@@ -29,6 +29,7 @@ import (
 
 	"diffharness/internal/harness"
 	"diffharness/internal/mutate"
+	"diffharness/internal/typeparam"
 )
 
 func main() {
@@ -44,6 +45,8 @@ func main() {
 		err = cmdMutate(os.Args[2:])
 	case "validate":
 		err = cmdValidate(os.Args[2:])
+	case "typeparam":
+		err = cmdTypeparam(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -55,11 +58,13 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate> [flags]
+	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam> [flags]
 
   run      -config PATH -corpus DIR -out PATH [-timeout SEC]
   mutate   -corpus DIR -class CLASS -target PROG [-out FILE]
   validate -config PATH -corpus DIR -mutations FILE -workdir DIR [-out PATH] [-timeout SEC]
+  typeparam scan -dir DIR -exclusions FILE -out PATH
+  typeparam run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH]
 `)
 }
 
@@ -383,6 +388,117 @@ func cmdValidate(args []string) error {
 }
 
 type manifestEntry struct{ class, target string }
+
+// cmdTypeparam implements the test/typeparam differential adapter (M6/D2).
+func cmdTypeparam(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("typeparam needs a mode: scan|run")
+	}
+	switch args[0] {
+	case "scan":
+		return cmdTypeparamScan(args[1:])
+	case "run":
+		return cmdTypeparamRun(args[1:])
+	default:
+		return fmt.Errorf("unknown typeparam mode %q (want scan|run)", args[0])
+	}
+}
+
+func cmdTypeparamScan(args []string) error {
+	fs := flag.NewFlagSet("typeparam scan", flag.ExitOnError)
+	dir := fs.String("dir", "", "test/typeparam directory")
+	exclusions := fs.String("exclusions", "", "versioned exclusion YAML (GG-0033)")
+	out := fs.String("out", "", "scan JSON output path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" || *out == "" {
+		return fmt.Errorf("-dir and -out are required")
+	}
+	var excl map[string]typeparam.Exclusion
+	if *exclusions != "" {
+		_, excl2, err := typeparam.LoadExclusions(*exclusions)
+		if err != nil {
+			return err
+		}
+		excl = excl2
+	}
+	files, err := typeparam.Scan(*dir, excl)
+	if err != nil {
+		return err
+	}
+	byClass := map[string]int{}
+	for _, f := range files {
+		byClass[f.Class]++
+	}
+	fmt.Printf("typeparam scan: %d files, classes=%v\n", len(files), byClass)
+	return typeparam.WriteScanJSON(*out, files)
+}
+
+func cmdTypeparamRun(args []string) error {
+	fs := flag.NewFlagSet("typeparam run", flag.ExitOnError)
+	dir := fs.String("dir", "", "test/typeparam directory")
+	exclusions := fs.String("exclusions", "", "versioned exclusion YAML (GG-0033)")
+	out := fs.String("out", "", "report JSON output path")
+	jobs := fs.Int("jobs", 4, "parallel programs")
+	refName := fs.String("ref", "gc-a", "reference backend name")
+	altName := fs.String("alt", "graalgo", "alternate backend name")
+	config := fs.String("config", "", "backend config JSON (default: backends.json next to the exclusions file)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" || *exclusions == "" || *out == "" {
+		return fmt.Errorf("-dir, -exclusions and -out are required")
+	}
+	_, excl, err := typeparam.LoadExclusions(*exclusions)
+	if err != nil {
+		return err
+	}
+	cfgPath := *config
+	if cfgPath == "" {
+		cfgPath = filepath.Join(filepath.Dir(*exclusions), "backends.json")
+	}
+	cfg, err := harness.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+	files, err := typeparam.Scan(*dir, excl)
+	if err != nil {
+		return err
+	}
+	comps, err := typeparam.Run(cfg, files, *refName, *altName, *jobs)
+	if err != nil {
+		return err
+	}
+	div := 0
+	for _, c := range comps {
+		status := "SAME    "
+		if !c.Same {
+			status = "DIVERGE "
+			div++
+		}
+		fmt.Printf("%s %s", status, c.Program)
+		for _, r := range c.Reasons {
+			fmt.Printf("\n           - %s", r)
+		}
+		fmt.Println()
+	}
+	skipped := 0
+	for _, f := range files {
+		if len(f.Class) >= 7 && f.Class[:7] == "exclude" {
+			skipped++
+		}
+	}
+	if err := typeparam.WriteReportJSON(*out, comps, skipped); err != nil {
+		return err
+	}
+	fmt.Printf("typeparam run: %d comparisons, %d diverged, %d excluded, report %s\n",
+		len(comps), div, skipped, *out)
+	if div > 0 {
+		return fmt.Errorf("%d divergences", div)
+	}
+	return nil
+}
 
 func readManifest(path string) ([]manifestEntry, error) {
 	data, err := os.ReadFile(path)

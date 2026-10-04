@@ -105,8 +105,15 @@ public final class TypeSwitchNode extends GoStmtNode {
             } else {
                 // v has the clause's asserted type: bind the raw dynamic value
                 // with the clause's kind (Go value semantics: copy structs/arrays).
-                Boxing.setSlot(frame, c.bindSlot, c.bindKind,
-                        Boxing.copyForAssign(c.bindKind, data));
+                // Multi-type clauses bind the guard at interface kind: the
+                // slot must hold a GoInterface carrying the dynamic
+                // descriptor, not the raw data (else the first interface
+                // use throws ClassCastException).
+                Object bound = Boxing.copyForAssign(c.bindKind, data);
+                if (c.bindKind == GoKind.INTERFACE) {
+                    bound = new GoInterface(dyn, bound, null);
+                }
+                Boxing.setSlot(frame, c.bindSlot, c.bindKind, bound);
             }
         }
         c.body.executeVoid(frame);

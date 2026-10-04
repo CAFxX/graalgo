@@ -28,6 +28,12 @@ public final class PrintNode extends GoExprNode {
     }
 
     @Override
+    public Object executeObject(VirtualFrame frame) {
+        executeLong(frame);
+        return null;
+    }
+
+    @Override
     public long executeLong(VirtualFrame frame) {
         BuiltinPrint.Arg[] bargs = new BuiltinPrint.Arg[args.length];
         for (int i = 0; i < args.length; i++) {

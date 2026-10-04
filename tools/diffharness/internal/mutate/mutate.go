@@ -28,6 +28,7 @@ var Classes = []string{
 	"ReturnSwap",  // swap the first two results of a multi-value return
 	"ChanOp",      // turn a channel send into a receive (wrong channel op)
 	"SliceBound",  // shrink a slice high bound by one
+	"TargSwap",    // swap the first two explicit type arguments at a generic call site
 }
 
 // Mutation is one generated mutant.
@@ -75,6 +76,8 @@ func Apply(class string, src []byte, filename string) (*Mutation, error) {
 		desc, ok = m.chanOp(f)
 	case "SliceBound":
 		desc, ok = m.sliceBound(f)
+	case "TargSwap":
+		desc, ok = m.targSwap(f)
 	}
 	if !ok {
 		return nil, fmt.Errorf("class %s: no eligible site in %s", class, filename)
@@ -353,6 +356,38 @@ func (m *mutator) sliceBound(f *ast.File) (string, bool) {
 			return false
 		}
 		return !done
+	})
+	return desc, done
+}
+
+// targSwap swaps the first two explicit type arguments at the first generic
+// call site carrying at least two (e.g. Show[int, float64](1, 2) becomes
+// Show[float64, int](1, 2)). It is the generics-dedicated mutation class:
+// on a target whose type parameters are observably ordered, the swap
+// changes behavior while still compiling, so the oracle must flag it.
+func (m *mutator) targSwap(f *ast.File) (string, bool) {
+	var desc string
+	done := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		if done {
+			return false
+		}
+		ce, ok := n.(*ast.CallExpr)
+		if !ok {
+			return true
+		}
+		il, ok := ce.Fun.(*ast.IndexListExpr)
+		if !ok || len(il.Indices) < 2 {
+			return true
+		}
+		var b0, b1 bytes.Buffer
+		printer.Fprint(&b0, m.fset, il.Indices[0])
+		printer.Fprint(&b1, m.fset, il.Indices[1])
+		il.Indices[0], il.Indices[1] = il.Indices[1], il.Indices[0]
+		desc = fmt.Sprintf("swapped type args %q <-> %q at %s",
+			b0.String(), b1.String(), m.at(il.Pos()))
+		done = true
+		return false
 	})
 	return desc, done
 }

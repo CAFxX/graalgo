@@ -11,12 +11,19 @@ package graalgo.values;
  *       an untyped constant ({@code int}, {@code float64}, {@code string},
  *       {@code bool}) shares the instance with the corresponding basic
  *       type-table entry;</li>
- *   <li>named types: one instance per named type — a named type and its
- *       underlying type are <em>different</em> dynamic types (gc-verified:
- *       {@code case MyInt} does not match a dynamic {@code int});</li>
+ *   <li>named types: one instance per <em>qualified name</em> (process-wide) —
+ *       a named type and its underlying type are <em>different</em> dynamic
+ *       types (gc-verified: {@code case MyInt} does not match a dynamic
+ *       {@code int}); the name key is safe because qualified names are
+ *       unique within a program and descriptors are immutable identity
+ *       tokens;</li>
  *   <li>aliases resolve to their right-hand side (an alias <em>is</em> its
  *       rhs as a dynamic type);</li>
- *   <li>all other composite types: one instance per type-table entry.</li>
+ *   <li>unnamed struct/array/slice/map/pointer types: one instance per
+ *       <em>structural shape</em> (process-wide) — anonymous types are
+ *       identical in Go iff structurally identical, and the exporter's
+ *       type table mints one id per syntactic occurrence;</li>
+ *   <li>all other kinds: one instance per type-table entry.</li>
  * </ul>
  * Instances are compared by reference; there is no structural equality.
  */

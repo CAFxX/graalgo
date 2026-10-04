@@ -1,0 +1,702 @@
+# typeparam-exclusions.yaml — versioned exclusion list for the
+# test/typeparam differential adapter (M6/D2 acceptance).
+#
+# GG-0033: every excluded test/typeparam file carries a reason code; the
+# list is versioned and the acceptance test enforces coverage, freshness,
+# and code validity.
+#
+# Reason codes:
+#   backend-specific     — tests gc-specific behavior (cgo, compiler
+#                          diagnostics, error-message text); not a
+#                          portability observable.
+#   unspecified-behavior — the program's output is nondeterministic or
+#                          implementation-defined (map order, timing).
+#   deferred-parity      — needs a feature from a later milestone/
+#                          workstream (multi-file packages = WS G import
+#                          overlay; unimplemented stdlib imports).
+version: 2
+exclusions:
+- file: absdiffimp.go
+  reason: deferred-parity
+  detail: multi-file program (absdiffimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: absdiffimp2.go
+  reason: deferred-parity
+  detail: multi-file program (absdiffimp2.dir): frontend/v1 is single-file; package loading is WS G
+- file: aliasimp.go
+  reason: deferred-parity
+  detail: multi-file program (aliasimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: chansimp.go
+  reason: deferred-parity
+  detail: multi-file program (chansimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: dedup.go
+  reason: deferred-parity
+  detail: multi-file program (dedup.dir): frontend/v1 is single-file; package loading is WS G
+- file: factimp.go
+  reason: deferred-parity
+  detail: multi-file program (factimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: gencrawler.go
+  reason: deferred-parity
+  detail: multi-file program (gencrawler.dir): frontend/v1 is single-file; package loading is WS G
+- file: geninline.go
+  reason: deferred-parity
+  detail: multi-file program (geninline.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue46461b.go
+  reason: deferred-parity
+  detail: multi-file program (issue46461b.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue47514c.go
+  reason: deferred-parity
+  detail: multi-file program (issue47514c.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue47775.go
+  reason: deferred-parity
+  detail: multi-file program (issue47775.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue47892.go
+  reason: deferred-parity
+  detail: multi-file program (issue47892.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue47892b.go
+  reason: deferred-parity
+  detail: multi-file program (issue47892b.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48094.go
+  reason: deferred-parity
+  detail: multi-file program (issue48094.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48094b.go
+  reason: deferred-parity
+  detail: multi-file program (issue48094b.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48185a.go
+  reason: deferred-parity
+  detail: multi-file program (issue48185a.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48185b.go
+  reason: deferred-parity
+  detail: multi-file program (issue48185b.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48280.go
+  reason: deferred-parity
+  detail: multi-file program (issue48280.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48306.go
+  reason: deferred-parity
+  detail: multi-file program (issue48306.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48337a.go
+  reason: deferred-parity
+  detail: multi-file program (issue48337a.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48337b.go
+  reason: deferred-parity
+  detail: multi-file program (issue48337b.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48454.go
+  reason: deferred-parity
+  detail: multi-file program (issue48454.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48462.go
+  reason: deferred-parity
+  detail: multi-file program (issue48462.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48716.go
+  reason: deferred-parity
+  detail: multi-file program (issue48716.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue48962.go
+  reason: deferred-parity
+  detail: multi-file program (issue48962.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue49027.go
+  reason: deferred-parity
+  detail: multi-file program (issue49027.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue49241.go
+  reason: deferred-parity
+  detail: multi-file program (issue49241.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue49246.go
+  reason: deferred-parity
+  detail: multi-file program (issue49246.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue49497.go
+  reason: deferred-parity
+  detail: multi-file program (issue49497.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue49524.go
+  reason: deferred-parity
+  detail: multi-file program (issue49524.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue49536.go
+  reason: deferred-parity
+  detail: multi-file program (issue49536.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue49659.go
+  reason: deferred-parity
+  detail: multi-file program (issue49659.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue49667.go
+  reason: deferred-parity
+  detail: multi-file program (issue49667.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue49893.go
+  reason: deferred-parity
+  detail: multi-file program (issue49893.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50121.go
+  reason: deferred-parity
+  detail: multi-file program (issue50121.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50121b.go
+  reason: deferred-parity
+  detail: multi-file program (issue50121b.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50437.go
+  reason: deferred-parity
+  detail: multi-file program (issue50437.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50481b.go
+  reason: deferred-parity
+  detail: multi-file program (issue50481b.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50481c.go
+  reason: deferred-parity
+  detail: multi-file program (issue50481c.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50485.go
+  reason: deferred-parity
+  detail: multi-file program (issue50485.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50486.go
+  reason: deferred-parity
+  detail: multi-file program (issue50486.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50552.go
+  reason: deferred-parity
+  detail: multi-file program (issue50552.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50561.go
+  reason: deferred-parity
+  detail: multi-file program (issue50561.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50598.go
+  reason: deferred-parity
+  detail: multi-file program (issue50598.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue50841.go
+  reason: deferred-parity
+  detail: multi-file program (issue50841.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue51219.go
+  reason: deferred-parity
+  detail: multi-file program (issue51219.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue51219b.go
+  reason: deferred-parity
+  detail: multi-file program (issue51219b.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue51250a.go
+  reason: deferred-parity
+  detail: multi-file program (issue51250a.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue51367.go
+  reason: deferred-parity
+  detail: multi-file program (issue51367.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue51423.go
+  reason: deferred-parity
+  detail: multi-file program (issue51423.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue51836.go
+  reason: deferred-parity
+  detail: multi-file program (issue51836.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue52117.go
+  reason: deferred-parity
+  detail: multi-file program (issue52117.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue54302.go
+  reason: deferred-parity
+  detail: multi-file program (issue54302.dir): frontend/v1 is single-file; package loading is WS G
+- file: issue54765.go
+  reason: backend-specific
+  detail: //go:build cgo: graalgo has no cgo support
+- file: listimp.go
+  reason: deferred-parity
+  detail: multi-file program (listimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: listimp2.go
+  reason: deferred-parity
+  detail: multi-file program (listimp2.dir): frontend/v1 is single-file; package loading is WS G
+- file: mapimp.go
+  reason: deferred-parity
+  detail: multi-file program (mapimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: mapsimp.go
+  reason: deferred-parity
+  detail: multi-file program (mapsimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: mincheck.go
+  reason: deferred-parity
+  detail: multi-file program (mincheck.dir): frontend/v1 is single-file; package loading is WS G
+- file: minimp.go
+  reason: deferred-parity
+  detail: multi-file program (minimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: mutualimp.go
+  reason: deferred-parity
+  detail: multi-file program (mutualimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: orderedmapsimp.go
+  reason: deferred-parity
+  detail: multi-file program (orderedmapsimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: pairimp.go
+  reason: deferred-parity
+  detail: multi-file program (pairimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: recoverimp.go
+  reason: deferred-parity
+  detail: multi-file program (recoverimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: select.go
+  reason: deferred-parity
+  detail: multi-file program (select.dir): frontend/v1 is single-file; package loading is WS G
+- file: setsimp.go
+  reason: deferred-parity
+  detail: multi-file program (setsimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: sliceimp.go
+  reason: deferred-parity
+  detail: multi-file program (sliceimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: stringerimp.go
+  reason: deferred-parity
+  detail: multi-file program (stringerimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: structinit.go
+  reason: deferred-parity
+  detail: multi-file program (structinit.dir): frontend/v1 is single-file; package loading is WS G
+- file: valimp.go
+  reason: deferred-parity
+  detail: multi-file program (valimp.dir): frontend/v1 is single-file; package loading is WS G
+- file: absdiff2.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'math': imports are not supported in frontend/v1 scop"
+- file: absdiff3.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'math': imports are not supported in frontend/v1 scop"
+- file: append.go
+  reason: deferred-parity
+  detail: "named type use as value: identifier 'Recv' denotes *types.TypeName"
+- file: boundmethod.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: builtins.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: chans.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'context': imports are not supported in frontend/v1 s"
+- file: combine.go
+  reason: deferred-parity
+  detail: "WS D scope: *ast.IndexListExpr is not supported in frontend/v1 scope (WS"
+- file: cons.go
+  reason: deferred-parity
+  detail: "method resolution: method Match not found on List"
+- file: devirtualize1.go
+  reason: deferred-parity
+  detail: "WS H scope: method call M1 on non-named receiver interface{M1()} (WS H)"
+- file: devirtualize2.go
+  reason: deferred-parity
+  detail: "WS H scope: method call M2 on non-named receiver interface{M2()} (WS H)"
+- file: dictionaryCapture-noinline.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: dictionaryCapture.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: dottype.go
+  reason: deferred-parity
+  detail: "WS H scope: method call bar on non-named receiver interface{bar() int} ("
+- file: double.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: eface.go
+  reason: deferred-parity
+  detail: "WS D scope: non-identifier call target *ast.ParenExpr is not supported i"
+- file: equal.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: fact.go
+  reason: deferred-parity
+  detail: "WS G scope: only var/type declarations are supported in frontend/v1 scop"
+- file: genembed.go
+  reason: deferred-parity
+  detail: "method resolution: method get not found on getter"
+- file: genembed2.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'sync': imports are not supported in frontend/v1 scop"
+- file: graph.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'errors': imports are not supported in frontend/v1 sc"
+- file: ifaceconv.go
+  reason: deferred-parity
+  detail: "method resolution: method foo not found on C"
+- file: importtest.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'math': imports are not supported in frontend/v1 scop"
+- file: index.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: index2.go
+  reason: deferred-parity
+  detail: "triage: *ast.ArrayType is not supported in frontend/v1 scope (WS C/D"
+- file: interfacearg.go
+  reason: deferred-parity
+  detail: "named type use as value: identifier 'T' denotes *types.TypeName"
+- file: issue23536.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue376214.go
+  reason: deferred-parity
+  detail: "WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"
+- file: issue39755.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue42758.go
+  reason: deferred-parity
+  detail: "WS D scope: non-identifier call target *ast.InterfaceType is not support"
+- file: issue44688.go
+  reason: deferred-parity
+  detail: "method resolution: method m2 not found on B2"
+- file: issue45547.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue45722.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'log': imports are not supported in frontend/v1 scope"
+- file: issue45817.go
+  reason: deferred-parity
+  detail: "WS H scope: method value f (bound receiver) is not supported in frontend"
+- file: issue46461.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue46472.go
+  reason: deferred-parity
+  detail: "WS D scope: non-identifier call target *ast.InterfaceType is not support"
+- file: issue46591.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue47258.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue47272.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'errors': imports are not supported in frontend/v1 sc"
+- file: issue47514b.go
+  reason: deferred-parity
+  detail: "WS D scope: multi-valued call result is not supported in frontend/v1 sco"
+- file: issue47631.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue47684b.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue47684c.go
+  reason: deferred-parity
+  detail: "WS D scope: non-identifier call target *ast.CallExpr is not supported in"
+- file: issue47710.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue47713.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'encoding': imports are not supported in frontend/v1 "
+- file: issue47716.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'unsafe': imports are not supported in frontend/v1 sc"
+- file: issue47740b.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: issue47775b.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue47797.go
+  reason: deferred-parity
+  detail: "method resolution: method Bat not found on Bar"
+- file: issue47878.go
+  reason: deferred-parity
+  detail: "WS D scope: method call Next needs an implicit address-of or deref on th"
+- file: issue47896.go
+  reason: backend-specific
+  detail: "gc build failure (version drift)"
+- file: issue47901.go
+  reason: deferred-parity
+  detail: "triage: *ast.ChanType is not supported in frontend/v1 scope (WS C/D)"
+- file: issue47924.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue47925b.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue47925c.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue47925d.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue47929.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue47966.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue48013.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'unsafe': imports are not supported in frontend/v1 sc"
+- file: issue48016.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'strconv': imports are not supported in frontend/v1 s"
+- file: issue48042.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: issue48047.go
+  reason: deferred-parity
+  detail: "method resolution: method Work not found on B"
+- file: issue48049.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue48056.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue48137.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue48191.go
+  reason: deferred-parity
+  detail: "WS D scope: *ast.StarExpr is not supported in frontend/v1 scope (WS D)"
+- file: issue48198.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue48225.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: issue48253.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: issue48276a.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue48317.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'encoding/json': imports are not supported in fronten"
+- file: issue48318.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'encoding/xml': imports are not supported in frontend"
+- file: issue48453.go
+  reason: deferred-parity
+  detail: "named type use as value: identifier 'M' denotes *types.TypeName"
+- file: issue48538.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue48598.go
+  reason: deferred-parity
+  detail: "method resolution: method Iterate not found on Iterator"
+- file: issue48602.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue48604.go
+  reason: deferred-parity
+  detail: "WS D scope: non-identifier call target *ast.CallExpr is not supported in"
+- file: issue48609.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue48617.go
+  reason: deferred-parity
+  detail: "WS D scope: call of non-function variable b is not supported in frontend"
+- file: issue48645a.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: issue48645b.go
+  reason: deferred-parity
+  detail: "method resolution: method Iterate not found on Iterator"
+- file: issue49049.go
+  reason: deferred-parity
+  detail: "method resolution: method m not found on A"
+- file: issue49295.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'io': imports are not supported in frontend/v1 scope "
+- file: issue49421.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue49432.go
+  reason: deferred-parity
+  detail: "WS H scope: method value Bar (bound receiver) is not supported in fronte"
+- file: issue49516.go
+  reason: deferred-parity
+  detail: "WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"
+- file: issue49538.go
+  reason: deferred-parity
+  detail: "WS D scope: *ast.StarExpr is not supported in frontend/v1 scope (WS D)"
+- file: issue49611.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue49659b.go
+  reason: deferred-parity
+  detail: "triage: *ast.ArrayType is not supported in frontend/v1 scope (WS C/D"
+- file: issue49875.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue50002.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue50109.go
+  reason: deferred-parity
+  detail: "method resolution: method Set not found on AnyCacher"
+- file: issue50109b.go
+  reason: deferred-parity
+  detail: "WS D scope: non-identifier call target *ast.ParenExpr is not supported i"
+- file: issue50147.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue50177.go
+  reason: backend-specific
+  detail: "gc build failure (version drift)"
+- file: issue50193.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue50259.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue50419.go
+  reason: deferred-parity
+  detail: "fmt Stringer dispatch not implemented (pre-existing missing feature; non-generic Stringer also fails)"
+- file: issue50642.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue50690a.go
+  reason: deferred-parity
+  detail: "WS D: calling function value l.SumFn()(...); method lookup fixed (methodIndex) but function-value call out of scope"
+- file: issue50690b.go
+  reason: deferred-parity
+  detail: "WS D: calling function value; method lookup fixed (methodIndex) but function-value call out of scope"
+- file: issue50690c.go
+  reason: deferred-parity
+  detail: "WS D scope: non-identifier call target *ast.CallExpr is not supported in"
+- file: issue50833.go
+  reason: deferred-parity
+  detail: "triage: variable 'f' used before declaration"
+- file: issue50993.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'sync/atomic': imports are not supported in frontend/"
+- file: issue51245.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue51303.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue51355.go
+  reason: deferred-parity
+  detail: "WS D scope: selector call c.adder is not supported in frontend/v1 scope "
+- file: issue51521.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'strings': imports are not supported in frontend/v1 s"
+- file: issue51522a.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue51522b.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue51700.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue51765.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue51909.go
+  reason: deferred-parity
+  detail: "WS D scope: call of non-function variable h is not supported in frontend"
+- file: issue52026.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue52124.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue52228.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue52241.go
+  reason: deferred-parity
+  detail: "WS H scope: method value Collect (bound receiver) is not supported in fr"
+- file: issue53087.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: issue53390.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'unsafe': imports are not supported in frontend/v1 sc"
+- file: issue53406.go
+  reason: deferred-parity
+  detail: "method resolution: method M not found on Outer"
+- file: issue53477.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue53762.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue54135.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue54225.go
+  reason: deferred-parity
+  detail: "triage: method Len on type parameter with non-named argument type: i"
+- file: issue54456.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: issue54497.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: issue54537.go
+  reason: deferred-parity
+  detail: "WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"
+- file: issue55101.go
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
+- file: issue58513.go
+  reason: deferred-parity
+  detail: "triage: type error: /tmp/typeparam-work-2986452303/issue58513.go/mai"
+- file: list.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: list2.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'strconv': imports are not supported in frontend/v1 s"
+- file: lockable.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'sync': imports are not supported in frontend/v1 scop"
+- file: map.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: maps.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'math': imports are not supported in frontend/v1 scop"
+- file: metrics.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'sort': imports are not supported in frontend/v1 scop"
+- file: min.go
+  reason: deferred-parity
+  detail: "WS G scope: only var/type declarations are supported in frontend/v1 scop"
+- file: nested.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: ordered.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'math': imports are not supported in frontend/v1 scop"
+- file: orderedmap.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'bytes': imports are not supported in frontend/v1 sco"
+- file: pair.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'unsafe': imports are not supported in frontend/v1 sc"
+- file: pragma.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: sets.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'sort': imports are not supported in frontend/v1 scop"
+- file: settable.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'strconv': imports are not supported in frontend/v1 s"
+- file: shape1.go
+  reason: deferred-parity
+  detail: "WS D scope: *ast.StarExpr is not supported in frontend/v1 scope (WS D)"
+- file: shape_assert.go
+  reason: deferred-parity
+  detail: "WS D scope: non-identifier call target *ast.ArrayType is not supported i"
+- file: slices.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'math': imports are not supported in frontend/v1 scop"
+- file: smoketest.go
+  reason: deferred-parity
+  detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
+- file: stringable.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'strconv': imports are not supported in frontend/v1 s"
+- file: stringer.go
+  reason: deferred-parity
+  detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
+- file: subdict.go
+  reason: deferred-parity
+  detail: "WS D scope: method call get needs an implicit address-of or deref on the"
+- file: typelist.go
+  reason: deferred-parity
+  detail: "WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"
+- file: typeswitch2.go
+  reason: deferred-parity
+  detail: "B2b: struct value to interface param loses dynamic type descriptor in GoFuncRootNode.wrapInterface (pre-existing factory bug, needs call-convention redesign); type switch cannot match struct cases"
+- file: typeswitch3.go
+  reason: deferred-parity
+  detail: "method resolution: method foo not found on I"
+- file: typeswitch4.go
+  reason: deferred-parity
+  detail: "method resolution: method foo not found on I"
+- file: typeswitch5.go
+  reason: deferred-parity
+  detail: "WS H scope: method call foo on non-named receiver interface{foo() T} (WS"
+- file: typeswitch6.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: typeswitch7.go
+  reason: deferred-parity
+  detail: "triage: "
+- file: value.go
+  reason: deferred-parity
+  detail: "WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"
+- file: typeswitch1.go
+  reason: deferred-parity
+  detail: "case T: where T is a type parameter instantiated to an interface (e.g. any) does not match: type switch uses descriptor identity (t == dyn), not interface satisfaction. Pre-existing limitation."

@@ -268,11 +268,12 @@ func ExportFile(path string) (string, error) {
 	}
 
 	e := &exporter{
-		fset:    fset,
-		info:    info,
-		typeIDs: make(map[types.Type]int),
-		objIDs:  make(map[types.Object]int),
-		sizes:   types.SizesFor("gc", "amd64"),
+		fset:     fset,
+		info:     info,
+		typeIDs:  make(map[types.Type]int),
+		namedIDs: make(map[string]int),
+		objIDs:   make(map[types.Object]int),
+		sizes:    types.SizesFor("gc", "amd64"),
 	}
 	doc := Doc{
 		Frontend:  frontendVersion,
@@ -393,6 +394,12 @@ type exporter struct {
 	// M6 (WS H): per-instantiation type memo, keyed by unsubstituted type.
 	// The global typeIDs memo is only valid without substitution.
 	substTypeIDs map[types.Type]int
+	// M6 (WS H, issue52026): named types deduplicated by qualified name
+	// (including substituted type arguments). A substituted *types.Named
+	// (e.g. Some[T] under T=int) is a fresh go/types object, but it denotes
+	// the same type as the Some[int] from non-generic code — they must share
+	// one wire type id, or type assertions on monomorphized values fail.
+	namedIDs map[string]int
 	// M6 (WS H): top-level function/method declarations by object, and
 	// monomorphized instantiations by dedup key (see enumerateInstantiations).
 	funcByObj map[*types.Func]*funcDeclInfo
@@ -587,6 +594,42 @@ func (e *exporter) defFunc(obj *types.Func) (int, error) {
 // Type table.
 // ---------------------------------------------------------------------------
 
+// sizesWouldPanic reports whether asking go/types for the size/alignment of
+// t would panic: gcSizes asserts on bare type parameters, which are reached
+// by descending through array element types, struct field types, and named
+// type underlyings. (Slice/map/pointer/chan positions are fine — gcSizes
+// returns WordSize without descending.)
+func sizesWouldPanic(t types.Type) bool {
+	seen := make(map[types.Type]bool)
+	var walk func(t types.Type) bool
+	walk = func(t types.Type) bool {
+		if t == nil {
+			return false
+		}
+		if _, ok := t.(*types.TypeParam); ok {
+			return true
+		}
+		if seen[t] {
+			return false
+		}
+		seen[t] = true
+		switch u := t.(type) {
+		case *types.Named:
+			return walk(u.Underlying())
+		case *types.Array:
+			return walk(u.Elem())
+		case *types.Struct:
+			for i := 0; i < u.NumFields(); i++ {
+				if walk(u.Field(i).Type()) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(t)
+}
+
 // typeID returns the type-table id for t, serializing t on first sight.
 // Recursive types are handled by registering the id before describing.
 //
@@ -595,19 +638,173 @@ func (e *exporter) defFunc(obj *types.Func) (int, error) {
 // per-instantiation memo is consulted. The global typeIDs memo is only
 // valid without substitution: the same unsubstituted type denotes different
 // concrete types under different substitutions.
+// substType returns t with every type parameter bound in e.subst replaced
+// by its binding (M6, WS H — issue52026). Bindings resolve in the scope
+// where they were written (the chain links nested instantiations). Returns
+// t unchanged when no substitution is active or t contains no bound type
+// parameter. Composite types are rebuilt only when a component changed, so
+// concrete types keep their canonical go/types identity.
+func (e *exporter) substType(t types.Type) types.Type {
+	if e.subst == nil {
+		return t
+	}
+	switch t := t.(type) {
+	case *types.TypeParam:
+		if c, scope := e.subst.resolve(t); c != nil {
+			saved := e.subst
+			e.subst = scope
+			c = e.substType(c)
+			e.subst = saved
+			return c
+		}
+		return t
+	case *types.Named:
+		targs := t.TypeArgs()
+		if targs == nil || targs.Len() == 0 {
+			return t
+		}
+		changed := false
+		newArgs := make([]types.Type, targs.Len())
+		for i := 0; i < targs.Len(); i++ {
+			newArgs[i] = e.substType(targs.At(i))
+			if newArgs[i] != targs.At(i) {
+				changed = true
+			}
+		}
+		if !changed {
+			return t
+		}
+		inst, err := types.Instantiate(nil, t.Origin(), newArgs, false)
+		if err != nil {
+			return t // defensive; describeType fails loudly on bad types
+		}
+		return inst
+	case *types.Pointer:
+		if elem := e.substType(t.Elem()); elem != t.Elem() {
+			return types.NewPointer(elem)
+		}
+		return t
+	case *types.Slice:
+		if elem := e.substType(t.Elem()); elem != t.Elem() {
+			return types.NewSlice(elem)
+		}
+		return t
+	case *types.Array:
+		if elem := e.substType(t.Elem()); elem != t.Elem() {
+			return types.NewArray(elem, t.Len())
+		}
+		return t
+	case *types.Map:
+		key, elem := e.substType(t.Key()), e.substType(t.Elem())
+		if key != t.Key() || elem != t.Elem() {
+			return types.NewMap(key, elem)
+		}
+		return t
+	case *types.Chan:
+		if elem := e.substType(t.Elem()); elem != t.Elem() {
+			return types.NewChan(t.Dir(), elem)
+		}
+		return t
+	case *types.Signature:
+		params, results := t.Params(), t.Results()
+		changed := false
+		newParams := make([]*types.Var, params.Len())
+		for i := 0; i < params.Len(); i++ {
+			v := params.At(i)
+			if nt := e.substType(v.Type()); nt != v.Type() {
+				changed = true
+				newParams[i] = types.NewVar(v.Pos(), v.Pkg(), v.Name(), nt)
+			} else {
+				newParams[i] = v
+			}
+		}
+		newResults := make([]*types.Var, results.Len())
+		for i := 0; i < results.Len(); i++ {
+			v := results.At(i)
+			if nt := e.substType(v.Type()); nt != v.Type() {
+				changed = true
+				newResults[i] = types.NewVar(v.Pos(), v.Pkg(), v.Name(), nt)
+			} else {
+				newResults[i] = v
+			}
+		}
+		if !changed {
+			return t
+		}
+		return types.NewSignatureType(t.Recv(), typeParamSlice(t.RecvTypeParams()),
+			typeParamSlice(t.TypeParams()), types.NewTuple(newParams...),
+			types.NewTuple(newResults...), t.Variadic())
+	case *types.Struct:
+		changed := false
+		fields := make([]*types.Var, t.NumFields())
+		tags := make([]string, t.NumFields())
+		for i := 0; i < t.NumFields(); i++ {
+			v := t.Field(i)
+			if nt := e.substType(v.Type()); nt != v.Type() {
+				changed = true
+				fields[i] = types.NewField(v.Pos(), v.Pkg(), v.Name(), nt, v.Embedded())
+			} else {
+				fields[i] = v
+			}
+			tags[i] = t.Tag(i)
+		}
+		if !changed {
+			return t
+		}
+		return types.NewStruct(fields, tags)
+	default:
+		return t
+	}
+}
+
+// typeParamSlice converts a *types.TypeParamList to a slice.
+func typeParamSlice(l *types.TypeParamList) []*types.TypeParam {
+	if l == nil {
+		return nil
+	}
+	s := make([]*types.TypeParam, l.Len())
+	for i := 0; i < l.Len(); i++ {
+		s[i] = l.At(i)
+	}
+	return s
+}
+
+// namedTypeName renders the qualified name of a named type including its
+// (already substituted) type arguments — the canonical identity key.
+func namedTypeName(nt *types.Named) string {
+	name := qualifiedName(nt.Obj())
+	if targs := nt.TypeArgs(); targs != nil && targs.Len() > 0 {
+		args := make([]string, targs.Len())
+		for i := 0; i < targs.Len(); i++ {
+			args[i] = qualifiedNameForType(targs.At(i))
+		}
+		name += "[" + strings.Join(args, ", ") + "]"
+	}
+	return name
+}
+
 func (e *exporter) typeID(t types.Type) (int, error) {
 	if e.subst != nil {
-		if tp, ok := t.(*types.TypeParam); ok {
-			if c, scope := e.subst.resolve(tp); c != nil {
-				saved := e.subst
-				e.subst = scope
-				id, err := e.typeID(c)
-				e.subst = saved
-				return id, err
+		// M6 (WS H, issue52026): substitute bound type parameters before
+		// the memo lookup, so Some[T] under T=int denotes Some[int].
+		// The substituted *types.Named is a fresh object — deduplicate
+		// named types by qualified name, or the monomorphized body and
+		// the call site would mint different ids for the same type.
+		t = e.substType(t)
+		if nt, ok := t.(*types.Named); ok {
+			name := namedTypeName(nt)
+			if id, ok := e.namedIDs[name]; ok {
+				return id, nil
 			}
-			// Unbound under substitution: defensive fallthrough emits the
-			// typeparam entry as-is (instantiation keys with unbound params
-			// are rejected before emission).
+			id := len(e.types)
+			e.types = append(e.types, TypeEnt{})
+			e.namedIDs[name] = id
+			ent, err := e.describeType(t)
+			if err != nil {
+				return 0, err
+			}
+			e.types[id] = ent
+			return id, nil
 		}
 		if id, ok := e.substTypeIDs[t]; ok {
 			return id, nil
@@ -615,6 +812,24 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 		id := len(e.types)
 		e.types = append(e.types, TypeEnt{})
 		e.substTypeIDs[t] = id
+		ent, err := e.describeType(t)
+		if err != nil {
+			return 0, err
+		}
+		e.types[id] = ent
+		return id, nil
+	}
+	if nt, ok := t.(*types.Named); ok {
+		// Named types deduplicate by qualified name globally as well, so a
+		// substituted Some[int] (via namedIDs) shares the id with the
+		// Some[int] from non-generic code (issue52026).
+		name := namedTypeName(nt)
+		if id, ok := e.namedIDs[name]; ok {
+			return id, nil
+		}
+		id := len(e.types)
+		e.types = append(e.types, TypeEnt{})
+		e.namedIDs[name] = id
 		ent, err := e.describeType(t)
 		if err != nil {
 			return 0, err
@@ -667,6 +882,18 @@ func qualifiedName(obj *types.TypeName) string {
 	return obj.Name()
 }
 
+// qualifiedNameForType returns the qualified name for a type argument
+// (e.g. "main.foo" for type foo int). Used in instantiated type names.
+func qualifiedNameForType(t types.Type) string {
+	if n, ok := t.(*types.Named); ok {
+		return qualifiedName(n.Obj())
+	}
+	if b, ok := t.(*types.Basic); ok {
+		return b.Name()
+	}
+	return types.TypeString(t, nil)
+}
+
 func (e *exporter) tupleList(t *types.Tuple) ([]any, error) {
 	out := make([]any, 0, t.Len())
 	for i := 0; i < t.Len(); i++ {
@@ -694,12 +921,22 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		// M6 (WS H): named types may have methods (emitted as funcdecls /
 		// instantiations; dispatch resolves by object id). The methods list
 		// stays empty here — populated by WS D per docs/frontend-v1.md.
+		// M6: instantiated generic types (e.g. F[foo]) include the type
+		// arguments in the name for %T formatting (issue49547).
+		name := qualifiedName(t.Obj())
+		if targs := t.TypeArgs(); targs != nil && targs.Len() > 0 {
+			args := make([]string, targs.Len())
+			for i := 0; i < targs.Len(); i++ {
+				args[i] = qualifiedNameForType(targs.At(i))
+			}
+			name += "[" + strings.Join(args, ", ") + "]"
+		}
 		under, err := e.typeID(t.Underlying())
 		if err != nil {
 			return TypeEnt{}, err
 		}
 		return mk("named", map[string]any{
-			"name": qualifiedName(t.Obj()), "underlying": under, "methods": []any{},
+			"name": name, "underlying": under, "methods": []any{},
 		}), nil
 	case *types.Pointer:
 		elem, err := e.typeID(t.Elem())
@@ -750,7 +987,27 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		for i := 0; i < t.NumFields(); i++ {
 			vars = append(vars, t.Field(i))
 		}
-		offsets := e.sizes.Offsetsof(vars)
+		// M6 (WS H): go/types' gcSizes asserts on bare type parameters
+		// (Alignof/Sizeof panic), reachable by descending through array
+		// element and struct field types — e.g. struct{ t T }. Field
+		// offsets of a generic struct are instantiation-dependent anyway,
+		// so they are not computed: the wire carries -1 ("unknown"; the
+		// factory indexes fields by position, never by byte offset).
+		offsets := make([]int64, len(vars))
+		generic := false
+		for _, v := range vars {
+			if sizesWouldPanic(v.Type()) {
+				generic = true
+				break
+			}
+		}
+		if generic {
+			for i := range offsets {
+				offsets[i] = -1
+			}
+		} else {
+			offsets = e.sizes.Offsetsof(vars)
+		}
 		for i := 0; i < t.NumFields(); i++ {
 			f := t.Field(i)
 			ft, err := e.typeID(f.Type())
@@ -1115,20 +1372,16 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	if cn == nil {
 		return nil, scopeErrorf("method %s on type parameter with non-named argument type: interface dispatch on type parameters is not supported (WS H)", mname)
 	}
-	mset := types.NewMethodSet(c)
-	var mobj *types.Func
-	for i := 0; i < mset.Len(); i++ {
-		if mset.At(i).Obj().Name() == mname {
-			mobj, _ = mset.At(i).Obj().(*types.Func)
-			break
-		}
-	}
-	if mobj == nil {
-		return nil, fmt.Errorf("gofrontend: type %s has no method %s", substString(c, scope), mname)
-	}
-	fi, ok := e.funcByObj[mobj]
+	// M6: look the method up in the declaration index by (origin type
+	// name, method name). We do NOT use types.NewMethodSet here: for an
+	// instantiated receiver go/types returns *types.Func objects that are
+	// not identical to the declared ones (verified by probe), so a
+	// funcByObj lookup by object identity fails. The index is keyed by the
+	// origin's TypeName, so partial-instantiation receivers (e.g.
+	// Ledger[T, _]) resolve correctly.
+	fi, ok := e.methodIndex[methodKey{cn.Obj(), mname}]
 	if !ok {
-		return nil, fmt.Errorf("gofrontend: method %s has no declaration", mname)
+		return nil, fmt.Errorf("gofrontend: type %s has no method %s", substString(c, scope), mname)
 	}
 	if !fi.isTemplate {
 		return &methodCall{decl: fi, subst: subst}, nil
@@ -1349,6 +1602,32 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			if mc.needsInst {
 				enqueue(&instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name})
 			}
+		case *ast.Ident:
+			// Generic function in value position (e.g. min[T] passed as an
+			// argument inside a generic body): go/types records it in
+			// info.Instances, but the CallExpr case above only sees call
+			// targets, so the instantiation would never be enqueued and
+			// export later fails with "not enumerated (internal error)".
+			// Method idents (Sel of a SelectorExpr) are excluded: method
+			// calls/values go through the SelectorExpr case.
+			ii, ok := e.info.Instances[n]
+			if !ok {
+				return true
+			}
+			fn, ok := denotedFunc(e.info, n)
+			if !ok {
+				return true
+			}
+			fi, ok := e.funcByObj[fn]
+			if !ok || !fi.isTemplate || fi.recv != nil {
+				return true
+			}
+			ni, nerr := newFuncInst(fi, typeList(ii.TypeArgs), subst)
+			if nerr != nil {
+				err = nerr
+				return false
+			}
+			enqueue(ni)
 		}
 		return true
 	})
@@ -2245,6 +2524,25 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 	case *ast.CompositeLit:
 		return e.exportCompositeLit(x)
 	case *ast.IndexExpr:
+		// M6 (WS H): a generic function in value position (e.g. min[int]
+		// passed as an argument) is an IndexExpr whose X denotes a generic
+		// function recorded in info.Instances. It is a func value, not an
+		// index operation: route it through the func-value path instead
+		// of exportIndex (which would try to export the type argument as
+		// an expression).
+		if id, ok := x.X.(*ast.Ident); ok {
+			if _, isInst := e.info.Instances[id]; isInst {
+				if fn, ok := denotedFunc(e.info, id); ok {
+					if fi, ok := e.funcByObj[fn]; ok && fi.isTemplate && fi.recv == nil {
+						fields := map[string]any{"name": id.Name}
+						if err := e.exportFuncValue(id, fn, fields); err != nil {
+							return nil, err
+						}
+						return e.node("ident", x, fields), nil
+					}
+				}
+			}
+		}
 		return e.exportIndex(x, false)
 	case *ast.SliceExpr:
 		return e.exportSlice(x)
@@ -2343,42 +2641,53 @@ func (e *exporter) exportIdent(id *ast.Ident) (*Node, error) {
 		// the function/instantiation object id; the factory builds a
 		// func-value constant. Method values (bound receivers) are not
 		// supported (WS H follow-up).
-		fi, ok := e.funcByObj[obj]
-		if !ok {
-			return nil, fmt.Errorf("gofrontend: unknown function %s", obj.Name())
-		}
-		if fi.recv != nil {
-			return nil, scopeErrorf("method value %s (bound receiver) is not supported in frontend/v1 scope (WS H)", id.Name)
-		}
-		if fi.isTemplate {
-			ii, ok := e.info.Instances[id]
-			if !ok {
-				return nil, scopeErrorf("generic function value %s without instantiation is not supported (WS H)", id.Name)
-			}
-			targs := typeList(ii.TypeArgs)
-			key := instKeyForFunc(fi, targs, e.subst)
-			inst, ok := e.instByKey[key]
-			if !ok {
-				return nil, fmt.Errorf("gofrontend: instantiation %s not enumerated (internal error)", key)
-			}
-			fields["obj"] = inst.instID
-			fields["type"] = inst.sigID
-		} else {
-			t, err := e.typeID(obj.Type())
-			if err != nil {
-				return nil, err
-			}
-			oid, err := e.defFunc(obj)
-			if err != nil {
-				return nil, err
-			}
-			fields["obj"] = oid
-			fields["type"] = t
+		if err := e.exportFuncValue(id, obj, fields); err != nil {
+			return nil, err
 		}
 	default:
 		return nil, fmt.Errorf("gofrontend: identifier %q denotes %T", id.Name, obj)
 	}
 	return e.node("ident", id, fields), nil
+}
+
+// exportFuncValue fills fields for a reference to a named function or
+// method in value position (e.g. f := Min[int], or Min[int] passed as an
+// argument). Generic functions resolve to their monomorphized
+// instantiation via info.Instances.
+func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[string]any) error {
+	fi, ok := e.funcByObj[obj]
+	if !ok {
+		return fmt.Errorf("gofrontend: unknown function %s", obj.Name())
+	}
+	if fi.recv != nil {
+		return scopeErrorf("method value %s (bound receiver) is not supported in frontend/v1 scope (WS H)", id.Name)
+	}
+	if fi.isTemplate {
+		ii, ok := e.info.Instances[id]
+		if !ok {
+			return scopeErrorf("generic function value %s without instantiation is not supported (WS H)", id.Name)
+		}
+		targs := typeList(ii.TypeArgs)
+		key := instKeyForFunc(fi, targs, e.subst)
+		inst, ok := e.instByKey[key]
+		if !ok {
+			return fmt.Errorf("gofrontend: instantiation %s not enumerated (internal error)", key)
+		}
+		fields["obj"] = inst.instID
+		fields["type"] = inst.sigID
+	} else {
+		t, err := e.typeID(obj.Type())
+		if err != nil {
+			return err
+		}
+		oid, err := e.defFunc(obj)
+		if err != nil {
+			return err
+		}
+		fields["obj"] = oid
+		fields["type"] = t
+	}
+	return nil
 }
 
 // exportCall exports a call expression: either a Go conversion T(x) (the

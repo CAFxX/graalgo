@@ -23,6 +23,7 @@ public final class Runner {
         TESTS.add(graalgo.frontend.CompositeCorpusTest.class);
         TESTS.add(graalgo.frontend.PanicCorpusTest.class);
         TESTS.add(graalgo.frontend.GenericsCorpusTest.class);
+        TESTS.add(graalgo.frontend.TypeparamDifferentialTest.class);
         TESTS.add(graalgo.values.ValuesTest.class);
         TESTS.add(graalgo.runtime.FmtVerbMatrixTest.class);
         TESTS.add(graalgo.runtime.FreezeSignatureTest.class);

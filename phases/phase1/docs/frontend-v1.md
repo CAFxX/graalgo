@@ -143,6 +143,40 @@ Normalizations (applied by the exporter, part of the contract):
   as `basiclit` nodes; `nil` (a `*types.Nil`) is a scope error naming
   WS D.
 
+Monomorphization (M6, WS H): generics are erased on the wire — the
+factory never sees a type parameter. The exporter computes the full
+instantiation fixpoint (`enumerateInstantiations` in `frontend/export.go`):
+roots come from `go/types` `info.Instances`/`info.Selections` in
+non-generic code; nested instantiations inside generic bodies are found by
+walking each template with its type substitution. Every needed
+(generic function, type args) / (method, receiver args, method args) pair
+is emitted as its own `funcdecl` in the top-level `funcs` array, with
+`name` = the display name (e.g. `Min[int]`, from `instNameForFunc`).
+Dedup is by instantiation key (`F:<name>|<targs>`): one wire funcdecl per
+distinct instantiation, no matter how many call sites. The generic
+template itself is *not* emitted — only reachable instantiations are.
+Termination is guaranteed by `go/types` (instantiation cycles are type
+errors, so the graph is finite); a defensive cap guards against
+enumerator bugs as an internal error, never silent.
+
+Type identity across instantiations (M6, WS H): a `*types.Named` with
+substituted type arguments (e.g. `Some[T]` under `T=int`) denotes the same
+type as the `Some[int]` from non-generic code. The exporter substitutes
+bound type parameters before the type-table memo lookup (`substType` in
+`frontend/export.go`) and deduplicates named types by qualified name
+(including type arguments), so both sides share one wire type id — without
+this, a value boxed in a monomorphized body could never satisfy a type
+assertion in the caller (issue52026).
+
+Call sites resolve through the same map: a call to a generic
+function/method is a `call` node whose `fun` ident has `obj` = the
+instantiation's object id and whose `type` is the instantiation's
+signature id — statically dispatched, exactly like a non-generic call.
+Generic structs carry field offsets of `-1` ("unknown") whenever a field
+type could contain a bare type parameter (`go/types` `gcSizes` asserts on
+those; offsets are instantiation-dependent anyway); the factory indexes
+fields by position, never by byte offset.
+
 ## 7. Exporter scope (v1, M4 control-flow + composite subset)
 
 The exporter fails fast — non-zero exit, message on stderr, no JSON on
@@ -151,14 +185,24 @@ the extension:
 
 - one input file; **no imports** except `fmt` via the Phase-1 import
   overlay (WS G): the overlay synthesizes a `fmt` package exposing only
-  the seven D4 symbols (`Print`, `Printf`, `println`, `Sprint`, `Sprintf`,
+  the seven D4 symbols (`Print`, `Printf`, `Println`, `Sprint`, `Sprintf`,
   `Sprintln`, `Errorf`) with exact variadic signatures; any other `fmt.X`
   is a scope error naming Phase 3. Calls to the D4 symbols are emitted as
   `fmtcall` wire nodes.
-- no package-level declarations except `func main` (WS G/H);
+- package-level declarations: `func main` plus any number of named
+  functions, generic or not (M6, WS H). A generic function's template is
+  never emitted as such — only its reachable instantiations appear, one
+  `funcdecl` per instantiation (see §6, Monomorphization). An
+  instantiation whose type arguments still contain an unbound type
+  parameter is an internal error, never silent.
 - `func main`: no receiver (WS D); parameters/results are rejected by
   `go/types` itself ("func main must have no arguments and no return
   values");
+- named types may have methods (M6, WS H): methods are emitted as
+  `funcdecl`s / instantiations and dispatch resolves by object id. The
+  `methods` list on `named` type-table entries stays empty in v1 —
+  populated by WS D. Generic structs carry field offsets of `-1`
+  (instantiation-dependent; see §6).
 - statements: block, `var`/`:=`, `=`/op-assign (lhs: identifier, index,
   selector, or blank), expression statements, `return`, `++`/`--`
   (identifier/index/selector), `if`/`else` (with init), `for` (3-clause,

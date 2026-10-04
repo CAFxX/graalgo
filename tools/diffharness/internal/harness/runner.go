@@ -25,17 +25,12 @@ type Outcome struct {
 	Duration time.Duration `json:"durationNs"`
 }
 
-// RunProgram builds prog with backend and runs the resulting binary.
-// workRoot scopes all build artifacts for this invocation.
-//
-// Determinism controls (FEASIBILITY.md §7):
-//   - builds run with the ambient environment + backend Env overrides
-//     (GOCACHE etc. keep working; GOTOOLCHAIN pinned via backend env);
-//   - runs execute in a fresh empty working directory with a minimal
-//     environment: PATH, HOME, plus backend Env overrides (GOMAXPROCS=1
-//     is pinned via the default backend config, not trusted to ambient);
-//   - a per-program timeout converts hangs/deadlocks into TimedOut=true.
-func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
+// BuildOnly runs just the build step of backend b for prog and returns the
+// outcome with only the build fields populated (BuildOK, BuildLog).
+// workRoot scopes build artifacts for this invocation. It exists for
+// compile-only differential modes (build parity / build-failure parity)
+// where running the program is meaningless or impossible.
+func BuildOnly(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
 	oc := Outcome{Program: prog.Name, Backend: b.Name}
 	dir := filepath.Join(workRoot, prog.Name, b.Name)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -57,11 +52,33 @@ func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome 
 		// Scrub the workRoot from the echoed command: it is backend- and
 		// run-specific, so leaving it in would make two identical build
 		// failures compare as different (false divergence signal).
+		// Backend stderr noise filters apply here too (e.g. the Truffle
+		// Unsafe warnings), so the first-lines excerpt shows the real error.
 		cmdStr := strings.ReplaceAll(fmt.Sprintf("%v", buildCmd), workRoot, "{WORK}")
-		oc.BuildLog = Normalize(fmt.Sprintf("build %s failed: %v\n%s", cmdStr, err, blog.String()))
+		oc.BuildLog = Normalize(fmt.Sprintf("build %s failed: %v\n%s", cmdStr, err,
+			b.FilterStderr(blog.String())))
 		return oc
 	}
 	oc.BuildOK = true
+	oc.BuildLog = Normalize(blog.String())
+	return oc
+}
+
+// RunProgram builds prog with backend and runs the resulting binary.
+// workRoot scopes all build artifacts for this invocation.
+//
+// Determinism controls (FEASIBILITY.md §7):
+//   - builds run with the ambient environment + backend Env overrides
+//     (GOCACHE etc. keep working; GOTOOLCHAIN pinned via backend env);
+//   - runs execute in a fresh empty working directory with a minimal
+//     environment: PATH, HOME, plus backend Env overrides (GOMAXPROCS=1
+//     is pinned via the default backend config, not trusted to ambient);
+//   - a per-program timeout converts hangs/deadlocks into TimedOut=true.
+func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
+	oc := BuildOnly(cfg, b, prog, workRoot)
+	if !oc.BuildOK {
+		return oc
+	}
 
 	runDir, err := os.MkdirTemp("", "diffharness-run-*")
 	if err != nil {
@@ -70,11 +87,12 @@ func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome 
 	}
 	defer os.RemoveAll(runDir)
 
+	bin := filepath.Join(workRoot, prog.Name, b.Name, "prog")
 	runCmd := b.RenderRun(prog.Main, bin)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(cfg.TimeoutSec)*time.Second)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
-	cmd = exec.CommandContext(ctx, runCmd[0], runCmd[1:]...)
+	cmd := exec.CommandContext(ctx, runCmd[0], runCmd[1:]...)
 	cmd.Dir = runDir
 	cmd.Env = runEnv(b.Env)
 	cmd.Stdout = &stdout
@@ -86,7 +104,9 @@ func RunProgram(cfg *Config, b *Backend, prog Program, workRoot string) Outcome 
 	// program (%p, %x of pointers) are not semantic observables and differ
 	// between runs even of the same binary. Message text is untouched.
 	oc.Stdout = Normalize(stdout.String())
-	oc.Stderr = Normalize(stderr.String())
+	// Stderr carries the backend's declared noise filters (e.g. the
+	// Truffle Unsafe warnings on the graalgo backend) after normalization.
+	oc.Stderr = b.FilterStderr(Normalize(stderr.String()))
 	if ctx.Err() == context.DeadlineExceeded {
 		oc.TimedOut = true
 		oc.ExitCode = -1

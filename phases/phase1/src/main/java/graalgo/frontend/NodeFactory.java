@@ -119,6 +119,9 @@ public final class NodeFactory {
         public int resultSlot = -1;
         /** Kind of the result slot (M5, WS F); null when resultSlot is -1. */
         public GoKind resultKind;
+
+        /** Declared result type-table id (-1 if the function has no result). */
+        public int resultTypeId = -1;
         /** Function name for Go stack traces (M5, WS F). */
         public String funcName = "main";
         /**
@@ -420,6 +423,7 @@ public final class NodeFactory {
                     path + ".results[0]", ctx);
             ctx.resultSlot = resultSlot;
             ctx.resultKind = resultKind;
+            ctx.resultTypeId = resultTypeId;
         }
         GoStmtNode body = buildStmt(f.object("body", path), ctx);
         // Zero the result slot on entry (Go semantics: results start at zero
@@ -603,7 +607,20 @@ public final class NodeFactory {
     /**
      * Canonical dynamic-type descriptor for a type-table id (M4, WS E):
      * one instance per basic {@link GoKind}, per named type, and per
-     * remaining type-table entry (aliases resolve to their rhs).
+     * structural shape of every other composite type (aliases resolve to
+     * their rhs).
+     *
+     * <p>Structural canonicalization (M6, WS H): the exporter mints one
+     * type-table id per <em>syntactic occurrence</em> of an anonymous type,
+     * and every function body gets a fresh {@link BuildCtx} (hence a fresh
+     * {@code typeDescs} map) — so without this, {@code case struct{a int}}
+     * in one function could never match a {@code struct{a int}} value
+     * boxed in another (the descriptors were never identical). Unnamed
+     * struct/array/slice/map/pointer types now canonicalize by structure
+     * in a process-wide cache. Named types stay per-ctx by qualified name
+     * (a named type and its underlying type are different dynamic types);
+     * sharing an instance across programs is benign — a descriptor is an
+     * immutable identity token and dynamic-type universes never mix.
      */
     static graalgo.values.GoTypeDescriptor typeDescriptorFor(BuildCtx ctx, int typeId, String path) {
         typeId = resolveAlias(ctx, typeId, path);
@@ -612,6 +629,20 @@ public final class NodeFactory {
         if ("basic".equals(k)) {
             return basicDescriptorFor(kindOf(ctx, typeId, path));
         }
+        if (isStructuralComposite(k)) {
+            String key = structuralKey(ctx, typeId, path);
+            graalgo.values.GoTypeDescriptor d = STRUCTURAL_DESCS.get(key);
+            if (d == null) {
+                d = new graalgo.values.GoTypeDescriptor(k + "#" + Integer.toHexString(key.hashCode()),
+                        kindOf(ctx, typeId, path), false);
+                graalgo.values.GoTypeDescriptor prev =
+                        STRUCTURAL_DESCS.putIfAbsent(key, d);
+                if (prev != null) {
+                    d = prev;
+                }
+            }
+            return d;
+        }
         graalgo.values.GoTypeDescriptor d = ctx.typeDescs.get(typeId);
         if (d != null) {
             return d;
@@ -619,7 +650,23 @@ public final class NodeFactory {
         String name;
         boolean emptyIface = false;
         if ("named".equals(k)) {
+            // M6 (WS H, issue52026): named types canonicalize by qualified
+            // name in a process-wide cache — each function gets a fresh
+            // BuildCtx (hence a fresh typeDescs), so without this a
+            // Some[int] boxed in returnOption[int] could never match a
+            // Some[int] asserted in main.
             name = entry.object("detail", path).string("name", path);
+            graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(name);
+            if (nd == null) {
+                nd = new graalgo.values.GoTypeDescriptor(name,
+                        kindOf(ctx, typeId, path), false);
+                graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(name, nd);
+                if (prev != null) {
+                    nd = prev;
+                }
+            }
+            ctx.typeDescs.put(typeId, nd);
+            return nd;
         } else if ("interface".equals(k)) {
             emptyIface = entry.object("detail", path).bool("empty", path);
             name = emptyIface ? "any" : "interface#" + typeId;
@@ -629,6 +676,73 @@ public final class NodeFactory {
         d = new graalgo.values.GoTypeDescriptor(name, kindOf(ctx, typeId, path), emptyIface);
         ctx.typeDescs.put(typeId, d);
         return d;
+    }
+
+    /** Unnamed composite kinds canonicalized by structure (M6, WS H). */
+    private static boolean isStructuralComposite(String k) {
+        return "struct".equals(k) || "array".equals(k) || "slice".equals(k)
+                || "map".equals(k) || "pointer".equals(k);
+    }
+
+    /** Process-wide canonical descriptors for named types, keyed by qualified
+     * name (M6, WS H); see {@link #typeDescriptorFor}. */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+            graalgo.values.GoTypeDescriptor> NAMED_DESCS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Process-wide canonical descriptors for unnamed composite types (M6,
+     * WS H); see {@link #typeDescriptorFor}. A {@link java.util.concurrent.ConcurrentHashMap}
+     * because test suites may build programs on multiple threads.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+            graalgo.values.GoTypeDescriptor> STRUCTURAL_DESCS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Structural identity key for a type-table entry (M6, WS H). Named
+     * types contribute their qualified name (never expanded — expansion
+     * would not terminate on recursive named types, and qualified names
+     * are unique within a program); everything else is fully structural.
+     */
+    private static String structuralKey(BuildCtx ctx, int typeId, String path) {
+        typeId = resolveAlias(ctx, typeId, path);
+        Json.Object entry = ctx.types.entry(typeId, path);
+        String k = entry.string("kind", path);
+        Json.Object detail = entry.object("detail", path);
+        switch (k) {
+            case "basic":
+                return "basic:" + kindOf(ctx, typeId, path).name();
+            case "named":
+                return "named(" + detail.string("name", path) + ")";
+            case "struct": {
+                StringBuilder sb = new StringBuilder("struct{");
+                Json.Array fields = detail.array("fields", path);
+                for (int i = 0; i < fields.size(); i++) {
+                    Json.Value fv = fields.get(i);
+                    if (!(fv instanceof Json.Object fo)) {
+                        throw new FrontendException(path + ": struct field not an object");
+                    }
+                    sb.append(fo.string("name", path)).append(':')
+                            .append(structuralKey(ctx, fo.intValue("type", path), path))
+                            .append(';');
+                }
+                return sb.append('}').toString();
+            }
+            case "array":
+                return "array[" + detail.intValue("len", path) + "]"
+                        + structuralKey(ctx, detail.intValue("elem", path), path);
+            case "slice":
+                return "slice[" + structuralKey(ctx, detail.intValue("elem", path), path) + "]";
+            case "map":
+                return "map[" + structuralKey(ctx, detail.intValue("key", path), path) + "]"
+                        + structuralKey(ctx, detail.intValue("elem", path), path);
+            case "pointer":
+                return "ptr(" + structuralKey(ctx, detail.intValue("elem", path), path) + ")";
+            default:
+                // interface, signature, invalid: program-local identity.
+                return k + "#" + typeId;
+        }
     }
 
     /** Canonical dynamic-type descriptor per basic kind (M4, WS E). */
@@ -1362,6 +1476,7 @@ public final class NodeFactory {
         }
         if ("funclit".equals(funKind)) {
             GoExprNode lit = buildFuncLit(fun, ctx);
+            args = adaptArgsForInterfaceParams(args, funclitParamTypeIds(fun, path), ctx, path);
             return new FuncValueCallNode(lit, args, callResultKind(node, ctx, path));
         }
         if ("methodref".equals(funKind)) {
@@ -1391,10 +1506,86 @@ public final class NodeFactory {
                 throw new FrontendException(path + ": call to non-function value of kind "
                         + fn.kind() + " (WS D)");
             }
+            Json.Value sig = ff.opt("type");
+            List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
+                    : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
             return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path));
         }
         throw new FrontendException(path + ": call to " + funKind + " is not supported"
                 + " in frontend/v1 scope (WS D: methods and qualified calls)");
+    }
+
+    /**
+     * Implicit concrete-to-interface boxing at call sites (M6, WS H).
+     *
+     * <p>When a callee parameter has interface type and the argument is a
+     * concrete value, the argument is boxed with its exact static-type
+     * descriptor. This replaces the old {@code GoFuncRootNode.wrapInterface}
+     * inference, which derived the descriptor from the Java carrier type —
+     * int8/int16/uint8/uint16/uint32 all looked like int32 (a wrong type
+     * switch match, not just a miss), and composite values never matched.
+     * The root's fallback stays for call shapes whose signature is not on
+     * the wire (methodref).
+     *
+     * @param paramTypeIds the callee's parameter type ids, or null when
+     *                     unknown (no adaptation)
+     */
+    private GoExprNode[] adaptArgsForInterfaceParams(GoExprNode[] args,
+            List<Integer> paramTypeIds, BuildCtx ctx, String path) {
+        if (paramTypeIds == null) {
+            return args;
+        }
+        for (int i = 0; i < args.length && i < paramTypeIds.size(); i++) {
+            if (args[i].kind() == GoKind.INTERFACE) {
+                continue; // already an interface value
+            }
+            int paramTid = resolveAlias(ctx, paramTypeIds.get(i), path);
+            Json.Object pentry = ctx.types.entry(paramTid, path);
+            if (!"interface".equals(pentry.string("kind", path))) {
+                continue;
+            }
+            args[i] = boxInterface(args[i], ctx, path);
+        }
+        return args;
+    }
+
+    /** Parameter type ids from a wire signature entry; null when not a (non-variadic) signature. */
+    private static List<Integer> signatureParamTypeIds(BuildCtx ctx, int sigId, String path) {
+        Json.Object entry = ctx.types.entry(sigId, path);
+        if (!"signature".equals(entry.string("kind", path))) {
+            return null;
+        }
+        Json.Object detail = entry.object("detail", path);
+        if (detail.has("variadic") && detail.bool("variadic", path)) {
+            return null; // v1 has no variadic adaptation
+        }
+        Json.Array params = detail.array("params", path);
+        List<Integer> out = new ArrayList<>(params.size());
+        for (int i = 0; i < params.size(); i++) {
+            Json.Value pv = params.get(i);
+            if (!(pv instanceof Json.Object po)) {
+                return null;
+            }
+            out.add(po.intValue("type", path));
+        }
+        return out;
+    }
+
+    /** Parameter type ids from a wire funclit node; null when unreadable. */
+    private static List<Integer> funclitParamTypeIds(Json.Object fun, String path) {
+        Json.Object ff = fun.object("fields", path + ".fun");
+        Json.Array params = ff.array("params", path + ".fun.fields");
+        List<Integer> out = new ArrayList<>(params.size());
+        for (int i = 0; i < params.size(); i++) {
+            Json.Value pv = params.get(i);
+            if (!(pv instanceof Json.Object po)) {
+                return null;
+            }
+            Json.Object pf = po.object("fields", path + ".fun.fields.params[" + i + "]");
+            out.add(pf.intValue("type", path + ".fun.fields.params[" + i + "]"));
+        }
+        return out;
     }
 
     /**
@@ -1454,15 +1645,32 @@ public final class NodeFactory {
                 keyKinds, keyTypeNames, resultKind);
     }
 
-    /** Minimal builtin call wiring (M5, WS F); all other builtins name WS G. */
+    /**
+     * Builtin call wiring (M6, WS H — integration of the WS G intrinsic
+     * surface): {@code panic}/{@code recover} (M5, WS F), {@code print}/
+     * {@code println}, {@code len}, {@code cap}, {@code make}, {@code new},
+     * {@code append}, {@code copy}, {@code delete}, {@code complex},
+     * {@code real}, {@code imag}. Remaining builtins ({@code clear},
+     * {@code min}, {@code max}) still name WS G.
+     *
+     * <p>The wire "type" carries the call's result type id (null for void
+     * calls like print/println); element types come from the type table via
+     * {@link #underlyingEntry}. By the time the factory sees a generic
+     * function body, the exporter has monomorphized it (D2), so all types
+     * here are concrete.
+     */
     private GoExprNode buildBuiltinCall(String builtin, Json.Object f, BuildCtx ctx, String path) {
         Json.Array argNodes = f.array("args", path);
+        GoExprNode[] args = new GoExprNode[argNodes.size()];
+        for (int i = 0; i < args.length; i++) {
+            args[i] = buildExpr(asObject(argNodes.get(i), path + ".args[" + i + "]"), ctx);
+        }
         return switch (builtin) {
             case "panic" -> {
-                if (argNodes.size() != 1) {
+                if (args.length != 1) {
                     throw new FrontendException(path + ": panic takes exactly one argument");
                 }
-                GoExprNode v = buildExpr(asObject(argNodes.get(0), path + ".args[0]"), ctx);
+                GoExprNode v = args[0];
                 int typeId = v.typeId();
                 GoKind k = kindOf(ctx, typeId, path);
                 boolean isIface = k == GoKind.INTERFACE;
@@ -1477,14 +1685,148 @@ public final class NodeFactory {
                 yield new PanicBuiltinNode(v, desc, typeName, isIface);
             }
             case "recover" -> {
-                if (argNodes.size() != 0) {
+                if (args.length != 0) {
                     throw new FrontendException(path + ": recover takes no arguments");
                 }
                 yield new RecoverBuiltinNode();
             }
+            case "print" -> new PrintNode(false, args);
+            case "println" -> new PrintNode(true, args);
+            case "len" -> {
+                requireArgs(path, builtin, args, 1);
+                yield new LenNode(args[0]);
+            }
+            case "cap" -> {
+                requireArgs(path, builtin, args, 1);
+                yield new CapNode(args[0]);
+            }
+            case "make" -> buildMakeBuiltin(args, f, ctx, path);
+            case "new" -> buildNewBuiltin(args, f, ctx, path);
+            case "append" -> buildAppendBuiltin(args, f, ctx, path);
+            case "copy" -> buildCopyBuiltin(args, f, ctx, path);
+            case "delete" -> {
+                requireArgs(path, builtin, args, 2);
+                yield new DeleteNode(args[0], args[1]);
+            }
+            case "complex" -> {
+                requireArgs(path, builtin, args, 2);
+                yield new ComplexNode(ComplexNode.Op.COMPLEX, builtinResultKind(f, ctx, path),
+                        args[0], args[1]);
+            }
+            case "real" -> {
+                requireArgs(path, builtin, args, 1);
+                yield new ComplexNode(ComplexNode.Op.REAL, builtinResultKind(f, ctx, path),
+                        args[0], null);
+            }
+            case "imag" -> {
+                requireArgs(path, builtin, args, 1);
+                yield new ComplexNode(ComplexNode.Op.IMAG, builtinResultKind(f, ctx, path),
+                        args[0], null);
+            }
             default -> throw new FrontendException("call to builtin \"" + builtin + "\""
                     + " is not implemented in NodeFactory v1 (WS G intrinsic surface)");
         };
+    }
+
+    /** Arg-count guard for builtin calls (gc already type-checked; this is a wire-shape check). */
+    private static void requireArgs(String path, String builtin, GoExprNode[] args, int n) {
+        if (args.length != n) {
+            throw new FrontendException(path + ": builtin \"" + builtin + "\" takes " + n
+                    + " argument(s), wire has " + args.length);
+        }
+    }
+
+    /** The wire "type" of a builtin call as a GoKind (null only for void calls). */
+    private static GoKind builtinResultKind(Json.Object f, BuildCtx ctx, String path) {
+        Json.Value t = f.opt("type");
+        if (t instanceof Json.Null || t == null) {
+            throw new FrontendException(path + ": builtin call without a result type id");
+        }
+        return kindOf(ctx, f.intValue("type", path), path);
+    }
+
+    /** Element kind of the type id's underlying composite (slice/array/map/pointer). */
+    private static GoKind builtinElemKind(BuildCtx ctx, int typeId, String path, String what) {
+        Json.Object entry = underlyingEntry(ctx, typeId, path);
+        Json.Object detail = entry.object("detail", path);
+        if (!detail.has("elem")) {
+            throw new FrontendException(path + ": " + what + " on non-composite type");
+        }
+        return kindOf(ctx, detail.intValue("elem", path), path);
+    }
+
+    /** {@code make}: slice and map forms (chan is Phase 2). */
+    private GoExprNode buildMakeBuiltin(GoExprNode[] args, Json.Object f, BuildCtx ctx,
+            String path) {
+        Json.Value t = f.opt("type");
+        if (t instanceof Json.Null || t == null) {
+            throw new FrontendException(path + ": make without a result type id");
+        }
+        int typeId = f.intValue("type", path);
+        Json.Object entry = underlyingEntry(ctx, typeId, path);
+        String k = entry.string("kind", path);
+        switch (k) {
+            case "slice" -> {
+                if (args.length < 1 || args.length > 2) {
+                    throw new FrontendException(path + ": make(slice) takes 1-2 length args");
+                }
+                GoKind elemKind = builtinElemKind(ctx, typeId, path, "make");
+                return new MakeNode(elemKind, args[0], args.length == 2 ? args[1] : null);
+            }
+            case "map" -> {
+                // The size hint is semantically invisible (GoMap grows
+                // dynamically), so it is not threaded through.
+                return new MakeNode(-1);
+            }
+            default -> throw new FrontendException(path + ": make of " + k
+                    + " is not supported in frontend/v1 scope (Phase 2: channels)");
+        }
+    }
+
+    /** {@code new(T)}: allocate the zero value of T, return a pointer. */
+    private GoExprNode buildNewBuiltin(GoExprNode[] args, Json.Object f, BuildCtx ctx,
+            String path) {
+        requireArgs(path, "new", args, 1);
+        Json.Value t = f.opt("type");
+        if (t instanceof Json.Null || t == null) {
+            throw new FrontendException(path + ": new without a result type id");
+        }
+        int typeId = f.intValue("type", path);
+        Json.Object entry = underlyingEntry(ctx, typeId, path);
+        if (!"pointer".equals(entry.string("kind", path))) {
+            throw new FrontendException(path + ": new result is not a pointer type");
+        }
+        int elemId = entry.object("detail", path).intValue("elem", path);
+        GoKind elemKind = kindOf(ctx, elemId, path);
+        GoStructDescriptor desc =
+                elemKind == GoKind.STRUCT ? structDescriptorFor(ctx, elemId, path) : null;
+        return new NewNode(elemKind, desc);
+    }
+
+    /** {@code append(s, elems...)}: the result type id gives the element kind. */
+    private GoExprNode buildAppendBuiltin(GoExprNode[] args, Json.Object f, BuildCtx ctx,
+            String path) {
+        if (args.length < 1) {
+            throw new FrontendException(path + ": append takes at least one argument");
+        }
+        Json.Value t = f.opt("type");
+        if (t instanceof Json.Null || t == null) {
+            throw new FrontendException(path + ": append without a result type id");
+        }
+        GoKind elemKind = builtinElemKind(ctx, f.intValue("type", path), path, "append");
+        return new AppendNode(args[0], elemKind, Arrays.copyOfRange(args, 1, args.length));
+    }
+
+    /** {@code copy(dst, src)}: slice-to-slice only (string sources are WS D). */
+    private GoExprNode buildCopyBuiltin(GoExprNode[] args, Json.Object f, BuildCtx ctx,
+            String path) {
+        requireArgs(path, "copy", args, 2);
+        if (args[1].kind() == GoKind.STRING) {
+            throw new FrontendException(path + ": copy from a string source is not supported"
+                    + " in frontend/v1 scope (WS D: string<->[]byte conversions)");
+        }
+        GoKind elemKind = builtinElemKind(ctx, args[0].typeId(), path, "copy");
+        return new CopyNode(args[0], args[1], elemKind);
     }
 
     /** Result kind of a call node (from the wire "type"; void → null kind handling). */
@@ -1612,6 +1954,7 @@ public final class NodeFactory {
                     path + ".results[0]", fctx);
             fctx.resultSlot = rslot;
             fctx.resultKind = rkind;
+            fctx.resultTypeId = rtypeId;
         }
         GoStmtNode body = buildBlock(f.object("body", path), fctx);
         // Zero the result slot on entry (Go semantics: results start at zero
@@ -2371,9 +2714,23 @@ public final class NodeFactory {
         if (results.size() > 1) {
             throw new FrontendException("return with multiple results is not supported in v1");
         }
-        GoExprNode value = results.size() == 1
-                ? buildExpr(asObject(results.get(0), "return.fields.results[0]"), ctx)
-                : null;
+        GoExprNode value = null;
+        if (results.size() == 1) {
+            Json.Object re = asObject(results.get(0), "return.fields.results[0]");
+            value = buildExpr(re, ctx);
+            // M6 (WS H): box a concrete value into the declared interface
+            // result type. `func() interface{} { var x int; return x }` must
+            // return a GoInterface, not the raw Long — mirrors the call-site
+            // argument adaptation in buildCall.
+            if (ctx.resultTypeId >= 0
+                    && kindOf(ctx, ctx.resultTypeId, "return") == GoKind.INTERFACE) {
+                int valueTypeId = re.object("fields", "return.fields.results[0]")
+                        .intValue("type", "return.fields.results[0]");
+                if (kindOf(ctx, valueTypeId, "return") != GoKind.INTERFACE) {
+                    value = boxInterface(value, ctx, "return");
+                }
+            }
+        }
         // M5 (WS F): function literals with results assign the result slot
         // before throwing GoReturn (defer runs before the return completes).
         if (ctx.resultSlot >= 0) {

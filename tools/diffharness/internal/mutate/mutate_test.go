@@ -156,3 +156,26 @@ func TestClasses_Documented(t *testing.T) {
 		seen[c] = true
 	}
 }
+
+func TestTargSwap(t *testing.T) {
+	m := apply(t, "TargSwap", "package main\nfunc Show[T any, U any](t T, u U) {}\nfunc main() { Show[int, float64](1, 2) }\n")
+	if !strings.Contains(string(m.Src), "Show[float64, int](1, 2)") {
+		t.Fatalf("expected 'Show[float64, int](1, 2)', got:\n%s", m.Src)
+	}
+}
+
+func TestTargSwap_NoGenericCall(t *testing.T) {
+	_, err := Apply("TargSwap", []byte("package main\nfunc main() { println(1) }\n"), "test.go")
+	if err == nil {
+		t.Fatalf("expected error for program with no generic call site")
+	}
+}
+
+func TestTargSwap_SingleTypeArgUntouched(t *testing.T) {
+	// A single type argument is not a swap candidate; the mutator must
+	// report no eligible site rather than corrupt the call.
+	_, err := Apply("TargSwap", []byte("package main\nfunc Min[T int](a, b T) T { return a }\nfunc main() { _ = Min[int](1, 2) }\n"), "test.go")
+	if err == nil {
+		t.Fatalf("expected error for single-type-arg call site")
+	}
+}

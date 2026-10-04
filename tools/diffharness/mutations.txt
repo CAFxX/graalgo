@@ -10,3 +10,4 @@ ConstChange 01_hello
 ReturnSwap 08_multiple_assignment
 ChanOp 09_pipeline
 SliceBound 05_slices
+TargSwap 16_generics_targswap

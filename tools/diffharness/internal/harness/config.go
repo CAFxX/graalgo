@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 )
 
@@ -25,6 +26,40 @@ type Backend struct {
 	Build []string          `json:"build"`
 	Run   []string          `json:"run"`
 	Env   map[string]string `json:"env"`
+	// StderrFilters, when non-empty, holds RE2 regular expressions naming
+	// stderr lines to drop after normalization (one line per expression
+	// match). It exists for backend-emitted noise that is not a program
+	// observable — e.g. the HotSpot Truffle runtime's
+	// sun.misc.Unsafe terminal-deprecation warnings on the graalgo backend.
+	// Filters are backend-specific by construction: they never apply to
+	// the reference backend's output.
+	StderrFilters []string `json:"stderrFilters,omitempty"`
+}
+
+// FilterStderr drops every line of s matching any of the backend's
+// StderrFilters. An invalid expression is a programming error and panics.
+func (b *Backend) FilterStderr(s string) string {
+	if len(b.StderrFilters) == 0 {
+		return s
+	}
+	res := make([]*regexp.Regexp, len(b.StderrFilters))
+	for i, expr := range b.StderrFilters {
+		res[i] = regexp.MustCompile(expr)
+	}
+	var kept []string
+	for _, line := range strings.Split(s, "\n") {
+		drop := false
+		for _, re := range res {
+			if re.MatchString(line) {
+				drop = true
+				break
+			}
+		}
+		if !drop {
+			kept = append(kept, line)
+		}
+	}
+	return strings.Join(kept, "\n")
 }
 
 // Exclusion removes a corpus program from runs with a recorded reason, per
