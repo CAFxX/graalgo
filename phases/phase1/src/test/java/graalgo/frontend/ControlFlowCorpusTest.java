@@ -95,6 +95,7 @@ public final class ControlFlowCorpusTest {
     public void testCf37Adv13Shadow() throws Exception { checkProgram("cf37_adv13_shadow"); }
     public void testCf38Adv14Continue() throws Exception { checkProgram("cf38_adv14_continue"); }
     public void testCf39Adv15Rangestring() throws Exception { checkProgram("cf39_adv15_rangestring"); }
+    public void testCf40P1d7StructPtrAlias() throws Exception { checkProgram("cf40_p1d7_struct_ptr_alias"); }
 
     static void checkProgram(String base) throws Exception {
         Path src = corpusDir().resolve(base + ".go");
