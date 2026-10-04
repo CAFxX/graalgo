@@ -1,0 +1,35 @@
+# graalgo spike 5 harness provenance (recorded 2026-10-03).
+#
+# v1: initial wrapper (no PATH lookup for bare tool names; no @file handling).
+#     Used for the full 52x2 txtar matrix (as bin/toolexec-log).
+#     source: src/toolexec-log/main.go.v1
+#     binary: bin/toolexec-log
+# v2: v1 + exec.LookPath for slash-less argv[1] (bare `gcc -###` tool-ID
+#     probe, buildid.go:221). Used for probe follow-ups.
+#     source: src/toolexec-log/main.go.v2
+#     binary: bin/toolexec-log-v2
+# v3: v2 + @response-file discovery via ParseArgs (copied from go1.27.1
+#     cmd/internal/objabi/flag.go) with @file pass-through. SUPERSEDED by v4
+#     (pass-through leaves a duplicated tool path; see F6). Not used for
+#     matrix runs; binary kept for provenance. Source = v2 + resolveTool
+#     (pass-through variant) + ParseArgs; diff documented, binary archived.
+#     binary: bin/toolexec-log-v3
+# v4: v3 with in-place @file rewrite dropping the duplicated tool path
+#     (verbatim copy of the driver's encodeArg), + wrapper installed under
+#     a tool-like name (bin/named/compile) so the driver's useResponseFile
+#     basename check triggers. Used to re-run cgo_long_cmd -> PASS.
+#     source: src/toolexec-log/main.go      (current)
+#     binary: bin/toolexec-log-v4, bin/named/compile (same bits)
+#
+# Note: main.go.v1/v2/v3 are reconstructions after later edits, each VERIFIED
+# byte-identical by sha256 against the hash recorded when that version was
+# built. Diffs: v1->v2 = LookPath hunk; v2->v3 = resolveTool+ParseArgs;
+# v3->v4 = in-place rewrite + encodeArg.
+f2d5f4cdb7feb83bc9446397e52f480f142ad64a6138fadbd791b31b88a53512  src/toolexec-log/main.go.v1
+67d5d918d92830228836fe11f1118d6b4a9fc208aa7248cb0a5eac50b7d180db  bin/toolexec-log
+400fdc40cd0e23cc6bcb5890e86fc64b20aaa2197aac13441595a96b0423b15f  bin/toolexec-log-v2
+4ff045f569f53ace377ae6ba0189734d334899665e7b4520ce060c4f368b820c  bin/toolexec-log-v3
+e9a7bcd284e970f721b401c46b6e6b0d3b9c51637a40b58d606bd47e5823813b  src/toolexec-log/main.go
+bf86f300b8e8e1fb7af925d6898323cdc962f34116b71f2de3a1f806f391fee6  bin/toolexec-log-v4
+bf86f300b8e8e1fb7af925d6898323cdc962f34116b71f2de3a1f806f391fee6  bin/named/compile
+c8166fc3fc28747fc1c21810948e8e02a0ccc43dddd00fedfcdc284036123f58  src/toolexec-log/main.go.v2

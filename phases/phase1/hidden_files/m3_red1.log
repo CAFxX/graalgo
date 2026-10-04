@@ -1,0 +1,9 @@
+mkdir -p out/test-classes
+/home/hatch/tools/graalvm-jdk-25/bin/javac -Xlint:deprecation -Werror -cp "out/classes:lib/collections-25.0.4.1.1.jar:lib/graal-sdk-25.0.4.1.1.jar:lib/nativeimage-25.0.4.1.1.jar:lib/polyglot-25.0.4.1.1.jar:lib/truffle-api-25.0.4.1.1.jar:lib/truffle-dsl-processor-25.0.4.1.1.jar:lib/truffle-runtime-25.0.4.1.1.jar" -d out/test-classes src/test/java/graalgo/launcher/MainTest.java src/test/java/graalgo/test/Runner.java src/test/java/graalgo/frontend/StraightLineCorpusTest.java src/test/java/graalgo/frontend/ArithmeticCorpusTest.java src/test/java/graalgo/values/ValuesTest.java
+src/test/java/graalgo/frontend/ArithmeticCorpusTest.java:115: error: cannot find symbol
+        Map<String, GoKind> kinds = program.kindsByName();
+                                           ^
+  symbol:   method kindsByName()
+  location: variable program of type Program
+1 error
+make: *** [Makefile:64: out/test-classes/.built] Error 1

@@ -1,0 +1,12 @@
+id: GG-0048
+title: Preemption-equivalence bar
+statement: 'The spec SHALL define the exact scheduling observables the differential oracle must hold equivalent (fairness, starvation-freedom, latency distribution, GOMAXPROCS behavior); systematic divergence the user-space scheduler cannot close is a kill trigger.'
+rationale: 'Closes Phase-0 question 2; mechanism language updated for option C (spike 2b).'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: 'Preemption-torture suite implements the list; re-run against the 2b design in Phase 2.'
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: mechanism language yields -> user-space scheduler (option C)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

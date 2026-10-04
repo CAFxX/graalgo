@@ -1,0 +1,13 @@
+id: GG-0030
+title: Differential oracle definition
+statement: The differential-vs-gc oracle SHALL compare stdout/stderr (normalized), exit codes, panic messages/traces modulo addresses, and sandboxed file/network effects; it SHALL exclude timings, absolute addresses, GC statistics, and raw scheduling.
+rationale: Pins the oracle's compared/excluded sets so divergences are meaningful.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Oracle spec tests including normalization unit tests.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

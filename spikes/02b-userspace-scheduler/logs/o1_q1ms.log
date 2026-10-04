@@ -1,0 +1,9 @@
+=== o1_q1ms (par=2 gmp=2 quantumNs=1000000) ===
+o1 nSpin=2 secs=5 cap=2 quantumNs=1000000 samples=11824
+ponger_iters=11264
+spinner_counts=[97495041, 99325953]
+spinner_cv=0.0093
+rtt_ns mean=407593 p50=56104 p99=4896989 max=83189753
+RESULT=PARTIAL
+sched{cap=2(req=2,par=2) inflight_now~na parkEvents=25655 admissions=25654 firstAdmissions=4 wakeupCalls=23867 wakeupWon=23867 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=49525 drainerUtilPct=2.05}
+exit=0

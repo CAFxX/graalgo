@@ -1,0 +1,11 @@
+id: GG-0060
+title: Mode selection
+statement: Users SHALL select the execution mode via build flags/environment with documented defaults (default = hybrid once the hybrid meta-gate passes; JIT-only before that); mode selection SHALL NOT change program semantics.
+rationale: The modes are packaging; semantics must be mode-independent.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Mode-selection tests; same-program-same-behavior across modes.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

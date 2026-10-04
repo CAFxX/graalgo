@@ -1,0 +1,30 @@
+=== 2026-10-03T06:38:20.498723651Z pid=87596 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:20.519137466Z pid=87603 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:20.631595853Z pid=87610 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/vet importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:20.951403941Z pid=87631 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:20.97627801Z pid=87639 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:21.05417489Z pid=87647 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/vet importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:21.290441837Z pid=87671 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:21.308085785Z pid=87679 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:21.430716728Z pid=87686 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/vet importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:21.637633539Z pid=87709 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:21.65137401Z pid=87716 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:21.741807544Z pid=87723 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/vet importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:21.950587651Z pid=87755 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:21.987678474Z pid=87762 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:22.035448542Z pid=87769 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/vet importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-677520066/tmpdir165230989/vet_commandline641736434/gopath/src" argc=1
+  argv[0]="-V=full"

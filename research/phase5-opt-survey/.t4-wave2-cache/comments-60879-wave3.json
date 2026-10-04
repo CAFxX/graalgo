@@ -1,0 +1,49 @@
+[
+  {
+    "url": "https://api.github.com/repos/golang/go/issues/comments/1599391583",
+    "html_url": "https://github.com/golang/go/issues/60879#issuecomment-1599391583",
+    "issue_url": "https://api.github.com/repos/golang/go/issues/60879",
+    "id": 1599391583,
+    "node_id": "IC_kwDOAWBuf85fVMdf",
+    "user": {
+      "login": "rip-create-your-account",
+      "id": 59851993,
+      "node_id": "MDQ6VXNlcjU5ODUxOTkz",
+      "avatar_url": "https://avatars.githubusercontent.com/u/59851993?v=4",
+      "gravatar_id": "",
+      "url": "https://api.github.com/users/rip-create-your-account",
+      "html_url": "https://github.com/rip-create-your-account",
+      "followers_url": "https://api.github.com/users/rip-create-your-account/followers",
+      "following_url": "https://api.github.com/users/rip-create-your-account/following{/other_user}",
+      "gists_url": "https://api.github.com/users/rip-create-your-account/gists{/gist_id}",
+      "starred_url": "https://api.github.com/users/rip-create-your-account/starred{/owner}{/repo}",
+      "subscriptions_url": "https://api.github.com/users/rip-create-your-account/subscriptions",
+      "organizations_url": "https://api.github.com/users/rip-create-your-account/orgs",
+      "repos_url": "https://api.github.com/users/rip-create-your-account/repos",
+      "events_url": "https://api.github.com/users/rip-create-your-account/events{/privacy}",
+      "received_events_url": "https://api.github.com/users/rip-create-your-account/received_events",
+      "type": "User",
+      "user_view_type": "public",
+      "site_admin": false
+    },
+    "created_at": "2023-06-20T19:34:00Z",
+    "updated_at": "2023-06-20T19:34:00Z",
+    "body": "Opportunities for batch allocation are something that I stumble upon quite regularly and usually there's more than one allocation going on in the loop. Most recently in real code [here](https://github.com/rip-create-your-account/finnishtable/blob/922be3edd01262805c3c716a0bd1993890a7ca57/map.go#L186-L190).\r\n\r\nI really don't like doing `batch := make([]T, n); obj1 := &batch[0]; obj2 := &batch[1]; ...` for the reasons already mentioned in the OP, but it improves performance on all metrics too much to not do it. Please guide us away from the temptation of one-at-a-time processing.",
+    "author_association": "NONE",
+    "pin": null,
+    "reactions": {
+      "url": "https://api.github.com/repos/golang/go/issues/comments/1599391583/reactions",
+      "total_count": 0,
+      "+1": 0,
+      "-1": 0,
+      "laugh": 0,
+      "hooray": 0,
+      "confused": 0,
+      "heart": 0,
+      "rocket": 0,
+      "eyes": 0
+    },
+    "performed_via_github_app": null,
+    "minimized": null
+  }
+]

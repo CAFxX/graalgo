@@ -1,0 +1,44 @@
+=== 2026-10-03T06:29:44.337181448Z pid=57036 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:29:44.358958208Z pid=57043 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:29:44.429103786Z pid=57051 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="m/hello" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/gopath/src" argc=19
+  argv[0]="-o"
+  argv[1]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/tmp/go-build1072205256/b001/_pkg_.a"
+  argv[2]="-trimpath"
+  argv[3]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/tmp/go-build1072205256/b001=>"
+  argv[4]="-p"
+  argv[5]="main"
+  argv[6]="-lang=go1.16"
+  argv[7]="-complete"
+  argv[8]="-buildid"
+  argv[9]="C448F1m3jveB0Odty0rD/C448F1m3jveB0Odty0rD"
+  argv[10]="-dwarf=false"
+  argv[11]="-goversion"
+  argv[12]="go1.27.1"
+  argv[13]="-c=2"
+  argv[14]="-nolocalimports"
+  argv[15]="-importcfg"
+  argv[16]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/tmp/go-build1072205256/b001/importcfg"
+  argv[17]="-pack"
+  argv[18]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/gopath/src/hello/hello.go"
+=== 2026-10-03T06:29:44.476313204Z pid=57058 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/link importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:29:44.493252164Z pid=57065 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/link importpath="m/hello" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/gopath/src" argc=11
+  argv[0]="-o"
+  argv[1]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/tmp/go-build1072205256/b001/exe/hello"
+  argv[2]="-importcfg"
+  argv[3]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/tmp/go-build1072205256/b001/importcfg.link"
+  argv[4]="-s"
+  argv[5]="-w"
+  argv[6]="-X=runtime.godebugDefault=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0"
+  argv[7]="-buildmode=exe"
+  argv[8]="-buildid=W4OVXhjoo_YALkUkV-S-/C448F1m3jveB0Odty0rD/zpdqAHWEoayT7noWCL1k/W4OVXhjoo_YALkUkV-S-"
+  argv[9]="-extld=gcc"
+  argv[10]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/tmp/go-build1072205256/b001/_pkg_.a"
+=== 2026-10-03T06:29:44.72629355Z pid=57083 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/gopath/src/hello" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:29:44.740516765Z pid=57090 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/gopath/src/hello" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:29:44.824285988Z pid=57097 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/link importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2611555847/tmpdir1201704928/run_hello_pkg3166835507/gopath/src/hello" argc=1
+  argv[0]="-V=full"

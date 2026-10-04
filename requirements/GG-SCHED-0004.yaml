@@ -1,0 +1,12 @@
+id: GG-SCHED-0004
+title: Scheduler-aware blocking only
+statement: 'All blocking in the runtime and stdlib adaptation layer SHALL go through scheduler-aware primitives (channel park, timer park, sleep, select park, scheduler-token sleep); raw Java blocking that bypasses the scheduler (e.g. CountDownLatch.await()) is banned in the adaptation layer. Blocking I/O SHALL use the slot-releasing NIO wrapper: ioEnter releases the in-flight slot while blocked, ioExit re-acquires it via the wakeFifo lane on completion; unpaired ioEnter SHALL trip a fail-fast assert.'
+rationale: 'Spike 2b §3.1/F5: bypassing blocking counts against the in-flight cap and deadlocked the O5 barrier at cap=1. The pre-rework scheduler-transparent NIO carve-out is deleted (2026-10-03): N NIO-blocked goroutines at cap=N indefinitely postponed runnable goroutines (spike-2b rework §3.5); the CapExhaustion falsifier is red-green validated.'
+parent: "GG-0017"
+status: locked
+superseded_by: ""
+verification_plan: Spike 2b F5; static audit of adaptation layer for raw blocking calls; Phase-2 fault-injection suite.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: slot-releasing NIO wrapper replaces the deleted scheduler-transparent carve-out (R1 P0-2/P1-8)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

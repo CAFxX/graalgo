@@ -1,0 +1,7 @@
+ok   T1 getAndAdd: no lost updates (1600000 == 1600000)
+ok   T2 compareAndSet: every success installed (400000)
+ok   T3 getVolatile/setVolatile long: no torn reads
+ok   T4 getAndSet: each swap observed exactly once
+ok   T5 getAndBitwiseOr: all bits set exactly (ffffffffffffffff)
+ok   T6 setRelease/getAcquire: payload visible with flag
+RESULT: PASS

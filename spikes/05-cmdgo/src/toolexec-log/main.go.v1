@@ -1,0 +1,76 @@
+// Command toolexec-log is the -toolexec interception harness for graalgo
+// spike 5 (cmd/go coupling), testing the study's recommended driver
+// architecture: stock go distribution with the backend swapped behind the
+// existing -toolexec seam.
+//
+// For every tool invocation the driver prefixes with the wrapper, it logs a
+// record (timestamp, pid, tool path, TOOLEXEC_IMPORTPATH, working directory,
+// full argv with @response-file expansion) to $GRAALGO_WRAPPER_LOG, then
+// execs the real tool with argv and environment unchanged. Observable
+// behavior (stdout/stderr/exit code) is therefore identical to stock; the
+// only delta is the log side-channel.
+//
+// The log is append-only with an exclusive flock around each record so
+// parallel driver actions do not interleave. The lock is released before
+// exec, so tool execution itself is never serialized by the harness.
+package main
+
+import (
+	"crypto/sha256"
+	"fmt"
+	"os"
+	"strings"
+	"syscall"
+	"time"
+)
+
+func main() {
+	if len(os.Args) < 2 {
+		fmt.Fprintf(os.Stderr, "toolexec-log: no tool argv\n")
+		os.Exit(2)
+	}
+	logInvocation(os.Args[1:])
+	tool := os.Args[1]
+	// Replace ourselves with the real tool: argv, env, cwd, stdio and
+	// exit status are exactly what the driver would have gotten without
+	// the wrapper.
+	if err := syscall.Exec(tool, os.Args[1:], os.Environ()); err != nil {
+		fmt.Fprintf(os.Stderr, "toolexec-log: exec %s: %v\n", tool, err)
+		os.Exit(1)
+	}
+}
+
+func logInvocation(argv []string) {
+	logPath := os.Getenv("GRAALGO_WRAPPER_LOG")
+	if logPath == "" {
+		return
+	}
+	f, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		return
+	}
+	syscall.Flock(int(f.Fd()), syscall.LOCK_EX)
+	defer syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+	defer f.Close()
+
+	cwd, _ := os.Getwd()
+	fmt.Fprintf(f, "=== %s pid=%d tool=%s importpath=%q cwd=%q argc=%d\n",
+		time.Now().UTC().Format(time.RFC3339Nano), os.Getpid(),
+		argv[0], os.Getenv("TOOLEXEC_IMPORTPATH"), cwd, len(argv)-1)
+	for i, a := range argv[1:] {
+		if strings.HasPrefix(a, "@") && len(a) > 1 {
+			// Response file (see passLongArgsInResponseFiles in
+			// cmd/go/internal/work/exec.go): record identity, size and
+			// content hash so the effective argv stays observable and
+			// reproducible from the log alone.
+			data, err := os.ReadFile(a[1:])
+			if err != nil {
+				fmt.Fprintf(f, "  argv[%d]=@%q (response file unreadable: %v)\n", i, a[1:], err)
+			} else {
+				fmt.Fprintf(f, "  argv[%d]=@%q (response file: %d bytes sha256=%x)\n", i, a[1:], len(data), sha256.Sum256(data))
+			}
+			continue
+		}
+		fmt.Fprintf(f, "  argv[%d]=%q\n", i, a)
+	}
+}

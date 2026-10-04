@@ -1,0 +1,11 @@
+id: GG-0025
+title: Isolates for momo
+statement: momo module generations SHALL map to GraalVM isolates (containment by construction, crash-only restart = new isolate); memory quotas via MaxHeapSize + isResourceExhausted; CPU quotas are NOT supported in v1 (documented limitation).
+rationale: 'Closes Phase-0 question 9; honest gap: no CPU quota mechanism exists for isolates.'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Isolate lifecycle conformance; memory-quota breach test; SpawnIsolate maturity verified on the pinned GraalVM.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

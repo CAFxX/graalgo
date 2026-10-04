@@ -1,0 +1,5 @@
+panama: strlen("graalgo-panama-demo") = 19
+panama: checksum("graalgo-panama-demo") = 14843116955214666767
+panama: sum of byte squares = 190222
+panama: java recomputation matches C: true
+panama: java recomputation matches upcall sum: true

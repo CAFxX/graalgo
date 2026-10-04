@@ -1,0 +1,13 @@
+id: GG-0010
+title: Testing strategy built early
+statement: The four-layer testing strategy (differential smoke, conformance corpora, stdlib+script suites, fuzz soak) SHALL be built as a first-class deliverable starting in Phase 0 (harness seed), before the work it gates.
+rationale: Requirement (7); the strategy is the conformance net first and the toil reducer second.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: 'Phase-0 done-gate: differential smoke harness runs in CI with mutation-validated oracles.'
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

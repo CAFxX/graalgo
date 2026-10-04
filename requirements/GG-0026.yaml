@@ -1,0 +1,11 @@
+id: GG-0026
+title: JIT-mode isolation fallback
+statement: In pure-JIT mode (no isolates), momo generations SHALL be isolated via OS processes per generation, with weaker containment documented.
+rationale: Closes Phase-0 question 11; isolates are native-image-only.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Process-isolation conformance; documented fidelity delta vs isolate mode.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

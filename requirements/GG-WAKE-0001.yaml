@@ -1,0 +1,11 @@
+id: GG-WAKE-0001
+title: Park/unpark pairing safety
+statement: Each virtual thread SHALL carry a per-vthread armed ticket plus generation counter; the acked flag SHALL be set before unpark (reversing the order loses wakeups).
+rationale: 'Spike 2b §1.2: the exact pairing discipline that held the lost-wakeup invariant under stress.'
+parent: "GG-0017"
+status: locked
+superseded_by: ""
+verification_plan: Spike 2b F6 lost-wakeup stress (50,558/50,558); Phase-2 model-checking pass.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

@@ -1,0 +1,223 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:46127
+https://vcs-test.golang.org rerouted to https://127.0.0.1:44815
+go test proxy running at GOPROXY=http://127.0.0.1:39271/mod
+=== RUN   TestScript/env_changed
+=== PAUSE TestScript/env_changed
+=== CONT  TestScript/env_changed
+    script_test.go:141: 2026-10-03T06:16:58Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-192589043/tmpdir2599588109/env_changed1744270781
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-192589043/tmpdir2599588109/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:39271/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-192589043/tmpdir2599588109/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:46127
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:44815
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-192589043/vcstest1463250092/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-192589043/tmpdir2599588109/env_changed1744270781
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-192589043/tmpdir2599588109/env_changed1744270781/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-192589043/tmpdir2599588109/env_changed1744270781/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-192589043/tmpdir2599588109/env_changed1744270781/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-192589043/tmpdir2599588109/env_changed1744270781/gopath/src
+        
+        # Test query for non-defaults in the env
+        # Go+BoringCrypto conflicts with GOFIPS140. (0.058s)
+        > [GOEXPERIMENT:boringcrypto] skip
+        [condition not met]
+        > env GOROOT=./a
+        > env GOTOOLCHAIN=local
+        > env GOSUMDB=nodefault
+        > env GOPROXY=nodefault
+        > env GO111MODULE=auto
+        > env CGO_CFLAGS=nodefault
+        > env CGO_CPPFLAGS=nodefault
+        > env GOFIPS140=latest
+        > [cgo] env CGO_ENABLED=0
+        > env GCCGO=nodefault
+        > go env -changed
+        [stdout]
+        CGO_CFLAGS='nodefault'
+        CGO_CPPFLAGS='nodefault'
+        CGO_ENABLED='0'
+        GCCGO='nodefault'
+        GO111MODULE='auto'
+        GOCACHE='/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock'
+        GOFIPS140='latest'
+        GOPROXY='nodefault'
+        GOSUMDB='nodefault'
+        GOTOOLCHAIN='local'
+        GOVCS='*:all'
+        # linux output like GOTOOLCHAIN='local'
+        # windows output like GOTOOLCHAIN=local (0.341s)
+        > stdout 'GOTOOLCHAIN=''?local''?'
+        matched: GOTOOLCHAIN='local'
+        > stdout 'GOSUMDB=''?nodefault''?'
+        matched: GOSUMDB='nodefault'
+        > stdout 'GOPROXY=''?nodefault''?'
+        matched: GOPROXY='nodefault'
+        > stdout 'GO111MODULE=''?auto''?'
+        matched: GO111MODULE='auto'
+        > stdout 'CGO_CFLAGS=''?nodefault''?'
+        matched: CGO_CFLAGS='nodefault'
+        > stdout 'CGO_CPPFLAGS=''?nodefault''?'
+        matched: CGO_CPPFLAGS='nodefault'
+        > stdout 'GOFIPS140=''?latest''?'
+        matched: GOFIPS140='latest'
+        > [cgo] stdout 'CGO_ENABLED=''?0''?'
+        matched: CGO_ENABLED='0'
+        > stdout 'GCCGO=''?nodefault''?'
+        matched: GCCGO='nodefault'
+        > go env -changed -json
+        [stdout]
+        {
+        	"CGO_CFLAGS": "nodefault",
+        	"CGO_CPPFLAGS": "nodefault",
+        	"CGO_ENABLED": "0",
+        	"GCCGO": "nodefault",
+        	"GO111MODULE": "auto",
+        	"GOCACHE": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock",
+        	"GOFIPS140": "latest",
+        	"GOPROXY": "nodefault",
+        	"GOSUMDB": "nodefault",
+        	"GOTOOLCHAIN": "local",
+        	"GOVCS": "*:all"
+        }
+        > stdout '"GOTOOLCHAIN": "local"'
+        matched: 	"GOTOOLCHAIN": "local",
+        > stdout '"GOSUMDB": "nodefault"'
+        matched: 	"GOSUMDB": "nodefault",
+        > stdout '"GOPROXY": "nodefault"'
+        matched: 	"GOPROXY": "nodefault",
+        > stdout '"GO111MODULE": "auto"'
+        matched: 	"GO111MODULE": "auto",
+        > stdout '"CGO_CFLAGS": "nodefault"'
+        matched: 	"CGO_CFLAGS": "nodefault",
+        > stdout '"CGO_CPPFLAGS": "nodefault"'
+        matched: 	"CGO_CPPFLAGS": "nodefault",
+        > stdout '"GOFIPS140": "latest"'
+        matched: 	"GOFIPS140": "latest",
+        > [cgo] stdout '"CGO_ENABLED": "0"'
+        matched: 	"CGO_ENABLED": "0",
+        > stdout '"GCCGO": "nodefault"'
+        matched: 	"GCCGO": "nodefault",
+        > [GOOS:windows] env GOOS=linux
+        [condition not met]
+        > [!GOOS:windows] env GOOS=windows
+        > [GOARCH:amd64] env GOARCH=arm64
+        > [!GOARCH:amd64] env GOARCH=amd64
+        [condition not met]
+        > go env -changed GOOS
+        [stdout]
+        GOOS='windows'
+        > [GOOS:windows] stdout 'set GOOS=linux'
+        [condition not met]
+        > [!GOOS:windows] stdout 'GOOS=''windows'''
+        matched: GOOS='windows'
+        > go env -changed GOARCH
+        [stdout]
+        GOARCH='arm64'
+        > [GOARCH:amd64] stdout 'set GOARCH=arm64|GOARCH=''arm64'''
+        matched: GOARCH='arm64'
+        > [!GOARCH:amd64] stdout 'set GOARCH=amd64|GOARCH=''amd64'''
+        [condition not met]
+        > go env -changed -json GOOS
+        [stdout]
+        {
+        	"GOOS": "windows"
+        }
+        > [GOOS:windows] stdout '"GOOS": "linux"'
+        [condition not met]
+        > [!GOOS:windows] stdout '"GOOS": "windows"'
+        matched: 	"GOOS": "windows"
+        > go env -changed -json GOARCH
+        [stdout]
+        {
+        	"GOARCH": "arm64"
+        }
+        > [GOARCH:amd64] stdout '"GOARCH": "arm64"'
+        matched: 	"GOARCH": "arm64"
+        > [!GOARCH:amd64] stdout '"GOARCH": "amd64"'
+        [condition not met]
+        > env GOARCH=amd64
+        > env GOAMD64=v3
+        > go env -changed
+        [stdout]
+        CGO_CFLAGS='nodefault'
+        CGO_CPPFLAGS='nodefault'
+        GCCGO='nodefault'
+        GO111MODULE='auto'
+        GOAMD64='v3'
+        GOCACHE='/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock'
+        GOFIPS140='latest'
+        GOOS='windows'
+        GOPROXY='nodefault'
+        GOSUMDB='nodefault'
+        GOTOOLCHAIN='local'
+        GOVCS='*:all'
+        > stdout 'GOAMD64=''?v3''?'
+        matched: GOAMD64='v3'
+        > env GOPROXY=s
+        > go env -changed GOPROXY
+        > ! stdout 'GOPROXY'
+        > env GOPROXY=s2
+        > go env -changed GOPROXY
+        [stdout]
+        GOPROXY='s2'
+        > stdout 'GOPROXY=''?s2''?'
+        matched: GOPROXY='s2'
+        > env GOROOT=./b
+        > go env -changed
+        [stdout]
+        CGO_CFLAGS='nodefault'
+        CGO_CPPFLAGS='nodefault'
+        GCCGO='nodefault'
+        GO111MODULE='auto'
+        GOAMD64='v3'
+        GOCACHE='/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock'
+        GOFIPS140='latest'
+        GOOS='windows'
+        GOPROXY='s2'
+        GOSUMDB='nodefault'
+        GOVCS='*:all'
+        > ! stdout 'GOTOOLCHAIN=''?local''?'
+        > [GOOS:windows] env LocalAppData=C:\
+        [condition not met]
+        > [GOOS:windows] env GOCACHE=C:\go-build
+        [condition not met]
+        > [GOOS:windows] go env -changed
+        [condition not met]
+        > [GOOS:windows] ! stdout 'GOCACHE'
+        [condition not met]
+--- PASS: TestScript (0.18s)
+    --- PASS: TestScript/env_changed (0.42s)
+PASS

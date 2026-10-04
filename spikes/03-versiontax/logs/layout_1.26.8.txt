@@ -1,0 +1,65 @@
+== Type (src/go1.26.8/go/src/internal/abi/type.go) ==
+    Size_:uintptr
+    PtrBytes:uintptr
+    Hash:uint32
+    TFlag:TFlag
+    Align_:uint8
+    FieldAlign_:uint8
+    Kind_:Kind
+    Equal:func(unsafe.Pointer,
+    GCData:*byte
+    Str:NameOff
+    PtrToThis:TypeOff
+== Method (src/go1.26.8/go/src/internal/abi/type.go) ==
+    Name:NameOff
+    Mtyp:TypeOff
+    Ifn:TextOff
+    Tfn:TextOff
+== UncommonType (src/go1.26.8/go/src/internal/abi/type.go) ==
+    PkgPath:NameOff
+    Mcount:uint16
+    Xcount:uint16
+    Moff:uint32
+    _:uint32
+== Imethod (src/go1.26.8/go/src/internal/abi/type.go) ==
+    Name:NameOff
+    Typ:TypeOff
+== ArrayType (src/go1.26.8/go/src/internal/abi/type.go) ==
+    Elem:*Type
+    Slice:*Type
+    Len:uintptr
+== ChanType (src/go1.26.8/go/src/internal/abi/type.go) ==
+    Elem:*Type
+    Dir:ChanDir
+== structTypeUncommon (src/go1.26.8/go/src/internal/abi/type.go) ==
+    u:UncommonType
+== InterfaceType (src/go1.26.8/go/src/internal/abi/type.go) ==
+    PkgPath:Name
+    Methods:[]Imethod
+== SliceType (src/go1.26.8/go/src/internal/abi/type.go) ==
+    Elem:*Type
+== FuncType (src/go1.26.8/go/src/internal/abi/type.go) ==
+    InCount:uint16
+    OutCount:uint16
+== PtrType (src/go1.26.8/go/src/internal/abi/type.go) ==
+    Elem:*Type
+== StructField (src/go1.26.8/go/src/internal/abi/type.go) ==
+    Name:Name
+    Typ:*Type
+    Offset:uintptr
+== StructType (src/go1.26.8/go/src/internal/abi/type.go) ==
+    PkgPath:Name
+    Fields:[]StructField
+== Name (src/go1.26.8/go/src/internal/abi/type.go) ==
+    Bytes:*byte
+== rtype (src/go1.26.8/go/src/runtime/type.go) ==
+== bitCursor (src/go1.26.8/go/src/runtime/type.go) ==
+    ptr:*byte
+    n:uintptr
+== _typePair (src/go1.26.8/go/src/runtime/type.go) ==
+    t1:*_type
+    t2:*_type
+== itabTableType (src/go1.26.8/go/src/runtime/iface.go) ==
+    size:uintptr
+    count:uintptr
+    entries:[itabInitSize]*itab

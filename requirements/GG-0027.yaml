@@ -1,0 +1,14 @@
+id: GG-0027
+title: Pinned GraalVM distribution
+statement: graalgo SHALL pin its GraalVM/JDK distribution (version recorded in the spec appendix); SpawnIsolate maturity and OSR-in-Native-Image behavior SHALL be verified against the pin in Phase 0; GraalVM bumps ride a separate validation train from Go bumps.
+rationale: The embedded compiler is GraalVM-version-coupled; never bump both in one train.
+parent: ""
+status: active
+superseded_by: ""
+verification_plan: Pin record; combined regression run on GraalVM bump.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'
+    - '2026-10-04: activated (implementation started)'

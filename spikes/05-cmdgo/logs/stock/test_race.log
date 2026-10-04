@@ -1,0 +1,161 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:38103
+https://vcs-test.golang.org rerouted to https://127.0.0.1:43345
+go test proxy running at GOPROXY=http://127.0.0.1:35365/mod
+=== RUN   TestScript/test_race
+=== PAUSE TestScript/test_race
+=== CONT  TestScript/test_race
+    script_test.go:141: 2026-10-03T06:10:08Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:35365/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:38103
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:43345
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/vcstest909669031/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/gopath/src
+        
+        > [short] skip
+        [condition not met]
+        > [!race] skip
+        [condition not met]
+        > go test testrace
+        [stdout]
+        ok  	testrace	0.013s
+        > ! go test -race testrace
+        [stdout]
+        ==================
+        WARNING: DATA RACE
+        Write at 0x00c0000182b8 by goroutine 8:
+          testrace.TestRace.func1()
+              /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/gopath/src/race_test.go:10 +0x33
+        
+        Previous write at 0x00c0000182b8 by goroutine 7:
+          testrace.TestRace()
+              /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/gopath/src/race_test.go:13 +0x34
+          testing.tRunner()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0x21c
+          testing.(*T).Run.gowrap1()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x38
+        
+        Goroutine 8 (running) created at:
+          testrace.TestRace()
+              /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/gopath/src/race_test.go:9 +0x2a
+          testing.tRunner()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0x21c
+          testing.(*T).Run.gowrap1()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x38
+        
+        Goroutine 7 (running) created at:
+          testing.(*T).Run()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0xb12
+          testing.runTests.func1()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2742 +0x84
+          testing.tRunner()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0x21c
+          testing.runTests()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2740 +0x9e9
+          testing.(*M).Run()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2600 +0xf44
+          main.main()
+              _testmain.go:48 +0x164
+        ==================
+        --- FAIL: TestRace (0.01s)
+            testing.go:1865: race detected during execution of test
+        FAIL
+        FAIL	testrace	0.072s
+        FAIL
+        [exit status 1]
+        > stdout 'FAIL: TestRace'
+        matched: --- FAIL: TestRace (0.01s)
+        > ! stdout 'PASS'
+        > ! stderr 'PASS'
+        > ! go test -race testrace -run XXX -bench .
+        [stdout]
+        ==================
+        WARNING: DATA RACE
+        Write at 0x00c000018158 by goroutine 10:
+          testrace.BenchmarkRace.func1()
+              /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/gopath/src/race_test.go:24 +0x33
+        
+        Previous write at 0x00c000018158 by goroutine 9:
+          testrace.BenchmarkRace()
+              /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/gopath/src/race_test.go:27 +0x3b
+          testing.(*B).runN()
+              /home/hatch/tools/go-1.27.1/src/testing/benchmark.go:219 +0x2c2
+          testing.(*B).run1.func1()
+              /home/hatch/tools/go-1.27.1/src/testing/benchmark.go:245 +0x77
+        
+        Goroutine 10 (running) created at:
+          testrace.BenchmarkRace()
+              /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-91787666/tmpdir2420049995/test_race523596403/gopath/src/race_test.go:23 +0x31
+          testing.(*B).runN()
+              /home/hatch/tools/go-1.27.1/src/testing/benchmark.go:219 +0x2c2
+          testing.(*B).run1.func1()
+              /home/hatch/tools/go-1.27.1/src/testing/benchmark.go:245 +0x77
+        
+        Goroutine 9 (running) created at:
+          testing.(*B).run1()
+              /home/hatch/tools/go-1.27.1/src/testing/benchmark.go:238 +0x172
+          testing.(*B).Run()
+              /home/hatch/tools/go-1.27.1/src/testing/benchmark.go:867 +0xa7e
+          testing.runBenchmarks.func1()
+              /home/hatch/tools/go-1.27.1/src/testing/benchmark.go:726 +0x84
+          testing.(*B).runN()
+              /home/hatch/tools/go-1.27.1/src/testing/benchmark.go:219 +0x2c2
+          testing.runBenchmarks()
+              /home/hatch/tools/go-1.27.1/src/testing/benchmark.go:735 +0xb96
+          testing.(*M).Run()
+              /home/hatch/tools/go-1.27.1/src/testing/testing.go:2616 +0x1549
+          main.main()
+              _testmain.go:48 +0x164
+        ==================
+        --- FAIL: BenchmarkRace
+            testing.go:1865: race detected during execution of test
+        FAIL
+        exit status 1
+        FAIL	testrace	0.096s
+        FAIL
+        [exit status 1]
+        > stdout 'FAIL: BenchmarkRace'
+        matched: --- FAIL: BenchmarkRace
+        > ! stdout 'PASS'
+        > ! stderr 'PASS'
+--- PASS: TestScript (0.07s)
+    --- PASS: TestScript/test_race (97.81s)
+PASS

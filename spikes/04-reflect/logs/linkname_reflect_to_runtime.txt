@@ -1,0 +1,3 @@
+call runtime.reflectcall
+getStaticuint64s runtime.getStaticuint64s
+zeroVal runtime.zeroVal

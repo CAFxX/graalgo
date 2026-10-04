@@ -1,0 +1,13 @@
+id: GG-0016
+title: unsafe.Pointer v1 semantics
+statement: In v1, `unsafe.Pointer` SHALL be emulated via a handle table (object identity + field offset); arithmetic escaping the object SHALL trap; this restriction SHALL be documented, never silent.
+rationale: Closes Phase-0 question 3; raw addresses do not exist in the value model.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Spike 4 measures what reflect's 243 unsafe uses require; unsafe-suite differential tests.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

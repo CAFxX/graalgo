@@ -1,0 +1,314 @@
+=== PKG runtime ===
+  asan_amd64.s                 
+  asan_arm64.s                 
+  asan_loong64.s               
+  asan_ppc64le.s               
+  asan_riscv64.s               
+  asm.s                        mapinitnoop sigpanic0 
+  asm_386.s                    NAME _cgo_topofstack _rt0_386 _rt0_386_lib abort addmoduledata asmcgocall asmcgocall_no_g asminit breakpoint callRet cgocallback cputicks emptyfunc float64touint32 gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 goexit gogo gosave_systemstack_switch ldt0setup mcall morestack morestack_noctxt mstart panicBounds panicExtend procyieldAsm publicationBarrier reflectcall rt0_go rt0_lib_go setg setg_gcc stackcheck switchToCrashStack0 systemstack systemstack_switch uint32tofloat64 
+  asm_amd64.s                  NAME _cgo_topofstack _rt0_amd64 _rt0_amd64_lib abort addmoduledata asmcgocall asmcgocall_landingpad asmcgocall_no_g asminit breakpoint callRet cgocallback cputicks debugCallPanicked debugCallV2 gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 getfp goexit gogo gosave_systemstack_switch main mcall morestack morestack_noctxt mstart panicBounds procyieldAsm publicationBarrier reflectcall retpolineAX retpolineBP retpolineBX retpolineCX retpolineDI retpolineDX retpolineR10 retpolineR11 retpolineR12 retpolineR13 retpolineR14 retpolineR15 retpolineR8 retpolineR9 retpolineSI rt0_go rt0_lib_go setg setg_gcc sigpanic0 spillArgs stackcheck switchToCrashStack0 systemstack systemstack_switch unspillArgs 
+  asm_arm.s                    NAME _cgo_topofstack _rt0_arm _rt0_arm_lib abort addmoduledata armPublicationBarrier asmcgocall asmcgocall_no_g asminit breakpoint callRet emptyfunc gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 goexit gogo gosave_systemstack_switch main mcall morestack morestack_noctxt mstart panicBounds panicExtend procyieldAsm reflectcall rt0_go rt0_lib_go setg switchToCrashStack0 systemstack systemstack_switch usplit usplitR0 
+  asm_arm64.s                  NAME _cgo_topofstack _rt0_arm64 _rt0_arm64_lib abort addmoduledata asmcgocall asmcgocall_no_g asminit breakpoint callRet cgocallback debugCallPanicked debugCallV2 emptyfunc gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 getfp goexit gogo gosave_systemstack_switch main mcall morestack morestack_noctxt mstart panicBounds procyieldAsm reflectcall rt0_go rt0_lib_go setg setg_gcc spillArgs switchToCrashStack0 systemstack systemstack_switch unspillArgs 
+  asm_loong64.s                NAME _cgo_topofstack _rt0_loong64_lib abort addmoduledata asmcgocall asmcgocall_no_g asminit breakpoint callRet cgocallback cputicks debugCallPanicked debugCallV2 gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 goexit gogo gosave_systemstack_switch mcall morestack morestack_noctxt mstart panicBounds procyieldAsm reflectcall rt0_go rt0_lib_go setg setg_gcc spillArgs switchToCrashStack0 systemstack systemstack_switch unspillArgs 
+  asm_mips64x.s                NAME _cgo_topofstack abort asmcgocall asmcgocall_no_g asminit breakpoint callRet cgocallback gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 goexit gogo gosave_systemstack_switch mcall morestack morestack_noctxt mstart panicBounds procyieldAsm reflectcall rt0_go setg setg_gcc switchToCrashStack0 systemstack systemstack_switch 
+  asm_mipsx.s                  NAME _cgo_topofstack abort asmcgocall asminit breakpoint callRet cgocallback gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 goexit gogo gosave_systemstack_switch mcall morestack morestack_noctxt mstart panicBounds panicExtend procyieldAsm reflectcall rt0_go setg setg_gcc switchToCrashStack0 systemstack systemstack_switch 
+  asm_ppc64x.s                 NAME __cgo_topofstack _cgo_reginit _cgo_topofstack _rt0_ppc64x_lib _setg_gcc abort addmoduledata asmcgocall asmcgocall_no_g asminit breakpoint callRet cgocallback cputicks debugCallPanicked debugCallV2 elf_restfpr elf_restgpr0 elf_restgpr1 elf_restvr elf_savefpr elf_savegpr0 elf_savegpr1 elf_savevr gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 goexit gogo gosave_systemstack_switch mcall morestack morestack_noctxt mstart panicBounds prepGoExitFrame procyieldAsm reflectcall reginit rt0_go rt0_lib_go setg setg_gcc spillArgs switchToCrashStack0 systemstack systemstack_switch unspillArgs 
+  asm_riscv64.s                NAME _cgo_topofstack _rt0_riscv64_lib abort addmoduledata asmcgocall asmcgocall_no_g asminit breakpoint call callRet cgocallback cputicks gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 goexit gogo gosave_systemstack_switch mcall morestack morestack_noctxt mstart panicBounds procyieldAsm reflectcall rt0_go rt0_lib_go setg setg_gcc spillArgs switchToCrashStack0 systemstack systemstack_switch unspillArgs 
+  asm_s390x.s                  NAME _cgo_topofstack _rt0_s390x_lib abort addmoduledata asmcgocall asmcgocall_no_g asminit breakpoint callRet callfnMVC cgocallback cputicks gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 goexit gogo gosave_systemstack_switch mcall morestack morestack_noctxt mstart panicBounds procyieldAsm publicationBarrier reflectcall rt0_go rt0_lib_go setg setg_gcc spillArgs switchToCrashStack0 systemstack systemstack_switch unspillArgs 
+  asm_wasm.s                   NAME abort asmcgocall asminit breakpoint callRet cgocallback gcWriteBarrier gcWriteBarrier1 gcWriteBarrier2 gcWriteBarrier3 gcWriteBarrier4 gcWriteBarrier5 gcWriteBarrier6 gcWriteBarrier7 gcWriteBarrier8 goexit gogo mcall morestack morestack_noctxt mstart notInitialized pause procyieldAsm publicationBarrier reflectcall rt0_go switchToCrashStack0 systemstack systemstack_switch wasm_export_lib wasm_pc_f_loop wasm_pc_f_loop_export 
+  atomic_arm64.s               publicationBarrier 
+  atomic_loong64.s             publicationBarrier 
+  atomic_mips64x.s             publicationBarrier 
+  atomic_mipsx.s               publicationBarrier 
+  atomic_ppc64x.s              publicationBarrier 
+  atomic_riscv64.s             publicationBarrier 
+  duff_386.s                   duffcopy duffzero 
+  duff_arm.s                   duffcopy duffzero 
+  duff_mips64x.s               duffcopy duffzero 
+  duff_ppc64x.s                duffcopy duffzero 
+  duff_s390x.s                 duffcopy duffzero 
+  ints.s                       
+  libfuzzer_amd64.s            end_of_function ret_sled 
+  libfuzzer_arm64.s            
+  libfuzzer_loong64.s          
+  memclr_386.s                 memclrNoHeapPointers 
+  memclr_amd64.s               memclrNoHeapPointers 
+  memclr_arm.s                 memclrNoHeapPointers 
+  memclr_arm64.s               memclrNoHeapPointers 
+  memclr_loong64.s             memclrNoHeapPointers 
+  memclr_mips64x.s             memclrNoHeapPointers 
+  memclr_mipsx.s               memclrNoHeapPointers 
+  memclr_plan9_386.s           memclrNoHeapPointers 
+  memclr_plan9_amd64.s         memclrNoHeapPointers 
+  memclr_ppc64x.s              memclrNoHeapPointers 
+  memclr_riscv64.s             memclrNoHeapPointers 
+  memclr_s390x.s               memclrNoHeapPointers 
+  memclr_wasm.s                memclrNoHeapPointers 
+  memmove_386.s                memmove 
+  memmove_amd64.s              memmove 
+  memmove_arm.s                memmove 
+  memmove_arm64.s              memmove 
+  memmove_loong64.s            memmove 
+  memmove_mips64x.s            memmove 
+  memmove_mipsx.s              memmove 
+  memmove_plan9_386.s          memmove 
+  memmove_plan9_amd64.s        memmove 
+  memmove_ppc64x.s             memmove 
+  memmove_riscv64.s            memmove 
+  memmove_s390x.s              memmove memmove_exrl_mvc 
+  memmove_wasm.s               memmove 
+  msan_amd64.s                 
+  msan_arm64.s                 
+  msan_loong64.s               
+  preempt_386.s                asyncPreempt 
+  preempt_amd64.s              asyncPreempt 
+  preempt_arm.s                asyncPreempt 
+  preempt_arm64.s              asyncPreempt 
+  preempt_loong64.s            asyncPreempt 
+  preempt_mips64x.s            asyncPreempt 
+  preempt_mipsx.s              asyncPreempt 
+  preempt_ppc64x.s             asyncPreempt 
+  preempt_riscv64.s            asyncPreempt 
+  preempt_s390x.s              asyncPreempt 
+  preempt_wasm.s               asyncPreempt 
+  race_amd64.s                 
+  race_arm64.s                 
+  race_loong64.s               
+  race_ppc64le.s               
+  race_riscv64.s               
+  race_s390x.s                 
+  rt0_aix_ppc64.s              __start _main _rt0_ppc64_aix_lib 
+  rt0_android_386.s            _rt0_386_android _rt0_386_android_lib 
+  rt0_android_amd64.s          _rt0_amd64_android _rt0_amd64_android_lib 
+  rt0_android_arm.s            _rt0_arm_android _rt0_arm_android_lib 
+  rt0_android_arm64.s          _rt0_arm64_android _rt0_arm64_android_lib 
+  rt0_darwin_amd64.s           _rt0_amd64_darwin _rt0_amd64_darwin_lib 
+  rt0_darwin_arm64.s           _rt0_arm64_darwin _rt0_arm64_darwin_lib 
+  rt0_dragonfly_amd64.s        _rt0_amd64_dragonfly _rt0_amd64_dragonfly_lib 
+  rt0_freebsd_386.s            _rt0_386_freebsd _rt0_386_freebsd_lib main 
+  rt0_freebsd_amd64.s          _rt0_amd64_freebsd _rt0_amd64_freebsd_lib 
+  rt0_freebsd_arm.s            _rt0_arm_freebsd _rt0_arm_freebsd_lib 
+  rt0_freebsd_arm64.s          _rt0_arm64_freebsd _rt0_arm64_freebsd_lib 
+  rt0_freebsd_riscv64.s        _rt0_riscv64_freebsd _rt0_riscv64_freebsd_lib main 
+  rt0_illumos_amd64.s          _rt0_amd64_illumos _rt0_amd64_illumos_lib 
+  rt0_ios_amd64.s              _rt0_amd64_ios _rt0_amd64_ios_lib 
+  rt0_ios_arm64.s              _rt0_arm64_ios _rt0_arm64_ios_lib 
+  rt0_js_wasm.s                _rt0_wasm_js exit wasm_export_getsp wasm_export_resume wasm_export_run 
+  rt0_linux_386.s              _rt0_386_linux _rt0_386_linux_lib main 
+  rt0_linux_amd64.s            _rt0_amd64_linux _rt0_amd64_linux_lib 
+  rt0_linux_arm.s              _rt0_arm_linux _rt0_arm_linux1 _rt0_arm_linux_lib 
+  rt0_linux_arm64.s            _rt0_arm64_linux _rt0_arm64_linux_lib 
+  rt0_linux_loong64.s          _rt0_loong64_linux _rt0_loong64_linux_lib main 
+  rt0_linux_mips64x.s          _main _rt0_mips64_linux _rt0_mips64le_linux main 
+  rt0_linux_mipsx.s            _main _rt0_mips_linux _rt0_mipsle_linux main 
+  rt0_linux_ppc64x.s           ENTRYPOINT ENTRYPOINT_LIB _main main 
+  rt0_linux_riscv64.s          _rt0_riscv64_linux _rt0_riscv64_linux_lib main 
+  rt0_linux_s390x.s            _rt0_s390x_linux _rt0_s390x_linux_lib main 
+  rt0_netbsd_386.s             _rt0_386_netbsd _rt0_386_netbsd_lib main 
+  rt0_netbsd_amd64.s           _rt0_amd64_netbsd _rt0_amd64_netbsd_lib 
+  rt0_netbsd_arm.s             _rt0_arm_netbsd _rt0_arm_netbsd_lib 
+  rt0_netbsd_arm64.s           _rt0_arm64_netbsd _rt0_arm64_netbsd_lib 
+  rt0_openbsd_386.s            _rt0_386_openbsd _rt0_386_openbsd_lib main 
+  rt0_openbsd_amd64.s          _rt0_amd64_openbsd _rt0_amd64_openbsd_lib 
+  rt0_openbsd_arm.s            _rt0_arm_openbsd _rt0_arm_openbsd_lib 
+  rt0_openbsd_arm64.s          _rt0_arm64_openbsd _rt0_arm64_openbsd_lib 
+  rt0_openbsd_ppc64.s          _rt0_ppc64_openbsd main 
+  rt0_openbsd_riscv64.s        _rt0_riscv64_openbsd main 
+  rt0_plan9_386.s              _rt0_386_plan9 
+  rt0_plan9_amd64.s            _rt0_amd64_plan9 
+  rt0_plan9_arm.s              _rt0_arm_plan9 
+  rt0_solaris_amd64.s          _rt0_amd64_solaris _rt0_amd64_solaris_lib 
+  rt0_wasip1_wasm.s            _rt0_wasm_wasip1 _rt0_wasm_wasip1_lib 
+  rt0_windows_386.s            _main _rt0_386_windows _rt0_386_windows_lib 
+  rt0_windows_amd64.s          _rt0_amd64_windows _rt0_amd64_windows_lib 
+  rt0_windows_arm64.s          _rt0_arm64_windows _rt0_arm64_windows_lib 
+  secret_amd64.s               secretEraseRegisters secretEraseRegistersMcall 
+  secret_arm64.s               secretEraseRegisters secretEraseRegistersMcall 
+  sys_aix_ppc64.s              asmsyscall6 callCfunction exit1 osyield1 pthread_attr_init1 pthread_attr_setdetachstate1 pthread_attr_setstacksize1 pthread_create1 sigaction1 sigfwd sigprocmask1 sigtramp tstart usleep1 write2 
+  sys_darwin_amd64.s           arc4random_buf_trampoline cgoSigtramp close_trampoline exit_trampoline fcntl_trampoline issetugid_trampoline kevent_trampoline kqueue_trampoline mach_vm_region_trampoline madvise_trampoline mlock_trampoline mmap_trampoline mstart_stub munmap_trampoline nanotime_trampoline open_trampoline osinit_hack_trampoline pipe_trampoline proc_regionfilename_trampoline pthread_attr_getstacksize_trampoline pthread_attr_init_trampoline pthread_attr_setdetachstate_trampoline pthread_cond_init_trampoline pthread_cond_signal_trampoline pthread_cond_timedwait_relative_np_trampoline pthread_cond_wait_trampoline pthread_create_trampoline pthread_kill_trampoline pthread_mutex_init_trampoline pthread_mutex_lock_trampoline pthread_mutex_unlock_trampoline pthread_self_trampoline raise_trampoline raiseproc_trampoline read_trampoline setitimer_trampoline settls sigaction_trampoline sigaltstack_trampoline sigfwd sigprocmask_trampoline sigprofNonGoWrapper sigtramp syscallN_trampoline syscall_x509 sysctl_trampoline sysctlbyname_trampoline usleep_trampoline walltime_trampoline write_trampoline 
+  sys_darwin_arm64.s           arc4random_buf_trampoline cgoSigtramp close_trampoline exit_trampoline fcntl_trampoline issetugid_trampoline kevent_trampoline kqueue_trampoline mach_vm_region_trampoline madvise_trampoline mlock_trampoline mmap_trampoline mstart_stub munmap_trampoline nanotime_trampoline notok open_trampoline osinit_hack_trampoline pipe_trampoline proc_regionfilename_trampoline pthread_attr_getstacksize_trampoline pthread_attr_init_trampoline pthread_attr_setdetachstate_trampoline pthread_cond_init_trampoline pthread_cond_signal_trampoline pthread_cond_timedwait_relative_np_trampoline pthread_cond_wait_trampoline pthread_create_trampoline pthread_key_create_trampoline pthread_kill_trampoline pthread_mutex_init_trampoline pthread_mutex_lock_trampoline pthread_mutex_unlock_trampoline pthread_self_trampoline pthread_setspecific_trampoline raise_trampoline raiseproc_trampoline read_trampoline setitimer_trampoline sigaction_trampoline sigaltstack_trampoline sigfwd sigprocmask_trampoline sigtramp syscallN_trampoline syscall_x509 sysctl_trampoline sysctlbyname_trampoline usleep_trampoline walltime_trampoline write_trampoline 
+  sys_dragonfly_amd64.s        closefd exit exitThread fcntl issetugid kevent kqueue lwp_create lwp_gettid lwp_kill lwp_start madvise mmap munmap nanotime1 open osyield pipe2 raiseproc read setitimer settls sigaction sigaltstack sigfwd sigprocmask sigtramp sys_umtx_sleep sys_umtx_wakeup sysctl usleep walltime write1 
+  sys_freebsd_386.s            asmSigaction closefd cpuset_getaffinity exit exitThread fallback_nanotime fallback_walltime fcntl i386_set_ldt issetugid kevent kqueue madvise mmap munmap open osyield pipe2 raiseproc read setitimer setldt sigaltstack sigfwd sigprocmask sigtramp sys_umtx_op sysctl thr_kill thr_new thr_self thr_start usleep write1 
+  sys_freebsd_amd64.s          asmSigaction callCgoMmap callCgoMunmap callCgoSigaction cgoSigtramp closefd cpuset_getaffinity exit exitThread fallback_nanotime fallback_walltime fcntl issetugid kevent kqueue madvise open osyield pipe2 raiseproc read setitimer settls sigaltstack sigfwd sigprocmask sigprofNonGoWrapper sigtramp sysMmap sysMunmap sys_umtx_op sysctl thr_kill thr_new thr_self thr_start usleep write1 
+  sys_freebsd_arm.s            asmSigaction closefd cpuset_getaffinity exit exitThread fallback_nanotime fallback_walltime fcntl getCntxct issetugid kevent kqueue madvise mmap munmap open osyield pipe2 publicationBarrier raiseproc read read_tls_fallback setitimer sigaltstack sigfwd sigprocmask sigtramp sys_umtx_op sysctl thr_kill thr_new thr_self thr_start usleep write1 
+  sys_freebsd_arm64.s          asmSigaction closefd cpuset_getaffinity emptyfunc exit exitThread fallback_nanotime fallback_walltime fcntl getCntxct issetugid kevent kqueue madvise mmap munmap open osyield pipe2 raiseproc read setitimer sigaltstack sigfwd sigprocmask sigtramp sys_umtx_op sysctl thr_kill thr_new thr_self thr_start usleep write1 
+  sys_freebsd_riscv64.s        asmSigaction closefd cpuset_getaffinity emptyfunc exit exitThread fallback_nanotime fallback_walltime fcntl getCntxct issetugid kevent kqueue madvise mmap munmap open osyield pipe2 raiseproc read setitimer sigaltstack sigfwd sigprocmask sigtramp sys_umtx_op sysctl thr_kill thr_new thr_self thr_start usleep write1 
+  sys_ios_arm64.s              cfBundleCopyBundleURL_trampoline cfBundleGetMainBundle_trampoline cfBundleGetValueForInfoDictionaryKey_trampoline cfRelease_trampoline cfStringCreateWithCString_trampoline cfStringGetCString_trampoline cfURLGetFileSystemRepresentation_trampoline chdir_trampoline 
+  sys_linux_386.s              access callCgoSigaction cgoSigtramp clone closefd connect exit exit1 exitThread futex_time32 futex_time64 getpid gettid madvise mincore mmap munmap nanotime1 open osyield pipe2 raise raiseproc read rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer setldt sigaltstack sigfwd sigreturn__sigaction sigtramp socket tgkill timer_create timer_delete timer_settime32 timer_settime64 usleep walltime write1 
+  sys_linux_amd64.s            access callCgoMmap callCgoMunmap callCgoSigaction cgoSigtramp clone closefd connect exit exitThread futex getpid gettid madvise mincore nanotime1 open osyield pipe2 raise raiseproc read rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer settls sigaltstack sigfwd sigprofNonGoWrapper sigreturn__sigaction sigtramp socket sysMmap sysMunmap tgkill timer_create timer_delete timer_settime usleep vgetrandom1 write1 
+  sys_linux_arm.s              access cgoSigtramp clone closefd connect exit exit1 exitThread futex_time32 futex_time64 getpid gettid kernelPublicationBarrier madvise mincore mmap munmap nanotime1 open osyield pipe2 publicationBarrier read read_tls_fallback rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer sigaltstack sigfwd sigtramp socket tgkill timer_create timer_delete timer_settime32 timer_settime64 usleep vdsoCall walltime write1 
+  sys_linux_arm64.s            access callCgoMmap callCgoMunmap callCgoSigaction cgoSigtramp clone closefd connect exit exitThread futex getpid gettid madvise mincore nanotime1 open osyield pipe2 raise raiseproc read rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer sigaltstack sigfwd sigprofNonGoWrapper sigtramp socket sysMmap sysMunmap tgkill timer_create timer_delete timer_settime usleep vgetrandom1 walltime write1 
+  sys_linux_loong64.s          access callCgoMmap callCgoMunmap callCgoSigaction cgoSigtramp clone closefd connect exit exitThread futex getpid gettid madvise mincore nanotime1 open osyield pipe2 raise raiseproc read rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer sigaltstack sigfwd sigprofNonGoWrapper sigtramp socket sysMmap sysMunmap tgkill timer_create timer_delete timer_settime usleep vgetrandom1 walltime write1 
+  sys_linux_mips64x.s          access cgoSigtramp clone closefd connect exit exitThread futex getpid gettid madvise mincore mmap munmap nanotime1 open osyield pipe2 raise raiseproc read rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer sigaltstack sigfwd sigtramp socket tgkill timer_create timer_delete timer_settime usleep walltime write1 
+  sys_linux_mipsx.s            access cgoSigtramp clone closefd connect exit exitThread futex_time32 futex_time64 getpid gettid madvise mincore mmap munmap nanotime1 open osyield pipe2 raise raiseproc read rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer sigaltstack sigfwd sigtramp socket tgkill timer_create timer_delete timer_settime32 timer_settime64 usleep walltime write1 
+  sys_linux_ppc64x.s           access callCgoSigaction cgoSigtramp clone closefd connect exit exitThread futex getpid gettid madvise mincore mmap munmap nanotime1 open osyield pipe2 raise raiseproc read rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer sigaltstack sigfwd sigprofNonGoWrapper sigtramp socket tgkill timer_create timer_delete timer_settime usleep vgetrandom1 walltime write1 
+  sys_linux_riscv64.s          cgoSigtramp clone closefd exit exitThread futex getpid gettid madvise mincore mmap munmap nanotime1 open osyield pipe2 raise raiseproc read rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer sigaltstack sigfwd sigtramp tgkill timer_create timer_delete timer_settime usleep walltime write1 
+  sys_linux_s390x.s            access cgoSigtramp clone closefd connect exit exitThread futex getpid gettid madvise mincore mmap munmap nanotime1 open osyield pipe2 raise raiseproc read rt_sigaction rtsigprocmask sbrk0 sched_getaffinity setitimer sigaltstack sigfwd sigtramp socket tgkill timer_create timer_delete timer_settime usleep vgetrandom1 walltime write1 
+  sys_netbsd_386.s             closefd exit exitThread fcntl getcontext issetugid kevent kqueue lwp_create lwp_kill lwp_park lwp_self lwp_setprivate lwp_tramp lwp_unpark madvise mmap munmap nanotime1 netbsdMstart open osyield pipe2 raiseproc read setitimer setldt sigaction sigaltstack sigfwd sigprocmask sigreturn_tramp sigtramp sysctl usleep walltime write1 
+  sys_netbsd_amd64.s           closefd exit exitThread fcntl getcontext issetugid kevent kqueue lwp_create lwp_kill lwp_park lwp_self lwp_tramp lwp_unpark madvise mmap munmap nanotime1 netbsdMstart open osyield pipe2 raiseproc read setitimer settls sigaction sigaltstack sigfwd sigprocmask sigreturn_tramp sigtramp sysctl usleep walltime write1 
+  sys_netbsd_arm.s             closefd exit exitThread fcntl getcontext issetugid kevent kqueue lwp_create lwp_kill lwp_park lwp_self lwp_tramp lwp_unpark madvise mmap munmap nanotime1 netbsdMstart open osyield pipe2 publicationBarrier raiseproc read read_tls_fallback setitimer sigaction sigaltstack sigfwd sigprocmask sigreturn_tramp sigtramp sysctl usleep walltime write1 
+  sys_netbsd_arm64.s           closefd exit exitThread fcntl getcontext issetugid kevent kqueue lwp_create lwp_kill lwp_park lwp_self lwp_tramp lwp_unpark madvise mmap munmap nanotime1 netbsdMstart open osyield pipe2 raiseproc read setitimer sigaction sigaltstack sigfwd sigprocmask sigreturn_tramp sigtramp sysctl usleep walltime write1 
+  sys_openbsd_386.s            clock_gettime_trampoline close_trampoline exit_trampoline fcntl_trampoline getthrid_trampoline issetugid_trampoline kevent_trampoline kqueue_trampoline madvise_trampoline mmap_trampoline mstart_stub munmap_trampoline open_trampoline pipe2_trampoline pthread_attr_destroy_trampoline pthread_attr_getstacksize_trampoline pthread_attr_init_trampoline pthread_attr_setdetachstate_trampoline pthread_create_trampoline raiseproc_trampoline read_trampoline sched_yield_trampoline setitimer_trampoline setldt sigaction_trampoline sigaltstack_trampoline sigfwd sigprocmask_trampoline sigtramp syscall syscall10 syscall10X syscall6 syscall6X syscallX sysctl_trampoline thrkill_trampoline thrsleep_trampoline thrwakeup_trampoline usleep_trampoline write_trampoline 
+  sys_openbsd_amd64.s          clock_gettime_trampoline close_trampoline exit_trampoline fcntl_trampoline getthrid_trampoline issetugid_trampoline kevent_trampoline kqueue_trampoline madvise_trampoline mmap_trampoline mstart_stub munmap_trampoline open_trampoline pipe2_trampoline pthread_attr_destroy_trampoline pthread_attr_getstacksize_trampoline pthread_attr_init_trampoline pthread_attr_setdetachstate_trampoline pthread_create_trampoline raiseproc_trampoline read_trampoline sched_yield_trampoline setitimer_trampoline settls sigaction_trampoline sigaltstack_trampoline sigfwd sigprocmask_trampoline sigtramp syscall syscall10 syscall10X syscall6 syscall6X syscallX sysctl_trampoline thrkill_trampoline thrsleep_trampoline thrwakeup_trampoline usleep_trampoline write_trampoline 
+  sys_openbsd_arm.s            clock_gettime_trampoline close_trampoline exit_trampoline fcntl_trampoline getthrid_trampoline issetugid_trampoline kevent_trampoline kqueue_trampoline madvise_trampoline mmap_trampoline mstart_stub munmap_trampoline open_trampoline pipe2_trampoline pthread_attr_destroy_trampoline pthread_attr_getstacksize_trampoline pthread_attr_init_trampoline pthread_attr_setdetachstate_trampoline pthread_create_trampoline publicationBarrier raiseproc_trampoline read_tls_fallback read_trampoline sched_yield_trampoline setitimer_trampoline sigaction_trampoline sigaltstack_trampoline sigfwd sigprocmask_trampoline sigtramp syscall syscall10 syscall10X syscall6 syscall6X syscallX sysctl_trampoline thrkill_trampoline thrsleep_trampoline thrwakeup_trampoline usleep_trampoline write_trampoline 
+  sys_openbsd_arm64.s          clock_gettime_trampoline close_trampoline exit_trampoline fcntl_trampoline getthrid_trampoline issetugid_trampoline kevent_trampoline kqueue_trampoline madvise_trampoline mmap_trampoline mstart_stub munmap_trampoline open_trampoline pipe2_trampoline pthread_attr_destroy_trampoline pthread_attr_getstacksize_trampoline pthread_attr_init_trampoline pthread_attr_setdetachstate_trampoline pthread_create_trampoline raiseproc_trampoline read_trampoline sched_yield_trampoline setitimer_trampoline sigaction_trampoline sigaltstack_trampoline sigfwd sigprocmask_trampoline sigtramp syscall syscall10 syscall10X syscall6 syscall6X syscallX sysctl_trampoline thrkill_trampoline thrsleep_trampoline thrwakeup_trampoline usleep_trampoline write_trampoline 
+  sys_openbsd_ppc64.s          clock_gettime_trampoline close_trampoline exit_trampoline fcntl_trampoline getthrid_trampoline issetugid_trampoline kevent_trampoline kqueue_trampoline madvise_trampoline mmap_trampoline mstart_stub munmap_trampoline open_trampoline pipe2_trampoline pthread_attr_destroy_trampoline pthread_attr_getstacksize_trampoline pthread_attr_init_trampoline pthread_attr_setdetachstate_trampoline pthread_create_trampoline raiseproc_trampoline read_trampoline sched_yield_trampoline setitimer_trampoline sigaction_trampoline sigaltstack_trampoline sigfwd sigprocmask_trampoline sigtramp syscall syscall10 syscall10X syscall6 syscall6X syscallX sysctl_trampoline thrkill_trampoline thrsleep_trampoline thrwakeup_trampoline usleep_trampoline write_trampoline 
+  sys_openbsd_riscv64.s        clock_gettime_trampoline close_trampoline exit_trampoline fcntl_trampoline getthrid_trampoline issetugid_trampoline kevent_trampoline kqueue_trampoline madvise_trampoline mmap_trampoline mstart_stub munmap_trampoline open_trampoline pipe2_trampoline pthread_attr_destroy_trampoline pthread_attr_getstacksize_trampoline pthread_attr_init_trampoline pthread_attr_setdetachstate_trampoline pthread_create_trampoline raiseproc_trampoline read_trampoline sched_yield_trampoline setitimer_trampoline sigaction_trampoline sigaltstack_trampoline sigfwd sigprocmask_trampoline sigtramp syscall syscall10 syscall10X syscall6 syscall6X syscallX sysctl_trampoline thrkill_trampoline thrsleep_trampoline thrwakeup_trampoline usleep_trampoline write_trampoline 
+  sys_plan9_386.s              _seek brk_ closefd dupfd errstr exits noted notify open plan9_semacquire plan9_semrelease plan9_tsemacquire pread pwrite rfork seek setfpmasks setldt sigpanictramp sigtramp sleep timesplit tstart_plan9 
+  sys_plan9_amd64.s            _seek brk_ closefd dupfd errstr exits noted notify open plan9_semacquire plan9_semrelease plan9_tsemacquire pread pwrite rfork seek setfpmasks settls sigpanictramp sigtramp sleep timesplit tstart_plan9 
+  sys_plan9_arm.s              brk_ closefd dupfd errstr exits noted notify open plan9_semacquire plan9_semrelease plan9_tsemacquire pread publicationBarrier pwrite read_tls_fallback rfork seek setfpmasks sigtramp sleep timesplit tstart_plan9 
+  sys_solaris_amd64.s          asmsysvicall6 miniterrno osyield1 settls sigfwd sigtramp tstart_sysvicall usleep1 usleep2 
+  sys_wasm.s                   currentMemory exitThread growMemory osyield wasmDiv 
+  sys_windows_386.s            callbackasm1 exceptiontramp firstcontinuetramp getlasterror lastcontinuetramp nanotime1 setldt sigFetchGSafe sigresume sigtramp tstart tstart_stdcall wintls 
+  sys_windows_amd64.s          callbackasm1 exceptiontramp firstcontinuetramp getlasterror lastcontinuetramp nanotime1 osSetupTLS sehtramp settls sigresume sigtramp tstart_stdcall wintls 
+  sys_windows_arm64.s          callbackasm1 exceptiontramp firstcontinuetramp getlasterror lastcontinuetramp nanotime1 sigresume sigtramp tstart_stdcall wintls 
+  test_amd64.s                 testSPWrite 
+  time_linux_amd64.s           now 
+  time_windows_386.s           now 
+  time_windows_amd64.s         now 
+  time_windows_arm64.s         now 
+  tls_arm.s                    _initcgo load_g save_g setg_gcc 
+  tls_arm64.s                  load_g save_g 
+  tls_loong64.s                load_g save_g 
+  tls_mips64x.s                load_g save_g 
+  tls_mipsx.s                  load_g save_g 
+  tls_ppc64x.s                 load_g save_g 
+  tls_riscv64.s                load_g save_g 
+  tls_s390x.s                  load_g save_g 
+  valgrind_amd64.s             valgrindClientRequest 
+  valgrind_arm64.s             valgrindClientRequest 
+  vlop_386.s                   _div64by32 _mul64by32 
+  vlop_arm.s                   _div _div64by32 _divu _mod _modu _mul64by32 udiv 
+  zcallback_windows.s          callbackasm 
+  zcallback_windows_arm64.s    callbackasm 
+=== PKG sync/atomic ===
+  asm.s                        AddInt32 AddInt64 AddUint32 AddUint64 AddUintptr AndInt32 AndInt64 AndUint32 AndUint64 AndUintptr CompareAndSwapInt32 CompareAndSwapInt64 CompareAndSwapUint32 CompareAndSwapUint64 CompareAndSwapUintptr LoadInt32 LoadInt64 LoadPointer LoadUint32 LoadUint64 LoadUintptr OrInt32 OrInt64 OrUint32 OrUint64 OrUintptr StoreInt32 StoreInt64 StoreUint32 StoreUint64 StoreUintptr SwapInt32 SwapInt64 SwapUint32 SwapUint64 SwapUintptr 
+  race.s                       
+=== PKG reflect ===
+  asm_386.s                    makeFuncStub methodValueCall 
+  asm_amd64.s                  makeFuncStub methodValueCall 
+  asm_arm.s                    makeFuncStub methodValueCall 
+  asm_arm64.s                  makeFuncStub methodValueCall 
+  asm_loong64.s                makeFuncStub methodValueCall 
+  asm_mips64x.s                makeFuncStub methodValueCall 
+  asm_mipsx.s                  makeFuncStub methodValueCall 
+  asm_ppc64x.s                 makeFuncStub methodValueCall 
+  asm_riscv64.s                makeFuncStub methodValueCall 
+  asm_s390x.s                  makeFuncStub methodValueCall 
+  asm_wasm.s                   makeFuncStub methodValueCall 
+  float32reg_ppc64x.s          archFloat32FromReg archFloat32ToReg 
+  float32reg_riscv64.s         archFloat32FromReg archFloat32ToReg 
+  float32reg_s390x.s           archFloat32FromReg archFloat32ToReg 
+=== PKG internal/bytealg ===
+  compare_386.s                Compare cmpbody cmpstring 
+  compare_amd64.s              Compare cmpbody cmpstring 
+  compare_arm.s                Compare cmpbody cmpstring 
+  compare_arm64.s              Compare cmpbody cmpstring 
+  compare_loong64.s            Compare cmpbody cmpstring 
+  compare_mips64x.s            Compare cmpbody cmpstring 
+  compare_mipsx.s              Compare cmpstring 
+  compare_ppc64x.s             Compare cmpbody cmpstring 
+  compare_riscv64.s            Compare cmpstring compare 
+  compare_s390x.s              Compare cmpbody cmpbodyclc cmpstring 
+  compare_wasm.s               Compare cmpbody cmpstring memcmp 
+  count_amd64.s                Count CountString countbody 
+  count_arm.s                  Count CountString countbytebody 
+  count_arm64.s                Count CountString 
+  count_loong64.s              Count CountString countbody 
+  count_mips64x.s              Count CountString 
+  count_ppc64x.s               Count CountString countbytebody 
+  count_riscv64.s              Count CountString 
+  count_s390x.s                Count CountString countbytebody 
+  equal_386.s                  memeqbody memequal memequal_varlen 
+  equal_amd64.s                memeqbody memequal memequal_varlen 
+  equal_arm.s                  memeqbody memequal memequal_varlen 
+  equal_arm64.s                memequal memequal_varlen 
+  equal_loong64.s              equalbody memequal memequal_varlen 
+  equal_mips64x.s              memequal memequal_varlen 
+  equal_mipsx.s                memequal memequal_varlen 
+  equal_ppc64x.s               memeqbody memequal memequal_varlen 
+  equal_riscv64.s              memequal memequal_varlen 
+  equal_s390x.s                memeqbody memeqbodyclc memequal memequal_varlen 
+  equal_wasm.s                 memeqbody memequal memequal_varlen 
+  index_amd64.s                Index IndexString indexbody 
+  index_arm64.s                Index IndexString 
+  index_loong64.s              Index IndexString indexbody 
+  index_ppc64x.s               Index IndexString indexbody indexbodyp9 
+  index_s390x.s                Index IndexString indexbody 
+  indexbyte_386.s              IndexByte IndexByteString 
+  indexbyte_amd64.s            
+  indexbyte_arm.s              IndexByte IndexByteString indexbytebody 
+  indexbyte_arm64.s            IndexByte IndexByteString 
+  indexbyte_loong64.s          IndexByte IndexByteString indexbytebody 
+  indexbyte_mips64x.s          IndexByte IndexByteString 
+  indexbyte_mipsx.s            IndexByte IndexByteString 
+  indexbyte_ppc64x.s           IndexByte IndexByteString indexbytebody 
+  indexbyte_riscv64.s          IndexByte IndexByteString indexByteBig 
+  indexbyte_s390x.s            IndexByte IndexByteString indexbytebody 
+  indexbyte_wasm.s             IndexByte IndexByteString memchr 
+=== PKG internal/runtime/atomic ===
+  atomic_386.s                 And And32 And64 And8 Anduintptr Cas Cas64 CasRel Casint32 Casint64 Casp1 Casuintptr Load64 Loadint32 Loadint64 Loaduint Loaduintptr Or Or32 Or64 Or8 Oruintptr Store Store64 Store8 StoreRel StoreReluintptr Storeint32 Storeint64 StorepNoWB Storeuintptr Xadd Xadd64 Xaddint32 Xaddint64 Xadduintptr Xchg Xchg64 Xchg8 Xchgint32 Xchgint64 Xchguintptr 
+  atomic_amd64.s               And And32 And64 And8 Anduintptr Cas Cas64 CasRel Casint32 Casint64 Casp1 Casuintptr Loadint32 Loadint64 Loaduint Loaduintptr Or Or32 Or64 Or8 Oruintptr Store Store64 Store8 StoreRel StoreRel64 StoreReluintptr Storeint32 Storeint64 StorepNoWB Storeuintptr Xadd Xadd64 Xaddint32 Xaddint64 Xadduintptr Xchg Xchg64 Xchg8 Xchgint32 Xchgint64 Xchguintptr 
+  atomic_arm.s                 And8 Cas64 CasRel Casint32 Casint64 Casp1 Casuintptr Load64 LoadAcq LoadAcquintptr Loadint32 Loadint64 Loadp Loaduint Loaduintptr Or8 Store64 StoreRel StoreReluintptr Storeint32 Storeint64 StorepNoWB Storeuintptr Xadd64 Xaddint32 Xaddint64 Xadduintptr Xchg64 Xchg8 Xchgint32 Xchgint64 armAnd8 armCas64 armLoad64 armOr8 armStore64 armXadd64 armXchg64 armXchg8 armcas 
+  atomic_arm64.s               And And32 And64 And8 Anduintptr Cas Cas64 CasRel Casint32 Casint64 Casp1 Casuintptr Load Load64 Load8 LoadAcq LoadAcq64 LoadAcquintptr Loadint32 Loadint64 Loadp Loaduint Loaduintptr Or Or32 Or64 Or8 Oruintptr Store Store64 Store8 StoreRel StoreRel64 StoreReluintptr Storeint32 Storeint64 StorepNoWB Storeuintptr Xadd Xadd64 Xaddint32 Xaddint64 Xadduintptr Xchg Xchg64 Xchg8 Xchgint32 Xchgint64 Xchguintptr 
+  atomic_loong64.s             And And32 And64 And8 Anduintptr Cas Cas64 CasRel Casint32 Casint64 Casp1 Casuintptr Load Load64 Load8 LoadAcq LoadAcq64 LoadAcquintptr Loadint64 Loadp Loaduint Loaduintptr Or Or32 Or64 Or8 Oruintptr Store Store64 Store8 StoreRel StoreRel64 StoreReluintptr StorepNoWB Storeuintptr Xadd Xadd64 Xaddint32 Xaddint64 Xadduintptr Xchg Xchg64 Xchg8 Xchgint32 Xchgint64 Xchguintptr 
+  atomic_mips64x.s             And And32 And64 And8 Anduintptr Cas Cas64 CasRel Casint32 Casint64 Casp1 Casuintptr Load Load64 Load8 LoadAcq LoadAcq64 LoadAcquintptr Loadint32 Loadint64 Loadp Loaduint Loaduintptr Or Or32 Or64 Or8 Oruintptr Store Store64 Store8 StoreRel StoreRel64 StoreReluintptr Storeint32 Storeint64 StorepNoWB Storeuintptr Xadd Xadd64 Xaddint32 Xaddint64 Xadduintptr Xchg Xchg64 Xchg8 Xchgint32 Xchgint64 Xchguintptr 
+  atomic_mipsx.s               And And32 And8 Anduintptr Cas CasRel Casint32 Casint64 Casp1 Casuintptr Load Load8 Loadint32 Loadint64 Loadp Loaduint Loaduintptr Or Or32 Or8 Oruintptr Store Store8 StoreRel StoreReluintptr Storeint32 Storeint64 StorepNoWB Storeuintptr Xadd Xaddint32 Xaddint64 Xadduintptr Xchg Xchg8 Xchgint32 Xchgint64 Xchguintptr spinLock spinUnlock 
+  atomic_ppc64x.s              And And32 And64 And8 Anduintptr Cas Cas64 CasRel Casint32 Casint64 Casp1 Casuintptr Load Load64 Load8 LoadAcq LoadAcq64 LoadAcquintptr Loadint32 Loadint64 Loadp Loaduint Loaduintptr Or Or32 Or64 Or8 Oruintptr Store Store64 Store8 StoreRel StoreRel64 StoreReluintptr Storeint32 Storeint64 StorepNoWB Storeuintptr Xadd Xadd64 Xaddint32 Xaddint64 Xadduintptr Xchg Xchg64 Xchg8 Xchgint32 Xchgint64 Xchguintptr 
+  atomic_riscv64.s             And And32 And64 And8 Anduintptr Cas Cas64 CasRel Casint32 Casint64 Casp1 Casuintptr Load Load64 Load8 LoadAcq LoadAcq64 LoadAcquintptr Loadint32 Loadint64 Loadp Loaduint Loaduintptr Or Or32 Or64 Or8 Oruintptr Store Store64 Store8 StoreRel StoreRel64 StoreReluintptr Storeint32 Storeint64 StorepNoWB Storeuintptr Xadd Xadd64 Xaddint32 Xaddint64 Xadduintptr Xchg Xchg64 Xchg8 Xchgint32 Xchgint64 Xchguintptr 
+  atomic_s390x.s               And And32 And64 And8 Anduintptr Cas Cas64 CasRel Casint32 Casint64 Casp1 Casuintptr Loadint32 Loadint64 Loaduint Loaduintptr Or Or32 Or64 Or8 Oruintptr Store Store64 Store8 Storeint32 Storeint64 StorepNoWB Storeuintptr Xadd Xadd64 Xaddint32 Xaddint64 Xadduintptr Xchg Xchg64 Xchgint32 Xchgint64 Xchguintptr 
+  atomic_wasm.s                StorepNoWB 
+  sys_linux_arm.s              Cas cas kernelcas memory_barrier 
+  sys_nonlinux_arm.s           
+=== PKG internal/runtime/syscall/linux ===
+  asm_linux_386.s              Syscall6 
+  asm_linux_amd64.s            Syscall6 
+  asm_linux_arm.s              Syscall6 
+  asm_linux_arm64.s            Syscall6 
+  asm_linux_loong64.s          Syscall6 
+  asm_linux_mips64x.s          Syscall6 
+  asm_linux_mipsx.s            Syscall6 
+  asm_linux_ppc64x.s           Syscall6 
+  asm_linux_riscv64.s          Syscall6 
+  asm_linux_s390x.s            Syscall6 
+=== PKG internal/runtime/sys ===
+  dit_arm64.s                  DITEnabled DisableDIT EnableDIT 
+  empty.s                      
+=== PKG internal/abi ===
+  abi_test.s                   
+  stub.s                       
+=== PKG internal/reflectlite ===
+  asm.s                        
+=== PKG internal/runtime/maps ===
+  memhash_386.s                checkMasksAndShiftsAlignment memHash32AES memHash64AES memHashAES 
+  memhash_amd64.s              checkMasksAndShiftsAlignment memHashAES 
+  memhash_arm64.s              memHash32AES memHash64AES memHashAES 
+  memhash_nosimd_amd64.s       memHash32AES memHash64AES 
+=== PKG internal/cpu ===
+  cpu.s                        
+  cpu_arm64.s                  getMIDR getisar0 getisar1 getpfr0 
+  cpu_loong64.s                get_cpucfg 
+  cpu_s390x.s                  kdsaQuery kimdQuery klmdQuery kmQuery kmaQuery kmcQuery kmctrQuery stfle 
+  cpu_x86.s                    cpuid getGOAMD64level xgetbv 
+=== PKG internal/syscall/unix ===
+  asm_aix_ppc64.s              syscall6 
+  asm_darwin.s                 libc_arc4random_buf_trampoline libc_faccessat_trampoline libc_fchmodat_trampoline libc_fchownat_trampoline libc_freeaddrinfo_trampoline libc_gai_strerror_trampoline libc_getaddrinfo_trampoline libc_getgrgid_r_trampoline libc_getgrnam_r_trampoline libc_getgrouplist_trampoline libc_getnameinfo_trampoline libc_getpwnam_r_trampoline libc_getpwuid_r_trampoline libc_grantpt_trampoline libc_linkat_trampoline libc_mkdirat_trampoline libc_posix_openpt_trampoline libc_ptsname_r_trampoline libc_readlinkat_trampoline libc_renameat_trampoline libc_symlinkat_trampoline libc_sysconf_trampoline libc_unlockpt_trampoline libresolv_res_9_nclose_trampoline libresolv_res_9_ninit_trampoline libresolv_res_9_nsearch_trampoline 
+  asm_openbsd.s                libc_arc4random_buf_trampoline libc_faccessat_trampoline libc_fchmodat_trampoline libc_fchownat_trampoline libc_linkat_trampoline libc_mkdirat_trampoline libc_readlinkat_trampoline libc_renameat_trampoline libc_symlinkat_trampoline 
+  asm_solaris.s                rawSyscall6 syscall6 
+=== PKG internal/chacha8rand ===
+  chacha8_amd64.s              block 
+  chacha8_arm64.s              block 
+  chacha8_loong64.s            block 
+  chacha8_riscv64.s            block 
+  chacha8_stub.s               block 
+=== PKG runtime/secret ===
+  asm_amd64.s                  loadRegisters spillRegisters useSecret 
+  asm_arm64.s                  loadRegisters spillRegisters useSecret 
+=== PKG runtime/debug ===
+  debug.s                      
+=== PKG os/signal ===
+  sig.s                        
+=== PKG simd ===
+  dummy.s                      
+=== PKG simd/archsimd ===
+  dummy.s                      

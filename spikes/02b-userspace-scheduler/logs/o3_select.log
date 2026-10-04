@@ -1,0 +1,5 @@
+=== o3_select (par=2 gmp=2 quantumNs=1000000) ===
+o3 nCh=8 nSel=20000 counts=[2501, 2518, 2513, 2533, 2534, 2495, 2428, 2478] maxmin_ratio=1.044 RESULT=PASS
+sched{cap=2(req=2,par=2) inflight_now~na parkEvents=4 admissions=4 firstAdmissions=2 wakeupCalls=0 wakeupWon=0 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=6 drainerUtilPct=6.24}
+O3 RESULT=PASS
+exit=0

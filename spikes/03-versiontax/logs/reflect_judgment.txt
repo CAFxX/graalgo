@@ -1,0 +1,3 @@
+lines needing human judgment: 1
+
+type.go:1748 [NEW-OR-CHANGED] func typelinks() (sections []unsafe.Pointer, offset [][]int32)

@@ -1,0 +1,13 @@
+id: GG-0055
+title: GODEBUG registry
+statement: Every GODEBUG knob SHALL be classified per release (emulated / no-op / unsupported with justification) in a versioned registry; unknown knobs default to deny-with-error; the registry SHALL be reviewed per release.
+rationale: Closes Phase-0 question 15.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: godebug-diff in upgrade Phase 2; registry review record.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

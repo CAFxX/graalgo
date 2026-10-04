@@ -1,0 +1,11 @@
+id: GG-0039
+title: Nine-phase upgrade runbook
+statement: 'Every major upgrade SHALL execute the 9-phase runbook starting at rc1: mechanical rebase, scoped diffs, language delta, runtime intrinsics, stdlib, driver, interop+AOT configs, oracles, done-gates + upgrade report.'
+rationale: The agent-executable procedure that makes upgrades bounded.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Runbook executed; upgrade report filed with effort log.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

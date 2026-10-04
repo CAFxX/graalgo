@@ -1,0 +1,13 @@
+id: GG-0013
+title: No language pinning
+statement: graalgo SHALL support older language versions via per-file/per-module `-lang` gates only; it SHALL NOT pin the frontend below the vendored stdlib's language version.
+rationale: 'Pinning breaks when the stdlib itself uses newer language features (go1.27 precedent: generic methods in math/rand/v2).'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: -lang regression suite across language versions.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

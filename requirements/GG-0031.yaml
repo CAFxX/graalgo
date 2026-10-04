@@ -1,0 +1,13 @@
+id: GG-0031
+title: Nondeterminism controls
+statement: The harness SHALL tame nondeterminism via GOMAXPROCS=1 for the scheduling-sensitive subset, multiset comparison for order-unspecified outputs, repeat runs (3-5) to classify flakes, fixed seeds, and synctest preference in new tests.
+rationale: Without these, the oracle drowns in flakes.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Flake-classification test; seed-reproducibility check.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

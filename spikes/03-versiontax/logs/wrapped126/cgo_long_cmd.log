@@ -1,0 +1,69 @@
+=== RUN   TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:40161
+https://vcs-test.golang.org rerouted to https://127.0.0.1:39193
+go test proxy running at GOPROXY=http://127.0.0.1:34147/mod
+=== RUN   TestScript/cgo_long_cmd
+=== PAUSE TestScript/cgo_long_cmd
+=== CONT  TestScript/cgo_long_cmd
+    script_test.go:139: 2026-10-03T11:39:03Z
+    script_test.go:141: $WORK=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-1992050234/tmpdir3910505663/cgo_long_cmd2898058515
+    script_test.go:163: 
+        PATH=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-1992050234/tmpdir3910505663/testbin:/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/03-versiontax/gocache126-wrapped
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:34147/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-1992050234/tmpdir3910505663/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:40161
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:39193
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-1992050234/vcstest2623679470/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.26.8
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        GRAALGO_WRAPPER_LOG=/home/hatch/workspace/graalgo/spikes/03-versiontax/logs/wraplogs126/cgo_long_cmd.wraplog
+        GOFLAGS=-toolexec=/home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log-v4
+        WORK=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-1992050234/tmpdir3910505663/cgo_long_cmd2898058515
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-1992050234/tmpdir3910505663/cgo_long_cmd2898058515/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-1992050234/tmpdir3910505663/cgo_long_cmd2898058515/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-1992050234/tmpdir3910505663/cgo_long_cmd2898058515/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-1992050234/tmpdir3910505663/cgo_long_cmd2898058515/gopath/src
+        
+        # Issue #66456 (0.000s)
+        > [!cgo] skip
+        [condition not met]
+        > [GOOS:windows] skip
+        [condition not met]
+        > [GOOS:plan9] skip
+        [condition not met]
+        # Generate a file with a very long #cgo LDFLAGS line.
+        # This used to cause "go build" to fail with "argument list too long". (1.208s)
+        > go generate
+        # Build with the generated file. (0.908s)
+        > go build
+        [stderr]
+        cgolongcmd: /home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log-v4: fork/exec /home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log-v4: argument list too long
+    script_test.go:163: FAIL: testdata/script/cgo_long_cmd.txt:12: go build: exit status 1
+--- FAIL: TestScript (0.25s)
+    --- FAIL: TestScript/cgo_long_cmd (2.13s)
+FAIL

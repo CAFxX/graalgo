@@ -1,0 +1,24 @@
+PASS MainTest.testCheckAcceptsStraightLine
+PASS MainTest.testCheckRejectsTypeError
+PASS MainTest.testCheckRejectsScopeError
+PASS MainTest.testCheckRejectsSyntaxError
+PASS MainTest.testRunExecutesStraightLine
+PASS MainTest.testRunIsSilent
+PASS MainTest.testMissingFile
+PASS MainTest.testUnknownFlag
+PASS MainTest.testNoInputFile
+PASS MainTest.testDumpVars
+PASS StraightLineCorpusTest.testCorpusHasEnoughPrograms
+PASS StraightLineCorpusTest.testSl01Consts
+PASS StraightLineCorpusTest.testSl02Arith
+PASS StraightLineCorpusTest.testSl03Bitwise
+PASS StraightLineCorpusTest.testSl04Shifts
+PASS StraightLineCorpusTest.testSl05IntUint
+PASS StraightLineCorpusTest.testSl06Multiassign
+PASS StraightLineCorpusTest.testSl07Define
+PASS StraightLineCorpusTest.testSl08Incdec
+PASS StraightLineCorpusTest.testSl09Unary
+PASS StraightLineCorpusTest.testSl10Overflow
+PASS StraightLineCorpusTest.testSl11Divmod
+PASS StraightLineCorpusTest.testSl12Earlyreturn
+23 tests, 0 failures

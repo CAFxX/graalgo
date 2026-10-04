@@ -1,0 +1,12 @@
+id: GG-0057
+title: Pinning audit
+statement: '`jdk.VirtualThreadPinned` JFR events SHALL show zero unexpected pins on the conformance corpus; cgo/FFM calls and blocking file I/O (which pins without unmounting) SHALL run off the carrier pool (separate platform-thread pool) or be counted in the budgeted +k carriers.'
+rationale: Pinning collapses carrier parallelism; the audit is the falsifier.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Pinning-audit suite (Phase 2 done-gate).
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: scope extended from cgo/Panama-only to FFM + blocking file I/O (R1 P1-2)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

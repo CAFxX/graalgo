@@ -1,0 +1,98 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:38175
+https://vcs-test.golang.org rerouted to https://127.0.0.1:39943
+go test proxy running at GOPROXY=http://127.0.0.1:41383/mod
+=== RUN   TestScript/list_export_e
+=== PAUSE TestScript/list_export_e
+=== CONT  TestScript/list_export_e
+    script_test.go:141: 2026-10-03T06:38:50Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-905913238/tmpdir1754393195/list_export_e1599169760
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-905913238/tmpdir1754393195/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-wrapped
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:41383/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-905913238/tmpdir1754393195/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:38175
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:39943
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-905913238/vcstest2767665119/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        GRAALGO_WRAPPER_LOG=/home/hatch/workspace/graalgo/spikes/05-cmdgo/logs/wraplogs/list_export_e.wraplog
+        GOFLAGS=-toolexec=/home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-905913238/tmpdir1754393195/list_export_e1599169760
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-905913238/tmpdir1754393195/list_export_e1599169760/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-905913238/tmpdir1754393195/list_export_e1599169760/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-905913238/tmpdir1754393195/list_export_e1599169760/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-905913238/tmpdir1754393195/list_export_e1599169760/gopath/src
+        
+        > ! go list -export ./...
+        [stdout]
+        example.com/p1
+        example.com/p2
+        [stderr]
+        # example.com/p2
+        p2/main.go:7:25: invalid operation: p1.Name == 5 (mismatched types untyped string and untyped int)
+        [exit status 1]
+        > stderr '^# example.com/p2\np2'${/}'main\.go:7:.*'
+        matched: # example.com/p2
+        p2/main.go:7:25: invalid operation: p1.Name == 5 (mismatched types untyped string and untyped int)
+        > ! stderr '^go build '
+        > go list -f '{{with .Error}}{{.}}{{end}}' -e -export ./...
+        [stdout]
+        # example.com/p2
+        p2/main.go:7:25: invalid operation: p1.Name == 5 (mismatched types untyped string and untyped int)
+        > ! stderr '.'
+        > stdout '^# example.com/p2\np2'${/}'main\.go:7:.*'
+        matched: # example.com/p2
+        p2/main.go:7:25: invalid operation: p1.Name == 5 (mismatched types untyped string and untyped int)
+        > go list -export -e -f '{{.ImportPath}} -- {{.Incomplete}} -- {{.Error}}' ./...
+        [stdout]
+        example.com/p1 -- false -- <nil>
+        example.com/p2 -- true -- # example.com/p2
+        p2/main.go:7:25: invalid operation: p1.Name == 5 (mismatched types untyped string and untyped int)
+        > stdout 'example.com/p1 -- false -- <nil>'
+        matched: example.com/p1 -- false -- <nil>
+        > stdout 'example.com/p2 -- true -- # example.com/p2'
+        matched: example.com/p2 -- true -- # example.com/p2
+        > go list -e -export -json=Error ./...
+        [stdout]
+        {}
+        {
+        	"Error": {
+        		"ImportStack": [],
+        		"Pos": "",
+        		"Err": "# example.com/p2\np2/main.go:7:25: invalid operation: p1.Name == 5 (mismatched types untyped string and untyped int)\n"
+        	}
+        }
+        > stdout '"Err": "# example.com/p2'
+        matched: 		"Err": "# example.com/p2\np2/main.go:7:25: invalid operation: p1.Name == 5 (mismatched types untyped string and untyped int)\n"
+--- PASS: TestScript (0.16s)
+    --- PASS: TestScript/list_export_e (1.24s)
+PASS

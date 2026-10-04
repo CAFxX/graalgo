@@ -1,0 +1,31 @@
+=== 2026-10-03T06:25:06.52981004Z pid=48707 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/gopath/src/m" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:25:06.592782383Z pid=48714 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/gopath/src/m" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:25:06.825659273Z pid=48728 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/link importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/gopath/src/m" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:25:06.990759149Z pid=48742 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/gopath/src/m" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:25:07.030223273Z pid=48749 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/gopath/src/m" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:25:07.143022612Z pid=48757 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="example.com" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/gopath/src/m" argc=20
+  argv[0]="-o"
+  argv[1]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/tmp/go-build1763116185/b001/_pkg_.a"
+  argv[2]="-trimpath"
+  argv[3]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/tmp/go-build1763116185/b001=>"
+  argv[4]="-p"
+  argv[5]="main"
+  argv[6]="-lang=go1.16"
+  argv[7]="-complete"
+  argv[8]="-buildid"
+  argv[9]="3ohTXOPrI4HPW3C0AQn3/3ohTXOPrI4HPW3C0AQn3"
+  argv[10]="-goversion"
+  argv[11]="go1.27.1"
+  argv[12]="-c=2"
+  argv[13]="-c"
+  argv[14]="0"
+  argv[15]="-nolocalimports"
+  argv[16]="-importcfg"
+  argv[17]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/tmp/go-build1763116185/b001/importcfg"
+  argv[18]="-pack"
+  argv[19]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1164846842/tmpdir1186084652/build_gcflags_order1426181567/gopath/src/m/main.go"

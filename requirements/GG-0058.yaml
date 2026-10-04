@@ -1,0 +1,11 @@
+id: GG-0058
+title: MM-0017 gate on FFI
+statement: 'momo''s MM-0017 verifier ban on C interop SHALL gate graalgo''s Panama FFI path: module code SHALL NOT reach the FFI boundary.'
+rationale: C code defeats generation-relative addressing and tagging, same as cgo.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Verifier test with FFI attempt in module code -> rejected.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

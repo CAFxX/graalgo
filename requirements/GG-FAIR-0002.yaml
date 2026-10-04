@@ -1,0 +1,12 @@
+id: GG-FAIR-0002
+title: Per-hop overhead budget
+statement: 'Mean per park/resume hop overhead SHALL be at most 1% of the configured quantum.'
+rationale: 'Spike 2b F4: mean 27-41us/hop across runs on the contended 2-vCPU VM (2.7-4.1% at 1ms, over budget), p50 5-10us (at/under); 10ms quanta measured 29.9us mean = 0.30% in the 2026-10-03 rework battery (was 0.27% [ESTIMATE]); 38us cold-drainer wakeup unexplained on the 2-vCPU VM (suspected host wakeup latency).'
+parent: "GG-0048"
+status: locked
+superseded_by: ""
+verification_plan: Spike 2b F4; Phase-2 overhead re-measurement on server hardware (re-test trigger).
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: statement reduced to the bound; numbers moved to rationale; 0.30% measured replaces 0.27% [ESTIMATE] (R1 P1-9)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

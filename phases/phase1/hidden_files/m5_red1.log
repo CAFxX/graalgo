@@ -1,0 +1,43 @@
+# M5 red run 1 — PanicCorpusTest written before fixes, `make test` 2026-10-04 ~08:35 UTC
+# (captured from the Runner output; tree state: worker-F M5 machinery + my new
+# test, before the trailer/DeferChain/-Xss fixes below).
+#
+# 21 tests: 6 PASS, 15 FAIL. Failure taxonomy:
+#   (T) test/corpus-doc bug — // panic: trailer missed the "panic: " prefix
+#   (D) real divergence vs gc — implementation fix needed
+#
+# PASS PanicCorpusTest.testCorpusHasEnoughPrograms
+# PASS PanicCorpusTest.testPn01DeferLifo
+# PASS PanicCorpusTest.testPn02DeferArgsEarly
+# PASS PanicCorpusTest.testPn03DeferNamedResults
+# PASS PanicCorpusTest.testPn06PanicNil
+# PASS PanicCorpusTest.testPn20PanicSliceValue
+#
+# FAIL (T) testPn04PanicString: // panic: trailer <boom> does not match gc's first stderr line <panic: boom>
+# FAIL (D) testPn05PanicValues: NullPointerException: Cannot invoke "MaterializedFrame.setLong(int, long)" because "<local2>" is null
+#        — deferred funclit capturing outer vars gets a null closure frame at invoke time
+# FAIL (D) testPn07RecoverStops: pn07_recover_stops.stage (INT64): gc=<7123> graalgo=<712>
+#        — DeferChain.unwindPanicking returned immediately on recovery, dropping the remaining defers
+# FAIL (D) testPn08RecoverOutsideDefer: NullPointerException: Cannot invoke "MaterializedFrame.setBoolean(int, boolean)" because "<local2>" is null
+#        — same closure-frame root cause as pn05
+# FAIL (D) testPn09NestedPanic: pn09_nested_panic.log (INT64): gc=<321> graalgo=<32>
+#        — same remaining-defers-after-recovery root cause as pn07
+# FAIL (D) testPn10Goexit: header block differs: graalgo stderr contains "DEBUG FuncLitNode captures=true closureFrame=true" (leftover debug print)
+# FAIL (D) testPn11GoexitNotRecoverable: same DEBUG print on stderr
+# FAIL (D) testPn12DeepRecursion: java.lang.StackOverflowError
+#        — 10000 nested calls unwind through Truffle's exception profiling on the default thread stack
+# FAIL (D) testPn13DeferStorm: NullPointerException: Cannot invoke "GoKind.isIntKind()" because "<parameter2>" is null
+#        at ConvertNode.checkCombo <- NodeFactory.maybeConvert:593 <- buildAssign:1368 (op-assign on captured var)
+# FAIL (T) testPn14OobIndex: trailer <runtime error: index out of range [5] with length 3> vs gc <panic: runtime error: index out of range [5] with length 3>
+# FAIL (T) testPn15SliceBounds: trailer <runtime error: slice bounds out of range [:10] with capacity 3> vs gc <panic: runtime error: slice bounds out of range [:10] with capacity 3>
+# FAIL (T) testPn16NilMapWrite: trailer <assignment to entry in nil map> vs gc <panic: assignment to entry in nil map>
+# FAIL (T) testPn17TypeAssert: trailer <interface conversion: interface {} is string, not int> vs gc <panic: interface conversion: interface {} is string, not int>
+# FAIL (T) testPn18NilDeref: trailer <runtime error: invalid memory address or nil pointer dereference> vs gc <panic: runtime error: invalid memory address or nil pointer dereference>
+# FAIL (T) testPn19DivZero: trailer <runtime error: integer divide by zero> vs gc <panic: runtime error: integer divide by zero>
+#
+# Fixes applied after this run (green run follows):
+#   (T) corpus trailers pn04/pn14-pn19 given the full "panic: ..." first line.
+#   (D) DeferChain.unwindPanicking: after recovery, remaining defers still run (recover() -> nil for them).
+#   (D) -Xss32m in Makefile JAVA_FLAGS + graalgo-run (measured: pn12 needs ~13-16m; 10000 levels).
+# Open at red time (another worker actively editing NodeFactory.java/FuncLitNode.java):
+#   pn05/pn08 closure-frame NPE, pn10/pn11 DEBUG print, pn13 maybeConvert NPE.

@@ -1,0 +1,11 @@
+Building Go cmd/dist using /home/hatch/tools/go. (go1.27.1 linux/amd64)
+Building Go toolchain1 using /home/hatch/tools/go.
+Building Go bootstrap cmd/go (go_bootstrap) using Go toolchain1.
+Building Go toolchain2 using go_bootstrap and Go toolchain1.
+Building Go toolchain3 using go_bootstrap and Go toolchain2.
+Building packages and commands for linux/amd64.
+---
+Installed Go for linux/amd64 in /home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go
+Installed commands in /home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/bin
+*** You need to add /home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/bin to your PATH.
+EXIT=0

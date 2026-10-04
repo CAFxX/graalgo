@@ -1,0 +1,127 @@
+mkdir -p out/classes
+/home/hatch/tools/graalvm-jdk-25/bin/javac -version
+javac 25.0.4
+/home/hatch/tools/graalvm-jdk-25/bin/javac -Xlint:deprecation -Werror -cp "lib/collections-25.0.4.1.1.jar:lib/graal-sdk-25.0.4.1.1.jar:lib/nativeimage-25.0.4.1.1.jar:lib/polyglot-25.0.4.1.1.jar:lib/truffle-api-25.0.4.1.1.jar:lib/truffle-dsl-processor-25.0.4.1.1.jar:lib/truffle-runtime-25.0.4.1.1.jar" -processorpath "lib/collections-25.0.4.1.1.jar:lib/graal-sdk-25.0.4.1.1.jar:lib/nativeimage-25.0.4.1.1.jar:lib/polyglot-25.0.4.1.1.jar:lib/truffle-api-25.0.4.1.1.jar:lib/truffle-dsl-processor-25.0.4.1.1.jar:lib/truffle-runtime-25.0.4.1.1.jar" -d out/classes src/main/java/graalgo/launcher/Main.java src/main/java/graalgo/launcher/ToolPaths.java src/main/java/graalgo/frontend/Json.java src/main/java/graalgo/frontend/FrontendException.java src/main/java/graalgo/frontend/GoExprNode.java src/main/java/graalgo/frontend/GoStmtNode.java src/main/java/graalgo/frontend/ConstNode.java src/main/java/graalgo/frontend/UnaryOpNode.java src/main/java/graalgo/frontend/VarReadNode.java src/main/java/graalgo/frontend/VarDeclNode.java src/main/java/graalgo/frontend/AssignNode.java src/main/java/graalgo/frontend/IncDecNode.java src/main/java/graalgo/frontend/BlockNode.java src/main/java/graalgo/frontend/ExprStmtNode.java src/main/java/graalgo/frontend/GoReturn.java src/main/java/graalgo/frontend/GoRootNode.java src/main/java/graalgo/frontend/TypeTable.java src/main/java/graalgo/frontend/ReturnNode.java src/main/java/graalgo/frontend/BinaryOpNode.java src/main/java/graalgo/frontend/ConvertNode.java src/main/java/graalgo/frontend/Boxing.java src/main/java/graalgo/frontend/BreakSignal.java src/main/java/graalgo/frontend/ContinueSignal.java src/main/java/graalgo/frontend/FallthroughSignal.java src/main/java/graalgo/frontend/GotoSignal.java src/main/java/graalgo/frontend/IfNode.java src/main/java/graalgo/frontend/LabelTarget.java src/main/java/graalgo/frontend/SwitchNode.java src/main/java/graalgo/frontend/TypeSwitchNode.java src/main/java/graalgo/frontend/LabeledStmtNode.java src/main/java/graalgo/frontend/BranchNode.java src/main/java/graalgo/frontend/CompositeLitNode.java src/main/java/graalgo/frontend/MapKeys.java src/main/java/graalgo/frontend/IndexNode.java src/main/java/graalgo/frontend/IndexWriteNode.java src/main/java/graalgo/frontend/IndexOkNode.java src/main/java/graalgo/frontend/SliceExprNode.java src/main/java/graalgo/frontend/SelectorNode.java src/main/java/graalgo/frontend/SelectorWriteNode.java src/main/java/graalgo/frontend/TypeAssertNode.java src/main/java/graalgo/frontend/TypeAssertOkNode.java src/main/java/graalgo/frontend/InterfaceBoxNode.java src/main/java/graalgo/frontend/NilNode.java src/main/java/graalgo/frontend/StructZeroNode.java src/main/java/graalgo/frontend/ForStmtNode.java src/main/java/graalgo/frontend/GoLoopNode.java src/main/java/graalgo/frontend/ForRepeatingNode.java src/main/java/graalgo/frontend/RangeSliceNode.java src/main/java/graalgo/frontend/RangeArrayNode.java src/main/java/graalgo/frontend/RangeStringNode.java src/main/java/graalgo/frontend/RangeMapNode.java src/main/java/graalgo/frontend/RangeStmtNode.java src/main/java/graalgo/frontend/NodeFactory.java src/main/java/graalgo/frontend/GoTypeStrings.java src/main/java/graalgo/frontend/PanicBuiltinNode.java src/main/java/graalgo/frontend/RecoverBuiltinNode.java src/main/java/graalgo/frontend/GoexitCallNode.java src/main/java/graalgo/frontend/DeferNode.java src/main/java/graalgo/frontend/FuncLitNode.java src/main/java/graalgo/frontend/LenNode.java src/main/java/graalgo/frontend/CapNode.java src/main/java/graalgo/frontend/GoFuncRootNode.java src/main/java/graalgo/frontend/MakeNode.java src/main/java/graalgo/frontend/NewNode.java src/main/java/graalgo/frontend/AppendNode.java src/main/java/graalgo/frontend/FuncValueCallNode.java src/main/java/graalgo/frontend/CopyNode.java src/main/java/graalgo/frontend/DeleteNode.java src/main/java/graalgo/frontend/CapReadNode.java src/main/java/graalgo/frontend/CapWriteNode.java src/main/java/graalgo/frontend/ComplexNode.java src/main/java/graalgo/frontend/PrintNode.java src/main/java/graalgo/frontend/PanicNode.java src/main/java/graalgo/frontend/FmtCallNode.java src/main/java/graalgo/frontend/CapIncDecNode.java src/main/java/graalgo/values/GoKind.java src/main/java/graalgo/values/GoString.java src/main/java/graalgo/values/GoSlice.java src/main/java/graalgo/values/GoEquality.java src/main/java/graalgo/values/GoMap.java src/main/java/graalgo/values/GoStructDescriptor.java src/main/java/graalgo/values/GoStruct.java src/main/java/graalgo/values/GoInterface.java src/main/java/graalgo/values/GoFunc.java src/main/java/graalgo/values/UnsafeHandles.java src/main/java/graalgo/values/InterfaceDispatchProbes.java src/main/java/graalgo/values/GoConvert.java src/main/java/graalgo/values/GoTypeDescriptor.java src/main/java/graalgo/values/GoPointer.java src/main/java/graalgo/values/GoComplex32.java src/main/java/graalgo/values/GoComplex64.java src/main/java/graalgo/runtime/Runtime.java src/main/java/graalgo/runtime/Panic.java src/main/java/graalgo/runtime/Intrinsics.java src/main/java/graalgo/runtime/GoFloatFmt.java src/main/java/graalgo/runtime/BuiltinPrint.java src/main/java/graalgo/runtime/GoIsPrint.java src/main/java/graalgo/runtime/GoQuote.java src/main/java/graalgo/runtime/Fmt.java src/main/java/graalgo/runtime/Atomics.java src/main/java/graalgo/runtime/Timers.java src/main/java/graalgo/runtime/Scheduler.java src/main/java/graalgo/runtime/Netpoll.java src/main/java/graalgo/runtime/ChanOps.java src/main/java/graalgo/runtime/DeferredCall.java src/main/java/graalgo/runtime/GoStackFrame.java src/main/java/graalgo/runtime/GoroutineState.java src/main/java/graalgo/runtime/DeferChain.java src/main/java/graalgo/runtime/GoErrorValue.java src/main/java/graalgo/runtime/PanicNilError.java src/main/java/graalgo/runtime/PanicException.java src/main/java/graalgo/runtime/Goexit.java src/main/java/graalgo/runtime/PanicRendering.java src/main/java/graalgo/runtime/GoCalls.java src/main/java/graalgo/runtime/GoErrors.java src/main/java/graalgo/safepoint/Safepoint.java
+touch out/classes/.built
+mkdir -p out/test-classes
+/home/hatch/tools/graalvm-jdk-25/bin/javac -Xlint:deprecation -Werror -cp "out/classes:lib/collections-25.0.4.1.1.jar:lib/graal-sdk-25.0.4.1.1.jar:lib/nativeimage-25.0.4.1.1.jar:lib/polyglot-25.0.4.1.1.jar:lib/truffle-api-25.0.4.1.1.jar:lib/truffle-dsl-processor-25.0.4.1.1.jar:lib/truffle-runtime-25.0.4.1.1.jar" -d out/test-classes src/test/java/graalgo/launcher/MainTest.java src/test/java/graalgo/test/Runner.java src/test/java/graalgo/frontend/StraightLineCorpusTest.java src/test/java/graalgo/frontend/ArithmeticCorpusTest.java src/test/java/graalgo/frontend/ControlFlowCorpusTest.java src/test/java/graalgo/frontend/CompositeCorpusTest.java src/test/java/graalgo/frontend/PanicCorpusTest.java src/test/java/graalgo/values/ValuesTest.java src/test/java/graalgo/runtime/FmtVerbMatrixTest.java src/test/java/graalgo/runtime/FreezeSignatureTest.java
+touch out/test-classes/.built
+/home/hatch/tools/graalvm-jdk-25/bin/java --enable-native-access=ALL-UNNAMED -Xss32m -cp "out/test-classes:out/classes:lib/collections-25.0.4.1.1.jar:lib/graal-sdk-25.0.4.1.1.jar:lib/nativeimage-25.0.4.1.1.jar:lib/polyglot-25.0.4.1.1.jar:lib/truffle-api-25.0.4.1.1.jar:lib/truffle-dsl-processor-25.0.4.1.1.jar:lib/truffle-runtime-25.0.4.1.1.jar" graalgo.test.Runner
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.oracle.truffle.runtime.hotspot.HotSpotTruffleRuntime (file:/home/hatch/workspace/graalgo/phases/phase1/lib/truffle-runtime-25.0.4.1.1.jar)
+WARNING: Please consider reporting this to the maintainers of class com.oracle.truffle.runtime.hotspot.HotSpotTruffleRuntime
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+PASS MainTest.testCheckAcceptsStraightLine
+PASS MainTest.testCheckRejectsTypeError
+PASS MainTest.testCheckRejectsScopeError
+PASS MainTest.testCheckRejectsSyntaxError
+PASS MainTest.testRunExecutesStraightLine
+PASS MainTest.testRunIsSilent
+PASS MainTest.testMissingFile
+usage: graalgo-run [--check] [--dump-vars] file.go
+       graalgo-run --help
+  --check      frontend only (diffharness build step)
+  --dump-vars  after executing, print name=value per frame slot (debug aid)
+PASS MainTest.testUnknownFlag
+usage: graalgo-run [--check] [--dump-vars] file.go
+       graalgo-run --help
+  --check      frontend only (diffharness build step)
+  --dump-vars  after executing, print name=value per frame slot (debug aid)
+PASS MainTest.testNoInputFile
+PASS MainTest.testDumpVars
+PASS StraightLineCorpusTest.testCorpusHasEnoughPrograms
+PASS StraightLineCorpusTest.testSl01Consts
+PASS StraightLineCorpusTest.testSl02Arith
+PASS StraightLineCorpusTest.testSl03Bitwise
+PASS StraightLineCorpusTest.testSl04Shifts
+PASS StraightLineCorpusTest.testSl05IntUint
+PASS StraightLineCorpusTest.testSl06Multiassign
+PASS StraightLineCorpusTest.testSl07Define
+PASS StraightLineCorpusTest.testSl08Incdec
+PASS StraightLineCorpusTest.testSl09Unary
+PASS StraightLineCorpusTest.testSl10Overflow
+PASS StraightLineCorpusTest.testSl11Divmod
+PASS StraightLineCorpusTest.testSl12Earlyreturn
+PASS ArithmeticCorpusTest.testCorpusHasEnoughPrograms
+PASS ArithmeticCorpusTest.testAr01Int8
+PASS ArithmeticCorpusTest.testAr02Int16
+PASS ArithmeticCorpusTest.testAr03Int32
+PASS ArithmeticCorpusTest.testAr04Int64
+PASS ArithmeticCorpusTest.testAr05Uint8
+PASS ArithmeticCorpusTest.testAr06Uint16
+PASS ArithmeticCorpusTest.testAr07Uint32
+PASS ArithmeticCorpusTest.testAr08Uint64
+PASS ArithmeticCorpusTest.testAr09IntUint
+PASS ArithmeticCorpusTest.testAr10Float32
+PASS ArithmeticCorpusTest.testAr11Float64
+PASS ArithmeticCorpusTest.testAr12ConvInt
+PASS ArithmeticCorpusTest.testAr13ConvFloat
+PASS ArithmeticCorpusTest.testAr14ConvString
+PASS ArithmeticCorpusTest.testAr15Compare
+PASS ArithmeticCorpusTest.testAr16BoolLogic
+PASS ArithmeticCorpusTest.testAr17ShiftsWidths
+PASS ControlFlowCorpusTest.testCorpusHasEnoughPrograms
+PASS ControlFlowCorpusTest.testCf01IfElse
+PASS ControlFlowCorpusTest.testCf02For
+PASS ControlFlowCorpusTest.testCf03While
+PASS ControlFlowCorpusTest.testCf04Infinite
+PASS ControlFlowCorpusTest.testCf05Labeled
+PASS ControlFlowCorpusTest.testCf06RangeSlice
+PASS ControlFlowCorpusTest.testCf07RangeArrayString
+PASS ControlFlowCorpusTest.testCf08RangeMap
+PASS ControlFlowCorpusTest.testCf09Switch
+PASS ControlFlowCorpusTest.testCf10TypeSwitch
+PASS ControlFlowCorpusTest.testCf11Goto
+PASS CompositeCorpusTest.testCorpusHasEnoughPrograms
+PASS CompositeCorpusTest.testCo07CommaOk
+PASS CompositeCorpusTest.testCo08Multi
+PASS CompositeCorpusTest.testCo09String
+PASS CompositeCorpusTest.testCo10Assert
+PASS CompositeCorpusTest.testCo01Array
+PASS CompositeCorpusTest.testCo02Slice
+PASS CompositeCorpusTest.testCo03Slice3
+PASS CompositeCorpusTest.testCo04Struct
+PASS CompositeCorpusTest.testCo05Embed
+PASS CompositeCorpusTest.testCo06Map
+PASS PanicCorpusTest.testCorpusHasEnoughPrograms
+PASS PanicCorpusTest.testPn01DeferLifo
+PASS PanicCorpusTest.testPn02DeferArgsEarly
+PASS PanicCorpusTest.testPn03DeferNamedResults
+PASS PanicCorpusTest.testPn04PanicString
+PASS PanicCorpusTest.testPn05PanicValues
+PASS PanicCorpusTest.testPn06PanicNil
+FAIL PanicCorpusTest.testPn07RecoverStops: java.lang.AssertionError: pn07_recover_stops.stage (INT64): gc=<7123> graalgo=<712>
+PASS PanicCorpusTest.testPn08RecoverOutsideDefer
+FAIL PanicCorpusTest.testPn09NestedPanic: java.lang.AssertionError: pn09_nested_panic.log (INT64): gc=<321> graalgo=<32>
+PASS PanicCorpusTest.testPn10Goexit
+PASS PanicCorpusTest.testPn11GoexitNotRecoverable
+PASS PanicCorpusTest.testPn12DeepRecursion
+PASS PanicCorpusTest.testPn13DeferStorm
+FAIL PanicCorpusTest.testPn14OobIndex: java.lang.AssertionError: pn14_oob_index: // panic: trailer <runtime error: index out of range [5] with length 3> does not match gc's first stderr line <panic: runtime error: index out of range [5] with length 3>
+PASS PanicCorpusTest.testPn15SliceBounds
+PASS PanicCorpusTest.testPn16NilMapWrite
+PASS PanicCorpusTest.testPn17TypeAssert
+PASS PanicCorpusTest.testPn18NilDeref
+PASS PanicCorpusTest.testPn19DivZero
+PASS PanicCorpusTest.testPn20PanicSliceValue
+PASS ValuesTest.testGoKindFromBasic
+PASS ValuesTest.testGoKindTransparent
+PASS ValuesTest.testGoStringRune
+PASS ValuesTest.testGoStringCompare
+PASS ValuesTest.testGoMap
+PASS ValuesTest.testGoStruct
+PASS ValuesTest.testGoInterface
+PASS ValuesTest.testUnsafeHandles
+PASS ValuesTest.testGoConvertFloatToInt
+PASS ValuesTest.testGoConvertFloatToIntNarrow
+PASS ValuesTest.testGoConvertIntToFloat
+PASS ValuesTest.testGoConvertIntToString
+PASS ValuesTest.testInterfaceDispatchProbes
+PASS ValuesTest.testGoSlice
+  (fmt matrix: 122 rows, all match gc)
+PASS FmtVerbMatrixTest.testVerbMatrix
+PASS FmtVerbMatrixTest.testAddressErasure
+  (freeze v1: 37 signatures verified)
+PASS FreezeSignatureTest.testFrozenSignatures
+102 tests, 3 failures
+make: *** [Makefile:66: test] Error 1

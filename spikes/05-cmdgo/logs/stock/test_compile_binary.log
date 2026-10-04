@@ -1,0 +1,64 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:44223
+https://vcs-test.golang.org rerouted to https://127.0.0.1:38637
+go test proxy running at GOPROXY=http://127.0.0.1:41685/mod
+=== RUN   TestScript/test_compile_binary
+=== PAUSE TestScript/test_compile_binary
+=== CONT  TestScript/test_compile_binary
+    script_test.go:141: 2026-10-03T06:09:28Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-711520095/tmpdir122289982/test_compile_binary3257400552
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-711520095/tmpdir122289982/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:41685/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-711520095/tmpdir122289982/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:44223
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:38637
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-711520095/vcstest1451146161/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-711520095/tmpdir122289982/test_compile_binary3257400552
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-711520095/tmpdir122289982/test_compile_binary3257400552/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-711520095/tmpdir122289982/test_compile_binary3257400552/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-711520095/tmpdir122289982/test_compile_binary3257400552/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-711520095/tmpdir122289982/test_compile_binary3257400552/gopath/src
+        
+        > env GO111MODULE=off
+        > ! go test -c compile_binary/...
+        [stderr]
+        # compile_binary
+        # [compile_binary]
+        compile_binary/foo_test.go:1:1: misplaced +build comment
+        [exit status 1]
+        > stderr 'build comment'
+        matched: compile_binary/foo_test.go:1:1: misplaced +build comment
+--- PASS: TestScript (0.12s)
+    --- PASS: TestScript/test_compile_binary (2.08s)
+PASS

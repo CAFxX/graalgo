@@ -1,0 +1,7 @@
+=== 2026-10-03T06:38:49.28307971Z pid=89381 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-148221349/tmpdir309156371/vet_internal1853904455/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:49.3008643Z pid=89389 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/vet importpath="" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-148221349/tmpdir309156371/vet_internal1853904455/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T06:38:49.320001128Z pid=89396 tool=/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64/vet importpath="command-line-arguments" cwd="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-148221349/tmpdir309156371/vet_internal1853904455/gopath/src/b" argc=2
+  argv[0]="-json"
+  argv[1]="/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-148221349/tmpdir309156371/vet_internal1853904455/tmp/go-build1460589957/b001/vet.cfg"

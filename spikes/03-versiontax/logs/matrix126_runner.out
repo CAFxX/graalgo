@@ -1,0 +1,35 @@
+=== 1.26 matrix run started 2026-10-03T11:25:15Z ===
+scripts: 16 x 2 modes
+skip [stock] toolexec (already recorded)
+skip [stock] list_toolexec_stderr_issue22588 (already recorded)
+skip [stock] build_dash_x (already recorded)
+2026-10-03T11:26:41Z [stock] build_pgo pass=true rc=0 1791026801s>86s
+2026-10-03T11:26:43Z [stock] build_cgo_error pass=true rc=0 1791026803s>2s
+2026-10-03T11:26:44Z [stock] build_dash_n_cgo pass=true rc=0 1791026804s>1s
+2026-10-03T11:26:45Z [stock] run_hello pass=true rc=0 1791026805s>1s
+2026-10-03T11:27:30Z [stock] test_json pass=true rc=0 1791026850s>45s
+2026-10-03T11:29:19Z [stock] test_vet pass=true rc=0 1791026959s>109s
+2026-10-03T11:30:21Z [stock] test_cache_coverpkg_bug pass=true rc=0 1791027021s>62s
+2026-10-03T11:30:23Z [stock] vet_asm pass=true rc=0 1791027023s>2s
+2026-10-03T11:30:24Z [stock] list_export_e pass=true rc=0 1791027024s>1s
+2026-10-03T11:30:26Z [stock] goflags pass=true rc=0 1791027026s>2s
+2026-10-03T11:30:29Z [stock] cover_cgo pass=true rc=0 1791027029s>3s
+2026-10-03T11:30:31Z [stock] cgo_long_cmd pass=true rc=0 1791027031s>2s
+2026-10-03T11:30:33Z [stock] mod_vendor pass=true rc=0 1791027033s>2s
+2026-10-03T11:31:40Z [wrapped] toolexec pass=true rc=0 1791027100s>67s
+2026-10-03T11:31:40Z [wrapped] list_toolexec_stderr_issue22588 pass=true rc=0 1791027100s>0s
+2026-10-03T11:32:31Z [wrapped] build_dash_x pass=true rc=0 1791027151s>51s
+2026-10-03T11:34:06Z [wrapped] build_pgo pass=true rc=0 1791027246s>95s
+2026-10-03T11:34:09Z [wrapped] build_cgo_error pass=true rc=0 1791027249s>3s
+2026-10-03T11:34:09Z [wrapped] build_dash_n_cgo pass=true rc=0 1791027249s>0s
+2026-10-03T11:34:10Z [wrapped] run_hello pass=true rc=0 1791027250s>1s
+2026-10-03T11:34:50Z [wrapped] test_json pass=true rc=0 1791027290s>40s
+2026-10-03T11:37:36Z [wrapped] test_vet pass=true rc=0 1791027456s>166s
+2026-10-03T11:38:48Z [wrapped] test_cache_coverpkg_bug pass=true rc=0 1791027528s>72s
+2026-10-03T11:38:50Z [wrapped] vet_asm pass=true rc=0 1791027530s>2s
+2026-10-03T11:38:52Z [wrapped] list_export_e pass=true rc=0 1791027532s>2s
+2026-10-03T11:38:56Z [wrapped] goflags pass=true rc=0 1791027536s>4s
+2026-10-03T11:39:02Z [wrapped] cover_cgo pass=true rc=0 1791027542s>6s
+2026-10-03T11:39:05Z [wrapped] cgo_long_cmd pass=false rc=1 1791027545s>3s
+2026-10-03T11:39:11Z [wrapped] mod_vendor pass=true rc=0 1791027551s>6s
+=== 1.26 matrix run finished 2026-10-03T11:39:11Z ===

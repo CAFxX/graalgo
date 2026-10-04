@@ -1,0 +1,163 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:36429
+https://vcs-test.golang.org rerouted to https://127.0.0.1:33659
+go test proxy running at GOPROXY=http://127.0.0.1:34363/mod
+=== RUN   TestScript/test_buildvcs
+=== PAUSE TestScript/test_buildvcs
+=== CONT  TestScript/test_buildvcs
+    script_test.go:141: 2026-10-03T06:13:42Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/tmpdir2298920125/test_buildvcs602444953
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/tmpdir2298920125/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:34363/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/tmpdir2298920125/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:36429
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:33659
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/vcstest3866537007/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/tmpdir2298920125/test_buildvcs602444953
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/tmpdir2298920125/test_buildvcs602444953/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/tmpdir2298920125/test_buildvcs602444953/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/tmpdir2298920125/test_buildvcs602444953/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/tmpdir2298920125/test_buildvcs602444953/gopath/src
+        
+        # https://go.dev/issue/51723: 'go test' should not stamp VCS metadata
+        # in the build settings. (It isn't worth the latency hit, given that
+        # test binaries are almost never distributed to users.) (0.032s)
+        > [short] skip
+        [condition not met]
+        > [!git] skip
+        [condition not met]
+        > exec git init
+        [stdout]
+        Initialized empty Git repository in /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1654734038/tmpdir2298920125/test_buildvcs602444953/gopath/src/.git/
+        [stderr]
+        hint: Using 'master' as the name for the initial branch. This default branch name
+        hint: is subject to change. To configure the initial branch name to use in all
+        hint: of your new repositories, which will suppress this warning, call:
+        hint: 
+        hint: 	git config --global init.defaultBranch <name>
+        hint: 
+        hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+        hint: 'development'. The just-created branch can be renamed via this command:
+        hint: 
+        hint: 	git branch -m <name>
+        # The test binaries should not have VCS settings stamped by default.
+        # (The test itself verifies that.) (1.952s)
+        > go test . ./testonly
+        [stdout]
+        ok  	example	0.008s
+        ok  	example/testonly	0.015s
+        # However, setting -buildvcs explicitly should override that and
+        # stamp anyway (https://go.dev/issue/52648). (2.053s)
+        > go test -buildvcs -c -o ./testonly.exe ./testonly
+        > ! exec ./testonly.exe
+        [stdout]
+        --- FAIL: TestDetail (0.00s)
+            main_test.go:16: unexpected VCS setting: vcs.modified=true
+        FAIL
+        [exit status 1]
+        > stdout 'unexpected VCS setting: vcs\.modified=true'
+        matched:     main_test.go:16: unexpected VCS setting: vcs.modified=true
+        # Remove 'git' from $PATH. The test should still build.
+        # This ensures that we aren't loading VCS metadata that
+        # we subsequently throw away. (0.000s)
+        > env PATH=''
+        > env path=''
+        # Compiling the test should not require the VCS tool. (2.516s)
+        > go test -c -o $devnull .
+        # When listing a main package, in general we need its VCS metadata to determine
+        # the .Stale and .StaleReason fields. (0.138s)
+        > ! go list -buildvcs=true .
+        [stderr]
+        go: missing Git command. See https://go.dev/s/gogetcmd
+        error obtaining VCS status: exec: "git": executable file not found in $PATH
+        	Use -buildvcs=false to disable VCS stamping.
+        [exit status 1]
+        > stderr '^go: missing Git command\. See https://go\.dev/s/gogetcmd\nerror obtaining VCS status: .*\n\tUse -buildvcs=false to disable VCS stamping.'
+        matched: go: missing Git command. See https://go.dev/s/gogetcmd
+        error obtaining VCS status: exec: "git": executable file not found in $PATH
+        	Use -buildvcs=false to disable VCS stamping.
+        # Adding the -test flag should be strictly additive — it should not suppress the error. (0.150s)
+        > ! go list -buildvcs=true -test .
+        [stderr]
+        go: missing Git command. See https://go.dev/s/gogetcmd
+        error obtaining VCS status: exec: "git": executable file not found in $PATH
+        	Use -buildvcs=false to disable VCS stamping.
+        [exit status 1]
+        > stderr '^go: missing Git command\. See https://go\.dev/s/gogetcmd\nerror obtaining VCS status: .*\n\tUse -buildvcs=false to disable VCS stamping.'
+        matched: go: missing Git command. See https://go.dev/s/gogetcmd
+        error obtaining VCS status: exec: "git": executable file not found in $PATH
+        	Use -buildvcs=false to disable VCS stamping.
+        # Adding the suggested flag should suppress the error. (0.240s)
+        > go list -test -buildvcs=false .
+        [stdout]
+        example
+        example.test
+        example [example.test]
+        > ! stderr .
+        # Since the ./testonly package doesn't itself produce an actual binary, we shouldn't
+        # invoke a VCS tool to compute a build stamp by default when listing it. (0.335s)
+        > go list ./testonly
+        [stdout]
+        example/testonly
+        > ! stderr .
+        > go list -test ./testonly
+        [stdout]
+        example/testonly
+        example/testonly.test
+        example/testonly [example/testonly.test]
+        > ! stderr .
+        # Again, setting -buildvcs explicitly should force the use of the VCS tool. (0.193s)
+        > ! go list -buildvcs ./testonly
+        [stderr]
+        go: missing Git command. See https://go.dev/s/gogetcmd
+        error obtaining VCS status: exec: "git": executable file not found in $PATH
+        	Use -buildvcs=false to disable VCS stamping.
+        [exit status 1]
+        > stderr '^go: missing Git command\. See https://go\.dev/s/gogetcmd\nerror obtaining VCS status: .*\n\tUse -buildvcs=false to disable VCS stamping.'
+        matched: go: missing Git command. See https://go.dev/s/gogetcmd
+        error obtaining VCS status: exec: "git": executable file not found in $PATH
+        	Use -buildvcs=false to disable VCS stamping.
+        > ! go list -buildvcs -test ./testonly
+        [stderr]
+        go: missing Git command. See https://go.dev/s/gogetcmd
+        error obtaining VCS status: exec: "git": executable file not found in $PATH
+        	Use -buildvcs=false to disable VCS stamping.
+        [exit status 1]
+        > stderr '^go: missing Git command\. See https://go\.dev/s/gogetcmd\nerror obtaining VCS status: .*\n\tUse -buildvcs=false to disable VCS stamping.'
+        matched: go: missing Git command. See https://go.dev/s/gogetcmd
+        error obtaining VCS status: exec: "git": executable file not found in $PATH
+        	Use -buildvcs=false to disable VCS stamping.
+--- PASS: TestScript (0.22s)
+    --- PASS: TestScript/test_buildvcs (7.63s)
+PASS

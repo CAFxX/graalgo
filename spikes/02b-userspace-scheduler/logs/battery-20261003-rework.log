@@ -1,0 +1,44 @@
+date=2026-10-03T12:02:37Z
+nproc=2
+ 12:02:37 up  2:38,  0 user,  load average: 8.97, 7.84, 6.40
+java version "25.0.4" 2026-07-21 LTS
+=== o1_q1ms (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+=== o1_q100us (par=2 gmp=2 quantumNs=100000) ===
+exit=0
+=== o1_cap2_par8 (par=8 gmp=2 quantumNs=1000000) ===
+exit=0
+=== o1_q10ms (par=2 gmp=2 quantumNs=10000000) ===
+exit=0
+=== o1_gmp32_par2 (par=2 gmp=32 quantumNs=1000000) ===
+exit=0
+=== o2_chan (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+=== o3_select (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+=== o4_timer (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+=== o5_scale_cap1 (par=2 gmp=1 quantumNs=1000000) ===
+exit=0
+=== o5_scale_cap2 (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+=== quiescence_10k (par=2 gmp=2 quantumNs=100000) ===
+exit=0
+=== overhead (par=2 gmp=2 quantumNs=1000000) ===
+exit=2
+BATTERY: overhead FAILED
+=== overhead_q10ms (par=2 gmp=2 quantumNs=10000000) ===
+exit=0
+=== gomaxprocs_cap1 (par=2 gmp=1 quantumNs=1000000) ===
+exit=0
+=== gomaxprocs_cap2 (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+=== gomaxprocs_mixed (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+=== gomaxprocs_baseline (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+=== capexhaustion (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+=== stress (par=2 gmp=2 quantumNs=1000000) ===
+exit=0
+BATTERY_DONE failed=1

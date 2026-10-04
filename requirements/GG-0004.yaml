@@ -1,0 +1,11 @@
+id: GG-0004
+title: Bounded version tracking
+statement: graalgo SHALL track the most recent Go release via the agent-driven upgrade workflow with P95 <= 200 agent-hours and <= 10 wall-clock days per release; any breach triggers a toil-reduction sprint before the next release.
+rationale: '''Always latest'' is only credible bounded; the bound is the enforcement mechanism.'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Toil accounting in every upgrade report; bounds checked mechanically.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

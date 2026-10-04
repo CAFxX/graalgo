@@ -1,0 +1,65 @@
+bool                                     gc(size=  1 align=1) mine(size=  1 align=1) OK
+int8                                     gc(size=  1 align=1) mine(size=  1 align=1) OK
+int64                                    gc(size=  8 align=8) mine(size=  8 align=8) OK
+uint32                                   gc(size=  4 align=4) mine(size=  4 align=4) OK
+uintptr                                  gc(size=  8 align=8) mine(size=  8 align=8) OK
+float32                                  gc(size=  4 align=4) mine(size=  4 align=4) OK
+complex128                               gc(size= 16 align=8) mine(size= 16 align=8) OK
+string                                   gc(size= 16 align=8) mine(size= 16 align=8) OK
+[]uint8                                  gc(size= 24 align=8) mine(size= 24 align=8) OK
+map[string]int                           gc(size=  8 align=8) mine(size=  8 align=8) OK
+chan int                                 gc(size=  8 align=8) mine(size=  8 align=8) OK
+func()                                   gc(size=  8 align=8) mine(size=  8 align=8) OK
+*int                                     gc(size=  8 align=8) mine(size=  8 align=8) OK
+interface {}                             gc(size= 16 align=8) mine(size= 16 align=8) OK
+[0]int                                   gc(size=  0 align=8) mine(size=  0 align=8) OK
+[4]int32                                 gc(size= 16 align=4) mine(size= 16 align=4) OK
+[3][2]int16                              gc(size= 12 align=2) mine(size= 12 align=2) OK
+[5]struct {}                             gc(size=  0 align=1) mine(size=  0 align=1) OK
+[2][0]int                                gc(size=  0 align=8) mine(size=  0 align=8) OK
+[1000]uint8                              gc(size=1000 align=1) mine(size=1000 align=1) OK
+main.tEmpty                              gc(size=  0 align=1) mine(size=  0 align=1) OK
+main.tPad1                               gc(size= 24 align=8) mine(size= 24 align=8) OK
+    .a                        gc(off=  0) mine(off=  0) OK
+    .b                        gc(off=  8) mine(off=  8) OK
+    .c                        gc(off= 16) mine(off= 16) OK
+main.tPad2                               gc(size= 16 align=8) mine(size= 16 align=8) OK
+    .a                        gc(off=  0) mine(off=  0) OK
+    .b                        gc(off=  8) mine(off=  8) OK
+main.tNested                             gc(size= 48 align=8) mine(size= 48 align=8) OK
+    .a                        gc(off=  0) mine(off=  0) OK
+    .b                        gc(off= 24) mine(off= 24) OK
+    .c                        gc(off= 32) mine(off= 32) OK
+main.tEmbed                              gc(size= 32 align=8) mine(size= 32 align=8) OK
+    .tPad1                    gc(off=  0) mine(off=  0) OK
+    .x                        gc(off= 24) mine(off= 24) OK
+main.tTrailZero                          gc(size=  5 align=1) mine(size=  5 align=1) OK
+    .a                        gc(off=  0) mine(off=  0) OK
+    .z                        gc(off=  4) mine(off=  4) OK
+main.tTrailZeroAlign8                    gc(size= 16 align=8) mine(size= 16 align=8) OK
+    .a                        gc(off=  0) mine(off=  0) OK
+    .z                        gc(off=  8) mine(off=  8) OK
+main.tLeadZero                           gc(size=  8 align=8) mine(size=  8 align=8) OK
+    .z                        gc(off=  0) mine(off=  0) OK
+    .a                        gc(off=  0) mine(off=  0) OK
+main.tAllZero                            gc(size=  0 align=8) mine(size=  0 align=8) OK
+    .a                        gc(off=  0) mine(off=  0) OK
+    .b                        gc(off=  0) mine(off=  0) OK
+    .c                        gc(off=  0) mine(off=  0) OK
+main.tHeaders                            gc(size=112 align=8) mine(size=112 align=8) OK
+    .s                        gc(off=  0) mine(off=  0) OK
+    .sl                       gc(off= 16) mine(off= 16) OK
+    .m                        gc(off= 40) mine(off= 40) OK
+    .ch                       gc(off= 48) mine(off= 48) OK
+    .f                        gc(off= 56) mine(off= 56) OK
+    .p                        gc(off= 64) mine(off= 64) OK
+    .u                        gc(off= 72) mine(off= 72) OK
+    .i                        gc(off= 80) mine(off= 80) OK
+    .e                        gc(off= 96) mine(off= 96) OK
+main.tAtomic                             gc(size= 16 align=8) mine(size= 16 align=8) OK
+    .i                        gc(off=  0) mine(off=  0) OK
+    .x                        gc(off=  8) mine(off=  8) OK
+main.tRec                                gc(size= 16 align=8) mine(size= 16 align=8) OK
+    .next                     gc(off=  0) mine(off=  0) OK
+    .v                        gc(off=  8) mine(off=  8) OK
+types=32 mismatches=0

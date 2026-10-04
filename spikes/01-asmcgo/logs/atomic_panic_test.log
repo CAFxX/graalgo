@@ -1,0 +1,4 @@
+=== RUN   TestPanicReleasesLock
+--- PASS: TestPanicReleasesLock (0.00s)
+PASS
+ok  	spike01/atomic	0.017s

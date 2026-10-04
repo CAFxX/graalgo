@@ -1,0 +1,16 @@
+toolexec
+list_toolexec_stderr_issue22588
+build_dash_x
+build_pgo
+build_cgo_error
+build_dash_n_cgo
+run_hello
+test_json
+test_vet
+test_cache_coverpkg_bug
+vet_asm
+list_export_e
+goflags
+cover_cgo
+cgo_long_cmd
+mod_vendor

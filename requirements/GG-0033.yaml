@@ -1,0 +1,13 @@
+id: GG-0033
+title: Versioned exclusion list
+statement: Backend-specific test exclusions SHALL live in a versioned, reason-coded list (backend-specific / unspecified-behavior / deferred-parity); the list SHALL grow only through per-release review; a shrinking list is the health metric.
+rationale: Exclusions are expected; silent growth is how toil becomes unbounded.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Exclusion-list diff reviewed every upgrade; growth cap enforced.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

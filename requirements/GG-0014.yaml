@@ -1,0 +1,14 @@
+id: GG-0014
+title: One Truffle AST
+statement: One Truffle AST built from go/ast+go/types SHALL feed all three execution modes; there SHALL be no second backend.
+rationale: The central complexity-control decision of the architecture.
+parent: ""
+status: active
+superseded_by: ""
+verification_plan: Architecture review plus packaging audit per mode.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'
+    - '2026-10-04: activated (implementation started)'

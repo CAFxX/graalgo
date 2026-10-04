@@ -1,0 +1,11 @@
+id: GG-0001
+title: Drop-in CLI surface
+statement: 'graalgo SHALL present the same command-line interface as the stock `go` of the tracked release for all 19 commands: identical command set, flag surfaces, help output, and exit codes (0/1/2), such that `alias go=graalgo` is behaviorally indistinguishable at the CLI.'
+rationale: The drop-in requirement is decided at the CLI boundary; everything else is implementation detail.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Run the 929 txtar driver scripts plus a CLI-surface diff (flagdiff on --help snapshots) against stock go; zero unexplained diffs.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

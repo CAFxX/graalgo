@@ -1,0 +1,13 @@
+id: GG-0047
+title: Sulong decision rule
+statement: The Sulong-vs-direct-AST fork SHALL be decided by the Phase-0 scored spike verdict; the default is the direct Truffle AST [PROPOSAL]; if Sulong wins and the direct-AST estimate doubles, the program replans (not necessarily stops).
+rationale: 'Closes Phase-0 question 1 honestly: the spike decides, the spec names the decider.'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Spike 6 verdict + reproduction.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

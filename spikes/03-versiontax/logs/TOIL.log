@@ -1,0 +1,6 @@
+2026-10-03T11:03:58Z
+A asm surface: mechanical done; judgment done (see REPORT draft)
+2026-10-03T11:05:25Z B reflect surface: mechanical done (carryover 300/301, layouts stable 18/18); judgment done (1 line: typelinks->compiledTypelinks, TD-R absorbed)
+2026-10-03T11:06:00Z D go-api surface: mechanical done (1434->1445 decls, 12 additive items); judgment done (all additive, re-vendor absorbs)
+2026-10-03T11:22:36Z E harness corpus: mechanical done (45/45 SAME across boundary); judgment: none needed
+2026-10-03T11:45:26Z CLOSE: matrix 32/32, F8 resolved with 1.26-format wrapper, script_test.go patch reverted+verified, REPORT/run.sh/logs complete

@@ -1,0 +1,25 @@
+# spike 03-versiontax source + input checksums (2026-10-03)
+# 1.26.8 tarball verified against https://go.dev/dl/?mode=json published sha256
+4e39b98e42f946fa05ac8bc5b71877df97dbdb7cbb1a777b541667ad7117fd2e  /tmp/go1.26.8.src.tar.gz
+# extracted tree root:
+src/go1.26.8/go (extracted from go1.26.8.src.tar.gz above)
+# 1.27.1 tree: /home/hatch/tools/go (VERSION: go1.27.1)
+# dry-run tooling:
+8c5ab1c24b893c66b5ab42dc41391ea5b24da5c27ffd4307e28e2b25a23dfeb1  src/asm_inventory.py
+4ac8ea49b39ca40da42548974f6e132d1eeca2a37548f4c27767c64616c75aca  src/asm_diff.py
+34a2413f7621ea1e2844de1ccb8506c8ef68663e552277c3ef67b2bea3dba684  src/reflect_inventory.py
+c248affbbf3316592ed1281e19816bcc8a562e0bc8525dc100c5376f992ecd96  src/reflect_carryover.py
+0c73eaaa8d69aff4c52a0cf13ecd5873aad283cf528aa983a2a0555963236c5d  src/layout_extract.py
+1a99b7cd6ea093ba0adb27e6bb382416ce78ae4ffacb737ef48cf3de8cf56a2f  src/api_dump.go
+36e5e44481d3a704e4639d8b1cb04358c90e28657646b207106a4385f90e4584  run_matrix126.sh
+e94ef8b1193e522a8e7318de8172dff0cf4705cd8dbf26929ce821f10423cbbf  logs/backends126.json
+bc42849b0658f5a0d120ecc469e812c47cb743680f9a5d66a4c027ae7975833e  logs/matrix126_sample.txt
+# borrowed (not modified): ../05-cmdgo/bin/toolexec-log (spike-05 v4 wrapper)
+67d5d918d92830228836fe11f1118d6b4a9fc208aa7248cb0a5eac50b7d180db  ../05-cmdgo/bin/toolexec-log
+# borrowed scripts (not modified): ../04-reflect/src_archive/linkname_diff.py ../04-reflect/src_archive/categorize.py
+a0dbab4d9b70afe3b060af8b84a15de6c778c220a2347c259495055f476a91d7  ../04-reflect/src_archive/linkname_diff.py
+7195faf8370065af4ccd56bb9cd5c678b6309e2afb4d070018029a21e75dd9fa  ../04-reflect/src_archive/categorize.py
+318aba41c3039bee1ce56e7d6d0c5f131d8f9a3a7028bea0da0aa691ee7f8afc  run.sh
+5a56c1c6239831559f7a3d157869c0d68f0a37ab3a6cf480318d82b91f031397  src/toolexec-126/main.go
+8341a29fa8f1aa28faff33ed6de7b0e6b64246a189e5c1593a200b5e1cbce2a5  bin/named126/compile
+c931df5c579ba68ebaf6e396c0e70e222a877189bdcf4a9aaf740d9bebf46d3c  run_matrix126.sh

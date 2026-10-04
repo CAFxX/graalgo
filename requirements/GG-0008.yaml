@@ -1,0 +1,11 @@
+id: GG-0008
+title: Modern JVM integration
+statement: graalgo SHALL integrate virtual threads (goroutines), async I/O, GraalVM isolates, and JVM-grade observability (JFR events, heap dumps, VisualVM in JIT mode).
+rationale: Program requirement (5).
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: 'Per-area conformance: JFR event flow, isolate lifecycle, virtual-thread mapping.'
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

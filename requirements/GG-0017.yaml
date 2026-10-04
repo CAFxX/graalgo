@@ -1,0 +1,14 @@
+id: GG-0017
+title: Goroutines on virtual threads with user-space scheduler
+statement: 'Each goroutine SHALL map 1:1 to a Java virtual thread plus a scheduler token; the Truffle AST SHALL insert Safepoint.poll() at loop back-edges and function entries for quantum-based preemption (indefinite park + resume token on expiry); the Loom ForkJoinPool SHALL be treated as an untrusted thread pool with no scheduling discipline assumed; GOMAXPROCS SHALL map to the scheduler in-flight cap.'
+rationale: 'Spike 2 (yield-to-FJP) falsified FJP fairness; spike 2b validated the user-space scheduler (option C).'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: 'Spike 2b F1-F6; Phase-2 preemption-torture re-run on the production path; pinning audit.'
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: revised for option C (spike 2b PASS); yield-to-FJP design removed'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

@@ -1,0 +1,13 @@
+id: GG-0037
+title: Generative differential fuzzing
+statement: 'Two fuzzing layers SHALL run: (i) native testing.F differential fuzzing of stdlib functions with identical corpora under gc and graalgo; (ii) program generation across the feature space run through the differential harness; minimized divergences become permanent regressions.'
+rationale: The long-tail semantic-equivalence net.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Soak runs per release; corpus-minimization pipeline test.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# graalgo-run — Phase 1 launcher wrapper.
+#
+# Invoked directly by the diffharness (build: graalgo-run --check {SRC};
+# run: graalgo-run {SRC}). Requires `make main` to have been run first in
+# this directory (out/classes must exist); this script never builds.
+set -euo pipefail
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+CP="$HERE/out/classes"
+for jar in "$HERE"/lib/*.jar; do
+  CP="$CP:$jar"
+done
+exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m \
+  -cp "$CP" graalgo.launcher.Main "$@"
+# -Xss32m: see the Makefile's M5 stance note (guest recursion burns host
+# stack; the panic corpus's 10000-deep unwind needs ~13-16m).

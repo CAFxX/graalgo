@@ -1,0 +1,11 @@
+id: GG-0040
+title: Patch-release light path
+statement: Patch releases SHALL take the light path (re-vendor + re-run oracles) unless the patch notes touch language/driver behavior.
+rationale: Patches are security/bug-fix only; the full runbook would be waste.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Patch-note review record per patch.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

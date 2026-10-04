@@ -1,0 +1,11 @@
+id: GG-0006
+title: Three execution modes
+statement: graalgo SHALL provide three execution modes - (a) pure JIT on HotSpot, (b) pure AOT Native Image, (c) AOT+JIT hybrid - fed by one Truffle AST; modes differ only in packaging, never in a second backend.
+rationale: Requirement (4) as decided; one AST is the central complexity-control decision.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Same test corpus passes on all three modes; AST->mode packaging audit.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

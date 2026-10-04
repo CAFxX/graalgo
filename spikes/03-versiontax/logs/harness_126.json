@@ -1,0 +1,332 @@
+{
+  "generatedAt": "2026-10-03T11:20:50Z",
+  "config": "/home/hatch/workspace/graalgo/spikes/03-versiontax/logs/backends126.json",
+  "backends": [
+    "gc-1.27.1",
+    "gc-1.26.8"
+  ],
+  "skipped": null,
+  "comparisons": [
+    {
+      "program": "01_hello",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "02_arithmetic",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "03_control_flow",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "04_for_range",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "05_slices",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "06_nested_defer",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "07_two_sum",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "08_multiple_assignment",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "09_pipeline",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "10_closures",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "11_methods",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "12_interfaces",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "13_maps_sorted",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "14_goroutines_sum",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "15_select",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "16_defer_panic_recover",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "17_generics",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "18_errors",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "19_sort",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "20_fmt_formats",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "21_pointers",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "22_conversions",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "23_bitwise",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "24_variadic",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "25_recursion",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "26_sync_primitives",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "27_panic_trace",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "28_exit_code",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "29_interface_nil",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "30_type_switch",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "31_string_switch",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "32_defer_args",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "33_recover_reraise",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "34_struct_reflect",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "35_map_zero",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "36_matrix_mult",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "37_utf8",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "38_iota_enum",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "39_named_returns",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "40_method_values",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "41_done_channel",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "42_json",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "43_range_over_func",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "44_copy_builtin",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "45_shadowing",
+      "ref": "gc-1.27.1",
+      "alt": "gc-1.26.8",
+      "same": true,
+      "reasons": null
+    }
+  ],
+  "summary": {
+    "diverged": 0,
+    "same": 45,
+    "skipped": 0,
+    "total": 45
+  }
+}

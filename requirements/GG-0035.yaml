@@ -1,0 +1,12 @@
+id: GG-0035
+title: API/ABI diff tooling
+statement: The upgrade workflow SHALL use built-once diff tooling - apidiff, go/types signature diff, rtlink (linkname+runtime-import delta), flagdiff, godebug-diff, respdiff (resumption/restart semantic diff on ported code) - producing the scoped per-component work list; the tooling itself SHALL carry red-green evidence (N-vs-N empty, N-vs-N+1 exact).
+rationale: 'The toil-reduction engine: the diff tells the agent where to look.'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Tooling self-tests; work-list completeness audit on a past release.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: statement gains respdiff per R2 P1-3 (ID kept; consistency audit E7)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

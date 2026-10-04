@@ -1,0 +1,54 @@
+=== 2026-10-03T11:42:21.624473861Z pid=75071 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T11:42:21.782224118Z pid=75083 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T11:42:22.552766665Z pid=75099 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/compile importpath="command-line-arguments" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=19
+  argv[0]="-o"
+  argv[1]="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/tmp/go-build2377611503/b001/_pkg_.a"
+  argv[2]="-trimpath"
+  argv[3]="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/tmp/go-build2377611503/b001=>"
+  argv[4]="-p"
+  argv[5]="main"
+  argv[6]="-lang=go1.26"
+  argv[7]="-complete"
+  argv[8]="-buildid"
+  argv[9]="GuJZjuD1TTGhuRaxQ6oC/GuJZjuD1TTGhuRaxQ6oC"
+  argv[10]="-dwarf=false"
+  argv[11]="-goversion"
+  argv[12]="go1.26.8"
+  argv[13]="-c=2"
+  argv[14]="-nolocalimports"
+  argv[15]="-importcfg"
+  argv[16]="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/tmp/go-build2377611503/b001/importcfg"
+  argv[17]="-pack"
+  argv[18]="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src/generate.go"
+=== 2026-10-03T11:42:22.697821109Z pid=75111 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/link importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T11:42:22.78230847Z pid=75124 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/link importpath="command-line-arguments" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=11
+  argv[0]="-o"
+  argv[1]="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/tmp/go-build2377611503/b001/exe/generate"
+  argv[2]="-importcfg"
+  argv[3]="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/tmp/go-build2377611503/b001/importcfg.link"
+  argv[4]="-s"
+  argv[5]="-w"
+  argv[6]="-X=runtime.godebugDefault=asynctimerchan=1,containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,gotypesalias=0,httpcookiemaxnum=0,httpservecontentkeepheaders=1,multipathtcp=0,randseednop=0,rsa1024min=0,tls3des=1,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509keypairleaf=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509usepolicies=0"
+  argv[7]="-buildmode=exe"
+  argv[8]="-buildid=vcFNoR2L43sZHvS3j22D/GuJZjuD1TTGhuRaxQ6oC/vAvXKbhTOa6I_rCMelOD/vcFNoR2L43sZHvS3j22D"
+  argv[9]="-extld=gcc"
+  argv[10]="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/tmp/go-build2377611503/b001/_pkg_.a"
+=== 2026-10-03T11:42:23.67099757Z pid=75148 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T11:42:23.71835518Z pid=75160 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T11:42:23.848904676Z pid=75174 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/cgo importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T11:42:23.916723733Z pid=75187 tool=gcc importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=5
+  argv[0]="-###"
+  argv[1]="-x"
+  argv[2]="c"
+  argv[3]="-c"
+  argv[4]="-"
+=== 2026-10-03T11:42:24.576056086Z pid=75196 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/cgo importpath="cgolongcmd" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/gopath/src" argc=1
+  [response-file] response file /home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/tmp/args4086665694: 349482 bytes sha256=d6957cc6dd1d0903aca8333c1e7fbf3472186b269626e5ed3e2a532be6cb603d, tool="/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/cgo", 10012 args; rewrote file without tool path, passing @file through
+  raw argv[0]="@/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/tmp/args4086665694"
+  argv[0]=@"/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2253182109/tmpdir2251381564/cgo_long_cmd1078751580/tmp/args4086665694" (response file: 329386 bytes sha256=818880d0111e26e9e34684b13b56a1e4ba603ca4a75f0840bdf95f8ce3cb2cc8)

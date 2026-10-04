@@ -1,0 +1,12 @@
+1c1
+< == Type (src/go1.26.8/go/src/internal/abi/type.go) ==
+---
+> == Type (/home/hatch/tools/go/src/internal/abi/type.go) ==
+13c13
+< == Name (src/go1.26.8/go/src/internal/abi/type.go) ==
+---
+> == Name (/home/hatch/tools/go/src/internal/abi/type.go) ==
+15c15
+< == rtype (src/go1.26.8/go/src/runtime/type.go) ==
+---
+> == rtype (/home/hatch/tools/go/src/runtime/type.go) ==

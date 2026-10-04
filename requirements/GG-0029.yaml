@@ -1,0 +1,13 @@
+id: GG-0029
+title: Four test layers
+statement: 'Upgrades and releases SHALL be gated by four layers in order: (1) fast differential smoke, (2) language conformance corpora, (3) stdlib + cmd/go script suites, (4) generative differential fuzz soak.'
+rationale: Fast-to-slow gating converts semantic risk into mechanical signal.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: CI wiring per phase; each layer demonstrably gates.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

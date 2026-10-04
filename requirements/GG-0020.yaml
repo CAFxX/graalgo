@@ -1,0 +1,14 @@
+id: GG-0020
+title: Intrinsic surface
+statement: The runtime SHALL expose a versioned intrinsic surface of ~60-70 functions (memmove/memequal, makeslice/growslice, map/chan/select ops, itab machinery, panic/defer, scheduler, atomics, timers, fastrand, traceback) plus exact rtype/itab layouts for reflect's unsafe uses.
+rationale: The contract the adapted stdlib builds against; versioned for the upgrade workflow.
+parent: ""
+status: active
+superseded_by: ""
+verification_plan: Intrinsic coverage audit per release; reflect/unsafe suites green.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'
+    - '2026-10-04: activated (implementation started)'

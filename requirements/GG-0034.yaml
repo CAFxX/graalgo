@@ -1,0 +1,13 @@
+id: GG-0034
+title: Mutation-validated oracles
+statement: 'Every oracle layer SHALL be validated by mutation: deliberately break the lowering and confirm the harness goes red; no test SHALL be tautological (red-green evidence required).'
+rationale: A harness never seen failing is not evidence.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Mutation runs recorded per layer.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

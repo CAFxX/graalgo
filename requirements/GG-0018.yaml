@@ -1,0 +1,11 @@
+id: GG-0018
+title: Netpoller deletion
+statement: Go's netpoller event loop SHALL be deleted; the `net` contract SHALL be implemented on virtual-thread-friendly blocking NIO.
+rationale: Closes Phase-0 question 4; this is the Loom value proposition and the lowest-risk path.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Spike 2 runs net/os-signal suites differentially; targeted corpus covers edge-triggered subtleties.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

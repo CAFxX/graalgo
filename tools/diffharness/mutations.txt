@@ -1,0 +1,12 @@
+# Mutation manifest for `diffharness validate`.
+# Each line: <MUTATION-CLASS> <CORPUS-PROGRAM>. Every entry must be DETECTED
+# (harness reports DIVERGE); a MISSED entry fails validation.
+OpSwap 02_arithmetic
+CmpSwap 03_control_flow
+OffByOne 04_for_range
+DropDefer 06_nested_defer
+CondNegate 07_two_sum
+ConstChange 01_hello
+ReturnSwap 08_multiple_assignment
+ChanOp 09_pipeline
+SliceBound 05_slices

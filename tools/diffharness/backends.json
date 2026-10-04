@@ -1,0 +1,65 @@
+{
+  "backends": [
+    {
+      "build": [
+        "{GO}/bin/go",
+        "build",
+        "-o",
+        "{BIN}",
+        "{SRC}"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "GOTOOLCHAIN": "local"
+      },
+      "name": "gc-a",
+      "run": [
+        "{BIN}"
+      ],
+      "vars": {
+        "GO": "${DH_GO}"
+      }
+    },
+    {
+      "build": [
+        "{GO}/bin/go",
+        "build",
+        "-o",
+        "{BIN}",
+        "{SRC}"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "GOTOOLCHAIN": "local"
+      },
+      "name": "gc-b",
+      "run": [
+        "{BIN}"
+      ],
+      "vars": {
+        "GO": "${DH_GO}"
+      }
+    },
+    {
+      "build": [
+        "{GRAALGO_RUN}",
+        "--check",
+        "{SRC}"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "GOTOOLCHAIN": "local"
+      },
+      "name": "graalgo",
+      "run": [
+        "{GRAALGO_RUN}",
+        "{SRC}"
+      ],
+      "vars": {
+        "GRAALGO_RUN": "${PHASE1_DIR}/graalgo-run"
+      }
+    }
+  ],
+  "exclusions": [],
+  "timeoutSec": 15
+}

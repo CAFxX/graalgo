@@ -1,0 +1,121 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:41113
+https://vcs-test.golang.org rerouted to https://127.0.0.1:34421
+go test proxy running at GOPROXY=http://127.0.0.1:40957/mod
+=== RUN   TestScript/test_cache_coverpkg_bug
+=== PAUSE TestScript/test_cache_coverpkg_bug
+=== CONT  TestScript/test_cache_coverpkg_bug
+    script_test.go:141: 2026-10-03T06:35:28Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1191999297/tmpdir3208582410/test_cache_coverpkg_bug2829233520
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1191999297/tmpdir3208582410/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-wrapped
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:40957/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1191999297/tmpdir3208582410/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:41113
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:34421
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1191999297/vcstest4013144524/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        GRAALGO_WRAPPER_LOG=/home/hatch/workspace/graalgo/spikes/05-cmdgo/logs/wraplogs/test_cache_coverpkg_bug.wraplog
+        GOFLAGS=-toolexec=/home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1191999297/tmpdir3208582410/test_cache_coverpkg_bug2829233520
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1191999297/tmpdir3208582410/test_cache_coverpkg_bug2829233520/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1191999297/tmpdir3208582410/test_cache_coverpkg_bug2829233520/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1191999297/tmpdir3208582410/test_cache_coverpkg_bug2829233520/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1191999297/tmpdir3208582410/test_cache_coverpkg_bug2829233520/gopath/src
+        
+        # Test for bug where cached coverage profiles with -coverpkg can contain
+        # outdated line references when source files are modified.
+        # This reproduces the issue where coverage data from cache may reference
+        # lines that no longer exist in the updated source files. (0.000s)
+        > [short] skip
+        [condition not met]
+        > [GODEBUG:gocacheverify=1] skip
+        [condition not met]
+        # We're testing cache behavior, so start with a clean GOCACHE. (0.000s)
+        > env GOCACHE=$WORK/cache
+        # Create a project structure with multiple packages
+        # proj/
+        #   some_func.go
+        #   some_func_test.go
+        #   sub/
+        #     sub.go
+        #     sub_test.go
+        #   sum/
+        #     sum.go
+        # Switch to the proj directory (0.000s)
+        > cd proj
+        # Run tests with -coverpkg to collect coverage for all packages (50.030s)
+        > go test -coverpkg=proj/... -coverprofile=cover1.out ./...
+        [stdout]
+        ok  	proj	0.026s	coverage: 44.4% of statements in proj/...
+        ok  	proj/sub	0.009s	coverage: 22.2% of statements in proj/...
+        	proj/sum		coverage: 0.0% of statements
+        > stdout 'coverage:'
+        matched: ok  	proj	0.026s	coverage: 44.4% of statements in proj/...
+        # Verify the first coverage profile exists and has expected content (0.000s)
+        > exists cover1.out
+        > grep -q 'proj/sub/sub.go:' cover1.out
+        # Run again to ensure caching works (1.618s)
+        > go test -coverpkg=proj/... -coverprofile=cover1_cached.out ./...
+        [stdout]
+        ok  	proj	(cached)	coverage: 44.4% of statements in proj/...
+        ok  	proj/sub	(cached)	coverage: 22.2% of statements in proj/...
+        	proj/sum		coverage: 0.0% of statements
+        > stdout '\(cached\)'
+        matched: ok  	proj	(cached)	coverage: 44.4% of statements in proj/...
+        > stdout 'coverage:'
+        matched: ok  	proj	(cached)	coverage: 44.4% of statements in proj/...
+        # Note: Due to the bug, cached coverage profiles may have duplicate entries.
+        # The duplicate entries are the entries for the previous file structure and the new file structure.
+        # Now modify sub.go to change line structure - this will invalidate
+        # the cache for the sub package but not for the proj package. (0.001s)
+        > cp ../sub_modified.go sub/sub.go
+        # After modifying sub.go, we should not have both old and new line references. (2.282s)
+        > go test -coverpkg=proj/... -coverprofile=cover2.out ./...
+        [stdout]
+        ok  	proj	0.041s	coverage: 44.4% of statements in proj/...
+        ok  	proj/sub	0.014s	coverage: 22.2% of statements in proj/...
+        	proj/sum		coverage: 0.0% of statements
+        > stdout 'coverage:'
+        matched: ok  	proj	0.041s	coverage: 44.4% of statements in proj/...
+        # With the bug present, we would see duplicate entries for the same lines.
+        # With the bug fixed, there should be no duplicate or stale entries in the coverage profile. (0.000s)
+        > grep 'proj/sub/sub.go:' cover2.out
+        matched: proj/sub/sub.go:4.2,4.35 1 0
+        # The fix should ensure that only the new line format exists, not the old one (0.000s)
+        > grep 'proj/sub/sub.go:4.2,4.35' cover2.out
+        matched: proj/sub/sub.go:4.2,4.35 1 0
+        # This should fail if the stale coverage line exists (the bug is present) (0.000s)
+        > ! grep 'proj/sub/sub.go:4.2,4.22' cover2.out
+--- PASS: TestScript (0.05s)
+    --- PASS: TestScript/test_cache_coverpkg_bug (54.10s)
+PASS

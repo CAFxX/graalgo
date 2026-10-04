@@ -1,0 +1,6 @@
+difftest seed=777 cases=3000 go=go1.27.1
+bytealg: 3000 randomized cases x 8 functions, 0 mismatches
+atomic: 1500 randomized 50-op sequences (Xadd/Xchg/Cas/Store/Load/And32/Or32 x u32/u64/uintptr), 0 mismatches
+mem: 3000 randomized cases (Memmove vs copy, Memclr canaries, Memequal vs string==, Memcmp vs bytes.Compare), 0 mismatches
+crypto: 750 AES-128 blocks + 750 SHA-256 digests vs asm-backed stdlib, 0 mismatches
+RESULT: PASS

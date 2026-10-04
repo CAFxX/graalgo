@@ -1,0 +1,122 @@
+%d	int:42	42
+%d	int:-42	-42
+%d	int64:9223372036854775807	9223372036854775807
+%d	int64:-9223372036854775808	-9223372036854775808
+%d	uint64:18446744073709551615	18446744073709551615
+%5d	int:42	   42
+%-5d|	int:42	42   |
+%05d	int:42	00042
+%05d	int:-42	-0042
+%+d	int:42	+42
+% d	int:42	 42
+%x	int:42	2a
+%X	int:42	2A
+%#x	int:42	0x2a
+%#X	int:42	0X2A
+%o	int:42	52
+%#o	int:42	052
+%O	int:42	0o52
+%b	int:42	101010
+%#b	int:42	0b101010
+%.3d	int:42	042
+%8.3d	int:42	     042
+%.0d	int:0	
+%5.0d	int:0	     
+%c	int:65	A
+%c	int32:65	A
+%U	int:65	U+0041
+%#U	int:65	U+0041 'A'
+%U	int:1114112	U+110000
+%q	int:65	'A'
+%v	int:42	42
+%T	int:42	int
+%t	int:42	%!t(int=42)
+%f	float64:1.5	1.500000
+%.2f	float64:3.14159	3.14
+%9.2f	float64:3.14159	     3.14
+%09.2f	float64:3.14159	000003.14
+%+09.2f	float64:3.14159	+00003.14
+%e	float64:12345.678	1.234568e+04
+%.3e	float64:0.00012345	1.234e-04
+%E	float64:12345.678	1.234568E+04
+%g	float64:1e21	1e+21
+%g	float64:1e-5	1e-05
+%G	float64:12345.678	12345.678
+%#g	float64:1.5	1.50000
+%#.0g	float64:1.5	2.
+%x	float64:1.5	0x1.8p+00
+%b	float64:1.5	6755399441055744p-52
+%v	float64:0.5	0.5
+%v	float64:-0	-0
+%v	float64:Inf	+Inf
+%v	float64:-Inf	-Inf
+%v	float64:NaN	NaN
+%f	float64:Inf	+Inf
+%T	float64:1.5	float64
+%d	float64:1.5	%!d(float64=1.5)
+%s	string:hi	hi
+%q	string:hi	"hi"
+%x	string:hi	6869
+% x	string:hi	68 69
+%#x	string:hi	0x6869
+%v	string:hi	hi
+%T	string:hi	string
+%5s	string:hi	   hi
+%-5s|	string:hi	hi   |
+%.2s	string:hi	hi
+%s	string:héllo	héllo
+%.3s	string:héllo	hél
+%q	string:héllo	"héllo"
+%s	string:a\\nb	a\nb
+%q	string:a\\nb	"a\\nb"
+%d	string:hi	%!d(string=hi)
+%05d	string:hi	%!d(string=000hi)
+%v	bool:true	true
+%t	bool:true	true
+%t	bool:false	false
+%d	bool:true	%!d(bool=true)
+%v	complex128:1+2i	(1+2i)
+%f	complex128:1+2i	(1.000000+2.000000i)
+%g	complex128:1+2i	(1+2i)
+%T	complex128:1+2i	complex128
+%v	complex128:0+0i	(0+0i)
+%v	bytes:6869	[104 105]
+%s	bytes:6869	hi
+%q	bytes:6869	"hi"
+%x	bytes:6869	6869
+% X	bytes:6869	68 69
+%v	ints:1,2,3	[1 2 3]
+%#v	ints:1,2,3	[]int{1, 2, 3}
+%d	ints:1,2,3	[1 2 3]
+%x	ints:1,2,3	[1 2 3]
+%v	bytes:6869	[104 105]
+%#v	bytes:6869	[]byte{0x68, 0x69}
+%v	mapsi:a:1,b:2	map[a:1 b:2]
+%#v	mapsi:a:1,b:2	map[string]int{"a":1, "b":2}
+%v	error:oops	oops
+%s	error:oops	oops
+%q	error:oops	"oops"
+%x	error:oops	6f6f7073
+%T	error:oops	*errors.errorString
+%d	error:oops	&{%!d(string=oops)}
+%w	error:oops 7	%!w(*errors.errorString=&{oops 7})
+%#v	error:oops	&errors.errorString{s:"oops"}
+%U	error:oops	&{%!U(string=oops)}
+%T	ptrint:42	*int
+%v	nil	<nil>
+%T	nil	<nil>
+%s	nil	%!s(<nil>)
+%d	nil	%!d(<nil>)
+%p	nil	%!p(<nil>)
+%[2]d %[1]d	int:1;int:2	2 1
+%[1]d %[1]d	int:7	7 7
+%*d	int:5;int:42	   42
+%.*f	int:2;float64:3.14159	3.14
+%d	int:1;int:2	1%!(EXTRA int=2)
+%d %d	int:1	1 %!d(MISSING)
+%d		%!d(MISSING)
+100%%		100%
+%+08.2f	float64:3.14159	+0003.14
+%-10.2f|	float64:3.14159	3.14      |
+% d	int:42	 42
+%#08x	int:255	0x000000ff

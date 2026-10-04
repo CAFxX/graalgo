@@ -1,0 +1,13 @@
+id: GG-0007
+title: Beyond-gc optimization bar
+statement: Every claimed optimization win SHALL beat gc with PGO on its named falsifying benchmark, or the claim SHALL be struck from the documentation.
+rationale: Keeps the 'beyond gc' pitch honest; gc+PGO is the bar that matters.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Falsifying benchmarks wired as regression gates (Phase 5).
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

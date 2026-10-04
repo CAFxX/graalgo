@@ -1,0 +1,13 @@
+id: GG-0021
+title: Linkname by symbol name
+statement: Linkname compatibility between graalgo-compiled runtime and stdlib SHALL be by symbol name, not gc ABI; a linkname-diff step SHALL scope per-release churn of the ~52+~100 edges.
+rationale: graalgo compiles both sides, so only names must match; the tax is churn, paid via tooling.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: linkname-diff runs in every upgrade Phase 2; skip-list growth <= 15.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

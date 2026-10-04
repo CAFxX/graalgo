@@ -1,0 +1,46 @@
+652a653
+> func go/constantStringLen(Value) int64
+714a716
+> func go/scanner(*Scanner).End() token.Pos
+742a745
+> func go/token(*File).String() string
+911a915
+> func go/types(*TypeList).String() string
+922a927
+> func go/types(*TypeParamList).String() string
+970a976,980
+> func go/types(Hasher).Equal(Type,Type) bool
+> func go/types(Hasher).Hash(*maphash.Hash,Type)
+> func go/types(HasherIgnoreTags).Equal(Type,Type) bool
+> func go/types(HasherIgnoreTags).Hash(*maphash.Hash,Type)
+> func go/types(Instance).String() string
+1773c1783,1785
+< 	stringEnd	token.Pos
+---
+> 
+> 	endPosValid	bool
+> 	endPos		token.Pos
+1891,1892d1902
+< 
+< 	_EnableAlias	bool
+1916d1925
+< 	hasPtrRecv_	bool
+1917a1927,1928
+> 	hasPtrRecv_	bool
+> 	nointerface	bool
+1918a1930,1931
+> type go/types.Hasher struct{}
+> type go/types.HasherIgnoreTags struct{}
+1979,1980c1992
+< 	allowNilRHS		bool
+< 	allowNilUnderlying	bool
+---
+> 	allowNilRHS	bool
+1989c2001
+< 	finite		bool
+---
+> 	varSize		bool
+2062a2075
+> 	recvold		*Var
+2149d2161
+< var go/internal/scannerhooks.StringEnd

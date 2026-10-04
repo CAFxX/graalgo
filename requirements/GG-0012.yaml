@@ -1,0 +1,14 @@
+id: GG-0012
+title: Verbatim frontend vendoring
+statement: graalgo SHALL use `go/parser`+`go/types` vendored verbatim from the tracked Go release as its frontend, re-vendored atomically (frontend + stdlib as one unit) on every release.
+rationale: 'The frontend IS Go''s frontend: language semantics, error messages, -lang gating come free; atomicity avoids the N/N+1 typecheck blocker.'
+parent: ""
+status: active
+superseded_by: ""
+verification_plan: Vendored tree byte-identical to upstream except the recorded patch stack; parser/types suites green.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'
+    - '2026-10-04: activated (implementation started)'

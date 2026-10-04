@@ -1,0 +1,731 @@
+{
+  "generatedAt": "2026-10-03T05:58:22Z",
+  "config": "backends.json",
+  "backends": [
+    "gc-a",
+    "gc-b"
+  ],
+  "greenRun": [
+    {
+      "program": "01_hello",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "02_arithmetic",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "03_control_flow",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "04_for_range",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "05_slices",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "06_nested_defer",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "07_two_sum",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "08_multiple_assignment",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "09_pipeline",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "10_closures",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "11_methods",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "12_interfaces",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "13_maps_sorted",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "14_goroutines_sum",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "15_select",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "16_defer_panic_recover",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "17_generics",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "18_errors",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "19_sort",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "20_fmt_formats",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "21_pointers",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "22_conversions",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "23_bitwise",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "24_variadic",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "25_recursion",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "26_sync_primitives",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "27_panic_trace",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "28_exit_code",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "29_interface_nil",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "30_type_switch",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "31_string_switch",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "32_defer_args",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "33_recover_reraise",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "34_struct_reflect",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "35_map_zero",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "36_matrix_mult",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "37_utf8",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "38_iota_enum",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "39_named_returns",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "40_method_values",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "41_done_channel",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "42_json",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "43_range_over_func",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "44_copy_builtin",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "45_shadowing",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    }
+  ],
+  "rerunControl": [
+    {
+      "program": "01_hello",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "02_arithmetic",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "03_control_flow",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "04_for_range",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "05_slices",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "06_nested_defer",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "07_two_sum",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "08_multiple_assignment",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "09_pipeline",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "10_closures",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "11_methods",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "12_interfaces",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "13_maps_sorted",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "14_goroutines_sum",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "15_select",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "16_defer_panic_recover",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "17_generics",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "18_errors",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "19_sort",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "20_fmt_formats",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "21_pointers",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "22_conversions",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "23_bitwise",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "24_variadic",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "25_recursion",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "26_sync_primitives",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "27_panic_trace",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "28_exit_code",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "29_interface_nil",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "30_type_switch",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "31_string_switch",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "32_defer_args",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "33_recover_reraise",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "34_struct_reflect",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "35_map_zero",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "36_matrix_mult",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "37_utf8",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "38_iota_enum",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "39_named_returns",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "40_method_values",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "41_done_channel",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "42_json",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "43_range_over_func",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "44_copy_builtin",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "45_shadowing",
+      "ref": "gc-a",
+      "alt": "gc-a",
+      "same": true,
+      "reasons": null
+    }
+  ],
+  "mutations": [
+    {
+      "class": "OpSwap",
+      "target": "02_arithmetic",
+      "description": "swapped operator \"+\" -\u003e \"-\" at corpus/02_arithmetic/main.go:7:16",
+      "detected": true,
+      "reasons": [
+        "stdout differs at line 1: ref=\"22\" alt=\"12\""
+      ]
+    },
+    {
+      "class": "CmpSwap",
+      "target": "03_control_flow",
+      "description": "swapped operator \"\u003c\" -\u003e \"\u003c=\" at corpus/03_control_flow/main.go:6:7",
+      "detected": true,
+      "reasons": [
+        "stdout differs at line 2: ref=\"10 medium\" alt=\"10 small\""
+      ]
+    },
+    {
+      "class": "OffByOne",
+      "target": "04_for_range",
+      "description": "off-by-one: int literal 5 -\u003e 6 at corpus/04_for_range/main.go:6:18",
+      "detected": true,
+      "reasons": [
+        "stdout differs at line 1: ref=\"0 1 2 3 4 \" alt=\"0 1 2 3 4 5 \""
+      ]
+    },
+    {
+      "class": "DropDefer",
+      "target": "06_nested_defer",
+      "description": "dropped defer fmt.Println(...) at corpus/06_nested_defer/main.go:6:2",
+      "detected": true,
+      "reasons": [
+        "stdout differs at line 6: ref=\"first\" alt=\"\""
+      ]
+    },
+    {
+      "class": "CondNegate",
+      "target": "07_two_sum",
+      "description": "negated if condition at corpus/07_two_sum/main.go:10:7",
+      "detected": true,
+      "reasons": [
+        "stdout differs at line 1: ref=\"0 1\" alt=\"0 2\""
+      ]
+    },
+    {
+      "class": "ConstChange",
+      "target": "01_hello",
+      "description": "const string \"hello, world\" -\u003e \"hello, world!\" at corpus/01_hello/main.go:5:18",
+      "detected": true,
+      "reasons": [
+        "stdout differs at line 1: ref=\"hello, world\" alt=\"hello, world!\""
+      ]
+    },
+    {
+      "class": "ReturnSwap",
+      "target": "08_multiple_assignment",
+      "description": "swapped first two return values at corpus/08_multiple_assignment/main.go:5:36",
+      "detected": true,
+      "reasons": [
+        "stdout differs at line 1: ref=\"3 2\" alt=\"2 3\""
+      ]
+    },
+    {
+      "class": "ChanOp",
+      "target": "09_pipeline",
+      "description": "channel send -\u003e { _ = \u003cexpr\u003e; \u003c-ch } at corpus/09_pipeline/main.go:11:4",
+      "detected": true,
+      "reasons": [
+        "exit code: ref=0 alt=2",
+        "stdout differs at line 1: ref=\"55\" alt=\"\"",
+        "stderr differs at line 1: ref=\"\" alt=\"fatal error: all goroutines are asleep - deadlock!\""
+      ]
+    },
+    {
+      "class": "SliceBound",
+      "target": "05_slices",
+      "description": "slice high bound -1 at corpus/05_slices/main.go:7:14",
+      "detected": true,
+      "reasons": [
+        "stdout differs at line 1: ref=\"[1 2 3]\" alt=\"[1 2]\""
+      ]
+    }
+  ],
+  "greenDiverged": 0,
+  "rerunDiverged": 0,
+  "mutationsMissed": 0,
+  "pass": true
+}

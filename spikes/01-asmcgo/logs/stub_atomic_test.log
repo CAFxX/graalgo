@@ -1,0 +1,161 @@
+=== RUN   TestSwapInt32
+--- PASS: TestSwapInt32 (0.00s)
+=== RUN   TestSwapInt32Method
+--- PASS: TestSwapInt32Method (0.00s)
+=== RUN   TestSwapUint32
+--- PASS: TestSwapUint32 (0.00s)
+=== RUN   TestSwapUint32Method
+--- PASS: TestSwapUint32Method (0.00s)
+=== RUN   TestSwapInt64
+--- PASS: TestSwapInt64 (0.00s)
+=== RUN   TestSwapInt64Method
+--- PASS: TestSwapInt64Method (0.00s)
+=== RUN   TestSwapUint64
+--- PASS: TestSwapUint64 (0.00s)
+=== RUN   TestSwapUint64Method
+--- PASS: TestSwapUint64Method (0.00s)
+=== RUN   TestSwapUintptr
+--- PASS: TestSwapUintptr (0.00s)
+=== RUN   TestSwapUintptrMethod
+--- PASS: TestSwapUintptrMethod (0.00s)
+=== RUN   TestSwapPointer
+--- PASS: TestSwapPointer (0.00s)
+=== RUN   TestSwapPointerMethod
+--- PASS: TestSwapPointerMethod (0.00s)
+=== RUN   TestAddInt32
+--- PASS: TestAddInt32 (0.00s)
+=== RUN   TestAddInt32Method
+--- PASS: TestAddInt32Method (0.00s)
+=== RUN   TestAddUint32
+--- PASS: TestAddUint32 (0.00s)
+=== RUN   TestAddUint32Method
+--- PASS: TestAddUint32Method (0.00s)
+=== RUN   TestAddInt64
+--- PASS: TestAddInt64 (0.00s)
+=== RUN   TestAddInt64Method
+--- PASS: TestAddInt64Method (0.00s)
+=== RUN   TestAddUint64
+--- PASS: TestAddUint64 (0.00s)
+=== RUN   TestAddUint64Method
+--- PASS: TestAddUint64Method (0.00s)
+=== RUN   TestAddUintptr
+--- PASS: TestAddUintptr (0.00s)
+=== RUN   TestAddUintptrMethod
+--- PASS: TestAddUintptrMethod (0.00s)
+=== RUN   TestAndInt32
+--- PASS: TestAndInt32 (0.00s)
+=== RUN   TestAndInt32Method
+--- PASS: TestAndInt32Method (0.00s)
+=== RUN   TestAndUint32
+--- PASS: TestAndUint32 (0.00s)
+=== RUN   TestAndUint32Method
+--- PASS: TestAndUint32Method (0.00s)
+=== RUN   TestAndInt64
+--- PASS: TestAndInt64 (0.00s)
+=== RUN   TestAndInt64Method
+--- PASS: TestAndInt64Method (0.00s)
+=== RUN   TestAndUint64
+--- PASS: TestAndUint64 (0.00s)
+=== RUN   TestAndUint64Method
+--- PASS: TestAndUint64Method (0.00s)
+=== RUN   TestAndUintptr
+--- PASS: TestAndUintptr (0.00s)
+=== RUN   TestAndUintptrMethod
+--- PASS: TestAndUintptrMethod (0.00s)
+=== RUN   TestOrInt32
+--- PASS: TestOrInt32 (0.00s)
+=== RUN   TestOrInt32Method
+--- PASS: TestOrInt32Method (0.00s)
+=== RUN   TestOrUint32
+--- PASS: TestOrUint32 (0.00s)
+=== RUN   TestOrUint32Method
+--- PASS: TestOrUint32Method (0.00s)
+=== RUN   TestOrInt64
+--- PASS: TestOrInt64 (0.00s)
+=== RUN   TestOrInt64Method
+--- PASS: TestOrInt64Method (0.00s)
+=== RUN   TestOrUint64
+--- PASS: TestOrUint64 (0.00s)
+=== RUN   TestOrUint64Method
+--- PASS: TestOrUint64Method (0.00s)
+=== RUN   TestOrUintptr
+--- PASS: TestOrUintptr (0.00s)
+=== RUN   TestOrUintptrMethod
+--- PASS: TestOrUintptrMethod (0.00s)
+=== RUN   TestCompareAndSwapInt32
+--- PASS: TestCompareAndSwapInt32 (0.00s)
+=== RUN   TestCompareAndSwapInt32Method
+--- PASS: TestCompareAndSwapInt32Method (0.00s)
+=== RUN   TestCompareAndSwapUint32
+--- PASS: TestCompareAndSwapUint32 (0.00s)
+=== RUN   TestCompareAndSwapUint32Method
+--- PASS: TestCompareAndSwapUint32Method (0.00s)
+=== RUN   TestCompareAndSwapInt64
+--- PASS: TestCompareAndSwapInt64 (0.00s)
+=== RUN   TestCompareAndSwapInt64Method
+--- PASS: TestCompareAndSwapInt64Method (0.00s)
+=== RUN   TestCompareAndSwapUint64
+--- PASS: TestCompareAndSwapUint64 (0.00s)
+=== RUN   TestCompareAndSwapUint64Method
+--- PASS: TestCompareAndSwapUint64Method (0.00s)
+=== RUN   TestCompareAndSwapUintptr
+--- PASS: TestCompareAndSwapUintptr (0.00s)
+=== RUN   TestCompareAndSwapUintptrMethod
+--- PASS: TestCompareAndSwapUintptrMethod (0.00s)
+=== RUN   TestCompareAndSwapPointer
+--- PASS: TestCompareAndSwapPointer (0.00s)
+=== RUN   TestCompareAndSwapPointerMethod
+--- PASS: TestCompareAndSwapPointerMethod (0.00s)
+=== RUN   TestLoadInt32
+--- PASS: TestLoadInt32 (0.00s)
+=== RUN   TestLoadInt32Method
+--- PASS: TestLoadInt32Method (0.00s)
+=== RUN   TestLoadUint32
+--- PASS: TestLoadUint32 (0.00s)
+=== RUN   TestLoadUint32Method
+--- PASS: TestLoadUint32Method (0.00s)
+=== RUN   TestLoadInt64
+--- PASS: TestLoadInt64 (0.00s)
+=== RUN   TestLoadInt64Method
+--- PASS: TestLoadInt64Method (0.00s)
+=== RUN   TestLoadUint64
+--- PASS: TestLoadUint64 (0.00s)
+=== RUN   TestLoadUint64Method
+--- PASS: TestLoadUint64Method (0.00s)
+=== RUN   TestLoadUintptr
+--- PASS: TestLoadUintptr (0.00s)
+=== RUN   TestLoadUintptrMethod
+--- PASS: TestLoadUintptrMethod (0.00s)
+=== RUN   TestLoadPointer
+--- PASS: TestLoadPointer (0.00s)
+=== RUN   TestLoadPointerMethod
+--- PASS: TestLoadPointerMethod (0.00s)
+=== RUN   TestStoreInt32
+--- PASS: TestStoreInt32 (0.00s)
+=== RUN   TestStoreInt32Method
+--- PASS: TestStoreInt32Method (0.00s)
+=== RUN   TestStoreUint32
+--- PASS: TestStoreUint32 (0.00s)
+=== RUN   TestStoreUint32Method
+--- PASS: TestStoreUint32Method (0.00s)
+=== RUN   TestStoreInt64
+--- PASS: TestStoreInt64 (0.00s)
+=== RUN   TestStoreInt64Method
+--- PASS: TestStoreInt64Method (0.00s)
+=== RUN   TestStoreUint64
+--- PASS: TestStoreUint64 (0.00s)
+=== RUN   TestStoreUint64Method
+--- PASS: TestStoreUint64Method (0.00s)
+=== RUN   TestStoreUintptr
+--- PASS: TestStoreUintptr (0.00s)
+=== RUN   TestStoreUintptrMethod
+--- PASS: TestStoreUintptrMethod (0.00s)
+=== RUN   TestStorePointer
+--- PASS: TestStorePointer (0.00s)
+=== RUN   TestStorePointerMethod
+--- PASS: TestStorePointerMethod (0.00s)
+=== RUN   TestHammer32
+--- PASS: TestHammer32 (6.35s)
+=== RUN   TestHammer64
+--- PASS: TestHammer64 (9.01s)
+=== RUN   TestHammerStoreLoad

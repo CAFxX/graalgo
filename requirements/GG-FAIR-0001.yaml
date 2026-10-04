@@ -1,0 +1,11 @@
+id: GG-FAIR-0001
+title: Quanta distribution bounds
+statement: At 10,000-goroutine scale, per-goroutine admitted quanta SHALL have max/mean within 2x.
+rationale: 'Spike 2b F3: min=6, max=7, mean=7.0, max/mean=1.01 — the fairness bar the design demonstrably clears.'
+parent: "GG-0048"
+status: locked
+superseded_by: ""
+verification_plan: Spike 2b F3; Phase-2 scale matrix (different CPU counts/JDKs per verdict-scope).
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

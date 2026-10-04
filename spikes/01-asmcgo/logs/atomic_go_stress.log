@@ -1,0 +1,7 @@
+ok   T1 AddInt64: no lost updates
+ok   T2 CompareAndSwapInt64: every success installed
+ok   T3 LoadUint64/StoreUint64: no torn reads
+ok   T4 SwapInt64: each swap observed exactly once
+ok   T5 OrInt64: all bits set exactly
+ok   T6 Store/Load: payload visible with flag
+RESULT: PASS

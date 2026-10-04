@@ -1,0 +1,13 @@
+id: GG-0056
+title: No agent-leverage discount
+statement: The 20-40 PY estimate SHALL carry no agent-leverage discount; agent leverage SHALL instead be measured as a program metric (actual agent-hours vs estimate per phase) and calibrated empirically.
+rationale: Closes Phase-0 question 14; an unquantified discount is not a plan.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Leverage metric published per phase.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

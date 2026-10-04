@@ -1,0 +1,466 @@
+# T2 — Version-Tracking Strategy for graalgo
+
+Research track: how graalgo stays pinned to the latest Go release, twice a year, via an
+**agent-driven upgrade workflow** with toil-minimizing tooling. A fully mechanical upgrade
+is not expected to be possible; the requirement is **bounded, tooled toil per release**.
+
+Evidence: Go source tree at `~/tools/go` (go1.27.1, built 2026-08-28), a go1.26.7 source
+tree downloaded and diffed against it (then removed), go.dev release notes for 1.26/1.27
+(primary sources), and one measured native-test timing anchor (bytes+strings+sync:
+~11 s cold on this VM). Line-churn numbers are **measured** diffs (1.26.7 → 1.27.1,
+non-test source). Effort and timing figures are **estimates**, labeled as such.
+
+---
+
+## 1. Go's release cadence
+
+1. Major releases ship every ~6 months, alternating February/August, with an rc ~1 week
+   before the final. Measured history (golang-design/history, endoflife.date, go.dev):
+   1.21 2023-08-08 · 1.22 2024-02-06 · 1.23 2024-08-13 · 1.24 2025-02-11 ·
+   1.25 2025-08-12 · 1.26 2026-02-10 · 1.27 2026-08-19. Intervals are 181–189 days;
+   the schedule is metronomic, not aspirational.
+2. Two release branches are supported at any time (current + previous). Patch releases
+   (~monthly) are security/bug-fix only — the workflow below has a light path for
+   patches (re-vendor + re-run oracles) and a full path for majors.
+3. The N+1 cycle starts immediately: `src/internal/goversion/goversion.go` carries
+   `const Version = 27`, "updated at the start of each development cycle". The upgrade
+   workflow therefore **starts at rc1** (~2–4 weeks before .0), not at release day.
+4. Every release ships the same *categories* of change (verified against
+   go.dev/doc/go1.26 and go.dev/doc/go1.27):
+   1. **Language deltas** — 1.26: `new(expr)` (operand may be an expression), lifted
+      ban on generic types referring to themselves in type-parameter lists. 1.27:
+      generic methods, struct-literal keys as field selectors, generalized inference.
+   2. **cmd/go (driver)** — 1.26: `go fix` revamped into modernizers, `go mod init`
+      default version lowered, `cmd/doc` deleted. 1.27: `go doc pkg@version`/`-ex`,
+      `go test` runs `stdversion` vet by default, `go test -json` gains `"OutputType"`,
+      `go mod tidy` merges require blocks, bzr dropped.
+   3. **Runtime internals** — 1.26: Green Tea GC on by default
+      (`GOEXPERIMENT=nogreenteagc`), faster cgo, heap-base randomization, goroutine-leak
+      profile experiment, `runtime/secret` experiment. 1.27: size-specialized malloc
+      (`GOEXPERIMENT=nosizespecializedmalloc`), leak profile GA'd, `asynctimerchan`
+      removed, `tracebacklabels` behavior change.
+   4. **Compiler backend** — new SSA passes in 1.27 (`licm.go`,
+      `merge_conditional_branches.go`, `downward_counting_loop.go`, new `midway`
+      directory). Irrelevant to graalgo's backend (Graal replaces it).
+   5. **Stdlib** — 1.26: `crypto/hpke`, `simd/archsimd`, `runtime/secret`
+      (experiments), `bytes.Buffer.Peek`, `testing/cryptotest.SetGlobalRandom`. 1.27:
+      `uuid`, `simd`, `encoding/json/v2`+`jsontext`, `crypto/mldsa`, Unicode 15 → 17,
+      `encoding/json` re-backed by v2 (error text may differ), `compress/flate`
+      output bytes changed.
+   6. **gofmt/vet** — 1.27: gofmt alignment fix (previously varied *by CPU
+      architecture*); `printf` analyzer flags `%w` on `*E`; `stdversion` analyzer added.
+
+## 2. Measured per-release churn (go1.26.7 → go1.27.1)
+
+Non-test source lines changed:
+
+| Area | Files | Lines | graalgo relevance |
+|---|---|---|---|
+| `src/go` (parser, types, …) | 54 | 2,893 | Frontend: reused verbatim |
+| `src/cmd/compile/internal/types2` | 45 | 2,454 | Same changes as `go/types` (one codebase, §3) |
+| `src/cmd/compile/internal/syntax` | 6 | 80 | Parser deltas are small |
+| `src/cmd/go` | 83 | 6,540 | Driver parity surface |
+| `src/cmd/vet` | 1 | 82 | Vendored x/tools analyzers shift |
+| `src/runtime` | 143 | 15,338 | Only the surface stdlib touches matters |
+| `src/reflect` / `src/sync` / `src/net` / `src/os` | — | 302 / 37 / 2,306 / 80 | Free if stdlib re-vendored verbatim |
+| `src/cmd/compile/internal/ssa` | — | ~133k | **Inflated**: `opGen.go` (60k) etc. are *generated* from `_gen/*.rules`; count inputs, not outputs |
+
+API growth (`src/api/go1.N.txt`): 180 lines (1.26), 317 (1.27). Notably, **zero** of
+those lines are `pkg runtime` in either release — the runtime coupling surface is not
+the exported API but `//go:linkname` (145 files outside `runtime/`+`cmd/` linkname
+into runtime internals, measured) plus internal imports. The linkname-target list,
+not `api/*.txt`, is the runtime watch-list.
+
+## 3. Frontend-reuse options
+
+### Option (a): reuse `go/parser` + `go/types` from the pinned release — RECOMMENDED
+
+1. The public `go/*` packages *are* the compiler's frontend logic:
+   `src/go/types/version.go` is generated from
+   `src/cmd/compile/internal/types2/version.go`
+   ("Code generated by `go test -run=Generate -write=all`"); `internal/syntax` is a
+   thin fork of `go/parser`. Reusing `go/*` verbatim means graalgo's frontend *is*
+   Go's frontend — language semantics, error messages, and `-lang` gating come free.
+2. The Go 1 compat promise (go.dev/doc/go1compat) covers `go/*` as additive-only API.
+   Per-release deltas: new exported API (1.27: `go/scanner.Scanner.End`,
+   `go/token.File.String`, `go/types.Hasher`), new accepted syntax, type-checker
+   behavior behind `-lang` gates. Measured: 2,893 lines/release in `src/go`,
+   concentrated in `go/types` when the language changes.
+3. The `gopls`/x/tools stack bumps on exactly this model twice a year — proven
+   sustainable. Caveat: `go/*` is written in Go; it must be executed by graalgo's own
+   Truffle runtime (self-hosted frontend) or a build-time bootstrap toolchain —
+   an architecture-track decision that does not change the version-tracking math.
+
+### Option (b): fork `cmd/compile` internals — NOT RECOMMENDED
+
+The tree is 22 MB; for a Truffle backend only `internal/syntax`+`internal/types2`
+matter — the *same code* as public `go/*` minus the compatibility promise. Forking
+the whole compiler (ssa, backends, link) is pointless: Graal replaces all of it, and
+the backend is where most churn lives. Scoped verdict: (b)-frontend-only has the
+identical porting surface of (a) with worse stability guarantees.
+
+### Option (c): reimplement parser + typechecker — REJECTED
+
+`go/types` alone is ~31k lines implementing the full spec incl. generics and
+per-version gating. Re-deriving every language delta twice a year with no oracle but
+the implementation being replaced is unbounded toil. Revisit only on a proven hard
+constraint (none known).
+
+## 4. TOIL AUDIT — per component, automatable vs judgment
+
+For each graalgo component: what a release plausibly demands, split into
+**mechanical** (toolable, agent-executable without design decisions) and
+**judgment** (requires a human-level decision; the workflow must surface it, not
+hide it). Calibrated on 1.26/1.27.
+
+### 4.1 Language frontend (`go/*` verbatim + Truffle lowering)
+
+1. Mechanical: re-vendor the tree; regenerate `go/types/version.go`; mirror the new
+   `go1_N` gate constant from `types2/version.go`; run `go/parser`+`go/types` suites;
+   apidiff the `go/*` exported API for new nodes the lowering consumes.
+2. Judgment: representing new language semantics in the Truffle AST. 1.26's
+   `new(expr)` is trivial (allocate+store); 1.27's **generic methods** are not
+   (method type parameters, instantiation at call sites, the interface-exclusion
+   rule, interaction with the existing generics lowering). Spec-edge cases the
+   release notes don't spell out must be read from the spec diff + `types2` tests.
+3. Calibration: 1.26 ≈ 4–8 agent-hours; 1.27 ≈ 25–45 agent-hours. The variance is
+   almost entirely "did the language change, and how deeply does it touch the
+   lowering".
+
+### 4.2 Runtime intrinsics (Truffle implementations of the runtime surface stdlib needs)
+
+1. Mechanical: `rtlink` scan — diff the linkname-target list and runtime-internal
+   imports release-to-release; diff GODEBUG history and the GOEXPERIMENT knob list;
+   accept-and-ignore new experiment knobs (one-line stance each).
+2. Judgment: implementing genuinely new intrinsics. 1.27's goroutine-leak profile
+   needs GC-reachability integration (deep: on JVM this means a heap-walk design
+   decision); size-specialized malloc needs a backend codegen decision (implement
+   size classes vs route to the generic allocator). Also **parity-stance decisions**:
+   e.g. Green Tea GC → "the JVM's GC *is* our GC; `nogreenteagc` is
+   accepted-and-ignored" — decided once, documented, then mechanical forever.
+3. Calibration: 1.26 ≈ 6–12 agent-hours (mostly stances + experiment gates);
+   1.27 ≈ 15–35 (malloc codegen + leak-profile design).
+
+### 4.3 Stdlib shims (vendored stdlib + adaptation layer)
+
+1. Mechanical: verbatim re-vendor (checksum-verified against the upstream tarball);
+   api-diff → new-package list; run the stdlib suite; diff the exclusion list.
+2. Judgment: triaging new test failures into *graalgo bug / upstream behavior change /
+   backend-specific test / nondeterminism* (each with a different disposition); shim
+   decisions for the 145 linkname-coupled files; new-package backend decisions
+   (1.26 `simd/archsimd`: arch-specific asm → defer-or-map-to-vector-API;
+   1.27 `encoding/json/v2`: free, but snapshot its error texts).
+3. Calibration: ~10–25 agent-hours typical; dominated by failure triage, which shrinks
+   as the runtime matures. The structural fact in our favor: most stdlib is pure Go
+   and comes free — toil concentrates in the runtime-coupled minority.
+
+### 4.4 `go` driver (fork-or-wrapper — price both, decide in architecture)
+
+1. Fork option: review ~6,540 changed lines/83 files per release; port behavior
+   deltas; run the 929 script tests through an adapter. Toil ≈ 20–40 agent-hours
+   per release, every release, forever.
+2. Wrapper option (delegate module resolution/fetch to a real `go`, intercept at
+   build): toil ≈ 8–16 agent-hours per release, but the interception seam carries
+   semantic-mismatch risk that must be covered by the differential harness (§6.1).
+3. Mechanical either way: flag-surface diff from `--help` snapshots; script-suite
+   execution. Judgment: behavior changes (1.26's `go fix` revamp; 1.27's tidy
+   require-block merging) and toolchain-switching semantics (§10).
+
+### 4.5 Interop layer (Go↔Java)
+
+Per-release toil is near zero **unless** a language feature crosses the boundary:
+1.27's generic methods force a decision (expose to Java? with what erasure
+semantics?). Mechanical: re-run the interop conformance suite (must exist as part
+of §6 infrastructure). Calibration: 0–4 agent-hours quiet; ~4–8 when a feature
+crosses.
+
+### 4.6 AOT/JIT configs (GraalVM Native Image)
+
+1. Mechanical: regenerate reflection/resource/JNI configs with the tracing agent
+   over the §6 corpora (compute, not judgment); diff the regenerated configs.
+2. Judgment: new reflection-heavy packages (1.27 `encoding/json/v2` is the
+   archetype), new dynamic behaviors, and perf-regression triage across the three
+   execution modes (pure JIT / pure AOT / hybrid).
+3. Calibration: ~4–10 agent-hours per release.
+
+## 5. AGENT-DRIVEN UPGRADE WORKFLOW — runbook
+
+Designed so a future agent executes it with minimal human input. Trigger: the
+release-watch agent (§9) fires at **rc1**.
+
+1. **Phase 1 — Mechanical rebase.** Inputs: upstream source tarball + checksums.
+   Run `vendor.sh` (fetch, checksum-verify against go.dev, lay down
+   `third_party/go/src`); run `regen.sh` (stringer outputs, `go/types` Generate,
+   unicode tables); rebase graalgo's patch stack (kept near zero by §8) onto the
+   new tree. Output: `bump/go1.N` branch + rebase report. Done-gate: vendored tree
+   is byte-identical to upstream except the recorded patch stack.
+2. **Phase 2 — Scoped diffs (the toil-reduction engine).** Run the diff tooling
+   (built once, §6.3): `apidiff` (new pkgs/funcs/methods/consts from
+   `api/go1.N.txt`), `rtlink` (linkname-target + runtime-import delta),
+   `godebug-diff`, `flagdiff` (cmd/go `--help` snapshots), and expand the release
+   notes into a per-bullet checklist. Output: a **categorized work list per
+   component** (§4). This is what turns "upgrade Go" into bounded tickets.
+3. **Phase 3 — Language delta.** Implement the lowering for new semantics (§4.1);
+   add the `go1_N` gate; write conformance tests for the new feature *first*
+   (red-green: they must fail before the lowering change). Done-gate: new-feature
+   tests green, `-lang` regression suite green.
+4. **Phase 4 — Runtime intrinsics.** Work the `rtlink` report top-down; record every
+   parity-stance decision in the architecture log (one decision, permanent).
+   Done-gate: every new runtime-surface item dispositioned
+   (implemented / deferred-with-issue / wont-parity-with-reason).
+5. **Phase 5 — Stdlib.** Re-vendor already done in Phase 1; triage new suite
+   failures with the four-way classification (§4.3); review the exclusion-list
+   diff. Done-gate: no new failures vs the previous release's baseline.
+6. **Phase 6 — Driver.** Port the `flagdiff` + behavior deltas; run the 929 script
+   tests via the adapter. Done-gate: pass rate ≥ previous release.
+7. **Phase 7 — Interop + AOT configs.** Regenerate configs; review the config diff;
+   run interop conformance. Done-gate: config diff reviewed, no unexplained
+   additions.
+8. **Phase 8 — Oracles** (§6): fast differential smoke → language conformance →
+   stdlib corpus → fuzz soak. Triage loop per §6.6.
+9. **Phase 9 — Done-gates + upgrade report.** All gates in §§5–6 green; file the
+   upgrade report: effort log per component, deferred items with issues, toil
+   metrics (agent-hours, wall-clock, skip-list delta, rebase conflicts). The report
+   is what makes the *next* upgrade cheaper — and what proves "bounded" (§8).
+
+Light path (patch releases): Phase 1 + Phase 8 only, unless the patch touches
+language/driver behavior (read the patch notes; security patches occasionally do).
+
+## 6. TESTING STRATEGY FOR UPGRADE-TOIL MINIMIZATION
+
+First-class deliverable, built **before** the first upgrade it is meant to cheapen
+(sequencing: program Phase 0/1 builds this; the first real use is the first bump).
+Its explicit purpose: convert per-release semantic risk into mechanical signal.
+
+### 6.1 Differential testing against gc as oracle
+
+The reference `go` toolchain is ground truth. The harness compiles and runs the
+same programs under both toolchains and compares **observable behavior**:
+
+1. Compared: stdout bytes, stderr bytes (after normalization), exit codes, panic
+   messages and goroutine traces **modulo addresses** (regex-scrub `0x…`, goroutine
+   IDs, timestamps, durations, and file paths outside the sandbox), and file/network
+   effects in sandboxed form (redirect FS writes to a temp dir, diff the resulting
+   tree; loopback-only networking with a recorded stub server).
+2. Excluded: wall-clock timings, absolute addresses, GC statistics, and goroutine
+   scheduling nondeterminism.
+3. Taming nondeterminism: (i) normalization passes before comparison; (ii)
+   `GOMAXPROCS=1` for the scheduling-sensitive subset; (iii) order-unspecified
+   outputs (map iteration) compared as multisets — annotated per-test, never
+   global; (iv) 3–5 repeat runs to classify flaky vs deterministic divergence;
+   (v) fixed seeds for generator-driven inputs so failures reproduce;
+   (vi) prefer `testing/synctest` (1.25+, deterministic-by-construction) in new
+   conformance tests.
+4. Falsifiability: the harness is validated by **mutation** — deliberately break
+   graalgo's lowering (e.g. invert a comparison, drop a defer) and confirm the
+   harness goes red. A differential harness that has never been seen failing is
+   not evidence.
+
+### 6.2 Conformance corpora
+
+1. Primary corpus: stdlib's own `go test ./...`. Secondary: the `src/test/`
+   language suite (356 files) — the spec-semantics anchor independent of stdlib.
+2. Targeted corpora for historically churny areas: `runtime`, `reflect`, `unsafe`,
+   `sync`, `net` (netpoller), `os/signal`, `syscall`, `plugin`/cgo. These are
+   where releases actually move behavior (1.26: netpoller-adjacent `synctest`,
+   Green Tea GC; 1.27: `asynctimerchan` removal, UnixConn EOF semantics).
+3. Backend-specific exclusions are **expected and versioned**: tests asserting gc
+   internals (GC stats, exact stack traces modulo inlining, `//go:linkname` into
+   gc-only symbols), debugger tests, cgo tests, tests depending on gc scheduling
+   quirks. The exclusion list lives in-repo (e.g.
+   `conformance/exclusions/go1.27.yaml`) with a **reason code per entry**
+   (backend-specific / unspecified-behavior / deferred-parity), and its
+   release-to-release diff is reviewed every upgrade — a shrinking exclusion list
+   is the project's health metric.
+
+### 6.3 Release-to-release API/ABI diffing — the toil-reduction engine
+
+Tooling built once, run every Phase 2:
+
+1. `apidiff`: parse `src/api/go1.N.txt`, emit new packages/functions/methods/consts
+   categorized by component (frontend `go/*` vs stdlib vs `cmd/*`).
+2. `go/types`-visible signature diff: export-data-level comparison of changed
+   signatures (catches what `api/*.txt` misses: unexported-but-linknamed surface
+   is covered by `rtlink` instead).
+3. `rtlink`: linkname-target list + `runtime`-internal import graph, diffed —
+   this is the true runtime-coupling watch-list (exported `runtime` API was
+   unchanged in both 1.26 and 1.27; the action is all linkname).
+4. `flagdiff`: `go help` / subcommand `--help` snapshots diffed — the driver's
+   CLI contract.
+5. `godebug-diff`: added/removed/changed GODEBUG settings from `doc/godebug.md`
+   history.
+6. Output: the scoped work list that drives Phases 3–7. Validation: run N-vs-N
+   (expect empty) and N-vs-(N+1) (expect exactly the known `api/go1.N+1.txt`
+   content) — red-green evidence for the tooling itself.
+
+### 6.4 Behavior snapshots
+
+Per release, record the differential corpus results **under gc**: normalized
+stdout/stderr hashes, exit codes, full normalized outputs, stored content-addressed
+under `snapshots/go1.N/`. On upgrade: re-run under the *new* gc and under graalgo.
+Drift in gc's own snapshots = upstream semantic change to triage (e.g. 1.27's
+`compress/flate` output bytes, `net.UnixConn` EOF change — both would have been
+caught mechanically). Drift in graalgo's = regression. Snapshots make silent
+semantic drift a diff, not a discovery.
+
+### 6.5 Generative differential fuzzing — the long-tail net
+
+1. Two layers: (i) **native `testing.F` fuzzing**, differential mode — fuzz
+   stdlib functions (encoding/json, compress/flate, net/url, go/parser
+   round-trip) with identical corpora under gc and graalgo, compare outputs;
+   (ii) **program generation** across the feature space (generics instantiation,
+   interface dispatch, closure capture, defer/panic/recover chains, select, map
+   iteration, atomics) run under both toolchains through the §6.1 harness.
+2. Reuse vs build: `go-fuzz` (Dmitry Vyukov, coverage-guided) is adaptable to
+   differential mode — reuse; `testing.F` is in-tree — reuse; a Go program
+   generator in the `gosmith` class: [UNVERIFIED] — verify existence/license and
+   gc-parity of generated programs before depending on it, else build a small
+   template-based generator (bounded grammar, not full-language).
+3. Corpus minimization on every new divergence (standard minimization), and the
+   minimized cases become permanent regression tests. Soak runs overnight
+   per-release; the smoke subset runs per-commit.
+
+### 6.6 Integration into the upgrade workflow
+
+Gating order (fast → slow), wired into Phase 8:
+
+1. **Fast differential smoke** (minutes): curated ~200-program corpus through the
+   §6.1 harness. Runs per-commit; red = stop, triage now.
+2. **Language conformance** (`src/test/` + new-feature tests): per-commit on
+   frontend changes; red = frontend regression or new-feature mis-lowering.
+3. **Stdlib corpus + cmd/go scripts + interop suite** (hours): per-release gate.
+   Red → the four-way triage (§4.3): graalgo bug (fix), upstream change (adapt +
+   snapshot update), backend-specific (exclusion list + reason code), nondeterminism
+   (harness normalization fix).
+4. **Fuzz soak** (overnight, 8–24 h): per-release; new unique crashes vs baseline =
+   red.
+5. Every red gate produces a **triage record** (classification + disposition +
+   issue link); the upgrade report (§5.9) aggregates them. No gate is waived
+   without a recorded reason — waivers are how toil becomes unbounded.
+
+### 6.7 Cost honesty
+
+Reference hardware (assumption, labeled): 16-core x86-64 Linux, 64 GB RAM.
+Measured anchor: 3 small stdlib packages ≈ 11 s cold natively on this VM.
+
+1. Differential smoke: **~5–15 min** (estimate; dominated by process spawn ×2
+   toolchains).
+2. Language conformance: **~30–60 min** (estimate).
+3. Stdlib corpus on Truffle: **~1–4 h** (estimate — the honest caveat: Truffle needs
+   warmup and short-lived test binaries are its worst case; mitigate by batching
+   test binaries per package and, where legal, `-test.run` sharding; measure on
+   the first real run and recalibrate).
+4. cmd/go script suite (929 scripts): **~30–90 min** (estimate; mostly subprocess).
+5. Fuzz soak: **8–24 h overnight** (estimate; unattended).
+6. Per-commit CI: layers 1–2 only. Per-release: all layers. Total attended oracle
+   compute per upgrade: **~2–6 h wall-clock**, parallelizable across runners.
+
+## 7. Effort estimate per release (agent-hours / wall-clock)
+
+Calibrated on what 1.26 (quiet-ish: `new(expr)`, type-param self-reference, Green
+Tea GC, `go fix` revamp) and 1.27 (heavy: generic methods, size-specialized
+malloc, leak profile, json/v2, tidy merging) actually changed. One agent-hour =
+one agent's focused hour; wall-clock assumes 4–6 parallel subagents plus oracle
+compute.
+
+| Component | Quiet release (1.26-like) | Heavy release (1.27-like) |
+|---|---|---|
+| Language frontend (§4.1) | 4–8 | 25–45 |
+| Runtime intrinsics (§4.2) | 6–12 | 15–35 |
+| Stdlib shims + triage (§4.3) | 10–20 | 15–30 |
+| Driver: wrapper / fork (§4.4) | 8–16 / 20–40 | 10–20 / 25–45 |
+| Interop (§4.5) | 0–4 | 4–8 |
+| AOT/JIT configs (§4.6) | 4–8 | 4–10 |
+| Oracles + triage + report | 18–35 | 28–50 |
+| **Total (wrapper)** | **~50–100 agent-h** | **~100–200 agent-h** |
+| **Wall-clock** | **2–4 days** | **5–10 days** |
+
+The fork-vs-wrapper driver choice is the largest structural lever: forking `cmd/go`
+roughly doubles driver toil every release, forever. The second lever is the
+patch-stack size against vendored sources (§8): every local patch is rebase toil
+twice a year.
+
+## 8. ARCHITECTURE GUIDANCE — seams that minimize toil
+
+1. **Prefer reuse seams over fork seams, priced by recurring toil:** `go/*`
+   verbatim (§3a: ~2–6 agent-h mechanical + language-delta work) dominates forking
+   compiler internals (same work + rebase conflicts) and reimplementation
+   (unbounded). Same logic for stdlib: verbatim vendor + shim the runtime-coupled
+   minority, never rewrite.
+2. **Keep the patch stack against vendored sources near zero.** Every local
+   modification to `third_party/go/src` is a twice-yearly rebase conflict. The
+   budget: ≤ 5 conflicted files per upgrade; breach triggers a toil-reduction
+   review (upstream the patch, or move the customization behind a seam).
+3. **One frontend, many language versions.** Never pin frontend < stdlib (§10.1);
+   implement `-lang` per-module/per-file gates exactly like `gc.go:80` +
+   `types2/version.go`. This converts "support old code" from a version-management
+   problem into a (tested, gated) code path.
+4. **Version the interop contract, not the implementation.** The Go↔Java boundary
+   should have a conformance suite (§6.2) that runs per release; language features
+   cross it only by explicit decision (§4.5).
+5. **Decide parity stances once, in writing.** For every runtime-internal behavior
+   with no JVM analog (GC algorithm, scheduler specifics, malloc size classes),
+   record "we parity X / we deliberately diverge on Y because Z" in the
+   architecture log. Phase 4 then becomes mechanical: new items get stances, old
+   items are never re-debated.
+6. **"Bounded" is quantified as:** P95 upgrade ≤ **200 agent-hours** total, ≤ **10
+   wall-clock days**, skip-list net growth ≤ **15 entries** (each reason-coded),
+   patch-stack rebase conflicts ≤ **5 files**, zero unexplained differential
+   divergences. Breaching any bound triggers a toil-reduction sprint before the
+   next release — that is the enforcement mechanism that keeps "always latest"
+   credible.
+
+## 9. Release-watch background agent — YES, part of the design
+
+1. A scheduled agent (weekly cron; precedent: the existing `mix-sota-review-weekly`
+   Monday pattern) watches golang-announce / `golang/go` releases / endoflife.date
+   for rc1 and .0 tags.
+2. On detection it does **not** upgrade; it prepares: creates `bump/go1.N`, runs
+   Phase 1 (vendor + regen) and Phase 2 (all five diff tools), and files an
+   **intake report** — the categorized work list with per-component estimates —
+   then notifies. The upgrade workflow (§5) is then agent-driven from that intake,
+   possibly across sessions.
+3. It never merges, never declares done-gates, never edits the exclusion list.
+   Preparation is mechanical; judgment stays in the upgrade workflow.
+4. Rationale: releases are metronomic (§1), the mechanical phases are ~4–8
+   agent-hours of pure toil, and starting at rc1 buys 2–4 weeks. This is exactly
+   the standing delegation pattern (autonomous background work, human decides
+   only at irreversible/ambiguous points).
+
+## 10. go.mod language versioning and GOTOOLCHAIN
+
+1. **Frontend pinning vs stdlib tracking: pinning the frontend to N while tracking
+   stdlib N+1 does not work in general.** Concrete blocker: 1.27's stdlib itself
+   uses a 1.27 language feature (`math/rand/v2.Rand` gained a *generic method* `N`,
+   per the release notes) — an N-pinned `go/types` cannot typecheck the N+1
+   stdlib it ships with. Rule: **re-vendor frontend and stdlib as one atomic unit**;
+   frontend version ≥ max language version used by the vendored stdlib.
+2. Supporting *older* code needs gates, not pinning: `cmd/go` passes
+   `-lang=go1.21` per package (`src/cmd/go/internal/work/gc.go:80`, via
+   `gover.Lang`), and the typechecker gates each feature per file
+   (`types2/version.go: allowVersion`). The `go` line in go.mod does double duty:
+   minimum toolchain version *and* enforced language version; since 1.21 a
+   `//go:build go1.N` tag also sets the file's language version (go.dev/doc/toolchain).
+3. **GOTOOLCHAIN is the sharpest "drop-in" edge.** When a module's `go`/`toolchain`
+   line is newer than the bundled toolchain, the `go` command *switches* — finding
+   `go1.N.P` on PATH or downloading
+   `golang.org/toolchain@v0.0.1-go1.N.P-GOOS-GOARCH` and re-execs
+   (`src/cmd/go/internal/toolchain/{select,switch}.go`). Options: (i) switch
+   faithfully to real Go (most compatible; execution silently stops being graalgo);
+   (ii) refuse with an error pointing at `GOTOOLCHAIN=local` (breaks drop-in);
+   (iii) track latest aggressively so it rarely fires, implement selection
+   faithfully, document `GOTOOLCHAIN=local` as the pin. **Recommend (iii)** — it is
+   the "always latest" requirement restated: every month of lag pushes more
+   real-world modules into paths (i)/(ii). Also version-faithful: `go version`
+   output, `runtime.Version()`, the `toolchain` directive (incl. `toolchain
+   default`), and `GOTOOLCHAIN` env/`go env -w` handling.
+
+---
+
+## T2 key takeaways
+
+1. Go releases every ~182 days like clockwork; upgrades are a standing agent-driven workflow (start at rc1), not automation theater — bounded, tooled toil is the honest requirement.
+2. Reuse `go/parser`+`go/types` verbatim and re-vendor frontend+stdlib atomically; support old code via `-lang` gates, never by pinning; keep the patch stack near zero.
+3. "Bounded" = P95 ≤ 200 agent-hours, ≤ 10 wall-clock days, skip-list growth ≤ 15, rebase conflicts ≤ 5 — breach triggers a toil-reduction sprint.
+4. The toil-reduction engine is tooling built early: apidiff/rtlink/godebug/flag diffs scoping each upgrade, plus a four-layer test strategy (differential-vs-gc smoke, conformance corpora, stdlib+script suites, fuzz soak) with behavior snapshots.
+5. Run a weekly release-watch agent that prepares (not performs) each upgrade; the driver fork-vs-wrapper choice is the biggest structural toil lever — price it before committing.

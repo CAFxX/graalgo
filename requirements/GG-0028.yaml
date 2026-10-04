@@ -1,0 +1,11 @@
+id: GG-0028
+title: Build-cache behavioral compatibility
+statement: graalgo SHALL provide behavioral build-cache compatibility (hit/miss patterns), not byte-identical cache entries; differing backends SHALL auto-namespace via toolID (`tool -V=full` through the wrapper).
+rationale: What drop-in actually requires at the cache layer.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Cache-behavior differential tests; shared-GOCACHE smoke test.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

@@ -1,0 +1,13 @@
+id: GG-0009
+title: Stdlib reuse
+statement: 'graalgo SHALL reuse the Go stdlib maximally: verbatim vendoring of the tracked release plus an adapted fork limited to the runtime-coupled packages; Plan 9 asm handled per category (intrinsify / evaporate / emulate-then-intrinsify / JVM-covers).'
+rationale: 'Requirement (6); the proven TinyGo shape: reuse the frontend wholesale, reimplement only the runtime.'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Stdlib `go test ./...` green with versioned exclusion list; fork-size audit per release.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

@@ -1,0 +1,110 @@
+FILE-ADDED   src/runtime/rt0_linux_ppc64x.s
+FILE-ADDED   src/runtime/sys_ios_arm64.s
+FILE-REMOVED src/runtime/rt0_linux_ppc64.s
+FILE-REMOVED src/runtime/rt0_linux_ppc64le.s
+FILE-CHANGED src/internal/cpu/cpu_arm64.s
+  + getisar1
+FILE-CHANGED src/runtime/asm_386.s
+  + runtime·rt0_lib_go<ABIInternal>
+  - _rt0_386_lib_go
+  - aeshashbody<>
+  - checkASM
+  - masks<>(SB)
+  - masks<>
+  - runtime·memhash
+  - runtime·memhash32
+  - runtime·memhash64
+  - shifts<>(SB)
+  - shifts<>
+  - runtime·strhash
+FILE-CHANGED src/runtime/asm_amd64.s
+  + runtime·rt0_lib_go<ABIInternal>
+  - _rt0_amd64_lib_go
+  - aeshashbody<>
+  - checkASM
+  - masks<>(SB)
+  - masks<>
+  - runtime·memhash<ABIInternal>
+  - runtime·memhash32<ABIInternal>
+  - runtime·memhash64<ABIInternal>
+  - shifts<>(SB)
+  - shifts<>
+  - runtime·strhash<ABIInternal>
+FILE-CHANGED src/runtime/asm_arm.s
+  + runtime·rt0_lib_go<ABIInternal>
+  - _rt0_arm_lib_go<>
+  - checkASM
+  - runtime·memhash
+  - runtime·memhash32
+  - runtime·memhash64
+  - runtime·strhash
+FILE-CHANGED src/runtime/asm_arm64.s
+  + runtime·rt0_lib_go<ABIInternal>
+  - _rt0_arm64_lib_go
+  - aeshashbody<>
+  - checkASM
+  - runtime·memhash<ABIInternal>
+  - runtime·memhash32<ABIInternal>
+  - runtime·memhash64<ABIInternal>
+  - runtime·strhash<ABIInternal>
+FILE-CHANGED src/runtime/asm_loong64.s
+  + asmcgocall_no_g
+  + runtime·rt0_lib_go<ABIInternal>
+  - _rt0_loong64_lib_go
+  - checkASM
+  - runtime·memhash<ABIInternal>
+  - runtime·memhash32<ABIInternal>
+  - runtime·memhash64<ABIInternal>
+  - runtime·strhash<ABIInternal>
+FILE-CHANGED src/runtime/asm_mips64x.s
+  - checkASM
+  - runtime·memhash
+  - runtime·memhash32
+  - runtime·memhash64
+  - runtime·strhash
+FILE-CHANGED src/runtime/asm_mipsx.s
+  - checkASM
+  - runtime·memhash
+  - runtime·memhash32
+  - runtime·memhash64
+  - runtime·strhash
+FILE-CHANGED src/runtime/asm_ppc64x.s
+  + runtime·rt0_lib_go<ABIInternal>
+  - __rt0_ppc64x_lib_go
+  - _rt0_ppc64x_lib_go
+  - checkASM
+  - runtime·memhash<ABIInternal>
+  - runtime·memhash32<ABIInternal>
+  - runtime·memhash64<ABIInternal>
+  - runtime·strhash<ABIInternal>
+FILE-CHANGED src/runtime/asm_riscv64.s
+  + runtime·rt0_lib_go<ABIInternal>
+  - _rt0_riscv64_lib_go
+  - checkASM
+  - runtime·memhash<ABIInternal>
+  - runtime·memhash32<ABIInternal>
+  - runtime·memhash64<ABIInternal>
+  - runtime·strhash<ABIInternal>
+FILE-CHANGED src/runtime/asm_s390x.s
+  + asmcgocall_no_g
+  + runtime·rt0_lib_go<ABIInternal>
+  - _rt0_s390x_lib_go
+  - checkASM
+  - runtime·memhash<ABIInternal>
+  - runtime·memhash32<ABIInternal>
+  - runtime·memhash64<ABIInternal>
+  - runtime·strhash<ABIInternal>
+FILE-CHANGED src/runtime/asm_wasm.s
+  - checkASM
+  - runtime·memhash
+  - runtime·memhash32
+  - runtime·memhash64
+  - runtime·strhash
+FILE-CHANGED src/runtime/sys_aix_ppc64.s
+  + runtime·rt0LibGoDesc(SB)
+FILE-CHANGED src/runtime/sys_darwin_amd64.s
+  - runtime·libc_error_trampoline
+FILE-CHANGED src/runtime/sys_darwin_arm64.s
+  - runtime·libc_error_trampoline
+FILE-CHANGED src/runtime/sys_linux_ppc64x.s
+  - sigtramp<>

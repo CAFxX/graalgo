@@ -1,0 +1,11 @@
+id: GG-0011
+title: Driver wrapper via -toolexec
+statement: graalgo SHALL ship the stock Go distribution and swap only the compile backend behind the existing `-toolexec` seam; the driver SHALL NOT be reimplemented; forking `cmd/go` is permitted only as a priced escape hatch if argv interception proves insufficient.
+rationale: Reimplementation rejected (~74k LOC, lowest fidelity-per-effort); the wrapper halves per-release driver toil vs a fork.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Spike 5 (txtar matrix through the wrapper); toil accounting compares wrapper vs fork.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

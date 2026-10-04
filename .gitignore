@@ -1,0 +1,12 @@
+# build outputs
+out/
+*.class
+# regenerable caches, downloads, binaries
+**/dl/
+**/gocache*/
+**/bin/
+# vendored upstream toolchain (not our work)
+spikes/03-versiontax/src/go1.26.8/
+# heavy experiment probe outputs (kept on disk, outside version control)
+spikes/05-cmdgo/probes/
+.DS_Store

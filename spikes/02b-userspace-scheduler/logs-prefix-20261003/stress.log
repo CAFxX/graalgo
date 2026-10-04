@@ -1,0 +1,5 @@
+=== stress (par=2 gmp=2 quantumNs=1000000) ===
+stress finished=true errors=0 parks=50558 admissions=50558 wakeupCalls=40617 wakeupWon=40617 invariant=OK
+sched{cap=2 inflight_now~na parkEvents=50558 admissions=50558 wakeupCalls=40617 wakeupWon=40617 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=91368 drainerUtilPct=1.31}
+RESULT=PASS
+exit=0

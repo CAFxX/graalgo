@@ -1,0 +1,400 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:35037
+https://vcs-test.golang.org rerouted to https://127.0.0.1:40969
+go test proxy running at GOPROXY=http://127.0.0.1:35237/mod
+=== RUN   TestScript/vet_basic
+=== PAUSE TestScript/vet_basic
+=== CONT  TestScript/vet_basic
+    script_test.go:141: 2026-10-03T06:36:54Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-wrapped
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:35237/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:35037
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:40969
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/vcstest124555822/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        GRAALGO_WRAPPER_LOG=/home/hatch/workspace/graalgo/spikes/05-cmdgo/logs/wraplogs/vet_basic.wraplog
+        GOFLAGS=-toolexec=/home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src
+        
+        # Test basic features of "go vet"/"go fix" CLI.
+        #
+        # The example relies on two analyzers:
+        # - hostport (which is included in both the fix and vet suites), and
+        # - printf (which is only in the vet suite).
+        # Each reports one diagnostic with a fix.
+        # vet default flags print diagnostics to stderr. Diagnostic => nonzero exit. (7.718s)
+        > ! go vet example.com/x
+        [stderr]
+        x.go:15:40: address format "%s:%d" does not work with IPv6
+        x.go:12:21: non-constant format string in call to fmt.Sprintf
+        [exit status 1]
+        > stderr 'does not work with IPv6'
+        matched: x.go:15:40: address format "%s:%d" does not work with IPv6
+        > stderr 'non-constant format string in call to fmt.Sprintf'
+        matched: x.go:12:21: non-constant format string in call to fmt.Sprintf
+        # -hostport runs only one analyzer. Diagnostic => failure. (4.176s)
+        > ! go vet -hostport example.com/x
+        [stderr]
+        x.go:15:40: address format "%s:%d" does not work with IPv6
+        [exit status 1]
+        > stderr 'does not work with IPv6'
+        matched: x.go:15:40: address format "%s:%d" does not work with IPv6
+        > ! stderr 'non-constant format string'
+        # -timeformat runs only one analyzer. No diagnostics => success. (4.676s)
+        > go vet -timeformat example.com/x
+        > ! stderr .
+        # JSON output includes diagnostics and fixes. Always success. (6.236s)
+        > go vet -json example.com/x
+        [stdout]
+        {
+        	"example.com/x": {
+        		"hostport": [
+        			{
+        				"posn": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:15:40",
+        				"end": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:15:47",
+        				"message": "address format \"%s:%d\" does not work with IPv6",
+        				"suggested_fixes": [
+        					{
+        						"message": "Replace fmt.Sprintf with net.JoinHostPort",
+        						"edits": [
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 267,
+        								"end": 278,
+        								"new": "net.JoinHostPort"
+        							},
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 279,
+        								"end": 288,
+        								"new": ""
+        							},
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 291,
+        								"end": 293,
+        								"new": "\"80\""
+        							}
+        						]
+        					}
+        				]
+        			}
+        		],
+        		"printf": [
+        			{
+        				"posn": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:12:21",
+        				"end": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:12:22",
+        				"message": "non-constant format string in call to fmt.Sprintf",
+        				"suggested_fixes": [
+        					{
+        						"message": "Insert \"%s\" format string",
+        						"edits": [
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 161,
+        								"end": 161,
+        								"new": "\"%s\", "
+        							}
+        						]
+        					}
+        				]
+        			}
+        		]
+        	}
+        }
+        > ! stderr .
+        > stdout '"example.com/x": {'
+        matched: 	"example.com/x": {
+        > stdout '"hostport":'
+        matched: 		"hostport": [
+        > stdout '"message": "address format .* does not work with IPv6",'
+        matched: 				"message": "address format \"%s:%d\" does not work with IPv6",
+        > stdout '"suggested_fixes":'
+        matched: 				"suggested_fixes": [
+        > stdout '"message": "Replace fmt.Sprintf with net.JoinHostPort",'
+        matched: 						"message": "Replace fmt.Sprintf with net.JoinHostPort",
+        # vet -fix -diff displays a diff. Diff => nonzero exit. (4.159s)
+        > ! go vet -fix -diff example.com/x
+        [stdout]
+        --- /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go (old)
+        +++ /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go (new)
+        @@ -1,6 +1,5 @@
+         package x
+         
+        -
+         import (
+         	"fmt"
+         	"net"
+        @@ -9,7 +8,7 @@
+         var s string
+         
+         // This call yields a "non-constant format string" diagnostic, with a fix (go vet only).
+        -var _ = fmt.Sprintf(s)
+        +var _ = fmt.Sprintf("%s", s)
+         
+         // This call yields a hostport diagnostic, with a fix (go vet and go fix).
+        -var _, _ = net.Dial("tcp", fmt.Sprintf("%s:%d", s, 80))
+        +var _, _ = net.Dial("tcp", net.JoinHostPort(s, "80"))
+        [exit status 1]
+        > stdout '\-var _ = fmt.Sprintf\(s\)'
+        matched: -var _ = fmt.Sprintf(s)
+        > stdout '\+var _ = fmt.Sprintf\("%s", s\)'
+        matched: +var _ = fmt.Sprintf("%s", s)
+        > stdout '\-var _, _ = net.Dial\("tcp", fmt.Sprintf\("%s:%d", s, 80\)\)'
+        matched: -var _, _ = net.Dial("tcp", fmt.Sprintf("%s:%d", s, 80))
+        > stdout '\+var _, _ = net.Dial\("tcp", net.JoinHostPort\(s, "80"\)\)'
+        matched: +var _, _ = net.Dial("tcp", net.JoinHostPort(s, "80"))
+        # vet -fix quietly applies the vet suite fixes. (0.482s)
+        > cp x.go x.go.bak
+        > go vet -fix example.com/x
+        > grep 'fmt.Sprintf\("%s", s\)' x.go
+        matched: var _ = fmt.Sprintf("%s", s)
+        > grep 'net.JoinHostPort' x.go
+        matched: var _, _ = net.Dial("tcp", net.JoinHostPort(s, "80"))
+        > ! stderr .
+        > cp x.go.bak x.go
+        > ! go vet -diff example.com/x
+        [stderr]
+        go vet -diff flag requires -fix
+        [exit status 1]
+        > stderr 'go vet -diff flag requires -fix'
+        matched: go vet -diff flag requires -fix
+        # go fix applies the fix suite fixes. (5.266s)
+        > go fix example.com/x
+        > grep 'net.JoinHostPort' x.go
+        matched: var _, _ = net.Dial("tcp", net.JoinHostPort(s, "80"))
+        > ! grep 'fmt.Sprintf\("%s", s\)' x.go
+        > ! stderr .
+        > cp x.go.bak x.go
+        # Show diff of fixes from the fix suite. Diff => nonzero exit. (6.471s)
+        > ! go fix -diff example.com/x
+        [stdout]
+        --- /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go (old)
+        +++ /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go (new)
+        @@ -1,6 +1,5 @@
+         package x
+         
+        -
+         import (
+         	"fmt"
+         	"net"
+        @@ -12,4 +11,4 @@
+         var _ = fmt.Sprintf(s)
+         
+         // This call yields a hostport diagnostic, with a fix (go vet and go fix).
+        -var _, _ = net.Dial("tcp", fmt.Sprintf("%s:%d", s, 80))
+        +var _, _ = net.Dial("tcp", net.JoinHostPort(s, "80"))
+        [exit status 1]
+        > ! stdout '\-var _ = fmt.Sprintf\(s\)'
+        > stdout '\-var _, _ = net.Dial\("tcp", fmt.Sprintf\("%s:%d", s, 80\)\)'
+        matched: -var _, _ = net.Dial("tcp", fmt.Sprintf("%s:%d", s, 80))
+        > stdout '\+var _, _ = net.Dial\("tcp", net.JoinHostPort\(s, "80"\)\)'
+        matched: +var _, _ = net.Dial("tcp", net.JoinHostPort(s, "80"))
+        # Show fix-suite fixes in JSON form. (6.097s)
+        > go fix -json example.com/x
+        [stdout]
+        {
+        	"example.com/x": {
+        		"hostport": [
+        			{
+        				"posn": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:15:40",
+        				"end": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:15:47",
+        				"message": "address format \"%s:%d\" does not work with IPv6",
+        				"suggested_fixes": [
+        					{
+        						"message": "Replace fmt.Sprintf with net.JoinHostPort",
+        						"edits": [
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 267,
+        								"end": 278,
+        								"new": "net.JoinHostPort"
+        							},
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 279,
+        								"end": 288,
+        								"new": ""
+        							},
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 291,
+        								"end": 293,
+        								"new": "\"80\""
+        							}
+        						]
+        					}
+        				]
+        			}
+        		]
+        	}
+        }
+        > ! stderr .
+        > stdout '"example.com/x": {'
+        matched: 	"example.com/x": {
+        > stdout '"hostport":'
+        matched: 		"hostport": [
+        > stdout '"message": "address format .* does not work with IPv6",'
+        matched: 				"message": "address format \"%s:%d\" does not work with IPv6",
+        > stdout '"suggested_fixes":'
+        matched: 				"suggested_fixes": [
+        > stdout '"message": "Replace fmt.Sprintf with net.JoinHostPort",'
+        matched: 						"message": "Replace fmt.Sprintf with net.JoinHostPort",
+        > ! stdout '"printf":'
+        > ! stdout '"message": "non-constant format string.*",'
+        > ! stdout '"message": "Insert.*%s.*format.string",'
+        # Show vet-suite fixes in JSON form. (0.261s)
+        > go vet -fix -json example.com/x
+        [stdout]
+        {
+        	"example.com/x": {
+        		"hostport": [
+        			{
+        				"posn": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:15:40",
+        				"end": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:15:47",
+        				"message": "address format \"%s:%d\" does not work with IPv6",
+        				"suggested_fixes": [
+        					{
+        						"message": "Replace fmt.Sprintf with net.JoinHostPort",
+        						"edits": [
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 267,
+        								"end": 278,
+        								"new": "net.JoinHostPort"
+        							},
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 279,
+        								"end": 288,
+        								"new": ""
+        							},
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 291,
+        								"end": 293,
+        								"new": "\"80\""
+        							}
+        						]
+        					}
+        				]
+        			}
+        		],
+        		"printf": [
+        			{
+        				"posn": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:12:21",
+        				"end": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go:12:22",
+        				"message": "non-constant format string in call to fmt.Sprintf",
+        				"suggested_fixes": [
+        					{
+        						"message": "Insert \"%s\" format string",
+        						"edits": [
+        							{
+        								"filename": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2498419059/tmpdir1148880612/vet_basic3109895733/gopath/src/x.go",
+        								"start": 161,
+        								"end": 161,
+        								"new": "\"%s\", "
+        							}
+        						]
+        					}
+        				]
+        			}
+        		]
+        	}
+        }
+        > ! stderr .
+        > stdout '"example.com/x": {'
+        matched: 	"example.com/x": {
+        > stdout '"hostport":'
+        matched: 		"hostport": [
+        > stdout '"message": "address format .* does not work with IPv6",'
+        matched: 				"message": "address format \"%s:%d\" does not work with IPv6",
+        > stdout '"suggested_fixes":'
+        matched: 				"suggested_fixes": [
+        > stdout '"message": "Replace fmt.Sprintf with net.JoinHostPort",'
+        matched: 						"message": "Replace fmt.Sprintf with net.JoinHostPort",
+        > stdout '"printf":'
+        matched: 		"printf": [
+        > stdout '"message": "non-constant format string.*",'
+        matched: 				"message": "non-constant format string in call to fmt.Sprintf",
+        > stdout '"suggested_fixes":'
+        matched: 				"suggested_fixes": [
+        > stdout '"message": "Insert.*%s.*format.string",'
+        matched: 						"message": "Insert \"%s\" format string",
+        # Reject -diff + -json. (0.049s)
+        > ! go fix -diff -json example.com/x
+        [stderr]
+        -json and -diff cannot be used together
+        [exit status 1]
+        > stderr '-json and -diff cannot be used together'
+        matched: -json and -diff cannot be used together
+        # Legacy way of selecting fixers is a no-op. (0.294s)
+        > go fix -fix=old1,old2 example.com/x
+        [stderr]
+        go fix: the -fix=old1,old2 flag is obsolete and has no effect
+        > stderr 'go fix: the -fix=old1,old2 flag is obsolete and has no effect'
+        matched: go fix: the -fix=old1,old2 flag is obsolete and has no effect
+        > cp x.go.bak x.go
+        # -c=n flag shows n lines of context. (3.955s)
+        > ! go vet -c=2 -printf example.com/x
+        [stderr]
+        x.go:12:21: non-constant format string in call to fmt.Sprintf
+        10	
+        11	// This call yields a "non-constant format string" diagnostic, with a fix (go vet only).
+        12	var _ = fmt.Sprintf(s)
+        13	
+        14	// This call yields a hostport diagnostic, with a fix (go vet and go fix).
+        [exit status 1]
+        > stderr 'x.go:12:21: non-constant format string in call to fmt.Sprintf'
+        matched: x.go:12:21: non-constant format string in call to fmt.Sprintf
+        > ! stderr '9	'
+        > stderr '10	'
+        matched: 10	
+        > stderr '11	// This call...'
+        matched: 11	// This call yields a "non-constant format string" diagnostic, with a fix (go vet only).
+        > stderr '12	var _ = fmt.Sprintf\(s\)'
+        matched: 12	var _ = fmt.Sprintf(s)
+        > stderr '13	'
+        matched: 13	
+        > stderr '14	'
+        matched: 14	// This call yields a hostport diagnostic, with a fix (go vet and go fix).
+        > ! stderr '15	'
+--- PASS: TestScript (0.07s)
+    --- PASS: TestScript/vet_basic (49.85s)
+PASS

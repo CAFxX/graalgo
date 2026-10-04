@@ -1,0 +1,12 @@
+id: GG-SCHED-0002
+title: Drainer admission discipline
+statement: 'A single platform-thread drainer SHALL take tokens (blocking) from the scheduler queue and admit vthreads via LockSupport.unpark(), in the lane-priority order defined by GG-WAKE-0003. The drainer SHALL be non-terminating: it SHALL NOT exit on InterruptedException (swallow-and-continue or supervisor-restart), and production SHALL NOT expose the drainer thread to interruptors.'
+rationale: 'Spike 2b §1.2/§3.2: FIFO alone starved 2,768/10,000 new goroutines behind RESUME flood; the two-level priority fixed it (never_scheduled=0).'
+parent: "GG-0017"
+status: locked
+superseded_by: ""
+verification_plan: Spike 2b F3 quiescence probe; Phase-2 scale tests.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: lane discipline delegated to GG-WAKE-0003 (R1 P1-6); drainer non-termination added (R1 P1-5)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

@@ -1,0 +1,5 @@
+=== o5_scale_cap1 (par=2 gmp=1 quantumNs=1000000) ===
+o5 nG=16 secs=3 cap=1 total_units=21784311 units_per_sec=7261437.0
+sched{cap=1(req=1,par=2) inflight_now~na parkEvents=1800 admissions=1800 firstAdmissions=16 wakeupCalls=0 wakeupWon=0 maxUnparkedNotResumed=1 maxTrueParallel=1 minInflightObserved=0 drainerEvents=1816 drainerUtilPct=1.07}
+O5 RESULT=PASS
+exit=0

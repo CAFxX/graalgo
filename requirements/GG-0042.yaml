@@ -1,0 +1,13 @@
+id: GG-0042
+title: Toil accounting
+statement: Every upgrade report SHALL publish per-component toil accounting (agent-hours, wall-clock, skip-list delta, rebase conflicts, unexplained divergences = 0); the P95 bounds SHALL be checked mechanically.
+rationale: '''Bounded'' is proved by measurement, not asserted.'
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Accounting template; bound-check in CI.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

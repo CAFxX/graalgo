@@ -1,0 +1,68 @@
+=== RUN   TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:44819
+https://vcs-test.golang.org rerouted to https://127.0.0.1:32901
+go test proxy running at GOPROXY=http://127.0.0.1:39995/mod
+=== RUN   TestScript/build_cgo_error
+=== PAUSE TestScript/build_cgo_error
+=== CONT  TestScript/build_cgo_error
+    script_test.go:139: 2026-10-03T11:26:41Z
+    script_test.go:141: $WORK=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-303899118/tmpdir2807095162/build_cgo_error998153443
+    script_test.go:163: 
+        PATH=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-303899118/tmpdir2807095162/testbin:/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/03-versiontax/gocache126-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:39995/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-303899118/tmpdir2807095162/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:44819
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:32901
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-303899118/vcstest2777094326/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.26.8
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-303899118/tmpdir2807095162/build_cgo_error998153443
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-303899118/tmpdir2807095162/build_cgo_error998153443/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-303899118/tmpdir2807095162/build_cgo_error998153443/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-303899118/tmpdir2807095162/build_cgo_error998153443/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-303899118/tmpdir2807095162/build_cgo_error998153443/gopath/src
+        
+        > [short] skip
+        [condition not met]
+        > [!cgo] skip
+        [condition not met]
+        > ! go build .
+        [stderr]
+        # foo
+        foo.c:1:10: fatal error: doesnotexist.h: No such file or directory
+            1 | #include "doesnotexist.h"
+              |          ^~~~~~~~~~~~~~~~
+        compilation terminated.
+        [exit status 1]
+        > stderr '# foo\nfoo.c:'
+        matched: # foo
+        foo.c:1:10: fatal error: doesnotexist.h: No such file or directory
+        > ! stderr 'EXTRA string'
+--- PASS: TestScript (0.08s)
+    --- PASS: TestScript/build_cgo_error (2.44s)
+PASS

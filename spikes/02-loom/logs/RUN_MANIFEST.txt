@@ -1,0 +1,11 @@
+spike 02-loom run manifest
+date: 2026-10-03
+jdk: ~/tools/graalvm-jdk-25 (GraalVM 25.0.4+7.1, JDK 25.0.4 LTS)
+go: ~/tools/go (go1.27.1 linux/amd64)
+machine: 2 vCPU (AMD EPYC 9D25), 7GB RAM
+source checksums: SOURCES.sha256 (this dir)
+build: proto/build.sh (javac from pinned JDK); go build from pinned Go
+java runs: -Djdk.virtualThreadScheduler.parallelism=N (N=1,2,4)
+go runs: GOMAXPROCS=N (N=1,2,4)
+jfr: logs/jfr/*.jfr (note: recordings capture env vars incl. internal
+     runtime metadata; counts extracted programmatically, files not for export)

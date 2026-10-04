@@ -1,0 +1,12 @@
+id: GG-SCHED-0003
+title: In-flight cap equals GOMAXPROCS
+statement: The number of admitted-but-not-yet-parked virtual threads SHALL never exceed `min(GOMAXPROCS, carrier parallelism)`; the drainer SHALL enforce this as a hard assert.
+rationale: 'Spike 2b F5: maxTrueParallel never exceeded the cap at cap=1 and cap=2; this is the GOMAXPROCS fidelity mechanism under option C.'
+parent: "GG-0017"
+status: locked
+superseded_by: ""
+verification_plan: Spike 2b F5; Phase-2 pinned-GOMAXPROCS matrix incl. mixed I/O+compute.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: statement pins min(GOMAXPROCS, carrier parallelism) per SPEC §3.5 (ID kept; consistency audit D1)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

@@ -1,0 +1,14 @@
+=== 2026-10-03T11:34:09.416011164Z pid=58889 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/compile importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-890306119/tmpdir4188295097/build_dash_n_cgo1357528668/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T11:34:09.424645662Z pid=58897 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/asm importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-890306119/tmpdir4188295097/build_dash_n_cgo1357528668/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T11:34:09.460256383Z pid=58905 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/cgo importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-890306119/tmpdir4188295097/build_dash_n_cgo1357528668/gopath/src" argc=1
+  argv[0]="-V=full"
+=== 2026-10-03T11:34:09.466583778Z pid=58912 tool=gcc importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-890306119/tmpdir4188295097/build_dash_n_cgo1357528668/gopath/src" argc=5
+  argv[0]="-###"
+  argv[1]="-x"
+  argv[2]="c"
+  argv[3]="-c"
+  argv[4]="-"
+=== 2026-10-03T11:34:09.48017176Z pid=58916 tool=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64/link importpath="" cwd="/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-890306119/tmpdir4188295097/build_dash_n_cgo1357528668/gopath/src" argc=1
+  argv[0]="-V=full"

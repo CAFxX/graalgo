@@ -1,0 +1,7 @@
+=== quiescence_10k (par=2 gmp=2 quantumNs=100000) ===
+quiescence nSpin=10000 secs=20 cap=2 quantumNs=100000
+quanta_per_spinner min=9 max=10 mean=9.1 max_over_mean=1.10 never_scheduled=2643 FAIR=FAIL
+maxParkedObserved=9999 (N=10000, cap=2)
+sched{cap=2 inflight_now~na parkEvents=103422 admissions=102129 wakeupCalls=0 wakeupWon=0 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=1 drainerEvents=112127 drainerUtilPct=1.00}
+RESULT=FAIL
+exit=2

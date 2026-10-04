@@ -1,0 +1,121 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:43951
+https://vcs-test.golang.org rerouted to https://127.0.0.1:44425
+go test proxy running at GOPROXY=http://127.0.0.1:46487/mod
+=== RUN   TestScript/vet_internal
+=== PAUSE TestScript/vet_internal
+=== CONT  TestScript/vet_internal
+    script_test.go:141: 2026-10-03T06:16:42Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2294845296/tmpdir1555491587/vet_internal3750119175
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2294845296/tmpdir1555491587/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:46487/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2294845296/tmpdir1555491587/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:43951
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:44425
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2294845296/vcstest3105693438/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2294845296/tmpdir1555491587/vet_internal3750119175
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2294845296/tmpdir1555491587/vet_internal3750119175/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2294845296/tmpdir1555491587/vet_internal3750119175/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2294845296/tmpdir1555491587/vet_internal3750119175/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2294845296/tmpdir1555491587/vet_internal3750119175/gopath/src
+        
+        > env GO111MODULE=off
+        # Issue 36173. Verify that "go vet" prints line numbers on load errors. (4.557s)
+        > ! go vet a/a.go
+        [stderr]
+        package command-line-arguments
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+        [exit status 1]
+        > stderr '^package command-line-arguments\n\ta[/\\]a.go:5:3: use of internal package'
+        matched: package command-line-arguments
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+        > ! go vet a/a_test.go
+        [stderr]
+        package command-line-arguments (test)
+        	a/a_test.go:4:3: use of internal package a/x/internal/y not allowed
+        [exit status 1]
+        > stderr '^package command-line-arguments \(test\)\n\ta[/\\]a_test.go:4:3: use of internal package'
+        matched: package command-line-arguments (test)
+        	a/a_test.go:4:3: use of internal package a/x/internal/y not allowed
+        > ! go vet a
+        [stderr]
+        package a
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+        [exit status 1]
+        > stderr '^package a\n\ta[/\\]a.go:5:3: use of internal package'
+        matched: package a
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+        > go vet b/b.go
+        > ! stderr 'use of internal package'
+        > ! go vet b/b_test.go
+        [stderr]
+        package command-line-arguments (test)
+        	b/b_test.go:4:3: use of internal package a/x/internal/y not allowed
+        [exit status 1]
+        > stderr '^package command-line-arguments \(test\)\n\tb[/\\]b_test.go:4:3: use of internal package'
+        matched: package command-line-arguments (test)
+        	b/b_test.go:4:3: use of internal package a/x/internal/y not allowed
+        > ! go vet depends-on-a/depends-on-a.go
+        [stderr]
+        package command-line-arguments
+        	imports a
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+        [exit status 1]
+        > stderr '^package command-line-arguments\n\timports a\n\ta[/\\]a.go:5:3: use of internal package'
+        matched: package command-line-arguments
+        	imports a
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+        > ! go vet depends-on-a/depends-on-a_test.go
+        [stderr]
+        package command-line-arguments (test)
+        	imports a
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+        [exit status 1]
+        > stderr '^package command-line-arguments \(test\)\n\timports a\n\ta[/\\]a.go:5:3: use of internal package a/x/internal/y not allowed'
+        matched: package command-line-arguments (test)
+        	imports a
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+        > ! go vet depends-on-a
+        [stderr]
+        package depends-on-a
+        	imports a
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+        [exit status 1]
+        > stderr '^package depends-on-a\n\timports a\n\ta[/\\]a.go:5:3: use of internal package'
+        matched: package depends-on-a
+        	imports a
+        	a/a.go:5:3: use of internal package a/x/internal/y not allowed
+--- PASS: TestScript (0.25s)
+    --- PASS: TestScript/vet_internal (4.57s)
+PASS

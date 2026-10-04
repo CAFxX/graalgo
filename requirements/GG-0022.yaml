@@ -1,0 +1,11 @@
+id: GG-0022
+title: cgo via Panama FFI
+statement: 'cgo SHALL map to Panama FFI (JEP 454): the stock cgo tool and host gcc SHALL be kept for the C side; graalgo SHALL author the C ABI struct-layout engine; supported platforms are linux/amd64 first, linux/arm64 second; darwin/windows deferred.'
+rationale: Closes Phase-0 question 5; real user-facing wins, with toolchain-author risk concentrated in the layout engine.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Spike 1 plus cgo corpus via Panama (Phase 4 done-gate); per-platform ABI conformance.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

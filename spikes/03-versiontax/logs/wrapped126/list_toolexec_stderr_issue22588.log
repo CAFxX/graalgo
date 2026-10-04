@@ -1,0 +1,59 @@
+=== RUN   TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:41431
+https://vcs-test.golang.org rerouted to https://127.0.0.1:45225
+go test proxy running at GOPROXY=http://127.0.0.1:40345/mod
+=== RUN   TestScript/list_toolexec_stderr_issue22588
+=== PAUSE TestScript/list_toolexec_stderr_issue22588
+=== CONT  TestScript/list_toolexec_stderr_issue22588
+    script_test.go:139: 2026-10-03T11:31:40Z
+    script_test.go:141: $WORK=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2343686651/tmpdir2651085852/list_toolexec_stderr_issue22588688205830
+    script_test.go:163: 
+        PATH=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2343686651/tmpdir2651085852/testbin:/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/03-versiontax/gocache126-wrapped
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:40345/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2343686651/tmpdir2651085852/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:41431
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:45225
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2343686651/vcstest1566920207/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.26.8
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        GRAALGO_WRAPPER_LOG=/home/hatch/workspace/graalgo/spikes/03-versiontax/logs/wraplogs126/list_toolexec_stderr_issue22588.wraplog
+        GOFLAGS=-toolexec=/home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log-v4
+        WORK=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2343686651/tmpdir2651085852/list_toolexec_stderr_issue22588688205830
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2343686651/tmpdir2651085852/list_toolexec_stderr_issue22588688205830/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2343686651/tmpdir2651085852/list_toolexec_stderr_issue22588688205830/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2343686651/tmpdir2651085852/list_toolexec_stderr_issue22588688205830/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-2343686651/tmpdir2651085852/list_toolexec_stderr_issue22588688205830/gopath/src
+        
+        # This is a script test conversion of TestIssue22588 which was added in CL 76017.
+        # Test that the stderr of a tool run under toolexec doesn't affect caching.
+        # Don't get confused by stderr coming from tools. (0.001s)
+        > [!exec:/usr/bin/time] skip
+    script_test.go:163: SKIP
+--- PASS: TestScript (0.10s)
+    --- SKIP: TestScript/list_toolexec_stderr_issue22588 (0.01s)
+PASS

@@ -1,0 +1,38 @@
+?   	graalgo-spike04/difftest	[no test files]
+=== RUN   TestTD_DescriptorFieldRead
+--- PASS: TestTD_DescriptorFieldRead (0.00s)
+=== RUN   TestPA_Add
+--- PASS: TestPA_Add (0.00s)
+=== RUN   TestPA_AlignmentQuery
+--- PASS: TestPA_AlignmentQuery (0.00s)
+=== RUN   TestIF_PackEface
+--- PASS: TestIF_PackEface (0.00s)
+=== RUN   TestIF_PrototypeExtraction
+--- PASS: TestIF_PrototypeExtraction (0.00s)
+=== RUN   TestRW_WordAndSlice
+--- PASS: TestRW_WordAndSlice (0.00s)
+=== RUN   TestRW_BitReinterpret
+--- PASS: TestRW_BitReinterpret (0.00s)
+=== RUN   TestSH_SliceHeader
+--- PASS: TestSH_SliceHeader (0.00s)
+=== RUN   TestCF_FrameTraffic
+--- PASS: TestCF_FrameTraffic (0.00s)
+=== RUN   TestFP_SyntheticCodePointers
+--- PASS: TestFP_SyntheticCodePointers (0.00s)
+=== RUN   TestZV_CanonicalZero
+--- PASS: TestZV_CanonicalZero (0.00s)
+=== RUN   TestAD_AddressOf
+--- PASS: TestAD_AddressOf (0.00s)
+=== RUN   TestRC_RaceNote
+    handletable_test.go:197: race: obj=100000000 pc=1000 fn=mapIterStart
+--- PASS: TestRC_RaceNote (0.00s)
+=== RUN   TestToken_RoundTrip
+--- PASS: TestToken_RoundTrip (0.00s)
+=== RUN   TestTDR_OffsetResolution
+--- PASS: TestTDR_OffsetResolution (0.00s)
+PASS
+ok  	graalgo-spike04/handletable	0.004s
+=== RUN   TestDifferential
+--- PASS: TestDifferential (0.00s)
+PASS
+ok  	graalgo-spike04/layout	0.016s

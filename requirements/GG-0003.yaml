@@ -1,0 +1,11 @@
+id: GG-0003
+title: Extra JVM APIs
+statement: graalgo SHALL expose additional JVM-integration APIs (the `graalgo/java` package and polyglot bindings) beyond the stock Go surface, without altering any stock behavior.
+rationale: Requirement (1) explicitly adds JVM APIs to the drop-in core; they must be purely additive.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Conformance suite asserting stock behavior unchanged with the extra APIs present, plus the interop conformance suite.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

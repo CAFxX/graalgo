@@ -1,0 +1,106 @@
+package graalgo.frontend;
+
+import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.Node;
+import graalgo.runtime.GoErrors;
+import graalgo.runtime.Panic;
+import graalgo.values.GoKind;
+import graalgo.values.GoPointer;
+import graalgo.values.GoStruct;
+
+/**
+ * Field selector {@code x.f} (M4, WS E).
+ *
+ * <p>{@code selpath} is go/types' field-index path through (possibly
+ * embedded) structs, so no promotion logic lives here. Pointers
+ * auto-deref at every level (a nil pointer raises gc's nil-dereference panic).
+ * The node's kind is the field's kind; struct-typed fields read by
+ * reference (writes through them mutate the owning struct in place —
+ * sound because every struct assignment deep-copies).
+ */
+public final class SelectorNode extends GoExprNode {
+    @Child private GoExprNode obj;
+    private final int[] selpath;
+
+    public SelectorNode(GoExprNode obj, int[] selpath, GoKind fieldKind) {
+        super(fieldKind);
+        this.obj = obj;
+        this.selpath = selpath;
+    }
+
+    public GoExprNode obj() {
+        return obj;
+    }
+
+    public int[] selpath() {
+        return selpath;
+    }
+
+    /** Navigates to the selected field's canonical boxed value. */
+    static Object readField(GoExprNode objNode, int[] selpath, VirtualFrame frame) {
+        Object o = objNode.executeObject(frame);
+        for (int idx : selpath) {
+            o = deref(o);
+            GoStruct s = (GoStruct) o;
+            if (s.descriptor().field(idx).inLongs()) {
+                o = Long.valueOf(s.getLong(idx));
+            } else {
+                o = s.getObject(idx);
+            }
+        }
+        return o;
+    }
+
+    static Object deref(Object o) {
+        if (o == null) {
+            // Nil pointer (Java null): gc's nil-dereference panic.
+            Panic.throwPanic(GoErrors.nilDereference());
+        }
+        if (o instanceof GoPointer p) {
+            if (p.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference());
+            }
+            return p.referent();
+        }
+        return o;
+    }
+
+    private Object read(VirtualFrame frame) {
+        Object o = readField(obj, selpath, frame);
+        if (o instanceof Long l) {
+            // Longs-carried field: decode per the node's kind.
+            return Boxing.fromLongBits(kind(), l.longValue());
+        }
+        return o;
+    }
+
+    @Override
+    public long executeLong(VirtualFrame frame) {
+        return ((Long) read(frame)).longValue();
+    }
+
+    @Override
+    public int executeInt(VirtualFrame frame) {
+        return ((Integer) read(frame)).intValue();
+    }
+
+    @Override
+    public float executeFloat(VirtualFrame frame) {
+        return ((Float) read(frame)).floatValue();
+    }
+
+    @Override
+    public double executeDouble(VirtualFrame frame) {
+        return ((Double) read(frame)).doubleValue();
+    }
+
+    @Override
+    public boolean executeBoolean(VirtualFrame frame) {
+        return ((Boolean) read(frame)).booleanValue();
+    }
+
+    @Override
+    public Object executeObject(VirtualFrame frame) {
+        return read(frame);
+    }
+}

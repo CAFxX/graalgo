@@ -1,0 +1,6 @@
+=== capexhaustion (par=2 gmp=2 quantumNs=1000000) ===
+capexhaustion raw=false secs=5 cap=2 spinner_iters=511518295 short_io_done=1
+liveness(spinner>1M iters)=true short_io_reacquired=true
+sched{cap=2(req=2,par=2) inflight_now~na parkEvents=3563 admissions=3561 firstAdmissions=4 wakeupCalls=1 wakeupWon=1 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=3566 drainerUtilPct=0.95}
+RESULT=PASS
+exit=0

@@ -1,0 +1,12 @@
+id: GG-WAKE-0002
+title: Lost-wakeup invariant
+statement: At quiescence, scheduler admissions SHALL equal parks; under randomized park/unpark + channel-wakeup stress, zero wakeups SHALL be lost.
+rationale: 'Spike 2b F6: parks=50,558, admissions=50,558, wakeupWon=40,617/40,617, 0 errors.'
+parent: "GG-0017"
+status: locked
+superseded_by: ""
+verification_plan: 'Spike 2b F6; Phase-2 formal model-checking at the protocol level (events + drainer state machine; TLA+/JPF-scale), scoped to the interleavings F6 does not deterministically cover: (a) close() waking parked senders via the aborted path while receivers drain; (b) stale-ticket wakeup racing re-arm to a fresh ticket; (c) select in-flight stale SelSignal vs re-registration; (d) INIT lane under WAKEUP flood; (e) cap=1 channel-wakeup liveness; (f) WAKEUP-before-IDLE with generation skew under drainer batching.'
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: model-checking scope written explicitly (R1 P2-9)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

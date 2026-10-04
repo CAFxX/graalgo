@@ -1,0 +1,11 @@
+id: GG-FAIR-0003
+title: Starvation freedom at scale
+statement: Every runnable goroutine SHALL be admitted within 4 x N drainer admissions (N = live goroutines), i.e. within four full round-robin passes - no indefinite postponement; in the 10,000-spinner quiescence probe, never_scheduled SHALL be 0.
+rationale: 'Spike 2b F3: the all-parked idle state is reachable and drains fairly — the quiescence argument that distinguishes option C from the killed yield design.'
+parent: "GG-0048"
+status: locked
+superseded_by: ""
+verification_plan: Spike 2b F3; Phase-2 starvation-freedom probes.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

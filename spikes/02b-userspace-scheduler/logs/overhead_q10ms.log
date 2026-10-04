@@ -1,0 +1,10 @@
+=== overhead_q10ms (par=2 gmp=2 quantumNs=10000000) ===
+overhead iters=200000 park_resume_ns mean=29884 p50=10015 p99=153611 max=28368893
+budget_1ms_quantum: mean_ns=29884 < 10000 (1%) -> FAIL
+budget_100us_quantum: mean_ns=29884 < 5000 (5%) -> FAIL
+budget_configured_quantum: mean_ns=29884 < 100000 (1% of quantumNs=10000000) -> PASS
+poll_fastpath_ns_per_poll=120.13 (quantumNs=10000000, main thread: no goroutine -> early exit)
+poll_fastpath_ns_per_poll_on_goroutine=31.23
+sched{cap=2(req=2,par=2) inflight_now~na parkEvents=220026 admissions=220026 firstAdmissions=2 wakeupCalls=0 wakeupWon=0 maxUnparkedNotResumed=1 maxTrueParallel=1 minInflightObserved=0 drainerEvents=220028 drainerUtilPct=5.27}
+RESULT=PASS
+exit=0

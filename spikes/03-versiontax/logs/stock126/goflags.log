@@ -1,0 +1,236 @@
+=== RUN   TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:40989
+https://vcs-test.golang.org rerouted to https://127.0.0.1:42519
+go test proxy running at GOPROXY=http://127.0.0.1:44569/mod
+=== RUN   TestScript/goflags
+=== PAUSE TestScript/goflags
+=== CONT  TestScript/goflags
+    script_test.go:139: 2026-10-03T11:30:24Z
+    script_test.go:141: $WORK=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130
+    script_test.go:163: 
+        PATH=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/testbin:/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/03-versiontax/gocache126-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:44569/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:40989
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:42519
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/vcstest3744705791/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.26.8
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/gopath/src
+        
+        > env GO111MODULE=off
+        # GOFLAGS sets flags for commands (0.105s)
+        > env GOFLAGS='-e -f={{.Dir}} --test.benchtime=1s -count=10'
+        > go list asdfasdfasdf  # succeeds because of -e
+        > go list runtime
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/src/runtime
+        > stdout '[\\/]runtime$'
+        matched: /home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/src/runtime
+        > env GOFLAGS=-race OLDGOARCH=$GOARCH OLDGOOS=$GOOS GOARCH=386 GOOS=linux
+        > ! go list runtime
+        [stderr]
+        -race is not supported on linux/386
+        [exit status 2]
+        > stderr 'race is not supported on linux/386'
+        matched: -race is not supported on linux/386
+        > env GOARCH=$OLDGOARCH GOOS=$OLDGOOS
+        # go env succeeds even though -f={{.Dir}} is inappropriate (0.015s)
+        > go env
+        [stdout]
+        AR='ar'
+        CC='gcc'
+        CGO_CFLAGS='-O2 -g'
+        CGO_CPPFLAGS=''
+        CGO_CXXFLAGS='-O2 -g'
+        CGO_ENABLED='1'
+        CGO_FFLAGS='-O2 -g'
+        CGO_LDFLAGS='-O2 -g'
+        CXX='g++'
+        GCCGO='gccgo'
+        GO111MODULE='off'
+        GOAMD64='v1'
+        GOARCH='amd64'
+        GOAUTH='netrc'
+        GOBIN=''
+        GOCACHE='/home/hatch/workspace/graalgo/spikes/03-versiontax/gocache126-stock'
+        GOCACHEPROG=''
+        GODEBUG=''
+        GOENV='/no-home/.config/go/env'
+        GOEXE=''
+        GOEXPERIMENT=''
+        GOFIPS140='off'
+        GOFLAGS='-race'
+        GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/tmp/go-build4091087297=/tmp/go-build -gno-record-gcc-switches'
+        GOHOSTARCH='amd64'
+        GOHOSTOS='linux'
+        GOINSECURE=''
+        GOMOD=''
+        GOMODCACHE='/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/gopath/pkg/mod'
+        GONOPROXY=''
+        GONOSUMDB=''
+        GOOS='linux'
+        GOPATH='/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/gopath'
+        GOPRIVATE=''
+        GOPROXY='http://127.0.0.1:44569/mod'
+        GOROOT='/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go'
+        GOSUMDB='localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6'
+        GOTELEMETRY='local'
+        GOTELEMETRYDIR='/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/telemetry'
+        GOTMPDIR=''
+        GOTOOLCHAIN='auto'
+        GOTOOLDIR='/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64'
+        GOVCS='*:all'
+        GOVERSION='go1.26.8'
+        GOWORK=''
+        PKG_CONFIG='pkg-config'
+        # bad flags are diagnosed (0.063s)
+        > env GOFLAGS=-typoflag
+        > ! go list runtime
+        [stderr]
+        go: parsing $GOFLAGS: unknown flag -typoflag
+        [exit status 1]
+        > stderr 'unknown flag -typoflag'
+        matched: go: parsing $GOFLAGS: unknown flag -typoflag
+        > env GOFLAGS=-
+        > ! go list runtime
+        [stderr]
+        go: parsing $GOFLAGS: non-flag "-"
+        [exit status 1]
+        > stderr '^go: parsing \$GOFLAGS: non-flag "-"'
+        matched: go: parsing $GOFLAGS: non-flag "-"
+        > env GOFLAGS=--
+        > ! go list runtime
+        [stderr]
+        go: parsing $GOFLAGS: non-flag "--"
+        [exit status 1]
+        > stderr '^go: parsing \$GOFLAGS: non-flag "--"'
+        matched: go: parsing $GOFLAGS: non-flag "--"
+        > env GOFLAGS=---oops
+        > ! go list runtime
+        [stderr]
+        go: parsing $GOFLAGS: non-flag "---oops"
+        [exit status 1]
+        > stderr '^go: parsing \$GOFLAGS: non-flag "---oops"'
+        matched: go: parsing $GOFLAGS: non-flag "---oops"
+        > env GOFLAGS=-=noname
+        > ! go list runtime
+        [stderr]
+        go: parsing $GOFLAGS: non-flag "-=noname"
+        [exit status 1]
+        > stderr '^go: parsing \$GOFLAGS: non-flag "-=noname"'
+        matched: go: parsing $GOFLAGS: non-flag "-=noname"
+        > env GOFLAGS=-f
+        > ! go list runtime
+        [stderr]
+        go: flag needs an argument: -f (from $GOFLAGS)
+        usage: go list [-f format] [-json] [-m] [list flags] [build flags] [packages]
+        Run 'go help list' for details.
+        [exit status 2]
+        > stderr '^go: flag needs an argument: -f \(from (\$GOFLAGS|%GOFLAGS%)\)$'
+        matched: go: flag needs an argument: -f (from $GOFLAGS)
+        > env GOFLAGS=-e=asdf
+        > ! go list runtime
+        [stderr]
+        go: invalid boolean value "asdf" for flag -e (from $GOFLAGS): parse error
+        usage: go list [-f format] [-json] [-m] [list flags] [build flags] [packages]
+        Run 'go help list' for details.
+        [exit status 2]
+        > stderr '^go: invalid boolean value \"asdf\" for flag -e \(from (\$GOFLAGS|%GOFLAGS%)\)'
+        matched: go: invalid boolean value "asdf" for flag -e (from $GOFLAGS): parse error
+        # except in go bug (untested) and go env (0.012s)
+        > go env
+        [stdout]
+        AR='ar'
+        CC='gcc'
+        CGO_CFLAGS='-O2 -g'
+        CGO_CPPFLAGS=''
+        CGO_CXXFLAGS='-O2 -g'
+        CGO_ENABLED='1'
+        CGO_FFLAGS='-O2 -g'
+        CGO_LDFLAGS='-O2 -g'
+        CXX='g++'
+        GCCGO='gccgo'
+        GO111MODULE='off'
+        GOAMD64='v1'
+        GOARCH='amd64'
+        GOAUTH='netrc'
+        GOBIN=''
+        GOCACHE='/home/hatch/workspace/graalgo/spikes/03-versiontax/gocache126-stock'
+        GOCACHEPROG=''
+        GODEBUG=''
+        GOENV='/no-home/.config/go/env'
+        GOEXE=''
+        GOEXPERIMENT=''
+        GOFIPS140='off'
+        GOFLAGS='-e=asdf'
+        GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/tmp/go-build3015310523=/tmp/go-build -gno-record-gcc-switches'
+        GOHOSTARCH='amd64'
+        GOHOSTOS='linux'
+        GOINSECURE=''
+        GOMOD=''
+        GOMODCACHE='/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/gopath/pkg/mod'
+        GONOPROXY=''
+        GONOSUMDB=''
+        GOOS='linux'
+        GOPATH='/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/gopath'
+        GOPRIVATE=''
+        GOPROXY='http://127.0.0.1:44569/mod'
+        GOROOT='/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go'
+        GOSUMDB='localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6'
+        GOTELEMETRY='local'
+        GOTELEMETRYDIR='/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/telemetry'
+        GOTMPDIR=''
+        GOTOOLCHAIN='auto'
+        GOTOOLDIR='/home/hatch/workspace/graalgo/spikes/03-versiontax/src/go1.26.8/go/pkg/tool/linux_amd64'
+        GOVCS='*:all'
+        GOVERSION='go1.26.8'
+        GOWORK=''
+        PKG_CONFIG='pkg-config'
+        > stdout GOFLAGS
+        matched: GOFLAGS='-e=asdf'
+        # Flags listed in GOFLAGS should be safe to duplicate on the command line. (1.281s)
+        > env GOFLAGS=-tags=magic
+        > go list -tags=magic
+        [stdout]
+        _/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/gopath/src
+        > go test -tags=magic -c -o $devnull
+        > go vet -tags=magic
+        # GOFLAGS uses the same quoting rules (quoted.Split) as the rest of
+        # the go command env variables (0.008s)
+        > env GOFLAGS='"-tags=magic wizardry"'
+        > go list
+        [stdout]
+        _/home/hatch/workspace/graalgo/spikes/03-versiontax/tmp/cmd-go-test-278916929/tmpdir2871263887/goflags2741869130/gopath/src
+--- PASS: TestScript (0.05s)
+    --- PASS: TestScript/goflags (1.49s)
+PASS

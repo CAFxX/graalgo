@@ -1,0 +1,405 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:38331
+https://vcs-test.golang.org rerouted to https://127.0.0.1:36039
+go test proxy running at GOPROXY=http://127.0.0.1:40003/mod
+=== RUN   TestScript/version_buildvcs_git
+=== PAUSE TestScript/version_buildvcs_git
+=== CONT  TestScript/version_buildvcs_git
+    script_test.go:141: 2026-10-03T06:41:18Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980
+go proxy: open /home/hatch/tools/go/src/cmd/go/testdata/mod/example.com_cmd_a_v1.0.0.txt: no such file or directory
+go proxy: no archive example.com/cmd/a v1.0.0: file does not exist
+go proxy: no archive example.com/cmd/a v1.0.0: file does not exist
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-wrapped
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:40003/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:38331
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:36039
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/vcstest572145635/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        GRAALGO_WRAPPER_LOG=/home/hatch/workspace/graalgo/spikes/05-cmdgo/logs/wraplogs/version_buildvcs_git.wraplog
+        GOFLAGS=-toolexec=/home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/src
+        
+        # This test checks that VCS information is stamped into Go binaries by default,
+        # controlled with -buildvcs. This test focuses on Git. Other tests focus on
+        # other VCS tools but may not cover common functionality. (0.000s)
+        > [!git] skip
+        [condition not met]
+        > [short] skip
+        [condition not met]
+        > env GOBIN=$WORK/gopath/bin
+        > env oldpath=$PATH
+        > cd repo/a
+        # If there's no local repository, there's no VCS info. (0.317s)
+        > go install
+        > go version -m $GOBIN/a$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/a: go1.27.1
+        	path	example.com/a
+        	mod	example.com/a	(devel)	
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        > ! stdout vcs.revision
+        > rm $GOBIN/a$GOEXE
+        # If there's an orphan .git file left by a git submodule, it's not a git
+        # repository, and there's no VCS info. (0.320s)
+        > cd ../gitsubmodule
+        > go install
+        > go version -m $GOBIN/gitsubmodule$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/gitsubmodule: go1.27.1
+        	path	example.com/gitsubmodule
+        	mod	example.com/gitsubmodule	(devel)	
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        > ! stdout vcs.revision
+        > rm $GOBIN/gitsubmodule$GOEXE
+        # If there is a repository, but it can't be used for some reason,
+        # there should be an error. It should hint about -buildvcs=false.
+        # Also ensure that multiple errors are collected by "go list -e". (0.069s)
+        > cd ..
+        > mkdir .git
+        > env PATH=$WORK${/}fakebin${:}$oldpath
+        > chmod 0755 $WORK/fakebin/git
+        > ! exec git help
+        [exit status 1]
+        > cd a
+        > ! go install
+        [stderr]
+        error obtaining VCS status: exit status 1
+        	Use -buildvcs=false to disable VCS stamping.
+        [exit status 1]
+        > stderr '^error obtaining VCS status: exit status 1\n\tUse -buildvcs=false to disable VCS stamping.$'
+        matched: error obtaining VCS status: exit status 1
+        	Use -buildvcs=false to disable VCS stamping.
+        > go list -e -f '{{.ImportPath}}: {{.Error}}' ./...
+        [stdout]
+        example.com/a: error obtaining VCS status: exit status 1
+        	Use -buildvcs=false to disable VCS stamping.
+        example.com/a/library: <nil>
+        example.com/a/othermain: error obtaining VCS status: exit status 1
+        	Use -buildvcs=false to disable VCS stamping.
+        > stdout -count=1 '^example\.com/a: error obtaining VCS status'
+        > stdout -count=1 '^example\.com/a/library: <nil>'
+        > stdout -count=1 '^example\.com/a/othermain: error obtaining VCS status'
+        > cd ..
+        > env PATH=$oldpath
+        > rm .git
+        # If there is an empty repository in a parent directory, only "uncommitted" is tagged. (0.402s)
+        > exec git init
+        [stdout]
+        Initialized empty Git repository in /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/src/repo/.git/
+        [stderr]
+        hint: Using 'master' as the name for the initial branch. This default branch name
+        hint: is subject to change. To configure the initial branch name to use in all
+        hint: of your new repositories, which will suppress this warning, call:
+        hint: 
+        hint: 	git config --global init.defaultBranch <name>
+        hint: 
+        hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+        hint: 'development'. The just-created branch can be renamed via this command:
+        hint: 
+        hint: 	git branch -m <name>
+        > exec git config user.email gopher@golang.org
+        > exec git config user.name 'J.R. Gopher'
+        > cd a
+        > go install
+        > go version -m $GOBIN/a$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/a: go1.27.1
+        	path	example.com/a
+        	mod	example.com/a	(devel)	
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        	build	vcs=git
+        	build	vcs.modified=true
+        > stdout '^\tbuild\tvcs=git$'
+        matched: 	build	vcs=git
+        > stdout '^\tbuild\tvcs.modified=true$'
+        matched: 	build	vcs.modified=true
+        > ! stdout vcs.revision
+        > ! stdout vcs.time
+        > rm $GOBIN/a$GOEXE
+        # Revision and commit time are tagged for repositories with commits. (0.325s)
+        > exec git add -A
+        > exec git commit -m 'initial commit'
+        [stdout]
+        [master (root-commit) e3ed9d9] initial commit
+         9 files changed, 22 insertions(+)
+         create mode 100644 README
+         create mode 100644 a/a.go
+         create mode 100644 a/go.mod
+         create mode 100644 a/library/f.go
+         create mode 100644 a/othermain/f.go
+         create mode 100644 b/b.go
+         create mode 100644 b/go.mod
+         create mode 100644 gitsubmodule/go.mod
+         create mode 100644 gitsubmodule/main.go
+        > go install
+        > go version -m $GOBIN/a$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/a: go1.27.1
+        	path	example.com/a
+        	mod	example.com/a	(devel)	
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        	build	vcs=git
+        	build	vcs.revision=e3ed9d9472a2f55cbb1b1472c3f7c32fc46e2c3c
+        	build	vcs.time=2026-10-03T06:41:19Z
+        	build	vcs.modified=false
+        > stdout '^\tbuild\tvcs.revision='
+        matched: 	build	vcs.revision=e3ed9d9472a2f55cbb1b1472c3f7c32fc46e2c3c
+        > stdout '^\tbuild\tvcs.time='
+        matched: 	build	vcs.time=2026-10-03T06:41:19Z
+        > stdout '^\tbuild\tvcs.modified=false$'
+        matched: 	build	vcs.modified=false
+        > rm $GOBIN/a$GOEXE
+        # Building with -buildvcs=false suppresses the info. (0.338s)
+        > go install -buildvcs=false
+        > go version -m $GOBIN/a$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/a: go1.27.1
+        	path	example.com/a
+        	mod	example.com/a	(devel)	
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        > ! stdout vcs.revision
+        > rm $GOBIN/a$GOEXE
+        # An untracked file is shown as uncommitted, even if it isn't part of the build. (0.358s)
+        > cp ../../outside/empty.txt .
+        > go install
+        > go version -m $GOBIN/a$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/a: go1.27.1
+        	path	example.com/a
+        	mod	example.com/a	(devel)	
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        	build	vcs=git
+        	build	vcs.revision=e3ed9d9472a2f55cbb1b1472c3f7c32fc46e2c3c
+        	build	vcs.time=2026-10-03T06:41:19Z
+        	build	vcs.modified=true
+        > stdout '^\tbuild\tvcs.modified=true$'
+        matched: 	build	vcs.modified=true
+        > rm empty.txt
+        > rm $GOBIN/a$GOEXE
+        # An edited file is shown as uncommitted, even if it isn't part of the build. (0.602s)
+        > cp ../../outside/empty.txt ../README
+        > go install
+        > go version -m $GOBIN/a$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/a: go1.27.1
+        	path	example.com/a
+        	mod	example.com/a	(devel)	
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        	build	vcs=git
+        	build	vcs.revision=e3ed9d9472a2f55cbb1b1472c3f7c32fc46e2c3c
+        	build	vcs.time=2026-10-03T06:41:19Z
+        	build	vcs.modified=true
+        > stdout '^\tbuild\tvcs.modified=true$'
+        matched: 	build	vcs.modified=true
+        > exec git checkout ../README
+        [stderr]
+        Updated 1 path from the index
+        > rm $GOBIN/a$GOEXE
+        # If the build doesn't include any packages from the repository,
+        # there should be no VCS info. (0.755s)
+        > go install example.com/cmd/a@v1.0.0
+        [stderr]
+        go: downloading example.com v1.0.0
+        go: downloading example.com/cmd v1.0.0
+        > go version -m $GOBIN/a$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/a: go1.27.1
+        	path	example.com/cmd/a
+        	mod	example.com/cmd	v1.0.0	h1:hzCXVh1avI/33tA01Ss7/DbC/mseSMkahFFoTYN5qC0=
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        > ! stdout vcs.revision
+        > rm $GOBIN/a$GOEXE
+        > go mod edit -require=example.com/c@v0.0.0
+        > go mod edit -replace=example.com/c@v0.0.0=../../outside/c
+        > go install example.com/c
+        > go version -m $GOBIN/c$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/c: go1.27.1
+        	path	example.com/c
+        	mod	example.com/c	v0.0.0
+        	=>	../../outside/c	(devel)	
+        	
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        > ! stdout vcs.revision
+        > rm $GOBIN/c$GOEXE
+        > exec git checkout go.mod
+        [stderr]
+        Updated 1 path from the index
+        # If the build depends on a package in the repository, but it's not in the
+        # main module, there should be no VCS info. (0.598s)
+        > go mod edit -require=example.com/b@v0.0.0
+        > go mod edit -replace=example.com/b@v0.0.0=../b
+        > go mod edit -require=example.com/d@v0.0.0
+        > go mod edit -replace=example.com/d@v0.0.0=../../outside/d
+        > go install example.com/d
+        > go version -m $GOBIN/d$GOEXE
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/bin/d: go1.27.1
+        	path	example.com/d
+        	mod	example.com/d	v0.0.0
+        	=>	../../outside/d	(devel)	
+        	
+        	dep	example.com/b	v0.0.0
+        	=>	../b	(devel)	
+        	
+        	build	-buildmode=exe
+        	build	-compiler=gc
+        	build	DefaultGODEBUG=containermaxprocs=0,cryptocustomrand=1,decoratemappings=0,gotestjsonbuildtext=1,httpcookiemaxnum=0,httplaxcontentlength=1,httpmuxgo121=1,httpservecontentkeepheaders=1,multipathtcp=0,netedns0=0,panicnil=1,randseednop=0,rsa1024min=0,tlsmlkem=0,tlssecpmlkem=0,tlssha1=1,tracebacklabels=0,updatemaxprocs=0,urlmaxqueryparams=0,urlstrictcolons=0,winreadlinkvolume=0,winsymlink=0,x509negativeserial=1,x509rsacrt=0,x509sha256skid=0,x509sslcertoverrideplatform=0,x509usepolicies=0
+        	build	CGO_ENABLED=1
+        	build	CGO_CFLAGS=
+        	build	CGO_CPPFLAGS=
+        	build	CGO_CXXFLAGS=
+        	build	CGO_LDFLAGS=
+        	build	GOARCH=amd64
+        	build	GOOS=linux
+        	build	GOAMD64=v1
+        > ! stdout vcs.revision
+        > exec git checkout go.mod
+        [stderr]
+        Updated 1 path from the index
+        > rm $GOBIN/d$GOEXE
+        # If we're loading multiple main packages,
+        # but they share the same VCS repository,
+        # we only need to execute VCS status commands once. (0.032s)
+        > go list -x ./...
+        [stdout]
+        example.com/a
+        example.com/a/library
+        example.com/a/othermain
+        [stderr]
+        cd /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/src/repo
+        git status --porcelain
+        cd /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-700940481/tmpdir1248054252/version_buildvcs_git3681325980/gopath/src/repo
+        git -c log.showsignature=false log -1 --format=%H:%ct
+        > stdout -count=3 '^example.com'
+        > stderr -count=1 '^git status'
+        > stderr -count=1 '^git -c log.showsignature=false log'
+--- PASS: TestScript (0.05s)
+    --- PASS: TestScript/version_buildvcs_git (4.14s)
+PASS

@@ -1,0 +1,109 @@
+# Spike 5 matrix — script list and sampling rationale
+
+Each script runs twice via the compiled `cmd/go` test binary
+(`TestScript/<name>`): once stock (no GOFLAGS), once with
+`GOFLAGS=-toolexec=<wrapper>`. A script "passes" in a mode iff the txtar
+script's own assertions (stdout/stderr/exit-code/file-content) hold — so
+equal pass/fail across modes means identical observable behavior by the
+suite's own definition. Divergence = pass in one mode, fail in the other.
+
+## Sampling rationale
+
+The seam under test is `-toolexec`: every `compile`/`asm`/`cgo`/`link`/
+`cover`/`vet`/`preprofile` tool invocation is prefixed with the wrapper
+argv (verified in source: work/build.go:354, work/gc.go:136,332,676,724,
+work/exec.go:1490,3088,3337, work/cover.go:26, work/action.go:496).
+Sampling maximizes seam coverage per script:
+
+1. SEAM-DIRECT: scripts that assert on -toolexec behavior itself.
+2. TOOL-COVERAGE: at least one script per wrapped tool
+   (compile, asm, link, cgo, cover, vet, preprofile/PGO).
+3. CACHE/METADATA-BLINDSPOTS: scripts where the wrapper sees nothing or
+   only probes (build cache hits, two-level test cache, staleness) — the
+   wrapper cannot observe or influence driver-side caching; behavior must
+   still match.
+4. KNOWN-RISK (T3): cgo/gcc boundary (gcc is NOT wrapped — exec.go
+   ccompile), test JSON protocol, response files (@file argv),
+   GOFLAGS composition, buildvcs stamping, PGO.
+5. COMMAND-COVERAGE: build, run, test, vet, list, env, mod all represented.
+
+## Script list (53)
+
+The authoritative machine-readable list is `matrix_list.txt` in this
+directory (one script name per line, mapping to
+`testdata/script/<name>.txt`); grouped here with the reason each group is
+sampled.
+
+SEAM-DIRECT:
+toolexec
+list_toolexec_stderr_issue22588
+
+BUILD:
+build_dash_x                  # full -x trace; gap-hunt by diffing wrapped vs stock
+build_cache_compile
+build_cache_link
+build_gcflags
+build_gcflags_order
+build_pgo                     # preprofile tool (wrapped)
+build_cgo_error               # cgo tool error path under wrapper
+build_trimpath
+build_dash_n_cgo              # -n trace incl. unwrapped gcc
+build_cache_output
+
+RUN:
+run_hello
+run_hello_pkg
+
+TEST:
+test_json                     # test2json protocol
+test_vet                      # vet-during-test actions (wrapped)
+test_vet_vetall
+test_compile_binary           # go test -c
+test_trimpath
+test_main                     # generated test main
+test_race                     # race runtime link
+test_cache_coverpkg_bug       # two-level test cache
+test_go111module_cache
+test_exit                     # exit codes
+test_buildvcs                 # buildvcs stamping via link -X
+test_trimpath_test_suffix
+
+VET (all 7):
+vet_asm
+vet_basic
+vet_cache
+vet_commandline
+vet_deps
+vet_flags
+vet_internal
+
+LIST:
+list_export_e                 # BuildID / export data
+list_test_e
+list_json_fields              # PackagePublic stability
+list_compiled_imports
+
+ENV:
+env_write
+env_changed
+env_cache
+env_sanitize
+
+MOD:
+mod_download
+mod_tidy
+mod_vendor
+goflags                       # GOFLAGS composition (script overrides env GOFLAGS)
+
+COVER:
+cover_build_simple
+cover_cgo
+cover_modes
+
+CGO (gcc boundary):
+cgo_stale
+cgo_flag_contains_space
+cgo_long_cmd                  # long command lines -> response-file behavior
+
+VERSION:
+version_buildvcs_git

@@ -1,0 +1,11 @@
+id: GG-0005
+title: Bidirectional Go-Java interop
+statement: 'graalgo SHALL support Go<->Java calls in both directions with shared data types per the interop contract: pinned copy-vs-view semantics per type, error<->exception mapping, func<->lambda adapters.'
+rationale: Program requirement (3).
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Interop conformance suite run per release; differential behavior checks on boundary crossings.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

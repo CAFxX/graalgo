@@ -1,0 +1,13 @@
+id: GG-0045
+title: Parity stances
+statement: For every runtime-internal behavior with no JVM analog, the parity stance (parity / deliberate divergence + reason) SHALL be decided once and recorded in the architecture log; old stances SHALL NOT be re-debated.
+rationale: Converts recurring judgment into mechanical lookup.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Architecture-log completeness audit per upgrade.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

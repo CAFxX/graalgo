@@ -1,0 +1,103 @@
+{
+  "url": "https://api.github.com/repos/golang/go/issues/81887",
+  "repository_url": "https://api.github.com/repos/golang/go",
+  "labels_url": "https://api.github.com/repos/golang/go/issues/81887/labels{/name}",
+  "comments_url": "https://api.github.com/repos/golang/go/issues/81887/comments",
+  "events_url": "https://api.github.com/repos/golang/go/issues/81887/events",
+  "html_url": "https://github.com/golang/go/issues/81887",
+  "id": 5648862258,
+  "node_id": "I_kwDOAWBuf88AAAABULLMMg",
+  "number": 81887,
+  "title": "cmd/compile: slices.BinarySearchFunc is not inlined, making it slower than sort.Search",
+  "user": {
+    "login": "adonovan",
+    "id": 5658175,
+    "node_id": "MDQ6VXNlcjU2NTgxNzU=",
+    "avatar_url": "https://avatars.githubusercontent.com/u/5658175?v=4",
+    "gravatar_id": "",
+    "url": "https://api.github.com/users/adonovan",
+    "html_url": "https://github.com/adonovan",
+    "followers_url": "https://api.github.com/users/adonovan/followers",
+    "following_url": "https://api.github.com/users/adonovan/following{/other_user}",
+    "gists_url": "https://api.github.com/users/adonovan/gists{/gist_id}",
+    "starred_url": "https://api.github.com/users/adonovan/starred{/owner}{/repo}",
+    "subscriptions_url": "https://api.github.com/users/adonovan/subscriptions",
+    "organizations_url": "https://api.github.com/users/adonovan/orgs",
+    "repos_url": "https://api.github.com/users/adonovan/repos",
+    "events_url": "https://api.github.com/users/adonovan/events{/privacy}",
+    "received_events_url": "https://api.github.com/users/adonovan/received_events",
+    "type": "User",
+    "user_view_type": "public",
+    "site_admin": false
+  },
+  "labels": [
+    {
+      "id": 150880191,
+      "node_id": "MDU6TGFiZWwxNTA4ODAxOTE=",
+      "url": "https://api.github.com/repos/golang/go/labels/Performance",
+      "name": "Performance",
+      "color": "ededed",
+      "default": false,
+      "description": null,
+      "archived_at": null,
+      "archived_by": null
+    },
+    {
+      "id": 4262323075,
+      "node_id": "LA_kwDOAWBuf87-DeOD",
+      "url": "https://api.github.com/repos/golang/go/labels/compiler/runtime",
+      "name": "compiler/runtime",
+      "color": "486AF7",
+      "default": false,
+      "description": "Issues related to the Go compiler and/or runtime.",
+      "archived_at": null,
+      "archived_by": null
+    }
+  ],
+  "state": "open",
+  "locked": false,
+  "assignees": [
+
+  ],
+  "milestone": null,
+  "comments": 3,
+  "created_at": "2026-09-30T15:23:30Z",
+  "updated_at": "2026-10-01T14:27:25Z",
+  "closed_at": null,
+  "assignee": null,
+  "author_association": "MEMBER",
+  "issue_field_values": [
+
+  ],
+  "type": null,
+  "active_lock_reason": null,
+  "sub_issues_summary": {
+    "total": 0,
+    "completed": 0,
+    "percent_completed": 0
+  },
+  "issue_dependencies_summary": {
+    "blocked_by": 0,
+    "total_blocked_by": 0,
+    "blocking": 0,
+    "total_blocking": 0
+  },
+  "body": "The generic slices.BinarySearchFunc function added in Go 1.21 is significantly slower than sort.Search in some cases, such as the program below. The difference appears to be due to inlining of the Search call, permitting the calls to the lambda to be made static; by contrast BinarySearchFunc, which has a slightly more complex comparison expression (that appears twice), seems to exceed the inliner budget.\n\n```\n    goos: darwin\n    goarch: arm64\n    pkg: binsearch\n    cpu: Apple M1 Pro\n                         │ sort.Search  │      slices.BinarySearchFunc       │\n                         │    sec/op    │   sec/op     vs base               │\n    Search/C-8             18.56n ± 15%   24.57n ± 3%  +32.41% (p=0.002 n=6)\n    Search/WriteString-8   20.30n ±  5%   25.48n ± 2%  +25.54% (p=0.002 n=6)\n    Search/p.c-8           19.06n ±  1%   24.71n ± 1%  +29.64% (p=0.002 n=6)\n    Search/q.grow-8        19.43n ± 21%   23.11n ± 1%        ~ (p=0.065 n=6)\n    Search/missing-8       18.91n ±  1%   26.51n ± 3%  +40.19% (p=0.002 n=6)\n    geomean                19.24n         24.85n       +29.15%\n```\n\n\n```go\npackage binsearch\n\nimport (\n\t\"fmt\"\n\t\"slices\"\n\t\"sort\"\n\t\"strings\"\n\t\"testing\"\n)\n\ntype entry struct {\n\tid  string\n\tval *int\n}\n\nvar list = func() []entry {\n\tvar list []entry\n\tfor _, id := range []string{\n\t\t\"A\", \"B\", \"C\", \"D\", \"Grow\", \"Len\", \"Read\", \"Reset\",\n\t\t\"String\", \"Write\", \"WriteString\", \"p.a\", \"p.b\", \"p.c\", \"p.d\", \"q.grow\",\n\t} {\n\t\tlist = append(list, entry{id, new(int)})\n\t}\n\tif !slices.IsSortedFunc(list, func(x, y entry) int { return strings.Compare(x.id, y.id) }) {\n\t\tpanic(\"unsorted\")\n\t}\n\treturn list\n}()\n\n//go:noinline\nfunc lookupSort(list []entry, key string) *int {\n\ti := sort.Search(len(list), func(i int) bool {\n\t\treturn strings.Compare(list[i].id, key) >= 0\n\t})\n\tif i < len(list) && list[i].id == key {\n\t\treturn list[i].val\n\t}\n\treturn nil\n}\n\n//go:noinline\nfunc lookupSlices(list []entry, key string) *int {\n\ti, found := slices.BinarySearchFunc(list, key, func(e entry, key string) int {\n\t\treturn strings.Compare(e.id, key)\n\t})\n\tif found {\n\t\treturn list[i].val\n\t}\n\treturn nil\n}\n\nvar keys = []string{\"C\", \"WriteString\", \"p.c\", \"q.grow\", \"missing\"}\n\nfunc TestAgree(t *testing.T) {\n\tfor _, e := range list {\n\t\tif lookupSort(list, e.id) != e.val || lookupSlices(list, e.id) != e.val {\n\t\t\tt.Errorf(\"lookup(%q) failed\", e.id)\n\t\t}\n\t}\n\tif lookupSort(list, \"missing\") != nil || lookupSlices(list, \"missing\") != nil {\n\t\tt.Errorf(\"lookup(missing) succeeded\")\n\t}\n}\n\nvar sink *int\n\nfunc BenchmarkSortSearch(b *testing.B) {\n\tfor _, key := range keys {\n\t\tb.Run(fmt.Sprint(key), func(b *testing.B) {\n\t\t\tfor b.Loop() {\n\t\t\t\tsink = lookupSort(list, key)\n\t\t\t}\n\t\t})\n\t}\n}\n\nfunc BenchmarkSlicesBinarySearchFunc(b *testing.B) {\n\tfor _, key := range keys {\n\t\tb.Run(fmt.Sprint(key), func(b *testing.B) {\n\t\t\tfor b.Loop() {\n\t\t\t\tsink = lookupSlices(list, key)\n\t\t\t}\n\t\t})\n\t}\n}\n```",
+  "closed_by": null,
+  "reactions": {
+    "url": "https://api.github.com/repos/golang/go/issues/81887/reactions",
+    "total_count": 2,
+    "+1": 1,
+    "-1": 0,
+    "laugh": 0,
+    "hooray": 0,
+    "confused": 0,
+    "heart": 0,
+    "rocket": 0,
+    "eyes": 1
+  },
+  "timeline_url": "https://api.github.com/repos/golang/go/issues/81887/timeline",
+  "performed_via_github_app": null,
+  "state_reason": null,
+  "pinned_comment": null
+}

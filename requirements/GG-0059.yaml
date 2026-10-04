@@ -1,0 +1,13 @@
+id: GG-0059
+title: Interface freeze
+statement: At the Phase-1 interface freeze, the AST<->runtime intrinsic signatures and the `-toolexec` argv contract SHALL be versioned and documented; Phase 4's parallel start depends on this freeze.
+rationale: The handoff contract between phases.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Frozen contract docs; compatibility check in CI.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
+    - '2026-10-03: active — Phase 1 started (coordinator)'
+    - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'

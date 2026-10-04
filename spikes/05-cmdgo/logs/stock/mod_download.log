@@ -1,0 +1,339 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:45069
+https://vcs-test.golang.org rerouted to https://127.0.0.1:35731
+go test proxy running at GOPROXY=http://127.0.0.1:34893/mod
+=== RUN   TestScript/mod_download
+=== PAUSE TestScript/mod_download
+=== CONT  TestScript/mod_download
+    script_test.go:141: 2026-10-03T06:16:59Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799
+go proxy: open /home/hatch/tools/go/src/cmd/go/testdata/mod/this.domain.is.invalid_somemodule_v1.0.0.txt: no such file or directory
+go proxy: no archive this.domain.is.invalid/somemodule v1.0.0: file does not exist
+go proxy: no archive this.domain.is.invalid/somemodule v1.0.0: file does not exist
+go proxy: open /home/hatch/tools/go/src/cmd/go/testdata/mod/rsc.io_quote_v1.999.999.txt: no such file or directory
+go proxy: no archive rsc.io/quote v1.999.999: file does not exist
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:34893/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:45069
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:35731
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/vcstest3535064841/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/src
+        
+        > env GO111MODULE=on
+        # download with version should print nothing.
+        # It should not load retractions from the .mod file from the latest version. (0.070s)
+        > go mod download rsc.io/quote@v1.5.0
+        > ! stdout .
+        > ! stderr .
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.0.info
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.0.mod
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.0.zip
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.2.info
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.2.mod
+        # download of an invalid path should report the error (0.034s)
+        > [short] skip
+        [condition not met]
+        > ! go mod download this.domain.is.invalid/somemodule@v1.0.0
+        [stderr]
+        go: this.domain.is.invalid/somemodule@v1.0.0: reading http://127.0.0.1:34893/mod/this.domain.is.invalid/somemodule/@v/v1.0.0.info: 404 Not Found
+        	server response: 404 page not found
+        [exit status 1]
+        > stderr 'this.domain.is.invalid'
+        matched: go: this.domain.is.invalid/somemodule@v1.0.0: reading http://127.0.0.1:34893/mod/this.domain.is.invalid/somemodule/@v/v1.0.0.info: 404 Not Found
+        > ! go mod download -json this.domain.is.invalid/somemodule@v1.0.0
+        [stdout]
+        {
+        	"Path": "this.domain.is.invalid/somemodule",
+        	"Version": "v1.0.0",
+        	"Error": "this.domain.is.invalid/somemodule@v1.0.0: reading http://127.0.0.1:34893/mod/this.domain.is.invalid/somemodule/@v/v1.0.0.info: 404 Not Found\n\tserver response: 404 page not found"
+        }
+        [exit status 1]
+        > stdout '"Error": ".*this.domain.is.invalid.*"'
+        matched: 	"Error": "this.domain.is.invalid/somemodule@v1.0.0: reading http://127.0.0.1:34893/mod/this.domain.is.invalid/somemodule/@v/v1.0.0.info: 404 Not Found\n\tserver response: 404 page not found"
+        # download -json with version should print JSON (0.024s)
+        > go mod download -json 'rsc.io/quote@<=v1.5.0'
+        [stdout]
+        {
+        	"Path": "rsc.io/quote",
+        	"Version": "v1.5.0",
+        	"Query": "\u003c=v1.5.0",
+        	"Info": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.0.info",
+        	"GoMod": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.0.mod",
+        	"Zip": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.0.zip",
+        	"Dir": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/rsc.io/quote@v1.5.0",
+        	"Sum": "h1:6fJa6E+wGadANKkUMlZ0DhXFpoKlslOQDCo259XtdIE=",
+        	"GoModSum": "h1:LzX7hefJvL54yjefDEDHNONDjII0t9xZLPXsUe+TKr0="
+        }
+        > stdout '^\t"Path": "rsc.io/quote"'
+        matched: 	"Path": "rsc.io/quote",
+        > stdout '^\t"Version": "v1.5.0"'
+        matched: 	"Version": "v1.5.0",
+        > stdout '^\t"Info": ".*(\\\\|/)pkg(\\\\|/)mod(\\\\|/)cache(\\\\|/)download(\\\\|/)rsc.io(\\\\|/)quote(\\\\|/)@v(\\\\|/)v1.5.0.info"'
+        matched: 	"Info": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.0.info",
+        > stdout '^\t"GoMod": ".*(\\\\|/)pkg(\\\\|/)mod(\\\\|/)cache(\\\\|/)download(\\\\|/)rsc.io(\\\\|/)quote(\\\\|/)@v(\\\\|/)v1.5.0.mod"'
+        matched: 	"GoMod": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.0.mod",
+        > stdout '^\t"Zip": ".*(\\\\|/)pkg(\\\\|/)mod(\\\\|/)cache(\\\\|/)download(\\\\|/)rsc.io(\\\\|/)quote(\\\\|/)@v(\\\\|/)v1.5.0.zip"'
+        matched: 	"Zip": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.0.zip",
+        > stdout '^\t"Sum": "h1:6fJa6E\+wGadANKkUMlZ0DhXFpoKlslOQDCo259XtdIE="'  # hash of testdata/mod version, not real version!
+        matched: 	"Sum": "h1:6fJa6E+wGadANKkUMlZ0DhXFpoKlslOQDCo259XtdIE=",
+        > stdout '^\t"GoModSum": "h1:LzX7hefJvL54yjefDEDHNONDjII0t9xZLPXsUe\+TKr0="'
+        matched: 	"GoModSum": "h1:LzX7hefJvL54yjefDEDHNONDjII0t9xZLPXsUe+TKr0="
+        > ! stdout '"Error"'
+        # download queries above should not have added to go.mod. (0.019s)
+        > go list -m all
+        [stdout]
+        m
+        > ! stdout rsc.io
+        # download query should have downloaded go.mod for the highest release version
+        # in order to find retractions when resolving the query '@<=v1.5.0'. (0.000s)
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.2.info
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.2.mod
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.2.zip
+        # add to go.mod so we can test non-query downloads (0.013s)
+        > go mod edit -require rsc.io/quote@v1.5.3-pre1
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.info
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.mod
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.zip
+        # module loading will page in the info and mod files (0.037s)
+        > go list -m -mod=mod all
+        [stdout]
+        m
+        golang.org/x/text v0.0.0-20170915032832-14c0d48ead0c
+        rsc.io/quote v1.5.3-pre1
+        rsc.io/sampler v1.3.0
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.info
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.mod
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.zip
+        # download will fetch and unpack the zip file (0.054s)
+        > go mod download
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.info
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.mod
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.zip
+        > exists $GOPATH/pkg/mod/rsc.io/quote@v1.5.3-pre1
+        # download repopulates deleted files and directories independently. (0.137s)
+        > rm $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.info
+        > go mod download
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.info
+        > rm $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.mod
+        > go mod download
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.mod
+        > rm $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.zip
+        > go mod download
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.zip
+        > rm -r $GOPATH/pkg/mod/rsc.io/quote@v1.5.3-pre1
+        > go mod download
+        > exists $GOPATH/pkg/mod/rsc.io/quote@v1.5.3-pre1
+        # download reports the locations of downloaded files (0.052s)
+        > go mod download -json
+        [stdout]
+        {
+        	"Path": "rsc.io/quote",
+        	"Version": "v1.5.3-pre1",
+        	"Info": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.info",
+        	"GoMod": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.mod",
+        	"Zip": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.zip",
+        	"Dir": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/rsc.io/quote@v1.5.3-pre1",
+        	"Sum": "h1:FoxyADIfUXoYwpK03H8YrG0FWCsiVwFD+VXRUAKWV30=",
+        	"GoModSum": "h1:LzX7hefJvL54yjefDEDHNONDjII0t9xZLPXsUe+TKr0="
+        }
+        > stdout '^\t"Path": "rsc.io/quote"'
+        matched: 	"Path": "rsc.io/quote",
+        > stdout '^\t"Version": "v1.5.3-pre1"'
+        matched: 	"Version": "v1.5.3-pre1",
+        > stdout '^\t"Info": ".*(\\\\|/)pkg(\\\\|/)mod(\\\\|/)cache(\\\\|/)download(\\\\|/)rsc.io(\\\\|/)quote(\\\\|/)@v(\\\\|/)v1.5.3-pre1.info"'
+        matched: 	"Info": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.info",
+        > stdout '^\t"GoMod": ".*(\\\\|/)pkg(\\\\|/)mod(\\\\|/)cache(\\\\|/)download(\\\\|/)rsc.io(\\\\|/)quote(\\\\|/)@v(\\\\|/)v1.5.3-pre1.mod"'
+        matched: 	"GoMod": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.mod",
+        > stdout '^\t"Zip": ".*(\\\\|/)pkg(\\\\|/)mod(\\\\|/)cache(\\\\|/)download(\\\\|/)rsc.io(\\\\|/)quote(\\\\|/)@v(\\\\|/)v1.5.3-pre1.zip"'
+        matched: 	"Zip": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.3-pre1.zip",
+        > stdout '^\t"Dir": ".*(\\\\|/)pkg(\\\\|/)mod(\\\\|/)rsc.io(\\\\|/)quote@v1.5.3-pre1"'
+        matched: 	"Dir": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/rsc.io/quote@v1.5.3-pre1",
+        # download will follow replacements (0.055s)
+        > go mod edit -require rsc.io/quote@v1.5.1 -replace rsc.io/quote@v1.5.1=rsc.io/quote@v1.5.2
+        > go mod download
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.1.zip
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.2.zip
+        # download will not follow replacements for explicit module queries (0.057s)
+        > go mod download -json rsc.io/quote@v1.5.1
+        [stdout]
+        {
+        	"Path": "rsc.io/quote",
+        	"Version": "v1.5.1",
+        	"Info": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.1.info",
+        	"GoMod": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.1.mod",
+        	"Zip": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.1.zip",
+        	"Dir": "/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-2167006100/tmpdir2367198601/mod_download1911378799/gopath/pkg/mod/rsc.io/quote@v1.5.1",
+        	"Sum": "h1:ZE3OgnVGrhXtFkGw90HwW992ZRqcdli/33DLqEYsoxA=",
+        	"GoModSum": "h1:LzX7hefJvL54yjefDEDHNONDjII0t9xZLPXsUe+TKr0="
+        }
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.1.zip
+        # download reports errors encountered when locating modules (0.121s)
+        > ! go mod download bad/path
+        [stderr]
+        go: module bad/path: not a known dependency
+        [exit status 1]
+        > stderr '^go: module bad/path: not a known dependency$'
+        matched: go: module bad/path: not a known dependency
+        > ! go mod download bad/path@latest
+        [stderr]
+        go: bad/path@latest: malformed module path "bad/path": missing dot in first path element
+        [exit status 1]
+        > stderr '^go: bad/path@latest: malformed module path "bad/path": missing dot in first path element$'
+        matched: go: bad/path@latest: malformed module path "bad/path": missing dot in first path element
+        > ! go mod download rsc.io/quote@v1.999.999
+        [stderr]
+        go: rsc.io/quote@v1.999.999: reading http://127.0.0.1:34893/mod/rsc.io/quote/@v/v1.999.999.info: 404 Not Found
+        	server response: 404 page not found
+        [exit status 1]
+        > stderr '^go: rsc.io/quote@v1.999.999: reading .*/v1.999.999.info: 404 Not Found$'
+        matched: go: rsc.io/quote@v1.999.999: reading http://127.0.0.1:34893/mod/rsc.io/quote/@v/v1.999.999.info: 404 Not Found
+        > ! go mod download -json bad/path
+        [stdout]
+        {
+        	"Path": "bad/path",
+        	"Error": "module bad/path: not a known dependency"
+        }
+        [exit status 1]
+        > stdout '^\t"Error": "module bad/path: not a known dependency"'
+        matched: 	"Error": "module bad/path: not a known dependency"
+        # download main module produces a warning or error (0.070s)
+        > go mod download m
+        [stderr]
+        go: skipping download of m that resolves to the main module
+        > stderr '^go: skipping download of m that resolves to the main module\n'
+        matched: go: skipping download of m that resolves to the main module
+        > ! go mod download m@latest
+        [stderr]
+        go: m@latest: malformed module path "m": missing dot in first path element
+        [exit status 1]
+        > stderr '^go: m@latest: malformed module path "m": missing dot in first path element$'
+        matched: go: m@latest: malformed module path "m": missing dot in first path element
+        # download without arguments updates go.mod and go.sum after loading the
+        # build list, but does not save sums for downloaded zips. (0.070s)
+        > cd update
+        > cp go.mod.orig go.mod
+        > ! exists go.sum
+        > go mod download
+        > cmp go.mod.update go.mod
+        > cmp go.sum.update go.sum
+        > cp go.mod.orig go.mod
+        > rm go.sum
+        # download with arguments (even "all") does update go.mod and go.sum. (0.084s)
+        > go mod download rsc.io/sampler
+        > cmp go.mod.update go.mod
+        > grep '^rsc.io/sampler v1.3.0 ' go.sum
+        matched: rsc.io/sampler v1.3.0 h1:HLGR/BgEtI3r0uymSP/nl2uPLsUnNJX8toRyhfpBTII=
+        > cp go.mod.orig go.mod
+        > rm go.sum
+        > go mod download all
+        > cmp go.mod.update go.mod
+        > grep '^rsc.io/sampler v1.3.0 ' go.sum
+        matched: rsc.io/sampler v1.3.0 h1:HLGR/BgEtI3r0uymSP/nl2uPLsUnNJX8toRyhfpBTII=
+        # https://golang.org/issue/44435: At go 1.17 or higher, 'go mod download'
+        # (without arguments) should only download the modules explicitly required in
+        # the go.mod file, not (presumed-irrelevant) transitive dependencies.
+        #
+        # (If the go.mod file is inconsistent, the version downloaded should be the
+        # selected version from the broader graph, but the go.mod file will also be
+        # updated to list the correct versions. If at some point we change 'go mod
+        # download' to stop updating for consistency, then it should fail if the
+        # requirements are inconsistent.) (0.243s)
+        > rm go.sum
+        > cp go.mod.orig go.mod
+        > go mod edit -go=1.17
+        > cp go.mod.update go.mod.go117
+        > go mod edit -go=1.17 go.mod.go117
+        > go clean -modcache
+        > go mod download
+        > cmp go.mod go.mod.go117
+        > go list -e -m all
+        [stdout]
+        m
+        golang.org/x/text v0.0.0-20170915032832-14c0d48ead0c
+        rsc.io/quote v1.5.2
+        rsc.io/sampler v1.3.0
+        > stdout '^rsc.io/quote v1.5.2$'
+        matched: rsc.io/quote v1.5.2
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.2.zip
+        > stdout '^rsc.io/sampler v1.3.0$'
+        matched: rsc.io/sampler v1.3.0
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/sampler/@v/v1.2.1.zip
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/sampler/@v/v1.3.0.zip
+        > stdout '^golang\.org/x/text v0.0.0-20170915032832-14c0d48ead0c$'
+        matched: golang.org/x/text v0.0.0-20170915032832-14c0d48ead0c
+        > ! exists $GOPATH/pkg/mod/cache/download/golang.org/x/text/@v/v0.0.0-20170915032832-14c0d48ead0c.zip
+        > cmp go.mod go.mod.go117
+        # However, 'go mod download all' continues to download the selected version
+        # of every module reported by 'go list -m all'. (0.133s)
+        > cp go.mod.orig go.mod
+        > go mod edit -go=1.17
+        > go clean -modcache
+        > go mod download all
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.5.2.zip
+        > ! exists $GOPATH/pkg/mod/cache/download/rsc.io/sampler/@v/v1.2.1.zip
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/sampler/@v/v1.3.0.zip
+        > exists $GOPATH/pkg/mod/cache/download/golang.org/x/text/@v/v0.0.0-20170915032832-14c0d48ead0c.zip
+        > cmp go.mod go.mod.go117
+        > cd ..
+        # allow go mod download without go.mod (0.078s)
+        > env GO111MODULE=auto
+        > rm go.mod
+        > rm $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.2.1.zip
+        > go mod download rsc.io/quote@v1.2.1
+        > exists $GOPATH/pkg/mod/cache/download/rsc.io/quote/@v/v1.2.1.zip
+        # download -x with version should print
+        # the underlying commands such as contacting GOPROXY. (0.036s)
+        > go mod download -x rsc.io/quote@v1.0.0
+        [stderr]
+        # get http://127.0.0.1:34893/mod/rsc.io/quote/@v/v1.0.0.info
+        # get http://127.0.0.1:34893/mod/rsc.io/quote/@v/v1.0.0.info: 200 OK (0.002s)
+        # get http://127.0.0.1:34893/mod/rsc.io/quote/@v/v1.0.0.mod
+        # get http://127.0.0.1:34893/mod/rsc.io/quote/@v/v1.0.0.mod: 200 OK (0.001s)
+        # get http://127.0.0.1:34893/mod/sumdb/localhost.localdev/sumdb/supported
+        # get http://127.0.0.1:34893/mod/sumdb/localhost.localdev/sumdb/supported: 200 OK (0.000s)
+        # get http://127.0.0.1:34893/mod/sumdb/localhost.localdev/sumdb/lookup/rsc.io/quote@v1.0.0
+        # get http://127.0.0.1:34893/mod/sumdb/localhost.localdev/sumdb/lookup/rsc.io/quote@v1.0.0: 200 OK (0.000s)
+        # get http://127.0.0.1:34893/mod/rsc.io/quote/@v/v1.0.0.zip
+        # get http://127.0.0.1:34893/mod/rsc.io/quote/@v/v1.0.0.zip: 200 OK (0.000s)
+        > ! stdout .
+        > stderr 'get '$GOPROXY
+        matched: # get http://127.0.0.1:34893/mod/rsc.io/quote/@v/v1.0.0.info
+--- PASS: TestScript (0.10s)
+    --- PASS: TestScript/mod_download (1.44s)
+PASS

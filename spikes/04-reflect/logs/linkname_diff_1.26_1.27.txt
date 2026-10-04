@@ -1,0 +1,20 @@
+== baseline go1.26/go: runtime->reflect=41 reflect->runtime=3 pushes=6
+== new      /home/hatch/tools/go: runtime->reflect=43 reflect->runtime=3 pushes=6
+
+-- runtime->reflect --
+ADDED       reflect.adjustAIXGCDataForRuntime  (now reflect_adjustAIXGCDataForRuntime reflect_adjustAIXGCDataForRuntime(addr *byte) *byte)
+ADDED       reflect.compiledTypelinks  (now reflect_compiledTypelinks reflect_compiledTypelinks() ([]*abi.Type, [][]*abi.Type))
+
+-- reflect->runtime --
+
+-- push markers (ecosystem-compat, not skip-list) --
+  reflect.add
+  reflect.addReflectOff
+  reflect.mapassign
+  reflect.rtypeOff
+  reflect.toType
+  reflect.typesByString
+
+SKIP-LIST size: 0
+WATCH-LIST size: 2
+KILL-TRIGGER check: skip-list growth > 15 twice in a row -> not fired (needs two consecutive)

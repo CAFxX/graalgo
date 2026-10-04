@@ -1,0 +1,2301 @@
+field go/ast.ArrayType.Elt Expr
+field go/ast.ArrayType.Lbrack token.Pos
+field go/ast.ArrayType.Len Expr
+field go/ast.AssignStmt.Lhs []Expr
+field go/ast.AssignStmt.Rhs []Expr
+field go/ast.AssignStmt.Tok token.Token
+field go/ast.AssignStmt.TokPos token.Pos
+field go/ast.BadDecl.From token.Pos
+field go/ast.BadDecl.To token.Pos
+field go/ast.BadExpr.From token.Pos
+field go/ast.BadExpr.To token.Pos
+field go/ast.BadStmt.From token.Pos
+field go/ast.BadStmt.To token.Pos
+field go/ast.BasicLit.Kind token.Token
+field go/ast.BasicLit.Value string
+field go/ast.BasicLit.ValueEnd token.Pos
+field go/ast.BasicLit.ValuePos token.Pos
+field go/ast.BinaryExpr.Op token.Token
+field go/ast.BinaryExpr.OpPos token.Pos
+field go/ast.BinaryExpr.X Expr
+field go/ast.BinaryExpr.Y Expr
+field go/ast.BlockStmt.Lbrace token.Pos
+field go/ast.BlockStmt.List []Stmt
+field go/ast.BlockStmt.Rbrace token.Pos
+field go/ast.BranchStmt.Label *Ident
+field go/ast.BranchStmt.Tok token.Token
+field go/ast.BranchStmt.TokPos token.Pos
+field go/ast.CallExpr.Args []Expr
+field go/ast.CallExpr.Ellipsis token.Pos
+field go/ast.CallExpr.Fun Expr
+field go/ast.CallExpr.Lparen token.Pos
+field go/ast.CallExpr.Rparen token.Pos
+field go/ast.CaseClause.Body []Stmt
+field go/ast.CaseClause.Case token.Pos
+field go/ast.CaseClause.Colon token.Pos
+field go/ast.CaseClause.List []Expr
+field go/ast.ChanType.Arrow token.Pos
+field go/ast.ChanType.Begin token.Pos
+field go/ast.ChanType.Dir ChanDir
+field go/ast.ChanType.Value Expr
+field go/ast.CommClause.Body []Stmt
+field go/ast.CommClause.Case token.Pos
+field go/ast.CommClause.Colon token.Pos
+field go/ast.CommClause.Comm Stmt
+field go/ast.Comment.Slash token.Pos
+field go/ast.Comment.Text string
+field go/ast.CommentGroup.List []*Comment
+field go/ast.CompositeLit.Elts []Expr
+field go/ast.CompositeLit.Incomplete bool
+field go/ast.CompositeLit.Lbrace token.Pos
+field go/ast.CompositeLit.Rbrace token.Pos
+field go/ast.CompositeLit.Type Expr
+field go/ast.DeclStmt.Decl Decl
+field go/ast.DeferStmt.Call *CallExpr
+field go/ast.DeferStmt.Defer token.Pos
+field go/ast.Directive.Args string
+field go/ast.Directive.ArgsPos token.Pos
+field go/ast.Directive.Name string
+field go/ast.Directive.Slash token.Pos
+field go/ast.Directive.Tool string
+field go/ast.DirectiveArg.Arg string
+field go/ast.DirectiveArg.Pos token.Pos
+field go/ast.Ellipsis.Ellipsis token.Pos
+field go/ast.Ellipsis.Elt Expr
+field go/ast.EmptyStmt.Implicit bool
+field go/ast.EmptyStmt.Semicolon token.Pos
+field go/ast.ExprStmt.X Expr
+field go/ast.Field.Comment *CommentGroup
+field go/ast.Field.Doc *CommentGroup
+field go/ast.Field.Names []*Ident
+field go/ast.Field.Tag *BasicLit
+field go/ast.Field.Type Expr
+field go/ast.FieldList.Closing token.Pos
+field go/ast.FieldList.List []*Field
+field go/ast.FieldList.Opening token.Pos
+field go/ast.File.Comments []*CommentGroup
+field go/ast.File.Decls []Decl
+field go/ast.File.Doc *CommentGroup
+field go/ast.File.FileEnd token.Pos
+field go/ast.File.FileStart token.Pos
+field go/ast.File.GoVersion string
+field go/ast.File.Imports []*ImportSpec
+field go/ast.File.Name *Ident
+field go/ast.File.Package token.Pos
+field go/ast.File.Scope *Scope
+field go/ast.File.Unresolved []*Ident
+field go/ast.ForStmt.Body *BlockStmt
+field go/ast.ForStmt.Cond Expr
+field go/ast.ForStmt.For token.Pos
+field go/ast.ForStmt.Init Stmt
+field go/ast.ForStmt.Post Stmt
+field go/ast.FuncDecl.Body *BlockStmt
+field go/ast.FuncDecl.Doc *CommentGroup
+field go/ast.FuncDecl.Name *Ident
+field go/ast.FuncDecl.Recv *FieldList
+field go/ast.FuncDecl.Type *FuncType
+field go/ast.FuncLit.Body *BlockStmt
+field go/ast.FuncLit.Type *FuncType
+field go/ast.FuncType.Func token.Pos
+field go/ast.FuncType.Params *FieldList
+field go/ast.FuncType.Results *FieldList
+field go/ast.FuncType.TypeParams *FieldList
+field go/ast.GenDecl.Doc *CommentGroup
+field go/ast.GenDecl.Lparen token.Pos
+field go/ast.GenDecl.Rparen token.Pos
+field go/ast.GenDecl.Specs []Spec
+field go/ast.GenDecl.Tok token.Token
+field go/ast.GenDecl.TokPos token.Pos
+field go/ast.GoStmt.Call *CallExpr
+field go/ast.GoStmt.Go token.Pos
+field go/ast.Ident.Name string
+field go/ast.Ident.NamePos token.Pos
+field go/ast.Ident.Obj *Object
+field go/ast.IfStmt.Body *BlockStmt
+field go/ast.IfStmt.Cond Expr
+field go/ast.IfStmt.Else Stmt
+field go/ast.IfStmt.If token.Pos
+field go/ast.IfStmt.Init Stmt
+field go/ast.ImportSpec.Comment *CommentGroup
+field go/ast.ImportSpec.Doc *CommentGroup
+field go/ast.ImportSpec.EndPos token.Pos
+field go/ast.ImportSpec.Name *Ident
+field go/ast.ImportSpec.Path *BasicLit
+field go/ast.IncDecStmt.Tok token.Token
+field go/ast.IncDecStmt.TokPos token.Pos
+field go/ast.IncDecStmt.X Expr
+field go/ast.IndexExpr.Index Expr
+field go/ast.IndexExpr.Lbrack token.Pos
+field go/ast.IndexExpr.Rbrack token.Pos
+field go/ast.IndexExpr.X Expr
+field go/ast.IndexListExpr.Indices []Expr
+field go/ast.IndexListExpr.Lbrack token.Pos
+field go/ast.IndexListExpr.Rbrack token.Pos
+field go/ast.IndexListExpr.X Expr
+field go/ast.InterfaceType.Incomplete bool
+field go/ast.InterfaceType.Interface token.Pos
+field go/ast.InterfaceType.Methods *FieldList
+field go/ast.KeyValueExpr.Colon token.Pos
+field go/ast.KeyValueExpr.Key Expr
+field go/ast.KeyValueExpr.Value Expr
+field go/ast.LabeledStmt.Colon token.Pos
+field go/ast.LabeledStmt.Label *Ident
+field go/ast.LabeledStmt.Stmt Stmt
+field go/ast.MapType.Key Expr
+field go/ast.MapType.Map token.Pos
+field go/ast.MapType.Value Expr
+field go/ast.Object.Data any
+field go/ast.Object.Decl any
+field go/ast.Object.Kind ObjKind
+field go/ast.Object.Name string
+field go/ast.Object.Type any
+field go/ast.Package.Files map[string]*File
+field go/ast.Package.Imports map[string]*Object
+field go/ast.Package.Name string
+field go/ast.Package.Scope *Scope
+field go/ast.ParenExpr.Lparen token.Pos
+field go/ast.ParenExpr.Rparen token.Pos
+field go/ast.ParenExpr.X Expr
+field go/ast.RangeStmt.Body *BlockStmt
+field go/ast.RangeStmt.For token.Pos
+field go/ast.RangeStmt.Key Expr
+field go/ast.RangeStmt.Range token.Pos
+field go/ast.RangeStmt.Tok token.Token
+field go/ast.RangeStmt.TokPos token.Pos
+field go/ast.RangeStmt.Value Expr
+field go/ast.RangeStmt.X Expr
+field go/ast.ReturnStmt.Results []Expr
+field go/ast.ReturnStmt.Return token.Pos
+field go/ast.Scope.Objects map[string]*Object
+field go/ast.Scope.Outer *Scope
+field go/ast.SelectStmt.Body *BlockStmt
+field go/ast.SelectStmt.Select token.Pos
+field go/ast.SelectorExpr.Sel *Ident
+field go/ast.SelectorExpr.X Expr
+field go/ast.SendStmt.Arrow token.Pos
+field go/ast.SendStmt.Chan Expr
+field go/ast.SendStmt.Value Expr
+field go/ast.SliceExpr.High Expr
+field go/ast.SliceExpr.Lbrack token.Pos
+field go/ast.SliceExpr.Low Expr
+field go/ast.SliceExpr.Max Expr
+field go/ast.SliceExpr.Rbrack token.Pos
+field go/ast.SliceExpr.Slice3 bool
+field go/ast.SliceExpr.X Expr
+field go/ast.StarExpr.Star token.Pos
+field go/ast.StarExpr.X Expr
+field go/ast.StructType.Fields *FieldList
+field go/ast.StructType.Incomplete bool
+field go/ast.StructType.Struct token.Pos
+field go/ast.SwitchStmt.Body *BlockStmt
+field go/ast.SwitchStmt.Init Stmt
+field go/ast.SwitchStmt.Switch token.Pos
+field go/ast.SwitchStmt.Tag Expr
+field go/ast.TypeAssertExpr.Lparen token.Pos
+field go/ast.TypeAssertExpr.Rparen token.Pos
+field go/ast.TypeAssertExpr.Type Expr
+field go/ast.TypeAssertExpr.X Expr
+field go/ast.TypeSpec.Assign token.Pos
+field go/ast.TypeSpec.Comment *CommentGroup
+field go/ast.TypeSpec.Doc *CommentGroup
+field go/ast.TypeSpec.Name *Ident
+field go/ast.TypeSpec.Type Expr
+field go/ast.TypeSpec.TypeParams *FieldList
+field go/ast.TypeSwitchStmt.Assign Stmt
+field go/ast.TypeSwitchStmt.Body *BlockStmt
+field go/ast.TypeSwitchStmt.Init Stmt
+field go/ast.TypeSwitchStmt.Switch token.Pos
+field go/ast.UnaryExpr.Op token.Token
+field go/ast.UnaryExpr.OpPos token.Pos
+field go/ast.UnaryExpr.X Expr
+field go/ast.ValueSpec.Comment *CommentGroup
+field go/ast.ValueSpec.Doc *CommentGroup
+field go/ast.ValueSpec.Names []*Ident
+field go/ast.ValueSpec.Type Expr
+field go/ast.ValueSpec.Values []Expr
+field go/build.Context.BuildTags []string
+field go/build.Context.CgoEnabled bool
+field go/build.Context.Compiler string
+field go/build.Context.Dir string
+field go/build.Context.GOARCH string
+field go/build.Context.GOOS string
+field go/build.Context.GOPATH string
+field go/build.Context.GOROOT string
+field go/build.Context.HasSubdir func(root, dir string) (rel string, ok bool)
+field go/build.Context.InstallSuffix string
+field go/build.Context.IsAbsPath func(path string) bool
+field go/build.Context.IsDir func(path string) bool
+field go/build.Context.JoinPath func(elem ...string) string
+field go/build.Context.OpenFile func(path string) (io.ReadCloser, error)
+field go/build.Context.ReadDir func(dir string) ([]fs.FileInfo, error)
+field go/build.Context.ReleaseTags []string
+field go/build.Context.SplitPathList func(list string) []string
+field go/build.Context.ToolTags []string
+field go/build.Context.UseAllFiles bool
+field go/build.Directive.Pos token.Position
+field go/build.Directive.Text string
+field go/build.MultiplePackageError.Dir string
+field go/build.MultiplePackageError.Files []string
+field go/build.MultiplePackageError.Packages []string
+field go/build.NoGoError.Dir string
+field go/build.Package.AllTags []string
+field go/build.Package.BinDir string
+field go/build.Package.BinaryOnly bool
+field go/build.Package.CFiles []string
+field go/build.Package.CXXFiles []string
+field go/build.Package.CgoCFLAGS []string
+field go/build.Package.CgoCPPFLAGS []string
+field go/build.Package.CgoCXXFLAGS []string
+field go/build.Package.CgoFFLAGS []string
+field go/build.Package.CgoFiles []string
+field go/build.Package.CgoLDFLAGS []string
+field go/build.Package.CgoPkgConfig []string
+field go/build.Package.ConflictDir string
+field go/build.Package.Dir string
+field go/build.Package.Directives []Directive
+field go/build.Package.Doc string
+field go/build.Package.EmbedPatternPos map[string][]token.Position
+field go/build.Package.EmbedPatterns []string
+field go/build.Package.FFiles []string
+field go/build.Package.GoFiles []string
+field go/build.Package.Goroot bool
+field go/build.Package.HFiles []string
+field go/build.Package.IgnoredGoFiles []string
+field go/build.Package.IgnoredOtherFiles []string
+field go/build.Package.ImportComment string
+field go/build.Package.ImportPath string
+field go/build.Package.ImportPos map[string][]token.Position
+field go/build.Package.Imports []string
+field go/build.Package.InvalidGoFiles []string
+field go/build.Package.MFiles []string
+field go/build.Package.Name string
+field go/build.Package.PkgObj string
+field go/build.Package.PkgRoot string
+field go/build.Package.PkgTargetRoot string
+field go/build.Package.Root string
+field go/build.Package.SFiles []string
+field go/build.Package.SrcRoot string
+field go/build.Package.SwigCXXFiles []string
+field go/build.Package.SwigFiles []string
+field go/build.Package.SysoFiles []string
+field go/build.Package.TestDirectives []Directive
+field go/build.Package.TestEmbedPatternPos map[string][]token.Position
+field go/build.Package.TestEmbedPatterns []string
+field go/build.Package.TestGoFiles []string
+field go/build.Package.TestImportPos map[string][]token.Position
+field go/build.Package.TestImports []string
+field go/build.Package.XTestDirectives []Directive
+field go/build.Package.XTestEmbedPatternPos map[string][]token.Position
+field go/build.Package.XTestEmbedPatterns []string
+field go/build.Package.XTestGoFiles []string
+field go/build.Package.XTestImportPos map[string][]token.Position
+field go/build.Package.XTestImports []string
+field go/build/constraint.AndExpr.X Expr
+field go/build/constraint.AndExpr.Y Expr
+field go/build/constraint.NotExpr.X Expr
+field go/build/constraint.OrExpr.X Expr
+field go/build/constraint.OrExpr.Y Expr
+field go/build/constraint.SyntaxError.Err string
+field go/build/constraint.SyntaxError.Offset int
+field go/build/constraint.TagExpr.Tag string
+field go/doc.Example.Code ast.Node
+field go/doc.Example.Comments []*ast.CommentGroup
+field go/doc.Example.Doc string
+field go/doc.Example.EmptyOutput bool
+field go/doc.Example.Name string
+field go/doc.Example.Order int
+field go/doc.Example.Output string
+field go/doc.Example.Play *ast.File
+field go/doc.Example.Suffix string
+field go/doc.Example.Unordered bool
+field go/doc.Func.Decl *ast.FuncDecl
+field go/doc.Func.Doc string
+field go/doc.Func.Examples []*Example
+field go/doc.Func.Level int
+field go/doc.Func.Name string
+field go/doc.Func.Orig string
+field go/doc.Func.Recv string
+field go/doc.Note.Body string
+field go/doc.Note.End token.Pos
+field go/doc.Note.Pos token.Pos
+field go/doc.Note.UID string
+field go/doc.Package.Bugs []string
+field go/doc.Package.Consts []*Value
+field go/doc.Package.Doc string
+field go/doc.Package.Examples []*Example
+field go/doc.Package.Filenames []string
+field go/doc.Package.Funcs []*Func
+field go/doc.Package.ImportPath string
+field go/doc.Package.Imports []string
+field go/doc.Package.Name string
+field go/doc.Package.Notes map[string][]*Note
+field go/doc.Package.Types []*Type
+field go/doc.Package.Vars []*Value
+field go/doc.Type.Consts []*Value
+field go/doc.Type.Decl *ast.GenDecl
+field go/doc.Type.Doc string
+field go/doc.Type.Examples []*Example
+field go/doc.Type.Funcs []*Func
+field go/doc.Type.Methods []*Func
+field go/doc.Type.Name string
+field go/doc.Type.Vars []*Value
+field go/doc.Value.Decl *ast.GenDecl
+field go/doc.Value.Doc string
+field go/doc.Value.Names []string
+field go/doc/comment.Code.Text string
+field go/doc/comment.Doc.Content []Block
+field go/doc/comment.Doc.Links []*LinkDef
+field go/doc/comment.DocLink.ImportPath string
+field go/doc/comment.DocLink.Name string
+field go/doc/comment.DocLink.Recv string
+field go/doc/comment.DocLink.Text []Text
+field go/doc/comment.Heading.Text []Text
+field go/doc/comment.Link.Auto bool
+field go/doc/comment.Link.Text []Text
+field go/doc/comment.Link.URL string
+field go/doc/comment.LinkDef.Text string
+field go/doc/comment.LinkDef.URL string
+field go/doc/comment.LinkDef.Used bool
+field go/doc/comment.List.ForceBlankBefore bool
+field go/doc/comment.List.ForceBlankBetween bool
+field go/doc/comment.List.Items []*ListItem
+field go/doc/comment.ListItem.Content []Block
+field go/doc/comment.ListItem.Number string
+field go/doc/comment.Paragraph.Text []Text
+field go/doc/comment.Parser.LookupPackage func(name string) (importPath string, ok bool)
+field go/doc/comment.Parser.LookupSym func(recv, name string) (ok bool)
+field go/doc/comment.Parser.Words map[string]string
+field go/doc/comment.Printer.DocLinkBaseURL string
+field go/doc/comment.Printer.DocLinkURL func(link *DocLink) string
+field go/doc/comment.Printer.HeadingID func(h *Heading) string
+field go/doc/comment.Printer.HeadingLevel int
+field go/doc/comment.Printer.TextCodePrefix string
+field go/doc/comment.Printer.TextPrefix string
+field go/doc/comment.Printer.TextWidth int
+field go/internal/gccgoimporter.GccgoInstallation.GccVersion string
+field go/internal/gccgoimporter.GccgoInstallation.LibPaths []string
+field go/internal/gccgoimporter.GccgoInstallation.TargetTriple string
+field go/internal/gccgoimporter.InitData.Inits []PackageInit
+field go/internal/gccgoimporter.InitData.Priority int
+field go/internal/gccgoimporter.PackageInit.InitFunc string
+field go/internal/gccgoimporter.PackageInit.Name string
+field go/internal/gccgoimporter.PackageInit.Priority int
+field go/printer.CommentedNode.Comments []*ast.CommentGroup
+field go/printer.CommentedNode.Node any
+field go/printer.Config.Indent int
+field go/printer.Config.Mode Mode
+field go/printer.Config.Tabwidth int
+field go/scanner.Error.Msg string
+field go/scanner.Error.Pos token.Position
+field go/scanner.Scanner.ErrorCount int
+field go/token.Position.Column int
+field go/token.Position.Filename string
+field go/token.Position.Line int
+field go/token.Position.Offset int
+field go/types.ArgumentError.Err error
+field go/types.ArgumentError.Index int
+field go/types.Config.Context *Context
+field go/types.Config.DisableUnusedImportCheck bool
+field go/types.Config.Error func(err error)
+field go/types.Config.FakeImportC bool
+field go/types.Config.GoVersion string
+field go/types.Config.IgnoreFuncBodies bool
+field go/types.Config.Importer Importer
+field go/types.Config.Sizes Sizes
+field go/types.Error.Fset *token.FileSet
+field go/types.Error.Msg string
+field go/types.Error.Pos token.Pos
+field go/types.Error.Soft bool
+field go/types.Info.Defs map[*ast.Ident]Object
+field go/types.Info.FileVersions map[*ast.File]string
+field go/types.Info.Implicits map[ast.Node]Object
+field go/types.Info.InitOrder []*Initializer
+field go/types.Info.Instances map[*ast.Ident]Instance
+field go/types.Info.Scopes map[ast.Node]*Scope
+field go/types.Info.Selections map[*ast.SelectorExpr]*Selection
+field go/types.Info.Types map[ast.Expr]TypeAndValue
+field go/types.Info.Uses map[*ast.Ident]Object
+field go/types.Initializer.Lhs []*Var
+field go/types.Initializer.Rhs ast.Expr
+field go/types.Instance.Type Type
+field go/types.Instance.TypeArgs *TypeList
+field go/types.StdSizes.MaxAlign int64
+field go/types.StdSizes.WordSize int64
+field go/types.TypeAndValue.Type Type
+field go/types.TypeAndValue.Value constant.Value
+func go/ast(*ArrayType).End() token.Pos
+func go/ast(*ArrayType).Pos() token.Pos
+func go/ast(*AssignStmt).End() token.Pos
+func go/ast(*AssignStmt).Pos() token.Pos
+func go/ast(*BadDecl).End() token.Pos
+func go/ast(*BadDecl).Pos() token.Pos
+func go/ast(*BadExpr).End() token.Pos
+func go/ast(*BadExpr).Pos() token.Pos
+func go/ast(*BadStmt).End() token.Pos
+func go/ast(*BadStmt).Pos() token.Pos
+func go/ast(*BasicLit).End() token.Pos
+func go/ast(*BasicLit).Pos() token.Pos
+func go/ast(*BinaryExpr).End() token.Pos
+func go/ast(*BinaryExpr).Pos() token.Pos
+func go/ast(*BlockStmt).End() token.Pos
+func go/ast(*BlockStmt).Pos() token.Pos
+func go/ast(*BranchStmt).End() token.Pos
+func go/ast(*BranchStmt).Pos() token.Pos
+func go/ast(*CallExpr).End() token.Pos
+func go/ast(*CallExpr).Pos() token.Pos
+func go/ast(*CaseClause).End() token.Pos
+func go/ast(*CaseClause).Pos() token.Pos
+func go/ast(*ChanType).End() token.Pos
+func go/ast(*ChanType).Pos() token.Pos
+func go/ast(*CommClause).End() token.Pos
+func go/ast(*CommClause).Pos() token.Pos
+func go/ast(*Comment).End() token.Pos
+func go/ast(*Comment).Pos() token.Pos
+func go/ast(*CommentGroup).End() token.Pos
+func go/ast(*CommentGroup).Pos() token.Pos
+func go/ast(*CommentGroup).Text() string
+func go/ast(*CompositeLit).End() token.Pos
+func go/ast(*CompositeLit).Pos() token.Pos
+func go/ast(*DeclStmt).End() token.Pos
+func go/ast(*DeclStmt).Pos() token.Pos
+func go/ast(*DeferStmt).End() token.Pos
+func go/ast(*DeferStmt).Pos() token.Pos
+func go/ast(*Directive).End() token.Pos
+func go/ast(*Directive).ParseArgs() ([]DirectiveArg,error)
+func go/ast(*Directive).Pos() token.Pos
+func go/ast(*Ellipsis).End() token.Pos
+func go/ast(*Ellipsis).Pos() token.Pos
+func go/ast(*EmptyStmt).End() token.Pos
+func go/ast(*EmptyStmt).Pos() token.Pos
+func go/ast(*ExprStmt).End() token.Pos
+func go/ast(*ExprStmt).Pos() token.Pos
+func go/ast(*Field).End() token.Pos
+func go/ast(*Field).Pos() token.Pos
+func go/ast(*FieldList).End() token.Pos
+func go/ast(*FieldList).NumFields() int
+func go/ast(*FieldList).Pos() token.Pos
+func go/ast(*File).End() token.Pos
+func go/ast(*File).Pos() token.Pos
+func go/ast(*ForStmt).End() token.Pos
+func go/ast(*ForStmt).Pos() token.Pos
+func go/ast(*FuncDecl).End() token.Pos
+func go/ast(*FuncDecl).Pos() token.Pos
+func go/ast(*FuncLit).End() token.Pos
+func go/ast(*FuncLit).Pos() token.Pos
+func go/ast(*FuncType).End() token.Pos
+func go/ast(*FuncType).Pos() token.Pos
+func go/ast(*GenDecl).End() token.Pos
+func go/ast(*GenDecl).Pos() token.Pos
+func go/ast(*GoStmt).End() token.Pos
+func go/ast(*GoStmt).Pos() token.Pos
+func go/ast(*Ident).End() token.Pos
+func go/ast(*Ident).IsExported() bool
+func go/ast(*Ident).Pos() token.Pos
+func go/ast(*Ident).String() string
+func go/ast(*IfStmt).End() token.Pos
+func go/ast(*IfStmt).Pos() token.Pos
+func go/ast(*ImportSpec).End() token.Pos
+func go/ast(*ImportSpec).Pos() token.Pos
+func go/ast(*IncDecStmt).End() token.Pos
+func go/ast(*IncDecStmt).Pos() token.Pos
+func go/ast(*IndexExpr).End() token.Pos
+func go/ast(*IndexExpr).Pos() token.Pos
+func go/ast(*IndexListExpr).End() token.Pos
+func go/ast(*IndexListExpr).Pos() token.Pos
+func go/ast(*InterfaceType).End() token.Pos
+func go/ast(*InterfaceType).Pos() token.Pos
+func go/ast(*KeyValueExpr).End() token.Pos
+func go/ast(*KeyValueExpr).Pos() token.Pos
+func go/ast(*LabeledStmt).End() token.Pos
+func go/ast(*LabeledStmt).Pos() token.Pos
+func go/ast(*MapType).End() token.Pos
+func go/ast(*MapType).Pos() token.Pos
+func go/ast(*Object).Pos() token.Pos
+func go/ast(*Package).End() token.Pos
+func go/ast(*Package).Pos() token.Pos
+func go/ast(*ParenExpr).End() token.Pos
+func go/ast(*ParenExpr).Pos() token.Pos
+func go/ast(*RangeStmt).End() token.Pos
+func go/ast(*RangeStmt).Pos() token.Pos
+func go/ast(*ReturnStmt).End() token.Pos
+func go/ast(*ReturnStmt).Pos() token.Pos
+func go/ast(*Scope).Insert(*Object) (*Object)
+func go/ast(*Scope).Lookup(string) *Object
+func go/ast(*Scope).String() string
+func go/ast(*SelectStmt).End() token.Pos
+func go/ast(*SelectStmt).Pos() token.Pos
+func go/ast(*SelectorExpr).End() token.Pos
+func go/ast(*SelectorExpr).Pos() token.Pos
+func go/ast(*SendStmt).End() token.Pos
+func go/ast(*SendStmt).Pos() token.Pos
+func go/ast(*SliceExpr).End() token.Pos
+func go/ast(*SliceExpr).Pos() token.Pos
+func go/ast(*StarExpr).End() token.Pos
+func go/ast(*StarExpr).Pos() token.Pos
+func go/ast(*StructType).End() token.Pos
+func go/ast(*StructType).Pos() token.Pos
+func go/ast(*SwitchStmt).End() token.Pos
+func go/ast(*SwitchStmt).Pos() token.Pos
+func go/ast(*TypeAssertExpr).End() token.Pos
+func go/ast(*TypeAssertExpr).Pos() token.Pos
+func go/ast(*TypeSpec).End() token.Pos
+func go/ast(*TypeSpec).Pos() token.Pos
+func go/ast(*TypeSwitchStmt).End() token.Pos
+func go/ast(*TypeSwitchStmt).Pos() token.Pos
+func go/ast(*UnaryExpr).End() token.Pos
+func go/ast(*UnaryExpr).Pos() token.Pos
+func go/ast(*ValueSpec).End() token.Pos
+func go/ast(*ValueSpec).Pos() token.Pos
+func go/ast(*printer).Write([]byte) (int,error)
+func go/ast(CommentMap).Comments() []*CommentGroup
+func go/ast(CommentMap).Filter(Node) CommentMap
+func go/ast(CommentMap).String() string
+func go/ast(CommentMap).Update(Node,Node) Node
+func go/ast(ObjKind).String() string
+func go/ast(inspector).Visit(Node) Visitor
+func go/astFileExports(*File) bool
+func go/astFilterDecl(Decl,Filter) bool
+func go/astFilterFile(*File,Filter) bool
+func go/astFilterPackage(*Package,Filter) bool
+func go/astFprint(io.Writer,*token.FileSet,any,FieldFilter) error
+func go/astInspect(Node,func(Node) bool)
+func go/astIsExported(string) bool
+func go/astIsGenerated(*File) bool
+func go/astMergePackageFiles(*Package,MergeMode) *File
+func go/astNewCommentMap(*token.FileSet,Node,[]*CommentGroup) CommentMap
+func go/astNewIdent(string) *Ident
+func go/astNewObj(ObjKind,string) *Object
+func go/astNewPackage(*token.FileSet,map[string]*File,Importer,*Scope) (*Package,error)
+func go/astNewScope(*Scope) *Scope
+func go/astNotNilFilter(string,reflect.Value) bool
+func go/astPackageExports(*Package) bool
+func go/astParseDirective(token.Pos,string) (Directive,bool)
+func go/astPreorder(Node) iter.Seq[Node]
+func go/astPreorderStack(Node,[]Node,func(n Node, stack []Node) bool)
+func go/astPrint(*token.FileSet,any) error
+func go/astSortImports(*token.FileSet,*File)
+func go/astUnparen(Expr) Expr
+func go/astWalk(Visitor,Node)
+func go/build(*Context).Import(string,string,ImportMode) (*Package,error)
+func go/build(*Context).ImportDir(string,ImportMode) (*Package,error)
+func go/build(*Context).MatchFile(string,string) (bool,error)
+func go/build(*Context).SrcDirs() []string
+func go/build(*MultiplePackageError).Error() string
+func go/build(*NoGoError).Error() string
+func go/build(*Package).IsCommand() bool
+func go/build/constraint(*AndExpr).Eval(func(tag string) bool) bool
+func go/build/constraint(*AndExpr).String() string
+func go/build/constraint(*NotExpr).Eval(func(tag string) bool) bool
+func go/build/constraint(*NotExpr).String() string
+func go/build/constraint(*OrExpr).Eval(func(tag string) bool) bool
+func go/build/constraint(*OrExpr).String() string
+func go/build/constraint(*SyntaxError).Error() string
+func go/build/constraint(*TagExpr).Eval(func(tag string) bool) bool
+func go/build/constraint(*TagExpr).String() string
+func go/build/constraintGoVersion(Expr) string
+func go/build/constraintIsGoBuild(string) bool
+func go/build/constraintIsPlusBuild(string) bool
+func go/build/constraintParse(string) (Expr,error)
+func go/build/constraintPlusBuildLines(Expr) ([]string,error)
+func go/buildArchChar(string) (string,error)
+func go/buildImport(string,string,ImportMode) (*Package,error)
+func go/buildImportDir(string,ImportMode) (*Package,error)
+func go/buildIsLocalImport(string) bool
+func go/constant(*stringVal).ExactString() string
+func go/constant(*stringVal).Kind() Kind
+func go/constant(*stringVal).String() string
+func go/constant(Kind).String() string
+func go/constant(boolVal).ExactString() string
+func go/constant(boolVal).Kind() Kind
+func go/constant(boolVal).String() string
+func go/constant(complexVal).ExactString() string
+func go/constant(complexVal).Kind() Kind
+func go/constant(complexVal).String() string
+func go/constant(floatVal).ExactString() string
+func go/constant(floatVal).Kind() Kind
+func go/constant(floatVal).String() string
+func go/constant(int64Val).ExactString() string
+func go/constant(int64Val).Kind() Kind
+func go/constant(int64Val).String() string
+func go/constant(intVal).ExactString() string
+func go/constant(intVal).Kind() Kind
+func go/constant(intVal).String() string
+func go/constant(ratVal).ExactString() string
+func go/constant(ratVal).Kind() Kind
+func go/constant(ratVal).String() string
+func go/constant(unknownVal).ExactString() string
+func go/constant(unknownVal).Kind() Kind
+func go/constant(unknownVal).String() string
+func go/constantBinaryOp(Value,token.Token,Value) Value
+func go/constantBitLen(Value) int
+func go/constantBoolVal(Value) bool
+func go/constantBytes(Value) []byte
+func go/constantCompare(Value,token.Token,Value) bool
+func go/constantDenom(Value) Value
+func go/constantFloat32Val(Value) (float32,bool)
+func go/constantFloat64Val(Value) (float64,bool)
+func go/constantImag(Value) Value
+func go/constantInt64Val(Value) (int64,bool)
+func go/constantMake(any) Value
+func go/constantMakeBool(bool) Value
+func go/constantMakeFloat64(float64) Value
+func go/constantMakeFromBytes([]byte) Value
+func go/constantMakeFromLiteral(string,token.Token,uint) Value
+func go/constantMakeImag(Value) Value
+func go/constantMakeInt64(int64) Value
+func go/constantMakeString(string) Value
+func go/constantMakeUint64(uint64) Value
+func go/constantMakeUnknown() Value
+func go/constantNum(Value) Value
+func go/constantReal(Value) Value
+func go/constantShift(Value,token.Token,uint) Value
+func go/constantSign(Value) int
+func go/constantStringVal(Value) string
+func go/constantToComplex(Value) Value
+func go/constantToFloat(Value) Value
+func go/constantToInt(Value) Value
+func go/constantUint64Val(Value) (uint64,bool)
+func go/constantUnaryOp(token.Token,Value,uint) Value
+func go/constantVal(Value) any
+func go/doc(*Package).Filter(Filter)
+func go/doc(*Package).HTML(string) []byte
+func go/doc(*Package).Markdown(string) []byte
+func go/doc(*Package).Parser() *comment.Parser
+func go/doc(*Package).Printer() *comment.Printer
+func go/doc(*Package).Synopsis(string) string
+func go/doc(*Package).Text(string) []byte
+func go/doc/comment(*DocLink).DefaultURL(string) string
+func go/doc/comment(*Heading).DefaultID() string
+func go/doc/comment(*List).BlankBefore() bool
+func go/doc/comment(*List).BlankBetween() bool
+func go/doc/comment(*Parser).Parse(string) *Doc
+func go/doc/comment(*Printer).Comment(*Doc) []byte
+func go/doc/comment(*Printer).HTML(*Doc) []byte
+func go/doc/comment(*Printer).Markdown(*Doc) []byte
+func go/doc/comment(*Printer).Text(*Doc) []byte
+func go/doc/commentDefaultLookupPackage(string) (string,bool)
+func go/docExamples(...*ast.File) []*Example
+func go/docIsPredeclared(string) bool
+func go/docNew(*ast.Package,string,Mode) *Package
+func go/docNewFromFiles(*token.FileSet,[]*ast.File,string,...any) (*Package,error)
+func go/docSynopsis(string) string
+func go/docToHTML(io.Writer,string,map[string]string)
+func go/docToText(io.Writer,string,string,string,int)
+func go/formatNode(io.Writer,*token.FileSet,any) error
+func go/formatSource([]byte) ([]byte,error)
+func go/importer(*gccgoimports).Import(string) (*types.Package,error)
+func go/importer(*gccgoimports).ImportFrom(string,string,types.ImportMode) (*types.Package,error)
+func go/importer(*gcimports).Import(string) (*types.Package,error)
+func go/importer(*gcimports).ImportFrom(string,string,types.ImportMode) (*types.Package,error)
+func go/importerDefault() types.Importer
+func go/importerFor(string,Lookup) types.Importer
+func go/importerForCompiler(*token.FileSet,string,Lookup) types.Importer
+func go/internal/gccgoimporter(*GccgoInstallation).GetImporter([]string,map[*types.Package]InitData) Importer
+func go/internal/gccgoimporter(*GccgoInstallation).InitFromDriver(string,...string) (error)
+func go/internal/gccgoimporter(*GccgoInstallation).SearchPaths() ([]string)
+func go/internal/gccgoimporter(importError).Error() string
+func go/internal/gccgoimporter(seekerReadAt).ReadAt([]byte,int64) (int,error)
+func go/internal/gccgoimporterGetImporter([]string,map[*types.Package]InitData) Importer
+func go/internal/gcimporterImport(*token.FileSet,map[string]*types.Package,string,string,func(path string) (io.ReadCloser, error)) (*types.Package,error)
+func go/internal/srcimporter(*Importer).Import(string) (*types.Package,error)
+func go/internal/srcimporter(*Importer).ImportFrom(string,string,types.ImportMode) (*types.Package,error)
+func go/internal/srcimporterNew(*build.Context,*token.FileSet,map[string]*types.Package) *Importer
+func go/parser(*resolver).Visit(ast.Node) ast.Visitor
+func go/parserParseDir(*token.FileSet,string,func(fs.FileInfo) bool,Mode) (map[string]*ast.Package,error)
+func go/parserParseExpr(string) (ast.Expr,error)
+func go/parserParseExprFrom(*token.FileSet,string,any,Mode) (ast.Expr,error)
+func go/parserParseFile(*token.FileSet,string,any,Mode) (*ast.File,error)
+func go/printer(*Config).Fprint(io.Writer,*token.FileSet,any) error
+func go/printer(*sizeCounter).Write([]byte) (int,error)
+func go/printer(*trimmer).Write([]byte) (int,error)
+func go/printerFprint(io.Writer,*token.FileSet,any) error
+func go/scanner(*ErrorList).Add(token.Position,string)
+func go/scanner(*ErrorList).RemoveMultiples()
+func go/scanner(*ErrorList).Reset()
+func go/scanner(*Scanner).Init(*token.File,[]byte,ErrorHandler,Mode)
+func go/scanner(*Scanner).Scan() (token.Pos,token.Token,string)
+func go/scanner(Error).Error() string
+func go/scanner(ErrorList).Err() error
+func go/scanner(ErrorList).Error() string
+func go/scanner(ErrorList).Len() int
+func go/scanner(ErrorList).Less(int,int) bool
+func go/scanner(ErrorList).Sort()
+func go/scanner(ErrorList).Swap(int,int)
+func go/scannerPrintError(io.Writer,error)
+func go/token(*File).AddLine(int)
+func go/token(*File).AddLineColumnInfo(int,string,int,int)
+func go/token(*File).AddLineInfo(int,string,int)
+func go/token(*File).Base() int
+func go/token(*File).End() Pos
+func go/token(*File).Line(Pos) int
+func go/token(*File).LineCount() int
+func go/token(*File).LineStart(int) Pos
+func go/token(*File).Lines() []int
+func go/token(*File).MergeLine(int)
+func go/token(*File).Name() string
+func go/token(*File).Offset(Pos) int
+func go/token(*File).Pos(int) Pos
+func go/token(*File).Position(Pos) (Position)
+func go/token(*File).PositionFor(Pos,bool) (Position)
+func go/token(*File).SetLines([]int) bool
+func go/token(*File).SetLinesForContent([]byte)
+func go/token(*File).Size() int
+func go/token(*FileSet).AddExistingFiles(...*File)
+func go/token(*FileSet).AddFile(string,int,int) *File
+func go/token(*FileSet).Base() int
+func go/token(*FileSet).File(Pos) (*File)
+func go/token(*FileSet).Iterate(func(*File) bool)
+func go/token(*FileSet).Position(Pos) (Position)
+func go/token(*FileSet).PositionFor(Pos,bool) (Position)
+func go/token(*FileSet).Read(func(any) error) error
+func go/token(*FileSet).RemoveFile(*File)
+func go/token(*FileSet).Write(func(any) error) error
+func go/token(*Position).IsValid() bool
+func go/token(Pos).IsValid() bool
+func go/token(Position).String() string
+func go/token(Token).IsKeyword() bool
+func go/token(Token).IsLiteral() bool
+func go/token(Token).IsOperator() bool
+func go/token(Token).Precedence() int
+func go/token(Token).String() string
+func go/tokenIsExported(string) bool
+func go/tokenIsIdentifier(string) bool
+func go/tokenIsKeyword(string) bool
+func go/tokenLookup(string) Token
+func go/tokenNewFileSet() *FileSet
+func go/types(*Alias).Obj() *TypeName
+func go/types(*Alias).Origin() *Alias
+func go/types(*Alias).Rhs() Type
+func go/types(*Alias).SetTypeParams([]*TypeParam)
+func go/types(*Alias).String() string
+func go/types(*Alias).TypeArgs() *TypeList
+func go/types(*Alias).TypeParams() *TypeParamList
+func go/types(*Alias).Underlying() Type
+func go/types(*ArgumentError).Error() string
+func go/types(*ArgumentError).Unwrap() error
+func go/types(*Array).Elem() Type
+func go/types(*Array).Len() int64
+func go/types(*Array).String() string
+func go/types(*Array).Underlying() Type
+func go/types(*Basic).Info() BasicInfo
+func go/types(*Basic).Kind() BasicKind
+func go/types(*Basic).Name() string
+func go/types(*Basic).String() string
+func go/types(*Basic).Underlying() Type
+func go/types(*Builtin).String() string
+func go/types(*Chan).Dir() ChanDir
+func go/types(*Chan).Elem() Type
+func go/types(*Chan).String() string
+func go/types(*Chan).Underlying() Type
+func go/types(*Checker).Files([]*ast.File) (error)
+func go/types(*Config).Check(string,*token.FileSet,[]*ast.File,*Info) (*Package,error)
+func go/types(*Const).String() string
+func go/types(*Const).Val() constant.Value
+func go/types(*Func).FullName() string
+func go/types(*Func).Origin() *Func
+func go/types(*Func).Pkg() *Package
+func go/types(*Func).Scope() *Scope
+func go/types(*Func).Signature() *Signature
+func go/types(*Func).String() string
+func go/types(*Info).ObjectOf(*ast.Ident) Object
+func go/types(*Info).PkgNameOf(*ast.ImportSpec) *PkgName
+func go/types(*Info).TypeOf(ast.Expr) Type
+func go/types(*Initializer).String() string
+func go/types(*Interface).Complete() *Interface
+func go/types(*Interface).Embedded(int) *Named
+func go/types(*Interface).EmbeddedType(int) Type
+func go/types(*Interface).EmbeddedTypes() iter.Seq[Type]
+func go/types(*Interface).Empty() bool
+func go/types(*Interface).ExplicitMethod(int) *Func
+func go/types(*Interface).ExplicitMethods() iter.Seq[*Func]
+func go/types(*Interface).IsComparable() bool
+func go/types(*Interface).IsImplicit() bool
+func go/types(*Interface).IsMethodSet() bool
+func go/types(*Interface).MarkImplicit()
+func go/types(*Interface).Method(int) *Func
+func go/types(*Interface).Methods() iter.Seq[*Func]
+func go/types(*Interface).NumEmbeddeds() int
+func go/types(*Interface).NumExplicitMethods() int
+func go/types(*Interface).NumMethods() int
+func go/types(*Interface).String() string
+func go/types(*Interface).Underlying() Type
+func go/types(*Label).String() string
+func go/types(*Map).Elem() Type
+func go/types(*Map).Key() Type
+func go/types(*Map).String() string
+func go/types(*Map).Underlying() Type
+func go/types(*MethodSet).At(int) *Selection
+func go/types(*MethodSet).Len() int
+func go/types(*MethodSet).Lookup(*Package,string) *Selection
+func go/types(*MethodSet).Methods() iter.Seq[*Selection]
+func go/types(*MethodSet).String() string
+func go/types(*Named).AddMethod(*Func)
+func go/types(*Named).Method(int) *Func
+func go/types(*Named).Methods() iter.Seq[*Func]
+func go/types(*Named).NumMethods() int
+func go/types(*Named).Obj() *TypeName
+func go/types(*Named).Origin() *Named
+func go/types(*Named).SetTypeParams([]*TypeParam)
+func go/types(*Named).SetUnderlying(Type)
+func go/types(*Named).String() string
+func go/types(*Named).TypeArgs() *TypeList
+func go/types(*Named).TypeParams() *TypeParamList
+func go/types(*Named).Underlying() Type
+func go/types(*Nil).String() string
+func go/types(*Package).Complete() bool
+func go/types(*Package).GoVersion() string
+func go/types(*Package).Imports() []*Package
+func go/types(*Package).MarkComplete()
+func go/types(*Package).Name() string
+func go/types(*Package).Path() string
+func go/types(*Package).Scope() *Scope
+func go/types(*Package).SetImports([]*Package)
+func go/types(*Package).SetName(string)
+func go/types(*Package).String() string
+func go/types(*PkgName).Imported() *Package
+func go/types(*PkgName).String() string
+func go/types(*Pointer).Elem() Type
+func go/types(*Pointer).String() string
+func go/types(*Pointer).Underlying() Type
+func go/types(*Scope).Child(int) *Scope
+func go/types(*Scope).Children() iter.Seq[*Scope]
+func go/types(*Scope).Contains(token.Pos) bool
+func go/types(*Scope).End() token.Pos
+func go/types(*Scope).Innermost(token.Pos) *Scope
+func go/types(*Scope).Insert(Object) Object
+func go/types(*Scope).Len() int
+func go/types(*Scope).Lookup(string) Object
+func go/types(*Scope).LookupParent(string,token.Pos) (*Scope,Object)
+func go/types(*Scope).Names() []string
+func go/types(*Scope).NumChildren() int
+func go/types(*Scope).Parent() *Scope
+func go/types(*Scope).Pos() token.Pos
+func go/types(*Scope).String() string
+func go/types(*Scope).WriteTo(io.Writer,int,bool)
+func go/types(*Selection).Index() []int
+func go/types(*Selection).Indirect() bool
+func go/types(*Selection).Kind() SelectionKind
+func go/types(*Selection).Obj() Object
+func go/types(*Selection).Recv() Type
+func go/types(*Selection).String() string
+func go/types(*Selection).Type() Type
+func go/types(*Signature).Params() *Tuple
+func go/types(*Signature).Recv() *Var
+func go/types(*Signature).RecvTypeParams() *TypeParamList
+func go/types(*Signature).Results() *Tuple
+func go/types(*Signature).String() string
+func go/types(*Signature).TypeParams() *TypeParamList
+func go/types(*Signature).Underlying() Type
+func go/types(*Signature).Variadic() bool
+func go/types(*Slice).Elem() Type
+func go/types(*Slice).String() string
+func go/types(*Slice).Underlying() Type
+func go/types(*StdSizes).Alignof(Type) (int64)
+func go/types(*StdSizes).Offsetsof([]*Var) []int64
+func go/types(*StdSizes).Sizeof(Type) int64
+func go/types(*Struct).Field(int) *Var
+func go/types(*Struct).Fields() iter.Seq[*Var]
+func go/types(*Struct).NumFields() int
+func go/types(*Struct).String() string
+func go/types(*Struct).Tag(int) string
+func go/types(*Struct).Underlying() Type
+func go/types(*Term).String() string
+func go/types(*Term).Tilde() bool
+func go/types(*Term).Type() Type
+func go/types(*Tuple).At(int) *Var
+func go/types(*Tuple).Len() int
+func go/types(*Tuple).String() string
+func go/types(*Tuple).Underlying() Type
+func go/types(*Tuple).Variables() iter.Seq[*Var]
+func go/types(*TypeList).At(int) Type
+func go/types(*TypeList).Len() int
+func go/types(*TypeList).Types() iter.Seq[Type]
+func go/types(*TypeName).IsAlias() bool
+func go/types(*TypeName).String() string
+func go/types(*TypeParam).Constraint() Type
+func go/types(*TypeParam).Index() int
+func go/types(*TypeParam).Obj() *TypeName
+func go/types(*TypeParam).SetConstraint(Type)
+func go/types(*TypeParam).String() string
+func go/types(*TypeParam).Underlying() Type
+func go/types(*TypeParamList).At(int) *TypeParam
+func go/types(*TypeParamList).Len() int
+func go/types(*TypeParamList).TypeParams() iter.Seq[*TypeParam]
+func go/types(*Union).Len() int
+func go/types(*Union).String() string
+func go/types(*Union).Term(int) *Term
+func go/types(*Union).Terms() iter.Seq[*Term]
+func go/types(*Union).Underlying() Type
+func go/types(*Var).Anonymous() bool
+func go/types(*Var).Embedded() bool
+func go/types(*Var).IsField() bool
+func go/types(*Var).Kind() VarKind
+func go/types(*Var).Origin() *Var
+func go/types(*Var).SetKind(VarKind)
+func go/types(*Var).String() string
+func go/types(*_TypeSet).IsAll() bool
+func go/types(*_TypeSet).IsComparable(map[Type]bool) bool
+func go/types(*_TypeSet).IsEmpty() bool
+func go/types(*_TypeSet).IsMethodSet() bool
+func go/types(*_TypeSet).LookupMethod(*Package,string,bool) (int,*Func)
+func go/types(*_TypeSet).Method(int) *Func
+func go/types(*_TypeSet).NumMethods() int
+func go/types(*_TypeSet).String() string
+func go/types(*gcSizes).Alignof(Type) (int64)
+func go/types(*gcSizes).Offsetsof([]*Var) []int64
+func go/types(*gcSizes).Sizeof(Type) int64
+func go/types(*indexedExpr).Pos() token.Pos
+func go/types(*lazyObject).Exported() bool
+func go/types(*lazyObject).Id() string
+func go/types(*lazyObject).Name() string
+func go/types(*lazyObject).Parent() *Scope
+func go/types(*lazyObject).Pkg() *Package
+func go/types(*lazyObject).Pos() token.Pos
+func go/types(*lazyObject).String() string
+func go/types(*lazyObject).Type() Type
+func go/types(*nodeQueue).Pop() any
+func go/types(*nodeQueue).Push(any)
+func go/types(*object).Exported() bool
+func go/types(*object).Id() string
+func go/types(*object).Name() string
+func go/types(*object).Parent() *Scope
+func go/types(*object).Pkg() *Package
+func go/types(*object).Pos() token.Pos
+func go/types(*object).String() string
+func go/types(*object).Type() Type
+func go/types(*operand).Pos() token.Pos
+func go/types(*operand).String() string
+func go/types(*term).String() string
+func go/types(*unifier).String() string
+func go/types(Error).Error() string
+func go/types(TypeAndValue).Addressable() bool
+func go/types(TypeAndValue).Assignable() bool
+func go/types(TypeAndValue).HasOk() bool
+func go/types(TypeAndValue).IsBuiltin() bool
+func go/types(TypeAndValue).IsNil() bool
+func go/types(TypeAndValue).IsType() bool
+func go/types(TypeAndValue).IsValue() bool
+func go/types(TypeAndValue).IsVoid() bool
+func go/types(VarKind).String() string
+func go/types(atPos).Pos() token.Pos
+func go/types(nodeQueue).Len() int
+func go/types(nodeQueue).Less(int,int) bool
+func go/types(nodeQueue).Swap(int,int)
+func go/types(posSpan).Pos() token.Pos
+func go/types(termlist).String() string
+func go/types(typeParamsById).Len() int
+func go/types(typeParamsById).Less(int,int) bool
+func go/types(typeParamsById).Swap(int,int)
+func go/types(unifyMode).String() string
+func go/typesAssertableTo(*Interface,Type) bool
+func go/typesAssignableTo(Type,Type) bool
+func go/typesCheckExpr(*token.FileSet,*Package,token.Pos,ast.Expr,*Info) (error)
+func go/typesComparable(Type) bool
+func go/typesConvertibleTo(Type,Type) bool
+func go/typesDefPredeclaredTestFuncs()
+func go/typesDefault(Type) Type
+func go/typesEval(*token.FileSet,*Package,token.Pos,string) (TypeAndValue,error)
+func go/typesExprString(ast.Expr) string
+func go/typesId(*Package,string) string
+func go/typesIdentical(Type,Type) bool
+func go/typesIdenticalIgnoreTags(Type,Type) bool
+func go/typesImplements(Type,*Interface) bool
+func go/typesInstantiate(*Context,Type,[]Type,bool) (Type,error)
+func go/typesIsInterface(Type) bool
+func go/typesLookupFieldOrMethod(Type,bool,*Package,string) (Object,[]int,bool)
+func go/typesLookupSelection(Type,bool,*Package,string) (Selection,bool)
+func go/typesMissingMethod(Type,*Interface,bool) (*Func,bool)
+func go/typesNewAlias(*TypeName,Type) *Alias
+func go/typesNewArray(Type,int64) *Array
+func go/typesNewChan(ChanDir,Type) *Chan
+func go/typesNewChecker(*Config,*token.FileSet,*Package,*Info) *Checker
+func go/typesNewConst(token.Pos,*Package,string,Type,constant.Value) *Const
+func go/typesNewContext() *Context
+func go/typesNewField(token.Pos,*Package,string,Type,bool) *Var
+func go/typesNewFunc(token.Pos,*Package,string,*Signature) *Func
+func go/typesNewInterface([]*Func,[]*Named) *Interface
+func go/typesNewInterfaceType([]*Func,[]Type) *Interface
+func go/typesNewLabel(token.Pos,*Package,string) *Label
+func go/typesNewMap(Type,Type) *Map
+func go/typesNewMethodSet(Type) *MethodSet
+func go/typesNewNamed(*TypeName,Type,[]*Func) *Named
+func go/typesNewPackage(string,string) *Package
+func go/typesNewParam(token.Pos,*Package,string,Type) *Var
+func go/typesNewPkgName(token.Pos,*Package,string,*Package) *PkgName
+func go/typesNewPointer(Type) *Pointer
+func go/typesNewScope(*Scope,token.Pos,token.Pos,string) *Scope
+func go/typesNewSignature(*Var,*Tuple,*Tuple,bool) *Signature
+func go/typesNewSignatureType(*Var,[]*TypeParam,[]*TypeParam,*Tuple,*Tuple,bool) *Signature
+func go/typesNewSlice(Type) *Slice
+func go/typesNewStruct([]*Var,[]string) *Struct
+func go/typesNewTerm(bool,Type) *Term
+func go/typesNewTuple(...*Var) *Tuple
+func go/typesNewTypeName(token.Pos,*Package,string,Type) *TypeName
+func go/typesNewTypeParam(*TypeName,Type) *TypeParam
+func go/typesNewUnion([]*Term) *Union
+func go/typesNewVar(token.Pos,*Package,string,Type) *Var
+func go/typesObjectString(Object,Qualifier) string
+func go/typesRelativeTo(*Package) Qualifier
+func go/typesSatisfies(Type,*Interface) bool
+func go/typesSelectionString(*Selection,Qualifier) string
+func go/typesSizesFor(string,string) Sizes
+func go/typesTypeString(Type,Qualifier) string
+func go/typesUnalias(Type) Type
+func go/typesWriteExpr(*bytes.Buffer,ast.Expr)
+func go/typesWriteSignature(*bytes.Buffer,*Signature,Qualifier)
+func go/typesWriteType(*bytes.Buffer,Type,Qualifier)
+func go/versionCompare(string,string) int
+func go/versionIsValid(string) bool
+func go/versionLang(string) string
+method go/ast.Node.Endfunc() token.Pos
+method go/ast.Node.Posfunc() token.Pos
+method go/ast.Visitor.Visitfunc(node Node) (w Visitor)
+method go/build/constraint.Expr.Evalfunc(ok func(tag string) bool) bool
+method go/build/constraint.Expr.Stringfunc() string
+method go/constant.Value.ExactStringfunc() string
+method go/constant.Value.Kindfunc() Kind
+method go/constant.Value.Stringfunc() string
+method go/types.Importer.Importfunc(path string) (*Package, error)
+method go/types.ImporterFrom.ImportFromfunc(path, dir string, mode ImportMode) (*Package, error)
+method go/types.Object.Exportedfunc() bool
+method go/types.Object.Idfunc() string
+method go/types.Object.Namefunc() string
+method go/types.Object.Parentfunc() *Scope
+method go/types.Object.Pkgfunc() *Package
+method go/types.Object.Posfunc() token.Pos
+method go/types.Object.Stringfunc() string
+method go/types.Object.Typefunc() Type
+method go/types.Sizes.Alignoffunc(T Type) int64
+method go/types.Sizes.Offsetsoffunc(fields []*Var) []int64
+method go/types.Sizes.Sizeoffunc(T Type) int64
+method go/types.Type.Stringfunc() string
+method go/types.Type.Underlyingfunc() Type
+type go/ast.ArrayType struct {
+	Lbrack	token.Pos
+	Len	Expr
+	Elt	Expr
+}
+type go/ast.AssignStmt struct {
+	Lhs	[]Expr
+	TokPos	token.Pos
+	Tok	token.Token
+	Rhs	[]Expr
+}
+type go/ast.BadDecl struct {
+	From, To token.Pos
+}
+type go/ast.BadExpr struct {
+	From, To token.Pos
+}
+type go/ast.BadStmt struct {
+	From, To token.Pos
+}
+type go/ast.BasicLit struct {
+	ValuePos	token.Pos
+	ValueEnd	token.Pos
+	Kind		token.Token
+	Value		string
+}
+type go/ast.BinaryExpr struct {
+	X	Expr
+	OpPos	token.Pos
+	Op	token.Token
+	Y	Expr
+}
+type go/ast.BlockStmt struct {
+	Lbrace	token.Pos
+	List	[]Stmt
+	Rbrace	token.Pos
+}
+type go/ast.BranchStmt struct {
+	TokPos	token.Pos
+	Tok	token.Token
+	Label	*Ident
+}
+type go/ast.CallExpr struct {
+	Fun		Expr
+	Lparen		token.Pos
+	Args		[]Expr
+	Ellipsis	token.Pos
+	Rparen		token.Pos
+}
+type go/ast.CaseClause struct {
+	Case	token.Pos
+	List	[]Expr
+	Colon	token.Pos
+	Body	[]Stmt
+}
+type go/ast.ChanDir int
+type go/ast.ChanType struct {
+	Begin	token.Pos
+	Arrow	token.Pos
+	Dir	ChanDir
+	Value	Expr
+}
+type go/ast.CommClause struct {
+	Case	token.Pos
+	Comm	Stmt
+	Colon	token.Pos
+	Body	[]Stmt
+}
+type go/ast.Comment struct {
+	Slash	token.Pos
+	Text	string
+}
+type go/ast.CommentGroup struct {
+	List []*Comment
+}
+type go/ast.CommentMap map[Node][]*CommentGroup
+type go/ast.CompositeLit struct {
+	Type		Expr
+	Lbrace		token.Pos
+	Elts		[]Expr
+	Rbrace		token.Pos
+	Incomplete	bool
+}
+type go/ast.Decl interface {
+	Node
+	declNode()
+}
+type go/ast.DeclStmt struct {
+	Decl Decl
+}
+type go/ast.DeferStmt struct {
+	Defer	token.Pos
+	Call	*CallExpr
+}
+type go/ast.Directive struct {
+	Tool	string
+	Name	string
+	Args	string
+
+	Slash	token.Pos
+
+	ArgsPos	token.Pos
+}
+type go/ast.DirectiveArg struct {
+	Arg	string
+
+	Pos	token.Pos
+}
+type go/ast.Ellipsis struct {
+	Ellipsis	token.Pos
+	Elt		Expr
+}
+type go/ast.EmptyStmt struct {
+	Semicolon	token.Pos
+	Implicit	bool
+}
+type go/ast.Expr interface {
+	Node
+	exprNode()
+}
+type go/ast.ExprStmt struct {
+	X Expr
+}
+type go/ast.Field struct {
+	Doc	*CommentGroup
+	Names	[]*Ident
+	Type	Expr
+	Tag	*BasicLit
+	Comment	*CommentGroup
+}
+type go/ast.FieldFilter func(name string, value reflect.Value) bool
+type go/ast.FieldList struct {
+	Opening	token.Pos
+	List	[]*Field
+	Closing	token.Pos
+}
+type go/ast.File struct {
+	Doc	*CommentGroup
+	Package	token.Pos
+	Name	*Ident
+	Decls	[]Decl
+
+	FileStart, FileEnd	token.Pos
+	Scope			*Scope
+	Imports			[]*ImportSpec
+	Unresolved		[]*Ident
+	Comments		[]*CommentGroup
+	GoVersion		string
+}
+type go/ast.Filter func(string) bool
+type go/ast.ForStmt struct {
+	For	token.Pos
+	Init	Stmt
+	Cond	Expr
+	Post	Stmt
+	Body	*BlockStmt
+}
+type go/ast.FuncDecl struct {
+	Doc	*CommentGroup
+	Recv	*FieldList
+	Name	*Ident
+	Type	*FuncType
+	Body	*BlockStmt
+}
+type go/ast.FuncLit struct {
+	Type	*FuncType
+	Body	*BlockStmt
+}
+type go/ast.FuncType struct {
+	Func		token.Pos
+	TypeParams	*FieldList
+	Params		*FieldList
+	Results		*FieldList
+}
+type go/ast.GenDecl struct {
+	Doc	*CommentGroup
+	TokPos	token.Pos
+	Tok	token.Token
+	Lparen	token.Pos
+	Specs	[]Spec
+	Rparen	token.Pos
+}
+type go/ast.GoStmt struct {
+	Go	token.Pos
+	Call	*CallExpr
+}
+type go/ast.Ident struct {
+	NamePos	token.Pos
+	Name	string
+	Obj	*Object
+}
+type go/ast.IfStmt struct {
+	If	token.Pos
+	Init	Stmt
+	Cond	Expr
+	Body	*BlockStmt
+	Else	Stmt
+}
+type go/ast.ImportSpec struct {
+	Doc	*CommentGroup
+	Name	*Ident
+	Path	*BasicLit
+	Comment	*CommentGroup
+	EndPos	token.Pos
+}
+type go/ast.Importer func(imports map[string]*Object, path string) (pkg *Object, err error)
+type go/ast.IncDecStmt struct {
+	X	Expr
+	TokPos	token.Pos
+	Tok	token.Token
+}
+type go/ast.IndexExpr struct {
+	X	Expr
+	Lbrack	token.Pos
+	Index	Expr
+	Rbrack	token.Pos
+}
+type go/ast.IndexListExpr struct {
+	X	Expr
+	Lbrack	token.Pos
+	Indices	[]Expr
+	Rbrack	token.Pos
+}
+type go/ast.InterfaceType struct {
+	Interface	token.Pos
+	Methods		*FieldList
+	Incomplete	bool
+}
+type go/ast.KeyValueExpr struct {
+	Key	Expr
+	Colon	token.Pos
+	Value	Expr
+}
+type go/ast.LabeledStmt struct {
+	Label	*Ident
+	Colon	token.Pos
+	Stmt	Stmt
+}
+type go/ast.MapType struct {
+	Map	token.Pos
+	Key	Expr
+	Value	Expr
+}
+type go/ast.MergeMode uint
+type go/ast.Node interface {
+	Pos() token.Pos
+	End() token.Pos
+}
+type go/ast.ObjKind int
+type go/ast.Object struct {
+	Kind	ObjKind
+	Name	string
+	Decl	any
+	Data	any
+	Type	any
+}
+type go/ast.Package struct {
+	Name	string
+	Scope	*Scope
+	Imports	map[string]*Object
+	Files	map[string]*File
+}
+type go/ast.ParenExpr struct {
+	Lparen	token.Pos
+	X	Expr
+	Rparen	token.Pos
+}
+type go/ast.RangeStmt struct {
+	For		token.Pos
+	Key, Value	Expr
+	TokPos		token.Pos
+	Tok		token.Token
+	Range		token.Pos
+	X		Expr
+	Body		*BlockStmt
+}
+type go/ast.ReturnStmt struct {
+	Return	token.Pos
+	Results	[]Expr
+}
+type go/ast.Scope struct {
+	Outer	*Scope
+	Objects	map[string]*Object
+}
+type go/ast.SelectStmt struct {
+	Select	token.Pos
+	Body	*BlockStmt
+}
+type go/ast.SelectorExpr struct {
+	X	Expr
+	Sel	*Ident
+}
+type go/ast.SendStmt struct {
+	Chan	Expr
+	Arrow	token.Pos
+	Value	Expr
+}
+type go/ast.SliceExpr struct {
+	X	Expr
+	Lbrack	token.Pos
+	Low	Expr
+	High	Expr
+	Max	Expr
+	Slice3	bool
+	Rbrack	token.Pos
+}
+type go/ast.Spec interface {
+	Node
+	specNode()
+}
+type go/ast.StarExpr struct {
+	Star	token.Pos
+	X	Expr
+}
+type go/ast.Stmt interface {
+	Node
+	stmtNode()
+}
+type go/ast.StructType struct {
+	Struct		token.Pos
+	Fields		*FieldList
+	Incomplete	bool
+}
+type go/ast.SwitchStmt struct {
+	Switch	token.Pos
+	Init	Stmt
+	Tag	Expr
+	Body	*BlockStmt
+}
+type go/ast.TypeAssertExpr struct {
+	X	Expr
+	Lparen	token.Pos
+	Type	Expr
+	Rparen	token.Pos
+}
+type go/ast.TypeSpec struct {
+	Doc		*CommentGroup
+	Name		*Ident
+	TypeParams	*FieldList
+	Assign		token.Pos
+	Type		Expr
+	Comment		*CommentGroup
+}
+type go/ast.TypeSwitchStmt struct {
+	Switch	token.Pos
+	Init	Stmt
+	Assign	Stmt
+	Body	*BlockStmt
+}
+type go/ast.UnaryExpr struct {
+	OpPos	token.Pos
+	Op	token.Token
+	X	Expr
+}
+type go/ast.ValueSpec struct {
+	Doc	*CommentGroup
+	Names	[]*Ident
+	Type	Expr
+	Values	[]Expr
+	Comment	*CommentGroup
+}
+type go/ast.Visitor interface {
+	Visit(node Node) (w Visitor)
+}
+type go/build.Context struct {
+	GOARCH	string
+	GOOS	string
+	GOROOT	string
+	GOPATH	string
+
+	Dir	string
+
+	CgoEnabled	bool
+	UseAllFiles	bool
+	Compiler	string
+
+	BuildTags	[]string
+	ToolTags	[]string
+	ReleaseTags	[]string
+
+	InstallSuffix	string
+
+	JoinPath	func(elem ...string) string
+
+	SplitPathList	func(list string) []string
+
+	IsAbsPath	func(path string) bool
+
+	IsDir	func(path string) bool
+
+	HasSubdir	func(root, dir string) (rel string, ok bool)
+
+	ReadDir	func(dir string) ([]fs.FileInfo, error)
+
+	OpenFile	func(path string) (io.ReadCloser, error)
+}
+type go/build.Directive struct {
+	Text	string
+	Pos	token.Position
+}
+type go/build.ImportMode uint
+type go/build.MultiplePackageError struct {
+	Dir		string
+	Packages	[]string
+	Files		[]string
+}
+type go/build.NoGoError struct {
+	Dir string
+}
+type go/build.Package struct {
+	Dir		string
+	Name		string
+	ImportComment	string
+	Doc		string
+	ImportPath	string
+	Root		string
+	SrcRoot		string
+	PkgRoot		string
+	PkgTargetRoot	string
+	BinDir		string
+	Goroot		bool
+	PkgObj		string
+	AllTags		[]string
+	ConflictDir	string
+	BinaryOnly	bool
+
+	GoFiles			[]string
+	CgoFiles		[]string
+	IgnoredGoFiles		[]string
+	InvalidGoFiles		[]string
+	IgnoredOtherFiles	[]string
+	CFiles			[]string
+	CXXFiles		[]string
+	MFiles			[]string
+	HFiles			[]string
+	FFiles			[]string
+	SFiles			[]string
+	SwigFiles		[]string
+	SwigCXXFiles		[]string
+	SysoFiles		[]string
+
+	CgoCFLAGS	[]string
+	CgoCPPFLAGS	[]string
+	CgoCXXFLAGS	[]string
+	CgoFFLAGS	[]string
+	CgoLDFLAGS	[]string
+	CgoPkgConfig	[]string
+
+	TestGoFiles	[]string
+	XTestGoFiles	[]string
+
+	Directives	[]Directive
+	TestDirectives	[]Directive
+	XTestDirectives	[]Directive
+
+	Imports		[]string
+	ImportPos	map[string][]token.Position
+	TestImports	[]string
+	TestImportPos	map[string][]token.Position
+	XTestImports	[]string
+	XTestImportPos	map[string][]token.Position
+
+	EmbedPatterns		[]string
+	EmbedPatternPos		map[string][]token.Position
+	TestEmbedPatterns	[]string
+	TestEmbedPatternPos	map[string][]token.Position
+	XTestEmbedPatterns	[]string
+	XTestEmbedPatternPos	map[string][]token.Position
+}
+type go/build/constraint.AndExpr struct {
+	X, Y Expr
+}
+type go/build/constraint.Expr interface {
+	String() string
+
+	Eval(ok func(tag string) bool) bool
+
+	isExpr()
+}
+type go/build/constraint.NotExpr struct {
+	X Expr
+}
+type go/build/constraint.OrExpr struct {
+	X, Y Expr
+}
+type go/build/constraint.SyntaxError struct {
+	Offset	int
+	Err	string
+}
+type go/build/constraint.TagExpr struct {
+	Tag string
+}
+type go/constant.Kind int
+type go/constant.Value interface {
+	Kind() Kind
+
+	String() string
+
+	ExactString() string
+
+	implementsValue()
+}
+type go/doc.Example struct {
+	Name		string
+	Suffix		string
+	Doc		string
+	Code		ast.Node
+	Play		*ast.File
+	Comments	[]*ast.CommentGroup
+	Output		string
+	Unordered	bool
+	EmptyOutput	bool
+	Order		int
+}
+type go/doc.Filter func(string) bool
+type go/doc.Func struct {
+	Doc	string
+	Name	string
+	Decl	*ast.FuncDecl
+
+	Recv	string
+	Orig	string
+	Level	int
+
+	Examples	[]*Example
+}
+type go/doc.Mode int
+type go/doc.Note struct {
+	Pos, End	token.Pos
+	UID		string
+	Body		string
+}
+type go/doc.Package struct {
+	Doc		string
+	Name		string
+	ImportPath	string
+	Imports		[]string
+	Filenames	[]string
+	Notes		map[string][]*Note
+
+	Bugs	[]string
+
+	Consts	[]*Value
+	Types	[]*Type
+	Vars	[]*Value
+	Funcs	[]*Func
+
+	Examples	[]*Example
+
+	importByName	map[string]string
+	syms		map[string]bool
+}
+type go/doc.Type struct {
+	Doc	string
+	Name	string
+	Decl	*ast.GenDecl
+
+	Consts	[]*Value
+	Vars	[]*Value
+	Funcs	[]*Func
+	Methods	[]*Func
+
+	Examples	[]*Example
+}
+type go/doc.Value struct {
+	Doc	string
+	Names	[]string
+	Decl	*ast.GenDecl
+
+	order	int
+}
+type go/doc/comment.Block interface {
+	block()
+}
+type go/doc/comment.Code struct {
+	Text string
+}
+type go/doc/comment.Doc struct {
+	Content	[]Block
+
+	Links	[]*LinkDef
+}
+type go/doc/comment.DocLink struct {
+	Text	[]Text
+
+	ImportPath	string
+	Recv		string
+	Name		string
+}
+type go/doc/comment.Heading struct {
+	Text []Text
+}
+type go/doc/comment.Italic string
+type go/doc/comment.Link struct {
+	Auto	bool
+	Text	[]Text
+	URL	string
+}
+type go/doc/comment.LinkDef struct {
+	Text	string
+	URL	string
+	Used	bool
+}
+type go/doc/comment.List struct {
+	Items	[]*ListItem
+
+	ForceBlankBefore	bool
+
+	ForceBlankBetween	bool
+}
+type go/doc/comment.ListItem struct {
+	Number	string
+
+	Content	[]Block
+}
+type go/doc/comment.Paragraph struct {
+	Text []Text
+}
+type go/doc/comment.Parser struct {
+	Words	map[string]string
+
+	LookupPackage	func(name string) (importPath string, ok bool)
+
+	LookupSym	func(recv, name string) (ok bool)
+}
+type go/doc/comment.Plain string
+type go/doc/comment.Printer struct {
+	HeadingLevel	int
+
+	HeadingID	func(h *Heading) string
+
+	DocLinkURL	func(link *DocLink) string
+
+	DocLinkBaseURL	string
+
+	TextPrefix	string
+
+	TextCodePrefix	string
+
+	TextWidth	int
+}
+type go/doc/comment.Text interface {
+	text()
+}
+type go/importer.Lookup func(path string) (io.ReadCloser, error)
+type go/internal/gccgoimporter.GccgoInstallation struct {
+	GccVersion	string
+
+	TargetTriple	string
+
+	LibPaths	[]string
+}
+type go/internal/gccgoimporter.Importer func(imports map[string]*types.Package, path, srcDir string, lookup func(string) (io.ReadCloser, error)) (*types.Package, error)
+type go/internal/gccgoimporter.InitData struct {
+	Priority	int
+
+	Inits	[]PackageInit
+}
+type go/internal/gccgoimporter.PackageInit struct {
+	Name		string
+	InitFunc	string
+	Priority	int
+}
+type go/internal/srcimporter.Importer struct {
+	ctxt		*build.Context
+	fset		*token.FileSet
+	sizes		types.Sizes
+	packages	map[string]*types.Package
+}
+type go/parser.Mode uint
+type go/printer.CommentedNode struct {
+	Node		any
+	Comments	[]*ast.CommentGroup
+}
+type go/printer.Config struct {
+	Mode		Mode
+	Tabwidth	int
+	Indent		int
+}
+type go/printer.Mode uint
+type go/scanner.Error struct {
+	Pos	token.Position
+	Msg	string
+}
+type go/scanner.ErrorHandler func(pos token.Position, msg string)
+type go/scanner.ErrorList []*Error
+type go/scanner.Mode uint
+type go/scanner.Scanner struct {
+	file	*token.File
+	dir	string
+	src	[]byte
+	err	ErrorHandler
+	mode	Mode
+
+	ch		rune
+	offset		int
+	rdOffset	int
+	lineOffset	int
+	insertSemi	bool
+	nlPos		token.Pos
+	stringEnd	token.Pos
+
+	ErrorCount	int
+}
+type go/token.File struct {
+	name	string
+	base	int
+	size	int
+
+	mutex	sync.Mutex
+	lines	[]int
+	infos	[]lineInfo
+}
+type go/token.FileSet struct {
+	mutex	sync.RWMutex
+	base	int
+	tree	tree
+	last	atomic.Pointer[File]
+}
+type go/token.Pos int
+type go/token.Position struct {
+	Filename	string
+	Offset		int
+	Line		int
+	Column		int
+}
+type go/token.Token int
+type go/types.Alias struct {
+	obj	*TypeName
+	orig	*Alias
+	tparams	*TypeParamList
+	targs	*TypeList
+	fromRHS	Type
+	actual	Type
+}
+type go/types.ArgumentError struct {
+	Index	int
+	Err	error
+}
+type go/types.Array struct {
+	len	int64
+	elem	Type
+}
+type go/types.Basic struct {
+	kind	BasicKind
+	info	BasicInfo
+	name	string
+}
+type go/types.BasicInfo int
+type go/types.BasicKind int
+type go/types.Builtin struct {
+	object
+	id	builtinId
+}
+type go/types.Chan struct {
+	dir	ChanDir
+	elem	Type
+}
+type go/types.ChanDir int
+type go/types.Checker struct {
+	conf	*Config
+	ctxt	*Context
+	fset	*token.FileSet
+	pkg	*Package
+	*Info
+	nextID	uint64
+	objMap	map[Object]*declInfo
+	objList	[]Object
+	impMap	map[importKey]*Package
+
+	pkgPathMap	map[string]map[string]bool
+	seenPkgMap	map[*Package]bool
+
+	files		[]*ast.File
+	versions	map[*ast.File]string
+	imports		[]*PkgName
+	dotImportMap	map[dotImportKey]*PkgName
+	brokenAliases	map[*TypeName]bool
+	unionTypeSets	map[*Union]*_TypeSet
+	usedVars	map[*Var]bool
+	usedPkgNames	map[*PkgName]bool
+	mono		monoGraph
+
+	firstErr	error
+	methods		map[*TypeName][]*Func
+	untyped		map[ast.Expr]exprInfo
+	delayed		[]action
+	objPath		[]Object
+	objPathIdx	map[Object]int
+	cleaners	[]cleaner
+
+	environment
+
+	posStack	[]positioner
+	indent		int
+}
+type go/types.Config struct {
+	Context	*Context
+
+	GoVersion	string
+
+	IgnoreFuncBodies	bool
+
+	FakeImportC	bool
+
+	go115UsesCgo	bool
+
+	_Trace	bool
+
+	Error	func(err error)
+
+	Importer	Importer
+
+	Sizes	Sizes
+
+	DisableUnusedImportCheck	bool
+
+	_ErrorURL	string
+
+	_EnableAlias	bool
+}
+type go/types.Const struct {
+	object
+	val	constant.Value
+}
+type go/types.Context struct {
+	mu		sync.Mutex
+	typeMap		map[string][]ctxtEntry
+	nextID		int
+	originIDs	map[Type]int
+}
+type go/types.Error struct {
+	Fset	*token.FileSet
+	Pos	token.Pos
+	Msg	string
+	Soft	bool
+
+	go116code	Code
+	go116start	token.Pos
+	go116end	token.Pos
+}
+type go/types.Func struct {
+	object
+	hasPtrRecv_	bool
+	origin		*Func
+}
+type go/types.ImportMode int
+type go/types.Importer interface {
+	Import(path string) (*Package, error)
+}
+type go/types.ImporterFrom interface {
+	Importer
+
+	ImportFrom(path, dir string, mode ImportMode) (*Package, error)
+}
+type go/types.Info struct {
+	Types	map[ast.Expr]TypeAndValue
+
+	Instances	map[*ast.Ident]Instance
+
+	Defs	map[*ast.Ident]Object
+
+	Uses	map[*ast.Ident]Object
+
+	Implicits	map[ast.Node]Object
+
+	Selections	map[*ast.SelectorExpr]*Selection
+
+	Scopes	map[ast.Node]*Scope
+
+	InitOrder	[]*Initializer
+
+	FileVersions	map[*ast.File]string
+}
+type go/types.Initializer struct {
+	Lhs	[]*Var
+	Rhs	ast.Expr
+}
+type go/types.Instance struct {
+	TypeArgs	*TypeList
+	Type		Type
+}
+type go/types.Interface struct {
+	check		*Checker
+	methods		[]*Func
+	embeddeds	[]Type
+	embedPos	*[]token.Pos
+	implicit	bool
+	complete	bool
+
+	tset	*_TypeSet
+}
+type go/types.Label struct {
+	object
+	used	bool
+}
+type go/types.Map struct {
+	key, elem Type
+}
+type go/types.MethodSet struct {
+	list []*Selection
+}
+type go/types.Named struct {
+	check	*Checker
+	obj	*TypeName
+
+	allowNilRHS		bool
+	allowNilUnderlying	bool
+
+	inst	*instance
+
+	mu		sync.Mutex
+	state_		uint32
+	fromRHS		Type
+	tparams		*TypeParamList
+	underlying	Type
+	finite		bool
+
+	methods	[]*Func
+
+	loader	func(*Named) ([]*TypeParam, Type, []*Func, []func())
+}
+type go/types.Nil struct {
+	object
+}
+type go/types.Object interface {
+	Parent() *Scope
+	Pos() token.Pos
+	Pkg() *Package
+	Name() string
+	Type() Type
+	Exported() bool
+	Id() string
+
+	String() string
+
+	order() uint32
+
+	setType(Type)
+
+	setOrder(uint32)
+
+	setParent(*Scope)
+
+	sameId(pkg *Package, name string, foldCase bool) bool
+
+	scopePos() token.Pos
+
+	setScopePos(pos token.Pos)
+}
+type go/types.Package struct {
+	path		string
+	name		string
+	scope		*Scope
+	imports		[]*Package
+	complete	bool
+	fake		bool
+	cgo		bool
+	goVersion	string
+}
+type go/types.PkgName struct {
+	object
+	imported	*Package
+}
+type go/types.Pointer struct {
+	base Type
+}
+type go/types.Qualifier func(*Package) string
+type go/types.Scope struct {
+	parent		*Scope
+	children	[]*Scope
+	number		int
+	elems		map[string]Object
+	pos, end	token.Pos
+	comment		string
+	isFunc		bool
+}
+type go/types.Selection struct {
+	kind		SelectionKind
+	recv		Type
+	obj		Object
+	index		[]int
+	indirect	bool
+}
+type go/types.SelectionKind int
+type go/types.Signature struct {
+	rparams		*TypeParamList
+	tparams		*TypeParamList
+	scope		*Scope
+	recv		*Var
+	params		*Tuple
+	results		*Tuple
+	variadic	bool
+}
+type go/types.Sizes interface {
+	Alignof(T Type) int64
+
+	Offsetsof(fields []*Var) []int64
+
+	Sizeof(T Type) int64
+}
+type go/types.Slice struct {
+	elem Type
+}
+type go/types.StdSizes struct {
+	WordSize	int64
+	MaxAlign	int64
+}
+type go/types.Struct struct {
+	fields	[]*Var
+	tags	[]string
+}
+type go/types.Term term
+type go/types.Tuple struct {
+	vars []*Var
+}
+type go/types.Type interface {
+	Underlying() Type
+
+	String() string
+}
+type go/types.TypeAndValue struct {
+	mode	operandMode
+	Type	Type
+	Value	constant.Value
+}
+type go/types.TypeList struct{ types []Type }
+type go/types.TypeName struct {
+	object
+}
+type go/types.TypeParam struct {
+	check	*Checker
+	id	uint64
+	obj	*TypeName
+	index	int
+	bound	Type
+}
+type go/types.TypeParamList struct{ tparams []*TypeParam }
+type go/types.Union struct {
+	terms []*Term
+}
+type go/types.Var struct {
+	object
+	origin		*Var
+	kind		VarKind
+	embedded	bool
+}
+type go/types.VarKind uint8
+var go/ast.Bad
+var go/ast.Con
+var go/ast.FilterFuncDuplicates
+var go/ast.FilterImportDuplicates
+var go/ast.FilterUnassociatedComments
+var go/ast.Fun
+var go/ast.Lbl
+var go/ast.Pkg
+var go/ast.RECV
+var go/ast.SEND
+var go/ast.Typ
+var go/ast.Var
+var go/build.AllowBinary
+var go/build.Default
+var go/build.FindOnly
+var go/build.IgnoreVendor
+var go/build.ImportComment
+var go/build.ToolDir
+var go/constant.Bool
+var go/constant.Complex
+var go/constant.Float
+var go/constant.Int
+var go/constant.String
+var go/constant.Unknown
+var go/doc.AllDecls
+var go/doc.AllMethods
+var go/doc.IllegalPrefixes
+var go/doc.PreserveAST
+var go/internal/scannerhooks.StringEnd
+var go/parser.AllErrors
+var go/parser.DeclarationErrors
+var go/parser.ImportsOnly
+var go/parser.PackageClauseOnly
+var go/parser.ParseComments
+var go/parser.SkipObjectResolution
+var go/parser.SpuriousErrors
+var go/parser.Trace
+var go/printer.RawFormat
+var go/printer.SourcePos
+var go/printer.TabIndent
+var go/printer.UseSpaces
+var go/scanner.ScanComments
+var go/token.ADD
+var go/token.ADD_ASSIGN
+var go/token.AND
+var go/token.AND_ASSIGN
+var go/token.AND_NOT
+var go/token.AND_NOT_ASSIGN
+var go/token.ARROW
+var go/token.ASSIGN
+var go/token.BREAK
+var go/token.CASE
+var go/token.CHAN
+var go/token.CHAR
+var go/token.COLON
+var go/token.COMMA
+var go/token.COMMENT
+var go/token.CONST
+var go/token.CONTINUE
+var go/token.DEC
+var go/token.DEFAULT
+var go/token.DEFER
+var go/token.DEFINE
+var go/token.ELLIPSIS
+var go/token.ELSE
+var go/token.EOF
+var go/token.EQL
+var go/token.FALLTHROUGH
+var go/token.FLOAT
+var go/token.FOR
+var go/token.FUNC
+var go/token.GEQ
+var go/token.GO
+var go/token.GOTO
+var go/token.GTR
+var go/token.HighestPrec
+var go/token.IDENT
+var go/token.IF
+var go/token.ILLEGAL
+var go/token.IMAG
+var go/token.IMPORT
+var go/token.INC
+var go/token.INT
+var go/token.INTERFACE
+var go/token.LAND
+var go/token.LBRACE
+var go/token.LBRACK
+var go/token.LEQ
+var go/token.LOR
+var go/token.LPAREN
+var go/token.LSS
+var go/token.LowestPrec
+var go/token.MAP
+var go/token.MUL
+var go/token.MUL_ASSIGN
+var go/token.NEQ
+var go/token.NOT
+var go/token.NoPos
+var go/token.OR
+var go/token.OR_ASSIGN
+var go/token.PACKAGE
+var go/token.PERIOD
+var go/token.QUO
+var go/token.QUO_ASSIGN
+var go/token.RANGE
+var go/token.RBRACE
+var go/token.RBRACK
+var go/token.REM
+var go/token.REM_ASSIGN
+var go/token.RETURN
+var go/token.RPAREN
+var go/token.SELECT
+var go/token.SEMICOLON
+var go/token.SHL
+var go/token.SHL_ASSIGN
+var go/token.SHR
+var go/token.SHR_ASSIGN
+var go/token.STRING
+var go/token.STRUCT
+var go/token.SUB
+var go/token.SUB_ASSIGN
+var go/token.SWITCH
+var go/token.TILDE
+var go/token.TYPE
+var go/token.UnaryPrec
+var go/token.VAR
+var go/token.XOR
+var go/token.XOR_ASSIGN
+var go/types.Bool
+var go/types.Byte
+var go/types.Complex128
+var go/types.Complex64
+var go/types.FieldVal
+var go/types.FieldVar
+var go/types.Float32
+var go/types.Float64
+var go/types.Int
+var go/types.Int16
+var go/types.Int32
+var go/types.Int64
+var go/types.Int8
+var go/types.Invalid
+var go/types.IsBoolean
+var go/types.IsComplex
+var go/types.IsConstType
+var go/types.IsFloat
+var go/types.IsInteger
+var go/types.IsNumeric
+var go/types.IsOrdered
+var go/types.IsString
+var go/types.IsUnsigned
+var go/types.IsUntyped
+var go/types.LocalVar
+var go/types.MethodExpr
+var go/types.MethodVal
+var go/types.PackageVar
+var go/types.ParamVar
+var go/types.RecvOnly
+var go/types.RecvVar
+var go/types.ResultVar
+var go/types.Rune
+var go/types.SendOnly
+var go/types.SendRecv
+var go/types.String
+var go/types.Typ
+var go/types.Uint
+var go/types.Uint16
+var go/types.Uint32
+var go/types.Uint64
+var go/types.Uint8
+var go/types.Uintptr
+var go/types.Universe
+var go/types.Unsafe
+var go/types.UnsafePointer
+var go/types.UntypedBool
+var go/types.UntypedComplex
+var go/types.UntypedFloat
+var go/types.UntypedInt
+var go/types.UntypedNil
+var go/types.UntypedRune
+var go/types.UntypedString

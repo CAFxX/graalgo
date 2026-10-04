@@ -1,0 +1,300 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:37761
+https://vcs-test.golang.org rerouted to https://127.0.0.1:37539
+go test proxy running at GOPROXY=http://127.0.0.1:43047/mod
+=== RUN   TestScript/cover_build_simple
+=== PAUSE TestScript/cover_build_simple
+=== CONT  TestScript/cover_build_simple
+    script_test.go:141: 2026-10-03T06:39:09Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-wrapped
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:43047/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:37761
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:37539
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/vcstest367225597/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        GRAALGO_WRAPPER_LOG=/home/hatch/workspace/graalgo/spikes/05-cmdgo/logs/wraplogs/cover_build_simple.wraplog
+        GOFLAGS=-toolexec=/home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059/gopath/src
+        
+        # This test checks basic "go build -cover" functionality. (0.000s)
+        > [short] skip
+        [condition not met]
+        # Build for coverage. (6.913s)
+        > go build -gcflags=-m -o example.exe -cover example/main &
+        > [race] go build -o examplewithrace.exe -race -cover example/main &
+        > wait
+        [background] go build -gcflags=-m -o example.exe -cover example/main
+        [stderr]
+        # example/main
+        main/example.go:5:6: can inline main
+        [background] go build -o examplewithrace.exe -race -cover example/main
+        # First execute without GOCOVERDIR set... (0.015s)
+        > env GOCOVERDIR=
+        > exec ./example.exe normal
+        [stderr]
+        warning: GOCOVERDIR not set, no coverage data emitted
+        hi
+        > stderr '^warning: GOCOVERDIR not set, no coverage data emitted'
+        matched: warning: GOCOVERDIR not set, no coverage data emitted
+        # ... then with GOCOVERDIR set. (2.757s)
+        > env GOCOVERDIR=data/normal
+        > exec ./example.exe normal
+        [stderr]
+        hi
+        > ! stderr '^warning: GOCOVERDIR not set, no coverage data emitted'
+        > go tool covdata percent -i=data/normal
+        [stdout]
+        	example/main		coverage: 100.0% of statements
+        	example/sub		coverage: 40.0% of statements
+        > stdout  'coverage:.*[1-9][0-9.]+%'
+        matched: 	example/main		coverage: 100.0% of statements
+        # Program makes a direct call to os.Exit(0). (0.368s)
+        > env GOCOVERDIR=data/goodexit
+        > exec ./example.exe goodexit
+        > ! stderr '^warning: GOCOVERDIR not set, no coverage data emitted'
+        > go tool covdata percent -i=data/goodexit
+        [stdout]
+        	example/main		coverage: 100.0% of statements
+        	example/sub		coverage: 40.0% of statements
+        > stdout  'coverage:.*[1-9][0-9.]+%'
+        matched: 	example/main		coverage: 100.0% of statements
+        # Program makes a direct call to os.Exit(1). (0.250s)
+        > env GOCOVERDIR=data/badexit
+        > ! exec ./example.exe badexit
+        [exit status 1]
+        > ! stderr '^warning: GOCOVERDIR not set, no coverage data emitted'
+        > go tool covdata percent -i=data/badexit
+        [stdout]
+        	example/main		coverage: 100.0% of statements
+        	example/sub		coverage: 40.0% of statements
+        > stdout  'coverage:.*[1-9][0-9.]+%'
+        matched: 	example/main		coverage: 100.0% of statements
+        # Program invokes panic. (0.299s)
+        > env GOCOVERDIR=data/panic
+        > ! exec ./example.exe panic
+        [stderr]
+        panic: something bad happened
+        
+        goroutine 1 gp=0xa5994dc21e0 m=0 mp=0x5d1700 [running]:
+        panic({0x5ad260?, 0x4cff08?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:878 +0x159 fp=0xa5994e51e88 sp=0xa5994e51de0 pc=0x47a6f9
+        example/sub.S()
+        	/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059/gopath/src/sub/sub.go:15 +0x14b fp=0xa5994e51ea8 sp=0xa5994e51e88 pc=0x4c4bab
+        main.main()
+        	/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059/gopath/src/main/example.go:6 +0x36 fp=0xa5994e51eb8 sp=0xa5994e51ea8 pc=0x4c4c76
+        runtime.main()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:302 +0x427 fp=0xa5994e51fe0 sp=0xa5994e51eb8 pc=0x448c67
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xa5994e51fe8 sp=0xa5994e51fe0 pc=0x480281
+        
+        goroutine 2 gp=0xa5994dc2780 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0xa5994e04fa8 sp=0xa5994e04f88 pc=0x47abaa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.forcegchelper()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:387 +0xb3 fp=0xa5994e04fe0 sp=0xa5994e04fa8 pc=0x448f33
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xa5994e04fe8 sp=0xa5994e04fe0 pc=0x480281
+        created by runtime.init.7 in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:375 +0x1a
+        
+        goroutine 3 gp=0xa5994dc2d20 m=nil [GC sweep wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0xa5994e05788 sp=0xa5994e05768 pc=0x47abaa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.bgsweep(0xa5994de0180)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcsweep.go:279 +0x94 fp=0xa5994e057c8 sp=0xa5994e05788 pc=0x434bf4
+        runtime.gcenable.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x17 fp=0xa5994e057e0 sp=0xa5994e057c8 pc=0x473b77
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xa5994e057e8 sp=0xa5994e057e0 pc=0x480281
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x66
+        
+        goroutine 4 gp=0xa5994dc2f00 m=nil [GC scavenge wait]:
+        runtime.gopark(0xa5994de0180?, 0x4cf8b0?, 0x1?, 0x0?, 0xa5994dc2f00?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0xa5994e05f78 sp=0xa5994e05f58 pc=0x47abaa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.(*scavengerState).park(0x5d0700)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:425 +0x49 fp=0xa5994e05fa8 sp=0xa5994e05f78 pc=0x4327c9
+        runtime.bgscavenge(0xa5994de0180)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:653 +0x3c fp=0xa5994e05fc8 sp=0xa5994e05fa8 pc=0x432d1c
+        runtime.gcenable.gowrap2()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0x17 fp=0xa5994e05fe0 sp=0xa5994e05fc8 pc=0x473b37
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xa5994e05fe8 sp=0xa5994e05fe0 pc=0x480281
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0xa5
+        
+        goroutine 5 gp=0xa5994dc34a0 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0xa5994e04658?, 0xef?, 0x96?, 0xa5994de01e8?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0xa5994e04620 sp=0xa5994e04600 pc=0x47abaa
+        runtime.runFinalizers()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:210 +0x107 fp=0xa5994e047e0 sp=0xa5994e04620 pc=0x425fc7
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xa5994e047e8 sp=0xa5994e047e0 pc=0x480281
+        created by runtime.createfing in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:172 +0x3d
+        [exit status 2]
+        > ! stderr '^warning: GOCOVERDIR not set, no coverage data emitted'
+        > go tool covdata percent -i=data/panic
+        [stdout]
+        	example/main		coverage: 0.0% of statements
+        	example/sub		coverage: 0.0% of statements
+        > stdout  'coverage:.*[0-9.]+%'
+        matched: 	example/main		coverage: 0.0% of statements
+        # Skip remainder if no race detector support. (1.297s)
+        > [!race] skip
+        [condition not met]
+        > env GOCOVERDIR=data2/normal
+        > exec ./examplewithrace.exe normal
+        [stderr]
+        hi
+        > ! stderr '^warning: GOCOVERDIR not set, no coverage data emitted'
+        > go tool covdata percent -i=data2/normal
+        [stdout]
+        	example/main		coverage: 100.0% of statements
+        	example/sub		coverage: 40.0% of statements
+        > stdout  'coverage:.*[1-9][0-9.]+%'
+        matched: 	example/main		coverage: 100.0% of statements
+        # Program makes a direct call to os.Exit(0). (1.310s)
+        > env GOCOVERDIR=data2/goodexit
+        > exec ./examplewithrace.exe goodexit
+        > ! stderr '^warning: GOCOVERDIR not set, no coverage data emitted'
+        > go tool covdata percent -i=data2/goodexit
+        [stdout]
+        	example/main		coverage: 100.0% of statements
+        	example/sub		coverage: 40.0% of statements
+        > stdout  'coverage:.*[1-9][0-9.]+%'
+        matched: 	example/main		coverage: 100.0% of statements
+        # Program makes a direct call to os.Exit(1). (0.302s)
+        > env GOCOVERDIR=data2/badexit
+        > ! exec ./examplewithrace.exe badexit
+        [exit status 1]
+        > ! stderr '^warning: GOCOVERDIR not set, no coverage data emitted'
+        > go tool covdata percent -i=data2/badexit
+        [stdout]
+        	example/main		coverage: 100.0% of statements
+        	example/sub		coverage: 40.0% of statements
+        > stdout  'coverage:.*[1-9][0-9.]+%'
+        matched: 	example/main		coverage: 100.0% of statements
+        # Program invokes panic. (0.292s)
+        > env GOCOVERDIR=data2/panic
+        > ! exec ./examplewithrace.exe panic
+        [stderr]
+        panic: something bad happened
+        
+        goroutine 1 gp=0xc0000081e0 m=0 mp=0x673720 [running]:
+        panic({0x647768?, 0x540340?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:878 +0x159 fp=0xc0000a3e70 sp=0xc0000a3dc8 pc=0x4b1359
+        example/sub.S()
+        	/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059/gopath/src/sub/sub.go:15 +0x1be fp=0xc0000a3e98 sp=0xc0000a3e70 pc=0x5346de
+        main.main()
+        	/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3639558647/tmpdir361737444/cover_build_simple2910883059/gopath/src/main/example.go:6 +0x6b fp=0xc0000a3eb8 sp=0xc0000a3e98 pc=0x53482b
+        runtime.main()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:302 +0x427 fp=0xc0000a3fe0 sp=0xc0000a3eb8 pc=0x47dc87
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xc0000a3fe8 sp=0xc0000a3fe0 pc=0x4b7301
+        
+        goroutine 2 gp=0xc0000094a0 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0xc0000467a8 sp=0xc000046788 pc=0x4b182a
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.forcegchelper()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:387 +0xb3 fp=0xc0000467e0 sp=0xc0000467a8 pc=0x47df53
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xc0000467e8 sp=0xc0000467e0 pc=0x4b7301
+        created by runtime.init.7 in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:375 +0x1a
+        
+        goroutine 3 gp=0xc000009680 m=nil [GC sweep wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0xc00005af88 sp=0xc00005af68 pc=0x4b182a
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.bgsweep(0xc000028180)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcsweep.go:279 +0x94 fp=0xc00005afc8 sp=0xc00005af88 pc=0x469f74
+        runtime.gcenable.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x17 fp=0xc00005afe0 sp=0xc00005afc8 pc=0x4aa4d7
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xc00005afe8 sp=0xc00005afe0 pc=0x4b7301
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x66
+        
+        goroutine 4 gp=0xc000009860 m=nil [GC scavenge wait]:
+        runtime.gopark(0xc000028180?, 0x53fbe8?, 0x1?, 0x0?, 0xc000009860?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0xc00005bf78 sp=0xc00005bf58 pc=0x4b182a
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.(*scavengerState).park(0x672720)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:425 +0x49 fp=0xc00005bfa8 sp=0xc00005bf78 pc=0x467b49
+        runtime.bgscavenge(0xc000028180)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:653 +0x3c fp=0xc00005bfc8 sp=0xc00005bfa8 pc=0x46809c
+        runtime.gcenable.gowrap2()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0x17 fp=0xc00005bfe0 sp=0xc00005bfc8 pc=0x4aa497
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xc00005bfe8 sp=0xc00005bfe0 pc=0x4b7301
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0xa5
+        
+        goroutine 5 gp=0xc00007e3c0 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0xc000054e20 sp=0xc000054e00 pc=0x4b182a
+        runtime.runFinalizers()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:210 +0x13b fp=0xc000054fe0 sp=0xc000054e20 pc=0x45b33b
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0xc000054fe8 sp=0xc000054fe0 pc=0x4b7301
+        created by runtime.createfing in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:172 +0x3d
+        [exit status 2]
+        > ! stderr '^warning: GOCOVERDIR not set, no coverage data emitted'
+        > go tool covdata percent -i=data2/panic
+        [stdout]
+        	example/main		coverage: 0.0% of statements
+        	example/sub		coverage: 0.0% of statements
+        > stdout  'coverage:.*[0-9.]+%'
+        matched: 	example/main		coverage: 0.0% of statements
+        # end of test cmds, start of harness and related files.
+--- PASS: TestScript (0.12s)
+    --- PASS: TestScript/cover_build_simple (13.86s)
+PASS

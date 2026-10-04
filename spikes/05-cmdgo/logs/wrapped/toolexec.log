@@ -1,0 +1,890 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:45681
+https://vcs-test.golang.org rerouted to https://127.0.0.1:41339
+go test proxy running at GOPROXY=http://127.0.0.1:43711/mod
+=== RUN   TestScript/toolexec
+=== PAUSE TestScript/toolexec
+=== CONT  TestScript/toolexec
+    script_test.go:141: 2026-10-03T06:21:10Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3591323864/tmpdir2306097264/toolexec3157354046
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3591323864/tmpdir2306097264/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-wrapped
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:43711/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3591323864/tmpdir2306097264/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:45681
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:41339
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3591323864/vcstest3261707222/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        GRAALGO_WRAPPER_LOG=/home/hatch/workspace/graalgo/spikes/05-cmdgo/logs/wraplogs/toolexec.wraplog
+        GOFLAGS=-toolexec=/home/hatch/workspace/graalgo/spikes/05-cmdgo/bin/toolexec-log
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3591323864/tmpdir2306097264/toolexec3157354046
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3591323864/tmpdir2306097264/toolexec3157354046/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3591323864/tmpdir2306097264/toolexec3157354046/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3591323864/tmpdir2306097264/toolexec3157354046/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3591323864/tmpdir2306097264/toolexec3157354046/gopath/src
+        
+        > [short] skip
+        [condition not met]
+        # Build our simple toolexec program. (5.304s)
+        > go build ./cmd/mytool
+        # Use an ephemeral build cache so that our toolexec output is not cached
+        # for any stale standard-library dependencies.
+        #
+        # TODO(#27628): This should not be necessary. (0.000s)
+        > env GOCACHE=$WORK/gocache
+        # Build the main package with our toolexec program. For each action, it will
+        # print the tool's name and the TOOLEXEC_IMPORTPATH value. We expect to compile
+        # each package once, and link the main package once.
+        # Don't check the entire output at once, because the order in which the tools
+        # are run is irrelevant here.
+        # Finally, note that asm and cgo are run twice. (42.914s)
+        > go build -toolexec=$PWD/mytool
+        [stderr]
+        # internal/goarch
+        compile TOOLEXEC_IMPORTPATH="internal/goarch"
+        # internal/goos
+        compile TOOLEXEC_IMPORTPATH="internal/goos"
+        # test/main/withasm
+        asm TOOLEXEC_IMPORTPATH="test/main/withasm"
+        # test/main/withasm
+        compile TOOLEXEC_IMPORTPATH="test/main/withasm"
+        # test/main/withasm
+        asm TOOLEXEC_IMPORTPATH="test/main/withasm"
+        # internal/runtime/sys
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/sys"
+        # internal/runtime/sys
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/sys"
+        # internal/runtime/sys
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/sys"
+        # internal/runtime/atomic
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/atomic"
+        # internal/runtime/atomic
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/atomic"
+        # internal/runtime/atomic
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/atomic"
+        # sync/atomic
+        asm TOOLEXEC_IMPORTPATH="sync/atomic"
+        # sync/atomic
+        compile TOOLEXEC_IMPORTPATH="sync/atomic"
+        # sync/atomic
+        asm TOOLEXEC_IMPORTPATH="sync/atomic"
+        # internal/cpu
+        asm TOOLEXEC_IMPORTPATH="internal/cpu"
+        # internal/cpu
+        compile TOOLEXEC_IMPORTPATH="internal/cpu"
+        # internal/cpu
+        asm TOOLEXEC_IMPORTPATH="internal/cpu"
+        # internal/cpu
+        asm TOOLEXEC_IMPORTPATH="internal/cpu"
+        # internal/abi
+        asm TOOLEXEC_IMPORTPATH="internal/abi"
+        # internal/abi
+        compile TOOLEXEC_IMPORTPATH="internal/abi"
+        # internal/abi
+        asm TOOLEXEC_IMPORTPATH="internal/abi"
+        # internal/abi
+        asm TOOLEXEC_IMPORTPATH="internal/abi"
+        # internal/race
+        compile TOOLEXEC_IMPORTPATH="internal/race"
+        # internal/sync
+        compile TOOLEXEC_IMPORTPATH="internal/sync"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        compile TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/synctest
+        compile TOOLEXEC_IMPORTPATH="internal/synctest"
+        # internal/byteorder
+        compile TOOLEXEC_IMPORTPATH="internal/byteorder"
+        # internal/coverage/rtcov
+        compile TOOLEXEC_IMPORTPATH="internal/coverage/rtcov"
+        # internal/godebugs
+        compile TOOLEXEC_IMPORTPATH="internal/godebugs"
+        # internal/chacha8rand
+        asm TOOLEXEC_IMPORTPATH="internal/chacha8rand"
+        # internal/chacha8rand
+        compile TOOLEXEC_IMPORTPATH="internal/chacha8rand"
+        # internal/chacha8rand
+        asm TOOLEXEC_IMPORTPATH="internal/chacha8rand"
+        # internal/goexperiment
+        compile TOOLEXEC_IMPORTPATH="internal/goexperiment"
+        # internal/profilerecord
+        compile TOOLEXEC_IMPORTPATH="internal/profilerecord"
+        # internal/runtime/syscall/linux
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/syscall/linux"
+        # internal/runtime/syscall/linux
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/syscall/linux"
+        # internal/runtime/syscall/linux
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/syscall/linux"
+        # math/bits
+        compile TOOLEXEC_IMPORTPATH="math/bits"
+        # internal/runtime/exithook
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/exithook"
+        # internal/runtime/gc
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/gc"
+        # internal/runtime/gc/scan
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/runtime/gc/scan
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/runtime/gc/scan
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/runtime/gc/scan
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/runtime/gc/scan
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/asan
+        compile TOOLEXEC_IMPORTPATH="internal/asan"
+        # internal/msan
+        compile TOOLEXEC_IMPORTPATH="internal/msan"
+        # internal/runtime/math
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/math"
+        # internal/strconv
+        compile TOOLEXEC_IMPORTPATH="internal/strconv"
+        # internal/runtime/cgroup
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/cgroup"
+        # internal/runtime/pprof/label
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/pprof/label"
+        # internal/runtime/maps
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/maps"
+        # internal/runtime/maps
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/maps"
+        # internal/runtime/maps
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/maps"
+        # internal/runtime/maps
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/maps"
+        # internal/stringslite
+        compile TOOLEXEC_IMPORTPATH="internal/stringslite"
+        # internal/unsafeheader
+        compile TOOLEXEC_IMPORTPATH="internal/unsafeheader"
+        # internal/trace/tracev2
+        compile TOOLEXEC_IMPORTPATH="internal/trace/tracev2"
+        # cmp
+        compile TOOLEXEC_IMPORTPATH="cmp"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        compile TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # internal/reflectlite
+        asm TOOLEXEC_IMPORTPATH="internal/reflectlite"
+        # internal/reflectlite
+        compile TOOLEXEC_IMPORTPATH="internal/reflectlite"
+        # internal/reflectlite
+        asm TOOLEXEC_IMPORTPATH="internal/reflectlite"
+        # sync
+        compile TOOLEXEC_IMPORTPATH="sync"
+        # errors
+        compile TOOLEXEC_IMPORTPATH="errors"
+        # internal/oserror
+        compile TOOLEXEC_IMPORTPATH="internal/oserror"
+        # iter
+        compile TOOLEXEC_IMPORTPATH="iter"
+        # slices
+        compile TOOLEXEC_IMPORTPATH="slices"
+        # runtime/cgo
+        cgo TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # syscall
+        asm TOOLEXEC_IMPORTPATH="syscall"
+        # syscall
+        compile TOOLEXEC_IMPORTPATH="syscall"
+        # syscall
+        asm TOOLEXEC_IMPORTPATH="syscall"
+        # runtime/cgo
+        cgo TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # runtime/cgo
+        asm TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # runtime/cgo
+        compile TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # runtime/cgo
+        asm TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # test/main/withcgo
+        cgo TOOLEXEC_IMPORTPATH="test/main/withcgo"
+        # test/main/withcgo
+        cgo TOOLEXEC_IMPORTPATH="test/main/withcgo"
+        # test/main/withcgo
+        compile TOOLEXEC_IMPORTPATH="test/main/withcgo"
+        # test/main
+        compile TOOLEXEC_IMPORTPATH="test/main"
+        # test/main
+        link TOOLEXEC_IMPORTPATH="test/main"
+        > [GOARCH:amd64] stderr -count=2 '^asm'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main/withasm"$'
+        > stderr -count=1 '^compile'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main/withasm"$'
+        > [cgo] stderr -count=2 '^cgo'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main/withcgo"$'
+        > [cgo] stderr -count=1 '^compile'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main/withcgo"$'
+        > stderr -count=1 '^compile'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main"$'
+        > stderr -count=1 '^link'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main"$'
+        # Test packages are a little bit trickier.
+        # We have four variants of test/main, as reported by 'go list -test':
+        #
+        #    test/main                        - the regular non-test package
+        #    test/main.test                   - the generated test program
+        #    test/main [test/main.test]       - the test package for foo_test.go
+        #    test/main_test [test/main.test]  - the test package for foo_separate_test.go
+        #
+        # As such, TOOLEXEC_IMPORTPATH must see the same strings, to be able to uniquely
+        # identify each package being built as reported by 'go list -f {{.ImportPath}}'.
+        # Note that these are not really "import paths" anymore, but that naming is
+        # consistent with 'go list -json' at least. (50.987s)
+        > go test -toolexec=$PWD/mytool
+        [stdout]
+        PASS
+        ok  	test/main	0.011s
+        [stderr]
+        # internal/unsafeheader
+        compile TOOLEXEC_IMPORTPATH="internal/unsafeheader"
+        # internal/goarch
+        compile TOOLEXEC_IMPORTPATH="internal/goarch"
+        # internal/cpu
+        asm TOOLEXEC_IMPORTPATH="internal/cpu"
+        # internal/cpu
+        compile TOOLEXEC_IMPORTPATH="internal/cpu"
+        # internal/cpu
+        asm TOOLEXEC_IMPORTPATH="internal/cpu"
+        # internal/cpu
+        asm TOOLEXEC_IMPORTPATH="internal/cpu"
+        # internal/abi
+        asm TOOLEXEC_IMPORTPATH="internal/abi"
+        # internal/abi
+        compile TOOLEXEC_IMPORTPATH="internal/abi"
+        # internal/abi
+        asm TOOLEXEC_IMPORTPATH="internal/abi"
+        # internal/abi
+        asm TOOLEXEC_IMPORTPATH="internal/abi"
+        # internal/byteorder
+        compile TOOLEXEC_IMPORTPATH="internal/byteorder"
+        # internal/coverage/rtcov
+        compile TOOLEXEC_IMPORTPATH="internal/coverage/rtcov"
+        # internal/chacha8rand
+        asm TOOLEXEC_IMPORTPATH="internal/chacha8rand"
+        # internal/chacha8rand
+        compile TOOLEXEC_IMPORTPATH="internal/chacha8rand"
+        # internal/chacha8rand
+        asm TOOLEXEC_IMPORTPATH="internal/chacha8rand"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        compile TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/bytealg
+        asm TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/godebugs
+        compile TOOLEXEC_IMPORTPATH="internal/godebugs"
+        # internal/goos
+        compile TOOLEXEC_IMPORTPATH="internal/goos"
+        # internal/goexperiment
+        compile TOOLEXEC_IMPORTPATH="internal/goexperiment"
+        # internal/runtime/atomic
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/atomic"
+        # internal/runtime/atomic
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/atomic"
+        # internal/runtime/atomic
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/atomic"
+        # internal/profilerecord
+        compile TOOLEXEC_IMPORTPATH="internal/profilerecord"
+        # math/bits
+        compile TOOLEXEC_IMPORTPATH="math/bits"
+        # internal/runtime/syscall/linux
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/syscall/linux"
+        # internal/runtime/syscall/linux
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/syscall/linux"
+        # internal/runtime/syscall/linux
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/syscall/linux"
+        # internal/runtime/exithook
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/exithook"
+        # internal/runtime/gc
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/gc"
+        # internal/strconv
+        compile TOOLEXEC_IMPORTPATH="internal/strconv"
+        # internal/runtime/sys
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/sys"
+        # internal/runtime/sys
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/sys"
+        # internal/runtime/sys
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/sys"
+        # internal/runtime/cgroup
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/cgroup"
+        # internal/runtime/gc/scan
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/runtime/gc/scan
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/runtime/gc/scan
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/runtime/gc/scan
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/runtime/gc/scan
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/asan
+        compile TOOLEXEC_IMPORTPATH="internal/asan"
+        # internal/msan
+        compile TOOLEXEC_IMPORTPATH="internal/msan"
+        # internal/runtime/math
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/math"
+        # internal/race
+        compile TOOLEXEC_IMPORTPATH="internal/race"
+        # internal/runtime/maps
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/maps"
+        # internal/runtime/maps
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/maps"
+        # internal/runtime/maps
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/maps"
+        # internal/runtime/maps
+        asm TOOLEXEC_IMPORTPATH="internal/runtime/maps"
+        # internal/stringslite
+        compile TOOLEXEC_IMPORTPATH="internal/stringslite"
+        # internal/trace/tracev2
+        compile TOOLEXEC_IMPORTPATH="internal/trace/tracev2"
+        # internal/runtime/pprof/label
+        compile TOOLEXEC_IMPORTPATH="internal/runtime/pprof/label"
+        # sync/atomic
+        asm TOOLEXEC_IMPORTPATH="sync/atomic"
+        # sync/atomic
+        compile TOOLEXEC_IMPORTPATH="sync/atomic"
+        # sync/atomic
+        asm TOOLEXEC_IMPORTPATH="sync/atomic"
+        # internal/sync
+        compile TOOLEXEC_IMPORTPATH="internal/sync"
+        # internal/synctest
+        compile TOOLEXEC_IMPORTPATH="internal/synctest"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        compile TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # runtime
+        asm TOOLEXEC_IMPORTPATH="runtime"
+        # internal/reflectlite
+        asm TOOLEXEC_IMPORTPATH="internal/reflectlite"
+        # internal/reflectlite
+        compile TOOLEXEC_IMPORTPATH="internal/reflectlite"
+        # internal/reflectlite
+        asm TOOLEXEC_IMPORTPATH="internal/reflectlite"
+        # errors
+        compile TOOLEXEC_IMPORTPATH="errors"
+        # internal/oserror
+        compile TOOLEXEC_IMPORTPATH="internal/oserror"
+        # sync
+        compile TOOLEXEC_IMPORTPATH="sync"
+        # unicode/utf8
+        compile TOOLEXEC_IMPORTPATH="unicode/utf8"
+        # io
+        compile TOOLEXEC_IMPORTPATH="io"
+        # cmp
+        compile TOOLEXEC_IMPORTPATH="cmp"
+        # iter
+        compile TOOLEXEC_IMPORTPATH="iter"
+        # slices
+        compile TOOLEXEC_IMPORTPATH="slices"
+        # syscall
+        asm TOOLEXEC_IMPORTPATH="syscall"
+        # syscall
+        compile TOOLEXEC_IMPORTPATH="syscall"
+        # syscall
+        asm TOOLEXEC_IMPORTPATH="syscall"
+        # path
+        compile TOOLEXEC_IMPORTPATH="path"
+        # internal/syscall/unix
+        compile TOOLEXEC_IMPORTPATH="internal/syscall/unix"
+        # internal/syscall/execenv
+        compile TOOLEXEC_IMPORTPATH="internal/syscall/execenv"
+        # internal/testlog
+        compile TOOLEXEC_IMPORTPATH="internal/testlog"
+        # time
+        compile TOOLEXEC_IMPORTPATH="time"
+        # math
+        asm TOOLEXEC_IMPORTPATH="math"
+        # math
+        compile TOOLEXEC_IMPORTPATH="math"
+        # math
+        asm TOOLEXEC_IMPORTPATH="math"
+        # math
+        asm TOOLEXEC_IMPORTPATH="math"
+        # math
+        asm TOOLEXEC_IMPORTPATH="math"
+        # math
+        asm TOOLEXEC_IMPORTPATH="math"
+        # math
+        asm TOOLEXEC_IMPORTPATH="math"
+        # io/fs
+        compile TOOLEXEC_IMPORTPATH="io/fs"
+        # internal/filepathlite
+        compile TOOLEXEC_IMPORTPATH="internal/filepathlite"
+        # strconv
+        compile TOOLEXEC_IMPORTPATH="strconv"
+        # internal/poll
+        compile TOOLEXEC_IMPORTPATH="internal/poll"
+        # unicode
+        compile TOOLEXEC_IMPORTPATH="unicode"
+        # os
+        compile TOOLEXEC_IMPORTPATH="os"
+        # bytes
+        compile TOOLEXEC_IMPORTPATH="bytes"
+        # context
+        compile TOOLEXEC_IMPORTPATH="context"
+        # encoding
+        compile TOOLEXEC_IMPORTPATH="encoding"
+        # reflect
+        asm TOOLEXEC_IMPORTPATH="reflect"
+        # reflect
+        compile TOOLEXEC_IMPORTPATH="reflect"
+        # reflect
+        asm TOOLEXEC_IMPORTPATH="reflect"
+        # internal/fmtsort
+        compile TOOLEXEC_IMPORTPATH="internal/fmtsort"
+        # strings
+        compile TOOLEXEC_IMPORTPATH="strings"
+        # bufio
+        compile TOOLEXEC_IMPORTPATH="bufio"
+        # internal/sysinfo
+        compile TOOLEXEC_IMPORTPATH="internal/sysinfo"
+        # internal/bisect
+        compile TOOLEXEC_IMPORTPATH="internal/bisect"
+        # internal/godebug
+        compile TOOLEXEC_IMPORTPATH="internal/godebug"
+        # fmt
+        compile TOOLEXEC_IMPORTPATH="fmt"
+        # math/rand
+        compile TOOLEXEC_IMPORTPATH="math/rand"
+        # flag
+        compile TOOLEXEC_IMPORTPATH="flag"
+        # path/filepath
+        compile TOOLEXEC_IMPORTPATH="path/filepath"
+        # runtime/debug
+        asm TOOLEXEC_IMPORTPATH="runtime/debug"
+        # runtime/debug
+        compile TOOLEXEC_IMPORTPATH="runtime/debug"
+        # runtime/debug
+        asm TOOLEXEC_IMPORTPATH="runtime/debug"
+        # hash
+        compile TOOLEXEC_IMPORTPATH="hash"
+        # crypto
+        compile TOOLEXEC_IMPORTPATH="crypto"
+        # runtime/trace
+        compile TOOLEXEC_IMPORTPATH="runtime/trace"
+        # crypto/internal/fips140deps/godebug
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140deps/godebug"
+        # crypto/internal/fips140
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140"
+        # crypto/internal/fips140/alias
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/alias"
+        # crypto/internal/fips140deps/byteorder
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140deps/byteorder"
+        # crypto/internal/fips140deps/cpu
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140deps/cpu"
+        # crypto/internal/impl
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/impl"
+        # crypto/internal/fips140/sha256
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/sha256"
+        # crypto/internal/fips140/sha256
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/sha256"
+        # crypto/internal/fips140/sha256
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/sha256"
+        # crypto/internal/constanttime
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/constanttime"
+        # crypto/internal/fips140/subtle
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/subtle"
+        # crypto/internal/fips140/subtle
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/subtle"
+        # crypto/internal/fips140/subtle
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/subtle"
+        # crypto/internal/fips140/sha3
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/sha3"
+        # crypto/internal/fips140/sha3
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/sha3"
+        # crypto/internal/fips140/sha3
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/sha3"
+        # crypto/internal/fips140/sha512
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/sha512"
+        # crypto/internal/fips140/sha512
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/sha512"
+        # crypto/internal/fips140/sha512
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/sha512"
+        # crypto/internal/fips140/hmac
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/hmac"
+        # crypto/internal/fips140/check
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/check"
+        # crypto/internal/fips140/aes
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/aes"
+        # crypto/internal/fips140/aes
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/aes"
+        # crypto/internal/fips140/aes
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/aes"
+        # crypto/internal/fips140/aes
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/aes"
+        # crypto/internal/fips140deps/time
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140deps/time"
+        # crypto/internal/entropy/v1.0.0
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/entropy/v1.0.0"
+        # testing
+        compile TOOLEXEC_IMPORTPATH="testing"
+        # crypto/fips140
+        compile TOOLEXEC_IMPORTPATH="crypto/fips140"
+        # crypto/internal/sysrand
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/sysrand"
+        # crypto/subtle
+        compile TOOLEXEC_IMPORTPATH="crypto/subtle"
+        # crypto/internal/boring/sig
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/boring/sig"
+        # crypto/internal/boring/sig
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/boring/sig"
+        # crypto/internal/boring/sig
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/boring/sig"
+        # crypto/internal/fips140/drbg
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/drbg"
+        # crypto/internal/fips140/aes/gcm
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/aes/gcm"
+        # crypto/internal/fips140/aes/gcm
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140/aes/gcm"
+        # crypto/internal/fips140/aes/gcm
+        asm TOOLEXEC_IMPORTPATH="crypto/internal/fips140/aes/gcm"
+        # crypto/internal/fips140only
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/fips140only"
+        # crypto/cipher
+        compile TOOLEXEC_IMPORTPATH="crypto/cipher"
+        # crypto/internal/boring
+        compile TOOLEXEC_IMPORTPATH="crypto/internal/boring"
+        # crypto/sha256
+        compile TOOLEXEC_IMPORTPATH="crypto/sha256"
+        # encoding/json/internal
+        compile TOOLEXEC_IMPORTPATH="encoding/json/internal"
+        # encoding/json/internal/jsonflags
+        compile TOOLEXEC_IMPORTPATH="encoding/json/internal/jsonflags"
+        # encoding/json/internal/jsonopts
+        compile TOOLEXEC_IMPORTPATH="encoding/json/internal/jsonopts"
+        # unicode/utf16
+        compile TOOLEXEC_IMPORTPATH="unicode/utf16"
+        # encoding/binary
+        compile TOOLEXEC_IMPORTPATH="encoding/binary"
+        # encoding/json/internal/jsonwire
+        compile TOOLEXEC_IMPORTPATH="encoding/json/internal/jsonwire"
+        # encoding/base32
+        compile TOOLEXEC_IMPORTPATH="encoding/base32"
+        # encoding/base64
+        compile TOOLEXEC_IMPORTPATH="encoding/base64"
+        # encoding/hex
+        compile TOOLEXEC_IMPORTPATH="encoding/hex"
+        # go/token
+        compile TOOLEXEC_IMPORTPATH="go/token"
+        # sort
+        compile TOOLEXEC_IMPORTPATH="sort"
+        # encoding/json/jsontext
+        compile TOOLEXEC_IMPORTPATH="encoding/json/jsontext"
+        # go/scanner
+        compile TOOLEXEC_IMPORTPATH="go/scanner"
+        # go/ast
+        compile TOOLEXEC_IMPORTPATH="go/ast"
+        # go/build/constraint
+        compile TOOLEXEC_IMPORTPATH="go/build/constraint"
+        # go/parser
+        compile TOOLEXEC_IMPORTPATH="go/parser"
+        # os/exec
+        compile TOOLEXEC_IMPORTPATH="os/exec"
+        # encoding/json/v2
+        compile TOOLEXEC_IMPORTPATH="encoding/json/v2"
+        # os/signal
+        asm TOOLEXEC_IMPORTPATH="os/signal"
+        # os/signal
+        compile TOOLEXEC_IMPORTPATH="os/signal"
+        # os/signal
+        asm TOOLEXEC_IMPORTPATH="os/signal"
+        # encoding/json
+        compile TOOLEXEC_IMPORTPATH="encoding/json"
+        # regexp/syntax
+        compile TOOLEXEC_IMPORTPATH="regexp/syntax"
+        # internal/fuzz
+        compile TOOLEXEC_IMPORTPATH="internal/fuzz"
+        # regexp
+        compile TOOLEXEC_IMPORTPATH="regexp"
+        # hash/crc32
+        asm TOOLEXEC_IMPORTPATH="hash/crc32"
+        # hash/crc32
+        compile TOOLEXEC_IMPORTPATH="hash/crc32"
+        # hash/crc32
+        asm TOOLEXEC_IMPORTPATH="hash/crc32"
+        # text/tabwriter
+        compile TOOLEXEC_IMPORTPATH="text/tabwriter"
+        # test/main/withasm
+        asm TOOLEXEC_IMPORTPATH="test/main/withasm"
+        # test/main/withasm
+        compile TOOLEXEC_IMPORTPATH="test/main/withasm"
+        # test/main/withasm
+        asm TOOLEXEC_IMPORTPATH="test/main/withasm"
+        # runtime/cgo
+        cgo TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # runtime/cgo
+        asm TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # runtime/cgo
+        compile TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # runtime/cgo
+        asm TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # test/main/withcgo
+        cgo TOOLEXEC_IMPORTPATH="test/main/withcgo"
+        # test/main/withcgo
+        compile TOOLEXEC_IMPORTPATH="test/main/withcgo"
+        # test/main [test/main.test]
+        compile TOOLEXEC_IMPORTPATH="test/main [test/main.test]"
+        # test/main_test [test/main.test]
+        compile TOOLEXEC_IMPORTPATH="test/main_test [test/main.test]"
+        # internal/goarch
+        vet TOOLEXEC_IMPORTPATH="internal/goarch"
+        # internal/abi
+        vet TOOLEXEC_IMPORTPATH="internal/abi"
+        # internal/unsafeheader
+        vet TOOLEXEC_IMPORTPATH="internal/unsafeheader"
+        # internal/cpu
+        vet TOOLEXEC_IMPORTPATH="internal/cpu"
+        # internal/bytealg
+        vet TOOLEXEC_IMPORTPATH="internal/bytealg"
+        # internal/byteorder
+        vet TOOLEXEC_IMPORTPATH="internal/byteorder"
+        # internal/chacha8rand
+        vet TOOLEXEC_IMPORTPATH="internal/chacha8rand"
+        # internal/coverage/rtcov
+        vet TOOLEXEC_IMPORTPATH="internal/coverage/rtcov"
+        # internal/godebugs
+        vet TOOLEXEC_IMPORTPATH="internal/godebugs"
+        # internal/goexperiment
+        vet TOOLEXEC_IMPORTPATH="internal/goexperiment"
+        # internal/goos
+        vet TOOLEXEC_IMPORTPATH="internal/goos"
+        # internal/profilerecord
+        vet TOOLEXEC_IMPORTPATH="internal/profilerecord"
+        # compress/flate
+        compile TOOLEXEC_IMPORTPATH="compress/flate"
+        # internal/runtime/atomic
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/atomic"
+        # internal/runtime/syscall/linux
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/syscall/linux"
+        # math/bits
+        vet TOOLEXEC_IMPORTPATH="math/bits"
+        # compress/gzip
+        compile TOOLEXEC_IMPORTPATH="compress/gzip"
+        # internal/strconv
+        vet TOOLEXEC_IMPORTPATH="internal/strconv"
+        # internal/runtime/cgroup
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/cgroup"
+        # internal/runtime/exithook
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/exithook"
+        # internal/runtime/gc
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/gc"
+        # internal/runtime/sys
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/sys"
+        # internal/runtime/gc/scan
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/gc/scan"
+        # internal/asan
+        vet TOOLEXEC_IMPORTPATH="internal/asan"
+        # internal/msan
+        vet TOOLEXEC_IMPORTPATH="internal/msan"
+        # internal/race
+        vet TOOLEXEC_IMPORTPATH="internal/race"
+        # internal/runtime/math
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/math"
+        # internal/runtime/maps
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/maps"
+        # internal/runtime/pprof/label
+        vet TOOLEXEC_IMPORTPATH="internal/runtime/pprof/label"
+        # internal/stringslite
+        vet TOOLEXEC_IMPORTPATH="internal/stringslite"
+        # internal/trace/tracev2
+        vet TOOLEXEC_IMPORTPATH="internal/trace/tracev2"
+        # runtime/pprof
+        compile TOOLEXEC_IMPORTPATH="runtime/pprof"
+        # testing/internal/testdeps
+        compile TOOLEXEC_IMPORTPATH="testing/internal/testdeps"
+        # test/main.test
+        compile TOOLEXEC_IMPORTPATH="test/main.test"
+        # runtime
+        vet TOOLEXEC_IMPORTPATH="runtime"
+        # internal/reflectlite
+        vet TOOLEXEC_IMPORTPATH="internal/reflectlite"
+        # errors
+        vet TOOLEXEC_IMPORTPATH="errors"
+        # sync/atomic
+        vet TOOLEXEC_IMPORTPATH="sync/atomic"
+        # internal/sync
+        vet TOOLEXEC_IMPORTPATH="internal/sync"
+        # internal/synctest
+        vet TOOLEXEC_IMPORTPATH="internal/synctest"
+        # sync
+        vet TOOLEXEC_IMPORTPATH="sync"
+        # io
+        vet TOOLEXEC_IMPORTPATH="io"
+        # iter
+        vet TOOLEXEC_IMPORTPATH="iter"
+        # unicode
+        vet TOOLEXEC_IMPORTPATH="unicode"
+        # unicode/utf8
+        vet TOOLEXEC_IMPORTPATH="unicode/utf8"
+        # bytes
+        vet TOOLEXEC_IMPORTPATH="bytes"
+        # internal/oserror
+        vet TOOLEXEC_IMPORTPATH="internal/oserror"
+        # test/main.test
+        link TOOLEXEC_IMPORTPATH="test/main.test"
+        # cmp
+        vet TOOLEXEC_IMPORTPATH="cmp"
+        # encoding
+        vet TOOLEXEC_IMPORTPATH="encoding"
+        # slices
+        vet TOOLEXEC_IMPORTPATH="slices"
+        # math
+        vet TOOLEXEC_IMPORTPATH="math"
+        # syscall
+        vet TOOLEXEC_IMPORTPATH="syscall"
+        # strconv
+        vet TOOLEXEC_IMPORTPATH="strconv"
+        # time
+        vet TOOLEXEC_IMPORTPATH="time"
+        # context
+        vet TOOLEXEC_IMPORTPATH="context"
+        # path
+        vet TOOLEXEC_IMPORTPATH="path"
+        # io/fs
+        vet TOOLEXEC_IMPORTPATH="io/fs"
+        # reflect
+        vet TOOLEXEC_IMPORTPATH="reflect"
+        # internal/filepathlite
+        vet TOOLEXEC_IMPORTPATH="internal/filepathlite"
+        # internal/fmtsort
+        vet TOOLEXEC_IMPORTPATH="internal/fmtsort"
+        # internal/syscall/execenv
+        vet TOOLEXEC_IMPORTPATH="internal/syscall/execenv"
+        # internal/syscall/unix
+        vet TOOLEXEC_IMPORTPATH="internal/syscall/unix"
+        # internal/testlog
+        vet TOOLEXEC_IMPORTPATH="internal/testlog"
+        # strings
+        vet TOOLEXEC_IMPORTPATH="strings"
+        # internal/poll
+        vet TOOLEXEC_IMPORTPATH="internal/poll"
+        # bufio
+        vet TOOLEXEC_IMPORTPATH="bufio"
+        # internal/bisect
+        vet TOOLEXEC_IMPORTPATH="internal/bisect"
+        # internal/godebug
+        vet TOOLEXEC_IMPORTPATH="internal/godebug"
+        # math/rand
+        vet TOOLEXEC_IMPORTPATH="math/rand"
+        # test/main/withasm
+        vet TOOLEXEC_IMPORTPATH="test/main/withasm"
+        # runtime/cgo
+        vet TOOLEXEC_IMPORTPATH="runtime/cgo"
+        # test/main/withcgo
+        vet TOOLEXEC_IMPORTPATH="test/main/withcgo"
+        # os
+        vet TOOLEXEC_IMPORTPATH="os"
+        # internal/sysinfo
+        vet TOOLEXEC_IMPORTPATH="internal/sysinfo"
+        # fmt
+        vet TOOLEXEC_IMPORTPATH="fmt"
+        # path/filepath
+        vet TOOLEXEC_IMPORTPATH="path/filepath"
+        # runtime/debug
+        vet TOOLEXEC_IMPORTPATH="runtime/debug"
+        # flag
+        vet TOOLEXEC_IMPORTPATH="flag"
+        # runtime/trace
+        vet TOOLEXEC_IMPORTPATH="runtime/trace"
+        # testing
+        vet TOOLEXEC_IMPORTPATH="testing"
+        # test/main
+        # [test/main]
+        vet TOOLEXEC_IMPORTPATH="test/main [test/main.test]"
+        # test/main_test
+        # [test/main_test]
+        vet TOOLEXEC_IMPORTPATH="test/main_test [test/main.test]"
+        > stderr -count=2 '^# test/main\.test$'
+        > stderr -count=1 '^compile'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main\.test"$'
+        > stderr -count=1 '^link'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main\.test"$'
+        > stderr -count=1 '^# test/main \[test/main\.test\]$'
+        > stderr -count=1 '^compile'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main \[test/main\.test\]"$'
+        > stderr -count=1 '^# test/main_test \[test/main\.test\]$'
+        > stderr -count=1 '^compile'${GOEXE}' TOOLEXEC_IMPORTPATH="test/main_test \[test/main\.test\]"$'
+--- PASS: TestScript (0.08s)
+    --- PASS: TestScript/toolexec (99.44s)
+PASS

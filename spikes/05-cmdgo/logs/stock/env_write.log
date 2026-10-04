@@ -1,0 +1,548 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:38871
+https://vcs-test.golang.org rerouted to https://127.0.0.1:39587
+go test proxy running at GOPROXY=http://127.0.0.1:41615/mod
+=== RUN   TestScript/env_write
+=== PAUSE TestScript/env_write
+=== CONT  TestScript/env_write
+    script_test.go:141: 2026-10-03T06:16:56Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:41615/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:38871
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:39587
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/vcstest2992695995/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/gopath/src
+        
+        > env GO111MODULE=off
+        # go env should default to the right places (0.017s)
+        > env AppData=$HOME/windowsappdata
+        > env home=$HOME/plan9home
+        > go env GOENV
+        [stdout]
+        /no-home/.config/go/env
+        > [GOOS:aix] stdout $HOME/.config/go/env
+        [condition not met]
+        > [GOOS:darwin] stdout $HOME'/Library/Application Support/go/env'
+        [condition not met]
+        > [GOOS:freebsd] stdout $HOME/.config/go/env
+        [condition not met]
+        > [GOOS:linux] stdout $HOME/.config/go/env
+        matched: /no-home/.config/go/env
+        > [GOOS:netbsd] stdout $HOME/.config/go/env
+        [condition not met]
+        > [GOOS:openbsd] stdout $HOME/.config/go/env
+        [condition not met]
+        > [GOOS:plan9] stdout $HOME/plan9home/lib/go/env
+        [condition not met]
+        > [GOOS:windows] stdout $HOME\\windowsappdata\\go\\env
+        [condition not met]
+        # Now override it to something writable. (0.045s)
+        > env GOENV=$WORK/envdir/go/env
+        > go env GOENV
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/envdir/go/env
+        > stdout envdir[\\/]go[\\/]env
+        matched: /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/envdir/go/env
+        # go env shows all variables (0.022s)
+        > go env
+        [stdout]
+        AR='ar'
+        CC='gcc'
+        CGO_CFLAGS='-O2 -g'
+        CGO_CPPFLAGS=''
+        CGO_CXXFLAGS='-O2 -g'
+        CGO_ENABLED='1'
+        CGO_FFLAGS='-O2 -g'
+        CGO_LDFLAGS='-O2 -g'
+        CXX='g++'
+        GCCGO='gccgo'
+        GO111MODULE='off'
+        GOAMD64='v1'
+        GOARCH='amd64'
+        GOAUTH='netrc'
+        GOBIN='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/gopath/bin'
+        GOCACHE='/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock'
+        GOCACHEPROG=''
+        GODEBUG=''
+        GOENV='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/envdir/go/env'
+        GOEXE=''
+        GOEXPERIMENT=''
+        GOFIPS140='off'
+        GOFLAGS=''
+        GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/tmp/go-build3088836372=/tmp/go-build -gno-record-gcc-switches'
+        GOHOSTARCH='amd64'
+        GOHOSTOS='linux'
+        GOINSECURE=''
+        GOMOD=''
+        GOMODCACHE='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/gopath/pkg/mod'
+        GONOPROXY=''
+        GONOSUMDB=''
+        GOOS='linux'
+        GOPACKAGESDRIVER=''
+        GOPATH='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/gopath'
+        GOPRIVATE=''
+        GOPROXY='http://127.0.0.1:41615/mod'
+        GOROOT='/home/hatch/tools/go-1.27.1'
+        GOSUMDB='localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6'
+        GOTELEMETRY='local'
+        GOTELEMETRYDIR='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/telemetry'
+        GOTMPDIR=''
+        GOTOOLCHAIN='auto'
+        GOTOOLDIR='/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64'
+        GOVCS='*:all'
+        GOVERSION='go1.27.1'
+        GOWORK=''
+        PKG_CONFIG='pkg-config'
+        > stdout GOARCH=
+        matched: GOARCH='amd64'
+        > stdout GOOS=
+        matched: GOOS='linux'
+        > stdout GOROOT=
+        matched: GOROOT='/home/hatch/tools/go-1.27.1'
+        # go env ignores invalid flag in GOFLAGS environment variable (0.029s)
+        > env GOFLAGS='=true'
+        > go env
+        [stdout]
+        AR='ar'
+        CC='gcc'
+        CGO_CFLAGS='-O2 -g'
+        CGO_CPPFLAGS=''
+        CGO_CXXFLAGS='-O2 -g'
+        CGO_ENABLED='1'
+        CGO_FFLAGS='-O2 -g'
+        CGO_LDFLAGS='-O2 -g'
+        CXX='g++'
+        GCCGO='gccgo'
+        GO111MODULE='off'
+        GOAMD64='v1'
+        GOARCH='amd64'
+        GOAUTH='netrc'
+        GOBIN='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/gopath/bin'
+        GOCACHE='/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock'
+        GOCACHEPROG=''
+        GODEBUG=''
+        GOENV='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/envdir/go/env'
+        GOEXE=''
+        GOEXPERIMENT=''
+        GOFIPS140='off'
+        GOFLAGS='=true'
+        GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/tmp/go-build3966010189=/tmp/go-build -gno-record-gcc-switches'
+        GOHOSTARCH='amd64'
+        GOHOSTOS='linux'
+        GOINSECURE=''
+        GOMOD=''
+        GOMODCACHE='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/gopath/pkg/mod'
+        GONOPROXY=''
+        GONOSUMDB=''
+        GOOS='linux'
+        GOPACKAGESDRIVER=''
+        GOPATH='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/gopath'
+        GOPRIVATE=''
+        GOPROXY='http://127.0.0.1:41615/mod'
+        GOROOT='/home/hatch/tools/go-1.27.1'
+        GOSUMDB='localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6'
+        GOTELEMETRY='local'
+        GOTELEMETRYDIR='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/telemetry'
+        GOTMPDIR=''
+        GOTOOLCHAIN='auto'
+        GOTOOLDIR='/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64'
+        GOVCS='*:all'
+        GOVERSION='go1.27.1'
+        GOWORK=''
+        PKG_CONFIG='pkg-config'
+        # checking errors (0.055s)
+        > ! go env -w
+        [stderr]
+        go: no KEY=VALUE arguments given
+        [exit status 1]
+        > stderr 'go: no KEY=VALUE arguments given'
+        matched: go: no KEY=VALUE arguments given
+        > ! go env -u
+        [stderr]
+        go: 'go env -u' requires an argument
+        [exit status 1]
+        > stderr 'go: ''go env -u'' requires an argument'
+        matched: go: 'go env -u' requires an argument
+        # go env -w changes default setting (0.067s)
+        > env root=
+        > [GOOS:windows] env root=c:
+        [condition not met]
+        > env GOPATH=
+        > go env -w GOPATH=$root/non-exist/gopath
+        > ! stderr .+
+        > grep GOPATH=$root/non-exist/gopath $WORK/envdir/go/env
+        matched: GOPATH=/non-exist/gopath
+        > go env GOPATH
+        [stdout]
+        /non-exist/gopath
+        > stdout /non-exist/gopath
+        matched: /non-exist/gopath
+        # go env -w does not override OS environment, and warns about that (0.090s)
+        > env GOPATH=$root/other
+        > go env -w GOPATH=$root/non-exist/gopath2
+        [stderr]
+        warning: go env -w GOPATH=... does not override conflicting OS environment variable
+        > stderr 'warning: go env -w GOPATH=... does not override conflicting OS environment variable'
+        matched: warning: go env -w GOPATH=... does not override conflicting OS environment variable
+        > go env GOPATH
+        [stdout]
+        /other
+        > stdout $root/other
+        matched: /other
+        # but go env -w does do the update, and unsetting the env var exposes the change (0.047s)
+        > env GOPATH=
+        > go env GOPATH
+        [stdout]
+        /non-exist/gopath2
+        > stdout $root/non-exist/gopath2
+        matched: /non-exist/gopath2
+        # unsetting with go env -u does not warn about OS environment overrides,
+        # nor does it warn about variables that haven't been set by go env -w. (0.079s)
+        > env GOPATH=$root/other
+        > go env -u GOPATH
+        > ! stderr .+
+        > go env -u GOPATH
+        > ! stderr .+
+        # go env -w rejects unknown or bad variables (0.227s)
+        > ! go env -w GOGC=off
+        [stderr]
+        go: unknown go command variable GOGC
+        [exit status 1]
+        > stderr 'unknown go command variable GOGC'
+        matched: go: unknown go command variable GOGC
+        > ! go env -w GOEXE=.bat
+        [stderr]
+        go: GOEXE cannot be modified
+        [exit status 1]
+        > stderr 'GOEXE cannot be modified'
+        matched: go: GOEXE cannot be modified
+        > ! go env -w GOVERSION=customversion
+        [stderr]
+        go: GOVERSION cannot be modified
+        [exit status 1]
+        > stderr 'GOVERSION cannot be modified'
+        matched: go: GOVERSION cannot be modified
+        > ! go env -w GOROOT=./go
+        [stderr]
+        go: GOROOT cannot be modified
+        [exit status 1]
+        > stderr 'GOROOT cannot be modified'
+        matched: go: GOROOT cannot be modified
+        > ! go env -w GOENV=/env
+        [stderr]
+        go: GOENV can only be set using the OS environment
+        [exit status 1]
+        > stderr 'GOENV can only be set using the OS environment'
+        matched: go: GOENV can only be set using the OS environment
+        > ! go env -w GODEBUG=gctrace=1
+        [stderr]
+        go: GODEBUG can only be set using the OS environment
+        [exit status 1]
+        > stderr 'GODEBUG can only be set using the OS environment'
+        matched: go: GODEBUG can only be set using the OS environment
+        # go env -w can set multiple variables (0.040s)
+        > env CC=
+        > go env CC
+        [stdout]
+        gcc
+        > ! stdout ^xyc$
+        > go env -w GOOS=$GOOS CC=xyc
+        > grep CC=xyc $GOENV
+        matched: CC=xyc
+        # file is maintained in sorted order (0.020s)
+        > grep 'CC=xyc\nGOOS=' $GOENV
+        matched: CC=xyc
+        GOOS=linux
+        > go env CC
+        [stdout]
+        xyc
+        > stdout ^xyc$
+        matched: xyc
+        # go env -u unsets effect of go env -w. (0.052s)
+        > go env -u CC
+        > go env CC
+        [stdout]
+        gcc
+        > ! stdout ^xyc$
+        # go env -w rejects double-set variables (0.015s)
+        > ! go env -w GOOS=$GOOS GOOS=$GOOS
+        [stderr]
+        go: multiple values for key: GOOS
+        [exit status 1]
+        > stderr 'multiple values for key: GOOS'
+        matched: go: multiple values for key: GOOS
+        # go env -w rejects missing variables (0.017s)
+        > ! go env -w GOOS
+        [stderr]
+        go: arguments must be KEY=VALUE: invalid argument: GOOS
+        [exit status 1]
+        > stderr 'arguments must be KEY=VALUE: invalid argument: GOOS'
+        matched: go: arguments must be KEY=VALUE: invalid argument: GOOS
+        # go env -w rejects invalid GO111MODULE values, as otherwise cmd/go would break (0.058s)
+        > ! go env -w GO111MODULE=badvalue
+        [stderr]
+        go: invalid GO111MODULE value "badvalue"
+        [exit status 1]
+        > stderr 'invalid GO111MODULE value "badvalue"'
+        matched: go: invalid GO111MODULE value "badvalue"
+        # go env -w rejects invalid GOPATH values (0.062s)
+        > ! go env -w GOPATH=~/go
+        [stderr]
+        go: GOPATH entry cannot start with shell metacharacter '~': "~/go"
+        [exit status 1]
+        > stderr 'GOPATH entry cannot start with shell metacharacter'
+        matched: go: GOPATH entry cannot start with shell metacharacter '~': "~/go"
+        > ! go env -w GOPATH=./go
+        [stderr]
+        go: GOPATH entry is relative; must be absolute path: "./go"
+        [exit status 1]
+        > stderr 'GOPATH entry is relative; must be absolute path'
+        matched: go: GOPATH entry is relative; must be absolute path: "./go"
+        # go env -w rejects invalid GOTMPDIR values (0.039s)
+        > ! go env -w GOTMPDIR=x
+        [stderr]
+        go: GOTMPDIR must be an absolute path
+        [exit status 1]
+        > stderr 'go: GOTMPDIR must be an absolute path'
+        matched: go: GOTMPDIR must be an absolute path
+        # go env -w should accept absolute GOTMPDIR value
+        # and should not create it (0.049s)
+        > [GOOS:windows] go env -w GOTMPDIR=$WORK\x\y\z
+        [condition not met]
+        > [!GOOS:windows] go env -w GOTMPDIR=$WORK/x/y/z
+        > ! exists $WORK/x/y/z
+        # we should be able to clear an env (0.103s)
+        > go env -u GOTMPDIR
+        > go env GOTMPDIR
+        [stdout]
+        
+        > stdout ^$
+        matched: 
+        > [GOOS:windows] go env -w GOTMPDIR=$WORK\x\y\z
+        [condition not met]
+        > [!GOOS:windows] go env -w GOTMPDIR=$WORK/x/y/z
+        > go env -w GOTMPDIR=
+        > go env GOTMPDIR
+        [stdout]
+        
+        > stdout ^$
+        matched: 
+        # go env -w rejects relative CC values (0.102s)
+        > [!GOOS:windows] go env -w CC=/usr/bin/clang
+        > go env -w CC=clang
+        > [!GOOS:windows] ! go env -w CC=./clang
+        [stderr]
+        go: CC entry is relative; must be absolute path: "./clang"
+        [exit status 1]
+        > [!GOOS:windows] ! go env -w CC=bin/clang
+        [stderr]
+        go: CC entry is relative; must be absolute path: "bin/clang"
+        [exit status 1]
+        > [!GOOS:windows] stderr 'go: CC entry is relative; must be absolute path'
+        matched: go: CC entry is relative; must be absolute path: "bin/clang"
+        > [GOOS:windows] go env -w CC=$WORK\bin\clang
+        [condition not met]
+        > [GOOS:windows] ! go env -w CC=.\clang
+        [condition not met]
+        > [GOOS:windows] ! go env -w CC=bin\clang
+        [condition not met]
+        > [GOOS:windows] stderr 'go: CC entry is relative; must be absolute path'
+        [condition not met]
+        # go env -w rejects relative CXX values (0.152s)
+        > [!GOOS:windows] go env -w CC=/usr/bin/cpp
+        > go env -w CXX=cpp
+        > [!GOOS:windows] ! go env -w CXX=./cpp
+        [stderr]
+        go: CXX entry is relative; must be absolute path: "./cpp"
+        [exit status 1]
+        > [!GOOS:windows] ! go env -w CXX=bin/cpp
+        [stderr]
+        go: CXX entry is relative; must be absolute path: "bin/cpp"
+        [exit status 1]
+        > [!GOOS:windows] stderr 'go: CXX entry is relative; must be absolute path'
+        matched: go: CXX entry is relative; must be absolute path: "bin/cpp"
+        > [GOOS:windows] go env -w CXX=$WORK\bin\cpp
+        [condition not met]
+        > [GOOS:windows] ! go env -w CXX=.\cpp
+        [condition not met]
+        > [GOOS:windows] ! go env -w CXX=bin\cpp
+        [condition not met]
+        > [GOOS:windows] stderr 'go: CXX entry is relative; must be absolute path'
+        [condition not met]
+        # go env -w/-u checks validity of GOOS/ARCH combinations (0.000s)
+        > env GOOS=
+        > env GOARCH=
+        # check -w doesn't allow invalid GOOS (0.019s)
+        > ! go env -w GOOS=linuxx
+        [stderr]
+        go: unsupported GOOS/GOARCH pair linuxx/amd64
+        [exit status 1]
+        > stderr 'unsupported GOOS/GOARCH pair linuxx'
+        matched: go: unsupported GOOS/GOARCH pair linuxx/amd64
+        # check -w doesn't allow invalid GOARCH (0.022s)
+        > ! go env -w GOARCH=amd644
+        [stderr]
+        go: unsupported GOOS/GOARCH pair linux/amd644
+        [exit status 1]
+        > stderr 'unsupported GOOS/GOARCH.*/amd644$'
+        matched: go: unsupported GOOS/GOARCH pair linux/amd644
+        # check -w doesn't allow invalid GOOS with valid GOARCH (0.037s)
+        > ! go env -w GOOS=linuxx GOARCH=amd64
+        [stderr]
+        go: unsupported GOOS/GOARCH pair linuxx/amd64
+        [exit status 1]
+        > stderr 'unsupported GOOS/GOARCH pair linuxx'
+        matched: go: unsupported GOOS/GOARCH pair linuxx/amd64
+        # check a valid GOOS and GOARCH values but an incompatible combinations (0.013s)
+        > ! go env -w GOOS=android GOARCH=s390x
+        [stderr]
+        go: unsupported GOOS/GOARCH pair android/s390x
+        [exit status 1]
+        > stderr 'unsupported GOOS/GOARCH pair android/s390x'
+        matched: go: unsupported GOOS/GOARCH pair android/s390x
+        # check that -u considers explicit envs (0.036s)
+        > go env -w GOOS=linux GOARCH=mips
+        > env GOOS=windows
+        > ! go env -u GOOS
+        [stderr]
+        go: unsupported GOOS/GOARCH pair windows/mips
+        [exit status 1]
+        > stderr 'unsupported GOOS/GOARCH.*windows/mips$'
+        matched: go: unsupported GOOS/GOARCH pair windows/mips
+        > env GOOS=
+        # go env -w should reject relative paths in GOMODCACHE environment. (0.053s)
+        > ! go env -w GOMODCACHE=~/test
+        [stderr]
+        go: GOMODCACHE entry is relative; must be absolute path: "~/test"
+        [exit status 1]
+        > stderr 'go: GOMODCACHE entry is relative; must be absolute path: "~/test"'
+        matched: go: GOMODCACHE entry is relative; must be absolute path: "~/test"
+        > ! go env -w GOMODCACHE=./test
+        [stderr]
+        go: GOMODCACHE entry is relative; must be absolute path: "./test"
+        [exit status 1]
+        > stderr 'go: GOMODCACHE entry is relative; must be absolute path: "./test"'
+        matched: go: GOMODCACHE entry is relative; must be absolute path: "./test"
+        # go env -w checks validity of GOEXPERIMENT (0.032s)
+        > env GOEXPERIMENT=
+        > ! go env -w GOEXPERIMENT=badexp
+        [stderr]
+        go: unknown GOEXPERIMENT badexp
+        [exit status 1]
+        > stderr 'unknown GOEXPERIMENT badexp'
+        matched: go: unknown GOEXPERIMENT badexp
+        > go env -w GOEXPERIMENT=fieldtrack
+        # go env -w and go env -u work on unknown fields already in the go/env file (0.181s)
+        > cp bad.env $GOENV
+        > go env GOENV
+        [stdout]
+        /home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/envdir/go/env
+        > cat $GOENV
+        [stdout]
+        UNKNOWN=yes
+        > go env
+        [stdout]
+        AR='ar'
+        CC='gcc'
+        CGO_CFLAGS='-O2 -g'
+        CGO_CPPFLAGS=''
+        CGO_CXXFLAGS='-O2 -g'
+        CGO_ENABLED='1'
+        CGO_FFLAGS='-O2 -g'
+        CGO_LDFLAGS='-O2 -g'
+        CXX='g++'
+        GCCGO='gccgo'
+        GO111MODULE='off'
+        GOAMD64='v1'
+        GOARCH='amd64'
+        GOAUTH='netrc'
+        GOBIN='/other/bin'
+        GOCACHE='/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock'
+        GOCACHEPROG=''
+        GODEBUG=''
+        GOENV='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/envdir/go/env'
+        GOEXE=''
+        GOEXPERIMENT=''
+        GOFIPS140='off'
+        GOFLAGS='=true'
+        GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/tmp/go-build1905446522=/tmp/go-build -gno-record-gcc-switches'
+        GOHOSTARCH='amd64'
+        GOHOSTOS='linux'
+        GOINSECURE=''
+        GOMOD=''
+        GOMODCACHE='/other/pkg/mod'
+        GONOPROXY=''
+        GONOSUMDB=''
+        GOOS='linux'
+        GOPACKAGESDRIVER=''
+        GOPATH='/other'
+        GOPRIVATE=''
+        GOPROXY='http://127.0.0.1:41615/mod'
+        GOROOT='/home/hatch/tools/go-1.27.1'
+        GOSUMDB='localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6'
+        GOTELEMETRY='local'
+        GOTELEMETRYDIR='/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1914819873/tmpdir2478036296/env_write2385787483/telemetry'
+        GOTMPDIR=''
+        GOTOOLCHAIN='auto'
+        GOTOOLDIR='/home/hatch/tools/go-1.27.1/pkg/tool/linux_amd64'
+        GOVCS='*:all'
+        GOVERSION='go1.27.1'
+        GOWORK=''
+        PKG_CONFIG='pkg-config'
+        > ! stdout UNKNOWN
+        > go env UNKNOWN
+        [stdout]
+        yes
+        > stdout yes
+        matched: yes
+        > go env -w UNKNOWN=maybe
+        > go env UNKNOWN
+        [stdout]
+        maybe
+        > stdout maybe
+        matched: maybe
+        > go env -u UNKNOWN
+        > go env UNKNOWN
+        [stdout]
+        
+        > ! stdout . # gone
+--- PASS: TestScript (0.06s)
+    --- PASS: TestScript/env_write (1.81s)
+PASS

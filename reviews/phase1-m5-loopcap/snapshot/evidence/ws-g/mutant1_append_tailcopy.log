@@ -1,0 +1,5 @@
+MUTANT 1: append tail-copy drop (WS-G, 2026-10-04)
+Location: graalgo.runtime.Intrinsics.growslice
+Change: guarded the memmove of old elements with `if (false && ...)`
+Effect: append(0..19) sum = 19 (only last element), gc expects 190
+Result: KILLED (bi01_append_growth logic)

@@ -1,0 +1,6 @@
+=== o2_chan (par=2 gmp=2 quantumNs=1000000) ===
+o2 cap=0 per_sender_min=20000 per_sender_max=20000 expected=20000 RESULT=PASS
+o2 cap=16 per_sender_min=20000 per_sender_max=20000 expected=20000 RESULT=PASS
+sched{cap=2(req=2,par=2) inflight_now~na parkEvents=208942 admissions=208942 firstAdmissions=18 wakeupCalls=208923 wakeupWon=208923 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=417885 drainerUtilPct=4.08}
+O2 RESULT=PASS
+exit=0

@@ -1,0 +1,776 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:33267
+https://vcs-test.golang.org rerouted to https://127.0.0.1:39005
+go test proxy running at GOPROXY=http://127.0.0.1:41625/mod
+=== RUN   TestScript/test_exit
+=== PAUSE TestScript/test_exit
+=== CONT  TestScript/test_exit
+    script_test.go:141: 2026-10-03T06:13:18Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:41625/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:33267
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:39005
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/vcstest947536706/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/gopath/src
+        
+        # Builds and runs test binaries, so skip in short mode. (0.000s)
+        > [short] skip
+        [condition not met]
+        > env GO111MODULE=on
+        # If a test invoked by 'go test' exits with a zero status code,
+        # it will panic. (1.621s)
+        > ! go test ./zero
+        [stdout]
+        --- FAIL: TestExitZero (0.00s)
+        panic: unexpected call to os.Exit(0) during test [recovered, repanicked]
+        
+        goroutine 18 gp=0x249117b221e0 m=0 mp=0x6fc620 [running]:
+        panic({0x6b5988?, 0x5631b0?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:878 +0x159 fp=0x249117ac6c48 sp=0x249117ac6ba0 pc=0x485ff9
+        testing.tRunner.func1.2({0x6b5988, 0x5631b0})
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2123 +0x232 fp=0x249117ac6cf8 sp=0x249117ac6c48 pc=0x4f3592
+        testing.tRunner.func1()
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2126 +0x329 fp=0x249117ac6e90 sp=0x249117ac6cf8 pc=0x4f2f49
+        panic({0x6b5988?, 0x5631b0?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:859 +0x125 fp=0x249117ac6f38 sp=0x249117ac6e90 pc=0x485fc5
+        os.Exit(0x0)
+        	/home/hatch/tools/go-1.27.1/src/os/proc.go:67 +0x51 fp=0x249117ac6f58 sp=0x249117ac6f38 pc=0x4ae1d1
+        m/zero.TestExitZero(0x249117b4c248?)
+        	/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/gopath/src/zero/zero_test.go:9 +0x15 fp=0x249117ac6f70 sp=0x249117ac6f58 pc=0x543375
+        testing.tRunner(0x249117b4c248, 0x6d6188)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x249117ac6fc0 sp=0x249117ac6f70 pc=0x4edd4a
+        testing.(*T).Run.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x1b fp=0x249117ac6fe0 sp=0x249117ac6fc0 pc=0x4f36bb
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x249117ac6fe8 sp=0x249117ac6fe0 pc=0x48c941
+        created by testing.(*T).Run in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x4d4
+        
+        goroutine 1 gp=0x249117a681e0 m=nil [chan receive]:
+        runtime.gopark(0x784b9b085a00?, 0x784b54581b88?, 0x68?, 0x9?, 0x6b5988?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x249117aca908 sp=0x249117aca8e8 pc=0x4864aa
+        runtime.chanrecv(0x249117b46100, 0x249117aca9ef, 0x1)
+        	/home/hatch/tools/go-1.27.1/src/runtime/chan.go:667 +0x4ae fp=0x249117aca980 sp=0x249117aca908 pc=0x41622e
+        runtime.chanrecv1(0x18?, 0x6c2e08?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/chan.go:509 +0x12 fp=0x249117aca9a8 sp=0x249117aca980 pc=0x415d72
+        testing.(*T).Run(0x249117b4c008, {0x555e04?, 0x249117acaaa0?}, 0x6d6188)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2266 +0x4f2 fp=0x249117acaa80 sp=0x249117aca9a8 pc=0x4ee2b2
+        testing.runTests.func1(0x249117b4c008)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2742 +0x37 fp=0x249117acaac0 sp=0x249117acaa80 pc=0x4f3937
+        testing.tRunner(0x249117b4c008, 0x249117acabc8)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x249117acab10 sp=0x249117acaac0 pc=0x4edd4a
+        testing.runTests({0x554000, 0x1}, {0x554562, 0x6}, 0x249117b08330, {0x6f08e8, 0x1, 0x1}, {0xc2a845b5e54c0295, 0x8bb2cf000e, ...})
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2740 +0x510 fp=0x249117acabf8 sp=0x249117acab10 pc=0x4f0290
+        testing.(*M).Run(0x249117b066e0)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2600 +0x6af fp=0x249117acae38 sp=0x249117acabf8 pc=0x4eee4f
+        main.main()
+        	_testmain.go:46 +0x9b fp=0x249117acaeb8 sp=0x249117acae38 pc=0x5434bb
+        runtime.main()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:302 +0x427 fp=0x249117acafe0 sp=0x249117acaeb8 pc=0x44ea07
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x249117acafe8 sp=0x249117acafe0 pc=0x48c941
+        
+        goroutine 2 gp=0x249117a68780 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x249117aa2fa8 sp=0x249117aa2f88 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.forcegchelper()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:387 +0xb3 fp=0x249117aa2fe0 sp=0x249117aa2fa8 pc=0x44ecd3
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x249117aa2fe8 sp=0x249117aa2fe0 pc=0x48c941
+        created by runtime.init.7 in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:375 +0x1a
+        
+        goroutine 3 gp=0x249117a68d20 m=nil [GC sweep wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x249117aa3788 sp=0x249117aa3768 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.bgsweep(0x249117a84280)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcsweep.go:279 +0x94 fp=0x249117aa37c8 sp=0x249117aa3788 pc=0x4381b4
+        runtime.gcenable.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x17 fp=0x249117aa37e0 sp=0x249117aa37c8 pc=0x47d077
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x249117aa37e8 sp=0x249117aa37e0 pc=0x48c941
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x66
+        
+        goroutine 4 gp=0x249117a68f00 m=nil [GC scavenge wait]:
+        runtime.gopark(0x249117a84280?, 0x562710?, 0x1?, 0x0?, 0x249117a68f00?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x249117aa3f78 sp=0x249117aa3f58 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.(*scavengerState).park(0x6fb300)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:425 +0x49 fp=0x249117aa3fa8 sp=0x249117aa3f78 pc=0x435d69
+        runtime.bgscavenge(0x249117a84280)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:653 +0x3c fp=0x249117aa3fc8 sp=0x249117aa3fa8 pc=0x4362bc
+        runtime.gcenable.gowrap2()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0x17 fp=0x249117aa3fe0 sp=0x249117aa3fc8 pc=0x47d037
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x249117aa3fe8 sp=0x249117aa3fe0 pc=0x48c941
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0xa5
+        
+        goroutine 17 gp=0x249117b22000 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x249117a9e620 sp=0x249117a9e600 pc=0x4864aa
+        runtime.runFinalizers()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:210 +0x107 fp=0x249117a9e7e0 sp=0x249117a9e620 pc=0x429367
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x249117a9e7e8 sp=0x249117a9e7e0 pc=0x48c941
+        created by runtime.createfing in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:172 +0x3d
+        FAIL	m/zero	0.012s
+        FAIL
+        [exit status 1]
+        > ! stdout ^ok
+        > ! stdout 'exit status'
+        > stdout 'panic'
+        matched: panic: unexpected call to os.Exit(0) during test [recovered, repanicked]
+        > stdout ^FAIL
+        matched: FAIL	m/zero	0.012s
+        # If a test exits with a non-zero status code, 'go test' fails normally. (1.282s)
+        > ! go test ./one
+        [stdout]
+        exit status 1
+        FAIL	m/one	0.019s
+        FAIL
+        [exit status 1]
+        > ! stdout ^ok
+        > stdout 'exit status'
+        matched: exit status 1
+        > ! stdout 'panic'
+        > stdout ^FAIL
+        matched: FAIL	m/one	0.019s
+        # Ensure that other flags still do the right thing. (2.441s)
+        > go test -list=. ./zero
+        [stdout]
+        TestExitZero
+        ok  	m/zero	0.012s
+        > stdout ExitZero
+        matched: TestExitZero
+        > ! go test -bench=. ./zero
+        [stdout]
+        --- FAIL: TestExitZero (0.00s)
+        panic: unexpected call to os.Exit(0) during test [recovered, repanicked]
+        
+        goroutine 3 gp=0x13c2ed2b10e0 m=0 mp=0x6fc620 [running]:
+        panic({0x6b5988?, 0x5631b0?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:878 +0x159 fp=0x13c2ed38ac48 sp=0x13c2ed38aba0 pc=0x485ff9
+        testing.tRunner.func1.2({0x6b5988, 0x5631b0})
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2123 +0x232 fp=0x13c2ed38acf8 sp=0x13c2ed38ac48 pc=0x4f3592
+        testing.tRunner.func1()
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2126 +0x329 fp=0x13c2ed38ae90 sp=0x13c2ed38acf8 pc=0x4f2f49
+        panic({0x6b5988?, 0x5631b0?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:859 +0x125 fp=0x13c2ed38af38 sp=0x13c2ed38ae90 pc=0x485fc5
+        os.Exit(0x0)
+        	/home/hatch/tools/go-1.27.1/src/os/proc.go:67 +0x51 fp=0x13c2ed38af58 sp=0x13c2ed38af38 pc=0x4ae1d1
+        m/zero.TestExitZero(0x13c2ed344248?)
+        	/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/gopath/src/zero/zero_test.go:9 +0x15 fp=0x13c2ed38af70 sp=0x13c2ed38af58 pc=0x543375
+        testing.tRunner(0x13c2ed344248, 0x6d6188)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x13c2ed38afc0 sp=0x13c2ed38af70 pc=0x4edd4a
+        testing.(*T).Run.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x1b fp=0x13c2ed38afe0 sp=0x13c2ed38afc0 pc=0x4f36bb
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x13c2ed38afe8 sp=0x13c2ed38afe0 pc=0x48c941
+        created by testing.(*T).Run in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x4d4
+        
+        goroutine 1 gp=0x13c2ed2b01e0 m=nil [chan receive]:
+        runtime.gopark(0x78cdf20a4108?, 0x78cdf20ad420?, 0xa0?, 0xf4?, 0x6b5988?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x13c2ed38e908 sp=0x13c2ed38e8e8 pc=0x4864aa
+        runtime.chanrecv(0x13c2ed2cc380, 0x13c2ed38e9ef, 0x1)
+        	/home/hatch/tools/go-1.27.1/src/runtime/chan.go:667 +0x4ae fp=0x13c2ed38e980 sp=0x13c2ed38e908 pc=0x41622e
+        runtime.chanrecv1(0x18?, 0x6c2e08?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/chan.go:509 +0x12 fp=0x13c2ed38e9a8 sp=0x13c2ed38e980 pc=0x415d72
+        testing.(*T).Run(0x13c2ed344008, {0x555e04?, 0x13c2ed38eaa0?}, 0x6d6188)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2266 +0x4f2 fp=0x13c2ed38ea80 sp=0x13c2ed38e9a8 pc=0x4ee2b2
+        testing.runTests.func1(0x13c2ed344008)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2742 +0x37 fp=0x13c2ed38eac0 sp=0x13c2ed38ea80 pc=0x4f3937
+        testing.tRunner(0x13c2ed344008, 0x13c2ed38ebc8)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x13c2ed38eb10 sp=0x13c2ed38eac0 pc=0x4edd4a
+        testing.runTests({0x554000, 0x1}, {0x554562, 0x6}, 0x13c2ed2bc348, {0x6f08e8, 0x1, 0x1}, {0xc2a845b6d3da81c0, 0x8bb2ccd384, ...})
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2740 +0x510 fp=0x13c2ed38ebf8 sp=0x13c2ed38eb10 pc=0x4f0290
+        testing.(*M).Run(0x13c2ed312780)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2600 +0x6af fp=0x13c2ed38ee38 sp=0x13c2ed38ebf8 pc=0x4eee4f
+        main.main()
+        	_testmain.go:46 +0x9b fp=0x13c2ed38eeb8 sp=0x13c2ed38ee38 pc=0x5434bb
+        runtime.main()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:302 +0x427 fp=0x13c2ed38efe0 sp=0x13c2ed38eeb8 pc=0x44ea07
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x13c2ed38efe8 sp=0x13c2ed38efe0 pc=0x48c941
+        
+        goroutine 17 gp=0x13c2ed380000 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x13c2ed2e67a8 sp=0x13c2ed2e6788 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.forcegchelper()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:387 +0xb3 fp=0x13c2ed2e67e0 sp=0x13c2ed2e67a8 pc=0x44ecd3
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x13c2ed2e67e8 sp=0x13c2ed2e67e0 pc=0x48c941
+        created by runtime.init.7 in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:375 +0x1a
+        
+        goroutine 18 gp=0x13c2ed3801e0 m=nil [GC sweep wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x13c2ed2e6f88 sp=0x13c2ed2e6f68 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.bgsweep(0x13c2ed384000)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcsweep.go:279 +0x94 fp=0x13c2ed2e6fc8 sp=0x13c2ed2e6f88 pc=0x4381b4
+        runtime.gcenable.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x17 fp=0x13c2ed2e6fe0 sp=0x13c2ed2e6fc8 pc=0x47d077
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x13c2ed2e6fe8 sp=0x13c2ed2e6fe0 pc=0x48c941
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x66
+        
+        goroutine 19 gp=0x13c2ed3803c0 m=nil [GC scavenge wait]:
+        runtime.gopark(0x13c2ed384000?, 0x562710?, 0x1?, 0x0?, 0x13c2ed3803c0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x13c2ed2e7778 sp=0x13c2ed2e7758 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.(*scavengerState).park(0x6fb300)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:425 +0x49 fp=0x13c2ed2e77a8 sp=0x13c2ed2e7778 pc=0x435d69
+        runtime.bgscavenge(0x13c2ed384000)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:653 +0x3c fp=0x13c2ed2e77c8 sp=0x13c2ed2e77a8 pc=0x4362bc
+        runtime.gcenable.gowrap2()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0x17 fp=0x13c2ed2e77e0 sp=0x13c2ed2e77c8 pc=0x47d037
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x13c2ed2e77e8 sp=0x13c2ed2e77e0 pc=0x48c941
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0xa5
+        
+        goroutine 2 gp=0x13c2ed2b0f00 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x13c2ed2eae20 sp=0x13c2ed2eae00 pc=0x4864aa
+        runtime.runFinalizers()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:210 +0x107 fp=0x13c2ed2eafe0 sp=0x13c2ed2eae20 pc=0x429367
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x13c2ed2eafe8 sp=0x13c2ed2eafe0 pc=0x48c941
+        created by runtime.createfing in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:172 +0x3d
+        exit status 2
+        FAIL	m/zero	0.026s
+        FAIL
+        [exit status 1]
+        > stdout 'panic'
+        matched: panic: unexpected call to os.Exit(0) during test [recovered, repanicked]
+        # 'go test' with no args streams output without buffering. Ensure that it still
+        # catches a zero exit with missing output. (3.405s)
+        > cd zero
+        > ! go test
+        [stdout]
+        --- FAIL: TestExitZero (0.00s)
+        panic: unexpected call to os.Exit(0) during test [recovered, repanicked]
+        
+        goroutine 18 gp=0x3903e1f221e0 m=0 mp=0x6fc620 [running]:
+        panic({0x6b5988?, 0x5631b0?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:878 +0x159 fp=0x3903e1e96c48 sp=0x3903e1e96ba0 pc=0x485ff9
+        testing.tRunner.func1.2({0x6b5988, 0x5631b0})
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2123 +0x232 fp=0x3903e1e96cf8 sp=0x3903e1e96c48 pc=0x4f3592
+        testing.tRunner.func1()
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2126 +0x329 fp=0x3903e1e96e90 sp=0x3903e1e96cf8 pc=0x4f2f49
+        panic({0x6b5988?, 0x5631b0?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:859 +0x125 fp=0x3903e1e96f38 sp=0x3903e1e96e90 pc=0x485fc5
+        os.Exit(0x0)
+        	/home/hatch/tools/go-1.27.1/src/os/proc.go:67 +0x51 fp=0x3903e1e96f58 sp=0x3903e1e96f38 pc=0x4ae1d1
+        m/zero.TestExitZero(0x3903e1f48248?)
+        	/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/gopath/src/zero/zero_test.go:9 +0x15 fp=0x3903e1e96f70 sp=0x3903e1e96f58 pc=0x543375
+        testing.tRunner(0x3903e1f48248, 0x6d6188)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x3903e1e96fc0 sp=0x3903e1e96f70 pc=0x4edd4a
+        testing.(*T).Run.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x1b fp=0x3903e1e96fe0 sp=0x3903e1e96fc0 pc=0x4f36bb
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x3903e1e96fe8 sp=0x3903e1e96fe0 pc=0x48c941
+        created by testing.(*T).Run in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x4d4
+        
+        goroutine 1 gp=0x3903e1e381e0 m=nil [chan receive]:
+        runtime.gopark(0x72365b9f8a00?, 0x72365b827b88?, 0xa8?, 0x6a?, 0x6b5988?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x3903e1e9a908 sp=0x3903e1e9a8e8 pc=0x4864aa
+        runtime.chanrecv(0x3903e1f46100, 0x3903e1e9a9ef, 0x1)
+        	/home/hatch/tools/go-1.27.1/src/runtime/chan.go:667 +0x4ae fp=0x3903e1e9a980 sp=0x3903e1e9a908 pc=0x41622e
+        runtime.chanrecv1(0x18?, 0x6c2e08?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/chan.go:509 +0x12 fp=0x3903e1e9a9a8 sp=0x3903e1e9a980 pc=0x415d72
+        testing.(*T).Run(0x3903e1f48008, {0x555e04?, 0x3903e1e9aaa0?}, 0x6d6188)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2266 +0x4f2 fp=0x3903e1e9aa80 sp=0x3903e1e9a9a8 pc=0x4ee2b2
+        testing.runTests.func1(0x3903e1f48008)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2742 +0x37 fp=0x3903e1e9aac0 sp=0x3903e1e9aa80 pc=0x4f3937
+        testing.tRunner(0x3903e1f48008, 0x3903e1e9abc8)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x3903e1e9ab10 sp=0x3903e1e9aac0 pc=0x4edd4a
+        testing.runTests({0x554000, 0x1}, {0x554562, 0x6}, 0x3903e1f08330, {0x6f08e8, 0x1, 0x1}, {0xc2a845b75c73f341, 0x8bb2cd6a7c, ...})
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2740 +0x510 fp=0x3903e1e9abf8 sp=0x3903e1e9ab10 pc=0x4f0290
+        testing.(*M).Run(0x3903e1f066e0)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2600 +0x6af fp=0x3903e1e9ae38 sp=0x3903e1e9abf8 pc=0x4eee4f
+        main.main()
+        	_testmain.go:46 +0x9b fp=0x3903e1e9aeb8 sp=0x3903e1e9ae38 pc=0x5434bb
+        runtime.main()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:302 +0x427 fp=0x3903e1e9afe0 sp=0x3903e1e9aeb8 pc=0x44ea07
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x3903e1e9afe8 sp=0x3903e1e9afe0 pc=0x48c941
+        
+        goroutine 2 gp=0x3903e1e38780 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x3903e1e72fa8 sp=0x3903e1e72f88 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.forcegchelper()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:387 +0xb3 fp=0x3903e1e72fe0 sp=0x3903e1e72fa8 pc=0x44ecd3
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x3903e1e72fe8 sp=0x3903e1e72fe0 pc=0x48c941
+        created by runtime.init.7 in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:375 +0x1a
+        
+        goroutine 3 gp=0x3903e1e38d20 m=nil [GC sweep wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x3903e1e73788 sp=0x3903e1e73768 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.bgsweep(0x3903e1e54280)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcsweep.go:279 +0x94 fp=0x3903e1e737c8 sp=0x3903e1e73788 pc=0x4381b4
+        runtime.gcenable.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x17 fp=0x3903e1e737e0 sp=0x3903e1e737c8 pc=0x47d077
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x3903e1e737e8 sp=0x3903e1e737e0 pc=0x48c941
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x66
+        
+        goroutine 4 gp=0x3903e1e38f00 m=nil [GC scavenge wait]:
+        runtime.gopark(0x3903e1e54280?, 0x562710?, 0x1?, 0x0?, 0x3903e1e38f00?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x3903e1e73f78 sp=0x3903e1e73f58 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.(*scavengerState).park(0x6fb300)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:425 +0x49 fp=0x3903e1e73fa8 sp=0x3903e1e73f78 pc=0x435d69
+        runtime.bgscavenge(0x3903e1e54280)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:653 +0x3c fp=0x3903e1e73fc8 sp=0x3903e1e73fa8 pc=0x4362bc
+        runtime.gcenable.gowrap2()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0x17 fp=0x3903e1e73fe0 sp=0x3903e1e73fc8 pc=0x47d037
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x3903e1e73fe8 sp=0x3903e1e73fe0 pc=0x48c941
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0xa5
+        
+        goroutine 17 gp=0x3903e1f22000 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x3903e1e6e620 sp=0x3903e1e6e600 pc=0x4864aa
+        runtime.runFinalizers()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:210 +0x107 fp=0x3903e1e6e7e0 sp=0x3903e1e6e620 pc=0x429367
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x3903e1e6e7e8 sp=0x3903e1e6e7e0 pc=0x48c941
+        created by runtime.createfing in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:172 +0x3d
+        exit status 2
+        FAIL	m/zero	0.025s
+        [exit status 1]
+        > stdout 'panic'
+        matched: panic: unexpected call to os.Exit(0) during test [recovered, repanicked]
+        > cd ../normal
+        > go test
+        [stdout]
+        PASS
+        ok  	m/normal	0.008s
+        > stdout ^ok
+        matched: ok  	m/normal	0.008s
+        > cd ..
+        # If a TestMain exits with a zero status code, 'go test' shouldn't
+        # complain about that. It's a common way to skip testing a package
+        # entirely. (2.215s)
+        > go test ./main_zero
+        [stdout]
+        ok  	m/main_zero	0.016s
+        > ! stdout 'skipping all tests'
+        > stdout ^ok
+        matched: ok  	m/main_zero	0.016s
+        # With -v, we'll see the warning from TestMain. (1.701s)
+        > go test -v ./main_zero
+        [stdout]
+        skipping all tests
+        ok  	m/main_zero	0.015s
+        > stdout 'skipping all tests'
+        matched: skipping all tests
+        > stdout ^ok
+        matched: ok  	m/main_zero	0.015s
+        # Listing all tests won't actually give a result if TestMain exits. That's okay,
+        # because this is how TestMain works. If we decide to support -list even when
+        # TestMain is used to skip entire packages, we can change this test case. (1.425s)
+        > go test -list=. ./main_zero
+        [stdout]
+        skipping all tests
+        ok  	m/main_zero	0.011s
+        > stdout 'skipping all tests'
+        matched: skipping all tests
+        > ! stdout TestNotListed
+        # Running the test directly still fails, if we pass the flag. (3.056s)
+        > go test -c -o ./zero.exe ./zero
+        > ! exec ./zero.exe -test.paniconexit0
+        [stdout]
+        --- FAIL: TestExitZero (0.00s)
+        [stderr]
+        panic: unexpected call to os.Exit(0) during test [recovered, repanicked]
+        
+        goroutine 18 gp=0x2c8c5b9221e0 m=0 mp=0x6fc620 [running]:
+        panic({0x6b5988?, 0x5631b0?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:878 +0x159 fp=0x2c8c5b89ec48 sp=0x2c8c5b89eba0 pc=0x485ff9
+        testing.tRunner.func1.2({0x6b5988, 0x5631b0})
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2123 +0x232 fp=0x2c8c5b89ecf8 sp=0x2c8c5b89ec48 pc=0x4f3592
+        testing.tRunner.func1()
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2126 +0x329 fp=0x2c8c5b89ee90 sp=0x2c8c5b89ecf8 pc=0x4f2f49
+        panic({0x6b5988?, 0x5631b0?})
+        	/home/hatch/tools/go-1.27.1/src/runtime/panic.go:859 +0x125 fp=0x2c8c5b89ef38 sp=0x2c8c5b89ee90 pc=0x485fc5
+        os.Exit(0x0)
+        	/home/hatch/tools/go-1.27.1/src/os/proc.go:67 +0x51 fp=0x2c8c5b89ef58 sp=0x2c8c5b89ef38 pc=0x4ae1d1
+        m/zero.TestExitZero(0x2c8c5b948248?)
+        	/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/gopath/src/zero/zero_test.go:9 +0x15 fp=0x2c8c5b89ef70 sp=0x2c8c5b89ef58 pc=0x543375
+        testing.tRunner(0x2c8c5b948248, 0x6d6190)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x2c8c5b89efc0 sp=0x2c8c5b89ef70 pc=0x4edd4a
+        testing.(*T).Run.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x1b fp=0x2c8c5b89efe0 sp=0x2c8c5b89efc0 pc=0x4f36bb
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2c8c5b89efe8 sp=0x2c8c5b89efe0 pc=0x48c941
+        created by testing.(*T).Run in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x4d4
+        
+        goroutine 1 gp=0x2c8c5b8421e0 m=nil [chan receive]:
+        runtime.gopark(0x78c3a8f42a00?, 0x78c362471b88?, 0xa8?, 0xa?, 0x6b5988?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x2c8c5b8a2908 sp=0x2c8c5b8a28e8 pc=0x4864aa
+        runtime.chanrecv(0x2c8c5b946100, 0x2c8c5b8a29ef, 0x1)
+        	/home/hatch/tools/go-1.27.1/src/runtime/chan.go:667 +0x4ae fp=0x2c8c5b8a2980 sp=0x2c8c5b8a2908 pc=0x41622e
+        runtime.chanrecv1(0x18?, 0x6c2e08?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/chan.go:509 +0x12 fp=0x2c8c5b8a29a8 sp=0x2c8c5b8a2980 pc=0x415d72
+        testing.(*T).Run(0x2c8c5b948008, {0x555e04?, 0x2c8c5b8a2aa0?}, 0x6d6190)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2266 +0x4f2 fp=0x2c8c5b8a2a80 sp=0x2c8c5b8a29a8 pc=0x4ee2b2
+        testing.runTests.func1(0x2c8c5b948008)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2742 +0x37 fp=0x2c8c5b8a2ac0 sp=0x2c8c5b8a2a80 pc=0x4f3937
+        testing.tRunner(0x2c8c5b948008, 0x2c8c5b8a2bc8)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x2c8c5b8a2b10 sp=0x2c8c5b8a2ac0 pc=0x4edd4a
+        testing.runTests({0x554000, 0x1}, {0x554562, 0x6}, 0x2c8c5b908330, {0x6f08e8, 0x1, 0x1}, {0x0, 0x0, ...})
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2740 +0x510 fp=0x2c8c5b8a2bf8 sp=0x2c8c5b8a2b10 pc=0x4f0290
+        testing.(*M).Run(0x2c8c5b906780)
+        	/home/hatch/tools/go-1.27.1/src/testing/testing.go:2600 +0x6af fp=0x2c8c5b8a2e38 sp=0x2c8c5b8a2bf8 pc=0x4eee4f
+        main.main()
+        	_testmain.go:46 +0x9b fp=0x2c8c5b8a2eb8 sp=0x2c8c5b8a2e38 pc=0x5434bb
+        runtime.main()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:302 +0x427 fp=0x2c8c5b8a2fe0 sp=0x2c8c5b8a2eb8 pc=0x44ea07
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2c8c5b8a2fe8 sp=0x2c8c5b8a2fe0 pc=0x48c941
+        
+        goroutine 2 gp=0x2c8c5b842780 m=nil [force gc (idle)]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x2c8c5b87cfa8 sp=0x2c8c5b87cf88 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.forcegchelper()
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:387 +0xb3 fp=0x2c8c5b87cfe0 sp=0x2c8c5b87cfa8 pc=0x44ecd3
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2c8c5b87cfe8 sp=0x2c8c5b87cfe0 pc=0x48c941
+        created by runtime.init.7 in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:375 +0x1a
+        
+        goroutine 3 gp=0x2c8c5b842d20 m=nil [GC sweep wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x2c8c5b87d788 sp=0x2c8c5b87d768 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.bgsweep(0x2c8c5b860280)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcsweep.go:279 +0x94 fp=0x2c8c5b87d7c8 sp=0x2c8c5b87d788 pc=0x4381b4
+        runtime.gcenable.gowrap1()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x17 fp=0x2c8c5b87d7e0 sp=0x2c8c5b87d7c8 pc=0x47d077
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2c8c5b87d7e8 sp=0x2c8c5b87d7e0 pc=0x48c941
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x66
+        
+        goroutine 4 gp=0x2c8c5b842f00 m=nil [GC scavenge wait]:
+        runtime.gopark(0x2c8c5b860280?, 0x562710?, 0x1?, 0x0?, 0x2c8c5b842f00?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x2c8c5b87df78 sp=0x2c8c5b87df58 pc=0x4864aa
+        runtime.goparkunlock(...)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480
+        runtime.(*scavengerState).park(0x6fb300)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:425 +0x49 fp=0x2c8c5b87dfa8 sp=0x2c8c5b87df78 pc=0x435d69
+        runtime.bgscavenge(0x2c8c5b860280)
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:653 +0x3c fp=0x2c8c5b87dfc8 sp=0x2c8c5b87dfa8 pc=0x4362bc
+        runtime.gcenable.gowrap2()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0x17 fp=0x2c8c5b87dfe0 sp=0x2c8c5b87dfc8 pc=0x47d037
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2c8c5b87dfe8 sp=0x2c8c5b87dfe0 pc=0x48c941
+        created by runtime.gcenable in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0xa5
+        
+        goroutine 17 gp=0x2c8c5b922000 m=nil [finalizer wait]:
+        runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)
+        	/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x2c8c5b878620 sp=0x2c8c5b878600 pc=0x4864aa
+        runtime.runFinalizers()
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:210 +0x107 fp=0x2c8c5b8787e0 sp=0x2c8c5b878620 pc=0x429367
+        runtime.goexit({})
+        	/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2c8c5b8787e8 sp=0x2c8c5b8787e0 pc=0x48c941
+        created by runtime.createfing in goroutine 1
+        	/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:172 +0x3d
+        [exit status 2]
+        # Using -json doesn't affect the exit status. (1.743s)
+        > ! go test -json ./zero
+        [stdout]
+        {"Time":"2026-10-03T06:13:36.851895186Z","Action":"start","Package":"m/zero"}
+        {"Time":"2026-10-03T06:13:36.867467405Z","Action":"run","Package":"m/zero","Test":"TestExitZero"}
+        {"Time":"2026-10-03T06:13:36.867800035Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"=== RUN   TestExitZero\n","OutputType":"frame"}
+        {"Time":"2026-10-03T06:13:36.867847706Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"--- FAIL: TestExitZero (0.00s)\n","OutputType":"frame"}
+        {"Time":"2026-10-03T06:13:36.881028507Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"panic: unexpected call to os.Exit(0) during test [recovered, repanicked]\n"}
+        {"Time":"2026-10-03T06:13:36.88108375Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\n"}
+        {"Time":"2026-10-03T06:13:36.881088577Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"goroutine 18 gp=0x230a5fc221e0 m=0 mp=0x6fc620 [running]:\n"}
+        {"Time":"2026-10-03T06:13:36.881092453Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"panic({0x6b5988?, 0x5631b0?})\n"}
+        {"Time":"2026-10-03T06:13:36.881096409Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/panic.go:878 +0x159 fp=0x230a5fb82c48 sp=0x230a5fb82ba0 pc=0x485ff9\n"}
+        {"Time":"2026-10-03T06:13:36.881105072Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"testing.tRunner.func1.2({0x6b5988, 0x5631b0})\n"}
+        {"Time":"2026-10-03T06:13:36.881109128Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2123 +0x232 fp=0x230a5fb82cf8 sp=0x230a5fb82c48 pc=0x4f3592\n"}
+        {"Time":"2026-10-03T06:13:36.881113955Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"testing.tRunner.func1()\n"}
+        {"Time":"2026-10-03T06:13:36.881119744Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2126 +0x329 fp=0x230a5fb82e90 sp=0x230a5fb82cf8 pc=0x4f2f49\n"}
+        {"Time":"2026-10-03T06:13:36.881122658Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"panic({0x6b5988?, 0x5631b0?})\n"}
+        {"Time":"2026-10-03T06:13:36.881126804Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/panic.go:859 +0x125 fp=0x230a5fb82f38 sp=0x230a5fb82e90 pc=0x485fc5\n"}
+        {"Time":"2026-10-03T06:13:36.88113044Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"os.Exit(0x0)\n"}
+        {"Time":"2026-10-03T06:13:36.881133835Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/os/proc.go:67 +0x51 fp=0x230a5fb82f58 sp=0x230a5fb82f38 pc=0x4ae1d1\n"}
+        {"Time":"2026-10-03T06:13:36.8811372Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"m/zero.TestExitZero(0x230a5fc4c248?)\n"}
+        {"Time":"2026-10-03T06:13:36.881141857Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/gopath/src/zero/zero_test.go:9 +0x15 fp=0x230a5fb82f70 sp=0x230a5fb82f58 pc=0x543375\n"}
+        {"Time":"2026-10-03T06:13:36.881147555Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"testing.tRunner(0x230a5fc4c248, 0x6d6188)\n"}
+        {"Time":"2026-10-03T06:13:36.881152212Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x230a5fb82fc0 sp=0x230a5fb82f70 pc=0x4edd4a\n"}
+        {"Time":"2026-10-03T06:13:36.881155988Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"testing.(*T).Run.gowrap1()\n"}
+        {"Time":"2026-10-03T06:13:36.881159994Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x1b fp=0x230a5fb82fe0 sp=0x230a5fb82fc0 pc=0x4f36bb\n"}
+        {"Time":"2026-10-03T06:13:36.881165202Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Time":"2026-10-03T06:13:36.881169458Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x230a5fb82fe8 sp=0x230a5fb82fe0 pc=0x48c941\n"}
+        {"Time":"2026-10-03T06:13:36.881173675Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"created by testing.(*T).Run in goroutine 1\n"}
+        {"Time":"2026-10-03T06:13:36.881177841Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x4d4\n"}
+        {"Time":"2026-10-03T06:13:36.881181606Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\n"}
+        {"Time":"2026-10-03T06:13:36.881193655Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"goroutine 1 gp=0x230a5fb241e0 m=nil [chan receive]:\n"}
+        {"Time":"2026-10-03T06:13:36.881197Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.gopark(0x6d5068?, 0x7ac501081b88?, 0x48?, 0x69?, 0x6b5988?)\n"}
+        {"Time":"2026-10-03T06:13:36.881201546Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x230a5fb86908 sp=0x230a5fb868e8 pc=0x4864aa\n"}
+        {"Time":"2026-10-03T06:13:36.881205502Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.chanrecv(0x230a5fc46100, 0x230a5fb869ef, 0x1)\n"}
+        {"Time":"2026-10-03T06:13:36.881209518Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/chan.go:667 +0x4ae fp=0x230a5fb86980 sp=0x230a5fb86908 pc=0x41622e\n"}
+        {"Time":"2026-10-03T06:13:36.881213634Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.chanrecv1(0x18?, 0x6c2e08?)\n"}
+        {"Time":"2026-10-03T06:13:36.881217801Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/chan.go:509 +0x12 fp=0x230a5fb869a8 sp=0x230a5fb86980 pc=0x415d72\n"}
+        {"Time":"2026-10-03T06:13:36.881221787Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"testing.(*T).Run(0x230a5fc4c008, {0x555e04?, 0x230a5fb86aa0?}, 0x6d6188)\n"}
+        {"Time":"2026-10-03T06:13:36.881226113Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2266 +0x4f2 fp=0x230a5fb86a80 sp=0x230a5fb869a8 pc=0x4ee2b2\n"}
+        {"Time":"2026-10-03T06:13:36.881236639Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"testing.runTests.func1(0x230a5fc4c008)\n"}
+        {"Time":"2026-10-03T06:13:36.881241146Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2742 +0x37 fp=0x230a5fb86ac0 sp=0x230a5fb86a80 pc=0x4f3937\n"}
+        {"Time":"2026-10-03T06:13:36.88124423Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"testing.tRunner(0x230a5fc4c008, 0x230a5fb86bc8)\n"}
+        {"Time":"2026-10-03T06:13:36.881248026Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x230a5fb86b10 sp=0x230a5fb86ac0 pc=0x4edd4a\n"}
+        {"Time":"2026-10-03T06:13:36.881252473Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"testing.runTests({0x554000, 0x1}, {0x554562, 0x6}, 0x230a5fc08330, {0x6f08e8, 0x1, 0x1}, {0xc2a845ba33b18f6e, 0x8bb2ce4ba1, ...})\n"}
+        {"Time":"2026-10-03T06:13:36.88125723Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2740 +0x510 fp=0x230a5fb86bf8 sp=0x230a5fb86b10 pc=0x4f0290\n"}
+        {"Time":"2026-10-03T06:13:36.881260285Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"testing.(*M).Run(0x230a5fc06780)\n"}
+        {"Time":"2026-10-03T06:13:36.88126375Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2600 +0x6af fp=0x230a5fb86e38 sp=0x230a5fb86bf8 pc=0x4eee4f\n"}
+        {"Time":"2026-10-03T06:13:36.881267035Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"main.main()\n"}
+        {"Time":"2026-10-03T06:13:36.88127029Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t_testmain.go:46 +0x9b fp=0x230a5fb86eb8 sp=0x230a5fb86e38 pc=0x5434bb\n"}
+        {"Time":"2026-10-03T06:13:36.881273294Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.main()\n"}
+        {"Time":"2026-10-03T06:13:36.881276809Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:302 +0x427 fp=0x230a5fb86fe0 sp=0x230a5fb86eb8 pc=0x44ea07\n"}
+        {"Time":"2026-10-03T06:13:36.881279844Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Time":"2026-10-03T06:13:36.88128389Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x230a5fb86fe8 sp=0x230a5fb86fe0 pc=0x48c941\n"}
+        {"Time":"2026-10-03T06:13:36.881287575Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\n"}
+        {"Time":"2026-10-03T06:13:36.88129058Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"goroutine 2 gp=0x230a5fb24780 m=nil [force gc (idle)]:\n"}
+        {"Time":"2026-10-03T06:13:36.881293655Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)\n"}
+        {"Time":"2026-10-03T06:13:36.881297601Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x230a5fb5efa8 sp=0x230a5fb5ef88 pc=0x4864aa\n"}
+        {"Time":"2026-10-03T06:13:36.881300375Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.goparkunlock(...)\n"}
+        {"Time":"2026-10-03T06:13:36.881303279Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480\n"}
+        {"Time":"2026-10-03T06:13:36.881306133Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.forcegchelper()\n"}
+        {"Time":"2026-10-03T06:13:36.881309819Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:387 +0xb3 fp=0x230a5fb5efe0 sp=0x230a5fb5efa8 pc=0x44ecd3\n"}
+        {"Time":"2026-10-03T06:13:36.881313995Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Time":"2026-10-03T06:13:36.881479764Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x230a5fb5efe8 sp=0x230a5fb5efe0 pc=0x48c941\n"}
+        {"Time":"2026-10-03T06:13:36.881484852Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"created by runtime.init.7 in goroutine 1\n"}
+        {"Time":"2026-10-03T06:13:36.881488016Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:375 +0x1a\n"}
+        {"Time":"2026-10-03T06:13:36.881492243Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\n"}
+        {"Time":"2026-10-03T06:13:36.881495227Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"goroutine 3 gp=0x230a5fb24d20 m=nil [GC sweep wait]:\n"}
+        {"Time":"2026-10-03T06:13:36.881498262Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)\n"}
+        {"Time":"2026-10-03T06:13:36.881503139Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x230a5fb5f788 sp=0x230a5fb5f768 pc=0x4864aa\n"}
+        {"Time":"2026-10-03T06:13:36.881506153Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.goparkunlock(...)\n"}
+        {"Time":"2026-10-03T06:13:36.881509969Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480\n"}
+        {"Time":"2026-10-03T06:13:36.881512834Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.bgsweep(0x230a5fb40280)\n"}
+        {"Time":"2026-10-03T06:13:36.881516169Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgcsweep.go:279 +0x94 fp=0x230a5fb5f7c8 sp=0x230a5fb5f788 pc=0x4381b4\n"}
+        {"Time":"2026-10-03T06:13:36.881519033Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.gcenable.gowrap1()\n"}
+        {"Time":"2026-10-03T06:13:36.881522208Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x17 fp=0x230a5fb5f7e0 sp=0x230a5fb5f7c8 pc=0x47d077\n"}
+        {"Time":"2026-10-03T06:13:36.881524942Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Time":"2026-10-03T06:13:36.881528046Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x230a5fb5f7e8 sp=0x230a5fb5f7e0 pc=0x48c941\n"}
+        {"Time":"2026-10-03T06:13:36.881530951Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"created by runtime.gcenable in goroutine 1\n"}
+        {"Time":"2026-10-03T06:13:36.881533875Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x66\n"}
+        {"Time":"2026-10-03T06:13:36.881536379Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\n"}
+        {"Time":"2026-10-03T06:13:36.881549919Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"goroutine 4 gp=0x230a5fb24f00 m=nil [GC scavenge wait]:\n"}
+        {"Time":"2026-10-03T06:13:36.881553414Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.gopark(0x230a5fb40280?, 0x562710?, 0x1?, 0x0?, 0x230a5fb24f00?)\n"}
+        {"Time":"2026-10-03T06:13:36.881556739Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x230a5fb5ff78 sp=0x230a5fb5ff58 pc=0x4864aa\n"}
+        {"Time":"2026-10-03T06:13:36.881559453Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.goparkunlock(...)\n"}
+        {"Time":"2026-10-03T06:13:36.881563399Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480\n"}
+        {"Time":"2026-10-03T06:13:36.881566194Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.(*scavengerState).park(0x6fb300)\n"}
+        {"Time":"2026-10-03T06:13:36.881569398Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:425 +0x49 fp=0x230a5fb5ffa8 sp=0x230a5fb5ff78 pc=0x435d69\n"}
+        {"Time":"2026-10-03T06:13:36.881572233Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.bgscavenge(0x230a5fb40280)\n"}
+        {"Time":"2026-10-03T06:13:36.881576269Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:653 +0x3c fp=0x230a5fb5ffc8 sp=0x230a5fb5ffa8 pc=0x4362bc\n"}
+        {"Time":"2026-10-03T06:13:36.881578983Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.gcenable.gowrap2()\n"}
+        {"Time":"2026-10-03T06:13:36.881582077Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0x17 fp=0x230a5fb5ffe0 sp=0x230a5fb5ffc8 pc=0x47d037\n"}
+        {"Time":"2026-10-03T06:13:36.881584731Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Time":"2026-10-03T06:13:36.881587826Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x230a5fb5ffe8 sp=0x230a5fb5ffe0 pc=0x48c941\n"}
+        {"Time":"2026-10-03T06:13:36.88159068Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"created by runtime.gcenable in goroutine 1\n"}
+        {"Time":"2026-10-03T06:13:36.881593615Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0xa5\n"}
+        {"Time":"2026-10-03T06:13:36.881596159Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\n"}
+        {"Time":"2026-10-03T06:13:36.881598863Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"goroutine 17 gp=0x230a5fc22000 m=nil [runnable]:\n"}
+        {"Time":"2026-10-03T06:13:36.881601657Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.runFinalizers()\n"}
+        {"Time":"2026-10-03T06:13:36.881604892Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:193 fp=0x230a5fb5a7e0 sp=0x230a5fb5a7d8 pc=0x429260\n"}
+        {"Time":"2026-10-03T06:13:36.881608006Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Time":"2026-10-03T06:13:36.881611191Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x230a5fb5a7e8 sp=0x230a5fb5a7e0 pc=0x48c941\n"}
+        {"Time":"2026-10-03T06:13:36.8816171Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"created by runtime.createfing in goroutine 1\n"}
+        {"Time":"2026-10-03T06:13:36.881620916Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:172 +0x3d\n"}
+        {"Time":"2026-10-03T06:13:36.890131468Z","Action":"fail","Package":"m/zero","Test":"TestExitZero","Elapsed":0}
+        {"Time":"2026-10-03T06:13:36.890171638Z","Action":"output","Package":"m/zero","Output":"FAIL\tm/zero\t0.038s\n","OutputType":"frame"}
+        {"Time":"2026-10-03T06:13:36.890187992Z","Action":"fail","Package":"m/zero","Elapsed":0.038}
+        [exit status 1]
+        > ! stdout '"Output":"ok'
+        > ! stdout 'exit status'
+        > stdout 'panic'
+        matched: {"Time":"2026-10-03T06:13:36.881028507Z","Action":"output","Package":"m/zero","Test":"TestExitZero","Output":"panic: unexpected call to os.Exit(0) during test [recovered, repanicked]\n"}
+        > stdout '"Output":"FAIL'
+        matched: {"Time":"2026-10-03T06:13:36.890171638Z","Action":"output","Package":"m/zero","Output":"FAIL\tm/zero\t0.038s\n","OutputType":"frame"}
+        # Running the test via test2json also fails. (5.532s)
+        > ! go tool test2json ./zero.exe -test.v -test.paniconexit0
+        [stdout]
+        {"Action":"start"}
+        {"Action":"run","Test":"TestExitZero"}
+        {"Action":"output","Test":"TestExitZero","Output":"=== RUN   TestExitZero\n","OutputType":"frame"}
+        {"Action":"output","Test":"TestExitZero","Output":"--- FAIL: TestExitZero (0.00s)\n","OutputType":"frame"}
+        {"Action":"output","Test":"TestExitZero","Output":"panic: unexpected call to os.Exit(0) during test [recovered, repanicked]\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"goroutine 18 gp=0x2fd72ea221e0 m=0 mp=0x6fc620 [running]:\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"panic({0x6b5988?, 0x5631b0?})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/panic.go:878 +0x159 fp=0x2fd72e9cac48 sp=0x2fd72e9caba0 pc=0x485ff9\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"testing.tRunner.func1.2({0x6b5988, 0x5631b0})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2123 +0x232 fp=0x2fd72e9cacf8 sp=0x2fd72e9cac48 pc=0x4f3592\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"testing.tRunner.func1()\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2126 +0x329 fp=0x2fd72e9cae90 sp=0x2fd72e9cacf8 pc=0x4f2f49\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"panic({0x6b5988?, 0x5631b0?})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/panic.go:859 +0x125 fp=0x2fd72e9caf38 sp=0x2fd72e9cae90 pc=0x485fc5\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"os.Exit(0x0)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/os/proc.go:67 +0x51 fp=0x2fd72e9caf58 sp=0x2fd72e9caf38 pc=0x4ae1d1\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"m/zero.TestExitZero(0x2fd72ea48248?)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-1144328551/tmpdir485001602/test_exit4245037660/gopath/src/zero/zero_test.go:9 +0x15 fp=0x2fd72e9caf70 sp=0x2fd72e9caf58 pc=0x543375\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"testing.tRunner(0x2fd72ea48248, 0x6d6190)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x2fd72e9cafc0 sp=0x2fd72e9caf70 pc=0x4edd4a\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"testing.(*T).Run.gowrap1()\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x1b fp=0x2fd72e9cafe0 sp=0x2fd72e9cafc0 pc=0x4f36bb\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2fd72e9cafe8 sp=0x2fd72e9cafe0 pc=0x48c941\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"created by testing.(*T).Run in goroutine 1\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2258 +0x4d4\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"goroutine 1 gp=0x2fd72e9681e0 m=nil [chan receive]:\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.gopark(0x6d5068?, 0x78d9c4ec1cc8?, 0xcf?, 0x62?, 0x6b5988?)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x2fd72e9ce908 sp=0x2fd72e9ce8e8 pc=0x4864aa\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.chanrecv(0x2fd72ea46100, 0x2fd72e9ce9ef, 0x1)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/chan.go:667 +0x4ae fp=0x2fd72e9ce980 sp=0x2fd72e9ce908 pc=0x41622e\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.chanrecv1(0x18?, 0x6c2e08?)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/chan.go:509 +0x12 fp=0x2fd72e9ce9a8 sp=0x2fd72e9ce980 pc=0x415d72\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"testing.(*T).Run(0x2fd72ea48008, {0x555e04?, 0x2fd72e9ceaa0?}, 0x6d6190)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2266 +0x4f2 fp=0x2fd72e9cea80 sp=0x2fd72e9ce9a8 pc=0x4ee2b2\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"testing.runTests.func1(0x2fd72ea48008)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2742 +0x37 fp=0x2fd72e9ceac0 sp=0x2fd72e9cea80 pc=0x4f3937\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"testing.tRunner(0x2fd72ea48008, 0x2fd72e9cebc8)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2193 +0xea fp=0x2fd72e9ceb10 sp=0x2fd72e9ceac0 pc=0x4edd4a\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"testing.runTests({0x554000, 0x1}, {0x554562, 0x6}, 0x2fd72ea08330, {0x6f08e8, 0x1, 0x1}, {0x0, 0x0, ...})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2740 +0x510 fp=0x2fd72e9cebf8 sp=0x2fd72e9ceb10 pc=0x4f0290\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"testing.(*M).Run(0x2fd72ea06640)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/testing/testing.go:2600 +0x6af fp=0x2fd72e9cee38 sp=0x2fd72e9cebf8 pc=0x4eee4f\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"main.main()\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t_testmain.go:46 +0x9b fp=0x2fd72e9ceeb8 sp=0x2fd72e9cee38 pc=0x5434bb\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.main()\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:302 +0x427 fp=0x2fd72e9cefe0 sp=0x2fd72e9ceeb8 pc=0x44ea07\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2fd72e9cefe8 sp=0x2fd72e9cefe0 pc=0x48c941\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"goroutine 2 gp=0x2fd72e968780 m=nil [force gc (idle)]:\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x2fd72e9a6fa8 sp=0x2fd72e9a6f88 pc=0x4864aa\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.goparkunlock(...)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.forcegchelper()\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:387 +0xb3 fp=0x2fd72e9a6fe0 sp=0x2fd72e9a6fa8 pc=0x44ecd3\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2fd72e9a6fe8 sp=0x2fd72e9a6fe0 pc=0x48c941\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"created by runtime.init.7 in goroutine 1\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:375 +0x1a\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"goroutine 3 gp=0x2fd72e968d20 m=nil [GC sweep wait]:\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.gopark(0x0?, 0x0?, 0x0?, 0x0?, 0x0?)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x2fd72e9a7788 sp=0x2fd72e9a7768 pc=0x4864aa\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.goparkunlock(...)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.bgsweep(0x2fd72e986280)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgcsweep.go:279 +0x94 fp=0x2fd72e9a77c8 sp=0x2fd72e9a7788 pc=0x4381b4\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.gcenable.gowrap1()\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x17 fp=0x2fd72e9a77e0 sp=0x2fd72e9a77c8 pc=0x47d077\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2fd72e9a77e8 sp=0x2fd72e9a77e0 pc=0x48c941\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"created by runtime.gcenable in goroutine 1\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:214 +0x66\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"goroutine 4 gp=0x2fd72e968f00 m=nil [GC scavenge wait]:\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.gopark(0x2fd72e986280?, 0x562710?, 0x1?, 0x0?, 0x2fd72e968f00?)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:474 +0xca fp=0x2fd72e9a7f78 sp=0x2fd72e9a7f58 pc=0x4864aa\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.goparkunlock(...)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/proc.go:480\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.(*scavengerState).park(0x6fb300)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:425 +0x49 fp=0x2fd72e9a7fa8 sp=0x2fd72e9a7f78 pc=0x435d69\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.bgscavenge(0x2fd72e986280)\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgcscavenge.go:653 +0x3c fp=0x2fd72e9a7fc8 sp=0x2fd72e9a7fa8 pc=0x4362bc\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.gcenable.gowrap2()\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0x17 fp=0x2fd72e9a7fe0 sp=0x2fd72e9a7fc8 pc=0x47d037\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2fd72e9a7fe8 sp=0x2fd72e9a7fe0 pc=0x48c941\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"created by runtime.gcenable in goroutine 1\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mgc.go:215 +0xa5\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"goroutine 17 gp=0x2fd72ea22000 m=nil [runnable]:\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.runFinalizers()\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:193 fp=0x2fd72e9a27e0 sp=0x2fd72e9a27d8 pc=0x429260\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"runtime.goexit({})\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/asm_amd64.s:1264 +0x1 fp=0x2fd72e9a27e8 sp=0x2fd72e9a27e0 pc=0x48c941\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"created by runtime.createfing in goroutine 1\n"}
+        {"Action":"output","Test":"TestExitZero","Output":"\t/home/hatch/tools/go-1.27.1/src/runtime/mfinal.go:172 +0x3d\n"}
+        {"Action":"fail","Test":"TestExitZero"}
+        [exit status 1]
+        > ! stdout '"Output":"ok'
+        > ! stdout 'exit status'
+        > stdout 'panic'
+        matched: {"Action":"output","Test":"TestExitZero","Output":"panic: unexpected call to os.Exit(0) during test [recovered, repanicked]\n"}
+--- PASS: TestScript (0.11s)
+    --- PASS: TestScript/test_exit (24.51s)
+PASS

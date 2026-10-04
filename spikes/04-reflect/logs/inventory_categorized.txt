@@ -1,0 +1,278 @@
+TD    | abi.go:224: tt := (*arrayType)(unsafe.Pointer(t))
+TD    | abi.go:237: st := (*structType)(unsafe.Pointer(t))
+TP    | abi.go:473: func intFromReg(r *abi.RegArgs, reg int, argSize uintptr, to unsafe.Pointer) {
+TP    | abi.go:480: func intToReg(r *abi.RegArgs, reg int, argSize uintptr, from unsafe.Pointer) {
+TP    | abi.go:487: func floatFromReg(r *abi.RegArgs, reg int, argSize uintptr, to unsafe.Pointer) {
+RW    | abi.go:492: *(*float64)(to) = *(*float64)(unsafe.Pointer(&r.Floats[reg]))
+TP    | abi.go:501: func floatToReg(r *abi.RegArgs, reg int, argSize uintptr, from unsafe.Pointer) {
+TP    | badlinkname.go:130: func badlinkname_Value_pointer(Value) unsafe.Pointer
+TP    | deepequal.go:19: a1  unsafe.Pointer
+TP    | deepequal.go:20: a2  unsafe.Pointer
+TP    | deepequal.go:63: ptrval := func(v Value) unsafe.Pointer {
+RW    | float32reg_generic.go:18: return *(*float32)(unsafe.Pointer(&i))
+RW    | float32reg_generic.go:22: return uint64(*(*uint32)(unsafe.Pointer(&val)))
+TD    | makefunc.go:54: ftyp := (*funcType)(unsafe.Pointer(t))
+TP    | makefunc.go:72: return Value{t, unsafe.Pointer(impl), flag(Func)}
+TD    | makefunc.go:109: ftyp := (*funcType)(unsafe.Pointer(v.Type().(*rtype)))
+TP    | makefunc.go:131: return Value{ftyp.Common(), unsafe.Pointer(fv), v.flag&flagRO | flag(Func)}
+CF    | makefunc.go:173: ptr := (*uintptr)(add(unsafe.Pointer(unsafe.SliceData(args.Ptrs[:])), uintptr(i)*goarch.PtrSize, "always in [0:IntArgRegs]"))
+TD    | map.go:20: tt := (*abi.MapType)(unsafe.Pointer(t))
+TD    | map.go:49: mt := (*abi.MapType)(unsafe.Pointer(tt))
+IF    | map.go:61: var imap any = (map[unsafe.Pointer]unsafe.Pointer)(nil)
+IF    | map.go:62: mt := **(**abi.MapType)(unsafe.Pointer(&imap))
+TP    | map.go:69: mt.Hasher = func(p unsafe.Pointer, seed uintptr) uintptr {
+TD    | map.go:184: tt := (*abi.MapType)(unsafe.Pointer(v.typ()))
+TP    | map.go:194: var e unsafe.Pointer
+TP    | map.go:200: var k unsafe.Pointer
+AD    | map.go:204: k = unsafe.Pointer(&key.ptr)
+RC    | map.go:223: race.ReadPC(unsafe.Pointer(m), callerpc, abi.FuncPCABIInternal(mapIterStart))
+RC    | map.go:236: race.ReadPC(unsafe.Pointer(it.Map()), callerpc, abi.FuncPCABIInternal(mapIterNext))
+TD    | map.go:248: tt := (*abi.MapType)(unsafe.Pointer(v.typ()))
+TD    | map.go:297: t := (*abi.MapType)(unsafe.Pointer(iter.m.typ()))
+TP    | map.go:317: var target unsafe.Pointer
+TD    | map.go:322: t := (*abi.MapType)(unsafe.Pointer(iter.m.typ()))
+TD    | map.go:341: t := (*abi.MapType)(unsafe.Pointer(iter.m.typ()))
+TP    | map.go:361: var target unsafe.Pointer
+TD    | map.go:366: t := (*abi.MapType)(unsafe.Pointer(iter.m.typ()))
+TD    | map.go:383: t := (*abi.MapType)(unsafe.Pointer(iter.m.typ()))
+TD    | map.go:443: tt := (*abi.MapType)(unsafe.Pointer(v.typ()))
+TP    | map.go:453: var e unsafe.Pointer
+AD    | map.go:457: e = unsafe.Pointer(&elem.ptr)
+TP    | map.go:464: var k unsafe.Pointer
+AD    | map.go:468: k = unsafe.Pointer(&key.ptr)
+TP    | map.go:476: var e unsafe.Pointer
+AD    | map.go:480: e = unsafe.Pointer(&elem.ptr)
+RW    | swapper.go:42: ps := *(*[]unsafe.Pointer)(v.ptr)
+RW    | type.go:455: copy((*[4]byte)(unsafe.Pointer(&nameOff))[:], (*[4]byte)(unsafe.Pointer(n.DataChecked(off, "name offset field")))[:])
+TD-R  | type.go:456: pkgPathName := abi.Name{Bytes: (*byte)(resolveTypeOff(unsafe.Pointer(n.Bytes), nameOff))}
+TP    | type.go:534: func resolveNameOff(ptrInModule unsafe.Pointer, off int32) unsafe.Pointer
+TP    | type.go:541: func resolveTypeOff(rtype unsafe.Pointer, off int32) unsafe.Pointer
+TP    | type.go:548: func resolveTextOff(rtype unsafe.Pointer, off int32) unsafe.Pointer
+TP    | type.go:564: func addReflectOff(ptr unsafe.Pointer) int32
+TD-R  | type.go:569: return aNameOff(addReflectOff(unsafe.Pointer(n.Bytes)))
+TD-R  | type.go:575: return aTypeOff(addReflectOff(unsafe.Pointer(t)))
+TP    | type.go:581: func resolveReflectText(ptr unsafe.Pointer) aTextOff {
+TD-R  | type.go:586: return abi.Name{Bytes: (*byte)(resolveNameOff(unsafe.Pointer(t), int32(off)))}
+TD-R  | type.go:590: return (*abi.Type)(resolveTypeOff(unsafe.Pointer(t), int32(off)))
+TP    | type.go:593: func (t *rtype) textOff(off aTextOff) unsafe.Pointer {
+TD-R  | type.go:594: return resolveTextOff(unsafe.Pointer(t), int32(off))
+TP    | type.go:597: func textOffFor(t *abi.Type, off aTextOff) unsafe.Pointer {
+TD    | type.go:638: tt := (*interfaceType)(unsafe.Pointer(t))
+TD    | type.go:646: tt := (*interfaceType)(unsafe.Pointer(t))
+TD    | type.go:658: ft := (*funcType)(unsafe.Pointer(mtyp))
+AD    | type.go:671: fn := unsafe.Pointer(&tfn)
+TD    | type.go:680: tt := (*interfaceType)(unsafe.Pointer(t))
+TD    | type.go:752: tt := (*abi.ChanType)(unsafe.Pointer(t))
+TD    | type.go:757: return (*rtype)(unsafe.Pointer(t))
+TD    | type.go:776: tt := (*structType)(unsafe.Pointer(t))
+TD    | type.go:784: tt := (*structType)(unsafe.Pointer(t))
+TD    | type.go:792: tt := (*structType)(unsafe.Pointer(t))
+TD    | type.go:800: tt := (*structType)(unsafe.Pointer(t))
+TD    | type.go:808: tt := (*arrayType)(unsafe.Pointer(t))
+TD    | type.go:816: tt := (*structType)(unsafe.Pointer(t))
+TD    | type.go:824: tt := (*abi.FuncType)(unsafe.Pointer(t))
+TD    | type.go:832: tt := (*abi.FuncType)(unsafe.Pointer(t))
+TD    | type.go:840: tt := (*abi.FuncType)(unsafe.Pointer(t))
+TD    | type.go:848: tt := (*abi.FuncType)(unsafe.Pointer(t))
+TD    | type.go:856: tt := (*abi.FuncType)(unsafe.Pointer(t))
+TP    | type.go:1011: func add(p unsafe.Pointer, x uintptr, whySafe string) unsafe.Pointer {
+PA    | type.go:1012: return unsafe.Pointer(uintptr(p) + x)
+AD    | type.go:1187: p := unsafe.Pointer(&(*staticuint64s)[i])
+AL    | type.go:1188: if unsafe.Sizeof(int(0)) == 4 && goarch.BigEndian {
+PA    | type.go:1189: p = unsafe.Add(p, 4)
+RW    | type.go:1191: f.Index = unsafe.Slice((*int)(p), 1)
+TD    | type.go:1318: styp := (*structType)(unsafe.Pointer(ntyp))
+TD    | type.go:1416: p := (*ptrType)(unsafe.Pointer(tt))
+IF    | type.go:1426: var iptr any = (*unsafe.Pointer)(nil)
+IF    | type.go:1427: prototype := *(**ptrType)(unsafe.Pointer(&iptr))
+TD    | type.go:1492: t := (*interfaceType)(unsafe.Pointer(T))
+TD    | type.go:1510: v := (*interfaceType)(unsafe.Pointer(V))
+TD    | type.go:1646: t := (*funcType)(unsafe.Pointer(T))
+TD    | type.go:1647: v := (*funcType)(unsafe.Pointer(V))
+TD    | type.go:1664: t := (*interfaceType)(unsafe.Pointer(T))
+TD    | type.go:1665: v := (*interfaceType)(unsafe.Pointer(V))
+TD    | type.go:1680: t := (*structType)(unsafe.Pointer(T))
+TD    | type.go:1681: v := (*structType)(unsafe.Pointer(V))
+TP    | type.go:1735: func rtypeOff(section unsafe.Pointer, off int32) *abi.Type {
+TD    | type.go:1859: ch := (*chanType)(unsafe.Pointer(tt))
+IF    | type.go:1867: var ichan any = (chan unsafe.Pointer)(nil)
+IF    | type.go:1868: prototype := *(**chanType)(unsafe.Pointer(&ichan))
+IF    | type.go:1922: prototype := *(**funcType)(unsafe.Pointer(&ifunc))
+TD    | type.go:1930: ft := (*funcType)(unsafe.Pointer(o.Field(0).Addr().Pointer()))
+RW    | type.go:1931: args := unsafe.Slice((**rtype)(unsafe.Pointer(o.Field(1).Addr().Pointer())), n)[0:0:n]
+TD    | type.go:2015: repr = append(repr, stringFor((*sliceType)(unsafe.Pointer(t)).Elem)...)
+TD    | type.go:2048: tt := (*arrayType)(unsafe.Pointer(t))
+TD    | type.go:2051: tt := (*structType)(unsafe.Pointer(t))
+TD    | type.go:2075: tt := (*arrayType)(unsafe.Pointer(t))
+TD    | type.go:2078: tt := (*structType)(unsafe.Pointer(t))
+TD    | type.go:2097: tt := (*arrayType)(unsafe.Pointer(t))
+TD    | type.go:2100: tt := (*structType)(unsafe.Pointer(t))
+TD    | type.go:2143: slice := (*sliceType)(unsafe.Pointer(tt))
+IF    | type.go:2151: var islice any = ([]unsafe.Pointer)(nil)
+IF    | type.go:2152: prototype := *(**sliceType)(unsafe.Pointer(&islice))
+TD    | type.go:2309: ift := (*interfaceType)(unsafe.Pointer(ft))
+FP    | type.go:2316: fnStub := resolveReflectText(unsafe.Pointer(abi.FuncPCABIInternal(embeddedIfaceMethStub)))
+TD    | type.go:2325: ptr := (*ptrType)(unsafe.Pointer(ft))
+AL    | type.go:2472: ut.Moff = uint32(unsafe.Sizeof(uncommonType{}))
+IF    | type.go:2490: prototype := *(**structType)(unsafe.Pointer(&istruct))
+AD    | type.go:2564: typ.GCData = (*byte)(unsafe.Pointer(new(uintptr)))
+TP    | type.go:2572: typ.Equal = func(p, q unsafe.Pointer) bool {
+TD    | type.go:2630: st := (*structType)(unsafe.Pointer(t))
+TD    | type.go:2672: array := (*arrayType)(unsafe.Pointer(tt))
+IF    | type.go:2680: var iarray any = [1]unsafe.Pointer{}
+IF    | type.go:2681: prototype := *(**arrayType)(unsafe.Pointer(&iarray))
+AD    | type.go:2733: array.GCData = (*byte)(unsafe.Pointer(new(uintptr)))
+TP    | type.go:2744: array.Equal = func(p, q unsafe.Pointer) bool {
+TD    | type.go:2943: tt := (*arrayType)(unsafe.Pointer(t))
+TD    | type.go:2950: tt := (*structType)(unsafe.Pointer(t))
+TP    | value.go:47: ptr unsafe.Pointer
+TD    | value.go:106: return (*abi.Type)(abi.NoEscape(unsafe.Pointer(v.typ_)))
+TP    | value.go:112: func (v Value) pointer() unsafe.Pointer {
+RW    | value.go:117: return *(*unsafe.Pointer)(v.ptr)
+IF    | value.go:124: return *(*any)(unsafe.Pointer(&abi.EmptyInterface{
+TP    | value.go:132: func packEfaceData(v Value) unsafe.Pointer {
+RW    | value.go:150: return *(*unsafe.Pointer)(v.ptr)
+IF    | value.go:159: e := (*abi.EmptyInterface)(unsafe.Pointer(&i))
+TP    | value.go:209: word unsafe.Pointer
+TD    | value.go:322: n := int((*arrayType)(unsafe.Pointer(v.typ())).Len)
+RW    | value.go:323: return unsafe.Slice(p, n)
+TD    | value.go:392: t := (*funcType)(unsafe.Pointer(v.typ()))
+TP    | value.go:394: fn       unsafe.Pointer
+RW    | value.go:402: fn = *(*unsafe.Pointer)(v.ptr)
+TP    | value.go:476: var stackArgs unsafe.Pointer
+TP    | value.go:479: stackArgs = framePool.Get().(unsafe.Pointer)
+CF    | value.go:505: storeRcvr(rcvr, unsafe.Pointer(&regArgs.Ptrs[st.ireg]))
+CF    | value.go:508: storeRcvr(rcvr, unsafe.Pointer(&regArgs.Ints[st.ireg]))
+CF    | value.go:510: storeRcvr(rcvr, unsafe.Pointer(&regArgs.Floats[st.freg]))
+CF    | value.go:534: *(*unsafe.Pointer)(addr) = v.ptr
+CF    | value.go:546: regArgs.Ptrs[st.ireg] = *(*unsafe.Pointer)(offset)
+CF    | value.go:660: *((*unsafe.Pointer)(s)) = regArgs.Ptrs[st.ireg]
+TP    | value.go:697: func callReflect(ctxt *makeFuncImpl, frame unsafe.Pointer, retValid *bool, regs *abi.RegArgs) {
+CF    | value.go:733: v.ptr = *(*unsafe.Pointer)(add(ptr, st.stkOff, "1-ptr"))
+CF    | value.go:748: *((*unsafe.Pointer)(s)) = regs.Ptrs[st.ireg]
+TP    | value.go:877: func methodReceiver(op string, v Value, methodIndex int) (rcvrtype *abi.Type, t *funcType, fn unsafe.Pointer) {
+TD    | value.go:880: tt := (*interfaceType)(unsafe.Pointer(v.typ()))
+FP    | value.go:893: fn = unsafe.Pointer(&unsafe.Slice(&iface.itab.Fun[0], i+1)[i])
+TD    | value.go:894: t = (*funcType)(unsafe.Pointer(tt.typeOff(m.Typ)))
+AD    | value.go:906: fn = unsafe.Pointer(&ifn)
+TD    | value.go:907: t = (*funcType)(unsafe.Pointer(typeOffFor(v.typ(), m.Mtyp)))
+TP    | value.go:916: func storeRcvr(v Value, p unsafe.Pointer) {
+CF    | value.go:921: *(*unsafe.Pointer)(p) = iface.word
+CF    | value.go:923: *(*unsafe.Pointer)(p) = *(*unsafe.Pointer)(v.ptr)
+CF    | value.go:925: *(*unsafe.Pointer)(p) = v.ptr
+TP    | value.go:954: func callMethod(ctxt *methodValue, frame unsafe.Pointer, retValid *bool, regs *abi.RegArgs) {
+TP    | value.go:972: methodFrame := methodFramePool.Get().(unsafe.Pointer)
+CF    | value.go:983: storeRcvr(rcvr, unsafe.Pointer(&methodRegs.Ptrs[st.ireg]))
+CF    | value.go:986: storeRcvr(rcvr, unsafe.Pointer(&methodRegs.Ints[st.ireg]))
+CF    | value.go:988: storeRcvr(rcvr, unsafe.Pointer(&methodRegs.Floats[st.freg]))
+CF    | value.go:1034: methodRegs.Ptrs[mStep.ireg] = *(*unsafe.Pointer)(from)
+CF    | value.go:1053: *(*unsafe.Pointer)(to) = valueRegs.Ptrs[vStep.ireg]
+FP    | value.go:1145: pc := *(*uintptr)(unsafe.Pointer(&f))
+TD    | value.go:1185: tt := (*chanType)(unsafe.Pointer(v.typ()))
+RW    | value.go:1247: ptr = *(*unsafe.Pointer)(ptr)
+TD    | value.go:1253: tt := (*ptrType)(unsafe.Pointer(v.typ()))
+TD    | value.go:1268: tt := (*structType)(unsafe.Pointer(v.typ()))
+ZV    | value.go:1294: return Value{typ, unsafe.Pointer(&zeroVal[0]), fl | flagIndir}
+TD    | value.go:1403: tt := (*arrayType)(unsafe.Pointer(v.typ()))
+TD    | value.go:1426: tt := (*sliceType)(unsafe.Pointer(v.typ()))
+IF    | value.go:1577: iface := *(*any)(unsafe.Pointer(&abi.EmptyInterface{Type: v.typ(), Data: nil}))
+IF    | value.go:1582: (*abi.CommonInterface)(unsafe.Pointer(&out)).Data = packEfaceData(v)
+RW    | value.go:1596: return *(*T)(unsafe.Pointer(&v.ptr)), true
+RW    | value.go:1652: ptr = *(*unsafe.Pointer)(ptr)
+RW    | value.go:1658: return *(*unsafe.Pointer)(v.ptr) == nil
+ZV    | value.go:1690: if v.ptr == unsafe.Pointer(&zeroVal[0]) {
+TD    | value.go:1693: typ := (*abi.ArrayType)(unsafe.Pointer(v.typ()))
+ZV    | value.go:1699: return typ.Equal(abi.NoEscape(v.ptr), unsafe.Pointer(&zeroVal[0]))
+RW    | value.go:1704: return isZero(unsafe.Slice(((*byte)(v.ptr)), typ.Size()))
+ZV    | value.go:1721: if v.ptr == unsafe.Pointer(&zeroVal[0]) {
+TD    | value.go:1724: typ := (*abi.StructType)(unsafe.Pointer(v.typ()))
+ZV    | value.go:1728: return typ.Equal(abi.NoEscape(v.ptr), unsafe.Pointer(&zeroVal[0]))
+RW    | value.go:1733: return isZero(unsafe.Slice(((*byte)(v.ptr)), typ.Size()))
+PA    | value.go:1758: for uintptr(unsafe.Pointer(&b[0]))%8 != 0 {
+RW    | value.go:1776: w := unsafe.Slice((*uint64)(unsafe.Pointer(&b[0])), len(b)/8)
+RW    | value.go:1843: *(*unsafe.Pointer)(v.ptr) = nil
+TD    | value.go:1872: tt := (*arrayType)(unsafe.Pointer(v.typ()))
+TP    | value.go:1892: func copyVal(typ *abi.Type, fl flag, ptr unsafe.Pointer) Value {
+RW    | value.go:1900: return Value{typ, *(*unsafe.Pointer)(ptr), fl}
+TD    | value.go:1968: tt := (*structType)(unsafe.Pointer(v.typ()))
+RW    | value.go:2087: p = *(*unsafe.Pointer)(p)
+TD    | value.go:2112: tt := (*chanType)(unsafe.Pointer(v.typ()))
+TP    | value.go:2118: var p unsafe.Pointer
+AD    | value.go:2124: p = unsafe.Pointer(&val.ptr)
+TD    | value.go:2145: tt := (*chanType)(unsafe.Pointer(v.typ()))
+TP    | value.go:2151: var p unsafe.Pointer
+AD    | value.go:2155: p = unsafe.Pointer(&x.ptr)
+TP    | value.go:2167: var target unsafe.Pointer
+ZV    | value.go:2173: if x.ptr == unsafe.Pointer(&zeroVal[0]) {
+RW    | value.go:2179: *(*unsafe.Pointer)(v.ptr) = x.ptr
+TP    | value.go:2320: func (v Value) SetPointer(x unsafe.Pointer) {
+RW    | value.go:2323: *(*unsafe.Pointer)(v.ptr) = x
+TP    | value.go:2341: base unsafe.Pointer
+TD    | value.go:2351: tt := (*arrayType)(unsafe.Pointer(v.typ()))
+TD    | value.go:2353: typ = (*sliceType)(unsafe.Pointer(tt.Slice))
+TD    | value.go:2357: typ = (*sliceType)(unsafe.Pointer(v.typ()))
+AD    | value.go:2371: return Value{v.typ(), unsafe.Pointer(&t), v.flag}
+TP    | value.go:2379: var x []unsafe.Pointer
+SH    | value.go:2382: s := (*unsafeheader.Slice)(unsafe.Pointer(&x))
+AD    | value.go:2393: return Value{typ.Common(), unsafe.Pointer(&x), fl}
+TP    | value.go:2403: base unsafe.Pointer
+TD    | value.go:2413: tt := (*arrayType)(unsafe.Pointer(v.typ()))
+TD    | value.go:2415: typ = (*sliceType)(unsafe.Pointer(tt.Slice))
+TD    | value.go:2419: typ = (*sliceType)(unsafe.Pointer(v.typ()))
+TP    | value.go:2431: var x []unsafe.Pointer
+SH    | value.go:2434: s := (*unsafeheader.Slice)(unsafe.Pointer(&x))
+AD    | value.go:2445: return Value{typ.Common(), unsafe.Pointer(&x), fl}
+TD    | value.go:2495: return (*rtype)(abi.NoEscape(unsafe.Pointer(v.typ_))) // inline of toRType(v.typ()), for own inlining in inline test
+TD    | value.go:2527: tt := (*interfaceType)(unsafe.Pointer(typ))
+TP    | value.go:2610: func (v Value) UnsafePointer() unsafe.Pointer {
+RW    | value.go:2620: return *(*unsafe.Pointer)(v.ptr)
+FP    | value.go:2634: return *(*unsafe.Pointer)(unsafe.Pointer(&code))
+RW    | value.go:2640: p = *(*unsafe.Pointer)(p)
+TP    | value.go:2734: func arrayAt(p unsafe.Pointer, i int, eltSize uintptr, whySafe string) unsafe.Pointer {
+AD    | value.go:2777: v.ptr = unsafe.Pointer(s)
+TD    | value.go:2792: st := (*sliceType)(unsafe.Pointer(v.typ()))
+TP    | value.go:2889: ch  unsafe.Pointer // channel
+TP    | value.go:2890: val unsafe.Pointer // ptr to data (SendDir) or ptr to receive buffer (RecvDir)
+TD    | value.go:3015: tt := (*chanType)(unsafe.Pointer(ch.typ()))
+AD    | value.go:3030: rc.val = unsafe.Pointer(&v.ptr)
+TD    | value.go:3046: tt := (*chanType)(unsafe.Pointer(ch.typ()))
+TD    | value.go:3058: tt := (*chanType)(unsafe.Pointer(runcases[chosen].typ))
+RW    | value.go:3065: recv = Value{t, *(*unsafe.Pointer)(p), fl}
+TP    | value.go:3078: func unsafe_New(*abi.Type) unsafe.Pointer
+TP    | value.go:3081: func unsafe_NewArray(*abi.Type, int) unsafe.Pointer
+AD    | value.go:3101: return Value{&typ.(*rtype).t, unsafe.Pointer(&s), flagIndir | flag(Slice)}
+TP    | value.go:3108: func SliceAt(typ Type, p unsafe.Pointer, n int) Value {
+AD    | value.go:3111: return Value{SliceOf(typ).common(), unsafe.Pointer(&s), flagIndir | flag(Slice)}
+TP    | value.go:3179: var p unsafe.Pointer
+ZV    | value.go:3181: p = unsafe.Pointer(&zeroVal[0])
+TP    | value.go:3212: func NewAt(typ Type, p unsafe.Pointer) Value {
+TP    | value.go:3223: func (v Value) assignTo(context string, dst *abi.Type, target unsafe.Pointer) Value {
+TP    | value.go:3738: func chancap(ch unsafe.Pointer) int
+TP    | value.go:3741: func chanclose(ch unsafe.Pointer)
+TP    | value.go:3744: func chanlen(ch unsafe.Pointer) int
+TP    | value.go:3754: func chanrecv(ch unsafe.Pointer, nb bool, val unsafe.Pointer) (selected, received bool)
+TP    | value.go:3757: func chansend0(ch unsafe.Pointer, val unsafe.Pointer, nb bool) bool
+TP    | value.go:3759: func chansend(ch unsafe.Pointer, val unsafe.Pointer, nb bool) bool {
+TP    | value.go:3764: func makechan(typ *abi.Type, size int) (ch unsafe.Pointer)
+TP    | value.go:3765: func makemap(t *abi.Type, cap int) (m unsafe.Pointer)
+TP    | value.go:3768: func mapaccess(t *abi.Type, m unsafe.Pointer, key unsafe.Pointer) (val unsafe.Pointer)
+TP    | value.go:3771: func mapaccess_faststr(t *abi.Type, m unsafe.Pointer, key string) (val unsafe.Pointer)
+TP    | value.go:3774: func mapassign0(t *abi.Type, m unsafe.Pointer, key, val unsafe.Pointer)
+TP    | value.go:3786: func mapassign(t *abi.Type, m unsafe.Pointer, key, val unsafe.Pointer) {
+TP    | value.go:3793: func mapassign_faststr0(t *abi.Type, m unsafe.Pointer, key string, val unsafe.Pointer)
+TP    | value.go:3795: func mapassign_faststr(t *abi.Type, m unsafe.Pointer, key string, val unsafe.Pointer) {
+SH    | value.go:3796: contentEscapes((*unsafeheader.String)(unsafe.Pointer(&key)).Data)
+TP    | value.go:3802: func mapdelete(t *abi.Type, m unsafe.Pointer, key unsafe.Pointer)
+TP    | value.go:3805: func mapdelete_faststr(t *abi.Type, m unsafe.Pointer, key string)
+TP    | value.go:3808: func maplen(m unsafe.Pointer) int
+TP    | value.go:3810: func mapclear(t *abi.Type, m unsafe.Pointer)
+TP    | value.go:3838: func call(stackArgsType *abi.Type, f, stackArgs unsafe.Pointer, stackArgsSize, stackRetOffset, frameSize uint32, regArgs *abi.RegArgs)
+TP    | value.go:3840: func ifaceE2I(t *abi.Type, src any, dst unsafe.Pointer)
+TP    | value.go:3845: func memmove(dst, src unsafe.Pointer, size uintptr)
+TP    | value.go:3850: func typedmemmove(t *abi.Type, dst, src unsafe.Pointer)
+TP    | value.go:3855: func typedmemclr(t *abi.Type, ptr unsafe.Pointer)
+TP    | value.go:3861: func typedmemclrpartial(t *abi.Type, ptr unsafe.Pointer, off, size uintptr)
+TP    | value.go:3873: func typedarrayclear(elemType *abi.Type, ptr unsafe.Pointer, len int)
+TP    | value.go:3876: func typehash(t *abi.Type, p unsafe.Pointer, h uintptr) uintptr
+TP    | value.go:3884: func unsafeslice(t *abi.Type, ptr unsafe.Pointer, len int)
+TP    | value.go:3904: func contentEscapes(x unsafe.Pointer) {

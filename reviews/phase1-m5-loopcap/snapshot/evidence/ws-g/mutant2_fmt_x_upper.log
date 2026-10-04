@@ -1,0 +1,5 @@
+MUTANT 2: fmt %x on strings uppercase (WS-G, 2026-10-04)
+Location: graalgo.runtime.Fmt.fmtString, case 'x'
+Change: fmtSx(s, LDIGITS) -> fmtSx(s, UDIGITS)
+Effect: Sprintf("%x", "é") = "C3A9", gc expects "c3a9"
+Result: KILLED (matrix row %x/string)

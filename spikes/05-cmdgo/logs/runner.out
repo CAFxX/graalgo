@@ -1,0 +1,120 @@
+=== matrix run started 2026-10-03T05:43:15Z ===
+scripts: 52 x 2 modes
+2026-10-03T05:46:42Z [stock] toolexec pass=true rc=0 1791006402s>207s
+2026-10-03T05:46:43Z [stock] list_toolexec_stderr_issue22588 pass=true rc=0 1791006403s>1s
+2026-10-03T05:49:13Z [stock] build_dash_x pass=true rc=0 1791006553s>150s
+2026-10-03T05:49:14Z [stock] build_cache_compile pass=true rc=0 1791006554s>1s
+2026-10-03T05:49:53Z [stock] build_cache_link pass=true rc=0 1791006593s>39s
+2026-10-03T05:49:54Z [stock] build_gcflags pass=true rc=0 1791006594s>1s
+2026-10-03T05:49:55Z [stock] build_gcflags_order pass=true rc=0 1791006595s>1s
+2026-10-03T05:53:28Z [stock] build_pgo pass=true rc=0 1791006808s>213s
+2026-10-03T05:53:29Z [stock] build_cgo_error pass=true rc=0 1791006809s>1s
+2026-10-03T05:54:55Z [stock] build_trimpath pass=true rc=0 1791006895s>86s
+2026-10-03T05:54:56Z [stock] build_dash_n_cgo pass=true rc=0 1791006896s>1s
+=== matrix run started 2026-10-03T06:01:50Z ===
+scripts: 52 x 2 modes
+skip [stock] toolexec (already recorded)
+skip [stock] list_toolexec_stderr_issue22588 (already recorded)
+skip [stock] build_dash_x (already recorded)
+skip [stock] build_cache_compile (already recorded)
+skip [stock] build_cache_link (already recorded)
+skip [stock] build_gcflags (already recorded)
+skip [stock] build_gcflags_order (already recorded)
+skip [stock] build_pgo (already recorded)
+skip [stock] build_cgo_error (already recorded)
+skip [stock] build_trimpath (already recorded)
+skip [stock] build_dash_n_cgo (already recorded)
+2026-10-03T06:03:43Z [stock] build_cache_output pass=true rc=0 1791007423s>112s
+2026-10-03T06:03:45Z [stock] run_hello pass=true rc=0 1791007425s>2s
+2026-10-03T06:03:47Z [stock] run_hello_pkg pass=true rc=0 1791007427s>2s
+2026-10-03T06:05:41Z [stock] test_json pass=true rc=0 1791007541s>114s
+2026-10-03T06:07:52Z [stock] test_vet pass=true rc=0 1791007672s>131s
+2026-10-03T06:09:28Z [stock] test_vet_vetall pass=true rc=0 1791007768s>96s
+2026-10-03T06:09:30Z [stock] test_compile_binary pass=true rc=0 1791007770s>2s
+2026-10-03T06:10:03Z [stock] test_trimpath pass=true rc=0 1791007803s>33s
+2026-10-03T06:10:08Z [stock] test_main pass=true rc=0 1791007808s>5s
+2026-10-03T06:11:46Z [stock] test_race pass=true rc=0 1791007906s>98s
+2026-10-03T06:13:13Z [stock] test_cache_coverpkg_bug pass=true rc=0 1791007993s>87s
+2026-10-03T06:13:17Z [stock] test_go111module_cache pass=true rc=0 1791007997s>4s
+2026-10-03T06:13:42Z [stock] test_exit pass=true rc=0 1791008022s>25s
+2026-10-03T06:13:50Z [stock] test_buildvcs pass=true rc=0 1791008030s>8s
+2026-10-03T06:13:52Z [stock] test_trimpath_test_suffix pass=true rc=0 1791008032s>2s
+2026-10-03T06:13:54Z [stock] vet_asm pass=true rc=0 1791008034s>2s
+2026-10-03T06:14:56Z [stock] vet_basic pass=true rc=0 1791008096s>62s
+2026-10-03T06:15:46Z [stock] vet_cache pass=true rc=0 1791008146s>50s
+2026-10-03T06:15:51Z [stock] vet_commandline pass=true rc=0 1791008151s>5s
+2026-10-03T06:15:53Z [stock] vet_deps pass=true rc=0 1791008153s>2s
+2026-10-03T06:16:42Z [stock] vet_flags pass=true rc=0 1791008202s>49s
+2026-10-03T06:16:47Z [stock] vet_internal pass=true rc=0 1791008207s>5s
+2026-10-03T06:16:49Z [stock] list_export_e pass=true rc=0 1791008209s>2s
+2026-10-03T06:16:51Z [stock] list_test_e pass=true rc=0 1791008211s>1s
+2026-10-03T06:16:53Z [stock] list_json_fields pass=true rc=0 1791008213s>2s
+2026-10-03T06:16:55Z [stock] list_compiled_imports pass=true rc=0 1791008215s>1s
+2026-10-03T06:16:58Z [stock] env_write pass=true rc=0 1791008218s>3s
+2026-10-03T06:16:58Z [stock] env_changed pass=true rc=0 1791008218s>0s
+2026-10-03T06:16:59Z [stock] env_cache pass=true rc=0 1791008219s>1s
+2026-10-03T06:16:59Z [stock] env_sanitize pass=true rc=0 1791008219s>0s
+2026-10-03T06:17:01Z [stock] mod_download pass=true rc=0 1791008221s>2s
+2026-10-03T06:17:01Z [stock] mod_tidy pass=true rc=0 1791008221s>0s
+2026-10-03T06:17:06Z [stock] mod_vendor pass=true rc=0 1791008226s>5s
+2026-10-03T06:17:09Z [stock] goflags pass=true rc=0 1791008229s>3s
+2026-10-03T06:17:30Z [stock] cover_build_simple pass=true rc=0 1791008250s>21s
+2026-10-03T06:17:36Z [stock] cover_cgo pass=true rc=0 1791008256s>6s
+2026-10-03T06:20:14Z [stock] cover_modes pass=true rc=0 1791008414s>158s
+2026-10-03T06:20:51Z [stock] cgo_stale pass=true rc=0 1791008451s>37s
+2026-10-03T06:20:53Z [stock] cgo_flag_contains_space pass=true rc=0 1791008453s>2s
+2026-10-03T06:21:00Z [stock] cgo_long_cmd pass=true rc=0 1791008460s>7s
+2026-10-03T06:21:09Z [stock] version_buildvcs_git pass=true rc=0 1791008469s>9s
+2026-10-03T06:22:49Z [wrapped] toolexec pass=true rc=0 1791008569s>99s
+2026-10-03T06:22:50Z [wrapped] list_toolexec_stderr_issue22588 pass=true rc=0 1791008570s>1s
+2026-10-03T06:24:28Z [wrapped] build_dash_x pass=true rc=0 1791008668s>98s
+2026-10-03T06:24:29Z [wrapped] build_cache_compile pass=true rc=0 1791008669s>1s
+2026-10-03T06:25:04Z [wrapped] build_cache_link pass=true rc=0 1791008704s>35s
+2026-10-03T06:25:05Z [wrapped] build_gcflags pass=true rc=0 1791008705s>1s
+2026-10-03T06:25:07Z [wrapped] build_gcflags_order pass=true rc=0 1791008707s>2s
+2026-10-03T06:27:32Z [wrapped] build_pgo pass=true rc=0 1791008852s>145s
+2026-10-03T06:27:34Z [wrapped] build_cgo_error pass=true rc=0 1791008854s>2s
+2026-10-03T06:28:35Z [wrapped] build_trimpath pass=true rc=0 1791008915s>61s
+2026-10-03T06:28:36Z [wrapped] build_dash_n_cgo pass=true rc=0 1791008916s>1s
+2026-10-03T06:29:42Z [wrapped] build_cache_output pass=true rc=0 1791008982s>66s
+2026-10-03T06:29:43Z [wrapped] run_hello pass=true rc=0 1791008983s>1s
+2026-10-03T06:29:44Z [wrapped] run_hello_pkg pass=true rc=0 1791008984s>1s
+2026-10-03T06:30:48Z [wrapped] test_json pass=true rc=0 1791009048s>64s
+2026-10-03T06:32:30Z [wrapped] test_vet pass=true rc=0 1791009150s>102s
+2026-10-03T06:33:57Z [wrapped] test_vet_vetall pass=true rc=0 1791009237s>87s
+2026-10-03T06:33:59Z [wrapped] test_compile_binary pass=true rc=0 1791009239s>2s
+2026-10-03T06:34:22Z [wrapped] test_trimpath pass=true rc=0 1791009262s>23s
+2026-10-03T06:34:26Z [wrapped] test_main pass=true rc=0 1791009266s>4s
+2026-10-03T06:35:28Z [wrapped] test_race pass=true rc=0 1791009328s>62s
+2026-10-03T06:36:22Z [wrapped] test_cache_coverpkg_bug pass=true rc=0 1791009382s>54s
+2026-10-03T06:36:26Z [wrapped] test_go111module_cache pass=true rc=0 1791009386s>4s
+2026-10-03T06:36:42Z [wrapped] test_exit pass=true rc=0 1791009402s>16s
+2026-10-03T06:36:50Z [wrapped] test_buildvcs pass=true rc=0 1791009410s>8s
+2026-10-03T06:36:52Z [wrapped] test_trimpath_test_suffix pass=true rc=0 1791009412s>2s
+2026-10-03T06:36:54Z [wrapped] vet_asm pass=true rc=0 1791009414s>2s
+2026-10-03T06:37:44Z [wrapped] vet_basic pass=true rc=0 1791009464s>50s
+2026-10-03T06:38:20Z [wrapped] vet_cache pass=true rc=0 1791009500s>36s
+2026-10-03T06:38:22Z [wrapped] vet_commandline pass=true rc=0 1791009502s>2s
+2026-10-03T06:38:23Z [wrapped] vet_deps pass=true rc=0 1791009503s>1s
+2026-10-03T06:38:47Z [wrapped] vet_flags pass=true rc=0 1791009527s>24s
+2026-10-03T06:38:50Z [wrapped] vet_internal pass=true rc=0 1791009530s>3s
+2026-10-03T06:38:51Z [wrapped] list_export_e pass=true rc=0 1791009531s>1s
+2026-10-03T06:38:52Z [wrapped] list_test_e pass=true rc=0 1791009532s>1s
+2026-10-03T06:38:54Z [wrapped] list_json_fields pass=true rc=0 1791009534s>2s
+2026-10-03T06:38:56Z [wrapped] list_compiled_imports pass=true rc=0 1791009536s>2s
+2026-10-03T06:38:57Z [wrapped] env_write pass=true rc=0 1791009537s>1s
+2026-10-03T06:38:58Z [wrapped] env_changed pass=true rc=0 1791009538s>1s
+2026-10-03T06:38:58Z [wrapped] env_cache pass=true rc=0 1791009538s>0s
+2026-10-03T06:38:58Z [wrapped] env_sanitize pass=true rc=0 1791009538s>0s
+2026-10-03T06:39:00Z [wrapped] mod_download pass=true rc=0 1791009540s>2s
+2026-10-03T06:39:01Z [wrapped] mod_tidy pass=true rc=0 1791009541s>1s
+2026-10-03T06:39:05Z [wrapped] mod_vendor pass=true rc=0 1791009545s>4s
+2026-10-03T06:39:08Z [wrapped] goflags pass=true rc=0 1791009548s>3s
+2026-10-03T06:39:23Z [wrapped] cover_build_simple pass=true rc=0 1791009563s>15s
+2026-10-03T06:39:27Z [wrapped] cover_cgo pass=true rc=0 1791009567s>4s
+2026-10-03T06:40:55Z [wrapped] cover_modes pass=true rc=0 1791009655s>88s
+2026-10-03T06:41:15Z [wrapped] cgo_stale pass=true rc=0 1791009675s>20s
+2026-10-03T06:41:16Z [wrapped] cgo_flag_contains_space pass=true rc=0 1791009676s>1s
+2026-10-03T06:41:18Z [wrapped] cgo_long_cmd pass=false rc=1 1791009678s>2s
+2026-10-03T06:41:22Z [wrapped] version_buildvcs_git pass=true rc=0 1791009682s>4s
+=== matrix run finished 2026-10-03T06:41:22Z ===

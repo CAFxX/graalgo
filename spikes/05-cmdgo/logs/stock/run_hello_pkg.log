@@ -1,0 +1,66 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:36957
+https://vcs-test.golang.org rerouted to https://127.0.0.1:42829
+go test proxy running at GOPROXY=http://127.0.0.1:35779/mod
+=== RUN   TestScript/run_hello_pkg
+=== PAUSE TestScript/run_hello_pkg
+=== CONT  TestScript/run_hello_pkg
+    script_test.go:141: 2026-10-03T06:03:45Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3149157256/tmpdir3276646858/run_hello_pkg470800059
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3149157256/tmpdir3276646858/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:35779/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3149157256/tmpdir3276646858/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:36957
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:42829
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3149157256/vcstest368720011/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3149157256/tmpdir3276646858/run_hello_pkg470800059
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3149157256/tmpdir3276646858/run_hello_pkg470800059/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3149157256/tmpdir3276646858/run_hello_pkg470800059/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3149157256/tmpdir3276646858/run_hello_pkg470800059/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-3149157256/tmpdir3276646858/run_hello_pkg470800059/gopath/src
+        
+        > go run m/hello
+        [stderr]
+        hello, world
+        > stderr 'hello, world'
+        matched: hello, world
+        > cd hello
+        > go run .
+        [stderr]
+        hello, world
+        > stderr 'hello, world'
+        matched: hello, world
+--- PASS: TestScript (0.20s)
+    --- PASS: TestScript/run_hello_pkg (1.68s)
+PASS

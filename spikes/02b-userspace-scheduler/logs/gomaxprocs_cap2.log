@@ -1,0 +1,4 @@
+=== gomaxprocs_cap2 (par=2 gmp=2 quantumNs=1000000) ===
+gomaxprocs_par cap=2 maxTrueParallel=2 RESULT=PASS
+sched{cap=2(req=2,par=2) inflight_now~na parkEvents=3313 admissions=3313 firstAdmissions=8 wakeupCalls=0 wakeupWon=0 maxUnparkedNotResumed=2 maxTrueParallel=2 minInflightObserved=0 drainerEvents=3321 drainerUtilPct=0.81}
+exit=0

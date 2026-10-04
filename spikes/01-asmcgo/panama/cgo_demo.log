@@ -1,0 +1,2 @@
+cgo  : checksum("graalgo-panama-demo") = 14843116955214666767
+cgo  : strlen("graalgo-panama-demo") = 19

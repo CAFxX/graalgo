@@ -1,0 +1,76 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:36743
+https://vcs-test.golang.org rerouted to https://127.0.0.1:35857
+go test proxy running at GOPROXY=http://127.0.0.1:36591/mod
+=== RUN   TestScript/vet_cache
+=== PAUSE TestScript/vet_cache
+=== CONT  TestScript/vet_cache
+    script_test.go:141: 2026-10-03T06:14:57Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-708983753/tmpdir835991622/vet_cache1436730572
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-708983753/tmpdir835991622/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:36591/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-708983753/tmpdir835991622/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:36743
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:35857
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-708983753/vcstest4154723992/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-708983753/tmpdir835991622/vet_cache1436730572
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-708983753/tmpdir835991622/vet_cache1436730572/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-708983753/tmpdir835991622/vet_cache1436730572/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-708983753/tmpdir835991622/vet_cache1436730572/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-708983753/tmpdir835991622/vet_cache1436730572/gopath/src
+        
+        # Test that go vet's caching of vet tool actions replays
+        # the recorded stderr output even after a cache hit. (0.000s)
+        > [short] skip 'uses a fresh build cache'
+        [condition not met]
+        # Set up fresh GOCACHE. (0.000s)
+        > env GOCACHE=$WORK/gocache
+        # First time is a cache miss. (48.319s)
+        > ! go vet example.com/a
+        [stderr]
+        a/a.go:5:9: fmt.Sprint call has possible Printf formatting directive %s
+        [exit status 1]
+        > stderr 'fmt.Sprint call has possible Printf formatting directive'
+        matched: a/a.go:5:9: fmt.Sprint call has possible Printf formatting directive %s
+        # Second time is assumed to be a cache hit for the stdout JSON,
+        # but we don't bother to assert it. Same diagnostics again. (0.762s)
+        > ! go vet example.com/a
+        [stderr]
+        a/a.go:5:9: fmt.Sprint call has possible Printf formatting directive %s
+        [exit status 1]
+        > stderr 'fmt.Sprint call has possible Printf formatting directive'
+        matched: a/a.go:5:9: fmt.Sprint call has possible Printf formatting directive %s
+--- PASS: TestScript (0.11s)
+    --- PASS: TestScript/vet_cache (49.35s)
+PASS

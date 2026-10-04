@@ -1,0 +1,11 @@
+id: GG-0049
+title: Hybrid meta-gate
+statement: The AOT+JIT hybrid SHALL become the default only if it beats both single modes on >=1 workload class across the six falsifying experiments (image-size delta, warmup, safepoint overhead, pinning audit, deopt torture, stack-depth parity); otherwise the mode is cut.
+rationale: Closes Phase-0 question 8; the recommendation must survive contact with measurement.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: The six experiments run; verdict recorded.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

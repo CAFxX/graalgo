@@ -1,0 +1,447 @@
+10292 | cmd/compile: inline function calls that return a closure
+12628 | cmd/compile: turn nilcheckelim into branchelim
+13493 | cmd/compile: storing pointer of a local value escapes
+14018 | cmd/compile: Need better type propagation
+14059 | runtime: improve performance of IndexByte on older processors
+14179 | runtime: GC should wake up idle Ps
+14325 | cmd/compile: recognize append loop
+14586 | cmd/compile: SSA, don't re-copy spilled output parameters
+14723 | cmd/compile: redundant loop generated for comparing/hashing arrays of size 1.
+14808 | cmd/compile: unnecessary bounds checks are not removed
+14921 | runtime, cmd/compile: consider write barrier short-circuit when *dst == src
+15031 | cmd/compile: unnecessary branching
+15105 | cmd/compile: combine AND 0xff and MOVQload into MOVBQZXload
+15110 | runtime: 40us pause in file-backed serve loops
+15164 | cmd/compile: suboptimal compilation of struct-valued switch statements
+15238 | cmd/compile: eliminate write barrier for self-referencing pointer
+15290 | runtime: heavy time.Now usage cause taskgated to consume lots of cpu
+15300 | cmd/compile: combine extension with register loads and stores on amd64
+15397 | cmd/compile: ephemeral slicing doesn't need protection against next object pointers
+15451 | cmd/compile: unexplained allocation for convT2I
+15808 | cmd/compile: loads/constants not lifted out of loop
+15925 | cmd/compile: SSA performance regression due to array zeroing
+15943 | runtime: main_init_done can be implemented more efficiently
+16108 | cmd/compile: do front-end constant evaluation across simple inlined function boundaries
+16122 | cmd/compile: poor register allocator behavior in compression code
+16141 | cmd/compile: go1.7beta2 performance regression
+16187 | cmd/compile: go1.7beta2 performance regression (floats and arrays)
+16192 | cmd/compile: new backend; multiple efficiency issues...
+16416 | cmd/compile: lower % using multiply and subtract when the result of / is known
+16832 | cmd/compile: should recognize binary package and intrinsify it where possible
+16869 | cmd/compile: inline reflect.TypeOf (or make it intrinsic)
+16973 | cmd/compile: use common ancestor blocks in CSE?
+17023 | cmd/compile: detect call trees that can be marked NOSPLIT
+17106 | cmd/compile: combine contiguous multi-byte comparisons to a constant
+17110 | cmd/compile: avoid reloads of temp register on ppc64le, others
+17133 | cmd/compile: optimizing multiple accesses to same key in map
+17216 | cmd/compile: elimination of unused runtime calls
+17370 | cmd/compile: eliminate more bounds checks
+17566 | cmd/compile: improve inlining cost model
+17622 | cmd/compile: optimize functions into boolean expressions
+17638 | cmd/compile: use better code for slicing
+17842 | cmd/compile: implement duffcopy on ppc64x
+17862 | cmd/compile: elide branches that must be taken
+17973 | sync: RWMutex scales poorly with CPU count
+18004 | cmd/compile: improve map iteration
+18020 | runtime: stack growth during critical section harms performance
+18236 | runtime: frequent blocking syscalls cause high sysmon overhead
+18300 | cmd/compile: investigate closure capture issue
+18529 | cmd/compile: improve code generation for temporary slice copy and inlining
+18739 | cmd/compile: order.go is outdated
+18822 | cmd/compile: optimize Write([]byte(stringVal)) to not copy the string
+18977 | cmd/compile: Fannkuch11 on AMD64 slow down 6% after removing assembler backend instruction reordering
+19042 | cmd/internal/obj: optimize wrapper method prologue for branch prediction
+19165 | cmd/compile: rewrite interface args by actual type args in functions called only with a single set of argument types
+19195 | cmd/compile: needlessly early return value loads in runtime.scanobject
+19495 | runtime: working with small maps is 4x-10x slower than in nodejs
+19509 | runtime: better support for 64bit div/mod operations on 32bit platforms
+19574 | runtime: performance problem with many Cgo calls
+19650 | cmd/compile: use FP-based frame zeroing outside of package runtime on plan9
+19715 | cmd/compile: arm64: emit double-register loads and stores in lowering
+19733 | cmd/compile: clumsy rematerialization in mapassign_fast*
+19817 | cmd/compile: avoid copying if copied value isn't modified
+19818 | cmd/compile: share statictmp
+19992 | runtime: reuse evacuated map overflow buckets
+20005 | runtime: add per-G shadows of writeBarrier.enabled
+20019 | cmd/compile: go:linkname prevents inlining
+20022 | cmd/compile: some problems on optimization when takes care about of arrays in struct
+20087 | cmd/compile: postpone argument conversions after inlining
+20135 | runtime: shrink map as elements are deleted
+20307 | runtime: GC turning on/off disruptive to scheduler and locality
+20351 | runtime: select on a shared channel is slow with many Ps
+20354 | cmd/compile: trim more blocks?
+20356 | cmd/compile: lay out loop-free, likeliness-free control flow more compactly
+20411 | cmd/compile: improve loop rotation
+20533 | cmd/compile: improve escape analysis of make([]T, n) where n is non-constant
+20934 | cmd/compile: CSE some function calls args/results
+21032 | sync: reduce (*Map).Load penalty for Stores with new keys
+21056 | runtime: sub optimal gc scalability
+21394 | cmd/compile: improve codegen for nested if statements
+21572 | cmd/compile: optimize away some MOVQconverts
+21639 | runtime: apply strength reduction optimizations to generic map routines
+22025 | cmd/compile: redundant branch
+22081 | cmd/compile: avoid allocations for some return values
+22310 | cmd/compile: odd inlining heuristic under mid-stack inlining
+22479 | cmd/compile: reordering struct field accesses can alter performance
+22654 | runtime: goroutines linger in GC assist queue
+22693 | runtime:  fractional worker preemption causes performance degradation for single cpu
+23006 | cmd/compile: slicing can be improved on ARM
+23306 | runtime: memmove sometimes faster than memclrNoHeapPointers
+23377 | cmd/compile: inefficient CALL setup when more than 32bytes of args
+23832 | cmd/compile: avoid updating capacity if unused
+23929 | cmd/compile, runtime: optimize comparison of large values with zero
+23948 | cmd/compile: use runtime.zeroVal for small zero-valued readonly static vars
+24177 | cmd/compile: tighten CFG as well as values
+24240 | cmd/compile: loop optimization
+24314 | cmd/compile: slice update with self subslice - write barrier probably not needed (?)
+24386 | cmd/compile: keeping a subset of a struct value's fields is slow
+24416 | cmd/compile: optimize large structs
+24479 | sync: eliminate global Mutex in Pool operations
+24582 | cmd/compile: opt: reuse interface payload during interface conversion
+24650 | cmd/compile: eliminate empty switch cases
+24660 | cmd/compile: Fannkuch11 can be speed up by ~ 30% via improving BCE
+24686 | runtime: add g.p
+24765 | cmd/compile: unexpected memequal call in short string comparison
+24926 | cmd/compile: avoiding zeroing new allocations when possible
+24928 | runtime: sparse zeroing in mallocgc
+24930 | cmd/compile: sometimes issue rematerializable values early
+25086 | cmd/compile: add bounds information from non-control ops to prove pass
+25087 | cmd/compile: use bounds from prove pass to simplify shifts
+25111 | cmd/compile: optimize unaligned load-XOR-store on byte slices
+25115 | cmd/compile: prove pass doesn't draw signed int conclusions from range checks
+25125 | cmd/compile: take into account that floating point special cases (NaN, Inf) are unlikely
+25132 | cmd/compile: eliminate more dead stores
+25156 | cmd/compile: emit variable byte-sized bit tests on amd64
+25167 | cmd/compile: use bounded shift information on non-amd64 architectures
+25168 | cmd/compile: detect bounded shifts in generic rules
+25169 | cmd/compile: detect bounded shifts of the form (bits-var) in prove
+25189 | cmd/compile: elide useless type assertion
+25298 | cmd/compile: tweak branchelim heuristic on amd64
+25317 | cmd/compile: call memmove on amd64 for large OpMove
+25358 | cmd/compile: aggressive IMUL rewrites on AMD64 sometimes lead to performance regressions
+25733 | cmd/compile: detect divisions that always result in 0
+25828 | cmd/compile: combine append calls
+25862 | cmd/compile: teach prove.go that {strings|bytes}.Index* return value in the range [-1 .. len(s))
+25866 | cmd/compile: merge sequential memory moves into bigger memory moves
+25916 | cmd/compile: possible missed optimization in append benchmark
+25999 | cmd/compile: record and use per-function optimization data
+26059 | runtime: use wrappers for op= map operations
+26299 | cmd/compile: teach prove about more type conversion operations
+26498 | cmd/compile: constant string -> []byte and []byte -> string conversions aren't constant folded
+26680 | cmd/compile, runtime: pack info into low bits of interface type pointers
+26734 | runtime: append is slower than make+assignments for small slices with known length
+26951 | cmd/compile: recognize map-copy with range idiom
+27148 | cmd/compile: optimise ranges over string(byteSlice)
+27184 | cmd/compile: understand Go vs assembly rc4 results
+27345 | runtime: use parent goroutine's stack for new goroutines
+27572 | cmd/compile: eliminate unnecessary extend-of-truncate calculations in prove pass
+27585 | cmd/compile: BCE optimizes less for string than slice
+27625 | cmd/compile: automatically stack-allocate small non-escaping slices of dynamic size
+27732 | runtime: mark assist blocks GC microbenchmark for 7ms
+27780 | cmd/compile: detect and apply more CMOV optimizations
+27801 | runtime,cmd/compile: string concatenation specializations for performance
+27857 | cmd/compile: unexpected performance difference accessing slices with different caps
+28045 | cmd/compile: optimize field access after type assertion
+28314 | cmd/compile: recognize rand.Intn() is bounded for BCE
+28454 | cmd/cgo: avoid calls to cgoCheckPointer when debug.cgocheck=0
+28639 | cmd/compile: reduce generated algs for compiler created array types
+28671 | cmd/compile: various low level x86 instruction generation improvements
+28701 | runtime: repeated syscalls inhibit periodic preemption
+28783 | runtime: types are not garbage collected
+28808 | runtime: scheduler work stealing slow for high GOMAXPROCS
+28861 | cmd/compile: fuse constant comparison with division by a constant
+28942 | cmd/compile: BCE is better with reslicing than index variables
+28952 | cmd/compile: consider teaching prove about unexported integer fields
+29085 | cmd/compile: specialize variadic functions
+29095 | cmd/compile: better const-based optimizations handling in compiler frontend
+29166 | cmd/compile: optimize variables in function calls as equivalent to constant-derived variables
+29276 | cmd/compile: improve interface dispatch performance
+29292 | cmd/compile: use bit tests for binary search in type switches
+29691 | cmd/compile: implement global new(T) without calling newobject
+29693 | cmd/compile: use memmove to initialize non-global static data
+29716 | cmd/compile: optimize CAS loops
+29785 | cmd/compile: eliminate memory allocation for non-int n in slice extension idiom
+30272 | runtime: simplify right shift and zero test
+30509 | cmd/compile: elide call to runtime.growslice with provable capacity availability
+30528 | cmd/compile: unnecessary hash/eq functions for global arrays
+30529 | cmd/compile: unnecessary bounds check for global slices
+30548 | cmd/compile: mid-stack inline dispatch functions that call a function on each path
+30605 | cmd/compile: investigate wasm sync inlining
+30945 | cmd/compile: bounds checking for unrolled loops is weird
+30946 | cmd/compile: runtime check for availability of popcount is spammy
+31047 | cmd/compile: pack structs containing anonymous fields more tightly
+31193 | cmd/compile, runtime: reduce function prologue overhead
+31265 | cmd/compile: intrinsify math/bits.RotateLeft{32,64} on all architectures
+31900 | cmd/compile: suboptimal assembly for a + b + 1
+31993 | cmd/compile: use slicebytetostringtmp in concatenation
+32255 | cmd/compile: prefer to cheaply re-materialize after call site instead of spilling
+32492 | cmd/compile: slice hint seems to perform better than loop bound check
+32515 | cmd/compile: prove pass unable to eliminate bounds check when a variable is assigned from len
+32554 | cmd/compile: similar returns not optimized
+32969 | cmd/compile: superfluous MOV instructions
+33012 | cmd/compile: suboptimal code generated for simple integer comparison if-block
+33972 | cmd/compile: taking address of variables in chain breaks optimizations
+34020 | cmd/compile: optimize conditional pointer assignment
+34525 | cmd/compile: inline functions that are called only once
+34816 | cmd/compile: unneeded bounds checks
+35196 | cmd/compile: no closure inlining even in the simple case?
+36351 | cmd/compile: optimize overhead from CPU feature detection
+36603 | runtime: sysUsed often called on non-scavenged memory
+36889 | cmd/compile: prove misses obvious facts about constants
+36915 | runtime: allow map hashes with different tradeoffs
+36964 | cmd/compile: escape analysis on interface calls
+37096 | cmd/compile: ARM's MOVWnop causes regalloc to insert unnecessary copies
+37415 | cmd/compile: partial cse of phi inputs?
+37429 | cmd/compile: investigate performance regression vs Go 1.13
+37608 | cmd/compile: branch elimination opportunites when comparing constants
+37694 | cmd/compile: better append of unmodified slices
+38325 | runtime: cgo calls are way faster when enabling CPU profile
+38420 | runtime: sema: many many goroutines queueing up on many many distinct addresses -> slow
+38471 | cmd/compile: allow inlining of open-coded defer calls
+38512 | runtime: support SSE2 memmove on older amd64 hardware
+38547 | cmd/compile: optimize bits.OnesCount(x) == 1
+38721 | cmd/compile: experiment with more integer comparison optimizations
+38992 | cmd/compile: Missed opportunity for post-inlining devirtualization
+39139 | cmd/compile: intrinsify bits.RotateLeft32 on mipsle
+39668 | runtime: unnecessary heap allocations when `range`ing over an empty array
+39710 | cmd/compile: optimize xor to complement
+39756 | cmd/compile: unnecessary bounds check in a loop passed as a closure
+39918 | cmd/compile: create cheapdeadcode
+40039 | cmd/compile: reclaim binary size increase from CL 35554 constant to interface allocation optimizations
+40108 | cmd/compile: unnecessary nil pointer check
+40229 | runtime: reducing preemption in suspendG when G is running large nosplit functions
+40987 | cmd/compile: some missing BCE cases
+41174 | cmd/compile: optimize redundant iface->iface type assertions
+41666 | cmd/compile: checking pointers for nilness inside a loop
+41774 | cmd/compile: introduce masked memeq
+41948 | runtime: selectgo need not  lock all the channels involved in the select 
+42094 | cmd/compile: negative shift check with trailing zeros
+42179 | cmd/compile: unneeded panicshift for bounded shift amount
+42430 | runtime: GC pacer problems meta-issue
+42569 | cmd/compile: notice when function variables are never reassigned, avoid indirect calls
+42672 | cmd/compile: missed add+load combination opportunity
+42999 | cmd/compile: inlined err check elimination opportunity
+43145 | cmd/compile: suboptimal arm64 output
+43248 | cmd/compile: missed opportunity to coalesce loads that compare with constants
+43357 | cmd/compile: inefficient assembly code on arm64
+43403 | cmd/compile: constant indexing to private array should be folded
+43423 | cmd/compile: better optimization/inlining for sort.Search
+43752 | cmd/compile: better escape analysis of `[]byte` -> `string` conversions
+44628 | cmd/compile: avoid unnecessary allocations for consecutive appends
+44670 | cmd/compile: unnecessary copy in regalloc
+44671 | cmd/compile: regalloc fails to reserve key register (CX) for future code
+44827 | cmd/compile: pass pointer-shaped receivers using context register
+45894 | runtime: mark termination is slow to restart mutator
+46079 | cmd/compile: treat "d = append(make([]T, 0, len(s)), s...)" as  "d = make([]T, len(s)); copy(d, s)"
+46711 | cmd/compile: Optimise branches that could be behind other branches, to avoid running those branches when known to be false
+47120 | cmd/compile: tight code optimization opportunities
+47454 | cmd/compile: optimize append([]byte(string), ...) to avoid a duplication
+47969 | cmd/compile: shorter slicing instruction sequence on x86/amd64
+48161 | x/sys/unix: add ParseDirent variant that doesn't allocate?
+48192 | cmd/compile: inline functions with only an error wrapper
+48220 | cmd/compile: cannot elim binary search typeHash on a type switch for a known type
+48222 | cmd/compile: Load optimization suboptimal
+48245 | cmd/compile: avoid repeated write barrier checks
+48507 | cmd/compile: inline-able function with named results performs worse
+48637 | cmd/compile: worse performance looping through arrays identifiable at compile time
+48684 | cmd/compile,unicode/utf8: utf8.EncodeRune has different performance from the equivalent string conversion
+48849 | cmd/compile: generic function argument causes escape to heap
+49026 | runtime: unnecessary return in netpoll
+49058 | runtime: optimize memmove for 1-16 MB overlapping case on AMD64
+49113 | cmd/compile: Get rid of redundant TEST instructions by using the ZF flag of DEC/INC
+49331 | cmd/compile: reorganize associative computation to allow superscalar execution
+49332 | cmd/compile: mark CSE'd loads as rematerializable
+49634 | cmd/compile: compiler/inliner leads to suboptimal register usage
+49785 | cmd/compile: strange performance difference between two implementations
+50126 | cmd/compile: simplify multiplication and division of Abs() 
+50325 | cmd/compile:  optimize dead store
+50365 | cmd/compile: some subsequent bounds checks are not eliminated
+50947 | runtime: FreeBSD nanotime performance regression with different CPU setups
+51071 | runtime: investigate possible Go scheduler improvements inspired by Linux Kernel's CFS
+51133 | cmd/compile: optimize convI2I, assertI2I, assertE2I for statically known types
+51462 | cmd/compile: self assigned append should not escape
+51553 | cmd/compile,runtime: optimize channel filling idiom
+51554 | cmd/compile: missed devirtualization
+51773 | cmd/compile: global vars initialized with func calls like net.IPv4 allocate at init time
+52373 | cmd/compile: optimize struct reset logic
+52741 | reflect: StructOf with very large arrays is slow 
+53300 | cmd/compile: opt should match rules through phis
+53331 | cmd/compile: jump tables perform much worse on AMD zen3?
+53465 | cmd/compile: inlining confuses escape analysis with interface{} params
+53599 | cmd/compile: reduce unnecessary register copies in regalloc
+53643 | cmd/compile: suboptimal cloning/optimization in slices.Clone
+53824 | runtime: use epoll_pwait2 where available for sub-millisecond timeout precision on Linux
+54444 | runtime: wasm GC causes stop the world for a very long time
+54544 | cmd/compile: prove should be taught about the bounds of (i+j)/2
+54612 | cmd/compile: missed optimization when using verbose array initialization
+54613 | cmd/compile: elide unnecessary copies
+54622 | runtime: allow short-term drop of work conservation to increase CPU efficiency
+55930 | runtime: reuse map string key instead of allocating
+56442 | cmd/compile: optimize append with string concatenation
+57000 | runtime: investigate a hybrid memory clearing strategy based on prove results
+57060 | cmd/compile: optimize reflect.Value.Set with short-lived Values
+57070 | runtime: contention on a single channel can consume all Ps
+57072 | cmd/compile: statically remove type switch in instantiated generic code
+57153 | cmd/compile: avoid memclr for provable overwritten slices
+57505 | cmd/compile: performance regression in 1.20 - inlining regression due to missed export
+57740 | cmd/compile: os.Stdout.Write causes its argument to escape on Windows
+57910 | sync: `sync.Mutex.*` escape `m *Mutex` argument
+59089 | cmd/compile: mod operator is very slow on intel hardware with int64
+59120 | cmd/compile: implement more optimizations on loong64
+59478 | cmd/compile: redundant loads in strconv not eliminated
+59591 | cmd/compile: better optimization of type switches in instantiated generic functions
+59612 | cmd/compile: add intra-line discrimination to PGO profiles
+59616 | cmd/compile: support for LBR profiles in PGO
+59706 | cmd/compile: range loop with large element has a significant cost
+59708 | cmd/compile: optimize recursive closure calls
+60071 | runtime: significant number of bounds checks in growslice
+60879 | cmd/compile,runtime: speed up heap allocations in loops
+61333 | cmd/compile: bounds check not needed
+61426 | runtime: contention in runtime.gcFlushBgCredit on work.assistQueue.lock
+61427 | runtime: contention in runtime.(*mheap).freeSpan.func1 on mheap_.lock
+61428 | runtime: contention in runtime.newMarkBits on gcBitsArenas.lock
+61502 | cmd/compile: overhaul inliner
+61984 | runtime,cmd/compile: redesign PCDATA encoding
+62049 | cmd/compile: treat bool-to-int conversion as a constant for optimization for more complex patterns
+62488 | runtime: unboundedly expensive equality testing
+63423 | expvar: default "memstats" key causes STW
+63670 | cmd/compile: loop invariant code motion
+63678 | all: instruction alignment optimizations for assembly routines, good starter projects
+64222 | cmd/compile: suboptimal compilation of reflect.isZero
+64272 | cmd/compile: missing BCE optimization cases
+64328 | cmd/compile: unexpected benchmark results
+64455 | runtime: ~5% regression in ParallelizeUntil/pieces:1000,workers:10,chunkSize:1-8 sec/op at 450ecbe
+64541 | runtime: redundant allocation after type assertion
+64595 | cmd/compile: pre-allocate a slice of provable length 
+64634 | proposal: crypto: replace assembly implementations with internal instrinsics
+64673 | cmd/compile: PGO devirtualization of partial interface implementations
+64675 | cmd/compile: PGO devirtualization of closures
+64676 | cmd/compile: include PGO devirtualization targets in export data
+64703 | runtime: online slice/map pre-sizing
+64877 | runtime: smoother growth rate transition yields great results
+64900 | runtime: add fast paths for common `select` patterns
+65039 | cmd/compile: flagalloc doesn't delete dead instructions
+65068 | cmd/compile: move basic blocks, which return non-nil errors, to the end of assembly output
+65192 | cmd/compile: code generates unnecessary mov-s
+65330 | cmd/compile: unsafe conversion from slice to struct pointer generates worse code on amd64 than on 386
+65440 | cmd/compile: performance of go wasm is very poor
+65647 | runtime: CL 501976 performance and jitter regression
+65685 | cmd/compile: avoid call to runtime.makeslice for zero-length types?
+65694 | runtime: stronger affinity between G ↔ P ↔ M ↔ CPU?
+65874 | runtime: allow preemption-disable around critical section
+65918 | cmd/compile: loop inversion does not support unsigned numbers
+66420 | cmd/compile: greedy basic block layout
+66671 | cmd/compile: static allocation should work with constant propagation and inlining
+66915 | runtime: use frame pointer unwind to get backtrace in goroutine profile
+67066 | time, runtime: use QueryPerformanceCounter in time.Now on Windows to improve time resolution
+67619 | runtime: memhash: use simple loop for short strings 
+67937 | runtime: consider CNTVCT_EL0 to implement cputicks on ARM64
+68399 | runtime: findrunnableGCWorker consumed much higher CPU under 64c AWS instance (ARM64), comparing to 32c
+68787 | cmd/compile: PGO devirtualization of generic method call
+68815 | cmd/compile: pgo causes worse performance on some benchmarks
+68912 | runtime: use `tophash == emptyRest` to decrease search times in `mapaccess1_faststr` and `mapaccess2_faststr`
+68933 | runtime: consider using batched shuffle in selectgo
+69015 | cmd/compile: iter implementations significantly slower than equivalent for loops
+69268 | runtime: consider removing osyield call from lock2
+69327 | runtime: non-preemptible zeroing in clear, append, bytes.growSlice, etc
+69621 | runtime: make `injectglist` starting spinning m
+69889 | cmd/compile: should delete loops without side-effects
+70062 | cmd/compile: missed bounds check elimination when paired slices are resliced
+70235 | cmd/compile: doesn't inline basic funcs and doesn't optimize code after inlining
+70393 | cmd/compile: provide default PGO profiles that cover the runtime
+70617 | runtime: clear() is slow for maps with big capacity and small number of items
+70837 | runtime: reduce duplicate work by merging map operations
+70956 | cmd/compile: remove memory components for loads statically known to only touch the `.rodata` section
+70966 | runtime: use zero byte as empty control word in maps (potential performance improvement)
+71255 | runtime: swiss map SIMD implementation for non-amd64
+71270 | cmd/compile: intrinsify cmp.Compare on common types such as strings
+71349 | reflect: allow stack allocation of underlying value for reflect.Value.Interface
+71400 | cmd/compile: worse performance when built with pgo
+71443 | cmd/compile: a constant expression is moved into a loop
+71598 | cmd/compile: functions and methods calls for indirect imports not inlined
+71628 | cmd/compile: function signature based optimizations
+71780 | cmd/compile: memcombine should learn alignment of byte slices - hard mode - arithmetic
+71868 | cmd/compile: poor spill decisions making code 14% slower
+72036 | cmd/compile: teach escape analysis to conditionally stack alloc interface method call parameters like a slice in w.Write(b)
+72107 | cmd/compile: use context-sensitivity to prevent inlining of cold callsites in PGO
+72741 | cmd/compile: storing strings doesn't take advantage of paired stores on arm64
+73055 | runtime: Channel benchmark causes extremely high idle wake ups on macOS Sequoia
+73145 | cmd/compile: unnecessary bounds check when slicing after using `slices.Grow`
+73589 | cmd/compile: non-escaping pointer operations block register lifting of values
+73601 | cmd/compile: stronger constant propagation around closures
+73821 | unique: optimize interning of string([]byte) in structs/arrays
+74000 | runtime: 9.81% regression in ParallelizeUntil/pieces:1000,workers:10,chunkSize:1-88 sec/op on linux/amd64 at 0afcf91
+74003 | runtime: 6.16% regression in PendingDemotion10000-72 sec/op on linux/arm64 at bfc2095
+74171 | cmd/compile: on amd64, compiler's Zero operation is slower than memclrNoHeapPointers for 1024-2048 bytes
+74356 | cmd/compile: wrapping funcs in interfaces causes them to escape
+74364 | cmd/compile: support conditional escapes by splitting variables
+74365 | cmd/compile: regalloc using multiple restores when one would do
+74383 | cmd/compile: devirtualized type switch causes temporary allocation to escape
+74413 | cmd/compile: redundant morestack spill space in nosplit functions
+74471 | cmd/compile: significant performance difference between 'strs[i] == str' and 'str == strs[i]'"
+74489 | cmd/compile: x86-64: sub-optimal codegen less-than-int sized index from structured slice/array
+75001 | cmd/compile: excessive time spent in line numbering
+75056 | cmd/compile: methods on generic type parameters are not inlined
+75188 | runtime: improve AddCleanup performance
+75201 | cmd/compile: functions that involve a lot of constant folding are not inlined
+75261 | runtime: high variance and unpredictable latency with spinbit mutex
+75441 | runtime, cmd/compile: increase tmpStringBufSize
+75620 | cmd/compile: avoid slices.Clone for non-mutating slices
+75955 | cmd/compile: reverse bounds check elimination
+76066 | cmd/compile: on `AMD64` slow instruction sequence to Zext a < register size instruction output
+76073 | cmd/compile: exploit disjoint live ranges to reduce frame size
+76354 | cmd/compile: extra bounds check when accessing string using index from range over its runes
+76372 | cmd/compile: inliner loses optimizations (and has different optimizations) for constant string args
+76703 | cmd/compile: extra allocation when returning a non-pointer value > 128KB
+76722 | cmd/compile: for always negative numbers `int(x) < int(y)` proves `uint(x) < uint(y)`
+76788 | runtime/secret, runtime: allocations are zeroed twice
+77087 | cmd/compile: escape: induction through map values
+77088 | cmd/compile: conditional escape analysis (or better synergy with inlining)
+77089 | cmd/compile: early loop rotation
+77090 | cmd/compile: special case slice consuming sliding window pattern
+77287 | slices: make slices.Clone avoid heap allocation for small slices
+77325 | cmd/compile: optimize string concatenation to avoid runtime calls
+77332 | cmd/go: builds appear slower on openbsd/amd64 with Go 1.26rc2 (vs 1.25.6)
+77361 | runtime: selecting mark workers during start-the-world (CL 721002) causes RSS regression in gopher-lua on large machines
+77433 | cmd/compile: inconsistent check insertion for division and bounds checks
+77522 | runtime: receiving from a closed and empty channel still requires acquiring a lock every time
+77541 | cmd/compile: riscv instruction bloat in hot loops due to large stack frame offsets
+77576 | reflect: Value.Seq2 on a map value allocates more than Value.MapRange
+77893 | runtime: better adaptive stack sizing
+78044 | runtime: degraded performance on multi-NUMA-node machines
+78336 | cmd/compile: calling a method causes interface with non-pointer receiver to escape
+78370 | cmd/compile: closures in generic functions capture type dictionaries unconditionally
+78377 | cmd/compile: loop induction with `*` and `<<` induction operators
+78378 | internal/runtime/maps: `runtime.mapaccess2_fast64` causes unnecessary type dictionary requirement
+78379 | cmd/compile: channel operations require but do not use a type dictionary
+78390 | cmd/compile: fallthrough prevents the elimination of some bounds checks
+78597 | cmd/compile: struct literal assignment to non-local targets generates unnecessary stack temporary
+78808 | cmd/compile: generic function reference in loop is not LICM'd out
+78912 | proposal: runtime: support a percentage for GOMEMLIMIT
+78946 | cmd/compile: bounds check elision cannot reason through non-dominating blocks
+79195 | cmd/compile: known bits and prove constant folding can impede memcombine
+79587 | runtime: objects pointed to by package-level var initializer are not garbage collected after pointer reassignment
+79592 | cmd/compile: missing escape analysis on generic func impls
+79931 |  runtime: add ARM64 vectorized support for Green Tea GC
+79984 | cmd/compile: simd operations not marked as hoistable
+80095 | cmd/compile: reduce allocations by reusing SSA scratch state
+80146 | cmd/compile/internal/ssa: eSSA for the prove pass
+80260 | cmd/compile: missed optimization for consecutive byte stores
+80320 | cmd/compile: go super-optimization research
+80378 | cmd/compile: improve mono.go from O(n^2) to O(n)
+80389 | runtime: use process_madvise to batch scavenger memory releases on Linux
+80400 | cmd/compile: add memory operand ADC and SBB to `AMD64.rules`
+80739 | syscall: mmapper.Mmap uses a single registry mutex, causing performance issues
+80806 | cmd/compile: Struct parameter leaks to return values despite copying field
+80829 | cmd/compile: archsimd MulAdd cannot accumulate in place or fold a broadcast memory operand (no VFMADD231PS, no .BCST), though the assembler encodes both
+80972 | internal/runtime/maps: use fxhash for very small keys
+81097 | cmd/compile: archsimd load isn't treated as read only for string → []byte elision
+81131 | cmd/compile: regalloc inserts redundant register swap in strings.Fields hot loop
+81377 | cmd/compile: missed devirtualization of generic dictionary calls for closed/package-internal constraints
+81609 | cmd/compile: break false dependency on Zen 4 and 5 (compress/expand)
+81649 | cmd/compile: composite literal fields built by inlined constructors are not initialized in place
+81657 | runtime: speed up GC phase transitions
+81755 | cmd/compile: arm64 rematerializes multi-instruction 64-bit constants inside loops
+81839 | cmd/compile: Go 1.27 regression in BigEndian.Uint32 load combining with array copy
+81846 | cmd/compile: simd.Float32s.Neg rebuilds its sign-bit constant on every loop iteration
+81887 | cmd/compile: slices.BinarySearchFunc is not inlined, making it slower than sort.Search

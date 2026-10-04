@@ -1,0 +1,11 @@
+id: GG-0002
+title: Drop-in build/test/module behavior
+statement: 'graalgo SHALL reproduce stock `go` behavior for module resolution (GOPROXY/sumdb), build caching (behavioral: hit/miss patterns, not byte-identical entries), `go test` JSON protocol and two-level result caching, and `go vet` invocation.'
+rationale: Drop-in extends past the CLI into observable build/test semantics.
+parent: ""
+status: locked
+superseded_by: ""
+verification_plan: Differential runs of module/test/cache scenarios vs stock go per testing-strategy layer 3.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

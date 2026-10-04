@@ -1,0 +1,66 @@
+=== RUN   TestScript
+=== PAUSE TestScript
+=== CONT  TestScript
+vcs-test.golang.org rerouted to http://127.0.0.1:37707
+https://vcs-test.golang.org rerouted to https://127.0.0.1:33959
+go test proxy running at GOPROXY=http://127.0.0.1:34571/mod
+=== RUN   TestScript/vet_deps
+=== PAUSE TestScript/vet_deps
+=== CONT  TestScript/vet_deps
+    script_test.go:141: 2026-10-03T06:15:51Z
+    script_test.go:143: $WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/tmpdir2155122218/vet_deps1409235798
+    script_test.go:165: 
+        PATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/tmpdir2155122218/testbin:/home/hatch/tools/go/bin:/opt/hatch/bin:/opt/hatch-image/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/opt/hatch/skills/artifacts/scripts:/opt/hatch/skills/generate_podcast/scripts:/opt/hatch/skills/podcast/scripts:/opt/hatch/skills/spaces/scripts
+        HOME=/no-home
+        CCACHE_DISABLE=1
+        GOARCH=amd64
+        TESTGO_GOHOSTARCH=amd64
+        GOCACHE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/gocache-stock
+        GOCOVERDIR=
+        GODEBUG=
+        GOEXE=
+        GOEXPERIMENT=
+        GOOS=linux
+        TESTGO_GOHOSTOS=linux
+        GOPROXY=http://127.0.0.1:34571/mod
+        GOPRIVATE=
+        GOROOT=/home/hatch/tools/go-1.27.1
+        GOTRACEBACK=system
+        TESTGO_GOROOT=/home/hatch/tools/go-1.27.1
+        TESTGO_EXE=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/tmpdir2155122218/testbin/go
+        TESTGO_VCSTEST_HOST=127.0.0.1:37707
+        TESTGO_VCSTEST_TLS_HOST=127.0.0.1:33959
+        TESTGO_VCSTEST_CERT=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/vcstest1956443764/cert.pem
+        TESTGONETWORK=panic
+        GOSUMDB=localhost.localdev/sumdb+00000c67+AcTrnkbUA+TU4heY3hkjiSES/DSQniBqIeQ/YppAUtK6
+        TESTGO_SUMDB=localhost.localdev/sumdb
+        GONOPROXY=
+        GONOSUMDB=
+        GOVCS=*:all
+        devnull=/dev/null
+        goversion=1.27.1
+        CMDGO_TEST_RUN_MAIN=true
+        HGRCPATH=
+        GOTOOLCHAIN=auto
+        newline=
+        
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/tmpdir2155122218/vet_deps1409235798
+        TEST_TELEMETRY_DIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/tmpdir2155122218/vet_deps1409235798/telemetry
+        TMPDIR=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/tmpdir2155122218/vet_deps1409235798/tmp
+        GOPATH=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/tmpdir2155122218/vet_deps1409235798/gopath
+        PWD=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/tmpdir2155122218/vet_deps1409235798/gopath/src
+        
+        > env GO111MODULE=off
+        # Issue 30296. Verify that "go vet" uses only immediate dependencies.
+        # First run fills the cache. (2.418s)
+        > go vet a
+        > go vet -x a
+        [stderr]
+        WORK=/home/hatch/workspace/graalgo/spikes/05-cmdgo/tmp/cmd-go-test-568376171/tmpdir2155122218/vet_deps1409235798/tmp/go-build4128322975
+        mkdir -p $WORK/b003/
+        mkdir -p $WORK/b002/
+        mkdir -p $WORK/b001/
+        > ! stderr 'transitive'
+--- PASS: TestScript (0.06s)
+    --- PASS: TestScript/vet_deps (2.42s)
+PASS

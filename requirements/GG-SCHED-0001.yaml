@@ -1,0 +1,11 @@
+id: GG-SCHED-0001
+title: Quantum park on Safepoint.poll expiry
+statement: On quantum expiry at a Safepoint.poll() (loop back-edges and function entries in the Truffle AST), the virtual thread SHALL park indefinitely via LockSupport.park() and enqueue a resume token on the scheduler queue; the default quantum SHALL be 10ms.
+rationale: 'Spike 2b: indefinite park (not yield) removes the vthread from FJP contention entirely, which is what eliminates the starvation pathology; 10ms is the F4 scoped fix (1ms mean overhead 2.7% over the 1% budget; 10ms gives 0.27%).'
+parent: "GG-0017"
+status: locked
+superseded_by: ""
+verification_plan: Spike 2b F1/F4; Phase-2 preemption-torture re-run on the production path.
+history:
+    - '2026-10-03: created (draft)'
+    - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'

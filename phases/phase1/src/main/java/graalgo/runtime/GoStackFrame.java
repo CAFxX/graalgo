@@ -1,0 +1,52 @@
+package graalgo.runtime;
+
+import com.oracle.truffle.api.source.SourceSection;
+
+/**
+ * One Go call-stack frame, for panic traces (M5, WS F).
+ *
+ * <p>Frames form a persistent (immutable) linked list hanging off
+ * {@link GoroutineState}: pushing returns a new head, so a
+ * {@link PanicException} can capture the stack in O(1) at throw time and
+ * render it lazily only if the panic goes uncaught (SPEC §3.5: panic traces
+ * are lazy; recovered panics stay cheap).
+ */
+public final class GoStackFrame {
+    private final GoStackFrame parent;
+    private final String funcName;
+    private final SourceSection section;
+
+    public GoStackFrame(GoStackFrame parent, String funcName, SourceSection section) {
+        this.parent = parent;
+        this.funcName = funcName;
+        this.section = section;
+    }
+
+    /** The empty stack. */
+    public GoStackFrame() {
+        this(null, "", null);
+    }
+
+    public GoStackFrame parent() {
+        return parent;
+    }
+
+    /** Go-qualified function name, e.g. {@code main.main} or {@code main.main.func1}. */
+    public String funcName() {
+        return funcName;
+    }
+
+    /**
+     * The source section to attribute this frame in a trace: the call-site
+     * section for caller frames. The panicking (innermost) frame's line is
+     * overridden with the throw site when the trace is rendered.
+     */
+    public SourceSection section() {
+        return section;
+    }
+
+    /** True for the empty stack. */
+    public boolean isEmpty() {
+        return parent == null;
+    }
+}
