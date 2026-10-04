@@ -1148,3 +1148,40 @@ store), DeleteNode.java (INT64 kind, MapKeys.box), LenNode.java
 
 **Status**: Awaiting test results. TypeparamDifferentialTest failure
 (pre-existing, from earlier run) needs investigation.
+
+## 2026-10-04 ~23:30 CEST — M7 builtins committed (2fa4da2)
+
+**Commit**: 2fa4da2 "M7: package-level const/var (GG-0014) + builtins
+differential green" (33 files, +1490/-75).
+
+**Test results**:
+- `make -C phases/phase1 test`: **183 tests, 0 failures** (green).
+- `make check`: green (placeholder gate, gofrontend gofmt/vet/test,
+  vendoring diff gate).
+- BuiltinsCorpusTest: 16/16 pass (was 5/11).
+- TypeparamDifferentialTest: 44 comparisons, 0 diverged, 222 excluded
+  (bar not regressed).
+- SliceGrowthTest: new, pins nextSliceCap to Go source algorithm.
+
+**Divergence categories** (11 -> 0):
+- Real bugs fixed (8): append fast path, DeleteNode kind, DeleteNode
+  MapKeys, new/make type args, complex constants, len untyped string,
+  append small-int cast, string<->slice conversion, append spread.
+- Test/normalization fixes (1): Differential PCOFF/ADDR order.
+- Corpus rewrites (3): bi01, bi10, bi13 — exact caps are not a
+  differential property (gc's growsliceBuf optimization); assert
+  validity + elements instead. Growth algorithm pinned by unit test.
+
+**Exclusion delta**: 0 (no new exclusions; 3 programs rewritten, not
+excluded).
+
+**P1 finding** (spec gap, not a bug): gc's observable `cap` after
+`append` depends on the `growsliceBuf` stack-buffer compiler
+optimization, which is not in the Go language spec and cannot be
+replicated by an interpreter. Recorded in corpus/builtins/README.md.
+Not silently excluded — programs rewritten to test specified behavior.
+
+**Remaining M7 scope**:
+1. Run all 47 tools/diffharness/corpus/ programs through diffharness.
+2. Build corpus coverage manifest (gate-1 evidence).
+3. Full diffharness run for done-gate 1.
