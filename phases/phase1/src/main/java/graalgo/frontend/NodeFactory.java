@@ -1545,6 +1545,17 @@ public final class NodeFactory {
             GoExprNode[] allArgs = new GoExprNode[args.length + 1];
             allArgs[0] = recv;
             System.arraycopy(args, 0, allArgs, 1, args.length);
+            // P1-1 (M6 remediation): the exporter wires the method's
+            // signature type id on the methodref node (receiver as
+            // params[0]); adapt concrete args passed to interface params
+            // exactly as for direct calls. Previously the signature was
+            // not on the wire and the root's fallback inferred a bogus
+            // descriptor from the Java carrier type, so a later type
+            // switch silently took the wrong branch.
+            Json.Value sig = ff.opt("type");
+            List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
+                    : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            allArgs = adaptArgsForInterfaceParams(allArgs, paramTypes, ctx, path);
             return new FuncValueCallNode(new FuncConstNode(funcTable, oid), allArgs,
                     callResultKind(node, ctx, path));
         }
@@ -1581,8 +1592,9 @@ public final class NodeFactory {
      * inference, which derived the descriptor from the Java carrier type —
      * int8/int16/uint8/uint16/uint32 all looked like int32 (a wrong type
      * switch match, not just a miss), and composite values never matched.
-     * The root's fallback stays for call shapes whose signature is not on
-     * the wire (methodref).
+     * The root's {@code wrapInterface} fallback stays only for exotic call
+     * shapes whose signature is not on the wire (none remain: ident, funclit
+     * and methodref all carry it).
      *
      * @param paramTypeIds the callee's parameter type ids, or null when
      *                     unknown (no adaptation)

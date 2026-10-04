@@ -104,6 +104,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `return` | `results`: [expr nodes] |
 | `incdec` | `tok` ∈ {`++`,`--`}, `x`: expr node |
 | `ident` | `name`, `obj`: object id, `type`: type id; *or* builtin form: `name`, `builtin`: str, `type`: type id |
+| `methodref` | `obj`: object id (method funcdecl/instantiation), `recv`: expr node (evaluated first, passed as the method's params[0]), `type`: signature type id with the receiver as params[0] — a method-call target (M6, WS H) |
 | `basiclit` | `value`: source text, `const`: `go/constant` `ExactString()` (present when the literal is a constant), `type`: type id; string constants additionally carry `sbytes`: hex of the exact UTF-8 bytes (byte-exact — `ExactString` is a quoted literal and JSON cannot carry invalid UTF-8); float constants additionally carry `f32bits`: int and `f64bits`: long, the signed-reinterpreted IEEE-754 bits (correctly rounded by `go/constant` itself; `ExactString` renders rationals as `"a/b"`, which no float parser reads) |
 | `binary` | `op` ∈ {`+`,`-`,`*`,`/`,`%`,`&`,`\|`,`^`,`&^`,`<<`,`>>`,`==`,`!=`,`<`,`<=`,`>`,`>=`,`&&`,`\|\|`}, `x`, `y`, `type`: type id |
 | `unary` | `op` ∈ {`+`,`-`,`!`,`^`}, `x`, `type`: type id |
@@ -154,12 +155,20 @@ walking each template with its type substitution. Every needed
 (generic function, type args) / (method, receiver args, method args) pair
 is emitted as its own `funcdecl` in the top-level `funcs` array, with
 `name` = the display name (e.g. `Min[int]`, from `instNameForFunc`).
-Dedup is by instantiation key (`F:<name>|<targs>`): one wire funcdecl per
-distinct instantiation, no matter how many call sites. The generic
+Dedup is by instantiation key (`F:<name>|<targs>` for functions,
+`M:<recvkey>.<mname>|<mtargs>` for methods): one wire funcdecl per
+distinct instantiation, no matter how many call sites. Method-level type
+arguments bind positionally (`bind[mtps.At(i)] = methodTargs[i]`) with loud
+arity/concreteness errors; the path is covered differentially by
+`corpus/generics/gn04_generic_method_targs.go` (`s.MapTo[string](...)`,
+`s.MapTo[int](...)` vs stock gc). The generic
 template itself is *not* emitted — only reachable instantiations are.
 Termination is guaranteed by `go/types` (instantiation cycles are type
 errors, so the graph is finite); a defensive cap guards against
-enumerator bugs as an internal error, never silent.
+enumerator bugs as an internal error, never silent. The cap is
+unreachable for accepted programs except pathological-but-legal ones
+with more than 100000 distinct instantiations, where it fails loudly
+rather than hanging.
 
 Type identity across instantiations (M6, WS H): a `*types.Named` with
 substituted type arguments (e.g. `Some[T]` under `T=int`) denotes the same
@@ -171,9 +180,17 @@ this, a value boxed in a monomorphized body could never satisfy a type
 assertion in the caller (issue52026).
 
 Call sites resolve through the same map: a call to a generic
-function/method is a `call` node whose `fun` ident has `obj` = the
-instantiation's object id and whose `type` is the instantiation's
-signature id — statically dispatched, exactly like a non-generic call.
+function/method is a `call` node whose `fun` is an `ident` (functions)
+or `methodref` (methods, carrying `obj`, `recv`, and the signature
+`type` id) with `obj` = the instantiation's object id and `type` = the
+instantiation's signature id — statically dispatched, exactly like a
+non-generic call. The `methodref` `type` id has the receiver as params[0]
+(matching the callee funcdecl's `sig`) so the factory can box concrete
+arguments passed to interface-typed parameters at the call site (P1-1).
+Generic function *values* in single-`IndexExpr` form (`f := Min[int]`)
+resolve the same way; multi-type-argument values (`f := Show[int,
+float64]`, an `*ast.IndexListExpr`) and parenthesized values
+(`(Min)[int]`) are loud scope errors (WS D).
 Generic structs carry field offsets of `-1` ("unknown") whenever a field
 type could contain a bare type parameter (`go/types` `gcSizes` asserts on
 those; offsets are instantiation-dependent anyway); the factory indexes
@@ -220,8 +237,14 @@ the extension:
   (incl. comma-ok), `nil`, function literals (M5, WS F);
 - calls: builtins per the WS G builtin surface (see freeze-stub.md
   "Builtin nodes"); `panic`/`recover` are builtins (M5, WS F/G);
-  user-defined function calls are not in v1 scope (WS D);
-- named types with methods → scope error (WS D).
+  user-defined function calls (M6, WS H) and method calls (M6, WS H):
+  methods dispatch by object id via `methodref` fun targets
+  (receiver-based dispatch only — implicit address-of/deref on the
+  receiver, method values, and interface dispatch on type parameters are
+  scope errors naming WS D/WS H);
+- named types with methods beyond the M6 subset → scope error (WS D):
+  the M6 subset is receiver-based dispatch on named-type receivers with
+  an exact receiver-type match (see the calls bullet).
 
 There are no silently dropped or defaulted nodes. `go/types` errors (parse
 and type errors) abort before any JSON is emitted.

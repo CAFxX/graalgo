@@ -58,7 +58,7 @@ public final class GenericsCorpusTest {
     /** Guards against accidental corpus shrinkage: the edge-case cover below must stay. */
     public void testCorpusHasEnoughPrograms() throws Exception {
         List<String> ps = programs();
-        if (ps.size() < 9) {
+        if (ps.size() < 10) {
             throw new AssertionError(
                     "generics corpus shrank to " + ps.size() + " programs: " + ps);
         }
@@ -73,6 +73,7 @@ public final class GenericsCorpusTest {
     public void testGn07HigherOrder() throws Exception { checkProgram("gn07_higher_order"); }
     public void testGn08Constraints() throws Exception { checkProgram("gn08_constraints"); }
     public void testGn09FmtOverlay() throws Exception { checkProgram("gn09_fmt_overlay"); }
+    public void testGn10MethodrefBox() throws Exception { checkProgram("gn10_methodref_box"); }
 
     /**
      * Runs one corpus program through both backends and asserts every

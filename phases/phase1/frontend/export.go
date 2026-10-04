@@ -923,20 +923,15 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		// stays empty here — populated by WS D per docs/frontend-v1.md.
 		// M6: instantiated generic types (e.g. F[foo]) include the type
 		// arguments in the name for %T formatting (issue49547).
-		name := qualifiedName(t.Obj())
-		if targs := t.TypeArgs(); targs != nil && targs.Len() > 0 {
-			args := make([]string, targs.Len())
-			for i := 0; i < targs.Len(); i++ {
-				args[i] = qualifiedNameForType(targs.At(i))
-			}
-			name += "[" + strings.Join(args, ", ") + "]"
-		}
+		// P2-3: single renderer (namedTypeName) — a second copy here would
+		// silently mint two wire ids for one type if they ever drifted,
+		// breaking the t == dyn identity B2a/B4 rest on.
 		under, err := e.typeID(t.Underlying())
 		if err != nil {
 			return TypeEnt{}, err
 		}
 		return mk("named", map[string]any{
-			"name": name, "underlying": under, "methods": []any{},
+			"name": namedTypeName(t), "underlying": under, "methods": []any{},
 		}), nil
 	case *types.Pointer:
 		elem, err := e.typeID(t.Elem())
@@ -2924,15 +2919,30 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	if substString(declRecv, mc.subst) != substString(xt.Type, e.subst) {
 		return nil, scopeErrorf("method call %s needs an implicit address-of or deref on the receiver (WS D)", sel.Sel.Name)
 	}
-	var objID int
+	var objID, sigID int
 	if mc.needsInst {
 		inst, ok := e.instByKey[mc.key]
 		if !ok {
 			return nil, fmt.Errorf("gofrontend: method instantiation %s not enumerated (internal error)", mc.key)
 		}
 		objID = inst.instID
+		sigID = inst.sigID
 	} else {
 		objID = mc.decl.funcID
+		// P1-1 (M6 remediation): wire the method's signature type id on the
+		// methodref node (receiver as params[0], matching the funcdecl's
+		// "sig") so the factory can adapt concrete arguments passed to
+		// interface-typed parameters — the same call-site boxing direct
+		// calls get. Without it the root fell back to inferring the
+		// descriptor from the Java carrier type and a later type switch
+		// silently took the wrong branch. The signature is concrete here
+		// (!isTemplate), so the active substitution is the identity on it.
+		var err error
+		sigID, err = e.freshSigID(mc.decl.recv, mc.decl.sig.Params(), mc.decl.sig.Results(),
+			mc.decl.sig.Variadic())
+		if err != nil {
+			return nil, err
+		}
 	}
 	recv, err := e.exportExpr(sel.X)
 	if err != nil {
@@ -2946,7 +2956,7 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	if err != nil {
 		return nil, err
 	}
-	fun := e.node("methodref", sel, map[string]any{"obj": objID, "recv": recv})
+	fun := e.node("methodref", sel, map[string]any{"obj": objID, "recv": recv, "type": sigID})
 	return e.node("call", c, map[string]any{
 		"fun": fun, "args": args, "type": typ,
 	}), nil
