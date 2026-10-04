@@ -1,0 +1,8 @@
+M6 mutation M1 (2026-10-04): dropped instantiation resolution in exportFuncCall.
+Mutation: when calling a generic function, resolve to the template's funcID
+instead of looking up the instantiation by type args (instByKey).
+Expected: corpus catches it (template has no RootNode; factory funcTable lookup fails).
+Result: CAUGHT — gn02_generic_funcs.go fails with:
+  "graalgo-run: execution failed: graalgo.frontend.FrontendException: unresolved function object 0 (WS H)"
+The GenericsCorpusTest differential would fail on gn02/gn06/gn07/gn08 (all use generic functions).
+Reverted after verification.

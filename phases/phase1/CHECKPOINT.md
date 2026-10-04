@@ -814,3 +814,23 @@ green on the unified tree.
   Reviewers read-only on the tree; no builds on the live tree (M6 owns it).
 - Registry: graalgo-phase1-review-m5-loopcap (coordinator). Next: consolidate findings
   -> remediation -> re-test -> milestone sign-off.
+
+## 2026-10-04 ~13:30 CEST — M5+loopcap review round COMPLETE: 5 semantic P0s, remediation sequenced
+- R1/R2/R3 all delivered; consolidated in reviews/phase1-m5-loopcap/FINDINGS.md.
+- Headline (parent-verified from gc's loopvar.go + oracle): the loop-capture two-cell
+  design (S_outer for init/cond/post, S_iter for body, write-through) mis-models gc,
+  which has ONE per-iteration variable + carry write-back (z:=z'; post(z); cond(z);
+  body(z); z'=z). 5 P0 programs (stale-cell write corrupts termination; struct field
+  mutation invisible to post/cond; cond/post closures capture wrong cell; range-=
+  into header var; nested transitive capture) all confirmed vs gc 1.27.1. The 114
+  green tests cover none of these shapes.
+- Evidence P0s: m5_green.log is a terminated 70-pass run, not 102/102 (cited
+  /tmp/m5_verify.log gone); loopcap red-green + 114/114 logs prose-only.
+- R3: no deprecated-API violations; untangle clean; 5 doc P1s (freeze/wire docs).
+- Remediation (FINDINGS.md §Remediation): design rework to gc's model + 17 new
+  adversarial corpus tests + evidence re-filing + doc fixes.
+- SEQUENCING (one-owner rule): M6 worker is mid-flight on NodeFactory.java/export.go
+  (generics corpus gn01-gn09, GenericsCorpusTest, mutation log active). Remediation
+  worker dispatches AFTER M6 completes, as single owner of both files. M6 worker note:
+  avoid depending on boxSpec-draining internals — capture propagation will be reworked.
+- Registry graalgo-phase1-review-m5-loopcap stays active until remediation+re-test done.
