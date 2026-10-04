@@ -14,7 +14,7 @@ import graalgo.values.GoSlice;
  * shared, so element writes during iteration are visible (gc-verified).
  * A nil slice iterates zero times.
  *
- * <p>Per-iteration capture (M6): when a range variable is boxed, each
+ * <p>Per-iteration capture (loopcap): when a range variable is boxed, each
  * iteration installs a fresh {@link GoBox} cell in its slot
  * ({@code keyDefine}/{@code valDefine}, {@code :=} form) or mutates the
  * existing cell ({@code =} form on an outer boxed variable) instead of a

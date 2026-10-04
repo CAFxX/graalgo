@@ -15,7 +15,7 @@ import graalgo.values.GoKind;
  * (null otherwise). The body is a {@link GoFuncRootNode}; calls go through
  * {@link FuncValueCallNode}, deferred calls through {@link DeferNode}.
  *
- * <p>Per-iteration capture (M6): when the literal captures boxed (loop)
+ * <p>Per-iteration capture (loopcap): when the literal captures boxed (loop)
  * variables, the creation spec lists {@code (depth, slot, snapSlot)}
  * triples in a fixed order. At creation the node walks the
  * {@code $closure} chain from the creating frame ({@code depth} hops;

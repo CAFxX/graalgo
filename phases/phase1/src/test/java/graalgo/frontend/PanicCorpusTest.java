@@ -126,6 +126,12 @@ public final class PanicCorpusTest {
     public void testPn12DeepRecursion() throws Exception { checkProgram("pn12_deep_recursion"); }
     public void testPn13DeferStorm() throws Exception { checkProgram("pn13_defer_storm"); }
     public void testPn14OobIndex() throws Exception { checkProgram("pn14_oob_index"); }
+    public void testPn15Adv06PanicCapture() throws Exception { checkProgram("pn15_adv06_panic_capture"); }
+    public void testPn16Adv07Crossframe() throws Exception { checkProgram("pn16_adv07_crossframe"); }
+    public void testPn17Adv08RecoverNamed() throws Exception { checkProgram("pn17_adv08_recover_named"); }
+    public void testPn18Adv09DeferUnwind() throws Exception { checkProgram("pn18_adv09_defer_unwind"); }
+    public void testPn19Adv11GoexitNested() throws Exception { checkProgram("pn19_adv11_goexit_nested"); }
+    public void testPn20Adv12RecoverNested() throws Exception { checkProgram("pn20_adv12_recover_nested"); }
     public void testPn15SliceBounds() throws Exception { checkProgram("pn15_slice_bounds"); }
     public void testPn16NilMapWrite() throws Exception { checkProgram("pn16_nil_map_write"); }
     public void testPn17TypeAssert() throws Exception { checkProgram("pn17_type_assert"); }

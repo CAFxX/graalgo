@@ -33,17 +33,17 @@ Conventions:
 
 | Signature | Notes |
 |-----------|-------|
-| `public static void memmove(Object dst, int dstOff, Object src, int srcOff, int n)` | Untyped word copy; used by slice growth. |
-| `public static boolean memequal(Object a, int aOff, Object b, int bOff, int n)` | Byte equality. |
+| `public static void memmove(Object dst, int dstOff, Object src, int srcOff, int n)` | Untyped word copy; used by slice growth. [T] |
+| `public static boolean memequal(Object a, int aOff, Object b, int bOff, int n)` | Byte equality. [T] |
 
 ### Slice intrinsics — `graalgo.runtime.Intrinsics` (REAL)
 
 | Signature | Notes |
 |-----------|-------|
-| `public static GoSlice makeslice(GoKind elemKind, int len, int cap)` | Exact cap (no size-class rounding observable). |
-| `public static GoSlice growslice(GoSlice old, GoKind elemKind, int newLen, long elemSizeBytes, boolean elemHasPointers)` | gc's growslice ported exactly (nextslicecap + roundupsize). |
-| `public static GoSlice growslice(GoSlice old, GoKind elemKind, int additional)` | Convenience for `append`; computes size/hasPointers from kind. |
-| `public static int slicecopy(GoSlice dst, GoSlice src, GoKind elemKind)` | `copy` builtin; memmove semantics; returns count. |
+| `public static GoSlice makeslice(GoKind elemKind, int len, int cap)` | Exact cap (no size-class rounding observable). [T] |
+| `public static GoSlice growslice(GoSlice old, GoKind elemKind, int newLen, long elemSizeBytes, boolean elemHasPointers)` | gc's growslice ported exactly (nextslicecap + roundupsize). [T] |
+| `public static GoSlice growslice(GoSlice old, GoKind elemKind, int additional)` | Convenience for `append`; computes size/hasPointers from kind. [T] |
+| `public static int slicecopy(GoSlice dst, GoSlice src, GoKind elemKind)` | `copy` builtin; memmove semantics; returns count. [T] |
 | `public static long elemSizeBytes(GoKind kind)` | D5 element size. |
 | `public static boolean elemHasPointers(GoKind kind)` | GC scanning hint. |
 
@@ -51,10 +51,10 @@ Conventions:
 
 | Signature | Notes |
 |-----------|-------|
-| `public static void mapAssign(GoMap m, Object key, Object value)` | Insert or overwrite. |
-| `public static Object mapAccess(GoMap m, Object key)` | Null when absent (caller applies comma-ok). |
-| `public static void mapDelete(GoMap m, Object key)` | No-op on absent. |
-| `public static int mapLen(GoMap m)` | |
+| `public static void mapAssign(GoMap m, Object key, Object value)` | Insert or overwrite. [T] |
+| `public static Object mapAccess(GoMap m, Object key)` | Null when absent (caller applies comma-ok). [T] |
+| `public static void mapDelete(GoMap m, Object key)` | No-op on absent. [T] |
+| `public static int mapLen(GoMap m)` | [T] |
 | `public static Object[] mapIterInit(GoMap m)` | Snapshot for range. |
 | `public static Object mapIterNext(Object[] snapshot, int index)` | |
 
@@ -62,28 +62,28 @@ Conventions:
 
 | Signature | Status | Notes |
 |-----------|--------|-------|
-| `public static Object itabFor(GoTypeDescriptor descriptor, GoTypeDescriptor iface)` | STUB | Phase-2 type/metadata tables. |
+| `public static Object itabFor(GoTypeDescriptor descriptor, GoTypeDescriptor iface)` | STUB | Phase-2 type/metadata tables. [T] |
 
 ### Random — `graalgo.runtime.Intrinsics` (REAL)
 
 | Signature | Notes |
 |-----------|-------|
 | `public static synchronized long fastrand64()` | wyrand (gc's runtime/rand.go port). |
-| `public static int fastrand()` | Low 32 bits. |
-| `public static int fastrandn(int n)` | `[0, n)`; n must be positive. |
+| `public static int fastrand()` | Low 32 bits. [T] |
+| `public static int fastrandn(int n)` | `[0, n)`; n must be positive. [T] |
 
 ### Traceback — `graalgo.runtime.Intrinsics`
 
 | Signature | Status | Notes |
 |-----------|--------|-------|
-| `public static String traceback()` | STUB | Needs Phase-2 scheduler stacks. |
+| `public static String traceback()` | STUB | Needs Phase-2 scheduler stacks. [T] |
 
 ### Builtin print — `graalgo.runtime.BuiltinPrint` (REAL)
 
 | Signature | Notes |
 |-----------|-------|
-| `public static void print(Arg[] args)` | `print` builtin → **stderr** (gc parity). |
-| `public static void println(Arg[] args)` | `println` builtin → **stderr**. |
+| `public static void print(Arg[] args)` | `print` builtin → **stderr** (gc parity). [T] |
+| `public static void println(Arg[] args)` | `println` builtin → **stderr**. [T] |
 | `public record Arg(GoKind kind, Object value)` | Argument box. |
 
 ### fmt stub — `graalgo.runtime.Fmt` (D4; replaceable-in-Phase-3)
@@ -95,13 +95,13 @@ import overlay, never linked as a real `fmt`.
 
 | Signature | Notes |
 |-----------|-------|
-| `public static GoString sprintf(String format, Arg[] args)` | |
-| `public static GoString sprint(Arg[] args)` | |
-| `public static GoString sprintln(Arg[] args)` | |
-| `public static int print(Arg[] args)` | → stdout; returns bytes written. |
-| `public static int printf(String format, Arg[] args)` | → stdout; returns bytes written. |
-| `public static int println(Arg[] args)` | → stdout; returns bytes written. |
-| `public static GoInterface errorf(String format, Arg[] args)` | Dynamic type `*errors.errorString`. |
+| `public static GoString sprintf(String format, Arg[] args)` | [T] |
+| `public static GoString sprint(Arg[] args)` | [T] |
+| `public static GoString sprintln(Arg[] args)` | [T] |
+| `public static int print(Arg[] args)` | → stdout; returns bytes written. [T] |
+| `public static int printf(String format, Arg[] args)` | → stdout; returns bytes written. [T] |
+| `public static int println(Arg[] args)` | → stdout; returns bytes written. [T] |
+| `public static GoInterface errorf(String format, Arg[] args)` | Dynamic type `*errors.errorString`. [T] |
 | `public record Arg(Object value, GoKind kind, String typeName, GoKind keyKind, String keyTypeName, GoKind elemKind, String elemTypeName)` | Full type metadata. |
 
 ### Atomics — `graalgo.runtime.Atomics` (REAL)
@@ -127,8 +127,8 @@ JVM atomics backing Go's `sync/atomic` (int32/int64/uintptr).
 
 | Signature | Status | Notes |
 |-----------|--------|-------|
-| `public static long nanotime()` | REAL | `System.nanoTime()`. |
-| `public static void sleep(long ns)` | STUB | Phase-2 scheduler sleep. |
+| `public static long nanotime()` | REAL | `System.nanoTime()`. [T] |
+| `public static void sleep(long ns)` | STUB | Phase-2 scheduler sleep. [T] |
 | `public static void startTimer(long whenNanos, Runnable callback)` | STUB | Phase-2 timer heap. |
 | `public static void stopTimer(long timerId)` | STUB | |
 
@@ -138,9 +138,9 @@ Phase-2 owns the implementation (park/queue/drainer per §3.5).
 
 | Signature | Notes |
 |-----------|-------|
-| `public static void spawn(GoFunc fn)` | `go` statement (Phase 1: factory scope error). |
-| `public static void yield()` | |
-| `public static void park(Runnable wake)` | |
+| `public static void spawn(GoFunc fn)` | `go` statement (Phase 1: factory scope error). [T] |
+| `public static void yield()` | [T] |
+| `public static void park(Runnable wake)` | [T] |
 | `public static int runnableCount()` | |
 
 ### Netpoller API contract — `graalgo.runtime.Netpoll` (STUB)
@@ -150,9 +150,9 @@ event loop.
 
 | Signature |
 |-----------|
-| `public static void init()` |
-| `public static long open(int fd, int mode)` |
-| `public static void close(int fd)` |
+| `public static void init()` [T] |
+| `public static long open(int fd, int mode)` [T] |
+| `public static void close(int fd)` [T] |
 | `public static boolean waitForEvents(boolean block)` |
 | `public static void breakWait()` |
 
@@ -161,9 +161,9 @@ event loop.
 | Signature |
 |-----------|
 | `public static Chan makeChan(long elemSizeBytes, int capacity)` |
-| `public static void send(Chan ch, Object value)` |
-| `public static Object recv(Chan ch)` |
-| `public static void close(Chan ch)` |
+| `public static void send(Chan ch, Object value)` [T] |
+| `public static Object recv(Chan ch)` [T] |
+| `public static void close(Chan ch)` [T] |
 | `public static int len(Chan ch)` |
 | `public static int cap(Chan ch)` |
 | `public static int selectGo(SelectCase[] cases)` |
@@ -174,8 +174,8 @@ Frozen cross-workstream interface (verbatim; WS F implements).
 
 | Signature | Notes |
 |-----------|-------|
-| `public static void throwPanic(Object goValue)` | `panic(x)` builtin calls this. |
-| `public static Object recover()` | `recover()` builtin calls this. |
+| `public static void throwPanic(Object goValue)` | `panic(x)` builtin calls this. [T] |
+| `public static Object recover()` | `recover()` builtin calls this. [T] |
 | `public static void throwPanic(Object goValue, Object descriptor, String goTypeName, Node throwSite)` | Additive overload (rendering/boxing info); does not change the frozen pair. |
 
 ### Builtin nodes — `graalgo.frontend` (REAL; Truffle nodes)
@@ -194,14 +194,55 @@ The builtins as Truffle expression nodes (WS G). The factory
 | `DeleteNode(GoExprNode, GoExprNode)` | `delete` | — (statement only) |
 | `ComplexNode(Op, GoKind, GoExprNode, GoExprNode)` | `complex`/`real`/`imag` | COMPLEX64/128 / FLOAT32/64 |
 | `PrintNode(boolean, GoExprNode[])` | `print`/`println` | — (statement only) |
-| `PanicNode(GoExprNode)` / `PanicNode()` | `panic`/`recover` | — / INTERFACE |
+| `PanicBuiltinNode(GoExprNode, GoTypeDescriptor, String, boolean)` | `panic` | — (statement only) |
+| `RecoverBuiltinNode()` | `recover` | INTERFACE |
 | `FmtCallNode(String, GoExprNode[], ...)` | `fmt.*` (D4) | STRING / INTERFACE |
+
+### M5 runtime surface (frozen 2026-10-04, WS F)
+
+The AST nodes built by `NodeFactory` for M5 (defer/panic/recover/Goexit,
+function literals) call into this runtime surface. It is frozen at the
+signatures below; Phase 1 provides REAL implementations (differential vs
+gc via the panic corpus).
+
+| Signature | Owner | Notes |
+|-----------|-------|-------|
+| `GoErrors.bounds(BoundsCode, long, long, boolean)` | `graalgo.runtime.GoErrors` | Slice/index bounds error values [C] |
+| `GoErrors.indexOutOfRange(long, long, boolean)` | `graalgo.runtime.GoErrors` | Index out of range [C] |
+| `GoErrors.assignmentToNilMap()` | `graalgo.runtime.GoErrors` | Assignment to nil map [C] |
+| `GoErrors.nilDereference()` | `graalgo.runtime.GoErrors` | Nil pointer dereference [C] |
+| `GoErrors.integerDivideByZero()` | `graalgo.runtime.GoErrors` | Integer divide by zero [C] |
+| `GoErrors.negativeShift()` | `graalgo.runtime.GoErrors` | Negative shift amount [C] |
+| `GoErrors.interfaceConversion(String, String, String)` | `graalgo.runtime.GoErrors` | Failed type assertion [C] |
+| `DeferChain.push(DeferredCall)` | `graalgo.runtime.DeferChain` | Register a deferred call [C] |
+| `DeferChain.runAll()` | `graalgo.runtime.DeferChain` | Run defers on normal return (LIFO) [C] |
+| `DeferChain.unwindReturning(int)` | `graalgo.runtime.DeferChain` | Run defers to a mark on return [C] |
+| `DeferChain.unwindPanicking(int, PanicException)` | `graalgo.runtime.DeferChain` | Run defers during panic unwind [C] |
+| `DeferChain.unwindGoexiting(int)` | `graalgo.runtime.DeferChain` | Run defers during Goexit [C] |
+| `Goexit.goexit()` | `graalgo.runtime.Goexit` | `runtime.Goexit` — runs defers, then fatal deadlock [C] |
+| `GoCalls.invoke(GoFunc, Object[])` | `graalgo.runtime.GoCalls` | Call a function value [C] |
+| `GoroutineState` (class) | `graalgo.runtime.GoroutineState` | Per-goroutine panic/defer state [C] |
+| `DeferredCall` (class) | `graalgo.runtime.DeferredCall` | A registered deferred call (fun + args) [C] |
+
+Scope rule: the freeze covers the *signatures* the M5 AST calls. Internal
+helpers and Phase-2 stubs (scheduler, netpoll, timers, chanops) are
+documented in their own sections; a STUB that throws is not a signature
+change.
 
 ## Version history
 
-- **v1 (2026-10-04, WS G)**: initial freeze. 58 functions + 11 builtin
-  nodes. STUBs: itabFor, traceback, timers (3), scheduler (4), netpoll
-  (5), chanops (7).
+- **v1 (2026-10-04, WS G)**: initial freeze. 63 signatures (57 unique
+  methods, some overloaded) + 11 builtin nodes. STUBs: itabFor,
+  traceback, timers (3), scheduler (4), netpoll (5), chanops (7).
+- **v1.1 (2026-10-04, WS F)**: added M5 runtime surface (16 signatures:
+  GoErrors ×7, DeferChain ×5, Goexit, GoCalls ×2, GoroutineState,
+  DeferredCall). Total: 79 signatures.
+
+Coverage: `FreezeSignatureTest` verifies 37 signatures by reflection
+(the M4 core). The M5 runtime surface is verified differentially vs gc
+via the panic corpus (pn01–pn20), not by the signature test. Rows
+marked [T] are in `FreezeSignatureTest`; rows marked [C] are covered
+by corpus differential tests.
 
 ## Panic semantics (GG-0045) {#panic-semantics-GG-0045}
 
@@ -222,3 +263,9 @@ of scope for Phase 1.
 `PanicNilError.INSTANCE`; `PanicRendering` renders it as
 `runtime error: panic called with nil argument`. `recover()` returns the
 `*PanicNilError` value (not nil).
+
+**Goexit in main (M5, WS F)**: `runtime.Goexit` in `main` runs the
+deferred calls, then — with no other goroutine to run — gc reports a
+fatal deadlock (`fatal error: no goroutines (main called
+runtime.Goexit) - deadlock!`, exit 2). graalgo replicates this exactly
+(pn19 pins the header and exit code). `recover()` cannot stop a Goexit.

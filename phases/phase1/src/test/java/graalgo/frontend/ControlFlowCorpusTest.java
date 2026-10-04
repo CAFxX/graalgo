@@ -79,6 +79,23 @@ public final class ControlFlowCorpusTest {
     public void testCf21AttackModify() throws Exception { checkProgram("cf21_attack_modify"); }
     public void testCf22AttackShadow() throws Exception { checkProgram("cf22_attack_shadow"); }
     public void testCf23AttackMultiheader() throws Exception { checkProgram("cf23_attack_multiheader"); }
+    public void testCf24P0d1Stalecell() throws Exception { checkProgram("cf24_p0d1_stalecell"); }
+    public void testCf25P0d2Structfield() throws Exception { checkProgram("cf25_p0d2_structfield"); }
+    public void testCf26P0d3Postclosure() throws Exception { checkProgram("cf26_p0d3_postclosure"); }
+    public void testCf27P0d4Rangeassign() throws Exception { checkProgram("cf27_p0d4_rangeassign"); }
+    public void testCf28P0d5Nestedcapture() throws Exception { checkProgram("cf28_p0d5_nestedcapture"); }
+    public void testCf29Adv02Perclosure() throws Exception { checkProgram("cf29_adv02_perclosure"); }
+    public void testCf30Adv16Structheader() throws Exception { checkProgram("cf30_adv16_structheader"); }
+    public void testCf31Adv17Fieldwritethrough() throws Exception { checkProgram("cf31_adv17_fieldwritethrough"); }
+    public void testCf32Adv01Outerbodyvar() throws Exception { checkProgram("cf32_adv01_outerbodyvar"); }
+    public void testCf33Adv03Duringiter() throws Exception { checkProgram("cf33_adv03_duringiter"); }
+    public void testCf34Adv04Rangemap() throws Exception { checkProgram("cf34_adv04_rangemap"); }
+    public void testCf35Adv05While() throws Exception { checkProgram("cf35_adv05_while"); }
+    public void testCf36Adv10Callboundary() throws Exception { checkProgram("cf36_adv10_callboundary"); }
+    public void testCf37Adv13Shadow() throws Exception { checkProgram("cf37_adv13_shadow"); }
+    public void testCf38Adv14Continue() throws Exception { checkProgram("cf38_adv14_continue"); }
+    public void testCf39Adv15Rangestring() throws Exception { checkProgram("cf39_adv15_rangestring"); }
+    public void testCf40P1d7StructPtrAlias() throws Exception { checkProgram("cf40_p1d7_struct_ptr_alias"); }
 
     static void checkProgram(String base) throws Exception {
         Path src = corpusDir().resolve(base + ".go");

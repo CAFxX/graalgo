@@ -120,6 +120,8 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `typecase` | `types`: [type ids] or null (`case nil`), `nilcase`: bool, `default`: bool, `bindobj`: object id or null, `bindtype`: type id or null, `body`: block node |
 | `branch` | `op` ∈ {`break`,`continue`,`goto`,`fallthrough`}, `label`: str or null |
 | `labeled` | `label`: str, `stmt`: stmt node |
+| `defer` | `call`: expr node — a deferred call (M5, WS F) |
+| `funclit` | `params`: [param nodes], `results`: [param nodes], `body`: block node — a function literal (M5, WS F) |
 | `blank` | (no fields) — the blank identifier `_` in assignment lhs |
 | `complit` | `type`: type id, `keyed`: bool, `keys`: [expr nodes] (absent unless keyed map/array/slice), `fieldkeys`: [str] (absent unless keyed struct), `values`: [expr nodes] |
 | `index` | `x`, `index`: expr nodes, `type`: type id (element type; map elem type for comma-ok), `commaOk`: bool |
@@ -177,14 +179,15 @@ type could contain a bare type parameter (`go/types` `gcSizes` asserts on
 those; offsets are instantiation-dependent anyway); the factory indexes
 fields by position, never by byte offset.
 
-## 7. Exporter scope (v1, M4 control-flow + composite subset)
+## 7. Exporter scope (v1, M4 control-flow + composite subset, M5 defer/panic/funclit, WS G builtins)
 
 The exporter fails fast — non-zero exit, message on stderr, no JSON on
 stdout — outside this scope. Every rejection names the workstream that owns
 the extension:
 
 - one input file; **no imports** except `fmt` via the Phase-1 import
-  overlay (WS G): the overlay synthesizes a `fmt` package exposing only
+  overlay (WS G) and `runtime` for `runtime.Goexit` only (M5, WS F):
+  the overlay synthesizes a `fmt` package exposing only
   the seven D4 symbols (`Print`, `Printf`, `Println`, `Sprint`, `Sprintf`,
   `Sprintln`, `Errorf`) with exact variadic signatures; any other `fmt.X`
   is a scope error naming Phase 3. Calls to the D4 symbols are emitted as
@@ -208,15 +211,16 @@ the extension:
   (identifier/index/selector), `if`/`else` (with init), `for` (3-clause,
   condition-only, infinite), `range` over slice/array/string/map (not
   channels — Phase 2), `switch` (expression + type switch), `break`/
-  `continue` (labeled and unlabeled), `goto`/labels, `fallthrough`
-  (go/defer → WS F; `select` → WS E Phase 2);
+  `continue` (labeled and unlabeled), `goto`/labels, `fallthrough`,
+  `defer` (M5, WS F; `go` → WS F Phase 2; `select` → WS E Phase 2);
 - expressions: identifiers, basic literals, binary/unary, parentheses,
   conversions, composite literals (array/slice/struct/map, incl. keyed and
   `&T{}`), indexing (array/slice/string/map, incl. comma-ok), slicing
   (2- and 3-index), selectors (incl. embedded/promoted), type assertions
-  (incl. comma-ok), `nil`;
-- calls must be builtins; `NodeFactory` v1 rejects every builtin call with a
-  precise error (builtin surface: WS G);
+  (incl. comma-ok), `nil`, function literals (M5, WS F);
+- calls: builtins per the WS G builtin surface (see freeze-stub.md
+  "Builtin nodes"); `panic`/`recover` are builtins (M5, WS F/G);
+  user-defined function calls are not in v1 scope (WS D);
 - named types with methods → scope error (WS D).
 
 There are no silently dropped or defaulted nodes. `go/types` errors (parse
