@@ -1095,3 +1095,10 @@ Commits (master, each green: make test + make check):
 
 M6 remediation complete: 7 P1 + 14 P2 all addressed, suite green,
 5 commits, no new features.
+
+## 2026-10-04 ~21:45 CEST — M6 SIGNED OFF
+
+- Independent verification: `make -C phases/phase1 test` on master → **156 tests, 0 failures** (third green run counting the worker's two).
+- M6 milestone-close requirements met: implemented (4b24b89 + d91d6f3) → 3 independent reviews (GO-WITH-FINDINGS, 0 P0) → all 21 findings remediated (5 commits: 1022b92, e74b45f, b60c4eb, 7b93471, 24c93e2) → re-tested green.
+- Loopcap remediation merged in the same tree (4cb9572, 154/0 at merge time); rework branch/worktree removed; periodic merge cron retired.
+- Next: M7 (full corpus differential green, zero unexplained divergences → done-gate 1).
