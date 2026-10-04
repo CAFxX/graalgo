@@ -194,8 +194,40 @@ The builtins as Truffle expression nodes (WS G). The factory
 | `DeleteNode(GoExprNode, GoExprNode)` | `delete` | — (statement only) |
 | `ComplexNode(Op, GoKind, GoExprNode, GoExprNode)` | `complex`/`real`/`imag` | COMPLEX64/128 / FLOAT32/64 |
 | `PrintNode(boolean, GoExprNode[])` | `print`/`println` | — (statement only) |
-| `PanicNode(GoExprNode)` / `PanicNode()` | `panic`/`recover` | — / INTERFACE |
+| `PanicBuiltinNode(GoExprNode, GoTypeDescriptor, String, boolean)` | `panic` | — (statement only) |
+| `RecoverBuiltinNode()` | `recover` | INTERFACE |
 | `FmtCallNode(String, GoExprNode[], ...)` | `fmt.*` (D4) | STRING / INTERFACE |
+
+### M5 runtime surface (frozen 2026-10-04, WS F)
+
+The AST nodes built by `NodeFactory` for M5 (defer/panic/recover/Goexit,
+function literals) call into this runtime surface. It is frozen at the
+signatures below; Phase 1 provides REAL implementations (differential vs
+gc via the panic corpus).
+
+| Signature | Owner | Notes |
+|-----------|-------|-------|
+| `GoErrors.bounds(BoundsCode, long, long, boolean)` | `graalgo.runtime.GoErrors` | Slice/index bounds error values |
+| `GoErrors.indexOutOfRange(long, long, boolean)` | `graalgo.runtime.GoErrors` | Index out of range |
+| `GoErrors.assignmentToNilMap()` | `graalgo.runtime.GoErrors` | Assignment to nil map |
+| `GoErrors.nilDereference()` | `graalgo.runtime.GoErrors` | Nil pointer dereference |
+| `GoErrors.integerDivideByZero()` | `graalgo.runtime.GoErrors` | Integer divide by zero |
+| `GoErrors.negativeShift()` | `graalgo.runtime.GoErrors` | Negative shift amount |
+| `GoErrors.interfaceConversion(String, String, String)` | `graalgo.runtime.GoErrors` | Failed type assertion |
+| `DeferChain.push(DeferredCall)` | `graalgo.runtime.DeferChain` | Register a deferred call |
+| `DeferChain.runAll()` | `graalgo.runtime.DeferChain` | Run defers on normal return (LIFO) |
+| `DeferChain.unwindReturning(int)` | `graalgo.runtime.DeferChain` | Run defers to a mark on return |
+| `DeferChain.unwindPanicking(int, PanicException)` | `graalgo.runtime.DeferChain` | Run defers during panic unwind |
+| `DeferChain.unwindGoexiting(int)` | `graalgo.runtime.DeferChain` | Run defers during Goexit |
+| `Goexit.goexit()` | `graalgo.runtime.Goexit` | `runtime.Goexit` — runs defers, then fatal deadlock |
+| `GoCalls.invoke(GoFunc, Object[])` | `graalgo.runtime.GoCalls` | Call a function value |
+| `GoroutineState` (class) | `graalgo.runtime.GoroutineState` | Per-goroutine panic/defer state |
+| `DeferredCall` (class) | `graalgo.runtime.DeferredCall` | A registered deferred call (fun + args) |
+
+Scope rule: the freeze covers the *signatures* the M5 AST calls. Internal
+helpers and Phase-2 stubs (scheduler, netpoll, timers, chanops) are
+documented in their own sections; a STUB that throws is not a signature
+change.
 
 ## Version history
 

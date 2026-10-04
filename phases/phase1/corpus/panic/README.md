@@ -92,10 +92,6 @@ See `../hidden_files/m5_red/README.md` for mutant evidence (SPEC §5.2):
 
 ## Known limitations (M5)
 
-- **Loop-variable capture**: Variables declared in a loop body and
-  captured by a funclit share the frame slot across iterations (no
-  per-iteration storage). Workaround: pass as explicit param (pn13 uses
-  `func(j int) { defer ... }(i)`). Full per-iteration capture is WS D.
 - **Trace text**: Panic stack traces show graalgo frames, not gc PCs.
   The header line and exit code are compared; frame bodies are known
   divergence (documented in `PanicCorpusTest`).
