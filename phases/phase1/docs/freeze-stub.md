@@ -263,3 +263,9 @@ of scope for Phase 1.
 `PanicNilError.INSTANCE`; `PanicRendering` renders it as
 `runtime error: panic called with nil argument`. `recover()` returns the
 `*PanicNilError` value (not nil).
+
+**Goexit in main (M5, WS F)**: `runtime.Goexit` in `main` runs the
+deferred calls, then — with no other goroutine to run — gc reports a
+fatal deadlock (`fatal error: no goroutines (main called
+runtime.Goexit) - deadlock!`, exit 2). graalgo replicates this exactly
+(pn19 pins the header and exit code). `recover()` cannot stop a Goexit.

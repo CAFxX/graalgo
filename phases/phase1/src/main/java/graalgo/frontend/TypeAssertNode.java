@@ -62,7 +62,7 @@ public final class TypeAssertNode extends GoExprNode {
             // gc: "interface conversion: <iface> is <dynamic>, not <asserted>".
             // The dynamic name comes from the descriptor; the int/int64 and
             // uint/uint64/uintptr conflation is an M4 kind-system limitation
-            // (documented in docs/freeze-stub.md GG-0045).
+            // (GoKind has a single INT64/UINT64 slot; not part of GG-0045).
             String dynamicName = gi.isNil() ? "nil"
                     : ((GoTypeDescriptor) gi.descriptor()).name();
             Panic.throwPanic(GoErrors.interfaceConversion(ifaceName, dynamicName, assertedName));
