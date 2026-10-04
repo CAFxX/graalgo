@@ -64,10 +64,12 @@ final class Boxing {
 
     /**
      * Writes an already-boxed value into a {@link graalgo.values.GoBox}
-     * cell (M6, per-iteration capture): stores it in the cell, and when
-     * the cell is a {@code for}-header variable's per-iteration body cell,
-     * writes an independent copy through to the outer cell (Go's
-     * value-copy rule applies per cell for struct/array values).
+     * cell (per-iteration capture): stores it in the cell. The cell is
+     * fully detached — there is no write-through to any other cell;
+     * propagation between the per-iteration cell and the carry cell of a
+     * {@code for}-header variable happens only through the explicit
+     * {@link BoxRefreshNode} (seed) and {@link BoxWritebackNode}
+     * (write-back), matching gc's {@code loopvar} desugar.
      */
     static void setBoxedCell(VirtualFrame frame, int slot, GoKind kind, Object boxed) {
         graalgo.values.GoBox cell = (graalgo.values.GoBox) frame.getObject(slot);
@@ -76,9 +78,6 @@ final class Boxing {
                     + " (per-iteration cell not installed)");
         }
         cell.value = boxed;
-        if (cell.outer != null) {
-            cell.outer.value = copyForAssign(kind, boxed);
-        }
     }
 
     /**

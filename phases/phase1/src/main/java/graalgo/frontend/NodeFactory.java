@@ -14,6 +14,7 @@ import graalgo.values.GoStructDescriptor;
 import java.util.ArrayList;
 import java.util.ArrayDeque;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -144,14 +145,15 @@ public final class NodeFactory {
          */
         public final Set<Integer> boxed = new HashSet<>();
         /**
-         * For-header boxed variables (M6): object id → per-iteration cell
-         * slot (S_iter). The primary slot in {@link #objSlots} is the outer
-         * cell (S_outer). Body reads/writes use S_iter; init/cond/post use
-         * S_outer (resolved via the factory's loop-phase stack).
+         * For-header boxed variables: object id → per-iteration cell
+         * slot. The primary slot in {@link #objSlots} is the <em>carry</em>
+         * cell (gc's {@code z'}). Init-seed, post, cond, body, and closures
+         * all use the per-iteration cell; the carry is only touched by the
+         * declaration, the refresh prologue, and the write-back.
          */
         public final Map<Integer, Integer> boxIterSlots = new HashMap<>();
         /**
-         * Captured boxed variables of this function literal (M6): object
+         * Captured boxed variables of this function literal (loopcap): object
          * id → snapshot slot in this literal's frame. The snapshot cell is
          * installed by {@link GoFuncRootNode} on entry from the
          * {@link graalgo.values.GoFunc}'s snapshot.
@@ -159,12 +161,12 @@ public final class NodeFactory {
         public final Map<Integer, Integer> boxSnapSlots = new HashMap<>();
         /**
          * Snapshot spec triples (depth, slot, snapSlot) for
-         * {@link FuncLitNode} (M6): collected during the body build as
+         * {@link FuncLitNode} (loopcap): collected during the body build as
          * boxed captures are encountered; drained by {@code buildFuncLit}.
          */
         public final List<int[]> boxSpec = new ArrayList<>();
         /**
-         * GoKind for each boxed variable (M6): populated when the box
+         * GoKind for each boxed variable (loopcap): populated when the box
          * slots are allocated.
          */
         public final Map<Integer, GoKind> boxKinds = new HashMap<>();
@@ -201,11 +203,11 @@ public final class NodeFactory {
      * program-global, so loop ids are factory-global.
      */
     private final Deque<LoopPhase> loopStack = new ArrayDeque<>();
-    /** Next loop id (M6). */
+    /** Next loop id (loopcap). */
     private int nextLoopId;
-    /** Boxed for-header var oid → declaring loop id (M6). */
+    /** Boxed for-header var oid → declaring loop id (loopcap). */
     private final Map<Integer, Integer> headerLoopIds = new HashMap<>();
-    /** Loop phases (M6). */
+    /** Loop phases (loopcap). */
     private static final int LP_INIT = 0, LP_COND = 1, LP_POST = 2, LP_BODY = 3;
     /** One entry of {@link #loopStack}. */
     private record LoopPhase(int loopId, int phase) {}
@@ -843,7 +845,7 @@ public final class NodeFactory {
     }
 
     /**
-     * Resolution of a boxed (M6) variable: like {@link #resolveVar} but
+     * Resolution of a boxed (loopcap) variable: like {@link #resolveVar} but
      * also consults each level's {@code boxSnapSlots} (a funclit that
      * captured the variable keeps the snapshot cell in its own frame).
      * The caller guarantees {@code oid} is boxed (transitively).
@@ -879,18 +881,27 @@ public final class NodeFactory {
     }
 
     /**
-     * Records a boxed capture (M6) for the funclit whose body is being
+     * Records a boxed capture for the funclit whose body is being
      * built in {@code ctx}: allocates the snapshot slot in the funclit's
      * frame and appends the {@code (depth, slot, snapSlot)} triple to
      * {@code ctx.boxSpec}. The {@code (depth, slot)} is resolved in the
      * <em>creating</em> frame ({@code ctx.parent}), which is where the
      * {@link FuncLitNode} executes.
      *
-     * <p>For-header variables are phase-aware: a funclit created in the
-     * loop body snapshots the per-iteration cell (S_iter); one created in
-     * init/cond/post snapshots the outer cell (S_outer) — gc-oracle
-     * verified (header closures share the loop variable). An ancestor's
-     * existing snapshot cell is always reused as-is (never re-resolved).
+     * <p>For-header variables are per-iteration in every phase: a funclit
+     * created in the loop body, cond, or post snapshots the per-iteration
+     * cell (gc's {@code loopvar} desugar puts cond/post inside the
+     * per-iteration region). A funclit created in the init statement
+     * snapshots the carry cell instead, matching gc's
+     * {@code init : s/z/z'} substitution (the per-iteration cell does not
+     * exist yet). An ancestor's existing snapshot cell is always reused
+     * as-is (never re-resolved).
+     *
+     * <p>Transitive capture (P0-D5): when the reference passes through
+     * intermediate function literals, each of them snapshots the variable
+     * too (outermost first), so the triple chain resolves through
+     * per-iteration snapshot cells instead of the live frame slot at the
+     * inner literal's (possibly much later) creation time.
      */
     private int snapshotBoxedVar(BuildCtx ctx, int oid, String path) {
         Integer existing = ctx.boxSnapSlots.get(oid);
@@ -901,22 +912,58 @@ public final class NodeFactory {
         if (creator == null) {
             throw new FrontendException(path + ": boxed capture in func main (no enclosing frame)");
         }
+        ensureFunclitSnapshots(ctx, oid, path);
         BoxResolution b = resolveBoxed(creator, oid, path);
         int slot = b.slot;
         if (!b.isSnapshot) {
             int iter = headerIterSlot(creator, oid);
-            if (iter >= 0 && headerPhase(oid) == LP_BODY) {
-                // Body-phase creation: capture the per-iteration cell.
-                // The depth is unchanged: S_iter lives in the same frame
-                // as S_outer.
+            if (iter >= 0 && headerPhase(oid) != LP_INIT) {
+                // Per-iteration capture (body/cond/post, or a nested
+                // loop's phase of an outer header var): the per-iteration
+                // cell. The depth is unchanged: the per-iteration cell
+                // lives in the same frame as the carry cell.
                 slot = iter;
             }
+            // LP_INIT (or no loop phase): the carry cell (b.slot).
         }
         int snapSlot = ctx.frames.addSlot(FrameSlotKind.Object, "boxsnap$" + oid, null);
         ctx.boxSnapSlots.put(oid, snapSlot);
         ctx.boxSpec.add(new int[]{b.depth, slot, snapSlot});
         ctx.hasCapture = true;
         return snapSlot;
+    }
+
+    /**
+     * P0-D5: ensures every function-literal context strictly between
+     * {@code ctx} (the funclit being built) and the declaring function of
+     * the boxed variable {@code oid} snapshots the variable (outermost
+     * first). Without this, a nested funclit that alone references a loop
+     * variable would resolve its capture through the live frame slot at
+     * its own creation time — which may be iterations later, or after the
+     * loop — instead of the per-iteration cell of the iteration that
+     * created the intermediate literal.
+     */
+    private void ensureFunclitSnapshots(BuildCtx ctx, int oid, String path) {
+        BuildCtx decl = null;
+        for (BuildCtx c = ctx.parent; c != null; c = c.parent) {
+            if (c.objSlots.containsKey(oid) || c.boxSnapSlots.containsKey(oid)) {
+                decl = c;
+                break;
+            }
+        }
+        if (decl == null) {
+            throw new FrontendException(path + ": boxed oid " + oid + " has no declaring context");
+        }
+        List<BuildCtx> chain = new ArrayList<>();
+        for (BuildCtx c = ctx.parent; c != null && c != decl; c = c.parent) {
+            chain.add(c);
+        }
+        Collections.reverse(chain);
+        for (BuildCtx f : chain) {
+            if (f.closureSlot == 0) {
+                snapshotBoxedVar(f, oid, path);
+            }
+        }
     }
 
     /**
@@ -935,7 +982,7 @@ public final class NodeFactory {
     }
 
     /**
-     * The per-iteration cell slot (S_iter) for a for-header variable,
+     * The per-iteration cell slot for a for-header variable,
      * or -1. Walks the context chain: the declaring loop may belong to an
      * enclosing function.
      */
@@ -951,7 +998,7 @@ public final class NodeFactory {
 
     /**
      * The current phase of the loop that declared the for-header variable
-     * {@code oid} (M6): {@link #LP_INIT}/{@link #LP_COND}/{@link #LP_POST}/
+     * {@code oid} (loopcap): {@link #LP_INIT}/{@link #LP_COND}/{@link #LP_POST}/
      * {@link #LP_BODY}, or -1 if the declaring loop is not on the stack
      * (cannot happen for in-scope references; treated as outer).
      *
@@ -975,7 +1022,7 @@ public final class NodeFactory {
     /**
      * Builds a read of a variable, capture-aware (M5, WS F): a depth-0
      * resolution is a {@link VarReadNode}; a deeper one is a
-     * {@link CapReadNode} walking the {@code $closure} chain. Boxed (M6)
+     * {@link CapReadNode} walking the {@code $closure} chain. Boxed (loopcap)
      * variables read their {@link graalgo.values.GoBox} cell instead.
      */
     private GoExprNode readVar(GoKind kind, BuildCtx ctx, int oid, String path) {
@@ -991,11 +1038,18 @@ public final class NodeFactory {
     }
 
     /**
-     * Reads a boxed (M6) variable. A snapshot slot (this funclit's capture)
+     * Reads a boxed variable. A snapshot slot (this funclit's capture)
      * is read directly; an ancestor's variable is snapshotted on first
-     * reference. A local for-header variable reads S_outer in init/cond/post
-     * and S_iter in the body (phase stack, gc-oracle verified); every other
-     * boxed variable reads its single cell slot.
+     * reference. A local for-header variable reads its per-iteration cell
+     * in every phase except LP_INIT (the init statement defines the carry
+     * cell — gc's {@code init : s/z/z'} substitution — and the
+     * per-iteration cell does not exist yet): init-seed, post, cond, and
+     * body all operate on the one per-iteration variable (gc's
+     * {@code loopvar} desugar runs the post on the fresh per-iteration
+     * cell at the top of the iteration, before the condition). The carry
+     * cell is otherwise only touched by the declaration, the refresh
+     * prologue, and the write-back. Every other boxed variable reads its
+     * single cell slot.
      */
     private GoExprNode readBoxedVar(GoKind kind, BuildCtx ctx, int oid, String path) {
         Integer snap = ctx.boxSnapSlots.get(oid);
@@ -1007,7 +1061,7 @@ public final class NodeFactory {
             return new BoxReadNode(kind, snapshotBoxedVar(ctx, oid, path));
         }
         int iter = headerIterSlot(ctx, oid);
-        if (iter >= 0 && headerPhase(oid) == LP_BODY) {
+        if (iter >= 0 && headerPhase(oid) != LP_INIT) {
             return new BoxReadNode(kind, iter);
         }
         return new BoxReadNode(kind, b.slot);
@@ -1015,11 +1069,13 @@ public final class NodeFactory {
 
     /**
      * The frame slot whose {@link graalgo.values.GoBox} cell receives a
-     * write to the boxed variable {@code oid} (M6). A funclit-captured
+     * write to the boxed variable {@code oid}. A funclit-captured
      * variable writes its local snapshot cell; a local for-header variable
-     * writes S_outer in init/cond/post (never through the body cell: the
-     * post must not mutate body-captured instances) and S_iter in the body
-     * (write-through reaches S_outer via {@link graalgo.values.GoBox#outer}).
+     * writes its per-iteration cell in every phase except LP_INIT, where
+     * the declaration seeds the carry cell instead (gc's
+     * {@code init : s/z/z'}). The post runs on the per-iteration cell —
+     * at the top of the iteration, before the condition — and the
+     * write-back propagates to the carry.
      */
     private int boxWriteSlot(BuildCtx ctx, int oid, String path) {
         Integer snap = ctx.boxSnapSlots.get(oid);
@@ -1031,14 +1087,14 @@ public final class NodeFactory {
             return snapshotBoxedVar(ctx, oid, path);
         }
         int iter = headerIterSlot(ctx, oid);
-        if (iter >= 0 && headerPhase(oid) == LP_BODY) {
+        if (iter >= 0 && headerPhase(oid) != LP_INIT) {
             return iter;
         }
         return b.slot;
     }
 
     // ------------------------------------------------------------------
-    // M6 loop-capture pre-scan (factory side; no exporter/wire change).
+    // loopcap pre-scan (factory side; no exporter/wire change).
     // ------------------------------------------------------------------
 
     /** The "kind" string of a JSON AST node, or null. */
@@ -1131,13 +1187,13 @@ public final class NodeFactory {
     }
 
     /**
-     * Pre-scan for a "for" loop (M6): loop-declared variables (for-init and
+     * Pre-scan for a "for" loop: loop-declared variables (for-init and
      * body vardecls) referenced by a function literal anywhere in the loop
      * are boxed (per-iteration cells). For-init variables additionally get
-     * the two-cell (S_outer/S_iter) treatment: recorded in
+     * the carry/per-iteration treatment: recorded in
      * {@link #headerLoopIds}. Returns the boxed for-header oids in
-     * declaration order (for S_iter slot allocation and the refresh
-     * prologue).
+     * declaration order (for per-iteration slot allocation and the
+     * refresh/write-back nodes).
      */
     private List<Integer> prescanForBoxes(Json.Object node, Json.Object f, String path, BuildCtx ctx, int loopId) {
         Set<Integer> initDecls = new LinkedHashSet<>();
@@ -1165,7 +1221,7 @@ public final class NodeFactory {
     }
 
     /**
-     * Pre-scan for a "range" loop (M6): the := -declared key/value variables
+     * Pre-scan for a "range" loop (loopcap): the := -declared key/value variables
      * and body vardecls referenced by a function literal are boxed. Range
      * variables are single-cell (per-iteration); no header treatment.
      */
@@ -1759,7 +1815,7 @@ public final class NodeFactory {
     }
 
     /**
-     * Box-aware two-phase assignment (M6): like {@link #assignTwoPhase}
+     * Box-aware two-phase assignment (loopcap): like {@link #assignTwoPhase}
      * but each ident write goes through {@link #writeIdentSlot} so boxed
      * variables write their GoBox cell. Used when at least one lhs ident
      * is boxed; the all-plain case keeps the original.
@@ -2226,7 +2282,7 @@ public final class NodeFactory {
     }
 
     /**
-     * Box-aware ident write (M6): a boxed variable writes its
+     * Box-aware ident write (loopcap): a boxed variable writes its
      * {@link graalgo.values.GoBox} cell via {@link BoxWriteNode}
      * (phase-aware slot from {@link #boxWriteSlot}); otherwise the plain
      * M2/M5 path (AssignNode local, CapWriteNode captured).
@@ -2244,7 +2300,7 @@ public final class NodeFactory {
     }
 
     /**
-     * Box-aware ident read (M6): a boxed variable reads its
+     * Box-aware ident read (loopcap): a boxed variable reads its
      * {@link graalgo.values.GoBox} cell via {@link #readBoxedVar};
      * otherwise the plain M2/M5 path.
      */
@@ -2531,21 +2587,39 @@ public final class NodeFactory {
             loopStack.pop();
         }
         if (!headerOids.isEmpty()) {
-            // M6: seed each iteration's cell from the outer cell at the top
-            // of the body (gc-oracle: body sees the post-updated value).
-            List<GoStmtNode> prologue = new ArrayList<>(headerOids.size() + 1);
+            // gc loopvar model (verified against cmd/compile/internal/loopvar):
+            // init defines the carry cells (z'); each iteration runs the
+            // refresh prologue (fresh per-iteration cell z := z'), then —
+            // unless it is the first iteration (tmp_first) — the post
+            // statement on the fresh cell, then the condition, then the
+            // body, then the write-back (z' = z). continue is rewritten to
+            // the write-back; break/panic/return/goto-out skip it.
+            int firstIterSlot = ctx.frames.addSlot(FrameSlotKind.Boolean, "loopfirst$" + loopId, null);
+            List<GoStmtNode> prologue = new ArrayList<>(headerOids.size());
+            List<GoStmtNode> writeback = new ArrayList<>(headerOids.size());
             for (int oid : headerOids) {
-                Integer outerSlot = ctx.objSlots.get(oid);
+                Integer carrySlot = ctx.objSlots.get(oid);
                 Integer iterSlot = ctx.boxIterSlots.get(oid);
                 GoKind kind = ctx.boxKinds.get(oid);
-                if (outerSlot == null || iterSlot == null || kind == null) {
+                if (carrySlot == null || iterSlot == null || kind == null) {
                     throw new FrontendException(path + ": boxed header var " + oid
                             + " missing cell slot");
                 }
-                prologue.add(new BoxRefreshNode(kind, iterSlot, outerSlot));
+                prologue.add(new BoxRefreshNode(kind, iterSlot, carrySlot));
+                writeback.add(new BoxWritebackNode(kind, iterSlot, carrySlot));
             }
-            prologue.add(body);
-            body = new BlockNode(prologue.toArray(new GoStmtNode[0]));
+            GoStmtNode prologueNode = prologue.size() == 1 ? prologue.get(0)
+                    : new BlockNode(prologue.toArray(new GoStmtNode[0]));
+            GoStmtNode writebackNode = writeback.size() == 1 ? writeback.get(0)
+                    : new BlockNode(writeback.toArray(new GoStmtNode[0]));
+            ForStmtNode stmt = new ForStmtNode(init,
+                    new GoLoopNode(new ForRepeatingNode(cond, post, body, prologueNode,
+                            writebackNode, firstIterSlot)),
+                    firstIterSlot);
+            if (label != null) {
+                stmt.setLabel(label);
+            }
+            return stmt;
         }
         ForStmtNode stmt = new ForStmtNode(init,
                 new GoLoopNode(new ForRepeatingNode(cond, post, body)));
@@ -2563,6 +2637,27 @@ public final class NodeFactory {
             // CapWriteNode support in the range nodes (v1 limitation).
             throw new FrontendException(path + ": range assignment to captured variable"
                     + " is not supported in v1 (WS F)");
+        }
+        return r.slot;
+    }
+
+    /**
+     * Frame slot for a range `=` target (P0-D4). A boxed for-header
+     * variable of an enclosing loop denotes that loop's per-iteration
+     * variable inside the loop body (gc's {@code loopvar} desugar), so the
+     * assignment must hit the per-iteration cell, not the carry cell. The
+     * end-of-iteration write-back propagates it, exactly like a body
+     * assignment. Captured (depth &gt; 0) targets keep the v1 limitation.
+     */
+    private int rangeAssignSlot(BuildCtx ctx, int oid, String path) {
+        VarResolution r = resolveVar(ctx, oid, path);
+        if (r.depth > 0) {
+            throw new FrontendException(path + ": range assignment to captured variable"
+                    + " is not supported in v1 (WS F)");
+        }
+        int iter = headerIterSlot(ctx, oid);
+        if (iter >= 0) {
+            return iter;
         }
         return r.slot;
     }
@@ -2618,12 +2713,12 @@ public final class NodeFactory {
         if (f.opt("key") instanceof Json.Num kn) {
             int koid = (int) kn.asLong(path);
             keyOid = koid;
-            keySlot = define ? declareObj(ctx, koid, path) : slotForOid(ctx, koid, path);
+            keySlot = define ? declareObj(ctx, koid, path) : rangeAssignSlot(ctx, koid, path);
         }
         if (f.opt("value") instanceof Json.Num vn) {
             int void_ = (int) vn.asLong(path);
             valOid = void_;
-            valSlot = define ? declareObj(ctx, void_, path) : slotForOid(ctx, void_, path);
+            valSlot = define ? declareObj(ctx, void_, path) : rangeAssignSlot(ctx, void_, path);
         }
         boolean keyBoxed = keyOid >= 0 && ctx.boxed.contains(keyOid);
         boolean valBoxed = valOid >= 0 && ctx.boxed.contains(valOid);

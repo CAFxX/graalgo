@@ -22,7 +22,7 @@ import graalgo.values.GoKind;
  * for {@link CapReadNode}/{@link CapWriteNode}); {@code args[1..]} are the
  * call arguments, stored into the parameter slots.
  *
- * <p>Per-iteration capture (M6): when the literal captures boxed (loop)
+ * <p>Per-iteration capture (loopcap): when the literal captures boxed (loop)
  * variables, {@code args[0]}'s {@code boxCells()} are installed into the
  * {@code snapSlots} frame slots on entry (parallel arrays; null when the
  * literal captures no boxed variables). Nested literals resolve boxed
@@ -50,7 +50,7 @@ public final class GoFuncRootNode extends RootNode {
     private final String funcName;
     private SourceSection sourceSection;
     /**
-     * Snapshot slots for captured boxed variables (M6); parallel to
+     * Snapshot slots for captured boxed variables (loopcap); parallel to
      * {@link GoFunc#boxCells()}. Null when the literal captures none.
      */
     private final int[] snapSlots;
