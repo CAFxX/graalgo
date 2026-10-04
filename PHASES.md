@@ -630,6 +630,30 @@ before it becomes a claimed win):
   of immutable values, but cost/benefit only closes for strings — scope the
   item there. Candidate benchmarks: config/JSON parsing, HTTP header handling,
   short-keyed map workloads.
+- **Copy elision on provably-unmodified copies.** Elide a copy — struct/array
+  value copies on assignment and call, `append`-growth temporaries, explicit
+  deep-copy sites (user deep-copy helpers, runtime refresh copies like the
+  loop-capture per-iteration refresh), marshalling temporaries — when the copy
+  is provably never modified; sharing the reference is then observationally
+  identical, and eliding a *deep* copy saves the whole traversal. Two proof
+  sources, as usual: (a) static — the copy's write set is empty (no store
+  through its address range; escape + modification analysis); (b) speculative —
+  JIT profiles stores and guards the shared backing store with
+  deopt-on-first-write (copy-on-write). Relationship to neighbors: generalizes
+  the store-once item (that one is about the source; this is about the copy);
+  composes with escape analysis (thread-local copies elide freely) and with
+  SSO/interning (strings are the immutable special case already covered).
+  Precedent: C++ copy elision (RVO/NRVO, language-guaranteed), Swift
+  copy-on-write value types (the direct model — CoW with uniqueness check),
+  Rust's moves-instead-of-copies by construction. Sharp edges: `reflect`/
+  `unsafe` can write anywhere — bail or guard, same pattern as the store-once
+  item; pointer-identity observation (`%p`, `unsafe.Pointer` comparison) makes
+  elision visible if the address leaks — same observability rule as the other
+  items; concurrent writes are races, so the proof must be race-aware; partial
+  aliasing — the unmodified proof must cover exactly the shared range; guard
+  placement must not regress the fast path (guard the store, not the load).
+  Candidate benchmarks: append-growth temporaries, struct copies in hot loops,
+  marshal/unmarshal round-trips, slice-passing-heavy pipelines.
 
 **Done-gates:** (1) every claimed win beats gc **with PGO** on its named benchmark, or the
 claim is struck from the docs; (2) hybrid meta-gate resolved: it beats *both* single modes on
