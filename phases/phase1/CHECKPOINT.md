@@ -1006,3 +1006,16 @@ issue48276a, issue49421, issue49547, issue52026 (all identical to gc).
 - PanicCorpusTest.testPn12DeepRecursion StackOverflowError: likely
   pre-existing (deep recursion environment issue, unrelated to generics).
 - Re-running full test suite.
+
+## 2026-10-04 ~19:45 CEST — M6 COMMITTED
+
+- Commit 4b24b89 on master: "M6: generics/typeparam differential adapter
+  red-green" (18 files, 1947 insertions).
+- Evidence:
+  - TypeparamDifferentialTest.testExclusionListCoversAllFiles PASS
+  - TypeparamDifferentialTest.testZeroUnexplainedDivergences PASS
+  - TargSwap mutation DETECTED, green run clean
+  - req lint: 70 requirements, 1032 references (green)
+  - Full suite: 1 pre-existing FAIL (PanicCorpusTest.testPn12DeepRecursion
+    StackOverflowError, environment/stack-size issue, not M6 scope)
+- Logs: hidden_files/m6_tdt.log, m6_mutation_targswap.log, m6_req_lint.log
