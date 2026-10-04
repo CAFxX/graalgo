@@ -50,6 +50,21 @@ public final class TypeparamDifferentialTest {
     private static final Set<String> VALID_REASONS = Set.of(
             "backend-specific", "unspecified-behavior", "deferred-parity");
 
+    /**
+     * P1-7 (M6 remediation): mechanical guard against silent exclusion-list
+     * growth. The acceptance gate ("zero unexplained divergences") is only
+     * as strong as the exclusion list — adding an entry with any valid
+     * reason silently shrinks the compared set. This bound is the honest
+     * count after the M6 re-triage (222); growing the list beyond it fails
+     * the test, forcing the worker to bump this constant *with a reason*
+     * in the same change. Shrinking the list (pruning stale exclusions)
+     * stays free.
+     */
+    private static final int MAX_EXCLUSIONS = 222;
+
+    /** Expected version of the exclusion list (bumped on material changes). */
+    private static final String EXPECTED_EXCLUSIONS_VERSION = "3";
+
     private static Path phase1Dir() {
         return resolvePhase1Dir(
                 System.getProperty("graalgo.phase1.dir"),
@@ -168,24 +183,55 @@ public final class TypeparamDifferentialTest {
         return holderBin;
     }
 
-    /** Minimal YAML reader for the flat exclusion-list format (no deps). */
+    /**
+     * Minimal YAML reader for the flat exclusion-list format (no deps).
+     * Mirrors the Go {@code LoadExclusions} parser's semantics (P2-8):
+     * field order is insignificant, {@code detail:} is optional (defaults
+     * to ""), entries flush at the next {@code - file:} or EOF. The two
+     * readers are conformance-tested against the same fixture (see
+     * {@code tools/diffharness/testdata/exclusions-edge.yaml}).
+     */
     static Map<String, String[]> readExclusions(Path yaml) throws IOException {
         Map<String, String[]> out = new HashMap<>();
-        String file = null, reason = null;
+        String file = null, reason = null, detail = null;
         for (String line : Files.readAllLines(yaml, StandardCharsets.UTF_8)) {
             String t = line.trim();
             if (t.startsWith("- file:")) {
+                if (file != null) {
+                    out.put(file, new String[]{reason, detail == null ? "" : detail});
+                }
                 file = t.substring("- file:".length()).trim();
                 reason = null;
+                detail = null;
             } else if (t.startsWith("reason:") && file != null) {
                 reason = t.substring("reason:".length()).trim();
-            } else if (t.startsWith("detail:") && file != null && reason != null) {
-                out.put(file, new String[]{reason, t.substring("detail:".length()).trim()});
-                file = null;
-                reason = null;
+            } else if (t.startsWith("detail:") && file != null) {
+                detail = t.substring("detail:".length()).trim();
             }
         }
+        if (file != null) {
+            out.put(file, new String[]{reason, detail == null ? "" : detail});
+        }
         return out;
+    }
+
+    /** Reads the {@code version:} line of the exclusion list (GG-0033). */
+    static String readExclusionsVersion(Path yaml) throws IOException {
+        for (String line : Files.readAllLines(yaml, StandardCharsets.UTF_8)) {
+            String t = line.trim();
+            if (t.startsWith("version:")) {
+                return t.substring("version:".length()).trim();
+            }
+        }
+        return "";
+    }
+
+    /** Strips one pair of surrounding double quotes, if present. */
+    private static String unquote(String s) {
+        if (s != null && s.length() >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+            return s.substring(1, s.length() - 1);
+        }
+        return s;
     }
 
     /**
@@ -233,6 +279,11 @@ public final class TypeparamDifferentialTest {
                 if (!VALID_REASONS.contains(entry[0])) {
                     problems.add(name + ": invalid reason code " + entry[0]);
                 }
+                // P1-7: every exclusion carries a human-readable
+                // justification — an empty detail is unauditable.
+                if (unquote(entry[1]).trim().isEmpty()) {
+                    problems.add(name + ": empty exclusion detail (GG-0033: every exclusion must say why)");
+                }
                 byReason.merge(entry[0] + ":" + entry[1], 1, Integer::sum);
             }
         }
@@ -244,6 +295,23 @@ public final class TypeparamDifferentialTest {
         // The tree has 266 files; guard against silent shrinkage of the scan.
         if (seen.size() < 260) {
             problems.add("scan covered only " + seen.size() + " files; expected >= 260");
+        }
+        // P1-7: guard against silent exclusion-list growth (see MAX_EXCLUSIONS).
+        int excludedCount = 0;
+        for (int i = 0; i < files.size(); i++) {
+            Json.Object f = (Json.Object) files.get(i);
+            if (f.string("class", "scan.files").startsWith("exclude")) {
+                excludedCount++;
+            }
+        }
+        if (excludedCount > MAX_EXCLUSIONS) {
+            problems.add("exclusion list grew to " + excludedCount
+                    + " (bound " + MAX_EXCLUSIONS + "): bump MAX_EXCLUSIONS with a reason, not silently");
+        }
+        String version = readExclusionsVersion(exclusionsFile());
+        if (!EXPECTED_EXCLUSIONS_VERSION.equals(version)) {
+            problems.add("exclusion list version is " + version + ", expected "
+                    + EXPECTED_EXCLUSIONS_VERSION + " (bump on material list changes)");
         }
         System.out.println("typeparam scan: classes=" + byClass);
         System.out.println("typeparam exclusions by reason: " + byReason);
@@ -278,6 +346,17 @@ public final class TypeparamDifferentialTest {
         if (!done) {
             p.destroyForcibly();
             throw new AssertionError("typeparam run timed out after 40 minutes");
+        }
+        // P2-14: if the adapter died before writing the report, say so with
+        // its log — don't let a NoSuchFileException on the missing JSON
+        // mask the real failure.
+        if (p.exitValue() != 0) {
+            throw new AssertionError("typeparam run exited " + p.exitValue()
+                    + " (adapter log above)");
+        }
+        if (!Files.isRegularFile(reportOut)) {
+            throw new AssertionError("typeparam run produced no report JSON at "
+                    + reportOut + " (adapter log above)");
         }
         Json.Object report = (Json.Object) Json.parse(
                 Files.readString(reportOut, StandardCharsets.UTF_8));
@@ -357,6 +436,38 @@ public final class TypeparamDifferentialTest {
         Path got = resolvePhase1Dir(rel.toString(), p1.getParent().getParent());
         if (!got.equals(p1)) {
             throw new AssertionError("relative property not resolved against cwd: " + got);
+        }
+    }
+
+    // -- YAML parser conformance (P2-8) -----------------------------------
+    // readExclusions must agree with Go LoadExclusions on the shared
+    // fixture tools/diffharness/testdata/exclusions-edge.yaml. Neither
+    // parser unquotes detail values; both accept any field order and a
+    // missing detail (defaults to "").
+
+    public void testReadExclusionsEdgeCases() throws IOException {
+        Path fixture = repoRoot().resolve("tools").resolve("diffharness")
+                .resolve("testdata").resolve("exclusions-edge.yaml");
+        Map<String, String[]> got = readExclusions(fixture);
+        Map<String, String[]> want = Map.of(
+                "a.go", new String[]{"deferred-parity", "\"canonical order\""},
+                "b.go", new String[]{"backend-specific", "\"out of order\""},
+                "c.go", new String[]{"deferred-parity", ""},
+                "d.go", new String[]{"unspecified-behavior", "\"\""});
+        if (!got.keySet().equals(want.keySet())) {
+            throw new AssertionError("parsed files " + got.keySet()
+                    + ", want " + want.keySet());
+        }
+        for (Map.Entry<String, String[]> e : want.entrySet()) {
+            String[] g = got.get(e.getKey());
+            String[] w = e.getValue();
+            if (!g[0].equals(w[0]) || !g[1].equals(w[1])) {
+                throw new AssertionError(e.getKey() + " parsed as ["
+                        + g[0] + ", " + g[1] + "], want [" + w[0] + ", " + w[1] + "]");
+            }
+        }
+        if (!"99".equals(readExclusionsVersion(fixture))) {
+            throw new AssertionError("fixture version not parsed");
         }
     }
 

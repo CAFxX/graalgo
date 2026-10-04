@@ -1,0 +1,24 @@
+# exclusions-edge.yaml — conformance fixture for the two hand-rolled
+# exclusion-list parsers (P2-8): Go LoadExclusions
+# (tools/diffharness/internal/typeparam/typeparam.go) and Java
+# readExclusions (TypeparamDifferentialTest.java). Both must produce the
+# same file set from this input. Edge cases: fields out of order, missing
+# detail, comments, blank lines, quoted values.
+version: 99
+exclusions:
+# canonical order
+- file: a.go
+  reason: deferred-parity
+  detail: "canonical order"
+# detail before reason
+- file: b.go
+  detail: "out of order"
+  reason: backend-specific
+# missing detail entirely
+- file: c.go
+  reason: deferred-parity
+# reason before file is NOT valid yaml for this format; skipped
+
+- file: d.go
+  reason: unspecified-behavior
+  detail: ""

@@ -14,7 +14,7 @@
 #   deferred-parity      — needs a feature from a later milestone/
 #                          workstream (multi-file packages = WS G import
 #                          overlay; unimplemented stdlib imports).
-version: 2
+version: 3
 exclusions:
 - file: absdiffimp.go
   reason: deferred-parity
@@ -273,7 +273,7 @@ exclusions:
   detail: "WS D scope: non-identifier call target *ast.ParenExpr is not supported i"
 - file: equal.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: illegal binary op/kind combination: EQ result=BOOL operand=STRUCT (struct == comparison not supported in frontend/v1)"
 - file: fact.go
   reason: deferred-parity
   detail: "WS G scope: only var/type declarations are supported in frontend/v1 scop"
@@ -294,16 +294,16 @@ exclusions:
   detail: "import not in D4 overlay: import 'math': imports are not supported in frontend/v1 scop"
 - file: index.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: illegal binary op/kind combination: EQ result=BOOL operand=POINTER (pointer == comparison not supported in frontend/v1)"
 - file: index2.go
   reason: deferred-parity
-  detail: "triage: *ast.ArrayType is not supported in frontend/v1 scope (WS C/D"
+  detail: "array type not supported in frontend/v1 scope (WS C/D)"
 - file: interfacearg.go
   reason: deferred-parity
   detail: "named type use as value: identifier 'T' denotes *types.TypeName"
 - file: issue23536.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: illegal conversion: SLICE -> STRING (slice-to-string conversion not supported in frontend/v1)"
 - file: issue376214.go
   reason: deferred-parity
   detail: "WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"
@@ -336,7 +336,7 @@ exclusions:
   detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
 - file: issue47258.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: constant of kind COMPLEX64 is not supported (WS C/D)"
 - file: issue47272.go
   reason: deferred-parity
   detail: "import not in D4 overlay: import 'errors': imports are not supported in frontend/v1 sc"
@@ -346,9 +346,6 @@ exclusions:
 - file: issue47631.go
   reason: deferred-parity
   detail: "no func main: Phase-1 program model requires func main"
-- file: issue47684b.go
-  reason: deferred-parity
-  detail: "triage: "
 - file: issue47684c.go
   reason: deferred-parity
   detail: "WS D scope: non-identifier call target *ast.CallExpr is not supported in"
@@ -374,20 +371,20 @@ exclusions:
   reason: deferred-parity
   detail: "WS D scope: method call Next needs an implicit address-of or deref on th"
 - file: issue47896.go
-  reason: backend-specific
-  detail: "gc build failure (version drift)"
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
 - file: issue47901.go
   reason: deferred-parity
-  detail: "triage: *ast.ChanType is not supported in frontend/v1 scope (WS C/D)"
+  detail: "channel type not supported in frontend/v1 scope (WS C/D)"
 - file: issue47924.go
   reason: deferred-parity
   detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
 - file: issue47925b.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: convert.fields: interface conversion needs type ids (WS E)"
 - file: issue47925c.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: convert.fields: interface conversion needs type ids (WS E)"
 - file: issue47925d.go
   reason: deferred-parity
   detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
@@ -409,15 +406,9 @@ exclusions:
 - file: issue48047.go
   reason: deferred-parity
   detail: "method resolution: method Work not found on B"
-- file: issue48049.go
-  reason: deferred-parity
-  detail: "triage: "
 - file: issue48056.go
   reason: deferred-parity
   detail: "no func main: Phase-1 program model requires func main"
-- file: issue48137.go
-  reason: deferred-parity
-  detail: "triage: "
 - file: issue48191.go
   reason: deferred-parity
   detail: "WS D scope: *ast.StarExpr is not supported in frontend/v1 scope (WS D)"
@@ -430,9 +421,6 @@ exclusions:
 - file: issue48253.go
   reason: deferred-parity
   detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
-- file: issue48276a.go
-  reason: deferred-parity
-  detail: "triage: "
 - file: issue48317.go
   reason: deferred-parity
   detail: "import not in D4 overlay: import 'encoding/json': imports are not supported in fronten"
@@ -450,7 +438,7 @@ exclusions:
   detail: "method resolution: method Iterate not found on Iterator"
 - file: issue48602.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: convert.fields: interface conversion needs type ids (WS E)"
 - file: issue48604.go
   reason: deferred-parity
   detail: "WS D scope: non-identifier call target *ast.CallExpr is not supported in"
@@ -472,9 +460,6 @@ exclusions:
 - file: issue49295.go
   reason: deferred-parity
   detail: "import not in D4 overlay: import 'io': imports are not supported in frontend/v1 scope "
-- file: issue49421.go
-  reason: deferred-parity
-  detail: "triage: "
 - file: issue49432.go
   reason: deferred-parity
   detail: "WS H scope: method value Bar (bound receiver) is not supported in fronte"
@@ -489,13 +474,13 @@ exclusions:
   detail: "no func main: Phase-1 program model requires func main"
 - file: issue49659b.go
   reason: deferred-parity
-  detail: "triage: *ast.ArrayType is not supported in frontend/v1 scope (WS C/D"
+  detail: "array type not supported in frontend/v1 scope (WS C/D)"
 - file: issue49875.go
   reason: deferred-parity
   detail: "no func main: Phase-1 program model requires func main"
 - file: issue50002.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: convert.fields: interface conversion needs type ids (WS E)"
 - file: issue50109.go
   reason: deferred-parity
   detail: "method resolution: method Set not found on AnyCacher"
@@ -506,11 +491,11 @@ exclusions:
   reason: deferred-parity
   detail: "no func main: Phase-1 program model requires func main"
 - file: issue50177.go
-  reason: backend-specific
-  detail: "gc build failure (version drift)"
+  reason: deferred-parity
+  detail: "no func main: Phase-1 program model requires func main"
 - file: issue50193.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: illegal conversion: FLOAT64 -> COMPLEX128 (complex conversions not supported in frontend/v1)"
 - file: issue50259.go
   reason: deferred-parity
   detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
@@ -531,7 +516,7 @@ exclusions:
   detail: "WS D scope: non-identifier call target *ast.CallExpr is not supported in"
 - file: issue50833.go
   reason: deferred-parity
-  detail: "triage: variable 'f' used before declaration"
+  detail: "use of variable 'f' before declaration (rejected by go/types)"
 - file: issue50993.go
   reason: deferred-parity
   detail: "import not in D4 overlay: import 'sync/atomic': imports are not supported in frontend/"
@@ -540,7 +525,7 @@ exclusions:
   detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
 - file: issue51303.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "runtime ClassCastException: [J cannot be cast to [I (int64-slice vs int-slice confusion; pre-existing, non-generic)"
 - file: issue51355.go
   reason: deferred-parity
   detail: "WS D scope: selector call c.adder is not supported in frontend/v1 scope "
@@ -549,28 +534,25 @@ exclusions:
   detail: "import not in D4 overlay: import 'strings': imports are not supported in frontend/v1 s"
 - file: issue51522a.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: binary.fields: interface conversion needs type ids (WS E)"
 - file: issue51522b.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: illegal conversion: INTERFACE -> INT64 (interface-to-int conversion not supported in frontend/v1)"
 - file: issue51700.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: convert.fields: interface conversion needs type ids (WS E)"
 - file: issue51765.go
   reason: deferred-parity
   detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
 - file: issue51909.go
   reason: deferred-parity
   detail: "WS D scope: call of non-function variable h is not supported in frontend"
-- file: issue52026.go
-  reason: deferred-parity
-  detail: "triage: "
 - file: issue52124.go
   reason: deferred-parity
   detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
 - file: issue52228.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: convert.fields: interface conversion needs type ids (WS E)"
 - file: issue52241.go
   reason: deferred-parity
   detail: "WS H scope: method value Collect (bound receiver) is not supported in fr"
@@ -585,22 +567,22 @@ exclusions:
   detail: "method resolution: method M not found on Outer"
 - file: issue53477.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: convert.fields: interface conversion needs type ids (WS E)"
 - file: issue53762.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: convert.fields: interface conversion needs type ids (WS E)"
 - file: issue54135.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "loud build error: vardecl.fields: assertion to non-empty interface needs method tables (WS D)"
 - file: issue54225.go
   reason: deferred-parity
-  detail: "triage: method Len on type parameter with non-named argument type: i"
+  detail: "method Len on type parameter with non-named argument type: interface dispatch on type parameters not supported (WS H)"
 - file: issue54456.go
   reason: deferred-parity
   detail: "import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"
 - file: issue54497.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "no func main: Phase-1 program model requires func main"
 - file: issue54537.go
   reason: deferred-parity
   detail: "WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"
@@ -609,7 +591,7 @@ exclusions:
   detail: "no func main: Phase-1 program model requires func main"
 - file: issue58513.go
   reason: deferred-parity
-  detail: "triage: type error: /tmp/typeparam-work-2986452303/issue58513.go/mai"
+  detail: "go/types type error in test program (rejected before export)"
 - file: list.go
   reason: deferred-parity
   detail: "WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"
@@ -644,8 +626,8 @@ exclusions:
   reason: deferred-parity
   detail: "import not in D4 overlay: import 'unsafe': imports are not supported in frontend/v1 sc"
 - file: pragma.go
-  reason: deferred-parity
-  detail: "triage: "
+  reason: backend-specific
+  detail: "tests gc -m inliner diagnostics (\"can inline\" output for //go:noinline stenciling); gc compiler-diagnostic text is not a portability observable"
 - file: sets.go
   reason: deferred-parity
   detail: "import not in D4 overlay: import 'sort': imports are not supported in frontend/v1 scop"
@@ -678,7 +660,7 @@ exclusions:
   detail: "WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"
 - file: typeswitch2.go
   reason: deferred-parity
-  detail: "B2b: struct value to interface param loses dynamic type descriptor in GoFuncRootNode.wrapInterface (pre-existing factory bug, needs call-convention redesign); type switch cannot match struct cases"
+  detail: "residual ClassCastException on f[float64](int8(9)) (expected \"other 9\"): int8 in default clause; reproduced non-generically, pre-existing factory bug. B2b struct-descriptor path fixed (lines 1-4 now print)"
 - file: typeswitch3.go
   reason: deferred-parity
   detail: "method resolution: method foo not found on I"
@@ -690,10 +672,10 @@ exclusions:
   detail: "WS H scope: method call foo on non-named receiver interface{foo() T} (WS"
 - file: typeswitch6.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "case T with T instantiated to an interface: type switch uses descriptor identity, not interface satisfaction (same pre-existing limitation as typeswitch1)"
 - file: typeswitch7.go
   reason: deferred-parity
-  detail: "triage: "
+  detail: "case interface{bar() T} with a type parameter inside the interface case: not matched by descriptor identity (same pre-existing limitation family as typeswitch1)"
 - file: value.go
   reason: deferred-parity
   detail: "WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"
