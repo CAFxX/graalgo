@@ -126,6 +126,9 @@ javadoc; dead `PanicNode` unmarked.
 ## Status
 
 - [x] R1/R2/R3 reports delivered and consolidated here (2026-10-04)
-- [ ] Remediation dispatched (blocked on routing to impl coordinator — see below)
+- [x] Remediation dispatched → registry `graalgo-phase1-loopcap-rework`,
+  worktree ~/workspace/graalgo-loopcap-rework branch rework/loopcap-gc-model
+  (survived VM reboot; rework worker re-dispatched 2026-10-04, red-green phase
+  complete per hidden_files/loopcap-rework/PROGRESS.md)
 - [ ] Findings remediated + re-tested
 - [ ] Milestone sign-off recorded
