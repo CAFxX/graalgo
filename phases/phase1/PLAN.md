@@ -118,6 +118,19 @@ remediation at named targets) lives under `reviews/`. M10 retains the final
 cross-cutting review: self-attack (pathological generics, deep recursion,
 defer storms), grep gates, cross-doc consistency audit, closeout.
 
+**Worker commit checklist (M6 P1-4/P1-5 remediation — the 4b24b89 escape):**
+4b24b89 committed references to two source files that were still untracked,
+so a clean checkout could not build. History is permanent; the process fix
+is mechanical. Before every commit the worker MUST:
+1. `bash tools/precommit-check.sh` — fails on untracked `*.java`/`*.go`
+   outside scratch dirs (a commit must never silently omit sources);
+2. `make -C phases/phase1 test` green on the tree as committed
+   (never commit red or untested state);
+3. one logical change per commit, message naming what and why
+   (never batch unrelated changes; never `--amend` someone else's commit —
+   fix forward with a new commit, or amend only your own unpushed work).
+A commit that fails (1) is not a commit — add the files first.
+
 ## 5. Test strategy
 
 `graalgo-run file.go`: frontend → AST → execute `main`; exit code = program's.
