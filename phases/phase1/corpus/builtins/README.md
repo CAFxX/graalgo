@@ -9,7 +9,7 @@ gofrontend builtin emission, WS B/G), through graalgo for comparison.
 
 | File | Tests | Key expectation |
 |------|-------|-----------------|
-| bi01_append_growth.go | append growth | cap sequence 1,2,4→(3,8),16,32 matches gc's growslice |
+| bi01_append_growth.go | append growth | caps valid (cap>=len, non-decreasing); sum 190. Exact caps are compiler-dependent (see note) |
 | bi02_append_alias.go | append aliasing | input slice not mutated; t[0]=99, s[0]=1 |
 | bi03_copy_overlap.go | copy overlap | memmove semantics: n=4, s=[1,1,2,3,4] |
 | bi04_delete_lookup.go | delete+lookup | b absent (0,false); len=2 after delete |
@@ -18,24 +18,27 @@ gofrontend builtin emission, WS B/G), through graalgo for comparison.
 | bi07_print_stderr.go | print/println | **stderr** (gc parity); stdout empty |
 | bi08_len_cap.go | len/cap types | "héllo"=6 bytes; arr 5/5; map 2 |
 | bi09_new.go | new | allocates (non-nil) |
-| bi10_append_varieties.go | append forms | nil+3 → cap4; +5 → cap8; bytes "hi!!" |
+| bi10_append_varieties.go | append forms | len 3, elems 1 2 3; t len 8; bytes "hi!!" (caps not asserted) |
 | bi11_panic.go | panic | panics "boom", exit 2, stderr |
 | bi12_fmt_stub.go | fmt D4 stub | Print/Printf/Println/Sprint/Sprintf/Sprintln/Errorf |
-| bi13_append_sizes.go | growth by elem size | bytes cap32; u64 cap16 (per-byte policy) |
+| bi13_append_sizes.go | growth by elem size | len 10, valid caps, elems correct (exact caps compiler-dependent) |
 | bi14_map_lifecycle.go | map ops | make/assign/len/delete/lookup |
 | bi15_copy_counts.go | copy counts | n=3 (truncated); n2=5 |
+
+**Note on exact capacities (bi01, bi10, bi13):** gc's observable `cap`
+after `append` depends on a compiler optimization (the `growsliceBuf`
+stack-buffer path in `runtime/slice.go`), not just the documented
+`growslice`/`nextslicecap` runtime algorithm. The Go language does not
+specify growth, so exact caps are not a differential property across
+different backends. graalgo implements the pure runtime algorithm
+(pinned by unit tests); the corpus programs assert validity
+(`cap >= len`, monotonic) and element correctness, not exact values.
 
 ## Expected outputs (gc 1.27.1, 2026-10-04)
 
 ### bi01
 ```
-len: 1 cap: 1
-len: 2 cap: 2
-len: 3 cap: 3
-len: 5 cap: 8
-len: 9 cap: 16
-len: 17 cap: 32
-len: 20 cap: 32
+valid: true len: 20
 sum: 190
 ```
 
@@ -102,8 +105,8 @@ allocated: true
 
 ### bi10
 ```
-len: 3 cap: 4
-t len: 8 cap: 8
+len: 3 s: 1 2 3
+t len: 8 t: 1 8
 bytes: hi!!
 ```
 
@@ -125,8 +128,8 @@ oops 7
 
 ### bi13
 ```
-bytes len: 10 cap: 32
-u64 len: 10 cap: 16
+bytes len: 10 valid: true b9: 9
+u64 len: 10 valid: true w9: 9
 ```
 
 ### bi14

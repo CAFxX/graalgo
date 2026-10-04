@@ -32,7 +32,11 @@ public final class CapNode extends GoExprNode {
     public long executeLong(VirtualFrame frame) {
         return switch (argKind) {
             case ARRAY -> java.lang.reflect.Array.getLength(child.executeObject(frame));
-            case SLICE -> ((GoSlice) child.executeObject(frame)).cap();
+            // M7: cap of a nil slice is 0 (Go spec, Length and capacity).
+            case SLICE -> {
+                GoSlice s = (GoSlice) child.executeObject(frame);
+                yield s == null ? 0 : s.cap();
+            }
             default -> throw new IllegalStateException("unreachable: " + argKind);
         };
     }

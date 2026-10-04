@@ -25,7 +25,8 @@ public final class LenNode extends GoExprNode {
         this.child = child;
         this.argKind = child.kind();
         switch (argKind) {
-            case STRING, ARRAY, SLICE, MAP -> {}
+            // M7: UNTYPED_STRING (e.g. len("héllo")) folds to a string.
+            case STRING, UNTYPED_STRING, ARRAY, SLICE, MAP -> {}
             default -> throw new FrontendException(
                     "len of " + argKind + " is not implemented (WS G); channels are Phase 2");
         }
@@ -34,10 +35,17 @@ public final class LenNode extends GoExprNode {
     @Override
     public long executeLong(VirtualFrame frame) {
         return switch (argKind) {
-            case STRING -> ((GoString) child.executeObject(frame)).bytes().length;
+            case STRING, UNTYPED_STRING -> ((GoString) child.executeObject(frame)).bytes().length;
             case ARRAY -> java.lang.reflect.Array.getLength(child.executeObject(frame));
-            case SLICE -> ((GoSlice) child.executeObject(frame)).len();
-            case MAP -> ((GoMap) child.executeObject(frame)).size();
+            // M7: len of a nil slice/map is 0 (Go spec, Length and capacity).
+            case SLICE -> {
+                GoSlice s = (GoSlice) child.executeObject(frame);
+                yield s == null ? 0 : s.len();
+            }
+            case MAP -> {
+                GoMap m = (GoMap) child.executeObject(frame);
+                yield m == null ? 0 : m.size();
+            }
             default -> throw new IllegalStateException("unreachable: " + argKind);
         };
     }

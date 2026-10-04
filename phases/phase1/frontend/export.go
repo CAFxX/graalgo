@@ -71,6 +71,19 @@ type Doc struct {
 	Types     []TypeEnt   `json:"types"`
 	Objects   []ObjectEnt `json:"objects"`
 	Funcs     []*Node     `json:"funcs"`
+	// Globals lists package-level variables in initialization
+	// (dependency) order (M7). A nil Init means the zero value;
+	// Obj == -1 means "evaluate Init for side effects, discard"
+	// (package-level `var _ = ...`).
+	Globals []GlobalEnt `json:"globals"`
+}
+
+// GlobalEnt is one package-level variable (M7): the object-table id of
+// the variable plus its initializer expression (nil when absent).
+type GlobalEnt struct {
+	Obj  int   `json:"obj"`
+	Init *Node `json:"init"`
+	Pos  *Pos  `json:"pos,omitempty"`
 }
 
 type Generator struct {
@@ -306,6 +319,26 @@ func ExportFile(path string) (string, error) {
 				}
 				continue
 			}
+			if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.CONST {
+				// M7: package-level constants need no codegen — every
+				// reference folds through go/types (the *types.Const case
+				// in exportIdent), which has already evaluated them
+				// (iota included). Validate the specs are value specs.
+				for _, spec := range gd.Specs {
+					if _, ok := spec.(*ast.ValueSpec); !ok {
+						return "", scopeErrorf("package-level const spec %T is not supported (M7)", spec)
+					}
+				}
+				continue
+			}
+			if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.VAR {
+				// M7: package-level vars become globals; initializers are
+				// exported after the declaration scan (dependency order).
+				if err := e.collectPackageVars(gd); err != nil {
+					return "", err
+				}
+				continue
+			}
 			return "", scopeErrorf("package-level %T is not supported in frontend/v1 scope (WS G/H)", decl)
 		}
 		_ = fd // collected below (M6, WS H)
@@ -334,6 +367,15 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 	}
+	// M7: package-level vars — dependency-order initialization. This runs
+	// after instantiation enumeration so initializers can call
+	// package-level functions (funcByObj is populated) and generic
+	// instantiations inside initializers are already enqueued.
+	globals, err := e.exportPackageVars()
+	if err != nil {
+		return "", err
+	}
+	doc.Globals = globals
 	hasMain := false
 	for _, fi := range funcs {
 		if fi.isTemplate {
@@ -376,6 +418,185 @@ func scopeErrorf(format string, args ...any) error {
 }
 
 // ---------------------------------------------------------------------------
+// Package-level variables (M7).
+// ---------------------------------------------------------------------------
+
+// collectPackageVars records one package-level `var` GenDecl. Variables are
+// defined in the object table now (so a later initializer can reference an
+// earlier variable); initializer export and dependency ordering happen in
+// exportPackageVars after the full declaration scan.
+func (e *exporter) collectPackageVars(gd *ast.GenDecl) error {
+	for _, spec := range gd.Specs {
+		vs, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			return scopeErrorf("package-level var spec %T is not supported (M7)", spec)
+		}
+		pv := &pkgVarDecl{spec: vs}
+		for _, n := range vs.Names {
+			if n.Name == "_" {
+				continue
+			}
+			v, ok := e.info.Defs[n].(*types.Var)
+			if !ok {
+				return fmt.Errorf("gofrontend: package var %q has no *types.Var object", n.Name)
+			}
+			oid, err := e.defVar(v, false)
+			if err != nil {
+				return err
+			}
+			pv.vars = append(pv.vars, v)
+			pv.oids = append(pv.oids, oid)
+		}
+		e.pkgVars = append(e.pkgVars, pv)
+	}
+	return nil
+}
+
+// exportPackageVars exports initializers for the collected package-level
+// vars and returns the document's Globals in initialization (dependency)
+// order.
+//
+// Go spec (Package initialization): "Given the list of all variables, the
+// initialization order is determined by analyzing dependencies" — x depends
+// on y when x's initializer refers to y (only references to package-level
+// variables are ordering constraints; function bodies are not analyzed, and
+// functions need no initialization). Unconstrained variables initialize in
+// declaration order. A dependency cycle is a build error, matching gc's
+// "initialization cycle" rejection.
+func (e *exporter) exportPackageVars() ([]GlobalEnt, error) {
+	type ginit struct {
+		oid  int      // object id, or -1 for blank (`var _ = ...`)
+		init *Node    // exported initializer, nil when absent (zero value)
+		expr ast.Expr // source initializer, nil when absent
+		pos  *Pos     // source position of the declaration
+	}
+	inits := []ginit{}
+	for _, pv := range e.pkgVars {
+		vs := pv.spec
+		specPos := e.pos(vs)
+		if len(vs.Values) != 0 && len(vs.Values) != len(vs.Names) {
+			// Multi-valued initializers (`var a, b = f()`) are WS D.
+			return nil, scopeErrorf(
+				"package-level var with multi-valued initializer is not supported in v1 (WS D)")
+		}
+		for i, n := range vs.Names {
+			var initNode *Node
+			var initExpr ast.Expr
+			if i < len(vs.Values) {
+				initExpr = vs.Values[i]
+				x, err := e.exportExpr(initExpr)
+				if err != nil {
+					return nil, err
+				}
+				initNode = x
+			}
+			if n.Name == "_" {
+				// Blank: no variable, but the initializer is evaluated
+				// for side effects (Go spec, Package initialization).
+				if initNode != nil {
+					inits = append(inits, ginit{oid: -1, init: initNode, expr: initExpr, pos: specPos})
+				}
+				continue
+			}
+			v, ok := e.info.Defs[n].(*types.Var)
+			if !ok {
+				return nil, fmt.Errorf("gofrontend: package var %q has no *types.Var object", n.Name)
+			}
+			oid, ok := e.objIDs[v]
+			if !ok {
+				return nil, fmt.Errorf("gofrontend: package var %q missing from object table", n.Name)
+			}
+			inits = append(inits, ginit{oid: oid, init: initNode, expr: initExpr, pos: specPos})
+		}
+	}
+
+	// Dependency analysis: the package-level variables each initializer
+	// refers to (via go/types Uses — selectors and calls are covered
+	// because the referenced variable appears as an *ast.Ident).
+	pkgVar := map[int]bool{}
+	for _, g := range inits {
+		if g.oid >= 0 {
+			pkgVar[g.oid] = true
+		}
+	}
+	deps := make([][]int, len(inits))
+	for i, g := range inits {
+		if g.expr == nil {
+			continue
+		}
+		seen := map[int]bool{}
+		ast.Inspect(g.expr, func(n ast.Node) bool {
+			id, ok := n.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			if v, ok := e.info.Uses[id].(*types.Var); ok {
+				if oid, ok := e.objIDs[v]; ok && pkgVar[oid] && !seen[oid] {
+					seen[oid] = true
+					deps[i] = append(deps[i], oid)
+				}
+			}
+			return true
+		})
+	}
+
+	// Topological order, stable by declaration order: at each step the
+	// earliest-declared variable whose dependencies are all initialized
+	// goes next (this matches gc's source-order tie-breaking). A
+	// self-reference is a cycle, like any other.
+	oidx := map[int]int{}
+	for i, g := range inits {
+		if g.oid >= 0 {
+			oidx[g.oid] = i
+		}
+	}
+	indeg := make([]int, len(inits))
+	dependents := make([][]int, len(inits))
+	for i, ds := range deps {
+		for _, d := range ds {
+			j := oidx[d]
+			dependents[j] = append(dependents[j], i)
+			indeg[i]++
+		}
+	}
+	order := make([]int, 0, len(inits))
+	done := make([]bool, len(inits))
+	for len(order) < len(inits) {
+		next := -1
+		for i := range inits {
+			if !done[i] && indeg[i] == 0 {
+				next = i
+				break
+			}
+		}
+		if next < 0 {
+			break // cycle; reported below
+		}
+		done[next] = true
+		order = append(order, next)
+		for _, k := range dependents[next] {
+			indeg[k]--
+		}
+	}
+	if len(order) < len(inits) {
+		cycle := []string{}
+		for i := range inits {
+			if indeg[i] > 0 && inits[i].oid >= 0 {
+				cycle = append(cycle, e.objects[inits[i].oid].Name)
+			}
+		}
+		return nil, scopeErrorf("initialization cycle involving package-level var(s): %s",
+			strings.Join(cycle, ", "))
+	}
+
+	out := make([]GlobalEnt, 0, len(inits))
+	for _, i := range order {
+		out = append(out, GlobalEnt{Obj: inits[i].oid, Init: inits[i].init, Pos: inits[i].pos})
+	}
+	return out, nil
+}
+
+// ---------------------------------------------------------------------------
 // Exporter state.
 // ---------------------------------------------------------------------------
 
@@ -406,6 +627,20 @@ type exporter struct {
 	// M6 (WS H): method declarations by (receiver type name, method name).
 	methodIndex map[methodKey]*funcDeclInfo
 	instByKey   map[string]*instantiation
+	// M7: package-level var declarations in source order (collected by
+	// collectPackageVars during the declaration scan; exported in
+	// dependency order by exportPackageVars after the scan).
+	pkgVars []*pkgVarDecl
+}
+
+// pkgVarDecl is one package-level `var` spec (M7).
+type pkgVarDecl struct {
+	spec *ast.ValueSpec
+	vars []*types.Var // non-blank declared variables, in source order
+	oids []int        // object ids parallel to vars
+	// blankInit is set when the spec declares only blank identifiers:
+	// the values are still evaluated for side effects (Go spec).
+	blankInit []ast.Expr
 }
 
 // ---------------------------------------------------------------------------
@@ -2440,6 +2675,19 @@ func (e *exporter) foldedConst(x ast.Expr, v constant.Value) (*Node, error) {
 		fields["f32bits"] = int32(math.Float32bits(f32))
 		fields["f64bits"] = int64(math.Float64bits(f64))
 	}
+	// M7: complex constants carry the real/imag parts as bit patterns.
+	if v.Kind() == constant.Complex {
+		realPart := constant.Real(v)
+		imagPart := constant.Imag(v)
+		r32, _ := constant.Float32Val(realPart)
+		r64, _ := constant.Float64Val(realPart)
+		i32, _ := constant.Float32Val(imagPart)
+		i64, _ := constant.Float64Val(imagPart)
+		fields["creal32"] = int32(math.Float32bits(r32))
+		fields["creal64"] = int64(math.Float64bits(r64))
+		fields["cimag32"] = int32(math.Float32bits(i32))
+		fields["cimag64"] = int64(math.Float64bits(i64))
+	}
 	return e.node("basiclit", x, fields), nil
 }
 
@@ -2611,15 +2859,11 @@ func (e *exporter) exportIdent(id *ast.Ident) (*Node, error) {
 		fields["builtin"] = obj.Name()
 		fields["type"] = t
 	case *types.Const:
-		// Universe constants (true, false). Emitted as a basiclit so the
-		// factory's typed-constant path handles them (M3, WS D).
-		t, err := e.typeID(obj.Type())
-		if err != nil {
-			return nil, err
-		}
-		return e.node("basiclit", id, map[string]any{
-			"value": id.Name, "const": obj.Val().ExactString(), "type": t,
-		}), nil
+		// Constants (universe true/false, package-level and local consts):
+		// emitted as a folded basiclit so the factory's typed-constant
+		// path handles them (M3, WS D). foldedConst supplies the binary
+		// payloads (sbytes/f32bits/f64bits) the factory requires.
+		return e.foldedConst(id, obj.Val())
 	case *types.Nil:
 		// M5 (WS F): the nil identifier in expression position. Typed as
 		// the empty interface; the factory's NilNode evaluates to null,
@@ -2743,6 +2987,35 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	}
 	funIdent := callTargetIdent(c.Fun)
 	if funIdent == nil {
+		// M7: conversion with a composite type target, e.g. []byte("hi").
+		// The target is an *ast.ArrayType/*ast.MapType, not an identifier.
+		if tv, ok := e.info.Types[c.Fun]; ok && tv.Type != nil {
+			if len(c.Args) != 1 {
+				return nil, fmt.Errorf("gofrontend: conversion has %d arguments (want 1)", len(c.Args))
+			}
+			x, err := e.exportExpr(c.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			to, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			// M7: "from" records the source type id.
+			var from any
+			if atv, ok := e.info.Types[c.Args[0]]; ok && atv.Type != nil {
+				fid, err := e.typeID(atv.Type)
+				if err != nil {
+					return nil, err
+				}
+				from = fid
+			}
+			fields := map[string]any{"x": x, "to": to, "type": to}
+			if from != nil {
+				fields["from"] = from
+			}
+			return e.node("convert", c, fields), nil
+		}
 		return nil, scopeErrorf("non-identifier call target %T is not supported in frontend/v1 scope (WS D)", c.Fun)
 	}
 	if tn, ok := e.info.Uses[funIdent].(*types.TypeName); ok {
@@ -2758,9 +3031,23 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
+		// M7: "from" records the source type id (needed for string<->
+		// slice conversions to get the element kind).
+		var from any
+		if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
+			fid, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			from = fid
+		}
 		// "type" records the conversion target: NodeFactory stamps it on
 		// the built node (M4: interface boxing needs the target type id).
-		return e.node("convert", c, map[string]any{"x": x, "to": to, "type": to}), nil
+		fields := map[string]any{"x": x, "to": to, "type": to}
+		if from != nil {
+			fields["from"] = from
+		}
+		return e.node("convert", c, fields), nil
 	}
 	if v, ok := e.info.Uses[funIdent].(*types.Var); ok {
 		// M5 (WS F): call through a func-valued variable (recursion,
@@ -2800,17 +3087,46 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	args, err := e.exportCallArgs(c)
-	if err != nil {
-		return nil, err
+	// M7: new(T) and make(T, ...) take a type as the first argument.
+	// The type is recorded in the result type id (via callType); only
+	// the value arguments are exported as expressions.
+	// Non-nil so empty args marshal as [] rather than null.
+	args := []*Node{}
+	switch b.Name() {
+	case "new":
+		// new(T): no value arguments; the pointer type is the result.
+	case "make":
+		// make(T, len[, cap]): skip the type, export len/cap.
+		if len(c.Args) < 1 {
+			return nil, scopeErrorf("make without a type argument")
+		}
+		for _, a := range c.Args[1:] {
+			x, err := e.exportExpr(a)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, x)
+		}
+	default:
+		var err error
+		args, err = e.exportCallArgs(c)
+		if err != nil {
+			return nil, err
+		}
 	}
 	typ, err := e.callType(c)
 	if err != nil {
 		return nil, err
 	}
-	return e.node("call", c, map[string]any{
+	fields := map[string]any{
 		"fun": fun, "args": args, "builtin": b.Name(), "type": typ,
-	}), nil
+	}
+	// M7: mark append(s, x...) spread; the factory expands the string
+	// into individual bytes.
+	if b.Name() == "append" && c.Ellipsis.IsValid() {
+		fields["ellipsis"] = true
+	}
+	return e.node("call", c, fields), nil
 }
 
 // exportFmtCall exports a call to one of the seven D4 fmt stub functions

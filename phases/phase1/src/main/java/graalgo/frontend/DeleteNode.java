@@ -19,9 +19,10 @@ public final class DeleteNode extends GoExprNode {
     @Child private GoExprNode keyChild;
 
     public DeleteNode(GoExprNode mapChild, GoExprNode keyChild) {
-        // No result; INTERFACE is a placeholder kind (only executeLong is
-        // ever called, via ExprStmtNode).
-        super(GoKind.INTERFACE);
+        // No result; INT64 is a placeholder kind (only executeLong is
+        // ever called, via ExprStmtNode, which dispatches on slotKind —
+        // INTERFACE would route to executeObject and throw).
+        super(GoKind.INT64);
         this.mapChild = mapChild;
         this.keyChild = keyChild;
     }
@@ -29,7 +30,10 @@ public final class DeleteNode extends GoExprNode {
     @Override
     public long executeLong(VirtualFrame frame) {
         GoMap m = (GoMap) mapChild.executeObject(frame);
-        Object k = keyChild.executeObject(frame);
+        // M7: canonicalize the key via MapKeys.box (int keys box as Long,
+        // etc.), matching the index-write path — otherwise delete(m, 1)
+        // won't find a key stored as Long by m[1] = ....
+        Object k = MapKeys.box(keyChild.kind(), keyChild, frame);
         m.delete(k);
         return 0L;
     }

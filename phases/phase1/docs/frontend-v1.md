@@ -88,6 +88,23 @@ v1 has variables only (parameters flagged). Identifiers reference objects by
 `obj` id; the id is assigned at the declaration in a single deterministic AST
 walk, so ids are stable across runs.
 
+## 5a. Globals (M7)
+
+Package-level variables are listed in document order-independent
+*initialization* order in the top-level `globals` array:
+
+`globals[i]` = `{ "obj": <object id>, "init": <expr node|null>, "pos": <pos> }`.
+
+- `init` is the variable's initializer expression, or `null` when the
+  declaration has none (the variable takes its zero value).
+- `obj: -1` marks a side-effect-only blank initializer (`var _ = ...`):
+  the expression is evaluated for side effects and discarded.
+- Entries appear in Go's initialization order (spec, Package
+  initialization): a variable's initializer dependencies first,
+  declaration order breaking ties; a dependency cycle is a build error.
+- Package-level `const` declarations need no wire entry: every reference
+  folds through go/types (iota included) at the use site.
+
 ## 6. Nodes
 
 Every node is exactly `{ "kind", "pos", "fields" }` — including `funcdecl`
@@ -105,12 +122,12 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `incdec` | `tok` ∈ {`++`,`--`}, `x`: expr node |
 | `ident` | `name`, `obj`: object id, `type`: type id; *or* builtin form: `name`, `builtin`: str, `type`: type id |
 | `methodref` | `obj`: object id (method funcdecl/instantiation), `recv`: expr node (evaluated first, passed as the method's params[0]), `type`: signature type id with the receiver as params[0] — a method-call target (M6, WS H) |
-| `basiclit` | `value`: source text, `const`: `go/constant` `ExactString()` (present when the literal is a constant), `type`: type id; string constants additionally carry `sbytes`: hex of the exact UTF-8 bytes (byte-exact — `ExactString` is a quoted literal and JSON cannot carry invalid UTF-8); float constants additionally carry `f32bits`: int and `f64bits`: long, the signed-reinterpreted IEEE-754 bits (correctly rounded by `go/constant` itself; `ExactString` renders rationals as `"a/b"`, which no float parser reads) |
+| `basiclit` | `value`: source text, `const`: `go/constant` `ExactString()` (present when the literal is a constant), `type`: type id; string constants additionally carry `sbytes`: hex of the exact UTF-8 bytes (byte-exact — `ExactString` is a quoted literal and JSON cannot carry invalid UTF-8); float constants additionally carry `f32bits`: int and `f64bits`: long, the signed-reinterpreted IEEE-754 bits (correctly rounded by `go/constant` itself; `ExactString` renders rationals as `"a/b"`, which no float parser reads); complex constants additionally carry `creal32`/`creal64`/`cimag32`/`cimag64`: the IEEE-754 bits of the real and imaginary parts (M7) |
 | `binary` | `op` ∈ {`+`,`-`,`*`,`/`,`%`,`&`,`\|`,`^`,`&^`,`<<`,`>>`,`==`,`!=`,`<`,`<=`,`>`,`>=`,`&&`,`\|\|`}, `x`, `y`, `type`: type id |
 | `unary` | `op` ∈ {`+`,`-`,`!`,`^`}, `x`, `type`: type id |
 | `paren` | `x`, `type`: type id |
-| `convert` | `to`: type id, `x`: expr node — a Go conversion `T(x)` where `T` denotes a type (M3; builtin calls stay `call`) |
-| `call` | `fun`: expr node, `args`: [expr nodes], `builtin`: str or null, `type`: type id or null |
+| `convert` | `to`: type id, `from`: source type id (M7; needed for string<->slice to get the element kind), `x`: expr node — a Go conversion `T(x)` where `T` denotes a type (M3; builtin calls stay `call`) |
+| `call` | `fun`: expr node, `args`: [expr nodes], `builtin`: str or null, `type`: type id or null, `ellipsis`: bool (M7; true for `append(s, x...)` string spread) |
 | `fmtcall` | `func`: str (one of `Print`, `Printf`, `Println`, `Sprint`, `Sprintf`, `Sprintln`, `Errorf`), `args`: [expr nodes], `type`: type id or null — a call to the D4 `fmt` stub via the Phase-1 import overlay (WS G). Only the seven D4 symbols resolve; any other `fmt.X` is a scope error naming Phase 3. |
 | `if` | `init`: stmt node or null, `cond`: expr node, `then`: block node, `else`: stmt node or null (block or `if` for else-if) |
 | `for` | `init`: stmt node or null, `cond`: expr node or null, `post`: stmt node or null, `body`: block node |
@@ -210,7 +227,12 @@ the extension:
   is a scope error naming Phase 3. Calls to the D4 symbols are emitted as
   `fmtcall` wire nodes.
 - package-level declarations: `func main` plus any number of named
-  functions, generic or not (M6, WS H). A generic function's template is
+  functions, generic or not (M6, WS H); package-level `const` (references
+  fold through go/types, iota included) and `var` (M7 — initialized in
+  dependency order before `main` runs; see §5a). Package-level `var` with
+  a multi-valued initializer (`var a, b = f()`) is a v1 scope error
+  (WS D), as is ranging with `=` into a package-level variable (M7). A
+  generic function's template is
   never emitted as such — only its reachable instantiations appear, one
   `funcdecl` per instantiation (see §6, Monomorphization). An
   instantiation whose type arguments still contain an unbound type

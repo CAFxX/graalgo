@@ -26,22 +26,35 @@ import graalgo.values.GoKind;
 public final class ConvertNode extends GoExprNode {
     private final GoKind from;
     @Child private GoExprNode child;
+    /** Element kind for STRING<->SLICE conversions (null otherwise). */
+    private final GoKind sliceElemKind;
 
     public ConvertNode(GoKind from, GoKind to, GoExprNode child) {
-        super(to);
-        checkCombo(from, to);
-        this.from = from;
-        this.child = child;
+        this(from, to, child, null);
     }
 
-    private static void checkCombo(GoKind from, GoKind to) {
+    public ConvertNode(GoKind from, GoKind to, GoExprNode child, GoKind sliceElemKind) {
+        super(to);
+        checkCombo(from, to, sliceElemKind);
+        this.from = from;
+        this.child = child;
+        this.sliceElemKind = sliceElemKind;
+    }
+
+    private static void checkCombo(GoKind from, GoKind to, GoKind sliceElemKind) {
         boolean numeric = (from.isIntKind() || from.isFloatKind())
                 && (to.isIntKind() || to.isFloatKind());
         boolean intToString = from.isIntKind() && to == GoKind.STRING;
         boolean stringToString = from == GoKind.STRING && to == GoKind.STRING;
         boolean boolToBool = from == GoKind.BOOL && to == GoKind.BOOL;
         boolean unsafeEscape = from == GoKind.UNSAFE_POINTER && to == GoKind.UINT64;
-        if (!(numeric || intToString || stringToString || boolToBool || unsafeEscape)) {
+        // M7: string <-> []byte/[]rune conversions.
+        boolean stringToSlice = (from == GoKind.STRING || from == GoKind.UNTYPED_STRING)
+                && to == GoKind.SLICE && (sliceElemKind == GoKind.UINT8 || sliceElemKind == GoKind.INT32);
+        boolean sliceToString = from == GoKind.SLICE && to == GoKind.STRING
+                && (sliceElemKind == GoKind.UINT8 || sliceElemKind == GoKind.INT32);
+        if (!(numeric || intToString || stringToString || boolToBool || unsafeEscape
+                || stringToSlice || sliceToString)) {
             throw new IllegalArgumentException(
                     "illegal conversion: " + from + " -> " + to);
         }
@@ -142,8 +155,57 @@ public final class ConvertNode extends GoExprNode {
             return GoConvert.untypedIntToString(child.exactDecimal());
         }
         if (to == GoKind.STRING) {
+            // M7: []byte/[]rune -> string.
+            if (from == GoKind.SLICE) {
+                return sliceToString((graalgo.values.GoSlice) child.executeObject(frame));
+            }
             return GoConvert.intToString(child.executeLong(frame));
         }
+        // M7: string -> []byte/[]rune.
+        if (to == GoKind.SLICE && (from == GoKind.STRING || from == GoKind.UNTYPED_STRING)) {
+            return stringToSlice((graalgo.values.GoString) child.executeObject(frame));
+        }
         throw new UnsupportedOperationException("conversion " + from + " -> " + to + " has no object value");
+    }
+
+    /** Converts a Go string to a []byte or []rune slice. */
+    private graalgo.values.GoSlice stringToSlice(graalgo.values.GoString s) {
+        byte[] bytes = s.bytes();
+        if (sliceElemKind == GoKind.UINT8) {
+            int[] arr = new int[bytes.length];
+            for (int i = 0; i < bytes.length; i++) {
+                arr[i] = bytes[i] & 0xFF;
+            }
+            return new graalgo.values.GoSlice(arr, 0, arr.length, arr.length);
+        } else { // INT32 (rune)
+            String str = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            int[] codePoints = str.codePoints().toArray();
+            int[] arr = new int[codePoints.length];
+            System.arraycopy(codePoints, 0, arr, 0, codePoints.length);
+            return new graalgo.values.GoSlice(arr, 0, arr.length, arr.length);
+        }
+    }
+
+    /** Converts a []byte or []rune slice to a Go string. */
+    private graalgo.values.GoString sliceToString(graalgo.values.GoSlice s) {
+        if (s == null) {
+            return graalgo.values.GoString.EMPTY;
+        }
+        int[] arr = (int[]) s.array();
+        int offset = s.offset();
+        int len = s.len();
+        if (sliceElemKind == GoKind.UINT8) {
+            byte[] bytes = new byte[len];
+            for (int i = 0; i < len; i++) {
+                bytes[i] = (byte) arr[offset + i];
+            }
+            return new graalgo.values.GoString(bytes);
+        } else { // INT32 (rune)
+            StringBuilder sb = new StringBuilder(len);
+            for (int i = 0; i < len; i++) {
+                sb.appendCodePoint(arr[offset + i]);
+            }
+            return graalgo.values.GoString.fromUtf8(sb.toString());
+        }
     }
 }

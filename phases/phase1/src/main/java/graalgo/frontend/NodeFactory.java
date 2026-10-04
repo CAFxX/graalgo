@@ -2,6 +2,8 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotKind;
+import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.source.SourceSection;
@@ -210,6 +212,22 @@ public final class NodeFactory {
     private int nextLoopId;
     /** Boxed for-header var oid → declaring loop id (loopcap). */
     private final Map<Integer, Integer> headerLoopIds = new HashMap<>();
+    /**
+     * Package-level variables (M7): object id → slot in the program's
+     * globals frame. Filled by {@link #buildProgram} before any function
+     * body is built; consulted by {@link #readVar} and
+     * {@link #classifyLhs} ahead of the per-function frame maps. A global
+     * object id can never collide with a frame object id — the exporter's
+     * defVar is idempotent per go/types object, so each variable owns
+     * exactly one id for the whole program.
+     */
+    private final Map<Integer, Integer> globalSlots = new HashMap<>();
+    /**
+     * The program's globals frame (M7): one typed slot per package-level
+     * variable, initialized at the top of {@code func main} in dependency
+     * order. Null when the program declares no globals.
+     */
+    private MaterializedFrame globalsFrame;
     /** Loop phases (loopcap). */
     private static final int LP_INIT = 0, LP_COND = 1, LP_POST = 2, LP_BODY = 3;
     /** One entry of {@link #loopStack}. */
@@ -304,6 +322,118 @@ public final class NodeFactory {
      * into a {@link GoRootNode}, the rest into {@link GoFuncRootNode}s
      * registered in the function table); call sites resolve by object id.
      */
+    /**
+     * Allocates the program's globals frame (M7): one typed slot per
+     * package-level variable, in document order. The frame is created
+     * eagerly so {@link GlobalReadNode}/{@link GlobalWriteNode} can
+     * reference it while function bodies are built; the initialization
+     * statements themselves run at the top of {@code func main} (see the
+     * isMain branch of {@link #buildProgram}). Every global is explicitly
+     * initialized (zero value when the declaration has no initializer),
+     * so no frame default-value sentinel is needed.
+     */
+    private void buildGlobals(Json.Object doc, TypeTable types, Json.Array objects) {
+        globalSlots.clear();
+        globalsFrame = null;
+        Json.Value gv = doc.opt("globals");
+        if (!(gv instanceof Json.Array globals) || globals.size() == 0) {
+            return;
+        }
+        FrameDescriptor.Builder gb = FrameDescriptor.newBuilder();
+        BuildCtx gctx = new BuildCtx(source, gb, types, objects);
+        for (int i = 0; i < globals.size(); i++) {
+            String gpath = "globals[" + i + "]";
+            Json.Object e = asObject(globals.get(i), gpath);
+            int oid = e.intValue("obj", gpath);
+            if (oid < 0) {
+                continue; // side-effect-only blank initializer: no slot
+            }
+            Json.Value oe = objects.get(oid);
+            if (!(oe instanceof Json.Object objEnt)) {
+                throw new FrontendException(gpath + ": object id " + oid + " is not an object");
+            }
+            String varName = objEnt.string("name", "objects[" + oid + "]");
+            int typeId = objEnt.intValue("type", "objects[" + oid + "]");
+            int slot = allocGlobalSlot(gctx, typeId, varName, gpath);
+            if (globalSlots.put(oid, slot) != null) {
+                throw new FrontendException(gpath + ": duplicate global object id " + oid);
+            }
+        }
+        globalsFrame = Truffle.getRuntime().createMaterializedFrame(new Object[0], gb.build());
+    }
+
+    /**
+     * Allocates one globals-frame slot for a package-level variable (M7).
+     * Mirrors {@link #allocSlot}'s type-decoder selection, but records the
+     * slot in {@link #globalSlots} instead of a function's frame maps —
+     * globals are deliberately absent from {@code slotsByName} (the
+     * {@code --dump-vars} channel reports main-frame slots only).
+     */
+    private int allocGlobalSlot(BuildCtx gctx, int typeId, String varName, String path) {
+        int rid = resolveAlias(gctx, typeId, path);
+        Json.Object entry = gctx.types.entry(rid, path);
+        while ("named".equals(entry.string("kind", path))) {
+            rid = entry.object("detail", path).intValue("underlying", path);
+            entry = gctx.types.entry(rid, path);
+        }
+        FrameSlotKind slotKind = null;
+        for (TypeDecoder d : typeDecoders) {
+            slotKind = d.decode(rid, entry);
+            if (slotKind != null) {
+                break;
+            }
+        }
+        if (slotKind == null) {
+            throw new FrontendException(path + ": no TypeDecoder handles type id " + typeId
+                    + " for a package-level variable (M7)");
+        }
+        return gctx.frames.addSlot(slotKind, varName, null);
+    }
+
+    /**
+     * Builds the initialization statements for the program's globals (M7):
+     * one {@link GlobalWriteNode} per variable in document (dependency)
+     * order — the initializer expression, or the zero value when the
+     * declaration has none — plus an expression statement for each
+     * side-effect-only blank initializer ({@code var _ = ...}).
+     */
+    private List<GoStmtNode> buildGlobalInits(Json.Object doc, BuildCtx ctx) {
+        List<GoStmtNode> out = new ArrayList<>();
+        Json.Value gv = doc.opt("globals");
+        if (!(gv instanceof Json.Array globals) || globals.size() == 0) {
+            return out;
+        }
+        for (int i = 0; i < globals.size(); i++) {
+            String gpath = "globals[" + i + "]";
+            Json.Object e = asObject(globals.get(i), gpath);
+            int oid = e.intValue("obj", gpath);
+            Json.Value initV = e.opt("init");
+            if (oid < 0) {
+                // Side-effect-only blank initializer.
+                if (initV instanceof Json.Object initObj) {
+                    out.add(new ExprStmtNode(buildExpr(initObj, ctx)));
+                }
+                continue;
+            }
+            Integer slot = globalSlots.get(oid);
+            if (slot == null) {
+                throw new FrontendException(gpath + ": no globals-frame slot for object id " + oid);
+            }
+            int typeId = objTypeId(ctx, oid, gpath);
+            GoKind kind = kindOf(ctx, typeId, gpath);
+            GoExprNode init;
+            if (initV instanceof Json.Object initObj) {
+                init = maybeConvert(buildExpr(initObj, ctx), kind, typeId, ctx, gpath);
+            } else {
+                init = zeroNode(kind, typeId, ctx, gpath);
+            }
+            GlobalWriteNode w = new GlobalWriteNode(kind, globalsFrame, slot, init);
+            w.setSourceSection(sectionFor(e, gpath));
+            out.add(w);
+        }
+        return out;
+    }
+
     public Program buildProgram(String jsonText) {
         Json.Value v = Json.parse(jsonText);
         if (!(v instanceof Json.Object doc)) {
@@ -318,6 +448,11 @@ public final class NodeFactory {
         TypeTable types = new TypeTable(doc.array("types", "document"));
         Json.Array objects = doc.array("objects", "document");
         Json.Array funcs = doc.array("funcs", "document");
+
+        // M7: allocate the globals frame before any function body is built
+        // (bodies may reference globals; initializers run at the top of
+        // func main in dependency order).
+        buildGlobals(doc, types, objects);
 
         GoRootNode mainRoot = null;
         FrameDescriptor mainDescriptor = null;
@@ -349,6 +484,16 @@ public final class NodeFactory {
                             pf.intValue("type", "param.fields"), "param.fields", ctx);
                 }
                 GoStmtNode body = buildStmt(fields.object("body", "funcdecl.fields"), ctx);
+                // M7: package-level variable initialization runs before
+                // main's first statement, in dependency order (Go spec,
+                // Package initialization).
+                List<GoStmtNode> inits = buildGlobalInits(doc, ctx);
+                if (!inits.isEmpty()) {
+                    List<GoStmtNode> seq = new ArrayList<>(inits.size() + 1);
+                    seq.addAll(inits);
+                    seq.add(body);
+                    body = new BlockNode(seq.toArray(new GoStmtNode[0]));
+                }
                 mainDescriptor = ctx.frames.build();
                 mainRoot = new GoRootNode(mainDescriptor, body);
                 mainRoot.setSourceSection(sectionFor(fn, "funcdecl"));
@@ -852,6 +997,11 @@ public final class NodeFactory {
      * interface is a factory error (needs method tables, WS D).
      */
     private GoExprNode maybeConvert(GoExprNode child, GoKind to, int toTypeId, BuildCtx ctx, String path) {
+        return maybeConvert(child, to, toTypeId, ctx, path, null);
+    }
+
+    private GoExprNode maybeConvert(GoExprNode child, GoKind to, int toTypeId, BuildCtx ctx,
+            String path, GoKind sliceElemKind) {
         GoKind from = child.kind();
         if (GoKind.transparent(from, to)) {
             return child;
@@ -870,7 +1020,7 @@ public final class NodeFactory {
             }
             return boxInterface(child, ctx, path);
         }
-        ConvertNode n = new ConvertNode(from, to, child);
+        ConvertNode n = new ConvertNode(from, to, child, sliceElemKind);
         n.setSourceSection(child.getSourceSection());
         return n;
     }
@@ -1140,6 +1290,12 @@ public final class NodeFactory {
      * variables read their {@link graalgo.values.GoBox} cell instead.
      */
     private GoExprNode readVar(GoKind kind, BuildCtx ctx, int oid, String path) {
+        // M7: package-level variables live in the globals frame, shared by
+        // every function; they are never captured and never boxed.
+        Integer gslot = globalSlots.get(oid);
+        if (gslot != null) {
+            return new GlobalReadNode(kind, globalsFrame, gslot);
+        }
         if (isBoxedTransitive(ctx, oid)) {
             return readBoxedVar(kind, ctx, oid, path);
         }
@@ -1414,6 +1570,15 @@ public final class NodeFactory {
             case STRING -> ConstNode.ofString(new GoString(HexFormat.of().parseHex(f.string("sbytes", path))));
             case UNTYPED_STRING ->
                 ConstNode.ofUntypedString(new GoString(HexFormat.of().parseHex(f.string("sbytes", path))));
+            // M7: complex constants (from folded complex() calls or literals).
+            case COMPLEX64 -> ConstNode.ofObject(kind,
+                    new graalgo.values.GoComplex32(
+                            Float.intBitsToFloat(f.intValue("creal32", path)),
+                            Float.intBitsToFloat(f.intValue("cimag32", path))));
+            case COMPLEX128, UNTYPED_COMPLEX -> ConstNode.ofObject(kind,
+                    new graalgo.values.GoComplex64(
+                            Double.longBitsToDouble(f.longInt("creal64", path)),
+                            Double.longBitsToDouble(f.longInt("cimag64", path))));
             default -> throw new FrontendException(
                     path + ": constant of kind " + kind + " is not supported (WS C/D)");
         };
@@ -1463,6 +1628,24 @@ public final class NodeFactory {
         GoKind kind = kindOf(ctx, f.intValue("type", path), path);
         GoExprNode x = buildExpr(f.object("x", path), ctx);
         GoExprNode y = buildExpr(f.object("y", path), ctx);
+        if (op == BinaryOpNode.Op.EQ || op == BinaryOpNode.Op.NE) {
+            // M7: `v == nil` / `v != nil` for a nillable concrete kind
+            // (slice, map, pointer, func, chan, unsafe.Pointer). The
+            // exporter types every nil literal as the empty interface, so
+            // without this the comparison would attempt an interface
+            // conversion; instead the null carrier is tested directly.
+            // (INTERFACE operands keep the M5 interface-equality path.)
+            boolean xNil = "nil".equals(nodeKind(f.object("x", path)));
+            boolean yNil = "nil".equals(nodeKind(f.object("y", path)));
+            if (xNil != yNil) {
+                GoExprNode other = xNil ? y : x;
+                switch (other.kind()) {
+                    case SLICE, MAP, POINTER, FUNC, CHAN, UNSAFE_POINTER ->
+                        { return new NilCheckNode(other, op == BinaryOpNode.Op.NE); }
+                    default -> { /* fall through to the general path */ }
+                }
+            }
+        }
         if (op.isComparison() || op.isLogical()) {
             // Operand kind: both sides agree, or one side is an untyped
             // constant (transparent). The result kind is BOOL.
@@ -1494,9 +1677,23 @@ public final class NodeFactory {
     private GoExprNode buildConvert(Json.Object node, BuildCtx ctx) {
         Json.Object f = fieldsOf(node, "convert");
         String path = "convert.fields";
-        GoKind to = kindOf(ctx, f.intValue("to", path), path);
+        int toId = f.intValue("to", path);
+        GoKind to = kindOf(ctx, toId, path);
         GoExprNode x = buildExpr(f.object("x", path), ctx);
-        return maybeConvert(x, to, path);
+        // M7: string <-> slice conversions need the element kind, from the
+        // "from" (source type) field.
+        GoKind sliceElemKind = null;
+        GoKind from = x.kind();
+        if ((to == GoKind.SLICE && (from == GoKind.STRING || from == GoKind.UNTYPED_STRING))
+                || (from == GoKind.SLICE && to == GoKind.STRING)) {
+            Json.Value fromVal = f.opt("from");
+            if (fromVal instanceof Json.Num n) {
+                int fromId = (int) n.longValue();
+                int sliceId = to == GoKind.SLICE ? toId : fromId;
+                sliceElemKind = builtinElemKind(ctx, sliceId, path, "convert");
+            }
+        }
+        return maybeConvert(x, to, toId, ctx, path, sliceElemKind);
     }
 
     /**
@@ -1854,7 +2051,9 @@ public final class NodeFactory {
     /** {@code new(T)}: allocate the zero value of T, return a pointer. */
     private GoExprNode buildNewBuiltin(GoExprNode[] args, Json.Object f, BuildCtx ctx,
             String path) {
-        requireArgs(path, "new", args, 1);
+        // M7: new takes a type, not a value; the exporter sends zero args
+        // and the result (pointer) type id carries T.
+        requireArgs(path, "new", args, 0);
         Json.Value t = f.opt("type");
         if (t instanceof Json.Null || t == null) {
             throw new FrontendException(path + ": new without a result type id");
@@ -1882,7 +2081,13 @@ public final class NodeFactory {
             throw new FrontendException(path + ": append without a result type id");
         }
         GoKind elemKind = builtinElemKind(ctx, f.intValue("type", path), path, "append");
-        return new AppendNode(args[0], elemKind, Arrays.copyOfRange(args, 1, args.length));
+        // M7: append(s, x...) with a string x spreads the string's bytes.
+        boolean ellipsis = false;
+        Json.Value e = f.opt("ellipsis");
+        if (e instanceof Json.Bool b) {
+            ellipsis = b.value();
+        }
+        return new AppendNode(args[0], elemKind, Arrays.copyOfRange(args, 1, args.length), ellipsis);
     }
 
     /** {@code copy(dst, src)}: slice-to-slice only (string sources are WS D). */
@@ -2420,7 +2625,11 @@ public final class NodeFactory {
         }
         boolean hasLvalue = lhss.stream().anyMatch(l -> !l.isIdent);
         boolean hasCapture = lhss.stream().anyMatch(l -> l.captureDepth > 0);
-        if (!hasLvalue && op == null && !hasCapture) {
+        // M7: globals bypass the slot-based fast path (their slots live in
+        // the globals frame, not the current frame); they take the general
+        // path through writeIdentSlot → GlobalWriteNode.
+        boolean hasGlobal = lhss.stream().anyMatch(l -> l.isGlobal);
+        if (!hasLvalue && op == null && !hasCapture && !hasGlobal) {
             // Ident-only plain assignment: the M2 two-phase lowering, unchanged.
             // (Captured variables take the general path below for CapWriteNode.)
             // M6: boxed idents write their GoBox cell via writeIdentSlot.
@@ -2442,10 +2651,11 @@ public final class NodeFactory {
             }
             return assignTwoPhaseBoxed(lhss, values, ctx, path);
         }
-        if (!hasLvalue && !hasCapture) {
+        if (!hasLvalue && !hasCapture && !hasGlobal) {
             // Ident-only op-assignment: the M2 lowering, unchanged.
             // (Captured variables take the general path below for CapWriteNode.)
             // M6: boxed idents use the box-aware read/write.
+            // M7: globals take the general path (GlobalWriteNode).
             Lhs l = lhss.get(0);
             GoExprNode rhsVal = maybeConvert(
                     buildExpr(asObject(rhs.get(0), path + ".rhs[0]"), ctx), l.kind, l.typeId, ctx, path);
@@ -2551,6 +2761,8 @@ public final class NodeFactory {
         int tmpO = -1;
         /** Capture depth for ident lvalues (M5, WS F): 0 = local, >0 = ancestor. */
         int captureDepth;
+        /** Package-level variable (M7): the write goes to the globals frame. */
+        boolean isGlobal;
     }
 
     private static GoKind targetKind(Lhs l) {
@@ -2602,11 +2814,21 @@ public final class NodeFactory {
                 lhs.isIdent = true;
                 int oid = lf.intValue("obj", path);
                 lhs.oid = oid;
-                VarResolution r = resolveVar(ctx, oid, "assign.lhs");
-                        lhs.slot = r.slot;
-                lhs.captureDepth = r.depth;
-                lhs.typeId = objTypeOf(ctx, lf, path);
-                lhs.kind = kindOf(ctx, lhs.typeId, path);
+                // M7: package-level variable — resolved against the globals
+                // frame, never a function frame (and never captured).
+                Integer gslot = globalSlots.get(oid);
+                if (gslot != null) {
+                    lhs.isGlobal = true;
+                    lhs.slot = gslot;
+                    lhs.typeId = objTypeOf(ctx, lf, path);
+                    lhs.kind = kindOf(ctx, lhs.typeId, path);
+                } else {
+                    VarResolution r = resolveVar(ctx, oid, "assign.lhs");
+                    lhs.slot = r.slot;
+                    lhs.captureDepth = r.depth;
+                    lhs.typeId = objTypeOf(ctx, lf, path);
+                    lhs.kind = kindOf(ctx, lhs.typeId, path);
+                }
             }
             case "index" -> {
                 lhs.isIndex = true;
@@ -2643,6 +2865,10 @@ public final class NodeFactory {
      * M2/M5 path (AssignNode local, CapWriteNode captured).
      */
     private GoStmtNode writeIdentSlot(Lhs l, GoExprNode value, BuildCtx ctx, String path) {
+        // M7: package-level variable — write the globals-frame cell.
+        if (l.isGlobal) {
+            return new GlobalWriteNode(l.kind, globalsFrame, l.slot, value);
+        }
         if (l.oid >= 0 && isBoxedTransitive(ctx, l.oid)) {
             return new BoxWriteNode(l.kind, boxWriteSlot(ctx, l.oid, path), value);
         }
@@ -2660,6 +2886,10 @@ public final class NodeFactory {
      * otherwise the plain M2/M5 path.
      */
     private GoExprNode readIdentSlot(Lhs l, BuildCtx ctx, String path) {
+        // M7: package-level variable — read the globals-frame cell.
+        if (l.isGlobal) {
+            return new GlobalReadNode(l.kind, globalsFrame, l.slot);
+        }
         if (l.oid >= 0 && isBoxedTransitive(ctx, l.oid)) {
             return readBoxedVar(l.kind, ctx, l.oid, path);
         }
@@ -2819,6 +3049,24 @@ public final class NodeFactory {
         if ("ident".equals(x.string("kind", path + ".x"))) {
             Json.Object xf = x.object("fields", path + ".x");
             int oid = xf.intValue("obj", path);
+            Integer gslot = globalSlots.get(oid);
+            if (gslot != null) {
+                // M7: package-level variable — read-modify-write the
+                // globals-frame cell (never captured, never boxed).
+                Lhs l = new Lhs();
+                l.isIdent = true;
+                l.isGlobal = true;
+                l.oid = oid;
+                l.slot = gslot;
+                l.kind = kindOf(ctx, objTypeOf(ctx, xf, path + ".x"), path + ".x");
+                GoExprNode newVal = new BinaryOpNode(
+                        delta > 0 ? BinaryOpNode.Op.ADD : BinaryOpNode.Op.SUB,
+                        l.kind, readIdentSlot(l, ctx, path), oneNode(l.kind));
+                newVal.setSourceSection(sectionFor(node, "incdec"));
+                GoStmtNode w = writeIdentSlot(l, newVal, ctx, path);
+                w.setSourceSection(sectionFor(node, "incdec"));
+                return w;
+            }
             VarResolution r = resolveVar(ctx, oid, "incdec.x");
             GoKind kind = kindOf(ctx, objTypeOf(ctx, xf, path + ".x"), path + ".x");
             if (isBoxedTransitive(ctx, oid)) {
@@ -3000,6 +3248,13 @@ public final class NodeFactory {
 
     /** Frame slot for an already-declared object id (range `=` form). */
     private int slotForOid(BuildCtx ctx, int oid, String path) {
+        if (globalSlots.containsKey(oid)) {
+            // M7: ranging with `=` into a package-level variable would
+            // need the range repeating nodes to write the globals frame
+            // (v1 limitation, like captured variables below).
+            throw new FrontendException(path + ": range assignment to a package-level variable"
+                    + " is not supported in v1 (M7)");
+        }
         VarResolution r = resolveVar(ctx, oid, path);
         if (r.depth > 0) {
             // M5 (WS F): ranging with `=` into a captured variable needs
@@ -3019,6 +3274,12 @@ public final class NodeFactory {
      * assignment. Captured (depth &gt; 0) targets keep the v1 limitation.
      */
     private int rangeAssignSlot(BuildCtx ctx, int oid, String path) {
+        if (globalSlots.containsKey(oid)) {
+            // M7: see slotForOid — ranging with `=` into a package-level
+            // variable is not supported in v1.
+            throw new FrontendException(path + ": range assignment to a package-level variable"
+                    + " is not supported in v1 (M7)");
+        }
         VarResolution r = resolveVar(ctx, oid, path);
         if (r.depth > 0) {
             throw new FrontendException(path + ": range assignment to captured variable"
