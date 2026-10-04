@@ -10,3 +10,6 @@ spikes/03-versiontax/src/go1.26.8/
 # heavy experiment probe outputs (kept on disk, outside version control)
 spikes/05-cmdgo/probes/
 .DS_Store
+
+# built harness binary (rebuilt by tests from source)
+tools/diffharness/diffharness
