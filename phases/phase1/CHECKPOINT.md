@@ -970,8 +970,20 @@ args in the name for instantiated generic types.
    WS-G builtins (print/println/len/cap/make/new/append/copy/delete/complex/
    real/imag), not just panic/recover.
 
-**Verified green:** typeswitch1, typeswitch2, issue47684b, issue48049, issue48137,
-issue48276a, issue49421, issue49547, issue52026 (all identical to gc).
+**Verified green:** issue47684b, issue48049, issue48137,
+issue48276a, issue49421, issue49547, issue52026 (all identical to gc;
+confirmed by the completed 266-file differential runs the same evening and
+independently by R2 — this is what let the M6-remediation prune all six from
+the exclusions list).
+
+> **Correction (M6 remediation, 2026-10-04 ~21:30):** the 19:30 draft of this
+> note wrongly listed typeswitch1 and typeswitch2 as "verified green" — the
+> differential was still running when it was written. Both ended EXCLUDED:
+> typeswitch1.go (`case T` with T=any never matches — descriptor-identity
+> limitation, same family as the B2a deferred surface) and typeswitch2.go
+> (residual CCE `f[float64](int8(9))`, pre-existing non-generic). Neither is
+> green; both carry honest `deferred-parity` details in
+> tools/diffharness/typeparam-exclusions.yaml v3.
 
 **Excluded (reason-coded):**
 - issue50419: `deferred-parity` — String() method dispatch via fmt is WS D;
@@ -1019,3 +1031,67 @@ issue48276a, issue49421, issue49547, issue52026 (all identical to gc).
   - Full suite: 1 pre-existing FAIL (PanicCorpusTest.testPn12DeepRecursion
     StackOverflowError, environment/stack-size issue, not M6 scope)
 - Logs: hidden_files/m6_tdt.log, m6_mutation_targswap.log, m6_req_lint.log
+
+## 2026-10-04 ~21:35 CEST — M6 remediation: record corrections (P2-6, §19:30)
+
+- **P2-6 (commit-message accuracy):** commit 4b24b89's message says "39 files
+  in scope, zero unexplained divergences", but the exclusions YAML committed
+  there has 228 entries, i.e. 266 - 228 = **38** files in scope. History is
+  permanent — the commit message stands; this note records the correction.
+  (The M6-remediation re-triage brings it to 222 exclusions = 44 in scope.)
+- **§19:30 false claims corrected in place:** the "Verified green" line now
+  names only the 7 files the completed differential actually verified, and a
+  correction block names typeswitch1.go / typeswitch2.go as EXCLUDED
+  (case-T descriptor-identity; residual CCE f[float64](int8(9))) — not green.
+
+## 2026-10-04 ~22:00 CEST — M6 remediation progress
+
+- **P2-8 conformance:** edge fixture tools/diffharness/testdata/exclusions-edge.yaml
+  + Go TestLoadExclusionsEdgeCases (internal/typeparam/typeparam_test.go) + Java
+  testReadExclusionsEdgeCases — both parsers agree (field-order insensitive,
+  detail optional, no unquoting). PASS in suite.
+- **P2-9/P2-10/P2-12:** -jobs >= 1 guard, strings.HasPrefix, FilterStderr on
+  BuildOnly success path. **P2-11:** backends.json trailing newline restored.
+  **P2-3:** describeType named-case now calls namedTypeName (dedup).
+- **P2-2:** B3 method-targ binding coverage documented (gn04 vs gc) in
+  frontend-v1.md §6.
+- **P1-4/P1-5:** tools/precommit-check.sh (fails on untracked *.java/*.go
+  outside scratch dirs — the 4b24b89 escape) + worker commit checklist in
+  PLAN.md §4. Script verified: flags exactly the 2 new remediation files.
+- **Gate hygiene:** deleted leftover frontend/dbg_test.go (pre-existing,
+  read /tmp/gn02.go, failed make check since the initial commit).
+- **P2-7 red log:** hidden_files/m6_p27_printnode_red.log — without the
+  PrintNode.executeObject override: UnsupportedOperationException
+  "PrintNode (kind INTERFACE) has no object value" (exit 1); with fix:
+  "hello 42" (exit 0). Source restored byte-identical.
+- **Differential re-run:** 44 comparisons (32 run + 7 compile + 5 errorcheck),
+  0 diverged, 222 excluded; all 6 pruned files SAME. Suite: 156 tests,
+  0 failures. make check: placeholder gate clean, gofrontend green.
+- **P2-13:** mutation validate re-running (background) to refresh
+  m6_mutation_targswap.log against the committed corpus (int/int=1/1).
+
+## 2026-10-04 ~22:30 CEST — M6 remediation: commits + closeout
+
+Commits (master, each green: make test + make check):
+- 1022b92 P1-1 methodref fix + P1-3/P2-2/P2-3 docs (red-green gn10;
+  also removed pre-existing frontend/dbg_test.go blocking make check).
+- e74b45f P1-2/P1-6/P1-7 exclusions v3 + guards + P2-8/P2-14.
+- b60c4eb P2 nits (P2-9/P2-10/P2-11/P2-12).
+- 7b93471 P1-4/P1-5 precommit-check.sh + PLAN.md checklist.
+
+- **P2-13 resolved:** mutation validate re-run post-reboot: green 46/0,
+  rerun 46/0, 10 mutations DETECTED, 0 missed. TargSwap line now
+  reproduces the committed corpus (`int/int=2/2` — the finding's `1/1`
+  was a misread of the Sprintf args; verified by direct graalgo+gc runs).
+  Log: hidden_files/m6_mutation_targswap.log.
+- **VM reboot ~22:15 CEST** wiped /tmp (killed the first mutation re-run
+  mid-green-run); all 4 commits survived in git; binary rebuilt, mutation
+  re-run clean, suite re-verified post-reboot: 156 tests, 0 failures;
+  make check green.
+- **P2-6/P2-7:** 4b24b89 "39 files" correction recorded above (2026-10-04
+  ~21:35 entry); PrintNode red log at hidden_files/m6_p27_printnode_red.log.
+- research/phase5-opt-survey/* modifications are another track's — not
+  touched, not committed.
+
+M6 remediation complete: 7 P1 + 14 P2 all addressed, suite green,
+5 commits, no new features.
