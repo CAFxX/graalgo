@@ -450,6 +450,10 @@ func cmdTypeparamRun(args []string) error {
 	if *dir == "" || *exclusions == "" || *out == "" {
 		return fmt.Errorf("-dir, -exclusions and -out are required")
 	}
+	if *jobs < 1 {
+		// P2-9: -jobs 0 deadlocks Run (unbuffered semaphore + wg.Wait).
+		return fmt.Errorf("-jobs must be >= 1, got %d", *jobs)
+	}
 	_, excl, err := typeparam.LoadExclusions(*exclusions)
 	if err != nil {
 		return err
@@ -485,7 +489,7 @@ func cmdTypeparamRun(args []string) error {
 	}
 	skipped := 0
 	for _, f := range files {
-		if len(f.Class) >= 7 && f.Class[:7] == "exclude" {
+		if strings.HasPrefix(f.Class, "exclude") {
 			skipped++
 		}
 	}

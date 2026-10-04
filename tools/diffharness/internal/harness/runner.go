@@ -60,7 +60,10 @@ func BuildOnly(cfg *Config, b *Backend, prog Program, workRoot string) Outcome {
 		return oc
 	}
 	oc.BuildOK = true
-	oc.BuildLog = Normalize(blog.String())
+	// P2-12: apply the stderr filters on the success path too, symmetric
+	// with the failure path above (Compare only reads BuildLog when both
+	// builds fail, so this is hygiene, not behavior).
+	oc.BuildLog = Normalize(b.FilterStderr(blog.String()))
 	return oc
 }
 
