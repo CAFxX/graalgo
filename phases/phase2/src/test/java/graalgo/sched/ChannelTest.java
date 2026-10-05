@@ -583,6 +583,85 @@ public final class ChannelTest {
     // ---------- stress ----------
 
     /**
+     * P0-1 regression: racy select completion must not leave a stale
+     * unpark (lost claim → spurious wakeup). Hamer close(A) vs send(B)
+     * while a select blocks on A+B; after the select, a recv on an
+     * untouched channel must block (not return spuriously).
+     * verifies: GG-0017
+     */
+    public void testSelectRacyCompleteNoStaleWakeup() throws Exception {
+        for (int iter = 0; iter < 30; iter++) {
+            AtomicBoolean recvReturned = new AtomicBoolean(false);
+            AtomicReference<String> selError = new AtomicReference<>();
+            AtomicBoolean selDone = new AtomicBoolean(false);
+            withScheduler(4, () -> {
+                // Many channels widen the sweep race window: the select
+                // sweeps 50 channels while closer/sender fire.
+                int n = 50;
+                GoChan[] chs = new GoChan[n];
+                for (int i = 0; i < n; i++) {
+                    chs[i] = new GoChan(1, 0L);
+                }
+                GoChan chC = new GoChan(0, 0L); // never touched
+                ChanOps.SelectCase[] cases = new ChanOps.SelectCase[n];
+                for (int i = 0; i < n; i++) {
+                    cases[i] = new ChanOps.SelectCase(chs[i], false, null);
+                }
+                // Selector: racy select over many channels.
+                sched.spawn(() -> {
+                    try {
+                        int idx = ChanOps.selectGo(cases);
+                        // Either ch0 (closed) or ch1 (value) must win.
+                        if (idx == 0) {
+                            if (ChanOps.selectRecvOk()) {
+                                selError.set("ch0 case with ok=true");
+                            }
+                        } else if (idx == 1) {
+                            if (!ChanOps.selectRecvOk()
+                                    || !Long.valueOf(1L).equals(
+                                            ChanOps.selectRecvValue())) {
+                                selError.set("ch1 case bad value/ok");
+                            }
+                        } else {
+                            selError.set("unexpected winner idx=" + idx);
+                        }
+                    } catch (Exception e) {
+                        selError.set(e.toString());
+                    } finally {
+                        selDone.set(true);
+                    }
+                });
+                // Racers: close ch0 and send ch1 concurrently.
+                // (Single shot; the 50-channel sweep widens the window.)
+                sched.spawn(() -> {
+                    try {
+                        ChanOps.close(chs[0]);
+                    } catch (Exception e) {
+                        // Lost the race with the select's poll; ignore.
+                    }
+                });
+                sched.spawn(() -> ChanOps.send(chs[1], 1L));
+                // Main thread: wait for the select, then probe for a
+                // stale unpark with a recv on untouched chC.
+                waitFor(() -> selDone.get(), "select done");
+                sched.spawn(() -> {
+                    ChanOps.recv(chC);
+                    recvReturned.set(true);
+                });
+                waitFor(() -> chC.recvWaitersCount() == 1, "recv parked");
+                Thread.sleep(100);
+                if (recvReturned.get()) {
+                    selError.set("spurious wakeup: recv on untouched"
+                            + " channel returned");
+                }
+                ChanOps.close(chC); // clean shutdown
+            });
+            assertTrue(selError.get() == null,
+                    "iter " + iter + ": " + selError.get());
+        }
+    }
+
+    /**
      * Same channel in two select cases: exactly one case wins and the
      * value is delivered exactly once. verifies: GG-0017
      */

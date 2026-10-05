@@ -265,6 +265,7 @@ public final class GoChan implements ChanOps.Chan {
         Object v;
         if (count > 0) {
             v = buf[head];
+            buf[head] = null; // P2-1: avoid retaining the consumed slot
             head = (head + 1) % buf.length;
             buf[tail] = sv;
             tail = (tail + 1) % buf.length;

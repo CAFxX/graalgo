@@ -97,6 +97,9 @@ public final class ChanOps {
      * denotes {@code default:}.
      */
     public static int selectGo(SelectCase[] cases) {
+        if (cases == null) {
+            throw new IllegalArgumentException("selectGo: null cases");
+        }
         SelectOp op = new SelectOp(cases);
         int idx = op.execute();
         SELECT_RESULT.set(new SelectResult(op.resultValue(), op.resultOk()));

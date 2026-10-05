@@ -38,6 +38,8 @@ import graalgo.sched.SchedulerCore;
 public final class SelectOp {
     /** Unclaimed sentinel for the shared claim. */
     private static final Object UNCLAIMED = new Object();
+    /** Self-claim sentinel: the selecting goroutine won in its sweep. */
+    private static final Object SELF_CLAIM = new Object();
 
     private final ChanOps.SelectCase[] cases;
     /** Shared claim: UNCLAIMED, or the winning SelectCaseWaiter. */
@@ -94,6 +96,20 @@ public final class SelectOp {
         this.resultIndex = caseIndex;
         this.resultValue = value;
         this.resultOk = ok;
+    }
+
+    /**
+     * Tries to claim the SelectOp for the selecting goroutine itself
+     * (block-phase sweep). Returns true if the claim was won; the caller
+     * must then complete under the monitor or release.
+     */
+    private boolean tryClaimSelf() {
+        return claim.compareAndSet(UNCLAIMED, SELF_CLAIM);
+    }
+
+    /** Releases a self-claim after a failed immediate completion. */
+    private void releaseSelfClaim() {
+        claim.compareAndSet(SELF_CLAIM, UNCLAIMED);
     }
 
     /** Called by close() when it poisons a blocked select send case. */
@@ -157,9 +173,24 @@ public final class SelectOp {
             }
 
             // ---- Phase 2: block ----
+            // Sweep in random order (P2-4: fairness — no systematic
+            // low-index preference in the poll→block gap).
             List<SelectCaseWaiter> mine = new ArrayList<>();
             Integer immediate = null;
-            for (int i = 0; i < cases.length && immediate == null; i++) {
+            boolean claimedByOther = false;
+            int[] order = new int[cases.length];
+            for (int i = 0; i < order.length; i++) {
+                order[i] = i;
+            }
+            ThreadLocalRandom rng = ThreadLocalRandom.current();
+            for (int i = order.length - 1; i > 0; i--) {
+                int j = rng.nextInt(i + 1);
+                int t = order[i];
+                order[i] = order[j];
+                order[j] = t;
+            }
+            for (int oi = 0; oi < order.length && immediate == null && !claimedByOther; oi++) {
+                int i = order[oi];
                 ChanOps.SelectCase c = cases[i];
                 if (c.chan() == null) {
                     continue;
@@ -169,24 +200,51 @@ public final class SelectOp {
                     // Re-check under the monitor: a case that became ready
                     // between poll and enqueue completes immediately.
                     // (Never enqueue on a poisoned channel.)
-                    if (!(c.send() && ch.isClosed())) {
+                    if (c.send() && ch.isClosed()) {
+                        poison = true;
+                        continue;
+                    }
+                    // P0-1: claim the SelectOp BEFORE completing. A
+                    // concurrent waker on another channel may have already
+                    // won the shared claim; completing without it causes
+                    // a lost claim (stale unpark → spurious wakeup, or a
+                    // resultIndex overwrite).
+                    if (tryClaimSelf()) {
                         Integer doneNow = completeUnderLock(ch, i, sched);
                         if (doneNow != null) {
                             immediate = doneNow;
                         } else {
+                            // Lost the race under the monitor: release so
+                            // a waker can win, then enqueue normally.
+                            releaseSelfClaim();
                             SelectCaseWaiter w = new SelectCaseWaiter(this, i, ch,
                                     c.send(), c.sendValue(), self);
                             ch.enqueueSelectWaiter(w, c.send());
                             mine.add(w);
                         }
                     } else {
-                        poison = true;
+                        // A waker won the claim; its unpark is in flight.
+                        // Do not complete — park and read its result.
+                        claimedByOther = true;
                     }
                 }
             }
             if (immediate != null) {
                 cleanup(mine);
                 return immediate;
+            }
+            if (claimedByOther) {
+                // Winner's unpark is in flight: this park returns
+                // immediately. (mine holds earlier enqueues; cleaned up.)
+                sched.parkCurrent(null);
+                try {
+                    if (resultPoison) {
+                        Panic.throwPanic(GoStrings.of("send on closed channel"));
+                    }
+                    return resultIndex;
+                } finally {
+                    cleanup(mine);
+                }
             }
             if (mine.isEmpty()) {
                 if (poison) {
