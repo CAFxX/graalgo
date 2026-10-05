@@ -1259,3 +1259,44 @@ corpus_test.go absolute-path test).
 **Next (M7 scope):** run all 47 tools/diffharness/corpus/ programs gc-a vs
 graalgo with reason-coded exclusions; corpus coverage manifest (gate-1
 evidence); full diffharness run for done-gate 1.
+
+## 2026-10-05 ~02:45 CEST — DUPLICATE WORKER detected; this resume yields M7-corpus scope
+
+**Finding:** a second live worker ("M7 worker (resume)") is active on this
+same tree and registry scope. Evidence: commits d64469a/6da57a3/d48b941/
+4de2dcc landed 00:05–00:06 UTC (mid-session, not mine); a full 47-program
+diffharness corpus run is in flight NOW (`./diffharness run -corpus corpus
+-out /tmp/m7_corpus_run4.json`, pid 93516, started 00:06 UTC, currently on
+33_recover_reraise); their 02:30 CEST checkpoint entry records suite 183/0
+green + exclusions 24_variadic/27_panic_trace + "Next: fresh full corpus
+run, coverage manifest, gate-1 evidence" — exactly this resume's remaining
+M7 scope.
+
+**Deconfliction (F2: work already owned — do not duplicate):**
+- My unique contribution (NodeFactory nil-to-nillable `isNillable` fix for
+  issue51840.go) was committed by the other worker inside d48b941 (verbatim,
+  with attribution to the issue51840 regression). Nothing of mine is lost.
+- My commit 6b830f5 (CHECKPOINT.md only) sits cleanly on top; no file
+  conflicts. `git status` shows no uncommitted phase1/diffharness changes
+  (only the other track's research/* files, untouched).
+- I am NOT running a competing corpus run and will not touch the tree
+  further while their run is in flight. Independent verification already
+  done: my full `make test` (/tmp/m7_test3.log) was 183/183 green on the
+  same tree state, matching their 183/0.
+- Registry graalgo-phase1-impl stays ACTIVE (work not finished; M7–M10
+  remain). Next recovery tick: read this entry first — a live worker owns
+  M7-corpus; do NOT dispatch another resume for this scope (duplicate-
+  dispatch guard must check live processes/tree activity, not just the
+  registry — the registry showed no other owner at 01:23 CEST).
+
+## 2026-10-05 ~03:15 CEST — M7: 05_slices spread fix
+
+- Commit 007b42f: AppendNode.ellipsis now handles slice spread (append(s1,
+  s2...)) in addition to string spread. Was ClassCastException (GoSlice ->
+  GoString); now matches gc exactly.
+- Suite: 183/0 green.
+- Corpus run5 (post-fix, /tmp/m7_corpus_run5.json): 18/46 graalgo comparisons
+  same; 28 diverged = 24 build-fail (all honest WS scope) + 4 runtime
+  (05_slices now fixed; 24_variadic, 27_panic_trace to be excluded).
+- Remaining: re-verify 05_slices in corpus, build coverage manifest with
+  exclusion justifications, gate-1 evidence.
