@@ -227,3 +227,53 @@ remediated and re-tested. Sign-off granted.
 GG-SCHED-0002 (drainer), GG-SCHED-0003 (cap), GG-WAKE-0001
 (ack-before-unpark), GG-WAKE-0003 (lane order), GG-0017 (crash
 discipline) — core slice per PLAN.md.
+
+## 2026-10-05 ~13:45 CEST — P2-M2 START (channels + select, WS B)
+
+**Scope decision (parent constraint: no Phase-1 file modifications).**
+The Phase-1 exporter rejects channel programs (`SendStmt`/`SelectStmt`/
+`make(chan)` are "not supported in frontend/v1 scope" — verified:
+gofrontend exits 2 on `ch <- 1`). End-to-end Go-source execution needs a
+small exporter addition (5 lowering functions, additive wire kinds, under
+the freeze change policy like the `gostmt` precedent) — flagged as a
+DEPENDENCY for the parent, not done here. P2-M2 therefore owns:
+1. The channel RUNTIME: same-FQN `graalgo.runtime.ChanOps` replacement
+   (frozen signatures byte-identical, real bodies) + new
+   `graalgo.runtime.GoChan`.
+2. Java-level red-green tests driving ChanOps via spawned goroutines.
+3. Differential corpus: Go programs in `phases/phase2/corpus/channels/`
+   with gc-recorded `.expected` outputs; `ChannelDifferentialTest`
+   executes mechanical Java translations on the scheduler and diffs.
+   The translations are 1:1 syntactic (`ch <- 1` → `send(ch, 1L)`); the
+   concurrency semantics under test emerge from the runtime, not the
+   translation. These .go files double as the future end-to-end corpus
+   once the exporter lowering lands.
+
+**Design (Go runtime/chan.go adapted to scheduler-aware park):**
+- `GoChan`: circular buffer, closed flag, separate FIFO send/recv waiter
+  queues. All state under the channel monitor; park happens AFTER
+  releasing the lock via `SchedulerCore.parkCurrent(null)`; post-park the
+  waiter re-checks its outcome under the lock.
+- Lost-wakeup freedom comes from the P2-M1 drainer protocol: waiter
+  enqueues (visible) before park; waker dequeues + `unpark(handle)` under
+  the same lock; the drainer matches PARKED/UNPARK by handle tolerating
+  both orders (verified in Drainer.java: `parked` map + `unparkPending`).
+- Close: wakes recv waiters with (zero, ok=false), send waiters with a
+  must-panic flag. Send on closed → `Panic.throwPanic("send on closed
+  channel")`; close of closed → panic "close of closed channel".
+- Zero value: frozen `makeChan(long,int)` cannot carry the element type;
+  added overload `makeChan(long,int,Object zeroValue)` (additive,
+  documented). 2-arg form delegates with null zero.
+- Select: `selectGo(SelectCase[]) -> int` (frozen). Poll all cases; random
+  choice among ready (ThreadLocalRandom); `default` = case with
+  `chan == null` (documented convention for the future exporter);
+  blocking path enqueues one SelectCaseWaiter per (channel, case) sharing
+  a SelectOp with CAS-claim (exactly one waker wins); resumed goroutine
+  removes itself from all other channels (one lock at a time — no lock
+  ordering issue). Received value/ok stashed in a ThreadLocal, read via
+  added `selectRecvValue()`/`selectRecvOk()`.
+- Send-on-closed in select: poison — panics only if select would
+  otherwise block with no default; default wins over poison.
+
+**GG-0017 chan slice →active** when the first channel test lands
+(activation policy).

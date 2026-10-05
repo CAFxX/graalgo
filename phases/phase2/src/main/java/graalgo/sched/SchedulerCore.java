@@ -194,6 +194,15 @@ public final class SchedulerCore {
     }
 
     /**
+     * The calling goroutine's handle. Fail-fast when the current thread
+     * is not a scheduler goroutine (a loud error beats silently running
+     * unscheduled).
+     */
+    public GoroutineHandle currentGoroutine() {
+        return requireHandle();
+    }
+
+    /**
      * Quantum check for the calling thread. No handle (not a scheduler
      * vthread) &rarr; no-op, so scheduler-less Phase-1 runs are
      * unaffected even with the replacement Safepoint on the classpath.
