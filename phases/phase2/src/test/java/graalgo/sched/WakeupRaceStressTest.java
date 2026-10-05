@@ -170,7 +170,10 @@ public final class WakeupRaceStressTest {
                     long sink = 0;
                     for (int k = 0; k < iters; k++) {
                         ch.recv();
-                        // Burn quantum to force expiry mid-protocol.
+                        // Burn a little CPU per round: the ~40us channel
+                        // round-trip latency (not this ~0.5us burn) is what
+                        // actually pushes goroutines past the 100us quantum,
+                        // so quantumPark keeps racing PARKED/UNPARK here.
                         for (int j = 0; j < 500; j++) {
                             sink += j;
                         }

@@ -21,8 +21,10 @@ lane order, PARKED/UNPARK matching, ack discipline) → re-run `make test`
 
 NO goroutine is ever lost: every PARKED whose paired UNPARK is offered is
 admitted (acked >= its generation) on EVERY interleaving; every UNPARK is
-either matched to a parked PARKED or stashed and consumed by exactly one
-later PARKED. A terminal WAIT with the paired unpark offered = LOST WAKEUP
+either matched to a parked PARKED or stashed and consumed by at most one
+later PARKED (a `Set` dedupes: two unparks before one park collapse to a
+single stash entry — the second is absorbed, never duplicated, never
+owed). A terminal WAIT with the paired unpark offered = LOST WAKEUP
 (hard fail with the full path).
 
 Retention (not loss): an UNPARK offered for an exited or never-parking
@@ -55,12 +57,14 @@ it from the other direction:
   admitted, `wakeUnparkDirect=1`, `wakeUnparkStashed=0`.
 
 The two directed tests prove the provenance counters partition every WAKE
-admission; the explorer proves no WAKE-lane admission occurs without an
-UNPARK or IO_EXIT behind it. (INIT/RESUME admissions need no unpark — the
-drainer admits those lanes directly; the "no admission without cause"
-claim is scoped to the WAKE lane.) No other
-re-admission-without-UNPARK path exists in the
-model. The JFR timeline anomaly was the stashed path — legitimate.
+admission. On spurious admissions: the explorer's terminal expectations
+would flip a WAIT to DONE if a park were admitted without cause, but only
+`unpark-consumed-once` has a WAIT terminal sensitive to that direction —
+the structural argument carries the rest (admit() only acks lane tokens;
+WAKE tokens originate only from UNPARK/IO_EXIT/stash-consumption, all
+under the single drainer lock). No re-admission-without-UNPARK path was
+found in the model. The JFR timeline anomaly was the stashed path —
+legitimate.
 
 ## 5. Results
 
@@ -71,16 +75,19 @@ end state; property = every paired park admitted, no lost wakeup):
 |---|---|---|---|
 | basic | 22 | 2 | no lost wakeup |
 | cross | 528 | 6 | no lost wakeup |
-| threeway | 13,208 | 8 | no lost wakeup |
+| threeway | 12,365 | 8 | no lost wakeup |
 | quantum | 7 | 1 | no lost wakeup |
 | io | 9 | 1 | no lost wakeup |
 | unpark-consumed-once | 22 | 2 | no lost wakeup |
-| cap1-handoff | 228 | 3 | no lost wakeup |
+| cap1-handoff | 224 | 3 | no lost wakeup |
 | exit-pending-unpark | 17 | 1 | no lost wakeup |
 | unpark-during-quantum | 17 | 1 | no lost wakeup |
 | mixed-io-park | 339 | 4 | no lost wakeup |
 | unpark-io-park | 36 | 2 | no lost wakeup |
-| init-under-wake-flood | 3,021 | 3 | no lost wakeup |
+| init-under-wake-flood | 2,896 | 3 | no lost wakeup |
+
+(State counts are reproducible run-to-run: `snapshotForTest` sorts entries
+by normalized name — reviewer1 P1-2.)
 
 Directed: `testUnparkBeforeParkFastPath` (stashed=1/direct=0),
 `testParkBeforeUnparkDirectPath` (direct=1/stashed=0),
@@ -131,6 +138,9 @@ asserted exactly.
   is modeled, not executed; the JFR park-path hooks (`notePark`,
   `parkResumed`) are not in the model (they don't affect wakeup pairing;
   their cost is bounded by `JfrParkCostTest`).
+- The `wakeAction` (runs on the woken vthread after admission) is not in
+  the model: it cannot affect wakeup pairing (set before the PARKED offer,
+  consumed after `awaitAck` returns).
 - `armed` is write-only dead state (spike-2b external-waker protocol
   never implemented; all wakeups route through the drainer).
 

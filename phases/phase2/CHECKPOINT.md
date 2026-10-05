@@ -1173,3 +1173,52 @@ pure noise, not signal). Root cause: ~0.3s legs have ±40% scheduling noise
 on a loaded box; the 0.80 gate can't survive it. Fix (no gate weakening):
 10x work per leg (5000→50000 yields) so bursts average out; a true >=20%
 JFR regression still trips 0.80 clearly. Verifying stability 5/5 now.
+
+## 2026-10-05 — P2-M9 reviewer2 remediation (all P1s)
+
+- **P1-1** ((c) coverage): added `testDuplicateUnparkAdmittedOnce`
+  (two unparks → exactly one admission) and `testStaleUnparkAfterRearm`
+  (stale unpark consumed once by re-armed park); REPORT.md gains an
+  explicit analogy note (no SelSignal in the implementation — select
+  uses a shared CAS claim; at drainer level a stale wakeup IS an UNPARK
+  with no parked PARKED).
+- **P1-2** (JFR smoke flake): the throughput-ratio design is unfixable
+  (true effect ~0.5%, noise ±10%) — REPLACED by `JfrParkCostTest`, a
+  direct microbenchmark of the hook cost (no scheduler/vthreads/drainer,
+  escaping handle defeats JIT elimination). 10/10 stable; budgets from
+  measured reality (1000ns/800ns). Fault-injection verified: 2us sleep
+  → 6612ns, FAILS (then reverted). Old smoke removed with rationale.
+- **P1-3** (escape protocol): class hunt over the test tree — the herd
+  barrier was the only fatal instance (indefinite JVM-block without
+  ioEnter); `nioGate.take()` is ioEnter-bracketed, `wg.await()` is the
+  scheduler-aware product, `Thread.sleep` hits are bounded/transient.
+  Process patch: test-writing rules in `SchedTestRunner` javadoc.
+- **P1-4** (race-detector-equivalent): REPORT.md §9 gives the explicit
+  argument (single-threaded drainer + atomic/volatile-only vthread side
+  + monitor-held channels + empirical stress).
+- P2s: GG-0044 → GG-WAKE-0002, verifies: annotation, §4 WAKE-lane
+  scoping, §7 hook disclosures, §2 retention case.
+
+## 2026-10-05 — P2-M9 reviewer1 remediation (P0-1, P1-1, P1-2, P2s)
+
+**P0-1 (JFR gate):** replaced absolute ns budgets with machine-relative
+budgets (`enabledMed < 8 * nanoCost`, delta `< 6 * nanoCost`), the pattern
+from `testDisabledGuardCostNegligible` — absolute budgets don't transfer
+(this VM's nanoTime ~160ns, ~5x slow). Fault-injection evidence
+(reviewer1 P0-1 item 2): 2026-10-05, temporarily added a 2us busy-spin in
+`JfrEvents.parkResumed` → `testJfrParkPathCost` FAILED as required
+("JFR enabled park-hook cost blew the budget: 6611.8776ns/park"); reverted
+immediately after (working tree verified identical to HEAD via diff).
+Fixed the "trickle test" wording (it covers filter exactness, not
+emit-path cost — the emit path is out of the hook budget by design).
+
+**P1-1:** REPORT.md §2 "exactly one" → "at most one" (Set dedupes double
+unparks — verified by reviewer's probe); §4 no-spurious-admission claim
+qualified (explorer terminals catch it only via `unpark-consumed-once`;
+the structural argument carries the rest).
+**P1-2:** `snapshotForTest` now sorts entries by normalized name
+(TreeMap/TreeSet) — state counts reproducible across runs.
+**P2s:** fixed WakeupRaceStressTest burn comment (P2-2), documented
+init-under-wake-flood boundary (P2-3), REPORT §7 gains wakeAction (P2-7).
+P2-5 (one-directional red-green) noted as accepted limitation; P2-6
+(quadratic replay) noted.

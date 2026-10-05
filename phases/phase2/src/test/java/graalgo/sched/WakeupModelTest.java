@@ -459,6 +459,12 @@ public final class WakeupModelTest {
      * park while a third is still awaiting first admission; WAKE tokens
      * must not starve or lose the queued INIT (WAKE &gt; INIT priority is
      * about order, not loss — every INIT is eventually admitted).
+     *
+     * <p>Boundary (reviewer1 P2-3): two unparks are pressure, not a flood;
+     * fairness/starvation under an <em>infinite</em> WAKE flood and
+     * RESUME-vs-WAKE/INIT lane contention under cap are out of
+     * model-checker scope (unbounded scripts don't terminate) — covered
+     * empirically by the P2-M8 torture battery instead.
      */
     public void testModelInitUnderWakeFlood() {
         explore(script("init-under-wake-flood", 1,

@@ -273,41 +273,45 @@ public final class Drainer {
                 idNames == null ? "g" + id
                         : idNames.getOrDefault(id, "g?" + id);
         synchronized (lock) {
+            // P1-2: entries sorted by normalized name — HashMap/HashSet
+            // iteration order is run-dependent (ids come from a global
+            // counter), which made explorer state counts irreproducible.
+            java.util.TreeMap<String, Long> parkedSorted = new java.util.TreeMap<>();
+            for (java.util.Map.Entry<Long, Long> e : parked.entrySet()) {
+                parkedSorted.put(name.apply(e.getKey()), e.getValue());
+            }
+            java.util.TreeSet<String> pendingSorted = new java.util.TreeSet<>();
+            for (Long id : unparkPending) {
+                pendingSorted.add(name.apply(id));
+            }
+            java.util.TreeSet<String> ioSorted = new java.util.TreeSet<>();
+            for (Long id : inIo) {
+                ioSorted.add(name.apply(id));
+            }
             StringBuilder sb = new StringBuilder();
             sb.append("inflight=").append(inflight)
               .append(";admissions=").append(admissions)
               .append(";max=").append(maxInflightObserved)
-              .append(";parked={");
-            String sep = "";
-            for (java.util.Map.Entry<Long, Long> e : parked.entrySet()) {
-                sb.append(sep).append(name.apply(e.getKey())).append("=").append(e.getValue());
-                sep = ",";
-            }
-            sb.append("};pending=[");
-            sep = "";
-            for (Long id : unparkPending) {
-                sb.append(sep).append(name.apply(id));
-                sep = ",";
-            }
-            sb.append("];io=[");
-            sep = "";
-            for (Long id : inIo) {
-                sb.append(sep).append(name.apply(id));
-                sep = ",";
-            }
-            sb.append("]");
+              .append(";parked=").append(parkedSorted)
+              .append(";pending=").append(pendingSorted)
+              .append(";io=").append(ioSorted);
             sb.append(";wake=");
             for (ResumeToken t : wakeFifo) {
                 sb.append(t.kind).append(":").append(name.apply(t.handle.id))
                   .append(":").append(t.generation).append(",");
             }
+            // P2-4: lanes render uniformly as kind:id:gen (init/run lanes
+            // are kind-homogeneous by construction, but uniform rendering
+            // keeps a future lane-kind bug visible in snapshots).
             sb.append(";init=");
             for (ResumeToken t : initFifo) {
-                sb.append(name.apply(t.handle.id)).append(":").append(t.generation).append(",");
+                sb.append(t.kind).append(":").append(name.apply(t.handle.id))
+                  .append(":").append(t.generation).append(",");
             }
             sb.append(";run=");
             for (ResumeToken t : runFifo) {
-                sb.append(name.apply(t.handle.id)).append(":").append(t.generation).append(",");
+                sb.append(t.kind).append(":").append(name.apply(t.handle.id))
+                  .append(":").append(t.generation).append(",");
             }
             sb.append(";prov=").append(wakeUnparkDirect.get()).append("/")
               .append(wakeUnparkStashed.get()).append("/").append(wakeIoExit.get());

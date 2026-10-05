@@ -17,24 +17,30 @@ import jdk.jfr.Recording;
  * scheduler hot path), with a JFR recording enabled vs disabled.
  *
  * <p>No scheduler, no vthreads, no drainer: just the hooks in a tight
- * loop, so box load cannot inject scheduling noise. The budget (500ns)
- * The budget (1000ns, ~2x the measured ~450ns enabled cost) is generous
- * enough to never flake, tight enough to catch any real regression
- * (per-park event emission costs microseconds; a slow disabled guard
- * would show in the delta). Fault-injection verified: a 2us sleep in
- * {@code parkResumed} fails this test (6612ns > budget — verified
- * 2026-10-05, then reverted).
+ * loop, so box load cannot inject scheduling noise. Budgets are
+ * machine-relative (multiples of the local {@code nanoTime} cost — the
+ * pattern from {@code testDisabledGuardCostNegligible}), because absolute
+ * nanosecond budgets do not transfer across machines. Tight enough to
+ * catch any real regression (per-park event emission costs microseconds,
+ * i.e. tens of nanoCosts). Fault-injection verified: a 2us sleep in
+ * {@code parkResumed} fails this test (6612ns >> 8x nanoCost — verified
+ * 2026-10-05, then reverted; evidence in CHECKPOINT).
  */
 public final class JfrParkCostTest {
 
     /**
-     * Generous upper bound, set from measured reality (2026-10-05:
-     * enabled ~420-510ns/park on this VM): ~2x headroom, still catches
-     * any real regression (per-park event emission costs microseconds).
+     * Budgets are machine-relative, in units of the local
+     * {@code System.nanoTime()} cost (pattern from
+     * {@code JfrEventsTest.testDisabledGuardCostNegligible}): absolute
+     * nanosecond budgets do not transfer across machines (this VM's
+     * nanoTime is ~160ns, ~5x slow; the enabled hook path is dominated by
+     * 2x nanoTime). Measured 2026-10-05: enabled ~2.9x nanoCost, delta
+     * ~1.9x nanoCost — the budgets below have ~2.7x headroom and still
+     * catch any real regression (per-park event emission costs
+     * microseconds, i.e. tens of nanoCosts).
      */
-    private static final double BUDGET_NANOS_PER_PARK = 1000.0;
-    /** Upper bound on the enabled-vs-disabled delta (measured ~300ns). */
-    private static final double DELTA_BUDGET_NANOS_PER_PARK = 800.0;
+    private static final double ENABLED_BUDGET_NANOCOSTS = 8.0;
+    private static final double DELTA_BUDGET_NANOCOSTS = 6.0;
 
     private static final int WARMUP = 200_000;
     private static final int ITERS = 500_000;
@@ -83,6 +89,21 @@ public final class JfrParkCostTest {
         probe = new GoroutineHandle(() -> {});
         GoroutineHandle h = probe;
 
+        // Machine-relative unit: cost of one clock read on this machine.
+        for (int i = 0; i < 100_000; i++) {
+            System.nanoTime();
+        }
+        long sink = 0;
+        int n = 1_000_000;
+        long t0 = System.nanoTime();
+        for (int i = 0; i < n; i++) {
+            sink += System.nanoTime();
+        }
+        double nanoCost = (double) (System.nanoTime() - t0) / n;
+        if (sink == 0) {
+            throw new AssertionError("unreachable");
+        }
+
         // Warmup: JIT-compile the hooks.
         h.parkSeq.set(1L);
         for (int i = 0; i < WARMUP; i++) {
@@ -113,12 +134,15 @@ public final class JfrParkCostTest {
         double enabledMed = median(enabled);
 
         System.out.println("JFR park-hook cost: disabled=" + disabledMed
-                + "ns/park enabled=" + enabledMed + "ns/park");
-        assertTrue(enabledMed < BUDGET_NANOS_PER_PARK,
-                "JFR enabled park-hook cost blew the budget: " + enabledMed + "ns/park");
-        assertTrue(enabledMed - disabledMed < DELTA_BUDGET_NANOS_PER_PARK,
+                + "ns/park enabled=" + enabledMed + "ns/park (nanoTime: "
+                + nanoCost + "ns)");
+        assertTrue(enabledMed < ENABLED_BUDGET_NANOCOSTS * nanoCost,
+                "JFR enabled park-hook cost blew the budget: " + enabledMed
+                + "ns/park vs " + (ENABLED_BUDGET_NANOCOSTS * nanoCost) + "ns");
+        assertTrue(enabledMed - disabledMed < DELTA_BUDGET_NANOCOSTS * nanoCost,
                 "JFR enabled-vs-disabled delta blew the budget: "
-                + (enabledMed - disabledMed) + "ns/park");
+                + (enabledMed - disabledMed) + "ns/park vs "
+                + (DELTA_BUDGET_NANOCOSTS * nanoCost) + "ns");
     }
 
     private static void assertTrue(boolean cond, String msg) {
