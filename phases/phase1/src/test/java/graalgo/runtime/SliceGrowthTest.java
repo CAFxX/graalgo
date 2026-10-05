@@ -19,8 +19,9 @@ public final class SliceGrowthTest {
         assertCap(17, 16, 8, false, 32);
         // byte (1 byte, no pointers): size-class rounding matters.
         // nextslicecap(1,0)=1, but roundupsize(1)=8 -> cap 8.
+        // nextslicecap(3,2)=4, roundupsize(4)=8 -> cap 8.
         assertCap(1, 0, 1, false, 8);
-        assertCap(3, 2, 1, false, 4);
+        assertCap(3, 2, 1, false, 8);
         assertCap(5, 4, 1, false, 8);
         assertCap(9, 8, 1, false, 16);
         // large: 1.25x growth after threshold
