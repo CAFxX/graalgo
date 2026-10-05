@@ -1805,6 +1805,30 @@ public final class NodeFactory {
         if (f.has("goexit")) {
             return new GoexitCallNode();
         }
+        // P2-M4 (GC interop, ADR-0002 D4): runtime.SetFinalizer/KeepAlive/GC
+        // via the synthetic runtime import overlay. The exporter marks the
+        // call node with gcinterop:<Name> (no "fun" key, like goexit); the
+        // call delegates to graalgo.runtime.GcInterop (Phase-1 stub,
+        // Phase-2 real).
+        if (f.has("gcinterop")) {
+            String which = f.string("gcinterop", path);
+            Json.Array gciArgs = f.array("args", path);
+            GoExprNode[] gciArgNodes = new GoExprNode[gciArgs.size()];
+            for (int i = 0; i < gciArgNodes.length; i++) {
+                gciArgNodes[i] = buildExpr(asObject(gciArgs.get(i), path + ".args[" + i + "]"), ctx);
+            }
+            switch (which) {
+                case "SetFinalizer":
+                    return new SetFinalizerCallNode(gciArgNodes);
+                case "KeepAlive":
+                    return new KeepAliveCallNode(gciArgNodes);
+                case "GC":
+                    return new GcCallNode();
+                default:
+                    throw new IllegalArgumentException(
+                            "unknown gcinterop marker: " + which);
+            }
+        }
         String builtin = f.has("builtin") ? f.string("builtin", path) : null;
         if (builtin != null) {
             return buildBuiltinCall(builtin, f, ctx, path);

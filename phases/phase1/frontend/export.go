@@ -180,6 +180,19 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		pkg := types.NewPackage("runtime", "runtime")
 		sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
 		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "Goexit", sig))
+		// P2-M4 (GC interop, ADR-0002 D4): the Go-observable GC surface.
+		// Signatures match gc's runtime package exactly; the Java side is
+		// graalgo.runtime.GcInterop (Phase-1 stub, Phase-2 real).
+		anyT := types.NewInterfaceType(nil, nil).Complete()
+		mkSig := func(params ...*types.Var) *types.Signature {
+			return types.NewSignatureType(nil, nil, nil, types.NewTuple(params...), nil, false)
+		}
+		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "SetFinalizer", mkSig(
+			types.NewVar(token.NoPos, pkg, "obj", anyT),
+			types.NewVar(token.NoPos, pkg, "finalizer", anyT))))
+		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "KeepAlive", mkSig(
+			types.NewVar(token.NoPos, pkg, "x", anyT))))
+		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "GC", mkSig()))
 		pkg.MarkComplete()
 		return pkg, nil
 	case "fmt":
@@ -3069,6 +3082,29 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
 			}
 			return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
+		}
+		// P2-M4 (GC interop, ADR-0002 D4): runtime.SetFinalizer/KeepAlive/GC.
+		// Emitted as "call" nodes with the gcinterop marker naming the
+		// intrinsic; the factory builds the corresponding CallNode which
+		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
+		// v1 wire format (goexit-marker precedent) — no version bump.
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+				switch sel.Sel.Name {
+				case "SetFinalizer", "KeepAlive", "GC":
+					want := map[string]int{"SetFinalizer": 2, "KeepAlive": 1, "GC": 0}[sel.Sel.Name]
+					if len(c.Args) != want {
+						return nil, fmt.Errorf("gofrontend: runtime.%s takes %d arguments", sel.Sel.Name, want)
+					}
+					args, err := e.exportCallArgs(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("call", c, map[string]any{
+						"gcinterop": sel.Sel.Name, "args": args,
+					}), nil
+				}
+			}
 		}
 		// M6 (WS H): method call — receiver-based dispatch resolved by
 		// go/types to a (possibly instantiated) method.
