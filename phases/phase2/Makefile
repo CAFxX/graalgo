@@ -87,13 +87,13 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # SchedTrace's SCHED/SCHED-DETAIL lines and GcTrace's per-cycle lines are
 # excluded on the same grounds: they ARE the GODEBUG=schedtrace/gctrace
 # feature (P2-M5); the user explicitly asked for stderr diagnostics.
-check:
+check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
 	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java'; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== netpoller-deletion gate (GG-0018, P2-M3) =="
@@ -122,6 +122,16 @@ check:
 	@if grep -rn --include='*.java' 'java\.lang\.foreign' src/main/ ../phase1/src/main/; then \
 		echo "PIN-SURFACE GATE FAILED: FFM usage"; exit 1; fi
 	@echo "pin-surface gate clean"
+	@echo "== pin-audit smoke (P2-M7, GG-0057) =="
+	@echo "-- runs the phase-2 suite in a child JVM with jdk.VirtualThreadPinned"
+	@echo "-- enabled; FAILS on any unexpected pin. Full corpus: make pin-audit."
+	mkdir -p out/test-tmp
+	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
+	$(JAVA) --enable-native-access=ALL-UNNAMED -Xss32m \
+	-Dpinaudit.test.cp="$(TEST_CP)" \
+	-cp "$(RUN_CP)" graalgo.sched.audit.PinAudit --tests --gmp 2 \
+	> out/test-tmp/pin-smoke.log 2>&1; \
+	rc=$$?; tail -3 out/test-tmp/pin-smoke.log; exit $$rc
 
 # P2-M7 pinning audit (WS G, GG-0057): full conformance corpus + test
 # suite under jdk.VirtualThreadPinned. Slow (~15 min); run explicitly and
