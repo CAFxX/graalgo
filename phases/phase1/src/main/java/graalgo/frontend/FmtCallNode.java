@@ -29,16 +29,19 @@ public final class FmtCallNode extends GoExprNode {
     private final String[] typeNames;
     private final GoKind[] elemKinds;
     private final String[] elemTypeNames;
-    // M7: element kind of a nested array/slice element (e.g. INT64 for
-    // [2][2]int); null unless elemKind is ARRAY or SLICE.
-    private final GoKind[] elemElemKinds;
+    // M7-remediation (R2 P0-2): element kind/name chains for nested
+    // array/slice elements (e.g. [INT32] for [2][2]int, [ARRAY, INT32] for
+    // [2][2][2]int); depth-general, replacing the old single elemElemKind.
+    private final java.util.List<GoKind>[] elemKindChains;
+    private final java.util.List<String>[] elemTypeNameChains;
     private final GoKind[] keyKinds;
     private final String[] keyTypeNames;
 
     public FmtCallNode(String funcName, GoExprNode[] args,
             GoKind[] kinds, String[] typeNames,
             GoKind[] elemKinds, String[] elemTypeNames,
-            GoKind[] elemElemKinds,
+            java.util.List<GoKind>[] elemKindChains,
+            java.util.List<String>[] elemTypeNameChains,
             GoKind[] keyKinds, String[] keyTypeNames,
             GoKind resultKind) {
         super(resultKind);
@@ -48,7 +51,8 @@ public final class FmtCallNode extends GoExprNode {
         this.typeNames = typeNames;
         this.elemKinds = elemKinds;
         this.elemTypeNames = elemTypeNames;
-        this.elemElemKinds = elemElemKinds;
+        this.elemKindChains = elemKindChains;
+        this.elemTypeNameChains = elemTypeNameChains;
         this.keyKinds = keyKinds;
         this.keyTypeNames = keyTypeNames;
     }
@@ -77,8 +81,12 @@ public final class FmtCallNode extends GoExprNode {
         return elemKinds;
     }
 
-    GoKind[] argElemElemKinds() {
-        return elemElemKinds;
+    java.util.List<GoKind>[] argElemKindChains() {
+        return elemKindChains;
+    }
+
+    java.util.List<String>[] argElemTypeNameChains() {
+        return elemTypeNameChains;
     }
 
     String[] argElemTypeNames() {
@@ -99,7 +107,7 @@ public final class FmtCallNode extends GoExprNode {
         for (int i = 0; i < args.length; i++) {
             fargs[i] = new Fmt.Arg(readArg(args[i], frame), kinds[i], typeNames[i],
                     keyKinds[i], keyTypeNames[i], elemKinds[i], elemTypeNames[i],
-                    elemElemKinds[i]);
+                    elemKindChains[i], elemTypeNameChains[i]);
         }
         return switch (funcName) {
             case "Sprint" -> Fmt.sprint(fargs);

@@ -13,6 +13,7 @@ import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
 import graalgo.values.GoTypeDescriptor;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * Minimal intrinsic-backed {@code fmt} stub (WS G, PLAN.md D4, REAL).
@@ -63,22 +64,27 @@ public final class Fmt {
      *   <li>pointer: {@code elemKind}/{@code elemTypeName} = referent;</li>
      *   <li>other kinds: composite fields null.</li>
      * </ul>
+     * For nested slices/arrays, {@code elemKindChain}/{@code elemTypeNameChain}
+     * hold the element kinds/names below {@code elemKind} (innermost last),
+     * so recursive printing works at arbitrary depth (R2 P0-2); empty or
+     * null when the element is not itself a composite.
      * For {@link GoKind#INTERFACE} the value is a {@link GoInterface}
      * (or {@code null} for a nil interface, like Go's {@code arg == nil}).
      */
     public record Arg(Object value, GoKind kind, String typeName,
                       GoKind keyKind, String keyTypeName,
                       GoKind elemKind, String elemTypeName,
-                      GoKind elemElemKind) {
+                      List<GoKind> elemKindChain,
+                      List<String> elemTypeNameChain) {
         /** Convenience for non-composite args. */
         public Arg(Object value, GoKind kind, String typeName) {
-            this(value, kind, typeName, null, null, null, null, null);
+            this(value, kind, typeName, null, null, null, null, null, null);
         }
         /** Convenience for composite args without nested composites. */
         public Arg(Object value, GoKind kind, String typeName,
                    GoKind keyKind, String keyTypeName,
                    GoKind elemKind, String elemTypeName) {
-            this(value, kind, typeName, keyKind, keyTypeName, elemKind, elemTypeName, null);
+            this(value, kind, typeName, keyKind, keyTypeName, elemKind, elemTypeName, null, null);
         }
     }
 
@@ -1282,11 +1288,11 @@ public final class Fmt {
                     if (i > 0) {
                         buf.append(", ");
                     }
-                    // M7: thread the nested element kind through so recursive
-                    // printSlice sees the inner array's elemKind (not null).
-                    printValue(new Arg(compositeGet(v, arg.kind(), elemKind, i),
-                            elemKind, arg.elemTypeName(), null, null,
-                            arg.elemElemKind(), null, null),
+                    // Remediation (R2 P0-2): depth-general nested kinds. The
+                    // old single elemElemKind field structurally capped
+                    // nesting at depth 2; pop one level off the kind/name
+                    // chains per recursion instead.
+                    printValue(nestedArg(arg, compositeGet(v, arg.kind(), elemKind, i), elemKind),
                             verb, depth + 1);
                 }
                 buf.append('}');
@@ -1298,14 +1304,27 @@ public final class Fmt {
                 if (i > 0) {
                     buf.append(' ');
                 }
-                // M7: thread the nested element kind through so recursive
-                // printSlice sees the inner array's elemKind (not null).
-                printValue(new Arg(compositeGet(v, arg.kind(), elemKind, i),
-                        elemKind, arg.elemTypeName(), null, null,
-                        arg.elemElemKind(), null, null),
+                // Remediation (R2 P0-2): depth-general nested kinds (see above).
+                printValue(nestedArg(arg, compositeGet(v, arg.kind(), elemKind, i), elemKind),
                         verb, depth + 1);
             }
             buf.append(']');
+        }
+
+        /**
+         * Builds the {@link Arg} for one element of a composite value,
+         * popping one level off the element kind/name chains (remediation
+         * for R2 P0-2: nested array/slice printing at arbitrary depth).
+         */
+        private Arg nestedArg(Arg arg, Object elemValue, GoKind elemKind) {
+            List<GoKind> chain = arg.elemKindChain() != null ? arg.elemKindChain() : List.of();
+            List<String> nameChain =
+                    arg.elemTypeNameChain() != null ? arg.elemTypeNameChain() : List.of();
+            return new Arg(elemValue, elemKind, arg.elemTypeName(), null, null,
+                    chain.isEmpty() ? null : chain.get(0),
+                    nameChain.isEmpty() ? null : nameChain.get(0),
+                    chain.size() <= 1 ? List.of() : chain.subList(1, chain.size()),
+                    nameChain.size() <= 1 ? List.of() : nameChain.subList(1, nameChain.size()));
         }
 
         /** Port of fmt's printValue Map case (keys sorted for orderable kinds). */

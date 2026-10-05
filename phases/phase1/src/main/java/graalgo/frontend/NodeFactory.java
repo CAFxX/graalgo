@@ -1887,9 +1887,12 @@ public final class NodeFactory {
         String[] typeNames = new String[n];
         GoKind[] elemKinds = new GoKind[n];
         String[] elemTypeNames = new String[n];
-        // M7: element kind of a nested array/slice element (for correct
-        // recursive printing); null unless elemKind is ARRAY or SLICE.
-        GoKind[] elemElemKinds = new GoKind[n];
+        // M7-remediation (R2 P0-2): element kind/name chains for nested
+        // array/slice printing at arbitrary depth. The old single
+        // elemElemKind field structurally capped nesting at depth 2;
+        // walk the type table down to the scalar instead.
+        java.util.List<GoKind>[] elemKindChains = new java.util.List[n];
+        java.util.List<String>[] elemTypeNameChains = new java.util.List[n];
         GoKind[] keyKinds = new GoKind[n];
         String[] keyTypeNames = new String[n];
         for (int i = 0; i < n; i++) {
@@ -1908,14 +1911,28 @@ public final class NodeFactory {
                 int elemId = detail.intValue("elem", apath);
                 elemKinds[i] = kindOf(ctx, elemId, apath);
                 elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                // M7: if the element is itself an array/slice, capture its
-                // element kind for nested printing.
-                if (elemKinds[i] == GoKind.ARRAY || elemKinds[i] == GoKind.SLICE) {
-                    Json.Object elemEntry = underlyingEntry(ctx, elemId, apath);
-                    Json.Object elemDetail = elemEntry.object("detail", apath);
-                    int elemElemId = elemDetail.intValue("elem", apath);
-                    elemElemKinds[i] = kindOf(ctx, elemElemId, apath);
+                // M7-remediation (R2 P0-2): walk the element type down to
+                // the scalar, collecting the kind/name chain for nested
+                // printing (e.g. [2][2][2]int -> [ARRAY, INT32]).
+                // Terminates: each step moves to a strictly smaller type,
+                // and go/types rejects recursive array types before export.
+                java.util.List<GoKind> kc = new java.util.ArrayList<>();
+                java.util.List<String> nc = new java.util.ArrayList<>();
+                int curId = elemId;
+                while (true) {
+                    Json.Object curEntry = underlyingEntry(ctx, curId, apath);
+                    String ck = curEntry.string("kind", apath);
+                    if (!"slice".equals(ck) && !"array".equals(ck)) {
+                        break;
+                    }
+                    Json.Object curDetail = curEntry.object("detail", apath);
+                    int nextId = curDetail.intValue("elem", apath);
+                    kc.add(kindOf(ctx, nextId, apath));
+                    nc.add(GoTypeStrings.of(ctx, nextId));
+                    curId = nextId;
                 }
+                elemKindChains[i] = java.util.List.copyOf(kc);
+                elemTypeNameChains[i] = java.util.List.copyOf(nc);
             } else if ("map".equals(k)) {
                 int keyId = detail.intValue("key", apath);
                 int elemId = detail.intValue("elem", apath);
@@ -1923,6 +1940,11 @@ public final class NodeFactory {
                 keyTypeNames[i] = GoTypeStrings.of(ctx, keyId);
                 elemKinds[i] = kindOf(ctx, elemId, apath);
                 elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
+                elemKindChains[i] = java.util.List.of();
+                elemTypeNameChains[i] = java.util.List.of();
+            } else {
+                elemKindChains[i] = java.util.List.of();
+                elemTypeNameChains[i] = java.util.List.of();
             }
         }
         // The wire "type" is null for the Print variants (results discarded,
@@ -1935,7 +1957,7 @@ public final class NodeFactory {
             resultKind = kindOf(ctx, f.intValue("type", path), path);
         }
         return new FmtCallNode(func, args, kinds, typeNames, elemKinds, elemTypeNames,
-                elemElemKinds, keyKinds, keyTypeNames, resultKind);
+                elemKindChains, elemTypeNameChains, keyKinds, keyTypeNames, resultKind);
     }
 
     /**

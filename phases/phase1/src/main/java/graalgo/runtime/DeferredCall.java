@@ -38,13 +38,15 @@ public final class DeferredCall {
     private final String[] fmtTypeNames;
     private final GoKind[] fmtElemKinds;
     private final String[] fmtElemTypeNames;
-    private final GoKind[] fmtElemElemKinds;
+    private final java.util.List<GoKind>[] fmtElemKindChains;
+    private final java.util.List<String>[] fmtElemTypeNameChains;
     private final GoKind[] fmtKeyKinds;
     private final String[] fmtKeyTypeNames;
 
     private DeferredCall(Kind kind, GoFunc func, Object[] args, GoKind[] argKinds, String builtinName,
             String fmtFunc, String[] fmtTypeNames, GoKind[] fmtElemKinds, String[] fmtElemTypeNames,
-            GoKind[] fmtElemElemKinds,
+            java.util.List<GoKind>[] fmtElemKindChains,
+            java.util.List<String>[] fmtElemTypeNameChains,
             GoKind[] fmtKeyKinds, String[] fmtKeyTypeNames) {
         this.kind = kind;
         this.func = func;
@@ -55,28 +57,30 @@ public final class DeferredCall {
         this.fmtTypeNames = fmtTypeNames;
         this.fmtElemKinds = fmtElemKinds;
         this.fmtElemTypeNames = fmtElemTypeNames;
-        this.fmtElemElemKinds = fmtElemElemKinds;
+        this.fmtElemKindChains = fmtElemKindChains;
+        this.fmtElemTypeNameChains = fmtElemTypeNameChains;
         this.fmtKeyKinds = fmtKeyKinds;
         this.fmtKeyTypeNames = fmtKeyTypeNames;
     }
 
     /** A deferred function-value call. */
     public static DeferredCall func(GoFunc func, Object[] args) {
-        return new DeferredCall(Kind.FUNC, func, args, null, null, null, null, null, null, null, null, null);
+        return new DeferredCall(Kind.FUNC, func, args, null, null, null, null, null, null, null, null, null, null);
     }
 
     /** A deferred builtin call ({@code println}, {@code print}, {@code panic}, {@code recover}). */
     public static DeferredCall builtin(String name, Object[] args, GoKind[] argKinds) {
-        return new DeferredCall(Kind.BUILTIN, null, args, argKinds, name, null, null, null, null, null, null, null);
+        return new DeferredCall(Kind.BUILTIN, null, args, argKinds, name, null, null, null, null, null, null, null, null);
     }
 
     /** A deferred {@code fmt} overlay call (M7): values captured at defer time. */
     public static DeferredCall fmtCall(String funcName, Object[] argVals, GoKind[] argKinds,
             String[] typeNames, GoKind[] elemKinds, String[] elemTypeNames,
-            GoKind[] elemElemKinds,
+            java.util.List<GoKind>[] elemKindChains,
+            java.util.List<String>[] elemTypeNameChains,
             GoKind[] keyKinds, String[] keyTypeNames) {
         return new DeferredCall(Kind.FMT, null, argVals, argKinds, null, funcName, typeNames,
-                elemKinds, elemTypeNames, elemElemKinds, keyKinds, keyTypeNames);
+                elemKinds, elemTypeNames, elemKindChains, elemTypeNameChains, keyKinds, keyTypeNames);
     }
 
     public Kind kind() {
@@ -120,7 +124,7 @@ public final class DeferredCall {
         for (int i = 0; i < args.length; i++) {
             fargs[i] = new Fmt.Arg(args[i], argKinds[i], fmtTypeNames[i],
                     fmtKeyKinds[i], fmtKeyTypeNames[i], fmtElemKinds[i], fmtElemTypeNames[i],
-                    fmtElemElemKinds[i]);
+                    fmtElemKindChains[i], fmtElemTypeNameChains[i]);
         }
         switch (fmtFunc) {
             case "Print" -> Fmt.print(fargs);

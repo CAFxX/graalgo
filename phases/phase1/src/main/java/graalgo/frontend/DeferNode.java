@@ -60,7 +60,7 @@ public final class DeferNode extends GoStmtNode {
             }
             dc = DeferredCall.fmtCall(fmtCall.funcName(), argVals, fmtCall.argKinds(),
                     fmtCall.argTypeNames(), fmtCall.argElemKinds(), fmtCall.argElemTypeNames(),
-                    fmtCall.argElemElemKinds(),
+                    fmtCall.argElemKindChains(), fmtCall.argElemTypeNameChains(),
                     fmtCall.argKeyKinds(), fmtCall.argKeyTypeNames());
         } else {
             Object[] argVals = new Object[args.length];
