@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // repoRoot returns the graalgo repo root (four levels above this file's dir).
@@ -374,4 +375,41 @@ func main() {
 			gc.code, gc.stdout, gc.stderr, gr.code, gr.stdout, gr.stderr)
 	}
 	t.Logf("embedded-field rebinding: gc and graalgo agree on %q", want)
+}
+
+// TestGofrontendTimeout verifies P1-4: a hung frozen exporter does not
+// hang ExportDir forever — runGofrontend kills it after gofrontendTimeout
+// and reports a named timeout error. The stand-in never exits on its own;
+// the timeout is shortened for the test (the production default stays
+// generous).
+func TestGofrontendTimeout(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "sleeper.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexec sleep 60\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GRAALGO_GOFRONTEND", script)
+	old := gofrontendTimeout
+	gofrontendTimeout = 2 * time.Second
+	defer func() { gofrontendTimeout = old }()
+
+	if _, err := runGofrontend("dummy.go"); err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("expected named timeout error, got: %v", err)
+	}
+}
+
+// TestGofrontendErrorPrefix verifies the P2 error-prefix dedup: the frozen
+// binary's exit-2 stderr ("gofrontend: gofrontend: type error: ...")
+// surfaces with the duplicate wrapper prefix collapsed, not stacked three
+// deep.
+func TestGofrontendErrorPrefix(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "failer.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'gofrontend: gofrontend: type error: boom' >&2\nexit 2\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GRAALGO_GOFRONTEND", script)
+	_, err := runGofrontend("dummy.go")
+	const want = "p3frontend: gofrontend: type error: boom"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
+	}
 }

@@ -2,6 +2,7 @@ package p3frontend
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"go/token"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 // ExportDir compiles the multi-file Go package in dir (which must be
@@ -103,19 +105,38 @@ func isExecutable(path string) bool {
 	return fi.Mode()&0111 != 0
 }
 
+// gofrontendTimeout bounds one frozen-exporter invocation. Generous:
+// differential inputs can be large and the binary is a JVM service with
+// a cold-start cost. Tests may shorten it (it is a plain var for that).
+var gofrontendTimeout = 10 * time.Minute
+
 // runGofrontend invokes the frozen service and returns the frontend/v1
-// JSON document. Exit 2 (frontend error) surfaces the stderr verbatim.
+// JSON document. Exit 2 (frontend error) surfaces the stderr with one
+// layer prefix: the frozen main.go wraps ExportFile's error as
+// "gofrontend: <err>", and ExportFile's own errors already start with
+// "gofrontend: " — the duplicate wrapper prefix is collapsed so the
+// result reads "p3frontend: gofrontend: <err>" instead of stacking
+// three. A hung exporter is killed after gofrontendTimeout and reported
+// with a named timeout error instead of hanging ExportDir forever.
 func runGofrontend(goFile string) (string, error) {
 	bin, err := gofrontendPath()
 	if err != nil {
 		return "", err
 	}
-	cmd := exec.Command(bin, goFile)
+	ctx, cancel := context.WithTimeout(context.Background(), gofrontendTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, bin, goFile)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		detail := strings.TrimSpace(stderr.String())
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("p3frontend: gofrontend timed out after %v", gofrontendTimeout)
+		}
+		// Exit 2 always comes from the frozen main.go's
+		// `fmt.Fprintf(os.Stderr, "gofrontend: %v\n", err)` wrapper, so
+		// the leading duplicate prefix is stable to strip.
+		detail := strings.TrimPrefix(strings.TrimSpace(stderr.String()), "gofrontend: ")
 		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 2 {
 			return "", fmt.Errorf("p3frontend: %s", detail)
 		}

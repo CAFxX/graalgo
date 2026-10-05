@@ -253,6 +253,15 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
 - `TestNoLanguagePinning` (`verifies: GG-0013`): `//go:build go1.27`
   included by the evaluator; generics in a `go 1.27` module pass
   `ExportDir` — no version gating anywhere.
+- `TestEmbeddedFieldRebinding`: embedded-field fixtures colliding with
+  main's own `T` — direct selectors, promoted selectors, keyed literals;
+  asserts the exact `h.T` output plus gc byte-equality (a rebinding bug
+  is silent: both legs exit 0).
+- `TestGofrontendTimeout`: a never-exiting stand-in binary proves
+  `runGofrontend` kills the exporter after `gofrontendTimeout` with a
+  named timeout error instead of hanging.
+- `TestGofrontendErrorPrefix`: exit-2 stderr surfaces with the frozen
+  binary's duplicate `gofrontend: ` wrapper prefix collapsed.
 - `TestDeterministic`: `ExportDir` twice → byte-identical.
 - Red-green-first (evidence in `hidden_files/m1/redgreen.md`): (a) break
   the selector rewrite → differential test must fail with a gc
@@ -272,9 +281,19 @@ freeze) or vendoring its 3400-line exporter (forbidden by the brief).
 `p3frontend` therefore consumes the frozen Go API through its frozen CLI
 contract (`INTERFACE_FREEZE.md` §2.1): the `gofrontend` binary's stdout is
 `ExportFile`'s return value byte-for-byte (`main.go` is a thin
-`fmt.Println(ExportFile(arg))` wrapper; exit 2 surfaces the error
-verbatim). Binary resolution mirrors `graalgo.launcher.ToolPaths`:
+`fmt.Println(ExportFile(arg))` wrapper; exit 2 surfaces the stderr with
+one layer prefix — the frozen `main.go` wraps `ExportFile`'s error as
+`gofrontend: <err>` while `ExportFile`'s own errors already start with
+`gofrontend: `, so `runGofrontend` collapses the duplicate wrapper prefix
+and reports `p3frontend: gofrontend: <err>`). A hung exporter is killed
+after a generous timeout (`gofrontendTimeout`, 10 minutes) with a named
+timeout error rather than hanging `ExportDir` forever. Binary resolution
+mirrors `graalgo.launcher.ToolPaths`:
 `GRAALGO_GOFRONTEND`, then `<repo>/phases/phase1/frontend/gofrontend`,
 then `PATH`. The `require graalgo-frontend` + `replace` in `go.mod`
-records the dependency explicitly. This is the same consumption surface
-the Phase-2 launcher uses — no new coupling is introduced.
+records the dependency explicitly for readers and `go mod graph`; note
+that `go mod tidy` drops the `require` (the module is `package main` and
+never imported) while keeping the `replace` — that is expected, and the
+durable record of the binary dependency is this section, not `go.mod`.
+This is the same consumption surface the Phase-2 launcher uses — no new
+coupling is introduced.

@@ -33,6 +33,19 @@ func Flatten(fset *token.FileSet, imp *Importer, mainRef *PackageRef, deps []*Pa
 	if mainPkg == nil {
 		return "", fmt.Errorf("p3frontend: main package %s was not type-checked", mainRef.ImportPath)
 	}
+	if imp.Info(mainRef.ImportPath) == nil {
+		return "", fmt.Errorf("p3frontend: main package %s has no type info", mainRef.ImportPath)
+	}
+	// Flatten is exported: fail fast on missing type-check results
+	// instead of nil-dereferencing below.
+	for _, dep := range deps {
+		if imp.Package(dep.ImportPath) == nil {
+			return "", fmt.Errorf("p3frontend: dependency %s was not type-checked", dep.ImportPath)
+		}
+		if imp.Info(dep.ImportPath) == nil {
+			return "", fmt.Errorf("p3frontend: dependency %s has no type info", dep.ImportPath)
+		}
+	}
 
 	// Scope checks first (fail fast, before any rewriting).
 	allRefs := append(append([]*PackageRef{}, deps...), mainRef)
