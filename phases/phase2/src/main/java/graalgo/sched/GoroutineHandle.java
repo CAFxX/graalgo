@@ -33,7 +33,7 @@ public final class GoroutineHandle {
     public volatile Thread thread;
 
     /** Next park generation to reserve. */
-    final AtomicLong parkSeq = new AtomicLong(0);
+    public final AtomicLong parkSeq = new AtomicLong(0);
 
     /**
      * Currently armed generation, or -1 when not parked. Set by
@@ -63,6 +63,21 @@ public final class GoroutineHandle {
      * syscall-duration park event emitted at {@code ioExit}.
      */
     public volatile long ioStartNanos;
+
+    /**
+     * P2-M6: whether this handle has done its first JFR cache refresh
+     * (see {@code JfrEvents}). Ensures a newly started recording is
+     * noticed even if the handle never reaches a periodic refresh
+     * boundary.
+     */
+    public volatile boolean jfrCacheInit;
+
+    /**
+     * JFR lifetime tracking (P2-M6): nanos when the goroutine started
+     * executing (after first admission); read in the finally block for
+     * {@code graalgo.GoroutineEnd}.
+     */
+    public volatile long startNanos;
 
     /** Next quantum deadline, nanoTime. Reset on every admission. */
     volatile long quantumDeadlineNanos;

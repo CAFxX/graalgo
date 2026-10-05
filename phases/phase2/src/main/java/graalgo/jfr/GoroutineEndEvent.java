@@ -2,6 +2,7 @@ package graalgo.jfr;
 
 import jdk.jfr.Category;
 import jdk.jfr.Description;
+import jdk.jfr.Enabled;
 import jdk.jfr.Event;
 import jdk.jfr.Label;
 import jdk.jfr.Name;
@@ -16,6 +17,7 @@ import jdk.jfr.Name;
 @Name("graalgo.GoroutineEnd")
 @Label("Go Goroutine End")
 @Category("graalgo")
+@Enabled(false)
 @Description("A graalgo scheduler goroutine finished executing.")
 public final class GoroutineEndEvent extends Event {
     private static final GoroutineEndEvent PROTOTYPE = new GoroutineEndEvent();

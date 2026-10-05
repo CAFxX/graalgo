@@ -2,6 +2,7 @@ package graalgo.jfr;
 
 import jdk.jfr.Category;
 import jdk.jfr.Description;
+import jdk.jfr.Enabled;
 import jdk.jfr.Event;
 import jdk.jfr.Label;
 import jdk.jfr.Name;
@@ -17,6 +18,7 @@ import jdk.jfr.Name;
 @Name("graalgo.GoroutineStart")
 @Label("Go Goroutine Start")
 @Category("graalgo")
+@Enabled(false)
 @Description("A graalgo scheduler goroutine started executing on its virtual thread.")
 public final class GoroutineStartEvent extends Event {
     private static final GoroutineStartEvent PROTOTYPE = new GoroutineStartEvent();

@@ -2,6 +2,7 @@ package graalgo.jfr;
 
 import jdk.jfr.Category;
 import jdk.jfr.Description;
+import jdk.jfr.Enabled;
 import jdk.jfr.Event;
 import jdk.jfr.Label;
 import jdk.jfr.Name;
@@ -11,15 +12,14 @@ import jdk.jfr.Name;
  * GG-0008 JFR slice).
  *
  * <p>Committed on resume with the measured park duration. Rate control:
- * only parks lasting at least
- * {@link JfrEvents#PARK_THRESHOLD_NANOS} are committed — quantum parks
- * (microseconds, the scheduler hot loop) vanish, while real blocks
- * (channel/timer/select, milliseconds) are recorded. See
- * {@link JfrEvents#parkResumed}.
+ * non-quantum parks are committed only when lasting at least
+ * {@link JfrEvents#PARK_THRESHOLD_NANOS}; quantum parks (the scheduler
+ * hot loop) are sampled 1-in-1024. See {@link JfrEvents#parkResumed}.
  */
 @Name("graalgo.GoroutinePark")
 @Label("Go Goroutine Park")
 @Category("graalgo")
+@Enabled(false)
 @Description("A graalgo scheduler goroutine parked and resumed; long parks only (see graalgo.jfr.parkThresholdNanos).")
 public final class GoroutineParkEvent extends Event {
     private static final GoroutineParkEvent PROTOTYPE = new GoroutineParkEvent();

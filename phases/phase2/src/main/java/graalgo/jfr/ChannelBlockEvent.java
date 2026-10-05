@@ -2,6 +2,7 @@ package graalgo.jfr;
 
 import jdk.jfr.Category;
 import jdk.jfr.Description;
+import jdk.jfr.Enabled;
 import jdk.jfr.Event;
 import jdk.jfr.Label;
 import jdk.jfr.Name;
@@ -20,6 +21,7 @@ import jdk.jfr.Name;
 @Name("graalgo.ChannelBlock")
 @Label("Go Channel Block")
 @Category("graalgo")
+@Enabled(false)
 @Description("A goroutine blocked on a channel send, receive, or select.")
 public final class ChannelBlockEvent extends Event {
     private static final ChannelBlockEvent PROTOTYPE = new ChannelBlockEvent();
