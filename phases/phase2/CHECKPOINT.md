@@ -1222,3 +1222,34 @@ the structural argument carries the rest).
 init-under-wake-flood boundary (P2-3), REPORT §7 gains wakeAction (P2-7).
 P2-5 (one-directional red-green) noted as accepted limitation; P2-6
 (quadratic replay) noted.
+
+## 2026-10-05 — P2-M9 SIGN-OFF (done-gate 4 MET)
+
+Independent re-verification of the full review chain, all on the final
+tree (`4c20a31` + doc fix above):
+
+- **Reviewer 2 (methodology):** GO-WITH-FINDINGS; all 4 P1s remediated and
+  re-tested (commits `acb7337`, `2573d38`).
+- **Reviewer 1 (correctness):** NO-GO (P0-1 JFR gate) → remediated →
+  re-review (`reviews/phase2-m9/reviewer1-rereview.md`): **GO-WITH-FINDINGS,
+  NO-GO lifted.** Confirmed by independent code-reading + test runs:
+  machine-relative budgets genuine (8x/6x, hand-counted 2 clock + ~8
+  volatile accesses), fault-injection evidence in CHECKPOINT, canonical
+  snapshots (12 scripts byte-identical across 4 runs), P1/P2 wording fixed.
+  One new non-blocking P2 (stale "500ns budget" doc reference) fixed in
+  this commit; re-run 192/192 + 5/5 gates after.
+
+Final evidence, all fresh on the sign-off tree:
+- Phase-2 `make test`: 192/192, 0 failures; `make check`: 5/5 gates green.
+- Phase-1 `make test`: 208/208, 0 failures; `make check`: clean.
+- JfrParkCostTest: 100/100 in fresh JVMs (10x10) + 11/11 by re-reviewer,
+  margins ≤2.7x vs 8x budget, ≤2.2x vs 6x delta, across nanoTime 48-160ns.
+- Explorer: 12/12 scripts, max 12,365 states (threeway), no lost wakeup;
+  counts reproducible run-to-run (TreeMap/TreeSet canonical order).
+- Race stress: 4/4 scenarios, exact accounting, green.
+
+Deliverables: `WakeupModelTest` (16 tests incl. red-green guard),
+`WakeupRaceStressTest` (4), `JfrParkCostTest`, `hidden_files/modelcheck/REPORT.md`
+(§§1-9), 3 reviews (reviewer1.md, reviewer2.md, reviewer1-rereview.md).
+
+Done-gate 4 (P2-M9) is MET. Next: P2-M10 divergence closeout, then gate 5.
