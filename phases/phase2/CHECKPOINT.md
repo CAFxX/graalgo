@@ -633,3 +633,29 @@ deferred.
 
 **Commits:** eb61aae (impl) → b3a7546 → 6b327f2 (reviewer1) →
 bce75f9 (reviewer2) → 6056a98 (reviewer3).
+
+## 2026-10-05 ~15:45 CEST — P2-M4 design spike + ADR-0002 (phase gate)
+
+**Spike** (`/tmp/gcspike/Spike.java`, throwaway, 7/7 PASS):
+- Parked-vthread roots via the real SchedulerCore + GoChan park path:
+  ~20MB graph root + deep leaf both survive forced GCs while parked
+  (roots enumerated from the parked stack; transitive closure exact —
+  no holes); after goroutine exit the graph is collected (no
+  over-retention by scheduler/channel structures).
+- `runtime.SetFinalizer` vehicle (`java.lang.ref.Cleaner`): runs once
+  after unreachability, never while reachable.
+- Barrier audit: zero off-heap allocation (`allocateMemory`: 0 hits);
+  zero `Unsafe`/`MemorySegment`/`Arena` in sources; `unsafe.Pointer`
+  is the JVM-heap handle table. Every Go reference store is JVM-heap →
+  JVM GC barriers cover all stores.
+
+**ADR-0002** (`phases/phase2/adr/ADR-0002-gc-interop.md`, status: proposed):
+closes PLAN.md §3 [OPEN] heap layout. Decisions: (D1) all Go objects in
+JVM heap, JVM GC *is* the Go GC — no segregated region, no Go marker
+(SPEC §3.4 [DECIDED] + spike); (D2) root enumeration is the JVM's, exact
+by construction — rejects cooperative root publication as duplicated
+machinery; (D3) no Truffle-level write barrier — JVM barriers cover all
+stores, guarded by a new `make check` grep gate; (D4) Go-observable GC
+surface (SetFinalizer/KeepAlive/GC/weak/memstats) emulated on JVM
+primitives, tuning knobs → P2-M5 GODEBUG registry. Falsifiers F1–F3 +
+re-test triggers recorded. Implementation starts after review sign-off.
