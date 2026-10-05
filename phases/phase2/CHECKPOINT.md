@@ -700,3 +700,52 @@ after DELTA-GO from both.
 - Phase-1 suite 208/208 green with exporter change (verified in background).
 - Next: commit, dispatch ≥2 independent implementation reviews, remediate,
   re-verify, sign off.
+
+## 2026-10-05 ~18:30 CEST — P2-M4 remediation complete, awaiting reviewer #2
+
+- Remediated all reviewer #1 findings (P1-1..3, P2-4..8, P3-15):
+  * Switched to java.lang.ref.Cleaner (ADR-0002 D4 compliance)
+  * Fixed Cleanable.clean() misuse (it runs the action; use cancellable flag)
+  * Added PINNED set for register/cancel window lifetime
+  * Matched gc's 'finalizer already set' fatal
+  * Added DIV-M4-6..9 to DIVERGENCES.md
+  * Added gc05_finalizer_replace corpus case
+- Key insight: back-to-back runtime.GC() starves finalizer goroutine under
+  multi-P (world almost always stopped); GOMAXPROCS=1 required for recording.
+- Key insight: Cleanable.clean() RUNS the action (not cancel); use flag.
+- Tests: 114/114 green. make check green. Committed.
+- Reviewer #2 (redispatch) completed; report pending delivery.
+
+## 2026-10-05 ~19:30 CEST — P2-M4 SIGN-OFF
+
+**Status:** COMPLETE. All done-gates met.
+
+**Evidence:**
+- Phase-2 `make test`: 124/124 green (fresh, final tree)
+- Phase-1 suite: 208/208 green (fresh, final tree)
+- `make check`: all gates green (placeholder, debug-leftover, netpoller-deletion, off-heap/barrier)
+- Per-collector: G1 124/124 PASS, ZGC 124/124 PASS (Shenandoah N/A — Graal JIT unsupported)
+
+**Reviews:** 2 independent reviews, all findings remediated and re-tested.
+- Reviewer #1 (correctness): GO-WITH-FINDINGS (3 P1, 5 P2, 8 P3) — all fixed.
+- Reviewer #2 (design fidelity): NO-GO (5 P1, 5 P2) — all fixed, including
+  F4 torture test, F3 visibility backstop, gc01 determinism (GOMAXPROCS=1),
+  ADR scope amendment for weak/ReadMemStats deferral.
+
+**Deliverables:**
+- `graalgo/runtime/GcInterop.java` (phase-2, Cleaner-based finalizers,
+  KeepAlive via reachabilityFence, GC() via MXBean poll, weak vehicle,
+  memStats field table)
+- Differential corpus `corpus/gc/` (6 programs: finalizer, remove, replace,
+  keepalive, GC hint, panic-loudness; gc-1.27.1 .expected where applicable)
+- `GcDifferentialTest`, `GcInteropTest`, `GcTortureTest`, `GcVisibilityTest`
+- `DIVERGENCES.md` (DIV-M4-1..9)
+- ADR-0002 accepted with scope amendment; `make check` off-heap/barrier gate
+
+**Key findings:**
+- Back-to-back runtime.GC() starves finalizer goroutine under multi-P;
+  GOMAXPROCS=1 required for deterministic recording.
+- Cleanable.clean() RUNS the action (not cancel); use cancellable flag.
+- gc fatals on double SetFinalizer without nil (matched).
+- JIT liveness requires KeepAlive for reliable cancellation; PINNED set
+  bridges the register/cancel window.
