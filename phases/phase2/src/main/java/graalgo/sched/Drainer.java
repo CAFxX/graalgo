@@ -58,8 +58,6 @@ public final class Drainer {
     public final java.util.concurrent.atomic.AtomicLong wakeUnparkDirect = new java.util.concurrent.atomic.AtomicLong();
     public final java.util.concurrent.atomic.AtomicLong wakeUnparkStashed = new java.util.concurrent.atomic.AtomicLong();
     public final java.util.concurrent.atomic.AtomicLong wakeIoExit = new java.util.concurrent.atomic.AtomicLong();
-    public final java.util.concurrent.atomic.AtomicLong wakeResumeQuantum = new java.util.concurrent.atomic.AtomicLong();
-    public final java.util.concurrent.atomic.AtomicLong admitInit = new java.util.concurrent.atomic.AtomicLong();
 
     Drainer(SchedulerCore sched) {
         this.sched = sched;

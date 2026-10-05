@@ -17,14 +17,20 @@ import java.util.concurrent.atomic.AtomicLong;
  * Preemption-torture battery ported from spike 2b (spikes/02b-userspace-scheduler/
  * src/work/) to the production scheduler ({@code graalgo.sched.SchedulerCore}).
  *
- * <p>Legs (spike 2b F1–F6):
+ * <p>Legs (spike 2b F1–F6, minus F2 — see below):
  * <ul>
  *   <li>F1: O1 torture — spinners + latency pair (starvation falsifier)
- *   <li>F2: O2–O5 correctness — channels, select fairness, timers, scale
+ *   <li>F2: NOT PORTED as a battery leg. O2–O5 semantics are covered at
+ *       unit level: O2 (channels) by {@code ChannelTest} + F1/F6's
+ *       unbuffered ping-pong; O3 (select fairness) by
+ *       {@code ChannelTest.testSelectFairness} (2-case); O4 (timers) by
+ *       {@code TimerTest}/{@code TimerDifferentialTest}. O5 (spin-barrier
+ *       scale) has no torture-level equivalent — recorded as a re-test
+ *       trigger in the P2-M8 REPORT (§5).
  *   <li>F3: quiescence — 10k spinners, all admitted, fair quanta
  *   <li>F4: overhead budget — per-hop park/resume vs 1% of quantum
  *   <li>F5: GOMAXPROCS fidelity — cap never exceeded; F5b cap-exhaustion
- *   <li>F6: lost-wakeup stress — parks == admissions invariant
+ *   <li>F6: lost-wakeup stress — hang-on-loss invariant (see leg doc)
  * </ul>
  *
  * <p>Usage: {@code TortureBattery <leg> [args...]}, with
@@ -288,7 +294,11 @@ public final class TortureBattery {
         System.out.printf("F4 budget: mean_ns=%.0f < %d (1%% of quantumNs=%d) -> %s%n",
                 mean, budgetNs, quantumNs, mean < budgetNs ? "PASS" : "FAIL");
 
-        // poll() fast path on a goroutine (quantum never expires here).
+        // poll() on a goroutine: 10M polls include quantum-expiry parks
+        // (the quantum DOES expire here — ~2.4s of looping at ~237ns/poll),
+        // so this measures the poll fast path plus park/re-admit costs.
+        // The ~237ns/poll reflects ThreadLocal goroutine lookup + nanoTime
+        // compare + occasional drainer re-admission, not a single fast-path read.
         final double[] pollNs = new double[1];
         CountDownLatch done2 = new CountDownLatch(1);
         sched.spawn(() -> {

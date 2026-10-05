@@ -105,6 +105,10 @@ same provisional status applies to `context` (pattern-level only).
   (WS G overlay). Java primitives implemented and stressed; Go bindings
   deferred. **Re-test trigger:** when WS G overlay lands, bind the four
   primitives and re-run stress as Go programs differential vs gc.
+- **F2 (O2–O5) not ported as a battery leg:** O2–O4 covered at unit level
+  (ChannelTest, TimerTest/TimerDifferentialTest); O5 (spin-barrier scale)
+  has no torture-level equivalent. **Re-test trigger:** port the O5
+  spin-barrier throughput leg when the battery is extended.
 - **`context` package:** out of scope — needs interfaces (WS D, Phase 4).
   **Re-test trigger:** when interfaces land, implement context and stress.
 - **F4_q1ms:** informational per spike precedent; re-measure on quiet

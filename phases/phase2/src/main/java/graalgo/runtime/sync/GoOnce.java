@@ -12,6 +12,11 @@ import java.util.concurrent.atomic.AtomicInteger;
  * runs the action exactly once; concurrent callers park scheduler-aware
  * until the winner finishes (slow path). Fast path is a single volatile
  * read (done flag).
+ *
+ * <p>Must be called from a goroutine (scheduler-managed virtual thread);
+ * the slow path parks via the scheduler and throws
+ * {@code IllegalStateException} on a non-scheduler thread. The fast path
+ * ({@code state == DONE}) is safe from any thread.
  */
 public final class GoOnce {
     private static final int IDLE = 0;
