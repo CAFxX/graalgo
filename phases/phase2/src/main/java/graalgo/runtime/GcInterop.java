@@ -6,12 +6,9 @@ import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
-import java.lang.ref.PhantomReference;
 import java.lang.ref.Reference;
-import java.lang.ref.ReferenceQueue;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
-import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -38,15 +35,15 @@ import com.sun.management.GarbageCollectionNotificationInfo;
  * (D3). This class implements only the <em>observable</em> surface:
  *
  * <ul>
- *   <li>{@code runtime.SetFinalizer} — {@link PhantomReference} +
- *       ReferenceQueue + a <b>single</b> finalizer thread (restores gc's
- *       serialized finalizer execution). <b>Accepted divergence:</b> the
- *       finalizer is invoked with a {@code nil} argument — resurrection is
- *       impossible (a phantom action is denied the referent) and the
- *       original object cannot be recovered on a pure JVM. Finalizers that
- *       dereference their argument diverge from gc (loudly, not silently).
- *       The finalizer runs on the JVM finalizer thread, not a goroutine:
- *       touching scheduler state from a finalizer body fail-fasts.
+ *   <li>{@code runtime.SetFinalizer} — single shared
+ *       {@link java.lang.ref.Cleaner} (one dedicated thread ⇒ serialized,
+ *       like gc's finalizer goroutine). <b>Accepted divergence:</b> the
+ *       finalizer is invoked with a {@code nil} argument — a Cleaner action
+ *       is denied the referent and the original object cannot be recovered
+ *       on a pure JVM. Finalizers that dereference their argument diverge
+ *       from gc (loudly, not silently). The finalizer runs on the Cleaner's
+ *       JVM thread, not a goroutine: touching scheduler state from a
+ *       finalizer body fail-fasts.
  *   <li>{@code runtime.KeepAlive} — {@link java.lang.ref.Reference#reachabilityFence}.
  *   <li>{@code runtime.GC()} — {@code System.gc()} + poll of GC MXBean
  *       collection counts until they advance, bounded 30 s timeout. If the
@@ -67,60 +64,64 @@ public final class GcInterop {
     // runtime.SetFinalizer
     // ------------------------------------------------------------------
 
-    /** Guard for FINALIZERS/BY_OBJ. */
+    /**
+     * Single shared Cleaner (ADR-0002 D4). One Cleaner ⇒ one dedicated
+     * finalizer thread ⇒ all finalizers serialized, like gc's finalizer
+     * goroutine. Actions are phantoms: denied the referent by construction,
+     * hence the nil finalizer argument (DIV-M4-1).
+     */
+    private static final java.lang.ref.Cleaner CLEANER = java.lang.ref.Cleaner.create();
+    /**
+     * Obj -> registration, for {@code SetFinalizer(obj, nil)} removal.
+     * STRONG keys: the registration keeps the GoPointer alive until the
+     * program either cancels (SetFinalizer(x, nil)) or calls runtime.GC().
+     * This is necessary because the interpreter frame's reference may not
+     * be a timely GC root (JIT liveness can collect the GoPointer between
+     * the register and cancel calls, before the Go program nils x).
+     *
+     * <p>Weak keys so the registry never keeps a finalizable object alive
+     * (that would defeat the phantom). The weak key is safe because
+     * {@link #PINNED} keeps the GoPointer strongly reachable until the
+     * program calls {@link #gc()} or cancels. GoPointer uses identity
+     * equality, so weak-key semantics are identity semantics here. Guarded
+     * by {@link #FINALIZER_LOCK}.
+     */
     private static final Object FINALIZER_LOCK = new Object();
-    /** Phantom -> finalizer. Identity: phantoms are never equal. */
-    private static final Map<PhantomReference<Object>, GoFunc> FINALIZERS = new IdentityHashMap<>();
+    private static final Map<Object, FinalizerAction> BY_OBJ =
+            new WeakHashMap<>();
     /**
-     * Obj -> phantom, for {@code SetFinalizer(obj, nil)} removal. Weak keys
-     * so the registry never keeps a finalizable object alive (that would
-     * defeat the phantom). GoPointer uses identity equality, so weak-key
-     * semantics are identity semantics here.
+     * Strong references to registered GoPointers, released on {@link #gc()}.
+     * Keeps the referent alive across the register/cancel window. The
+     * explicit GC call is the program's signal that setup is complete; after
+     * release, lifetimes are natural (tied to Go variables). Guarded by
+     * {@link #FINALIZER_LOCK}.
      */
-    private static final Map<Object, PhantomReference<Object>> BY_OBJ = new WeakHashMap<>();
-    private static final ReferenceQueue<Object> FINALIZER_QUEUE = new ReferenceQueue<>();
-    private static volatile Thread finalizerThread;
-
-    private static void ensureFinalizerThread() {
-        if (finalizerThread != null) {
-            return;
-        }
-        synchronized (FINALIZER_LOCK) {
-            if (finalizerThread == null) {
-                Thread t = new Thread(GcInterop::finalizerLoop, "graalgo-finalizer");
-                t.setDaemon(true);
-                finalizerThread = t;
-                t.start();
-            }
-        }
-    }
+    private static final java.util.Set<Object> PINNED = new java.util.HashSet<>();
 
     /**
-     * Single finalizer thread (gc parity: all finalizers serialized).
-     * On phantom enqueue the registration is removed and the finalizer
-     * invoked with a nil argument (accepted divergence — see class javadoc).
+     * A cancellable finalizer action. The Cleaner API has no "unregister"
+     * (Cleanable.clean() *runs* the action); cancellation is via flag.
      */
-    private static void finalizerLoop() {
-        while (true) {
-            final Reference<?> r;
-            try {
-                r = FINALIZER_QUEUE.remove();
-            } catch (InterruptedException e) {
+    private static final class FinalizerAction implements Runnable {
+        final GoFunc fn;
+        final int objHash; // for debug
+        volatile boolean cancelled;
+        FinalizerAction(GoFunc fn, int objHash) {
+            this.fn = fn;
+            this.objHash = objHash;
+        }
+        @Override
+        public void run() {
+            if (cancelled) {
                 return;
             }
-            final GoFunc f;
-            synchronized (FINALIZER_LOCK) {
-                f = FINALIZERS.remove(r);
-            }
-            r.clear();
-            if (f != null) {
-                try {
-                    GoCalls.invoke(f, new Object[] { null });
-                } catch (Throwable t) {
-                    // gc: a panicking finalizer crashes the program. We cannot
-                    // crash the host from here; be loud instead.
-                    System.err.println("graalgo: finalizer panicked: " + t);
-                }
+            try {
+                GoCalls.invoke(fn, new Object[] { null });
+            } catch (Throwable t) {
+                // gc: a panicking finalizer crashes the program. We cannot
+                // crash the host from here; be loud instead.
+                System.err.println("graalgo: finalizer panicked: " + t);
+                t.printStackTrace(System.err);
             }
         }
     }
@@ -150,18 +151,32 @@ public final class GcInterop {
                     "runtime.SetFinalizer: finalizer must be a function");
         }
         synchronized (FINALIZER_LOCK) {
-            PhantomReference<Object> old = BY_OBJ.remove(obj);
+            FinalizerAction old = BY_OBJ.remove(obj);
             if (old != null) {
-                FINALIZERS.remove(old);
-                old.clear();
+                if (fn != null) {
+                    // gc fatals "finalizer already set" — setting twice
+                    // without an intervening nil is a programming bug.
+                    // Restore the registration before throwing.
+                    BY_OBJ.put(obj, old);
+                    throw new IllegalStateException(
+                            "runtime.SetFinalizer: finalizer already set");
+                }
+                old.cancelled = true; // cancel; the Cleaner action will no-op
+                PINNED.remove(obj);
             }
             if (fn == null) {
                 return;
             }
-            ensureFinalizerThread();
-            PhantomReference<Object> ph = new PhantomReference<>(obj, FINALIZER_QUEUE);
-            FINALIZERS.put(ph, fn);
-            BY_OBJ.put(obj, ph);
+            // The action must not capture obj (else the phantom never clears).
+            // fn is the Go closure; the nil argument is DIV-M4-1.
+            FinalizerAction action = new FinalizerAction(fn, System.identityHashCode(obj));
+            CLEANER.register(obj, action);
+            BY_OBJ.put(obj, action);
+            PINNED.add(obj);
+            // Fence: keep obj alive until the registration is complete.
+            // Without this, the JIT may consider obj dead after its last use
+            // above and the Cleaner may fire prematurely.
+            java.lang.ref.Reference.reachabilityFence(obj);
         }
     }
 
@@ -211,6 +226,13 @@ public final class GcInterop {
      */
     public static void gc() {
         FORCED_GC_COUNT.incrementAndGet();
+        // Release pinned GoPointers: the explicit GC is the program's signal
+        // that setup is complete. After this, lifetimes are natural (tied to
+        // Go variables), and the Cleaner can collect them. BY_OBJ (weak) is
+        // retained for cancellation lookups. (See PINNED javadoc.)
+        synchronized (FINALIZER_LOCK) {
+            PINNED.clear();
+        }
         long before = totalCollections();
         System.gc();
         if (before < 0) {

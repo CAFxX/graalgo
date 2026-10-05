@@ -65,6 +65,49 @@ ordering relative to weak clearing follows JVM semantics (phantoms enqueue
 after weak clearing), which matches gc's observable order in practice but
 is not contractual.
 
+**Scope note (P2-M4):** `weak.Pointer` and `runtime.ReadMemStats` have no Go
+call path in P2-M4 — the `gcinterop:` marker dispatch handles only
+`SetFinalizer`/`KeepAlive`/`GC`, and the synthetic `runtime` package
+declares only those three (ADR-0002: "frontend scope permitting" for
+`weak`). `newWeakRef`/`weakRefValue`/`memStats()` are implemented and
+unit-tested as vehicles for future wiring, not live surface.
+
+### DIV-M4-6: `SetFinalizer` on an `unsafe.Pointer`-held object silently never runs
+
+`unsafe.Pointer` values lower to `UnsafeHandles` — a `HashMap<Long,Object>`
+of strong JVM references (SPEC §3.4). An object reachable *only* through
+`UnsafeHandles` is a permanent strong root: it is never collected, so a
+`SetFinalizer` registered on it never fires, silently. (ADR-0002 `*unsafe*`
+interaction bullet; recorded here per its requirement.)
+
+This is inherent to the handle design, not a bug: the handles exist
+precisely to keep the referent alive across the "pointer as integer"
+boundary. Programs that convert pointers to integers and back must not
+expect finalization while a handle is live.
+
+### DIV-M4-7: `runtime.SetFinalizer` on nil is `IllegalArgumentException`, not fatal
+
+gc raises a **fatal** `runtime.SetFinalizer: pointer not in allocated block`
+for a nil pointer argument. graalgo throws `IllegalArgumentException`
+("nil object"), which escapes the interpreter as a Java exception rather
+than a Go fatal. Loud, but a different mechanism and message.
+
+### DIV-M4-8: `pprof` heap profiles out of scope for P2-M4
+
+`net/http/pprof` heap profiles (`/debug/pprof/heap`) have no P2-M4
+vehicle. A faithful heap profile would require walking the JVM heap with
+Go-type attribution; the JVMTI/`jmap` surface exposes JVM types, not Go
+types. Stance: out of scope; revisit when the object model carries enough
+type metadata for attribution (Phase 4+).
+
+### DIV-M4-9: `debug.FreeOSMemory` ≈ `runtime.GC()` (best effort)
+
+`debug.FreeOSMemory()` forces a GC and returns memory to the OS. graalgo
+maps it to `System.gc()` (same vehicle as `runtime.GC()`): the collection
+is best-effort per DIV-M4-3, and there is no JVM API that compels the OS
+to take pages back — heap shrinking is the collector's decision. No Go
+call path is wired in P2-M4 (same scope note as DIV-M4-5).
+
 ## Template for new entries
 
 ### DIV-<M>-<N>: short title

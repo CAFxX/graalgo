@@ -108,12 +108,12 @@ public final class GcInteropTest {
         GcInterop.setFinalizer(p, null); // must not throw
     }
 
-    /** gc(): returns (does not hang) even with explicit GC disabled. */
-    public void testGcReturnsWithExplicitGcDisabled() throws Exception {
-        // -XX:+DisableExplicitGC makes System.gc() a no-op; the MXBean poll
-        // must still return via the bounded timeout rather than hang.
-        // We cannot set the flag from inside the test; instead assert the
-        // plain call returns promptly.
+    /** gc(): returns promptly (does not hang) on the normal path. */
+    public void testGcReturnsPromptly() throws Exception {
+        // Note: this exercises the fast path where MXBean counts advance.
+        // The 30s-timeout path (explicit GC disabled via -XX:+DisableExplicitGC)
+        // cannot be tested in-process; it is covered by code inspection
+        // (bounded poll loop with deadline).
         long start = System.nanoTime();
         GcInterop.gc();
         long ms = (System.nanoTime() - start) / 1_000_000L;

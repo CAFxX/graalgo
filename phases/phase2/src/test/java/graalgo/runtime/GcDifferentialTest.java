@@ -32,7 +32,8 @@ public final class GcDifferentialTest {
             "gc01_finalizer",
             "gc02_finalizer_remove",
             "gc03_keepalive",
-            "gc04_gc_hint");
+            "gc04_gc_hint",
+            "gc05_finalizer_replace");
 
     private static void assertEquals(String expected, String actual, String msg) {
         if (!expected.equals(actual)) {
@@ -79,22 +80,20 @@ public final class GcDifferentialTest {
             throw new AssertionError(name + ": subprocess exit " + p.exitValue()
                     + "\nstdout:\n" + stdout + "\nstderr:\n" + stderr);
         }
-        // Strip JVM warnings (e.g. CDS/archive notices) that precede program output.
-        // Program output is the trailing line(s); warnings go to stderr normally,
-        // but be tolerant: keep only lines after the last "WARNING:" line on stdout.
+        // Strip JVM warnings (e.g. HotSpot notices) that may precede program
+        // output. Filter only lines matching known warning patterns; keep all
+        // program output lines intact.
         String[] lines = stdout.split("\n", -1);
-        int keepFrom = 0;
-        for (int i = 0; i < lines.length; i++) {
-            if (lines[i].contains("WARNING:")) {
-                keepFrom = i + 1;
-            }
-        }
         StringBuilder sb = new StringBuilder();
-        for (int i = keepFrom; i < lines.length; i++) {
-            sb.append(lines[i]);
-            if (i + 1 < lines.length) {
+        for (String line : lines) {
+            if (line.startsWith("Java HotSpot(TM)")
+                    || line.startsWith("OpenJDK 64-Bit Server VM warning:")) {
+                continue;
+            }
+            if (sb.length() > 0) {
                 sb.append('\n');
             }
+            sb.append(line);
         }
         return sb.toString();
     }
@@ -114,6 +113,11 @@ public final class GcDifferentialTest {
 
     public void testGc04GcHint() throws Exception {
         assertEquals(expected("gc04_gc_hint"), runGo("gc04_gc_hint"), "gc04_gc_hint");
+    }
+
+    public void testGc05FinalizerReplace() throws Exception {
+        assertEquals(expected("gc05_finalizer_replace"), runGo("gc05_finalizer_replace"),
+                "gc05_finalizer_replace");
     }
 
     /**
