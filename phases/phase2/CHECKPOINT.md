@@ -871,3 +871,26 @@ reviewer1 (fixed). Methodology findings remediated (commit bba197c):
 godebug-diff 4/4 green.
 
 **Still pending:** Phase-1 suite re-run (208 tests) before sign-off.
+
+## 2026-10-05 — P2-M5 SIGN-OFF
+
+**Acceptance (phases/phase2/PLAN.md §4 P2-M5):** versioned registry
+published (v3, 78 knobs + 9 removed, GODEBUG.md); unknown-knob
+deny-with-error (falsifiable: testUnknownKnobDenied asserts exit 2);
+godebug-diff 4/4 green with strengthened comparators.
+
+**Fresh verification on the final tree (this sign-off):**
+- phase-2 `make test`: **152/152, 0 failures**
+- Phase-1 suite: **208/208, 0 failures** (INTERFACE_FREEZE untouched)
+- `make check`: **green**
+- `tools/godebug-diff`: **4/4 PASS**
+
+**Reviews:** 2 independent (correctness + methodology), both NO-GO →
+all P0/P1/P2 findings remediated and re-tested (commits fe297b8,
+2a57796, bba197c, 2cdcd01). No open findings.
+
+**Deliverables:** GoDebug parser/applier/registry (deny exit 2),
+SchedTrace/GcTrace daemons, panicnil overlay (drift-guarded),
+godebug-diff tool, GODEBUG.md, DIVERGENCES.md DIV-M5-1..5.
+
+P2-M5 done. Workstream E complete.
