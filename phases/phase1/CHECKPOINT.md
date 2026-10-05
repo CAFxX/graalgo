@@ -1313,3 +1313,33 @@ M7 scope.
   - Red-green logs: /tmp/nilcheck, /tmp/matcheck, /tmp/m7_verify_run.json
   - Suite log: /tmp/m7_test4.log (183/0)
 - M7 done-gate 1 met: full corpus differential green, zero unexplained divergences.
+
+## 2026-10-05 ~06:30 CEST — M7 remediation complete (R1 + R2 findings)
+
+All 10 findings (2 P0, 4 P1, 4 P2) remediated. 9 commits:
+
+- 47ea356 (P0-1): overlap-safe append slice-spread via Intrinsics.memmove;
+  + class-hunt find (interleaved arg eval/store in non-spread append);
+  P1-2 zero-arg append identity. New corpus/builtins/bi16_append_overlap.go.
+- 61efa54 (P0-2): depth-general nested array/slice printing (kind/name chains).
+  New bi17_nested_arrays.go.
+- ddf6322 (P1-3): string([]rune) U+FFFD for invalid scalars (surrogates
+  explicitly excluded; Character.isValidCodePoint admits them). New bi18.
+- 9de796b (P1-1a): variadic fail-fast — checkVariadicCall exporter scope error
+  (WS D) on non-spread variadic calls across 4 call paths; corrected inverted
+  24_variadic manifest entry; new bi19 + MainTest.testCheckRejectsVariadicPacking.
+- a68c02c (P2 batch): stale exportPackageVars comment, 27_panic_trace manifest
+  precision, 0xADDR normalization limitation documented, evidence to
+  hidden_files/m7-gate1/, ellipsis wire doc fix.
+- fffc3dd: gofmt. 5b85def: bi16 extended (nil-target spread, self-alias).
+- cf1b172: exclude issue51840.go + issue51925.go (generic variadic-packing
+  compile tests; now loud WS D scope errors; previously built by accident).
+- 5e4cd2b: bump MAX_EXCLUSIONS 222 -> 224 with documented reason.
+
+Suite: 188/0 green (was 183/0; +5 new red-green tests). Corpus re-run
+(post-fix, hidden_files/m7-gate1/corpus_remediation.json): 19/46 same,
+27 diverged = the 27 excluded programs, 0 unexplained. Typeparam: 42
+comparisons, 0 diverged, 224 excluded.
+
+Note: /tmp (512M tmpfs) filled during runs by ~2700 leftover
+graalgo-difftest* dirs; cleaned. Suite is sensitive to /tmp space.
