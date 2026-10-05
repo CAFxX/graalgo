@@ -7,16 +7,12 @@ import graalgo.sched.GoroutineHandle;
  * GG-0008 JFR slice).
  *
  * <p>Overhead contract: when no recording has our events enabled, the
- * park path costs ~10ns (a bit-test on the already-incremented parkSeq,
- * a volatile read of the cached flag, two volatile writes) — no
- * allocation, no {@code System.nanoTime()}, no JFR call. Rationale:
- * {@code Event.isEnabled()} costs ~600ns on this JVM (it is not a field
- * read), so it is cached and refreshed at most every 1024 parks per
- * goroutine plus on each handle's first park; staleness is milliseconds
- * on a busy scheduler (longer for a goroutine that rarely parks — the
- * cache is global, so busy goroutines refresh it for idle ones).
- * Start/end/block emissions check the live JFR state directly — they
- * are not hot-path.
+ * park path costs tens of nanoseconds (two volatile field accesses and
+ * one {@code Event.isEnabled()} at ~8ns — measured on GraalVM 25.0.4.1.1,
+ * not the ~600ns an early flawed probe reported; the caching layer built
+ * on that number was removed in review) — no allocation, no
+ * {@code System.nanoTime()}, no JFR call. Start/end/block emissions check
+ * the live JFR state directly — they are not hot-path.
  *
  * <p>Rate contract: {@code graalgo.GoroutinePark} is committed for
  * non-quantum parks lasting at least {@link #PARK_THRESHOLD_NANOS}, and
@@ -28,8 +24,10 @@ import graalgo.sched.GoroutineHandle;
  * <p>Opt-in: all graalgo events are {@code @Enabled(false)} — a bare
  * {@code new Recording()} does <em>not</em> capture them (JFR would
  * otherwise enable custom events by default for any active recording).
- * Enable explicitly: {@code rec.enable("graalgo.GoroutineStart")} etc.,
- * or {@code jfr start --events graalgo.*}.
+ * Enable explicitly: {@code rec.enable("graalgo.GoroutineStart")} etc.
+ * For a live JVM: {@code jcmd <pid> JFR.start name=graalgo
+ * '+graalgo.GoroutineStart#enabled=true' '+graalgo.GoroutineEnd#enabled=true'
+ * '+graalgo.GoroutinePark#enabled=true' '+graalgo.ChannelBlock#enabled=true'}.
  */
 public final class JfrEvents {
     private JfrEvents() {}
@@ -114,27 +112,6 @@ public final class JfrEvents {
     }
 
     /**
-     * Cached {@code graalgo.GoroutinePark} enablement. {@code Event.isEnabled()}
-     * costs ~600ns on this JVM (not a field read — it goes through the
-     * JVM), so calling it per park would be ~1.5% of a quantum-park
-     * round-trip. Instead we refresh at most every 1024 parks (per
-     * goroutine, via its already-incremented parkSeq) plus on each
-     * handle's first park. Staleness window: a recording started/stopped
-     * is noticed within ~1024 parks — milliseconds on a busy scheduler,
-     * documented and acceptable for observability.
-     */
-    private static volatile boolean parkEnabledCache = false;
-
-    private static boolean parkEnabled(GoroutineHandle h) {
-        long seq = h.parkSeq.get();
-        if (!h.jfrCacheInit || (seq & 1023) == 0) {
-            h.jfrCacheInit = true;
-            parkEnabledCache = GoroutineParkEvent.enabled();
-        }
-        return parkEnabledCache;
-    }
-
-    /**
      * Quantum-park sampling (P2-M6 rate control): quantum parks are the
      * scheduler hot loop (tens of microseconds each — a 100µs duration
      * threshold does NOT filter them; measured 26% exceed it). Committing
@@ -152,7 +129,7 @@ public final class JfrEvents {
      */
     public static void notePark(GoroutineHandle h, ParkReason reason) {
         h.parkReason = reason;
-        h.parkStartNanos = parkEnabled(h) ? System.nanoTime() : 0L;
+        h.parkStartNanos = GoroutineParkEvent.enabled() ? System.nanoTime() : 0L;
     }
 
     /**
@@ -170,7 +147,7 @@ public final class JfrEvents {
         }
         h.parkReason = null;
         long start = h.parkStartNanos;
-        if (start == 0L || !parkEnabled(h)) {
+        if (start == 0L || !GoroutineParkEvent.enabled()) {
             return;
         }
         long durationNanos = System.nanoTime() - start;

@@ -281,8 +281,8 @@ public final class JfrEventsTest {
      * two {@code System.nanoTime()} calls — a machine-independent
      * definition of "near-zero" for instrumentation whose job is
      * timestamping parks. (Absolute budgets don't port: this VM's clock
-     * runs ~5x slow. The 600ns {@code Event.isEnabled()} is cached:
-     * refreshed at most every 1024 parks plus on first park.)
+     * runs ~5x slow. {@code Event.isEnabled()} is ~8ns on the pinned
+     * GraalVM 25 toolchain — called directly, no caching layer.)
      */
     public void testDisabledGuardCostNegligible() throws Exception {
         assertTrue(!JfrEvents.anyEnabled(), "test requires no active recording");
@@ -305,7 +305,7 @@ public final class JfrEventsTest {
         if (sink == 0) {
             throw new AssertionError("unreachable");
         }
-        // Warmup: first park does the (amortized) cache refresh.
+        // Warmup: settle JIT/code-cache on the park path.
         for (int i = 0; i < 100_000; i++) {
             h.parkSeq.incrementAndGet(); // simulate armPark
             JfrEvents.notePark(h, ParkReason.QUANTUM);

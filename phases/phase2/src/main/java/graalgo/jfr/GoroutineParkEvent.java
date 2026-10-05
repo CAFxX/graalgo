@@ -36,7 +36,7 @@ public final class GoroutineParkEvent extends Event {
     @Description("Nanos parked before resume.")
     private long durationNanos;
 
-    /** Enabled check (~600ns direct; JfrEvents caches it on the hot path). */
+    /** Enabled check (single-digit ns; safe to call on the park path). */
     public static boolean enabled() {
         return PROTOTYPE.isEnabled();
     }

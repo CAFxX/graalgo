@@ -38,7 +38,7 @@ public final class ChannelBlockEvent extends Event {
     @Description("SEND, RECV, or SELECT.")
     private String operation;
 
-    /** Enabled check (~600ns direct; JfrEvents caches it on the hot path). */
+    /** Enabled check (single-digit ns; safe to call on the park path). */
     public static boolean enabled() {
         return PROTOTYPE.isEnabled();
     }

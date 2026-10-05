@@ -30,8 +30,18 @@ rec.enable("graalgo.GoroutinePark").with("stackTrace", "false");
 rec.enable("graalgo.ChannelBlock").with("stackTrace", "false");
 ```
 
-or `jfr start --events graalgo.*`. Disable stack traces: these are
-high-rate scheduler events; stacks would dominate the recording.
+or on a live JVM via `jcmd`:
+
+```
+jcmd <pid> JFR.start name=graalgo \
+  '+graalgo.GoroutineStart#enabled=true' \
+  '+graalgo.GoroutineEnd#enabled=true' \
+  '+graalgo.GoroutinePark#enabled=true' \
+  '+graalgo.ChannelBlock#enabled=true'
+```
+
+Disable stack traces: these are high-rate scheduler events; stacks
+would dominate the recording.
 
 ## Rate control (measured, not assumed)
 
@@ -43,16 +53,20 @@ high-rate scheduler events; stacks would dominate the recording.
   custom events by default for *any* active recording (caught by
   `testNoEventsWhenDisabled`, which was red before the fix) — without
   this, an unrelated recording would silently flip our events on.
-- **Cached enablement**: `Event.isEnabled()` costs ~600ns on this JVM
-  (not a field read), so the park path caches it: refreshed at most every
-  1024 parks per goroutine plus on each handle's first park (staleness:
-  milliseconds on a busy scheduler).
+- **Direct enablement checks**: `Event.isEnabled()` measures ~8ns on the
+  pinned toolchain (GraalVM 25.0.4.1.1) — called directly on the park
+  path, no caching layer. (An early flawed probe reported ~600ns and a
+  caching design was built on it; review re-measured single-digit ns on
+  two JVMs and the cache was removed.)
 
-## Overhead (this VM: AMD EPYC 9D25 @ 1.5GHz)
+## Overhead (this VM: AMD EPYC 9D25 @ 1.5GHz; `System.nanoTime()` ~60ns here)
 
-- Disabled guard (notePark + parkResumed, no recording): **60ns/park**,
-  0.63× one `System.nanoTime()` — i.e. less than a single clock read.
-  A quantum-park round-trip is tens of microseconds; the guard is < 0.5%.
+- Disabled guard (notePark + parkResumed, no recording): **~23ns/park**,
+  0.38× one `System.nanoTime()` — i.e. well under a single clock read.
+  A quantum-park round-trip is tens of microseconds; the guard is < 0.1%.
+  (Earlier docs said 60ns/0.63× from a pre-review probe and ~10ns in a
+  class comment; 23ns/0.38× is the re-measured value after the
+  enablement-cache removal.)
 - Yield hot loop, recording active with events enabled vs no recording:
   throughput within noise (smoke test; the precise claims are the guard
   cost above and the filter test below).

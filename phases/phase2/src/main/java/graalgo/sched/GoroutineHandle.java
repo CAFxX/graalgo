@@ -65,14 +65,6 @@ public final class GoroutineHandle {
     public volatile long ioStartNanos;
 
     /**
-     * P2-M6: whether this handle has done its first JFR cache refresh
-     * (see {@code JfrEvents}). Ensures a newly started recording is
-     * noticed even if the handle never reaches a periodic refresh
-     * boundary.
-     */
-    public volatile boolean jfrCacheInit;
-
-    /**
      * JFR lifetime tracking (P2-M6): nanos when the goroutine started
      * executing (after first admission); read in the finally block for
      * {@code graalgo.GoroutineEnd}.

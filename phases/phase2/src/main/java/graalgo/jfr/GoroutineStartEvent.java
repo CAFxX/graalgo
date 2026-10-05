@@ -32,7 +32,7 @@ public final class GoroutineStartEvent extends Event {
     private String threadName;
 
     /**
-     * Enabled check (~600ns direct; JfrEvents caches it on the hot path).
+     * Enabled check (single-digit ns; safe to call on the park path).
      * Events are @Enabled(false): no recording enables them by default.
      */
     public static boolean enabled() {

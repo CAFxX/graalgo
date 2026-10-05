@@ -30,7 +30,7 @@ public final class GoroutineEndEvent extends Event {
     @Description("Nanos from goroutine start to end.")
     private long lifetimeNanos;
 
-    /** Enabled check (~600ns direct; JfrEvents caches it on the hot path). */
+    /** Enabled check (single-digit ns; safe to call on the park path). */
     public static boolean enabled() {
         return PROTOTYPE.isEnabled();
     }
