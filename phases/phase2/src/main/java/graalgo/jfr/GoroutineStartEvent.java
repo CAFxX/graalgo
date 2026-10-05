@@ -32,9 +32,8 @@ public final class GoroutineStartEvent extends Event {
     private String threadName;
 
     /**
-     * Cheap enabled check: a single field read, no allocation. This is
-     * what keeps the scheduler fast path near-zero cost when no
-     * recording is active.
+     * Enabled check (~600ns direct; JfrEvents caches it on the hot path).
+     * Events are @Enabled(false): no recording enables them by default.
      */
     public static boolean enabled() {
         return PROTOTYPE.isEnabled();

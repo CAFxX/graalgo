@@ -38,7 +38,7 @@ public final class ChannelBlockEvent extends Event {
     @Description("SEND, RECV, or SELECT.")
     private String operation;
 
-    /** Cheap enabled check: a single field read, no allocation. */
+    /** Enabled check (~600ns direct; JfrEvents caches it on the hot path). */
     public static boolean enabled() {
         return PROTOTYPE.isEnabled();
     }

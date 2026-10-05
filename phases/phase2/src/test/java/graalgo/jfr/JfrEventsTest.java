@@ -262,7 +262,7 @@ public final class JfrEventsTest {
         // does one quantumPark; notePark sees seq 2..5001, and seq
         // 1024/2048/3072/4096 hit the 1-in-1024 mask → 4 per goroutine =
         // 16 total. Bound generously for stray scheduler parks.
-        assertTrue(parks.size() >= 8 && parks.size() <= 32,
+        assertTrue(parks.size() >= 12 && parks.size() <= 20,
                 "expected ~16 sampled quantum parks, got " + parks.size());
         for (RecordedEvent e : parks) {
             assertTrue("QUANTUM".equals(getString(e, "reason")),

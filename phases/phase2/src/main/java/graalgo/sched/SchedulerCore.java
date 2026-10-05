@@ -156,7 +156,6 @@ public final class SchedulerCore {
         }
         long t = armPark(h);
         h.ioStartNanos = System.nanoTime();
-        JfrEvents.notePark(h, ParkReason.IO);
         drainer.offer(new ResumeToken(ResumeToken.Kind.IO_ENTER, h, t));
         awaitAck(h, t);
     }
@@ -174,11 +173,17 @@ public final class SchedulerCore {
                     "graalgo.sched: ioExit without ioEnter");
         }
         long t = armPark(h);
-        JfrEvents.notePark(h, ParkReason.IO);
         drainer.offer(new ResumeToken(ResumeToken.Kind.IO_EXIT, h, t));
         awaitAck(h, t);
-        // P2-M6: report the full blocking-I/O interval (the handshake
-        // above is microseconds and filtered; the syscall was long).
+        // P2-M6: report the full blocking-I/O interval. The slot-release
+        // and re-admission handshakes above are deliberately NOT
+        // notePark'd: they are scheduler latency, not I/O, and under
+        // drainer contention could exceed the park threshold — emitting
+        // them would double/triple-count one syscall and mislabel the
+        // reason. ioBlocked is the single authoritative IO event.
+        // (ioStartNanos is taken unconditionally in ioEnter so a
+        // recording started mid-syscall still observes the interval;
+        // ~100ns on a syscall path is negligible.)
         JfrEvents.ioBlocked(h, System.nanoTime() - h.ioStartNanos);
     }
 

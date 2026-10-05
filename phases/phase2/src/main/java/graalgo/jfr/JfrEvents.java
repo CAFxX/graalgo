@@ -13,8 +13,10 @@ import graalgo.sched.GoroutineHandle;
  * {@code Event.isEnabled()} costs ~600ns on this JVM (it is not a field
  * read), so it is cached and refreshed at most every 1024 parks per
  * goroutine plus on each handle's first park; staleness is milliseconds
- * on a busy scheduler. Start/end/block emissions check the live JFR
- * state directly — they are not hot-path.
+ * on a busy scheduler (longer for a goroutine that rarely parks — the
+ * cache is global, so busy goroutines refresh it for idle ones).
+ * Start/end/block emissions check the live JFR state directly — they
+ * are not hot-path.
  *
  * <p>Rate contract: {@code graalgo.GoroutinePark} is committed for
  * non-quantum parks lasting at least {@link #PARK_THRESHOLD_NANOS}, and
@@ -28,12 +30,6 @@ import graalgo.sched.GoroutineHandle;
  * otherwise enable custom events by default for any active recording).
  * Enable explicitly: {@code rec.enable("graalgo.GoroutineStart")} etc.,
  * or {@code jfr start --events graalgo.*}.
- *
- * <p>Rate contract: {@code graalgo.GoroutinePark} is committed only for
- * parks lasting at least {@link #PARK_THRESHOLD_NANOS} (quantum parks are
- * microseconds; real blocks are milliseconds). {@code graalgo.ChannelBlock}
- * fires only when an operation actually blocks; non-blocking fast-path
- * channel ops emit nothing.
  */
 public final class JfrEvents {
     private JfrEvents() {}
@@ -48,6 +44,33 @@ public final class JfrEvents {
      */
     public static final long PARK_THRESHOLD_NANOS =
             Long.getLong("graalgo.jfr.parkThresholdNanos", 100_000L);
+
+    /**
+     * Emitted-but-dropped count (observability must never break the
+     * scheduler: emission failures are swallowed and counted, never
+     * propagated). Test-visible.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong droppedEmits =
+            new java.util.concurrent.atomic.AtomicLong();
+
+    /** Number of swallowed emission failures since VM start. */
+    public static long droppedEmits() {
+        return droppedEmits.get();
+    }
+
+    /**
+     * Runs an emission, swallowing failures. JFR commit is designed not
+     * to throw, but these call sites are scheduler-critical (awaitAck,
+     * spawn finally, channel ops): a throwing observability hook must
+     * never break scheduling or mask the goroutine's real exception.
+     */
+    private static void emitQuietly(Runnable emit) {
+        try {
+            emit.run();
+        } catch (RuntimeException e) {
+            droppedEmits.incrementAndGet();
+        }
+    }
 
     /**
      * Force-loads the event classes so {@code Recording.enable(name)}
@@ -78,14 +101,15 @@ public final class JfrEvents {
     public static void goroutineStart(GoroutineHandle h) {
         if (GoroutineStartEvent.enabled()) {
             Thread t = h.thread;
-            GoroutineStartEvent.emit(h.id, t == null ? "" : t.getName());
+            String name = t == null ? "" : t.getName();
+            emitQuietly(() -> GoroutineStartEvent.emit(h.id, name));
         }
     }
 
     /** Goroutine finished (call in the vthread finally block). */
     public static void goroutineEnd(GoroutineHandle h, long lifetimeNanos) {
         if (GoroutineEndEvent.enabled()) {
-            GoroutineEndEvent.emit(h.id, lifetimeNanos);
+            emitQuietly(() -> GoroutineEndEvent.emit(h.id, lifetimeNanos));
         }
     }
 
@@ -157,13 +181,13 @@ public final class JfrEvents {
         } else if (durationNanos < PARK_THRESHOLD_NANOS) {
             return;
         }
-        GoroutineParkEvent.emit(h.id, reason, durationNanos);
+        emitQuietly(() -> GoroutineParkEvent.emit(h.id, reason, durationNanos));
     }
 
     /** A channel operation blocked (call before parking). */
     public static void channelBlock(GoroutineHandle h, long channelId, ChannelOp op) {
         if (ChannelBlockEvent.enabled()) {
-            ChannelBlockEvent.emit(h.id, channelId, op);
+            emitQuietly(() -> ChannelBlockEvent.emit(h.id, channelId, op));
         }
     }
 
@@ -175,7 +199,7 @@ public final class JfrEvents {
      */
     public static void ioBlocked(GoroutineHandle h, long ioNanos) {
         if (GoroutineParkEvent.enabled() && ioNanos >= PARK_THRESHOLD_NANOS) {
-            GoroutineParkEvent.emit(h.id, ParkReason.IO, ioNanos);
+            emitQuietly(() -> GoroutineParkEvent.emit(h.id, ParkReason.IO, ioNanos));
         }
     }
 }

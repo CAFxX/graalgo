@@ -36,7 +36,7 @@ public final class GoroutineParkEvent extends Event {
     @Description("Nanos parked before resume.")
     private long durationNanos;
 
-    /** Cheap enabled check: a single field read, no allocation. */
+    /** Enabled check (~600ns direct; JfrEvents caches it on the hot path). */
     public static boolean enabled() {
         return PROTOTYPE.isEnabled();
     }
