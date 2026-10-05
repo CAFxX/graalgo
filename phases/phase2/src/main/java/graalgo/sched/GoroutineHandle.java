@@ -30,7 +30,7 @@ public final class GoroutineHandle {
     public final long id = ID_GEN.getAndIncrement();
 
     /** The virtual thread running this goroutine; set before start. */
-    volatile Thread thread;
+    public volatile Thread thread;
 
     /** Next park generation to reserve. */
     final AtomicLong parkSeq = new AtomicLong(0);
@@ -47,6 +47,22 @@ public final class GoroutineHandle {
 
     /** Highest generation acknowledged (admitted) by the drainer. */
     final AtomicLong acked = new AtomicLong(-1);
+
+    /**
+     * JFR park tracking (P2-M6, WS F): reason + start nanos for the
+     * current park, set by {@code JfrEvents.notePark} before the park
+     * becomes visible, consumed by {@code JfrEvents.parkResumed} on
+     * resume. {@code null} reason = not a tracked park (initial
+     * admission).
+     */
+    public volatile graalgo.jfr.ParkReason parkReason;
+    public volatile long parkStartNanos;
+
+    /**
+     * JFR I/O tracking (P2-M6): nanos at {@code ioEnter}, for the full
+     * syscall-duration park event emitted at {@code ioExit}.
+     */
+    public volatile long ioStartNanos;
 
     /** Next quantum deadline, nanoTime. Reset on every admission. */
     volatile long quantumDeadlineNanos;
