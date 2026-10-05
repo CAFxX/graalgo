@@ -412,3 +412,35 @@ detection): deferred — P2-2/P2-3 are frontend-rejected shapes;
 P2-5 is P2-M10 scope. Documented in code.
 
 **Tests:** 52/52 green (3 consecutive runs), incl. new P0-1 regression.
+
+## 2026-10-05 ~17:00 CEST — P2-M2 SIGN-OFF
+
+**Verdict: GO.** All acceptance criteria met, both reviews remediated,
+all suites green on the final tree.
+
+**Evidence (fresh on final tree 245b46c):**
+- Phase-2 `make test`: 52/52, 0 failures (3 consecutive runs).
+- Phase-1 `make test`: 208/208, 0 failures (no Phase-1 files modified).
+- Phase-2 `make check`: clean (placeholder + debug gates).
+- Differential: 12 corpus programs — 9 stdout-identical, 3 panic-message-
+  identical vs gc 1.27.1, all from checked-in files (regen.sh).
+- Red-green: 4 mutations (A/B/C + P0-1 revert), all caught by tests.
+- Reviews: 2 independent (reviewer1.md, reviewer2.md), all P0/P1 remediated
+  and re-tested; P2s fixed or documented as deferred.
+
+**Acceptance:**
+1. Unbuffered + buffered, close (send-panic/recv-drain/close-panic),
+   select (multi-channel, default, fairness) — 26 unit tests.
+2. Differential vs gc: 12/12 (no divergences; 2 gc behaviors corrected
+   during review: poison>default, close-while-parked panics).
+3. P2-D4: testBlockedSendDoesNotPinCarrier (GOMAXPROCS=1) — falsifies
+   carrier-blocking (mutation C: 4 failures).
+4. Red-green for every semantic — documented in checkpoint.
+
+**Deliverables:** GoChan.java, SelectOp.java, ChanOps.java (overlay),
+GoStrings.java; ChannelTest.java (26), ChannelDifferentialTest.java (12);
+corpus/channels/ (12 programs + expected/panic + regen.sh + README).
+
+**Parent dependencies flagged:** exporter lowering for channel/select
+AST (Phase-1 rejects `*ast.SendStmt`); P2-M10 owns deadlock detection
+and the divergence list (none found).
