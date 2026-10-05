@@ -1895,6 +1895,10 @@ public final class NodeFactory {
         java.util.List<String>[] elemTypeNameChains = new java.util.List[n];
         GoKind[] keyKinds = new GoKind[n];
         String[] keyTypeNames = new String[n];
+        // M8 closeout: key kind/name chains for nested maps, parallel to the
+        // elem chains for nested arrays (see Fmt.Arg).
+        java.util.List<GoKind>[] keyKindChains = new java.util.List[n];
+        java.util.List<String>[] keyTypeNameChains = new java.util.List[n];
         for (int i = 0; i < n; i++) {
             String apath = path + ".args[" + i + "]";
             args[i] = buildExpr(asObject(argNodes.get(i), apath), ctx);
@@ -1933,6 +1937,8 @@ public final class NodeFactory {
                 }
                 elemKindChains[i] = java.util.List.copyOf(kc);
                 elemTypeNameChains[i] = java.util.List.copyOf(nc);
+                keyKindChains[i] = java.util.List.of();
+                keyTypeNameChains[i] = java.util.List.of();
             } else if ("map".equals(k)) {
                 int keyId = detail.intValue("key", apath);
                 int elemId = detail.intValue("elem", apath);
@@ -1940,8 +1946,35 @@ public final class NodeFactory {
                 keyTypeNames[i] = GoTypeStrings.of(ctx, keyId);
                 elemKinds[i] = kindOf(ctx, elemId, apath);
                 elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                elemKindChains[i] = java.util.List.of();
-                elemTypeNameChains[i] = java.util.List.of();
+                // M8 closeout: walk the element type down through nested maps,
+                // collecting the (key, elem) kinds per level for nested-map
+                // printing (e.g. map[string]map[string]int -> keyChain=[STRING],
+                // elemChain=[INT]). Terminates: each step moves to a strictly
+                // smaller type; go/types rejects recursive map types.
+                java.util.List<GoKind> kkc = new java.util.ArrayList<>();
+                java.util.List<String> knc = new java.util.ArrayList<>();
+                java.util.List<GoKind> kec = new java.util.ArrayList<>();
+                java.util.List<String> nec = new java.util.ArrayList<>();
+                int curId = elemId;
+                while (true) {
+                    Json.Object curEntry = underlyingEntry(ctx, curId, apath);
+                    String ck = curEntry.string("kind", apath);
+                    if (!"map".equals(ck)) {
+                        break;
+                    }
+                    Json.Object curDetail = curEntry.object("detail", apath);
+                    int ckId = curDetail.intValue("key", apath);
+                    int ceId = curDetail.intValue("elem", apath);
+                    kkc.add(kindOf(ctx, ckId, apath));
+                    knc.add(GoTypeStrings.of(ctx, ckId));
+                    kec.add(kindOf(ctx, ceId, apath));
+                    nec.add(GoTypeStrings.of(ctx, ceId));
+                    curId = ceId;
+                }
+                keyKindChains[i] = java.util.List.copyOf(kkc);
+                keyTypeNameChains[i] = java.util.List.copyOf(knc);
+                elemKindChains[i] = java.util.List.copyOf(kec);
+                elemTypeNameChains[i] = java.util.List.copyOf(nec);
             } else if ("pointer".equals(k)) {
                 // M8 (fuzzer find): %v of a pointer to struct/array/slice/map
                 // prints &value (Go's printValue Pointer case), not the erased
@@ -1952,9 +1985,13 @@ public final class NodeFactory {
                 elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
                 elemKindChains[i] = java.util.List.of();
                 elemTypeNameChains[i] = java.util.List.of();
+                keyKindChains[i] = java.util.List.of();
+                keyTypeNameChains[i] = java.util.List.of();
             } else {
                 elemKindChains[i] = java.util.List.of();
                 elemTypeNameChains[i] = java.util.List.of();
+                keyKindChains[i] = java.util.List.of();
+                keyTypeNameChains[i] = java.util.List.of();
             }
         }
         // The wire "type" is null for the Print variants (results discarded,
@@ -1967,7 +2004,8 @@ public final class NodeFactory {
             resultKind = kindOf(ctx, f.intValue("type", path), path);
         }
         return new FmtCallNode(func, args, kinds, typeNames, elemKinds, elemTypeNames,
-                elemKindChains, elemTypeNameChains, keyKinds, keyTypeNames, resultKind);
+                elemKindChains, elemTypeNameChains, keyKinds, keyTypeNames,
+                keyKindChains, keyTypeNameChains, resultKind);
     }
 
     /**

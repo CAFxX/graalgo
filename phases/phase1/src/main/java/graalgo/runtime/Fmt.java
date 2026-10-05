@@ -69,6 +69,10 @@ public final class Fmt {
      * hold the element kinds/names below {@code elemKind} (innermost last),
      * so recursive printing works at arbitrary depth (R2 P0-2); empty or
      * null when the element is not itself a composite.
+     * For nested maps, {@code keyKindChain}/{@code keyTypeNameChain} carry the
+     * key kinds/names per nesting level, parallel to the elem chains
+     * (M8 closeout: nested-map printing; e.g. map[string]map[string]int has
+     * keyKindChain=[STRING], elemKindChain=[INT]).
      * For {@link GoKind#INTERFACE} the value is a {@link GoInterface}
      * (or {@code null} for a nil interface, like Go's {@code arg == nil}).
      */
@@ -76,16 +80,19 @@ public final class Fmt {
                       GoKind keyKind, String keyTypeName,
                       GoKind elemKind, String elemTypeName,
                       List<GoKind> elemKindChain,
-                      List<String> elemTypeNameChain) {
+                      List<String> elemTypeNameChain,
+                      List<GoKind> keyKindChain,
+                      List<String> keyTypeNameChain) {
         /** Convenience for non-composite args. */
         public Arg(Object value, GoKind kind, String typeName) {
-            this(value, kind, typeName, null, null, null, null, null, null);
+            this(value, kind, typeName, null, null, null, null, null, null, null, null);
         }
         /** Convenience for composite args without nested composites. */
         public Arg(Object value, GoKind kind, String typeName,
                    GoKind keyKind, String keyTypeName,
                    GoKind elemKind, String elemTypeName) {
-            this(value, kind, typeName, keyKind, keyTypeName, elemKind, elemTypeName, null, null);
+            this(value, kind, typeName, keyKind, keyTypeName, elemKind, elemTypeName,
+                    null, null, null, null);
         }
     }
 
@@ -590,8 +597,27 @@ public final class Fmt {
         void printArg(Arg arg, int verb) {
             curArg = arg;
             if (arg.value() == null) {
-                // nil interface, like Go's arg == nil.
-                if (verb == 'T' || verb == 'v') {
+                // Go's printArg: a nil slice prints [], a nil map prints
+                // map[] (not <nil>); typed nils print their type for %T.
+                // (M8 closeout, triage class C.)
+                if (verb == 'T') {
+                    if (arg.kind() == GoKind.INTERFACE) {
+                        pad("<nil>");
+                    } else {
+                        fmtS(arg.typeName());
+                    }
+                    return;
+                }
+                if (arg.kind() == GoKind.SLICE) {
+                    pad("[]");
+                    return;
+                }
+                if (arg.kind() == GoKind.MAP) {
+                    pad("map[]");
+                    return;
+                }
+                // nil interface/pointer/chan/func, like Go's arg == nil.
+                if (verb == 'v') {
                     pad("<nil>");
                 } else {
                     badVerb(arg, verb);
@@ -1415,7 +1441,8 @@ public final class Fmt {
                     chain.isEmpty() ? null : chain.get(0),
                     nameChain.isEmpty() ? null : nameChain.get(0),
                     chain.size() <= 1 ? List.of() : chain.subList(1, chain.size()),
-                    nameChain.size() <= 1 ? List.of() : nameChain.subList(1, nameChain.size()));
+                    nameChain.size() <= 1 ? List.of() : nameChain.subList(1, nameChain.size()),
+                    null, null);
         }
 
         /** Port of fmt's printValue Map case (keys sorted for orderable kinds). */
@@ -1442,7 +1469,7 @@ public final class Fmt {
                     }
                     printValue(new Arg(keys[i], keyKind, kt), verb, depth + 1);
                     buf.write(':');
-                    printValue(new Arg(m.get(keys[i]), elemKind, et), verb, depth + 1);
+                    printValue(nestedMapArg(arg, m.get(keys[i])), verb, depth + 1);
                 }
                 buf.write('}');
             } else {
@@ -1453,10 +1480,32 @@ public final class Fmt {
                     }
                     printValue(new Arg(keys[i], keyKind, kt), verb, depth + 1);
                     buf.write(':');
-                    printValue(new Arg(m.get(keys[i]), elemKind, et), verb, depth + 1);
+                    printValue(nestedMapArg(arg, m.get(keys[i])), verb, depth + 1);
                 }
                 buf.write(']');
             }
+        }
+
+        /**
+         * Builds the {@link Arg} for one value of a map, popping one level
+         * off the key/elem kind chains (M8 closeout: nested maps at arbitrary
+         * depth; e.g. map[string]map[string]int threads keyKindChain=[STRING],
+         * elemKindChain=[INT] so the inner map prints with the right kinds).
+         */
+        private Arg nestedMapArg(Arg arg, Object elemValue) {
+            List<GoKind> kc = arg.keyKindChain() != null ? arg.keyKindChain() : List.of();
+            List<String> knc = arg.keyTypeNameChain() != null ? arg.keyTypeNameChain() : List.of();
+            List<GoKind> ec = arg.elemKindChain() != null ? arg.elemKindChain() : List.of();
+            List<String> enc = arg.elemTypeNameChain() != null ? arg.elemTypeNameChain() : List.of();
+            return new Arg(elemValue, arg.elemKind(), arg.elemTypeName(),
+                    kc.isEmpty() ? null : kc.get(0),
+                    knc.isEmpty() ? null : knc.get(0),
+                    ec.isEmpty() ? null : ec.get(0),
+                    enc.isEmpty() ? null : enc.get(0),
+                    ec.size() <= 1 ? List.of() : ec.subList(1, ec.size()),
+                    enc.size() <= 1 ? List.of() : enc.subList(1, enc.size()),
+                    kc.size() <= 1 ? List.of() : kc.subList(1, kc.size()),
+                    knc.size() <= 1 ? List.of() : knc.subList(1, knc.size()));
         }
 
         /** Port of fmt's printValue Struct case. */

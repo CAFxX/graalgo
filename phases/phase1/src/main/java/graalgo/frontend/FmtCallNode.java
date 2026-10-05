@@ -36,6 +36,11 @@ public final class FmtCallNode extends GoExprNode {
     private final java.util.List<String>[] elemTypeNameChains;
     private final GoKind[] keyKinds;
     private final String[] keyTypeNames;
+    // M8 closeout: key kind/name chains for nested maps (parallel to the
+    // elem chains for nested arrays); e.g. map[string]map[string]int has
+    // keyKindChain=[STRING], elemKindChain=[INT].
+    private final java.util.List<GoKind>[] keyKindChains;
+    private final java.util.List<String>[] keyTypeNameChains;
 
     public FmtCallNode(String funcName, GoExprNode[] args,
             GoKind[] kinds, String[] typeNames,
@@ -43,6 +48,8 @@ public final class FmtCallNode extends GoExprNode {
             java.util.List<GoKind>[] elemKindChains,
             java.util.List<String>[] elemTypeNameChains,
             GoKind[] keyKinds, String[] keyTypeNames,
+            java.util.List<GoKind>[] keyKindChains,
+            java.util.List<String>[] keyTypeNameChains,
             GoKind resultKind) {
         super(resultKind);
         this.funcName = funcName;
@@ -55,6 +62,8 @@ public final class FmtCallNode extends GoExprNode {
         this.elemTypeNameChains = elemTypeNameChains;
         this.keyKinds = keyKinds;
         this.keyTypeNames = keyTypeNames;
+        this.keyKindChains = keyKindChains;
+        this.keyTypeNameChains = keyTypeNameChains;
     }
 
     // Package-private accessors for deferred fmt calls (M7): DeferNode
@@ -101,13 +110,22 @@ public final class FmtCallNode extends GoExprNode {
         return keyTypeNames;
     }
 
+    java.util.List<GoKind>[] argKeyKindChains() {
+        return keyKindChains;
+    }
+
+    java.util.List<String>[] argKeyTypeNameChains() {
+        return keyTypeNameChains;
+    }
+
     @Override
     public Object executeObject(VirtualFrame frame) {
         Fmt.Arg[] fargs = new Fmt.Arg[args.length];
         for (int i = 0; i < args.length; i++) {
             fargs[i] = new Fmt.Arg(readArg(args[i], frame), kinds[i], typeNames[i],
                     keyKinds[i], keyTypeNames[i], elemKinds[i], elemTypeNames[i],
-                    elemKindChains[i], elemTypeNameChains[i]);
+                    elemKindChains[i], elemTypeNameChains[i],
+                    keyKindChains[i], keyTypeNameChains[i]);
         }
         return switch (funcName) {
             case "Sprint" -> Fmt.sprint(fargs);
