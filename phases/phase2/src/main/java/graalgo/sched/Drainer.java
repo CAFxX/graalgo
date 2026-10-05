@@ -58,6 +58,11 @@ public final class Drainer {
         drainerThread.setPriority(Thread.MAX_PRIORITY);
     }
 
+    /** Package-private for tests: the drainer thread (to interrupt it). */
+    Thread drainerThreadForTest() {
+        return drainerThread;
+    }
+
     /** MPSC offer from vthreads. Never blocks. */
     void offer(ResumeToken token) {
         inbox.offer(token);

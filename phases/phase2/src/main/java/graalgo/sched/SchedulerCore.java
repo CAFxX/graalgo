@@ -1,6 +1,5 @@
 package graalgo.sched;
 
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -86,7 +85,15 @@ public final class SchedulerCore {
     private final Drainer drainer;
     private final ThreadLocal<GoroutineHandle> currentHandle = new ThreadLocal<>();
     private final AtomicInteger liveGoroutines = new AtomicInteger();
-    private final CountDownLatch quiescenceLatch = new CountDownLatch(1);
+    /**
+     * Quiescence monitor (reviewer2 P0). A one-shot CountDownLatch cannot
+     * work here: the live count hits zero transiently mid-spawn-stream
+     * (early trivial goroutines drain before later spawns are issued),
+     * firing the latch early with no way to un-fire. The monitor
+     * re-checks the condition on every wakeup, so a transient zero
+     * before the await call cannot cause an early return.
+     */
+    private final Object quiescenceLock = new Object();
 
     /**
      * @param gomaxprocs requested GOMAXPROCS (clamped to &ge;1)
@@ -263,8 +270,10 @@ public final class SchedulerCore {
             } finally {
                 GoroutineState.restore(prev);
                 currentHandle.remove();
-                if (liveGoroutines.decrementAndGet() == 0) {
-                    quiescenceLatch.countDown();
+                synchronized (quiescenceLock) {
+                    if (liveGoroutines.decrementAndGet() == 0) {
+                        quiescenceLock.notifyAll();
+                    }
                 }
                 drainer.offer(new ResumeToken(ResumeToken.Kind.EXIT, h, -1));
             }
@@ -274,7 +283,9 @@ public final class SchedulerCore {
         // and the live count is untouched. The vthread blocks in awaitAck
         // until the drainer admits it, so early start is safe.
         vthread.start();
-        liveGoroutines.incrementAndGet();
+        synchronized (quiescenceLock) {
+            liveGoroutines.incrementAndGet();
+        }
         drainer.offer(new ResumeToken(ResumeToken.Kind.INIT, h, t));
         return h;
     }
@@ -349,15 +360,20 @@ public final class SchedulerCore {
     /**
      * Blocks until every spawned goroutine has finished.
      *
-     * <p><strong>Closed-world contract:</strong> the calling thread must
-     * not spawn after calling this, and every spawn must originate from
-     * a live goroutine (or from threads that finished spawning before
-     * this call). A spawn stream from the awaiting thread itself (e.g. a
-     * 10k-spawn loop) can transiently hit zero live goroutines mid-stream
-     * and return early — bulk spawns must go through a spawner goroutine.
-     * Violating the contract is a test bug, not a scheduler bug.
+     * <p><strong>No-concurrent-spawn contract:</strong> {@code spawn()}
+     * must not be called concurrently with this method from another
+     * thread. The spawn set must be closed before awaiting; a spawn that
+     * starts after this method has observed zero and returned will not
+     * be waited for. (The canonical spawn-loop-then-await from a single
+     * thread is safe: the monitor re-checks the live count at await
+     * time, so a transient zero mid-loop cannot cause an early return —
+     * reviewer2 P0.)
      */
     public void awaitQuiescence() throws InterruptedException {
-        quiescenceLatch.await();
+        synchronized (quiescenceLock) {
+            while (liveGoroutines.get() != 0) {
+                quiescenceLock.wait();
+            }
+        }
     }
 }

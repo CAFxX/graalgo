@@ -3,7 +3,7 @@
 User-space goroutine scheduler (option C, spike 2b PASS): goroutine =
 virtual thread + scheduler token; quantum-based preemption via
 `Safepoint.poll()`; single platform-thread drainer; in-flight cap =
-`GOMAXPROCS`.
+`min(GOMAXPROCS, carrier parallelism)` (P2-D6).
 
 ## Layout
 

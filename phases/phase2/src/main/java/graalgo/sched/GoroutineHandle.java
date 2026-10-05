@@ -36,8 +36,12 @@ public final class GoroutineHandle {
     final AtomicLong parkSeq = new AtomicLong(0);
 
     /**
-     * Currently armed generation, or -1 when not parked. A waker wins
-     * generation {@code t} via {@code armed.compareAndSet(t, -2)}.
+     * Currently armed generation, or -1 when not parked. Set by
+     * {@code armPark} before the waiter becomes visible; the drainer
+     * matches PARKED/UNPARK tokens by handle against this generation.
+     * (The {@code compareAndSet(t, -2)} external-waker protocol from
+     * spike 2b is not implemented in P2-M1; all wakeups go through the
+     * drainer — see class javadoc.)
      */
     final AtomicLong armed = new AtomicLong(-1);
 

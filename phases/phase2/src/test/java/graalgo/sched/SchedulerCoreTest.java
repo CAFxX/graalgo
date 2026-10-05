@@ -34,8 +34,8 @@ public final class SchedulerCoreTest {
     // ---------- spawn / join / quiescence ----------
 
     /**
-     * verifies: GG-SCHED-0001 (goroutine spawn/admission).
-     * N goroutines each do work; all complete; quiescence fires.
+     * Basic spawn/join: N goroutines each do work; all complete.
+     * (No specific GG ID; exercises spawn/admission machinery.)
      */
     public void testSpawnAndJoin() throws Exception {
         SchedulerCore sched = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
@@ -44,19 +44,9 @@ public final class SchedulerCoreTest {
         try {
             int n = 50;
             AtomicInteger done = new AtomicInteger();
-            CountDownLatch spawnsIssued = new CountDownLatch(1);
-            // Spawner goroutine: honors the closed-world contract (see
-            // awaitQuiescence) — the spawner stays live until the last
-            // spawn is issued, so the live count cannot hit zero
-            // mid-stream. Spawning straight from the test thread is the
-            // P0-1 race (reviewer1).
-            sched.spawn(() -> {
-                for (int i = 0; i < n; i++) {
-                    sched.spawn(done::incrementAndGet);
-                }
-                spawnsIssued.countDown();
-            });
-            assertTrue(spawnsIssued.await(10, TimeUnit.SECONDS), "spawns issued");
+            for (int i = 0; i < n; i++) {
+                sched.spawn(done::incrementAndGet);
+            }
             sched.awaitQuiescence();
             assertEquals(n, done.get(), "all goroutines ran");
             assertEquals(0, sched.runnableCount(), "quiescence: none live");
@@ -66,15 +56,13 @@ public final class SchedulerCoreTest {
     }
 
     /**
-     * verifies: GG-SCHED-0001 (quiescence scale).
+     * Quiescence at scale: 10k goroutines all run to completion.
      * P2-M1 acceptance: quiescence probe green at 10k goroutines.
+     * (No specific GG ID; exercises the quiescence machinery.)
      *
-     * <p>The 10k spawns go through a single spawner goroutine: the
-     * closed-world contract (see {@code awaitQuiescence}) requires the
-     * spawn set to be closed before awaiting, and a spawner goroutine
-     * keeps the live count above zero until the last spawn is issued.
-     * Spawning 10k directly from the test thread is a contract violation
-     * (transient zero mid-stream) — reviewer1 P0-1.
+     * <p>The canonical spawn-loop-then-await pattern: the monitor-based
+     * quiescence (reviewer2 P0) re-checks the live count at await time,
+     * so a transient zero mid-loop cannot cause an early return.
      */
     public void testQuiescenceAt10k() throws Exception {
         SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
@@ -83,14 +71,9 @@ public final class SchedulerCoreTest {
         try {
             int n = 10_000;
             AtomicInteger done = new AtomicInteger();
-            CountDownLatch spawnsIssued = new CountDownLatch(1);
-            sched.spawn(() -> {
-                for (int i = 0; i < n; i++) {
-                    sched.spawn(done::incrementAndGet);
-                }
-                spawnsIssued.countDown();
-            });
-            assertTrue(spawnsIssued.await(30, TimeUnit.SECONDS), "spawner issued 10k spawns");
+            for (int i = 0; i < n; i++) {
+                sched.spawn(done::incrementAndGet);
+            }
             sched.awaitQuiescence();
             assertEquals(n, done.get(), "10k goroutines all ran");
             assertTrue(sched.maxInflightObserved() <= 2,
@@ -298,7 +281,9 @@ public final class SchedulerCoreTest {
     }
 
     /**
-     * verifies: GG-SCHED-0001 (Safepoint.poll wiring).
+     * Safepoint.poll() resolves to the Phase-2 overlay (not the Phase-1
+     * stub) and delegates to the installed scheduler.
+     * (No specific GG ID; exercises the overlay wiring.)
      * The same preemption through the REAL replacement
      * {@code graalgo.safepoint.Safepoint.poll()} — proves the classpath
      * overlay resolves to Phase-2 semantics.
@@ -435,7 +420,9 @@ public final class SchedulerCoreTest {
     }
 
     /**
-     * verifies: GG-SCHED-0001 (internal errors are loud).
+     * Internal errors are loud: a RuntimeException escaping a goroutine
+     * body is recorded as a crash (launcher exits 1), never swallowed.
+     * verifies: GG-0017 (Goexit/panic/crash discipline).
      * A RuntimeException escaping a goroutine body is recorded as a
      * crash (launcher exits 1), never swallowed.
      */
@@ -449,6 +436,73 @@ public final class SchedulerCoreTest {
             });
             sched.awaitQuiescence();
             assertTrue(sched.crashed(), "internal error recorded");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * Voluntary yield via the quantum-park mechanism.
+     * Reviewer2 P1-2: yieldCurrent() had zero coverage. With cap=1 and
+     * quantum disabled, a goroutine that never yields would starve the
+     * second goroutine forever; 100 yields must let it run.
+     * (Exercises the park mechanism; not quantum expiry per se.)
+     * Red-green: fails if yieldCurrent is a no-op (timeout).
+     */
+    public void testYieldCurrent() throws Exception {
+        SchedulerCore sched = new SchedulerCore(1, 3_600_000_000_000L);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            AtomicInteger yields = new AtomicInteger();
+            AtomicInteger otherRan = new AtomicInteger();
+            CountDownLatch bothDone = new CountDownLatch(2);
+            sched.spawn(() -> {
+                for (int i = 0; i < 100; i++) {
+                    yields.incrementAndGet();
+                    sched.yieldCurrent();
+                }
+                bothDone.countDown();
+            });
+            sched.spawn(() -> {
+                otherRan.incrementAndGet();
+                bothDone.countDown();
+            });
+            assertTrue(bothDone.await(10, TimeUnit.SECONDS),
+                    "both completed (yield starved the peer if no-op)");
+            assertEquals(100, yields.get(), "all yields executed");
+            assertEquals(1, otherRan.get(), "peer ran: yield actually parked");
+            sched.awaitQuiescence();
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * verifies: GG-SCHED-0002 (non-terminating drainer).
+     * Reviewer2 P2: the interrupt-swallow was untested. Interrupting the
+     * drainer thread must not kill it; the scheduler keeps working.
+     */
+    public void testDrainerSurvivesInterrupt() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            // Let the drainer block in take().
+            Thread.sleep(100);
+            Thread drainerThread = sched.drainer().drainerThreadForTest();
+            assertTrue(drainerThread != null && drainerThread.isAlive(),
+                    "drainer thread running");
+            drainerThread.interrupt();
+            // Give it a moment to swallow the interrupt and continue.
+            Thread.sleep(100);
+            assertTrue(drainerThread.isAlive(),
+                    "drainer survived interrupt (GG-SCHED-0002)");
+            // Scheduler still works: spawn and join.
+            AtomicInteger done = new AtomicInteger();
+            sched.spawn(done::incrementAndGet);
+            sched.awaitQuiescence();
+            assertEquals(1, done.get(), "scheduler functional after interrupt");
         } finally {
             SchedulerCore.install(null);
         }

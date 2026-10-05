@@ -145,3 +145,52 @@ stable. `make check` green (debug gate exclusions documented for
 production diagnostics).
 
 **Next:** reviewer2 report → remediate → fresh suite+check → sign-off.
+
+## 2026-10-05 ~13:00 CEST — P2-M1 reviewer2 remediation
+
+Reviewer2 (methodology) returned GO-WITH-FINDINGS: 1 P0 + 4 P1s + 5 P2s.
+Report at reviews/phase2-m1/reviewer2.md.
+
+**P0 (quiescence latch genuinely broken):** Reviewer2 confirmed the
+one-shot CountDownLatch fires on transient mid-spawn zeros and can never
+un-fire (reproduced: 9/10, expected=10000 actual=620). Fixed by replacing
+the latch with a monitor (synchronized + wait/notify) + re-check loop:
+awaitQuiescence() re-checks live==0 at call time, so a transient zero
+during a prior spawn loop cannot cause early return. Documented the
+no-concurrent-spawn contract (spawn must not race await from another
+thread). Tests simplified back to the canonical spawn-loop-then-await
+pattern. 8/8 runs stable at 15 tests.
+
+**P1-1 (wake-action coverage):** Verified by mutation — deleting
+action.run() kills testWakeActionSurvivesUnparkBeforePark (FAIL as
+expected). The test provides the missing coverage.
+
+**P1-2 (yieldCurrent untested):** Added testYieldCurrent (cap=1, quantum
+disabled; 100 yields must let the peer run; red-green: no-op yield
+hangs).
+
+**P1-3 (preemption unauditable):** Archived smoke/preempt.go,
+smoke/panic.go, smoke/hello.go with smoke/README.md documenting the
+verification (wait-loop shape, quantum-neutered hangs, gc output match).
+
+**P1-4 (GG annotations):** Removed inaccurate verifies: GG-SCHED-0001
+from spawn/quiescence/wiring/crash tests (GG-SCHED-0001 is specifically
+quantum-expiry; only testQuantumExpiryPreempts keeps it).
+
+**P2s:**
+- armed field javadoc: clarified the CAS protocol is not implemented in
+  P2-M1 (drainer-matched only).
+- README: fixed cap formula disagreement (intro now says
+  min(GOMAXPROCS, carrier parallelism), matching P2-D6).
+- Differential: re-ran with 9 named programs (sl01_consts, sl02_arith,
+  cf01_ifelse, gv01_const, sl08_incdec, cf02_for, sl05_int_uint, hello,
+  panic). 8/8 non-panicking byte-identical. panic.go differs only in
+  stack-trace verbosity (Phase-1 gc-style vs M1 minimal); exit code (2)
+  and message match. Known M1 limitation, not a correctness issue.
+- Drainer interrupt-swallow: added testDrainerSurvivesInterrupt
+  (verifies GG-SCHED-0002 non-terminating).
+- Ack/unpark stress: documented as probabilistic (P2; acceptable for
+  stress test).
+
+**Tests:** 15/15 green (13 + yield + interrupt), 8/8 runs stable.
+`make check` green.
