@@ -10,6 +10,27 @@ import java.util.List;
  * instantiates each registered test class and invokes every public no-arg
  * method whose name starts with "test". Exits 0 on all-pass, 1 on any
  * failure. New test classes register in TESTS below.
+ *
+ * <h2>Test-writing rules (P2-M9 process patch)</h2>
+ * A spawned goroutine holds a scheduler in-flight slot until it parks via
+ * the scheduler ({@code parkCurrent}/{@code yieldCurrent}/{@code ioEnter}).
+ * JVM-blocking inside a goroutine body WITHOUT the scheduler's knowledge
+ * leaks the slot: with GOMAXPROCS=cap, an indefinite block (e.g.
+ * {@code CountDownLatch.await()}, {@code BlockingQueue.take()}) deadlocks
+ * admission — every other goroutine starves and the test hangs. Rules:
+ * <ul>
+ *   <li>NEVER JVM-block indefinitely inside a spawned goroutine. Use
+ *       scheduler-aware parking ({@code parkCurrent}, channel ops,
+ *       {@code GoWaitGroup}, {@code Timers.sleep}) or spin +
+ *       {@code yieldCurrent()} (which releases the slot).</li>
+ *   <li>Real blocking syscalls go inside {@code ioEnter()}/{@code ioExit()}
+ *       (see {@code TortureBattery.legF5b}: the slot is released first).</li>
+ *   <li>Bounded {@code Thread.sleep} for test pacing is tolerated
+ *       (transient slot hold) but prefer deterministic probes
+ *       ({@code recvWaitersCount()}, admission listeners).</li>
+ *   <li>{@code CountDownLatch.await()} etc. belong on the TEST thread
+ *       (which holds no slot), counted down by goroutines — never inverted.</li>
+ * </ul>
  */
 public final class SchedTestRunner {
     private static final List<Class<?>> TESTS = new ArrayList<>();
@@ -37,6 +58,7 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.runtime.sync.SyncStressTest.class);
         TESTS.add(graalgo.sched.WakeupModelTest.class);
         TESTS.add(graalgo.sched.WakeupRaceStressTest.class);
+        TESTS.add(graalgo.sched.JfrParkCostTest.class);
     }
 
     public static void main(String[] args) {

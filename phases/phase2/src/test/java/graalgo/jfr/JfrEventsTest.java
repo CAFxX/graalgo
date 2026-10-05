@@ -439,50 +439,16 @@ public final class JfrEventsTest {
      * regressions. The precise claims are in testHotLoopParkFilter
      * (filter exactness) and testDisabledGuardCostNegligible (guard cost).
      */
-    public void testYieldThroughputSmoke() throws Exception {
-        // P2-M9: paired interleaved design (was: 3 rounds of
-        // disabled-then-enabled on a fresh scheduler per leg). The old
-        // design compared a cold first leg against a warm second leg:
-        // the disabled baseline swung 40k–64k/s run to run while the
-        // enabled leg held steady at 55–61k/s — pure warmup/order noise,
-        // failing the 0.80 gate at ~40% on a loaded box. The new design
-        // warms up once on ONE scheduler, then interleaves D/E/D/E legs
-        // so warmup and drift cancel; the ratio of means is the gate.
-        // A true JFR hot-path regression (>=20% slowdown) still trips it.
-        SchedulerCore sched = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
-        sched.start();
-        SchedulerCore.install(sched);
-        try {
-            int goroutines = 4;
-            int yields = 50000;
-            runYielders(sched, goroutines, 20000); // warmup: JIT + drainer settle
-            double disabledSum = 0, enabledSum = 0;
-            int legs = 4;
-            for (int i = 0; i < legs; i++) {
-                disabledSum += runYielders(sched, goroutines, yields);
-                Recording rec = newRecording();
-                rec.start();
-                try {
-                    enabledSum += runYielders(sched, goroutines, yields);
-                } finally {
-                    rec.stop();
-                    rec.close();
-                }
-            }
-            // Throughputs: yields/s per leg; ratio of means.
-            double ratio = (enabledSum / legs) / (disabledSum / legs);
-            System.out.println("JFR yield throughput interleaved ratio=" + ratio
-                    + " (disabledMean=" + (long) (disabledSum / legs)
-                    + "/s enabledMean=" + (long) (enabledSum / legs) + "/s)");
-            assertTrue(ratio >= 0.80,
-                    "gross yield-throughput regression with JFR enabled: ratio=" + ratio);
-        } finally {
-            SchedulerCore.install(null);
-        }
-    }
+    // NOTE (P2-M9): testYieldThroughputSmoke was REMOVED. A throughput
+    // ratio cannot measure a ~0.5% JFR effect under ±10% scheduling noise:
+    // it flaked ~40% in-suite (ratios 0.50–1.65) and neither 10x work nor
+    // interleaved D/E legs made it deterministic. Replaced by
+    // graalgo.sched.JfrParkCostTest, which measures the hook cost directly
+    // (stable) and is strictly more sensitive (500ns budget vs a 0.80
+    // ratio gate that could never catch a realistic regression).
 
-    /** Runs n yielders and returns the measured yield throughput (yields/s). */
-    private double runYielders(SchedulerCore sched, int n, int yields) throws Exception {
+    /** Spawns n yielders and waits for quiescence. */
+    private void runYielders(SchedulerCore sched, int n, int yields) throws Exception {
         for (int i = 0; i < n; i++) {
             sched.spawn(() -> {
                 for (int j = 0; j < yields; j++) {
@@ -490,10 +456,7 @@ public final class JfrEventsTest {
                 }
             });
         }
-        long t0 = System.nanoTime();
         awaitQuiescence(sched, 120000);
-        long dtNanos = System.nanoTime() - t0;
-        return (double) n * yields / (dtNanos / 1e9);
     }
 
     private static void awaitQuiescence(SchedulerCore sched, long timeoutMs) throws Exception {

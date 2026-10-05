@@ -11,7 +11,7 @@ import java.util.Set;
 
 /**
  * P2-M9: exhaustive interleaving explorer for the park/unpark protocol
- * (done-gate 4; the GG-0044 lost-wakeup class).
+ * (done-gate 4; verifies: GG-WAKE-0002).
  *
  * <h2>Why a bespoke explorer (tool-spike verdict)</h2>
  * The protocol's entire concurrency surface collapses to two things:
@@ -553,6 +553,65 @@ public final class WakeupModelTest {
         assertTrue(h.acked.get() >= t1, "park must be admitted via direct unpark");
         assertEquals(1, d.wakeUnparkDirect.get(), "exactly one direct admission");
         assertEquals(0, d.wakeUnparkStashed.get(), "no stashed admission on this path");
+    }
+
+    /**
+     * Duplicate unpark: TWO unparks for ONE park must produce exactly ONE
+     * admission — the second is stashed, never duplicated. (Reviewer2
+     * P1-1: the "never duplicated" half of the stale-wakeup property.)
+     */
+    public void testDuplicateUnparkAdmittedOnce() {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        GoroutineHandle h = new GoroutineHandle(() -> {});
+        h.thread = Thread.currentThread();
+        Drainer d = sched.drainer();
+        Deque<ResumeToken> inbox = new ArrayDeque<>();
+        long t0 = sched.armPark(h);
+        inbox.addLast(new ResumeToken(ResumeToken.Kind.INIT, h, t0));
+        long t1 = sched.armPark(h);
+        inbox.addLast(new ResumeToken(ResumeToken.Kind.PARKED, h, t1));
+        inbox.addLast(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
+        inbox.addLast(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
+        while (!inbox.isEmpty()) {
+            d.processOneForTest(inbox.pollFirst());
+        }
+        assertTrue(h.acked.get() >= t1, "park admitted");
+        long wakeAdmissions = d.wakeUnparkDirect.get() + d.wakeUnparkStashed.get();
+        assertEquals(1, wakeAdmissions, "exactly one WAKE admission for one park");
+        assertEquals(1, d.wakeUnparkDirect.get(), "the matched unpark went direct");
+        // The duplicate is retained (bounded: ids unique), not duplicated.
+    }
+
+    /**
+     * Stale unpark after re-arm: the goroutine completes a park/wake
+     * cycle, then a STALE unpark arrives while it is RUNNING, then it
+     * parks again. The stale unpark stashes and is consumed exactly once
+     * by the re-armed park (spurious wakeup — tolerated, never lost,
+     * never duplicated).
+     */
+    public void testStaleUnparkAfterRearm() {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        GoroutineHandle h = new GoroutineHandle(() -> {});
+        h.thread = Thread.currentThread();
+        Drainer d = sched.drainer();
+        Deque<ResumeToken> inbox = new ArrayDeque<>();
+        long t0 = sched.armPark(h);
+        inbox.addLast(new ResumeToken(ResumeToken.Kind.INIT, h, t0));
+        // First park/wake cycle (re-arm).
+        long t1 = sched.armPark(h);
+        inbox.addLast(new ResumeToken(ResumeToken.Kind.PARKED, h, t1));
+        inbox.addLast(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
+        // Stale unpark while RUNNING.
+        inbox.addLast(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
+        // Re-armed park consumes the stash.
+        long t2 = sched.armPark(h);
+        inbox.addLast(new ResumeToken(ResumeToken.Kind.PARKED, h, t2));
+        while (!inbox.isEmpty()) {
+            d.processOneForTest(inbox.pollFirst());
+        }
+        assertTrue(h.acked.get() >= t2, "re-armed park admitted via stashed unpark");
+        assertEquals(1, d.wakeUnparkDirect.get(), "first cycle went direct");
+        assertEquals(1, d.wakeUnparkStashed.get(), "stale unpark consumed once via stash");
     }
 
     // ================= red-green guard =================

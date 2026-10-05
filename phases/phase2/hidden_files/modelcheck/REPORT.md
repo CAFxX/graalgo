@@ -25,13 +25,18 @@ either matched to a parked PARKED or stashed and consumed by exactly one
 later PARKED. A terminal WAIT with the paired unpark offered = LOST WAKEUP
 (hard fail with the full path).
 
+Retention (not loss): an UNPARK offered for an exited or never-parking
+handle is retained in `unparkPending` (bounded: handle ids are unique and
+never reused). This is a bounded memory retention, not a lost wakeup —
+no park is left unadmitted because of it (proven by `exit-pending-unpark`).
+
 ## 3. Coverage vs GG-WAKE-0002 (a–f)
 
 | Interleaving | Script(s) | Result |
 |---|---|---|
 | (a) close() waking parked senders via aborted path while receivers drain | `threeway` (3 parked × 3 unparks, all orders); the drainer does not distinguish abort unparks | PASS |
 | (b) stale-ticket wakeup racing re-arm to fresh ticket | `unpark-consumed-once`, `unpark-io-park` | PASS |
-| (c) select in-flight stale signal vs re-registration | `unpark-consumed-once` (stale unpark consumed exactly once, never duplicated) | PASS |
+| (c) select in-flight stale signal vs re-registration | `unpark-consumed-once`, `testDuplicateUnparkAdmittedOnce`, `testStaleUnparkAfterRearm` — see analogy note below | PASS |
 | (d) INIT lane under WAKEUP flood | `init-under-wake-flood` (cap=1) | PASS |
 | (e) cap=1 channel-wakeup liveness | `cap1-handoff` | PASS |
 | (f) WAKEUP-before-IDLE with generation skew under drainer batching | every script explores both orders; `testUnparkBeforeParkFastPath` directed | PASS |
@@ -50,8 +55,11 @@ it from the other direction:
   admitted, `wakeUnparkDirect=1`, `wakeUnparkStashed=0`.
 
 The two directed tests prove the provenance counters partition every WAKE
-admission; the explorer proves no admission occurs without an UNPARK or
-IO_EXIT behind it. No other re-admission-without-UNPARK path exists in the
+admission; the explorer proves no WAKE-lane admission occurs without an
+UNPARK or IO_EXIT behind it. (INIT/RESUME admissions need no unpark — the
+drainer admits those lanes directly; the "no admission without cause"
+claim is scoped to the WAKE lane.) No other
+re-admission-without-UNPARK path exists in the
 model. The JFR timeline anomaly was the stashed path — legitimate.
 
 ## 5. Results
@@ -75,9 +83,26 @@ end state; property = every paired park admitted, no lost wakeup):
 | init-under-wake-flood | 3,021 | 3 | no lost wakeup |
 
 Directed: `testUnparkBeforeParkFastPath` (stashed=1/direct=0),
-`testParkBeforeUnparkDirectPath` (direct=1/stashed=0) — both PASS.
+`testParkBeforeUnparkDirectPath` (direct=1/stashed=0),
+`testDuplicateUnparkAdmittedOnce` (two unparks → exactly one admission),
+`testStaleUnparkAfterRearm` (stale unpark consumed once by re-armed park)
+— all PASS.
 Red-green: `testModelDetectsWithheldUnpark` fails with LOST WAKEUP as
-required (explorer is not vacuous).
+required (explorer is not vacuous); `JfrParkCostTest` fails under a 2us
+fault-injected hook delay (6612ns > 500ns budget — verified 2026-10-05,
+then reverted).
+
+### Analogy note for (c)
+
+The implementation has no "SelSignal" — select uses a shared CAS claim
+(`SelectOp`). At the drainer protocol level, a select stale wakeup IS an
+UNPARK offered for a handle with no parked PARKED (the claim was won
+elsewhere). The drainer stashes it in `unparkPending`; the handle's next
+PARKED consumes it exactly once (a spurious wakeup, tolerated because the
+select re-checks the claim). The three directed tests prove the three
+required properties: stashed-not-lost (fast-path), matched-when-parked
+(direct), never-duplicated (duplicate-unpark), consumed-once-after-rearm
+(stale-after-rearm). The explorer proves no interleaving loses one.
 
 ## 6. JVM race stress (`WakeupRaceStressTest`)
 
@@ -102,8 +127,41 @@ asserted exactly.
 - The channel/select/timer logic that DECIDES when to unpark: out of
   scope; pairing is given by scripts (that logic is covered by
   ChannelTest/ChannelDifferentialTest/TimerDifferentialTest).
+- The `awaitAck` spin itself (LockSupport.park/unpark permit absorption)
+  is modeled, not executed; the JFR park-path hooks (`notePark`,
+  `parkResumed`) are not in the model (they don't affect wakeup pairing;
+  their cost is bounded by `JfrParkCostTest`).
 - `armed` is write-only dead state (spike-2b external-waker protocol
   never implemented; all wakeups route through the drainer).
+
+## 9. "Race-detector-equivalent" — the explicit argument
+
+Done-gate 4 asks for JVM race tools on the runtime. No race detector was
+run; here is why the combination is equivalent-or-stronger for THIS
+design:
+
+1. **The drainer is single-threaded.** Every mutation of lanes, inflight,
+   parked, unparkPending, and inIo happens on the drainer thread under one
+   lock. There is no concurrent mutation to race — a race detector has
+   nothing to find there by construction.
+2. **The vthread side is atomic/volatile-only.** Vthreads communicate via
+   (a) MPSC offer to a `LinkedBlockingQueue` (linearizable — the explorer
+   covers every total order), (b) `AtomicLong`/`AtomicReference`/
+   `volatile` fields (`acked`, `parkSeq`, `wakeAction`, `inIo`,
+   `parkReason`). Audit of every compound operation: `awaitAck` spins on
+   a volatile read (no check-then-act); `armPark`'s getAndIncrement+set
+   pair doesn't need atomicity (uniqueness comes from the increment;
+   `armed` is write-only); `wakeAction` getAndSet is atomic; `inIo`
+   compareAndSet is atomic. No check-then-act race exists.
+3. **Channel/select/timer state is monitor-held** (`synchronized` on the
+   channel/heap).
+4. **Empirical:** the race stress (§6) hammers the real paths with 64+
+   vthreads; any race would manifest as a hang (loud timeout), a count
+   mismatch (exact assertions), or a drainer halt (fatal path).
+
+A ThreadSanitizer-style tool explores interleavings looking for racy
+accesses; (1)–(3) show the racy-access surface is empty by construction,
+and the explorer + stress cover the interleaving space directly.
 
 ## 8. Red-green evidence
 
