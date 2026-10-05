@@ -631,7 +631,7 @@
                           }
                         },
                         "y": {
-                          "kind": "unary",
+                          "kind": "basiclit",
                           "pos": {
                             "file": 0,
                             "line": 15,
@@ -640,25 +640,11 @@
                             "len": 2
                           },
                           "fields": {
-                            "op": "-",
+                            "const": "-4",
+                            "f32bits": -1065353216,
+                            "f64bits": -4607182418800017408,
                             "type": 2,
-                            "x": {
-                              "kind": "basiclit",
-                              "pos": {
-                                "file": 0,
-                                "line": 15,
-                                "col": 12,
-                                "off": 361,
-                                "len": 1
-                              },
-                              "fields": {
-                                "const": "4",
-                                "f32bits": 1082130432,
-                                "f64bits": 4616189618054758400,
-                                "type": 3,
-                                "value": "4"
-                              }
-                            }
+                            "value": ""
                           }
                         }
                       }
@@ -1862,7 +1848,7 @@
                   ],
                   "rhs": [
                     {
-                      "kind": "unary",
+                      "kind": "basiclit",
                       "pos": {
                         "file": 0,
                         "line": 30,
@@ -1871,25 +1857,11 @@
                         "len": 2
                       },
                       "fields": {
-                        "op": "-",
+                        "const": "-1",
+                        "f32bits": -1082130432,
+                        "f64bits": -4616189618054758400,
                         "type": 2,
-                        "x": {
-                          "kind": "basiclit",
-                          "pos": {
-                            "file": 0,
-                            "line": 30,
-                            "col": 9,
-                            "off": 634,
-                            "len": 1
-                          },
-                          "fields": {
-                            "const": "1",
-                            "f32bits": 1065353216,
-                            "f64bits": 4607182418800017408,
-                            "type": 3,
-                            "value": "1"
-                          }
-                        }
+                        "value": ""
                       }
                     }
                   ],
