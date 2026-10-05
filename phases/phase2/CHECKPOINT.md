@@ -1027,3 +1027,83 @@ phases/phase2/hidden_files/jfr/EVENTS.md + p2-m6-evidence.jfr + counts).
 - `make check`: all gates clean, pin-audit smoke PASS (unexpected=0, unreadable=0).
 
 **Done-gate 2: MET.** Zero unexpected pins. GG-0057 falsifier not triggered.
+
+## 2026-10-05 — P2-M8 preemption-torture + stress (in progress, done-gate 1)
+
+**Scope decisions (from [OPEN]s):**
+- `sync`: proposal scope (Mutex/RWMutex/WaitGroup/Once) implemented as Java
+  runtime classes (`graalgo.runtime.sync`, scheduler-aware parking); Go
+  `import "sync"` blocked — Phase-1 overlayImporter is frozen and P2-M8 may
+  not modify Phase-1 files. Go bindings deferred to WS G overlay (Phase 3);
+  re-test trigger recorded.
+- `context`: out-of-scope — needs interfaces (WS D, Phase 4). Channel-based
+  cancellation patterns covered differentially as closest achievable.
+- `runtime`: the overlay exposes Goexit/SetFinalizer/KeepAlive/GC — Go-level
+  stress via those; GOMAXPROCS behavior via `--gmp=N` launcher flag.
+
+**Work items:**
+1. Torture battery port (spike 2b F1–F6 → production `graalgo.sched` API):
+   F1 O1 (5 legs), F2 O2–O5, F3 quiescence 10k, F4 overhead budget,
+   F5 GOMAXPROCS fidelity + F5b cap-exhaustion, F6 lost-wakeup stress.
+2. `runtime`/`sync`/`context`-pattern stress suites, differential vs gc.
+3. GOMAXPROCS matrix: {1,2,4,N} × {compute, mixed I/O+compute, channel-heavy},
+   differential vs gc per cell.
+4. M6 watch item: reproduce drainer re-admission w/o UNPARK under torture;
+   P0 if reproduced, else document attempt + re-test trigger.
+5. Overhead budget: fast-path hop vs spike 2b's 1%-of-10ms budget.
+6. Evidence: `hidden_files/torture/REPORT.md` + archived logs.
+7. ≥2 independent reviews, then sign-off (fresh phase-2 test + phase-1
+   suite + make check by me).
+
+## 2026-10-05 — P2-M8 progress checkpoint
+
+**Torture battery (F1–F6 port): COMPLETE, 12/12 PASS.**
+- F1 (5 legs): 36k–52k samples, CV 0.001–0.018, no starvation.
+- F3: 2000/2000 admitted, max/mean 1.00.
+- F4: 34.7µs @10ms (PASS, 3x margin); 12.9µs @1ms (INFO-FAIL per spike precedent).
+- F5: cap never violated (cap=1→max 1, cap=2→max 2).
+- F5b: 5.9M spinner iters during NIO block (slots released).
+- F6: 0 errors; provenance direct=12829 stashed=3.
+- Fixes: F6 select/recv hang (selectRecvValue), F3 admission counter.
+
+**Sync primitives:** GoMutex/RWMutex/WaitGroup/Once implemented (scheduler-aware),
+8 stress tests, all pass. Suite: 171/0.
+
+**Go stress:** gmp_compute, gmp_mixed, ctx_cancel differential vs gc (identical);
+rt_finalizer_storm completes (count informational).
+
+**GOMAXPROCS matrix:** 8/8 cells PASS vs gc.
+
+**M6 watch item:** RESOLVED — unparkPending fast-path explains the anomaly;
+provenance counters prove it's hit in normal operation. Not a bug.
+
+**make check:** green (pin-audit smoke PASS).
+**Reviews:** 2 independent dispatched (code + methodology), pending.
+
+## 2026-10-05 — P2-M8 SIGN-OFF (done-gate 1)
+
+**Reviews:** 2 independent, both GO-WITH-FINDINGS, all P1s remediated and
+re-tested.
+- reviewer1 (code): no P0. F2 javadoc fixed (P1-1), F4 poll comment fixed
+  (P1-3), dead Drainer counters removed (P2-1), GoOnce doc fixed (P2-4).
+  P1-2 was already fixed.
+- reviewer2 (methodology): no P0; both kill criteria genuinely NOT
+  TRIGGERED. F4_q1ms number fixed to 48.9µs (P1-1), margin 2.9x (P1-2),
+  matrix qualified to 8 distinct cells + gap disclosures (P1-3),
+  differential runs archived for rt_finalizer_storm + ctx_cancel (P1-4),
+  [OPEN] recorded as owner-undecided, gate verdict conditional (P1-5).
+  10k F3 extended leg run: PASS (P2-4).
+
+**Final verification (fresh on sign-off tree):**
+- phase-2 `make test`: 171/0
+- Phase-1 suite: 208/0
+- `make check`: green (pin-audit smoke PASS, 0 pins)
+
+**Torture:** 12/12 PASS (F4_q1ms INFO-FAIL per falsifier, discounted).
+**GOMAXPROCS:** 8/8 cells byte-identical vs gc.
+**Kill criteria:** #1 NOT TRIGGERED (no systematic divergence);
+#2 NOT TRIGGERED (2.9x margin at 10ms).
+**M6 watch item:** RESOLVED (unparkPending fast-path, proven by counters).
+
+**Done-gate 1: MET (conditional on program-owner acceptance of the sync
+scope deviation — see REPORT.md §5).**
