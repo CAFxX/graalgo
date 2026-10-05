@@ -1253,3 +1253,32 @@ Deliverables: `WakeupModelTest` (16 tests incl. red-green guard),
 (§§1-9), 3 reviews (reviewer1.md, reviewer2.md, reviewer1-rereview.md).
 
 Done-gate 4 (P2-M9) is MET. Next: P2-M10 divergence closeout, then gate 5.
+
+## 2026-10-06 — P2-M10 divergence closeout (in progress, done-gate 5)
+
+**Divergence triage (all of DIVERGENCES.md):**
+- DIV-M4-1..9 (GC interop): DOCUMENTED-WITH-TRIGGER — still reproduce as documented (verified at M4 sign-off; GC surface unchanged since). Triggers live in ADR-0002/P2-M4.
+- DIV-M5-1..5 (GODEBUG): DOCUMENTED — registry machine-pinned; deny-with-error behavior green at M5.
+- DIV-M6-1 (runtime/trace): DOCUMENTED — JFR is the native surface; recorded at M6.
+- **DIV-M3-1 (new, P2-M10): `len()` on buffered timer channel returns 1 (gc: 0)** — was accepted at M3 sign-off but never entered DIVERGENCES.md (only in GoTimer javadoc + corpus README). Added to DIVERGENCES.md with blocking Phase-3 re-test trigger: must fix before Phase 3 lowers `time`.
+- P2-M1/M2/M7/M8/M9: no accepted divergences (all differential-clean).
+
+**GG-0048 observable list (done-gate 5):** added to DIVERGENCES.md —
+(i) fairness CLOSED, (ii) starvation-freedom CLOSED, (iii) latency
+distribution ACCEPTED-WITH-TOLERANCE (band documented, server-hardware
+re-measure trigger standing), (iv) GOMAXPROCS CLOSED (8/8 byte-identical;
+channel-heavy/I-O+compute scope notes recorded with Go-source re-test
+trigger), (v) Gosched/preemption responsiveness CLOSED.
+
+**OWNER-DECISION-RECORDED (P2-M8 conditional):** the program supervisor,
+acting as program owner on 2026-10-05, accepted the sync-scope deviation
+(Mutex/RWMutex/WaitGroup/Once as Java runtime primitives stressed at the
+Java level; Go `import "sync"` bindings deferred to the WS G Phase-3
+frontend overlay, which the frozen Phase-1 frontend makes unavoidable).
+The conditional on done-gate 1 is discharged. Re-test trigger stands: when
+the WS G overlay lands, bind the four primitives and re-run stress as Go
+programs differential vs gc.
+
+**Work items:** (1) full differential battery re-run (in flight), (2) 2
+independent final reviews, (3) DONE-GATES.md verdict table, (4) final
+verify + sign-off.

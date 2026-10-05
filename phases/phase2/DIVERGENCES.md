@@ -5,6 +5,24 @@ stock gc toolchain. Each entry records the divergence, why it is accepted,
 and the observable consequence. New divergences are added by the workstream
 that introduces them, in the same commit as the implementation.
 
+## P2-M3 (timers/sleep + netpoller deletion, WS C)
+
+### DIV-M3-1: `len()` on a buffered timer channel returns 1 (gc: 0)
+
+gc's `time.NewTimer`/`NewTicker` channels always report `len() == 0` — the
+timer send is a non-blocking value-injection the runtime does not count.
+graalgo's `GoTimer` uses a real buffered channel, so after the timer fires
+`len()` returns 1.
+
+Consequence: any Go program that branches on `len(timerCh)` diverges
+observably. This was an accepted Phase-2 divergence, documented in the
+`GoTimer` javadoc and the timer corpus README at sign-off.
+
+**Re-test trigger (blocking for Phase 3):** must be fixed before Phase 3
+lowers `time` — the timer channel must expose `len() == 0` (e.g. a
+dedicated channel flavor or a length-masking wrapper), with the
+differential timer corpus re-run to prove it.
+
 ## P2-M4 (GC interop, ADR-0002)
 
 ### DIV-M4-1: finalizer runs with a nil argument (no resurrection)
@@ -186,3 +204,77 @@ Consequence: `runtime/trace` is not in the supported surface — a Go
 program importing it fails to build loudly (it is not silently
 ignored). Operators use `jfr print` / JMC on a recording with
 `graalgo.*` enabled instead (SPEC §3.10).
+
+## P2-M1/M2/M7/M8/M9 — no accepted divergences
+
+P2-M1 (scheduler core), P2-M2 (channels + select), P2-M7 (pinning audit),
+P2-M8 (preemption-torture), and P2-M9 (model-checking + race stress)
+introduced **no accepted behavioral divergences**: every differential
+corpus ran green vs gc 1.27.1 (M2: 12/12; M3: 14/14; M8: GOMAXPROCS 8/8
+byte-identical, torture 12/12; M5: godebug-diff 4/4).
+
+## GG-0048 (scheduling-observable divergence list — done-gate 5)
+
+SPEC §7.2 defines the preemption-equivalence bar: the differential oracle
+must hold these scheduling observables equivalent vs gc. Exact preemption
+*timing* is excluded (Go's memory model promises no preemption timing).
+Per-entry disposition for the closeout (P2-M10):
+
+### (i) Fairness — no goroutine starvation under contention, bounded window: CLOSED
+
+- Torture F1 legs (production path): 5 legs, 36k–52k samples each, CV
+  0.001–0.018 — every spinner admitted, no starvation
+  (`hidden_files/torture/REPORT.md` §1).
+- Select fairness: differential 12/12 vs gc (P2-M2 sign-off).
+- No accepted divergence; no trigger needed.
+
+### (ii) Starvation-freedom — every runnable goroutine eventually runs: CLOSED
+
+- F3 quiescence: 2000/2000 admitted; extended F3: 10000/10000, max/mean
+  1.01 (REPORT.md §1).
+- F6 lost-wakeup: 32 pairs × 200, 0 errors, 0 lost wakeups; provenance
+  direct=12829, stashed=3.
+- Model-checking (P2-M9): 12/12 exhaustive scripts (max 12,365 states),
+  no lost wakeup; red-green guard fails closed.
+- No accepted divergence; no trigger needed.
+
+### (iii) Latency distribution of wakeups within a documented tolerance band: ACCEPTED-WITH-TOLERANCE
+
+- Observable is the *distribution*, not bit-identical timings (SPEC §7.2).
+- Overhead budget: 34.7µs mean hop at 10ms quantum vs 100µs budget
+  (1%-of-quantum) — 2.9x margin, PASS (REPORT.md §4).
+- F4_q1ms leg: 48.9µs > 10µs budget — INFO-FAIL per spike precedent
+  (falsifier fires only at 10ms; structural drainer/FJP cost, documented
+  in spike 2b §2/F4). Not a divergence from gc semantics — a
+  performance-budget note.
+- **Re-test trigger:** re-measure on quiet server hardware before any
+  production performance claim (standing trigger since spike 2b).
+
+### (iv) `GOMAXPROCS=n` behavior incl. pinned-carrier matrix: CLOSED
+
+- Go-level matrix {1,2,4,N} × {compute, heterogeneous-compute}: 8/8 cells
+  byte-identical vs gc (REPORT.md §3).
+- F5 cap legs: maxTrueParallel=1 at gmp=1 (0 violations), =2 at gmp=2;
+  F5b cap-exhaustion: slots released on NIO block (5.9M spinner iters);
+  gmp=32 clamp leg confirms oversubscription becomes drainer-FIFO
+  time-slicing.
+- Coverage gaps recorded honestly (REPORT.md §3): channel-heavy matrix is
+  Java-level (F1, genuine unbuffered ping-pong) not a {1,2,4,N} matrix;
+  `gmp_mixed.go` is heterogeneous compute, not I/O+compute. Neither is a
+  divergence — both are scope notes with the same re-test trigger.
+- **Re-test trigger:** when Go channel/timer ops are in Go-source scope,
+  run the channel-heavy matrix differentially as Go programs.
+
+### (v) `runtime.Gosched` and preemption-point responsiveness: CLOSED
+
+- Preemption-point responsiveness: F1 quantum legs at 1ms/100µs/10ms —
+  all PASS with tight CV; no goroutine holds a carrier past its quantum.
+- Cooperative yield: `Scheduler.yield()` is the Gosched vehicle,
+  exercised by `JfrParkCostTest` (P2-M6/P2-M9).
+- Exact preemption timing excluded per SPEC §7.2; no divergence claimed.
+
+**Net: GG-0048 list is closed — four entries CLOSED with zero accepted
+divergences, one (latency distribution) ACCEPTED-WITH-TOLERANCE under the
+documented band, with re-test triggers for the two standing hardware/
+scope notes. Done-gate 5 evidence: this file (versioned) +
+`hidden_files/torture/REPORT.md` + `hidden_files/modelcheck/REPORT.md`.
