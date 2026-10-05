@@ -68,4 +68,6 @@ public final class BuiltinsCorpusTest {
     public void testBi18StringRune() throws Exception { Differential.checkProgram(prog("bi18_string_rune")); }
     public void testBi19VariadicSpread() throws Exception { Differential.checkProgram(prog("bi19_variadic_spread")); }
     public void testBi20StructPrint() throws Exception { Differential.checkProgram(prog("bi20_struct_print")); }
+    public void testBi21NestedMaps() throws Exception { Differential.checkProgram(prog("bi21_nested_maps")); }
+    public void testBi22FloatEdge() throws Exception { Differential.checkProgram(prog("bi22_float_edge")); }
 }

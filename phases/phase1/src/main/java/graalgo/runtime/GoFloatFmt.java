@@ -172,6 +172,13 @@ public final class GoFloatFmt {
                 want = prec == 0 ? 1 : prec;
             }
         }
+        if (want <= 0) {
+            // M8 closeout (triage class E): all significant digits lie
+            // beyond the requested precision (e.g. %f of 1e-300) — the
+            // value rounds to zero. (MathContext requires precision > 0;
+            // Go's decimal.Round produces an empty digit string here.)
+            return new DecParts(new byte[0], 0);
+        }
         if (want < sig.length()) {
             // Round half-to-even on the exact expansion (== Go's
             // shouldRoundUp: exact halves go to even; trunc never set).

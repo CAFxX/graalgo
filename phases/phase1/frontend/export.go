@@ -2798,6 +2798,12 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 			}
 			return e.exportCompositeLitAs(cl, t)
 		}
+		// M8 closeout: constant-fold like BinaryExpr/ParenExpr. go/types
+		// evaluates -0.0 to +0.0 (and all constant arithmetic exactly);
+		// emitting a runtime negation would produce IEEE -0.0 instead.
+		if tv, ok := e.info.Types[x]; ok && tv.Value != nil {
+			return e.foldedConst(x, tv.Value)
+		}
 		t, err := e.exprType(x)
 		if err != nil {
 			return nil, err

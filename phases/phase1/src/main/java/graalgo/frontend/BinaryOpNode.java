@@ -294,12 +294,30 @@ public final class BinaryOpNode extends GoExprNode {
             boolean eq = interfaceEqual(l, r);
             return op == Op.EQ ? eq : !eq;
         }
-        int cmp = switch (operandKind) {
+        int cmp;
+        // M8 closeout: float comparisons use IEEE 754 semantics (Java's
+        // primitive operators), not Double.compare's total ordering.
+        // Double.compare distinguishes -0.0 from +0.0 and orders NaN above
+        // everything; Go's ==/</<= all follow IEEE (-0.0 == 0.0 is true,
+        // NaN comparisons are false).
+        if (operandKind == GoKind.FLOAT32 || operandKind == GoKind.FLOAT64
+                || operandKind == GoKind.UNTYPED_FLOAT) {
+            double l = left.executeDouble(frame);
+            double r = right.executeDouble(frame);
+            return switch (op) {
+                case EQ -> l == r;
+                case NE -> l != r;
+                case LT -> l < r;
+                case LE -> l <= r;
+                case GT -> l > r;
+                case GE -> l >= r;
+                default -> throw new AssertionError("unreachable");
+            };
+        }
+        cmp = switch (operandKind) {
             case STRING -> ((GoString) left.executeObject(frame))
                     .compareTo((GoString) right.executeObject(frame));
             case BOOL -> Boolean.compare(left.executeBoolean(frame), right.executeBoolean(frame));
-            case FLOAT32, FLOAT64, UNTYPED_FLOAT ->
-                    Double.compare(left.executeDouble(frame), right.executeDouble(frame));
             default -> {
                 long l = left.executeLong(frame);
                 long r = right.executeLong(frame);
