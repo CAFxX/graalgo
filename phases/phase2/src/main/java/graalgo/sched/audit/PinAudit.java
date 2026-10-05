@@ -124,12 +124,17 @@ public final class PinAudit {
             Files.deleteIfExists(jfr);
         }
         boolean testsUnreadable = false;
+        boolean testsFailed = false;
         if (runTests) {
             programs++;
             Path jfr = work.resolve("tests.jfr");
             int exit = runChild(jfr, gmp, new String[]{"__TESTS__"});
             if (exit != 0) {
                 skipped.add("SchedTestRunner (exit " + exit + ")");
+                // Reviewer1 P1-1: the --tests leg is the pin-relevant
+                // coverage; a non-zero exit means the suite did not run
+                // clean, so PASS would be vacuous.
+                testsFailed = true;
             }
             try {
                 pins.addAll(readPins(jfr, "<SchedTestRunner>", allow));
@@ -143,10 +148,11 @@ public final class PinAudit {
         long unexpected = pins.stream().filter(p -> !p.expected).count();
         long expected = pins.size() - unexpected;
 
-        // P2-M7 reviewer P2-2: fail closed on systemic recording failure.
-        // Unreadable JFR means "pin count unknown", not "0 pins". Fail if the
-        // tests leg is unreadable, or if >5% of programs are unreadable.
-        boolean infraFail = testsUnreadable
+        // P2-M7 reviewer P2-2 / reviewer1 P1-1: fail closed on systemic
+        // recording failure AND on a failed tests leg. Unreadable JFR means
+        // "pin count unknown", not "0 pins"; a failed suite means the
+        // pin-relevant paths were not exercised.
+        boolean infraFail = testsUnreadable || testsFailed
                 || (!unreadable.isEmpty()
                         && (double) unreadable.size() / programs > 0.05);
 
@@ -186,18 +192,32 @@ public final class PinAudit {
         }
         String report = md.toString();
         System.out.print(report);
+        String verdict = "AUDIT_RESULT=" + (unexpected == 0 && !infraFail ? "PASS" : "FAIL")
+                + " unexpected=" + unexpected + " unreadable=" + unreadable.size();
+        System.out.println(verdict);
+        // Append the verdict to the archived report (reviewer1 P2-6).
         if (outFile != null) {
-            Files.writeString(outFile, report, StandardCharsets.UTF_8);
+            Files.writeString(outFile, report + "\n" + verdict + "\n",
+                    StandardCharsets.UTF_8);
             System.out.println("report written to " + outFile);
         }
-        System.out.println("AUDIT_RESULT=" + (unexpected == 0 && !infraFail ? "PASS" : "FAIL")
-                + " unexpected=" + unexpected + " unreadable=" + unreadable.size());
         if (unexpected > 0 || infraFail) {
             if (infraFail) {
-                System.out.println("INFRA_FAIL: unreadable recordings exceed threshold"
-                        + " (testsUnreadable=" + testsUnreadable + ")");
+                System.out.println("INFRA_FAIL: testsFailed=" + testsFailed
+                        + " testsUnreadable=" + testsUnreadable
+                        + " unreadable=" + unreadable.size() + "/" + programs);
             }
             System.exit(1);
+        }
+        // Clean up the temp dir (reviewer1 nit: was littered).
+        try (Stream<Path> s = Files.walk(work)) {
+            s.sorted(Comparator.reverseOrder()).forEach(p -> {
+                try {
+                    Files.deleteIfExists(p);
+                } catch (IOException ignored) {
+                }
+            });
+        } catch (IOException ignored) {
         }
     }
 

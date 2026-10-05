@@ -73,10 +73,13 @@ public final class JfrEvents {
     /**
      * Force-initializes the event classes so {@code Recording.enable(name)}
      * resolves them and, critically, so the one-time
-     * {@code FlightRecorder.register} (which parks while pinned — P2-M7)
-     * happens here on the startup thread, never lazily on a goroutine
-     * carrier. Class literals alone do NOT initialize (JLS 12.4.1); each
-     * event class declares its own {@code enabled()} touching the
+     * {@code FlightRecorder.register} happens here on the startup thread,
+     * never lazily on a goroutine carrier. The pre-fix pin stacks show
+     * {@code register} ← {@code <clinit>} on carriers (the exact
+     * park-while-pinned site inside JFR init is racy and unidentified —
+     * reviewer1 P2-7 — but forcing {@code <clinit>} here eliminates the
+     * whole class). Class literals alone do NOT initialize (JLS 12.4.1);
+     * each event class declares its own {@code enabled()} touching the
      * subclass-static prototype, which forces {@code <clinit>}.
      *
      * <p>Must be called once at scheduler startup, before the first spawn.

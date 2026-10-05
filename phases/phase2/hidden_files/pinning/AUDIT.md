@@ -51,10 +51,12 @@ surface to: JNI/FFM on goroutine paths, plus JVM-internal pinned parks.
 - `synchronized` in phase-1 runtime (`UnsafeHandles.alloc/get/free`,
   `Intrinsics.fastrand64`, probe classes) is short and non-blocking —
   no park/sleep/wait/I-O inside any monitor on a goroutine path.
-- Blocking sites are platform threads only: `SchedulerCore:481`
-  quiescence wait (main thread), `TimerHeap:323` (timer thread),
-  `GcInterop:247` sleep (called from `gc()`, platform),
-  `SchedTrace:57` sleep (platform).
+- Blocking sites: `SchedulerCore:481` quiescence wait runs on the main
+  thread (and test threads); `TimerHeap:323` on the timer thread;
+  `SchedTrace:57` sleep on a spawned platform thread. `GcInterop:247`
+  (`Thread.sleep(50)` in `gc()`) executes on the goroutine carrier when
+  reached via Go `runtime.GC()` (`GcCallNode`), but `Thread.sleep`
+  parks without pinning on JDK 25 — no pin possible.
 - `make check` pin-surface grep gate: no `native` method declarations, no
   `java.lang.foreign` imports in `src/main` (phase 1 + phase 2).
 
