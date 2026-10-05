@@ -16,6 +16,8 @@ public final class SchedTestRunner {
 
     static {
         TESTS.add(graalgo.sched.SchedulerCoreTest.class);
+        TESTS.add(graalgo.sched.ChannelTest.class);
+        TESTS.add(graalgo.sched.ChannelDifferentialTest.class);
     }
 
     public static void main(String[] args) {
