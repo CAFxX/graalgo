@@ -35,6 +35,8 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.runtime.GcVisibilityTest.class);
         TESTS.add(graalgo.jfr.JfrEventsTest.class);
         TESTS.add(graalgo.runtime.sync.SyncStressTest.class);
+        TESTS.add(graalgo.sched.WakeupModelTest.class);
+        TESTS.add(graalgo.sched.WakeupRaceStressTest.class);
     }
 
     public static void main(String[] args) {

@@ -440,50 +440,49 @@ public final class JfrEventsTest {
      * (filter exactness) and testDisabledGuardCostNegligible (guard cost).
      */
     public void testYieldThroughputSmoke() throws Exception {
-        double[] ratios = new double[3];
-        for (int round = 0; round < 3; round++) {
-            double disabled = measureYieldThroughput(false);
-            double enabled = measureYieldThroughput(true);
-            ratios[round] = enabled / disabled;
-            System.out.println("JFR yield throughput round " + round
-                    + ": disabled=" + (long) disabled + "/s"
-                    + " enabled=" + (long) enabled + "/s ratio=" + ratios[round]);
-        }
-        java.util.Arrays.sort(ratios);
-        double median = ratios[1];
-        System.out.println("JFR yield throughput median ratio=" + median);
-        assertTrue(median >= 0.80,
-                "gross yield-throughput regression with JFR enabled: median ratio=" + median);
-    }
-
-    private double measureYieldThroughput(boolean withRecording) throws Exception {
+        // P2-M9: paired interleaved design (was: 3 rounds of
+        // disabled-then-enabled on a fresh scheduler per leg). The old
+        // design compared a cold first leg against a warm second leg:
+        // the disabled baseline swung 40k–64k/s run to run while the
+        // enabled leg held steady at 55–61k/s — pure warmup/order noise,
+        // failing the 0.80 gate at ~40% on a loaded box. The new design
+        // warms up once on ONE scheduler, then interleaves D/E/D/E legs
+        // so warmup and drift cancel; the ratio of means is the gate.
+        // A true JFR hot-path regression (>=20% slowdown) still trips it.
         SchedulerCore sched = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         sched.start();
         SchedulerCore.install(sched);
-        Recording rec = null;
         try {
-            if (withRecording) {
-                rec = newRecording();
-                rec.start();
-            }
             int goroutines = 4;
-            int yields = 5000;
-            // Warmup (also settles the drainer).
-            runYielders(sched, goroutines, 500);
-            long t0 = System.nanoTime();
-            runYielders(sched, goroutines, yields);
-            long dtNanos = System.nanoTime() - t0;
-            return (double) goroutines * yields / (dtNanos / 1e9);
-        } finally {
-            if (rec != null) {
-                rec.stop();
-                rec.close();
+            int yields = 50000;
+            runYielders(sched, goroutines, 20000); // warmup: JIT + drainer settle
+            double disabledSum = 0, enabledSum = 0;
+            int legs = 4;
+            for (int i = 0; i < legs; i++) {
+                disabledSum += runYielders(sched, goroutines, yields);
+                Recording rec = newRecording();
+                rec.start();
+                try {
+                    enabledSum += runYielders(sched, goroutines, yields);
+                } finally {
+                    rec.stop();
+                    rec.close();
+                }
             }
+            // Throughputs: yields/s per leg; ratio of means.
+            double ratio = (enabledSum / legs) / (disabledSum / legs);
+            System.out.println("JFR yield throughput interleaved ratio=" + ratio
+                    + " (disabledMean=" + (long) (disabledSum / legs)
+                    + "/s enabledMean=" + (long) (enabledSum / legs) + "/s)");
+            assertTrue(ratio >= 0.80,
+                    "gross yield-throughput regression with JFR enabled: ratio=" + ratio);
+        } finally {
             SchedulerCore.install(null);
         }
     }
 
-    private void runYielders(SchedulerCore sched, int n, int yields) throws Exception {
+    /** Runs n yielders and returns the measured yield throughput (yields/s). */
+    private double runYielders(SchedulerCore sched, int n, int yields) throws Exception {
         for (int i = 0; i < n; i++) {
             sched.spawn(() -> {
                 for (int j = 0; j < yields; j++) {
@@ -491,7 +490,10 @@ public final class JfrEventsTest {
                 }
             });
         }
+        long t0 = System.nanoTime();
         awaitQuiescence(sched, 120000);
+        long dtNanos = System.nanoTime() - t0;
+        return (double) n * yields / (dtNanos / 1e9);
     }
 
     private static void awaitQuiescence(SchedulerCore sched, long timeoutMs) throws Exception {

@@ -1107,3 +1107,69 @@ re-tested.
 
 **Done-gate 1: MET (conditional on program-owner acceptance of the sync
 scope deviation — see REPORT.md §5).**
+
+## 2026-10-05 — P2-M9 lost-wakeup model checking + JVM race stress (in progress, done-gate 4)
+
+**Tool spike (TLA+ vs JPF vs bespoke) — verdict: bespoke interleaving explorer.**
+
+The park/queue/drainer protocol's entire concurrency surface collapses to
+two things: (1) the ORDER of token arrival at the drainer's MPSC inbox
+(the drainer itself is single-threaded — all lane/inflight/parked state
+mutates under one lock), and (2) the vthread-side armPark/acked generation
+protocol. Against the three criteria:
+
+1. **TLA+/PlusCal — REJECTED.** Would re-encode the protocol in TLA+ by
+   hand. The correctness hinges on Java-specific facts (AtomicLong
+   visibility, LockSupport permit absorption, LinkedBlockingQueue FIFO,
+   single-threaded drainer) that a TLA+ model re-states rather than
+   executes — a green TLC run would verify the encoding, not the
+   implementation. Falsification power against the shipped code: weak.
+2. **Java PathFinder — REJECTED.** JPF cannot execute JDK 25 bytecode with
+   virtual threads (its JDK model lags many versions; vthreads bottom out
+   in jdk.internal carrier mechanics JPF does not model). And even a
+   working JPF would explore the same token-order space the bespoke tool
+   covers — the drainer's single-threadedness makes full-JVM interleaving
+   exploration buy nothing here.
+3. **Bespoke explorer — WINNER.** Drives the REAL `Drainer` class through
+   the existing `processOneForTest` hook (route+admit+check, exactly the
+   production drain step). The vthread side is modeled at 1:1 fidelity to
+   the 15-line protocol (armPark → offer → spin on acked>=t). Zero
+   abstraction gap on the drainer; exhaustive over offer/drain
+   interleavings for bounded scripts; re-runnable by a second reviewer
+   (`WakeupModelTest`).
+
+**Re-test trigger:** if the token protocol changes (new ResumeToken.Kind,
+lane order, matching logic, ack discipline), re-run the explorer; extend
+the script family for the new token.
+
+**Abstraction gap (documented, not hidden):** real LockSupport permit
+semantics are modeled as "awaitAck returns iff acked>=t" (proof sketch:
+GG-WAKE-0001 ack-before-unpark + loop re-check makes permits unable to
+lose a wakeup — early permit absorbed, spurious wakeup re-parks); real
+vthread/carrier scheduling, GC, JIT, and the channel/select/timer logic
+that DECIDES when to unpark are out of model (the model takes
+park/unpark pairing as given by scripts); `armed` is write-only dead
+state (external-waker protocol not implemented — all wakeups route
+through the drainer).
+
+## 2026-10-05 — P2-M9 progress: explorer green; two test bugs found & fixed
+
+**Explorer (`WakeupModelTest`, 15 tests): all PASS.** 12 scripts, 13k max
+states (threeway), every GG-WAKE-0002 (a–f) interleaving covered, no lost
+wakeup on any path. Directed M6 re-tests confirm the unparkPending
+fast-path mechanism (stashed=1/direct=0 vs direct=1/stashed=0).
+`testModelDetectsWithheldUnpark` proves the explorer fails when it should.
+
+**Finding 1 (test bug, not scheduler):** `WakeupRaceStressTest`
+thundering-herd hung — my `CountDownLatch.await()` start barrier JVM-parked
+the 2 admitted goroutines without releasing scheduler slots (cap=2), so 62
+goroutines never got admitted. Fixed with a scheduler-aware spin barrier
+(`yieldCurrent`). Herd now passes in ~1s (32×32×200 exact accounting).
+
+**Finding 2 (flaky measurement, P2-M6 test):**
+`JfrEventsTest.testYieldThroughputSmoke` failed 2/2 in-suite but the
+isolation runs showed 3/5 pass with ratios 0.50–1.29 (ratio >1 sometimes:
+pure noise, not signal). Root cause: ~0.3s legs have ±40% scheduling noise
+on a loaded box; the 0.80 gate can't survive it. Fix (no gate weakening):
+10x work per leg (5000→50000 yields) so bursts average out; a true >=20%
+JFR regression still trips 0.80 clearly. Verifying stability 5/5 now.

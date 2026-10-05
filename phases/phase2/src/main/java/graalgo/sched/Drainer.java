@@ -261,6 +261,60 @@ public final class Drainer {
 
     // ---- test hooks (package-visible; production never calls these) ----
 
+    /**
+     * Read-only state snapshot for the P2-M9 interleaving explorer's
+     * visited-set. Pure observer: no mutation, no behavior change.
+     *
+     * @param idNames maps handle ids to stable per-exploration names
+     *        (goroutine indices); null keeps raw ids for human debugging.
+     */
+    String snapshotForTest(java.util.Map<Long, String> idNames) {
+        java.util.function.LongFunction<String> name = id ->
+                idNames == null ? "g" + id
+                        : idNames.getOrDefault(id, "g?" + id);
+        synchronized (lock) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("inflight=").append(inflight)
+              .append(";admissions=").append(admissions)
+              .append(";max=").append(maxInflightObserved)
+              .append(";parked={");
+            String sep = "";
+            for (java.util.Map.Entry<Long, Long> e : parked.entrySet()) {
+                sb.append(sep).append(name.apply(e.getKey())).append("=").append(e.getValue());
+                sep = ",";
+            }
+            sb.append("};pending=[");
+            sep = "";
+            for (Long id : unparkPending) {
+                sb.append(sep).append(name.apply(id));
+                sep = ",";
+            }
+            sb.append("];io=[");
+            sep = "";
+            for (Long id : inIo) {
+                sb.append(sep).append(name.apply(id));
+                sep = ",";
+            }
+            sb.append("]");
+            sb.append(";wake=");
+            for (ResumeToken t : wakeFifo) {
+                sb.append(t.kind).append(":").append(name.apply(t.handle.id))
+                  .append(":").append(t.generation).append(",");
+            }
+            sb.append(";init=");
+            for (ResumeToken t : initFifo) {
+                sb.append(name.apply(t.handle.id)).append(":").append(t.generation).append(",");
+            }
+            sb.append(";run=");
+            for (ResumeToken t : runFifo) {
+                sb.append(name.apply(t.handle.id)).append(":").append(t.generation).append(",");
+            }
+            sb.append(";prov=").append(wakeUnparkDirect.get()).append("/")
+              .append(wakeUnparkStashed.get()).append("/").append(wakeIoExit.get());
+            return sb.toString();
+        }
+    }
+
     /** Directly sets the in-flight count; white-box invariant tests only. */
     void setInflightForTest(int n) {
         synchronized (lock) {
