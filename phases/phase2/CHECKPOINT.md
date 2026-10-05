@@ -786,3 +786,28 @@ entries.
 Makefile copies resources) + `SchedMain` startup hook (exit 2 on deny,
 matching gc's fatal). Machine-checked version test (version constant +
 knob-name-set hash). `tools/godebug-diff/` probes per emulated knob.
+
+## 2026-10-05 — P2-M5 progress (implementation complete, reviews dispatched)
+
+**Commits:** f1c8774 (registry v1 + Makefile resources), bc67b1a
+(GoDebug/SchedTrace/GcTrace/Panic overlay/SchedMain hook), bb3c268
+(22 tests + drift test + corpus), d5eb521 (godebug-diff 4/4 green),
+fdc7d7f (GODEBUG.md + DIV-M5-1..4), c97b933 (make-check gate exclusions).
+
+**State:**
+- `GoDebug` parses/validates GODEBUG at SchedMain startup; unknown knobs,
+  malformed values, bare fields, and non-default unsupported knobs all deny
+  with exit 2. Registry: 79 knobs (4 emulated, 9 unsupported, 66 noop) +
+  9 removed, version 1, hash-pinned by test.
+- Emulated: schedtrace/scheddetail (daemon), gctrace (GC notifications),
+  panicnil (Panic overlay + drift test; byte-identical vs gc on recover path).
+- Tests: phase-2 suite 146/146 green (124 existing + 22 new). `make check` green.
+- `tools/godebug-diff`: 4/4 differential green vs gc (REPORT.md committed).
+- `GODEBUG.md` published; DIV-M5-1..4 recorded.
+
+**Reviews dispatched** against snapshot c97b933 (read-only):
+- reviewer1 (correctness) → reviews/phase2-m5/reviewer1.md
+- reviewer2 (methodology) → reviews/phase2-m5/reviewer2.md
+
+**Remaining:** remediate findings → re-test → fresh phase-2 suite +
+Phase-1 suite (208) + make check on final tree → sign-off.
