@@ -605,3 +605,31 @@ Full suite independently reproduced 101/101.
   never parks); fireChanLocked's dead owner==null branch annotated.
 
 Deferred (unchanged): P2-4 per-test timeout, P2-9 SchedulerCore shutdown.
+
+## 2026-10-05 ~16:00 CEST — P2-M3 SIGN-OFF
+
+**Verdict: DONE.** All acceptance criteria met with evidence.
+
+**Evidence (final tree 6056a98):**
+- phase-2 `make test`: **101/101 green** (3× consecutive runs, 0 flakes)
+- phase-2 `make check`: all gates clean (netpoller-deletion, freeze, deprecation)
+- Phase-1 suite (`make -C phases/phase1 test`): **208/208 green**
+  (run on bce75f9; delta to 6056a98 is comment-only in phase-2 + checkpoint)
+- Differential corpus: 14 programs (tm01–tm14), all gc-identical
+  (byte-identical .expected, re-derived 3× under gc 1.27.1)
+- Red-green: 2 verified falsifiers (3/3 red on old, 2/2 green on new);
+  no-drain mutation kills 7+ tests
+
+**Reviews:** 3 independent reviews, all findings remediated + re-tested.
+- reviewer1 (code): NO-GO → 4 P0s + P1s/P2s all fixed (6b327f2)
+- reviewer2 (methodology): GO-WITH-FINDINGS → P1-2 + P2s fixed (bce75f9)
+- reviewer3 (re-review): GO-WITH-FINDINGS, no P0/P1 → record/doc nits
+  fixed (6056a98)
+
+**Accepted divergences:** (1) `len()` on timer channels returns 1 when
+buffered (gc: 0) — must fix before Phase 3 lowers `time`; (2) per-test
+timeout deferred; (3) SchedulerCore shutdown / thread accumulation
+deferred.
+
+**Commits:** eb61aae (impl) → b3a7546 → 6b327f2 (reviewer1) →
+bce75f9 (reviewer2) → 6056a98 (reviewer3).
