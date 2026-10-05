@@ -811,3 +811,32 @@ fdc7d7f (GODEBUG.md + DIV-M5-1..4), c97b933 (make-check gate exclusions).
 
 **Remaining:** remediate findings → re-test → fresh phase-2 suite +
 Phase-1 suite (208) + make check on final tree → sign-off.
+
+## 2026-10-05 — P2-M5 reviewer1 (correctness) report: NO-GO → remediated
+
+**Verdict:** NO-GO. Headline: snapshot c97b933 didn't compile —
+`GcTrace.resetForTests()` was left uncommitted (my commit-discipline
+slip: tests committed without their production counterpart). Fixed by
+committing.
+
+**P1s fixed (commit fe297b8):**
+1. Registry publication race (removed assigned before knobs now).
+2. `String.format` locale → Locale.ROOT in GcTrace.
+3. `cgocheck>1` now denied like gc (was silently accepted, then killed
+   the gc-built gofrontend child confusingly).
+4. gofrontend no longer inherits GODEBUG (scrubbed in SchedMain;
+   keeps the build log deterministic).
+
+**P2s fixed:** non-ASCII digits rejected; JSON `\b`/`\f` escapes;
+panicnil nil-interface collapses to nil (uncaught prints "panic: nil");
+memprofilerate accepts int64 like gc; registry-load failure denies
+cleanly via GoDebugException.
+
+**New tests:** testCgocheck2Denied, testNonAsciiDigitsDenied,
+testMemprofilerateHugeAccepted. Registry bumped to v2 (cgocheck
+justification); GODEBUG.md regenerated.
+
+**Re-verified:** phase-2 suite 149/149 green, `make check` green,
+godebug-diff 4/4 green.
+
+**Still pending:** reviewer2 (methodology) report.
