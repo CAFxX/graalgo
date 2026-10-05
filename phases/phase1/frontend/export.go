@@ -417,6 +417,22 @@ func scopeErrorf(format string, args ...any) error {
 	return fmt.Errorf("gofrontend: "+format, args...)
 }
 
+// checkVariadicCall rejects non-spread calls to variadic signatures.
+// Remediation (R1 P1-1, R2 P1-2): the spread form f(s...) passes the slice
+// directly and is implemented; zero/single/multi-arg calls need argument
+// packing adaptation that v1 does not implement. Letting them through
+// produced internal ArrayIndexOutOfBoundsException/ClassCastException at
+// runtime instead of the clean scope error frontend-v1.md §7 requires.
+// (The fmt overlay handles its own variadic builtins and is not routed
+// through this check.)
+func checkVariadicCall(c *ast.CallExpr, sig *types.Signature) error {
+	if sig != nil && sig.Variadic() && !c.Ellipsis.IsValid() {
+		return scopeErrorf("call to variadic function without ... spread"+
+			" (argument packing) is not supported in frontend/v1 scope (WS D)")
+	}
+	return nil
+}
+
 // ---------------------------------------------------------------------------
 // Package-level variables (M7).
 // ---------------------------------------------------------------------------
@@ -2973,6 +2989,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
+		if tv, ok := e.info.Types[lit]; ok && tv.Type != nil {
+			if sig, ok := tv.Type.(*types.Signature); ok {
+				if err := checkVariadicCall(c, sig); err != nil {
+					return nil, err
+				}
+			}
+		}
 		args, err := e.exportCallArgs(c)
 		if err != nil {
 			return nil, err
@@ -3056,6 +3079,11 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		if _, ok := v.Type().(*types.Signature); !ok {
 			return nil, scopeErrorf("call of non-function variable %s is not supported in frontend/v1 scope (WS D)",
 				funIdent.Name)
+		}
+		if sig, ok := v.Type().(*types.Signature); ok {
+			if err := checkVariadicCall(c, sig); err != nil {
+				return nil, err
+			}
 		}
 		fun, err := e.exportIdent(funIdent)
 		if err != nil {
@@ -3169,6 +3197,11 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
 	}
+	if sig, ok := fn.Type().(*types.Signature); ok {
+		if err := checkVariadicCall(c, sig); err != nil {
+			return nil, err
+		}
+	}
 	var objID, sigID int
 	if fi.isTemplate {
 		ii, ok := e.info.Instances[funIdent]
@@ -3225,6 +3258,11 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	}
 	mc, err := e.resolveMethodCall(sel, selection, mtargs, e.subst)
 	if err != nil {
+		return nil, err
+	}
+	// Remediation (R1 P1-1, R2 P1-2): same variadic fail-fast as direct
+	// calls; the spread form passes the slice directly and works.
+	if err := checkVariadicCall(c, mc.decl.sig); err != nil {
 		return nil, err
 	}
 	declRecv := mc.decl.sig.Recv().Type()

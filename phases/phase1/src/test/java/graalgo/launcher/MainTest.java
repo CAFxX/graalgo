@@ -93,6 +93,30 @@ public final class MainTest {
         assertContains(err, "parse error", "--check stderr on syntax error");
     }
 
+    public void testCheckRejectsVariadicPacking() throws Exception {
+        // Remediation (R1 P1-1, R2 P1-2): non-spread calls to variadic
+        // functions need argument-packing adaptation that v1 does not
+        // implement; the exporter must fail fast with a WS D scope error
+        // instead of emitting a program that crashes at runtime with an
+        // internal ArrayIndexOutOfBoundsException. Pre-fix, --check
+        // accepted this program (exit 0).
+        Path dir = Files.createTempDirectory("graalgo-main-test");
+        Path f = dir.resolve("prog.go");
+        Files.writeString(f,
+                "package main\n\nfunc sum(nums ...int) int {\n\ttotal := 0\n" +
+                "\tfor _, n := range nums {\n\t\ttotal += n\n\t}\n\treturn total\n}\n\n" +
+                "func main() {\n\tprintln(sum(1, 2))\n}\n",
+                StandardCharsets.UTF_8);
+        final int[] code = new int[1];
+        String err = captureStderr(() -> {
+            code[0] = Main.run(new String[] {"--check", f.toString()});
+            return code[0];
+        });
+        assertEq(Main.EXIT_BUILD_FAILURE, code[0], "--check exit on variadic packing call");
+        assertContains(err, "variadic", "--check stderr names the variadic boundary");
+        assertContains(err, "WS D", "--check stderr names the owning workstream");
+    }
+
     public void testRunExecutesStraightLine() {
         assertEq(Main.EXIT_OK,
                 Main.run(new String[] {CORPUS.resolve("sl02_arith.go").toString()}),

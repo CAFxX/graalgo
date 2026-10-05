@@ -89,7 +89,7 @@ overlay (frontend-v1.md §7). These programs require standard library packages.
 
 | Program | Reason |
 |---------|--------|
-| 24_variadic | Variadic function call adaptation (packing trailing args into the slice parameter, `s...` spread in calls) is not implemented in Phase-1. Single-arg and fixed-arg calls work. This is a subset boundary, not a bug. |
+| 24_variadic | Variadic spread calls (`sum(s...)`, which pass the slice directly) are implemented; non-spread calls (zero/single/multi-arg packing into the slice parameter) are not implemented in Phase-1 and are a clean exporter scope error (`WS D`), verified by `MainTest.testCheckRejectsVariadicPacking`. (Corrected 2026-10-05: the original entry had this inverted.) |
 | 27_panic_trace | gc's panic trace includes PC offsets (`+0x25`), absolute file paths, and `main.` package qualifiers with `(...)`. The PC offset is unreplicable (machine code addresses); the format is implementation-defined. The panic itself (message + goroutine header) matches. |
 
 ## Mechanical guards
