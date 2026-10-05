@@ -224,6 +224,12 @@ public final class SchedMain {
     private static String runGofrontend(Path goFile) throws IOException, GofrontendException {
         ProcessBuilder pb = new ProcessBuilder(
                 graalgo.launcher.ToolPaths.gofrontend().toString(), goFile.toString());
+        // P2-M5: gofrontend is a gc-built Go binary; it would inherit
+        // GODEBUG and print its own schedtrace/gctrace lines into the
+        // build log (documented as deterministic), or fatal on knobs like
+        // cgocheck=2. The build log must reflect only gofrontend's
+        // deterministic output.
+        pb.environment().remove("GODEBUG");
         Process p;
         try {
             p = pb.start();

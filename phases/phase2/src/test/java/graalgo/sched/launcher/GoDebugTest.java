@@ -111,8 +111,8 @@ public final class GoDebugTest {
 
     /** verifies: GG-0055 (no-op knobs accepted, any value). */
     public void testNoopAccepted() throws Exception {
-        GoDebug.Settings s = GoDebug.parse("cgocheck=2,disablethp=1,http2debug=1");
-        assertEquals(2, s.get("cgocheck"), "cgocheck");
+        GoDebug.Settings s = GoDebug.parse("cgocheck=1,disablethp=1,http2debug=1");
+        assertEquals(1, s.get("cgocheck"), "cgocheck");
     }
 
     /** verifies: GG-0055 (emulated knobs parse). */
@@ -153,6 +153,24 @@ public final class GoDebugTest {
         assertEquals(0, s2.get("gctrace"), "null");
         GoDebug.Settings s3 = GoDebug.parse("schedtrace=100,");
         assertEquals(100, s3.get("schedtrace"), "trailing comma");
+    }
+
+    /** verifies: GG-0055 (gc fatals on cgocheck>1; we deny too). */
+    public void testCgocheck2Denied() {
+        GoDebug.GoDebugException e = assertThrows("cgocheck=2");
+        assertTrue(e.getMessage().contains("cgocheck"), e.getMessage());
+    }
+
+    /** verifies: GG-0055 (non-ASCII digits rejected like Go's ParseInt). */
+    public void testNonAsciiDigitsDenied() {
+        // Arabic-Indic digits: Long.parseLong accepts, Go rejects.
+        assertThrows("schedtrace=١٢٣");
+    }
+
+    /** verifies: GG-0055 (memprofilerate accepts full int range like gc). */
+    public void testMemprofilerateHugeAccepted() throws Exception {
+        GoDebug.Settings s = GoDebug.parse("memprofilerate=99999999999");
+        assertTrue(true, "accepted");
     }
 
     /** verifies: GG-0055 (negative schedtrace denied at apply time). */

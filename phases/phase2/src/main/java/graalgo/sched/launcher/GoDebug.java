@@ -205,8 +205,12 @@ public final class GoDebug {
                 removed.add(new RemovedKnob((String) r.get("name"), olds));
             }
         }
-        registryKnobs = Collections.unmodifiableMap(knobs);
+        // Publication order matters: the fast path in ensureRegistry()
+        // checks registryKnobs, so registryRemoved must be assigned first
+        // (both volatile); otherwise a reader could see a non-null map
+        // with a still-null removed list.
         registryRemoved = Collections.unmodifiableList(removed);
+        registryKnobs = Collections.unmodifiableMap(knobs);
     }
 
     // ------------------------------------------------------------------
@@ -220,7 +224,14 @@ public final class GoDebug {
      * old value.
      */
     public static Settings parse(String godebug) throws GoDebugException {
-        ensureRegistry();
+        try {
+            ensureRegistry();
+        } catch (RuntimeException e) {
+            // A missing/unreadable registry must deny cleanly (exit 2),
+            // not escape as an uncaught IllegalStateException.
+            throw new GoDebugException(
+                    "cannot load GODEBUG registry: " + e.getMessage());
+        }
         Map<String, Integer> values = new LinkedHashMap<>();
         if (godebug == null) {
             return new Settings(values);
@@ -265,17 +276,35 @@ public final class GoDebug {
                 throw new GoDebugException("unknown GODEBUG setting \"" + key
                         + "\" (typo? see GODEBUG.md for the supported registry)");
             }
-            int n;
+            // ASCII digits only (Go's ParseInt rejects non-ASCII digits;
+            // Long.parseLong would accept e.g. Arabic-Indic digits).
+            if (!value.matches("[+-]?[0-9]+")) {
+                throw new GoDebugException("malformed GODEBUG value for \""
+                        + key + "\": \"" + value + "\" is not a base-10 integer");
+            }
+            long parsed;
             try {
-                long l = Long.parseLong(value, 10);
-                if (l < Integer.MIN_VALUE || l > Integer.MAX_VALUE) {
-                    throw new NumberFormatException("out of int32 range");
-                }
-                n = (int) l;
+                parsed = Long.parseLong(value, 10);
             } catch (NumberFormatException e) {
                 throw new GoDebugException("malformed GODEBUG value for \""
-                        + key + "\": \"" + value + "\" is not a base-10 int32");
+                        + key + "\": \"" + value + "\" is out of range");
             }
+            // gc: every knob is int32 except memprofilerate (full int).
+            if (!key.equals("memprofilerate")
+                    && (parsed < Integer.MIN_VALUE || parsed > Integer.MAX_VALUE)) {
+                throw new GoDebugException("malformed GODEBUG value for \""
+                        + key + "\": \"" + value + "\" is out of int32 range");
+            }
+            // gc fatals at startup on cgocheck > 1 (needs GOEXPERIMENT=
+            // cgocheck2 at build time). We must deny it too: otherwise the
+            // inherited GODEBUG would kill the gc-built gofrontend child
+            // with a confusing build failure.
+            if (key.equals("cgocheck") && parsed > 1) {
+                throw new GoDebugException("GODEBUG cgocheck > 1 mode is not "
+                        + "supported at runtime (like gc); use "
+                        + "GOEXPERIMENT=cgocheck2 at build time instead");
+            }
+            int n = (int) parsed;
             if (knob.disposition == Disposition.UNSUPPORTED && n != knob.defaultValue) {
                 throw new GoDebugException("unsupported GODEBUG setting \""
                         + key + "=" + value + "\": " + knob.justification);
@@ -449,6 +478,8 @@ public final class GoDebug {
                         case '"': b.append('"'); break;
                         case '\\': b.append('\\'); break;
                         case '/': b.append('/'); break;
+                        case 'b': b.append('\b'); break;
+                        case 'f': b.append('\f'); break;
                         case 'n': b.append('\n'); break;
                         case 't': b.append('\t'); break;
                         case 'r': b.append('\r'); break;

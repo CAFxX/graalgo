@@ -3,6 +3,7 @@ package graalgo.sched.launcher;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryUsage;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -39,6 +40,7 @@ public final class GcTrace {
     private static final AtomicBoolean started = new AtomicBoolean(false);
     private static final AtomicLong count = new AtomicLong(0);
     private static final long T0_MS = System.currentTimeMillis();
+    private static volatile NotificationListener listener;
 
     /** Starts per-cycle GC trace lines. Idempotent. */
     public static void start() {
@@ -60,10 +62,14 @@ public final class GcTrace {
             Map<String, MemoryUsage> after = info.getGcInfo().getMemoryUsageAfterGc();
             long b = totalUsed(before);
             long a = totalUsed(after);
-            System.err.println("gc " + n + " @" + String.format("%.3f", secs) + "s "
+            // Locale.ROOT: the documented line shape must not vary with
+            // the ambient locale (e.g. "1,234s" under it_IT).
+            System.err.println("gc " + n + " @"
+                    + String.format(Locale.ROOT, "%.3f", secs) + "s "
                     + info.getGcName() + ": " + durMs + "ms, heap "
                     + (b / (1024 * 1024)) + "->" + (a / (1024 * 1024)) + " MB");
         };
+        listener = l;
         for (GarbageCollectorMXBean b : ManagementFactory.getGarbageCollectorMXBeans()) {
             if (b instanceof NotificationEmitter emitter) {
                 try {
@@ -88,5 +94,27 @@ public final class GcTrace {
     /** Whether tracing was started (tests). */
     public static boolean isStarted() {
         return started.get();
+    }
+
+    /**
+     * Removes the listener and clears the started flag (tests only).
+     * Production code never calls this: listeners are for the life of
+     * the JVM.
+     */
+    static void resetForTests() {
+        NotificationListener l = listener;
+        listener = null;
+        if (l != null) {
+            for (GarbageCollectorMXBean b : ManagementFactory.getGarbageCollectorMXBeans()) {
+                if (b instanceof NotificationEmitter emitter) {
+                    try {
+                        emitter.removeNotificationListener(l);
+                    } catch (Exception e) {
+                        // Best effort.
+                    }
+                }
+            }
+        }
+        started.set(false);
     }
 }

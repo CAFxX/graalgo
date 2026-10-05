@@ -80,6 +80,12 @@ public final class Panic {
                 if (!panicNilOldBehavior) {
                     v = PanicNilError.INSTANCE;
                     d = PanicNilError.descriptor();
+                } else {
+                    // Pre-1.21: panic of a nil interface value is a nil
+                    // panic (like untyped panic(nil)); recover() returns
+                    // nil and uncaught prints "panic: nil".
+                    v = null;
+                    d = null;
                 }
             } else {
                 v = gi.data();
