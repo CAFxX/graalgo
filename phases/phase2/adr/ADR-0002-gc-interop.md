@@ -207,9 +207,10 @@ divergence.
   invariant; P2-M7's pinning audit does not cover root visibility).
 
 **Supported collector decision:** default = the JVM default (G1 on GraalVM
-25); expected-to-work set = {G1, ZGC, Shenandoah}, with G1 the tested
-default. The spike re-run per collector is a P2-M4 verification-backlog
-item. (Was: no collector choice recorded anywhere — reviewer 1 P1-5.)
+25); expected-to-work set = {G1, ZGC}. Shenandoah is excluded: GraalVM
+25.0.4.1.1's JIT does not support it ("Shenandoah garbage collector is not
+supported by Graal"). Verified 2026-10-05: G1 124/124 PASS, ZGC 124/124 PASS.
+(Was: no collector choice recorded anywhere — reviewer 1 P1-5.)
 
 ## Consequences
 
