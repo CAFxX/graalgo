@@ -1,0 +1,206 @@
+package graalgo.sched;
+
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.locks.LockSupport;
+
+/**
+ * The single platform-thread drainer (P2-D2, P2-D3).
+ *
+ * <p>Loop: blocking take from the MPSC inbox → route the token into its
+ * lane → admit while {@code inflight < cap} → hard-assert the invariants.
+ * Lane order per GG-WAKE-0003: {@code wakeFifo} &gt; {@code initFifo} &gt;
+ * {@code runFifo}. The drainer is non-terminating: a stray interrupt is
+ * swallowed and the loop continues (otherwise every parked goroutine would
+ * hang forever with no recovery).
+ *
+ * <p>Admission does <strong>ack-before-unpark</strong> (GG-WAKE-0001):
+ * {@code acked.set(generation)} precedes {@code LockSupport.unpark};
+ * reversing the order loses wakeups.
+ *
+ * <p>All lane/inflight mutations happen on the drainer thread under
+ * {@link #lock}; vthreads only offer to the inbox. Single-threaded
+ * mutation is what makes the cap assert airtight.
+ */
+public final class Drainer {
+    private final SchedulerCore sched;
+    private final BlockingQueue<ResumeToken> inbox = new LinkedBlockingQueue<>();
+    private final Deque<ResumeToken> wakeFifo = new ArrayDeque<>();
+    private final Deque<ResumeToken> initFifo = new ArrayDeque<>();
+    private final Deque<ResumeToken> runFifo = new ArrayDeque<>();
+    private final Object lock = new Object();
+
+    private int inflight;
+    private int maxInflightObserved;
+    private long admissions;
+    private Thread drainerThread;
+    // Test-only admission observer (null in production).
+    private volatile java.util.function.Consumer<GoroutineHandle> admissionListener;
+    // Park/unpark matching (all under lock, drainer thread only):
+    // handle id -> parked generation (PARKED seen, UNPARK not yet).
+    private final java.util.Map<Long, Long> parked = new java.util.HashMap<>();
+    // handle id -> pending unpark arrived before the PARKED token.
+    private final java.util.Set<Long> unparkPending = new java.util.HashSet<>();
+
+    Drainer(SchedulerCore sched) {
+        this.sched = sched;
+    }
+
+    /** Starts the drainer platform thread. Idempotent. */
+    synchronized void start() {
+        if (drainerThread != null) {
+            return;
+        }
+        drainerThread = Thread.ofPlatform().daemon(true).name("graalgo-drainer")
+                .start(this::drainLoop);
+        drainerThread.setPriority(Thread.MAX_PRIORITY);
+    }
+
+    /** MPSC offer from vthreads. Never blocks. */
+    void offer(ResumeToken token) {
+        inbox.offer(token);
+    }
+
+    /** Highest in-flight count observed; for tests and stats. */
+    public int maxInflightObserved() {
+        synchronized (lock) {
+            return maxInflightObserved;
+        }
+    }
+
+    /** Total admissions; for quiescence/lost-wakeup accounting. */
+    public long admissions() {
+        synchronized (lock) {
+            return admissions;
+        }
+    }
+
+    private void drainLoop() {
+        for (;;) {
+            final ResumeToken token;
+            try {
+                token = inbox.take();
+            } catch (InterruptedException ie) {
+                // Non-terminating drainer: a stray interrupt must not kill
+                // the scheduler. Swallow and continue.
+                continue;
+            }
+            synchronized (lock) {
+                route(token);
+                admit();
+                checkInvariants();
+            }
+        }
+    }
+
+    private void route(ResumeToken token) {
+        switch (token.kind) {
+            case INIT -> initFifo.addLast(token);
+            case RESUME -> {
+                inflight--;
+                runFifo.addLast(token);
+            }
+            case WAKE -> wakeFifo.addLast(token);
+            case EXIT -> inflight--;
+            case PARKED -> {
+                inflight--;
+                if (unparkPending.remove(token.handle.id)) {
+                    // Wakeup arrived first: admit immediately through the
+                    // priority lane (no wakeup lost).
+                    wakeFifo.addLast(new ResumeToken(
+                            ResumeToken.Kind.WAKE, token.handle, token.generation));
+                } else {
+                    parked.put(token.handle.id, token.generation);
+                }
+            }
+            case UNPARK -> {
+                Long gen = parked.remove(token.handle.id);
+                if (gen != null) {
+                    wakeFifo.addLast(new ResumeToken(
+                            ResumeToken.Kind.WAKE, token.handle, gen));
+                } else {
+                    // Park hasn't been processed yet: remember the wakeup.
+                    unparkPending.add(token.handle.id);
+                }
+            }
+        }
+    }
+
+    private void admit() {
+        while (inflight < sched.cap()) {
+            ResumeToken token = pollLane();
+            if (token == null) {
+                break;
+            }
+            inflight++;
+            admissions++;
+            if (inflight > maxInflightObserved) {
+                maxInflightObserved = inflight;
+            }
+            // GG-WAKE-0001: ack BEFORE unpark. Reversing loses wakeups.
+            token.handle.acked.set(token.generation);
+            LockSupport.unpark(token.handle.thread);
+            java.util.function.Consumer<GoroutineHandle> listener = admissionListener;
+            if (listener != null) {
+                listener.accept(token.handle);
+            }
+        }
+    }
+
+    /** Lane order per GG-WAKE-0003: wake &gt; init &gt; run. */
+    private ResumeToken pollLane() {
+        ResumeToken token = wakeFifo.pollFirst();
+        if (token == null) {
+            token = initFifo.pollFirst();
+        }
+        if (token == null) {
+            token = runFifo.pollFirst();
+        }
+        return token;
+    }
+
+    /**
+     * Hard invariant check (GG-SCHED-0003): the in-flight count never
+     * exceeds the cap and never goes negative. Called by the drainer
+     * after every route+admit; a violation is a loud
+     * {@link AssertionError}, never silent corruption.
+     */
+    void checkInvariants() {
+        if (inflight > sched.cap()) {
+            throw new AssertionError(
+                    "inflight=" + inflight + " > cap=" + sched.cap());
+        }
+        if (inflight < 0) {
+            throw new AssertionError("inflight negative: " + inflight);
+        }
+    }
+
+    // ---- test hooks (package-visible; production never calls these) ----
+
+    /** Directly sets the in-flight count; white-box invariant tests only. */
+    void setInflightForTest(int n) {
+        synchronized (lock) {
+            inflight = n;
+        }
+    }
+
+    /** Observes admissions in order; lane-order tests only. */
+    void setAdmissionListener(java.util.function.Consumer<GoroutineHandle> listener) {
+        admissionListener = listener;
+    }
+
+    /**
+     * Synchronous route+admit+check on the calling thread; deterministic
+     * lane-order tests only. The production drainer is never driven this
+     * way (its drainLoop owns the lock there).
+     */
+    void processOneForTest(ResumeToken token) {
+        synchronized (lock) {
+            route(token);
+            admit();
+            checkInvariants();
+        }
+    }
+}

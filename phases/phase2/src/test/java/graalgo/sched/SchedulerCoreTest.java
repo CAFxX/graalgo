@@ -1,0 +1,353 @@
+package graalgo.sched;
+
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+
+/**
+ * P2-M1 scheduler-core unit tests (WS A).
+ *
+ * <p>Red-green discipline: every test fails against a broken scheduler
+ * (no quantum check, no cap assert, lost wakeups) and passes against the
+ * real one. GG IDs activate here per the plan's activation policy via
+ * {@code verifies:} annotations in javadoc.
+ */
+public final class SchedulerCoreTest {
+
+    private static void assertTrue(boolean cond, String msg) {
+        if (!cond) {
+            throw new AssertionError(msg);
+        }
+    }
+
+    private static void assertEquals(long expected, long actual, String msg) {
+        if (expected != actual) {
+            throw new AssertionError(msg + " expected=" + expected + " actual=" + actual);
+        }
+    }
+
+    // ---------- spawn / join / quiescence ----------
+
+    /**
+     * verifies: GG-SCHED-0001 (goroutine spawn/admission).
+     * N goroutines each do work; all complete; quiescence fires.
+     */
+    public void testSpawnAndJoin() throws Exception {
+        SchedulerCore sched = new SchedulerCore(4, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            int n = 50;
+            AtomicInteger done = new AtomicInteger();
+            for (int i = 0; i < n; i++) {
+                sched.spawn(done::incrementAndGet);
+            }
+            sched.awaitQuiescence();
+            assertEquals(n, done.get(), "all goroutines ran");
+            assertEquals(0, sched.runnableCount(), "quiescence: none live");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * verifies: GG-SCHED-0001 (quiescence scale).
+     * P2-M1 acceptance: quiescence probe green at 10k goroutines.
+     */
+    public void testQuiescenceAt10k() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            int n = 10_000;
+            AtomicInteger done = new AtomicInteger();
+            for (int i = 0; i < n; i++) {
+                sched.spawn(done::incrementAndGet);
+            }
+            sched.awaitQuiescence();
+            assertEquals(n, done.get(), "10k goroutines all ran");
+            assertTrue(sched.maxInflightObserved() <= 2,
+                    "cap held at 10k: maxInflight=" + sched.maxInflightObserved());
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    // ---------- park / unpark ----------
+
+    /**
+     * verifies: GG-WAKE-0001 (ack-before-unpark; no lost wakeup).
+     * Park then unpark: the goroutine resumes exactly once.
+     */
+    public void testParkUnpark() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, 3_600_000_000_000L); // huge quantum
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            CountDownLatch parked = new CountDownLatch(1);
+            CountDownLatch resumed = new CountDownLatch(1);
+            AtomicBoolean[] started = {new AtomicBoolean()};
+            GoroutineHandle h = sched.spawn(() -> {
+                started[0].set(true);
+                parked.countDown();
+                sched.parkCurrent(null);
+                resumed.countDown();
+            });
+            assertTrue(parked.await(5, TimeUnit.SECONDS), "goroutine started");
+            // Wait until it is actually parked (armed generation visible).
+            long deadline = System.nanoTime() + 5_000_000_000L;
+            while (h.armed.get() < 0 && System.nanoTime() < deadline) {
+                Thread.yield();
+            }
+            assertTrue(h.armed.get() >= 0, "goroutine armed its park ticket");
+            sched.unpark(h);
+            assertTrue(resumed.await(5, TimeUnit.SECONDS), "unpark resumed the goroutine");
+            sched.awaitQuiescence();
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * verifies: GG-WAKE-0001 (unpark-before-park is not lost).
+     * LockSupport permit semantics at the scheduler level: an unpark
+     * arriving before the park is absorbed, not lost.
+     */
+    public void testUnparkBeforePark() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, 3_600_000_000_000L);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            CountDownLatch resumed = new CountDownLatch(1);
+            GoroutineHandle h = sched.spawn(() -> {
+                // Park AFTER the unpark below: must still resume.
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                sched.parkCurrent(null);
+                resumed.countDown();
+            });
+            // Unpark before the goroutine parks: the drainer stashes it.
+            sched.unpark(h);
+            assertTrue(resumed.await(5, TimeUnit.SECONDS),
+                    "unpark-before-park was not lost");
+            sched.awaitQuiescence();
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * verifies: GG-WAKE-0001 (ack-before-unpark under stress).
+     * 200 park/unpark cycles; a reversed ack/unpark order would hang.
+     */
+    public void testAckBeforeUnparkStress() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, 3_600_000_000_000L);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            for (int i = 0; i < 200; i++) {
+                CountDownLatch resumed = new CountDownLatch(1);
+                GoroutineHandle h = sched.spawn(() -> {
+                    sched.parkCurrent(null);
+                    resumed.countDown();
+                });
+                long deadline = System.nanoTime() + 5_000_000_000L;
+                while (h.armed.get() < 0 && System.nanoTime() < deadline) {
+                    Thread.yield();
+                }
+                assertTrue(h.armed.get() >= 0, "cycle " + i + ": armed");
+                sched.unpark(h);
+                assertTrue(resumed.await(5, TimeUnit.SECONDS),
+                        "cycle " + i + ": wakeup lost (ack-before-unpark violated?)");
+            }
+            sched.awaitQuiescence();
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    // ---------- cap enforcement ----------
+
+    /**
+     * verifies: GG-SCHED-0003 (hard assert).
+     * White-box: forcing inflight above the cap must trip the loud
+     * AssertionError. Red-green: fails if checkInvariants is removed or
+     * weakened to a log.
+     */
+    public void testCapExceededHardAsserts() {
+        SchedulerCore sched = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        Drainer d = sched.drainer();
+        d.setInflightForTest(2); // cap is 1
+        try {
+            d.checkInvariants();
+            throw new AssertionError("cap+1 did not hard-assert");
+        } catch (AssertionError expected) {
+            assertTrue(expected.getMessage().contains("inflight=2"),
+                    "assert names the violation: " + expected.getMessage());
+        }
+        d.setInflightForTest(-1);
+        try {
+            d.checkInvariants();
+            throw new AssertionError("negative inflight did not hard-assert");
+        } catch (AssertionError expected) {
+            // expected
+        }
+        d.setInflightForTest(0);
+        d.checkInvariants(); // clean state passes
+    }
+
+    /**
+     * verifies: GG-SCHED-0003 (cap held under load).
+     * 8 spinners at cap=2: max in-flight never exceeds 2, all finish.
+     */
+    public void testCapEnforcedUnderLoad() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, 20_000_000L); // 20ms quantum
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            int n = 8;
+            AtomicInteger done = new AtomicInteger();
+            AtomicBoolean stop = new AtomicBoolean();
+            for (int i = 0; i < n; i++) {
+                sched.spawn(() -> {
+                    long iters = 0;
+                    while (!stop.get()) {
+                        iters++;
+                        if ((iters & 0xFFF) == 0) {
+                            sched.pollCurrentThread();
+                        }
+                    }
+                    done.incrementAndGet();
+                });
+            }
+            Thread.sleep(400);
+            stop.set(true);
+            sched.awaitQuiescence();
+            assertEquals(n, done.get(), "all spinners finished");
+            assertTrue(sched.maxInflightObserved() <= 2,
+                    "cap=2 held: maxInflight=" + sched.maxInflightObserved());
+            assertTrue(sched.maxInflightObserved() >= 1,
+                    "sanity: something actually ran");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    // ---------- quantum expiry ----------
+
+    /**
+     * verifies: GG-SCHED-0001 (quantum park at Safepoint.poll).
+     * cap=1, infinite spinner + one-shot: the one-shot only runs if the
+     * spinner is preempted. Red-green: fails (timeout) when the quantum
+     * check is disabled.
+     */
+    public void testQuantumExpiryPreempts() throws Exception {
+        SchedulerCore sched = new SchedulerCore(1, 20_000_000L); // 20ms quantum
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            AtomicBoolean stop = new AtomicBoolean();
+            AtomicLong spinnerIters = new AtomicLong();
+            // Infinite spinner: would hold cap=1 forever without preemption.
+            sched.spawn(() -> {
+                while (!stop.get()) {
+                    spinnerIters.incrementAndGet();
+                    sched.pollCurrentThread(); // what the AST Safepoint.poll does
+                }
+            });
+            CountDownLatch oneshot = new CountDownLatch(1);
+            sched.spawn(oneshot::countDown);
+            assertTrue(oneshot.await(10, TimeUnit.SECONDS),
+                    "one-shot goroutine starved: quantum expiry did not preempt the spinner");
+            assertTrue(spinnerIters.get() > 0, "spinner actually spun");
+            stop.set(true);
+            sched.awaitQuiescence();
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * verifies: GG-SCHED-0001 (Safepoint.poll wiring).
+     * The same preemption through the REAL replacement
+     * {@code graalgo.safepoint.Safepoint.poll()} — proves the classpath
+     * overlay resolves to Phase-2 semantics.
+     */
+    public void testSafepointPollWiring() throws Exception {
+        SchedulerCore sched = new SchedulerCore(1, 20_000_000L);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            AtomicBoolean stop = new AtomicBoolean();
+            sched.spawn(() -> {
+                while (!stop.get()) {
+                    graalgo.safepoint.Safepoint.poll();
+                }
+            });
+            CountDownLatch oneshot = new CountDownLatch(1);
+            sched.spawn(oneshot::countDown);
+            assertTrue(oneshot.await(10, TimeUnit.SECONDS),
+                    "Safepoint.poll() did not trigger quantum preemption "
+                    + "(overlay not active?)");
+            stop.set(true);
+            sched.awaitQuiescence();
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    // ---------- drainer lane order ----------
+
+    /**
+     * verifies: GG-SCHED-0002, GG-WAKE-0003 (wake &gt; init &gt; run).
+     * Deterministic white-box test: drives the drainer synchronously
+     * (never started) through a scripted token sequence and asserts the
+     * admission order. Red-green: fails if pollLane order changes.
+     */
+    public void testDrainerLaneOrder() {
+        SchedulerCore sched = new SchedulerCore(1, 3_600_000_000_000L);
+        // NOTE: drainer never started; processOneForTest drives it.
+        Drainer d = sched.drainer();
+        List<Long> admissions = new ArrayList<>();
+        d.setAdmissionListener(h -> admissions.add(h.id));
+
+        GoroutineHandle holder = fakeHandle();
+        GoroutineHandle waker = fakeHandle();
+        GoroutineHandle init = fakeHandle();
+        GoroutineHandle runner = fakeHandle();
+
+        // 1. Holder occupies the single slot.
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.INIT, holder, 0));
+        // 2. Queue WAKE + INIT while the slot is held (no admission).
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.WAKE, waker, 0));
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.INIT, init, 0));
+        // 3. A quantum-expired spinner parks: frees the slot, joins runFifo.
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.RESUME, runner, 0));
+        // 4. Holder exits: frees the slot again.
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.EXIT, holder, -1));
+        // 5. Waker exits: frees the slot again.
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.EXIT, waker, -1));
+
+        // Expected admission order: holder, waker (WAKE lane), init
+        // (INIT lane), runner (RESUME/run lane).
+        assertEquals(4, admissions.size(), "admissions: " + admissions);
+        assertEquals(holder.id, admissions.get(0), "holder first");
+        assertEquals(waker.id, admissions.get(1), "WAKE before INIT");
+        assertEquals(init.id, admissions.get(2), "INIT before RUN");
+        assertEquals(runner.id, admissions.get(3), "RUN last");
+    }
+
+    /** Non-started handle; unpark on its dummy thread is harmless. */
+    private static GoroutineHandle fakeHandle() {
+        GoroutineHandle h = new GoroutineHandle(() -> {});
+        h.thread = new Thread(() -> {});
+        return h;
+    }
+}
