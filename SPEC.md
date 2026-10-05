@@ -554,7 +554,9 @@ translated JFR `jdk.ExecutionSample` streams; heap profiles from allocation
 samples) served from a `net/http/pprof`-compatible endpoint `[DECIDED]` —
 a translation layer, not a format invention. Custom JFR events:
 `graalgo.GoroutineStart/End` (aliasing the JDK's virtual-thread events in JIT
-mode), `graalgo.ChannelBlock`, GC activity mapped onto `jdk.GC*`, and
+mode), `graalgo.GoroutinePark` (reason + duration; rate-controlled — duration
+threshold for blocking parks, 1-in-1024 sampling for quantum parks),
+`graalgo.ChannelBlock`, GC activity mapped onto `jdk.GC*`, and
 `graalgo.ModuleCrash` for momo attribution `[DECIDED]`. Pinning detection is
 free via `jdk.VirtualThreadPinned` (GG-0057).
 

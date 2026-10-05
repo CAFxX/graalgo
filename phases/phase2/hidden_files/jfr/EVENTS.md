@@ -47,8 +47,11 @@ would dominate the recording.
 
 - **Park threshold**: non-quantum parks commit only if ≥ 100µs
   (`-Dgraalgo.jfr.parkThresholdNanos=`). Quantum parks are the scheduler
-  hot loop — measured 26% exceed 100µs, so a threshold *cannot* filter
-  them; they are **sampled 1-in-1024** instead (deterministic via parkSeq).
+  hot loop — measured 26% exceed 100µs (conditions: 4 concurrent
+  yielders on 1 carrier, this VM; single-yielder measures ~2%, so the
+  number is workload-shaped — the point stands: a pure duration threshold
+  cannot filter quantum parks under contention), so they are **sampled
+  1-in-1024** instead (deterministic via parkSeq).
 - **Default-off**: `@Enabled(false)` on all four events. JFR enables
   custom events by default for *any* active recording (caught by
   `testNoEventsWhenDisabled`, which was red before the fix) — without
@@ -58,6 +61,22 @@ would dominate the recording.
   path, no caching layer. (An early flawed probe reported ~600ns and a
   caching design was built on it; review re-measured single-digit ns on
   two JVMs and the cache was removed.)
+
+### Residual rate-control risk (reviewer2 P2-4 — acknowledged, not fixed)
+
+- **`GoroutineStart/End` are unthrottled**: a spawn storm emits 2 events
+  per goroutine with no sampling or budget. Spawns are not the hot loop
+  (each spawn is already a vthread creation), but a pathological
+  spawn-loop would flood the recording.
+- **Blocking channel paths are unsampled**: N goroutines doing blocking
+  ping-pong emit up to 2 events per iteration per goroutine
+  (ChannelBlock + Park) with no backpressure. Genuine blocks are the
+  signal, not noise, but there is no worst-case bound.
+- **1-in-1024 is reasonable, not derived**: at hot-loop rates (~130k
+  parks/s/goroutine at ~7.6µs/park) it yields ~130 events/s/goroutine —
+  comfortable for JFR, but the constant comes from a round binary
+  fraction, not a stated event-rate budget. If a workload parks 10×
+  faster, the rate scales linearly.
 
 ## Overhead (this VM: AMD EPYC 9D25 @ 1.5GHz; `System.nanoTime()` ~60ns here)
 
@@ -89,7 +108,7 @@ Event counts (`jfr summary`):
 | graalgo.GoroutineStart | 4 |
 | graalgo.GoroutineEnd | 4 (all paired with a start) |
 | graalgo.GoroutinePark | 4 (3× CHANNEL: 274ms, 5ms, 8ms; 1× TIMER: 400ms) |
-| graalgo.ChannelBlock | 3 (all RECV; the sends completed via direct handoff and correctly emit nothing) |
+| graalgo.ChannelBlock | 3 (2× RECV by goroutine 1; 1× SEND by goroutine 2 — a genuine ~5ms block: the sender arrived before the receiver enqueued, so no direct handoff was possible; the matching 5ms CHANNEL park follows it) |
 | jdk.VirtualThreadStart | 4 (thread names `goroutine-<id>`, correlating) |
 
 ## gc boundary (DIV-M6-1)

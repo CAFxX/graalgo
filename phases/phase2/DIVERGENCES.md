@@ -170,15 +170,19 @@ here (NO-OP) — and document the effective value here.
 
 ### DIV-M6-1: `runtime/trace` has no JFR mapping (JFR is the native surface)
 
-gc's `runtime/trace` exposes the gc runtime's internal scheduler states
-(P, M, G transitions, STW phases). These have no meaningful mapping onto
-a JVM-hosted user-space scheduler (goroutines are Loom virtual threads;
-there are no Ps or Ms), so no `runtime/trace` compatibility is attempted.
-The JVM-native observability surface is JFR: `graalgo.GoroutineStart/End`,
-`graalgo.GoroutinePark` (reason + duration), `graalgo.ChannelBlock`
-(SPEC §3.10), plus the JDK's own `jdk.VirtualThreadStart/End/Pinned`.
-`go tool trace` compatibility is not claimed.
+gc's `runtime/trace` has two layers: (a) goroutine/channel/mutex-level
+events (`GoStart`/`GoEnd`/`GoBlockSend`/`GoBlockRecv`/`GoBlockSelect`/
+`GoUnblock`), and (b) the gc runtime's internal machine state (P, M, G
+transitions, STW phases) plus the trace binary format and the
+`go tool trace` UI. Layer (a) maps directly — this milestone *is* that
+mapping under JFR-native names (`graalgo.GoroutineStart/End`,
+`graalgo.GoroutinePark` with reason + duration, `graalgo.ChannelBlock`).
+Layer (b) has no counterpart: goroutines are Loom virtual threads, so
+there are no Ps or Ms to trace, and `go tool trace` compatibility is
+not claimed. `trace.WithRegion`-style span annotations are likewise out
+of scope (no JFR equivalent is emitted).
 
-Consequence: Go programs using `runtime/trace` observe nothing (the
-package is not in the supported surface); operators use `jfr print` /
-JMC on a recording with `graalgo.*` enabled instead.
+Consequence: `runtime/trace` is not in the supported surface — a Go
+program importing it fails to build loudly (it is not silently
+ignored). Operators use `jfr print` / JMC on a recording with
+`graalgo.*` enabled instead (SPEC §3.10).
