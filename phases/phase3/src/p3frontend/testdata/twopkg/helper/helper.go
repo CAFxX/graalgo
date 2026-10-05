@@ -39,3 +39,17 @@ func Describe(p Point) string {
 func Boom() {
 	panic("helper boom")
 }
+
+// T is a struct type designed to collide with main's T (P0-1): helper's
+// embedded T must never rebind to main's T during flattening.
+type T struct {
+	X int
+}
+
+// Who identifies which package's T answers.
+func (t T) Who() string { return "h.T" }
+
+// Outer embeds T.
+type Outer struct {
+	T
+}

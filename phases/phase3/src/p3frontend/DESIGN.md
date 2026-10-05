@@ -129,6 +129,14 @@ rewrite **shadowing-correct**:
 - Declaration identifiers (`Info.Defs`) of renamed objects are renamed.
 - Local identifiers that merely shadow a package-level name resolve to
   their local object and are untouched.
+- Embedded fields (`struct{ T }`): go/types records the field's type
+  identifier in both `Defs` (the synthetic field `*types.Var`) and `Uses`
+  (the `*types.TypeName`) — the rewriter prefers the type, so the
+  declaration is renamed; selectors naming the field (`o.T`, including
+  promoted selectors) and keyed literal elements (`Outer{T: ...}`) resolve
+  in `Uses` to the field `*types.Var` and are renamed to the renamed type
+  name. Without this, an embedded field would silently rebind to a
+  colliding local type of the same name.
 
 Import specs for flattened packages are dropped (blank imports
 `import _ "x"` are flattened for side effects, then dropped; the M1

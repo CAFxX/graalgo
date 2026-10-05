@@ -201,9 +201,50 @@ type rewriter struct {
 // identObj resolves an identifier to its object (declaration or use).
 func (rw *rewriter) identObj(id *ast.Ident) types.Object {
 	if obj, ok := rw.info.Defs[id]; ok {
+		// Embedded field declaration: go/types records the field's type
+		// identifier in BOTH Defs (the synthetic field *types.Var) and
+		// Uses (the *types.TypeName). Preferring Defs would resolve
+		// struct{ T } to the field Var, miss the rename map, and silently
+		// rebind the embedded type to a colliding local T — prefer the
+		// type whenever both are present.
+		if v, ok := obj.(*types.Var); ok && v.IsField() && v.Embedded() {
+			if u, ok := rw.info.Uses[id]; ok {
+				return u
+			}
+		}
 		return obj // may be nil (blank); the rename map lookup then misses
 	}
 	return rw.info.Uses[id]
+}
+
+// renameEmbeddedField renames id in place when it denotes an embedded
+// struct field whose type was renamed. For struct{ T } the field name IS
+// the type name, so every use of the field must track the renamed type:
+//   - the field declaration's type identifier (via identObj's Defs/Uses
+//     disambiguation above),
+//   - selectors naming the field (o.T, including promoted selectors —
+//     go/types records Sel in Uses as the field *types.Var, which is never
+//     in the rename map),
+//   - keyed composite-literal elements (Outer{T: ...} — keys are recorded
+//     in Uses as the field *types.Var).
+//
+// No-op when the field's type was not renamed (e.g. main's own types).
+func (rw *rewriter) renameEmbeddedField(id *ast.Ident) {
+	v, ok := rw.info.Uses[id].(*types.Var)
+	if !ok || !v.IsField() || !v.Embedded() {
+		return
+	}
+	t := v.Type()
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem() // struct{ *T }: the field is still named T
+	}
+	n, ok := t.(*types.Named)
+	if !ok {
+		return
+	}
+	if nn, ok := rw.renames[n.Obj()]; ok {
+		id.Name = nn
+	}
 }
 
 // ident renames id in place when it resolves to a renamed object.
@@ -232,6 +273,9 @@ func (rw *rewriter) expr(e ast.Expr) ast.Expr {
 		if nn, ok := rw.renames[rw.info.Uses[x.Sel]]; ok {
 			return &ast.Ident{NamePos: x.Sel.NamePos, Name: nn}
 		}
+		// Embedded-field selector (o.T): rename the field to the renamed
+		// type name so it keeps denoting the dependency's type.
+		rw.renameEmbeddedField(x.Sel)
 		x.X = rw.expr(x.X)
 		return x
 	case *ast.ParenExpr:
@@ -280,6 +324,12 @@ func (rw *rewriter) expr(e ast.Expr) ast.Expr {
 		}
 		return x
 	case *ast.KeyValueExpr:
+		// Keyed literal naming an embedded field (Outer{T: ...}): the key
+		// denotes the field Var, so it needs the embedded-field treatment
+		// to track the renamed type.
+		if key, ok := x.Key.(*ast.Ident); ok {
+			rw.renameEmbeddedField(key)
+		}
 		x.Key = rw.expr(x.Key)
 		x.Value = rw.expr(x.Value)
 		return x

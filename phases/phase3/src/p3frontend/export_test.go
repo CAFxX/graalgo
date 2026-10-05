@@ -305,3 +305,73 @@ func TestDeterministic(t *testing.T) {
 		t.Fatalf("ExportDir is not deterministic: %d vs %d bytes", len(a), len(b))
 	}
 }
+
+// TestEmbeddedFieldRebinding verifies P0-1: an embedded field's type
+// identifier must track the renamed dependency type through (a) the field
+// declaration, (b) selectors naming the embedded field (o.T, including
+// promotion through two levels), and (c) keyed composite-literal elements
+// (Outer{T: ...}). The fixture collides helper's T with main's own T: a
+// rebinding bug is SILENT (both legs exit 0; gc prints h.T, the broken
+// merge prints main.T), so the test asserts the exact expected output in
+// addition to gc-vs-graalgo byte equality.
+func TestEmbeddedFieldRebinding(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"go.mod": "module example.com/embed\n\ngo 1.27\n",
+		"h/h.go": `package h
+
+type T struct{ X int }
+
+func (t T) Who() string { return "h.T" }
+
+type Outer struct{ T }
+
+type Agg struct{ Outer }
+`,
+		"main.go": `package main
+
+import (
+	"example.com/embed/h"
+	"fmt"
+)
+
+type T struct{ X int }
+
+func (t T) Who() string { return "main.T" }
+
+func main() {
+	o := h.Outer{}
+	fmt.Println(o.T.Who()) // (a)+(b): embedded-field selector
+	fmt.Println(o.X)       // (b): promoted field selector
+	a := h.Agg{Outer: h.Outer{T: h.T{X: 7}}}
+	fmt.Println(a.Outer.T.Who(), a.Outer.X) // (c): keyed literal, two-level promotion
+	var t T
+	fmt.Println(t.Who()) // main's own T is untouched
+}
+`,
+	})
+
+	merged, err := MergeDir(dir)
+	if err != nil {
+		t.Fatalf("MergeDir: %v", err)
+	}
+	mergedPath := filepath.Join(t.TempDir(), "merged_embed.go")
+	if err := os.WriteFile(mergedPath, []byte(merged), 0644); err != nil {
+		t.Fatal(err)
+	}
+	progPath := filepath.Join(t.TempDir(), "embedprog")
+	if res := runCommand(t, dir, goTool(t), "build", "-o", progPath, "."); res.code != 0 {
+		t.Fatalf("go build: exit=%d stderr=%q", res.code, res.stderr)
+	}
+	gc := runCommand(t, dir, progPath)
+	gr := graalgoRun(t, mergedPath)
+	const want = "h.T\n0\nh.T 7\nmain.T\n"
+	if gc.stdout != want {
+		t.Fatalf("gc oracle moved: stdout=%q want=%q", gc.stdout, want)
+	}
+	if gr.code != gc.code || gr.stdout != gc.stdout {
+		t.Fatalf("gc divergence (embedded fields):\n gc exit=%d stdout=%q stderr=%q\n gr exit=%d stdout=%q stderr=%q",
+			gc.code, gc.stdout, gc.stderr, gr.code, gr.stdout, gr.stderr)
+	}
+	t.Logf("embedded-field rebinding: gc and graalgo agree on %q", want)
+}
