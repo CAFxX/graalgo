@@ -3,7 +3,7 @@ title: Linux-first OS scope
 statement: graalgo v1 SHALL target Linux (amd64 first, arm64 second); darwin is deferred; Windows is out of v1 scope with a re-test trigger after Linux is green.
 rationale: Closes Phase-0 question 13; Windows is 2-3x cost (IOCP + 6.7k-line syscall layer).
 parent: ""
-status: locked
+status: active
 superseded_by: ""
 verification_plan: OS-scope review per phase; re-test trigger recorded in the verdict-scope ledger.
 history:
@@ -11,3 +11,4 @@ history:
     - '2026-10-03: locked — SPEC accepted by program owner; Phase-1 entry gate passed'
     - '2026-10-03: active — Phase 1 started (coordinator)'
     - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'
+    - '2026-10-06: active — P3-M1 (first real tests: TestBuildTagFiltering with verifies: GG-0023 annotation)'
