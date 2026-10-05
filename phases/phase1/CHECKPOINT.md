@@ -1370,3 +1370,37 @@ Final evidence (independently verified by coordinator):
 
 M7 sign-off recorded. Done-gate 1 (full corpus differential green, zero
 unexplained divergences) MET. Next: M8 fuzz-soak/mutation validation.
+
+## 2026-10-05 ~06:55 CEST — M8 started (fuzz-soak + mutation validation → done-gate 2)
+
+Normative: done-gate (2) = "fuzz-soak layer of the testing strategy operational
+on the language subset" (PHASES.md:71–77); SPEC §5.4 (GG-0037) two layers —
+(i) native testing.F differential fuzzing, (ii) program generation across the
+feature space (generics instantiation, interface dispatch, closure capture,
+defer/panic/recover chains, map iteration, ...) through the §5.5 harness, with
+corpus minimization on every new divergence and minimized cases as permanent
+regressions; SPEC §5.7 (GG-0034) oracle validation by mutation (inverted
+comparison, dropped defer must turn the harness red); gosmith-class generator
+is [UNVERIFIED] → small template-based generator (SPEC.md:688–690).
+
+Plan: tools/fuzz/ — template-based Go program generator (seeded RNG, in-scope
+per docs/frontend-v1.md §7) + differential driver (gc vs graalgo-run, JSONL
+journal, checkpoint/resume, delta-minimizer); tools/mutation/ — curated
+source-level mutants (Java frontend + Go exporter), overlay-compile + full
+suite per mutant, kill-rate report with survivor dispositions.
+
+## 2026-10-05 — M8 progress: fuzzer finds fixed (commits 7c8dfec, a5731ec, 3ab5bec)
+
+Fuzzer (`tools/fuzz/`, Go module): 24 statement templates, seeded RNG,
+differential driver (gc vs graalgo-run), ddmin minimizer, JSONL journal,
+state.json resume. 100/100 programs valid Go (seeds 1–100).
+
+Pilot (40 seeds) found 4 bugs, all fixed red-green, suite 192/0:
+1. P0 non-ASCII source crash (byte-based col/len → rune-based) — a5731ec
+2. P2 clear/min/max builtin fail-fast gap — a5731ec
+3. P1 invalid-UTF-8 sanitization (Fmt byte-buffer refactor) — 3ab5bec
+4. P1 pointer %v printed 0x0 (NodeFactory elemKind branch) — 3ab5bec
+
+Red-green evidence: /tmp/m8_redcheck.log (190/2), /tmp/m8_green.log (190/0),
+/tmp/m8_fmt_green.log (192/0). Next: launch soak (2 lanes, resumable),
+triage divergences, build mutation rig (tools/mutation/).
