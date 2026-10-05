@@ -83,6 +83,7 @@ public final class SchedulerCore {
     private final int carrierParallelism;
     private final long quantumNanos;
     private final Drainer drainer;
+    private final graalgo.runtime.TimerHeap timerHeap;
     private final ThreadLocal<GoroutineHandle> currentHandle = new ThreadLocal<>();
     private final AtomicInteger liveGoroutines = new AtomicInteger();
     /**
@@ -106,6 +107,7 @@ public final class SchedulerCore {
         this.cap = Math.min(requestedCap, carrierParallelism);
         this.quantumNanos = quantumNanos;
         this.drainer = new Drainer(this);
+        this.timerHeap = new graalgo.runtime.TimerHeap(this);
     }
 
     /** Effective in-flight cap. */
@@ -124,6 +126,52 @@ public final class SchedulerCore {
     /** Starts the drainer. Must precede the first spawn. */
     public void start() {
         drainer.start();
+        timerHeap.start();
+    }
+
+    /** The scheduler's timer heap (P2-M3, WS C). */
+    public graalgo.runtime.TimerHeap timerHeap() {
+        return timerHeap;
+    }
+
+    /**
+     * Enter blocking I/O (P2-M3, GG-0018/GG-SCHED-0004 — netpoller
+     * deletion): releases the goroutine's in-flight slot synchronously
+     * (returns only after the drainer has released it), so the slot is
+     * immediately available to other goroutines. The vthread then blocks
+     * in the real syscall; Loom unmounts it, freeing the carrier.
+     *
+     * <p>Every {@code ioEnter} must be paired with {@code ioExit} on the
+     * same goroutine (use try/finally); re-entrant ioEnter and unpaired
+     * ioExit fail fast on the calling thread, and the drainer
+     * fail-fasts on any accounting mismatch.
+     */
+    public void ioEnter() {
+        GoroutineHandle h = requireHandle();
+        if (!h.inIo.compareAndSet(false, true)) {
+            throw new IllegalStateException(
+                    "graalgo.sched: re-entrant ioEnter (goroutine already in blocking I/O)");
+        }
+        long t = armPark(h);
+        drainer.offer(new ResumeToken(ResumeToken.Kind.IO_ENTER, h, t));
+        awaitAck(h, t);
+    }
+
+    /**
+     * Leave blocking I/O: re-acquires the in-flight slot through the
+     * WAKE lane, blocking until the drainer admits the goroutine (gc
+     * exitsyscall parity — if no slot is free, the goroutine waits
+     * rather than running unaccounted).
+     */
+    public void ioExit() {
+        GoroutineHandle h = requireHandle();
+        if (!h.inIo.compareAndSet(true, false)) {
+            throw new IllegalStateException(
+                    "graalgo.sched: ioExit without ioEnter");
+        }
+        long t = armPark(h);
+        drainer.offer(new ResumeToken(ResumeToken.Kind.IO_EXIT, h, t));
+        awaitAck(h, t);
     }
 
     Drainer drainer() {

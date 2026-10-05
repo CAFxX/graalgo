@@ -34,6 +34,22 @@ public final class ResumeToken {
          * via the parked record) — no wakeup is lost.
          */
         UNPARK,
+        /**
+         * Goroutine entering blocking I/O (P2-M3, GG-0018/GG-SCHED-0004).
+         * The drainer releases its in-flight slot (it no longer counts
+         * against GOMAXPROCS while blocked, gc netpoller parity) and
+         * records the handle in the in-I/O set. The vthread then blocks
+         * in the real syscall (Loom unmounts the carrier). Re-admission
+         * needs an IO_EXIT token for the same handle.
+         */
+        IO_ENTER,
+        /**
+         * Goroutine leaving blocking I/O. The drainer removes it from
+         * the in-I/O set (fail-fast when absent: unpaired ioExit) and
+         * re-admits through the WAKE lane; the vthread waits for
+         * re-admission (gc exitsyscall parity).
+         */
+        IO_EXIT,
     }
 
     public final Kind kind;

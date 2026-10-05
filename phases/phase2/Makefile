@@ -83,6 +83,10 @@ check:
 	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
+	@echo "== netpoller-deletion gate (GG-0018, P2-M3) =="
+	@if grep -rn --include='*.java' -E 'Netpoll\.' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java'; then \
+		echo "NETPOLLER GATE FAILED: reachable netpoller code path"; exit 1; fi
+	@echo "netpoller-deletion gate clean"
 
 clean:
 	rm -rf out

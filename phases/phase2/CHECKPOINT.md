@@ -444,3 +444,48 @@ corpus/channels/ (12 programs + expected/panic + regen.sh + README).
 **Parent dependencies flagged:** exporter lowering for channel/select
 AST (Phase-1 rejects `*ast.SendStmt`); P2-M10 owns deadlock detection
 and the divergence list (none found).
+
+## 2026-10-05 ~14:30 CEST — P2-M3 START (timers/sleep + netpoller deletion)
+
+**Design (verified against P2-M1/M2 code, not assumed):**
+
+1. **TimerHeap** (`graalgo.runtime`, owned by SchedulerCore): priority-queue
+   of deadlines + one daemon platform timer thread (not a carrier).
+   Fire actions: SLEEP/CALLBACK → `sched.unpark(handle)` (waiter parked
+   via `parkCurrent`, wakeAction runs on its vthread); CHAN →
+   `chan.trySend(nanotime, sched)` non-blocking from the timer thread
+   (drop if full — gc ticker parity). UNPARK-before-PARKED is safe via
+   the drainer's unparkPending (P2-D7).
+
+2. **Timers overlay** (same-FQN, frozen signatures byte-identical):
+   `sleep(ns)` parks (ns<=0 returns immediately, gc parity);
+   `startTimer(whenNanos, callback)` arms + parks current goroutine,
+   callback runs as wakeAction; `stopTimer(id)` cancels. Additive:
+   `after(ns)`, `newTimer(ns)`, `newTicker(ns)` → GoTimer.
+
+3. **GoTimer**: NewTimer/NewTicker + Stop/Reset with gc-exact semantics
+   (Stop→bool, Reset→bool; generation-guarded heap entries; Reset on
+   expired-undrained verified differentially vs gc 1.27). Ticker re-arms
+   deadline+=period with skip-ahead (no spin); NewTicker(0) panics
+   (gc message parity).
+
+4. **ioEnter/ioExit** (SchedulerCore, GG-0018/GG-SCHED-0004): new
+   ResumeToken kinds IO_ENTER/IO_EXIT. ioEnter: synchronous slot release
+   (offer + ack + unpark, awaitAck) so the release is deterministic;
+   inIo set on handle (calling-thread fail-fast for re-entrant/unpaired)
+   AND drainer-side set (halt-level invariant). ioExit: re-acquire via
+   wakeFifo + awaitAck (blocks until a slot frees — gc exitsyscall
+   parity). EXIT-while-inIo and PARKED-while-inIo are fail-fast.
+   While in I/O the vthread blocks in the real syscall (Loom unmounts);
+   the slot is free for other goroutines.
+
+5. **Netpoll overlay**: same-FQN, all methods throw UOE documenting
+   DELETION per GG-0018 (no readiness poller exists; blocking I/O uses
+   ioEnter/ioExit). `make check` gains a netpoller-deletion grep gate
+   (no `Netpoll.` references outside the overlay).
+
+6. **Differential strategy**: frontend rejects `import "time"`, so the
+   corpus is Java-level equivalents of Go timer programs (translation
+   convention like P2-M2); `.expected` from `go run`; compare event
+   ORDER, never wall-clock. 12 programs: sleep order, After, Timer
+   Stop/Reset edges, Ticker, ticker-drop, select+After, Sleep(0).

@@ -43,6 +43,10 @@ public final class Drainer {
     private final java.util.Map<Long, Long> parked = new java.util.HashMap<>();
     // handle id -> pending unpark arrived before the PARKED token.
     private final java.util.Set<Long> unparkPending = new java.util.HashSet<>();
+    // handle ids currently in blocking I/O (P2-M3, GG-0018): slot
+    // released, vthread blocked in the syscall (not parked). IO_EXIT
+    // re-admits through the WAKE lane.
+    private final java.util.Set<Long> inIo = new java.util.HashSet<>();
 
     Drainer(SchedulerCore sched) {
         this.sched = sched;
@@ -121,8 +125,25 @@ public final class Drainer {
                 runFifo.addLast(token);
             }
             case WAKE -> wakeFifo.addLast(token);
-            case EXIT -> inflight--;
+            case EXIT -> {
+                // A goroutine that dies while in blocking I/O without
+                // ioExit would double-release its slot (it was already
+                // released at ioEnter). Every ioEnter must be paired —
+                // fail fast, never silently corrupt the cap.
+                if (!inIo.remove(token.handle.id)) {
+                    inflight--;
+                } else {
+                    throw new AssertionError(
+                            "goroutine g" + token.handle.id
+                                    + " exited while in blocking I/O (unpaired ioEnter)");
+                }
+            }
             case PARKED -> {
+                if (inIo.contains(token.handle.id)) {
+                    throw new AssertionError(
+                            "goroutine g" + token.handle.id
+                                    + " parked while in blocking I/O");
+                }
                 inflight--;
                 if (unparkPending.remove(token.handle.id)) {
                     // Wakeup arrived first: admit immediately through the
@@ -142,6 +163,35 @@ public final class Drainer {
                     // Park hasn't been processed yet: remember the wakeup.
                     unparkPending.add(token.handle.id);
                 }
+            }
+            case IO_ENTER -> {
+                // Slot-releasing blocking I/O (P2-M3, GG-0018,
+                // GG-SCHED-0004): the goroutine no longer counts against
+                // the in-flight cap while blocked in the syscall.
+                if (!inIo.add(token.handle.id)) {
+                    throw new AssertionError(
+                            "duplicate ioEnter for g" + token.handle.id);
+                }
+                if (parked.containsKey(token.handle.id)) {
+                    throw new AssertionError(
+                            "ioEnter while parked for g" + token.handle.id);
+                }
+                inflight--;
+                // Synchronous release: ack (+unpark in case the vthread
+                // already parked in awaitAck) so ioEnter() returns only
+                // after the slot is actually released.
+                token.handle.acked.set(token.generation);
+                LockSupport.unpark(token.handle.thread);
+            }
+            case IO_EXIT -> {
+                // Re-acquire the slot through the priority lane (gc
+                // exitsyscall parity); the vthread waits for admission.
+                if (!inIo.remove(token.handle.id)) {
+                    throw new AssertionError(
+                            "ioExit without ioEnter for g" + token.handle.id);
+                }
+                wakeFifo.addLast(new ResumeToken(
+                        ResumeToken.Kind.WAKE, token.handle, token.generation));
             }
         }
     }
