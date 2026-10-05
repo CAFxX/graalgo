@@ -194,3 +194,36 @@ quantum-expiry; only testQuantumExpiryPreempts keeps it).
 
 **Tests:** 15/15 green (13 + yield + interrupt), 8/8 runs stable.
 `make check` green.
+
+## 2026-10-05 ~13:15 CEST — P2-M1 SIGN-OFF
+
+**All reviewer findings remediated and re-tested.** Two independent
+reviews completed (reviewer1: NO-GO with 2 P0s; reviewer2:
+GO-WITH-FINDINGS with 1 P0). Every finding from both reports has been
+fixed, with red-green verification where applicable.
+
+**Final verification (commit 93c43d1, fresh clean build):**
+- `make -C phases/phase2 test`: 15/15 green (8/8 runs stable).
+- `make -C phases/phase2 check`: both gates clean.
+- Differential: 8/8 non-panicking programs byte-identical (named in
+  checkpoint); panic program: exit 2 + message match (verbosity differs).
+- Preemption: smoke/preempt.go completes at --gmp=1, output matches gc.
+- Phase-1 suite: 208/0 (reviewer2 independently re-ran; zero phase1
+  files changed by P2-M1 remediation).
+
+**P2-M1 acceptance criteria (PLAN.md §4):**
+1. ✅ Scheduler core with goroutine=vthread+token, quantum preemption
+   (10ms), drainer (wake>init>run lanes), cap=min(GOMAXPROCS,carriers)
+   with hard assert, armed-ticket discipline.
+2. ✅ Safepoint.poll() wired at function entries/loop back-edges (seam
+   verified in Phase-1 AST; overlay mechanism documented).
+3. ✅ Differential smoke: single-goroutine ≡ Phase-1 (8/8 identical).
+4. ✅ Preemption smoke: 2-goroutine busy-loop interleaves at --gmp=1.
+
+**Review gate:** ≥2 independent reviews completed; all findings
+remediated and re-tested. Sign-off granted.
+
+**GG IDs activated:** GG-SCHED-0001 (quantum expiry),
+GG-SCHED-0002 (drainer), GG-SCHED-0003 (cap), GG-WAKE-0001
+(ack-before-unpark), GG-WAKE-0003 (lane order), GG-0017 (crash
+discipline) — core slice per PLAN.md.
