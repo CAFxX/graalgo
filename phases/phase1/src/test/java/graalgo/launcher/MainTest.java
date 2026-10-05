@@ -158,6 +158,30 @@ public final class MainTest {
         assertEq(Main.EXIT_INPUT_ERROR, code[0], "unknown flag");
     }
 
+    public void testDeepRecursionReportsCleanStackOverflow() throws Exception {
+        // M10 (self-attack): guest recursion burns host stack (-Xss32m).
+        // 100k frames overflows; the launcher must report a clean
+        // "stack overflow" (exit 2), not a raw JVM trace + Truffle cascade.
+        Path dir = Files.createTempDirectory("graalgo-stack-test");
+        Path prog = dir.resolve("deep.go");
+        Files.writeString(prog,
+                "package main\n\n"
+                + "func rec(n int) int { if n <= 0 { return 0 }; return 1 + rec(n-1) }\n\n"
+                + "func main() { println(rec(100000)) }\n",
+                StandardCharsets.UTF_8);
+        final int[] code = new int[1];
+        String err = captureStderr(() -> {
+            code[0] = Main.run(new String[] {prog.toString()});
+            return code[0];
+        });
+        assertEq(Main.EXIT_PANIC, code[0], "deep recursion exit code");
+        assertContains(err, "stack overflow", "deep recursion stderr");
+        if (err.contains("StackOverflowError") || err.contains("\tat ")) {
+            throw new AssertionError("deep recursion must not leak a JVM trace, got <"
+                    + err + ">");
+        }
+    }
+
     public void testNoInputFile() throws Exception {
         final int[] code = new int[1];
         captureStderr(() -> {

@@ -178,6 +178,26 @@ public final class Main {
             // WS F maps them to Go panic values.
             System.err.println("graalgo-run: execution failed: " + e);
             exitCode = EXIT_INPUT_ERROR;
+        } catch (StackOverflowError soe) {
+            // M10 (self-attack): guest recursion burns host stack (-Xss32m,
+            // M5 stance). Catching here — after the stack unwound — reports
+            // a clean stack-overflow instead of the JVM's raw trace plus the
+            // Truffle exception-profiling cascade. gc also aborts (exit 2)
+            // on runaway recursion; the depth limit itself is documented.
+            reportStackOverflow();
+            exitCode = EXIT_PANIC;
+        } catch (NoClassDefFoundError | ExceptionInInitializerError e) {
+            // M10 (self-attack): Truffle's exception profiler can itself
+            // blow the exhausted stack while handling a StackOverflowError,
+            // masking it as a class-init failure (NoClassDefFoundError:
+            // Could not initialize ...ReturnProfile, caused by
+            // StackOverflowError). Unwrap the cascade; rethrow anything else.
+            if (causedBy(e, StackOverflowError.class)) {
+                reportStackOverflow();
+                exitCode = EXIT_PANIC;
+            } else {
+                throw e;
+            }
         }
         if (dumpPoly != null) {
             // M9 (WS L): report the call-site polymorphism snapshot. The
@@ -280,6 +300,23 @@ public final class Main {
      * are graalgo-shaped (documented divergence — gc prints pc offsets and
      * inlined frames).
      */
+    /** M10 (self-attack): clean report for host-stack exhaustion. */
+    private static void reportStackOverflow() {
+        System.err.println("graalgo-run: stack overflow: Go call depth "
+                + "exceeded the host stack limit (deep recursion; "
+                + "see docs/limitations.md)");
+    }
+
+    /** Walks the cause chain looking for an instance of {@code kind}. */
+    private static boolean causedBy(Throwable t, Class<? extends Throwable> kind) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            if (kind.isInstance(c)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static void reportPanic(graalgo.runtime.PanicException p) {
         Object v = p.goValue();
         graalgo.runtime.PanicRendering.RenderInfo info =
