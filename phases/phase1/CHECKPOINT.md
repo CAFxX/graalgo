@@ -1421,3 +1421,14 @@ Fuzzer soak: 33 programs, 22 DIVERGED (67%). Triaged:
 - P1 (pre-existing): nested map printing ClassCastException
   (hidden_files/m8_nested_map_bug.md; fuzzer seed 1006)
 - Both confirmed on baseline a5731ec (not M8 regressions).
+
+## 2026-10-05 ~06:00 CEST — M8: mutation 6/6 killed (100% kill rate)
+
+Full 6-mutant run completed: all KILLED, 0 survived, 0 errors.
+- M-J01 (inc/dec swap), M-J02 (oid off-by-one), M-J03 (fmt width),
+  M-G01 (exporter bound), M-J04 (nil-check inversion), M-J05 (slot check)
+- Kill rate: 6/6 = 100%. No survivors to disposition.
+- Evidence: /tmp/mutation-2893029052/report.json
+
+Peer reviews (2 independent) completed; reports pending delivery.
+Soak: 54+ programs, divergences triaged (struct P0, map P1 documented).
