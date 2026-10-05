@@ -1516,7 +1516,9 @@ the documented P0/P1s were not fixed. All three closeout items are now done.
 ### Verification
 - Full suite: **195 tests, 0 failures** (`make -C phases/phase1 test`).
 - `make check`: green (frontend goldens updated for unary folding).
-- Diffharness corpus: re-run to confirm tally (see below).
+- Diffharness corpus: 92 comparisons, 46 same, 46 diverged — **all 46
+  divergences are "not supported in frontend/v1 scope"** (out-of-subset
+  programs correctly rejected); **0 real divergences**. Tally holds.
 
 ### Commits (closeout)
 954a9bd (P0 struct), 6e62b2e (nested maps), 95b20a2 (float/nil),
