@@ -16,7 +16,14 @@ type Program struct {
 
 // DiscoverCorpus finds all corpus programs: immediate subdirectories of
 // root containing a main.go file, sorted by name for deterministic order.
+// root is resolved to an absolute path: backend run steps execute in a
+// fresh empty working directory, so program paths must not be relative.
 func DiscoverCorpus(root string) ([]Program, error) {
+	abs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, fmt.Errorf("resolve corpus dir: %w", err)
+	}
+	root = abs
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, fmt.Errorf("read corpus dir: %w", err)
