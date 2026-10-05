@@ -133,8 +133,11 @@ before.
 - P2-M3: timers/sleep + blocking NIO (WS C) — timer correctness vs gc;
   slot-releasing NIO with CapExhaustion-style falsifier; netpoller deletion
   (GG-0018, GG-SCHED-0004→active)
-- P2-M4: GC interop (WS D) — design spike + ADR first ([OPEN] layout);
-  exact roots + Truffle-level write barriers; barrier/root differential vs gc
+- P2-M4: GC interop (WS D) — design spike + ADR-0002 first ([OPEN] layout
+  closed by ADR-0002); exact roots via the JVM GC + write-barrier integrity
+  (no Truffle-level barrier — ADR-0002 D3); Go-observable GC surface on JVM
+  primitives; barrier/root differential vs gc → blocking closeout checklist
+  in ADR-0002 ("P2-M4 closeout checklist")
 - P2-M5: GODEBUG triage (WS E) — versioned registry published, unknown-knob
   deny-with-error, `godebug-diff` green (GG-0055→active) → gate 5 (part)
 - P2-M6: JFR events (WS F) — goroutine/channel events flowing on the
