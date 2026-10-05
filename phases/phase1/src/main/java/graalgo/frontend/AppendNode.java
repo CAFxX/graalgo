@@ -41,33 +41,51 @@ public final class AppendNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         GoSlice s = (GoSlice) sliceChild.executeObject(frame);
-        // M7: append(s, str...) spreads the string's bytes.
+        // M7: append(s, x...) spreads x's elements. Two cases:
+        // - string spread (append([]byte, str...)): append the string's bytes.
+        // - slice spread (append(s1, s2...)): append s2's elements.
         if (ellipsis) {
             if (elemChildren.length != 1) {
                 throw new FrontendException("append with ellipsis takes exactly one spread argument");
             }
-            GoExprNode strNode = elemChildren[0];
-            graalgo.values.GoString str;
-            if (strNode.kind() == GoKind.UNTYPED_STRING) {
-                str = (graalgo.values.GoString) strNode.executeObject(frame);
+            GoExprNode spreadNode = elemChildren[0];
+            if (spreadNode.kind() == GoKind.STRING || spreadNode.kind() == GoKind.UNTYPED_STRING) {
+                graalgo.values.GoString str = (graalgo.values.GoString) spreadNode.executeObject(frame);
+                byte[] bytes = str.bytes();
+                int n = bytes.length;
+                GoSlice out;
+                if (s != null && n <= s.cap() - s.len()) {
+                    out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
+                } else {
+                    out = Intrinsics.growslice(s, elemKind, n);
+                }
+                Object arr = out.array();
+                int base = out.offset() + (s == null ? 0 : s.len());
+                int[] intArr = (int[]) arr;
+                for (int i = 0; i < n; i++) {
+                    intArr[base + i] = bytes[i] & 0xFF;
+                }
+                return out;
             } else {
-                str = (graalgo.values.GoString) strNode.executeObject(frame);
+                // Slice spread: append the slice's elements.
+                GoSlice spread = (GoSlice) spreadNode.executeObject(frame);
+                int n = spread == null ? 0 : (int) spread.len();
+                GoSlice out;
+                if (s != null && n <= s.cap() - s.len()) {
+                    out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
+                } else {
+                    out = Intrinsics.growslice(s, elemKind, n);
+                }
+                Object arr = out.array();
+                int base = out.offset() + (s == null ? 0 : s.len());
+                Object spreadArr = spread == null ? null : spread.array();
+                int spreadBase = spread == null ? 0 : spread.offset();
+                for (int i = 0; i < n; i++) {
+                    Object elem = Boxing.arrayGet(spreadArr, elemKind, spreadBase + i);
+                    Boxing.arraySet(arr, elemKind, base + i, elem);
+                }
+                return out;
             }
-            byte[] bytes = str.bytes();
-            int n = bytes.length;
-            GoSlice out;
-            if (s != null && n <= s.cap() - s.len()) {
-                out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
-            } else {
-                out = Intrinsics.growslice(s, elemKind, n);
-            }
-            Object arr = out.array();
-            int base = out.offset() + (s == null ? 0 : s.len());
-            int[] intArr = (int[]) arr;
-            for (int i = 0; i < n; i++) {
-                intArr[base + i] = bytes[i] & 0xFF;
-            }
-            return out;
         }
         int n = elemChildren.length;
         // M7: fast path — if the slice has capacity, extend the header
