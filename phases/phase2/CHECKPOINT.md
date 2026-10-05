@@ -894,3 +894,88 @@ SchedTrace/GcTrace daemons, panicnil overlay (drift-guarded),
 godebug-diff tool, GODEBUG.md, DIVERGENCES.md DIV-M5-1..5.
 
 P2-M5 done. Workstream E complete.
+
+## 2026-10-05 — P2-M6 START (JFR goroutine/channel events, WS F → gate 3)
+
+**Design (from SPEC §2.7/§3.10 + task brief):**
+- New package `graalgo.jfr`: `GoroutineStart/End`, `GoroutinePark` (reason +
+  duration, committed on resume, duration-threshold filtered), `ChannelBlock`
+  (operation SEND/RECV/SELECT). Fast-path (non-blocking) channel ops emit
+  nothing — rate control by design.
+- Hook points: `SchedulerCore.spawn` (start/end), `quantumPark` (QUANTUM),
+  `parkCurrent` overload with `ParkReason` (CHANNEL/TIMER/SELECT via
+  GoChan/SelectOp/Timers), `ioEnter`/`ioExit` (IO, full syscall duration),
+  `awaitAck` post-resume emission (threshold: `graalgo.jfr.parkThresholdNanos`,
+  default 100µs — quantum parks ~µs vanish, real blocks stay).
+- Disabled = near-zero: every emission guarded by prototype `isEnabled()`
+  (one field read); no allocation when no recording.
+- `jdk.VirtualThreadStart/End` fire for free (goroutines are vthreads);
+  test will assert correlation via thread name `goroutine-<id>`.
+- Evidence target: `phases/phase2/hidden_files/jfr/EVENTS.md` + recorded JFR
+  file + event counts (done-gate 3).
+
+## 2026-10-05 — P2-M6 progress
+- Hookups committed: 6f8ca2b (events+facade), 401132b (scheduler:
+  start/end, park reasons, IO duration), 1c5a03d (channel/timer:
+  ChannelBlock, CHANNEL/TIMER/SELECT reasons). Suite 152/152 green at
+  each commit; Phase-1 untouched.
+- **Design correction (JFR default-enable trap):** `@Enabled` defaults to
+  true for custom events — a bare `new Recording()` was capturing our
+  events (and `isEnabled()` returned true) even without explicit enable.
+  Caught by `testNoEventsWhenDisabled` (red). Fix: all four events now
+  `@Enabled(false)` — opt-in via `rec.enable("graalgo.*")`. The guard
+  pattern is only sound with default-off; documented in JfrEvents.
+- `testEventsFlow` green first run: start/end pairing, exactly 1 RECV
+  ChannelBlock (send via direct handoff emits nothing), CHANNEL+TIMER
+  park events with durations, jdk.VirtualThreadStart correlation.
+
+## 2026-10-05 — P2-M6 DONE (JFR goroutine/channel events, WS F → gate 3)
+
+**Reviews (2, both GO-WITH-FINDINGS, all remediated + re-tested):**
+- Reviewer 1 (correctness): 0 P0 / 1 P1 (IO double-count) / 7 P2 —
+  remediated in 4a9f393 (notePark removed from ioEnter/ioExit,
+  emitQuietly isolation, doc fixes).
+- Reviewer 2 (methodology/testing): 4 P1 / 8 P2, independently verified
+  (evidence-file counts/durations via jfr summary/print; red-green
+  genuineness via standalone probe; 5/5 determinism replication of the
+  1-in-1024 sampler; 24.3% replication of the "measured 26%"). Reports:
+  reviews/phase2-m6/reviewer1.md, reviewer2.md.
+  - P1-4: the ~600ns Event.isEnabled() claim did not reproduce (measured
+    7.4ns/9.2ns on GraalVM 25 here, 3.5–5.9ns by reviewer) — the caching
+    layer built on it was REMOVED; isEnabled() is called directly
+    (f4589fa). Disabled guard re-measured 23ns/park, 0.38× nanoTime.
+  - P2-7: IO park now begin()s at ioEnter / commits at ioExit (spans the
+    syscall); probe showed begin() is a no-op while disabled, so a
+    mid-syscall-started recording falls back to emit-at-exit (5e3439a,
+    red-green via mutation: old code fails "interval does not span: 0ns").
+  - P1-1: testEventsFlow hardened — sleep-paced (1ms) waiter probe with
+    10s fail-fast (the yield-spin pinned carriers on 2-core VMs, ~40%
+    flake), absolute 200ms bound replaced by "≥1 long (≥50ms) park per
+    reason" (9c44ebe).
+  - P2-5/P2-6: ensureRegistered() before rec.start(); throughput smoke
+    is median-of-3 with adjacent pairing (single-shot flaked at 0.54
+    under VM load 4.4).
+  - Docs: EVENTS.md ChannelBlock line fixed to the actual file (2 RECV +
+    1 SEND, genuine 5ms block — P1-2); DIV-M6-1 honestly worded
+    (runtime/trace layer (a) maps directly, only (b) P/M/STW+format+UI
+    lacks counterparts; import fails loudly — P1-3); SPEC §3.10 gains
+    graalgo.GoroutinePark (P2-3); residual rate-control risks documented
+    (P2-4); jcmd recipe replaces non-existent `jfr start` (P2-1);
+    measurement conditions recorded (P2-8).
+
+**Open scheduler question (not a JFR defect, for the scheduler owner):**
+reviewer2 observed a 5.6ms CHANNEL park ending +278ms with g2's send at
++1659ms — i.e. a drainer re-admission with no matching UNPARK in
+flight. 30-min bounded investigation ruled out: handle-ID reuse (IDs are
+unique), spurious LockSupport wakeup (awaitAck re-parks on acked < t),
+timer broadcast (unpark is handle-specific). Mechanism not found
+statically; may be 2-core timing-distortion artifact. The JFR hook
+measures the true notePark→resume interval faithfully either way.
+
+**Final verification (fresh on sign-off tree dfad56a, by me):**
+phase-2 `make test` 158/158, `make check` green (placeholder, debug,
+netpoller, off-heap gates), Phase-1 suite 208/208 (untouched files).
+
+P2-M6 done. Workstream F complete → Phase-2 done-gate 3 met ("JFR
+flowing": events observable on the conformance corpus; evidence
+phases/phase2/hidden_files/jfr/EVENTS.md + p2-m6-evidence.jfr + counts).
