@@ -71,18 +71,30 @@ public final class JfrEvents {
     }
 
     /**
-     * Force-loads the event classes so {@code Recording.enable(name)}
-     * resolves them. Referencing the class literals triggers loading,
-     * which registers the events with JFR.
+     * Force-initializes the event classes so {@code Recording.enable(name)}
+     * resolves them and, critically, so the one-time
+     * {@code FlightRecorder.register} (which parks while pinned — P2-M7)
+     * happens here on the startup thread, never lazily on a goroutine
+     * carrier. Class literals alone do NOT initialize (JLS 12.4.1); each
+     * event class declares its own {@code enabled()} touching the
+     * subclass-static prototype, which forces {@code <clinit>}.
+     *
+     * <p>Must be called once at scheduler startup, before the first spawn.
      */
     public static void ensureRegistered() {
-        Class<?>[] events = {
-            GoroutineStartEvent.class,
-            GoroutineEndEvent.class,
-            GoroutineParkEvent.class,
-            ChannelBlockEvent.class,
+        // Each enabled() touches the event class's own static prototype,
+        // forcing <clinit> (which registers with JFR). The events are
+        // @Enabled(false) so the results are always false; the return
+        // values are discarded — the class-initialization side effect is
+        // the entire point. Stored in an array so a dropped call is a
+        // compile error, not a silent no-op.
+        boolean[] initialized = {
+            GoroutineStartEvent.enabled(),
+            GoroutineEndEvent.enabled(),
+            GoroutineParkEvent.enabled(),
+            ChannelBlockEvent.enabled(),
         };
-        if (events.length != 4) {
+        if (initialized.length != 4) {
             throw new AssertionError("event registration list changed");
         }
     }

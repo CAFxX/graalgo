@@ -108,6 +108,11 @@ public final class SchedulerCore {
         // P2-D6: effective cap = min(GOMAXPROCS, carrier parallelism).
         this.cap = Math.min(requestedCap, carrierParallelism);
         this.quantumNanos = quantumNanos;
+        // P2-M7 (GG-0057): force-initialize the JFR event classes here on
+        // the startup thread. Their <clinit> calls FlightRecorder.register,
+        // which parks while pinned; doing it lazily on a goroutine carrier
+        // emits jdk.VirtualThreadPinned on the conformance corpus.
+        JfrEvents.ensureRegistered();
         this.drainer = new Drainer(this);
         this.timerHeap = new graalgo.runtime.TimerHeap(this);
     }
