@@ -184,4 +184,62 @@ public final class MainTest {
         assertContains(out, "d=-42", "--dump-vars d");
         assertContains(out, "f=1000233", "--dump-vars f");
     }
+
+    public void testRunNonAsciiSource() throws Exception {
+        // M8 fuzzer find (P0): any multi-byte UTF-8 in a statement's source
+        // range crashed NodeFactory with IllegalArgumentException
+        // ("charIndex out of range") because the exporter sent byte-based
+        // col/len while Truffle's createSection is char-based. Pre-fix, this
+        // program died building the AST; post-fix it runs and prints exactly.
+        Path dir = Files.createTempDirectory("graalgo-main-test");
+        Path f = dir.resolve("prog.go");
+        Files.writeString(f,
+                "package main\n\nimport \"fmt\"\n\nfunc main() {\n" +
+                "\tfmt.Println(\"日本語\")\n" +
+                "\tfmt.Println(\"héllo wörld\")\n" +
+                "\ts := \"日本語\" + \"!\"\n" +
+                "\tfmt.Println(s, len(s))\n" +
+                "}\n",
+                StandardCharsets.UTF_8);
+        PrintStream old = System.out;
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(buf, true, StandardCharsets.UTF_8));
+        int code;
+        try {
+            code = Main.run(new String[] {f.toString()});
+        } finally {
+            System.setOut(old);
+        }
+        assertEq(Main.EXIT_OK, code, "run exit on non-ASCII source");
+        String out = buf.toString(StandardCharsets.UTF_8);
+        // len("日本語") = 9 bytes; len("日本語!") = 10 bytes.
+        String expected = "日本語\n" + "héllo wörld\n" + "日本語! 10\n";
+        if (!expected.equals(out)) {
+            throw new AssertionError("stdout on non-ASCII source: expected <"
+                    + expected + "> but got <" + out + ">");
+        }
+    }
+
+    public void testCheckRejectsClearBuiltin() throws Exception {
+        // M8 fuzzer find (P2): clear/min/max are outside the v1 builtin
+        // surface but the exporter emitted them, and NodeFactory died with
+        // "internal error building AST". The exporter must fail fast with a
+        // clean WS G scope error instead. Pre-fix, stderr said
+        // "not implemented in NodeFactory v1", not "not supported in
+        // frontend/v1 scope".
+        for (String prog : new String[] {
+                "m := map[string]int{\"a\": 1}\n\tclear(m)\n",
+                "println(min(1, 2), max(3, 4))\n"}) {
+            Path bad = writeTempGo(prog);
+            final int[] code = new int[1];
+            String err = captureStderr(() -> {
+                code[0] = Main.run(new String[] {"--check", bad.toString()});
+                return code[0];
+            });
+            assertEq(Main.EXIT_BUILD_FAILURE, code[0], "--check exit on " + prog.trim());
+            assertContains(err, "not supported in frontend/v1 scope",
+                    "--check stderr is a clean scope error for " + prog.trim());
+            assertContains(err, "WS G", "--check stderr names WS G for " + prog.trim());
+        }
+    }
 }

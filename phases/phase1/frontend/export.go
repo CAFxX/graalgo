@@ -48,6 +48,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"unicode/utf8"
 )
 
 // frontendVersion is the JSON protocol version emitted. Additive-only changes
@@ -136,8 +137,14 @@ type Node struct {
 // see the Node type above. Params are emitted as kind:"param" nodes.)
 
 // Pos is a source position: file index into Doc.Package.Files, 1-based
-// line/column (go/token convention), byte offset, and byte length of the
-// node's source text.
+// line/column (go/token convention, but COLUMN IS RUNE-BASED — see below),
+// byte offset, and rune length of the node's source text.
+//
+// M8: col and len are rune (character) counts, not bytes. Truffle's
+// Source.createSection(line, col, len) is char-based; emitting byte-based
+// values crashed it ("charIndex out of range") on any non-ASCII source.
+// off remains the byte offset of the node's first character (NodeFactory
+// does not consume it).
 type Pos struct {
 	File int `json:"file"`
 	Line int `json:"line"`
@@ -282,6 +289,7 @@ func ExportFile(path string) (string, error) {
 
 	e := &exporter{
 		fset:     fset,
+		src:      src,
 		info:     info,
 		typeIDs:  make(map[types.Type]int),
 		namedIDs: make(map[string]int),
@@ -621,6 +629,7 @@ func (e *exporter) exportPackageVars() ([]GlobalEnt, error) {
 
 type exporter struct {
 	fset    *token.FileSet
+	src     []byte // raw source bytes of the single input file (M8: rune-based positions)
 	info    *types.Info
 	types   []TypeEnt
 	typeIDs map[types.Type]int
@@ -805,7 +814,22 @@ func joinSubstKeys(targs []types.Type, s *typeSubst) string {
 func (e *exporter) pos(n ast.Node) *Pos {
 	s := e.fset.Position(n.Pos())
 	t := e.fset.Position(n.End())
-	return &Pos{File: 0, Line: s.Line, Col: s.Column, Off: s.Offset, Len: t.Offset - s.Offset}
+	col, length := s.Column, t.Offset-s.Offset
+	// M8: Truffle Source.createSection(line, col, len) is char-based, but
+	// go/token positions are byte-based. For non-ASCII sources the byte
+	// length can exceed the char length, and createSection throws
+	// IllegalArgumentException ("charIndex out of range") — a hard crash on
+	// valid programs (found by the M8 fuzzer: fmt.Println("日本語")).
+	// Emit rune-based col/len; off stays a byte offset (NodeFactory ignores it).
+	if e.src != nil && s.IsValid() && t.IsValid() {
+		if f := e.fset.File(n.Pos()); f != nil && s.Offset <= t.Offset && t.Offset <= len(e.src) {
+			if lo := f.Offset(f.LineStart(s.Line)); lo <= s.Offset {
+				col = utf8.RuneCount(e.src[lo:s.Offset]) + 1
+			}
+			length = utf8.RuneCount(e.src[s.Offset:t.Offset])
+		}
+	}
+	return &Pos{File: 0, Line: s.Line, Col: col, Off: s.Offset, Len: length}
 }
 
 func (e *exporter) node(kind string, n ast.Node, fields map[string]any) *Node {
@@ -3113,6 +3137,15 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	b, ok := e.info.Uses[funIdent].(*types.Builtin)
 	if !ok {
 		return nil, scopeErrorf("calls to non-builtin functions are not supported in frontend/v1 scope (WS D)")
+	}
+	// M8: fail fast on builtins outside the v1 surface (fuzzer find: clear/
+	// min/max used to slip through and die as "internal error building AST"
+	// in NodeFactory). The surface is freeze-stub.md "Builtin nodes".
+	switch b.Name() {
+	case "len", "cap", "make", "new", "append", "copy", "delete",
+		"complex", "real", "imag", "print", "println", "panic", "recover":
+	default:
+		return nil, scopeErrorf("call to builtin %q is not supported in frontend/v1 scope (WS G intrinsic surface)", b.Name())
 	}
 	fun, err := e.exportIdent(funIdent)
 	if err != nil {

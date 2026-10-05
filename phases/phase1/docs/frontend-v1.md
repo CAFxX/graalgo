@@ -49,11 +49,13 @@ Every node carries `pos`:
 "pos": { "file": 0, "line": 11, "col": 7, "off": 412, "len": 5 }
 ```
 
-`file` indexes `package.files`; `line`/`col` are 1-based (go/token convention);
-`off` is the byte offset of the node's first character; `len` is the byte
-length of the node's source text (`End()`−`Pos()`). `NodeFactory` builds
-`SourceSection`s as `createSection(line, col, len)` (lengths are byte-based;
-identical to char lengths for ASCII sources — WS E refines for non-ASCII).
+`file` indexes `package.files`; `line`/`col` are 1-based (go/token convention,
+except `col` is rune-based, not byte-based); `off` is the byte offset of the
+node's first character; `len` is the rune length of the node's source text
+(`utf8.RuneCount` over `End()`−`Pos()`). `NodeFactory` builds `SourceSection`s
+as `createSection(line, col, len)` (Truffle is char-based, so the wire is too;
+byte-based values crashed it with "charIndex out of range" on non-ASCII
+sources — M8 fuzzer find, fixed).
 
 ## 4. Type table
 
