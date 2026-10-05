@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * P2-M1 scheduler-core unit tests (WS A).
@@ -43,9 +44,19 @@ public final class SchedulerCoreTest {
         try {
             int n = 50;
             AtomicInteger done = new AtomicInteger();
-            for (int i = 0; i < n; i++) {
-                sched.spawn(done::incrementAndGet);
-            }
+            CountDownLatch spawnsIssued = new CountDownLatch(1);
+            // Spawner goroutine: honors the closed-world contract (see
+            // awaitQuiescence) — the spawner stays live until the last
+            // spawn is issued, so the live count cannot hit zero
+            // mid-stream. Spawning straight from the test thread is the
+            // P0-1 race (reviewer1).
+            sched.spawn(() -> {
+                for (int i = 0; i < n; i++) {
+                    sched.spawn(done::incrementAndGet);
+                }
+                spawnsIssued.countDown();
+            });
+            assertTrue(spawnsIssued.await(10, TimeUnit.SECONDS), "spawns issued");
             sched.awaitQuiescence();
             assertEquals(n, done.get(), "all goroutines ran");
             assertEquals(0, sched.runnableCount(), "quiescence: none live");
@@ -57,6 +68,13 @@ public final class SchedulerCoreTest {
     /**
      * verifies: GG-SCHED-0001 (quiescence scale).
      * P2-M1 acceptance: quiescence probe green at 10k goroutines.
+     *
+     * <p>The 10k spawns go through a single spawner goroutine: the
+     * closed-world contract (see {@code awaitQuiescence}) requires the
+     * spawn set to be closed before awaiting, and a spawner goroutine
+     * keeps the live count above zero until the last spawn is issued.
+     * Spawning 10k directly from the test thread is a contract violation
+     * (transient zero mid-stream) — reviewer1 P0-1.
      */
     public void testQuiescenceAt10k() throws Exception {
         SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
@@ -65,9 +83,14 @@ public final class SchedulerCoreTest {
         try {
             int n = 10_000;
             AtomicInteger done = new AtomicInteger();
-            for (int i = 0; i < n; i++) {
-                sched.spawn(done::incrementAndGet);
-            }
+            CountDownLatch spawnsIssued = new CountDownLatch(1);
+            sched.spawn(() -> {
+                for (int i = 0; i < n; i++) {
+                    sched.spawn(done::incrementAndGet);
+                }
+                spawnsIssued.countDown();
+            });
+            assertTrue(spawnsIssued.await(30, TimeUnit.SECONDS), "spawner issued 10k spawns");
             sched.awaitQuiescence();
             assertEquals(n, done.get(), "10k goroutines all ran");
             assertTrue(sched.maxInflightObserved() <= 2,
@@ -349,5 +372,85 @@ public final class SchedulerCoreTest {
         GoroutineHandle h = new GoroutineHandle(() -> {});
         h.thread = new Thread(() -> {});
         return h;
+    }
+
+    // ---------- failure discipline ----------
+
+    /**
+     * verifies: GG-WAKE-0001 (wake action not dropped).
+     * Reviewer1 P0-2: unpark-before-park must still run the wake action,
+     * on the woken vthread. Red-green: fails pre-fix (action dropped).
+     */
+    public void testWakeActionSurvivesUnparkBeforePark() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, 3_600_000_000_000L);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            AtomicBoolean actionRan = new AtomicBoolean();
+            AtomicReference<Thread> actionThread = new AtomicReference<>();
+            CountDownLatch resumed = new CountDownLatch(1);
+            GoroutineHandle h = sched.spawn(() -> {
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                }
+                sched.parkCurrent(() -> {
+                    actionRan.set(true);
+                    actionThread.set(Thread.currentThread());
+                });
+                resumed.countDown();
+            });
+            sched.unpark(h); // before the goroutine parks
+            assertTrue(resumed.await(5, TimeUnit.SECONDS), "resumed after early unpark");
+            assertTrue(actionRan.get(), "wake action ran (dropped pre-fix)");
+            assertTrue(actionThread.get() != null && actionThread.get().isVirtual(),
+                    "wake action ran on the vthread");
+            sched.awaitQuiescence();
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * verifies: GG-0017 (Go panic parity).
+     * Reviewer1 P1-1: an uncaught panic in a SPAWNED goroutine must be
+     * recorded (launcher exits 2), not a silent exit 0 with a raw JVM
+     * stack trace.
+     */
+    public void testSpawnedPanicRecorded() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> {
+                throw new graalgo.runtime.PanicException("boom", null, "string", null);
+            });
+            sched.awaitQuiescence();
+            assertTrue(sched.panicked(), "spawned panic recorded");
+            assertTrue(!sched.crashed(), "panic is not an internal crash");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * verifies: GG-SCHED-0001 (internal errors are loud).
+     * A RuntimeException escaping a goroutine body is recorded as a
+     * crash (launcher exits 1), never swallowed.
+     */
+    public void testSpawnedRuntimeExceptionRecorded() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> {
+                throw new IllegalStateException("synthetic internal error");
+            });
+            sched.awaitQuiescence();
+            assertTrue(sched.crashed(), "internal error recorded");
+        } finally {
+            SchedulerCore.install(null);
+        }
     }
 }

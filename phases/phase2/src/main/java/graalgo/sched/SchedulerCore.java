@@ -155,31 +155,34 @@ public final class SchedulerCore {
     }
 
     /**
-     * Park the current goroutine indefinitely; {@code onWake} runs on
-     * the waker thread before the WAKE token is enqueued. Wake via
-     * {@link #unpark(GoroutineHandle)}. Generation matching is done by
-     * the drainer, tolerating both orders (wakeup-before-park and
-     * park-before-wakeup) — no wakeup is lost.
+     * Park the current goroutine indefinitely. When the goroutine is
+     * re-admitted via {@link #unpark(GoroutineHandle)}, {@code onWake}
+     * runs on the goroutine's own vthread immediately after resume
+     * (before {@code parkCurrent} returns). Wake via
+     * {@link #unpark(GoroutineHandle)}; the drainer matches PARKED/UNPARK
+     * by handle, tolerating both orders — no wakeup (and no wake action)
+     * is lost.
      */
     public void parkCurrent(Runnable onWake) {
         GoroutineHandle h = requireHandle();
         long t = armPark(h);
-        h.parkWakeAction = onWake;
+        h.wakeAction.set(onWake);
         drainer.offer(new ResumeToken(ResumeToken.Kind.PARKED, h, t));
         awaitAck(h, t);
+        Runnable action = h.wakeAction.getAndSet(null);
+        if (action != null) {
+            action.run();
+        }
     }
 
     /**
-     * Wake a parked goroutine: runs its wake action, then enqueues a
-     * WAKE token (priority lane). Safe to call before the target parks
-     * (the drainer matches by handle).
+     * Wake a parked goroutine: enqueues an UNPARK token; the drainer
+     * matches it against the parked record (or stashes it if the park
+     * hasn't been processed yet) and re-admits through the WAKE lane.
+     * The goroutine's wake action runs on its own vthread after resume.
+     * Safe to call before the target parks.
      */
     public void unpark(GoroutineHandle h) {
-        Runnable action = h.parkWakeAction;
-        if (action != null) {
-            h.parkWakeAction = null;
-            action.run();
-        }
         drainer.offer(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
     }
 
@@ -222,11 +225,16 @@ public final class SchedulerCore {
      * Spawns a goroutine running {@code body}. The vthread starts
      * parked; the drainer admits it through the init lane (GG-WAKE-0003).
      * Returns the handle (for tests and M2+ wakeups).
+     *
+     * <p>Failure discipline (Go parity): an uncaught Go panic in
+     * <em>any</em> goroutine is recorded and printed (the launcher exits
+     * 2); {@code Goexit} kills just that goroutine; internal
+     * {@code RuntimeException}s and stack overflows are recorded loudly
+     * (the launcher exits 1).
      */
     public GoroutineHandle spawn(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
         long t = armPark(h);
-        liveGoroutines.incrementAndGet();
         Thread vthread = Thread.ofVirtual().name("goroutine-" + h.id).unstarted(() -> {
             currentHandle.set(h);
             h.thread = Thread.currentThread();
@@ -237,6 +245,21 @@ public final class SchedulerCore {
                 awaitAck(h, t);
                 h.quantumDeadlineNanos = System.nanoTime() + quantumNanos;
                 body.run();
+            } catch (graalgo.runtime.PanicException pe) {
+                recordPanic(pe);
+            } catch (graalgo.runtime.Goexit g) {
+                // Non-main goroutine Goexit: just dies. (Main's Goexit
+                // is handled by the launcher's own catch, inside.)
+            } catch (StackOverflowError soe) {
+                recordCrash("stack overflow", soe);
+            } catch (NoClassDefFoundError | ExceptionInInitializerError e) {
+                if (isStackOverflowCascade(e)) {
+                    recordCrash("stack overflow", e);
+                } else {
+                    recordCrash("internal error", e);
+                }
+            } catch (RuntimeException e) {
+                recordCrash("internal error", e);
             } finally {
                 GoroutineState.restore(prev);
                 currentHandle.remove();
@@ -247,9 +270,58 @@ public final class SchedulerCore {
             }
         });
         h.thread = vthread;
-        drainer.offer(new ResumeToken(ResumeToken.Kind.INIT, h, t));
+        // Start BEFORE accounting: if start() throws, no slot is leaked
+        // and the live count is untouched. The vthread blocks in awaitAck
+        // until the drainer admits it, so early start is safe.
         vthread.start();
+        liveGoroutines.incrementAndGet();
+        drainer.offer(new ResumeToken(ResumeToken.Kind.INIT, h, t));
         return h;
+    }
+
+    private final AtomicInteger panicCount = new AtomicInteger();
+    private final AtomicInteger crashCount = new AtomicInteger();
+    private volatile String firstPanicMessage;
+
+    private void recordPanic(graalgo.runtime.PanicException pe) {
+        if (panicCount.getAndIncrement() == 0) {
+            firstPanicMessage = String.valueOf(pe.goValue());
+        }
+        // gc prints "panic: <value>" for an uncaught panic. Full gc-style
+        // stack rendering is Phase-1's reportPanic; M1 prints the value
+        // (PanicRendering is Phase-1-internal, not in the freeze).
+        System.err.println("panic: " + pe.goValue());
+    }
+
+    private void recordCrash(String what, Throwable t) {
+        crashCount.incrementAndGet();
+        System.err.println("graalgo-run: fatal " + what + " in goroutine: " + t);
+    }
+
+    /** True if any goroutine died from an uncaught Go panic. */
+    public boolean panicked() {
+        return panicCount.get() > 0;
+    }
+
+    /** True if any goroutine died from an internal error. */
+    public boolean crashed() {
+        return crashCount.get() > 0;
+    }
+
+    /**
+     * The M10 self-attack's stack-overflow cascade: Truffle's exception
+     * profiler can blow the exhausted stack while handling a
+     * StackOverflowError, masking it as a class-init failure.
+     */
+    private static boolean isStackOverflowCascade(Throwable t) {
+        Throwable c = t;
+        while (c != null) {
+            if (c instanceof StackOverflowError) {
+                return true;
+            }
+            c = c.getCause();
+        }
+        return false;
     }
 
     /**
@@ -275,8 +347,15 @@ public final class SchedulerCore {
     }
 
     /**
-     * Blocks until every spawned goroutine has finished. Only valid
-     * after at least one spawn (otherwise returns immediately).
+     * Blocks until every spawned goroutine has finished.
+     *
+     * <p><strong>Closed-world contract:</strong> the calling thread must
+     * not spawn after calling this, and every spawn must originate from
+     * a live goroutine (or from threads that finished spawning before
+     * this call). A spawn stream from the awaiting thread itself (e.g. a
+     * 10k-spawn loop) can transiently hit zero live goroutines mid-stream
+     * and return early — bulk spawns must go through a spawner goroutine.
+     * Violating the contract is a test bug, not a scheduler bug.
      */
     public void awaitQuiescence() throws InterruptedException {
         quiescenceLatch.await();

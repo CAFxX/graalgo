@@ -59,3 +59,35 @@ classpath (the Phase-1 208-test suite stays green).
   visible; admission does ack-before-unpark (GG-WAKE-0001). The drainer
   matches PARKED/UNPARK by handle, tolerating both orders.
 - Cap = min(GOMAXPROCS, carrier parallelism) (P2-D6).
+
+## Closed-world spawn contract (reviewer1 P0-1)
+
+`awaitQuiescence()` blocks until the live-goroutine count hits zero. The
+spawn set must therefore be CLOSED before awaiting: every spawn must
+originate from a live goroutine, or from threads that finished spawning
+before the await call. A spawn stream issued directly from the awaiting
+thread (e.g. a 10k-spawn loop in a test) can transiently hit zero
+mid-stream and return early — that is a caller bug, not a scheduler bug.
+Bulk spawns go through a spawner goroutine, which stays live until the
+last spawn is issued.
+
+## Failure discipline (reviewer1 P1-1/P1-4, P2)
+
+- An uncaught Go panic in ANY goroutine is recorded and printed as
+  `panic: <value>`; the launcher exits 2 (gc parity). `Goexit` kills just
+  that goroutine. Internal `RuntimeException`s and stack overflows are
+  recorded loudly; the launcher exits 1.
+- The vthread is started BEFORE accounting (live count, INIT token): if
+  `start()` throws, no slot is leaked.
+- A violated drainer invariant (or any drainer bug) halts the JVM loudly
+  (`halt(1)` after printing). A dead drainer thread would hang every
+  parked goroutine forever with no diagnostic — the non-terminating
+  contract forbids silent death.
+
+## Overlay fail-fast (reviewer1 P1-3)
+
+`SchedMain` asserts at startup that the Phase-2 `Scheduler` replacement
+is loaded (`isPhase2()`, a Phase-2-only method absent on the Phase-1
+stub). Wrong classpath order (phase1 classes first) fails immediately
+with a clear message instead of silently sharing one `GoroutineState`
+across goroutines.

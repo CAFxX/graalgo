@@ -123,24 +123,25 @@ public final class SchedMain {
         }
 
         // Install the scheduler and run main as the first goroutine.
+        assertSchedulerOverlay();
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
         final int[] exitCode = {EXIT_OK};
         try {
             sched.spawn(() -> {
+                VirtualFrame frame = Truffle.getRuntime()
+                        .createVirtualFrame(new Object[0], program.descriptor());
                 try {
-                    VirtualFrame frame = Truffle.getRuntime()
-                            .createVirtualFrame(new Object[0], program.descriptor());
                     program.root().execute(frame);
-                } catch (graalgo.runtime.PanicException pe) {
-                    System.err.println("panic: " + pe.getMessage());
-                    exitCode[0] = EXIT_PANIC;
                 } catch (graalgo.runtime.Goexit g) {
-                    System.err.println("fatal error: no goroutines (main called runtime.Goexit) - deadlock!");
-                    exitCode[0] = EXIT_PANIC;
-                } catch (StackOverflowError soe) {
-                    System.err.println("graalgo-run: stack overflow");
+                    // Main called Goexit: Go fatal deadlock iff no other
+                    // goroutine is live; otherwise main just dies.
+                    if (sched.runnableCount() > 1) {
+                        return;
+                    }
+                    System.err.println(
+                            "fatal error: all goroutines are asleep - deadlock!");
                     exitCode[0] = EXIT_PANIC;
                 }
             });
@@ -152,7 +153,37 @@ public final class SchedMain {
         } finally {
             SchedulerCore.install(prev);
         }
+        if (sched.panicked()) {
+            return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
+        }
+        if (sched.crashed()) {
+            return EXIT_INPUT_ERROR; // internal error, already reported on stderr
+        }
         return exitCode[0];
+    }
+
+    /**
+     * Fail-fast that the Phase-2 overlay is active (P2-D8): the
+     * {@code graalgo.runtime.Scheduler} on the classpath must be the
+     * Phase-2 replacement, i.e. phase2/out/classes precedes
+     * phase1/out/classes. With the wrong order the Phase-1 stub would
+     * throw UOE on first use — and worse, the Phase-1 static
+     * {@code GoroutineState} holder would be silently shared across
+     * goroutines. Never silent.
+     */
+    private static void assertSchedulerOverlay() {
+        try {
+            if (!graalgo.runtime.Scheduler.isPhase2()) {
+                throw new IllegalStateException(
+                        "graalgo.runtime.Scheduler.isPhase2() returned false");
+            }
+        } catch (NoSuchMethodError e) {
+            throw new IllegalStateException(
+                    "FATAL: Phase-1 Scheduler stub loaded instead of the Phase-2 "
+                    + "overlay; phase2/out/classes must precede phase1/out/classes "
+                    + "on the classpath",
+                    e);
+        }
     }
 
     private static int usageError(String msg) {

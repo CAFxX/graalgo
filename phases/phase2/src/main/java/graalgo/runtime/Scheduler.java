@@ -22,6 +22,18 @@ public final class Scheduler {
     private Scheduler() {}
 
     /**
+     * Phase-2-only diagnostic: true when THIS class (the Phase-2
+     * replacement) is loaded, absent on the Phase-1 stub. The launcher
+     * calls it at startup to fail fast if the classpath order is wrong
+     * (phase2 classes must precede phase1 classes). NOT part of the
+     * frozen contract — intentionally not covered by
+     * FreezeSignatureTest.
+     */
+    public static boolean isPhase2() {
+        return true;
+    }
+
+    /**
      * Create a new goroutine running {@code fn} (no-arg functions in
      * P2-M1; argument binding arrives with the call protocol in P2-M2+).
      */

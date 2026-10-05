@@ -94,3 +94,54 @@ Commits: 26b5d8b (core), 2e5f012 (phase1 exporter exception), b993df7
 reports pending in reviews/phase2-m1/.
 
 **Next:** remediate findings → fresh suite+check → sign-off.
+
+## 2026-10-05 ~12:45 CEST — P2-M1 review remediation (reviewer1 NO-GO)
+
+Reviewer1 (code) returned NO-GO with 2 P0s + 4 P1s + 1 P2, all verified
+as real. Remediation in progress (reviewer2 methodology still running).
+
+**P0-1 (quiescence latch):** one-shot CountDownLatch could return
+mid-spawn-stream. Fixed by documenting the closed-world spawn contract
+(spawn set must be closed before awaiting; bulk spawns go through a
+spawner goroutine) and rewriting both violating tests
+(testSpawnAndJoin, testQuiescenceAt10k) to use the spawner pattern.
+The flake reproduced in testSpawnAndJoin (1/6 runs) before the fix;
+6/6 green after.
+
+**P0-2 (wake action dropped):** unpark-before-park ran the wake action
+on the waker thread (dropped if unpark won the race). Fixed: wake action
+now stored in an AtomicReference on the handle and run by the WOKEN
+goroutine after resume (both orders). Regression test
+testWakeActionSurvivesUnparkBeforePark added (red-green: fails pre-fix).
+
+**P1-1 (panic exit code):** spawned-goroutine panics now caught in the
+spawn wrapper, printed as `panic: <value>`, recorded; launcher exits 2
+(gc parity). Goexit kills just that goroutine. Verified: panic program
+exits 2 with `panic: test panic` on stderr.
+
+**P1-2 (SchedMain error handling):** main-body catch simplified —
+PanicException/StackOverflowError now handled by the spawn wrapper;
+SchedMain checks panicked()/crashed() after quiescence for exit codes.
+Goexit-in-main: deadlock message + exit 2 iff no other goroutine live.
+
+**P1-3 (overlay fail-fast):** Scheduler.isPhase2() marker added
+(Phase-2-only, not in freeze); SchedMain asserts it at startup.
+Verified: wrong classpath order fails fast with clear message.
+
+**P1-4 (drainer death):** drainLoop now catches Throwable around
+route/admit/checkInvariants and halts loudly (halt(1) after stderr)
+instead of letting the thread die silently.
+
+**P1-5 (docs):** GoroutineHandle javadoc corrected — the CAS ticket
+discipline described the spike-2b external-waker protocol, not the
+P2-M1 drainer-matched implementation. Now documents what P2-M1 does.
+
+**P2 (spawn leak):** vthread.start() moved before live-count increment
+and INIT offer; start failure leaks nothing.
+
+**Tests:** 13/13 green (10 original + 3 new: wake-action survival,
+spawned-panic recorded, spawned-RuntimeException recorded), 6/6 runs
+stable. `make check` green (debug gate exclusions documented for
+production diagnostics).
+
+**Next:** reviewer2 report → remediate → fresh suite+check → sign-off.

@@ -87,10 +87,23 @@ public final class Drainer {
                 // the scheduler. Swallow and continue.
                 continue;
             }
-            synchronized (lock) {
-                route(token);
-                admit();
-                checkInvariants();
+            try {
+                synchronized (lock) {
+                    route(token);
+                    admit();
+                    checkInvariants();
+                }
+            } catch (Throwable t) {
+                // Fail LOUD, never silent: a violated invariant (or any
+                // drainer bug) means scheduler state is corrupt. Letting
+                // the drainer thread die here would hang every parked
+                // goroutine forever with no diagnostic — the exact
+                // permanent silent hang the non-terminating contract
+                // exists to prevent. Halt immediately.
+                System.err.println(
+                        "FATAL: scheduler drainer invariant violated, halting: " + t);
+                t.printStackTrace();
+                Runtime.getRuntime().halt(1);
             }
         }
     }
