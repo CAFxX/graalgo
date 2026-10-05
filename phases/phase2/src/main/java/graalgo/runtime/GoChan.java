@@ -5,6 +5,9 @@ import java.util.Deque;
 
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
+import graalgo.jfr.ChannelOp;
+import graalgo.jfr.JfrEvents;
+import graalgo.jfr.ParkReason;
 
 /**
  * Go channel implementation (P2-M2, WS B; GG-0017 chan slice).
@@ -37,6 +40,15 @@ import graalgo.sched.SchedulerCore;
  * peek and the handoff just makes trySend return false).
  */
 public final class GoChan implements ChanOps.Chan {
+    private static final java.util.concurrent.atomic.AtomicLong ID_GEN =
+            new java.util.concurrent.atomic.AtomicLong(1);
+
+    /**
+     * Stable channel identity for JFR ({@code graalgo.ChannelBlock}).
+     * Diagnostic only; never observed by the Go program.
+     */
+    final long channelId = ID_GEN.getAndIncrement();
+
     /** Circular buffer; length == capacity (0 for unbuffered). */
     private final Object[] buf;
     private int head;
@@ -299,7 +311,9 @@ public final class GoChan implements ChanOps.Chan {
         // Outside the monitor: scheduler-aware park (P2-D4: never blocks
         // the carrier). A waker that dequeued us before we park has its
         // UNPARK stashed by the drainer — no wakeup lost.
-        sched.parkCurrent(null);
+        // P2-M6: the send genuinely blocks — record it before parking.
+        JfrEvents.channelBlock(w.handle, channelId, ChannelOp.SEND);
+        sched.parkCurrent(null, ParkReason.CHANNEL);
         synchronized (this) {
             if (w.panicOnWake) {
                 Panic.throwPanic(GoStrings.of("send on closed channel"));
@@ -323,7 +337,9 @@ public final class GoChan implements ChanOps.Chan {
             w = new RecvWaiter(sched.currentGoroutine());
             recvWaiters.addLast(w);
         }
-        sched.parkCurrent(null);
+        // P2-M6: the receive genuinely blocks — record it before parking.
+        JfrEvents.channelBlock(w.handle, channelId, ChannelOp.RECV);
+        sched.parkCurrent(null, ParkReason.CHANNEL);
         synchronized (this) {
             return new RecvResult(w.value, w.ok);
         }

@@ -7,6 +7,9 @@ import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
+import graalgo.jfr.ChannelOp;
+import graalgo.jfr.JfrEvents;
+import graalgo.jfr.ParkReason;
 
 /**
  * A single {@code select} operation (P2-M2, WS B; GG-0017 chan slice).
@@ -236,7 +239,10 @@ public final class SelectOp {
             if (claimedByOther) {
                 // Winner's unpark is in flight: this park returns
                 // immediately. (mine holds earlier enqueues; cleaned up.)
-                sched.parkCurrent(null);
+                // P2-M6: no ChannelBlock — the select did not block; the
+                // result is already decided. The park is still
+                // reason-tagged but filtered by duration on resume.
+                sched.parkCurrent(null, ParkReason.SELECT);
                 try {
                     if (resultPoison) {
                         Panic.throwPanic(GoStrings.of("send on closed channel"));
@@ -253,12 +259,18 @@ public final class SelectOp {
                 }
                 // Zero cases: `select {}` blocks forever (gc deadlock).
                 // Park indefinitely; the deadlock detector (P2-M10) owns it.
-                sched.parkCurrent(null);
+                // P2-M6: it genuinely blocks — record with channelId -1
+                // (multi-channel select has no single channel).
+                JfrEvents.channelBlock(sched.currentGoroutine(), -1, ChannelOp.SELECT);
+                sched.parkCurrent(null, ParkReason.SELECT);
                 throw new IllegalStateException("unreachable: empty select woke");
             }
             // Scheduler-aware park. A waker that claimed us before we park
             // has its UNPARK stashed by the drainer — no wakeup lost.
-            sched.parkCurrent(null);
+            // P2-M6: the select genuinely blocks — record it before parking
+            // (channelId -1: multi-channel select has no single channel).
+            JfrEvents.channelBlock(sched.currentGoroutine(), -1, ChannelOp.SELECT);
+            sched.parkCurrent(null, ParkReason.SELECT);
             try {
                 if (resultPoison) {
                     Panic.throwPanic(GoStrings.of("send on closed channel"));

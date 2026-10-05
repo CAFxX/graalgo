@@ -1,6 +1,7 @@
 package graalgo.runtime;
 
 import graalgo.sched.SchedulerCore;
+import graalgo.jfr.ParkReason;
 
 /**
  * Timer intrinsic surface (WS G, GG-0020; WS C, GG-SCHED-0004).
@@ -44,7 +45,9 @@ public final class Timers {
         // unpark-before-parked).
         sched.timerHeap().addSleep(
                 System.nanoTime() + ns, sched.currentGoroutine());
-        sched.parkCurrent(null);
+        // P2-M6: a sleeping goroutine parks with reason TIMER. No
+        // ChannelBlock — sleep is not a channel operation.
+        sched.parkCurrent(null, ParkReason.TIMER);
     }
 
     /**
