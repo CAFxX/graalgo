@@ -1,6 +1,6 @@
 # Phase 3 plan — Stdlib bring-up (Linux-first)
 
-**Status:** draft for parent review. For implementation dispatch only after approval.
+**Status:** ACCEPTED by program supervisor 2026-10-06 (independent plan review; no per-phase owner gate per the 2026-10-06 "to completion" directive). Implementation dispatched.
 **Normative:** SPEC.md (ACCEPTED 2026-10-03) §§2.8, 3.2, 3.3, 3.6, 3.8, 5;
 PHASES.md §5; phases/phase1/INTERFACE_FREEZE.md (v1, still in force);
 phases/phase2/DONE-GATES.md + phases/phase2/CHECKPOINT.md tail (Phase 2
