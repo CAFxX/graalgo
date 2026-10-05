@@ -24,6 +24,13 @@ conformance corpus.
 - Bar: ZERO unexpected pins. Expected = allowlist match (budgeted
   off-carrier FFM/file-I/O). Default allowlist is empty: graalgo has no
   JNI/FFM on goroutine paths (see §5).
+- **Event boundary (reviewer P2-1):** `jdk.VirtualThreadPinned` fires
+  **only on park-while-pinned**. A blocking FFM/JNI downcall that never
+  parks pins the carrier with no event (verified: 2 s `sleep(2)` downcall
+  → 0 events). The dynamic leg therefore cannot see pin-without-park;
+  that class is controlled by the static grep gate (§3) plus the +0
+  budget (§5). Division of labor: dynamic leg ⇒ park-while-pinned;
+  grep gate ⇒ no-park class.
 
 ## 2. Platform finding: JEP 491 (JDK 25)
 
@@ -74,6 +81,23 @@ which do NOT trigger `<clinit>` (JLS 12.4.1) — verified with a probe
 `FlightRecorder.register` (which parks while pinned) therefore fired on
 the first goroutine to emit each event type.
 
+**Intermittency note (reviewer P1-1):** pre-fix, `ensureRegistered()`
+was dead code (no production callers), so all 186 child JVMs ran the
+event `<clinit>` on goroutine carriers — yet only 13 pins fired (~2–4%
+per registration). The pin-on-register is intermittent (plausibly a
+JVM-startup race in JFR subsystem init). Consequence: the re-audit "0
+pins" alone is weaker evidence than a clean count implies. What proves
+the found source is gone is the **deterministic fix** — a probe confirms
+4/4 event types register on the calling (startup) thread every time —
+plus `JfrRegistrationTest`, which asserts that post-condition in the
+suite. The re-audit count is corroboration, not the proof.
+
+**Evidence preservation:** the raw 13-pin stacks from the pre-fix run
+were not archived (the report file was overwritten by the re-audit).
+The stack shape above is transcribed from the pre-fix report; the
+mechanism (not the individual stacks) is what the fix addresses, and
+the mechanism is deterministically verified.
+
 Fix (commit `0dd2e2f`):
 1. `ensureRegistered()` now forces `<clinit>` via each event class's own
    static `enabled()` (each declares it, touching the subclass-static
@@ -109,8 +133,30 @@ Re-audit after fix: **0 pins** (see `pinaudit-report.md`).
 ## 6. Results
 
 - `make pin-audit` (full corpus + test suite under
-  `jdk.VirtualThreadPinned`): 186 programs, **0 pin events**
+  `jdk.VirtualThreadPinned`): **0 pin events**
   (`hidden_files/pinning/pinaudit-report.md`).
-- `make check`: pin-surface grep gate clean.
+
+### Honest coverage accounting (reviewer P1-2)
+
+The report's "186 programs" headline overstates coverage. Of the 186:
+- **147 clean runs** (exit 0): full pin evidence, 0 pins.
+- **13 panic-runs** (exit non-zero, genuine Go panics): partial pin
+  evidence (scheduler ran, program panicked), 0 pins.
+- **1 tests leg** (`SchedTestRunner`, exit 0): 162 tests including
+  channel/select/timer/GC park paths, 0 pins.
+- **26 build failures** (all 12 `corpus/channels/` + all 14
+  `corpus/timers/`): the frontend v1 does not support channels/timers/
+  select yet, so `SchedMain` exits before any goroutine spawns. These
+  contribute **no pin evidence** — their "0 pins" is vacuous.
+
+Honest headline: **147 clean + 13 panic + 1 tests-leg = 161 units with
+pin evidence, 0 pins; 26 programs contribute none.** The gap is real:
+zero Go-source coverage of channel/select/timer park paths; all of it
+comes from the Java-translated tests leg. When the frontend learns
+channels/timers/select, a full `make pin-audit` re-run is required
+before sign-off of that milestone (reviewer P2-3).
+
+- `make check`: pin-surface grep gate clean; pin-audit smoke
+  (`--tests` leg) clean.
 - Done-gate 2 (GG-0057 falsifier: unexpected pin event): NOT triggered —
-  zero unexpected pins.
+  zero unexpected pins on all units with pin evidence.

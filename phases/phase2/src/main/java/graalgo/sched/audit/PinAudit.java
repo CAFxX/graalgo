@@ -97,6 +97,7 @@ public final class PinAudit {
         Path work = Files.createTempDirectory("pinaudit");
         List<Pin> pins = new ArrayList<>();
         List<String> skipped = new ArrayList<>();
+        List<String> unreadable = new ArrayList<>();
         int programs = 0;
 
         List<Path> programsList = new ArrayList<>();
@@ -117,11 +118,12 @@ public final class PinAudit {
                 pins.addAll(readPins(jfr, prog.toString(), allow));
             } catch (IOException e) {
                 // Corrupt/unreadable recording: do not fail the whole audit,
-                // but record it as skipped (pin count unknown, not zero).
-                skipped.add(prog + " (unreadable JFR: " + e.getMessage() + ")");
+                // but record it separately (pin count unknown, not zero).
+                unreadable.add(prog + " (unreadable JFR: " + e.getMessage() + ")");
             }
             Files.deleteIfExists(jfr);
         }
+        boolean testsUnreadable = false;
         if (runTests) {
             programs++;
             Path jfr = work.resolve("tests.jfr");
@@ -132,7 +134,8 @@ public final class PinAudit {
             try {
                 pins.addAll(readPins(jfr, "<SchedTestRunner>", allow));
             } catch (IOException e) {
-                skipped.add("SchedTestRunner (unreadable JFR: " + e.getMessage() + ")");
+                unreadable.add("SchedTestRunner (unreadable JFR: " + e.getMessage() + ")");
+                testsUnreadable = true;
             }
             Files.deleteIfExists(jfr);
         }
@@ -140,12 +143,24 @@ public final class PinAudit {
         long unexpected = pins.stream().filter(p -> !p.expected).count();
         long expected = pins.size() - unexpected;
 
+        // P2-M7 reviewer P2-2: fail closed on systemic recording failure.
+        // Unreadable JFR means "pin count unknown", not "0 pins". Fail if the
+        // tests leg is unreadable, or if >5% of programs are unreadable.
+        boolean infraFail = testsUnreadable
+                || (!unreadable.isEmpty()
+                        && (double) unreadable.size() / programs > 0.05);
+
         StringBuilder md = new StringBuilder();
         md.append("# P2-M7 pinning audit report\n\n");
         md.append("- Programs run: ").append(programs).append("\n");
         md.append("- Skipped (non-zero exit, pin count still collected): ")
                 .append(skipped.size()).append("\n");
         for (String s : skipped) {
+            md.append("  - ").append(s).append("\n");
+        }
+        md.append("- Unreadable recordings (pin count UNKNOWN, not zero): ")
+                .append(unreadable.size()).append("\n");
+        for (String s : unreadable) {
             md.append("  - ").append(s).append("\n");
         }
         md.append("- Pin events total: ").append(pins.size())
@@ -175,9 +190,13 @@ public final class PinAudit {
             Files.writeString(outFile, report, StandardCharsets.UTF_8);
             System.out.println("report written to " + outFile);
         }
-        System.out.println("AUDIT_RESULT=" + (unexpected == 0 ? "PASS" : "FAIL")
-                + " unexpected=" + unexpected);
-        if (unexpected > 0) {
+        System.out.println("AUDIT_RESULT=" + (unexpected == 0 && !infraFail ? "PASS" : "FAIL")
+                + " unexpected=" + unexpected + " unreadable=" + unreadable.size());
+        if (unexpected > 0 || infraFail) {
+            if (infraFail) {
+                System.out.println("INFRA_FAIL: unreadable recordings exceed threshold"
+                        + " (testsUnreadable=" + testsUnreadable + ")");
+            }
             System.exit(1);
         }
     }
