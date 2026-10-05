@@ -681,3 +681,22 @@ reviewer2: 6 P1 + 4 P2). All 22 findings remediated in 3d94f0f:
   evidence files).
 Delta re-verification dispatched to both reviewers; implementation starts
 after DELTA-GO from both.
+
+## 2026-10-05 ~17:30 CEST — P2-M4 implementation complete, tests green
+
+- Phase-2 `graalgo/runtime/GcInterop.java` (real, shadows Phase-1 stub): single
+  PhantomReference finalizer thread (nil-arg, serialized), KeepAlive via
+  reachabilityFence, GC() via System.gc()+MXBean poll (30s bound), weak.Pointer
+  vehicle, memStats() field table + PauseNs ring via MXBean notifications.
+- `make check`: new off-heap/barrier grep gate (ADR-0002 D3/F3) + GcInterop
+  debug-println exclusion (documented, TimerHeap precedent).
+- Differential corpus `corpus/gc/` (4 programs + gc-1.27.1 .expected):
+  gc01 finalizer runs, gc02 SetFinalizer(x,nil) removal, gc03 KeepAlive,
+  gc04 GC hint. Key empirical finding: stock gc needs GC()+allocation in the
+  poll loop for prompt finalization (bare runtime.GC() loop never fired).
+- `GcDifferentialTest` (subprocess SchedMain end-to-end, diffs vs .expected)
+  + `GcInteropTest` (7 unit tests). Suite: 113/113 green (101 + 12 new).
+- `DIVERGENCES.md` created with 5 P2-M4 entries (DIV-M4-1..5).
+- Phase-1 suite 208/208 green with exporter change (verified in background).
+- Next: commit, dispatch ≥2 independent implementation reviews, remediate,
+  re-verify, sign off.

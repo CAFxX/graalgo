@@ -22,6 +22,8 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.sched.TimerDifferentialTest.class);
         TESTS.add(graalgo.runtime.TimerTest.class);
         TESTS.add(graalgo.runtime.FreezeGapTest.class);
+        TESTS.add(graalgo.runtime.GcInteropTest.class);
+        TESTS.add(graalgo.runtime.GcDifferentialTest.class);
     }
 
     public static void main(String[] args) {

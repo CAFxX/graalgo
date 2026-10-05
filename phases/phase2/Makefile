@@ -77,13 +77,16 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # callback-threw message is excluded on the same grounds: a throwing
 # timer callback must be loud, and letting it kill the timer thread
 # silently would stall every timer with no diagnostic.
+# GcInterop's finalizer-panicked message is excluded on the same grounds:
+# a panicking Go finalizer must be loud (gc crashes the program); letting
+# the finalizer thread die silently would lose the diagnostic.
 check:
 	@echo "== placeholder grep gate =="
 	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java'; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== netpoller-deletion gate (GG-0018, P2-M3) =="
@@ -92,6 +95,14 @@ check:
 	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/; then \
 		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (GG-0018 second disjunct)"; exit 1; fi
 	@echo "netpoller-deletion gate clean"
+	@echo "== off-heap/barrier gate (ADR-0002 D3/F3) =="
+	@echo "-- each pattern guards a way Go references could bypass JVM GC barriers;"
+	@echo "-- allocateMemory/MemorySegment/Arena/allocateDirect: off-heap Go-object storage"
+	@echo "-- theUnsafe/reflective Unsafe: raw-address access outside barrier discipline"
+	@echo "-- sun.misc/jdk.internal imports: unvetted barrier-bypass surface"
+	@if grep -rn --include='*.java' -E 'allocateMemory|MemorySegment|Arena\.|theUnsafe|allocateDirect|import sun\.misc\.|import jdk\.internal' src/; then \
+		echo "OFF-HEAP/BARRIER GATE FAILED"; exit 1; fi
+	@echo "off-heap/barrier gate clean"
 
 clean:
 	rm -rf out
