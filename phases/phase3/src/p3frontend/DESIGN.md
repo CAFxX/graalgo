@@ -247,9 +247,11 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
   `ExportFile` on the same file (modulo `package.files` basenames).
 - `TestTwoPackageDifferential` (`verifies: GG-0012`): `testdata/twopkg`
   (`main` + two-file `helper` with linux-tagged and windows-excluded
-  files) — `go run` on the original tree vs `graalgo-run --gmp=1` on the
-  merged file: byte-identical stdout, same exit code; panic variant →
-  identical `panic:` line post-normalization, exit 2.
+  files; `main` also carries a `T` colliding with `helper.T` and a
+  package-level `Counter` shadowing `helper.Counter`) — a built gc binary
+  vs `graalgo-run --gmp=1` on the merged file: byte-identical stdout,
+  same exit code; panic variant → identical `panic:` line (stacks differ
+  by design — JVM Unsafe warnings on stderr), exit 2.
 - `TestNoLanguagePinning` (`verifies: GG-0013`): `//go:build go1.27`
   included by the evaluator; generics in a `go 1.27` module pass
   `ExportDir` — no version gating anywhere.
@@ -263,6 +265,16 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
 - `TestGofrontendErrorPrefix`: exit-2 stderr surfaces with the frozen
   binary's duplicate `gofrontend: ` wrapper prefix collapsed.
 - `TestDeterministic`: `ExportDir` twice → byte-identical.
+- `TestInitRejected`: `func init()` in main and in a dep → the named
+  "not supported in M1" scope error (never a silent divergence).
+- `TestStdlibScopeError`: `import "strings"` resolves via `ResolveImport`
+  (proving the GOROOT mapping) then fails fast with the "P3-M7+ waves"
+  scope error.
+- `TestResolveImportNestedModules`: the resolve cache is keyed by
+  (fromDir, path) — a nested-module resolution must not leak into the
+  parent module.
+- `TestMultipleGoBuildLines`: two `//go:build` lines are an error,
+  mirroring `go/build`.
 - Red-green-first (evidence in `hidden_files/m1/redgreen.md`): (a) break
   the selector rewrite → differential test must fail with a gc
   divergence; (b) force-include `*_windows.go` → build-tag test must

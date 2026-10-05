@@ -42,6 +42,33 @@ The wrongly-included files are exactly the ones the suffix rules exclude
 Real stdlib dirs (`src/os`, `src/strings`) were not reached in this run —
 the synthetic corpus already falsified the mutation, as intended.
 
+## RED (c): quiet cross-package shadowing divergence (methodology P1-2)
+
+**Mutation:** in `flatten.go`, `rewriter.ident` — after the object-identity
+rename branch, a scratch fallback renamed variable *uses* by bare
+identifier name, ignoring which object they resolve to (definitions were
+still renamed by object, so the program kept type-checking).
+
+**Result:** `TestTwoPackageDifferential` FAILS on a QUIET divergence —
+both legs exit 0 with different stdout:
+
+```
+--- FAIL: TestTwoPackageDifferential (6.23s)
+    export_test.go:188: gc divergence (normal variant):
+         gc exit=0 stdout="hello\n42\n(1,2)\n1 2 2\nlinux\npoint (1,2)\nh.T\nmain counter: 1000\nhelper counter: 2\nmain.T\n" stderr=""
+         gr exit=0 stdout="...h.T\nmain counter: 2\nhelper counter: 2\nmain.T\n" stderr="WARNING: ..."
+```
+
+`main`'s package-level `Counter` (1000) shadowing `helper.Counter` was
+rebound by name to the helper's renamed counter (2): exactly the silent
+merge the cross-package shadowing corpus case exists to catch. The byte
+comparison — not any error — is what catches it, which is the point of
+the methodology reviewer's P1-2: the differential harness is proven to
+detect divergences that exit 0 on both sides.
+
+The mutation was reverted byte-exact (`git diff` empty afterwards,
+verified against the pre-mutant copy) and the suite re-run green.
+
 ## GREEN (after revert)
 
 ```

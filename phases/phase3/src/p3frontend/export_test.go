@@ -153,10 +153,14 @@ func main() {
 
 // TestTwoPackageDifferential verifies: GG-0012 — a two-package program
 // (main + helper, the latter with a linux-tagged file and a windows-suffixed
-// file that must be excluded) runs byte-identically under stock gc
-// (go run on the original tree) and under graalgo-run (on the merged file):
-// same stdout bytes, same exit code. The panic variant must produce the
-// identical panic line and exit code 2 on both.
+// file that must be excluded; main also carries a colliding T and a
+// shadowing Counter to pin the P0-1 and quiet-divergence fixes) runs
+// byte-identically under stock gc (a built binary run directly — `go run`
+// masks the program's exit code) and under graalgo-run (on the merged
+// file): same stdout bytes, same exit code. The panic variant must produce
+// the identical panic line and exit code 2 on both. Panic stacks differ by
+// design (the graalgo runtime prints JVM Unsafe warnings on stderr), so the
+// comparison is the first `panic:` line by design, not the full stderr.
 func TestTwoPackageDifferential(t *testing.T) {
 	twopkg := filepath.Join("testdata", "twopkg")
 	mainDir := filepath.Join(twopkg, "main")
@@ -174,7 +178,11 @@ func TestTwoPackageDifferential(t *testing.T) {
 		t.Fatalf("ExportDir: %v", err)
 	}
 
-	gc := runCommand(t, twopkg, goTool(t), "run", "./main")
+	normalProg := filepath.Join(t.TempDir(), "normalprog")
+	if res := runCommand(t, twopkg, goTool(t), "build", "-o", normalProg, "./main"); res.code != 0 {
+		t.Fatalf("go build (normal variant): exit=%d stderr=%q", res.code, res.stderr)
+	}
+	gc := runCommand(t, twopkg, normalProg)
 	gr := graalgoRun(t, mergedPath)
 	if gc.code != gr.code || gc.stdout != gr.stdout {
 		t.Fatalf("gc divergence (normal variant):\n gc exit=%d stdout=%q stderr=%q\n gr exit=%d stdout=%q stderr=%q",
@@ -411,5 +419,68 @@ func TestGofrontendErrorPrefix(t *testing.T) {
 	const want = "p3frontend: gofrontend: type error: boom"
 	if err == nil || err.Error() != want {
 		t.Fatalf("got %v, want %q", err, want)
+	}
+}
+
+// TestInitRejected verifies methodology P1-3: func init() in the main
+// package or in a flattened dependency is a fail-fast scope error ("not
+// supported in M1"), never a silent divergence (the frozen exporter
+// type-checks init functions but the runtime never executes them).
+func TestInitRejected(t *testing.T) {
+	t.Run("main", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFiles(t, dir, map[string]string{
+			"main.go": "package main\n\nfunc init() {}\n\nfunc main() {}\n",
+		})
+		_, err := MergeDir(dir)
+		if err == nil || !strings.Contains(err.Error(), "not supported in M1") {
+			t.Fatalf("expected init scope error, got: %v", err)
+		}
+		t.Logf("main init rejected: %v", err)
+	})
+
+	t.Run("dep", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFiles(t, dir, map[string]string{
+			"go.mod":     "module example.com/initdep\n\ngo 1.27\n",
+			"main.go":    "package main\n\nimport _ \"example.com/initdep/dep\"\n\nfunc main() {}\n",
+			"dep/dep.go": "package dep\n\nfunc init() {}\n",
+		})
+		_, err := MergeDir(dir)
+		if err == nil || !strings.Contains(err.Error(), "not supported in M1") {
+			t.Fatalf("expected init scope error, got: %v", err)
+		}
+		t.Logf("dep init rejected: %v", err)
+	})
+}
+
+// TestStdlibScopeError verifies methodology P1-4: import "strings"
+// resolves via ResolveImport (proving the GOROOT mapping at
+// ~/tools/go-1.27.1/src/strings) and then fails fast through the public
+// API with the named "P3-M7+ waves" scope error — compiling the real
+// stdlib is out of M1 scope.
+func TestStdlibScopeError(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"main.go": "package main\n\nimport \"strings\"\n\nfunc main() { println(strings.ToUpper(\"x\")) }\n",
+	})
+
+	ref, err := NewLoader().ResolveImport(dir, "strings")
+	if err != nil {
+		t.Fatalf("ResolveImport(strings): %v", err)
+	}
+	if ref.Kind != kindStdlib {
+		t.Fatalf("strings resolved as kind %d, want kindStdlib", ref.Kind)
+	}
+	wantDir := filepath.Join(NewLoader().GOROOT(), "src", "strings")
+	if ref.Dir != wantDir {
+		t.Fatalf("strings resolved at %s, want %s", ref.Dir, wantDir)
+	}
+	t.Logf("strings resolves to %s", ref.Dir)
+
+	if _, err := MergeDir(dir); err == nil || !strings.Contains(err.Error(), "P3-M7+ waves") {
+		t.Fatalf("expected stdlib scope error, got: %v", err)
+	} else {
+		t.Logf("stdlib compile correctly refused: %v", err)
 	}
 }
