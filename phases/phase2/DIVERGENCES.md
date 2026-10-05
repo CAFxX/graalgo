@@ -113,3 +113,33 @@ unsupported-with-justification. No Go call path is wired in P2-M4.
 ### DIV-<M>-<N>: short title
 
 What diverges, why it is accepted, and the observable consequence.
+
+## P2-M5 (GODEBUG surface triage, WS E)
+
+### DIV-M5-1: unknown GODEBUG knob is a hard error
+
+gc silently ignores GODEBUG settings it does not recognize. graalgo
+exits 2 with `graalgo-run: fatal error: unknown GODEBUG setting "..."`.
+Rationale: a typo (`GODEBUG=schedtace=100`) silently doing nothing is a
+worse failure mode than failing loud at startup; the full supported
+registry is published in `phases/phase2/GODEBUG.md`.
+
+### DIV-M5-2: malformed GODEBUG value is a hard error
+
+gc keeps the old value when a GODEBUG value does not parse as an int32.
+graalgo exits 2. Same rationale as DIV-M5-1.
+
+### DIV-M5-3: bare GODEBUG field without '=' is a hard error
+
+gc skips fields without `=`. graalgo exits 2 suggesting `field=1`.
+Same rationale as DIV-M5-1.
+
+### DIV-M5-4: emulated trace formats are graalgo-shaped
+
+`GODEBUG=schedtrace` prints `SCHED <ms>ms: goroutines=N cap=C
+carriers=K` (gc prints P/M fields that have no counterpart in the
+park/queue/drainer design); `GODEBUG=gctrace` prints per-cycle lines
+with JVM-heap numbers (gc prints allocator-level detail). The emulated
+observable is "a periodic/per-cycle scheduler/GC line on stderr",
+verified differential by `tools/godebug-diff` (4/4 green). Byte-identity
+is not attempted.
