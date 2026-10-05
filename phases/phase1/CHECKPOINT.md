@@ -1343,3 +1343,30 @@ comparisons, 0 diverged, 224 excluded.
 
 Note: /tmp (512M tmpfs) filled during runs by ~2700 leftover
 graalgo-difftest* dirs; cleaned. Suite is sensitive to /tmp space.
+
+## 2026-10-05 ~06:50 CEST — M7 SIGNED OFF (done-gate 1 met)
+
+Two independent milestone reviews completed:
+- R1 (reviews/phase1-m7/reviewer1.md): GO-WITH-FINDINGS — 0 P0, 3 P1, 4 P2.
+- R2 (reviews/phase1-m7/reviewer2.md): NO-GO — 2 P0, 2 P1, 3 P2.
+  P0s: overlapping append slice-spread data corruption (copy loop overwrote
+  source); nested array printing crashed at depth >= 3 (kind chain only 1 deep).
+
+All 10 findings remediated in 10 commits (47ea356, 61efa54, ddf6322, 9de796b,
+a68c02c, fffc3dd, 5b85def, cf1b172, 5e4cd2b, d496641), each with red-green
+probes (new corpus bi16–bi19; +5 suite tests). Notable class-hunts: interleaved
+arg eval/store in non-spread append (found via P0-1); Character.isValidCodePoint
+admits surrogates (handled in U+FFFD fix). Manifest corrected: 24_variadic
+reason was inverted (spread works; packing is the WS D boundary); 27_panic_trace
+precision fixed; evidence moved to hidden_files/m7-gate1/.
+
+Final evidence (independently verified by coordinator):
+- Suite: 188/0 green (suite_final.log).
+- Corpus re-run post-fix (corpus_remediation.json): 19/46 same, 27 diverged =
+  exactly the 27 documented exclusions, 0 unexplained.
+- Typeparam differential: 42 comparisons, 0 diverged, 224 exclusions
+  (2 generic variadic-packing tests newly excluded — now loud WS D scope
+  errors; previously built by accident).
+
+M7 sign-off recorded. Done-gate 1 (full corpus differential green, zero
+unexplained divergences) MET. Next: M8 fuzz-soak/mutation validation.
