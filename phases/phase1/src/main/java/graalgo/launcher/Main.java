@@ -304,7 +304,7 @@ public final class Main {
     private static void reportStackOverflow() {
         System.err.println("graalgo-run: stack overflow: Go call depth "
                 + "exceeded the host stack limit (deep recursion; "
-                + "see docs/limitations.md)");
+                + "see phases/phase1/docs/limitations.md)");
     }
 
     /** Walks the cause chain looking for an instance of {@code kind}. */

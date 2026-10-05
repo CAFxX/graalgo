@@ -89,7 +89,7 @@ version `"v1"`. Consequences:
 | `--dump-polymorphism[=path]` | M9 (WS L): record call-site polymorphism during execution, then print the JSON snapshot (bare flag) or write it to `path` |
 | Exit 0 | success (`func main` completed) |
 | Exit 1 | usage error, unreadable input, gofrontend unlaunchable, launcher-internal error |
-| Exit 2 | build failure (gofrontend rejected the program; stderr passed through verbatim) **or** uncaught Go panic / Goexit in main (gc: exit 2) |
+| Exit 2 | build failure (gofrontend rejected the program; stderr passed through verbatim) **or** uncaught Go panic / Goexit in main (gc: exit 2) **or** host stack exhaustion from deep Go recursion (M10: `graalgo-run: stack overflow` on stderr; see `phases/phase1/docs/limitations.md`) |
 
 ### 3.2 `NodeFactory` — FROZEN
 

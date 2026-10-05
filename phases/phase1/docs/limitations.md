@@ -7,8 +7,9 @@ result), with re-test triggers for the phase that owns the fix.
 
 Guest-language recursion burns host (JVM) stack: each Go call frame costs
 several JVM frames through Truffle dispatch. With the pinned `-Xss32m`
-(M5 stance), measured limit is ~10k–20k Go frames; beyond that
-`graalgo-run` reports `stack overflow` on stderr and exits 2 (no JVM trace).
+(M5 stance), measured 2026-10-05: depths 1k/5k/10k/15k run clean (exit 0);
+20k/30k/100k report `graalgo-run: stack overflow` on stderr, exit 2
+(log: `hidden_files/m10_selfattack/DEPTH_LIMIT.log`). No JVM trace leaks.
 
 gc grows goroutine stacks dynamically, so very deep recursion that gc
 accepts is rejected here. This is an interpreter-architecture limit, not
