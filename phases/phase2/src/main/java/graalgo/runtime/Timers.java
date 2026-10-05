@@ -49,11 +49,10 @@ public final class Timers {
 
     /**
      * Arm a timer for an absolute nanotime (frozen signature, now
-     * real). Parks the current goroutine until the timer fires;
-     * {@code callback} then runs as the wake action on the goroutine's
-     * own vthread (never on the timer thread, so it may block).
-     * The timer id is discarded; use {@link #startTimerId} when
-     * cancellation is needed.
+     * real). At {@code whenNanos}, {@code callback} runs on the timer
+     * thread (gc timer-proc parity): it must not block and must not
+     * call scheduler park operations. The timer id is discarded; use
+     * {@link #startTimerId} when cancellation is needed.
      */
     public static void startTimer(long whenNanos, Runnable callback) {
         startTimerId(whenNanos, callback);
@@ -67,10 +66,7 @@ public final class Timers {
         if (callback == null) {
             throw new IllegalArgumentException("startTimer: null callback");
         }
-        SchedulerCore sched = SchedulerCore.current();
-        long id = sched.timerHeap().addSleep(whenNanos, sched.currentGoroutine());
-        sched.parkCurrent(callback);
-        return id;
+        return SchedulerCore.current().timerHeap().addCallback(whenNanos, callback);
     }
 
     /**
