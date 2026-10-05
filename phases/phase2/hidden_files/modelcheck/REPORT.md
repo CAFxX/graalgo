@@ -144,7 +144,7 @@ asserted exactly.
 - `armed` is write-only dead state (spike-2b external-waker protocol
   never implemented; all wakeups route through the drainer).
 
-## 9. "Race-detector-equivalent" — the explicit argument
+## 8. "Race-detector-equivalent" — the explicit argument
 
 Done-gate 4 asks for JVM race tools on the runtime. No race detector was
 run; here is why the combination is equivalent-or-stronger for THIS
@@ -173,7 +173,7 @@ A ThreadSanitizer-style tool explores interleavings looking for racy
 accesses; (1)–(3) show the racy-access surface is empty by construction,
 and the explorer + stress cover the interleaving space directly.
 
-## 8. Red-green evidence
+## 9. Red-green evidence
 
 `testModelDetectsWithheldUnpark` withholds a script's paired unpark and
 demands DONE: the explorer fails it with LOST WAKEUP. The explorer is

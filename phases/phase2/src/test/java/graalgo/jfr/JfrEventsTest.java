@@ -351,9 +351,10 @@ public final class JfrEventsTest {
         Map<String, List<RecordedEvent>> byName = readAll(recFile);
         List<RecordedEvent> parks = byName.getOrDefault("graalgo.GoroutinePark", List.of());
         // Deterministic sampling: spawn does one armPark, then each yield
-        // does one quantumPark; notePark sees seq 2..5001, and seq
-        // 1024/2048/3072/4096 hit the 1-in-1024 mask → 4 per goroutine =
-        // 16 total. Bound generously for stray scheduler parks.
+        // does one quantumPark; parkResumed evaluates the mask after armPark
+        // already incremented parkSeq, so seq 1023/2047/3071/4095 hit the
+        // 1-in-1024 mask → 4 per goroutine = 16 total. Bound generously for
+        // stray scheduler parks.
         assertTrue(parks.size() >= 12 && parks.size() <= 20,
                 "expected ~16 sampled quantum parks, got " + parks.size());
         for (RecordedEvent e : parks) {

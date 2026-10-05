@@ -141,7 +141,7 @@ Re-audit after fix: **0 pins** (see `pinaudit-report.md`).
 ### Honest coverage accounting (reviewer P1-2)
 
 The report's "186 programs" headline overstates coverage. Of the 186:
-- **147 clean runs** (exit 0): full pin evidence, 0 pins.
+- **146 clean runs** (exit 0): full pin evidence, 0 pins.
 - **13 panic-runs** (exit non-zero, genuine Go panics): partial pin
   evidence (scheduler ran, program panicked), 0 pins.
 - **1 tests leg** (`SchedTestRunner`, exit 0): 162 tests including
@@ -151,7 +151,7 @@ The report's "186 programs" headline overstates coverage. Of the 186:
   select yet, so `SchedMain` exits before any goroutine spawns. These
   contribute **no pin evidence** — their "0 pins" is vacuous.
 
-Honest headline: **147 clean + 13 panic + 1 tests-leg = 161 units with
+Honest headline: **146 clean + 13 panic + 1 tests-leg = 160 units with
 pin evidence, 0 pins; 26 programs contribute none.** The gap is real:
 zero Go-source coverage of channel/select/timer park paths; all of it
 comes from the Java-translated tests leg. When the frontend learns

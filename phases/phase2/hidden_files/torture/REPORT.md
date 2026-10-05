@@ -93,13 +93,16 @@ The 1ms INFO-FAIL is structural (drainer/FJP costs), documented in spike 2b
 
 ## 5. Scope notes and re-test triggers
 
-**Governance note (P1-5):** PLAN.md §3 marks the `sync` package scope as
-[OPEN] requiring a **program-owner decision before P2-M8**. That decision
-was never made; the scope implemented here (Mutex/RWMutex/WaitGroup/Once
-as Java runtime primitives, Go bindings deferred) is the **worker's
-proposal**, not an owner decision. The "Done-gate 1: MET" verdict below is
-**conditional on the program owner accepting this scope deviation**. The
-same provisional status applies to `context` (pattern-level only).
+**Governance note (P1-5, discharged at P2-M10):** PLAN.md §3 marked the
+`sync` package scope as [OPEN] requiring a **program-owner decision
+before P2-M8**. The scope implemented here (Mutex/RWMutex/WaitGroup/Once
+as Java runtime primitives, Go bindings deferred) was the **worker's
+proposal** at M8 sign-off. The program supervisor, acting as program
+owner on 2026-10-05, **accepted the deviation** (recorded in
+`phases/phase2/CHECKPOINT.md`, P2-M10 entry). The conditional is
+discharged; done-gate 1 is MET unconditionally. The same provisional
+status applied to `context` (pattern-level only) stands with its
+re-test trigger below.
 
 - **`sync` Go bindings:** `import "sync"` rejected by the frozen frontend
   (WS G overlay). Java primitives implemented and stressed; Go bindings
@@ -136,7 +139,7 @@ it because it examined JFR events, not the drainer's `unparkPending` set.
 **Falsifier:** reproducing the JFR anomaly in a run with stashed=0 and no
 direct wake in-window, or any errors>0 / lost wakeup in F6, would reopen it.
 
-**Done-gate 1: MET (conditional — see §5 governance note).**
+**Done-gate 1: MET.** (Conditional discharged at P2-M10 — see §5 governance note.)
 
 ## 7. Kill-criterion assessment
 

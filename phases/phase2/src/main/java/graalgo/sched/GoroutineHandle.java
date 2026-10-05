@@ -42,6 +42,10 @@ public final class GoroutineHandle {
      * (The {@code compareAndSet(t, -2)} external-waker protocol from
      * spike 2b is not implemented in P2-M1; all wakeups go through the
      * drainer — see class javadoc.)
+     *
+     * <p>Intentionally retained as the test-visible park signal:
+     * {@code SchedulerCoreTest} polls it to know a goroutine is actually
+     * parked. No production code reads it.
      */
     final AtomicLong armed = new AtomicLong(-1);
 

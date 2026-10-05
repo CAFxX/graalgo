@@ -52,6 +52,12 @@ import jdk.jfr.consumer.RecordingFile;
  */
 public final class PinAudit {
 
+    /** Classified pins plus goroutine-spawn evidence from one recording. */
+    static final class AuditResult {
+        final List<Pin> pins = new ArrayList<>();
+        /** Number of jdk.VirtualThreadStart events for goroutine-<id> threads. */
+        int goroutineStarts;
+    }
     /** One classified pin event. */
     static final class Pin {
         final String program;
@@ -99,6 +105,10 @@ public final class PinAudit {
         List<String> skipped = new ArrayList<>();
         List<String> unreadable = new ArrayList<>();
         int programs = 0;
+        // P2-M10 reviewer P1-2: count units with goroutine-spawn evidence
+        // (≥1 goroutine-<id> VirtualThreadStart), so the report does not
+        // overstate coverage with units that exited before spawning.
+        int withEvidence = 0;
 
         List<Path> programsList = new ArrayList<>();
         for (Path dir : corpusDirs) {
@@ -115,7 +125,11 @@ public final class PinAudit {
                 skipped.add(prog + " (exit " + exit + ")");
             }
             try {
-                pins.addAll(readPins(jfr, prog.toString(), allow));
+                AuditResult r = readPins(jfr, prog.toString(), allow);
+                pins.addAll(r.pins);
+                if (r.goroutineStarts > 0) {
+                    withEvidence++;
+                }
             } catch (IOException e) {
                 // Corrupt/unreadable recording: do not fail the whole audit,
                 // but record it separately (pin count unknown, not zero).
@@ -137,7 +151,11 @@ public final class PinAudit {
                 testsFailed = true;
             }
             try {
-                pins.addAll(readPins(jfr, "<SchedTestRunner>", allow));
+                AuditResult r = readPins(jfr, "<SchedTestRunner>", allow);
+                pins.addAll(r.pins);
+                if (r.goroutineStarts > 0) {
+                    withEvidence++;
+                }
             } catch (IOException e) {
                 unreadable.add("SchedTestRunner (unreadable JFR: " + e.getMessage() + ")");
                 testsUnreadable = true;
@@ -159,6 +177,9 @@ public final class PinAudit {
         StringBuilder md = new StringBuilder();
         md.append("# P2-M7 pinning audit report\n\n");
         md.append("- Programs run: ").append(programs).append("\n");
+        md.append("- Units with goroutine-spawn evidence (≥1 goroutine-<id> thread started): ")
+                .append(withEvidence).append(" of ").append(programs)
+                .append(" (the rest exited before spawning; their 0-pin count is vacuous)\n");
         md.append("- Skipped (non-zero exit, pin count still collected): ")
                 .append(skipped.size()).append("\n");
         for (String s : skipped) {
@@ -235,7 +256,11 @@ public final class PinAudit {
         cmd.add("-Xss32m");
         cmd.add("-XX:StartFlightRecording:filename=" + jfr.toAbsolutePath()
                 + ",jdk.VirtualThreadPinned#enabled=true"
-                + ",jdk.VirtualThreadPinned#stackTrace=true");
+                + ",jdk.VirtualThreadPinned#stackTrace=true"
+                // P2-M10 reviewer P1-2: goroutine-spawn evidence for the
+                // honest coverage line (units that exited before spawning
+                // contribute no pin evidence).
+                + ",jdk.VirtualThreadStart#enabled=true");
         cmd.add("-cp");
         if (mainArgs[0].equals("__TESTS__")) {
             // The test runner lives in out/test-classes, which is not on
@@ -266,16 +291,25 @@ public final class PinAudit {
     }
 
     /** Reads pin events from one recording and classifies them. Package-visible for tests. */
-    static List<Pin> readPins(Path jfr, String program, List<String> allow)
+    static AuditResult readPins(Path jfr, String program, List<String> allow)
             throws IOException {
-        List<Pin> out = new ArrayList<>();
+        AuditResult out = new AuditResult();
         if (!Files.exists(jfr)) {
             return out;
         }
         try (RecordingFile rf = new RecordingFile(jfr)) {
             while (rf.hasMoreEvents()) {
                 RecordedEvent e = rf.readEvent();
-                if (!e.getEventType().getName().equals("jdk.VirtualThreadPinned")) {
+                String type = e.getEventType().getName();
+                if (type.equals("jdk.VirtualThreadStart")) {
+                    String thread = e.getThread() == null ? ""
+                            : String.valueOf(e.getThread().getJavaName());
+                    if (thread.startsWith("goroutine-")) {
+                        out.goroutineStarts++;
+                    }
+                    continue;
+                }
+                if (!type.equals("jdk.VirtualThreadPinned")) {
                     continue;
                 }
                 String thread = e.getThread() == null ? "<no-thread>"
@@ -292,7 +326,7 @@ public final class PinAudit {
                 // allowlist gates the expected set. Anything else is
                 // unexpected by default (fail closed).
                 boolean expected = match != null;
-                out.add(new Pin(program, thread, frames, expected, match));
+                out.pins.add(new Pin(program, thread, frames, expected, match));
             }
         }
         return out;

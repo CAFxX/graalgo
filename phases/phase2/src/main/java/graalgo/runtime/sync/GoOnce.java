@@ -36,6 +36,11 @@ public final class GoOnce {
             return;
         }
         if (state.compareAndSet(IDLE, RUNNING)) {
+            // P2-M10 reviewer P2-3: resolve the scheduler handle BEFORE the
+            // state transition. If the caller is not a scheduler goroutine,
+            // current() throws here — before state becomes DONE — instead of
+            // stranding parked waiters with state == DONE.
+            SchedulerCore sched = SchedulerCore.current();
             Throwable thrown = null;
             try {
                 action.run();
@@ -44,7 +49,6 @@ public final class GoOnce {
             }
             synchronized (waitLock) {
                 state.set(DONE);
-                SchedulerCore sched = SchedulerCore.current();
                 while (!waiters.isEmpty()) {
                     sched.unpark(waiters.pollFirst());
                 }

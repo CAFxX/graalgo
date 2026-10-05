@@ -1,0 +1,4 @@
+F4 iters=20000 hop_ns mean=43789 p50=6329 p99=983045 max=22570566
+F4 budget: mean_ns=43789 < 100000 (1% of quantumNs=10000000) -> PASS
+F4 poll_fastpath_ns_per_poll_on_goroutine=212.21
+RESULT=PASS

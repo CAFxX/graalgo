@@ -1,6 +1,7 @@
 # P2-M7 pinning audit report
 
-- Programs run: 186
+- Programs run: 187
+- Units with goroutine-spawn evidence (≥1 goroutine-<id> thread started): 161 of 187 (the rest exited before spawning; their 0-pin count is vacuous)
 - Skipped (non-zero exit, pin count still collected): 39
   - ../phase1/corpus/builtins/bi11_panic.go (exit 2)
   - ../phase1/corpus/panic/pn04_panic_string.go (exit 2)
@@ -41,6 +42,7 @@
   - corpus/timers/tm12_sleep_zero.go (exit 2)
   - corpus/timers/tm13_ticker_stop_buffered.go (exit 2)
   - corpus/timers/tm14_ticker_reset_buffered.go (exit 2)
+- Unreadable recordings (pin count UNKNOWN, not zero): 0
 - Pin events total: 0 (expected 0, UNEXPECTED 0)
 
 ## Classification
@@ -48,3 +50,5 @@
 Expected = matches an allowlist entry (budgeted off-carrier FFM/file-I/O per GG-0057). The default allowlist is empty: graalgo has no JNI/FFM on goroutine paths.
 
 No `jdk.VirtualThreadPinned` events on the conformance corpus.
+
+AUDIT_RESULT=PASS unexpected=0 unreadable=0

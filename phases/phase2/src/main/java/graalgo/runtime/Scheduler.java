@@ -47,9 +47,10 @@ public final class Scheduler {
     }
 
     /**
-     * Park the current goroutine indefinitely; {@code wake} runs on the
-     * waker thread before re-admission. Wake via
-     * {@code SchedulerCore.unpark} (channels in P2-M2).
+     * Park the current goroutine indefinitely. The wake action {@code wake}
+     * runs on the <b>goroutine's own vthread</b> immediately after resume
+     * (before {@code parkCurrent} returns) — it is not run on the waker
+     * thread. Wake via {@code SchedulerCore.unpark} (channels in P2-M2).
      */
     public static void park(Runnable wake) {
         graalgo.sched.SchedulerCore.current().parkCurrent(wake);

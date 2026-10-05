@@ -20,7 +20,7 @@ public final class PinAuditTest {
 
     public void testDetectsGenuinePin() throws Exception {
         List<PinAudit.Pin> pins =
-                PinAudit.readPins(Paths.get(FIXTURE), "<fixture>", List.of());
+                PinAudit.readPins(Paths.get(FIXTURE), "<fixture>", List.of()).pins;
         if (pins.size() != 1) {
             throw new AssertionError(
                     "expected exactly 1 pin event, got " + pins.size());
@@ -41,7 +41,7 @@ public final class PinAuditTest {
 
     public void testAllowlistMarksExpected() throws Exception {
         List<PinAudit.Pin> pins = PinAudit.readPins(Paths.get(FIXTURE), "<fixture>",
-                List.of("pin-jni-vt|doPark"));
+                List.of("pin-jni-vt|doPark")).pins;
         if (pins.size() != 1 || !pins.get(0).expected) {
             throw new AssertionError("allowlisted pin must be EXPECTED");
         }
@@ -52,7 +52,7 @@ public final class PinAuditTest {
 
     public void testAllowlistThreadPrefixMismatch() throws Exception {
         List<PinAudit.Pin> pins = PinAudit.readPins(Paths.get(FIXTURE), "<fixture>",
-                List.of("other-thread|doPark"));
+                List.of("other-thread|doPark")).pins;
         if (pins.size() != 1 || pins.get(0).expected) {
             throw new AssertionError("non-matching allowlist must stay UNEXPECTED");
         }
