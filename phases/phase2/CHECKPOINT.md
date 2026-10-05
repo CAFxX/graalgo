@@ -489,3 +489,29 @@ and the divergence list (none found).
    convention like P2-M2); `.expected` from `go run`; compare event
    ORDER, never wall-clock. 12 programs: sleep order, After, Timer
    Stop/Reset edges, Ticker, ticker-drop, select+After, Sleep(0).
+
+## 2026-10-05 ~15:30 CEST — P2-M3 progress: core + tests green
+
+**Implemented** (commit eb61aae): TimerHeap (deadline heap + daemon timer
+thread), GoTimer (NewTimer/NewTicker + gc-exact Stop/Reset incl. Go 1.23+
+expired-undrained drain rule, probed vs gc 1.27.1), Timers overlay (real
+sleep/startTimer/stopTimer + additive after/newTimer/newTicker/tick),
+Netpoll overlay documenting DELETION per GG-0018, ioEnter/ioExit on
+SchedulerCore + Drainer IO_ENTER/IO_EXIT (inIo set, fail-fast asserts),
+netpoller-deletion grep gate in `make check`.
+
+**Tests** (commit 1db223a): 85/85 green (52 carried + 33 new: TimerTest 15,
+IoSlotsTest 6, TimerDifferentialTest 12). Differential corpus:
+corpus/timers/tm01–tm12 + .expected (gc regen) + regen.sh + README.
+
+**Red-green** (all kill): A sleep-via-Thread.sleep → testSleepReleasesSlot
+(+2); B ioEnter w/o slot release → testIoEnterReleasesSlot; C stop w/o
+drain → tm05 + testTimerStopUndrained; D reset w/o drain → tm08 +
+testTimerResetExpiredUndrained.
+
+**gc probes that shaped semantics** (1.27.1): Reset on expired-undrained
+→ true (drains); Stop on expired-undrained → true (drains); Ticker.Stop
+drains pending tick; NewTicker(0) panics. All encoded in corpus + unit
+tests.
+
+**`make check`**: placeholder + debug + netpoller-deletion gates clean.
