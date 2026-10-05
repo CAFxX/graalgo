@@ -1715,4 +1715,4 @@ Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh 
   Report: hidden_files/m10_selfattack/REPORT.md. Known limit documented
   in docs/limitations.md (Phase-4 re-test trigger).
 - Reviews dispatched: 2 independent reviewers (code + methodology),
-  snapshot 51e281e. Reports -> reviews/phase1-m9... (pending).
+  snapshot 51e281e. Reports -> reviews/phase1-m10/ (pending).
