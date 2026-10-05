@@ -24,9 +24,15 @@ import graalgo.sched.GoroutineHandle;
  *       buffer drops the tick — gc ticker parity for slow receivers.
  * </ul>
  *
- * <p>Locking: all heap/byId mutation under {@link #lock}. Re-arm and
+ * <p>Locking: all heap/byId mutation under {@link #lock}. For channel
+ * entries, the staleness check, the non-blocking send, and the ticker
+ * re-arm execute atomically under the heap lock (the send cannot
+ * interleave with stop/reset — this closes gc's stale-send race
+ * structurally; gc needs its seq/sendLock protocol only because it
+ * cannot hold its timer lock across a blocking send). Re-arm and
  * staleness checks additionally synchronize on the entry owner, always
- * in the order heap-lock → owner-lock (never the reverse).
+ * in the order heap-lock → owner-lock (never the reverse). Channel
+ * monitor is the leaf: heap → owner → chan.
  *
  * <p>verifies: GG-SCHED-0004 (timer slice), GG-0018 (timer heap, not a
  * netpoller — readiness-based I/O does not exist here)
@@ -130,15 +136,33 @@ public final class TimerHeap {
     /**
      * Arms a channel timer: at {@code deadlineNanos}, delivers the fire
      * nanotime on {@code chan} (non-blocking; drop if full).
-     * {@code owner} is non-null for tickers (re-arm); {@code periodNanos}
-     * is the ticker period (0 for one-shot).
+     * {@code owner} is the GoTimer (also the re-arm/staleness callback).
+     * {@code periodNanos} is the ticker period (0 for one-shot).
+     *
+     * <p>P1-1: the owner's id is assigned under heap→owner locks
+     * <em>before</em> the entry becomes visible in the heap, so the
+     * timer thread can never observe a partially-constructed owner.
      */
-    long addChan(long deadlineNanos, GoChan chan, ChanOwner owner,
+    void addChan(long deadlineNanos, GoChan chan, GoTimer owner,
                  long periodNanos, long generation) {
         if (chan == null) {
             throw new IllegalArgumentException("channel timer needs a channel");
         }
-        return add(deadlineNanos, null, chan, null, owner, periodNanos, generation);
+        if (owner == null) {
+            throw new IllegalArgumentException("channel timer needs an owner");
+        }
+        synchronized (lock) {
+            synchronized (owner) {
+                long id = idGen.getAndIncrement();
+                owner.setIdLocked(id);
+                Entry e = new Entry(deadlineNanos, id, seqGen.getAndIncrement(),
+                        null, chan, null, owner, generation);
+                e.periodNanos = periodNanos;
+                heap.add(e);
+                byId.put(id, e);
+                lock.notifyAll();
+            }
+        }
     }
 
     private long add(long deadlineNanos, GoroutineHandle handle, GoChan chan,
@@ -180,9 +204,14 @@ public final class TimerHeap {
     /**
      * Stops a channel timer owned by {@code owner}: cancels the current
      * entry and clears the owner's id. Returns true iff the timer was
-     * active (gc Timer.Stop parity). Go 1.23+ parity: a fired-but-
-     * undrained timer counts as active — its pending value is drained
-     * and Stop returns true. Heap lock → owner lock order.
+     * active (gc Timer.Stop parity).
+     *
+     * <p>Go 1.23+ parity (gc {@code timer.stop} + {@code timerchandrain}):
+     * the channel is drained <em>unconditionally</em>; a drained stale
+     * value counts as active (returns true). This covers the live-ticker
+     * case: {@code stop()} on a ticker with a buffered tick drains it
+     * and returns true — a subsequent receive blocks rather than
+     * observing a stale pre-stop tick. Heap lock → owner lock order.
      */
     boolean stopChan(GoTimer owner) {
         synchronized (lock) {
@@ -194,13 +223,10 @@ public final class TimerHeap {
                 boolean wasActive = cancelLocked(id);
                 owner.clearIdLocked();
                 owner.bumpGenerationLocked();
-                if (!wasActive && owner.channelImpl().buffered() > 0) {
-                    // Fired but undrained (Go 1.23+): discard the stale
-                    // value; only the timer sends here, so it is ours.
-                    owner.channelImpl().tryRecv(sched);
-                    return true;
-                }
-                return wasActive;
+                // Evaluate the drain unconditionally (no short-circuit:
+                // gc drains even when the timer was active).
+                boolean drained = drainLocked(owner);
+                return wasActive || drained;
             }
         }
     }
@@ -208,8 +234,11 @@ public final class TimerHeap {
     /**
      * Resets a channel timer: cancels the current entry (if any),
      * re-arms for {@code deadlineNanos}. Returns true iff the timer had
-     * been active (gc Timer.Reset parity, incl. the Go 1.23+ expired-
-     * undrained → true + drain rule). Heap lock → owner lock order.
+     * been active (gc Timer.Reset / {@code timer.modify} parity).
+     *
+     * <p>Go 1.23+ parity: the channel is drained unconditionally before
+     * re-arming (gc {@code timerchandrain}); a drained stale value
+     * counts as active. Heap lock → owner lock order.
      */
     boolean resetChan(GoTimer owner, long deadlineNanos) {
         synchronized (lock) {
@@ -218,16 +247,35 @@ public final class TimerHeap {
                 boolean wasActive = false;
                 if (id >= 0) {
                     wasActive = cancelLocked(id);
-                    if (!wasActive && owner.channelImpl().buffered() > 0) {
-                        owner.channelImpl().tryRecv(sched);
-                        wasActive = true;
-                    }
+                    owner.clearIdLocked();
                 }
                 owner.bumpGenerationLocked();
-                long nid = addLocked(deadlineNanos, owner);
-                owner.setIdLocked(nid);
-                return wasActive;
+                boolean drained = drainLocked(owner);
+                // addLocked assigns the new id (P1-1: before publication).
+                addLocked(deadlineNanos, owner);
+                return wasActive || drained;
             }
+        }
+    }
+
+    /**
+     * Discards all pending values on the owner's channel (gc
+     * {@code timerchandrain} parity). Caller holds heap+owner locks;
+     * the channel monitor is the leaf (P0-1). Returns true iff a stale
+     * value was discarded. Only the timer thread sends on this channel,
+     * so any buffered value is a stale timer value.
+     */
+    private boolean drainLocked(GoTimer owner) {
+        GoChan ch = owner.channelImpl();
+        synchronized (ch) {
+            boolean drained = false;
+            // tryRecv is non-blocking and monitor-held; a null return
+            // means the buffer is empty (no send waiters exist — only
+            // the timer thread sends, via non-blocking trySend).
+            while (ch.tryRecv(sched) != null) {
+                drained = true;
+            }
+            return drained;
         }
     }
 
@@ -244,6 +292,8 @@ public final class TimerHeap {
     /** Heap-lock-held channel re-arm for owner (used by resetChan). */
     private long addLocked(long deadlineNanos, GoTimer owner) {
         long id = idGen.getAndIncrement();
+        // P1-1: id assigned before the entry is visible.
+        owner.setIdLocked(id);
         Entry e = new Entry(deadlineNanos, id, seqGen.getAndIncrement(),
                 null, owner.channelImpl(), null, owner, owner.generationLocked());
         e.periodNanos = owner.periodNanos();
@@ -291,18 +341,58 @@ public final class TimerHeap {
                 }
                 e = heap.poll();
                 byId.remove(e.id);
+                if (e.chan != null) {
+                    // P0-3/P0-4: the staleness check, the send, and the
+                    // ticker re-arm are atomic w.r.t. stopChan/resetChan:
+                    // the heap lock is held throughout, so no stop/reset
+                    // can interleave between pop and send. This closes the
+                    // stale-send window structurally (stronger than gc's
+                    // seq/sendLock protocol, which exists because gc
+                    // cannot hold its timer lock across a blocking send;
+                    // our trySend never blocks). Lock order throughout is
+                    // heap → owner → chan (leaf); trySend/unpark never
+                    // block and never acquire heap/owner locks.
+                    fireChanLocked(e);
+                    continue;
+                }
             }
-            fire(e);
+            fireNonChan(e);
         }
     }
 
     /**
-     * Fires one entry, outside the heap lock. Channel delivery is
-     * non-blocking (never parks the timer thread); ticker re-arm
-     * re-checks ownership to close the fire-vs-reset race. Raw callbacks
+     * Fires a channel entry; caller holds the heap lock (see timerLoop).
+     * P0-1: the channel monitor is held across the monitor-held
+     * {@code trySend}. P2-1: no {@code !e.cancelled} check — the peek
+     * loop skips cancelled heads, so a polled entry is never cancelled.
+     */
+    private void fireChanLocked(Entry e) {
+        if (e.owner == null || e.owner.stillCurrent(e.id, e.generation)) {
+            synchronized (e.chan) {
+                e.chan.trySend(System.nanoTime(), sched);
+            }
+            if (e.periodNanos > 0) {
+                // Ticker re-arm, atomic w.r.t. stop/reset (heap lock
+                // held). gc grid alignment (runtime/time.go unlockAndRun):
+                // next = when + period*(1+delay/period), skipping missed
+                // ticks rather than bursting.
+                long delay = Math.max(0, System.nanoTime() - e.deadlineNanos);
+                e.deadlineNanos += e.periodNanos * (1 + delay / e.periodNanos);
+                if (e.deadlineNanos < 0) {
+                    e.deadlineNanos = Long.MAX_VALUE; // overflow guard
+                }
+                heap.add(e);
+                byId.put(e.id, e);
+                lock.notifyAll();
+            }
+        }
+    }
+
+    /**
+     * Fires a sleep/callback entry, outside the heap lock. Raw callbacks
      * run on the timer thread (gc timer-proc parity — must not block).
      */
-    private void fire(Entry e) {
+    private void fireNonChan(Entry e) {
         if (e.callback != null) {
             try {
                 e.callback.run();
@@ -312,31 +402,6 @@ public final class TimerHeap {
                 // continue — same discipline as the drainer's fatal halt,
                 // but scoped: only this callback is lost.
                 System.err.println("graalgo-timer: callback threw: " + t);
-            }
-            return;
-        }
-        if (e.chan != null) {
-            e.chan.trySend(System.nanoTime(), sched);
-            if (e.periodNanos > 0 && e.owner != null) {
-                boolean rearm;
-                synchronized (lock) {
-                    synchronized (e.owner) {
-                        rearm = !e.cancelled && e.owner.stillCurrent(e.id, e.generation);
-                    }
-                    if (rearm) {
-                        e.deadlineNanos += e.periodNanos;
-                        long now = System.nanoTime();
-                        if (e.deadlineNanos < now) {
-                            // More than a period behind (long stall):
-                            // skip the missed ticks rather than spinning
-                            // (gc drops ticks for slow receivers).
-                            e.deadlineNanos = now + e.periodNanos;
-                        }
-                        heap.add(e);
-                        byId.put(e.id, e);
-                        lock.notifyAll();
-                    }
-                }
             }
             return;
         }

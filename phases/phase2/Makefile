@@ -89,6 +89,8 @@ check:
 	@echo "== netpoller-deletion gate (GG-0018, P2-M3) =="
 	@if grep -rn --include='*.java' -E 'Netpoll\.' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java'; then \
 		echo "NETPOLLER GATE FAILED: reachable netpoller code path"; exit 1; fi
+	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/; then \
+		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (GG-0018 second disjunct)"; exit 1; fi
 	@echo "netpoller-deletion gate clean"
 
 clean:

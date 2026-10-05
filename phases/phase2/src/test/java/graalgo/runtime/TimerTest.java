@@ -25,6 +25,18 @@ public final class TimerTest {
         }
     }
 
+    private static void assertFalse(boolean c, String msg) {
+        if (c) {
+            throw new AssertionError(msg);
+        }
+    }
+
+    private static void assertNull(Object o, String msg) {
+        if (o != null) {
+            throw new AssertionError(msg + " expected=null actual=" + o);
+        }
+    }
+
     private static void assertEquals(Object e, Object a, String msg) {
         if (!e.equals(a)) {
             throw new AssertionError(msg + " expected=" + e + " actual=" + a);
@@ -49,11 +61,17 @@ public final class TimerTest {
         void run() throws Exception;
     }
 
-    /** Non-blocking drain count (test scaffolding; never parks). */
+    /**
+     * Non-blocking drain count (test scaffolding; never parks).
+     * P0-1: holds the channel monitor — tryRecv is a monitor-held
+     * primitive and this runs concurrently with the timer thread.
+     */
     private static int drain(GoChan ch, SchedulerCore sched) {
         int n = 0;
-        while (ch.tryRecv(sched) != null) {
-            n++;
+        synchronized (ch) {
+            while (ch.tryRecv(sched) != null) {
+                n++;
+            }
         }
         return n;
     }
@@ -257,6 +275,127 @@ public final class TimerTest {
             sched.awaitQuiescence();
             assertEquals("non-positive interval for NewTicker", msg.get(),
                     "ticker panic message");
+        });
+    }
+
+    // P0-2: stop() on a live ticker with a buffered tick drains it
+    // (gc timerchandrain parity) — no stale tick is observable after
+    // Stop. Red-green: fails on the pre-fix code (buffered()==1).
+    public void testTickerStopDrainsBufferedTick() throws Exception {
+        withScheduler(1, () -> {
+            GoTimer tk = GoTimer.newTicker(20_000_000L);
+            Thread.sleep(300); // ticks fire; exactly 1 buffered (cap-1)
+            assertTrue(tk.stop(), "stop on live ticker with buffered tick");
+            assertEquals(0, drain((GoChan) tk.channel(), sched),
+                    "no stale tick after stop");
+            assertFalse(tk.stop(), "second stop reports inactive");
+        });
+    }
+
+    // P0-2: reset() drains a stale buffered tick before re-arming, so
+    // the next receive is a fresh post-reset tick, not the stale one.
+    // Red-green: fails on the pre-fix code (stale tick received first).
+    // Polls with the non-blocking drain (the test thread is not a
+    // scheduler goroutine, so it cannot block in recv).
+    public void testTickerResetDrainsStaleTick() throws Exception {
+        withScheduler(1, () -> {
+            GoTimer tk = GoTimer.newTicker(20_000_000L);
+            Thread.sleep(300); // 1 tick buffered
+            long tReset = System.nanoTime();
+            assertTrue(tk.reset(80_000_000L), "reset on live ticker");
+            GoChan ch = (GoChan) tk.channel();
+            long tRecv = 0;
+            for (int i = 0; i < 200 && tRecv == 0; i++) {
+                if (drain(ch, sched) > 0) {
+                    tRecv = System.nanoTime();
+                } else {
+                    Thread.sleep(10);
+                }
+            }
+            tk.stop();
+            assertTrue(tRecv > 0, "tick received after reset");
+            // A stale tick would arrive immediately (dt ~ 0); the fresh
+            // post-reset tick arrives ~80ms after reset. 40ms threshold
+            // is far from both (timers never fire early).
+            assertTrue(tRecv - tReset > 40_000_000L,
+                    "fresh post-reset tick, not stale; dt=" + (tRecv - tReset) + "ns");
+        });
+    }
+
+    // P0-2 (one-shot): stop() after fire but before receive drains the
+    // pending value and returns true (Go 1.23+ parity).
+    public void testTimerStopAfterFireDrains() throws Exception {
+        withScheduler(1, () -> {
+            GoTimer t = GoTimer.newTimer(20_000_000L);
+            Thread.sleep(150); // fired, undrained
+            assertTrue(t.stop(), "stop after fire, undrained");
+            assertEquals(0, drain((GoChan) t.channel(), sched),
+                    "pending value drained by stop");
+        });
+    }
+
+    // P0-3/P0-4 stress: after stop() returns, no tick is ever delivered
+    // again — the pop+send+rearm are atomic under the heap lock, so a
+    // stop cannot interleave a stale send or a dead-generation re-arm.
+    // (On the pre-fix code the ticker can re-arm after stop.)
+    public void testNoTickAfterStopStress() throws Exception {
+        withScheduler(2, () -> {
+            for (int i = 0; i < 300; i++) {
+                GoTimer tk = GoTimer.newTicker(1_000_000L);
+                Thread.sleep(5); // several ticks fire
+                tk.stop();
+                drain((GoChan) tk.channel(), sched);
+                Thread.sleep(10); // let any in-flight send land
+                assertEquals(0, drain((GoChan) tk.channel(), sched),
+                        "stale tick after stop; iter=" + i);
+            }
+        });
+    }
+
+    // P1-2: time.Tick(0) returns null (gc parity); NewTicker still panics.
+    public void testTickZeroReturnsNull() throws Exception {
+        withScheduler(1, () -> {
+            assertNull(GoTimer.tick(0), "tick(0)");
+            assertNull(GoTimer.tick(-5_000_000L), "tick(-)");
+        });
+    }
+
+    // P1-3: Ticker.Reset(0) panics (gc message parity); Timer.Reset(0)
+    // is allowed and fires immediately.
+    public void testTickerResetZeroPanics() throws Exception {
+        withScheduler(1, () -> {
+            AtomicReference<String> msg = new AtomicReference<>();
+            sched.spawn(() -> {
+                GoTimer tk = GoTimer.newTicker(50_000_000L);
+                try {
+                    tk.reset(0);
+                } catch (graalgo.runtime.PanicException pe) {
+                    msg.set(String.valueOf(pe.goValue()));
+                }
+                tk.stop();
+            });
+            sched.awaitQuiescence();
+            assertEquals("non-positive interval for Ticker.Reset", msg.get(),
+                    "ticker reset panic message");
+        });
+    }
+
+    public void testTimerResetZeroFiresImmediately() throws Exception {
+        withScheduler(1, () -> {
+            GoTimer t = GoTimer.newTimer(60_000_000L);
+            assertTrue(t.reset(0), "timer reset(0) allowed");
+            // Poll for the fire (non-blocking; test thread is not a goroutine).
+            GoChan ch = (GoChan) t.channel();
+            boolean got = false;
+            for (int i = 0; i < 100 && !got; i++) {
+                if (drain(ch, sched) > 0) {
+                    got = true;
+                } else {
+                    Thread.sleep(10);
+                }
+            }
+            t.stop();
+            assertTrue(got, "timer fired after reset(0)");
         });
     }
 

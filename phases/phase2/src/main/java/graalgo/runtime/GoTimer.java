@@ -46,7 +46,9 @@ public final class GoTimer implements TimerHeap.ChanOwner {
         this.chan = new GoChan(1, 0L);
         this.periodNanos = periodNanos;
         long deadline = System.nanoTime() + Math.max(0, ns);
-        this.id = heap.addChan(deadline, chan, this, periodNanos, generation);
+        // P1-1: addChan assigns this.id under heap→owner locks before
+        // the entry is visible; no this-escape before id assignment.
+        heap.addChan(deadline, chan, this, periodNanos, generation);
     }
 
     /**
@@ -80,10 +82,14 @@ public final class GoTimer implements TimerHeap.ChanOwner {
 
     /**
      * {@code time.Tick(d)}: the channel of a ticker (no Stop handle —
-     * the ticker leaks until the program ends, gc parity). Panics on
-     * non-positive interval.
+     * the ticker leaks until the program ends, gc parity). Returns null
+     * on non-positive interval (gc parity: unlike NewTicker, Tick
+     * returns nil if d <= 0).
      */
     public static ChanOps.Chan tick(long ns) {
+        if (ns <= 0) {
+            return null;
+        }
         return newTicker(ns).channel();
     }
 
@@ -109,8 +115,15 @@ public final class GoTimer implements TimerHeap.ChanOwner {
      * {@code (*Timer).Reset} / {@code (*Ticker).Reset}: re-arms for
      * {@code ns} nanoseconds from now. Returns true iff the timer had
      * been active.
+     *
+     * <p>gc parity: {@code Ticker.Reset} panics on non-positive
+     * interval ("non-positive interval for Ticker.Reset");
+     * {@code Timer.Reset} accepts it (fires immediately).
      */
     public boolean reset(long ns) {
+        if (periodNanos > 0 && ns <= 0) {
+            Panic.throwPanic(GoStrings.of("non-positive interval for Ticker.Reset"));
+        }
         return heap.resetChan(this, System.nanoTime() + Math.max(0, ns));
     }
 

@@ -254,6 +254,13 @@ public final class Drainer {
         }
     }
 
+    /** Reads the in-flight count; white-box invariant tests only. */
+    int inflightForTest() {
+        synchronized (lock) {
+            return inflight;
+        }
+    }
+
     /** Observes admissions in order; lane-order tests only. */
     void setAdmissionListener(java.util.function.Consumer<GoroutineHandle> listener) {
         admissionListener = listener;

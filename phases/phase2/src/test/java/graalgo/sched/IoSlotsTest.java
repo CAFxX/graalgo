@@ -192,4 +192,47 @@ public final class IoSlotsTest {
                     "wrong message: " + e.getMessage());
         }
     }
+
+    // P1-4: EXIT while in blocking I/O fail-fasts (no double-decrement —
+    // the slot was already released at IO_ENTER). The inflight count
+    // must be untouched by the failed EXIT.
+    public void testDrainerRejectsExitWhileInIo() {
+        SchedulerCore sc = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        GoroutineHandle h = new GoroutineHandle(() -> {});
+        h.thread = Thread.currentThread();
+        sc.drainer().setInflightForTest(1);
+        sc.drainer().processOneForTest(
+                new ResumeToken(ResumeToken.Kind.IO_ENTER, h, 0));
+        int before = sc.drainer().inflightForTest();
+        try {
+            sc.drainer().processOneForTest(
+                    new ResumeToken(ResumeToken.Kind.EXIT, h, 0));
+            throw new AssertionError("expected AssertionError for EXIT while inIo");
+        } catch (AssertionError e) {
+            assertTrue(e.getMessage().contains("exited while in blocking I/O"),
+                    "wrong message: " + e.getMessage());
+        }
+        assertTrue(before == sc.drainer().inflightForTest(),
+                "failed EXIT must not decrement inflight");
+    }
+
+    // P1-4: PARKED while in blocking I/O fail-fasts (a goroutine in
+    // ioEnter must ioExit before parking — otherwise its slot accounting
+    // diverges from its parked state).
+    public void testDrainerRejectsParkedWhileInIo() {
+        SchedulerCore sc = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        GoroutineHandle h = new GoroutineHandle(() -> {});
+        h.thread = Thread.currentThread();
+        sc.drainer().setInflightForTest(1);
+        sc.drainer().processOneForTest(
+                new ResumeToken(ResumeToken.Kind.IO_ENTER, h, 0));
+        try {
+            sc.drainer().processOneForTest(
+                    new ResumeToken(ResumeToken.Kind.PARKED, h, 0));
+            throw new AssertionError("expected AssertionError for PARKED while inIo");
+        } catch (AssertionError e) {
+            assertTrue(e.getMessage().contains("parked while in blocking I/O"),
+                    "wrong message: " + e.getMessage());
+        }
+    }
 }

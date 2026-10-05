@@ -515,3 +515,34 @@ drains pending tick; NewTicker(0) panics. All encoded in corpus + unit
 tests.
 
 **`make check`**: placeholder + debug + netpoller-deletion gates clean.
+
+## 2026-10-05 ~16:00 CEST — P2-M3 review remediation (reviewer1 NO-GO → fixed)
+
+**Reviewer1** (code) returned NO-GO with 4 P0s, all verified valid against
+gc 1.27.1 source (runtime/time.go). All remediated:
+
+- **P0-1** (timer thread violated GoChan monitor protocol): all
+  trySend/tryRecv sites now hold the channel monitor (heap→owner→chan).
+- **P0-2** (Stop/Reset did not drain on active path): stopChan/resetChan
+  now drain unconditionally (gc timerchandrain parity); return
+  wasActive||drained. Fixed a short-circuit bug during remediation
+  (wasActive||drainLocked skipped the drain).
+- **P0-3** (stale-send window): pop+staleness-check+send now atomic under
+  the heap lock (trySend never blocks, so stronger than gc's
+  seq/sendLock protocol — no interleaving possible).
+- **P0-4** (re-arm not atomic): re-arm now under heap lock with the send.
+- **P1-1** (this-escape): addChan assigns owner id under heap→owner locks
+  before publication. **P1-2**: tick(0) returns null. **P1-3**:
+  Ticker.Reset(0) panics (gc message). **P1-4**: EXIT/PARKED-while-inIo
+  tests added. **P1-5**: test drain holds monitor. **P2-2**: gc grid
+  alignment for ticker re-arm. **P2-3**: gate extended with
+  java.nio.channels|java.net. **P2-4**: FreezeGapTest (phase-2 reflection
+  covers the 4 signatures Phase-1 FreezeSignatureTest misses; Phase-1
+  immutable).
+
+**Tests**: 98/98 green (was 85). New: 7 TimerTest (3 P0-2 red-green,
+stress, tick(0), reset panics), 2 IoSlotsTest (P1-4), 2 FreezeGapTest,
+2 differential (tm13/tm14). **Red-green**: no-drain mutation kills 7
+tests (3 new P0-2 + 4 existing).
+
+**Reviewer2** (methodology) still running.

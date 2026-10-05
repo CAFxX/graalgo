@@ -311,4 +311,50 @@ public final class TimerDifferentialTest {
         });
         assertEquals(expected("tm12_sleep_zero"), out.toString(), "tm12");
     }
+
+    // tm13: Stop on a live ticker with a buffered tick drains it (Go
+    // 1.23+); no stale tick is observable after Stop.
+    public void testTm13TickerStopBuffered() throws Exception {
+        StringBuilder out = new StringBuilder();
+        withScheduler(2, () -> {
+            sched.spawn(() -> {
+                GoTimer tk = GoTimer.newTicker(20_000_000L);
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException ie) {
+                    // ignore
+                }
+                tk.stop();
+                out.append("stopped\n");
+                out.append("buffered after stop: ")
+                        .append(ChanOps.len(tk.channel())).append("\n");
+                out.append("done\n");
+            });
+        });
+        assertEquals(expected("tm13_ticker_stop_buffered"), out.toString(), "tm13");
+    }
+
+    // tm14: Reset on a live ticker with a buffered tick drains the stale
+    // tick; the next receive is a fresh post-reset tick.
+    public void testTm14TickerResetBuffered() throws Exception {
+        StringBuilder out = new StringBuilder();
+        withScheduler(2, () -> {
+            sched.spawn(() -> {
+                GoTimer tk = GoTimer.newTicker(20_000_000L);
+                try {
+                    Thread.sleep(300);
+                } catch (InterruptedException ie) {
+                    // ignore
+                }
+                tk.reset(150_000_000L);
+                out.append("reset\n");
+                long t0 = System.nanoTime();
+                ChanOps.recv(tk.channel());
+                long dt = System.nanoTime() - t0;
+                out.append(dt > 75_000_000L ? "fresh tick\n" : "STALE tick\n");
+                tk.stop();
+            });
+        });
+        assertEquals(expected("tm14_ticker_reset_buffered"), out.toString(), "tm14");
+    }
 }
