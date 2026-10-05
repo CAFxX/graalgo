@@ -659,3 +659,25 @@ stores, guarded by a new `make check` grep gate; (D4) Go-observable GC
 surface (SetFinalizer/KeepAlive/GC/weak/memstats) emulated on JVM
 primitives, tuning knobs → P2-M5 GODEBUG registry. Falsifiers F1–F3 +
 re-test triggers recorded. Implementation starts after review sign-off.
+
+## 2026-10-05 ~16:10 CEST — P2-M4 ADR reviews remediated, delta re-verification pending
+
+Both ADR reviews returned GO-WITH-FINDINGS (reviewer1: 7 P1 + 5 P2;
+reviewer2: 6 P1 + 4 P2). All 22 findings remediated in 3d94f0f:
+- D4 table repaired: single shared Cleaner + resurrection/thread-identity
+  divergence rows; KeepAlive → Reference.reachabilityFence; runtime.GC() →
+  System.gc() + MXBean-poll wait w/ bounded timeout, documented
+  approximation; ReadMemStats → field-table requirement;
+  pprof + FreeOSMemory rows added; UnsafeHandles/finalizer → DIVERGENCES.md.
+- F2 rewritten (coherent pause-based trigger); collector decision recorded
+  (G1 default, {G1,ZGC,Shenandoah} expected); F4 added (standing GC-torture
+  differential across park kinds × collectors); re-test triggers += cgo/FFM,
+  collector change.
+- D2 now argues from the funnel invariant (single park site); [MEASURED]
+  scoped to what ran; grep gate patterns extended + rationale split;
+  GC-visibility differential wired to F3; archived spike path canonical.
+- PLAN.md WS D wording fixed (was: "write barriers at the Truffle level").
+- P2-M4 closeout checklist recorded in ADR (3 blocking deliverables w/
+  evidence files).
+Delta re-verification dispatched to both reviewers; implementation starts
+after DELTA-GO from both.
