@@ -15,6 +15,7 @@ GOMAXPROCS matrix.
 | F1_q10ms | 2 spin, gmp=2, 10ms | PASS | 52,672 samples, CV 0.0175 |
 | F1_gmp32par2 | 2 spin, gmp=32, 1ms | PASS | cap clamp min(32,2)=2, 41,397 samples |
 | F3_quiesce | 2000 spin, 15s | PASS | 2000/2000 admitted, max/mean 1.00 |
+| F3_10k (extended) | 10000 spin, 20s | PASS | 10000/10000 admitted, max/mean 1.01 |
 | F4_q1ms | 20k iters | INFO-FAIL | 48.9µs > 10µs budget; see §4 |
 | F4_q10ms | 20k iters | PASS | 34.7µs < 100µs budget (1% of 10ms) |
 | F5_cap1 | gmp=1 | PASS | maxTrueParallel=1, 0 violations |
