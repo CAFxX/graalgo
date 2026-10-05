@@ -324,4 +324,74 @@ public final class MainTest {
         }
         return sb.toString().trim();
     }
+
+    /**
+     * M9 (WS L): {@code --dump-polymorphism=path} records per-call-site target
+     * cardinality. The {@code f(v)} site inside {@code apply} is invoked with
+     * two different closures → bimorphic (targets 2); the two {@code apply}
+     * call sites are monomorphic.
+     */
+    public void testDumpPolymorphism() throws Exception {
+        Path dir = Files.createTempDirectory("graalgo-poly-test");
+        Path f = dir.resolve("prog.go");
+        Files.writeString(f,
+                "package main\n\n" +
+                "func apply(f func(int) int, v int) int { return f(v) }\n\n" +
+                "func main() {\n" +
+                "\ta := func(x int) int { return x + 1 }\n" +
+                "\tb := func(x int) int { return x * 2 }\n" +
+                "\tprintln(apply(a, 10))\n" +
+                "\tprintln(apply(b, 10))\n" +
+                "}\n",
+                StandardCharsets.UTF_8);
+        Path snap = dir.resolve("poly.json");
+        int code;
+        try {
+            code = Main.run(new String[] {"--dump-polymorphism=" + snap, f.toString()});
+        } finally {
+            graalgo.values.CallSiteProbes.setEnabled(false);
+            graalgo.values.CallSiteProbes.reset();
+        }
+        assertEq(Main.EXIT_OK, code, "run exit with --dump-polymorphism");
+        String json = Files.readString(snap, StandardCharsets.UTF_8);
+        if (!json.contains("\"targets\":2")) {
+            throw new AssertionError(
+                    "expected a bimorphic site (targets 2) in snapshot, got: " + json);
+        }
+    }
+
+    /**
+     * M9 (WS L), stderr half: the program under test uses the builtin
+     * {@code println}, which writes to stderr (gc-accurate). Verifies the
+     * program itself ran correctly with probing enabled.
+     */
+    public void testDumpPolymorphismProgramOutput() throws Exception {
+        Path dir = Files.createTempDirectory("graalgo-poly-test");
+        Path f = dir.resolve("prog.go");
+        Files.writeString(f,
+                "package main\n\n" +
+                "func apply(f func(int) int, v int) int { return f(v) }\n\n" +
+                "func main() {\n" +
+                "\ta := func(x int) int { return x + 1 }\n" +
+                "\tb := func(x int) int { return x * 2 }\n" +
+                "\tprintln(apply(a, 10))\n" +
+                "\tprintln(apply(b, 10))\n" +
+                "}\n",
+                StandardCharsets.UTF_8);
+        Path snap = dir.resolve("poly.json");
+        PrintStream old = System.err;
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(buf, true, StandardCharsets.UTF_8));
+        int code;
+        try {
+            code = Main.run(new String[] {"--dump-polymorphism=" + snap, f.toString()});
+        } finally {
+            System.setErr(old);
+            graalgo.values.CallSiteProbes.setEnabled(false);
+            graalgo.values.CallSiteProbes.reset();
+        }
+        assertEq(Main.EXIT_OK, code, "run exit with --dump-polymorphism");
+        String err = buf.toString(StandardCharsets.UTF_8);
+        assertContains(err, "11\n20\n", "program output with probing enabled");
+    }
 }
