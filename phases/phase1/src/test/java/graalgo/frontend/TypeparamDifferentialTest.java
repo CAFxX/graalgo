@@ -63,7 +63,7 @@ public final class TypeparamDifferentialTest {
     private static final int MAX_EXCLUSIONS = 222;
 
     /** Expected version of the exclusion list (bumped on material changes). */
-    private static final String EXPECTED_EXCLUSIONS_VERSION = "3";
+    private static final String EXPECTED_EXCLUSIONS_VERSION = "4";
 
     private static Path phase1Dir() {
         return resolvePhase1Dir(

@@ -14,7 +14,7 @@
 #   deferred-parity      — needs a feature from a later milestone/
 #                          workstream (multi-file packages = WS G import
 #                          overlay; unimplemented stdlib imports).
-version: 3
+version: 4
 exclusions:
 - file: absdiffimp.go
   reason: deferred-parity
@@ -682,3 +682,9 @@ exclusions:
 - file: typeswitch1.go
   reason: deferred-parity
   detail: "case T: where T is a type parameter instantiated to an interface (e.g. any) does not match: type switch uses descriptor identity (t == dyn), not interface satisfaction. Pre-existing limitation."
+- file: issue51840.go
+  reason: deferred-parity
+  detail: "call to generic variadic function NewSet[Addr] without ... spread (argument packing): v1 has no packing adaptation; the exporter is a clean WS D scope error (M7 remediation for R1 P1-1/R2 P1-2). Previously built by accident (// compile test; the unadapted call was never executed)."
+- file: issue51925.go
+  reason: deferred-parity
+  detail: "call to generic variadic function VarMin[myInt] without ... spread (argument packing): v1 has no packing adaptation; the exporter is a clean WS D scope error (M7 remediation for R1 P1-1/R2 P1-2). Previously built by accident (// compile test; the unadapted call was never executed)."
