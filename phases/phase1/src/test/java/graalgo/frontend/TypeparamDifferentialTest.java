@@ -59,8 +59,13 @@ public final class TypeparamDifferentialTest {
      * the test, forcing the worker to bump this constant *with a reason*
      * in the same change. Shrinking the list (pruning stale exclusions)
      * stays free.
+     *
+     * M7 remediation (R1 P1-1/R2 P1-3): +2 for the generic variadic-packing
+     * compile tests issue51840.go and issue51925.go, now loud WS D scope
+     * errors (v1 has no packing adaptation); they previously built by
+     * accident.
      */
-    private static final int MAX_EXCLUSIONS = 222;
+    private static final int MAX_EXCLUSIONS = 224;
 
     /** Expected version of the exclusion list (bumped on material changes). */
     private static final String EXPECTED_EXCLUSIONS_VERSION = "4";
