@@ -334,17 +334,17 @@ public final class GoDebug {
     /** Installs EMULATED knobs from already-parsed settings (test seam). */
     static void applySettings(Settings s) throws GoDebugException {
         int schedtrace = s.get("schedtrace");
-        if (schedtrace < 0) {
-            throw new GoDebugException(
-                    "GODEBUG schedtrace must be >= 0 (milliseconds)");
-        }
+        // gc treats schedtrace <= 0 as "off" (accepted, never fires);
+        // we match rather than deny.
         if (schedtrace > 0) {
             SchedTrace.start(schedtrace, s.get("scheddetail") != 0);
         }
         if (s.get("gctrace") != 0) {
             GcTrace.start();
         }
-        if (s.get("panicnil") != 0) {
+        // gc enables the old panic(nil) behavior only when panicnil == 1
+        // exactly (runtime/panic.go: gopanic checks debug.panicnil != 1).
+        if (s.get("panicnil") == 1) {
             graalgo.runtime.Panic.setPanicNilOldBehavior(true);
         }
     }

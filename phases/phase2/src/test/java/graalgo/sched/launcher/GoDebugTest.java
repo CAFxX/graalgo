@@ -26,7 +26,7 @@ public final class GoDebugTest {
 
     /** verifies: GG-0055 (registry versioned; knob add/remove must bump). */
     public void testRegistryVersion() {
-        assertEquals(2, GoDebug.registryVersion(), "registry version");
+        assertEquals(3, GoDebug.registryVersion(), "registry version");
     }
 
     /**
@@ -34,15 +34,23 @@ public final class GoDebugTest {
      * the version bump + hash update is made deliberately).
      */
     public void testRegistryKnobHash() throws Exception {
-        String joined = String.join(",", GoDebug.knobNames());
+        // Hash covers name + disposition + default: a disposition retriage
+        // (e.g. weakening an UNSUPPORTED knob to no-op) must fail this
+        // check and force a version bump, not pass silently.
+        List<String> parts = new ArrayList<>();
+        for (String name : GoDebug.knobNames()) {
+            GoDebug.Knob k = GoDebug.knob(name);
+            parts.add(name + "|" + k.disposition + "|" + k.defaultValue);
+        }
+        String joined = String.join(",", parts);
         MessageDigest md = MessageDigest.getInstance("SHA-256");
         String hash = HexFormat.of().formatHex(
                 md.digest(joined.getBytes(StandardCharsets.UTF_8)));
         // If this fails, the registry changed: bump the version in
         // registry.json AND update EXPECTED_HASH here in the same commit.
         final String EXPECTED_HASH =
-                "944ee8d6d9c148fd25dc6a09c62938164ce8b593ec6ff2608be0c40b86d62e30";
-        assertEquals(EXPECTED_HASH, hash, "registry knob-name-set hash");
+                "3aa00bc7b03185dffde00e0edf2852d136de94ebbd61bf450c3d565e621e7530";
+        assertEquals(EXPECTED_HASH, hash, "registry knob-set hash");
     }
 
     /** verifies: GG-0055 (every knob documented). */
@@ -59,7 +67,7 @@ public final class GoDebugTest {
     /** verifies: GG-0055 (registry covers the gc knob universe). */
     public void testRegistryKnobCount() {
         // 33 dbgvars + memprofilerate + 45 non-runtime godebugs = 79.
-        assertEquals(79, GoDebug.knobNames().size(), "knob count");
+        assertEquals(78, GoDebug.knobNames().size(), "knob count");
     }
 
     // ------------------------------------------------------------------
@@ -173,15 +181,24 @@ public final class GoDebugTest {
         assertTrue(true, "accepted");
     }
 
-    /** verifies: GG-0055 (negative schedtrace denied at apply time). */
-    public void testNegativeSchedtraceDenied() throws Exception {
+    /** verifies: GG-0055 (negative schedtrace accepted as off, like gc). */
+    public void testNegativeSchedtraceMeansOff() throws Exception {
+        // Must not throw, and must not start the daemon.
+        GoDebug.applySettings(GoDebug.parse("schedtrace=-1"));
+        assertEquals(-1, GoDebug.parse("schedtrace=-1").get("schedtrace"),
+                "value preserved");
+    }
+
+    /** verifies: GG-0055 (gc enables old panicnil only for ==1 exactly). */
+    public void testPanicnil2MeansNewBehavior() throws Exception {
+        graalgo.runtime.Panic.setPanicNilOldBehavior(false);
         try {
-            GoDebug.applySettings(GoDebug.parse("schedtrace=-1"));
-        } catch (GoDebug.GoDebugException e) {
-            assertTrue(e.getMessage().contains("schedtrace"), e.getMessage());
-            return;
+            GoDebug.applySettings(GoDebug.parse("panicnil=2"));
+            assertTrue(!graalgo.runtime.Panic.isPanicNilOldBehavior(),
+                    "panicnil=2 must NOT enable old behavior (gc: ==1 only)");
+        } finally {
+            graalgo.runtime.Panic.setPanicNilOldBehavior(false);
         }
-        throw new AssertionError("expected GoDebugException for schedtrace=-1");
     }
 
     // ------------------------------------------------------------------
@@ -221,6 +238,24 @@ public final class GoDebugTest {
         ProcessResult r = runSchedMain("scavtrace=1", "db01_hello.go");
         assertEquals(2, r.exitCode, "exit code");
         assertTrue(r.stderr.contains("unsupported GODEBUG"), "stderr:\n" + r.stderr);
+    }
+
+    /** verifies: GG-0055 (uncaught panic(nil) prints "panic: nil", like gc). */
+    public void testPanicnilUncaughtRendering() throws Exception {
+        ProcessResult r = runSchedMain("panicnil=1", "db05_panicnil_uncaught.go");
+        assertEquals(2, r.exitCode, "exit code");
+        assertTrue(r.stderr.contains("panic: nil"),
+                "expected 'panic: nil', stderr:\n" + r.stderr);
+    }
+
+    /** verifies: GG-0055 (negative control: default prints the error, not "panic: nil"). */
+    public void testPanicnilUncaughtDefaultNotNil() throws Exception {
+        ProcessResult r = runSchedMain("", "db05_panicnil_uncaught.go");
+        assertEquals(2, r.exitCode, "exit code");
+        assertTrue(!r.stderr.contains("panic: nil"),
+                "default must NOT print 'panic: nil', stderr:\n" + r.stderr);
+        assertTrue(r.stderr.contains("panic:"),
+                "expected some panic line, stderr:\n" + r.stderr);
     }
 
     /** verifies: GG-0055 (valid GODEBUG runs the program; schedtrace emits). */

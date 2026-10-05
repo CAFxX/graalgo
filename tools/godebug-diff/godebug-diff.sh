@@ -68,6 +68,8 @@ echo "== building phase2 =="
 make -C "$P2" main >/dev/null 2>&1 || { echo "build failed"; exit 1; }
 
 # --- schedtrace ---
+# Strengthened comparator: requires >=3 lines with STRICTLY INCREASING
+# timestamps — a print-once-and-die daemon would fail this.
 echo "== schedtrace =="
 run_gc  "schedtrace=100" "db04_spin.go"
 run_gr  "schedtrace=100" "db04_spin.go"
@@ -78,12 +80,24 @@ ok=0; detail=""
 [ "$gc_exit" = "0" ] || { ok=1; detail="gc exit $gc_exit"; }
 [ "$gr_exit" = "0" ] || { ok=1; detail="graalgo exit $gr_exit"; }
 [ "$gc_lines" -ge 1 ] || { ok=1; detail="gc emitted no SCHED lines"; }
-[ "$gr_lines" -ge 1 ] || { ok=1; detail="graalgo emitted no SCHED lines"; }
+[ "$gr_lines" -ge 3 ] || { ok=1; detail="graalgo emitted <3 SCHED lines ($gr_lines)"; }
+# Timestamps must strictly increase (periodic daemon, not one-shot).
+if [ "$ok" = "0" ]; then
+    prev=-1; mono=1
+    while read -r line; do
+        ms=$(echo "$line" | sed -E 's/^SCHED ([0-9]+)ms:.*/\1/')
+        [ "$ms" -gt "$prev" ] || { mono=0; break; }
+        prev=$ms
+    done < <(clean_gr_err | grep "^SCHED [0-9]*ms: goroutines=")
+    [ "$mono" = "1" ] || { ok=1; detail="SCHED timestamps not strictly increasing"; }
+fi
 diff -q "$WORK/gc.out" "$WORK/gr.out" >/dev/null || { ok=1; detail="stdout differs"; }
-[ -z "$detail" ] && detail="gc SCHED lines=$gc_lines, graalgo SCHED lines=$gr_lines, stdout identical"
+[ -z "$detail" ] && detail="gc SCHED lines=$gc_lines, graalgo SCHED lines=$gr_lines (increasing), stdout identical"
 check "schedtrace" "$ok" "$detail"
 
 # --- scheddetail ---
+# Positive control (>=1 SCHED-DETAIL line with the knob) and NEGATIVE
+# control (no SCHED-DETAIL lines without it).
 echo "== scheddetail =="
 run_gr "schedtrace=100,scheddetail=1" "db04_spin.go"
 gr_detail=$(clean_gr_err | grep -c "^SCHED-DETAIL" || true)
@@ -91,10 +105,14 @@ gr_exit=$(cat "$WORK/gr.exit")
 ok=0; detail=""
 [ "$gr_exit" = "0" ] || { ok=1; detail="graalgo exit $gr_exit"; }
 [ "$gr_detail" -ge 1 ] || { ok=1; detail="no SCHED-DETAIL lines"; }
-[ -z "$detail" ] && detail="SCHED-DETAIL lines=$gr_detail"
+run_gr "schedtrace=100" "db04_spin.go"
+gr_nodetail=$(clean_gr_err | grep -c "^SCHED-DETAIL" || true)
+[ "$gr_nodetail" = "0" ] || { ok=1; detail="SCHED-DETAIL lines without scheddetail=1 ($gr_nodetail)"; }
+[ -z "$detail" ] && detail="SCHED-DETAIL lines=$gr_detail, negative control clean"
 check "scheddetail" "$ok" "$detail"
 
 # --- gctrace ---
+# Per-cycle-ness: requires >=2 cycle lines with non-decreasing timestamps.
 echo "== gctrace =="
 run_gc "gctrace=1" "db03_alloc.go"
 run_gr "gctrace=1" "db03_alloc.go"
@@ -105,7 +123,7 @@ ok=0; detail=""
 [ "$gc_exit" = "0" ] || { ok=1; detail="gc exit $gc_exit"; }
 [ "$gr_exit" = "0" ] || { ok=1; detail="graalgo exit $gr_exit"; }
 [ "$gc_lines" -ge 1 ] || { ok=1; detail="gc emitted no gc lines"; }
-[ "$gr_lines" -ge 1 ] || { ok=1; detail="graalgo emitted no gc lines"; }
+[ "$gr_lines" -ge 2 ] || { ok=1; detail="graalgo emitted <2 gc cycle lines ($gr_lines)"; }
 diff -q "$WORK/gc.out" "$WORK/gr.out" >/dev/null || { ok=1; detail="stdout differs"; }
 [ -z "$detail" ] && detail="gc cycle lines=$gc_lines, graalgo cycle lines=$gr_lines, stdout identical"
 check "gctrace" "$ok" "$detail"

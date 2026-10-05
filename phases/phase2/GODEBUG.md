@@ -1,10 +1,23 @@
 # GODEBUG surface (P2-M5, WS E)
 
 Versioned registry of every GODEBUG knob: `src/main/resources/graalgo/sched/godebug/registry.json`
-(current version **2**, 79 knobs + 9 removed). The registry is loaded at
+(current version **3**, 78 knobs + 9 removed). The registry is loaded at
 launcher startup by `graalgo.sched.launcher.GoDebug`; unknown knob names,
 malformed values, and non-default values of unsupported knobs are hard
 errors (exit 2), never silently ignored.
+
+## Triage principles
+
+1. **EMULATED** — we can produce the gc-observable behavior.
+2. **UNSUPPORTED** — the user explicitly asks for output/behavior we
+   cannot produce and would observe its absence; setting a non-default
+   value is a hard error.
+3. **NO-OP** — the knob cannot have observable effect in this runtime
+   (subsystem absent, or its precondition is impossible). Accepted and
+   ignored, with a documented justification.
+4. Knobs whose effective behavior permanently equals a *non-default*
+   value are NO-OP and the effective values are documented in
+   DIVERGENCES.md DIV-M5-5.
 
 ## Dispositions
 
@@ -29,7 +42,10 @@ errors (exit 2), never silently ignored.
    `gc <n> @<s>s <name>: <ms>ms, heap <b>-><a> MB` with JVM-heap numbers.
    The emulated observable is "a periodic/per-cycle line on stderr".
    (DIV-M5-4)
-5. **`panicnil` unrecovered rendering**: with `panicnil=1`, `recover()`
+5. **Five NO-OP knobs permanently behave as a non-default value**
+   (`asyncpreemptoff`, `dontfreezetheworld`, `containermaxprocs`,
+   `updatemaxprocs`, `tracebacklabels`; see DIV-M5-5).
+6. **`panicnil` unrecovered rendering**: with `panicnil=1`, `recover()`
    after `panic(nil)` returns nil exactly like gc (byte-identical), and
    an uncaught `panic(nil)` prints `panic: nil`. (No divergence.)
 
@@ -171,7 +187,6 @@ by `PanicOverlayDriftTest`. Verified byte-identical vs
 | `jstmpllitinterp` | `0` | non-runtime subsystem knob (see internal/godebugs) | Subsystem not present in the graalgo runtime (no net/http, crypto, cmd/go, etc.); the knob is accepted and ignored. |
 | `madvdontneed` | `1` | use MADV_DONTNEED instead of MADV_FREE (def 1 on Linux) | Memory management is delegated to the JVM. |
 | `memprofilerate` | `524288` | heap profile sample rate in bytes (def 524288) | No heap profiler is produced; the sampling rate is moot. |
-| `multipartfiles` | `0` | non-runtime subsystem knob (see internal/godebugs) | Subsystem not present in the graalgo runtime (no net/http, crypto, cmd/go, etc.); the knob is accepted and ignored. |
 | `multipartmaxheaders` | `0` | non-runtime subsystem knob (see internal/godebugs) | Subsystem not present in the graalgo runtime (no net/http, crypto, cmd/go, etc.); the knob is accepted and ignored. |
 | `multipartmaxparts` | `0` | non-runtime subsystem knob (see internal/godebugs) | Subsystem not present in the graalgo runtime (no net/http, crypto, cmd/go, etc.); the knob is accepted and ignored. |
 | `multipathtcp` | `0` | non-runtime subsystem knob (see internal/godebugs) | Subsystem not present in the graalgo runtime (no net/http, crypto, cmd/go, etc.); the knob is accepted and ignored. |
@@ -229,7 +244,7 @@ by `PanicOverlayDriftTest`. Verified byte-identical vs
 
 | knob | default | gc behavior | graalgo disposition |
 |---|---|---|---|
-| `tracebacklabels` | `1` | include pprof labels in goroutine headers (def 1) | Goroutine pprof labels are not implemented; traces never carry labels, so effective behavior always equals tracebacklabels=0. |
+| `tracebacklabels` | `1` | include pprof labels in goroutine headers (def 1) | Goroutine labels cannot exist in graalgo (no pprof label API); with no labels to show or hide, both values are observably identical. |
 | `tracecheckstackownership` | `0` | execution-tracer stack-ownership checks | No execution tracer exists. |
 | `tracefpunwindoff` | `0` | disable frame-pointer unwinding in tracer | No execution tracer exists. |
 | `updatemaxprocs` | `1` | update GOMAXPROCS on cgroup quota change (def 1) | Cgroup CPU quota is never consulted; effective behavior always equals updatemaxprocs=0. |
@@ -264,6 +279,6 @@ by `PanicOverlayDriftTest`. Verified byte-identical vs
 1. Edit `registry.json` (add/remove/retriage a knob).
 2. Bump `version`.
 3. Update `EXPECTED_HASH` in `GoDebugTest.testRegistryKnobHash` (it fails
-   until you do — that is the machine check).
+   until you do — that is the machine check; it covers name+disposition+default).
 4. Regenerate this document's table from the JSON.
 5. `godebug-diff` green if an EMULATED knob changed.

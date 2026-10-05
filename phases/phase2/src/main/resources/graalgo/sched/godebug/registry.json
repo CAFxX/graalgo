@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "generated_from": "go1.27.1: src/runtime/runtime1.go dbgvars + src/internal/godebugs/table.go",
   "knob_count": 79,
   "knobs": [
@@ -291,13 +291,6 @@
       "justification": "No heap profiler is produced; the sampling rate is moot."
     },
     {
-      "name": "multipartfiles",
-      "disposition": "noop",
-      "default": "0",
-      "summary": "non-runtime subsystem knob (see internal/godebugs)",
-      "justification": "Subsystem not present in the graalgo runtime (no net/http, crypto, cmd/go, etc.); the knob is accepted and ignored."
-    },
-    {
       "name": "multipartmaxheaders",
       "disposition": "noop",
       "default": "0",
@@ -456,7 +449,7 @@
       "disposition": "noop",
       "default": "1",
       "summary": "include pprof labels in goroutine headers (def 1)",
-      "justification": "Goroutine pprof labels are not implemented; traces never carry labels, so effective behavior always equals tracebacklabels=0."
+      "justification": "Goroutine labels cannot exist in graalgo (no pprof label API); with no labels to show or hide, both values are observably identical."
     },
     {
       "name": "tracecheckstackownership",

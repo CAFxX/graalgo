@@ -143,3 +143,25 @@ with JVM-heap numbers (gc prints allocator-level detail). The emulated
 observable is "a periodic/per-cycle scheduler/GC line on stderr",
 verified differential by `tools/godebug-diff` (4/4 green). Byte-identity
 is not attempted.
+
+### DIV-M5-5: effective behavior permanently equals a non-default value
+
+For five NO-OP knobs the runtime cannot exhibit gc's default behavior,
+so the effective behavior always equals the noted non-default value
+regardless of what is set (even the default):
+
+| knob | gc default | graalgo effective | why |
+|---|---|---|---|
+| `asyncpreemptoff` | 0 | 1 | no signal-based async preemption exists |
+| `dontfreezetheworld` | 0 | 1 | no stop-the-world phase exists to freeze |
+| `containermaxprocs` | 1 | 0 | no container CPU-quota detection; never applied |
+| `updatemaxprocs` | 1 | 0 | same |
+| `tracebacklabels` | 1 | 0 | goroutine labels cannot exist (no pprof label API) |
+
+These stay NO-OP (accepted, ignored) rather than UNSUPPORTED because
+denying gc's *default* value would be hostile for zero benefit: the
+program cannot get the default behavior either way, and every setting
+is observably identical inside this runtime. The triage principle is:
+deny when the user would observe missing output/behavior they asked
+for (UNSUPPORTED); accept when the knob cannot have observable effect
+here (NO-OP) — and document the effective value here.
