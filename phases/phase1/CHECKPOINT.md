@@ -1185,3 +1185,46 @@ Not silently excluded — programs rewritten to test specified behavior.
 1. Run all 47 tools/diffharness/corpus/ programs through diffharness.
 2. Build corpus coverage manifest (gate-1 evidence).
 3. Full diffharness run for done-gate 1.
+
+## 2026-10-05 ~01:25 CEST — impl resume after VM reboot 9a7a2d45 (recovery 01:23 CEST)
+- Duplicate-dispatch guard passed: registry graalgo-phase1-impl active; no
+  other live owner (heartbeat 2026-10-04T23:24Z is this resume's own).
+  Worktree ~/workspace/graalgo-loopcap-rework already removed (merged
+  4cb9572); periodic merge cron retired — nothing to touch.
+- Env verified: Go 1.27.1, Oracle GraalVM 25.0.4+7.1, lib/*.jar sha256sum OK.
+- Inherited in-flight uncommitted M7 work (pre-reboot worker, 23:06-23:21 UTC):
+  tools/diffharness/internal/harness/corpus.go (absolute corpus path fix);
+  DeferNode/DeferredCall/FmtCallNode/NodeFactory/Fmt.java (deferred fmt
+  overlay calls; nested array/slice elem kinds for recursive fmt printing;
+  composite-literal element/field conversion to declared type for interface
+  boxing); SliceGrowthTest oracle fix (nextslicecap(3,2) cap 4->8 per
+  roundupsize). research/phase5-opt-survey/* changes are another track's —
+  not touched. Single owner: this resume.
+- `make main` clean (-Xlint:deprecation -Werror) on the in-flight tree.
+- Baseline `make test` running (in-flight fixes included). Partial log
+  /tmp/m7_resume_test.log: 159 PASS, 0 FAIL at last check (TypeparamDifferentialTest
+  green). Full result pending.
+- Spot check: corpus 32_defer_args (defer fmt.Println) runs correct via
+  graalgo-run: LIFO order, defer-time arg eval (x=1), exit 0.
+- Next: finish baseline, then M7 scope items 1-3 (47-program diffharness
+  corpus run gc-a vs graalgo, coverage manifest, full diffharness run).
+
+## 2026-10-05 ~02:30 CEST — M7 worker (resume): 4 corpus bugs fixed, 3 commits
+
+- Commits (master):
+  - d64469a: harness absolute corpus path fix (corpus.go + corpus_test.go)
+  - 6da57a3: SliceGrowthTest cap correction (8, verified vs gc 1.27.1)
+  - d48b941: 4 corpus divergence fixes (see below)
+- Bugs fixed (all red-green verified vs gc 1.27.1):
+  1. 29_interface_nil: composite literals now maybeConvert values to elemKind
+     (NodeFactory.buildComplit); typed nils in map[string]any preserve descriptor.
+     Nil literals skipped (fixes typeparam issue51840.go INTERFACE->POINTER).
+  2. 02_arithmetic, 23_bitwise: Fmt.java Byte/Short casts -> Integer (canonical
+     boxing); boxArrayElement returns Integer.
+  3. 36_matrix_mult: nested array printing via Fmt.Arg.elemElemKind threading
+     (NodeFactory -> FmtCallNode -> Fmt -> DeferredCall/DeferNode).
+  4. Defer-FMT (inherited): DeferredCall.Kind.FMT replays deferred fmt calls.
+- Suite: 183/0 green (after boxArrayElement Integer fix + nil-skip fix).
+- Exclusions (honest): 24_variadic (variadic call adaptation not in P1 subset);
+  27_panic_trace (gc PC offsets + absolute paths unreplicable).
+- Next: fresh full corpus run (47 programs), coverage manifest, gate-1 evidence.
