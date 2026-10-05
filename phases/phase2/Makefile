@@ -67,13 +67,15 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	touch $(OUT_TEST)/.built
 
 # placeholder + debug-leftover grep gates (Phase-1 done-gate 5 discipline).
+# The launcher (SchedMain) is excluded from the debug gate: printing usage
+# and diagnostics to stderr is its job (same exclusion as Phase-1 Main).
 check:
 	@echo "== placeholder grep gate =="
 	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
-	@echo "== debug-leftover grep gate (src/main only) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/; then \
+	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 
