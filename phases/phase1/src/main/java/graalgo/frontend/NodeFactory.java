@@ -1942,6 +1942,16 @@ public final class NodeFactory {
                 elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
                 elemKindChains[i] = java.util.List.of();
                 elemTypeNameChains[i] = java.util.List.of();
+            } else if ("pointer".equals(k)) {
+                // M8 (fuzzer find): %v of a pointer to struct/array/slice/map
+                // prints &value (Go's printValue Pointer case), not the erased
+                // address. Thread the referent kind so fmtPointer takes the
+                // &-path; other referents keep the erased 0x0.
+                int elemId = detail.intValue("elem", apath);
+                elemKinds[i] = kindOf(ctx, elemId, apath);
+                elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
+                elemKindChains[i] = java.util.List.of();
+                elemTypeNameChains[i] = java.util.List.of();
             } else {
                 elemKindChains[i] = java.util.List.of();
                 elemTypeNameChains[i] = java.util.List.of();

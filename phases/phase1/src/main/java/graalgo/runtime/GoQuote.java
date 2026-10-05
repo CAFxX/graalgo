@@ -18,11 +18,11 @@ final class GoQuote {
     private static final int RUNE_SELF = 0x80;
     private static final int MAX_RUNE = 0x10FFFF;
 
-    /** Decoded rune + width in bytes. */
-    private record Rune(int r, int width) {}
+    /** Decoded rune + width in bytes. Package-visible for Fmt's byte-wise paths (M8). */
+    record Rune(int r, int width) {}
 
-    /** utf8.DecodeRuneInString equivalent. */
-    private static Rune decodeRune(byte[] s, int i) {
+    /** utf8.DecodeRuneInString equivalent. Package-visible for Fmt's byte-wise paths (M8). */
+    static Rune decodeRune(byte[] s, int i) {
         int n = s.length - i;
         int c0 = s[i] & 0xFF;
         if (c0 < RUNE_SELF) {

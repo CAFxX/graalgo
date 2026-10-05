@@ -12,6 +12,7 @@ import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
 import graalgo.values.GoTypeDescriptor;
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 
@@ -90,17 +91,17 @@ public final class Fmt {
 
     /** {@code Sprintf}: formats and returns the string. */
     public static GoString sprintf(String format, Arg[] args) {
-        return GoString.fromUtf8(new Printer().doPrintf(format, args));
+        return new GoString(new Printer().doPrintf(format, args));
     }
 
     /** {@code Sprint}: {@code %v} of each arg, spaces between non-strings. */
     public static GoString sprint(Arg[] args) {
-        return GoString.fromUtf8(new Printer().doPrint(args));
+        return new GoString(new Printer().doPrint(args));
     }
 
     /** {@code Sprintln}: {@code %v} of each arg, spaces always, trailing newline. */
     public static GoString sprintln(Arg[] args) {
-        return GoString.fromUtf8(new Printer().doPrintln(args));
+        return new GoString(new Printer().doPrintln(args));
     }
 
     /**
@@ -108,8 +109,7 @@ public final class Fmt {
      * Returns bytes written, like gc.
      */
     public static int print(Arg[] args) {
-        String s = new Printer().doPrint(args);
-        byte[] b = s.getBytes(StandardCharsets.UTF_8);
+        byte[] b = new Printer().doPrint(args);
         System.out.write(b, 0, b.length);
         System.out.flush();
         return b.length;
@@ -117,8 +117,7 @@ public final class Fmt {
 
     /** {@code Printf}: formats to stdout. Returns bytes written. */
     public static int printf(String format, Arg[] args) {
-        String s = new Printer().doPrintf(format, args);
-        byte[] b = s.getBytes(StandardCharsets.UTF_8);
+        byte[] b = new Printer().doPrintf(format, args);
         System.out.write(b, 0, b.length);
         System.out.flush();
         return b.length;
@@ -126,8 +125,7 @@ public final class Fmt {
 
     /** {@code Println}: {@code %v} of each arg to stdout, spaces + newline. */
     public static int println(Arg[] args) {
-        String s = new Printer().doPrintln(args);
-        byte[] b = s.getBytes(StandardCharsets.UTF_8);
+        byte[] b = new Printer().doPrintln(args);
         System.out.write(b, 0, b.length);
         System.out.flush();
         return b.length;
@@ -156,7 +154,18 @@ public final class Fmt {
     // ------------------------------------------------------------------
 
     static final class Printer {
-        final StringBuilder buf = new StringBuilder();
+        final ByteArrayOutputStream buf = new ByteArrayOutputStream();
+
+        /** Writes a String as UTF-8 bytes (ByteArrayOutputStream.write(byte[]) throws). */
+        void writeUtf8(String s) {
+            byte[] b = s.getBytes(StandardCharsets.UTF_8);
+            buf.write(b, 0, b.length);
+        }
+
+        /** Writes raw bytes (for invalid-UTF8 Go strings: Go prints bytes, not U+FFFD). */
+        void writeBytes(byte[] b) {
+            buf.write(b, 0, b.length);
+        }
 
         // flags (fmtFlags)
         boolean minus, plus, sharp, space, zero;
@@ -185,29 +194,29 @@ public final class Fmt {
             }
             char padByte = (zero && !minus) ? '0' : ' ';
             for (int i = 0; i < n; i++) {
-                buf.append(padByte);
+                buf.write(padByte);
             }
         }
 
         /** pad: width counts runes (Go: utf8.RuneCount). */
         void pad(String s) {
             if (!widPresent || wid == 0) {
-                buf.append(s);
+                writeUtf8(s);
                 return;
             }
             int width = wid - s.codePointCount(0, s.length());
             if (!minus) {
                 writePadding(width);
-                buf.append(s);
+                writeUtf8(s);
             } else {
-                buf.append(s);
+                writeUtf8(s);
                 writePadding(width);
             }
         }
 
         // -- format loop (doPrintf) --------------------------------------
 
-        String doPrintf(String format, Arg[] args) {
+        byte[] doPrintf(String format, Arg[] args) {
             byte[] f = format.getBytes(StandardCharsets.UTF_8);
             int end = f.length;
             int argNum = 0;
@@ -221,7 +230,7 @@ public final class Fmt {
                     i++;
                 }
                 if (i > lasti) {
-                    buf.append(format, lasti, i);
+                    writeUtf8(format.substring(lasti, i));
                 }
                 if (i >= end) {
                     break;
@@ -268,7 +277,7 @@ public final class Fmt {
                     widPresent = wr[1] == 1;
                     argNum = wr[2];
                     if (!widPresent) {
-                        buf.append("%!(BADWIDTH)");
+                        writeUtf8(("%!(BADWIDTH)"));
                     }
                     if (wid < 0) {
                         wid = -wid;
@@ -310,7 +319,7 @@ public final class Fmt {
                             precPresent = false;
                         }
                         if (!precPresent) {
-                            buf.append("%!(BADPREC)");
+                            writeUtf8(("%!(BADPREC)"));
                         }
                         afterIndex = false;
                     } else {
@@ -336,7 +345,7 @@ public final class Fmt {
                 }
 
                 if (i >= end) {
-                    buf.append("%!(NOVERB)");
+                    writeUtf8(("%!(NOVERB)"));
                     break;
                 }
 
@@ -352,7 +361,7 @@ public final class Fmt {
                 }
 
                 if (verb == '%') {
-                    buf.append('%');
+                    buf.write('%');
                     continue;
                 }
                 if (!goodArgNum) {
@@ -377,22 +386,23 @@ public final class Fmt {
             // extra arguments
             if (!reordered && argNum < args.length) {
                 clearFlags();
-                buf.append("%!(EXTRA ");
+                writeUtf8(("%!(EXTRA "));
                 for (int k = argNum; k < args.length; k++) {
                     if (k > argNum) {
-                        buf.append(", ");
+                        writeUtf8((", "));
                     }
                     Arg a = args[k];
                     if (a.value() == null) {
-                        buf.append("<nil>");
+                        writeUtf8(("<nil>"));
                     } else {
-                        buf.append(dynamicTypeName(a)).append('=');
+                        writeUtf8(dynamicTypeName(a));
+                        buf.write('=');
                         printArg(a, 'v');
                     }
                 }
-                buf.append(')');
+                buf.write(')');
             }
-            return buf.toString();
+            return buf.toByteArray();
         }
 
         // -- number/index parsing -----------------------------------------
@@ -492,57 +502,58 @@ public final class Fmt {
 
         // -- Sprint/Println bodies -----------------------------------------
 
-        String doPrint(Arg[] a) {
+        byte[] doPrint(Arg[] a) {
             boolean prevString = false;
             for (int n = 0; n < a.length; n++) {
                 Arg arg = a[n];
                 boolean isString = arg.value() != null
                         && (arg.kind() == GoKind.STRING || arg.kind() == GoKind.UNTYPED_STRING);
                 if (n > 0 && !isString && !prevString) {
-                    buf.append(' ');
+                    buf.write(' ');
                 }
                 clearFlags();
                 printArg(arg, 'v');
                 prevString = isString;
             }
-            return buf.toString();
+            return buf.toByteArray();
         }
 
-        String doPrintln(Arg[] a) {
+        byte[] doPrintln(Arg[] a) {
             for (int n = 0; n < a.length; n++) {
                 if (n > 0) {
-                    buf.append(' ');
+                    buf.write(' ');
                 }
                 clearFlags();
                 printArg(a[n], 'v');
             }
-            buf.append('\n');
-            return buf.toString();
+            buf.write('\n');
+            return buf.toByteArray();
         }
 
         // -- errors ----------------------------------------------------------
 
         private void badArgNum(int verb) {
-            buf.append("%!");
-            buf.appendCodePoint(verb);
-            buf.append("(BADINDEX)");
+            writeUtf8(("%!"));
+            writeUtf8(new String(Character.toChars(verb)));
+            writeUtf8(("(BADINDEX)"));
         }
 
         private void missingArg(int verb) {
-            buf.append("%!");
-            buf.appendCodePoint(verb);
-            buf.append("(MISSING)");
+            writeUtf8(("%!"));
+            writeUtf8(new String(Character.toChars(verb)));
+            writeUtf8(("(MISSING)"));
         }
 
         /** badVerb: "%!verb(type=value)" with the value in %v form. */
         private void badVerb(Arg arg, int verb) {
-            buf.append("%!");
-            buf.appendCodePoint(verb);
-            buf.append('(');
+            writeUtf8(("%!"));
+            writeUtf8(new String(Character.toChars(verb)));
+            buf.write('(');
             if (arg.value() == null) {
-                buf.append("<nil>");
+                writeUtf8(("<nil>"));
             } else {
-                buf.append(dynamicTypeName(arg)).append('=');
+                writeUtf8(dynamicTypeName(arg));
+                buf.write('=');
                 // The inner value prints with %v under the *current* flags
                 // (gc: "%05d" of "hi" -> "%!d(string=000hi)"). Method
                 // dispatch is disabled inside (Go's p.erroring), so the
@@ -552,7 +563,7 @@ public final class Fmt {
                 printArg(arg, 'v');
                 erroring = wasErroring;
             }
-            buf.append(')');
+            buf.write(')');
         }
 
         /**
@@ -616,9 +627,9 @@ public final class Fmt {
                 // pointer-to-struct path.
                 byte[] msg = ((GoString) gi.data()).bytes();
                 if (sharpV) {
-                    buf.append("&errors.errorString{s:");
-                    buf.append(GoQuote.quote(msg));
-                    buf.append('}');
+                    writeUtf8(("&errors.errorString{s:"));
+                    writeUtf8((GoQuote.quote(msg)));
+                    buf.write('}');
                     return;
                 }
                 if (!erroring) {
@@ -642,10 +653,11 @@ public final class Fmt {
                         default -> {}
                     }
                 }
-                buf.append('&').append('{');
+                buf.write('&');
+                buf.write('{');
                 printValue(new Arg(new GoString(msg), GoKind.STRING, "string"),
                         verb, depth + 1);
-                buf.append('}');
+                buf.write('}');
                 return;
             }
             switch (k) {
@@ -679,7 +691,7 @@ public final class Fmt {
                     GoInterface gi = (GoInterface) v;
                     if (gi.isNil() || gi.data() == null) {
                         if (verb == 'v') {
-                            buf.append("<nil>");
+                            writeUtf8(("<nil>"));
                         } else {
                             badVerb(arg, verb);
                         }
@@ -860,9 +872,9 @@ public final class Fmt {
             }
             if (plus || num.charAt(0) != '+') {
                 if (zero && !minus && widPresent && wid > num.length()) {
-                    buf.append(num.charAt(0));
+                    buf.write(num.charAt(0));
                     writePadding(wid - num.length());
-                    buf.append(num, 1, num.length());
+                    writeUtf8(num.substring(1, num.length()));
                     return;
                 }
                 pad(num);
@@ -937,25 +949,106 @@ public final class Fmt {
                 default -> { badVerb(curArg, verb); return; }
             }
             boolean oldPlus = plus;
-            buf.append('(');
+            buf.write('(');
             fmtFloat(re, size / 2, verb);
             // Imaginary part always has a sign.
             plus = true;
             fmtFloat(im, size / 2, verb);
-            buf.append("i)");
+            writeUtf8(("i)"));
             plus = oldPlus;
         }
 
         private void fmtString(byte[] sBytes, int verb) {
-            String s = new String(sBytes, StandardCharsets.UTF_8);
+            if (isValidUtf8(sBytes)) {
+                String s = new String(sBytes, StandardCharsets.UTF_8);
+                switch (verb) {
+                    case 'v' -> { if (sharpV) fmtQ(s); else fmtS(s); }
+                    case 's' -> fmtS(s);
+                    case 'x' -> fmtSx(s, LDIGITS);
+                    case 'X' -> fmtSx(s, UDIGITS);
+                    case 'q' -> fmtQ(s);
+                    default -> badVerb(curArg, verb);
+                }
+                return;
+            }
+            // M8 (fuzzer find): invalid UTF-8. Go strings are bytes; %s/%v
+            // print raw bytes, never U+FFFD. The old code decoded via
+            // new String(bytes, UTF_8), which sanitizes malformed input.
             switch (verb) {
-                case 'v' -> { if (sharpV) fmtQ(s); else fmtS(s); }
-                case 's' -> fmtS(s);
-                case 'x' -> fmtSx(s, LDIGITS);
-                case 'X' -> fmtSx(s, UDIGITS);
-                case 'q' -> fmtQ(s);
+                case 'v' -> { if (sharpV) fmtQBytes(sBytes); else fmtSBytes(sBytes); }
+                case 's' -> fmtSBytes(sBytes);
+                case 'x' -> fmtBx(sBytes, LDIGITS);
+                case 'X' -> fmtBx(sBytes, UDIGITS);
+                case 'q' -> fmtQBytes(sBytes);
                 default -> badVerb(curArg, verb);
             }
+        }
+
+        /** UTF-8 validity: a byte is invalid iff DecodeRune gives (RuneError, 1). */
+        private static boolean isValidUtf8(byte[] b) {
+            for (int i = 0; i < b.length; ) {
+                GoQuote.Rune dr = GoQuote.decodeRune(b, i);
+                if (dr.width() == 1 && dr.r() == 0xFFFD) {
+                    return false;
+                }
+                i += dr.width();
+            }
+            return true;
+        }
+
+        /** Rune count with each invalid byte counting as 1 (Go utf8.RuneCount). */
+        private static int runeCountBytes(byte[] b) {
+            int n = 0;
+            for (int i = 0; i < b.length; ) {
+                n++;
+                i += GoQuote.decodeRune(b, i).width();
+            }
+            return n;
+        }
+
+        /** Truncate to prec runes (Go fmt precision on strings). */
+        private static byte[] truncateBytes(byte[] b, int prec) {
+            int i = 0, n = 0;
+            while (i < b.length && n < prec) {
+                i += GoQuote.decodeRune(b, i).width();
+                n++;
+            }
+            return java.util.Arrays.copyOf(b, i);
+        }
+
+        /** pad for raw bytes: width counts runes (invalid bytes count as 1). */
+        private void padBytes(byte[] b) {
+            if (precPresent) {
+                b = truncateBytes(b, prec);
+            }
+            if (!widPresent || wid == 0) {
+                writeBytes(b);
+                return;
+            }
+            int width = wid - runeCountBytes(b);
+            if (!minus) {
+                writePadding(width);
+                writeBytes(b);
+            } else {
+                writeBytes(b);
+                writePadding(width);
+            }
+        }
+
+        /** %s/%v of invalid-UTF-8 bytes: raw bytes, rune-wise precision. */
+        private void fmtSBytes(byte[] b) {
+            padBytes(b);
+        }
+
+        /** %q of invalid-UTF-8 bytes: GoQuote handles raw bytes (\\xNN escapes). */
+        private void fmtQBytes(byte[] b) {
+            byte[] t = b;
+            if (precPresent) {
+                t = truncateBytes(b, prec);
+            }
+            // GoQuote.quote emits pure ASCII; safe to pad as a String.
+            // (canBackquote is always false for invalid UTF-8.)
+            pad(plus ? GoQuote.quoteToASCII(t) : GoQuote.quote(t));
         }
 
         /** truncateString: rune-wise truncation to prec. */
@@ -1021,7 +1114,7 @@ public final class Fmt {
                 int c = src[k] & 0xFF;
                 out.append(digits[c >> 4]).append(digits[c & 0xF]);
             }
-            buf.append(out);
+            writeUtf8(out.toString());
             if (widPresent && wid > width && minus) {
                 writePadding(wid - width);
             }
@@ -1036,14 +1129,8 @@ public final class Fmt {
         }
 
         private void fmtBs(byte[] b) {
-            // truncate rune-wise, then pad (bytes are ASCII-safe here only
-            // after truncation; pad counts runes).
-            byte[] t = b;
-            if (precPresent) {
-                String s = new String(b, StandardCharsets.UTF_8);
-                t = truncateString(s).getBytes(StandardCharsets.UTF_8);
-            }
-            pad(new String(t, StandardCharsets.UTF_8));
+            // M8: byte-faithful; invalid UTF-8 prints raw (never U+FFFD).
+            padBytes(b);
         }
 
         /** Port of fmt.fmtQ. */
@@ -1116,28 +1203,28 @@ public final class Fmt {
             switch (verb) {
                 case 'v', 'd' -> {
                     if (sharpV) {
-                        buf.append(typeString);
+                        writeUtf8((typeString));
                         if (v == null) {
-                            buf.append("(nil)");
+                            writeUtf8(("(nil)"));
                             return;
                         }
-                        buf.append('{');
+                        buf.write('{');
                         for (int i = 0; i < v.length; i++) {
                             if (i > 0) {
-                                buf.append(", ");
+                                writeUtf8((", "));
                             }
                             fmt0x64(v[i] & 0xFFL, true);
                         }
-                        buf.append('}');
+                        buf.write('}');
                     } else {
-                        buf.append('[');
+                        buf.write('[');
                         for (int i = 0; i < v.length; i++) {
                             if (i > 0) {
-                                buf.append(' ');
+                                buf.write(' ');
                             }
                             fmtIntegerRaw(v[i] & 0xFFL, 10, false, verb, LDIGITS);
                         }
-                        buf.append(']');
+                        buf.write(']');
                     }
                 }
                 case 's' -> fmtBs(v);
@@ -1146,15 +1233,15 @@ public final class Fmt {
                 case 'q' -> fmtQ(new String(v, StandardCharsets.UTF_8));
                 default -> {
                     // Like Go's printValue fallthrough: per-element verb.
-                    buf.append('[');
+                    buf.write('[');
                     for (int i = 0; i < v.length; i++) {
                         if (i > 0) {
-                            buf.append(' ');
+                            buf.write(' ');
                         }
                         curArg = new Arg(null, GoKind.UINT8, "uint8", null, null, null, null);
                         fmtInteger(v[i] & 0xFFL, false, verb);
                     }
-                    buf.append(']');
+                    buf.write(']');
                 }
             }
         }
@@ -1190,9 +1277,11 @@ public final class Fmt {
             switch (verb) {
                 case 'v' -> {
                     if (sharpV) {
-                        buf.append('(').append(dynamicTypeName(arg)).append(")(");
-                        buf.append("nil"); // u == 0 always in Phase 1
-                        buf.append(')');
+                        buf.write('(');
+                        writeUtf8(dynamicTypeName(arg));
+                        writeUtf8(")(");
+                        writeUtf8(("nil")); // u == 0 always in Phase 1
+                        buf.write(')');
                         return;
                     }
                     GoPointer gp = arg.value() instanceof GoPointer p ? p : null;
@@ -1206,7 +1295,7 @@ public final class Fmt {
                     if (arg.elemKind() != null) {
                         switch (arg.elemKind()) {
                             case ARRAY, SLICE, STRUCT, MAP -> {
-                                buf.append('&');
+                                buf.write('&');
                                 Arg ref = new Arg(gp.referent(), arg.elemKind(),
                                         arg.elemTypeName(), null, null, null, null);
                                 printValue(ref, verb, 1);
@@ -1277,16 +1366,16 @@ public final class Fmt {
                 return;
             }
             if (sharpV) {
-                buf.append(arg.typeName());
+                writeUtf8((arg.typeName()));
                 if (arg.kind() == GoKind.SLICE && v == null) {
-                    buf.append("(nil)");
+                    writeUtf8(("(nil)"));
                     return;
                 }
-                buf.append('{');
+                buf.write('{');
                 int n = compositeLen(v, arg.kind());
                 for (int i = 0; i < n; i++) {
                     if (i > 0) {
-                        buf.append(", ");
+                        writeUtf8((", "));
                     }
                     // Remediation (R2 P0-2): depth-general nested kinds. The
                     // old single elemElemKind field structurally capped
@@ -1295,20 +1384,20 @@ public final class Fmt {
                     printValue(nestedArg(arg, compositeGet(v, arg.kind(), elemKind, i), elemKind),
                             verb, depth + 1);
                 }
-                buf.append('}');
+                buf.write('}');
                 return;
             }
-            buf.append('[');
+            buf.write('[');
             int n = compositeLen(v, arg.kind());
             for (int i = 0; i < n; i++) {
                 if (i > 0) {
-                    buf.append(' ');
+                    buf.write(' ');
                 }
                 // Remediation (R2 P0-2): depth-general nested kinds (see above).
                 printValue(nestedArg(arg, compositeGet(v, arg.kind(), elemKind, i), elemKind),
                         verb, depth + 1);
             }
-            buf.append(']');
+            buf.write(']');
         }
 
         /**
@@ -1339,32 +1428,32 @@ public final class Fmt {
                 java.util.Arrays.sort(keys, (a, b) -> compareKeys(a, b, keyKind));
             }
             if (sharpV) {
-                buf.append(arg.typeName());
+                writeUtf8((arg.typeName()));
                 if (m == null) {
-                    buf.append("(nil)");
+                    writeUtf8(("(nil)"));
                     return;
                 }
-                buf.append('{');
+                buf.write('{');
                 for (int i = 0; i < keys.length; i++) {
                     if (i > 0) {
-                        buf.append(", ");
+                        writeUtf8((", "));
                     }
                     printValue(new Arg(keys[i], keyKind, kt), verb, depth + 1);
-                    buf.append(':');
+                    buf.write(':');
                     printValue(new Arg(m.get(keys[i]), elemKind, et), verb, depth + 1);
                 }
-                buf.append('}');
+                buf.write('}');
             } else {
-                buf.append("map[");
+                writeUtf8(("map["));
                 for (int i = 0; i < keys.length; i++) {
                     if (i > 0) {
-                        buf.append(' ');
+                        buf.write(' ');
                     }
                     printValue(new Arg(keys[i], keyKind, kt), verb, depth + 1);
-                    buf.append(':');
+                    buf.write(':');
                     printValue(new Arg(m.get(keys[i]), elemKind, et), verb, depth + 1);
                 }
-                buf.append(']');
+                buf.write(']');
             }
         }
 
@@ -1372,22 +1461,23 @@ public final class Fmt {
         private void printStruct(Arg arg, GoStruct s, int verb, int depth) {
             GoStructDescriptor d = s.descriptor();
             if (sharpV) {
-                buf.append(arg.typeName());
+                writeUtf8((arg.typeName()));
             }
-            buf.append('{');
+            buf.write('{');
             var fields = d.fields();
             for (int i = 0; i < fields.size(); i++) {
                 if (i > 0) {
-                    buf.append(sharpV ? ", " : " ");
+                    writeUtf8((sharpV ? ", " : " "));
                 }
                 var f = fields.get(i);
                 if (plusV || sharpV) {
-                    buf.append(f.name()).append(':');
+                    writeUtf8(f.name());
+                    buf.write(':');
                 }
                 printValue(new Arg(structFieldBoxed(s, f), f.kind(), kindName(f.kind())),
                         verb, depth + 1);
             }
-            buf.append('}');
+            buf.write('}');
         }
 
         /** Canonical boxed value of one struct field. */

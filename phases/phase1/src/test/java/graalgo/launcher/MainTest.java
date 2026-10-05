@@ -242,4 +242,83 @@ public final class MainTest {
             assertContains(err, "WS G", "--check stderr names WS G for " + prog.trim());
         }
     }
+
+    public void testFmtInvalidUtf8Bytes() throws Exception {
+        // M8 fuzzer find: Go strings are bytes. fmt of invalid UTF-8 must
+        // emit raw bytes (never U+FFFD). Pre-fix, Fmt decoded via
+        // new String(bytes, UTF_8) which sanitizes malformed input, so
+        // Println("a\xff\xfe") printed "a\uFFFD\uFFFD".
+        Path dir = Files.createTempDirectory("graalgo-main-test");
+        Path f = dir.resolve("prog.go");
+        byte[] prog = ("package main\n\nimport \"fmt\"\n\nfunc main() {\n" +
+                "\tfmt.Println(\"a\" + \"\\xff\\xfe\")\n" +
+                "\tfmt.Printf(\"%s|%v|%x|%q\\n\", \"a\"+\"\\xff\", \"b\"+\"\\xfe\", \"c\"+\"\\xff\", \"d\"+\"\\xfe\")\n" +
+                "}\n").getBytes(StandardCharsets.UTF_8);
+        Files.write(f, prog);
+        PrintStream old = System.out;
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(buf, true, StandardCharsets.UTF_8));
+        int code;
+        try {
+            code = Main.run(new String[] {f.toString()});
+        } finally {
+            System.setOut(old);
+        }
+        assertEq(Main.EXIT_OK, code, "run exit on invalid-UTF8 program");
+        byte[] got = buf.toByteArray();
+        // gc: a\xff\xfe \n, then a\xff | b\xfe | 63ff | "d\xfe" \n
+        byte[] expected = new byte[] {
+                'a', (byte) 0xFF, (byte) 0xFE, '\n',
+                'a', (byte) 0xFF, '|',
+                'b', (byte) 0xFE, '|',
+                '6', '3', 'f', 'f', '|',
+                '"', 'd', '\\', 'x', 'f', 'e', '"', '\n',
+        };
+        if (!java.util.Arrays.equals(expected, got)) {
+            throw new AssertionError("stdout bytes on invalid UTF-8: expected <"
+                    + hex(expected) + "> but got <" + hex(got) + ">");
+        }
+    }
+
+    public void testFmtPointerStructValue() throws Exception {
+        // M8 fuzzer find: Println(&T{...}) printed "0x0" because the
+        // NodeFactory fmtcall metadata loop had no pointer branch, so
+        // elemKind was null and fmtPointer fell through to erased output.
+        // gc prints &{1 2} (the referent's %v with & prefix).
+        Path dir = Files.createTempDirectory("graalgo-main-test");
+        Path f = dir.resolve("prog.go");
+        Files.writeString(f,
+                "package main\n\nimport \"fmt\"\n\n" +
+                "type fzPair struct{ X, Y int }\n\n" +
+                "func main() {\n" +
+                "\tp := &fzPair{1, 2}\n" +
+                "\tfmt.Println(p)\n" +
+                "\tfmt.Printf(\"%v %T\\n\", p, p)\n" +
+                "}\n",
+                StandardCharsets.UTF_8);
+        PrintStream old = System.out;
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        System.setOut(new PrintStream(buf, true, StandardCharsets.UTF_8));
+        int code;
+        try {
+            code = Main.run(new String[] {f.toString()});
+        } finally {
+            System.setOut(old);
+        }
+        assertEq(Main.EXIT_OK, code, "run exit on pointer-%v program");
+        String out = buf.toString(StandardCharsets.UTF_8);
+        String expected = "&{1 2}\n&{1 2} *main.fzPair\n";
+        if (!expected.equals(out)) {
+            throw new AssertionError("stdout on pointer %v: expected <"
+                    + expected + "> but got <" + out + ">");
+        }
+    }
+
+    private static String hex(byte[] b) {
+        StringBuilder sb = new StringBuilder();
+        for (byte x : b) {
+            sb.append(String.format("%02x ", x));
+        }
+        return sb.toString().trim();
+    }
 }
