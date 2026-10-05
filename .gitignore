@@ -13,3 +13,6 @@ spikes/05-cmdgo/probes/
 
 # built harness binary (rebuilt by tests from source)
 tools/diffharness/diffharness
+
+# fuzzer runtime state (journal, scratch programs, resume state)
+tools/fuzz/work/

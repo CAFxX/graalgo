@@ -1476,16 +1476,23 @@ public final class Fmt {
                     writeUtf8(f.name());
                     buf.write(':');
                 }
-                printValue(new Arg(structFieldBoxed(s, f), f.kind(), kindName(f.kind())),
+                printValue(new Arg(structFieldBoxed(s, i), f.kind(), kindName(f.kind())),
                         verb, depth + 1);
             }
             buf.write('}');
         }
 
-        /** Canonical boxed value of one struct field. */
-        private static Object structFieldBoxed(GoStruct s, GoStructDescriptor.Field f) {
+        /**
+         * Canonical boxed value of one struct field.
+         *
+         * @param fieldIndex index into the descriptor's field list (NOT the
+         *                   carrier index — {@link GoStructDescriptor.Field#index}
+         *                   is the position within longs[]/objects[]).
+         */
+        private static Object structFieldBoxed(GoStruct s, int fieldIndex) {
+            GoStructDescriptor.Field f = s.descriptor().field(fieldIndex);
             if (f.inLongs()) {
-                long v = s.getLong(f.index());
+                long v = s.getLong(fieldIndex);
                 return switch (f.kind()) {
                     case FLOAT32 -> Float.valueOf(Float.intBitsToFloat((int) v));
                     case FLOAT64 -> Double.valueOf(Double.longBitsToDouble(v));
@@ -1494,7 +1501,7 @@ public final class Fmt {
                     default -> Long.valueOf(v);
                 };
             }
-            return s.getObject(f.index());
+            return s.getObject(fieldIndex);
         }
 
         /** Go-syntax name for a kind (nested %T inside composites). */
