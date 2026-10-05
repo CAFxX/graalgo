@@ -6,6 +6,8 @@ import java.util.concurrent.locks.LockSupport;
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.GoCalls;
 import graalgo.values.GoFunc;
+import graalgo.jfr.JfrEvents;
+import graalgo.jfr.ParkReason;
 
 /**
  * The user-space scheduler core (WS A, P2-M1; P2-D1…P2-D7).
@@ -153,6 +155,8 @@ public final class SchedulerCore {
                     "graalgo.sched: re-entrant ioEnter (goroutine already in blocking I/O)");
         }
         long t = armPark(h);
+        h.ioStartNanos = System.nanoTime();
+        JfrEvents.notePark(h, ParkReason.IO);
         drainer.offer(new ResumeToken(ResumeToken.Kind.IO_ENTER, h, t));
         awaitAck(h, t);
     }
@@ -170,8 +174,12 @@ public final class SchedulerCore {
                     "graalgo.sched: ioExit without ioEnter");
         }
         long t = armPark(h);
+        JfrEvents.notePark(h, ParkReason.IO);
         drainer.offer(new ResumeToken(ResumeToken.Kind.IO_EXIT, h, t));
         awaitAck(h, t);
+        // P2-M6: report the full blocking-I/O interval (the handshake
+        // above is microseconds and filtered; the syscall was long).
+        JfrEvents.ioBlocked(h, System.nanoTime() - h.ioStartNanos);
     }
 
     Drainer drainer() {
@@ -196,6 +204,7 @@ public final class SchedulerCore {
      */
     void quantumPark(GoroutineHandle h) {
         long t = armPark(h);
+        JfrEvents.notePark(h, ParkReason.QUANTUM);
         drainer.offer(new ResumeToken(ResumeToken.Kind.RESUME, h, t));
         awaitAck(h, t);
         h.quantumDeadlineNanos = System.nanoTime() + quantumNanos;
@@ -219,8 +228,19 @@ public final class SchedulerCore {
      * is lost.
      */
     public void parkCurrent(Runnable onWake) {
+        parkCurrent(onWake, ParkReason.UNKNOWN);
+    }
+
+    /**
+     * Park the current goroutine indefinitely, with a JFR park reason.
+     * See {@link #parkCurrent(Runnable)} for the protocol; {@code reason}
+     * is recorded on the handle for the {@code graalgo.GoroutinePark}
+     * event committed on resume.
+     */
+    public void parkCurrent(Runnable onWake, ParkReason reason) {
         GoroutineHandle h = requireHandle();
         long t = armPark(h);
+        JfrEvents.notePark(h, reason);
         h.wakeAction.set(onWake);
         drainer.offer(new ResumeToken(ResumeToken.Kind.PARKED, h, t));
         awaitAck(h, t);
@@ -272,6 +292,10 @@ public final class SchedulerCore {
         while (h.acked.get() < t) {
             LockSupport.park();
         }
+        // P2-M6: commit the park event (if long enough) on resume. The
+        // initial admission has no parked reason and emits nothing; the
+        // goroutine-start event is emitted explicitly by spawn().
+        JfrEvents.parkResumed(h);
     }
 
     private GoroutineHandle requireHandle() {
@@ -307,6 +331,11 @@ public final class SchedulerCore {
             try {
                 // Wait for the drainer's first admission.
                 awaitAck(h, t);
+                // P2-M6: the initial admission is not a park (no reason
+                // was noted, so parkResumed emitted nothing); the
+                // goroutine genuinely starts here.
+                h.startNanos = System.nanoTime();
+                JfrEvents.goroutineStart(h);
                 h.quantumDeadlineNanos = System.nanoTime() + quantumNanos;
                 body.run();
             } catch (graalgo.runtime.PanicException pe) {
@@ -325,6 +354,8 @@ public final class SchedulerCore {
             } catch (RuntimeException e) {
                 recordCrash("internal error", e);
             } finally {
+                // P2-M6: every start gets an end, before the EXIT token.
+                JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);
                 GoroutineState.restore(prev);
                 currentHandle.remove();
                 synchronized (quiescenceLock) {
