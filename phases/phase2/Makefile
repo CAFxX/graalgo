@@ -145,5 +145,14 @@ pin-audit: main $(OUT_TEST)/.built
 	--corpus ../phase1/corpus --corpus corpus --tests --gmp 2 \
 	--out hidden_files/pinning/pinaudit-report.md
 
+# P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
+# Takes ~10 min; archives logs to hidden_files/torture/logs/.
+torture: main $(OUT_TEST)/.built
+	bash tools/torture/run_battery.sh
+
+# P2-M8 GOMAXPROCS matrix (differential vs gc).
+gmp-matrix: main $(OUT_TEST)/.built
+	bash tools/torture/gmp_matrix.sh
+
 clean:
 	rm -rf out
