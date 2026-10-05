@@ -2237,6 +2237,8 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 		return e.exportLabeled(s)
 	case *ast.DeferStmt:
 		return e.exportDeferStmt(s)
+	case *ast.GoStmt:
+		return e.exportGoStmt(s)
 	default:
 		return nil, scopeErrorf("%T is not supported in frontend/v1 scope (%s)", s, stmtOwner(s))
 	}
@@ -2251,6 +2253,20 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 		return nil, err
 	}
 	return e.node("defer", s, map[string]any{"call": call}), nil
+}
+
+// exportGoStmt exports `go f(args)` (P2-M1, WS A). The call is exported as
+// a call node; the Phase-2 factory builds a GoStatementNode that evaluates
+// the function value in the spawning goroutine and hands it to the
+// scheduler. Wire stays v1: "gostmt" is an additive node kind (freeze
+// §2.3 — old consumers reject it as unknown, which is the correct
+// forward-compatibility behavior for a kind they predate).
+func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
+	call, err := e.exportCall(s.Call)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("gostmt", s, map[string]any{"call": call}), nil
 }
 
 // stmtOwner attributes an unsupported statement to its workstream.
