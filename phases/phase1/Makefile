@@ -63,6 +63,9 @@ run: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(OUT_MAIN):$(CP)" graalgo.launcher.Main $(ARGS)
 
 test: main $(OUT_TEST)/.built
+	mkdir -p out/test-tmp
+	# /tmp is a 512M tmpfs: go builds in the differential tests would fill it.
+	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) $(JAVA_FLAGS) -cp "$(OUT_TEST):$(OUT_MAIN):$(CP)" graalgo.test.Runner
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
