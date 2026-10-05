@@ -58,3 +58,39 @@ Mechanism (the designed extension, not entanglement):
    forbids.
 
 P2-D8 recorded. Next: scheduler core implementation (WS A).
+
+## 2026-10-05 — P2-M1: scheduler core implemented (WS A)
+
+Commits: 26b5d8b (core), 2e5f012 (phase1 exporter exception), b993df7
+(goldens), 8030950 (gate fix).
+
+**What landed:**
+- `graalgo.sched`: SchedulerCore (spawn/park/unpark, 10ms quantum,
+  cap=min(GOMAXPROCS,carriers)), GoroutineHandle (vthread+ticket),
+  ResumeToken (INIT/RESUME/WAKE/EXIT/PARKED/UNPARK), Drainer (platform
+  thread, wake>init>run lanes, ack-before-unpark, hard cap assert,
+  swallow-and-continue on interrupt).
+- Same-FQN replacements (P2-D8, signatures byte-identical):
+  graalgo.safepoint.Safepoint (quantum check; no-op w/o scheduler),
+  graalgo.runtime.Scheduler (real spawn/yield/park/runnableCount),
+  graalgo.runtime.GoroutineState (ThreadLocal vthread-scoped holder).
+- `go` statement: GoStatementNode + public registerStmtKind hook;
+  exporter emits additive "gostmt" wire node (toolVersion 0.2.0).
+- SchedMain launcher: `--gmp=N`, quiescence await, Phase-1 exit codes.
+
+**Evidence:**
+- Unit: 10/10 green (`make -C phases/phase2 test`) — park/unpark (both
+  orders), 200-cycle ack stress, cap+1 hard-assert (white-box),
+  cap-held-under-load, quantum preemption (red-green), Safepoint
+  overlay wiring, deterministic lane-order.
+- Differential: 9/9 single-goroutine corpus programs byte-identical
+  Phase-1 vs `--gmp=1`; Phase-1 suite 208/0 green after exporter change.
+- Preemption: 2-goroutine busy-loop completes at `--gmp=1`
+  (impossible without quantum expiry), output matches gc.
+- `make -C phases/phase2 check` green; `make -C phases/phase1 check`
+  green (incl. regenerated goldens).
+
+**Review status:** 2 independent reviews dispatched (code + methodology),
+reports pending in reviews/phase2-m1/.
+
+**Next:** remediate findings → fresh suite+check → sign-off.
