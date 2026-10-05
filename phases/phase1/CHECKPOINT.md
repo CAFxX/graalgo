@@ -1606,3 +1606,90 @@ Full `make test` (202 tests): 4 failures on first run.
 - Process patch: supervisor acceptance of any future sign-off MUST include
   an independent `make test` + `make check` re-run — spot-checking other
   evidence is not sufficient (see AGENTS.md).
+
+### M9 progress (2026-10-05 ~11:15 CEST) — suite green, committed, reviews dispatched
+- Full suite: **203 tests, 0 failures** (`make test`, exit 0); `make check` green.
+- 5 commits: cd329c8 (probes), 137ff7e (e2e tests), a0028d8 (freeze doc),
+  6a9b567 (sl13→gv10 move), f0b011c (Makefile GOTMPDIR).
+- Measurement running in background: `hidden_files/m9_polymorphism/measure.py`
+  over diffharness (47) + phase1 corpus (147) + fuzz regressions (96).
+- 2 independent reviewers dispatched against fixed snapshot f0b011c:
+  review1 (freeze completeness/correctness) → reviews/phase1-m9/review1.md;
+  review2 (polymorphism methodology) → reviews/phase1-m9/review2.md.
+- Remaining: measurement results → findings remediation → honest sign-off
+  (only when freeze published + numbers recorded + reviews closed + suite green).
+
+### M9 progress (2026-10-05 ~13:00 CEST) — reviews remediated, re-measuring
+- Review #1 (freeze): GO-WITH-FINDINGS, 7 P1 + 7 P2, 0 P0. All remediated:
+  doc corrections (P1-1/2/3), FreezeSignatureTest extended with return-type
+  assertions + M5 surface + node protocol + probe APIs (P1-4/5), validator
+  wired into build.sh check (P1-6), M5 surface incorporated as FROZEN (P1-7).
+- Review #2 (methodology): GO-WITH-FINDINGS, 6 P1 + 11 P2, 0 P0. All P1s
+  remediated: per-instantiation site disambiguation (<objId>@file:line:col;
+  verified: apply[int]/apply[string] now two monomorphic sites, was one
+  bimorphic), defer probe, measure.py buckets/exit-codes/truncation flags,
+  closure-identity red-green test. P2-1 (interface unwrap) + P2-6 (RFC 8259)
+  done.
+- Suite: 204 tests, 0 failures; make check green (validator now validates
+  a real doc + selftest).
+- Commits: 0ed001d (review1), b3c7bc8 (review2).
+- Re-running the full measurement with fixed probe + script (background).
+  Then: SUMMARY.md Phase-4 implications → honest sign-off.
+
+## M9 measurements — call-site polymorphism (2026-10-05 ~14:00 CEST)
+
+289 programs (diffharness 47 + phase1 corpus 147 + fuzz regressions 96, minus
+overlaps): 24 rejected at build (out of WS scope), 263 executed with probing,
+2 no snapshot, 12 panic-truncated (partial traces excluded from headline).
+
+**N = 170 call sites (full traces):**
+- Monomorphic (1 target): 169 (99.4%)
+- Bimorphic (2 targets): 1 (0.6%) — `corpus:generics/gn07_higher_order.go`,
+  `Apply[T]`'s `f(x)` site (one instantiation, called with `inc` and `dbl`).
+- Megamorphic (>5 targets): 0 (0.0%)
+
+Method sites: 13 measured, all receiver cardinality 1 (static `methodref`
+dispatch — scaffolding for WS D, not signal yet).
+Generic instantiations (static): 17 origins, 25 total.
+
+**Phase-4 implication (PIC strategy):** The devirtualization thesis (SPEC
+§6.5a) requires monomorphic sites to dominate — they do (99.4%). A 1-entry
+inline cache with a guard covers virtually every call site in the corpus;
+the single bimorphic site wants a 2-entry PIC. Zero megamorphic sites means
+no site today defeats devirtualization. **Caveat:** this corpus has no
+interface dispatch (WS D) — the real megamorphism risk lives at interface
+call sites, which are unmeasured. Phase 4 must re-measure when interfaces
+land; today's numbers are the pre-interface baseline.
+
+Full data: `hidden_files/m9_polymorphism/report.json`; summary above also in
+`hidden_files/m9_polymorphism/SUMMARY.md`.
+
+## M9 SIGN-OFF (honest, 2026-10-05 ~14:00 CEST)
+
+Done-gate 3 criteria, verified:
+1. ✅ Interface freeze published (both components):
+   `phases/phase1/INTERFACE_FREEZE.md` v1 — gofrontend CLI + ExportFile +
+   frontend/v1 wire format; graalgo-run CLI; NodeFactory API; node execution
+   protocol; runtime intrinsics (via freeze-stub.md); values types; 16-builtin
+   registry; probe APIs. FROZEN vs INTERNAL marked; versioning + change policy.
+2. ✅ Signature-snapshot test green: `FreezeSignatureTest` (name + params +
+   return type + public/static shape; class existence; Program record) —
+   part of the 204-test green suite.
+3. ✅ Polymorphism numbers measured and recorded: 170 sites, 99.4% mono /
+   0.6% bi / 0% mega (above); committed in
+   `hidden_files/m9_polymorphism/{report.json,SUMMARY.md,measure.py}`.
+4. ✅ ≥2 independent reviews, all findings remediated and re-tested:
+   review1 (freeze: 7 P1 + 7 P2, GO-WITH-FINDINGS) and review2 (methodology:
+   6 P1 + 11 P2, GO-WITH-FINDINGS) in `reviews/phase1-m9/`; all P1s fixed,
+   P2s addressed; suite re-greened after each remediation.
+5. ✅ Full suite green (204 tests, 0 failures) + `make check` green
+   (placeholder gate + gofrontend check + frontend/v1 validator).
+
+Commits: cd329c8 (probes), 137ff7e (e2e), a0028d8 (freeze doc), 6a9b567
+(sl13→gv10), f0b011c (tmpdir), 0ed001d (review1 remediation), b3c7bc8
+(review2 remediation), 2a62587 (measurement results).
+
+Note: the M8 closeout's "195/0" suite claim was corrected during M9 (sl13 was
+in the wrong corpus and could not pass; moved to gv10 as a differential
+test). The AGENTS.md process lesson (supervisor must re-run the suite) is
+recorded.
