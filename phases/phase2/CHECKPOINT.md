@@ -379,3 +379,36 @@ regen.sh scripts .expected/.panic generation; verifies: GG-0017 on the
 differential class; ch06 comment clarified.
 
 **Tests:** 51/51 green (15 scheduler + 24 channel + 12 differential).
+
+## 2026-10-05 ~16:40 CEST — P2-M2 reviewer1 remediation (NO-GO → fixes)
+
+Reviewer1 (code) returned NO-GO: 1 P0 + 3 P1 + 6 P2. P1-1/P1-2/P1-3
+were already fixed in the reviewer2 remediation (poison-before-default,
+select{} parks). Remaining:
+
+**P0-1 (select lost-claim race — REAL BUG, fixed, reproduced by
+reviewer 3/3):** The block-phase sweep's `completeUnderLock` set
+`resultIndex` directly without winning the shared claim CAS. A
+concurrent waker on another channel could win the claim, call
+`setResult` + `unpark`, while the sweep also completed → resultIndex
+overwrite + stale unpark (spurious wakeup on next park; reviewer's
+probe saw a later `recv` spuriously return `(null, false)`).
+Fix: `tryClaimSelf()` CAS before `completeUnderLock` in the sweep;
+on CAS failure, break to park (winner's unpark in flight) and read
+its result. Waker path already claimed via `pollAccepting→accept()`;
+only the sweep bypassed it.
+- New regression test: testSelectRacyCompleteNoStaleWakeup (50-channel
+  sweep to widen the window; probes for stale unpark via a recv on an
+  untouched channel). Note: the race is narrow; the test is a smoke
+  test, not a deterministic reproducer. The fix was verified by code
+  reasoning (claim CAS now guards all result-setting paths).
+- P2-1: takeFromSender nulls the consumed buffer slot (was retaining).
+- P2-4: block-phase sweep now iterates in random order (was
+  index-ordered; poll phase already shuffled).
+- P2-6: selectGo(null) → IllegalArgumentException (was NPE).
+
+P2-2 (negative capacity message), P2-3 (nil channels), P2-5 (deadlock
+detection): deferred — P2-2/P2-3 are frontend-rejected shapes;
+P2-5 is P2-M10 scope. Documented in code.
+
+**Tests:** 52/52 green (3 consecutive runs), incl. new P0-1 regression.
