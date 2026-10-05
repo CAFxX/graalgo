@@ -28,6 +28,7 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.runtime.GcDifferentialTest.class);
         TESTS.add(graalgo.runtime.GcTortureTest.class);
         TESTS.add(graalgo.runtime.GcVisibilityTest.class);
+        TESTS.add(graalgo.jfr.JfrEventsTest.class);
     }
 
     public static void main(String[] args) {
