@@ -1404,3 +1404,20 @@ Pilot (40 seeds) found 4 bugs, all fixed red-green, suite 192/0:
 Red-green evidence: /tmp/m8_redcheck.log (190/2), /tmp/m8_green.log (190/0),
 /tmp/m8_fmt_green.log (192/0). Next: launch soak (2 lanes, resumable),
 triage divergences, build mutation rig (tools/mutation/).
+
+## 2026-10-05 ~05:30 CEST — M8: mutation rig operational, 4/4 killed
+
+Mutation rig (`tools/mutation/`) built and validated:
+- Java mutants: overlay-compile single file, run suite with overlay first in cp
+- Go exporter mutants: rebuild gofrontend, run suite with GRAALGO_GOFRONTEND
+- Initial 4 mutants (M-J01 inc/dec swap, M-J02 oid off-by-one, M-J03 fmt width,
+  M-G01 exporter bound): all KILLED (suite red). 100% kill rate.
+- Expanded to 6 mutants (+ M-J04 nil-check inversion, M-J05 slot check inversion);
+  6-mutant run in progress.
+
+Fuzzer soak: 33 programs, 22 DIVERGED (67%). Triaged:
+- P0 (pre-existing): struct field write after boxing to `any` fails
+  (hidden_files/m8_struct_boxing_bug.md; fuzzer seeds 1001+)
+- P1 (pre-existing): nested map printing ClassCastException
+  (hidden_files/m8_nested_map_bug.md; fuzzer seed 1006)
+- Both confirmed on baseline a5731ec (not M8 regressions).
