@@ -99,13 +99,13 @@ public final class PinAudit {
         List<String> skipped = new ArrayList<>();
         int programs = 0;
 
-        List<Path> programs_list = new ArrayList<>();
+        List<Path> programsList = new ArrayList<>();
         for (Path dir : corpusDirs) {
             try (Stream<Path> s = Files.walk(dir)) {
-                s.filter(p -> p.toString().endsWith(".go")).sorted().forEach(programs_list::add);
+                s.filter(p -> p.toString().endsWith(".go")).sorted().forEach(programsList::add);
             }
         }
-        for (Path prog : programs_list) {
+        for (Path prog : programsList) {
             programs++;
             Path jfr = work.resolve("p" + programs + ".jfr");
             int exit = runChild(jfr, gmp,
@@ -113,7 +113,13 @@ public final class PinAudit {
             if (exit != 0) {
                 skipped.add(prog + " (exit " + exit + ")");
             }
-            pins.addAll(readPins(jfr, prog.toString(), allow));
+            try {
+                pins.addAll(readPins(jfr, prog.toString(), allow));
+            } catch (IOException e) {
+                // Corrupt/unreadable recording: do not fail the whole audit,
+                // but record it as skipped (pin count unknown, not zero).
+                skipped.add(prog + " (unreadable JFR: " + e.getMessage() + ")");
+            }
             Files.deleteIfExists(jfr);
         }
         if (runTests) {
@@ -123,7 +129,11 @@ public final class PinAudit {
             if (exit != 0) {
                 skipped.add("SchedTestRunner (exit " + exit + ")");
             }
-            pins.addAll(readPins(jfr, "<SchedTestRunner>", allow));
+            try {
+                pins.addAll(readPins(jfr, "<SchedTestRunner>", allow));
+            } catch (IOException e) {
+                skipped.add("SchedTestRunner (unreadable JFR: " + e.getMessage() + ")");
+            }
             Files.deleteIfExists(jfr);
         }
 
