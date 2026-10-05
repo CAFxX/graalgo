@@ -145,6 +145,13 @@ public final class SelectOp {
                 // Each retry consumes a genuine contention event.
                 continue;
             }
+            // Poison (send on closed) panics BEFORE default: gc panics for
+            // `select { case closedCh <- v: default: }` (verified p1/p4).
+            // A ready case above already won, so poison is only reached
+            // when nothing is ready.
+            if (poison) {
+                Panic.throwPanic(GoStrings.of("send on closed channel"));
+            }
             if (defaultIndex >= 0) {
                 return defaultIndex;
             }
@@ -182,8 +189,14 @@ public final class SelectOp {
                 return immediate;
             }
             if (mine.isEmpty()) {
-                // All send cases poisoned (or zero cases): nothing to wait on.
-                Panic.throwPanic(GoStrings.of("send on closed channel"));
+                if (poison) {
+                    // Every case was a send on a closed channel.
+                    Panic.throwPanic(GoStrings.of("send on closed channel"));
+                }
+                // Zero cases: `select {}` blocks forever (gc deadlock).
+                // Park indefinitely; the deadlock detector (P2-M10) owns it.
+                sched.parkCurrent(null);
+                throw new IllegalStateException("unreachable: empty select woke");
             }
             // Scheduler-aware park. A waker that claimed us before we park
             // has its UNPARK stashed by the drainer — no wakeup lost.

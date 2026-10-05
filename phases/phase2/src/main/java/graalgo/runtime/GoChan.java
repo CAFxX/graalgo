@@ -76,6 +76,21 @@ public final class GoChan implements ChanOps.Chan {
         return closed;
     }
 
+    /**
+     * Number of parked send waiters. Test-only deterministic probe
+     * (replaces sleep-gated "must be parked" assertions).
+     */
+    public synchronized int sendWaitersCount() {
+        return sendWaiters.size();
+    }
+
+    /**
+     * Number of parked recv waiters. Test-only deterministic probe.
+     */
+    public synchronized int recvWaitersCount() {
+        return recvWaiters.size();
+    }
+
     // ================= waiter records =================
 
     /** A goroutine parked on this channel (plain or select case). */
