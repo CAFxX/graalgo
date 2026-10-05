@@ -1693,3 +1693,8 @@ Note: the M8 closeout's "195/0" suite claim was corrected during M9 (sl13 was
 in the wrong corpus and could not pass; moved to gv10 as a differential
 test). The AGENTS.md process lesson (supervisor must re-run the suite) is
 recorded.
+
+## M10 START (2026-10-05 ~11:15 CEST)
+M10: final reviews + self-attack + grep gates + cross-doc consistency audit → done-gates 4, 5 → Phase-1 closeout.
+Done-gates (PHASES.md §3): 1 (differential suites, zero unexplained) MET M7; 2 (fuzz-soak operational) MET M8; 3 (interface freeze) MET M9; 4 (peer reviews + self-attack) PENDING; 5 (no placeholders, grep gate) PENDING.
+Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh `make test` + `make check` run by this worker on the final tree.
