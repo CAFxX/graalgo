@@ -89,7 +89,7 @@ re-verified fresh during P2-M10 unless noted.
 
 ## Final verification (sign-off tree)
 
-- Phase-2 `make test`: ___/0
-- Phase-1 `make test`: 208/0
+- Phase-2 `make test`: 193/193, 0 failures
+- Phase-1 `make test`: 208/208, 0 failures
 - Phase-1 `make check`: clean
-- Phase-2 `make check`: ___/___ gates green
+- Phase-2 `make check`: all gates green (placeholder, debug, netpoller-deletion, off-heap/barrier, pin-surface + pin-audit smoke PASS)

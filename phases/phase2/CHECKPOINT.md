@@ -1282,3 +1282,35 @@ programs differential vs gc.
 **Work items:** (1) full differential battery re-run (in flight), (2) 2
 independent final reviews, (3) DONE-GATES.md verdict table, (4) final
 verify + sign-off.
+
+## 2026-10-06 — P2-M10 SIGN-OFF (done-gate 5 MET; PHASE 2 COMPLETE)
+
+**Final reviews (2 independent, fixed snapshot 9f6d2c9):**
+- reviewer1 (code): GO-WITH-FINDINGS, no P0. 2 P1 + 4 P2, all remediated:
+  P1-1 finalizer PINNED gating undocumented → DIV-M4-10 + gc07 corpus;
+  P1-2 stale pinaudit-report → regenerated with current tool + honest
+  coverage line (161/187 units with goroutine evidence); P2-1 Scheduler.park
+  javadoc fixed; P2-2 sampling comment off-by-one fixed; P2-3 GoOnce hoists
+  current() above the state transition; P2-4 armed documented as the
+  intentional test-visible park signal.
+- reviewer2 (methodology): GO-WITH-FINDINGS, no P0. P1-1 evidence
+  preservation → battery logs/gmp-matrix/stress-differential/reviews
+  committed (P2-M10 re-run archived per-run); P2-1 torture REPORT
+  conditional discharged; P2-2 remediated by the fresh pin-audit;
+  P2-3 AUDIT.md arithmetic fixed; P2-4/P2-5 DIVERGENCES.md citations fixed;
+  P2-7 modelcheck section numbering fixed. Red-green claims verified by
+  four independent mutations; grep gates verified by constructed
+  violations; generated-artifact numbers verified against raw logs.
+
+**Fresh differential battery re-run (P2-M10):** torture 12/12 PASS;
+GOMAXPROCS matrix 8/8 PASS; pin-audit AUDIT_RESULT=PASS
+(unexpected=0, unreadable=0, 161/187 units with goroutine evidence).
+
+**Final verification (sign-off tree):** phase-2 `make test` 193/193;
+Phase-1 `make test` 208/208; both `make check` clean.
+
+**Done-gates 1–5: ALL MET.** Verdict table: `phases/phase2/DONE-GATES.md`.
+No orphan [OPEN]s. Kill criteria never triggered.
+
+**Phase 2 is COMPLETE.** The hourly report cron
+(`graalgo-phase2-hourly-report`) can be retired — supervisor decision.
