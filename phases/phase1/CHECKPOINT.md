@@ -1516,9 +1516,15 @@ the documented P0/P1s were not fixed. All three closeout items are now done.
 ### Verification
 - Full suite: **195 tests, 0 failures** (`make -C phases/phase1 test`).
 - `make check`: green (frontend goldens updated for unary folding).
-- Diffharness corpus: 92 comparisons, 46 same, 46 diverged — **all 46
-  divergences are "not supported in frontend/v1 scope"** (out-of-subset
-  programs correctly rejected); **0 real divergences**. Tally holds.
+- Diffharness corpus: 92 comparisons, 65 same, 27 diverged — 26 are
+  "not supported in frontend/v1 scope" (out-of-subset programs correctly
+  rejected at build time), 1 is 27_panic_trace (byte-identical panic
+  message + `goroutine 1 [running]:` header; first trace line differs in
+  diagnostic formatting for documented implementation-defined reasons —
+  see M7 manifest). **0 unexplained divergences.** Improved vs M7 gate:
+  05_slices flipped to same (nil-slice formatting fix). Evidence:
+  `tools/diffharness/test-results/green.json` (independent re-verification
+  of the 27 divergences against the manifest).
 
 ### Commits (closeout)
 954a9bd (P0 struct), 6e62b2e (nested maps), 95b20a2 (float/nil),
