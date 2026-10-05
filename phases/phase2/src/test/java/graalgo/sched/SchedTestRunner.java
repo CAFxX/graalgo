@@ -15,6 +15,7 @@ public final class SchedTestRunner {
     private static final List<Class<?>> TESTS = new ArrayList<>();
 
     static {
+        TESTS.add(graalgo.sched.audit.PinAuditTest.class);
         TESTS.add(graalgo.sched.SchedulerCoreTest.class);
         TESTS.add(graalgo.sched.ChannelTest.class);
         TESTS.add(graalgo.sched.ChannelDifferentialTest.class);
