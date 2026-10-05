@@ -189,10 +189,9 @@ public final class Main {
         } catch (NoClassDefFoundError | ExceptionInInitializerError e) {
             // M10 (self-attack): Truffle's exception profiler can itself
             // blow the exhausted stack while handling a StackOverflowError,
-            // masking it as a class-init failure (NoClassDefFoundError:
-            // Could not initialize ...ReturnProfile, caused by
-            // StackOverflowError). Unwrap the cascade; rethrow anything else.
-            if (causedBy(e, StackOverflowError.class)) {
+            // masking it as a class-init failure. Unwrap the cascade;
+            // rethrow anything else.
+            if (isStackOverflowCascade(e)) {
                 reportStackOverflow();
                 exitCode = EXIT_PANIC;
             } else {
@@ -302,9 +301,23 @@ public final class Main {
      */
     /** M10 (self-attack): clean report for host-stack exhaustion. */
     private static void reportStackOverflow() {
-        System.err.println("graalgo-run: stack overflow: Go call depth "
-                + "exceeded the host stack limit (deep recursion; "
-                + "see phases/phase1/docs/limitations.md)");
+        System.err.println("graalgo-run: stack overflow: host stack exhausted "
+                + "(see phases/phase1/docs/limitations.md)");
+    }
+
+    /**
+     * M10 (self-attack): is this the Truffle profiler cascade masking a
+     * {@link StackOverflowError}? The profiler can blow the exhausted stack
+     * while handling the real SOE, surfacing as {@code NoClassDefFoundError:
+     * Could not initialize ...ReturnProfile} (or an
+     * {@code ExceptionInInitializerError}) <em>caused by</em> the SOE.
+     * Package-visible for deterministic unit testing (the live branch
+     * selection is racy across Truffle compilation states).
+     */
+    static boolean isStackOverflowCascade(Throwable t) {
+        return (t instanceof NoClassDefFoundError
+                        || t instanceof ExceptionInInitializerError)
+                && causedBy(t, StackOverflowError.class);
     }
 
     /** Walks the cause chain looking for an instance of {@code kind}. */

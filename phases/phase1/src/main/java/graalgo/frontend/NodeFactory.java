@@ -58,6 +58,14 @@ import java.util.Set;
  * {@link #assignTwoPhase}; see the package README's "Semantic lowerings".
  */
 public final class NodeFactory {
+    /**
+     * M10 (P1-3): bound for type-chain following loops ({@code named}→
+     * {@code underlying}, {@code alias}→{@code rhs}). Real chains are a
+     * handful of steps; a cycle must fail fast with FrontendException,
+     * never hang.
+     */
+    private static final int MAX_TYPE_CHAIN_STEPS = 10_000;
+
     /** Builds an expression node for one registered expression kind. WS D hook. */
     public interface ExprBuilder {
         GoExprNode build(Json.Object node, BuildCtx ctx);
@@ -104,6 +112,12 @@ public final class NodeFactory {
         public final Map<Integer, int[]> structFieldTypeIds = new HashMap<>();
         /** Zero-value templates per struct type-table id (M4, WS E). */
         public final Map<Integer, GoStruct> structZeroTemplates = new HashMap<>();
+        /**
+         * M10 (P1-3): type ids currently being zero-templated (recursion
+         * guard). A cyclic wire graph must fail fast with FrontendException,
+         * not overflow the stack.
+         */
+        public final Set<Integer> zeroTemplateVisiting = new HashSet<>();
         /** Canonical dynamic-type descriptors per type-table id (M4, WS E). */
         public final Map<Integer, graalgo.values.GoTypeDescriptor> typeDescs = new HashMap<>();
         /**
@@ -662,7 +676,12 @@ public final class NodeFactory {
      */
     static GoKind kindOf(BuildCtx ctx, int typeId, String path) {
         Json.Object entry = ctx.types.entry(typeId, path);
-        while (true) {
+        // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                throw new FrontendException(path + ": type chain exceeds "
+                        + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?) (WS E)");
+            }
             String ek = entry.string("kind", path);
             if ("named".equals(ek)) {
                 typeId = entry.object("detail", path).intValue("underlying", path);
@@ -695,11 +714,18 @@ public final class NodeFactory {
      */
     private static int resolveAlias(BuildCtx ctx, int typeId, String path) {
         Json.Object entry = ctx.types.entry(typeId, path);
-        while ("alias".equals(entry.string("kind", path))) {
+        // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                throw new FrontendException(path + ": alias chain exceeds "
+                        + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?) (WS E)");
+            }
+            if (!"alias".equals(entry.string("kind", path))) {
+                return typeId;
+            }
             typeId = entry.object("detail", path).intValue("rhs", path);
             entry = ctx.types.entry(typeId, path);
         }
-        return typeId;
     }
 
     /**
@@ -715,7 +741,15 @@ public final class NodeFactory {
             return d;
         }
         Json.Object entry = ctx.types.entry(typeId, path);
-        while ("named".equals(entry.string("kind", path))) {
+        // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                throw new FrontendException(path + ": named-type chain exceeds "
+                        + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?) (WS E)");
+            }
+            if (!"named".equals(entry.string("kind", path))) {
+                break;
+            }
             typeId = entry.object("detail", path).intValue("underlying", path);
             entry = ctx.types.entry(typeId, path);
         }
@@ -751,7 +785,15 @@ public final class NodeFactory {
         structDescriptorFor(ctx, typeId, path); // ensures the cache is populated
         typeId = resolveAlias(ctx, typeId, path);
         Json.Object entry = ctx.types.entry(typeId, path);
-        while ("named".equals(entry.string("kind", path))) {
+        // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                throw new FrontendException(path + ": named-type chain exceeds "
+                        + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?) (WS E)");
+            }
+            if (!"named".equals(entry.string("kind", path))) {
+                break;
+            }
             typeId = entry.object("detail", path).intValue("underlying", path);
             entry = ctx.types.entry(typeId, path);
         }
@@ -950,18 +992,29 @@ public final class NodeFactory {
         if (t != null) {
             return t;
         }
-        GoStructDescriptor desc = structDescriptorFor(ctx, typeId, path);
-        int[] fieldTypeIds = structFieldTypeIds(ctx, typeId, path);
-        Object[] objects = new Object[desc.objectsCount()];
-        for (int i = 0; i < desc.fields().size(); i++) {
-            GoStructDescriptor.Field f = desc.field(i);
-            if (!f.inLongs()) {
-                objects[f.index()] = fieldZeroTemplate(ctx, f.kind(), fieldTypeIds[i], path);
-            }
+        // M10 (P1-3): cycle guard. The memo above only fills after children
+        // are built, so a cyclic wire graph would recurse forever. Fail fast
+        // with FrontendException instead of StackOverflowError.
+        if (!ctx.zeroTemplateVisiting.add(typeId)) {
+            throw new FrontendException(path + ": cyclic struct type graph at type id "
+                    + typeId + " (WS E)");
         }
-        t = new GoStruct(desc, new long[desc.longsCount()], objects);
-        ctx.structZeroTemplates.put(typeId, t);
-        return t;
+        try {
+            GoStructDescriptor desc = structDescriptorFor(ctx, typeId, path);
+            int[] fieldTypeIds = structFieldTypeIds(ctx, typeId, path);
+            Object[] objects = new Object[desc.objectsCount()];
+            for (int i = 0; i < desc.fields().size(); i++) {
+                GoStructDescriptor.Field f = desc.field(i);
+                if (!f.inLongs()) {
+                    objects[f.index()] = fieldZeroTemplate(ctx, f.kind(), fieldTypeIds[i], path);
+                }
+            }
+            t = new GoStruct(desc, new long[desc.longsCount()], objects);
+            ctx.structZeroTemplates.put(typeId, t);
+            return t;
+        } finally {
+            ctx.zeroTemplateVisiting.remove(typeId);
+        }
     }
 
     /** Zero template for one struct field / array element (null when trivially zero). */
@@ -977,7 +1030,15 @@ public final class NodeFactory {
     private static Object arrayZeroTemplate(BuildCtx ctx, int arrayTypeId, String path) {
         int rid = resolveAlias(ctx, arrayTypeId, path);
         Json.Object entry = ctx.types.entry(rid, path);
-        while ("named".equals(entry.string("kind", path))) {
+        // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                throw new FrontendException(path + ": named-type chain exceeds "
+                        + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?) (WS E)");
+            }
+            if (!"named".equals(entry.string("kind", path))) {
+                break;
+            }
             rid = entry.object("detail", path).intValue("underlying", path);
             entry = ctx.types.entry(rid, path);
         }

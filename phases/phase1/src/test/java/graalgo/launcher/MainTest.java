@@ -182,6 +182,42 @@ public final class MainTest {
         }
     }
 
+    public void testIsStackOverflowCascade() {
+        // M10 (P1-2): the live branch selection (direct SOE vs Truffle
+        // profiler cascade) is racy across Truffle compilation states, so
+        // the unwrap decision is unit-tested deterministically here.
+        assertTrue(Main.isStackOverflowCascade(
+                new NoClassDefFoundError("x", new StackOverflowError())),
+                "NCDFE caused by SOE");
+        assertTrue(Main.isStackOverflowCascade(
+                new ExceptionInInitializerError(new StackOverflowError())),
+                "EIIE caused by SOE");
+        assertTrue(Main.isStackOverflowCascade(new NoClassDefFoundError("x",
+                new ExceptionInInitializerError(new StackOverflowError()))),
+                "nested cascade");
+        assertFalse(Main.isStackOverflowCascade(new NoClassDefFoundError("x")),
+                "plain NCDFE is not a cascade");
+        assertFalse(Main.isStackOverflowCascade(
+                new NoClassDefFoundError("x", new RuntimeException())),
+                "NCDFE caused by other is not a cascade");
+        assertFalse(Main.isStackOverflowCascade(new StackOverflowError()),
+                "direct SOE is not a cascade");
+        assertFalse(Main.isStackOverflowCascade(new RuntimeException()),
+                "other throwables are not cascades");
+    }
+
+    private static void assertTrue(boolean cond, String what) {
+        if (!cond) {
+            throw new AssertionError("expected true: " + what);
+        }
+    }
+
+    private static void assertFalse(boolean cond, String what) {
+        if (cond) {
+            throw new AssertionError("expected false: " + what);
+        }
+    }
+
     public void testNoInputFile() throws Exception {
         final int[] code = new int[1];
         captureStderr(() -> {

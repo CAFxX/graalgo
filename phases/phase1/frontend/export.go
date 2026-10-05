@@ -661,6 +661,42 @@ type exporter struct {
 	pkgVars []*pkgVarDecl
 }
 
+// M10 (P1-4): struct-nesting depth cap for offset computation.
+// Measured: 10-deep ~165us, 20-deep ~810ms (2^k blowup in go/types'
+// unmemoized gcSizes). 16 is safely below the pain point; deeper structs
+// get -1 offsets (position-indexed, never byte-offset, per the M6 comment
+// below).
+const maxStructDepth = 16
+
+// structValueDepth estimates the value-nesting depth of t without calling
+// Sizeof (which is exponential on deep nesting). Structs add one level per
+// nesting; arrays add one; other composites are O(1). Cycle-safe via the
+// depth cap: returns maxStructDepth+1 if the cap is exceeded.
+func structValueDepth(t types.Type, depth int) int {
+	if depth > maxStructDepth {
+		return depth
+	}
+	switch t := t.(type) {
+	case *types.Named:
+		return structValueDepth(t.Underlying(), depth)
+	case *types.Struct:
+		max := depth
+		for i := 0; i < t.NumFields(); i++ {
+			if d := structValueDepth(t.Field(i).Type(), depth+1); d > max {
+				max = d
+			}
+			if max > maxStructDepth {
+				return max
+			}
+		}
+		return max
+	case *types.Array:
+		return structValueDepth(t.Elem(), depth+1)
+	default:
+		return depth
+	}
+}
+
 // pkgVarDecl is one package-level `var` spec (M7).
 type pkgVarDecl struct {
 	spec *ast.ValueSpec
@@ -1280,6 +1316,13 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 			}
 		}
 		if generic {
+			for i := range offsets {
+				offsets[i] = -1
+			}
+		} else if structValueDepth(t, 0) > maxStructDepth {
+			// M10 (P1-4): depth cap. Computing real offsets here would
+			// invoke go/types' exponential Sizeof; -1 is safe (the
+			// factory indexes fields by position, never by byte offset).
 			for i := range offsets {
 				offsets[i] = -1
 			}

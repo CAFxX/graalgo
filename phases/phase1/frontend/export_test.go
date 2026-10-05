@@ -3,8 +3,10 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestGolden: every non-bad_ testdata program exports byte-identical JSON to
@@ -121,5 +123,47 @@ func TestNoMain(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no func main") {
 		t.Fatalf("expected no-func-main error, got: %v", err)
+	}
+}
+
+// TestDeepNesting (M10 P1-4): 40-deep value-nested structs must export fast.
+// go/types' gcSizes has no memoization (Sizeof is Theta(2^k)); the exporter
+// depth-caps offset computation at maxStructDepth and emits -1 offsets
+// instead of hanging. Pre-fix, 30-deep hung >60s.
+func TestDeepNesting(t *testing.T) {
+	dir := t.TempDir()
+	var sb strings.Builder
+	sb.WriteString("package main\n\n")
+	for i := 40; i >= 1; i-- {
+		if i == 40 {
+			sb.WriteString("type B40 struct{ v int }\n")
+		} else {
+			sb.WriteString("type B" + strconv.Itoa(i) + " struct{ v B" + strconv.Itoa(i+1) + " }\n")
+		}
+	}
+	sb.WriteString("\nfunc main() { var x B1; println(x.v) }\n")
+	p := filepath.Join(dir, "deep.go")
+	if err := os.WriteFile(p, []byte(sb.String()), 0644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan string, 1)
+	go func() {
+		out, err := ExportFile(p)
+		if err != nil {
+			done <- "error: " + err.Error()
+			return
+		}
+		done <- out
+	}()
+	select {
+	case out := <-done:
+		if strings.HasPrefix(out, "error: ") {
+			t.Fatalf("ExportFile: %s", out)
+		}
+		if !strings.Contains(out, "\"offset\": -1") {
+			t.Fatal("expected -1 offsets for over-cap structs")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("ExportFile hung on 40-deep nesting (P1-4 regression)")
 	}
 }

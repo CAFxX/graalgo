@@ -18,5 +18,7 @@ a semantic divergence: no program produces a wrong result, it fails fast.
 - Re-test trigger: Phase 4 (JIT) owns the stack strategy (explicit stack
   / segmented stacks / deeper host stack). Re-measure the depth limit
   when the execution model changes.
-- Regression: `corpus/panic/pn11_stack_overflow.go` (expects clean
-  `stack overflow` on stderr, exit 2 — not a JVM trace).
+- Regression: `MainTest.testDeepRecursionReportsCleanStackOverflow`
+  (`src/test/java/graalgo/launcher/MainTest.java`) — generates a 100k-deep
+  recursion program in a temp dir, asserts exit 2 and a clean
+  `stack overflow` stderr line (no JVM trace).
