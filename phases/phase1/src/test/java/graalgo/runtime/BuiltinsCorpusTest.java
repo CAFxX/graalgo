@@ -65,4 +65,5 @@ public final class BuiltinsCorpusTest {
     public void testBi15CopyCounts() throws Exception { Differential.checkProgram(prog("bi15_copy_counts")); }
     public void testBi16AppendOverlap() throws Exception { Differential.checkProgram(prog("bi16_append_overlap")); }
     public void testBi17NestedArrays() throws Exception { Differential.checkProgram(prog("bi17_nested_arrays")); }
+    public void testBi18StringRune() throws Exception { Differential.checkProgram(prog("bi18_string_rune")); }
 }

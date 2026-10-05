@@ -203,7 +203,18 @@ public final class ConvertNode extends GoExprNode {
         } else { // INT32 (rune)
             StringBuilder sb = new StringBuilder(len);
             for (int i = 0; i < len; i++) {
-                sb.appendCodePoint(arr[offset + i]);
+                int cp = arr[offset + i];
+                // Remediation (R1 P1-3): gc substitutes U+FFFD for values
+                // that are not valid Unicode scalar values (surrogates,
+                // >0x10FFFF, negative); appendCodePoint would either throw
+                // (out of range) or emit a lone surrogate that the UTF-8
+                // encoder then mangles to '?'. Same predicate as
+                // GoConvert.intToString. (Character.isValidCodePoint is
+                // insufficient: it admits surrogates.)
+                if (cp < 0 || cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF)) {
+                    cp = 0xFFFD;
+                }
+                sb.appendCodePoint(cp);
             }
             return graalgo.values.GoString.fromUtf8(sb.toString());
         }
