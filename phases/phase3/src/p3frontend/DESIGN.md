@@ -52,13 +52,19 @@ differentially against stock gc.
    match linux/amd64.
 3. Build-constraint filtering with our own evaluator over the file's
    leading comment block: a `//go:build` line, if present, controls
-   exclusively (multiple lines are an error, as in `go/build`); otherwise
-   every `// +build` line must evaluate true. Expressions are parsed with
+   exclusively (multiple lines are an error, as in `go/build`), and is
+   honored wherever it appears in the header — even with no blank line
+   after it. Otherwise every `// +build` line in the trimmed header
+   region must evaluate true; the region ends at the last blank line
+   before the package clause, so a `// +build` line with no following
+   blank line is ignored — exactly `go/build`'s `parseFileHeader`/`shouldBuild`
+   behavior, verified file-for-file against the `go/build` oracle.
+   Expressions are parsed with
    the standard `go/build/constraint` package (which handles both syntaxes)
    and evaluated against the tag set
    `{linux, amd64, gc, unix} ∪ {go1.1 … go1.27}`.
    Legacy `// +build` lines are supported (same parser; `constraint.Parse`
-   accepts both forms).
+   accepts both forms, and the space after `//` is optional).
 
 **`Loader`** carries the GOROOT (default `~/tools/go-1.27.1`, overridable
 via `GRAALGO_GOROOT`) and two caches: import-path → resolution, and

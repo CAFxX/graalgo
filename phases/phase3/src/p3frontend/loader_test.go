@@ -51,7 +51,10 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 // TestBuildTagFiltering verifies: GG-0023 — SelectFiles must agree
 // file-for-file with the stock go/build oracle, on a synthetic corpus
 // exercising suffix rules, //go:build lines, legacy // +build lines and
-// exclusions, and on two real stdlib directories (src/os, src/strings).
+// exclusions, the blank-line header-region rule (// +build with no blank
+// line is ignored; //go:build without one is still honored), block-comment
+// edge cases, late build lines, and cgo/user tags, and on two real stdlib
+// directories (src/os, src/strings).
 func TestBuildTagFiltering(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
@@ -78,6 +81,18 @@ func TestBuildTagFiltering(t *testing.T) {
 		"legacy_multi.go":      "// +build linux\n// +build amd64\n\npackage corpus\n",
 		"legacy_multi_excl.go": "// +build linux\n// +build windows\n\npackage corpus\n",
 		"legacy_or.go":         "// +build linux,windows\n\npackage corpus\n",
+		"noblank_plus.go":      "// +build ignore\npackage corpus\n",  // no blank line: +build ignored (P1-2)
+		"noblank_go.go":        "//go:build ignore\npackage corpus\n", // no blank line: //go:build still honored
+		"nospace.go":           "//+build ignore\n\npackage corpus\n", // space after // is optional
+		"nested_parens.go":     "//go:build (linux || windows) && !windows\n\npackage corpus\n",
+		"and_excl.go":          "//go:build linux && windows\n\npackage corpus\n",
+		"and_notarch.go":       "//go:build linux && !amd64\n\npackage corpus\n",
+		"inblock.go":           "/*\n// +build ignore\n*/\n\npackage corpus\n",   // /* ends the header region
+		"blankinblock.go":      "/*\n\n*/\n// +build ignore\n\npackage corpus\n", // blank inside /* */ doesn't count
+		"late_go.go":           "package corpus\n\n//go:build ignore\n",          // late build line ignored
+		"late_plus.go":         "package corpus\n\n// +build ignore\n",           // late build line ignored
+		"cgo.go":               "//go:build cgo\n\npackage corpus\n",             // cgo never satisfied in M1
+		"usertag.go":           "//go:build mytag\n\npackage corpus\n",           // user tags never satisfied in M1
 		"not_test.go":          "package corpus\n",
 		"skip_test.go":         "package corpus\n",
 		"_hidden.go":           "package corpus\n",
@@ -171,4 +186,58 @@ func TestImportCycle(t *testing.T) {
 		}
 		t.Logf("cycle error: %v", err)
 	})
+}
+
+// TestMultipleGoBuildLines verifies the error path: two //go:build lines
+// are an error, mirroring go/build's errMultipleGoBuild.
+func TestMultipleGoBuildLines(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"dup.go": "//go:build linux\n//go:build amd64\n\npackage corpus\n",
+	})
+	if _, err := NewLoader().SelectFiles(dir); err == nil ||
+		!strings.Contains(err.Error(), "multiple //go:build lines") {
+		t.Fatalf("expected multiple-//go:build error, got: %v", err)
+	}
+	// The oracle rejects the directory too (parity of the error path).
+	if _, err := (&build.Context{GOOS: "linux", GOARCH: "amd64"}).ImportDir(dir, 0); err == nil {
+		t.Fatalf("expected go/build oracle to reject multiple //go:build lines")
+	}
+}
+
+// TestResolveImportNestedModules verifies P1-3: the resolve cache is keyed
+// by (fromDir, path). Resolving "example.com/n" from inside the nested
+// module must succeed; resolving the same path from the parent module
+// afterwards must fail — not return the cached nested-module resolution.
+func TestResolveImportNestedModules(t *testing.T) {
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{
+		"go.mod":     "module example.com/root\n\ngo 1.27\n",
+		"sub/go.mod": "module example.com/n\n\ngo 1.27\n",
+		"sub/n.go":   "package n\n",
+	})
+	subDir := filepath.Join(root, "sub")
+	loader := NewLoader()
+
+	ref, err := loader.ResolveImport(subDir, "example.com/n")
+	if err != nil {
+		t.Fatalf("ResolveImport(subDir, example.com/n): %v", err)
+	}
+	if ref.Dir != subDir {
+		t.Fatalf("nested resolution pointed at %s, want %s", ref.Dir, subDir)
+	}
+
+	// From the parent module example.com/root, "example.com/n" is neither
+	// stdlib nor under the module: this must fail even though the path is
+	// now cached from the subDir resolution above.
+	if ref2, err := loader.ResolveImport(root, "example.com/n"); err == nil {
+		t.Fatalf("expected resolution failure from parent module, got dir %s", ref2.Dir)
+	} else {
+		t.Logf("parent-module resolution correctly fails: %v", err)
+	}
+
+	// And the anchored entry still resolves correctly afterwards.
+	if ref3, err := loader.ResolveImport(subDir, "example.com/n"); err != nil || ref3.Dir != subDir {
+		t.Fatalf("anchored cache entry lost: ref=%v err=%v", ref3, err)
+	}
 }

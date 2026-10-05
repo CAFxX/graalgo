@@ -68,7 +68,7 @@ type Loader struct {
 	goarch string
 	goroot string
 
-	resolveCache map[string]*PackageRef // import path -> resolution
+	resolveCache map[string]*PackageRef // (abs fromDir + "\x00" + import path) -> resolution
 	moduleCache  map[string]moduleInfo  // dir -> enclosing module (or none)
 }
 
@@ -142,13 +142,24 @@ var (
 	slashSlash = []byte("//")
 	slashStar  = []byte("/*")
 	starSlash  = []byte("*/")
+	plusBuild  = []byte("+build")
 )
 
 // headerBuildLines scans a file's leading comment block and returns the
-// //go:build lines and // +build lines found there. The scan mirrors
-// go/build's parseFileHeader: it stops at the first non-comment,
-// non-blank line and tracks /* */ comment state.
-func headerBuildLines(content []byte) (goBuild []string, plusBuild []string) {
+// trimmed header region plus the //go:build lines found there. The scan
+// mirrors go/build's parseFileHeader: it stops at the first non-comment,
+// non-blank line, tracks /* */ comment state, and records end — the
+// offset just past the most recent blank line seen while the header was
+// still open (!ended). The returned region is content[:end].
+//
+// The two constraint syntaxes are treated exactly as in go/build:
+//   - //go:build lines are honored wherever they appear in the header,
+//     even with no following blank line;
+//   - // +build lines are honored only inside the trimmed region —
+//     shouldBuild re-scans it line by line, so a // +build line with no
+//     blank line before the package clause is ignored.
+func headerBuildLines(content []byte) (trimmed []byte, goBuild []string) {
+	end := 0
 	p := content
 	ended := false
 	inSlashStar := false
@@ -162,18 +173,18 @@ lines:
 		}
 		line := bytes.TrimSpace(raw)
 		if len(line) == 0 && !ended {
+			// Remember the offset just past the most recent blank
+			// line: constraint lines at or past this offset are
+			// outside the build-constraint region.
+			end = len(content) - len(p)
 			continue lines
 		}
 		if !bytes.HasPrefix(line, slashSlash) {
 			ended = true
 		}
 		if !inSlashStar {
-			s := string(line)
-			switch {
-			case constraint.IsGoBuild(s):
+			if s := string(line); constraint.IsGoBuild(s) {
 				goBuild = append(goBuild, s)
-			case constraint.IsPlusBuild(s):
-				plusBuild = append(plusBuild, s)
 			}
 		}
 		for len(line) > 0 {
@@ -196,14 +207,15 @@ lines:
 			break lines // non-comment text: the header ends here
 		}
 	}
-	return goBuild, plusBuild
+	return content[:end], goBuild
 }
 
 // shouldBuild reports whether the file content is selected for the build,
 // mirroring go/build's shouldBuild: a //go:build line, when present,
-// controls exclusively; otherwise every // +build line must hold.
+// controls exclusively (multiple lines are an error, as in go/build);
+// otherwise every // +build line in the trimmed header region must hold.
 func (l *Loader) shouldBuild(content []byte) (bool, error) {
-	goBuild, plusBuild := headerBuildLines(content)
+	trimmed, goBuild := headerBuildLines(content)
 	if len(goBuild) > 1 {
 		return false, fmt.Errorf("multiple //go:build lines")
 	}
@@ -214,9 +226,21 @@ func (l *Loader) shouldBuild(content []byte) (bool, error) {
 		}
 		return x.Eval(l.tagSatisfied), nil
 	}
-	for _, line := range plusBuild {
+	// Like go/build, scan the trimmed header region line by line; an
+	// unparseable // +build line is ignored. (The trimmed region provably
+	// contains no /* */ lines — any /* line ends the header — so no
+	// comment-state tracking is needed here, exactly as in go/build.)
+	for _, raw := range bytes.Split(trimmed, []byte("\n")) {
+		line := bytes.TrimSpace(raw)
+		if !bytes.HasPrefix(line, slashSlash) || !bytes.Contains(line, plusBuild) {
+			continue
+		}
+		s := string(line)
+		if !constraint.IsPlusBuild(s) {
+			continue
+		}
 		// Like go/build, an unparseable // +build line is ignored.
-		if x, err := constraint.Parse(line); err == nil {
+		if x, err := constraint.Parse(s); err == nil {
 			if !x.Eval(l.tagSatisfied) {
 				return false, nil
 			}
@@ -356,20 +380,29 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 }
 
 // ResolveImport maps an import path to a PackageRef. fromDir anchors module
-// mode (the importing package's directory). Results are cached by path.
+// mode (the importing package's directory); results are cached by
+// (fromDir, path) because resolution is anchored at fromDir — the same
+// path can resolve differently (or fail) from different modules.
 // "runtime"/"fmt" resolve to synthetic markers; stdlib paths resolve to
 // their GOROOT directory (proving the mapping — compiling them is a scope
 // error raised by the importer); module-path-prefixed imports resolve to
 // directories; anything else is an error.
 func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
-	if ref, ok := l.resolveCache[path]; ok {
+	// Synthetic packages resolve independently of fromDir; keep them out
+	// of the anchored cache.
+	switch path {
+	case "runtime", "fmt":
+		return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
+	}
+	anchor, err := filepath.Abs(fromDir)
+	if err != nil {
+		anchor = fromDir
+	}
+	key := anchor + "\x00" + path
+	if ref, ok := l.resolveCache[key]; ok {
 		return ref, nil
 	}
 	resolve := func() (*PackageRef, error) {
-		switch path {
-		case "runtime", "fmt":
-			return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
-		}
 		if l.goroot != "" {
 			if dir := filepath.Join(l.goroot, "src", path); isDir(dir) {
 				files, err := l.SelectFiles(dir)
@@ -393,7 +426,7 @@ func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	if err != nil {
 		return nil, err
 	}
-	l.resolveCache[path] = ref
+	l.resolveCache[key] = ref
 	return ref, nil
 }
 
