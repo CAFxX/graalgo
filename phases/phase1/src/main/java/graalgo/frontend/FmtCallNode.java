@@ -29,12 +29,16 @@ public final class FmtCallNode extends GoExprNode {
     private final String[] typeNames;
     private final GoKind[] elemKinds;
     private final String[] elemTypeNames;
+    // M7: element kind of a nested array/slice element (e.g. INT64 for
+    // [2][2]int); null unless elemKind is ARRAY or SLICE.
+    private final GoKind[] elemElemKinds;
     private final GoKind[] keyKinds;
     private final String[] keyTypeNames;
 
     public FmtCallNode(String funcName, GoExprNode[] args,
             GoKind[] kinds, String[] typeNames,
             GoKind[] elemKinds, String[] elemTypeNames,
+            GoKind[] elemElemKinds,
             GoKind[] keyKinds, String[] keyTypeNames,
             GoKind resultKind) {
         super(resultKind);
@@ -44,8 +48,49 @@ public final class FmtCallNode extends GoExprNode {
         this.typeNames = typeNames;
         this.elemKinds = elemKinds;
         this.elemTypeNames = elemTypeNames;
+        this.elemElemKinds = elemElemKinds;
         this.keyKinds = keyKinds;
         this.keyTypeNames = keyTypeNames;
+    }
+
+    // Package-private accessors for deferred fmt calls (M7): DeferNode
+    // evaluates the argument children at defer time and DeferredCall
+    // replays the formatting at return/unwind time from the captured
+    // values plus this static metadata.
+    String funcName() {
+        return funcName;
+    }
+
+    GoExprNode[] fmtArgs() {
+        return args;
+    }
+
+    GoKind[] argKinds() {
+        return kinds;
+    }
+
+    String[] argTypeNames() {
+        return typeNames;
+    }
+
+    GoKind[] argElemKinds() {
+        return elemKinds;
+    }
+
+    GoKind[] argElemElemKinds() {
+        return elemElemKinds;
+    }
+
+    String[] argElemTypeNames() {
+        return elemTypeNames;
+    }
+
+    GoKind[] argKeyKinds() {
+        return keyKinds;
+    }
+
+    String[] argKeyTypeNames() {
+        return keyTypeNames;
     }
 
     @Override
@@ -53,7 +98,8 @@ public final class FmtCallNode extends GoExprNode {
         Fmt.Arg[] fargs = new Fmt.Arg[args.length];
         for (int i = 0; i < args.length; i++) {
             fargs[i] = new Fmt.Arg(readArg(args[i], frame), kinds[i], typeNames[i],
-                    keyKinds[i], keyTypeNames[i], elemKinds[i], elemTypeNames[i]);
+                    keyKinds[i], keyTypeNames[i], elemKinds[i], elemTypeNames[i],
+                    elemElemKinds[i]);
         }
         return switch (funcName) {
             case "Sprint" -> Fmt.sprint(fargs);
@@ -95,7 +141,7 @@ public final class FmtCallNode extends GoExprNode {
         return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    private static Object readArg(GoExprNode child, VirtualFrame frame) {
+    static Object readArg(GoExprNode child, VirtualFrame frame) {
         return switch (child.kind().slotKind()) {
             case Int -> child.executeInt(frame);
             case Long -> child.executeLong(frame);

@@ -68,10 +68,17 @@ public final class Fmt {
      */
     public record Arg(Object value, GoKind kind, String typeName,
                       GoKind keyKind, String keyTypeName,
-                      GoKind elemKind, String elemTypeName) {
+                      GoKind elemKind, String elemTypeName,
+                      GoKind elemElemKind) {
         /** Convenience for non-composite args. */
         public Arg(Object value, GoKind kind, String typeName) {
-            this(value, kind, typeName, null, null, null, null);
+            this(value, kind, typeName, null, null, null, null, null);
+        }
+        /** Convenience for composite args without nested composites. */
+        public Arg(Object value, GoKind kind, String typeName,
+                   GoKind keyKind, String keyTypeName,
+                   GoKind elemKind, String elemTypeName) {
+            this(value, kind, typeName, keyKind, keyTypeName, elemKind, elemTypeName, null);
         }
     }
 
@@ -637,12 +644,14 @@ public final class Fmt {
             }
             switch (k) {
                 case BOOL -> fmtBool((Boolean) v, verb);
-                case INT8 -> fmtInteger(((Byte) v).longValue(), true, verb);
-                case INT16 -> fmtInteger(((Short) v).longValue(), true, verb);
+                // Small int kinds are boxed as Integer everywhere (Boxing.box,
+                // IncDecNode); mask to width for unsigned printing.
+                case INT8 -> fmtInteger(((Integer) v).byteValue(), true, verb);
+                case INT16 -> fmtInteger(((Integer) v).shortValue(), true, verb);
                 case INT32 -> fmtInteger(((Integer) v).longValue(), true, verb);
                 case INT64 -> fmtInteger((Long) v, true, verb);
-                case UINT8 -> fmtInteger(Byte.toUnsignedLong((Byte) v), false, verb);
-                case UINT16 -> fmtInteger(Short.toUnsignedLong((Short) v), false, verb);
+                case UINT8 -> fmtInteger(Integer.toUnsignedLong(((Integer) v).intValue() & 0xFF), false, verb);
+                case UINT16 -> fmtInteger(Integer.toUnsignedLong(((Integer) v).intValue() & 0xFFFF), false, verb);
                 case UINT32 -> fmtInteger(Integer.toUnsignedLong((Integer) v), false, verb);
                 case UINT64 -> fmtInteger((Long) v, false, verb);
                 case FLOAT32 -> fmtFloat((Float) v, 32, verb);
@@ -1239,10 +1248,10 @@ public final class Fmt {
         }
 
         private static Object boxArrayElement(Object array, GoKind elemKind, int i) {
+            // M7: canonical boxing is Integer for all ≤32-bit int kinds
+            // (Boxing.box); Byte/Short would break the printValue switch.
             return switch (elemKind) {
-                case INT8, UINT8 -> Byte.valueOf((byte) ((int[]) array)[i]);
-                case INT16, UINT16 -> Short.valueOf((short) ((int[]) array)[i]);
-                case INT32, UINT32 -> Integer.valueOf(((int[]) array)[i]);
+                case INT8, UINT8, INT16, UINT16, INT32, UINT32 -> Integer.valueOf(((int[]) array)[i]);
                 case INT64, UINT64 -> Long.valueOf(((long[]) array)[i]);
                 case FLOAT32 -> Float.valueOf(((float[]) array)[i]);
                 case FLOAT64 -> Double.valueOf(((double[]) array)[i]);
@@ -1273,8 +1282,11 @@ public final class Fmt {
                     if (i > 0) {
                         buf.append(", ");
                     }
+                    // M7: thread the nested element kind through so recursive
+                    // printSlice sees the inner array's elemKind (not null).
                     printValue(new Arg(compositeGet(v, arg.kind(), elemKind, i),
-                            elemKind, arg.elemTypeName(), null, null, null, null),
+                            elemKind, arg.elemTypeName(), null, null,
+                            arg.elemElemKind(), null, null),
                             verb, depth + 1);
                 }
                 buf.append('}');
@@ -1286,8 +1298,11 @@ public final class Fmt {
                 if (i > 0) {
                     buf.append(' ');
                 }
+                // M7: thread the nested element kind through so recursive
+                // printSlice sees the inner array's elemKind (not null).
                 printValue(new Arg(compositeGet(v, arg.kind(), elemKind, i),
-                        elemKind, arg.elemTypeName(), null, null, null, null),
+                        elemKind, arg.elemTypeName(), null, null,
+                        arg.elemElemKind(), null, null),
                         verb, depth + 1);
             }
             buf.append(']');

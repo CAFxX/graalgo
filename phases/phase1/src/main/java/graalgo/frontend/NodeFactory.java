@@ -1003,6 +1003,15 @@ public final class NodeFactory {
     private GoExprNode maybeConvert(GoExprNode child, GoKind to, int toTypeId, BuildCtx ctx,
             String path, GoKind sliceElemKind) {
         GoKind from = child.kind();
+        // M7: untyped nil is assignable to every nillable kind without
+        // conversion (e.g. Addr{0, 0, nil} with z *byte, issue51840.go).
+        // The NilNode evaluates to null, the correct zero for all of these;
+        // routing it through ConvertNode would throw "illegal conversion:
+        // INTERFACE -> POINTER". A nil-to-non-nillable conversion can never
+        // appear here: go/types rejects such programs before export.
+        if (child instanceof NilNode && isNillable(to)) {
+            return child;
+        }
         if (GoKind.transparent(from, to)) {
             return child;
         }
@@ -1066,6 +1075,14 @@ public final class NodeFactory {
         ConvertNode n = new ConvertNode(from, to, child);
         n.setSourceSection(child.getSourceSection());
         return n;
+    }
+
+    /**
+     * Go kinds that admit the predeclared {@code nil} as a value (M7).
+     */
+    private static boolean isNillable(GoKind k) {
+        return k == GoKind.POINTER || k == GoKind.SLICE || k == GoKind.MAP
+                || k == GoKind.FUNC || k == GoKind.INTERFACE || k == GoKind.UNSAFE_POINTER;
     }
 
     private int slotForObj(Json.Object fields, String kind, BuildCtx ctx) {
@@ -1870,6 +1887,9 @@ public final class NodeFactory {
         String[] typeNames = new String[n];
         GoKind[] elemKinds = new GoKind[n];
         String[] elemTypeNames = new String[n];
+        // M7: element kind of a nested array/slice element (for correct
+        // recursive printing); null unless elemKind is ARRAY or SLICE.
+        GoKind[] elemElemKinds = new GoKind[n];
         GoKind[] keyKinds = new GoKind[n];
         String[] keyTypeNames = new String[n];
         for (int i = 0; i < n; i++) {
@@ -1888,6 +1908,14 @@ public final class NodeFactory {
                 int elemId = detail.intValue("elem", apath);
                 elemKinds[i] = kindOf(ctx, elemId, apath);
                 elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
+                // M7: if the element is itself an array/slice, capture its
+                // element kind for nested printing.
+                if (elemKinds[i] == GoKind.ARRAY || elemKinds[i] == GoKind.SLICE) {
+                    Json.Object elemEntry = underlyingEntry(ctx, elemId, apath);
+                    Json.Object elemDetail = elemEntry.object("detail", apath);
+                    int elemElemId = elemDetail.intValue("elem", apath);
+                    elemElemKinds[i] = kindOf(ctx, elemElemId, apath);
+                }
             } else if ("map".equals(k)) {
                 int keyId = detail.intValue("key", apath);
                 int elemId = detail.intValue("elem", apath);
@@ -1907,7 +1935,7 @@ public final class NodeFactory {
             resultKind = kindOf(ctx, f.intValue("type", path), path);
         }
         return new FmtCallNode(func, args, kinds, typeNames, elemKinds, elemTypeNames,
-                keyKinds, keyTypeNames, resultKind);
+                elemElemKinds, keyKinds, keyTypeNames, resultKind);
     }
 
     /**
@@ -2128,6 +2156,15 @@ public final class NodeFactory {
         Json.Object f = fieldsOf(node, "defer");
         String path = "defer.fields";
         Json.Object call = f.object("call", path);
+        String callKind = call.string("kind", path + ".call");
+        // Deferred fmt overlay call (M7, e.g. `defer fmt.Println(x)`): build
+        // the FmtCallNode; DeferNode evaluates its arguments now and replays
+        // the formatting at return/unwind time.
+        if ("fmtcall".equals(callKind)) {
+            FmtCallNode fmtCall = (FmtCallNode) buildFmtCall(call, ctx);
+            fmtCall.setSourceSection(sectionFor(node, "defer"));
+            return new DeferNode(fmtCall);
+        }
         Json.Object cf = call.object("fields", path + ".call");
         String cpath = path + ".call.fields";
         // Deferred builtin: pass the builtin name through; DeferNode builds
@@ -3614,6 +3651,23 @@ public final class NodeFactory {
         for (int i = 0; i < values.size(); i++) {
             valueNodes[i] = buildExpr(asObject(values.get(i), path + ".values[" + i + "]"), ctx);
         }
+        // M7: convert literal values to the composite element/field type.
+        // Without this, a concrete value stored into an `any` element (e.g.
+        // map[string]any{"k": p} with p a nil *int) is never boxed in a
+        // GoInterface, so a later read loses the dynamic type (typed nil
+        // compared equal to nil). maybeConvert is a no-op for compatible
+        // kinds. Nil literals are skipped: nil is already the zero value
+        // for every nillable type and needs no conversion.
+        if ("map".equals(ek) || "slice".equals(ek) || "array".equals(ek)) {
+            int elemTid = compDetail.intValue("elem", path);
+            GoKind elemKind = kindOf(ctx, elemTid, path);
+            for (int i = 0; i < valueNodes.length; i++) {
+                if (!(valueNodes[i] instanceof NilNode)) {
+                    valueNodes[i] = maybeConvert(valueNodes[i], elemKind, elemTid, ctx,
+                            path + ".values[" + i + "]");
+                }
+            }
+        }
         // Keyed keys: index expressions for map/array/slice, field names for structs.
         GoExprNode[] keyNodes = new GoExprNode[0];
         int[] fieldIdx = null;
@@ -3662,6 +3716,20 @@ public final class NodeFactory {
                 graalgo.values.GoStructDescriptor sd =
                         structDescriptorFor(ctx, compTypeId, path);
                 int[] ftids = structFieldTypeIds(ctx, compTypeId, path);
+                // M7: convert each field value to its declared field type
+                // (same interface-boxing rationale as map/slice/array above).
+                // fieldIdx maps value position -> struct field for keyed
+                // literals; unkeyed literals are positional. Nil literals are
+                // skipped (nil needs no conversion).
+                for (int i = 0; i < valueNodes.length; i++) {
+                    if (valueNodes[i] instanceof NilNode) {
+                        continue;
+                    }
+                    int fi = (fieldIdx != null) ? fieldIdx[i] : i;
+                    GoKind fkind = sd.fields().get(fi).kind();
+                    valueNodes[i] = maybeConvert(valueNodes[i], fkind, ftids[fi], ctx,
+                            path + ".values[" + i + "]");
+                }
                 Object[] fieldZeros = new Object[sd.fields().size()];
                 for (int i = 0; i < fieldZeros.length; i++) {
                     fieldZeros[i] = zeroTemplateFor(sd.fields().get(i).kind(), ftids[i], ctx, path);
