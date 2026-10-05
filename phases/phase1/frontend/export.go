@@ -427,7 +427,7 @@ func scopeErrorf(format string, args ...any) error {
 // through this check.)
 func checkVariadicCall(c *ast.CallExpr, sig *types.Signature) error {
 	if sig != nil && sig.Variadic() && !c.Ellipsis.IsValid() {
-		return scopeErrorf("call to variadic function without ... spread"+
+		return scopeErrorf("call to variadic function without ... spread" +
 			" (argument packing) is not supported in frontend/v1 scope (WS D)")
 	}
 	return nil
