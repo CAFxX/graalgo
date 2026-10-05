@@ -165,6 +165,7 @@ public final class TortureBattery {
         boolean pass = samples > 0;
         System.out.printf("F1 samples=%d pongerIters=%d spinnerCV=%.4f cap=%d maxInflight=%d%n",
                 samples, pongerIters.get(), cv, sched.cap(), sched.maxInflightObserved());
+        System.out.printf("F1 wakeProvenance: %s%n", sched.wakeProvenance());
         System.out.printf("RESULT=%s%n", pass ? "PASS" : "FAIL");
         return pass ? 0 : 2;
     }
@@ -370,6 +371,160 @@ public final class TortureBattery {
         boolean pass = finished && errors.get() == 0;
         System.out.printf("F6 finished=%s errors=%d maxInflight=%d cap=%d%n",
                 finished, errors.get(), sched.maxInflightObserved(), sched.cap());
+        // M6 watch item: every WAKE admission must have a causally-preceding
+        // UNPARK (direct or stashed). ioExit should be 0 here (no I/O).
+        System.out.printf("F6 wakeProvenance: %s%n", sched.wakeProvenance());
+        System.out.printf("RESULT=%s%n", pass ? "PASS" : "FAIL");
+        return pass ? 0 : 2;
+    }
+
+    // ------------------------------------------------------------------
+    // F5: GOMAXPROCS fidelity — cap never exceeded
+
+    /**
+     * F5: measures true parallelism (simultaneously executing goroutines)
+     * under CPU load; asserts it never exceeds the in-flight cap.
+     * The cap is a hard assert in the drainer (GG-SCHED-0003); this leg
+     * verifies it observationally.
+     *
+     * <p>No args (gmp/quantum via -D flags).
+     */
+    public static int legF5(String[] args) throws Exception {
+        SchedulerCore sched = newScheduler();
+        int cap = sched.cap();
+        AtomicInteger current = new AtomicInteger(0);
+        AtomicInteger maxObserved = new AtomicInteger(0);
+        AtomicLong violations = new AtomicLong(0);
+
+        int n = Math.max(8, cap * 4);
+        CountDownLatch done = new CountDownLatch(n);
+        final boolean[] stop = {false};
+        for (int i = 0; i < n; i++) {
+            sched.spawn(() -> {
+                try {
+                    long sink = 0;
+                    long end = System.nanoTime() + 5_000_000_000L;
+                    while (System.nanoTime() < end && !stop[0]) {
+                        int cur = current.incrementAndGet();
+                        // Track max.
+                        int prev;
+                        do {
+                            prev = maxObserved.get();
+                        } while (cur > prev && !maxObserved.compareAndSet(prev, cur));
+                        if (cur > cap) {
+                            violations.incrementAndGet();
+                        }
+                        // Brief compute burst while "executing".
+                        for (int j = 0; j < 1000; j++) {
+                            sink += j;
+                        }
+                        current.decrementAndGet();
+                        Safepoint.poll();
+                    }
+                    blackhole(sink);
+                } catch (Throwable th) {
+                    th.printStackTrace();
+                }
+                done.countDown();
+            });
+        }
+        if (!done.await(120, TimeUnit.SECONDS)) {
+            System.out.println("F5 TIMEOUT");
+            System.out.println("RESULT=FAIL");
+            return 2;
+        }
+        sched.awaitQuiescence();
+        boolean pass = violations.get() == 0;
+        System.out.printf("F5 cap=%d maxTrueParallel=%d violations=%d%n",
+                cap, maxObserved.get(), violations.get());
+        System.out.printf("RESULT=%s%n", pass ? "PASS" : "FAIL");
+        return pass ? 0 : 2;
+    }
+
+    // ------------------------------------------------------------------
+    // F5b: cap-exhaustion — blocked I/O must release slots
+
+    /**
+     * F5b: two goroutines blocked indefinitely in simulated NIO
+     * (ioEnter + blocking queue take + ioExit) + one spinner + one short
+     * I/O. The spinner must stay live (slots released while I/O blocked);
+     * the short I/O must complete via wakeFifo re-admission.
+     *
+     * <p>No args (gmp/quantum via -D flags; meaningful at low gmp, e.g. 2).
+     */
+    public static int legF5b(String[] args) throws Exception {
+        SchedulerCore sched = newScheduler();
+        java.util.concurrent.LinkedBlockingQueue<Object> nioGate =
+                new java.util.concurrent.LinkedBlockingQueue<>();
+        AtomicLong spinnerIters = new AtomicLong(0);
+        AtomicInteger shortIoDone = new AtomicInteger(0);
+        final boolean[] stop = {false};
+
+        // Two goroutines blocked in "NIO" indefinitely.
+        for (int i = 0; i < 2; i++) {
+            sched.spawn(() -> {
+                try {
+                    sched.ioEnter();
+                    try {
+                        nioGate.take();
+                    } finally {
+                        sched.ioExit();
+                    }
+                } catch (Throwable th) {
+                    th.printStackTrace();
+                }
+            });
+        }
+        // One spinner.
+        CountDownLatch spinnerDone = new CountDownLatch(1);
+        sched.spawn(() -> {
+            long iters = 0, sink = 0;
+            long end = System.nanoTime() + 8_000_000_000L;
+            while (System.nanoTime() < end && !stop[0]) {
+                sink += iters * 0x9E3779B9L;
+                iters++;
+                Safepoint.poll();
+            }
+            spinnerIters.set(iters);
+            blackhole(sink);
+            spinnerDone.countDown();
+        });
+        // One short I/O: enter, brief block, exit, must complete.
+        CountDownLatch shortDone = new CountDownLatch(1);
+        sched.spawn(() -> {
+            try {
+                sched.ioEnter();
+                try {
+                    Thread.sleep(500);
+                } finally {
+                    sched.ioExit();
+                }
+                shortIoDone.incrementAndGet();
+            } catch (Throwable th) {
+                th.printStackTrace();
+            }
+            shortDone.countDown();
+        });
+
+        boolean shortOk = shortDone.await(60, TimeUnit.SECONDS);
+        // Let the spinner run a minimum wall-time AFTER the NIO goroutines
+        // are blocked, to prove sustained progress (not just a burst).
+        long minEnd = System.nanoTime() + 2_000_000_000L;
+        while (System.nanoTime() < minEnd) {
+            Thread.sleep(100);
+        }
+        stop[0] = true;
+        // Release the NIO-blocked goroutines so the test can drain.
+        nioGate.offer(new Object());
+        nioGate.offer(new Object());
+        boolean spinnerOk = spinnerDone.await(60, TimeUnit.SECONDS);
+        sched.awaitQuiescence();
+
+        boolean pass = shortOk && spinnerOk && spinnerIters.get() > 1_000_000
+                && shortIoDone.get() == 1;
+        System.out.printf("F5b spinner_iters=%d short_io_done=%d cap=%d maxInflight=%d%n",
+                spinnerIters.get(), shortIoDone.get(), sched.cap(),
+                sched.maxInflightObserved());
         System.out.printf("RESULT=%s%n", pass ? "PASS" : "FAIL");
         return pass ? 0 : 2;
     }
@@ -379,7 +534,7 @@ public final class TortureBattery {
 
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
-            System.err.println("usage: TortureBattery <F1|F3|F4|F6> [args...]");
+            System.err.println("usage: TortureBattery <F1|F3|F4|F5|F5b|F6> [args...]");
             System.exit(2);
         }
         String leg = args[0];
@@ -389,6 +544,8 @@ public final class TortureBattery {
             case "F1": rc = legF1(rest); break;
             case "F3": rc = legF3(rest); break;
             case "F4": rc = legF4(rest); break;
+            case "F5": rc = legF5(rest); break;
+            case "F5b": rc = legF5b(rest); break;
             case "F6": rc = legF6(rest); break;
             default:
                 System.err.println("unknown leg: " + leg);

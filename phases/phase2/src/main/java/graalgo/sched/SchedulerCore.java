@@ -202,6 +202,19 @@ public final class SchedulerCore {
         return drainer;
     }
 
+    /**
+     * Admission provenance summary (P2-M8): counts of WAKE-lane admissions
+     * by cause. Format: {@code direct=<n> stashed=<n> ioExit=<n>}.
+     * {@code stashed} counts PARKED tokens that found a pre-arrived UNPARK
+     * (legitimate, but looks like "re-admission with no UNPARK in flight"
+     * to a timeline observer — the M6 watch item).
+     */
+    public String wakeProvenance() {
+        return "direct=" + drainer.wakeUnparkDirect.get()
+                + " stashed=" + drainer.wakeUnparkStashed.get()
+                + " ioExit=" + drainer.wakeIoExit.get();
+    }
+
     // ================= vthread side =================
 
     /**

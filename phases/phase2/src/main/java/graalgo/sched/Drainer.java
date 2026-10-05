@@ -48,6 +48,19 @@ public final class Drainer {
     // re-admits through the WAKE lane.
     private final java.util.Set<Long> inIo = new java.util.HashSet<>();
 
+    /**
+     * Admission provenance counters (P2-M8, M6 watch-item investigation):
+     * every WAKE-lane admission is classified by what produced it.
+     * {@code wakeStashed} counts PARKED tokens that found a pre-arrived
+     * UNPARK in {@code unparkPending} — legitimate, but looks like
+     * "re-admission with no UNPARK in flight" to a JFR timeline observer.
+     */
+    public final java.util.concurrent.atomic.AtomicLong wakeUnparkDirect = new java.util.concurrent.atomic.AtomicLong();
+    public final java.util.concurrent.atomic.AtomicLong wakeUnparkStashed = new java.util.concurrent.atomic.AtomicLong();
+    public final java.util.concurrent.atomic.AtomicLong wakeIoExit = new java.util.concurrent.atomic.AtomicLong();
+    public final java.util.concurrent.atomic.AtomicLong wakeResumeQuantum = new java.util.concurrent.atomic.AtomicLong();
+    public final java.util.concurrent.atomic.AtomicLong admitInit = new java.util.concurrent.atomic.AtomicLong();
+
     Drainer(SchedulerCore sched) {
         this.sched = sched;
     }
@@ -148,6 +161,7 @@ public final class Drainer {
                 if (unparkPending.remove(token.handle.id)) {
                     // Wakeup arrived first: admit immediately through the
                     // priority lane (no wakeup lost).
+                    wakeUnparkStashed.incrementAndGet();
                     wakeFifo.addLast(new ResumeToken(
                             ResumeToken.Kind.WAKE, token.handle, token.generation));
                 } else {
@@ -157,6 +171,7 @@ public final class Drainer {
             case UNPARK -> {
                 Long gen = parked.remove(token.handle.id);
                 if (gen != null) {
+                    wakeUnparkDirect.incrementAndGet();
                     wakeFifo.addLast(new ResumeToken(
                             ResumeToken.Kind.WAKE, token.handle, gen));
                 } else {
@@ -190,6 +205,7 @@ public final class Drainer {
                     throw new AssertionError(
                             "ioExit without ioEnter for g" + token.handle.id);
                 }
+                wakeIoExit.incrementAndGet();
                 wakeFifo.addLast(new ResumeToken(
                         ResumeToken.Kind.WAKE, token.handle, token.generation));
             }
