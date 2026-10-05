@@ -195,16 +195,20 @@ public final class TortureBattery {
                 // Explicit yield per iteration = one drainer admission per
                 // "quantum": measures drainer admission fairness directly.
                 // (Quantum-expiry fairness is covered by F1's poll() spinners.)
+                // admittedOnce tracks "admitted at least once during the run"
+                // (the starvation signal); incremented on the FIRST yield.
                 long sink = 0, c = 0, yields = 0;
+                boolean counted = false;
                 while (!stop[0]) {
                     sink += c * 0x9E3779B97F4A7C15L;
                     sink ^= sink >>> 29;
                     c++;
                     sched.yieldCurrent();
                     yields++;
-                }
-                if (yields > 0) {
-                    admitted.incrementAndGet();
+                    if (!counted) {
+                        counted = true;
+                        admitted.incrementAndGet();
+                    }
                 }
                 quanta[idx] = yields;
                 blackhole(sink);
@@ -333,8 +337,10 @@ public final class TortureBattery {
                             new ChanOps.SelectCase(dch, false, null),
                         });
                         if (idx == 1) break;
-                        GoChan.RecvResult r = ping.recv();
-                        long v = (Long) r.value();
+                        // selectGo claimed ping's value; retrieve it via the
+                        // select result accessors (NOT ping.recv(), which
+                        // would block — the value is already consumed).
+                        long v = (Long) ChanOps.selectRecvValue();
                         pong.send(v + 1);
                     }
                 } catch (Throwable th) {
