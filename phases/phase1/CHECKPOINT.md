@@ -1300,3 +1300,16 @@ M7 scope.
   (05_slices now fixed; 24_variadic, 27_panic_trace to be excluded).
 - Remaining: re-verify 05_slices in corpus, build coverage manifest with
   exclusion justifications, gate-1 evidence.
+
+## 2026-10-05 ~03:45 CEST — M7 gate-1 evidence complete
+
+- Commit e0d5734: M7_CORPUS_MANIFEST.md + hidden_files/m7-gate1/corpus_run5.json
+- Verification: 5/5 fixed programs PASS in harness (/tmp/m7_verify_run.json)
+- Final tally: 19 PASS, 27 EXCLUDED (all honest WS-scope), 0 unexplained divergences
+- Suite: 183/0 green. Commits: d64469a, 6da57a3, d48b941, 007b42f, 51d0e83, e0d5734
+- Gate-1 evidence:
+  - Manifest: phases/phase1/M7_CORPUS_MANIFEST.md
+  - Corpus run: phases/phase1/hidden_files/m7-gate1/corpus_run5.json
+  - Red-green logs: /tmp/nilcheck, /tmp/matcheck, /tmp/m7_verify_run.json
+  - Suite log: /tmp/m7_test4.log (183/0)
+- M7 done-gate 1 met: full corpus differential green, zero unexplained divergences.
