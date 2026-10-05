@@ -979,3 +979,51 @@ netpoller, off-heap gates), Phase-1 suite 208/208 (untouched files).
 P2-M6 done. Workstream F complete → Phase-2 done-gate 3 met ("JFR
 flowing": events observable on the conformance corpus; evidence
 phases/phase2/hidden_files/jfr/EVENTS.md + p2-m6-evidence.jfr + counts).
+
+## 2026-10-05 — P2-M7 pinning audit (in progress)
+
+**Spike findings (pipeline validation):**
+- GraalVM 25 = JDK 25: JEP 491 in effect — `synchronized` blocks/methods and
+  `Object.wait()` NO LONGER pin virtual threads (verified: `-Djdk.tracePinnedThreads=full`
+  silent on synchronized+park and pipe-read controls).
+- `jdk.VirtualThreadPinned` fires only on park-while-pinned. Verified positive
+  control: JNI `GetPrimitiveArrayCritical` + `LockSupport.parkNanos` → exactly 1
+  event with full stack (`VirtualThread.postPinnedEvent` → `doPark` →
+  `parkWhileCritical`). Controls that do NOT pin on JDK 25: synchronized+park,
+  blocking `PipedInputStream.read`, 2s blocking FFM `sleep(3)` downcall.
+- Codebase grep: zero `native` methods, zero `java.lang.foreign` usage in
+  phase1+phase2 main sources → no JNI/FFM pinning surface on goroutine paths.
+- All scheduler parks (`GoChan.send/recv`, `SelectOp`, `Timers`, `quantumPark`)
+  occur outside monitors (static review).
+- JFR plumbing: `-XX:StartFlightRecording:filename=x.jfr,jdk.VirtualThreadPinned#enabled=true,jdk.VirtualThreadPinned#stackTrace=true`
+  (inline; custom .jfc silently enabled nothing — do not use bare .jfc).
+
+## P2-M7 checkpoint (2026-10-05 ~18:20 UTC)
+- PinAudit tool built, committed (a1c2673). Full corpus audit found 13 UNEXPECTED pins (lazy JFR event <clinit> on goroutine carriers).
+- Root cause: ensureRegistered() used class literals (no <clinit> per JLS 12.4.1); FlightRecorder.register parks while pinned. Fixed (0dd2e2f): force <clinit> via enabled(), call in SchedulerCore ctor.
+- JfrRegistrationTest red-green verified. Re-audit: 0 pins (186 programs). make check green with pin-surface gate + pin-audit smoke.
+- Commits: a1c2673 (tool), 0dd2e2f (fix), b65fffc (test-cp), 0a7ef96 (make check wiring).
+- Remaining: final make pin-audit (running), commit AUDIT.md, 2 reviews, final verify (phase2 test + phase1 suite + check), sign-off.
+
+## P2-M7 SIGN-OFF (2026-10-05 ~19:30 UTC) — done-gate 2 MET
+
+**Goal:** jdk.VirtualThreadPinned shows zero unexpected pins on the conformance corpus (GG-0057 falsifier: unexpected pin → red).
+
+**Commits (8):** a1c2673 (PinAudit tool), 0dd2e2f (JFR <clinit> fix), b65fffc (test-cp), 0a7ef96 (make check wiring), 5b07719 (AUDIT.md), cf2e651 (JFR timing skip), 9828c4a (resilience+report), 6a0f694 (reviewer2), ecaabe0 (reviewer1).
+
+**Evidence:**
+- `make pin-audit`: 186 programs (148 phase-1 corpus + 37 phase-2 corpus + SchedTestRunner), 0 pin events. Report: hidden_files/pinning/pinaudit-report.md (AUDIT_RESULT=PASS).
+- Honest coverage: 147 clean + 13 panic + 1 tests-leg with pin evidence; 26 build-failures (channels/timers frontend v1) contribute none.
+- Finding: 13 pins from lazy JFR event <clinit> on carriers → fixed (force <clinit> on startup thread) → re-audit 0.
+- cgo/FFM budget: +0 (no native/FFM on goroutine paths; grep gate in make check).
+
+**Reviews:** 2 independent, both GO-WITH-FINDINGS, all findings remediated and re-tested.
+- reviewer1-code.md: 1 P1 (vacuous PASS on --tests failure → fixed: fail closed), 7 P2 (all fixed).
+- reviewer2-methodology.md: 2 P1 (intermittency documented, honest coverage accounting), 3 P2 (all addressed).
+
+**Final verification (sign-off tree ecaabe0):**
+- phase-2 `make test`: 163 tests, 0 failures.
+- Phase-1 suite: 208 tests, 0 failures.
+- `make check`: all gates clean, pin-audit smoke PASS (unexpected=0, unreadable=0).
+
+**Done-gate 2: MET.** Zero unexpected pins. GG-0057 falsifier not triggered.
