@@ -1228,3 +1228,34 @@ Not silently excluded — programs rewritten to test specified behavior.
 - Exclusions (honest): 24_variadic (variadic call adaptation not in P1 subset);
   27_panic_trace (gc PC offsets + absolute paths unreplicable).
 - Next: fresh full corpus run (47 programs), coverage manifest, gate-1 evidence.
+
+## 2026-10-05 ~02:10 CEST — M7 corpus-prep fixes committed (resume worker)
+
+**Commit 1 (M7 diffharness-corpus fixes):** inherited the pre-reboot worker's
+in-flight tree (deferred fmt overlay calls; nested array/slice elem kinds
+for recursive fmt printing; composite-literal element/field conversion to
+the declared type for interface boxing; SliceGrowthTest oracle 4->8;
+diffharness corpus.go absolute-path fix + new corpus_test.go), verified
+`make main` clean and `make test` 182/183, then fixed the one regression
+the in-flight change introduced:
+
+- **nil-to-nillable regression (issue51840.go):** the composite-literal
+  maybeConvert threw `illegal conversion: INTERFACE -> POINTER` on
+  `Addr{0, 0, nil}` (exporter types untyped nil as interface). Fix:
+  `maybeConvert` returns a `NilNode` unchanged when the target is nillable
+  (POINTER/SLICE/MAP/FUNC/INTERFACE/UNSAFE_POINTER) — Go-assignability,
+  not a hack; nil-to-non-nillable can never appear (go/types rejects it
+  before export). Red-green: pre-fix DIVERGE on issue51840.go
+  (testZeroUnexplainedDivergences FAIL); post-fix full suite
+  **183 tests, 0 failures** (hidden_files/m7_nilfix_red.log). Targeted
+  nil probe (struct field, map value, slice elems, var init) bit-identical
+  vs gc. `make check` green.
+
+**Commit 2 (harness):** `TestLoadConfig` was stale since M1 (expected 2
+backends/timeout 15; backends.json has gc-a/gc-b/graalgo + timeoutSec 30)
+— fixed the expectation. `go test ./internal/...` green (incl. the new
+corpus_test.go absolute-path test).
+
+**Next (M7 scope):** run all 47 tools/diffharness/corpus/ programs gc-a vs
+graalgo with reason-coded exclusions; corpus coverage manifest (gate-1
+evidence); full diffharness run for done-gate 1.
