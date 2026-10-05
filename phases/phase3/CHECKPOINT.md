@@ -54,3 +54,32 @@ Hourly Phase-2 report cron retired.
   reproducers; layer-4 slot reserved in this phase's testing strategy.
 - Hourly Phase-3 reporting cron: installed by the supervisor at phase
   start, retired at independent phase confirmation.
+
+## 2026-10-06 — P3-M1 implementation complete (WS A)
+
+**Delivered:** `phases/phase3/src/p3frontend/` (new Go module `p3frontend`,
+go 1.27): `ExportDir`/`MergeDir` compiling a multi-file `package main`
+directory into one frontend/v1 JSON document via loader (build-tag
+filtering verified file-for-file against the `go/build` oracle on
+synthetic corpus + real `src/os`, `src/strings`), graduated `types.Importer`
+(synthetic `runtime`/`fmt` with exact frozen signatures reimplemented;
+stdlib resolves but fails fast with "P3-M7+ waves" scope error), and
+package flattening (`p3i_<sha256hex8>_` prefix, go/types-driven selector
+rewrite, one merged file into the frozen `gofrontend` binary — the module
+is `package main` and unimportable, so the frozen CLI contract §2.1 is the
+consumption surface; recorded as a design deviation in DESIGN.md §8).
+Design: `src/p3frontend/DESIGN.md` (spec-first). Tests: 6 (2 cycle
+subtests) — bootstrap deep-equal vs `ExportFile`, two-package differential
+vs gc (normal: byte-identical stdout, exit 0; panic: identical `panic:`
+line, exit 2), no language pinning (go1.27 tag + generics), determinism,
+import cycles (fail-fast, timeout-guarded). Red-green-first evidence:
+`hidden_files/m1/redgreen.md` (broken flattener → fail-fast; disabled tag
+filter → oracle mismatch; both reverted, suite re-run green).
+**Empirical finding:** `func init()` is accepted by `gofrontend` but never
+executed by the runtime (gc prints INIT RAN, graalgo INIT DID NOT RUN) —
+M1 rejects any `func init()` with a clear scope error (documented
+limitation, never a silent gap); probe at `hidden_files/m1/initprobe2.go`.
+Commits: f3e9b05 (design), b5d3b03 (loader; verifies: GG-0023, GG-0012),
+1fc2f3a (importer/flattener/ExportDir; verifies: GG-0012, GG-0013).
+Phase-1/Phase-2 trees untouched (nothing outside `phases/phase3/src/`,
+`phases/phase3/hidden_files/m1/`, `phases/phase3/CHECKPOINT.md`).
