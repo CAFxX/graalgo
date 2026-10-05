@@ -79,6 +79,15 @@ are normalized before comparison:
 - `goroutine N [` → `goroutine # [`, `in goroutine N` → `in goroutine #`
 - `file.go:NNN` → `file.go:LINE` (line attribution may shift with inlining)
 
+Known limitation (R1 P2-1): the `0x…` rule is intentionally broad — it also
+matches *computed* `0x`-prefixed hex values a program prints (e.g. `%#x`
+output). Two backends printing different computed `0x` values would compare
+equal, a false "same". Verified not masking anything in the current corpus
+(only `%p` outputs carry `0x`; `%x` outputs have no `0x` prefix). Corpus
+discipline: programs must not print computed `0x`-prefixed values; if one
+ever needs to, narrow the rule first (e.g. address-length or
+pointer-context gating).
+
 Deliberately **not** normalized (a difference here is a real divergence):
 message text, exit codes, timeouts, build failures.
 

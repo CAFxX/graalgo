@@ -127,7 +127,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `unary` | `op` ∈ {`+`,`-`,`!`,`^`}, `x`, `type`: type id |
 | `paren` | `x`, `type`: type id |
 | `convert` | `to`: type id, `from`: source type id (M7; needed for string<->slice to get the element kind), `x`: expr node — a Go conversion `T(x)` where `T` denotes a type (M3; builtin calls stay `call`) |
-| `call` | `fun`: expr node, `args`: [expr nodes], `builtin`: str or null, `type`: type id or null, `ellipsis`: bool (M7; true for `append(s, x...)` string spread) |
+| `call` | `fun`: expr node, `args`: [expr nodes], `builtin`: str or null, `type`: type id or null, `ellipsis`: bool (M7; true for `append(s, x...)` — string spread *and* slice spread since `007b42f`; only `append` carries it, and only for `...` calls) |
 | `fmtcall` | `func`: str (one of `Print`, `Printf`, `Println`, `Sprint`, `Sprintf`, `Sprintln`, `Errorf`), `args`: [expr nodes], `type`: type id or null — a call to the D4 `fmt` stub via the Phase-1 import overlay (WS G). Only the seven D4 symbols resolve; any other `fmt.X` is a scope error naming Phase 3. |
 | `if` | `init`: stmt node or null, `cond`: expr node, `then`: block node, `else`: stmt node or null (block or `if` for else-if) |
 | `for` | `init`: stmt node or null, `cond`: expr node or null, `post`: stmt node or null, `body`: block node |

@@ -1,0 +1,88 @@
+{
+  "generatedAt": "2026-10-05T00:28:57Z",
+  "config": "backends.json",
+  "backends": [
+    "gc-a",
+    "gc-b",
+    "graalgo"
+  ],
+  "skipped": null,
+  "comparisons": [
+    {
+      "program": "02_arithmetic",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "02_arithmetic",
+      "ref": "gc-a",
+      "alt": "graalgo",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "05_slices",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "05_slices",
+      "ref": "gc-a",
+      "alt": "graalgo",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "23_bitwise",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "23_bitwise",
+      "ref": "gc-a",
+      "alt": "graalgo",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "29_interface_nil",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "29_interface_nil",
+      "ref": "gc-a",
+      "alt": "graalgo",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "36_matrix_mult",
+      "ref": "gc-a",
+      "alt": "gc-b",
+      "same": true,
+      "reasons": null
+    },
+    {
+      "program": "36_matrix_mult",
+      "ref": "gc-a",
+      "alt": "graalgo",
+      "same": true,
+      "reasons": null
+    }
+  ],
+  "summary": {
+    "diverged": 0,
+    "same": 10,
+    "skipped": 0,
+    "total": 10
+  }
+}

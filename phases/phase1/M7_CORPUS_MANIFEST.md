@@ -90,7 +90,7 @@ overlay (frontend-v1.md §7). These programs require standard library packages.
 | Program | Reason |
 |---------|--------|
 | 24_variadic | Variadic spread calls (`sum(s...)`, which pass the slice directly) are implemented; non-spread calls (zero/single/multi-arg packing into the slice parameter) are not implemented in Phase-1 and are a clean exporter scope error (`WS D`), verified by `MainTest.testCheckRejectsVariadicPacking`. (Corrected 2026-10-05: the original entry had this inverted.) |
-| 27_panic_trace | gc's panic trace includes PC offsets (`+0x25`), absolute file paths, and `main.` package qualifiers with `(...)`. The PC offset is unreplicable (machine code addresses); the format is implementation-defined. The panic itself (message + goroutine header) matches. |
+| 27_panic_trace | The panic message and `goroutine 1 [running]:` header are byte-identical to gc. The first trace line differs in diagnostic formatting (`main.level3(...)` vs `level3()`): gc's trace format additionally carries PC offsets (`+0x25`, unreplicable — machine-code addresses), absolute file paths, and package qualifiers, all implementation-defined. (Precision fix 2026-10-05: this program's evidence shows only the qualifier/parens difference; offsets/paths are the general reason the format can't be matched.) |
 
 ## Mechanical guards
 
@@ -101,7 +101,11 @@ overlay (frontend-v1.md §7). These programs require standard library packages.
 
 ## Evidence
 
-- Corpus run: `/tmp/m7_corpus_run5.json` (46 programs, 18 same + 05_slices fixed = 19 pass)
-- Individual red-green verifications: `/tmp/nilcheck`, `/tmp/matcheck`, `/tmp/varcheck`
-- Suite: 183/0 green (`make test`)
+All evidence lives under `phases/phase1/hidden_files/m7-gate1/` (durable;
+the original `/tmp` paths are ephemeral and were copied here 2026-10-05):
+
+- Corpus run: `hidden_files/m7-gate1/corpus_run5.json` (46 programs, 18 same; `05_slices` diverged here, fixed by `007b42f`)
+- Verify run: `hidden_files/m7-gate1/verify_run.json` (5 programs, 10/10 same — the `007b42f` fix plus 4 regression re-checks; final tally 19 pass / 27 excluded / 0 unexplained)
+- Individual red-green verifications: `hidden_files/m7-gate1/matcheck` (`/tmp/nilcheck`, `/tmp/varcheck` did not survive; their fixes are covered by `BuiltinsCorpusTest` and the verify run)
+- Suite: 183/0 green (`hidden_files/m7-gate1/suite_183.log`, `make test`)
 - Commits: d64469a (harness), 6da57a3 (SliceGrowthTest), d48b941 (4 fixes), 007b42f (append spread)

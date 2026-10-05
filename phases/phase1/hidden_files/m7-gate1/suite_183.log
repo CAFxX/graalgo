@@ -1,0 +1,253 @@
+mkdir -p out/test-classes
+/home/hatch/tools/graalvm-jdk-25/bin/javac -Xlint:deprecation -Werror -cp "out/classes:lib/collections-25.0.4.1.1.jar:lib/graal-sdk-25.0.4.1.1.jar:lib/nativeimage-25.0.4.1.1.jar:lib/polyglot-25.0.4.1.1.jar:lib/truffle-api-25.0.4.1.1.jar:lib/truffle-dsl-processor-25.0.4.1.1.jar:lib/truffle-runtime-25.0.4.1.1.jar" -d out/test-classes src/test/java/graalgo/launcher/MainTest.java src/test/java/graalgo/launcher/Differential.java src/test/java/graalgo/test/Runner.java src/test/java/graalgo/frontend/StraightLineCorpusTest.java src/test/java/graalgo/frontend/ArithmeticCorpusTest.java src/test/java/graalgo/frontend/CompositeCorpusTest.java src/test/java/graalgo/frontend/GenericsCorpusTest.java src/test/java/graalgo/frontend/TypeparamDifferentialTest.java src/test/java/graalgo/frontend/ControlFlowCorpusTest.java src/test/java/graalgo/frontend/PanicCorpusTest.java src/test/java/graalgo/frontend/VarsCorpusTest.java src/test/java/graalgo/values/ValuesTest.java src/test/java/graalgo/runtime/FmtVerbMatrixTest.java src/test/java/graalgo/runtime/FreezeSignatureTest.java src/test/java/graalgo/runtime/BuiltinsCorpusTest.java src/test/java/graalgo/runtime/SliceGrowthTest.java
+touch out/test-classes/.built
+/home/hatch/tools/graalvm-jdk-25/bin/java --enable-native-access=ALL-UNNAMED -Xss32m -cp "out/test-classes:out/classes:lib/collections-25.0.4.1.1.jar:lib/graal-sdk-25.0.4.1.1.jar:lib/nativeimage-25.0.4.1.1.jar:lib/polyglot-25.0.4.1.1.jar:lib/truffle-api-25.0.4.1.1.jar:lib/truffle-dsl-processor-25.0.4.1.1.jar:lib/truffle-runtime-25.0.4.1.1.jar" graalgo.test.Runner
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by com.oracle.truffle.runtime.hotspot.HotSpotTruffleRuntime (file:/home/hatch/workspace/graalgo/phases/phase1/lib/truffle-runtime-25.0.4.1.1.jar)
+WARNING: Please consider reporting this to the maintainers of class com.oracle.truffle.runtime.hotspot.HotSpotTruffleRuntime
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+PASS MainTest.testCheckAcceptsStraightLine
+PASS MainTest.testCheckRejectsTypeError
+PASS MainTest.testCheckRejectsScopeError
+PASS MainTest.testCheckRejectsSyntaxError
+PASS MainTest.testRunExecutesStraightLine
+PASS MainTest.testRunIsSilent
+PASS MainTest.testMissingFile
+usage: graalgo-run [--check] [--dump-vars] file.go
+       graalgo-run --help
+  --check      frontend only (diffharness build step)
+  --dump-vars  after executing, print name=value per frame slot (debug aid)
+PASS MainTest.testUnknownFlag
+usage: graalgo-run [--check] [--dump-vars] file.go
+       graalgo-run --help
+  --check      frontend only (diffharness build step)
+  --dump-vars  after executing, print name=value per frame slot (debug aid)
+PASS MainTest.testNoInputFile
+PASS MainTest.testDumpVars
+PASS StraightLineCorpusTest.testCorpusHasEnoughPrograms
+PASS StraightLineCorpusTest.testSl01Consts
+PASS StraightLineCorpusTest.testSl02Arith
+PASS StraightLineCorpusTest.testSl03Bitwise
+PASS StraightLineCorpusTest.testSl04Shifts
+PASS StraightLineCorpusTest.testSl05IntUint
+PASS StraightLineCorpusTest.testSl06Multiassign
+PASS StraightLineCorpusTest.testSl07Define
+PASS StraightLineCorpusTest.testSl08Incdec
+PASS StraightLineCorpusTest.testSl09Unary
+PASS StraightLineCorpusTest.testSl10Overflow
+PASS StraightLineCorpusTest.testSl11Divmod
+PASS StraightLineCorpusTest.testSl12Earlyreturn
+PASS ArithmeticCorpusTest.testCorpusHasEnoughPrograms
+PASS ArithmeticCorpusTest.testAr01Int8
+PASS ArithmeticCorpusTest.testAr02Int16
+PASS ArithmeticCorpusTest.testAr03Int32
+PASS ArithmeticCorpusTest.testAr04Int64
+PASS ArithmeticCorpusTest.testAr05Uint8
+PASS ArithmeticCorpusTest.testAr06Uint16
+PASS ArithmeticCorpusTest.testAr07Uint32
+PASS ArithmeticCorpusTest.testAr08Uint64
+PASS ArithmeticCorpusTest.testAr09IntUint
+PASS ArithmeticCorpusTest.testAr10Float32
+PASS ArithmeticCorpusTest.testAr11Float64
+PASS ArithmeticCorpusTest.testAr12ConvInt
+PASS ArithmeticCorpusTest.testAr13ConvFloat
+PASS ArithmeticCorpusTest.testAr14ConvString
+PASS ArithmeticCorpusTest.testAr15Compare
+PASS ArithmeticCorpusTest.testAr16BoolLogic
+PASS ArithmeticCorpusTest.testAr17ShiftsWidths
+PASS ControlFlowCorpusTest.testCorpusHasEnoughPrograms
+PASS ControlFlowCorpusTest.testCf01IfElse
+PASS ControlFlowCorpusTest.testCf02For
+PASS ControlFlowCorpusTest.testCf03While
+PASS ControlFlowCorpusTest.testCf04Infinite
+PASS ControlFlowCorpusTest.testCf05Labeled
+PASS ControlFlowCorpusTest.testCf06RangeSlice
+PASS ControlFlowCorpusTest.testCf07RangeArrayString
+PASS ControlFlowCorpusTest.testCf08RangeMap
+PASS ControlFlowCorpusTest.testCf09Switch
+PASS ControlFlowCorpusTest.testCf10TypeSwitch
+PASS ControlFlowCorpusTest.testCf11Goto
+PASS ControlFlowCorpusTest.testCf12LoopcapBody
+PASS ControlFlowCorpusTest.testCf13LoopcapHeader
+PASS ControlFlowCorpusTest.testCf14LoopcapNested
+PASS ControlFlowCorpusTest.testCf15LoopcapRange
+PASS ControlFlowCorpusTest.testCf16LoopcapWritethrough
+PASS ControlFlowCorpusTest.testCf17LoopcapGoto
+PASS ControlFlowCorpusTest.testCf18LoopcapDefer
+PASS ControlFlowCorpusTest.testCf19LoopcapBreak
+PASS ControlFlowCorpusTest.testCf20AttackNestedInit
+PASS ControlFlowCorpusTest.testCf21AttackModify
+PASS ControlFlowCorpusTest.testCf22AttackShadow
+PASS ControlFlowCorpusTest.testCf23AttackMultiheader
+PASS ControlFlowCorpusTest.testCf24P0d1Stalecell
+PASS ControlFlowCorpusTest.testCf25P0d2Structfield
+PASS ControlFlowCorpusTest.testCf26P0d3Postclosure
+PASS ControlFlowCorpusTest.testCf27P0d4Rangeassign
+PASS ControlFlowCorpusTest.testCf28P0d5Nestedcapture
+PASS ControlFlowCorpusTest.testCf29Adv02Perclosure
+PASS ControlFlowCorpusTest.testCf30Adv16Structheader
+PASS ControlFlowCorpusTest.testCf31Adv17Fieldwritethrough
+PASS ControlFlowCorpusTest.testCf32Adv01Outerbodyvar
+PASS ControlFlowCorpusTest.testCf33Adv03Duringiter
+PASS ControlFlowCorpusTest.testCf34Adv04Rangemap
+PASS ControlFlowCorpusTest.testCf35Adv05While
+PASS ControlFlowCorpusTest.testCf36Adv10Callboundary
+PASS ControlFlowCorpusTest.testCf37Adv13Shadow
+PASS ControlFlowCorpusTest.testCf38Adv14Continue
+PASS ControlFlowCorpusTest.testCf39Adv15Rangestring
+PASS ControlFlowCorpusTest.testCf40P1d7StructPtrAlias
+PASS CompositeCorpusTest.testCorpusHasEnoughPrograms
+PASS CompositeCorpusTest.testCo01Array
+PASS CompositeCorpusTest.testCo02Slice
+PASS CompositeCorpusTest.testCo03Slice3
+PASS CompositeCorpusTest.testCo04Struct
+PASS CompositeCorpusTest.testCo05Embed
+PASS CompositeCorpusTest.testCo06Map
+PASS CompositeCorpusTest.testCo07CommaOk
+PASS CompositeCorpusTest.testCo08Multi
+PASS CompositeCorpusTest.testCo09String
+PASS CompositeCorpusTest.testCo10Assert
+PASS PanicCorpusTest.testCorpusHasEnoughPrograms
+PASS PanicCorpusTest.testPn08RecoverOutsideDefer
+PASS PanicCorpusTest.testPn09NestedPanic
+PASS PanicCorpusTest.testPn10Goexit
+PASS PanicCorpusTest.testPn11GoexitNotRecoverable
+PASS PanicCorpusTest.testPn12DeepRecursion
+PASS PanicCorpusTest.testPn13DeferStorm
+PASS PanicCorpusTest.testPn14OobIndex
+PASS PanicCorpusTest.testPn15Adv06PanicCapture
+PASS PanicCorpusTest.testPn16Adv07Crossframe
+PASS PanicCorpusTest.testPn17Adv08RecoverNamed
+PASS PanicCorpusTest.testPn18Adv09DeferUnwind
+PASS PanicCorpusTest.testPn19Adv11GoexitNested
+PASS PanicCorpusTest.testPn20Adv12RecoverNested
+PASS PanicCorpusTest.testPn15SliceBounds
+PASS PanicCorpusTest.testPn16NilMapWrite
+PASS PanicCorpusTest.testPn17TypeAssert
+PASS PanicCorpusTest.testPn18NilDeref
+PASS PanicCorpusTest.testPn19DivZero
+PASS PanicCorpusTest.testPn20PanicSliceValue
+PASS PanicCorpusTest.testPn01DeferLifo
+PASS PanicCorpusTest.testPn02DeferArgsEarly
+PASS PanicCorpusTest.testPn03DeferNamedResults
+PASS PanicCorpusTest.testPn04PanicString
+PASS PanicCorpusTest.testPn05PanicValues
+PASS PanicCorpusTest.testPn06PanicNil
+PASS PanicCorpusTest.testPn07RecoverStops
+PASS GenericsCorpusTest.testCorpusHasEnoughPrograms
+PASS GenericsCorpusTest.testGn01NamedFuncs
+PASS GenericsCorpusTest.testGn02GenericFuncs
+PASS GenericsCorpusTest.testGn03GenericMethods
+PASS GenericsCorpusTest.testGn04GenericMethodTargs
+PASS GenericsCorpusTest.testGn05BoundMethod
+PASS GenericsCorpusTest.testGn06NestedInst
+PASS GenericsCorpusTest.testGn07HigherOrder
+PASS GenericsCorpusTest.testGn08Constraints
+hello 42
+PASS GenericsCorpusTest.testGn09FmtOverlay
+PASS GenericsCorpusTest.testGn10MethodrefBox
+PASS VarsCorpusTest.testCorpusHasEnoughPrograms
+PASS VarsCorpusTest.testGv01Const
+PASS VarsCorpusTest.testGv02Iota
+PASS VarsCorpusTest.testGv03VarInit
+PASS VarsCorpusTest.testGv04VarZero
+PASS VarsCorpusTest.testGv05DepOrder
+PASS VarsCorpusTest.testGv06VarCall
+PASS VarsCorpusTest.testGv07GlobalMutate
+PASS VarsCorpusTest.testGv08VarString
+PASS VarsCorpusTest.testGv09Blank
+PASS BuiltinsCorpusTest.testCorpusHasEnoughPrograms
+PASS BuiltinsCorpusTest.testBi01AppendGrowth
+PASS BuiltinsCorpusTest.testBi02AppendAlias
+PASS BuiltinsCorpusTest.testBi03CopyOverlap
+PASS BuiltinsCorpusTest.testBi04DeleteLookup
+PASS BuiltinsCorpusTest.testBi05MakeLenCap
+PASS BuiltinsCorpusTest.testBi06Complex
+PASS BuiltinsCorpusTest.testBi07PrintStderr
+PASS BuiltinsCorpusTest.testBi08LenCap
+PASS BuiltinsCorpusTest.testBi09New
+PASS BuiltinsCorpusTest.testBi10AppendVarieties
+PASS BuiltinsCorpusTest.testBi11Panic
+PASS BuiltinsCorpusTest.testBi12FmtStub
+PASS BuiltinsCorpusTest.testBi13AppendSizes
+PASS BuiltinsCorpusTest.testBi14MapLifecycle
+PASS BuiltinsCorpusTest.testBi15CopyCounts
+PASS SliceGrowthTest.testNextSliceCap
+typeparam scan: classes={compile=7, exclude:deferred-parity=220, errorcheck=5, run=32, exclude:backend-specific=2}
+typeparam exclusions by reason: {deferred-parity:multi-file program (issue48462.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue48306.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue54302.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue49027.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (structinit.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"named type use as value: identifier 'M' denotes *types.TypeName"=1, deferred-parity:"import not in D4 overlay: import 'context': imports are not supported in frontend/v1 s"=1, deferred-parity:"WS D scope: non-identifier call target *ast.CallExpr is not supported in"=3, deferred-parity:multi-file program (issue50598.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (mincheck.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"WS H scope: method call bar on non-named receiver interface{bar() int} ("=1, deferred-parity:"import not in D4 overlay: import 'strings': imports are not supported in frontend/v1 s"=1, deferred-parity:"WS D scope: method call Next needs an implicit address-of or deref on th"=1, deferred-parity:"loud build error: convert.fields: interface conversion needs type ids (WS E)"=8, deferred-parity:"named type use as value: identifier 'T' denotes *types.TypeName"=1, deferred-parity:multi-file program (orderedmapsimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"WS D scope: call of non-function variable h is not supported in frontend"=1, deferred-parity:"import not in D4 overlay: import 'sync/atomic': imports are not supported in frontend/"=1, deferred-parity:"WS H scope: method value f (bound receiver) is not supported in frontend"=1, deferred-parity:"WS D scope: call of non-function variable b is not supported in frontend"=1, deferred-parity:multi-file program (dedup.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (recoverimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"method Len on type parameter with non-named argument type: interface dispatch on type parameters not supported (WS H)"=1, deferred-parity:multi-file program (mutualimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (listimp2.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"loud build error: constant of kind COMPLEX64 is not supported (WS C/D)"=1, deferred-parity:multi-file program (issue50437.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue48185b.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue47892b.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (setsimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"import not in D4 overlay: import 'sort': imports are not supported in frontend/v1 scop"=2, deferred-parity:"import not in D4 overlay: import 'errors': imports are not supported in frontend/v1 sc"=2, deferred-parity:"import not in D4 overlay: import 'encoding/xml': imports are not supported in frontend"=1, deferred-parity:multi-file program (issue48185a.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue50841.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue50121.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"WS H scope: method value Bar (bound receiver) is not supported in fronte"=1, deferred-parity:"WS D scope: *ast.StarExpr is not supported in frontend/v1 scope (WS D)"=3, deferred-parity:multi-file program (aliasimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"method resolution: method Iterate not found on Iterator"=2, deferred-parity:"WS H scope: method value Collect (bound receiver) is not supported in fr"=1, deferred-parity:"import not in D4 overlay: import 'bytes': imports are not supported in frontend/v1 sco"=1, deferred-parity:multi-file program (issue48962.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue48454.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue47775.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"method resolution: method m2 not found on B2"=1, deferred-parity:"loud build error: illegal binary op/kind combination: EQ result=BOOL operand=STRUCT (struct == comparison not supported in frontend/v1)"=1, deferred-parity:multi-file program (sliceimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue47514c.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"go/types type error in test program (rejected before export)"=1, deferred-parity:"WS D scope: method call get needs an implicit address-of or deref on the"=1, deferred-parity:"WS D scope: selector call c.adder is not supported in frontend/v1 scope "=1, deferred-parity:"array type not supported in frontend/v1 scope (WS C/D)"=2, deferred-parity:"import not in D4 overlay: import 'reflect': imports are not supported in frontend/v1 s"=11, backend-specific://go:build cgo: graalgo has no cgo support=1, deferred-parity:"import not in D4 overlay: import 'log': imports are not supported in frontend/v1 scope"=1, deferred-parity:"residual ClassCastException on f[float64](int8(9)) (expected \"other 9\"): int8 in default clause; reproduced non-generically, pre-existing factory bug. B2b struct-descriptor path fixed (lines 1-4 now print)"=1, deferred-parity:multi-file program (select.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"import not in D4 overlay: import 'math': imports are not supported in frontend/v1 scop"=6, deferred-parity:"WS D scope: non-identifier call target *ast.ParenExpr is not supported i"=2, deferred-parity:multi-file program (issue51423.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"method resolution: method Match not found on List"=1, deferred-parity:multi-file program (absdiffimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue50481b.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (listimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"channel type not supported in frontend/v1 scope (WS C/D)"=1, deferred-parity:"method resolution: method m not found on A"=1, deferred-parity:"WS D scope: & on *ast.Ident is not supported in frontend/v1 scope (WS D)"=5, deferred-parity:multi-file program (minimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue51219.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"fmt Stringer dispatch not implemented (pre-existing missing feature; non-generic Stringer also fails)"=1, deferred-parity:"loud build error: illegal conversion: FLOAT64 -> COMPLEX128 (complex conversions not supported in frontend/v1)"=1, deferred-parity:"method resolution: method get not found on getter"=1, deferred-parity:multi-file program (factimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue49536.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue48716.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue49241.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue48280.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"method resolution: method foo not found on I"=2, deferred-parity:"loud build error: vardecl.fields: assertion to non-empty interface needs method tables (WS D)"=1, deferred-parity:multi-file program (issue50485.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (pairimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"runtime ClassCastException: [J cannot be cast to [I (int64-slice vs int-slice confusion; pre-existing, non-generic)"=1, deferred-parity:multi-file program (issue49659.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue48094b.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"WS G scope: package-level *ast.GenDecl is not supported in frontend/v1 s"=17, deferred-parity:"use of variable 'f' before declaration (rejected by go/types)"=1, deferred-parity:"import not in D4 overlay: import 'unsafe': imports are not supported in frontend/v1 sc"=4, deferred-parity:multi-file program (issue48337b.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"import not in D4 overlay: import 'sync': imports are not supported in frontend/v1 scop"=2, deferred-parity:"WS D: calling function value l.SumFn()(...); method lookup fixed (methodIndex) but function-value call out of scope"=1, deferred-parity:"WS H scope: method call M2 on non-named receiver interface{M2()} (WS H)"=1, deferred-parity:multi-file program (issue50552.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (valimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"named type use as value: identifier 'Recv' denotes *types.TypeName"=1, deferred-parity:"method resolution: method Work not found on B"=1, deferred-parity:"import not in D4 overlay: import 'io': imports are not supported in frontend/v1 scope "=1, deferred-parity:multi-file program (chansimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"WS D scope: non-identifier call target *ast.InterfaceType is not support"=2, deferred-parity:multi-file program (geninline.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"method resolution: method Set not found on AnyCacher"=1, deferred-parity:multi-file program (issue46461b.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (stringerimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"loud build error: illegal conversion: INTERFACE -> INT64 (interface-to-int conversion not supported in frontend/v1)"=1, deferred-parity:"loud build error: binary.fields: interface conversion needs type ids (WS E)"=1, deferred-parity:multi-file program (issue50486.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"import not in D4 overlay: import 'encoding': imports are not supported in frontend/v1 "=1, backend-specific:"tests gc -m inliner diagnostics (\"can inline\" output for //go:noinline stenciling); gc compiler-diagnostic text is not a portability observable"=1, deferred-parity:"import not in D4 overlay: import 'strconv': imports are not supported in frontend/v1 s"=4, deferred-parity:multi-file program (absdiffimp2.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"method resolution: method foo not found on C"=1, deferred-parity:multi-file program (gencrawler.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"loud build error: illegal conversion: SLICE -> STRING (slice-to-string conversion not supported in frontend/v1)"=1, deferred-parity:multi-file program (issue51219b.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue49246.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"WS G scope: only var/type declarations are supported in frontend/v1 scop"=2, deferred-parity:multi-file program (issue49667.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue51250a.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue49893.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue49497.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue50561.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue48337a.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"method resolution: method Bat not found on Bar"=1, deferred-parity:"WS H scope: method call foo on non-named receiver interface{foo() T} (WS"=1, deferred-parity:multi-file program (issue52117.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue51367.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"case interface{bar() T} with a type parameter inside the interface case: not matched by descriptor identity (same pre-existing limitation family as typeswitch1)"=1, deferred-parity:multi-file program (issue47892.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"case T: where T is a type parameter instantiated to an interface (e.g. any) does not match: type switch uses descriptor identity (t == dyn), not interface satisfaction. Pre-existing limitation."=1, deferred-parity:"WS D scope: multi-valued call result is not supported in frontend/v1 sco"=1, deferred-parity:multi-file program (issue50121b.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"WS D scope: *ast.IndexListExpr is not supported in frontend/v1 scope (WS"=1, deferred-parity:"WS D: calling function value; method lookup fixed (methodIndex) but function-value call out of scope"=1, deferred-parity:"import not in D4 overlay: import 'encoding/json': imports are not supported in fronten"=1, deferred-parity:"WS D scope: non-identifier call target *ast.ArrayType is not supported i"=1, deferred-parity:multi-file program (issue51836.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"method resolution: method M not found on Outer"=1, deferred-parity:multi-file program (mapsimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue50481c.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"case T with T instantiated to an interface: type switch uses descriptor identity, not interface satisfaction (same pre-existing limitation as typeswitch1)"=1, deferred-parity:"loud build error: illegal binary op/kind combination: EQ result=BOOL operand=POINTER (pointer == comparison not supported in frontend/v1)"=1, deferred-parity:multi-file program (mapimp.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"WS H scope: method call M1 on non-named receiver interface{M1()} (WS H)"=1, deferred-parity:multi-file program (issue49524.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:multi-file program (issue48094.dir): frontend/v1 is single-file; package loading is WS G=1, deferred-parity:"no func main: Phase-1 program model requires func main"=16}
+PASS TypeparamDifferentialTest.testExclusionListCoversAllFiles
+SAME     absdiff.go
+SAME     adder.go
+SAME     issue45738.go
+SAME     issue47514.go
+SAME     issue47676.go
+SAME     issue47684.go
+SAME     issue47684b.go
+SAME     issue47708.go
+SAME     issue47723.go
+SAME     issue47740.go
+SAME     issue47877.go
+SAME     issue47925.go
+SAME     issue47948.go
+SAME     issue48030.go
+SAME     issue48049.go
+SAME     issue48137.go
+SAME     issue48276a.go
+SAME     issue48276b.go
+SAME     issue48344.go
+SAME     issue48424.go
+SAME     issue48537.go
+SAME     issue48711.go
+SAME     issue48838.go
+SAME     issue49309.go
+SAME     issue49421.go
+SAME     issue49547.go
+SAME     issue50264.go
+SAME     issue50317.go
+SAME     issue50417.go
+SAME     issue50417b.go
+SAME     issue51232.go
+SAME     issue51233.go
+SAME     issue51236.go
+SAME     issue51832.go
+SAME     issue51840.go
+SAME     issue51925.go
+SAME     issue52026.go
+SAME     issue53254.go
+SAME     issue53419.go
+SAME     issue54535.go
+SAME     smallest.go
+SAME     struct.go
+SAME     sum.go
+SAME     tparam1.go
+typeparam run: 44 comparisons, 0 diverged, 222 excluded, report /tmp/typeparam-report-9517059118081947777.json
+
+typeparam run: 44 comparisons, 0 diverged, 222 excluded
+PASS TypeparamDifferentialTest.testZeroUnexplainedDivergences
+PASS TypeparamDifferentialTest.testResolvePhase1DirFromPhase1Cwd
+PASS TypeparamDifferentialTest.testResolvePhase1DirFromSubdir
+PASS TypeparamDifferentialTest.testResolvePhase1DirFromRepoRoot
+PASS TypeparamDifferentialTest.testResolvePhase1DirProperty
+PASS TypeparamDifferentialTest.testReadExclusionsEdgeCases
+PASS TypeparamDifferentialTest.testResolvePhase1DirFailsFast
+PASS ValuesTest.testGoKindFromBasic
+PASS ValuesTest.testGoKindTransparent
+PASS ValuesTest.testGoStringRune
+PASS ValuesTest.testGoStringCompare
+PASS ValuesTest.testGoMap
+PASS ValuesTest.testGoStruct
+PASS ValuesTest.testGoInterface
+PASS ValuesTest.testUnsafeHandles
+PASS ValuesTest.testGoConvertFloatToInt
+PASS ValuesTest.testGoConvertFloatToIntNarrow
+PASS ValuesTest.testGoConvertIntToFloat
+PASS ValuesTest.testGoConvertIntToString
+PASS ValuesTest.testInterfaceDispatchProbes
+PASS ValuesTest.testGoSlice
+  (fmt matrix: 122 rows, all match gc)
+PASS FmtVerbMatrixTest.testVerbMatrix
+PASS FmtVerbMatrixTest.testAddressErasure
+  (freeze v1: 37 signatures verified)
+PASS FreezeSignatureTest.testFrozenSignatures
+183 tests, 0 failures
+EXIT=0

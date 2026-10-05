@@ -475,10 +475,13 @@ func (e *exporter) collectPackageVars(gd *ast.GenDecl) error {
 // Go spec (Package initialization): "Given the list of all variables, the
 // initialization order is determined by analyzing dependencies" — x depends
 // on y when x's initializer refers to y (only references to package-level
-// variables are ordering constraints; function bodies are not analyzed, and
-// functions need no initialization). Unconstrained variables initialize in
-// declaration order. A dependency cycle is a build error, matching gc's
-// "initialization cycle" rejection.
+// variables are ordering constraints, and functions need no initialization).
+// The dependency walk covers the whole initializer expression, including
+// funclit bodies (ast.Inspect does not skip them) — matching gc, which
+// rejects `var f = func() int { return g }; var g = f` as an initialization
+// cycle. Unconstrained variables initialize in declaration order. A
+// dependency cycle is a build error, matching gc's "initialization cycle"
+// rejection.
 func (e *exporter) exportPackageVars() ([]GlobalEnt, error) {
 	type ginit struct {
 		oid  int      // object id, or -1 for blank (`var _ = ...`)
