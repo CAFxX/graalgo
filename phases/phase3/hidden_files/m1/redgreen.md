@@ -71,16 +71,37 @@ verified against the pre-mutant copy) and the suite re-run green.
 
 ## GREEN (after revert)
 
+Post-remediation re-run, 2026-10-06 (`go test -count=1 ./...`):
+13 top-level tests (15 incl. subtests), all PASS —
+
 ```
+--- PASS: TestBuildTagFiltering (0.08s)
+--- PASS: TestMultipleGoBuildLines (0.00s)
+--- PASS: TestResolveImportNestedModules (0.00s)
+--- PASS: TestImportCycle (0.00s)
+    --- PASS: TestImportCycle/mutual (0.00s)
+    --- PASS: TestImportCycle/self (0.00s)
 --- PASS: TestSyntheticBootstrapRetained (0.06s)
 --- PASS: TestTwoPackageDifferential (13.75s)
 --- PASS: TestNoLanguagePinning (0.03s)
 --- PASS: TestDeterministic (0.03s)
---- PASS: TestBuildTagFiltering (0.07s)
---- PASS: TestImportCycle (0.00s)
+--- PASS: TestEmbeddedFieldRebinding (8.60s)
+--- PASS: TestGofrontendTimeout (2.00s)
+--- PASS: TestGofrontendErrorPrefix (0.00s)
+--- PASS: TestInitRejected (0.00s)
+    --- PASS: TestInitRejected/main (0.00s)
+    --- PASS: TestInitRejected/dep (0.00s)
+--- PASS: TestStdlibScopeError (0.00s)
 PASS
-ok      p3frontend      13.957s
+ok      p3frontend
 ```
 
-`git status` after the revert shows only the intended new files; the two
-mutations left no residue (verified via `git diff --stat` before commit).
+Reds (a) and (b) were re-run against the remediated tree and still fail
+as designed (red (a)'s transcript now shows the deduped
+`p3frontend: gofrontend: type error:` prefix — the P2 error-prefix fix
+working); both reverted byte-exact (`git diff` empty), suite re-run
+green.
+
+`git status` after the reverts shows only the intended files; the three
+mutations left no residue (verified via `git diff --stat` before each
+commit).

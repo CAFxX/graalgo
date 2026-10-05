@@ -83,3 +83,58 @@ Commits: f3e9b05 (design), b5d3b03 (loader; verifies: GG-0023, GG-0012),
 1fc2f3a (importer/flattener/ExportDir; verifies: GG-0012, GG-0013).
 Phase-1/Phase-2 trees untouched (nothing outside `phases/phase3/src/`,
 `phases/phase3/hidden_files/m1/`, `phases/phase3/CHECKPOINT.md`).
+
+## 2026-10-06 — P3-M1 review remediation (code + methodology reviews)
+
+**Every finding remediated** from the two independent reviews of
+7bf5e4e..1664fa9 (code review: 1 P0 + 3 P1 + 4 P2; methodology review:
+4 P1 + 7 P2), in one-logical-change-per-commit sequence:
+
+1. `86b0a61` **P0-1 embedded-field silent rebinding** (flatten.go):
+   `identObj` prefers the `Uses` type for embedded field Vars; new
+   `renameEmbeddedField` helper renames embedded-field selectors (`o.T`,
+   promoted) and keyed literal elements (`Outer{T: ...}`) to the renamed
+   type name. Regression: `TestEmbeddedFieldRebinding` (asserts exact
+   `h.T` output; verified red without the fix — gc `h.T` vs merged
+   `main.T`, both exit 0) + colliding-`T` case in the twopkg corpus.
+2. `8b87455` **P1-2 build-tag header region** (loader.go):
+   `headerBuildLines` tracks `go/build` `parseFileHeader`'s `end` offset;
+   `// +build` honored only in the trimmed region (no-blank-line
+   `// +build` ignored, as `go list` does); **P1-3 resolve-cache keying**:
+   cache keyed by (abs fromDir, path) with nested-module regression test
+   (verified red with the old key). Corpus extended with the reviewer's
+   adversarial cases — all oracle-agreeing.
+3. `f11ba64` **P1-4 exporter timeout** (export.go): `exec.CommandContext`
+   with `gofrontendTimeout` (10 min, test-shortenable); named timeout
+   error; P2 error-prefix dedup (`p3frontend: gofrontend: <err>`,
+   DESIGN.md §8 "verbatim" claim corrected); defensive nil checks in
+   `Flatten`; `go.mod` `tidy` interaction documented (durable record:
+   DESIGN.md §8).
+4. `f8269ee` **Methodology P1-1**: GG-0013/GG-0023 locked→active with
+   dated history entries (first real tests with `verifies:`
+   annotations); GG-0012 (already active) gained its P3-M1 `verifies:`
+   entry. GG-0017 untouched (Phase-2's record, still locked).
+5. `ab98a09` **Methodology P1-2/P1-3/P1-4**: twopkg corpus gains a
+   main-level `Counter` shadowing `helper.Counter`; third red-green
+   proves the byte comparison catches the QUIET divergence (gc
+   `main counter: 1000` vs graalgo `main counter: 2`, both exit 0),
+   reverted byte-exact; `TestInitRejected` (main + dep);
+   `TestStdlibScopeError` (resolves at `~/tools/go-1.27.1/src/strings`,
+   fails fast with "P3-M7+ waves"); normal differential leg builds a real
+   gc binary; panic-stack-by-design comment.
+6. (this commit) **P2 wording**: "GOROOT source tree; vendoring is P3-M6"
+   in PLAN.md's M1 scope (phase-objective and later-milestone mentions
+   intentionally left — they describe the planned end state) and the
+   loader.go comment; init-order non-guarantee sentence in DESIGN.md
+   §2.3 (path sort matches OBSERVED gc, not a spec guarantee).
+
+**Re-test results:** `go test -count=1 ./...` — 13 top-level tests
+(15 incl. subtests), all PASS; `go vet ./...` and `gofmt -l` clean; no
+TODO/placeholder markers. All three red-green mutations (both originals
++ the new quiet-divergence red) re-run with transcripts in
+`hidden_files/m1/redgreen.md`, each reverted byte-exact (`git diff`
+empty) and the suite re-run green afterwards. Only
+`phases/phase3/src/`, `phases/phase3/hidden_files/m1/`,
+`phases/phase3/CHECKPOINT.md`, `phases/phase3/PLAN.md`, and
+`requirements/GG-0012.yaml`, `requirements/GG-0013.yaml`,
+`requirements/GG-0023.yaml` modified.

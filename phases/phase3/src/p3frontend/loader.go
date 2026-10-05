@@ -62,7 +62,7 @@ var unixOS = map[string]bool{
 
 // Loader selects buildable files and resolves imports. It targets
 // linux/amd64 with the gc toolchain; the release tags cover go1.1 through
-// go1.27 (the vendored toolchain version — no language pinning, GG-0013).
+// go1.27 (the pinned go1.27.1 toolchain — no language pinning, GG-0013).
 type Loader struct {
 	goos   string
 	goarch string

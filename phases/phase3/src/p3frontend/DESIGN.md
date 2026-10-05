@@ -156,7 +156,11 @@ declarations. Global initializers are emitted in this order; the frozen
 exporter's global-init pass is topological and stable by declaration
 order — i.e. it reproduces gc's source-order tie-breaking — so emitting
 deps-before-main in dependency order reproduces gc's package
-initialization order for the programs in M1 scope.
+initialization order for the programs in M1 scope. One explicit
+non-guarantee: the relative initialization order of side-effecting
+initializers in mutually-unconstrained packages follows import-path sort,
+which matches gc's OBSERVED behavior, not a spec guarantee (the Go spec
+leaves it unspecified).
 
 Determinism: every ordering input is sorted, the prefix is a pure
 function of the import path, and the file is rendered with `go/format`.

@@ -50,7 +50,7 @@ DIVERGENCES.md.
 
 | WS | Workstream | GG IDs | Gate |
 |---|---|---|---|
-| A | Frontend package dirs + import resolution: `ExportDir` (multi-file packages, build-tag filtering per GG-0023), import resolution across the vendored stdlib tree, `overlayImporter` → real importer with synthetic bootstrap retained (`runtime`, `fmt` until their real packages land) | GG-0012, GG-0013, GG-0023 (build-tag slice) | 1 (part) |
+| A | Frontend package dirs + import resolution: `ExportDir` (multi-file packages, build-tag filtering per GG-0023), import resolution across the GOROOT source tree (vendoring is P3-M6), `overlayImporter` → real importer with synthetic bootstrap retained (`runtime`, `fmt` until their real packages land) | GG-0012, GG-0013, GG-0023 (build-tag slice) | 1 (part) |
 | B | Interface dispatch: PIC on itab identity (limit ~3, megamorphic hash fallback per SPEC §3.3), type switches via decision trees, `GoInterface` graduates from data carrier to dispatch; polymorphism re-measurement (M9 trigger) | GG-0014, GG-0017 (iface slice) | 1 |
 | C | Intrinsic surface completion: GG-0020 audit (stub-vs-real over ~60–70 fns), complete memmove/memequal, makeslice/growslice, map ops, itab machinery, atomics, fastrand, traceback, write barrier; linkname by symbol name both directions | GG-0020 | 1 |
 | D | `sync` Go bindings + DIV-M3-1 fix: lower `import "sync"` onto the Phase-2 Java primitives (discharges the P2-M8 re-test trigger); fix `len()` on buffered timer channel to 0 (gc parity) with red-green-first evidence | GG-0017 (sync slice), GG-0048 | 1 |
@@ -120,9 +120,9 @@ depends on it; no Phase-3 worker staffs it.
 ## 4. Milestones and acceptance
 
 - P3-M1: frontend package dirs + import resolution (WS A) — `ExportDir`
-  compiles a multi-file package; imports resolve across the vendored
-  tree with build-tag filtering; synthetic bootstrap retained; a
-  two-package program (`main` + helper) runs differentially vs gc
+  compiles a multi-file package; imports resolve across the GOROOT source
+  tree (vendoring is P3-M6) with build-tag filtering; synthetic bootstrap
+  retained; a two-package program (`main` + helper) runs differentially vs gc
   (GG-0012, GG-0013, GG-0023 build-tag slice →active)
 - P3-M2: `sync` Go bindings + DIV-M3-1 fix (WS D) — `import "sync"`
   lowers onto the Phase-2 Java primitives; the P2-M8 stress suite
