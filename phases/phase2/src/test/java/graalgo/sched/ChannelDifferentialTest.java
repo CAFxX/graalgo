@@ -36,6 +36,8 @@ import graalgo.runtime.PanicException;
  * <p>These .go files double as the future end-to-end corpus: once the
  * exporter lowering lands (parent dependency), the same programs run
  * through {@code graalgo-run} and must produce identical output.
+ *
+ * <p>verifies: GG-0017 (differential slice)
  */
 public final class ChannelDifferentialTest {
 
@@ -51,6 +53,11 @@ public final class ChannelDifferentialTest {
 
     private String expected(String name) throws Exception {
         return Files.readString(CORPUS.resolve(name + ".expected"), StandardCharsets.UTF_8);
+    }
+
+    /** Expected first panic line, from gc's stderr. */
+    private String expectedPanic(String name) throws Exception {
+        return Files.readString(CORPUS.resolve(name + ".panic"), StandardCharsets.UTF_8);
     }
 
     private void withScheduler(int gmp, ThrowingRunnable body) throws Exception {
@@ -167,7 +174,7 @@ public final class ChannelDifferentialTest {
         assertEquals(expected("ch05_select_recv"), out.toString(), "ch05");
     }
 
-    // ch06: select with default, nothing ready.
+    // ch06: select with default, nothing ready → default branch.
     public void testCh06SelectDefault() throws Exception {
         StringBuilder out = new StringBuilder();
         withScheduler(2, () -> {
@@ -177,6 +184,9 @@ public final class ChannelDifferentialTest {
                         new ChanOps.SelectCase(ch, false, null),
                         new ChanOps.SelectCase(null, false, null),
                 });
+                // The recv case is never ready here (unbuffered, no
+                // sender); the translation mirrors the Go program's two
+                // branches by index.
                 out.append(idx == 0 ? "recv" : "default").append('\n');
             });
         });
@@ -226,6 +236,7 @@ public final class ChannelDifferentialTest {
 
     // ch09: send on closed channel panics (message parity with gc).
     public void testCh09SendOnClosedPanic() throws Exception {
+        String want = expectedPanic("ch09_send_on_closed");
         AtomicReference<String> panicLine = new AtomicReference<>();
         withScheduler(2, () -> {
             ChanOps.Chan ch = ChanOps.makeChan(8, 0, 0L);
@@ -238,12 +249,12 @@ public final class ChannelDifferentialTest {
                 }
             });
         });
-        assertEquals("panic: send on closed channel\n",
-                panicLine.get() + "\n", "ch09");
+        assertEquals(want, panicLine.get() + "\n", "ch09");
     }
 
     // ch10: close of closed channel panics (message parity with gc).
     public void testCh10CloseOfClosedPanic() throws Exception {
+        String want = expectedPanic("ch10_close_of_closed");
         AtomicReference<String> panicLine = new AtomicReference<>();
         withScheduler(2, () -> {
             ChanOps.Chan ch = ChanOps.makeChan(8, 0, 0L);
@@ -256,7 +267,50 @@ public final class ChannelDifferentialTest {
                 }
             });
         });
-        assertEquals("panic: close of closed channel\n",
-                panicLine.get() + "\n", "ch10");
+        assertEquals(want, panicLine.get() + "\n", "ch10");
+    }
+
+    // ch11: select send-on-closed + default panics (gc: poison > default).
+    public void testCh11SelectPoisonDefault() throws Exception {
+        String want = expectedPanic("ch11_select_poison_default");
+        AtomicReference<String> panicLine = new AtomicReference<>();
+        withScheduler(2, () -> {
+            ChanOps.Chan ch = ChanOps.makeChan(8, 0, 0L);
+            ChanOps.close(ch);
+            sched.spawn(() -> {
+                try {
+                    ChanOps.selectGo(new ChanOps.SelectCase[]{
+                            new ChanOps.SelectCase(ch, true, 1L),
+                            new ChanOps.SelectCase(null, false, null),
+                    });
+                } catch (PanicException pe) {
+                    panicLine.set("panic: " + pe.goValue());
+                }
+            });
+        });
+        assertEquals(want, panicLine.get() + "\n", "ch11");
+    }
+
+    // ch12: poison ignored when another case is ready (gc parity).
+    public void testCh12SelectPoisonReady() throws Exception {
+        StringBuilder out = new StringBuilder();
+        withScheduler(2, () -> {
+            ChanOps.Chan ch1 = ChanOps.makeChan(8, 0, 0L);
+            ChanOps.close(ch1);
+            ChanOps.Chan ch2 = ChanOps.makeChan(8, 1, 0L);
+            ChanOps.send(ch2, 99L);
+            sched.spawn(() -> {
+                int idx = ChanOps.selectGo(new ChanOps.SelectCase[]{
+                        new ChanOps.SelectCase(ch1, true, 1L),
+                        new ChanOps.SelectCase(ch2, false, null),
+                });
+                if (idx == 0) {
+                    out.append("sent ch1\n");
+                } else {
+                    out.append("recv ch2 ").append(ChanOps.selectRecvValue()).append('\n');
+                }
+            });
+        });
+        assertEquals(expected("ch12_select_poison_ready"), out.toString(), "ch12");
     }
 }

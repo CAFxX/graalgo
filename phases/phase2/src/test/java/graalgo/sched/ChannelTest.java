@@ -136,9 +136,9 @@ public final class ChannelTest {
                 ChanOps.send(ch, 3L); // blocks: buffer full
                 thirdSent.set(true);
             });
-            // Let the sender fill the buffer and park.
-            waitFor(() -> ch.buffered() == 2, "buffer full");
-            Thread.sleep(200);
+            // Wait until the sender is deterministically parked (waiter
+            // enqueued), then assert it hasn't completed.
+            waitFor(() -> ch.sendWaitersCount() == 1, "sender parked");
             assertTrue(!thirdSent.get(), "sender must be parked on full buffer");
             assertEquals(2, ch.buffered(), "buffer still full while sender parked");
             sched.spawn(() -> firstRecv.set(ChanOps.recv(ch)));
@@ -212,8 +212,7 @@ public final class ChannelTest {
                     panicVal.set(pe.goValue().toString());
                 }
             });
-            waitFor(() -> ch.buffered() == 1, "buffer full");
-            Thread.sleep(200); // let the second send park
+            waitFor(() -> ch.sendWaitersCount() == 1, "sender parked on full buffer");
             ChanOps.close(ch); // main thread: close is non-blocking
         });
         assertEquals("send on closed channel", panicVal.get(),
@@ -388,7 +387,8 @@ public final class ChannelTest {
                 val.set(ChanOps.selectRecvValue());
                 selected.set(true);
             });
-            Thread.sleep(200);
+            // Deterministic: wait until the select is parked.
+            waitFor(() -> ch.recvWaitersCount() == 1, "select parked");
             assertTrue(!selected.get(), "select must block with no ready case");
             sched.spawn(() -> ChanOps.send(ch, 42L));
             waitFor(selected::get, "select to complete after send");
@@ -440,9 +440,9 @@ public final class ChannelTest {
         AtomicReference<Object> got = new AtomicReference<>();
         withScheduler(2, () -> {
             GoChan ch = new GoChan(0, 0L);
-            // Park a plain receiver first.
+            // Park a plain receiver first (deterministic: waiter enqueued).
             sched.spawn(() -> got.set(ChanOps.recv(ch)));
-            Thread.sleep(200);
+            waitFor(() -> ch.recvWaitersCount() == 1, "receiver parked");
             // Select with a send case: must hand off to the receiver.
             sched.spawn(() -> idx.set(ChanOps.selectGo(new ChanOps.SelectCase[]{
                     new ChanOps.SelectCase(ch, true, 99L),
@@ -470,7 +470,7 @@ public final class ChannelTest {
                 val.set(ChanOps.selectRecvValue());
                 ok.set(ChanOps.selectRecvOk());
             });
-            Thread.sleep(200);
+            waitFor(() -> ch.recvWaitersCount() == 1, "select parked");
             ChanOps.close(ch);
         });
         assertEquals(0, idx.get(), "closed case chosen");
@@ -496,11 +496,64 @@ public final class ChannelTest {
                 idx.set(i);
                 ok.set(ChanOps.selectRecvOk());
             });
-            Thread.sleep(200);
+            waitFor(() -> a.recvWaitersCount() == 1 && b.recvWaitersCount() == 1,
+                    "select parked on both channels");
             ChanOps.close(b);
         });
         assertEquals(1, idx.get(), "closed channel's case chosen");
         assertTrue(!ok.get(), "ok=false");
+    }
+
+    /**
+     * Poison (send on closed) panics BEFORE default is considered, even
+     * when a default case is present (gc parity, verified against
+     * go1.27.1: `select { case closedCh <- v: default: }` panics).
+     * verifies: GG-0017
+     */
+    public void testSelectPoisonBeforeDefault() throws Exception {
+        AtomicReference<Object> panicVal = new AtomicReference<>();
+        withScheduler(2, () -> {
+            GoChan ch = new GoChan(0, 0L);
+            ChanOps.close(ch);
+            sched.spawn(() -> {
+                try {
+                    ChanOps.selectGo(new ChanOps.SelectCase[]{
+                            new ChanOps.SelectCase(ch, true, 1L),
+                            new ChanOps.SelectCase(null, false, null),
+                    });
+                    panicVal.set("NO_PANIC");
+                } catch (PanicException pe) {
+                    panicVal.set(pe.goValue().toString());
+                }
+            });
+        });
+        assertEquals("send on closed channel", panicVal.get(),
+                "poison panics before default");
+    }
+
+    /**
+     * Poison is ignored when another case is ready (gc parity: ready
+     * wins, no panic). verifies: GG-0017
+     */
+    public void testSelectPoisonIgnoredWhenReady() throws Exception {
+        AtomicInteger idx = new AtomicInteger(-1);
+        AtomicReference<Object> val = new AtomicReference<>();
+        withScheduler(2, () -> {
+            GoChan ch1 = new GoChan(0, 0L);
+            ChanOps.close(ch1);
+            GoChan ch2 = new GoChan(1, 0L);
+            ChanOps.send(ch2, 99L);
+            sched.spawn(() -> {
+                int i = ChanOps.selectGo(new ChanOps.SelectCase[]{
+                        new ChanOps.SelectCase(ch1, true, 1L),
+                        new ChanOps.SelectCase(ch2, false, null),
+                });
+                idx.set(i);
+                val.set(ChanOps.selectRecvValue());
+            });
+        });
+        assertEquals(1, idx.get(), "ready case wins over poison");
+        assertEquals(99L, val.get(), "value delivered");
     }
 
     /**
@@ -528,6 +581,60 @@ public final class ChannelTest {
     }
 
     // ---------- stress ----------
+
+    /**
+     * Same channel in two select cases: exactly one case wins and the
+     * value is delivered exactly once. verifies: GG-0017
+     */
+    public void testSelectSameChannelTwice() throws Exception {
+        AtomicInteger idx = new AtomicInteger(-1);
+        AtomicReference<Object> val = new AtomicReference<>();
+        AtomicInteger deliveries = new AtomicInteger();
+        withScheduler(2, () -> {
+            GoChan ch = new GoChan(1, 0L);
+            ChanOps.send(ch, 5L);
+            sched.spawn(() -> {
+                int i = ChanOps.selectGo(new ChanOps.SelectCase[]{
+                        new ChanOps.SelectCase(ch, false, null),
+                        new ChanOps.SelectCase(ch, false, null),
+                });
+                idx.set(i);
+                val.set(ChanOps.selectRecvValue());
+                deliveries.incrementAndGet();
+            });
+        });
+        assertTrue(idx.get() == 0 || idx.get() == 1, "one case won");
+        assertEquals(5L, val.get(), "value delivered");
+        assertEquals(1, deliveries.get(), "exactly one delivery");
+    }
+
+    /**
+     * Close broadcasts to multiple parked receivers: all observe
+     * (zero, false). verifies: GG-0017
+     */
+    public void testCloseWakesMultipleReceivers() throws Exception {
+        int n = 5;
+        AtomicInteger woken = new AtomicInteger();
+        AtomicInteger okCount = new AtomicInteger();
+        withScheduler(4, () -> {
+            GoChan ch = new GoChan(0, 0L);
+            for (int i = 0; i < n; i++) {
+                sched.spawn(() -> {
+                    GoChan.RecvResult r = ChanOps.recvOk(ch);
+                    if (!r.ok() && ((Long) r.value()) == 0L) {
+                        woken.incrementAndGet();
+                    }
+                    if (r.ok()) {
+                        okCount.incrementAndGet();
+                    }
+                });
+            }
+            waitFor(() -> ch.recvWaitersCount() == n, "all receivers parked");
+            ChanOps.close(ch);
+        });
+        assertEquals(n, woken.get(), "all receivers woken with zero");
+        assertEquals(0, okCount.get(), "none saw ok=true");
+    }
 
     /**
      * Ping-pong stress: many goroutines × many round trips on one
