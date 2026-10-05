@@ -74,6 +74,7 @@ public final class GenericsCorpusTest {
     public void testGn08Constraints() throws Exception { checkProgram("gn08_constraints"); }
     public void testGn09FmtOverlay() throws Exception { checkProgram("gn09_fmt_overlay"); }
     public void testGn10MethodrefBox() throws Exception { checkProgram("gn10_methodref_box"); }
+    public void testGn11NestedStruct() throws Exception { checkProgram("gn11_nested_struct"); }
 
     /**
      * Runs one corpus program through both backends and asserts every

@@ -1162,9 +1162,14 @@ func qualifiedName(obj *types.TypeName) string {
 
 // qualifiedNameForType returns the qualified name for a type argument
 // (e.g. "main.foo" for type foo int). Used in instantiated type names.
+// Named type arguments render WITH their own type arguments (via
+// namedTypeName): dropping them collapses Box[Box[int]] and Box[Box[string]]
+// to the same dedup key, which mints a cyclic type graph and overflows the
+// frontend (M10 self-attack: 4-deep Box nesting). The recursion terminates:
+// type arguments form a finite tree.
 func qualifiedNameForType(t types.Type) string {
 	if n, ok := t.(*types.Named); ok {
-		return qualifiedName(n.Obj())
+		return namedTypeName(n)
 	}
 	if b, ok := t.(*types.Basic); ok {
 		return b.Name()
