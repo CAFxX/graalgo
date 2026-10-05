@@ -79,7 +79,6 @@ public final class StraightLineCorpusTest {
     public void testSl10Overflow() throws Exception { checkProgram("sl10_overflow"); }
     public void testSl11Divmod() throws Exception { checkProgram("sl11_divmod"); }
     public void testSl12Earlyreturn() throws Exception { checkProgram("sl12_earlyreturn"); }
-    public void testSl13GlobalIncdec() throws Exception { checkProgram("sl13_global_incdec"); }
 
     /**
      * Runs one corpus program through both backends and asserts every

@@ -58,4 +58,5 @@ public final class VarsCorpusTest {
     public void testGv07GlobalMutate() throws Exception { Differential.checkProgram(prog("gv07_global_mutate")); }
     public void testGv08VarString() throws Exception { Differential.checkProgram(prog("gv08_var_string")); }
     public void testGv09Blank() throws Exception { Differential.checkProgram(prog("gv09_blank")); }
+    public void testGv10GlobalIncdec() throws Exception { Differential.checkProgram(prog("gv10_global_incdec")); }
 }
