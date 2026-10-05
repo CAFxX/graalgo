@@ -49,8 +49,9 @@ public final class TimerHeap {
         long deadlineNanos;
         final long id;
         final long seq;
-        final GoroutineHandle handle; // SLEEP: unpark target (null for CHAN)
-        final GoChan chan; // CHAN: delivery target (null for SLEEP)
+        final GoroutineHandle handle; // SLEEP: unpark target (null for CHAN/CALLBACK)
+        final GoChan chan; // CHAN: delivery target (null for SLEEP/CALLBACK)
+        final Runnable callback; // CALLBACK: runs on the timer thread (null otherwise)
         final ChanOwner owner; // CHAN ticker/re-arm owner (null for one-shot/SLEEP)
         final long generation; // owner generation at arm time
         /** Ticker period; 0 for one-shot timers. Mutable only for re-arm. */
@@ -58,13 +59,14 @@ public final class TimerHeap {
         boolean cancelled;
 
         Entry(long deadlineNanos, long id, long seq,
-              GoroutineHandle handle, GoChan chan,
+              GoroutineHandle handle, GoChan chan, Runnable callback,
               ChanOwner owner, long generation) {
             this.deadlineNanos = deadlineNanos;
             this.id = id;
             this.seq = seq;
             this.handle = handle;
             this.chan = chan;
+            this.callback = callback;
             this.owner = owner;
             this.generation = generation;
         }
@@ -109,7 +111,20 @@ public final class TimerHeap {
         if (handle == null) {
             throw new IllegalArgumentException("sleep timer needs a handle");
         }
-        return add(deadlineNanos, handle, null, null, 0);
+        return add(deadlineNanos, handle, null, null, null, 0, 0);
+    }
+
+    /**
+     * Arms a raw callback timer: at {@code deadlineNanos}, runs
+     * {@code callback} on the timer thread (gc timer-proc parity). The
+     * callback must not block and must not call scheduler park
+     * operations. Returns the timer id (for {@link #cancel}).
+     */
+    public long addCallback(long deadlineNanos, Runnable callback) {
+        if (callback == null) {
+            throw new IllegalArgumentException("callback timer needs a callback");
+        }
+        return add(deadlineNanos, null, null, callback, null, 0, 0);
     }
 
     /**
@@ -123,20 +138,16 @@ public final class TimerHeap {
         if (chan == null) {
             throw new IllegalArgumentException("channel timer needs a channel");
         }
-        return add(deadlineNanos, null, chan, owner, periodNanos, generation);
+        return add(deadlineNanos, null, chan, null, owner, periodNanos, generation);
     }
 
     private long add(long deadlineNanos, GoroutineHandle handle, GoChan chan,
-                     ChanOwner owner, long periodNanos) {
-        return add(deadlineNanos, handle, chan, owner, periodNanos, 0);
-    }
-
-    private long add(long deadlineNanos, GoroutineHandle handle, GoChan chan,
-                     ChanOwner owner, long periodNanos, long generation) {
+                     Runnable callback, ChanOwner owner,
+                     long periodNanos, long generation) {
         synchronized (lock) {
             long id = idGen.getAndIncrement();
             Entry e = new Entry(deadlineNanos, id, seqGen.getAndIncrement(),
-                    handle, chan, owner, generation);
+                    handle, chan, callback, owner, generation);
             // Ticker entries carry their period via the owner; store it
             // on the entry for the re-arm path.
             e.periodNanos = periodNanos;
@@ -169,7 +180,9 @@ public final class TimerHeap {
     /**
      * Stops a channel timer owned by {@code owner}: cancels the current
      * entry and clears the owner's id. Returns true iff the timer was
-     * active (gc Timer.Stop parity). Heap lock → owner lock order.
+     * active (gc Timer.Stop parity). Go 1.23+ parity: a fired-but-
+     * undrained timer counts as active — its pending value is drained
+     * and Stop returns true. Heap lock → owner lock order.
      */
     boolean stopChan(GoTimer owner) {
         synchronized (lock) {
@@ -178,10 +191,16 @@ public final class TimerHeap {
                 if (id < 0) {
                     return false;
                 }
-                boolean ok = cancelLocked(id);
+                boolean wasActive = cancelLocked(id);
                 owner.clearIdLocked();
                 owner.bumpGenerationLocked();
-                return ok;
+                if (!wasActive && owner.channelImpl().buffered() > 0) {
+                    // Fired but undrained (Go 1.23+): discard the stale
+                    // value; only the timer sends here, so it is ours.
+                    owner.channelImpl().tryRecv(sched);
+                    return true;
+                }
+                return wasActive;
             }
         }
     }
@@ -189,13 +208,21 @@ public final class TimerHeap {
     /**
      * Resets a channel timer: cancels the current entry (if any),
      * re-arms for {@code deadlineNanos}. Returns true iff the timer had
-     * been active (gc Timer.Reset parity). Heap lock → owner lock order.
+     * been active (gc Timer.Reset parity, incl. the Go 1.23+ expired-
+     * undrained → true + drain rule). Heap lock → owner lock order.
      */
     boolean resetChan(GoTimer owner, long deadlineNanos) {
         synchronized (lock) {
             synchronized (owner) {
                 long id = owner.currentId();
-                boolean wasActive = id >= 0 && cancelLocked(id);
+                boolean wasActive = false;
+                if (id >= 0) {
+                    wasActive = cancelLocked(id);
+                    if (!wasActive && owner.channelImpl().buffered() > 0) {
+                        owner.channelImpl().tryRecv(sched);
+                        wasActive = true;
+                    }
+                }
                 owner.bumpGenerationLocked();
                 long nid = addLocked(deadlineNanos, owner);
                 owner.setIdLocked(nid);
@@ -218,7 +245,7 @@ public final class TimerHeap {
     private long addLocked(long deadlineNanos, GoTimer owner) {
         long id = idGen.getAndIncrement();
         Entry e = new Entry(deadlineNanos, id, seqGen.getAndIncrement(),
-                null, owner.channelImpl(), owner, owner.generationLocked());
+                null, owner.channelImpl(), null, owner, owner.generationLocked());
         e.periodNanos = owner.periodNanos();
         heap.add(e);
         byId.put(id, e);
@@ -272,9 +299,22 @@ public final class TimerHeap {
     /**
      * Fires one entry, outside the heap lock. Channel delivery is
      * non-blocking (never parks the timer thread); ticker re-arm
-     * re-checks ownership to close the fire-vs-reset race.
+     * re-checks ownership to close the fire-vs-reset race. Raw callbacks
+     * run on the timer thread (gc timer-proc parity — must not block).
      */
     private void fire(Entry e) {
+        if (e.callback != null) {
+            try {
+                e.callback.run();
+            } catch (Throwable t) {
+                // A throwing timer callback must not kill the timer
+                // thread (that would stall every timer). Loud, then
+                // continue — same discipline as the drainer's fatal halt,
+                // but scoped: only this callback is lost.
+                System.err.println("graalgo-timer: callback threw: " + t);
+            }
+            return;
+        }
         if (e.chan != null) {
             e.chan.trySend(System.nanoTime(), sched);
             if (e.periodNanos > 0 && e.owner != null) {

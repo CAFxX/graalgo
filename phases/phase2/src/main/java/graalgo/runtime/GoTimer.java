@@ -11,11 +11,12 @@ import graalgo.sched.SchedulerCore;
  * <ul>
  *   <li>{@link #stop()} returns true iff the timer was stopped before
  *       firing; false if it already fired or was stopped. It does not
- *       close or drain the channel (gc parity — drain explicitly).
+ *       close the channel. Go 1.23+ parity: a fired-but-undrained timer
+ *       counts as active — Stop drains the pending value and returns
+ *       true (verified vs gc 1.27.1).
  *   <li>{@link #reset(long)} re-arms for {@code ns} from now, returning
- *       true iff the timer had been active. Reset on an expired timer
- *       (drained or not) re-arms cleanly (Go 1.23+ parity — verified
- *       vs gc, see corpus/timers/tm08).
+ *       true iff the timer had been active, where expired-undrained
+ *       counts as active (its stale value is drained). Go 1.23+ parity.
  *   <li>Slow ticker receivers drop ticks (channel full → fire is a
  *       no-op); a ticker more than a period behind skips ahead instead
  *       of bursting.
