@@ -8,6 +8,9 @@ The `graalgo-run` command-line interface (PLAN.md §5 CLI contract).
 graalgo-run file.go              frontend → AST → execute main; exit 0
 graalgo-run --check file.go      frontend only (harness build step; build-failure parity)
 graalgo-run --dump-vars file.go  execute, then print name=value per frame slot (debug aid)
+graalgo-run --dump-polymorphism[=path] file.go
+                             execute with call-site polymorphism recording,
+                             then print (bare flag) or write (path) the JSON snapshot (M9, WS L)
 graalgo-run --help
 ```
 

@@ -1771,7 +1771,7 @@ public final class NodeFactory {
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
             allArgs = adaptArgsForInterfaceParams(allArgs, paramTypes, ctx, path);
             return new FuncValueCallNode(new FuncConstNode(funcTable, oid), allArgs,
-                    callResultKind(node, ctx, path));
+                    callResultKind(node, ctx, path), true);
         }
         if ("ident".equals(funKind)) {
             // A func-typed variable (or a builtin ident without the builtin

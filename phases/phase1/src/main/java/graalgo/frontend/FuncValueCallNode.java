@@ -4,6 +4,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.GoCalls;
 import graalgo.runtime.GoroutineState;
+import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 
@@ -20,11 +21,49 @@ import graalgo.values.GoKind;
 public final class FuncValueCallNode extends GoExprNode {
     @Child private GoExprNode fn;
     @Children private final GoExprNode[] args;
+    /** True when built from a {@code methodref} call: args[0] is the receiver. */
+    private final boolean isMethodCall;
+    /** M9 polymorphism probe site, created lazily on first probed call. */
+    private volatile CallSiteProbes.Site probeSite;
 
     public FuncValueCallNode(GoExprNode fn, GoExprNode[] args, GoKind resultKind) {
+        this(fn, args, resultKind, false);
+    }
+
+    public FuncValueCallNode(GoExprNode fn, GoExprNode[] args, GoKind resultKind,
+            boolean isMethodCall) {
         super(resultKind);
         this.fn = fn;
         this.args = args;
+        this.isMethodCall = isMethodCall;
+    }
+
+    private String siteName() {
+        var section = getSourceSection();
+        if (section == null) {
+            return "unknown";
+        }
+        return section.getSource().getName() + ":" + section.getStartLine()
+                + ":" + section.getStartColumn();
+    }
+
+    private void probe(GoFunc f, Object[] argVals) {
+        if (!CallSiteProbes.isEnabled()) {
+            return;
+        }
+        CallSiteProbes.Site site = probeSite;
+        if (site == null) {
+            site = CallSiteProbes.registerSite(siteName());
+            probeSite = site;
+        }
+        // The compiled target (not the GoFunc wrapper: closure evaluations
+        // allocate fresh wrappers around the same target) is the stable
+        // polymorphism key — "how many distinct function bodies can this
+        // site invoke".
+        site.recordTarget(f.target());
+        if (isMethodCall && argVals.length > 0) {
+            site.recordReceiver(CallSiteProbes.receiverKey(argVals[0]));
+        }
     }
 
     private Object invoke(VirtualFrame frame) {
@@ -44,6 +83,7 @@ public final class FuncValueCallNode extends GoExprNode {
             state.setRecoverAllowed(false);
         }
         try {
+            probe(f, argVals);
             return GoCalls.invoke(f, argVals);
         } finally {
             if (state != null) {

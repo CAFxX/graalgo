@@ -53,8 +53,17 @@ public final class Main {
     static int run(String[] args) {
         boolean check = false;
         boolean dumpVars = false;
+        String dumpPoly = null;
         String file = null;
         for (String a : args) {
+            if (a.equals("--dump-polymorphism")) {
+                dumpPoly = "-"; // stdout
+                continue;
+            }
+            if (a.startsWith("--dump-polymorphism=")) {
+                dumpPoly = a.substring("--dump-polymorphism=".length());
+                continue;
+            }
             switch (a) {
                 case "--check":
                     check = true;
@@ -120,6 +129,11 @@ public final class Main {
             return EXIT_OK;
         }
 
+        if (dumpPoly != null) {
+            // M9 (WS L): enable call-site polymorphism recording for this run.
+            graalgo.values.CallSiteProbes.setEnabled(true);
+        }
+        int exitCode = EXIT_OK;
         try {
             if (dumpVars) {
                 VirtualFrame frame = Truffle.getRuntime()
@@ -146,10 +160,11 @@ public final class Main {
             } else {
                 program.root().getCallTarget().call();
             }
+            exitCode = EXIT_OK;
         } catch (graalgo.runtime.PanicException pe) {
             // M5 (WS F): uncaught Go panic → gc-comparable output, exit 2.
             reportPanic(pe);
-            return EXIT_PANIC;
+            exitCode = EXIT_PANIC;
         } catch (graalgo.runtime.Goexit g) {
             // M5 (WS F): Goexit in main = gc's fatal deadlock (exit 2).
             // (Exit 0 applies to non-main goroutines, Phase 2.)
@@ -157,14 +172,31 @@ public final class Main {
             System.err.println();
             System.err.println("goroutine 1 [running]:");
             System.err.println("main.main()");
-            return EXIT_PANIC;
+            exitCode = EXIT_PANIC;
         } catch (RuntimeException e) {
             // M2 stand-in: Go panics (incl. divide-by-zero) surface here until
             // WS F maps them to Go panic values.
             System.err.println("graalgo-run: execution failed: " + e);
-            return EXIT_INPUT_ERROR;
+            exitCode = EXIT_INPUT_ERROR;
         }
-        return EXIT_OK;
+        if (dumpPoly != null) {
+            // M9 (WS L): report the call-site polymorphism snapshot. The
+            // program's own output already went to stdout; the snapshot goes
+            // to the requested path (or stdout with the bare flag) so
+            // measurement runs stay machine-readable.
+            String polyJson = graalgo.values.CallSiteProbes.snapshotJson();
+            if ("-".equals(dumpPoly)) {
+                System.out.println(polyJson);
+            } else {
+                try {
+                    Files.writeString(Paths.get(dumpPoly), polyJson, StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    System.err.println("graalgo-run: cannot write polymorphism snapshot: " + e);
+                    return EXIT_INPUT_ERROR;
+                }
+            }
+        }
+        return exitCode;
     }
 
     /** gofrontend's side of a failed build: its exit code and captured stderr. */
@@ -232,10 +264,13 @@ public final class Main {
     }
 
     private static void usage() {
-        System.out.println("usage: graalgo-run [--check] [--dump-vars] file.go");
+        System.out.println("usage: graalgo-run [--check] [--dump-vars] [--dump-polymorphism[=path]] file.go");
         System.out.println("       graalgo-run --help");
         System.out.println("  --check      frontend only (diffharness build step)");
         System.out.println("  --dump-vars  after executing, print name=value per frame slot (debug aid)");
+        System.out.println("  --dump-polymorphism[=path]");
+        System.out.println("               M9 (WS L): record call-site polymorphism during execution,");
+        System.out.println("               then print the JSON snapshot (bare flag) or write it to path");
     }
 
     /**

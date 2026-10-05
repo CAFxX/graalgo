@@ -15,7 +15,7 @@ import java.util.Map;
  * is a stable polymorphism key.
  *
  * <p>Sites register with {@link #registerSite} and record through the
- * returned {@link Site}; {@link #snapshot} renders every site's histogram
+ * returned {@link Site}; {@link #sites} exposes every site's histogram
  * for {@code --dump-polymorphism} (WS L).
  */
 public final class InterfaceDispatchProbes {
