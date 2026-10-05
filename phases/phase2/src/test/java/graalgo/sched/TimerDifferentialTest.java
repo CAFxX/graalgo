@@ -17,7 +17,8 @@ import graalgo.runtime.Timers;
  * documented below), executed on the user-space scheduler. Output is
  * diffed byte-for-byte against the gc-recorded {@code <name>.expected}
  * file. Only event ORDER is significant — never wall-clock values
- * (sleep margins are ≥50ms so jitter cannot reorder events).
+ * (sleep margins are ≥300ms; 50ms separations sat inside the measured
+ * fire-lateness noise band and flaked — P1-2).
  *
  * <p>Translation convention (1:1 syntactic; timing semantics come from
  * the runtime under test, not the translation):
@@ -87,16 +88,18 @@ public final class TimerDifferentialTest {
         withScheduler(2, () -> {
             sched.spawn(() -> {
                 ChanOps.Chan done = ChanOps.makeChan(8, 3, "");
+                // P1-2: separations ≥300ms; 50ms sat inside the measured
+                // fire-lateness noise band (up to ~69ms) and flaked.
                 sched.spawn(() -> {
-                    Timers.sleep(150_000_000L);
+                    Timers.sleep(900_000_000L);
                     ChanOps.send(done, "slow");
                 });
                 sched.spawn(() -> {
-                    Timers.sleep(50_000_000L);
+                    Timers.sleep(300_000_000L);
                     ChanOps.send(done, "fast");
                 });
                 sched.spawn(() -> {
-                    Timers.sleep(100_000_000L);
+                    Timers.sleep(600_000_000L);
                     ChanOps.send(done, "mid");
                 });
                 for (int i = 0; i < 3; i++) {

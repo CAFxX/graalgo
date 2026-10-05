@@ -7,9 +7,9 @@ import (
 
 func main() {
 	done := make(chan string, 3)
-	go func() { time.Sleep(150 * time.Millisecond); done <- "slow" }()
-	go func() { time.Sleep(50 * time.Millisecond); done <- "fast" }()
-	go func() { time.Sleep(100 * time.Millisecond); done <- "mid" }()
+	go func() { time.Sleep(900 * time.Millisecond); done <- "slow" }()
+	go func() { time.Sleep(300 * time.Millisecond); done <- "fast" }()
+	go func() { time.Sleep(600 * time.Millisecond); done <- "mid" }()
 	for i := 0; i < 3; i++ {
 		fmt.Println(<-done)
 	}

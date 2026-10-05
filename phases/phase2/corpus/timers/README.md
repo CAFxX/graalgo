@@ -8,19 +8,26 @@ gc to produce `tm*.expected`. The Java translations in
 and must produce byte-identical output.
 
 Only event ORDER is significant — never wall-clock values. Sleep
-margins are generous (≥50ms separations) so scheduling jitter cannot
+margins are generous (≥300ms separations; 50ms sat inside the measured
+fire-lateness noise band and flaked — P1-2) so scheduling jitter cannot
 reorder events. If a program flakes, widen the sleeps.
 
 These .go files double as the future end-to-end corpus: once the
 exporter lowers the `time` package (parent dependency), the same
 programs run through `graalgo-run` and must produce identical output.
 
+**Known divergence (P2-1):** gc presents timer channels as unbuffered
+(`len(t.C)` always 0); this implementation uses 1-buffered channels, so
+a program observing `len(t.C)` would diverge. No corpus program uses
+`len()` on a timer channel. Must be resolved before Phase 3 lowers
+`time`.
+
 Programs:
-- tm01: sleep completion order (3 goroutines)
+- tm01: sleep completion order (3 goroutines; 300/600/900ms)
 - tm02: select with time.After → timeout branch
 - tm03: <-time.After fires
 - tm04: NewTimer + Stop before fire (no fire)
-- tm05: Stop after fire+drain → false, value drained
+- tm05: Stop on expired-undrained → true (Go 1.23+), pending value drained
 - tm06: Reset on active timer → true, fires at new deadline
 - tm07: Reset on expired+drained → false, fires at new deadline
 - tm08: Reset on expired+undrained → true (Go 1.23+), old value dropped
@@ -28,3 +35,5 @@ Programs:
 - tm10: slow ticker receiver → ticks dropped
 - tm11: select+After, value branch then timeout branch
 - tm12: Sleep(0)/Sleep(-1) return immediately
+- tm13: Ticker Stop with buffered tick → drained, 0 remaining (Go 1.23+)
+- tm14: Ticker Reset with buffered tick → stale drained, fresh tick arrives

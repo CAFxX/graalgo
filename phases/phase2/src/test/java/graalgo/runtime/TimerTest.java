@@ -116,24 +116,25 @@ public final class TimerTest {
                 "sleep(0) enqueued a timer");
     }
 
-    // Three sleeps fire in deadline order.
+    // Three sleeps fire in deadline order. P1-2: separations ≥300ms;
+    // 50ms sat inside the measured fire-lateness noise band and flaked.
     public void testSleepOrder() throws Exception {
         StringBuilder log = new StringBuilder();
         withScheduler(2, () -> {
             sched.spawn(() -> {
-                Timers.sleep(150_000_000L);
+                Timers.sleep(900_000_000L);
                 synchronized (log) {
                     log.append("slow\n");
                 }
             });
             sched.spawn(() -> {
-                Timers.sleep(50_000_000L);
+                Timers.sleep(300_000_000L);
                 synchronized (log) {
                     log.append("fast\n");
                 }
             });
             sched.spawn(() -> {
-                Timers.sleep(100_000_000L);
+                Timers.sleep(600_000_000L);
                 synchronized (log) {
                     log.append("mid\n");
                 }
@@ -198,9 +199,25 @@ public final class TimerTest {
             sched.spawn(() -> {
                 ChanOps.recv(t.channel());
                 log.append("fired\n");
+                // P2-8: the old 500ms deadline must have been cancelled —
+                // no second fire may arrive.
+                try {
+                    Thread.sleep(700);
+                } catch (InterruptedException ie) {
+                    // ignore
+                }
+                int extra;
+                GoChan ch = (GoChan) t.channel();
+                synchronized (ch) {
+                    extra = 0;
+                    while (ch.tryRecv(sched) != null) {
+                        extra++;
+                    }
+                }
+                log.append("extra:").append(extra).append("\n");
             });
         });
-        assertEquals("fired\n", log.toString(), "reset-active fire");
+        assertEquals("fired\nextra:0\n", log.toString(), "reset-active fire");
     }
 
     // Reset on an expired+drained timer: false, fires at the new deadline.
@@ -422,5 +439,56 @@ public final class TimerTest {
             Thread.sleep(300);
         });
         assertTrue(ran.get(), "startTimer callback did not run");
+    }
+
+    // P2-7: pin the b3a7546 headline — the startTimer callback runs on
+    // the timer thread (gc timer-proc parity), not a carrier.
+    public void testStartTimerCallbackOnTimerThread() throws Exception {
+        AtomicReference<String> threadName = new AtomicReference<>();
+        withScheduler(1, () -> {
+            Timers.startTimer(System.nanoTime() + 50_000_000L,
+                    () -> threadName.set(Thread.currentThread().getName()));
+            Thread.sleep(300);
+        });
+        assertEquals("graalgo-timer", threadName.get(),
+                "callback thread");
+    }
+
+    // P2-7: a throwing timer callback does not kill the timer thread —
+    // the next timer still fires.
+    public void testThrowingCallbackDoesNotKillTimerThread() throws Exception {
+        AtomicBoolean secondRan = new AtomicBoolean();
+        withScheduler(1, () -> {
+            Timers.startTimer(System.nanoTime() + 50_000_000L,
+                    () -> { throw new RuntimeException("boom"); });
+            Timers.startTimer(System.nanoTime() + 150_000_000L,
+                    () -> secondRan.set(true));
+            Thread.sleep(400);
+        });
+        assertTrue(secondRan.get(),
+                "timer thread died after throwing callback");
+    }
+
+    // P2-7: Netpoll deletion pin — all five methods throw UOE with the
+    // GG-0018 message (netpoller deleted; blocking I/O uses ioEnter/ioExit).
+    public void testNetpollDeletion() throws Exception {
+        withScheduler(1, () -> {
+            assertThrowsUoe(() -> Netpoll.init());
+            assertThrowsUoe(() -> Netpoll.open(0, 0));
+            assertThrowsUoe(() -> Netpoll.close(0));
+            assertThrowsUoe(() -> Netpoll.waitForEvents(true));
+            assertThrowsUoe(() -> Netpoll.breakWait());
+        });
+    }
+
+    private static void assertThrowsUoe(Runnable r) {
+        try {
+            r.run();
+        } catch (UnsupportedOperationException uoe) {
+            assertTrue(String.valueOf(uoe.getMessage()).contains("GG-0018"),
+                    "UOE message must cite GG-0018: " + uoe.getMessage());
+            return;
+        }
+        throw new AssertionError("expected UnsupportedOperationException");
     }
 }

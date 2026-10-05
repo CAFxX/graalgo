@@ -546,3 +546,36 @@ stress, tick(0), reset panics), 2 IoSlotsTest (P1-4), 2 FreezeGapTest,
 tests (3 new P0-2 + 4 existing).
 
 **Reviewer2** (methodology) still running.
+
+## 2026-10-05 ~16:30 CEST — P2-M3 reviewer2 remediation
+
+**Reviewer2** (methodology) returned GO-WITH-FINDINGS. P1-1 (ticker
+drain) was already fixed in 6b327f2 (reviewer1 P0-2 — same issue;
+reviewer2 independently verified the fix). Remediated:
+
+- **P1-2**: `testTm01SleepOrder`/`testSleepOrder` flaky (50ms inside
+  ~69ms noise band; failed 1/3 runs) → widened to 300/600/900ms in the
+  .go, both Java translations, and the class javadoc. gc re-run confirms
+  .expected unchanged (order-only).
+- **P2-1**: `len()` on timer channels (gc: always 0; impl: 1 when
+  buffered) → documented as accepted Phase-2 divergence in GoTimer
+  javadoc + corpus README (must fix before Phase 3 lowers `time`).
+- **P2-2**: `testIoExitReacquiresSlot` passed vacuously under no-op
+  ioExit → now does a second ioEnter/ioExit pair and asserts inIo
+  cleared (fails under mutation).
+- **P2-3**: README tm05 bullet fixed (was "fire+drain → false"; actually
+  expired-undrained → true); tm13/tm14 documented; margin note updated.
+- **P2-7**: added pins — callback runs on `graalgo-timer` thread,
+  throwing callback doesn't kill timer thread, Netpoll 5× UOE+GG-0018.
+- **P2-8**: `testTimerResetActive` now asserts no second fire (old
+  deadline cancelled).
+- **N3 correction**: the ~14:30 design entry's "startTimer arms + parks
+  current goroutine, callback runs as wakeAction" was superseded 8
+  minutes later by b3a7546 (callback runs on timer thread; caller never
+  parks). Current design: TimerHeap javadoc.
+- **N4**: PipedInputStream comment fixed (monitor wait, not syscall).
+
+Deferred: P2-4 (per-test timeout; mutation-B hang), P2-9 (SchedulerCore
+shutdown; thread accumulation documented as accepted for now).
+
+**Tests**: 101/101 green.

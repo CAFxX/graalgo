@@ -62,7 +62,10 @@ public final class IoSlotsTest {
                 sched.ioEnter();
                 inIo.set(true);
                 try {
-                    int b = in.read(); // real blocking syscall
+                    int b = in.read(); // N4: parks in a monitor wait
+                    // (PipedInputStream), not a syscall — but it does block
+                    // the carrier thread, which is what the slot-release
+                    // accounting must survive.
                     if (b != 7) {
                         throw new AssertionError("short read: " + b);
                     }
@@ -105,17 +108,31 @@ public final class IoSlotsTest {
     }
 
     // ioExit re-acquires the slot: the goroutine continues and the cap
-    // still holds when both run.
+    // still holds when both run. P2-2: pins the re-acquire — a no-op
+    // ioExit leaves inIo set, so the second ioEnter/ioExit pair throws
+    // the re-entrant ISE instead of succeeding (the old assertions
+    // passed vacuously under a no-op ioExit).
     public void testIoExitReacquiresSlot() throws Exception {
         AtomicBoolean continued = new AtomicBoolean();
+        AtomicBoolean inIoAfter = new AtomicBoolean(true);
+        AtomicReference<String> err = new AtomicReference<>();
         withScheduler(1, () -> {
             sched.spawn(() -> {
                 sched.ioEnter();
                 // No actual blocking: immediate re-acquire.
                 sched.ioExit();
+                inIoAfter.set(sched.currentGoroutine().inIo.get());
+                try {
+                    sched.ioEnter();
+                    sched.ioExit();
+                } catch (IllegalStateException ise) {
+                    err.set(ise.getMessage());
+                }
                 continued.set(true);
             });
         });
+        assertTrue(err.get() == null, "second ioEnter/ioExit failed: " + err.get());
+        assertTrue(!inIoAfter.get(), "inIo still set after ioExit");
         assertTrue(continued.get(), "goroutine did not continue after ioExit");
         assertTrue(sched.maxInflightObserved() <= 1,
                 "cap violated: maxInflight=" + sched.maxInflightObserved());

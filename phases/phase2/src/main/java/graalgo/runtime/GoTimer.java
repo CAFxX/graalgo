@@ -31,6 +31,13 @@ import graalgo.sched.SchedulerCore;
  * <p>The channel element is the fire nanotime boxed as {@link Long}
  * (opaque until Phase 3 brings {@code time.Time}).
  *
+ * <p><b>Known divergence (P2-1):</b> gc presents timer channels as
+ * unbuffered — {@code len(t.C)} always returns 0. This implementation
+ * uses a 1-buffered {@link GoChan}, so {@code ChanOps.len} returns 1
+ * when a tick is buffered but undelivered. Accepted for Phase 2 (the
+ * {@code time} package is not lowered yet); must be resolved before
+ * Phase 3 lowers {@code time}.
+ *
  * <p>verifies: GG-SCHED-0004 (timer slice)
  */
 public final class GoTimer implements TimerHeap.ChanOwner {
