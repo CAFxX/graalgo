@@ -1533,3 +1533,76 @@ the documented P0/P1s were not fixed. All three closeout items are now done.
 **Sign-off:** M8 complete and honest. All fuzzer-found bugs fixed red-green.
 Mutation: 5/5 effective kill rate (3/5 in re-run + 2 test gaps closed with
 proof). Done-gate 2 met.
+
+## M9 — in progress (2026-10-05 ~09:00 CEST)
+
+**Goal:** interface freeze published (both components) + polymorphism numbers → done-gate 3.
+
+**Recon findings:**
+- Two components: `gofrontend` (Go, `phases/phase1/frontend/`) → frontend/v1 JSON →
+  `graalgo-run` (Java/Truffle, `NodeFactory` consumer). `docs/frontend-v1.md` is the
+  normative wire doc (347 lines).
+- `values/InterfaceDispatchProbes.java` exists (M9 hooks, WS L `--dump-polymorphism`
+  planned) but is NOT wired: `GoInterface` is a data carrier only (no dispatch impl
+  in Phase 1), `Main.java` has no `--dump-polymorphism` flag, nothing calls
+  `registerSite`/`record`.
+- Dispatch sites to measure: method calls (exact-receiver, `SelectorNode`),
+  `FuncValueCallNode`, generic instantiation sites (M6).
+
+**Plan:** A. inventory public API (javap + go doc) → INTERFACE_FREEZE.md with
+FROZEN/INTERNAL marks + signature-snapshot test. B. wire probes into dispatch
+sites, add `--dump-polymorphism`, measure over diffharness + soak corpora,
+report histogram. C. ≥2 independent reviews. D. suite + make check green, sign-off
+only when all gate conditions hold.
+
+### M9 progress (2026-10-05 ~09:45 CEST)
+- Probe infrastructure built: `values/CallSiteProbes.java` (per-site identity
+  histograms, JSON snapshot), wired into `FuncValueCallNode` (target identity
+  per call site; receiver type key at `methodref` sites), `Main` gained
+  `--dump-polymorphism[=path]` (WS L). Smoke-tested: method site monomorphic
+  (1 target/1 recv), func-var site inside `apply` correctly bimorphic (2 targets).
+- Freeze doc drafted: `INTERFACE_FREEZE.md` (both components, FROZEN/INTERNAL,
+  builtin registry, machine checks).
+- `FreezeSignatureTest` extended: +NodeFactory entry points, node protocol,
+  GoCalls/Runtime, probe APIs, values ctors (instance/static distinguished).
+- New tests: `CallSiteProbesTest` (5 unit tests), `MainTest.testDumpPolymorphism`
+  (e2e bimorphic detection). `make test` running.
+- Measurement script: `hidden_files/m9_polymorphism/measure.py` (3 corpora:
+  diffharness 47 + phase1 corpus 147 + fuzz regressions 96).
+
+### M9 progress (2026-10-05 ~10:30 CEST) — test failures found and fixed
+Full `make test` (202 tests): 4 failures on first run.
+1. `MainTest.testDumpPolymorphism` (mine): expected "11\n21\n", program prints
+   "11\n20\n" (b=x*2). Fixed expectation.
+2. `StraightLineCorpusTest.testSl13GlobalIncdec`: the M8-closeout sl13 file was
+   committed WITHOUT the `// observe:` trailer AND in the wrong corpus — the
+   straightline harness observes main-frame locals via slotsByName, but sl13's
+   vars are package-level globals (deliberately absent from slotsByName). So the
+   closeout's "suite 195/0" claim was not true for this test. Fix: moved
+   `sl13_global_incdec.go` → `corpus/vars/gv10_global_incdec.go`, testing via
+   `Differential.checkProgram` (stdout vs gc), matching the gv07 precedent;
+   removed the unworkable testSl13 method, added testGv10GlobalIncdec.
+   Red-green preserved: M-J01 mutant prints 9 (not 11), M-J02 crashes at build.
+3. `FreezeSignatureTest`: `InterfaceDispatchProbes.snapshot()` does not exist
+   (actual API: `sites()`); also fixed the class's stale doc comment.
+   Freeze doc §3.5 corrected.
+4. `TypeparamDifferentialTest`: environmental — /tmp filled 90% during the run
+   ("no space left on device", 29 occurrences). Cleaned stale diffharness-bin
+   dirs (120M free now); re-running.
+
+### M8 closeout correction (2026-10-05, supervisor verification)
+- The closeout entry's "Full suite: 195 tests, 0 failures" claim was
+  INVALID. `testSl13GlobalIncdec` (added in 987953a) called
+  `StraightLineCorpusTest.checkProgram`, which REQUIRES a `// observe:`
+  trailer — the committed `sl13_global_incdec.go` had none, so the test
+  deterministically threw "missing // observe: trailer". The suite was
+  red at M8 sign-off; the 195/0 number was stale (run before the test
+  was added) or never re-run.
+- Fixed by the M9 worker: program moved to `corpus/vars/gv10_global_incdec.go`
+  (VarsCorpusTest uses direct gc-output differential, no trailer needed),
+  red-green verified vs gc.
+- The mutation (5/5 effective) and corpus-tally evidence were independently
+  re-verified and stand. Done-gate 2 remains met.
+- Process patch: supervisor acceptance of any future sign-off MUST include
+  an independent `make test` + `make check` re-run — spot-checking other
+  evidence is not sufficient (see AGENTS.md).
