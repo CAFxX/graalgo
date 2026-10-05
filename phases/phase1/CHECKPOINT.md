@@ -1698,3 +1698,21 @@ recorded.
 M10: final reviews + self-attack + grep gates + cross-doc consistency audit → done-gates 4, 5 → Phase-1 closeout.
 Done-gates (PHASES.md §3): 1 (differential suites, zero unexplained) MET M7; 2 (fuzz-soak operational) MET M8; 3 (interface freeze) MET M9; 4 (peer reviews + self-attack) PENDING; 5 (no placeholders, grep gate) PENDING.
 Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh `make test` + `make check` run by this worker on the final tree.
+
+### M10 progress (2026-10-05 ~12:00 CEST)
+- Grep gates: TODO/FIXME/XXX = 0 files. Placeholder hits all legitimate
+  (fail-fast WS scope rejections; frozen Phase-2 API stubs that throw).
+  Strengthened `make check` with debug-leftover gate (src/main only;
+  test/smoke output legitimate). Both gates green (d3371a6).
+- Self-attack: 6 adversarial programs, all vs gc. Two P0s found+fixed:
+  (1) exporter `qualifiedNameForType` dropped nested type args ->
+      cyclic type graph -> frontend StackOverflowError on 4-deep
+      `Box[Box[...]]` (ea4f6e9; regression gn11_nested_struct.go,
+      red-green verified); (2) deep Go recursion -> raw JVM
+      NoClassDefFoundError cascade -> clean `stack overflow` report,
+      exit 2 (51e281e; regression
+      MainTest.testDeepRecursionReportsCleanStackOverflow).
+  Report: hidden_files/m10_selfattack/REPORT.md. Known limit documented
+  in docs/limitations.md (Phase-4 re-test trigger).
+- Reviews dispatched: 2 independent reviewers (code + methodology),
+  snapshot 51e281e. Reports -> reviews/phase1-m9... (pending).
