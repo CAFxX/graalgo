@@ -93,6 +93,7 @@ func oneSeed(workdir string, seed int64, doMin bool, journal *bufio.Writer, jmu 
 	data, _ := json.Marshal(journalEntry{Seed: seed, Verdict: v.String(), Note: note})
 	journal.Write(data)
 	journal.WriteByte('\n')
+	journal.Flush() // M8: flush per entry for crash safety and live monitoring
 	jmu.Unlock()
 	return v
 }
