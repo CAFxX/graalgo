@@ -1716,3 +1716,51 @@ Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh 
   in docs/limitations.md (Phase-4 re-test trigger).
 - Reviews dispatched: 2 independent reviewers (code + methodology),
   snapshot 51e281e. Reports -> reviews/phase1-m10/ (pending).
+
+## M10 SIGN-OFF (2026-10-05 ~14:30 CEST) — done-gates 4, 5 MET — PHASE 1 COMPLETE
+
+### Done-gate 4: peer reviews + self-attack — MET
+**Reviews** (2 independent, snapshot 51e281e, both GO-WITH-FINDINGS, all remediated):
+- Reviewer 1 (code): 4 P1 + 2 P2 → all fixed. P1-1 (limitations.md bad
+  test ref), P1-2 (cascade unwrap now unit-tested via isStackOverflowCascade),
+  P1-3 (cycle guards in 5 Java type walkers + FrontendRobustnessTest),
+  P1-4 (exporter exponential-Sizeof hang → depth cap + TestDeepNesting).
+  Report: reviews/phase1-m10/reviewer1.md.
+- Reviewer 2 (methodology): 1 P1 + 7 P2 → all fixed (freeze §3.1 exit-2
+  table, doc paths, report precision, DEPTH_LIMIT.log).
+  Report: reviews/phase1-m10/reviewer2.md.
+- Reviewer 2 independently re-verified: mutation 5/5 still valid post-M10;
+  10+ doc numbers match evidence; both M10 P0 fixes red-green reproduced.
+
+**Self-attack** (6 adversarial programs vs gc): 2 P0s found and fixed red-green.
+- P0-A: exporter `qualifiedNameForType` dropped nested type args →
+  cyclic type graph → frontend StackOverflowError on 4-deep Box nesting.
+  Fix: recursive name rendering. Regression: gn11_nested_struct.go
+  (FAIL→PASS verified). Commit ea4f6e9.
+- P0-B: deep Go recursion → raw JVM NoClassDefFoundError cascade.
+  Fix: catch SOE + unwrap profiler cascade → clean `stack overflow`,
+  exit 2. Regression: MainTest.testDeepRecursionReportsCleanStackOverflow.
+  Commit 51e281e. Limit documented: docs/limitations.md (15k ok, 20k+ exit 2).
+- Others (defer storm, hostile fmt, defer/panic, typeparams): gc-identical.
+- Report: hidden_files/m10_selfattack/REPORT.md.
+
+### Done-gate 5: no placeholders (grep gate) — MET
+- TODO/FIXME/XXX: 0 files. "Stub" hits are fail-fast scope boundaries or
+  frozen Phase-2 API surfaces (throw UnsupportedOperationException).
+- `make check` gates: placeholder gate + debug-leftover gate (src/main),
+  both green. Deprecation enforced by -Xlint:deprecation -Werror.
+
+### Final verification (fresh runs by M10 worker on sign-off tree)
+- `make test`: **208 tests, 0 failures** (206 Java + 2 new: testIsStackOverflowCascade,
+  testCyclicStructTypeFailsFast; gn11, deep-recursion tests included).
+- `make check`: green.
+- Go frontend tests (`go test -count=1 .`): pass (incl. TestDeepNesting).
+- `bash tools/precommit-check.sh`: clean.
+
+### M10 commits
+8d26562 (start), d3371a6 (grep gates), ea4f6e9 (P0-A), 51e281e (P0-B),
+a9d548a (reviewer2 remediations), 72e293f (reviewer1 P1 remediations),
+4a77b3a (test fix).
+
+**Sign-off:** M10 complete. Done-gates 4 and 5 met with evidence above.
+Phase 1 (M1–M10) is COMPLETE: all five done-gates met.
