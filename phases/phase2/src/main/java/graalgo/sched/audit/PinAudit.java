@@ -188,10 +188,19 @@ public final class PinAudit {
                 + ",jdk.VirtualThreadPinned#enabled=true"
                 + ",jdk.VirtualThreadPinned#stackTrace=true");
         cmd.add("-cp");
-        cmd.add(cp);
         if (mainArgs[0].equals("__TESTS__")) {
+            // The test runner lives in out/test-classes, which is not on
+            // PinAudit's own classpath. The caller passes it via
+            // -Dpinaudit.test.cp (see the pin-audit Makefile target).
+            String testCp = System.getProperty("pinaudit.test.cp");
+            if (testCp == null || testCp.isEmpty()) {
+                throw new IllegalStateException(
+                        "pinaudit.test.cp not set (required for --tests)");
+            }
+            cmd.add(testCp);
             cmd.add("graalgo.sched.SchedTestRunner");
         } else {
+            cmd.add(cp);
             cmd.add("graalgo.sched.launcher.SchedMain");
             cmd.addAll(List.of(mainArgs));
         }

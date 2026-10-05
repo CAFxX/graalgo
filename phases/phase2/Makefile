@@ -111,6 +111,29 @@ check:
 	@if grep -rn --include='*.java' -E 'allocateMemory|MemorySegment|Arena|theUnsafe|allocateDirect|import sun\.misc\.|import jdk\.internal|sun\.misc\.Unsafe|Class\.forName\("sun' src/; then \
 		echo "OFF-HEAP/BARRIER GATE FAILED"; exit 1; fi
 	@echo "off-heap/barrier gate clean"
+	@echo "== pin-surface grep gate (P2-M7, GG-0057) =="
+	@echo "-- no JNI/FFM on goroutine-reachable paths: a native method or an"
+	@echo "-- FFM downcall on a goroutine vthread is the only remaining"
+	@echo "-- pinning class on JDK 25 (JEP 491 retired synchronized pinning)."
+	@echo "-- Any new native/FFM surface must be allowlisted in the PinAudit"
+	@echo "-- budget (hidden_files/pinning/AUDIT.md) or this gate fails."
+	@if grep -rn --include='*.java' -E '^[[:space:]]*(public|private|protected|static|final|[[:space:]])*native[[:space:]]' src/main/ ../phase1/src/main/; then \
+		echo "PIN-SURFACE GATE FAILED: native method declaration"; exit 1; fi
+	@if grep -rn --include='*.java' 'java\.lang\.foreign' src/main/ ../phase1/src/main/; then \
+		echo "PIN-SURFACE GATE FAILED: FFM usage"; exit 1; fi
+	@echo "pin-surface gate clean"
+
+# P2-M7 pinning audit (WS G, GG-0057): full conformance corpus + test
+# suite under jdk.VirtualThreadPinned. Slow (~15 min); run explicitly and
+# before milestone sign-off. Report: hidden_files/pinning/pinaudit-report.md.
+pin-audit: main $(OUT_TEST)/.built
+	mkdir -p out/test-tmp
+	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
+	$(JAVA) --enable-native-access=ALL-UNNAMED -Xss32m \
+	-Dpinaudit.test.cp="$(TEST_CP)" \
+	-cp "$(RUN_CP)" graalgo.sched.audit.PinAudit \
+	--corpus ../phase1/corpus --corpus corpus --tests --gmp 2 \
+	--out hidden_files/pinning/pinaudit-report.md
 
 clean:
 	rm -rf out
