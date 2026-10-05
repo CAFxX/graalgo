@@ -840,3 +840,34 @@ justification); GODEBUG.md regenerated.
 godebug-diff 4/4 green.
 
 **Still pending:** reviewer2 (methodology) report.
+
+## 2026-10-05 — P2-M5 reviewer2 (methodology) report: NO-GO → remediated
+
+**Verdict:** NO-GO. P0 was the same uncommitted-method issue as
+reviewer1 (fixed). Methodology findings remediated (commit bba197c):
+
+- **Hash strengthened:** now covers name+disposition+default (a
+  disposition retriage fails the check and forces a version bump).
+- **DIV-M5-5 added:** the five NO-OP knobs whose effective behavior
+  permanently equals a non-default value; triage principles stated in
+  GODEBUG.md; tracebacklabels justification addresses the no-labels case.
+- **godebug-diff comparators strengthened:** schedtrace requires >=3
+  lines with strictly increasing timestamps; scheddetail has a negative
+  control (no lines without the knob); gctrace requires >=2 cycle lines.
+  4/4 green.
+- **panicnil uncaught coverage:** new db05 probe; positive
+  ("panic: nil" with panicnil=1) and negative (default prints the
+  error) subprocess tests.
+- **gc-faithful fixes:** panicnil enables old behavior only for ==1
+  (panic.go:811); negative schedtrace accepted as off like gc;
+  memprofilerate int64 (was reviewer1 P1); cgocheck>1 denied (was
+  reviewer1 P1).
+- **multipartfiles removed:** it is commented out of go1.27.1's
+  godebug table (not a real knob). Registry v3, 78 knobs + 9 removed.
+- **Checkpoint correction:** the "10 removed" in the triage plan was
+  wrong; it is 9 (matches upstream).
+
+**Re-verified:** phase-2 suite 152/152 green, `make check` green,
+godebug-diff 4/4 green.
+
+**Still pending:** Phase-1 suite re-run (208 tests) before sign-off.
