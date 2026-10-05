@@ -749,3 +749,40 @@ after DELTA-GO from both.
 - gc fatals on double SetFinalizer without nil (matched).
 - JIT liveness requires KeepAlive for reliable cancellation; PINNED set
   bridges the register/cancel window.
+
+## 2026-10-05 — P2-M5 START (GODEBUG surface triage, WS E)
+
+**Goal:** versioned registry of every GODEBUG knob (emulated / no-op /
+unsupported-with-justification); unknown knobs deny-with-error (never
+silently ignore); `godebug-diff` tooling diffing emulated-knob behavior vs
+gc. GG-0055→active. Gate 5 (part).
+
+**Knob universe** (from go1.27.1 source): 33 `dbgvars` in
+`src/runtime/runtime1.go` + `memprofilerate` + 10 removed
+(`src/internal/godebugs/table.go`) + ~45 non-runtime `internal/godebugs`
+entries.
+
+**Triage plan:**
+- EMULATED (4): `schedtrace`, `scheddetail` (periodic scheduler-state
+  lines, graalgo format, documented), `gctrace` (per-cycle line from JVM
+  GC notifications, documented), `panicnil` (pre-1.21 panic(nil)
+  semantics via same-FQN `graalgo.runtime.Panic` overlay + drift test —
+  P2-D8 pattern).
+- UNSUPPORTED (deny on non-default): `gccheckmark`, `gcpacertrace`,
+  `gcstoptheworld`, `scavtrace` (JVM GC internals), `inittrace`
+  (Phase-1 frontend territory, frozen), `tracebackancestors` (no creator
+  tracking), `clobberfree`, `efence` (allocator debugging on JVM heap).
+- NO-OP (accept+ignore, justified): the rest — incl. `asyncpreemptoff`
+  (no signal-based async preemption exists; effective behavior always
+  equals asyncpreemptoff=1), all non-runtime knobs (subsystem absent).
+- REMOVED: deny iff set to gc's "old" value (matches gc fatal);
+  accept otherwise. `asynctimerchan=1` denied (our timers are async).
+- Deliberate divergences from gc (→ DIVERGENCES.md): unknown knob →
+  hard error (gc silently ignores); malformed value → error (gc keeps
+  old); bare field without `=` → error (gc skips).
+
+**Design:** `graalgo.sched.launcher.GoDebug` (parse/apply/accessors) +
+`src/main/resources/graalgo/sched/godebug/registry.json` (versioned;
+Makefile copies resources) + `SchedMain` startup hook (exit 2 on deny,
+matching gc's fatal). Machine-checked version test (version constant +
+knob-name-set hash). `tools/godebug-diff/` probes per emulated knob.

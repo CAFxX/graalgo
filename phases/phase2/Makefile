@@ -7,9 +7,10 @@
 # freeze change policy).
 #
 # Classpath order is load-bearing: phase2/out/classes comes FIRST so the
-# three "Phase 2 owns" same-FQN replacements (graalgo.safepoint.Safepoint,
-# graalgo.runtime.Scheduler, graalgo.runtime.GoroutineState) shadow the
-# Phase-1 stubs. If phase1 classes came first, the stubs' loud
+# four "Phase 2 owns" same-FQN replacements (graalgo.safepoint.Safepoint,
+# graalgo.runtime.Scheduler, graalgo.runtime.GoroutineState,
+# graalgo.runtime.Panic [P2-M5 panicnil overlay]) shadow the Phase-1 stubs.
+# If phase1 classes came first, the stubs' loud
 # UnsupportedOperationExceptions would fire — a fail-fast, never silent.
 #
 # Pinned toolchain: Oracle GraalVM 25.0.4.1.1 LTS, plain javac,
@@ -26,6 +27,7 @@ CP := $(subst $(eval) ,:,$(strip $(LIB)))
 
 SRC_MAIN := $(shell find src/main/java -name '*.java')
 SRC_TEST := $(shell find src/test/java -name '*.java')
+SRC_RES := $(shell find src/main/resources -type f 2>/dev/null)
 OUT_MAIN := out/classes
 OUT_TEST := out/test-classes
 
@@ -45,11 +47,13 @@ $(P1_CLASSES)/.built:
 	$(MAKE) -C $(P1) main
 
 main: $(P1_CLASSES)/.built $(OUT_MAIN)/.built
-$(OUT_MAIN)/.built: $(SRC_MAIN)
+$(OUT_MAIN)/.built: $(SRC_MAIN) $(SRC_RES)
 	mkdir -p $(OUT_MAIN)
 	$(JAVAC) -version
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(P1_CLASSES):$(CP)" -processorpath "$(CP)" \
 		-d $(OUT_MAIN) $(SRC_MAIN)
+	@if [ -d src/main/resources ]; then \
+		cp -r src/main/resources/. $(OUT_MAIN)/; fi
 	touch $(OUT_MAIN)/.built
 
 # graalgo-run --gmp=N file.go — Phase-2 scheduler entry point.
