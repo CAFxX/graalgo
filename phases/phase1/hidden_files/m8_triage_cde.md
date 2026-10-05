@@ -46,6 +46,19 @@ values, producing a negative digit count.
 **Re-test trigger:** Fix the decimal conversion to handle tiny values (clamp to 0).
 
 ## Disposition
-All three are real bugs in the v1 subset (fmt is in scope). Documented with
-repros and re-test triggers. Do not block done-gate 2 (soak is operational;
-triage loop is now keeping up).
+**ALL FIXED (M8 closeout, commit 95b20a2).** Red-green:
+`corpus/builtins/bi22_float_edge.go` (gc-identical).
+
+**Correction to the Class D analysis above:** The claim "Go's fmt has
+special handling for negative zero" was wrong. Direct measurement shows:
+(1) the `-0.0` literal is **+0.0** in gc (`math.Signbit(-0.0)==false`;
+go/types folds it to +0.0); (2) true -0.0 (via `math.Copysign(0,-1)` or
+unary minus of a variable) prints as **-0** in gc's fmt. The real bugs
+were: (a) UnaryExpr never constant-folded, producing IEEE -0.0 at runtime
+instead of go/types' +0.0; (b) float `==` used `Double.compare` (total
+ordering) instead of IEEE semantics. Both fixed; the triage doc's
+"normalizes to 0" premise is retracted.
+
+Class C: nil slice -> `[]`, nil map -> `map[]` (was `<nil>`). Class E:
+`%f` of 1e-300 -> `0.000000` (was `Digits < 0` crash from MathContext
+with non-positive precision).

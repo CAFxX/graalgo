@@ -2,7 +2,18 @@
 
 **Found by:** M8 fuzzer (seed 1001, minimized)
 **Severity:** P0 (any struct field write after `var x any = v` fails)
-**Status:** Pre-existing (confirmed on baseline a5731ec, not a regression)
+**Status:** FIXED (M8 closeout, commit 954a9bd). **The "boxing corrupts"
+hypothesis below was WRONG** — direct `fmt.Println(v44)` (no interface)
+crashes identically. Root cause: `Fmt.structFieldBoxed` passed the
+*carrier* index (`Field.index()`, position within longs[]/objects[]) to
+`GoStruct.getLong/getObject`, which expect the *field* index (position in
+the descriptor's field list). Any mixed struct (e.g. {int, string}) crashed
+printing; pure-longs/pure-objects structs passed by accident.
+**Fix:** `structFieldBoxed` takes the field index; documents the
+field-index vs carrier-index distinction. Class hunt: all other
+getLong/getObject/setLong/setObject sites correct — confusion isolated.
+**Red-green:** `corpus/builtins/bi20_struct_print.go` (mixed/direct/boxed/
+nested/%+v/%#v); verified red on old code, green on new, gc-identical.
 
 ## Repro
 ```go

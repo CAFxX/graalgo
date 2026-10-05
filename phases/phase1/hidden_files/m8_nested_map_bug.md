@@ -2,7 +2,7 @@
 
 **Found by:** M8 fuzzer (seed 1006, minimized)
 **Severity:** P1 (nested maps with non-ASCII keys fail to print)
-**Status:** Pre-existing (needs baseline verification)
+**Status:** FIXED (M8 closeout, commit 6e62b2e).
 
 ## Repro
 ```go
