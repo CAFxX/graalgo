@@ -156,6 +156,7 @@ public final class SchedulerCore {
         }
         long t = armPark(h);
         h.ioStartNanos = System.nanoTime();
+        h.ioParkEvent = JfrEvents.ioParkBegin();
         drainer.offer(new ResumeToken(ResumeToken.Kind.IO_ENTER, h, t));
         awaitAck(h, t);
     }
@@ -180,11 +181,16 @@ public final class SchedulerCore {
         // notePark'd: they are scheduler latency, not I/O, and under
         // drainer contention could exceed the park threshold — emitting
         // them would double/triple-count one syscall and mislabel the
-        // reason. ioBlocked is the single authoritative IO event.
-        // (ioStartNanos is taken unconditionally in ioEnter so a
+        // reason. ioParkEnd is the single authoritative IO event: the
+        // interval begun at ioEnter commits spanning the syscall
+        // (reviewer2 P2-7); if no interval was begun (recording started
+        // mid-syscall) it falls back to emitting the full duration at
+        // exit. (ioStartNanos is taken unconditionally in ioEnter so a
         // recording started mid-syscall still observes the interval;
         // ~100ns on a syscall path is negligible.)
-        JfrEvents.ioBlocked(h, System.nanoTime() - h.ioStartNanos);
+        graalgo.jfr.GoroutineParkEvent ioEvent = h.ioParkEvent;
+        h.ioParkEvent = null;
+        JfrEvents.ioParkEnd(h, ioEvent, System.nanoTime() - h.ioStartNanos);
     }
 
     Drainer drainer() {

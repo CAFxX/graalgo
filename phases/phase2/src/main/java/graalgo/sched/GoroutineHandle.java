@@ -65,6 +65,13 @@ public final class GoroutineHandle {
     public volatile long ioStartNanos;
 
     /**
+     * JFR I/O interval (P2-M6, reviewer2 P2-7): event begun at
+     * {@code ioEnter} (null when disabled at enter), committed at
+     * {@code ioExit} so the JFR interval spans the syscall.
+     */
+    public volatile graalgo.jfr.GoroutineParkEvent ioParkEvent;
+
+    /**
      * JFR lifetime tracking (P2-M6): nanos when the goroutine started
      * executing (after first admission); read in the finally block for
      * {@code graalgo.GoroutineEnd}.

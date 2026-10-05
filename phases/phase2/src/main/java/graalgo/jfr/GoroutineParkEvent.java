@@ -41,6 +41,27 @@ public final class GoroutineParkEvent extends Event {
         return PROTOTYPE.isEnabled();
     }
 
+    /**
+     * Begins an interval event (reviewer2 P2-7): for blocking I/O, begun
+     * at {@code ioEnter} and committed at {@code ioExit} so the JFR
+     * interval spans the syscall instead of rendering at the exit
+     * instant. Call {@link #commitInterval} to fill and commit, or drop
+     * the reference to discard.
+     */
+    public static GoroutineParkEvent beginInterval() {
+        GoroutineParkEvent e = new GoroutineParkEvent();
+        e.begin();
+        return e;
+    }
+
+    /** Fills the fields of a begun interval and commits it. */
+    public void commitInterval(long goroutineId, String reason, long durationNanos) {
+        this.goroutineId = goroutineId;
+        this.reason = reason;
+        this.durationNanos = durationNanos;
+        this.commit();
+    }
+
     public static void emit(long goroutineId, ParkReason reason, long durationNanos) {
         GoroutineParkEvent e = new GoroutineParkEvent();
         e.goroutineId = goroutineId;

@@ -102,7 +102,8 @@ user-space scheduler. JFR is the JVM-native observability surface
 
 ## Tests
 
-`graalgo.jfr.JfrEventsTest` (5 tests): event flow with field validation,
+`graalgo.jfr.JfrEventsTest` (6 tests): event flow with field validation,
 start/end pairing, no-events-when-disabled (red-green for the
 `@Enabled(false)` fix), hot-loop filter (deterministic 1-in-1024
-sampling), disabled guard cost (< 2× nanoTime), yield throughput smoke.
+sampling), disabled guard cost (< 2× nanoTime), yield throughput smoke,
+IO interval spanning the syscall (red-green for the begin/commit fix).

@@ -169,12 +169,39 @@ public final class JfrEvents {
     }
 
     /**
-     * A blocking-I/O interval finished (call after {@code ioExit}'s
-     * re-admission). The full syscall duration is reported, unlike the
-     * microsecond slot-release handshake which {@link #parkResumed}
-     * filters.
+     * Begins the blocking-I/O interval event (call at {@code ioEnter}).
+     * Returns null when disabled at enter — {@link #ioParkEnd} then
+     * falls back to the emit-at-exit path, so a recording started
+     * mid-syscall still observes the interval. One allocation on the
+     * non-hot I/O path.
      */
-    public static void ioBlocked(GoroutineHandle h, long ioNanos) {
+    public static GoroutineParkEvent ioParkBegin() {
+        return GoroutineParkEvent.enabled() ? GoroutineParkEvent.beginInterval() : null;
+    }
+
+    /**
+     * Ends the blocking-I/O interval (call at {@code ioExit}). A begun
+     * interval commits with the JFR interval spanning the syscall
+     * (reviewer2 P2-7); otherwise the emit-at-exit fallback reports the
+     * full duration. Below-threshold intervals are discarded.
+     */
+    public static void ioParkEnd(GoroutineHandle h, GoroutineParkEvent begun, long ioNanos) {
+        if (begun != null) {
+            if (ioNanos >= PARK_THRESHOLD_NANOS) {
+                long id = h.id;
+                emitQuietly(() -> begun.commitInterval(id, ParkReason.IO.name(), ioNanos));
+            }
+            return;
+        }
+        ioBlocked(h, ioNanos);
+    }
+
+    /**
+     * A blocking-I/O interval finished while no interval was begun
+     * (recording started mid-syscall): emit at exit with the full
+     * duration. Not rate-sampled — I/O syscalls are not the hot loop.
+     */
+    private static void ioBlocked(GoroutineHandle h, long ioNanos) {
         if (GoroutineParkEvent.enabled() && ioNanos >= PARK_THRESHOLD_NANOS) {
             emitQuietly(() -> GoroutineParkEvent.emit(h.id, ParkReason.IO, ioNanos));
         }
