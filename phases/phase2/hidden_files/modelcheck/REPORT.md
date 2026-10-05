@@ -96,7 +96,7 @@ Directed: `testUnparkBeforeParkFastPath` (stashed=1/direct=0),
 — all PASS.
 Red-green: `testModelDetectsWithheldUnpark` fails with LOST WAKEUP as
 required (explorer is not vacuous); `JfrParkCostTest` fails under a 2us
-fault-injected hook delay (6612ns > 500ns budget — verified 2026-10-05,
+fault-injected hook delay (6612ns >> 8x nanoCost — verified 2026-10-05,
 then reverted).
 
 ### Analogy note for (c)
