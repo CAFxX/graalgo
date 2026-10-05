@@ -187,23 +187,29 @@ public final class MainTest {
         // profiler cascade) is racy across Truffle compilation states, so
         // the unwrap decision is unit-tested deterministically here.
         assertTrue(Main.isStackOverflowCascade(
-                new NoClassDefFoundError("x", new StackOverflowError())),
+                ncdfe(new StackOverflowError())),
                 "NCDFE caused by SOE");
         assertTrue(Main.isStackOverflowCascade(
                 new ExceptionInInitializerError(new StackOverflowError())),
                 "EIIE caused by SOE");
-        assertTrue(Main.isStackOverflowCascade(new NoClassDefFoundError("x",
+        assertTrue(Main.isStackOverflowCascade(ncdfe(
                 new ExceptionInInitializerError(new StackOverflowError()))),
                 "nested cascade");
         assertFalse(Main.isStackOverflowCascade(new NoClassDefFoundError("x")),
                 "plain NCDFE is not a cascade");
         assertFalse(Main.isStackOverflowCascade(
-                new NoClassDefFoundError("x", new RuntimeException())),
+                ncdfe(new RuntimeException())),
                 "NCDFE caused by other is not a cascade");
         assertFalse(Main.isStackOverflowCascade(new StackOverflowError()),
                 "direct SOE is not a cascade");
         assertFalse(Main.isStackOverflowCascade(new RuntimeException()),
                 "other throwables are not cascades");
+    }
+
+    private static NoClassDefFoundError ncdfe(Throwable cause) {
+        NoClassDefFoundError e = new NoClassDefFoundError("x");
+        e.initCause(cause);
+        return e;
     }
 
     private static void assertTrue(boolean cond, String what) {
