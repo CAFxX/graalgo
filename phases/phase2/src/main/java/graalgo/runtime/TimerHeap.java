@@ -16,7 +16,8 @@ import graalgo.sched.GoroutineHandle;
  * against the in-flight cap). Fire actions:
  * <ul>
  *   <li>SLEEP entries: {@code sched.unpark(handle)} — the waiter parked
- *       via {@code SchedulerCore.parkCurrent} (sleep/startTimer).
+ *       via {@code SchedulerCore.parkCurrent} (sleep only — P2-4:
+ *       startTimer never parks).
  *       UNPARK-before-PARKED is safe via the drainer's unparkPending
  *       (P2-D7), so registering before parking cannot lose the wakeup.
  *   <li>CHAN entries: non-blocking {@code trySend} of the fire nanotime
@@ -367,6 +368,8 @@ public final class TimerHeap {
      * loop skips cancelled heads, so a polled entry is never cancelled.
      */
     private void fireChanLocked(Entry e) {
+        // P3-1: the owner==null branch is dead (addChan rejects null
+        // owners); kept as a defensive guard.
         if (e.owner == null || e.owner.stillCurrent(e.id, e.generation)) {
             synchronized (e.chan) {
                 e.chan.trySend(System.nanoTime(), sched);

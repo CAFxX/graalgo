@@ -579,3 +579,29 @@ Deferred: P2-4 (per-test timeout; mutation-B hang), P2-9 (SchedulerCore
 shutdown; thread accumulation documented as accepted for now).
 
 **Tests**: 101/101 green.
+
+## 2026-10-05 ~15:45 CEST — P2-M3 reviewer3 re-review (GO-WITH-FINDINGS)
+
+Reviewer3 (independent re-review of bce75f9) verified all 9 items:
+P0-1..P0-4 fixed (lock order exhaustive, no cycle), P1-1 confirmed,
+P1-2 fixed (3/3 gc byte-identical), 2 genuine red-green falsifiers
+(testTickerStopDrainsBufferedTick, testTickerResetDrainsStaleTick —
+3/3 red on old, 2/2 green on new), P2-2 non-vacuous, no new P0/P1.
+Full suite independently reproduced 101/101.
+
+**Record corrections (P2-1, P2-2, reviewer3):**
+- Reviewer1's P0-4 mechanism as described was IMPOSSIBLE — the b3a7546
+  code already held the heap lock across the stillCurrent check and the
+  re-insert, so "resetChan interleaves between check and re-insert"
+  could not occur. The real pre-fix stale-tick race was P0-3's unlocked
+  trySend. The remediation is correct and strictly stronger than needed;
+  this is record accuracy only.
+- The "~16:00" entry's "3 P0-2 red-green" is 2 falsifiers + 1 pin:
+  testTimerStopAfterFireDrains passes on pre-fix code (one-shot
+  expired-undrained drain predates the fix) — a regression + monitor
+  pin, not a falsifier. testNoTickAfterStopStress is likewise a stress
+  pin, not a falsifier (comments corrected).
+- TimerHeap javadoc "sleep/startTimer" park claim fixed (startTimer
+  never parks); fireChanLocked's dead owner==null branch annotated.
+
+Deferred (unchanged): P2-4 per-test timeout, P2-9 SchedulerCore shutdown.

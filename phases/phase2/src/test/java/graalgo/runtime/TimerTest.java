@@ -351,10 +351,11 @@ public final class TimerTest {
         });
     }
 
-    // P0-3/P0-4 stress: after stop() returns, no tick is ever delivered
-    // again — the pop+send+rearm are atomic under the heap lock, so a
-    // stop cannot interleave a stale send or a dead-generation re-arm.
-    // (On the pre-fix code the ticker can re-arm after stop.)
+    // Stress/regression pin: after stop() returns, no tick is ever
+    // delivered again. (Not a red-green falsifier — the pre-fix re-arm
+    // race it names could not occur; the real pre-fix stale-tick path
+    // was P0-3's unlocked send, a nanosecond window no stress test
+    // reliably exercises. Kept as a regression net.)
     public void testNoTickAfterStopStress() throws Exception {
         withScheduler(2, () -> {
             for (int i = 0; i < 300; i++) {
