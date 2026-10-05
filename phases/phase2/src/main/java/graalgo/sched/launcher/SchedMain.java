@@ -42,6 +42,16 @@ public final class SchedMain {
 
     /** Entry point without System.exit, for tests. */
     static int run(String[] args) {
+        // P2-M5 (WS E): GODEBUG surface triage — parse and validate before
+        // anything else. Unknown knobs, malformed values, and non-default
+        // values of unsupported knobs are hard errors (never silently
+        // ignored); gc fatals with exit status 2 on invalid GODEBUG.
+        try {
+            GoDebug.apply();
+        } catch (GoDebug.GoDebugException e) {
+            System.err.println("graalgo-run: fatal error: " + e.getMessage());
+            return 2;
+        }
         int gmp = 0; // 0 = default (carriers)
         boolean check = false;
         String file = null;

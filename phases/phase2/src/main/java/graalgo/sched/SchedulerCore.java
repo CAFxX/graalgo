@@ -358,7 +358,14 @@ public final class SchedulerCore {
         // gc prints "panic: <value>" for an uncaught panic. Full gc-style
         // stack rendering is Phase-1's reportPanic; M1 prints the value
         // (PanicRendering is Phase-1-internal, not in the freeze).
-        System.err.println("panic: " + pe.goValue());
+        // P2-M5: with GODEBUG=panicnil=1, an uncaught panic(nil) prints
+        // "panic: nil" like pre-1.21 gc (instead of "panic: null").
+        Object v = pe.goValue();
+        if (v == null && graalgo.runtime.Panic.isPanicNilOldBehavior()) {
+            System.err.println("panic: nil");
+        } else {
+            System.err.println("panic: " + v);
+        }
     }
 
     private void recordCrash(String what, Throwable t) {
