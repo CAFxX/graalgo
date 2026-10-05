@@ -24,23 +24,24 @@ PASS=0
 FAIL=0
 FAILED_CELLS=""
 
-for gmp in 1 2 4 "$NPROC"; do
+# Note: on hosts where NPROC is 1, 2, or 4, the gmp=N run duplicates an
+# earlier cell; we still run it (distinct evidence) but tag the files
+# -n<N> to avoid overwriting.
+for gmp in 1 2 4; do
   for wl in compute mixed; do
+    tag="gmp${gmp}"
     prog="$CORPUS/gmp_$wl.go"
     # graalgo
     timeout 180 "$GRAALVM_HOME/bin/java" -cp "$CP" \
       graalgo.sched.launcher.SchedMain --gmp="$gmp" "$prog" \
-      > "$OUTDIR/${wl}_gmp${gmp}.graalgo.out" 2> "$OUTDIR/${wl}_gmp${gmp}.graalgo.err"
+      > "$OUTDIR/${wl}_${tag}.graalgo.out" 2> "$OUTDIR/${wl}_${tag}.graalgo.err"
     grc=$?
     # gc
     GOMAXPROCS="$gmp" timeout 120 "$GO" run "$prog" \
-      > "$OUTDIR/${wl}_gmp${gmp}.gc.out" 2> "$OUTDIR/${wl}_gmp${gmp}.gc.err"
+      > "$OUTDIR/${wl}_${tag}.gc.out" 2> "$OUTDIR/${wl}_${tag}.gc.err"
     gcrc=$?
-    # Compare: both must exit 0 and stdout must match.
-    # (rt_finalizer_storm's count is timing-dependent; it is excluded from
-    #  byte-compare — checked separately for clean completion.)
     if [ $grc -eq 0 ] && [ $gcrc -eq 0 ] && \
-       cmp -s "$OUTDIR/${wl}_gmp${gmp}.graalgo.out" "$OUTDIR/${wl}_gmp${gmp}.gc.out"; then
+       cmp -s "$OUTDIR/${wl}_${tag}.graalgo.out" "$OUTDIR/${wl}_${tag}.gc.out"; then
       echo "PASS wl=$wl gmp=$gmp"
       PASS=$((PASS + 1))
     else
@@ -49,6 +50,26 @@ for gmp in 1 2 4 "$NPROC"; do
       FAIL=$((FAIL + 1))
     fi
   done
+done
+# gmp=N (distinct cell even when N coincides numerically: separate files).
+for wl in compute mixed; do
+  prog="$CORPUS/gmp_$wl.go"
+  timeout 180 "$GRAALVM_HOME/bin/java" -cp "$CP" \
+    graalgo.sched.launcher.SchedMain --gmp="$NPROC" "$prog" \
+    > "$OUTDIR/${wl}_gmpN.n$NPROC.graalgo.out" 2> "$OUTDIR/${wl}_gmpN.n$NPROC.graalgo.err"
+  grc=$?
+  GOMAXPROCS="$NPROC" timeout 120 "$GO" run "$prog" \
+    > "$OUTDIR/${wl}_gmpN.n$NPROC.gc.out" 2> "$OUTDIR/${wl}_gmpN.n$NPROC.gc.err"
+  gcrc=$?
+  if [ $grc -eq 0 ] && [ $gcrc -eq 0 ] && \
+     cmp -s "$OUTDIR/${wl}_gmpN.n$NPROC.graalgo.out" "$OUTDIR/${wl}_gmpN.n$NPROC.gc.out"; then
+    echo "PASS wl=$wl gmp=N($NPROC)"
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL wl=$wl gmp=N($NPROC) (graalgo_exit=$grc gc_exit=$gcrc)"
+    FAILED_CELLS="$FAILED_CELLS $wl/gmpN"
+    FAIL=$((FAIL + 1))
+  fi
 done
 
 echo "---"

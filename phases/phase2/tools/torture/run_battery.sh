@@ -60,10 +60,10 @@ run F1_gmp32par2 -Dgraalgo.gmp=32 -Dgraalgo.quantumNs=1000000 -- F1 2 10
 # F3: quiescence (2k spinners for the battery; full 10k extended).
 run F3_quiesce  -Dgraalgo.gmp=2  -Dgraalgo.quantumNs=100000    -- F3 2000 15
 # F4: overhead budget at 1ms and 10ms quanta.
-# NOTE (spike 2b §2/F4 precedent): the 1ms leg is INFORMATIONAL — the
-# ~13us hop exceeds 1% of a 1ms quantum by design (structural drainer/FJP
-# costs). The budget that matters (GG-SCHED-0001) is 1% at the 10ms
-# production default, where the leg passes with ~7x margin.
+# NOTE (spike 2b §2/F4 precedent): the 1ms leg is INFORMATIONAL — measured
+# 48.9µs mean exceeds 1% of a 1ms quantum by design (structural
+# drainer/FJP costs). The budget that matters (GG-SCHED-0001) is 1% at the
+# 10ms production default (measured 34.7µs vs 100µs budget: PASS).
 run_info F4_q1ms  -Dgraalgo.gmp=2  -Dgraalgo.quantumNs=1000000   -- F4 20000
 run F4_q10ms    -Dgraalgo.gmp=2  -Dgraalgo.quantumNs=10000000  -- F4 20000
 # F5: cap fidelity at gmp 1 and 2; F5b cap-exhaustion.

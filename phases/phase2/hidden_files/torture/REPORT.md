@@ -15,7 +15,7 @@ GOMAXPROCS matrix.
 | F1_q10ms | 2 spin, gmp=2, 10ms | PASS | 52,672 samples, CV 0.0175 |
 | F1_gmp32par2 | 2 spin, gmp=32, 1ms | PASS | cap clamp min(32,2)=2, 41,397 samples |
 | F3_quiesce | 2000 spin, 15s | PASS | 2000/2000 admitted, max/mean 1.00 |
-| F4_q1ms | 20k iters | INFO-FAIL | 12.9µs > 10µs budget; see §4 |
+| F4_q1ms | 20k iters | INFO-FAIL | 48.9µs > 10µs budget; see §4 |
 | F4_q10ms | 20k iters | PASS | 34.7µs < 100µs budget (1% of 10ms) |
 | F5_cap1 | gmp=1 | PASS | maxTrueParallel=1, 0 violations |
 | F5_cap2 | gmp=2 | PASS | maxTrueParallel=2, 0 violations |
@@ -27,10 +27,14 @@ GOMAXPROCS matrix.
 ## 2. `runtime`/`sync`/`context` stress suites
 
 ### runtime (Go-level, via overlay: Goexit/SetFinalizer/KeepAlive/GC)
+- `gmp_compute`, `gmp_mixed`: byte-identical vs gc (archived in
+  `gmp-matrix/`).
 - `rt_finalizer_storm.go`: 2000 objects with finalizers across 4 goroutines
-  + explicit GCs. Completes cleanly; finalizers run (count informational —
-  timing is implementation-defined).
-- `gmp_compute.go`, `gmp_mixed.go`: see §3.
+  + explicit GCs. Completes cleanly under both (exit 0); finalizer count
+  informational (timing is implementation-defined). Archived in
+  `stress-differential/`.
+- `ctx_cancel.go`: flag-broadcast cancellation, 8 workers terminate;
+  byte-identical vs gc ("cancelled"). Archived in `stress-differential/`.
 
 ### sync (Java-level; Go `import "sync"` blocked — see §5)
 - `GoMutex`: 32×1000 increments, exact count; cap=1 progress.
@@ -41,31 +45,60 @@ GOMAXPROCS matrix.
 
 ### context (pattern-level; `context` package out of scope — see §5)
 - `ctx_cancel.go`: flag-broadcast cancellation, 8 workers terminate.
-  Differential vs gc: identical ("cancelled").
+  Byte-identical vs gc. Archived in `stress-differential/`.
 
 ## 3. GOMAXPROCS matrix
 
+**Go-level matrix** (byte-identical vs gc per cell):
+
 | Workload | gmp=1 | gmp=2 | gmp=4 | gmp=N |
 |----------|-------|-------|-------|-------|
-| compute | PASS | PASS | PASS | PASS |
-| mixed | PASS | PASS | PASS | PASS |
+| compute | PASS | PASS | PASS | PASS (N=2, distinct files) |
+| mixed (heterogeneous compute) | PASS | PASS | PASS | PASS (N=2, distinct files) |
 
-All cells byte-identical vs gc. No systematic divergence.
-(Channel-heavy cells are Java-level: TortureBattery F1, all PASS.)
+8 cells, all PASS. Note: on this 2-CPU host N=2 numerically coincides
+with gmp=2; the N cells are separate runs with distinct archived files.
+
+**Channel-heavy** (plan's third workload): Java-level via TortureBattery
+F1 — genuine unbuffered ping-pong under preemption (36k–52k samples/leg),
+all 5 legs PASS at gmp=2 (+ cap-clamp leg at gmp=32). Not run as a
+{1,2,4,N} matrix and not differential vs gc (Go channel ops are WS E/F,
+not in Go source scope). This is a coverage gap vs the plan's letter;
+recorded here honestly.
+
+**Mixed I/O+compute** (plan's wording): the Go `gmp_mixed.go` is
+heterogeneous *compute* (the file says so); true I/O+compute with slot
+release is Java-level F5b (single gmp, PASS). Same gap note as above.
+
+No systematic divergence in any cell. The cap-clamp leg (gmp=32 on
+2 carriers) confirms oversubscription becomes drainer-FIFO time-slicing.
 
 ## 4. Overhead budget
 
 | Leg | Mean hop | Budget (1% of quantum) | Verdict |
 |-----|----------|------------------------|---------|
-| 10ms quantum | 34.7µs | 100µs | PASS (3x margin; 6.8µs in quiet run) |
-| 1ms quantum | 12.9µs | 10µs | INFO-FAIL (spike precedent) |
+| 10ms quantum | 34.7µs | 100µs | PASS (2.9x margin) |
+| 1ms quantum | 48.9µs | 10µs | INFO-FAIL (spike precedent) |
 
-Production is faster than the spike prototype (7–35µs vs 30µs at 10ms;
-VM noise dominates the range).
+Production hop is in the same range as the spike prototype (34.7µs vs
+33µs at 10ms; VM noise dominates — p50 5.5µs, p99 394µs, max 25.6ms;
+the budget is defined on the mean per GG-SCHED-0001). At 1ms the
+production mean (48.9µs) regressed vs the spike's 33.0µs; still
+informational per the falsifier (budget fires only at 10ms), but noted
+honestly here. Re-measure on quiet server hardware before production
+performance claims (standing trigger).
 The 1ms INFO-FAIL is structural (drainer/FJP costs), documented in spike 2b
 §2/F4; GG-SCHED-0001's falsifier is at 10ms (PASS).
 
 ## 5. Scope notes and re-test triggers
+
+**Governance note (P1-5):** PLAN.md §3 marks the `sync` package scope as
+[OPEN] requiring a **program-owner decision before P2-M8**. That decision
+was never made; the scope implemented here (Mutex/RWMutex/WaitGroup/Once
+as Java runtime primitives, Go bindings deferred) is the **worker's
+proposal**, not an owner decision. The "Done-gate 1: MET" verdict below is
+**conditional on the program owner accepting this scope deviation**. The
+same provisional status applies to `context` (pattern-level only).
 
 - **`sync` Go bindings:** `import "sync"` rejected by the frozen frontend
   (WS G overlay). Java primitives implemented and stressed; Go bindings
@@ -83,7 +116,8 @@ UNPARK in flight (5.6ms CHANNEL park ending +278ms).
 
 **Investigation:** Added drainer wake-provenance counters
 (`wakeUnparkDirect`, `wakeUnparkStashed`, `wakeIoExit`). F6 run:
-`direct=12830 stashed=2 ioExit=0`.
+`direct=12829 stashed=3 ioExit=0`; F1_q1ms: `stashed=2`; F1_q100us:
+`stashed=15`.
 
 **Root cause:** the `unparkPending` fast-path — when UNPARK arrives before
 the PARKED token is processed, the drainer stashes it and re-admits
@@ -94,6 +128,10 @@ operation (2 stashed wakes in F6).
 
 **Verdict:** explained, not a bug. No P0. The 30-min investigation missed
 it because it examined JFR events, not the drainer's `unparkPending` set.
+**Falsifier:** reproducing the JFR anomaly in a run with stashed=0 and no
+direct wake in-window, or any errors>0 / lost wakeup in F6, would reopen it.
+
+**Done-gate 1: MET (conditional — see §5 governance note).**
 
 ## 7. Kill-criterion assessment
 
@@ -102,7 +140,7 @@ it because it examined JFR events, not the drainer's `unparkPending` set.
   no systematic divergence found.
 - **Kill criterion 2** ("GOMAXPROCS fidelity impossible within perf budget"):
   NOT TRIGGERED. Cap never violated (F5); 10ms overhead budget met with
-  7x margin (F4).
+  2.9x margin (F4).
 
 ## 8. Evidence
 
