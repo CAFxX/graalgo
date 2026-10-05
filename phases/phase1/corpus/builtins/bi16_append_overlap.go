@@ -47,4 +47,12 @@ func main() {
 	v[2], v[3] = 99, 77
 	w := append(u, v[3], v[2])
 	println("interleave:", w[0], w[1], w[2], w[3])
+
+	// Spread onto a nil target, and exact self-alias.
+	var nz []int
+	nb := []int{3, 4, 5}
+	nc := append(nz, nb...)
+	println("nil-target:", nc[0], nc[1], nc[2], len(nc))
+	nd := append(nc, nc...)
+	println("self-alias:", nd[0], nd[1], nd[2], nd[3], nd[4], nd[5])
 }
