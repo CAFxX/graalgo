@@ -1,10 +1,10 @@
 # ADR-0002 — Phase-2 GC interop: heap layout, roots, write barriers
 
 **Date:** 2026-10-05
-**Status:** remediated 2026-10-05 — both independent ADR reviews
-(`reviews/phase2-m4/reviewer1.md`, `reviewer2.md`) returned GO-WITH-FINDINGS;
-all 13 P1 + 9 P2 findings are addressed in this revision. Delta re-verification
-by both reviewers pending — implementation starts after they confirm.
+**Status:** accepted 2026-10-05 — both independent ADR reviews returned
+GO-WITH-FINDINGS; all findings remediated and delta re-verified by both
+reviewers (reviewer1-delta.md, reviewer2-delta.md: DELTA-GO). Implementation
+may start.
 **Scope:** closes PLAN.md §3 `[OPEN] GC interop heap layout` ("the largest design
 unknown in Phase 2"); workstream D (P2-M4).
 **Normative basis:** SPEC §3.4 "Value model: Java objects throughout"
@@ -239,3 +239,26 @@ item. (Was: no collector choice recorded anywhere — reviewer 1 P1-5.)
    0 unexplained divergences.
 3. Off-heap grep gate landed in `make check` and green (with per-pattern
    rationale comments). Evidence: `make check` log.
+
+### Scope amendment (2026-10-05, P2-M4 implementation)
+
+The following D4 items are **deferred** from P2-M4 Go-observability (not
+from implementation — the Java vehicles exist and are unit-tested):
+
+- **`weak.Pointer` Go call path** (`weak.Make`/`Value`): deferred. The
+  exporter does not lower the `weak` package; wiring it requires frontend
+  work beyond P2-M4's GC-interop scope. ADR D4 hedged with "frontend scope
+  permitting". The `newWeakRef`/`weakRefValue` vehicles are implemented and
+  unit-tested (`GcInteropTest.testWeakRefLifecycle`) for future wiring.
+- **`runtime.ReadMemStats` Go call path**: deferred. The synthetic `runtime`
+  package does not declare it; wiring requires exporter + node work. The
+  `memStats()` field table is implemented and unit-tested
+  (`GcInteropTest.testMemStatsFields`) for future wiring.
+
+Rationale: P2-M4's blocking goal is the GC-interop *mechanism* (roots,
+barriers, finalizer lifetime). The `weak`/`ReadMemStats` *syntax* is
+frontend work that does not affect the GC design. Deferring the call paths
+does not weaken the F1–F4 falsifiers.
+
+This amendment is recorded here explicitly (not smuggled into a
+DIVERGENCES.md footnote) per the review gate requirement.

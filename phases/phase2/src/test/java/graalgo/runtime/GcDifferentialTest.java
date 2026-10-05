@@ -34,6 +34,21 @@ public final class GcDifferentialTest {
             "gc03_keepalive",
             "gc04_gc_hint",
             "gc05_finalizer_replace");
+    /** Programs with graalgo-specific (non-gc-differential) assertions. */
+    private static final List<String> NON_DIFFERENTIAL = List.of(
+            "gc06_finalizer_panic");
+
+    /** Stdout + stderr + exit code from a subprocess run. */
+    private static final class ProcessResult {
+        final String stdout;
+        final String stderr;
+        final int exitCode;
+        ProcessResult(String stdout, String stderr, int exitCode) {
+            this.stdout = stdout;
+            this.stderr = stderr;
+            this.exitCode = exitCode;
+        }
+    }
 
     private static void assertEquals(String expected, String actual, String msg) {
         if (!expected.equals(actual)) {
@@ -51,6 +66,19 @@ public final class GcDifferentialTest {
      * {@code make test} runs it.
      */
     private String runGo(String name) throws Exception {
+        ProcessResult r = runGoFull(name);
+        if (r.exitCode != 0) {
+            throw new AssertionError(name + ": subprocess exit " + r.exitCode
+                    + "\nstdout:\n" + r.stdout + "\nstderr:\n" + r.stderr);
+        }
+        return r.stdout;
+    }
+
+    /**
+     * Runs {@code SchedMain --gmp=1 <file>} and returns stdout/stderr/exit.
+     * Reads both streams concurrently to avoid pipe-buffer deadlock.
+     */
+    private ProcessResult runGoFull(String name) throws Exception {
         Path goFile = CORPUS.resolve(name + ".go").toAbsolutePath();
         String javaBin = Paths.get(System.getProperty("java.home"), "bin", "java").toString();
         List<String> cmd = new ArrayList<>();
@@ -65,24 +93,39 @@ public final class GcDifferentialTest {
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.redirectErrorStream(false);
         Process p = pb.start();
-        String stdout;
-        String stderr;
-        try (var out = p.getInputStream(); var err = p.getErrorStream()) {
-            stdout = new String(out.readAllBytes(), StandardCharsets.UTF_8);
-            stderr = new String(err.readAllBytes(), StandardCharsets.UTF_8);
-        }
+        // Read both streams concurrently to avoid deadlock.
+        java.util.concurrent.Future<String> outF = readAsync(p.getInputStream());
+        java.util.concurrent.Future<String> errF = readAsync(p.getErrorStream());
         boolean done = p.waitFor(300, TimeUnit.SECONDS);
         if (!done) {
             p.destroyForcibly();
-            throw new AssertionError(name + ": subprocess timed out\nstderr:\n" + stderr);
+            throw new AssertionError(name + ": subprocess timed out");
         }
-        if (p.exitValue() != 0) {
-            throw new AssertionError(name + ": subprocess exit " + p.exitValue()
-                    + "\nstdout:\n" + stdout + "\nstderr:\n" + stderr);
+        String stdout;
+        String stderr;
+        try {
+            stdout = outF.get(10, TimeUnit.SECONDS);
+            stderr = errF.get(10, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            throw new AssertionError(name + ": failed to read subprocess output", e);
         }
-        // Strip JVM warnings (e.g. HotSpot notices) that may precede program
-        // output. Filter only lines matching known warning patterns; keep all
-        // program output lines intact.
+        return new ProcessResult(stripWarnings(stdout), stderr, p.exitValue());
+    }
+
+    private static java.util.concurrent.Future<String> readAsync(java.io.InputStream in) {
+        java.util.concurrent.ExecutorService ex =
+                java.util.concurrent.Executors.newSingleThreadExecutor();
+        java.util.concurrent.Future<String> f = ex.submit(() -> {
+            try (var stream = in) {
+                return new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+            }
+        });
+        ex.shutdown();
+        return f;
+    }
+
+    /** Strip JVM warning lines from stdout; keep program output intact. */
+    private static String stripWarnings(String stdout) {
         String[] lines = stdout.split("\n", -1);
         StringBuilder sb = new StringBuilder();
         for (String line : lines) {
@@ -121,6 +164,21 @@ public final class GcDifferentialTest {
     }
 
     /**
+     * gc06: a finalizer that dereferences its nil argument must be LOUD.
+     * (DIV-M4-1: not silent.) stdout must be "survived"; stderr must contain
+     * the "graalgo: finalizer panicked:" diagnostic. No .expected file —
+     * gc would fatal-crash here, so this is graalgo-specific behavior.
+     */
+    public void testGc06FinalizerPanicIsLoud() throws Exception {
+        ProcessResult r = runGoFull("gc06_finalizer_panic");
+        assertEquals("survived\n", r.stdout, "gc06 stdout");
+        if (!r.stderr.contains("graalgo: finalizer panicked:")) {
+            throw new AssertionError(
+                    "gc06: expected loud finalizer-panic diagnostic on stderr, got:\n" + r.stderr);
+        }
+    }
+
+    /**
      * Lists the corpus directory to ensure every .go has a .expected and a
      * registered test (no silent corpus drift).
      */
@@ -133,11 +191,13 @@ public final class GcDifferentialTest {
                     .toList();
         }
         for (String g : gos) {
-            if (!Files.exists(CORPUS.resolve(g + ".expected"))) {
-                throw new AssertionError("corpus " + g + ".go has no .expected file");
-            }
-            if (!PROGRAMS.contains(g)) {
+            boolean isDifferential = PROGRAMS.contains(g);
+            boolean isNonDifferential = NON_DIFFERENTIAL.contains(g);
+            if (!isDifferential && !isNonDifferential) {
                 throw new AssertionError("corpus " + g + ".go has no registered test");
+            }
+            if (isDifferential && !Files.exists(CORPUS.resolve(g + ".expected"))) {
+                throw new AssertionError("corpus " + g + ".go has no .expected file");
             }
         }
         for (String p : PROGRAMS) {

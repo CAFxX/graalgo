@@ -100,13 +100,13 @@ Go-type attribution; the JVMTI/`jmap` surface exposes JVM types, not Go
 types. Stance: out of scope; revisit when the object model carries enough
 type metadata for attribution (Phase 4+).
 
-### DIV-M4-9: `debug.FreeOSMemory` ≈ `runtime.GC()` (best effort)
+### DIV-M4-9: `debug.FreeOSMemory` unsupported (no JVM analog)
 
-`debug.FreeOSMemory()` forces a GC and returns memory to the OS. graalgo
-maps it to `System.gc()` (same vehicle as `runtime.GC()`): the collection
-is best-effort per DIV-M4-3, and there is no JVM API that compels the OS
-to take pages back — heap shrinking is the collector's decision. No Go
-call path is wired in P2-M4 (same scope note as DIV-M4-5).
+`debug.FreeOSMemory()` forces a GC *and* returns memory to the OS. There is
+no JVM analog: `System.gc()` suggests collection but does not compel the OS
+to take pages back (heap shrinking is the collector's decision). Per ADR-0002
+D4 ("no JVM analog (`System.gc()` is not it)"), the stance is
+unsupported-with-justification. No Go call path is wired in P2-M4.
 
 ## Template for new entries
 

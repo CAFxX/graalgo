@@ -99,8 +99,9 @@ check:
 	@echo "-- each pattern guards a way Go references could bypass JVM GC barriers;"
 	@echo "-- allocateMemory/MemorySegment/Arena/allocateDirect: off-heap Go-object storage"
 	@echo "-- theUnsafe/reflective Unsafe: raw-address access outside barrier discipline"
-	@echo "-- sun.misc/jdk.internal imports: unvetted barrier-bypass surface"
-	@if grep -rn --include='*.java' -E 'allocateMemory|MemorySegment|Arena\.|theUnsafe|allocateDirect|import sun\.misc\.|import jdk\.internal' src/; then \
+	@echo "-- sun.misc/jdk.internal imports + fully-qualified sun.misc.Unsafe:"
+	@echo "--   unvetted barrier-bypass surface (incl. Class.forName evasion)"
+	@if grep -rn --include='*.java' -E 'allocateMemory|MemorySegment|Arena|theUnsafe|allocateDirect|import sun\.misc\.|import jdk\.internal|sun\.misc\.Unsafe|Class\.forName\("sun' src/; then \
 		echo "OFF-HEAP/BARRIER GATE FAILED"; exit 1; fi
 	@echo "off-heap/barrier gate clean"
 
