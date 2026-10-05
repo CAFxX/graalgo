@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "generated_from": "go1.27.1: src/runtime/runtime1.go dbgvars + src/internal/godebugs/table.go",
   "knob_count": 79,
   "knobs": [
@@ -29,7 +29,7 @@
       "disposition": "noop",
       "default": "1",
       "summary": "cgo pointer checks (0=off, 1=cheap, 2=expensive via GOEXPERIMENT)",
-      "justification": "No cgo in graalgo; there are no cgo pointers to check."
+      "justification": "No cgo in graalgo; there are no cgo pointers to check. Values 0-1 accepted; >1 denied like gc (requires GOEXPERIMENT=cgocheck2 at build time)."
     },
     {
       "name": "checkfinalizers",

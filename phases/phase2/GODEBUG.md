@@ -1,7 +1,7 @@
 # GODEBUG surface (P2-M5, WS E)
 
 Versioned registry of every GODEBUG knob: `src/main/resources/graalgo/sched/godebug/registry.json`
-(current version **1**, 79 knobs + 9 removed). The registry is loaded at
+(current version **2**, 79 knobs + 9 removed). The registry is loaded at
 launcher startup by `graalgo.sched.launcher.GoDebug`; unknown knob names,
 malformed values, and non-default values of unsupported knobs are hard
 errors (exit 2), never silently ignored.
@@ -18,7 +18,7 @@ errors (exit 2), never silently ignored.
 ## Deliberate divergences from gc
 
 1. **Unknown knob → hard error** (gc silently ignores). Rationale: a typo
-   (`schedtace=100`) silently doing nothing is worse than failing loud.
+   (`GODEBUG=schedtace=100`) silently doing nothing is worse than failing loud.
    (DIVERGENCES.md DIV-M5-1)
 2. **Malformed value → hard error** (gc keeps the old value silently).
    (DIV-M5-2)
@@ -78,7 +78,7 @@ by `PanicOverlayDriftTest`. Verified byte-identical vs
 | `adaptivestackstart` | `1` | gc varies initial goroutine stack size adaptively | Goroutine stacks are JVM carrier stacks of fixed size (-Xss); there is no adaptive initial stack to enable or disable. |
 | `allowmultiplevcs` | `0` | non-runtime subsystem knob (see internal/godebugs) | Subsystem not present in the graalgo runtime (no net/http, crypto, cmd/go, etc.); the knob is accepted and ignored. |
 | `asyncpreemptoff` | `0` | disables SIGURG-based async preemption | No signal-based async preemption exists in graalgo; preemption is via cooperative safepoint polls. Effective behavior always equals asyncpreemptoff=1. |
-| `cgocheck` | `1` | cgo pointer checks (0=off, 1=cheap, 2=expensive via GOEXPERIMENT) | No cgo in graalgo; there are no cgo pointers to check. |
+| `cgocheck` | `1` | cgo pointer checks (0=off, 1=cheap, 2=expensive via GOEXPERIMENT) | No cgo in graalgo; there are no cgo pointers to check. Values 0-1 accepted; >1 denied like gc (requires GOEXPERIMENT=cgocheck2 at build time). |
 
 ### UNSUPPORTED
 

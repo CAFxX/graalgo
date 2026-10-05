@@ -26,7 +26,7 @@ public final class GoDebugTest {
 
     /** verifies: GG-0055 (registry versioned; knob add/remove must bump). */
     public void testRegistryVersion() {
-        assertEquals(1, GoDebug.registryVersion(), "registry version");
+        assertEquals(2, GoDebug.registryVersion(), "registry version");
     }
 
     /**
