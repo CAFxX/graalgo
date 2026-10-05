@@ -444,8 +444,9 @@ public final class JfrEventsTest {
     // it flaked ~40% in-suite (ratios 0.50–1.65) and neither 10x work nor
     // interleaved D/E legs made it deterministic. Replaced by
     // graalgo.sched.JfrParkCostTest, which measures the hook cost directly
-    // (stable) and is strictly more sensitive (500ns budget vs a 0.80
-    // ratio gate that could never catch a realistic regression).
+    // (stable) and is strictly more sensitive (machine-relative 8x/6x
+    // nanoCost budgets vs a 0.80 ratio gate that could never catch a
+    // realistic regression).
 
     /** Spawns n yielders and waits for quiescence. */
     private void runYielders(SchedulerCore sched, int n, int yields) throws Exception {
