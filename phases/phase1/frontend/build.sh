@@ -46,6 +46,12 @@ case "${1:-build}" in
     go test $OV .
     echo "== vendoring diff gate ==" >&2
     diff -r "$GOROOT_DIR/src/go" "$PWD/go" && echo "vendored tree byte-identical to GOROOT/src/go" >&2
+    echo "== frontend/v1 wire-format validator ==" >&2
+    go build $OV -o gofrontend .
+    python3 tools/validate_frontend_v1.py --selftest
+    ./gofrontend testdata/straight01.go > "${TMPDIR:-/tmp}/v1doc.json"
+    python3 tools/validate_frontend_v1.py "${TMPDIR:-/tmp}/v1doc.json" \
+      && echo "frontend/v1 validator: selftest + straight01.go accepted" >&2
     ;;
   *) echo "usage: build.sh [build|vet|test|check]" >&2; exit 1 ;;
 esac

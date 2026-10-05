@@ -17,9 +17,13 @@ Every entry below is marked **FROZEN** or **INTERNAL**:
   Changing a FROZEN signature, wire field, CLI flag, exit code, or builtin
   requires: (a) a new ADR, (b) a version bump of the owning artifact
   (`frontend/v1` → `v2`, freeze v1 → v2, or a new `toolVersion`), and
-  (c) the machine check in §7 going red first (it must fail *before* the
-  change lands, proving the check guards the surface). Silent drift is a
-  GG-0020/GG-0021 review failure.
+  (c) the §6 machine check failing *before* the change lands, proving the
+  check guards the surface. Silent drift is a GG-0020/GG-0021 review failure.
+  Step (c) and the GG-0020 positive direction ("AST calls a non-frozen
+  signature → freeze gate red") are enforced by review discipline, not by a
+  CI gate: `FreezeSignatureTest` verifies frozen signatures *exist* with the
+  frozen shape; it does not enumerate every call site. No mechanism records
+  (c) post-hoc — the ADR is the record.
 - **INTERNAL** — implementation detail of one component. Free to change;
   listed here only to bound the frozen surface (if it's not in §2–§6, it's
   INTERNAL).
@@ -37,8 +41,8 @@ the Truffle AST, executes `main`.
 | Element | Frozen value |
 |---|---|
 | Invocation | `gofrontend <file.go>` (exactly one argument) |
-| stdout | the frontend/v1 JSON document, single line + trailing newline |
-| stderr | human-readable error prefixed `gofrontend: ` (build log; recorded verbatim by the diffharness) |
+| stdout | the frontend/v1 JSON document, pretty-printed multi-line (`json.MarshalIndent`, 2-space) + trailing newline |
+| stderr | human-readable error (build log; recorded verbatim by the diffharness): frontend errors (exit 2) are prefixed `gofrontend: `; the exit-1 usage error (`usage: gofrontend <file.go>`) is not |
 | Exit 0 | success |
 | Exit 1 | usage error (wrong arity) |
 | Exit 2 | frontend error: parse, type, or scope rejection |
@@ -54,7 +58,8 @@ resolution logic; the *contract above* is FROZEN).
   document. Signature frozen; behavior defined by `docs/frontend-v1.md`.
 - `enumerateInstantiations` (export.go, INTERNAL implementation) emits one
   `funcdecl` per monomorphized instantiation; the dedup key format
-  `F:<name>|<targs>` (functions) / `M:<recv>|<name>|<targs>` (methods) is
+  `F:<name>|<targs>` (functions) / `M:<recvKey>.<mname>[|<targs>]` (methods;
+  the `|<targs>` suffix is present only when method type args are non-empty) is
   FROZEN — the Java side keys its function table on it.
 
 ### 2.3 Wire format frontend/v1 — FROZEN
@@ -96,7 +101,7 @@ version `"v1"`. Consequences:
   document, builds the Truffle AST. Throws `FrontendException` on
   factory-side rejection (never the program's fault).
 - `public record Program(GoRootNode root, FrameDescriptor descriptor,
-  Map<String,Integer> slotsByName, Map<String,GoKind> kindsByName)` —
+  Map<String,Integer> slotsByName, Map<String,GoKind> kindsByName, Map<Integer,GoFunc> functions)` —
   the built program (component names frozen; record accessors frozen).
 - `registerExprKind(String, ExprBuilder)`, `registerStmtKind(String,
   StmtBuilder)`, `registerTypeDecoder(TypeDecoder)` — the WS C/D
@@ -107,10 +112,12 @@ version `"v1"`. Consequences:
 
 ### 3.3 Node base classes — FROZEN
 
-`graalgo.frontend.GoExprNode` / `GoStmtNode`: the `execute{Long,Int,Float,
+`graalgo.frontend.GoExprNode`: the `execute{Long,Int,Float,
 Double,Boolean,Object}(VirtualFrame)` protocol, `kind()`, `typeId()`,
-`setSourceSection`/`getSourceSection`. All node implementations extend
-these; the protocol is frozen, individual nodes are INTERNAL.
+`setSourceSection`/`getSourceSection`. `graalgo.frontend.GoStmtNode`:
+`executeVoid(VirtualFrame)`, `setSourceSection`/`getSourceSection`.
+All node implementations extend these; the protocol is frozen, individual
+nodes are INTERNAL.
 
 `graalgo.frontend.FuncValueCallNode(GoExprNode fn, GoExprNode[] args,
 GoKind resultKind)` and the `(…, boolean isMethodCall)` variant — the
@@ -129,6 +136,16 @@ maps, itab, random, traceback), `BuiltinPrint.print/println`,
 - `graalgo.runtime.GoCalls.invoke(GoFunc fn, Object[] args) -> Object`
   — the single function-invocation entry (nil check, recover-flag
   discipline documented on `FuncValueCallNode`).
+- The M5 runtime surface (frozen 2026-10-04, WS F — called by M5 AST nodes)
+  is incorporated here as FROZEN (from `docs/freeze-stub.md`, resolving the
+  §1 classification): `GoErrors.bounds(BoundsCode,long,long,boolean)`,
+  `GoErrors.indexOutOfRange(long,long,boolean)`, `GoErrors.assignmentToNilMap()`,
+  `GoErrors.nilDereference()`, `GoErrors.integerDivideByZero()`,
+  `GoErrors.negativeShift()`, `GoErrors.interfaceConversion(String,String,String)`,
+  `DeferChain.push(DeferredCall)`, `DeferChain.runAll()`,
+  `DeferChain.unwindReturning(int)`, `DeferChain.unwindPanicking(int,PanicException)`,
+  `DeferChain.unwindGoexiting(int)`, `Goexit.goexit()`, `GoroutineState` (class),
+  `DeferredCall` (class).
 - `graalgo.runtime.GoCalls.nilFuncCall() -> GoErrorValue` — the nil-function
   call error value (currently uncalled in-tree; frozen to prevent silent
   removal).
@@ -137,8 +154,9 @@ maps, itab, random, traceback), `BuiltinPrint.print/println`,
 ### 3.5 Values — FROZEN (cross-boundary types)
 
 The value representations cross the frontend↔runtime boundary (frame slots,
-boxing, descriptors) and are frozen as *types* (constructors and accessors
-listed; method bodies INTERNAL):
+boxing, descriptors) and are frozen as *types* — i.e. the named public
+classes must exist (checked by `FreezeSignatureTest`); constructors and
+accessors are frozen only where listed below, method bodies are INTERNAL:
 
 - `GoKind` (enum), `GoSlice`, `GoMap`, `GoString`, `GoStruct` +
   `GoStructDescriptor`, `GoPointer`, `GoInterface` (data carrier:
@@ -148,7 +166,12 @@ listed; method bodies INTERNAL):
 - `CallSiteProbes` (M9, WS L): `setEnabled(boolean)`, `isEnabled()`,
   `registerSite(String)->Site`, `snapshotJson()->String`, `reset()`,
   `receiverKey(Object)->Object`; `Site.recordTarget(Object)`,
-  `Site.recordReceiver(Object)`.
+  `Site.recordReceiver(Object)`. Site names are
+  `<funcdecl-objId>@<file>:<line>:<col>` — the objId disambiguates
+  per-instantiation sites of generic functions (M9 P1-1); the recorded
+  target key is the compiled `RootCallTarget` identity, not the `GoFunc`
+  wrapper. Deferred function-value calls are probed at their `defer`
+  statement's site (M9 P1-2).
 - `InterfaceDispatchProbes` — future interface-dispatch hooks (no dispatch
   implementation in Phase 1): `setEnabled(boolean)`, `isEnabled()`,
   `registerSite(String)->Site`, `reset()`, `sites()->Map<String,Site>`.
@@ -177,7 +200,7 @@ Phase-1 import overlay (D4), not as builtins.
 
 | Check | Guards |
 |---|---|
-| `FreezeSignatureTest` (suite) | FROZEN Java signatures (§3.2–3.5) — fails on rename/retype/removal |
+| `FreezeSignatureTest` (suite) | FROZEN Java signatures (§3.2–3.5): name, params, return type, public/static shape — fails on rename/retype/removal; plus FROZEN class existence and the `Program` record's 5 component names. **Coverage is the signature list in the test, not every name in §§3.2–3.5**: builders registered via `registerExprKind`/`registerStmtKind` are covered by contract, not enumerated. Enforcement that AST builders call *only* frozen signatures is review discipline, not a CI gate (see §1(c)). |
 | `frontend/tools/validate_frontend_v1.py` (`make check`) | frontend/v1 wire format (§2.3) |
 | `TestDeterministic` (`frontend/export_test.go`) | wire determinism (§2.3) |
 | diffharness build-failure parity | gofrontend exit codes (§2.1), graalgo-run exit codes (§3.1) |

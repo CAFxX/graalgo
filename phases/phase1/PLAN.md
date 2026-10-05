@@ -84,7 +84,7 @@ lands with a `verifies: GG-XXXX` annotation (req lint rule (c)); never before.
   the full ~60–70-function GG-0020 surface (incl. scheduler glue, netpoller API
   contract, timers — Phase-2-owned impls), each marked stub-vs-real; Phase 2/4
   build against it (spec-extract item 52).
-- **D8 [DECIDED]: Safepoint seam in Phase 1.** `graalgo.safepoint.poll()` intrinsic
+- **D8 [DECIDED]: Safepoint seam in Phase 1.** `graalgo.safepoint.Safepoint.poll()` intrinsic
   signature frozen; AST inserts calls at loop back-edges + function entries;
   Phase-1 impl is a no-op; Phase 2 gives it semantics (GG-0017 seam slice).
 

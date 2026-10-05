@@ -131,13 +131,22 @@ def check_objects(ctx):
         if not isinstance(o, dict):
             ctx.err(p, "must be an object")
             continue
-        if o.get("kind") != "var":
-            ctx.err(p, f"unknown object kind {o.get('kind')!r}")
+        kind = o.get("kind")
+        # M6: "func" (function/method objects) and "inst" (monomorphized
+        # instantiations) joined the original "var" kind.
+        if kind not in ("var", "func", "inst"):
+            ctx.err(p, f"unknown object kind {kind!r}")
         if not isinstance(o.get("name"), str):
             ctx.err(p, "name must be a string")
-        if not isinstance(o.get("param"), bool):
-            ctx.err(p, "param must be a bool")
-        ctx.check_type_id(f"{p}.type", o.get("type"))
+        if kind == "inst":
+            if not isinstance(o.get("instof"), int):
+                ctx.err(p, "inst: instof must be an int")
+            if not isinstance(o.get("typeargs"), list):
+                ctx.err(p, "inst: typeargs must be a list")
+        else:
+            if not isinstance(o.get("param"), bool):
+                ctx.err(p, "param must be a bool")
+            ctx.check_type_id(f"{p}.type", o.get("type"))
 
 
 def check_node(ctx, path, node, expr):

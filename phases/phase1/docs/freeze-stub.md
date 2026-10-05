@@ -5,7 +5,7 @@ cross-workstream review.
 
 ## D8 safepoint seam (frozen 2026-10-04, M3)
 
-- Signature: `graalgo.safepoint.poll()` — `public static void`, no arguments,
+- Signature: `graalgo.safepoint.Safepoint.poll()` — `public static void`, no arguments,
   no return value, in `src/main/java/graalgo/safepoint/Safepoint.java`.
 - Call sites (inserted by the AST builders, not by user code):
   - function entries — `GoRootNode.execute` (M3, WS D);
@@ -238,11 +238,20 @@ change.
   GoErrors ×7, DeferChain ×5, Goexit, GoCalls ×2, GoroutineState,
   DeferredCall). Total: 79 signatures.
 
-Coverage: `FreezeSignatureTest` verifies 37 signatures by reflection
-(the M4 core). The M5 runtime surface is verified differentially vs gc
-via the panic corpus (pn01–pn20), not by the signature test. Rows
+Coverage: `FreezeSignatureTest` verifies the frozen signatures by reflection
+(name, params, return type, public/static shape), plus frozen class existence
+and the `NodeFactory$Program` record components — see its `FROZEN` list for
+the exact covered set (extended at M9: NodeFactory, node protocol,
+M5 runtime surface, values types, probe APIs). The M5 runtime surface is
+also verified differentially vs gc via the panic corpus (pn01–pn20). Rows
 marked [T] are in `FreezeSignatureTest`; rows marked [C] are covered
 by corpus differential tests.
+
+Amendment (M9, per `INTERFACE_FREEZE.md` §1 conflict rule): the M5 runtime
+surface is incorporated as FROZEN in `INTERFACE_FREEZE.md` §3.4; this
+document's "frozen at the signatures below" stands unchanged. The D8
+safepoint signature is `graalgo.safepoint.Safepoint.poll()` (class name
+was missing in v1).
 
 ## Panic semantics (GG-0045) {#panic-semantics-GG-0045}
 

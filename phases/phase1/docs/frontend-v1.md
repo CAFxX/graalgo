@@ -85,8 +85,10 @@ the validator rejects dangling ids.
 
 ## 5. Object table
 
-`objects[i]` = `{ "kind": "var", "name": "<name>", "type": <type id>, "param": bool }`.
-v1 has variables only (parameters flagged). Identifiers reference objects by
+`objects[i]` = `{ "kind": "var", "name": "<name>", "type": <type id>, "param": bool }`;
+since M6 also `"kind": "func"` (function/method objects) and `"kind": "inst"`
+(monomorphized instantiations, with `instof` + `typeargs`). Identifiers
+reference objects by
 `obj` id; the id is assigned at the declaration in a single deterministic AST
 walk, so ids are stable across runs.
 
@@ -215,7 +217,7 @@ type could contain a bare type parameter (`go/types` `gcSizes` asserts on
 those; offsets are instantiation-dependent anyway); the factory indexes
 fields by position, never by byte offset.
 
-## 7. Exporter scope (v1, M4 control-flow + composite subset, M5 defer/panic/funclit, WS G builtins)
+## 7. Exporter scope (v1, M4 control-flow + composite subset, M5 defer/panic/funclit, WS G builtins, M6 typeparams/monomorphization, M7 methods)
 
 The exporter fails fast — non-zero exit, message on stderr, no JSON on
 stdout — outside this scope. Every rejection names the workstream that owns
