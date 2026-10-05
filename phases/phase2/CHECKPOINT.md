@@ -277,3 +277,42 @@ DEPENDENCY for the parent, not done here. P2-M2 therefore owns:
 
 **GG-0017 chan slice →active** when the first channel test lands
 (activation policy).
+
+## 2026-10-05 ~15:30 CEST — P2-M2 implementation + tests complete
+
+**Commits:**
+- 89545d6: GoChan + SelectOp + ChanOps overlay + SchedulerCore.currentGoroutine
+- 80f401e: ChannelTest (20 unit tests)
+- ceb8d14: differential corpus (10 Go programs + .expected + translations)
+- 4d0b545: corpus README
+
+**Tests:** 45/45 green (15 scheduler + 20 channel + 10 differential).
+`make check` green (both grep gates).
+
+**Red-green validation (mutation checks, all reverted):**
+- Mutation A (send never parks/delivers): 2 failures
+  (testBufferedBlocksWhenFull, testCloseWakesSenderToPanic).
+- Mutation B (no unpark on handoff): 2 failures, both as quiescence
+  timeouts (testSelectSendHandoff, testPingPongStress) — lost wakeups
+  are loud, never silent hangs.
+- Mutation C (carrier-blocking sleep instead of parkCurrent): 4
+  failures, including testBlockedSendDoesNotPinCarrier ("timeout waiting
+  for: peer progress while sender parked") — the P2-D4 falsifier works.
+
+**Differential:** 10/10 corpus programs byte-identical vs gc (incl. both
+panic messages). No scheduling-observable divergences found; nothing to
+add to the P2-M10 divergence list yet.
+
+**GG-0017 chan slice →active** (first channel test landed with
+verifies: GG-0017 annotations).
+
+**Design notes for reviewers:**
+- Same-FQN ChanOps overlay: frozen signatures byte-identical; added
+  makeChan 3-arg overload, recvOk, selectRecvValue/Ok (additive).
+- Select default = SelectCase with chan==null (documented).
+- close() wakes select send waiters with poison → panic on resume
+  (documented deviation risk: gc never async-panics a blocked select;
+  only triggers in a racy interleave; deterministic close-before-select
+  panics identically).
+- Zero value: makeChan 2-arg form defaults to null; 3-arg form takes the
+  type-directed zero (exporter contract).
