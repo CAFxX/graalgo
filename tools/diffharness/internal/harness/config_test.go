@@ -11,14 +11,15 @@ func TestLoadConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load backends.json: %v", err)
 	}
-	if len(cfg.Backends) != 2 {
-		t.Fatalf("want 2 backends, got %d", len(cfg.Backends))
+	if len(cfg.Backends) != 3 {
+		t.Fatalf("want 3 backends, got %d", len(cfg.Backends))
 	}
-	if cfg.Backends[0].Name != "gc-a" || cfg.Backends[1].Name != "gc-b" {
+	if cfg.Backends[0].Name != "gc-a" || cfg.Backends[1].Name != "gc-b" ||
+		cfg.Backends[2].Name != "graalgo" {
 		t.Fatalf("unexpected backend names: %+v", cfg.Backends)
 	}
-	if cfg.TimeoutSec != 15 {
-		t.Fatalf("want timeout 15, got %d", cfg.TimeoutSec)
+	if cfg.TimeoutSec != 30 {
+		t.Fatalf("want timeout 30, got %d", cfg.TimeoutSec)
 	}
 	if _, ok := cfg.Excluded("01_hello"); ok {
 		t.Fatal("01_hello should not be excluded")
