@@ -478,7 +478,10 @@ public final class TypeparamDifferentialTest {
 
     public void testResolvePhase1DirFailsFast() throws IOException {
         Path p1 = fakePhase1();
-        Path garbage = Files.createTempDirectory("garbage-cwd-");
+        // The garbage cwd must not be under a phase1 tree; java.io.tmpdir is
+        // routed to out/test-tmp (under the repo) by the Makefile, so use an
+        // explicit system-temp path here.
+        Path garbage = Files.createTempDirectory(Path.of("/tmp"), "garbage-cwd-");
         try {
             resolvePhase1Dir(null, garbage);
             throw new AssertionError("expected IllegalStateException for garbage cwd");

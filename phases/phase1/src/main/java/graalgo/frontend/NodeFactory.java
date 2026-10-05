@@ -128,6 +128,16 @@ public final class NodeFactory {
         /** Function name for Go stack traces (M5, WS F). */
         public String funcName = "main";
         /**
+         * M9 (P1-1): the enclosing funcdecl's object id, for probe site
+         * disambiguation. Each monomorphized instantiation is a separate
+         * funcdecl (own objId) whose call nodes re-use the origin's source
+         * positions; without this, per-instantiation sites merge under one
+         * {@code file:line:col} name and polymorphism is overstated.
+         * Inherited by funclit child contexts (a closure body belongs to
+         * the enclosing instantiation).
+         */
+        public int funcObjId = -1;
+        /**
          * The {@code $closure} frame slot index (M5, WS F): slot 0 in every
          * function-literal frame, -1 for {@code func main} (no closure).
          */
@@ -469,6 +479,7 @@ public final class NodeFactory {
             boolean isMain = "main".equals(name) && !fields.has("instof");
             BuildCtx ctx = new BuildCtx(
                     source, FrameDescriptor.newBuilder().defaultValueIllegal(), types, objects);
+            ctx.funcObjId = objId;
             if (isMain) {
                 if (mainRoot != null) {
                     throw new FrontendException("document has more than one func main");
@@ -1747,7 +1758,8 @@ public final class NodeFactory {
         if ("funclit".equals(funKind)) {
             GoExprNode lit = buildFuncLit(fun, ctx);
             args = adaptArgsForInterfaceParams(args, funclitParamTypeIds(fun, path), ctx, path);
-            return new FuncValueCallNode(lit, args, callResultKind(node, ctx, path));
+            return new FuncValueCallNode(lit, args, callResultKind(node, ctx, path),
+                    false, ctx.funcObjId);
         }
         if ("methodref".equals(funKind)) {
             // M6 (WS H): method call — the receiver was exported as the
@@ -1771,7 +1783,7 @@ public final class NodeFactory {
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
             allArgs = adaptArgsForInterfaceParams(allArgs, paramTypes, ctx, path);
             return new FuncValueCallNode(new FuncConstNode(funcTable, oid), allArgs,
-                    callResultKind(node, ctx, path), true);
+                    callResultKind(node, ctx, path), true, ctx.funcObjId);
         }
         if ("ident".equals(funKind)) {
             // A func-typed variable (or a builtin ident without the builtin
@@ -1791,7 +1803,8 @@ public final class NodeFactory {
             List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
             args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
-            return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path));
+            return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
+                    false, ctx.funcObjId);
         }
         throw new FrontendException(path + ": call to " + funKind + " is not supported"
                 + " in frontend/v1 scope (WS D: methods and qualified calls)");
@@ -2279,6 +2292,7 @@ public final class NodeFactory {
         }
         DeferNode n = new DeferNode(fn, args, null, kinds);
         n.setSourceSection(sectionFor(node, "defer"));
+        n.setEnclosingFunc(ctx.funcObjId);
         return n;
     }
 
@@ -2299,6 +2313,7 @@ public final class NodeFactory {
         FrameDescriptor.Builder frames = FrameDescriptor.newBuilder().defaultValueIllegal();
         BuildCtx fctx = new BuildCtx(source, frames, ctx.types, ctx.objects, ctx);
         fctx.funcName = ctx.funcName + ".func" + (++funclitCounter);
+        fctx.funcObjId = ctx.funcObjId;
         // Slot 0: the $closure slot (parent frame or null).
         int closureSlot = frames.addSlot(FrameSlotKind.Object, "$closure", null);
         fctx.closureSlot = closureSlot;

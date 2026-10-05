@@ -23,28 +23,44 @@ public final class FuncValueCallNode extends GoExprNode {
     @Children private final GoExprNode[] args;
     /** True when built from a {@code methodref} call: args[0] is the receiver. */
     private final boolean isMethodCall;
+    /**
+     * M9 (P1-1): enclosing funcdecl's object id. Each monomorphized
+     * instantiation is a separate funcdecl (own objId) whose call nodes
+     * re-use the origin's source positions; the site name includes this so
+     * per-instantiation sites do not merge. -1 when unknown (tests).
+     */
+    private final int enclosingFuncObj;
     /** M9 polymorphism probe site, created lazily on first probed call. */
     private volatile CallSiteProbes.Site probeSite;
 
     public FuncValueCallNode(GoExprNode fn, GoExprNode[] args, GoKind resultKind) {
-        this(fn, args, resultKind, false);
+        this(fn, args, resultKind, false, -1);
     }
 
     public FuncValueCallNode(GoExprNode fn, GoExprNode[] args, GoKind resultKind,
             boolean isMethodCall) {
+        this(fn, args, resultKind, isMethodCall, -1);
+    }
+
+    public FuncValueCallNode(GoExprNode fn, GoExprNode[] args, GoKind resultKind,
+            boolean isMethodCall, int enclosingFuncObj) {
         super(resultKind);
         this.fn = fn;
         this.args = args;
         this.isMethodCall = isMethodCall;
+        this.enclosingFuncObj = enclosingFuncObj;
     }
 
     private String siteName() {
+        String pos;
         var section = getSourceSection();
         if (section == null) {
-            return "unknown";
+            pos = "unknown";
+        } else {
+            pos = section.getSource().getName() + ":" + section.getStartLine()
+                    + ":" + section.getStartColumn();
         }
-        return section.getSource().getName() + ":" + section.getStartLine()
-                + ":" + section.getStartColumn();
+        return enclosingFuncObj + "@" + pos;
     }
 
     private void probe(GoFunc f, Object[] argVals) {

@@ -83,6 +83,17 @@ public final class CallSiteProbesTest {
         assertTrue(CallSiteProbes.receiverKey("s") == String.class,
                 "fallback key is the runtime class");
         assertTrue(CallSiteProbes.receiverKey(null) == null, "null receiver → null key");
+        // M9 review #2 P2-1: an interface receiver unwraps to the dynamic
+        // descriptor's identity, not GoInterface.class — two structs behind
+        // one interface must not collapse to a single key.
+        GoStructDescriptor d2 = new GoStructDescriptor("Q", java.util.List.of());
+        GoStruct st2 = new GoStruct(d2, new long[0], new Object[0]);
+        GoInterface if1 = new GoInterface(d, st, null);
+        GoInterface if2 = new GoInterface(d2, st2, null);
+        assertTrue(CallSiteProbes.receiverKey(if1) == d,
+                "interface unwrapped to dynamic descriptor");
+        assertTrue(CallSiteProbes.receiverKey(if1) != CallSiteProbes.receiverKey(if2),
+                "distinct dynamic types behind an interface get distinct keys");
     }
 
     public void testSnapshotJsonShape() {

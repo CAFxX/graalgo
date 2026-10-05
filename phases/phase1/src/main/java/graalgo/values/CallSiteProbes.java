@@ -107,11 +107,23 @@ public final class CallSiteProbes {
         return sites.computeIfAbsent(name, Site::new);
     }
 
-    /** Receiver type key for a method-call receiver value: the struct descriptor's identity. */
+    /**
+     * Receiver type key for a method-call receiver value: the struct
+     * descriptor's identity. A {@code GoInterface} receiver unwraps to its
+     * dynamic descriptor's identity (M9 review #2 P2-1) so that, when WS D
+     * lands interface dispatch, distinct dynamic types do not collapse to
+     * one key.
+     */
     public static Object receiverKey(Object recv) {
         Object v = recv;
         if (v instanceof GoPointer p) {
             v = p.referent();
+        }
+        if (v instanceof GoInterface i) {
+            v = i.data();
+            if (v instanceof GoPointer p2) {
+                v = p2.referent();
+            }
         }
         if (v instanceof GoStruct s) {
             return s.descriptor();
@@ -148,6 +160,31 @@ public final class CallSiteProbes {
     }
 
     private static String quote(String s) {
-        return '"' + s.replace("\\", "\\\\").replace("\"", "\\\"") + '"';
+        // M9 review #2 P2-6: escape per RFC 8259 (control characters, not
+        // just backslash and quote) so a hostile filename cannot emit
+        // invalid JSON.
+        StringBuilder sb = new StringBuilder(s.length() + 2);
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        sb.append('"');
+        return sb.toString();
     }
 }

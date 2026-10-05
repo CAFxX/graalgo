@@ -1,5 +1,6 @@
 package graalgo.runtime;
 
+import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 import graalgo.values.GoString;
@@ -69,6 +70,18 @@ public final class DeferredCall {
         this.fmtKeyTypeNameChains = fmtKeyTypeNameChains;
     }
 
+    /**
+     * M9 (P1-2): polymorphism probe site for a deferred function-value call,
+     * attached by {@code DeferNode} (the defer statement's site). Null when
+     * probing is disabled or the call is not a function value.
+     */
+    private CallSiteProbes.Site probeSite;
+
+    /** Attaches the probe site (called by DeferNode at defer time). */
+    public void setProbeSite(CallSiteProbes.Site site) {
+        this.probeSite = site;
+    }
+
     /** A deferred function-value call. */
     public static DeferredCall func(GoFunc func, Object[] args) {
         return new DeferredCall(Kind.FUNC, func, args, null, null, null, null, null, null, null, null, null, null, null, null);
@@ -99,7 +112,15 @@ public final class DeferredCall {
     /** Invokes the captured deferred call. */
     public void invoke() {
         switch (kind) {
-            case FUNC -> GoCalls.invoke(func, args);
+            case FUNC -> {
+                // M9 (P1-2): deferred function-value calls are real call
+                // sites; record the compiled target for the polymorphism
+                // histogram when probing is enabled.
+                if (CallSiteProbes.isEnabled() && probeSite != null) {
+                    probeSite.recordTarget(func.target());
+                }
+                GoCalls.invoke(func, args);
+            }
             case BUILTIN -> invokeBuiltin();
             case FMT -> invokeFmt();
         }

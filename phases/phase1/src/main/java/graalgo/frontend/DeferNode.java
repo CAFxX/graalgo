@@ -4,6 +4,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.DeferredCall;
 import graalgo.runtime.GoroutineState;
+import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 
@@ -30,6 +31,30 @@ public final class DeferNode extends GoStmtNode {
     private final GoKind[] argKinds;
     /** Non-null only for a deferred {@code fmt} overlay call (M7). */
     @Child private FmtCallNode fmtCall;
+    /**
+     * M9 (P1-2): enclosing funcdecl's object id for probe site disambiguation
+     * (see FuncValueCallNode). Set by the factory; -1 when unknown.
+     */
+    private int enclosingFuncObj = -1;
+    /** M9 polymorphism probe site, created lazily on first probed defer. */
+    private volatile CallSiteProbes.Site probeSite;
+
+    /** Sets the enclosing funcdecl's object id (called by NodeFactory). */
+    public void setEnclosingFunc(int funcObjId) {
+        this.enclosingFuncObj = funcObjId;
+    }
+
+    private String siteName() {
+        String pos;
+        var section = getSourceSection();
+        if (section == null) {
+            pos = "unknown";
+        } else {
+            pos = section.getSource().getName() + ":" + section.getStartLine()
+                    + ":" + section.getStartColumn();
+        }
+        return enclosingFuncObj + "@" + pos;
+    }
 
     public DeferNode(GoExprNode fn, GoExprNode[] args, String builtinName, GoKind[] argKinds) {
         this.fn = fn;
@@ -78,6 +103,16 @@ public final class DeferNode extends GoStmtNode {
                     graalgo.runtime.Panic.throwPanic(graalgo.runtime.GoErrors.nilDereference());
                 }
                 dc = DeferredCall.func(f, argVals);
+                // M9 (P1-2): attach the probe site so the deferred invocation
+                // is recorded in the polymorphism histogram.
+                if (CallSiteProbes.isEnabled()) {
+                    CallSiteProbes.Site site = probeSite;
+                    if (site == null) {
+                        site = CallSiteProbes.registerSite(siteName());
+                        probeSite = site;
+                    }
+                    dc.setProbeSite(site);
+                }
             }
         }
         GoroutineState.current().deferChain().push(dc);

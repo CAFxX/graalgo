@@ -394,4 +394,54 @@ public final class MainTest {
         String err = buf.toString(StandardCharsets.UTF_8);
         assertContains(err, "11\n20\n", "program output with probing enabled");
     }
+
+    /**
+     * M9 (review #2 P1-6): the probe must record the compiled
+     * {@code RootCallTarget} identity, not the {@code GoFunc} wrapper.
+     * Each loop iteration allocates a fresh wrapper around the same
+     * funclit target; the {@code f(v)} site must report targets:1. If the
+     * probe recorded wrapper identity, this would be targets:2 — the test
+     * is red under that bug, green under the correct implementation.
+     */
+    public void testDumpPolymorphismClosureIdentity() throws Exception {
+        Path dir = Files.createTempDirectory("graalgo-poly-test");
+        Path f = dir.resolve("prog.go");
+        Files.writeString(f,
+                "package main\n\n" +
+                "func apply(f func(int) int, v int) int { return f(v) }\n\n" +
+                "func main() {\n" +
+                "\tfor i := 0; i < 2; i++ {\n" +
+                "\t\tf := func(x int) int { return x + i }\n" +
+                "\t\tprintln(apply(f, 10))\n" +
+                "\t}\n" +
+                "}\n",
+                StandardCharsets.UTF_8);
+        Path snap = dir.resolve("poly.json");
+        PrintStream old = System.err;
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        System.setErr(new PrintStream(buf, true, StandardCharsets.UTF_8));
+        int code;
+        try {
+            code = Main.run(new String[] {"--dump-polymorphism=" + snap, f.toString()});
+        } finally {
+            System.setErr(old);
+            graalgo.values.CallSiteProbes.setEnabled(false);
+            graalgo.values.CallSiteProbes.reset();
+        }
+        assertEq(Main.EXIT_OK, code, "run exit with --dump-polymorphism");
+        String json = Files.readString(snap, StandardCharsets.UTF_8);
+        // The f(v) site saw two distinct wrappers of one target: must be 1.
+        // (The apply call sites are monomorphic; no site may exceed 1.)
+        if (json.contains("\"targets\":2") || json.contains("\"targets\":3")) {
+            throw new AssertionError(
+                    "closure-allocating loop reported >1 target (wrapper identity leak): " + json);
+        }
+        if (!json.contains("\"targets\":1")) {
+            throw new AssertionError(
+                    "expected a monomorphic site in snapshot, got: " + json);
+        }
+        // Sanity: the program ran correctly (10, 11).
+        String err = buf.toString(StandardCharsets.UTF_8);
+        assertContains(err, "10\n11\n", "loop closure program output");
+    }
 }

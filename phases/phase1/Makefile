@@ -64,9 +64,12 @@ run: main
 
 test: main $(OUT_TEST)/.built
 	mkdir -p out/test-tmp
-	# /tmp is a 512M tmpfs: go builds in the differential tests would fill it.
+	# /tmp is a 512M tmpfs: go builds and Java temp dirs in the differential
+	# tests would fill it. GOTMPDIR covers go; -Djava.io.tmpdir covers Java
+	# (Java ignores the TMPDIR env var for java.io.tmpdir).
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
-	$(JAVA) $(JAVA_FLAGS) -cp "$(OUT_TEST):$(OUT_MAIN):$(CP)" graalgo.test.Runner
+	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) \
+	-cp "$(OUT_TEST):$(OUT_MAIN):$(CP)" graalgo.test.Runner
 $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	mkdir -p $(OUT_TEST)
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(OUT_MAIN):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
