@@ -230,7 +230,9 @@ public final class Fmt {
                     i++;
                 }
                 if (i > lasti) {
-                    writeUtf8(format.substring(lasti, i));
+                    // R1#1 (P0): i/lasti are BYTE indices into f; decode the
+                    // byte range (format.substring takes CHAR indices).
+                    writeBytes(java.util.Arrays.copyOfRange(f, lasti, i));
                 }
                 if (i >= end) {
                     break;
@@ -1230,7 +1232,7 @@ public final class Fmt {
                 case 's' -> fmtBs(v);
                 case 'x' -> fmtBx(v, LDIGITS);
                 case 'X' -> fmtBx(v, UDIGITS);
-                case 'q' -> fmtQ(new String(v, StandardCharsets.UTF_8));
+                case 'q' -> fmtQBytes(v);
                 default -> {
                     // Like Go's printValue fallthrough: per-element verb.
                     buf.write('[');

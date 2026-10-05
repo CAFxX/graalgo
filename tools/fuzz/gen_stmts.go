@@ -451,11 +451,11 @@ func (g *generator) sBuiltin() {
 	// Only builtins in the v1 surface (freeze-stub.md "Builtin nodes").
 	// clear/min/max are WS G scope errors — the generator stays in scope;
 	// the scope-error path is covered by MainTest.testCheckRejectsClearBuiltin.
+	// R1#7: `*p = x` (deref-assign) is WS D — use only in-scope `*p` reads.
 	switch g.rng.Intn(3) {
 	case 0: // new
 		p := g.v()
 		g.p("%s := new(int)", p)
-		g.p("*%s = %s", p, g.intLit())
 		g.p("fmt.Println(*%s)", p)
 	case 1: // make map + len
 		m := g.v()

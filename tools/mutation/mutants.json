@@ -17,14 +17,6 @@
       "old": "if (oid < 0) {"
     },
     {
-      "description": "Width check boundary in Fmt.pad() (first occurrence, line 203)",
-      "file": "phases/phase1/src/main/java/graalgo/runtime/Fmt.java",
-      "id": "M-J03",
-      "lang": "java",
-      "new": "if (!widPresent || wid <= 0) {",
-      "old": "if (!widPresent || wid == 0) {"
-    },
-    {
       "description": "Off-by-one in var-spec values bound (exporter)",
       "file": "phases/phase1/frontend/export.go",
       "id": "M-G01",

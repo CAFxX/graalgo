@@ -56,6 +56,16 @@ func main() {
 	fmt.Printf("workdir: %s\n", workdir)
 
 	var results []Result
+
+	// R1#5, R2#6: baseline control — the clean tree must be green,
+	// otherwise every mutant is trivially "killed".
+	fmt.Printf("running baseline control...\n")
+	baselineVerdict, baselineDetail := runTestSuite(repo, workdir, nil)
+	if baselineVerdict != "SURVIVED" {
+		fatal(fmt.Errorf("baseline not green: %s (%s)", baselineVerdict, baselineDetail))
+	}
+	fmt.Printf("baseline: GREEN\n")
+
 	for _, m := range spec.Mutants {
 		start := time.Now()
 		verdict, detail := runMutant(repo, workdir, m)
@@ -69,10 +79,18 @@ func main() {
 		fmt.Printf("[%s] %s: %s (%s)\n", m.ID, verdict, m.Description, detail)
 	}
 
-	// Write report
+	// Write report (R2#6: persist to hidden_files, not just /tmp)
 	report, _ := json.MarshalIndent(results, "", "  ")
 	os.WriteFile(filepath.Join(workdir, "report.json"), report, 0644)
 	fmt.Printf("\nreport: %s/report.json\n", workdir)
+
+	// Also copy to the repo's hidden_files for durability
+	persistDir := "/home/hatch/workspace/graalgo/phases/phase1/hidden_files/mutation"
+	os.MkdirAll(persistDir, 0755)
+	ts := time.Now().Format("20060102-150405")
+	persistPath := filepath.Join(persistDir, "report-"+ts+".json")
+	os.WriteFile(persistPath, report, 0644)
+	fmt.Printf("persisted: %s\n", persistPath)
 
 	// Summary
 	killed, survived, errors := 0, 0, 0
@@ -104,8 +122,9 @@ func runMutant(repo, workdir string, m Mutant) (string, string) {
 	if !strings.Contains(string(orig), m.Old) {
 		return "ERROR", "old string not found"
 	}
-	if strings.Count(string(orig), m.Old) > 1 {
-		// Use first occurrence only; warn in detail
+	// R2#8: warn if the pattern occurs multiple times (we mutate only the first).
+	if n := strings.Count(string(orig), m.Old); n > 1 {
+		fmt.Fprintf(os.Stderr, "warning: %s: pattern occurs %d times, mutating first only\n", m.ID, n)
 	}
 	mutated := strings.Replace(string(orig), m.Old, m.New, 1)
 
@@ -184,7 +203,10 @@ func runTestSuite(repo, mdir string, extraEnv map[string]string) (string, string
 	}
 	cp += fmt.Sprintf("%s/out/test:%s/out/classes:%s", phase1, phase1, jarCP(phase1))
 
-	cmd := exec.Command(javaRunBin(), "-cp", cp, "graalgo.test.Runner")
+	// R1#5: pass the Makefile's JAVA_FLAGS (-Xss32m for the deep-recursion test).
+	cmd := exec.Command(javaRunBin(),
+		"--enable-native-access=ALL-UNNAMED", "-Xss32m",
+		"-cp", cp, "graalgo.test.Runner")
 	cmd.Dir = phase1
 	cmd.Env = os.Environ()
 	for k, v := range extraEnv {
@@ -201,11 +223,36 @@ func runTestSuite(repo, mdir string, extraEnv map[string]string) (string, string
 
 	if err := cmd.Run(); err != nil {
 		logFile.Close()
-		// Suite failed (non-zero exit) = mutant KILLED
-		return "KILLED", fmt.Sprintf("suite red (see %s)", logPath)
+		// Suite failed (non-zero exit) = mutant KILLED.
+		// R1#5: attribute the kill to the failing test(s).
+		killers := findFailingTests(logPath)
+		return "KILLED", fmt.Sprintf("killed by %v (see %s)", killers, logPath)
 	}
 	logFile.Close()
 	return "SURVIVED", "suite green"
+}
+
+// findFailingTests extracts FAIL lines from the test log.
+func findFailingTests(logPath string) []string {
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		return []string{"(unreadable log)"}
+	}
+	var killers []string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "FAIL ") {
+			// "FAIL Class.testName: ..." -> "Class.testName"
+			rest := strings.TrimPrefix(line, "FAIL ")
+			if i := strings.Index(rest, ":"); i > 0 {
+				rest = rest[:i]
+			}
+			killers = append(killers, rest)
+		}
+	}
+	if len(killers) == 0 {
+		return []string{"(no FAIL lines, non-zero exit)"}
+	}
+	return killers
 }
 
 func javaBin() string {

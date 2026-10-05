@@ -253,6 +253,7 @@ public final class MainTest {
         byte[] prog = ("package main\n\nimport \"fmt\"\n\nfunc main() {\n" +
                 "\tfmt.Println(\"a\" + \"\\xff\\xfe\")\n" +
                 "\tfmt.Printf(\"%s|%v|%x|%q\\n\", \"a\"+\"\\xff\", \"b\"+\"\\xfe\", \"c\"+\"\\xff\", \"d\"+\"\\xfe\")\n" +
+                "\tfmt.Printf(\"%q\\n\", []byte{0xff, 0xfe})\n" +
                 "}\n").getBytes(StandardCharsets.UTF_8);
         Files.write(f, prog);
         PrintStream old = System.out;
@@ -266,13 +267,15 @@ public final class MainTest {
         }
         assertEq(Main.EXIT_OK, code, "run exit on invalid-UTF8 program");
         byte[] got = buf.toByteArray();
-        // gc: a\xff\xfe \n, then a\xff | b\xfe | 63ff | "d\xfe" \n
+        // gc: a\xff\xfe \n, then a\xff | b\xfe | 63ff | "d\xfe" \n,
+        // then "\xff\xfe" (quoted) \n
         byte[] expected = new byte[] {
                 'a', (byte) 0xFF, (byte) 0xFE, '\n',
                 'a', (byte) 0xFF, '|',
                 'b', (byte) 0xFE, '|',
                 '6', '3', 'f', 'f', '|',
                 '"', 'd', '\\', 'x', 'f', 'e', '"', '\n',
+                '"', '\\', 'x', 'f', 'f', '\\', 'x', 'f', 'e', '"', '\n',
         };
         if (!java.util.Arrays.equals(expected, got)) {
             throw new AssertionError("stdout bytes on invalid UTF-8: expected <"
