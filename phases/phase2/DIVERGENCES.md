@@ -165,3 +165,20 @@ is observably identical inside this runtime. The triage principle is:
 deny when the user would observe missing output/behavior they asked
 for (UNSUPPORTED); accept when the knob cannot have observable effect
 here (NO-OP) — and document the effective value here.
+
+## P2-M6 (JFR events, WS F)
+
+### DIV-M6-1: `runtime/trace` has no JFR mapping (JFR is the native surface)
+
+gc's `runtime/trace` exposes the gc runtime's internal scheduler states
+(P, M, G transitions, STW phases). These have no meaningful mapping onto
+a JVM-hosted user-space scheduler (goroutines are Loom virtual threads;
+there are no Ps or Ms), so no `runtime/trace` compatibility is attempted.
+The JVM-native observability surface is JFR: `graalgo.GoroutineStart/End`,
+`graalgo.GoroutinePark` (reason + duration), `graalgo.ChannelBlock`
+(SPEC §3.10), plus the JDK's own `jdk.VirtualThreadStart/End/Pinned`.
+`go tool trace` compatibility is not claimed.
+
+Consequence: Go programs using `runtime/trace` observe nothing (the
+package is not in the supported surface); operators use `jfr print` /
+JMC on a recording with `graalgo.*` enabled instead.
