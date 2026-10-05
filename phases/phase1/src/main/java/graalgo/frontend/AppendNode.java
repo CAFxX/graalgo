@@ -53,6 +53,11 @@ public final class AppendNode extends GoExprNode {
                 graalgo.values.GoString str = (graalgo.values.GoString) spreadNode.executeObject(frame);
                 byte[] bytes = str.bytes();
                 int n = bytes.length;
+                // Remediation (R1 P1-2): append with no elements is the
+                // identity — gc returns s unchanged, preserving nil-ness.
+                if (n == 0) {
+                    return s;
+                }
                 GoSlice out;
                 if (s != null && n <= s.cap() - s.len()) {
                     out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
@@ -70,6 +75,11 @@ public final class AppendNode extends GoExprNode {
                 // Slice spread: append the slice's elements.
                 GoSlice spread = (GoSlice) spreadNode.executeObject(frame);
                 int n = spread == null ? 0 : (int) spread.len();
+                // Remediation (R1 P1-2): append with no elements is the
+                // identity — gc returns s unchanged, preserving nil-ness.
+                if (n == 0) {
+                    return s;
+                }
                 GoSlice out;
                 if (s != null && n <= s.cap() - s.len()) {
                     out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
@@ -78,16 +88,45 @@ public final class AppendNode extends GoExprNode {
                 }
                 Object arr = out.array();
                 int base = out.offset() + (s == null ? 0 : s.len());
-                Object spreadArr = spread == null ? null : spread.array();
-                int spreadBase = spread == null ? 0 : spread.offset();
-                for (int i = 0; i < n; i++) {
-                    Object elem = Boxing.arrayGet(spreadArr, elemKind, spreadBase + i);
-                    Boxing.arraySet(arr, elemKind, base + i, elem);
+                Object spreadArr = spread.array();
+                int spreadBase = spread.offset();
+                // Remediation (R2 P0-1): overlap-safe copy. When the spread
+                // aliases out's backing array (e.g. append(s[:2], s[:8]...)),
+                // a forward element loop overwrites not-yet-read source
+                // elements; gc has memmove semantics here.
+                if (spreadArr.getClass().getComponentType()
+                        .equals(arr.getClass().getComponentType())) {
+                    Intrinsics.memmove(arr, base, spreadArr, spreadBase, n);
+                } else {
+                    // Defensive: different component types cannot alias the
+                    // same array; snapshot through a temp buffer anyway.
+                    Object[] tmp = new Object[n];
+                    for (int i = 0; i < n; i++) {
+                        tmp[i] = Boxing.arrayGet(spreadArr, elemKind, spreadBase + i);
+                    }
+                    for (int i = 0; i < n; i++) {
+                        Boxing.arraySet(arr, elemKind, base + i, tmp[i]);
+                    }
                 }
                 return out;
             }
         }
         int n = elemChildren.length;
+        // Remediation (R1 P1-2): append(s) with no elements is the identity —
+        // gc returns s unchanged, preserving nil-ness.
+        if (n == 0) {
+            return s;
+        }
+        // Remediation (class hunt from R2 P0-1): Go evaluates all call
+        // arguments before the builtin runs. The old loop interleaved
+        // element reads and stores, so append(s, t[3], t[2]) with t sharing
+        // s's backing array read the just-written value (gc reads the
+        // original). Evaluate every element value first, then grow, then
+        // store.
+        Object[] vals = new Object[n];
+        for (int i = 0; i < n; i++) {
+            vals[i] = readElem(elemChildren[i], frame);
+        }
         // M7: fast path — if the slice has capacity, extend the header
         // (shares the backing array), exactly like gc's append. Only call
         // growslice when len+n exceeds cap; unconditional growth
@@ -104,7 +143,7 @@ public final class AppendNode extends GoExprNode {
         // dereference it.
         int base = out.offset() + (s == null ? 0 : s.len());
         for (int i = 0; i < n; i++) {
-            store(arr, base + i, readElem(elemChildren[i], frame));
+            store(arr, base + i, vals[i]);
         }
         return out;
     }

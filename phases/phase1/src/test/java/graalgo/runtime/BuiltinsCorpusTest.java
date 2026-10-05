@@ -63,4 +63,5 @@ public final class BuiltinsCorpusTest {
     public void testBi13AppendSizes() throws Exception { Differential.checkProgram(prog("bi13_append_sizes")); }
     public void testBi14MapLifecycle() throws Exception { Differential.checkProgram(prog("bi14_map_lifecycle")); }
     public void testBi15CopyCounts() throws Exception { Differential.checkProgram(prog("bi15_copy_counts")); }
+    public void testBi16AppendOverlap() throws Exception { Differential.checkProgram(prog("bi16_append_overlap")); }
 }
