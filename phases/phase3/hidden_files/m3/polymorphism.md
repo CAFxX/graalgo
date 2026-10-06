@@ -10,20 +10,21 @@ Call sites measured (full traces): 31; total probed dispatches: 1227.
 | itabs | sites | % |
 |---|---|---|
 | 1 (monomorphic) | 13 | 41.9% |
-| 2 (bimorphic) | 11 | 35.5% |
-| ≥3 (megamorphic) | 7 | 22.6% |
+| 2-3 (polymorphic, PIC-resident) | 16 | 51.6% |
+| ≥4 (megamorphic, PIC overflow) | 2 | 6.5% |
 
 Monomorphic: 13 / 31 (41.9%).
-Megamorphic (≥3 itabs): 7 / 31 (22.6%).
+Polymorphic (2-3 itabs, PIC-resident, never overflows): 16 / 31 (51.6%).
+Megamorphic (≥4 itabs, true PIC overflow): 2 / 31 (6.5%).
 
 ## Per-site data (full traces)
 
-- [bi] if00_basic_dispatch.go :: iface:3@if00_basic_dispatch.go:19:44#Write: itabs=2 dispatches=3
-- [mega] if01_multi_writer.go :: iface:3@if01_multi_writer.go:27:9#Write: itabs=3 dispatches=3
-- [bi] if02_sort_iface.go :: iface:0@if02_sort_iface.go:17:7#Len: itabs=2 dispatches=2
-- [bi] if02_sort_iface.go :: iface:0@if02_sort_iface.go:19:24#Less: itabs=2 dispatches=21
-- [bi] if02_sort_iface.go :: iface:0@if02_sort_iface.go:20:4#Swap: itabs=2 dispatches=15
-- [bi] if03_error_iface.go :: iface:3@if03_error_iface.go:32:16#Error: itabs=2 dispatches=3
+- [poly] if00_basic_dispatch.go :: iface:3@if00_basic_dispatch.go:19:44#Write: itabs=2 dispatches=3
+- [poly] if01_multi_writer.go :: iface:3@if01_multi_writer.go:27:9#Write: itabs=3 dispatches=3
+- [poly] if02_sort_iface.go :: iface:0@if02_sort_iface.go:17:7#Len: itabs=2 dispatches=2
+- [poly] if02_sort_iface.go :: iface:0@if02_sort_iface.go:19:24#Less: itabs=2 dispatches=21
+- [poly] if02_sort_iface.go :: iface:0@if02_sort_iface.go:20:4#Swap: itabs=2 dispatches=15
+- [poly] if03_error_iface.go :: iface:3@if03_error_iface.go:32:16#Error: itabs=2 dispatches=3
 - [mono] if04_assert_iface.go :: iface:1@if04_assert_iface.go:19:14#Write: itabs=1 dispatches=1
 - [mega] if05_megamorphic.go :: iface:4@if05_megamorphic.go:28:12#Write: itabs=4 dispatches=16
 - [mono] if07_typed_nil.go :: iface:1@if07_typed_nil.go:21:14#Write: itabs=1 dispatches=1
@@ -36,19 +37,19 @@ Megamorphic (≥3 itabs): 7 / 31 (22.6%).
 - [mono] if10_iface_param.go :: iface:2@if10_iface_param.go:28:7#Write: itabs=1 dispatches=1
 - [mono] if10_iface_param.go :: iface:3@if10_iface_param.go:38:14#CopyFrom: itabs=1 dispatches=1
 - [mono] mp01_hot_mono.go :: iface:1@mp01_hot_mono.go:15:10#Add: itabs=1 dispatches=1000
-- [bi] mp02_bimorphic.go :: iface:2@mp02_bimorphic.go:24:12#Size: itabs=2 dispatches=100
+- [poly] mp02_bimorphic.go :: iface:2@mp02_bimorphic.go:24:12#Size: itabs=2 dispatches=100
 - [mega] mp03_many_types.go :: iface:6@mp03_many_types.go:35:10#ID: itabs=6 dispatches=6
-- [mega] mp04_errors.go :: iface:4@mp04_errors.go:32:16#Error: itabs=3 dispatches=9
-- [bi] mp05_sorters.go :: iface:4@mp05_sorters.go:47:15#Name: itabs=2 dispatches=4
-- [bi] mp05_sorters.go :: iface:4@mp05_sorters.go:47:25#Sort: itabs=2 dispatches=4
+- [poly] mp04_errors.go :: iface:4@mp04_errors.go:32:16#Error: itabs=3 dispatches=9
+- [poly] mp05_sorters.go :: iface:4@mp05_sorters.go:47:15#Name: itabs=2 dispatches=4
+- [poly] mp05_sorters.go :: iface:4@mp05_sorters.go:47:25#Sort: itabs=2 dispatches=4
 - [mono] mp06_nested_iface.go :: iface:2@mp06_nested_iface.go:14:9#Value: itabs=1 dispatches=1
 - [mono] mp06_nested_iface.go :: iface:3@mp06_nested_iface.go:20:7#Double: itabs=1 dispatches=5
-- [bi] mp07_value_pointer_mix.go :: iface:2@mp07_value_pointer_mix.go:24:12#Next: itabs=2 dispatches=10
-- [bi] mp08_recursive.go :: iface:1@mp08_recursive.go:15:36#Sum: itabs=2 dispatches=3
-- [bi] mp08_recursive.go :: iface:1@mp08_recursive.go:15:51#Sum: itabs=2 dispatches=3
-- [mega] mp09_embedded_3impl.go :: iface:6@mp09_embedded_3impl.go:28:7#Write: itabs=3 dispatches=3
-- [mega] mp09_embedded_3impl.go :: iface:6@mp09_embedded_3impl.go:29:8#Close: itabs=3 dispatches=3
-- [mega] mp10_nonstrukt.go :: iface:3@mp10_nonstrukt.go:22:15#String: itabs=3 dispatches=3
+- [poly] mp07_value_pointer_mix.go :: iface:2@mp07_value_pointer_mix.go:24:12#Next: itabs=2 dispatches=10
+- [poly] mp08_recursive.go :: iface:1@mp08_recursive.go:15:36#Sum: itabs=2 dispatches=3
+- [poly] mp08_recursive.go :: iface:1@mp08_recursive.go:15:51#Sum: itabs=2 dispatches=3
+- [poly] mp09_embedded_3impl.go :: iface:6@mp09_embedded_3impl.go:28:7#Write: itabs=3 dispatches=3
+- [poly] mp09_embedded_3impl.go :: iface:6@mp09_embedded_3impl.go:29:8#Close: itabs=3 dispatches=3
+- [poly] mp10_nonstrukt.go :: iface:3@mp10_nonstrukt.go:22:15#String: itabs=3 dispatches=3
 
 ## Program outcomes
 
@@ -82,7 +83,7 @@ This re-measurement covers what Phase 1 could not: *interface* dispatch
 sites, where the dynamic type genuinely varies at runtime. The honest
 reading of the numbers:
 
-- The distribution (41.9% mono / 35.5% bi / 22.6% mega) does NOT
+- The distribution (41.9% mono / 51.6% poly / 6.5% mega) does NOT
   describe real Go workloads -- it describes this probe set, which was
   deliberately built to exercise the polymorphism spectrum (if05 feeds
   4 types through one site; mp03 feeds 6; mp02/mp05/mp07/mp09 are
@@ -91,8 +92,8 @@ reading of the numbers:
 - What the re-measurement does establish: the dispatch machinery is
   correct across the whole spectrum -- every site above dispatched
   correctly (the corpus differential is 11/11 byte-identical, the
-  probes 10/10 vs gc), the PIC serves the mono/bi sites, and the
-  megamorphic hash fallback serves if05/mp03/mp04/mp09/mp10.
+  probes 10/10 vs gc), the PIC serves the mono/poly sites (limit 3 — only if05 and mp03 ever overflow it), and the
+  megamorphic hash fallback serves if05 (4 itabs) and mp03 (6 itabs).
 - The Phase-2 plan's re-measure trigger asked whether the 99.4%
   monomorphic finding survives interface dispatch. That question needs
   a workload-representative program set (real interface-heavy Go code,

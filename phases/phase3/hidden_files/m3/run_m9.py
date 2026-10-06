@@ -53,9 +53,15 @@ for name, path, kind in programs:
 
 full = {k: v for k, v in sites.items() if not v["truncated"]}
 trunc = {k: v for k, v in sites.items() if v["truncated"]}
+# R2 P2-1: classification follows the implementation's PIC semantics
+# (IfaceDispatchNode.PIC_LIMIT = 3 — the megamorphic hash fallback
+# engages only on the 4th distinct itab). 1 = monomorphic; 2-3 =
+# polymorphic but PIC-resident (never overflows); >=4 = megamorphic
+# (true PIC overflow). Labeling >=3 "megamorphic" overstated the
+# headline: sites with exactly 3 itabs never leave the PIC.
 mono = sum(1 for v in full.values() if v["itabs"] == 1)
-bi = sum(1 for v in full.values() if v["itabs"] == 2)
-mega = sum(1 for v in full.values() if v["itabs"] >= 3)
+poly = sum(1 for v in full.values() if 2 <= v["itabs"] <= 3)
+mega = sum(1 for v in full.values() if v["itabs"] >= 4)
 tot = len(full)
 totd = sum(v["dispatches"] for v in full.values())
 
@@ -80,11 +86,11 @@ lines.append("")
 lines.append("| itabs | sites | % |")
 lines.append("|---|---|---|")
 lines.append(f"| 1 (monomorphic) | {mono} | {pct(mono)} |")
-lines.append(f"| 2 (bimorphic) | {bi} | {pct(bi)} |")
-lines.append(f"| ≥3 (megamorphic) | {mega} | {pct(mega)} |")
+lines.append(f"| 2-3 (polymorphic, PIC-resident) | {poly} | {pct(poly)} |")
+lines.append(f"| >=4 (megamorphic, PIC overflow) | {mega} | {pct(mega)} |")
 lines.append("")
 lines.append(f"Monomorphic: {mono} / {tot} ({pct(mono)}).")
-lines.append(f"Megamorphic (≥3 itabs): {mega} / {tot} ({pct(mega)}).")
+lines.append(f"Megamorphic (>=4 itabs, true PIC overflow): {mega} / {tot} ({pct(mega)}).")
 lines.append("")
 if trunc:
     lines.append(f"Truncated traces (excluded above): {len(trunc)} site(s):")
@@ -95,7 +101,7 @@ lines.append("## Per-site data (full traces)")
 lines.append("")
 for k in sorted(full):
     v = full[k]
-    cls = "mono" if v["itabs"] == 1 else ("bi" if v["itabs"] == 2 else "mega")
+    cls = "mono" if v["itabs"] == 1 else ("poly" if v["itabs"] <= 3 else "mega")
     lines.append(f"- [{cls}] {k}: itabs={v['itabs']} dispatches={v['dispatches']}")
 lines.append("")
 lines.append("## Program outcomes")
