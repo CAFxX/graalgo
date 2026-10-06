@@ -100,9 +100,6 @@ func isSyntheticIntrinsic(path, name string) bool {
 	if path == "time" {
 		return timeIntrinsicNames[name]
 	}
-	if path == "context" {
-		return name == "ctxChanClose"
-	}
 	return false
 }
 
@@ -379,20 +376,6 @@ func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 	return e.node("timeop", c, fields), nil
 }
 
-// exportChanClose lowers the synthetic context package's ctxChanClose
-// intrinsic into a "call" node with the additive "chanclose" marker (the
-// goexit/gcinterop marker precedent — no new node kind, no new builtin).
-func (e *exporter) exportChanClose(c *ast.CallExpr) (*Node, error) {
-	args, err := e.exportCallArgs(c)
-	if err != nil {
-		return nil, err
-	}
-	if len(args) != 1 {
-		return nil, scopeErrorf("context ctxChanClose takes 1 argument")
-	}
-	return e.node("call", c, map[string]any{"chanclose": true, "args": args}), nil
-}
-
 // exportSyntheticPkgCall handles calls of the form time.X(...) /
 // context.X(...) where X denotes a synthetic package member. It returns
 // handled=false for type names (conversions take the normal path) and
@@ -459,12 +442,6 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 		return nil, scopeErrorf("selector %s.%s is not supported in frontend/v1 scope (M5)",
 			pkgName.Name(), x.Sel.Name)
 	}
-}
-
-// isChanCloseFunc reports whether fn is the synthetic context package's
-// channel-close intrinsic.
-func isChanCloseFunc(fn *types.Func) bool {
-	return fn.Pkg() != nil && fn.Pkg().Path() == "context" && fn.Name() == "ctxChanClose"
 }
 
 // isTimeIntrinsicFunc reports whether fn is a synthetic time intrinsic.

@@ -10,7 +10,7 @@
 // the synthetic declarations' bodies into the same wire document (shared
 // type/object tables) via exportSyntheticPackages.
 //
-// Value model (ADR-0005 D1/D2):
+// Value model (ADR-0005 D1/D2, Appendix M):
 //   - time.Duration / time.Time / time.Month / time.Weekday are plain Go
 //     values; their methods are real Go, lowered like user code.
 //   - time.Timer / time.Ticker are opaque Java objects (the ADR-0002
@@ -20,19 +20,19 @@
 //     NewTicker, AfterFunc) are intrinsics: declared here with exact gc
 //     1.27.1 signatures and panic bodies, always intercepted by the
 //     exporter into the §D3 wire nodes, never exported as funcdecls.
-//   - context is real Go composing P3-M2 sync.Mutex, channel receive,
-//     synthetic time, and P3-M3 interface dispatch. The single intrinsic
-//     it needs is channel close (the v1 builtin registry is frozen and
-//     has no close): context_chanclose is declared below and intercepted
-//     into a "call" node with the additive "chanclose" marker (the
-//     goexit/gcinterop marker precedent — no new node kind).
+//   - context is real Go on the Appendix M channel-mutex design (no Java
+//     intrinsics at all): cancelCtx with done/cancelCh/muChan/children,
+//     timerCtx via time.AfterFunc, valueCtx, and the __withCancel/
+//     __withDeadline/__withTimeout/__deadlineOf single-result desugar
+//     targets behind the 6 multi-result operations (which keep exact gc
+//     signatures with fail-fast bodies for type-checking).
 //
 // Out-of-scope members are declared with exact gc signatures and panic
 // bodies reporting "not in M5 scope" — fail fast, never silently.
 //
-// The sources use only frontend/v1-supported constructs (no generics, no
-// select/send, no close builtin): they must keep passing `go vet`-level
-// type-check AND the exporter's scope rules.
+// The sources use only frontend/v1-supported constructs (no generics):
+// they must keep passing `go vet`-level type-check AND the exporter's
+// scope rules.
 package main
 
 // syntheticTimeSource is the P3-M5 synthetic `time` package (ADR-0005
@@ -243,7 +243,16 @@ func timeQuote(s string) string {
 	return string(b)
 }
 
-func timeLeadingInt(s string) (uint64, string, bool) {
+// __timeLeadingInt/__timeLeadingFraction are single-result variants of
+// gc's helpers (multi-result calls need WS D; these are only called from
+// __parseDuration, so they return pairs directly).
+type leadingIntPair struct {
+	x  uint64
+	s  string
+	ok bool
+}
+
+func __timeLeadingInt(s string) leadingIntPair {
 	var x uint64
 	i := 0
 	for ; i < len(s); i++ {
@@ -252,17 +261,23 @@ func timeLeadingInt(s string) (uint64, string, bool) {
 			break
 		}
 		if x > (1<<63)/10 {
-			return 0, "", false
+			return leadingIntPair{}
 		}
 		x = x*10 + uint64(c-'0')
 		if x > 1<<63 {
-			return 0, "", false
+			return leadingIntPair{}
 		}
 	}
-	return x, s[i:], true
+	return leadingIntPair{x: x, s: s[i:], ok: true}
 }
 
-func timeLeadingFraction(s string) (uint64, float64, string) {
+type leadingFractionTriple struct {
+	x     uint64
+	scale float64
+	s     string
+}
+
+func __timeLeadingFraction(s string) leadingFractionTriple {
 	var x uint64
 	scale := float64(1)
 	overflow := false
@@ -287,30 +302,47 @@ func timeLeadingFraction(s string) (uint64, float64, string) {
 		x = y
 		scale *= 10
 	}
-	return x, scale, s[i:]
+	return leadingFractionTriple{x: x, scale: scale, s: s[i:]}
 }
 
-func timeUnitValue(u string) (uint64, bool) {
+// __timeUnitValue is the single-result variant of gc's unit lookup
+// (multi-result calls need WS D; only called from __parseDuration).
+type unitPair struct {
+	unit uint64
+	ok   bool
+}
+
+func __timeUnitValue(u string) unitPair {
 	switch u {
 	case "ns":
-		return uint64(Nanosecond), true
+		return unitPair{unit: uint64(Nanosecond), ok: true}
 	case "us", "µs", "μs":
-		return uint64(Microsecond), true
+		return unitPair{unit: uint64(Microsecond), ok: true}
 	case "ms":
-		return uint64(Millisecond), true
+		return unitPair{unit: uint64(Millisecond), ok: true}
 	case "s":
-		return uint64(Second), true
+		return unitPair{unit: uint64(Second), ok: true}
 	case "m":
-		return uint64(Minute), true
+		return unitPair{unit: uint64(Minute), ok: true}
 	case "h":
-		return uint64(Hour), true
+		return unitPair{unit: uint64(Hour), ok: true}
 	}
-	return 0, false
+	return unitPair{}
 }
 
-// ParseDuration parses a duration string with gc 1.27.1's syntax and
-// error strings ("300ms", "-1.5h", "2h45m"; "0" is zero).
-func ParseDuration(s string) (Duration, error) {
+// durationPair is the Appendix M single-result carrier for ParseDuration.
+type durationPair struct {
+	d   Duration
+	err error
+}
+
+// __parseDuration is the Appendix M desugar target: the real
+// ParseDuration logic (gc 1.27.1 syntax and error strings: "300ms",
+// "-1.5h", "2h45m"; "0" is zero) returning a single durationPair. It
+// cannot call ParseDuration: the exporter desugars 2-target
+// multi-result calls, so "d, err := ParseDuration(s)" here would
+// recurse.
+func __parseDuration(s string) durationPair {
 	orig := s
 	var d uint64
 	neg := false
@@ -322,33 +354,35 @@ func ParseDuration(s string) (Duration, error) {
 		}
 	}
 	if s == "0" {
-		return 0, nil
+		return durationPair{}
 	}
 	if s == "" {
-		return 0, &timeParseError{"invalid duration", orig}
+		return durationPair{err: &timeParseError{"invalid duration", orig}}
 	}
 	for s != "" {
 		var v, f uint64
 		scale := float64(1)
 		if !(s[0] == '.' || ('0' <= s[0] && s[0] <= '9')) {
-			return 0, &timeParseError{"invalid duration", orig}
+			return durationPair{err: &timeParseError{"invalid duration", orig}}
 		}
 		pl := len(s)
-		var ok bool
-		v, s, ok = timeLeadingInt(s)
-		if !ok {
-			return 0, &timeParseError{"invalid duration", orig}
+		li := __timeLeadingInt(s)
+		if !li.ok {
+			return durationPair{err: &timeParseError{"invalid duration", orig}}
 		}
+		v = li.x
+		s = li.s
 		pre := pl != len(s)
 		post := false
 		if s != "" && s[0] == '.' {
 			s = s[1:]
 			pl = len(s)
-			f, scale, s = timeLeadingFraction(s)
+			lf := __timeLeadingFraction(s)
+			f, scale, s = lf.x, lf.scale, lf.s
 			post = pl != len(s)
 		}
 		if !pre && !post {
-			return 0, &timeParseError{"invalid duration", orig}
+			return durationPair{err: &timeParseError{"invalid duration", orig}}
 		}
 		i := 0
 		for ; i < len(s); i++ {
@@ -358,36 +392,44 @@ func ParseDuration(s string) (Duration, error) {
 			}
 		}
 		if i == 0 {
-			return 0, &timeParseError{"missing unit in duration", orig}
+			return durationPair{err: &timeParseError{"missing unit in duration", orig}}
 		}
 		u := s[:i]
 		s = s[i:]
-		unit, ok := timeUnitValue(u)
-		if !ok {
-			return 0, &timeParseError{"unknown unit " + timeQuote(u) + " in duration", orig}
+		up := __timeUnitValue(u)
+		if !up.ok {
+			return durationPair{err: &timeParseError{"unknown unit " + timeQuote(u) + " in duration", orig}}
 		}
+		unit := up.unit
 		if v > (1<<63)/unit {
-			return 0, &timeParseError{"invalid duration", orig}
+			return durationPair{err: &timeParseError{"invalid duration", orig}}
 		}
 		v *= unit
 		if f > 0 {
 			v += uint64(float64(f) * (float64(unit) / scale))
 			if v > 1<<63 {
-				return 0, &timeParseError{"invalid duration", orig}
+				return durationPair{err: &timeParseError{"invalid duration", orig}}
 			}
 		}
 		d += v
 		if d > 1<<63 {
-			return 0, &timeParseError{"invalid duration", orig}
+			return durationPair{err: &timeParseError{"invalid duration", orig}}
 		}
 	}
 	if neg {
-		return -Duration(d), nil
+		return durationPair{d: -Duration(d)}
 	}
 	if d > 1<<63-1 {
-		return 0, &timeParseError{"invalid duration", orig}
+		return durationPair{err: &timeParseError{"invalid duration", orig}}
 	}
-	return Duration(d), nil
+	return durationPair{d: Duration(d)}
+}
+
+// ParseDuration keeps the exact gc 1.27.1 signature for type-checking;
+// the exporter desugars 2-target call sites (Appendix M), every other
+// position fails fast. Body never runs.
+func ParseDuration(s string) (Duration, error) {
+	panic("time.ParseDuration: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
 // Time is a wall-clock instant as Unix nanoseconds. The zero Time has
@@ -678,12 +720,43 @@ func (t *Ticker) Reset(d Duration) { panic("time: intrinsic Ticker.Reset") }
 //   - emptyCtx.Done() returns a package-level never-closed channel, not
 //     nil: the runtime's channel receive throws on nil channels (spike),
 //     so nil would not block forever (ADR-0005 fallback).
+// syntheticContextSource is the P3-M5 synthetic `context` package
+// (ADR-0005 D2, Appendix M): REAL Go on the channel-mutex design — no
+// Java intrinsics, no goroutine leaks. It composes channel operations
+// (make/send/recv/close/select, Appendix C), synthetic time, and P3-M3
+// interface dispatch (a combination test of M2+M3+M5). Exact gc 1.27.1
+// signatures for the in-scope API.
+//
+// Design (Appendix M):
+//   - cancelCtx carries done (closed on cancel, broadcast), cancelCh
+//     (buffer 1; occupancy = "cancel claimed"), err/cause, muChan (binary
+//     semaphore, buffer 1, pre-filled), children, afterFuncs.
+//   - cancel() claims via select { case cancelCh <- err: ...;
+//     case <-done: }: exactly one winner; losers wait for done.
+//     Parent/child propagation is synchronous (no watcher goroutine —
+//     the launcher's awaitQuiescence hangs on parked goroutines, unlike
+//     gc which exits with main).
+//   - Lock discipline: snapshot children/hooks under muChan, recurse and
+//     spawn hook goroutines WITHOUT holding the lock (the context tree
+//     is a DAG — no cycles).
+//   - The 6 multi-result operations keep exact gc signatures with
+//     fail-fast bodies (for type-checking); the exporter desugars the
+//     2-target call sites to the __withCancel/__withCancelCause/
+//     __withDeadline/__withTimeout/__deadlineOf single-result helpers
+//     plus cancelFunc/cancelCauseFunc methods (Appendix M). The concrete
+//     Deadline() methods are declared for go/types interface
+//     satisfaction only — every call site desugars, so their fail-fast
+//     bodies are unreachable.
+//   - AfterFunc registers a hook run at cancel time (go f() per hook,
+//     spawned by the canceler — never a parked watcher goroutine).
+//
+// Documented M5 limitations (Appendix M): user-defined Context
+// implementations get no async parent-cancel propagation, no AfterFunc
+// hook, and no deadline (their Deadline method cannot be called —
+// multi-value dispatch needs WS D).
 const syntheticContextSource = `package context
 
-import (
-	"sync"
-	"time"
-)
+import "time"
 
 type ctxErrorString struct {
 	s string
@@ -704,14 +777,19 @@ type Context interface {
 
 type emptyCtx struct{}
 
-func (emptyCtx) Deadline() (deadline time.Time, ok bool) { return }
-func (emptyCtx) Done() <-chan struct{}                   { return ctxNeverFire }
-func (emptyCtx) Err() error                              { return nil }
-func (emptyCtx) Value(key any) any                       { return nil }
+// Deadline is declared for go/types interface satisfaction only; the
+// exporter desugars every Deadline() call site (Appendix M), so this
+// fail-fast body is unreachable.
+func (emptyCtx) Deadline() (deadline time.Time, ok bool) {
+	panic("context: emptyCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+}
+func (emptyCtx) Done() <-chan struct{} { return ctxNeverFire }
+func (emptyCtx) Err() error            { return nil }
+func (emptyCtx) Value(key any) any     { return nil }
 
 // ctxNeverFire is the ADR-0005 fallback for emptyCtx.Done: a
 // package-level never-closed channel. (Nil would be gc-exact, but the
-// runtime's receive throws on nil channels instead of blocking.)
+// runtime's channel receive throws on nil channels instead of blocking.)
 var ctxNeverFire = make(chan struct{})
 
 var ctxBackground = &emptyCtx{}
@@ -726,80 +804,157 @@ type CancelFunc func()
 // CancelCauseFunc is gc's func(cause error).
 type CancelCauseFunc func(cause error)
 
+// cancelCtx is the channel-mutex context (ADR-0005 Appendix M).
 type cancelCtx struct {
 	parent Context
-	// mu is a *sync.Mutex: sync values cannot be struct fields (the
-	// factory manufactures field zeros; ADR-0002 D3), but pointers are
-	// fine. Initialized at every construction site via newCancelCtx.
-	mu       *sync.Mutex
-	done     chan struct{}
-	children map[*cancelCtx]struct{}
+	done   chan struct{} // closed on cancel (broadcast)
+	// cancelCh has buffer 1; occupancy = "cancel claimed". Exactly one
+	// cancel() call wins the send; losers take the <-done branch.
+	cancelCh chan error
 	err      error
 	cause    error
+	// muChan is a binary semaphore (buffer 1, pre-filled at
+	// construction) guarding children/afterFuncs/err/cause.
+	muChan     chan struct{}
+	children   map[*cancelCtx]struct{}
+	afterFuncs []*afterFuncEntry
+}
+
+type afterFuncEntry struct {
+	f       func()
+	stopped bool
+	ran     bool
 }
 
 func newCancelCtx(parent Context) *cancelCtx {
-	return &cancelCtx{parent: parent, mu: &sync.Mutex{}}
-}
-
-// ctxClosedChan is installed as done when cancel runs before anyone
-// called Done (the stdlib's closedchan equivalent).
-var ctxClosedChan = ctxNewClosedChan()
-
-func ctxNewClosedChan() chan struct{} {
-	ch := make(chan struct{})
-	ctxChanClose(ch)
-	return ch
-}
-
-// ctxChanClose is the single channel-close intrinsic the package needs.
-// The v1 builtin registry is frozen and has no close, so this is a
-// synthetic-package-private intrinsic (the syncop/timeop precedent):
-// the exporter intercepts every call into a "call" node with the
-// additive "chanclose" marker; the body never runs.
-func ctxChanClose(ch chan struct{}) { panic("context: intrinsic ctxChanClose") }
-
-func (c *cancelCtx) Deadline() (deadline time.Time, ok bool) { return }
-
-func (c *cancelCtx) Done() <-chan struct{} {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.done == nil {
-		c.done = make(chan struct{})
+	c := &cancelCtx{
+		parent:   parent,
+		done:     make(chan struct{}),
+		cancelCh: make(chan error, 1),
+		muChan:   make(chan struct{}, 1),
 	}
-	return c.done
+	c.muChan <- struct{}{} // pre-fill the binary semaphore
+	return c
 }
+
+// Deadline is declared for go/types interface satisfaction only (see
+// emptyCtx.Deadline).
+func (c *cancelCtx) Deadline() (deadline time.Time, ok bool) {
+	panic("context: cancelCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+func (c *cancelCtx) Done() <-chan struct{} { return c.done }
 
 func (c *cancelCtx) Err() error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.err
+	select {
+	case <-c.done:
+		// done is closed after err is set (program order in the
+		// winner); receiving the close synchronizes-with it, so no
+		// lock is needed for the read.
+		return c.err
+	default:
+		return nil
+	}
 }
 
 func (c *cancelCtx) Value(key any) any { return c.parent.Value(key) }
 
+// cancel claims cancellation via cancelCh and propagates synchronously.
+// No goroutine is spawned or parked here (the launcher's
+// awaitQuiescence hangs on parked goroutines, unlike gc).
 func (c *cancelCtx) cancel(err, cause error) {
 	if err == nil {
 		panic("context: internal error: missing cancel error")
 	}
-	c.mu.Lock()
-	if c.err != nil {
-		c.mu.Unlock()
-		return
+	select {
+	case c.cancelCh <- err:
+		// Won the claim: publish err/cause, broadcast, then
+		// propagate without holding the semaphore.
+		c.err = err
+		c.cause = cause
+		close(c.done)
+		<-c.muChan
+		children := c.children
+		c.children = nil
+		hooks := c.afterFuncs
+		c.afterFuncs = nil
+		for _, h := range hooks {
+			h.ran = true
+		}
+		parent := c.parent
+		c.muChan <- struct{}{}
+		ctxRemoveChild(parent, c)
+		for child := range children {
+			child.cancel(err, cause)
+		}
+		for _, h := range hooks {
+			if !h.stopped {
+				f := h.f
+				go f()
+			}
+		}
+	case <-c.done:
+		// Already canceled: the winner is closing/closed done.
 	}
-	c.err = err
-	c.cause = cause
-	if c.done == nil {
-		c.done = ctxClosedChan
-	} else {
-		ctxChanClose(c.done)
+}
+
+// cancelFunc/cancelCauseFunc are the Appendix M desugar targets: the
+// second result of WithCancel/WithCancelCause.
+func (c *cancelCtx) cancelFunc() CancelFunc {
+	return func() {
+		c.cancel(Canceled, Canceled)
+		ctxRemoveChild(c.parent, c)
 	}
-	children := c.children
-	c.children = nil
-	c.mu.Unlock()
-	for child := range children {
-		child.cancel(err, cause)
+}
+
+func (c *cancelCtx) cancelCauseFunc() CancelCauseFunc {
+	return func(cause error) {
+		c.cancel(Canceled, cause)
+		ctxRemoveChild(c.parent, c)
 	}
+}
+
+// __withCancel/__withCancelCause are the Appendix M desugar targets:
+// the single-result constructors behind WithCancel/WithCancelCause.
+func __withCancel(parent Context) *cancelCtx {
+	if parent == nil {
+		panic("context: nil parent")
+	}
+	c := newCancelCtx(parent)
+	ctxPropagateCancel(parent, c)
+	return c
+}
+
+func __withCancelCause(parent Context) *cancelCtx {
+	if parent == nil {
+		panic("context: nil parent")
+	}
+	c := newCancelCtx(parent)
+	ctxPropagateCancel(parent, c)
+	return c
+}
+
+// WithCancel/WithCancelCause keep exact gc 1.27.1 signatures for
+// type-checking. The exporter desugars 2-target call sites (Appendix M);
+// every other position fails fast. Bodies never run.
+func WithCancel(parent Context) (Context, CancelFunc) {
+	panic("context.WithCancel: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+func WithCancelCause(parent Context) (Context, CancelCauseFunc) {
+	panic("context.WithCancelCause: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+// Cause returns the cause of c's cancellation: the cause for synthetic
+// contexts, else c.Err() (gc parity).
+func Cause(c Context) error {
+	if cc := ctxUnwrapCancel(c); cc != nil {
+		<-cc.muChan
+		cause := cc.cause
+		cc.muChan <- struct{}{}
+		return cause
+	}
+	return c.Err()
 }
 
 // ctxUnwrapCancel finds the *cancelCtx driving parent, through valueCtx
@@ -816,15 +971,20 @@ func ctxUnwrapCancel(parent Context) *cancelCtx {
 	return nil
 }
 
+// ctxPropagateCancel arranges synchronous child cancellation: if the
+// parent is already canceled the child cancels immediately; otherwise
+// the child registers in the parent's children set (no watcher
+// goroutine — see cancel). Exotic parents get no async propagation
+// (documented M5 limitation).
 func ctxPropagateCancel(parent Context, child *cancelCtx) {
 	if parent.Done() == nil {
 		return
 	}
 	if pc := ctxUnwrapCancel(parent); pc != nil {
-		pc.mu.Lock()
+		<-pc.muChan
 		if pc.err != nil {
 			err, cause := pc.err, pc.cause
-			pc.mu.Unlock()
+			pc.muChan <- struct{}{}
 			child.cancel(err, cause)
 			return
 		}
@@ -832,56 +992,17 @@ func ctxPropagateCancel(parent Context, child *cancelCtx) {
 			pc.children = make(map[*cancelCtx]struct{})
 		}
 		pc.children[child] = struct{}{}
-		pc.mu.Unlock()
+		pc.muChan <- struct{}{}
 		return
 	}
-	go func() {
-		<-parent.Done()
-		child.cancel(parent.Err(), Cause(parent))
-	}()
 }
 
 func ctxRemoveChild(parent Context, child *cancelCtx) {
 	if pc := ctxUnwrapCancel(parent); pc != nil {
-		pc.mu.Lock()
+		<-pc.muChan
 		delete(pc.children, child)
-		pc.mu.Unlock()
+		pc.muChan <- struct{}{}
 	}
-}
-
-func WithCancel(parent Context) (Context, CancelFunc) {
-	if parent == nil {
-		panic("context: nil parent")
-	}
-	c := newCancelCtx(parent)
-	ctxPropagateCancel(parent, c)
-	return c, func() {
-		c.cancel(Canceled, Canceled)
-		ctxRemoveChild(parent, c)
-	}
-}
-
-func WithCancelCause(parent Context) (Context, CancelCauseFunc) {
-	if parent == nil {
-		panic("context: nil parent")
-	}
-	c := newCancelCtx(parent)
-	ctxPropagateCancel(parent, c)
-	return c, func(cause error) {
-		c.cancel(Canceled, cause)
-		ctxRemoveChild(parent, c)
-	}
-}
-
-// Cause returns the cause of c's cancellation: the cause for
-// cancelCtx/timerCtx, else c.Err() (gc parity).
-func Cause(c Context) error {
-	if cc := ctxUnwrapCancel(c); cc != nil {
-		cc.mu.Lock()
-		defer cc.mu.Unlock()
-		return cc.cause
-	}
-	return c.Err()
 }
 
 type timerCtx struct {
@@ -890,8 +1011,10 @@ type timerCtx struct {
 	deadline time.Time
 }
 
+// Deadline is declared for go/types interface satisfaction only (see
+// emptyCtx.Deadline).
 func (c *timerCtx) Deadline() (deadline time.Time, ok bool) {
-	return c.deadline, true
+	panic("context: timerCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
 func (c *timerCtx) Done() <-chan struct{} { return c.cancel.Done() }
@@ -905,14 +1028,18 @@ func (c *timerCtx) cancelTimer(err, cause error) {
 	}
 }
 
-func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
+// cancelFunc is the Appendix M desugar target for the WithDeadline/
+// WithTimeout cancel function (stops the timer too).
+func (c *timerCtx) cancelFunc() CancelFunc {
+	return func() { c.cancelTimer(Canceled, Canceled) }
+}
+
+// __withDeadline/__withTimeout are the Appendix M desugar targets.
+func __withDeadline(parent Context, d time.Time) *timerCtx {
 	if parent == nil {
 		panic("context: nil parent")
 	}
-	c := &timerCtx{
-		cancel:   newCancelCtx(parent),
-		deadline: d,
-	}
+	c := &timerCtx{cancel: newCancelCtx(parent), deadline: d}
 	ctxPropagateCancel(parent, c.cancel)
 	if time.Until(d) <= 0 {
 		c.cancelTimer(DeadlineExceeded, DeadlineExceeded)
@@ -921,19 +1048,57 @@ func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
 			c.cancelTimer(DeadlineExceeded, DeadlineExceeded)
 		})
 	}
-	return c, func() { c.cancelTimer(Canceled, Canceled) }
+	return c
+}
+
+func __withTimeout(parent Context, timeout time.Duration) *timerCtx {
+	return __withDeadline(parent, time.Now().Add(timeout))
+}
+
+// WithDeadline/WithTimeout keep exact gc signatures for type-checking;
+// the exporter desugars 2-target call sites (Appendix M), every other
+// position fails fast. Bodies never run.
+func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
+	panic("context.WithDeadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc) {
+	panic("context.WithTimeout: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
 func WithDeadlineCause(parent Context, d time.Time, cause error) (Context, CancelFunc) {
 	panic("context.WithDeadlineCause: not in M5 scope")
 }
 
-func WithTimeout(parent Context, timeout time.Duration) (Context, CancelFunc) {
-	return WithDeadline(parent, time.Now().Add(timeout))
-}
-
 func WithTimeoutCause(parent Context, timeout time.Duration, cause error) (Context, CancelFunc) {
 	panic("context.WithTimeoutCause: not in M5 scope")
+}
+
+// deadlinePair is the Appendix M single-result carrier for Deadline().
+type deadlinePair struct {
+	d  time.Time
+	ok bool
+}
+
+// __deadlineOf is the Appendix M desugar target behind ctx.Deadline().
+// User-defined Contexts report no deadline (their Deadline method cannot
+// be called — multi-value dispatch needs WS D; documented M5
+// limitation).
+func __deadlineOf(c Context) deadlinePair {
+	switch c := c.(type) {
+	case *timerCtx:
+		return deadlinePair{d: c.deadline, ok: true}
+	case *valueCtx:
+		return __deadlineOf(c.parent)
+	case *cancelCtx:
+		return deadlinePair{}
+	case emptyCtx, *emptyCtx:
+		return deadlinePair{}
+	case *withoutCancelCtx:
+		return deadlinePair{}
+	default:
+		return deadlinePair{}
+	}
 }
 
 type valueCtx struct {
@@ -943,7 +1108,8 @@ type valueCtx struct {
 }
 
 func (c *valueCtx) Deadline() (deadline time.Time, ok bool) {
-	return c.parent.Deadline()
+	p := __deadlineOf(c.parent)
+	return p.d, p.ok
 }
 
 func (c *valueCtx) Done() <-chan struct{} { return c.parent.Done() }
@@ -967,37 +1133,37 @@ func WithValue(parent Context, key, val any) Context {
 }
 
 // AfterFunc arranges f to run in its own goroutine when ctx is done,
-// returning a stop function (gc signature).
+// returning a stop function (gc signature). The hook is registered on
+// the driving cancelCtx and spawned by the canceler — no parked watcher
+// goroutine (which would hang the launcher's awaitQuiescence).
 func AfterFunc(ctx Context, f func()) (stop func() bool) {
 	if ctx.Err() != nil {
 		go f()
 		return func() bool { return false }
 	}
-	done := ctx.Done()
-	if done == nil {
+	cc := ctxUnwrapCancel(ctx)
+	if cc == nil {
+		// Exotic (user-defined) parent: no hook possible without a
+		// parked watcher goroutine. Documented M5 limitation.
 		return func() bool { return false }
 	}
-	var mu sync.Mutex
-	stopped := false
-	ran := false
-	go func() {
-		<-done
-		mu.Lock()
-		if !stopped {
-			ran = true
-		}
-		mu.Unlock()
-		if ran {
-			f()
-		}
-	}()
+	e := &afterFuncEntry{f: f}
+	<-cc.muChan
+	if cc.err != nil {
+		cc.muChan <- struct{}{}
+		go f()
+		return func() bool { return false }
+	}
+	cc.afterFuncs = append(cc.afterFuncs, e)
+	cc.muChan <- struct{}{}
 	return func() bool {
-		mu.Lock()
-		defer mu.Unlock()
-		if ran {
+		<-cc.muChan
+		if e.stopped || e.ran {
+			cc.muChan <- struct{}{}
 			return false
 		}
-		stopped = true
+		e.stopped = true
+		cc.muChan <- struct{}{}
 		return true
 	}
 }
@@ -1006,9 +1172,13 @@ type withoutCancelCtx struct {
 	parent Context
 }
 
-func (c *withoutCancelCtx) Deadline() (deadline time.Time, ok bool) { return }
-func (c *withoutCancelCtx) Done() <-chan struct{}                   { return ctxNeverFire }
-func (c *withoutCancelCtx) Err() error                              { return nil }
+// Deadline is declared for go/types interface satisfaction only (see
+// emptyCtx.Deadline).
+func (c *withoutCancelCtx) Deadline() (deadline time.Time, ok bool) {
+	panic("context: withoutCancelCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
+}
+func (c *withoutCancelCtx) Done() <-chan struct{} { return ctxNeverFire }
+func (c *withoutCancelCtx) Err() error             { return nil }
 func (c *withoutCancelCtx) Value(key any) any {
 	return c.parent.Value(key)
 }

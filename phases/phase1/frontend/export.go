@@ -769,9 +769,8 @@ func ExportFile(path string) (string, error) {
 	// package implies time (its bodies call time.AfterFunc etc.).
 	// Their funcs/methods join funcByObj/methodIndex (shared *types
 	// objects via the overlay importer's package cache) and their
-	// package vars become document globals. Intrinsics (time.Now etc.,
-	// ctxChanClose) are skipped — every call site is intercepted into
-	// wire nodes.
+	// package vars become document globals. Intrinsics (time.Now etc.)
+	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
@@ -4415,14 +4414,10 @@ func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node,
 func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *types.Func) (*Node, error) {
 	// P3-M5 (WS E, ADR-0005 D1): calls to synthetic time intrinsics from
 	// inside the synthetic packages (e.g. Since calling Now) lower to
-	// the §D3 wire nodes; the context package's ctxChanClose lowers to
-	// the "chanclose"-marked call node. Neither is exported as a
-	// funcdecl, so they must be intercepted before the funcByObj lookup.
+	// the §D3 wire nodes. Neither is exported as a funcdecl, so they must
+	// be intercepted before the funcByObj lookup.
 	if isTimeIntrinsicFunc(fn) {
 		return e.exportTimeIntrinsic(c, fn.Name())
-	}
-	if isChanCloseFunc(fn) {
-		return e.exportChanClose(c)
 	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
