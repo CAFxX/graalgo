@@ -685,7 +685,24 @@ public final class NodeFactory {
     private SourceSection sectionFor(Json.Object node, String kind) {
         Json.Object pos = node.object("pos", kind);
         String p = kind + ".pos";
-        return source.createSection(pos.intValue("line", p), pos.intValue("col", p), pos.intValue("len", p));
+        int line = pos.intValue("line", p);
+        int col = pos.intValue("col", p);
+        int len = pos.intValue("len", p);
+        try {
+            return source.createSection(line, col, len);
+        } catch (IllegalArgumentException outOfRange) {
+            // P3-M5 (WS E; ADR-0005 §D5 documented exception): synthesized
+            // nodes (e.g. from the synthetic time/context packages) may
+            // carry positions past the end of the source text, which
+            // Truffle's TextMap rejects with "line out of bounds". Clamp
+            // to a valid section — zero-length at column 1 of the nearest
+            // valid line — instead of failing the build. In-range
+            // positions take the identical path as before (additive,
+            // behavior-preserving).
+            int lineCount = Math.max(source.getLineCount(), 1);
+            int clamped = Math.min(Math.max(line, 1), lineCount);
+            return source.createSection(clamped, 1, 0);
+        }
     }
 
     private void setSection(GoExprNode n, Json.Object node, String kind) {
