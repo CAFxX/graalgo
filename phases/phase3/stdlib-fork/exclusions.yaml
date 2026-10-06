@@ -1,0 +1,66 @@
+# exclusions.yaml — versioned stdlib-package exclusion list, v1 (P3-M6).
+#
+# GG-0033 machinery applies: flat "- file:" entries, "reason:" mandatory per
+# entry, "detail:" carries the evidence, "version:" line present. Parsed with
+# the same line-based semantics as tools/diffharness LoadExclusions and the
+# Java readExclusions in TypeparamDifferentialTest: the "reason_codes:"
+# section below is invisible to those readers ("reason_codes:" does not
+# carry the "reason:" prefix; "- code:" does not carry the "- file:"
+# prefix), so this file stays readable by the existing GG-0033 tooling.
+#
+# Standing review cap (user-approved proposal, P3-M6): 25 packages OR 5% of
+# stdlib test binaries, whichever binds first. On go1.27.1 the 5% clause
+# binds: 274 test binaries -> floor(5*274/100) = 13. Enforced by
+# `stdlib-excl validate` (tools/stdlib-excl), wired into
+# `make -C phases/phase3 check`.
+#
+# v1 is the MECHANICS publication: entries are minimal and restricted to
+# packages with concrete, decided evidence (SPEC citations). Packages the
+# waves have not triaged are LEFT OUT — no weak entries, no known-issues
+# parking (see coupled-packages-go1.27.1.md for the triage pipeline).
+#
+# Reason-code vocabulary (validator rejects unknown codes):
+#   PLATFORM            — package is outside the OS/arch scope: linux/amd64
+#                         first, darwin deferred, Windows out of v1 scope
+#                         (SPEC §3.8, GG-0023).
+#   CGO                 — package requires `import "C"`; cgo is banned in
+#                         module code by verifier rule GG-0058 (SPEC §3.7).
+#   ASM_UNCATEGORIZED   — package has .s files with no assigned P3-M6 asm
+#                         strategy category yet. Categories per SPEC §2.8:
+#                         runtime-core evaporates, atomics/bytealg
+#                         intrinsified, crypto emulate-then-intrinsify,
+#                         math covered by JVM IEEE754.
+#   LINKNAME_MISSING    — package needs a //go:linkname symbol the graalgo
+#                         intrinsic surface does not provide (linkname-diff
+#                         worker taxonomy, P3-M6).
+#   UNSUPPORTED_FEATURE — feature stubbed as unsupported by a DECIDED spec
+#                         statement (SPEC §3.8; plugin's full scope §7.7).
+#   DEFERRED_WAVE       — triaged by the M7–M9 four-way classification to a
+#                         later package wave.
+#   NONPORTABLE_BEHAVIOR — package tests nondeterministic or
+#                         backend-specific behavior that is not a
+#                         portability observable (mirrors GG-0033
+#                         unspecified-behavior).
+version: 1
+reason_codes:
+- code: PLATFORM
+  description: outside OS/arch scope (linux/amd64 first; darwin deferred; Windows out of v1 per SPEC §3.8 GG-0023)
+- code: CGO
+  description: requires import "C"; banned in module code by verifier rule GG-0058 (SPEC §3.7)
+- code: ASM_UNCATEGORIZED
+  description: has .s files with no assigned P3-M6 asm strategy category yet (categories: SPEC §2.8)
+- code: LINKNAME_MISSING
+  description: needs a //go:linkname symbol the intrinsic surface does not provide
+- code: UNSUPPORTED_FEATURE
+  description: feature stubbed as unsupported by a DECIDED spec statement
+- code: DEFERRED_WAVE
+  description: triaged by the M7–M9 four-way classification to a later package wave
+- code: NONPORTABLE_BEHAVIOR
+  description: tests nondeterministic or backend-specific behavior, not a portability observable
+exclusions:
+- file: runtime/cgo
+  reason: CGO
+  detail: SPEC §3.8 (GG-0023): runtime/cgo stubbed as unsupported initially; SPEC §3.7 (GG-0058): import "C" banned in module code by verifier rule — the package can neither build nor test on graalgo v1.
+- file: plugin
+  reason: UNSUPPORTED_FEATURE
+  detail: SPEC §3.8 (GG-0023): plugin stubbed as unsupported initially (full scope §7.7) — no v1 conformance target.

@@ -87,6 +87,14 @@ check: main $(OUT_TEST)/.built
 	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
+	@echo "== stdlib exclusion-list gate (P3-M6) =="
+	@if [ -f stdlib-fork/exclusions.yaml ]; then \
+		if [ -x "$(HOME)/tools/go/bin/go" ]; then \
+			cd ../../tools/stdlib-excl && GOTOOLCHAIN=local $(HOME)/tools/go/bin/go run . validate --list ../../phases/phase3/stdlib-fork/exclusions.yaml; \
+		else \
+			echo "WARNING: $(HOME)/tools/go/bin/go not found; exclusion-list gate skipped"; \
+		fi; \
+	fi
 
 clean:
 	rm -rf out

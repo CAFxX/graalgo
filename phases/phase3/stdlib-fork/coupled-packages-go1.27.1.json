@@ -1,0 +1,3210 @@
+{
+  "version": 1,
+  "go_version": "go1.27.1",
+  "generated_utc": "2026-10-06T23:01:19Z",
+  "src": "/home/hatch/tools/go/src",
+  "target": "linux/amd64",
+  "population_dirs": 399,
+  "counts": {
+    "coupled": 142,
+    "not-linux-amd64": 21,
+    "pure": 236
+  },
+  "counts_non_test_only": {
+    "coupled": 127,
+    "not-linux-amd64": 21,
+    "pure": 251
+  },
+  "reason_counts": {
+    "asm": 35,
+    "build-tags": 133,
+    "cgo": 15,
+    "linkname": 69
+  },
+  "test_binaries": 274,
+  "dirs": [
+    {
+      "path": "archive/tar",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "archive/zip",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "arena",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "bufio",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "builtin",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "bytes",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "cmp",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "compress/bzip2",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "compress/flate",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "compress/gzip",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "compress/lzw",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "compress/zlib",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "container/heap",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "container/list",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "container/ring",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "context",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/aes",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/boring",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/cipher",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/des",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/dsa",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/ecdh",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/ecdsa",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/ed25519",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/elliptic",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/fips140",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "crypto/hkdf",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/hmac",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/hpke",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/boring",
+      "class": "coupled",
+      "reasons": [
+        "cgo",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/boring/bbig",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/boring/bcache",
+      "class": "coupled",
+      "reasons": [
+        "asm"
+      ],
+      "non_test_reasons": [
+        "asm"
+      ]
+    },
+    {
+      "path": "crypto/internal/boring/sig",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm"
+      ]
+    },
+    {
+      "path": "crypto/internal/boring/syso",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/constanttime",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/cryptotest",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/cryptotest/wycheproof",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/cryptotest/wycheproof/_schema",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/cryptotest/x509limbo",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/cryptotest/x509limbo/_schema",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/entropy",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/entropy/v1.0.0",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/aes",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/aes/_asm/ctr",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/aes/_asm/standard",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/aes/gcm",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/aes/gcm/_asm/gcm",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/alias",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/bigmod",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/bigmod/_asm",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/check",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/check/checktest",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/drbg",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/ecdh",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/ecdsa",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/ed25519",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/edwards25519",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/edwards25519/field",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/edwards25519/field/_asm",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/hkdf",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/hmac",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/mldsa",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/mlkem",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/nistec",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/nistec/_asm",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/nistec/fiat",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/pbkdf2",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/rsa",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/sha256",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/sha256/_asm",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/sha3",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/sha3/_asm",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/sha512",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/sha512/_asm",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/ssh",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/subtle",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140/tls12",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140/tls13",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140cache",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140deps",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140deps/byteorder",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140deps/cpu",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140deps/godebug",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/fips140deps/time",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140hash",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "crypto/internal/fips140only",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/impl",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/rand",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/randutil",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/internal/sysrand",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/internal/sysrand/internal/seccomp",
+      "class": "coupled",
+      "reasons": [
+        "cgo",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/md5",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/md5/_asm",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/mldsa",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/mlkem",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/mlkem/mlkemtest",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/pbkdf2",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/rand",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "crypto/rc4",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/rsa",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/sha1",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/sha1/_asm",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/sha256",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/sha3",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "crypto/sha512",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/subtle",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "crypto/tls",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/tls/fipsonly",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/tls/internal/fips140tls",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "crypto/x509",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/x509/internal/macos",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "crypto/x509/pkix",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "database/sql",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "database/sql/driver",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "database/sql/internal",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "debug/buildinfo",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "debug/dwarf",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "debug/elf",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "debug/gosym",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "debug/macho",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "debug/pe",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "debug/plan9obj",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "embed",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/ascii85",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/asn1",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/base32",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/base64",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/binary",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "encoding/csv",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/gob",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "encoding/hex",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/json",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "encoding/json/internal",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/json/internal/jsonflags",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/json/internal/jsonopts",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/json/internal/jsontest",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/json/internal/jsonwire",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/json/jsontext",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/json/v2",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/pem",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "encoding/xml",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "errors",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "expvar",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "flag",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "fmt",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/ast",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/build",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "go/build/constraint",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/constant",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/doc",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "go/doc/comment",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/format",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/importer",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/internal/gccgoimporter",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/internal/gcimporter",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/internal/srcimporter",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "go/parser",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/printer",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/scanner",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/token",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "go/types",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "go/version",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "hash",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "hash/adler32",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "hash/crc32",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "hash/crc64",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "hash/fnv",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "hash/maphash",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "html",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "html/template",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "image",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "image/color",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "image/color/palette",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "image/draw",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "image/gif",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "image/internal/imageutil",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "image/jpeg",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "image/png",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "index/suffixarray",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/abi",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/asan",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/bisect",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/buildcfg",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/bytealg",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/byteorder",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/cfg",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/cgrouptest",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/chacha8rand",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm"
+      ]
+    },
+    {
+      "path": "internal/coverage",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/calloc",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/cfile",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "internal/coverage/cformat",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/cmerge",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/decodecounter",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/decodemeta",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/encodecounter",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/encodemeta",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/pods",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/rtcov",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/slicereader",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/slicewriter",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/stringtab",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/coverage/uleb128",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/cpu",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/dag",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/diff",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/exportdata",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/filepathlite",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/fmtsort",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/fuzz",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/gate",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/goarch",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/godebug",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "internal/godebugs",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/goexperiment",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/goos",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/goroot",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/gover",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/goversion",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/lazyregexp",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/lazytemplate",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/msan",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/nettest",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/nettrace",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/obscuretestdata",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/oserror",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/pkgbits",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/platform",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/poll",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/profile",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/profilerecord",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/race",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/reflectlite",
+      "class": "coupled",
+      "reasons": [
+        "asm"
+      ],
+      "non_test_reasons": [
+        "asm"
+      ]
+    },
+    {
+      "path": "internal/routebsd",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/runtime/atomic",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/runtime/cgobench",
+      "class": "coupled",
+      "reasons": [
+        "cgo",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo"
+      ]
+    },
+    {
+      "path": "internal/runtime/cgroup",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "internal/runtime/exithook",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/runtime/gc",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/runtime/gc/internal/gen",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/runtime/gc/scan",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/runtime/maps",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/runtime/math",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/runtime/pprof/label",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/runtime/startlinetest",
+      "class": "coupled",
+      "reasons": [
+        "asm"
+      ],
+      "non_test_reasons": [
+        "asm"
+      ]
+    },
+    {
+      "path": "internal/runtime/sys",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/runtime/syscall/linux",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/runtime/syscall/windows",
+      "class": "not-linux-amd64",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/saferio",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/singleflight",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/strconv",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/stringslite",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/sync",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "internal/synctest",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "internal/syscall/execenv",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/syscall/unix",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/syscall/windows",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/syscall/windows/registry",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/syscall/windows/sysdll",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/sysinfo",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/syslist",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/testenv",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/testhash",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/testlog",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "internal/testpty",
+      "class": "coupled",
+      "reasons": [
+        "cgo",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/trace",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/trace/internal/testgen",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/trace/internal/tracev1",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/trace/raw",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/trace/testtrace",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/trace/tracev2",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/trace/traceviewer",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/trace/traceviewer/format",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/trace/version",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/txtar",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/types/errors",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "internal/unsafeheader",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/xcoff",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "internal/zstd",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "io",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "io/fs",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "io/ioutil",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "iter",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "log",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "log/internal",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "log/slog",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "log/slog/internal",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "log/slog/internal/benchmarks",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "log/slog/internal/buffer",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "log/syslog",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "maps",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "math",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "math/big",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "math/big/internal/asmgen",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "math/bits",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "math/cmplx",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "math/rand",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "math/rand/v2",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "mime",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "mime/multipart",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "mime/quotedprintable",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net",
+      "class": "coupled",
+      "reasons": [
+        "cgo",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "net/http",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "net/http/cgi",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/cookiejar",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/fcgi",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/httptest",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/httptrace",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/httputil",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/internal",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/internal/ascii",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/internal/http2",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/internal/httpcommon",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/internal/httpsfv",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/internal/testcert",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/http/pprof",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/internal/cgotest",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "cgo",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "net/internal/socktest",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "net/mail",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/netip",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/rpc",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/rpc/jsonrpc",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/smtp",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "net/textproto",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "net/url",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "os",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "os/exec",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "os/exec/internal/fdtest",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "os/signal",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm"
+      ]
+    },
+    {
+      "path": "os/user",
+      "class": "coupled",
+      "reasons": [
+        "cgo",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "path",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "path/filepath",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "plugin",
+      "class": "coupled",
+      "reasons": [
+        "cgo",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "reflect",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "reflect/internal/example1",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "reflect/internal/example2",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "regexp",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "regexp/syntax",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "runtime",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "cgo",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "cgo",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "runtime/_mkmalloc",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "runtime/_mkmalloc/astutil",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "runtime/asan",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "cgo",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "runtime/cgo",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "cgo",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "cgo",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "runtime/coverage",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "runtime/debug",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "linkname"
+      ]
+    },
+    {
+      "path": "runtime/metrics",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": null
+    },
+    {
+      "path": "runtime/msan",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "cgo",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "runtime/pprof",
+      "class": "coupled",
+      "reasons": [
+        "cgo",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "runtime/race",
+      "class": "coupled",
+      "reasons": [
+        "cgo",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "cgo",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "runtime/race/internal/amd64v1",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "runtime/race/internal/amd64v3",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "runtime/secret",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "runtime/trace",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "simd",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "simd/archsimd",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "simd/archsimd/_gen",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "simd/archsimd/_gen/midway",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "simd/archsimd/_gen/sgutil",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "simd/archsimd/_gen/simdgen",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "simd/archsimd/_gen/simdgen/arm64",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "simd/archsimd/_gen/tmplgen",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "simd/archsimd/_gen/unify",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "simd/archsimd/_gen/wasmgen",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "simd/archsimd/internal/simd_test",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "simd/archsimd/internal/test_helpers",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "simd/internal/bridge",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "slices",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "sort",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "strconv",
+      "class": "coupled",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "strings",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "structs",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "sync",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "sync/atomic",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "syscall",
+      "class": "coupled",
+      "reasons": [
+        "asm",
+        "cgo",
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "asm",
+        "cgo",
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "syscall/js",
+      "class": "not-linux-amd64",
+      "reasons": [
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "build-tags"
+      ]
+    },
+    {
+      "path": "testing",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "testing/cryptotest",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "testing/fstest",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "testing/internal/testdeps",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "testing/iotest",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "testing/quick",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "testing/slogtest",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "testing/synctest",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "text/scanner",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "text/tabwriter",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "text/template",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "text/template/parse",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "time",
+      "class": "coupled",
+      "reasons": [
+        "linkname",
+        "build-tags"
+      ],
+      "non_test_reasons": [
+        "linkname",
+        "build-tags"
+      ]
+    },
+    {
+      "path": "time/tzdata",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "unicode",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "unicode/utf16",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "unicode/utf8",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "unique",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    },
+    {
+      "path": "unsafe",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "uuid",
+      "class": "pure",
+      "reasons": null,
+      "non_test_reasons": null
+    },
+    {
+      "path": "weak",
+      "class": "coupled",
+      "reasons": [
+        "linkname"
+      ],
+      "non_test_reasons": [
+        "linkname"
+      ]
+    }
+  ]
+}
