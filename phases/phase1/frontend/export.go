@@ -418,7 +418,8 @@ func ExportFile(path string) (string, error) {
 			break
 		}
 	}
-	if _, err := conf.Check("main", fset, []*ast.File{file}, info); err != nil {
+	pkg, err := conf.Check("main", fset, []*ast.File{file}, info)
+	if err != nil {
 		return "", fmt.Errorf("gofrontend: type error: %v", err)
 	}
 
@@ -426,6 +427,7 @@ func ExportFile(path string) (string, error) {
 		fset:     fset,
 		src:      src,
 		info:     info,
+		pkg:      pkg,
 		typeIDs:  make(map[types.Type]int),
 		namedIDs: make(map[string]int),
 		objIDs:   make(map[types.Object]int),
@@ -783,6 +785,7 @@ type exporter struct {
 	fset    *token.FileSet
 	src     []byte // raw source bytes of the single input file (M8: rune-based positions)
 	info    *types.Info
+	pkg     *types.Package // the type-checked package (P3-M3: method-set lookup visibility)
 	types   []TypeEnt
 	typeIDs map[types.Type]int
 	objects []ObjectEnt
@@ -1394,8 +1397,14 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		}), nil
 	case *types.Named:
 		// M6 (WS H): named types may have methods (emitted as funcdecls /
-		// instantiations; dispatch resolves by object id). The methods list
-		// stays empty here — populated by WS D per docs/frontend-v1.md.
+		// instantiations; dispatch resolves by object id).
+		// P3-M3 (WS D, ADR-0003): the "methods" list is populated here —
+		// one {"name","obj","recv"} per method in types.NewMethodSet order
+		// (covers promoted/embedded methods, which methodIndex lacks),
+		// resolved to declarations via funcByObj. "obj" is the funcdecl
+		// object id; "recv" is the declared receiver kind
+		// ("value"|"pointer"). Interface-declared methods (no funcdecl)
+		// and template methods are skipped.
 		// M6: instantiated generic types (e.g. F[foo]) include the type
 		// arguments in the name for %T formatting (issue49547).
 		// P2-3: single renderer (namedTypeName) — a second copy here would
@@ -1405,15 +1414,26 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		if err != nil {
 			return TypeEnt{}, err
 		}
+		methods, err := e.methodTableEntries(t)
+		if err != nil {
+			return TypeEnt{}, err
+		}
 		return mk("named", map[string]any{
-			"name": namedTypeName(t), "underlying": under, "methods": []any{},
+			"name": namedTypeName(t), "underlying": under, "methods": methods,
 		}), nil
 	case *types.Pointer:
 		elem, err := e.typeID(t.Elem())
 		if err != nil {
 			return TypeEnt{}, err
 		}
-		return mk("pointer", map[string]any{"elem": elem}), nil
+		// P3-M3 (WS D, ADR-0003): the same "methods" field as named
+		// entries, holding the full *T method set (value + pointer
+		// receivers) for itab construction.
+		methods, err := e.methodTableEntries(t)
+		if err != nil {
+			return TypeEnt{}, err
+		}
+		return mk("pointer", map[string]any{"elem": elem, "methods": methods}), nil
 	case *types.Slice:
 		// P3-M2b (ADR-0002 D3): the factory manufactures element zeros
 		// (frozen); a sync primitive element would zero to an unusable
@@ -2030,6 +2050,12 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 		if syncPrimitiveRecv(selection.Recv()) != nil {
 			continue
 		}
+		// P3-M3 (WS D, ADR-0003): interface method calls lower to
+		// ifacemethod nodes, never through resolveMethodCall/methodIndex
+		// (dispatch is dynamic via the itab; nothing to instantiate).
+		if recvIface(selection.Recv()) != nil {
+			continue
+		}
 		var mtargs []types.Type
 		if ii, ok := e.info.Instances[sel.Sel]; ok {
 			mtargs = typeList(ii.TypeArgs)
@@ -2101,6 +2127,11 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			// P3-M2b (ADR-0002): sync primitives bypass the method index
 			// (same as the roots loop above).
 			if syncPrimitiveRecv(selection.Recv()) != nil {
+				return true
+			}
+			// P3-M3 (WS D, ADR-0003): interface method calls need no
+			// instantiation (same as the roots loop above).
+			if recvIface(selection.Recv()) != nil {
 				return true
 			}
 			var mtargs []types.Type
@@ -3598,11 +3629,25 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			if nt := syncPrimitiveRecv(selection.Recv()); nt != nil {
 				return e.exportSyncOp(c, sel, nt)
 			}
+			// P3-M3 (WS D, ADR-0003): interface method call — the
+			// receiver's static type has an interface underlying (named
+			// or anonymous). Emits the additive "ifacemethod" wire node;
+			// dispatch happens at runtime through the itab.
+			if recvIface(selection.Recv()) != nil {
+				return e.exportIfaceMethodCall(c, sel, selection)
+			}
 		}
 		selection, ok := e.info.Selections[sel]
 		if !ok {
 			return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
 				sel.X, sel.Sel.Name)
+		}
+		// P3-M3 (WS D, ADR-0003): method expressions on interfaces
+		// (Writer.Write(w, ...)) keep failing, but with a named P3-M3
+		// scope error (greppable re-test trigger) instead of the WS D
+		// one below.
+		if selection.Kind() == types.MethodExpr && recvIface(selection.Recv()) != nil {
+			return nil, scopeErrorf("method expression %s is not supported: method expression via interface (P3-M3 scope)", sel.Sel.Name)
 		}
 		return e.exportMethodCall(c, sel, selection)
 	}
@@ -3963,6 +4008,209 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	}), nil
 }
 
+// ---------------------------------------------------------------------------
+// Interface dispatch (P3-M3, WS D, ADR-0003).
+// ---------------------------------------------------------------------------
+
+// recvIface reports the interface underlying t, or nil. This is the P3-M3
+// discriminator between interface method calls (dynamic dispatch via the
+// itab) and concrete method calls (static dispatch via methodref): the
+// receiver's static type must have an interface underlying — a named
+// concrete type never routes here. (types.AsInterface does not exist in
+// this toolchain's go/types, so this is the underlying check the ADR
+// allows.)
+func recvIface(t types.Type) *types.Interface {
+	if t == nil {
+		return nil
+	}
+	if i, ok := t.Underlying().(*types.Interface); ok {
+		return i
+	}
+	return nil
+}
+
+// methodTableEntries computes the wire "methods" list for a named type or
+// a pointer type (P3-M3, WS D, ADR-0003): one {"name","obj","recv"} entry
+// per method in types.NewMethodSet(t), resolved to declarations via
+// funcByObj (this covers promoted/embedded methods, which methodIndex
+// lacks). "obj" is the funcdecl object id; "recv" is the declared receiver
+// kind ("value" or "pointer"). Interface-declared methods (no funcdecl
+// exists to point at) and template methods are skipped — the latter are
+// out of P3-M3 scope. Sorted by method name for determinism.
+func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
+	ms := types.NewMethodSet(t)
+	type entry struct {
+		name string
+		obj  int
+		recv string
+	}
+	entries := make([]entry, 0, ms.Len())
+	for i := 0; i < ms.Len(); i++ {
+		mobj, ok := ms.At(i).Obj().(*types.Func)
+		if !ok {
+			continue
+		}
+		fi, ok := e.funcByObj[mobj]
+		if !ok || fi.isTemplate {
+			continue
+		}
+		recv := "value"
+		if fi.recv != nil {
+			if _, ok := fi.recv.Type().(*types.Pointer); ok {
+				recv = "pointer"
+			}
+		}
+		entries = append(entries, entry{name: mobj.Name(), obj: fi.funcID, recv: recv})
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+	out := make([]any, 0, len(entries))
+	for _, en := range entries {
+		out = append(out, map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv})
+	}
+	return out, nil
+}
+
+// resolveIfaceMethod looks the method up in the method set of the
+// receiver's static interface type (P3-M3, WS D, ADR-0003) and returns its
+// signature (no receiver — interface method signatures never declare one).
+// Generic (template) methods via interfaces are out of scope: a named P3-M3
+// scope error (greppable re-test trigger), never silent.
+func (e *exporter) resolveIfaceMethod(iface types.Type, mname string) (*types.Signature, error) {
+	msel := types.NewMethodSet(iface).Lookup(e.pkg, mname)
+	if msel == nil {
+		return nil, fmt.Errorf("gofrontend: method %s not in method set of %s",
+			mname, types.TypeString(iface, nil))
+	}
+	mobj, ok := msel.Obj().(*types.Func)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: %s is not a method of %s",
+			mname, types.TypeString(iface, nil))
+	}
+	sig, ok := mobj.Type().(*types.Signature)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: method %s of %s has non-signature type %T",
+			mname, types.TypeString(iface, nil), mobj.Type())
+	}
+	if sig.TypeParams().Len() > 0 {
+		return nil, scopeErrorf("method %s is not supported: generic method via interface (P3-M3 scope)", mname)
+	}
+	// A template method (declared on a generic type) reaching interface
+	// dispatch without a binding substitution would leak unbound type
+	// parameters into the wire signature — fail fast with the named
+	// scope error instead of emitting a corrupt signature. Inside a
+	// monomorphized body the active substitution binds them (e.g. I[S]
+	// under S=int), so only genuinely unbound parameters trip this.
+	if csig, ok := e.substType(sig).(*types.Signature); ok {
+		sig = csig
+	}
+	if mentionsTypeParam(sig) {
+		return nil, scopeErrorf("method %s is not supported: generic method via interface (P3-M3 scope)", mname)
+	}
+	return sig, nil
+}
+
+// mentionsTypeParam reports whether t contains a *types.TypeParam anywhere.
+// Used by the P3-M3 interface-dispatch path to fail fast on template
+// methods that would otherwise leak unbound type parameters into the wire
+// signature.
+func mentionsTypeParam(t types.Type) bool {
+	switch t := t.(type) {
+	case *types.TypeParam:
+		return true
+	case *types.Named:
+		if targs := t.TypeArgs(); targs != nil {
+			for i := 0; i < targs.Len(); i++ {
+				if mentionsTypeParam(targs.At(i)) {
+					return true
+				}
+			}
+		}
+		return false
+	case *types.Pointer:
+		return mentionsTypeParam(t.Elem())
+	case *types.Slice:
+		return mentionsTypeParam(t.Elem())
+	case *types.Array:
+		return mentionsTypeParam(t.Elem())
+	case *types.Map:
+		return mentionsTypeParam(t.Key()) || mentionsTypeParam(t.Elem())
+	case *types.Chan:
+		return mentionsTypeParam(t.Elem())
+	case *types.Signature:
+		return mentionsTypeParam(t.Params()) || mentionsTypeParam(t.Results())
+	case *types.Tuple:
+		for i := 0; i < t.Len(); i++ {
+			if mentionsTypeParam(t.At(i).Type()) {
+				return true
+			}
+		}
+		return false
+	case *types.Struct:
+		for i := 0; i < t.NumFields(); i++ {
+			if mentionsTypeParam(t.Field(i).Type()) {
+				return true
+			}
+		}
+		return false
+	}
+	return false
+}
+
+// exportIfaceMethodCall exports an interface method call w.M(args)
+// (P3-M3, WS D, ADR-0003) as an additive "ifacemethod" wire node:
+//
+//	{"kind": "ifacemethod", "fields": {
+//	  "recv": <node>, "method": "Write", "iface": <type id>,
+//	  "args": [<node>], "sig": <type id>, "type": <type id or null>}}
+//
+// The receiver evaluates to a GoInterface; the factory dispatches through
+// the itab built from the interface's method list. The "iface" field is the
+// type-table id of the receiver's static interface type (named or
+// anonymous); the method-name list is the "methods" list of the
+// "interface" type-table entry (following "underlying" for "named"
+// entries). The "sig" field is the method signature type id (no receiver)
+// for call-site argument adaptation — the methodref precedent. The "type"
+// field is the result type id, null when the call has no results.
+// Variadic misuse fails fast via checkVariadicCall, as for concrete method
+// calls.
+func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection) (*Node, error) {
+	mname := sel.Sel.Name
+	sig, err := e.resolveIfaceMethod(selection.Recv(), mname)
+	if err != nil {
+		return nil, err
+	}
+	// Remediation (R1 P1-1, R2 P1-2): same variadic fail-fast as direct
+	// and concrete-method calls; the spread form passes the slice
+	// directly and works.
+	if err := checkVariadicCall(c, sig); err != nil {
+		return nil, err
+	}
+	ifaceID, err := e.typeID(selection.Recv())
+	if err != nil {
+		return nil, err
+	}
+	sigID, err := e.typeID(sig)
+	if err != nil {
+		return nil, err
+	}
+	recv, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("ifacemethod", c, map[string]any{
+		"recv": recv, "method": mname, "iface": ifaceID,
+		"args": args, "sig": sigID, "type": typ,
+	}), nil
+}
+
 // exportSyncOp exports a method call on a synthetic sync primitive
 // (P3-M2b, WS D, ADR-0002) as an additive "syncop" wire node. The receiver
 // evaluates to the Java primitive object itself (ADR-0002 D1: the Go value
@@ -4252,6 +4500,16 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P3-M3 (WS D, ADR-0003): a method expression on an interface type
+	// (T.M in value position) fails fast here, before x.X is exported —
+	// x.X is a type name, not an exportable expression (exporting it
+	// yields the confusing `identifier "T" denotes *types.TypeName`
+	// internal error). Named P3-M3 scope error, greppable re-test
+	// trigger.
+	if sel, ok := e.info.Selections[x]; ok && sel.Kind() == types.MethodExpr &&
+		recvIface(sel.Recv()) != nil {
+		return nil, scopeErrorf("method expression %s is not supported: method expression via interface (P3-M3 scope)", x.Sel.Name)
+	}
 	xe, err := e.exportExpr(x.X)
 	if err != nil {
 		return nil, err
@@ -4263,7 +4521,24 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// M6 (WS H): a selector denoting a method in value position is a
 	// method value (bound receiver) — not supported (WS H follow-up).
 	// Method CALLS are handled by exportMethodCall.
+	// P3-M3 (WS D, ADR-0003): method values and method expressions on
+	// interface receivers keep failing, but with a named P3-M3 scope
+	// error (greppable re-test trigger) instead of the WS H one.
 	if _, ok := sel.Obj().(*types.Func); ok {
+		var rt types.Type
+		if sel.Kind() == types.MethodExpr {
+			rt = sel.Recv()
+		} else if tv, ok := e.info.Types[x.X]; ok {
+			rt = tv.Type
+		}
+		if recvIface(rt) != nil {
+			what := "method value"
+			if sel.Kind() == types.MethodExpr {
+				what = "method expression"
+			}
+			return nil, scopeErrorf("%s %s is not supported: %s via interface (P3-M3 scope)",
+				what, x.Sel.Name, what)
+		}
 		return nil, scopeErrorf("method value %s (bound receiver) is not supported in frontend/v1 scope (WS H)", x.Sel.Name)
 	}
 	idx := sel.Index()

@@ -66,8 +66,8 @@ entries by index. Shape: `{ "kind": "<kind>", "detail": { ... } }`.
 | kind | detail fields |
 |---|---|
 | `basic` | `name` (e.g. `"int64"`), `class` ∈ {`bool`,`int`,`uint`,`float`,`complex`,`string`,`pointer`,`untyped`,`unknown`}, `untyped` bool |
-| `named` | `name` (qualified `"path.Name"`, or bare for universe scope), `underlying`: type id, `methods`: [] (populated by WS D; a named type *with* methods is an exporter scope error today) |
-| `pointer` | `elem`: type id |
+| `named` | `name` (qualified `"path.Name"`, or bare for universe scope), `underlying`: type id, `methods`: [{`name`, `obj`: funcdecl object id, `recv` ∈ {`value`,`pointer`} (declared receiver kind)}] — populated since P3-M3 (ADR-0003) via `types.NewMethodSet` (covers promoted/embedded methods); interface-declared methods (no funcdecl) and template methods are skipped |
+| `pointer` | `elem`: type id, `methods`: same shape as `named` — the full `*T` method set (value + pointer receivers; P3-M3/ADR-0003) |
 | `slice` | `elem`: type id |
 | `array` | `len`: int, `elem`: type id |
 | `map` | `key`, `elem`: type ids |
@@ -126,6 +126,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `incdec` | `tok` ∈ {`++`,`--`}, `x`: expr node |
 | `ident` | `name`, `obj`: object id, `type`: type id; *or* builtin form: `name`, `builtin`: str, `type`: type id |
 | `methodref` | `obj`: object id (method funcdecl/instantiation), `recv`: expr node (evaluated first, passed as the method's params[0]), `type`: signature type id with the receiver as params[0] — a method-call target (M6, WS H) |
+| `ifacemethod` | `recv`: expr node (evaluates to a GoInterface), `method`: str, `iface`: type id (the receiver's static interface type — named or anonymous; the method-name list is the `methods` list of the `interface` type-table entry, following `underlying` for `named` entries), `args`: [expr nodes] (the receiver is NOT included), `sig`: type id (the method signature, no receiver — for call-site argument adaptation, the `methodref` precedent), `type`: type id or null (null when the call has no results) — an interface method call `w.M(args)` with dynamic dispatch through the itab (P3-M3, WS D, ADR-0003; additive node kind, first emitted by gofrontend 0.4.0) |
 | `basiclit` | `value`: source text, `const`: `go/constant` `ExactString()` (present when the literal is a constant), `type`: type id; string constants additionally carry `sbytes`: hex of the exact UTF-8 bytes (byte-exact — `ExactString` is a quoted literal and JSON cannot carry invalid UTF-8); float constants additionally carry `f32bits`: int and `f64bits`: long, the signed-reinterpreted IEEE-754 bits (correctly rounded by `go/constant` itself; `ExactString` renders rationals as `"a/b"`, which no float parser reads); complex constants additionally carry `creal32`/`creal64`/`cimag32`/`cimag64`: the IEEE-754 bits of the real and imaginary parts (M7) |
 | `binary` | `op` ∈ {`+`,`-`,`*`,`/`,`%`,`&`,`\|`,`^`,`&^`,`<<`,`>>`,`==`,`!=`,`<`,`<=`,`>`,`>=`,`&&`,`\|\|`}, `x`, `y`, `type`: type id |
 | `unary` | `op` ∈ {`+`,`-`,`!`,`^`}, `x`, `type`: type id |
@@ -246,8 +247,10 @@ the extension:
   values");
 - named types may have methods (M6, WS H): methods are emitted as
   `funcdecl`s / instantiations and dispatch resolves by object id. The
-  `methods` list on `named` type-table entries stays empty in v1 —
-  populated by WS D. Generic structs carry field offsets of `-1`
+  `methods` list on `named` type-table entries is populated since P3-M3
+  (ADR-0003: one `{name, obj, recv}` per method via `types.NewMethodSet`);
+  `pointer` entries carry the same field with the full `*T` method set.
+  Generic structs carry field offsets of `-1`
   (instantiation-dependent; see §6).
 - statements: block, `var`/`:=`, `=`/op-assign (lhs: identifier, index,
   selector, or blank), expression statements, `return`, `++`/`--`
@@ -267,7 +270,10 @@ the extension:
   methods dispatch by object id via `methodref` fun targets
   (receiver-based dispatch only — implicit address-of/deref on the
   receiver, method values, and interface dispatch on type parameters are
-  scope errors naming WS D/WS H);
+  scope errors naming WS D/WS H); interface method calls (P3-M3, WS D)
+  dispatch dynamically via `ifacemethod` nodes (ADR-0003) — method values
+  and method expressions on interface receivers, and generic (template)
+  methods via interfaces, are named P3-M3 scope errors;
 - named types with methods beyond the M6 subset → scope error (WS D):
   the M6 subset is receiver-based dispatch on named-type receivers with
   an exact receiver-type match (see the calls bullet).

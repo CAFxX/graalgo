@@ -2,7 +2,7 @@
   "frontend": "v1",
   "generator": {
     "tool": "gofrontend",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "goroot": "go1.27.1"
   },
   "package": {
