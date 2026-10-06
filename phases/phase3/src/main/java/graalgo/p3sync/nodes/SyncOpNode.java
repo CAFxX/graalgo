@@ -30,7 +30,7 @@ import graalgo.values.GoKind;
  *   <li>{@code sync: negative WaitGroup counter} (WaitGroup.Add and
  *       WaitGroup.Done) — gc panics: full parity;</li>
  *   <li>{@code sync: unlock of unlocked mutex} /
- *       {@code sync: unlock of unlocked RWMutex} /
+ *       {@code sync: Unlock of unlocked RWMutex} /
  *       {@code sync: RUnlock of unlocked RWMutex} — gc <em>fatal-errors</em>:
  *       same message text and exit code, but ours is a (recoverable) Go
  *       panic — scoped divergence, re-test trigger in ADR-0002 D4.</li>
