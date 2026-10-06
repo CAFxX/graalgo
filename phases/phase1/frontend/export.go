@@ -4039,6 +4039,15 @@ func recvIface(t types.Type) *types.Interface {
 	if t == nil {
 		return nil
 	}
+	// P3-M3: a type parameter is not an interface for dispatch purposes,
+	// even though its constraint's underlying may be one. Bound method
+	// calls (v.M() with v: T) devirtualize per monomorphized
+	// instantiation (M6 design) via the methodref path — routing them
+	// through ifacemethod would emit a wire node the Phase-1/2 consumers
+	// cannot build (regression vs the pre-P3-M3 exporter).
+	if _, ok := t.(*types.TypeParam); ok {
+		return nil
+	}
 	if i, ok := t.Underlying().(*types.Interface); ok {
 		return i
 	}
