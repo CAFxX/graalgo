@@ -5,6 +5,7 @@ package main
 // WS G scope error) and pass after.
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -165,5 +166,214 @@ func main() {
 `
 	if _, err := ExportFile(writeSyncProg(t, src)); err != nil {
 		t.Fatalf("pointer-to-sync in composite positions must be allowed: %v", err)
+	}
+}
+
+
+// findKind walks the decoded export JSON and returns the first node with the
+// given kind, or nil.
+func findKind(n any, kind string) map[string]any {
+	switch v := n.(type) {
+	case map[string]any:
+		if v["kind"] == kind {
+			return v
+		}
+		for _, c := range v {
+			if r := findKind(c, kind); r != nil {
+				return r
+			}
+		}
+	case []any:
+		for _, c := range v {
+			if r := findKind(c, kind); r != nil {
+				return r
+			}
+		}
+	}
+	return nil
+}
+
+func fieldsOf(n map[string]any) map[string]any {
+	f, _ := n["fields"].(map[string]any)
+	return f
+}
+
+// Defer of a sync method desugars to defer of a funclit call (the frozen
+// buildDefer only understands funclit/ident/builtin). A value-typed ident
+// receiver is CAPTURED (address semantics: `defer m.Unlock()` uses &m, so a
+// reassigned m still unlocks the current object — verified against gc).
+func TestSyncDeferUnlockDesugars(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+var gMu sync.Mutex
+
+func main() {
+	defer gMu.Unlock()
+	gMu.Lock()
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("export is not JSON: %v", err)
+	}
+	deferNode := findKind(doc, "defer")
+	if deferNode == nil {
+		t.Fatal("no defer node in export")
+	}
+	call := fieldsOf(deferNode)["call"].(map[string]any)
+	if call["kind"] != "call" {
+		t.Fatalf("defer call kind = %v, want call", call["kind"])
+	}
+	cf := fieldsOf(call)
+	fun := cf["fun"].(map[string]any)
+	if fun["kind"] != "funclit" {
+		t.Fatalf("defer fun kind = %v, want funclit", fun["kind"])
+	}
+	ff := fieldsOf(fun)
+	// Value-typed ident receiver is captured: no params, no outer args.
+	if params, _ := ff["params"].([]any); len(params) != 0 {
+		t.Fatalf("funclit params = %d, want 0 (receiver captured)", len(params))
+	}
+	if args, _ := cf["args"].([]any); len(args) != 0 {
+		t.Fatalf("defer call args = %d, want 0 (receiver captured)", len(args))
+	}
+	body := ff["body"].(map[string]any)
+	stmts, _ := fieldsOf(body)["stmts"].([]any)
+	x := fieldsOf(stmts[0].(map[string]any))["x"].(map[string]any)
+	if x["kind"] != "syncop" || fieldsOf(x)["op"] != "Unlock" {
+		t.Fatalf("funclit body = %v %v, want syncop Unlock", x["kind"], fieldsOf(x)["op"])
+	}
+	recv := fieldsOf(x)["recv"].(map[string]any)
+	if recv["kind"] != "ident" || fieldsOf(recv)["name"] != "gMu" {
+		t.Fatalf("syncop recv = %v %v, want captured ident gMu", recv["kind"], fieldsOf(recv)["name"])
+	}
+}
+
+// Defer of a sync method with arguments: args are params (evaluated at
+// defer time); a pointer-typed receiver is also a param.
+func TestSyncDeferArgsAreParams(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+func main() {
+	var wg sync.WaitGroup
+	n := 2
+	wg.Add(1)
+	func() {
+		defer wg.Add(n)
+		n = 100
+	}()
+	wg.Wait()
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("export is not JSON: %v", err)
+	}
+	deferNode := findKind(doc, "defer")
+	if deferNode == nil {
+		t.Fatal("no defer node in export")
+	}
+	call := fieldsOf(deferNode)["call"].(map[string]any)
+	cf := fieldsOf(call)
+	fun := cf["fun"].(map[string]any)
+	ff := fieldsOf(fun)
+	params, _ := ff["params"].([]any)
+	// wg is value-typed ident -> captured; n -> one param.
+	if len(params) != 1 {
+		t.Fatalf("funclit params = %d, want 1 (the arg n)", len(params))
+	}
+	if args, _ := cf["args"].([]any); len(args) != 1 {
+		t.Fatalf("defer call args = %d, want 1 (n evaluated at defer time)", len(args))
+	}
+}
+
+// go m.Unlock() desugars to a zero-arg funclit spawn (GoStatementNode's
+// P2-M1 contract).
+func TestSyncGoUnlockDesugars(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+var gMu sync.Mutex
+
+func main() {
+	gMu.Lock()
+	go gMu.Unlock()
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("export is not JSON: %v", err)
+	}
+	goNode := findKind(doc, "gostmt")
+	if goNode == nil {
+		t.Fatal("no gostmt node in export")
+	}
+	call := fieldsOf(goNode)["call"].(map[string]any)
+	cf := fieldsOf(call)
+	fun := cf["fun"].(map[string]any)
+	if fun["kind"] != "funclit" {
+		t.Fatalf("gostmt fun kind = %v, want funclit", fun["kind"])
+	}
+	if args, _ := cf["args"].([]any); len(args) != 0 {
+		t.Fatalf("gostmt call args = %d, want 0", len(args))
+	}
+	body := fieldsOf(fun)["body"].(map[string]any)
+	stmts, _ := fieldsOf(body)["stmts"].([]any)
+	x := fieldsOf(stmts[0].(map[string]any))["x"].(map[string]any)
+	if x["kind"] != "syncop" || fieldsOf(x)["op"] != "Unlock" {
+		t.Fatalf("spawned body = %v %v, want syncop Unlock", x["kind"], fieldsOf(x)["op"])
+	}
+}
+
+// Package-level `var m sync.Mutex` (no init) must carry the implicit
+// syncnew in the globals entry — otherwise the frozen factory installs
+// its struct zero (GoStruct) and every method call CCEs at runtime.
+func TestSyncPackageVarImplicitSyncnew(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+var gMu sync.Mutex
+var gWg sync.WaitGroup
+
+func main() { gMu.Lock(); gMu.Unlock() }
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("export is not JSON: %v", err)
+	}
+	globals, _ := doc.(map[string]any)["globals"].([]any)
+	if len(globals) != 2 {
+		t.Fatalf("globals = %d entries, want 2", len(globals))
+	}
+	for i, g := range globals {
+		init := g.(map[string]any)["init"]
+		if init == nil {
+			t.Fatalf("globals[%d] init is null, want implicit syncnew", i)
+		}
+		if init.(map[string]any)["kind"] != "syncnew" {
+			t.Fatalf("globals[%d] init kind = %v, want syncnew", i, init.(map[string]any)["kind"])
+		}
 	}
 }

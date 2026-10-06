@@ -651,6 +651,23 @@ func (e *exporter) exportPackageVars() ([]GlobalEnt, error) {
 					return nil, err
 				}
 				initNode = x
+			} else {
+				// P3-M2b (ADR-0002 D3): package-level `var m sync.Mutex`
+				// (no init) normalizes to an implicit syncnew — gc's
+				// ready-to-use zero value — mirroring the local-var path.
+				// Without it the frozen factory's struct zero (GoStruct)
+				// would be installed and every method call would CCE.
+				if v, ok := e.info.Defs[n].(*types.Var); ok {
+					if nt := syncPrimitiveNamed(v.Type()); nt != nil {
+						tid, err := e.typeID(v.Type())
+						if err != nil {
+							return nil, err
+						}
+						initNode = e.node("syncnew", vs, map[string]any{
+							"synctyp": nt.Obj().Name(), "type": tid,
+						})
+					}
+				}
 			}
 			if n.Name == "_" {
 				// Blank: no variable, but the initializer is evaluated
@@ -2419,10 +2436,162 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 // exported as a call node; the call/args evaluation timing (evaluate now,
 // invoke at return/unwind) is the factory's job.
 func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
+	// P3-M2b (ADR-0002): `defer m.Unlock()` — the frozen buildDefer only
+	// understands funclit/ident/builtin deferred calls, so a deferred sync
+	// method call desugars to
+	//   defer func(__sync_recv, __sync_arg0, ...) {
+	//       __sync_recv.Op(__sync_arg0, ...)
+	//   }(recv, args...)
+	// The receiver and arguments are evaluated at defer time (Go
+	// semantics); the call runs at return/unwind. Param passing (not
+	// capture) so a receiver reassigned before return still unlocks the
+	// deferred-time object.
+	if sel, ok := unwrapSelector(s.Call.Fun); ok {
+		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			if nt := syncPrimitiveRecv(selection.Recv()); nt != nil {
+				return e.exportSyncDefer(s, sel, selection, nt)
+			}
+		}
+	}
 	call, err := e.exportCall(s.Call)
 	if err != nil {
 		return nil, err
 	}
+	return e.node("defer", s, map[string]any{"call": call}), nil
+}
+
+// exportSyncDefer desugars `defer m.Op(args)` on a sync primitive (see
+// exportDeferStmt). The returned node is a "defer" wrapping a "call" of a
+// synthesized funclit — all additive v1 wire, no factory change.
+// exportSyncDefer desugars `defer m.Op(args)` on a sync primitive (see
+// exportDeferStmt). The returned node is a "defer" wrapping a "call" of a
+// synthesized funclit — all additive v1 wire, no factory change.
+// exportSyncDefer desugars `defer m.Op(args)` on a sync primitive (see
+// exportDeferStmt). The returned node is a "defer" wrapping a "call" of a
+// synthesized funclit — all additive v1 wire, no factory change.
+//
+// Receiver semantics (verified against gc 1.27.1): a method with pointer
+// receiver called on a value-typed receiver R uses &R — the ADDRESS — so a
+// reassigned R still unlocks the current object. The desugar therefore
+// CAPTURES a value-typed ident receiver in the closure body (evaluated at
+// return time, like &R). A pointer-typed receiver (or a non-ident receiver,
+// i.e. a temporary that cannot be reassigned) is passed as a param,
+// evaluated at defer time. Args are always params (evaluated at defer
+// time, Go semantics).
+func (e *exporter) exportSyncDefer(s *ast.DeferStmt, sel *ast.SelectorExpr, selection *types.Selection, nt *types.Named) (*Node, error) {
+	c := s.Call
+	typeName := nt.Obj().Name()
+	op := sel.Sel.Name
+	if !syncOpsInScope[typeName][op] {
+		return nil, scopeErrorf("sync.%s.%s is not in M2 scope", typeName, op)
+	}
+	argNodes, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	// The method's *types.Func gives the declared parameter types.
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync method %s.%s is not a *types.Func", typeName, op)
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync method %s.%s has non-signature type", typeName, op)
+	}
+	recvType := e.info.Types[sel.X].Type
+	if recvType == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for sync defer receiver")
+	}
+	// Value-typed ident receiver: capture (address semantics).
+	// Otherwise: evaluate at defer time via a param.
+	_, recvIsPtr := recvType.(*types.Pointer)
+	_, recvIsIdent := sel.X.(*ast.Ident)
+	captureRecv := !recvIsPtr && recvIsIdent
+	var recvNode *Node
+	var recvParam *Node
+	var recvIdent *Node
+	outerArgs := []*Node{}
+	if captureRecv {
+		// The original receiver expression goes in the body and is
+		// captured by the closure — no param, no outer arg.
+		recvNode, err = e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		recvNode, err = e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+		outerArgs = append(outerArgs, recvNode)
+		v := types.NewParam(token.NoPos, nil, "__sync_recv", recvType)
+		id, err := e.defVar(v, true)
+		if err != nil {
+			return nil, err
+		}
+		tid, err := e.typeID(recvType)
+		if err != nil {
+			return nil, err
+		}
+		recvParam = e.node("param", c, map[string]any{
+			"name": "__sync_recv", "obj": id, "type": tid,
+		})
+		recvIdent = e.node("ident", c, map[string]any{
+			"name": "__sync_recv", "obj": id, "type": tid,
+		})
+	}
+	// Args are always params (evaluated at defer time).
+	params := []*Node{}
+	idents := []*Node{}
+	if recvParam != nil {
+		params = append(params, recvParam)
+		idents = append(idents, recvIdent)
+	}
+	if sig.Params().Len() != len(argNodes) {
+		return nil, fmt.Errorf("gofrontend: sync.%s.%s arity mismatch (internal error)", typeName, op)
+	}
+	for i := range argNodes {
+		v := types.NewParam(token.NoPos, nil, fmt.Sprintf("__sync_arg%d", i), sig.Params().At(i).Type())
+		id, err := e.defVar(v, true)
+		if err != nil {
+			return nil, err
+		}
+		tid, err := e.typeID(sig.Params().At(i).Type())
+		if err != nil {
+			return nil, err
+		}
+		name := fmt.Sprintf("__sync_arg%d", i)
+		params = append(params, e.node("param", c, map[string]any{
+			"name": name, "obj": id, "type": tid,
+		}))
+		idents = append(idents, e.node("ident", c, map[string]any{
+			"name": name, "obj": id, "type": tid,
+		}))
+		outerArgs = append(outerArgs, argNodes[i])
+	}
+	// Body receiver: the captured original, or the param ident.
+	bodyRecv := recvNode
+	if recvIdent != nil {
+		bodyRecv = recvIdent
+	}
+	// Body args: param idents (skip the receiver's if present).
+	bodyArgs := idents
+	if recvParam != nil {
+		bodyArgs = idents[1:]
+	}
+	inner := e.node("syncop", c, map[string]any{
+		"op": op, "synctyp": typeName,
+		"recv": bodyRecv, "args": bodyArgs, "type": nil,
+	})
+	body := e.node("block", c, map[string]any{
+		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": inner})},
+	})
+	funclit := e.node("funclit", c, map[string]any{
+		"params": params, "results": []*Node{}, "body": body,
+	})
+	call := e.node("call", c, map[string]any{
+		"fun": funclit, "args": outerArgs, "type": nil,
+	})
 	return e.node("defer", s, map[string]any{"call": call}), nil
 }
 
@@ -2433,10 +2602,49 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 // §2.3 — old consumers reject it as unknown, which is the correct
 // forward-compatibility behavior for a kind they predate).
 func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
+	// P3-M2b (ADR-0002): `go m.Op(args)` — GoStatementNode only builds
+	// zero-arg spawns (P2-M1), so a direct sync method go-statement
+	// desugars to go func() { <syncop> }() with the receiver/args
+	// captured. For race-free programs this is indistinguishable from
+	// evaluating them at go-time (the go statement happens-before the new
+	// goroutine; any concurrent reassignment would be a data race).
+	if sel, ok := unwrapSelector(s.Call.Fun); ok {
+		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			if nt := syncPrimitiveRecv(selection.Recv()); nt != nil {
+				return e.exportSyncGoStmt(s, sel, nt)
+			}
+		}
+	}
 	call, err := e.exportCall(s.Call)
 	if err != nil {
 		return nil, err
 	}
+	return e.node("gostmt", s, map[string]any{"call": call}), nil
+}
+
+// exportSyncGoStmt desugars `go m.Op(args)` on a sync primitive (see
+// exportGoStmt): a zero-arg funclit call whose body is the syncop — all
+// additive v1 wire, no factory change.
+func (e *exporter) exportSyncGoStmt(s *ast.GoStmt, sel *ast.SelectorExpr, nt *types.Named) (*Node, error) {
+	c := s.Call
+	typeName := nt.Obj().Name()
+	op := sel.Sel.Name
+	if !syncOpsInScope[typeName][op] {
+		return nil, scopeErrorf("sync.%s.%s is not in M2 scope", typeName, op)
+	}
+	inner, err := e.exportSyncOp(c, sel, nt)
+	if err != nil {
+		return nil, err
+	}
+	body := e.node("block", c, map[string]any{
+		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": inner})},
+	})
+	funclit := e.node("funclit", c, map[string]any{
+		"params": []*Node{}, "results": []*Node{}, "body": body,
+	})
+	call := e.node("call", c, map[string]any{
+		"fun": funclit, "args": []*Node{}, "type": nil,
+	})
 	return e.node("gostmt", s, map[string]any{"call": call}), nil
 }
 

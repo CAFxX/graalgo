@@ -172,6 +172,20 @@ protocol `FuncValueCallNode` uses, including its `recoverAllowed` dance
 "If f panics, Do considers it to have returned"). A nil func value panics
 with the nil-dereference `GoErrorValue` (nil-func-call parity).
 
+## D5b. `defer`/`go` of sync calls desugar in the exporter
+
+The frozen `buildDefer` only builds funclit/ident/builtin deferred calls
+and the frozen `GoStatementNode` only builds zero-arg spawns, so the
+exporter desugars (all standard v1 wire, no factory change):
+
+- `defer m.Op(args)` → `defer func(…){ …Op(…) }(…)`; a value-typed ident
+  receiver is **captured** (gc uses `&m` — verified: reassigning `m`
+  before return makes the deferred call hit the new object, corpus
+  `sy12`); pointer-typed/non-ident receivers and all args are params
+  evaluated at defer time.
+- `go m.Op(args)` → `go func(){ …Op(…) }()` (captured receiver — identical
+  to Go's address semantics).
+
 ## D6. Out of scope (named scope errors, re-test triggers recorded)
 
 | Out of scope | Fails as | Re-test trigger |
