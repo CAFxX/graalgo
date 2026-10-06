@@ -547,3 +547,61 @@ func main() {
 		t.Fatalf("*MyWriter.Write index = %v, want [0]", idx)
 	}
 }
+
+// TestIfaceMethodTableValueEmbedUnsupported: a pointer-receiver method
+// promoted via a VALUE-embedded field is marked unsupported in the wire
+// ("index": null) — the dispatcher would receive a value where a pointer
+// is expected (silently type-unsound; addressable-field lowering is out
+// of P3-M3 scope). The mark is lazy: the export succeeds (the method
+// table is computed for every type), and dispatch fails fast with a named
+// P3-M3 scope error only if the method is actually dispatched.
+func TestIfaceMethodTableValueEmbedUnsupported(t *testing.T) {
+	const src = `package main
+
+type Writer interface{ Write(p []byte) int }
+
+type Buf struct{ n int }
+
+func (b *Buf) Write(p []byte) int { b.n += len(p); return len(p) }
+
+type V struct{ Buf }
+
+func main() {
+	v := &V{}
+	var w Writer = v
+	println(w.Write([]byte("hi")))
+}
+`
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: export must succeed (unsupported is lazy), got %v", err)
+	}
+	doc := decodeExport(t, out)
+	entries := typeEntries(t, doc)
+	id, _ := findNamedEntry(t, entries, "main.V")
+	found := false
+	for _, e := range entries {
+		em, _ := e.(map[string]any)
+		if em["kind"] != "pointer" {
+			continue
+		}
+		d, _ := em["detail"].(map[string]any)
+		if elem, _ := d["elem"].(float64); int(elem) != id {
+			continue
+		}
+		methods, _ := d["methods"].([]any)
+		for _, m := range methods {
+			mm, _ := m.(map[string]any)
+			if mm["name"] != "Write" {
+				continue
+			}
+			found = true
+			if idx, ok := mm["index"]; !ok || idx != nil {
+				t.Fatalf("*V.Write index = %v (%T), want JSON null (unsupported)", mm["index"], mm["index"])
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no *V pointer entry carries Write")
+	}
+}

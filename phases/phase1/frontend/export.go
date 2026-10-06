@@ -497,6 +497,17 @@ func ExportFile(path string) (string, error) {
 	}
 	e.funcByObj = funcByObj
 	e.methodIndex = methodIndex
+	// P3-M3 (WS D, ADR-0003): the "methods" lists on named/pointer entries
+	// are computed from funcByObj, which is only populated now. Any type
+	// described before this point (the GenDecl TYPE scan above,
+	// collectPackageVars) computed its methods against an empty funcByObj
+	// and would otherwise keep a permanently empty list (named entries
+	// memoize by qualified name, so it is never recomputed). Recompute
+	// every named/pointer entry described so far; entries described later
+	// (during body export) already compute against the populated map.
+	if err := e.recomputeMethodTables(); err != nil {
+		return "", err
+	}
 	insts, err := e.enumerateInstantiations(file, funcs)
 	if err != nil {
 		return "", err
@@ -782,15 +793,16 @@ func (e *exporter) exportPackageVars() ([]GlobalEnt, error) {
 // ---------------------------------------------------------------------------
 
 type exporter struct {
-	fset    *token.FileSet
-	src     []byte // raw source bytes of the single input file (M8: rune-based positions)
-	info    *types.Info
-	pkg     *types.Package // the type-checked package (P3-M3: method-set lookup visibility)
-	types   []TypeEnt
-	typeIDs map[types.Type]int
-	objects []ObjectEnt
-	objIDs  map[types.Object]int
-	sizes   types.Sizes
+	fset     *token.FileSet
+	src      []byte // raw source bytes of the single input file (M8: rune-based positions)
+	info     *types.Info
+	pkg      *types.Package // the type-checked package (P3-M3: method-set lookup visibility)
+	types    []TypeEnt
+	typeList []types.Type // parallel to types: the go/types type per id (P3-M3)
+	typeIDs  map[types.Type]int
+	objects  []ObjectEnt
+	objIDs   map[types.Object]int
+	sizes    types.Sizes
 	// M6 (WS H): active type-parameter substitution while exporting a
 	// monomorphized instantiation body (nil outside instantiations). See
 	// typeSubst below.
@@ -1271,6 +1283,7 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 			}
 			id := len(e.types)
 			e.types = append(e.types, TypeEnt{})
+			e.typeList = append(e.typeList, t)
 			e.namedIDs[name] = id
 			ent, err := e.describeType(t)
 			if err != nil {
@@ -1284,6 +1297,7 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 		}
 		id := len(e.types)
 		e.types = append(e.types, TypeEnt{})
+		e.typeList = append(e.typeList, t)
 		e.substTypeIDs[t] = id
 		ent, err := e.describeType(t)
 		if err != nil {
@@ -1302,6 +1316,7 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 		}
 		id := len(e.types)
 		e.types = append(e.types, TypeEnt{})
+		e.typeList = append(e.typeList, t)
 		e.namedIDs[name] = id
 		ent, err := e.describeType(t)
 		if err != nil {
@@ -1315,6 +1330,7 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 	}
 	id := len(e.types)
 	e.types = append(e.types, TypeEnt{})
+	e.typeList = append(e.typeList, t)
 	e.typeIDs[t] = id
 	ent, err := e.describeType(t)
 	if err != nil {
@@ -4029,6 +4045,50 @@ func recvIface(t types.Type) *types.Interface {
 	return nil
 }
 
+// embeddedFieldType walks a struct field-index path (P3-M3, WS D),
+// dereferencing pointers and named types between steps; it returns the
+// field type at the end of the path, or nil when the path cannot be
+// resolved (defensive: the caller then skips its check rather than
+// failing a program it cannot analyze).
+func embeddedFieldType(t types.Type, path []int) types.Type {
+	for _, idx := range path {
+		for {
+			if p, ok := t.(*types.Pointer); ok {
+				t = p.Elem()
+				continue
+			}
+			if n, ok := t.(*types.Named); ok {
+				t = n.Underlying()
+				continue
+			}
+			break
+		}
+		st, ok := t.(*types.Struct)
+		if !ok || idx < 0 || idx >= st.NumFields() {
+			return nil
+		}
+		t = st.Field(idx).Type()
+	}
+	return t
+}
+
+// recomputeMethodTables recomputes the wire "methods" list of every
+// named/pointer type-table entry described so far (P3-M3, WS D). Called
+// once from ExportFile after funcByObj is populated; see the call site.
+func (e *exporter) recomputeMethodTables() error {
+	for id, t := range e.typeList {
+		switch t.(type) {
+		case *types.Named, *types.Pointer:
+			methods, err := e.methodTableEntries(t)
+			if err != nil {
+				return err
+			}
+			e.types[id].Detail["methods"] = methods
+		}
+	}
+	return nil
+}
+
 // methodTableEntries computes the wire "methods" list for a named type or
 // a pointer type (P3-M3, WS D, ADR-0003): one {"name","obj","recv","index"}
 // entry per method in types.NewMethodSet(t), resolved to declarations via
@@ -4044,10 +4104,11 @@ func recvIface(t types.Type) *types.Interface {
 func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
 	ms := types.NewMethodSet(t)
 	type entry struct {
-		name  string
-		obj   int
-		recv  string
-		index []int
+		name        string
+		obj         int
+		recv        string
+		index       []int
+		unsupported bool
 	}
 	entries := make([]entry, 0, ms.Len())
 	for i := 0; i < ms.Len(); i++ {
@@ -4079,14 +4140,45 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
 		} else {
 			path = []int{}
 		}
-		entries = append(entries, entry{name: mobj.Name(), obj: fi.funcID, recv: recv, index: path})
+		// P3-M3: promoted method with a pointer receiver via a
+		// value-embedded field cannot be dispatched: the dispatcher passes
+		// the field value as-is, and a value where a pointer is expected
+		// would be silently type-unsound (addressable-field lowering is out
+		// of P3-M3 scope). Mark it unsupported ("index": null) rather than
+		// failing the export: the method table is computed for every type,
+		// but the failure must only fire if the method is actually
+		// dispatched through an interface (fail fast at itab build, named
+		// P3-M3 scope error) — never for programs that merely declare the
+		// type.
+		unsupported := false
+		if len(path) > 0 && recv == "pointer" {
+			if ft := embeddedFieldType(t, path); ft != nil {
+				for {
+					if nt, ok := ft.(*types.Named); ok {
+						ft = nt.Underlying()
+						continue
+					}
+					break
+				}
+				if _, ok := ft.(*types.Pointer); !ok {
+					unsupported = true
+				}
+			}
+		}
+		entries = append(entries, entry{name: mobj.Name(), obj: fi.funcID, recv: recv, index: path, unsupported: unsupported})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 	out := make([]any, 0, len(entries))
 	for _, en := range entries {
-		idx := make([]any, len(en.index))
-		for i, v := range en.index {
-			idx[i] = v
+		var idx any
+		if en.unsupported {
+			idx = nil
+		} else {
+			arr := make([]any, len(en.index))
+			for i, v := range en.index {
+				arr[i] = v
+			}
+			idx = arr
 		}
 		out = append(out, map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv, "index": idx})
 	}
