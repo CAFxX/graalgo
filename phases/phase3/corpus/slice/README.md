@@ -19,6 +19,7 @@ stock gc 1.27.1.
   builds) follows the pure `growslice` formula. The corpus builds
   slices through escaping functions (returned or passed out), which
   take the pure-growslice path on gc — the only path graalgo
-  replicates (documented in SPEC).
+  replicates. (This design note is the authoritative record of the
+  divergence; it is not in SPEC.md.)
 - Growth sequences are compared byte-for-byte: e.g. int caps for
   appends 1..17 are `1 2 4 4 8 8 8 16 16 32 …`.

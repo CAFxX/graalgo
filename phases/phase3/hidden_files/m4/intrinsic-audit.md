@@ -1,4 +1,5 @@
-# P3-M4 intrinsic audit — GG-0020 stub-vs-real (2026-10-06)
+# P3-M4 intrinsic audit — GG-0020 stub-vs-real (2026-10-06; refreshed
+2026-10-06 post-remediation to the current tree)
 
 **Scope:** every public method in `phases/phase1/src/main/java/graalgo/runtime/`,
 `phases/phase2/src/main/java/graalgo/runtime/` (+`sync/`, `graalgo/sched/`),
@@ -7,9 +8,25 @@ Enumerated mechanically (signature regex + brace-matched body scan for
 `throw new UnsupportedOperationException` / `throw deleted(`); the full
 per-file table is §4.
 
-**Headline:** 277 public methods audited → **248 REAL**, **24 STUB**
-(phase-1 throws), **5 INTENTIONALLY-REMOVED** (phase-2 `Netpoll`, whose 5
-methods throw the documented GG-0018 deletion error — not stubs), 0 other.
+**Headline (corrected 2026-10-06, methodology P2-1):** the M4-start
+inventory was 277 public methods: **248 REAL** (non-throwing),
+**19 STUB** (phase-1 throwing methods that are not intentionally
+removed: 17 overlay-routed per §2a + 2 implemented in M4 per §2c),
+**10 INTENTIONALLY-REMOVED** (5 phase-1 Netpoll + 5 phase-2 Netpoll,
+GG-0018), 0 other. 248+19+10=277. (The original headline said "24
+STUB + 5 INTENTIONALLY-REMOVED" — it counted the 5 phase-1 Netpoll
+throwing methods as stubs although §2b classifies them
+intentionally-removed, and missed the 5 phase-2 Netpoll.)
+
+**Post-M4 refresh (current tree):** 286 public methods audited →
+**259 REAL**, **17 STUB-shaped-but-REAL-via-overlay** (§2a; throwing
+fail-fasts, real through the P2-D8 overlay), **10
+INTENTIONALLY-REMOVED**, 0 true stubs. New since the M4-start
+inventory: `Linknames` (6 public methods, all REAL — missed in the
+original audit, methodology P2-2) and 3 M4-added `Intrinsics` methods
+(`structSizeBytes`, `setItabProvider`, `renderGoStack`, all REAL);
+the 2 §2c stubs (`itabFor`, `traceback`) are implemented (REAL).
+259+17+10=286.
 
 **Correction to the brief's rough inventory:** phase-2 `Scheduler` has
 **0** stubs, not ~2 — the two grep hits were javadoc mentions of the
@@ -63,12 +80,20 @@ for GOMAXPROCS accounting). Falsifier: `make check`'s netpoller-deletion
 gate fails on any reachable netpoller code path. No M4 code change;
 classification recorded here.
 
-### 2c. TO-IMPLEMENT in M4 (2)
+### 2c. IMPLEMENTED in M4 (2) — REAL, Java-callable; NO Go wire path (P2-1)
 
 | Stub | Routing |
 |---|---|
-| `Intrinsics.itabFor(descriptor, iface)` | Wire to the P3-M3 itab machinery (`graalgo.iface.IfaceMethodTable`): phase-1 gains a provider hook (frozen signature kept; STUB bodies are INTERNAL per freeze §8), phase-3 registers the provider at launcher startup from the installed method tables + interface method lists. Red-green: Java test asserting itab identity with the dispatch path's itab. |
-| `Intrinsics.traceback()` | Implement via `GoroutineState.current().goStack()` (phase-2 ThreadLocal holder under phase-2/3 classpaths; phase-1 static holder under phase-1). gc-shaped single-goroutine rendering shared with the panic path. Differential vs gc panic tracebacks (goroutine IDs, `+0x` offsets, arg lists normalized). |
+| `Intrinsics.itabFor(descriptor, iface)` | Wired to the P3-M3 itab machinery (`graalgo.iface.IfaceMethodTable`): phase-1 has a provider hook (frozen signature kept; STUB bodies are INTERNAL per freeze §8), phase-3 registers the provider at launcher startup from the installed method tables + interface wire entries. Remediation P2-1: one iface-id namespace (the wire type-table ids) for the intrinsic and dispatch paths — the old process-counter minting could collide. Red-green: R5 (collision probe) + `ItabForIntrinsicTest` (identical cached instance, no cross-interface collision). |
+| `Intrinsics.traceback()` | Implemented via `GoroutineState.current().goStack()` (phase-2 ThreadLocal holder under phase-2/3 classpaths; phase-1 static holder under phase-1). gc-shaped single-goroutine rendering shared with the panic path (`renderGoStack`). Differential vs gc panic tracebacks (goroutine IDs, `+0x` offsets, arg lists normalized). |
+
+**Honest reclassification (P2-1):** both are REAL as Java intrinsics
+(callable from any registered linkname target), but NEITHER has a Go
+wire path — no wire node kind, no exporter support, no Go-callable
+surface. Go-reachability is deferred, not silently assumed.
+**Re-test trigger:** when wire nodes + exporter support are added for
+`itab`/`traceback`, re-verify this routing, add differential corpora
+calling them from Go, and re-run this audit's per-file table.
 
 ## 3. GcInterop — per-function justification (no hand-waving)
 
@@ -135,6 +160,9 @@ the body scan, not from absence of evidence).
   growslice×2, mapAssign/mapAccess/mapDelete/mapLen, mapIterInit/
   mapIterNext, elemSizeBytes, elemHasPointers, slicecopy, fastrand64/
   fastrand/fastrandn).
+- `Linknames` (new P3-M4 class, `graalgo.runtime`): 6 total, 0 stub —
+  `register, clear, dispatch, bindGo, resolveGo, callGo` REAL (the
+  linkname symbol registry, ADR-0004 D1).
 - `Netpoll`: 5 total, 5 stub — `init, open, close, waitForEvents,
   breakWait` → §2b INTENTIONALLY-REMOVED (GG-0018).
 - `Panic`: 3 total, 0 stub — REAL.
@@ -175,13 +203,29 @@ the body scan, not from absence of evidence).
 (`Drainer` 2, `ResumeToken` 1, `SchedTrace` 3, `SchedulerCore` 24;
 `GoroutineHandle` is a data record with no public methods of its own).
 
-### phase3 `graalgo/iface/` — 18 total, 0 stub — REAL
+### phase3 `graalgo/iface/` — 21 total, 0 stub — REAL
 (`DescriptorNames` 3, `IfaceDispatchBuilder` 1, `IfaceDispatchNode` 7,
-`IfaceItab` 4, `IfaceMethodTable` 2, `IfaceMethodTables` 1,
+`IfaceItab` 4, `IfaceMethodTable` 5 (`install, clear,
+installInterfaces, itabForIntrinsic, itabForDescriptors`) +
+`IfaceWireEntry` record (P2-1: wire id + method names, one id
+namespace), `IfaceMethodTables` 2 (`resolve, resolveInterfaces`),
 `IfaceMethodTarget` 2).
 
 ### phase3 `graalgo/p3sync/` — 5 total, 0 stub — REAL
 (`P3SyncMain` 1, `SyncNewNode` 2, `SyncOpNode` 2).
+
+### Post-M4 refresh deltas (2026-10-06, methodology P2-2)
+
+- `Intrinsics`: 19 → 22 total, 0 stub. `itabFor`/`traceback`
+  implemented (§2c); new: `structSizeBytes` (flat-struct ABI layout for
+  append growth), `setItabProvider` (the provider hook),
+  `renderGoStack` (gc-shaped rendering shared with the panic path) —
+  all REAL. The one remaining `throw new
+  UnsupportedOperationException` in `itabFor` is the documented
+  no-provider fail-fast (phase-1-only mode), not a stub.
+- `Linknames`: new class, 6 total, 0 stub — REAL (see above).
+- `IfaceMethodTable`/`IfaceMethodTables`: see the iface section above
+  (P2-1 one-namespace rework).
 
 ## 6. GG-0020 frozen-surface subset
 

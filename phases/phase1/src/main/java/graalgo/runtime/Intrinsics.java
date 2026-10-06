@@ -597,7 +597,10 @@ public final class Intrinsics {
      * no {@code +0x} pc offsets (no machine code), no argument lists
      * (graalgo frames carry no arg words), unqualified frame names (the
      * wire carries no package path), no {@code created by} line (the
-     * scheduler does not record creators — re-test trigger when it does).
+     * scheduler does not record creators). Each divergence has an
+     * explicit re-test trigger in
+     * {@code phases/phase3/corpus/traceback/README.md} ("Re-test
+     * triggers").
      *
      * @param goroutineId the id to print (gc: the main goroutine is 1)
      * @param top the innermost frame (null renders an empty stack)

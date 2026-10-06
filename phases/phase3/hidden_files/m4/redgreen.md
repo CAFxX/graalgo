@@ -180,20 +180,34 @@ gc: `delete(nilMap, k)` is a no-op. Fix: nil check → no-op.
 
 ## 3. Struct slice append growth (`Intrinsics.structSizeBytes`)
 
-**RED** — appending to `[]Point` (a struct slice):
+**RED** — appending to `[]Point` (a struct slice), reproduced on the
+pre-fix tree (worktree at `90070be^`, rebuilt):
 
 ```
-Exception in thread "main" java.lang.UnsupportedOperationException:
-    struct element size not implemented
-    at graalgo.runtime.Intrinsics.structSizeBytes(...)
+int8 4 4 8
+int64 4 4 4 30000000000
+string 4 4 4
+graalgo-run: fatal internal error in goroutine:
+    java.lang.IllegalArgumentException: slice bounds out of range: offset=0 len=1 cap=1
+exit 1
 ```
 
-`AppendNode` had no element size for struct types, so growth
-crashed. Fix: flat-struct ABI layout computation; nested
-struct/array element sizes fail fast (documented M4 boundary).
+`elemSizeBytes(STRUCT)` fell into `default -> 0`, so `growslice`
+took the zero-size-element path (backing array of length 0, `newLen`
+as cap) and the append write went out of bounds. (An earlier draft
+of this entry cited an `UnsupportedOperationException: struct
+element size not implemented` — that exception never existed in any
+commit; corrected 2026-10-06, methodology P2-3.)
 
-**GREEN** — `sl01_elem_kinds`: struct append/copy values verified,
-growth caps match gc.
+Fix (commit `90070be`): flat-struct ABI layout computation
+(`structSizeBytes(GoStructDescriptor)` — field order, natural
+alignment, tail padding); `NodeFactory.buildAppendBuiltin` computes
+the size from the element type id's descriptor and passes it to
+`AppendNode`; nested struct/array element sizes fail fast
+(documented M4 boundary).
+
+**GREEN** — `sl01_elem_kinds` on the current tree: byte-identical to
+gc 1.27.1 (`struct 10 10 16 9`), exit 0.
 
 ## 4. Append growth caps vs gc (`AppendNode` / `Intrinsics`)
 
