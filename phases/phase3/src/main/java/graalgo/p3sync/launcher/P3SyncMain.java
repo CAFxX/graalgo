@@ -62,6 +62,7 @@ public final class P3SyncMain {
         }
         int gmp = 0; // 0 = default (carriers)
         boolean check = false;
+        boolean dumpPolymorphism = false;
         String file = null;
         for (String a : args) {
             if (a.startsWith("--gmp=")) {
@@ -77,6 +78,11 @@ public final class P3SyncMain {
             }
             switch (a) {
                 case "--check" -> check = true;
+                // P3-M3 (M9 re-measure): enable the InterfaceDispatchProbes
+                // (WS D hooks) and dump per-site itab-identity histograms
+                // to stderr after the run. The program's stdout is
+                // untouched, so differential comparisons still apply.
+                case "--dump-polymorphism" -> dumpPolymorphism = true;
                 case "--help", "-h" -> {
                     usage();
                     return EXIT_OK;
@@ -153,6 +159,10 @@ public final class P3SyncMain {
         if (check) {
             return EXIT_OK;
         }
+        if (dumpPolymorphism) {
+            graalgo.values.InterfaceDispatchProbes.reset();
+            graalgo.values.InterfaceDispatchProbes.setEnabled(true);
+        }
 
         // Install the scheduler and run main as the first goroutine
         // (SchedMain's flow, verbatim).
@@ -186,6 +196,12 @@ public final class P3SyncMain {
         } finally {
             SchedulerCore.install(prev);
         }
+        // M9: dump even on panic (partial traces are marked as such by
+        // the harness); the dump goes to stderr, never to the program's
+        // stdout.
+        if (dumpPolymorphism) {
+            dumpPolymorphism();
+        }
         if (sched.panicked()) {
             return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
         }
@@ -193,6 +209,25 @@ public final class P3SyncMain {
             return EXIT_INPUT_ERROR; // internal error, already reported on stderr
         }
         return exitCode[0];
+    }
+
+    /**
+     * M9 re-measurement (P3-M3): per-site itab-identity histograms from
+     * {@link graalgo.values.InterfaceDispatchProbes}, one line per site on
+     * stderr. A site's itab count is its dynamic-type cardinality:
+     * 1 = monomorphic, 2 = bimorphic, &ge;3 = megamorphic.
+     */
+    private static void dumpPolymorphism() {
+        var sites = graalgo.values.InterfaceDispatchProbes.sites();
+        System.err.println("POLYMORPHISM-BEGIN sites=" + sites.size());
+        var names = new java.util.ArrayList<>(sites.keySet());
+        java.util.Collections.sort(names);
+        for (String name : names) {
+            var site = sites.get(name);
+            System.err.println("POLYMORPHISM-SITE name=\"" + name + "\" itabs="
+                    + site.histogram().size() + " dispatches=" + site.total());
+        }
+        System.err.println("POLYMORPHISM-END");
     }
 
     /**
@@ -287,8 +322,9 @@ public final class P3SyncMain {
     }
 
     private static void usage() {
-        System.err.println("usage: graalgo-sync-run [--gmp=N] [--check] file.go");
+        System.err.println("usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] file.go");
         System.err.println("  --gmp=N   in-flight cap (default: carriers); effective cap = min(gmp, carriers)");
         System.err.println("  --check   build only, do not execute");
+        System.err.println("  --dump-polymorphism  M9: dump per-site itab-identity histograms to stderr");
     }
 }
