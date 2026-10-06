@@ -300,3 +300,17 @@ one-logical-change-per-commit sequence:
 **Final verification (sign-off tree `5fde351`, independent re-runs by coordinator):** phase-1 `make test` 208/208 + `make check` clean; phase-2 `make test` 194/194 + `make check` clean (pinning audit PASS, 0 unexpected); p3frontend `go test` ok; phase-3 `make test` 19/19; iface differential 13/13 byte-identical vs gc 1.27.1; sync differential 25/25. M9 re-measurement: 31 sites, 1227 dispatches — 41.9% mono / 51.6% poly (PIC-resident) / 6.5% mega (mechanism coverage, NOT a workload verdict; workload re-measurement deferred to Phase 4). GG-0014 →active; GG-0017 iface slice →active.
 
 **P3-M3 is COMPLETE.** Next: P3-M4 (intrinsic surface completion).
+
+## 2026-10-06 — P3-M4 sign-off: intrinsic surface completion (WS C)
+
+**Sign-off commit:** `e6cddab` (implementation `6d690e9` + remediation through `1d76b54` + harness fix).
+
+**Delivered:** GG-0020 audit published (`phases/phase3/hidden_files/m4/intrinsic-audit.md`): 286 intrinsic functions enumerated across phase-1/2/3 runtime classes — 248 REAL, 19 STUB routed to real implementations, 10 INTENTIONALLY-REMOVED (Netpoll, Phase-2 netpoller deletion), remainder documented no-ops-by-design (GcInterop ×3, write barrier — JVM owns it, each justified per-function). **0 stubs remain reachable from Go code.** Wiring: `//go:linkname` both directions (`LinknameIntrinsics`, `Linknames`), `Intrinsics.itabFor` → P3-M3 `IfaceMethodTable` (single iface-id namespace), `traceback()` with gc-parity call-site lines, atomics completions, `structSizeBytes` + gc-identical growslice caps. Phase-1/Phase-2 edits under ADR-0004 freeze exceptions (minimal, documented).
+
+**Reviews:** code reviewer **NO-GO** (1 P0 — atomic cell cloning severed `*atomic.T` aliasing, proven vs gc; 2 P1 — `fastrandn(0)` threw vs gc's 0, innermost panic frame reported the definition line; 5 P2), methodology reviewer **GO-WITH-FINDINGS** (5 P2 — audit arithmetic, stale audit, one unverifiable red-green RED, missing re-test triggers, uncommitted evidence). All 13 findings remediated in 8 one-change-per-commit commits with red-green evidence (R1–R5); reports: `reviews/phase3-m4/reviewer1.md`, `reviewer2.md`.
+
+**Supervisor-found defect (independent verification):** the map differential harness had a path bug — `NORM="$(cd "$(dirname "$0")" && pwd)/../traceback/normalize.py"` ran *after* the script's early `cd "$(dirname "$0")"`, so relative invocation resolved NORM to the nonexistent `/../traceback/normalize.py`, silently emptying the normalized output and failing the `.panic` anchor comparison 3/9. The product was correct (byte-identical output verified manually); the harness was not. Fixed in `e6cddab` (`NORM="$(pwd)/../traceback/normalize.py"`); map corpus now 9/9 via relative-path invocation. Lesson: differential harnesses must be exercised from the same working directory and invocation form the supervisor uses — "passes in CI" is not established by passing from the corpus dir.
+
+**Final verification (sign-off tree, independent re-runs by coordinator):** phase-1 `make test` 208/208 + `make check` clean; phase-2 `make test` 194/194; p3frontend `go test` ok; phase-3 `make test` 29/29 + `make check` clean; corpora vs gc 1.27.1 — atomic 8/8, map 9/9, slice 6/6, fastrand 8/8, traceback 4/4, iface 13/13, sync 25/25. GG-0020 stays active (already activated 2026-10-04; 17 new `verifies:` annotations).
+
+**P3-M4 is COMPLETE.** Next: P3-M5 (`time` + `context` lowering).
