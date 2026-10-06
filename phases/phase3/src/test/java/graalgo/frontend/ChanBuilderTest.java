@@ -12,6 +12,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.Source;
 
 import graalgo.p3chan.nodes.ChanCloseNode;
+import graalgo.p3chan.nodes.ChanLenCapNode;
 import graalgo.p3chan.nodes.ChanRecvNode;
 import graalgo.p3chan.nodes.ChanSendNode;
 import graalgo.p3chan.nodes.MakeChanNode;
@@ -19,6 +20,7 @@ import graalgo.p3chan.nodes.SelectNode;
 import graalgo.runtime.ChanOps;
 import graalgo.runtime.GoChan;
 import graalgo.runtime.PanicException;
+import graalgo.runtime.TimerChan;
 import graalgo.sched.SchedulerCore;
 import graalgo.values.GoStruct;
 
@@ -130,6 +132,8 @@ public final class ChanBuilderTest {
         factory.registerExprKind("recv", (n, c) -> ChanRecvNode.build(n, c, factory));
         factory.registerStmtKind("chanclose", (n, c) -> ChanCloseNode.build(n, c, factory));
         factory.registerStmtKind("select", (n, c) -> SelectNode.build(n, c, factory));
+        factory.registerExprKind("chanlen", (n, c) -> ChanLenCapNode.build(n, c, factory, false));
+        factory.registerExprKind("chancap", (n, c) -> ChanLenCapNode.build(n, c, factory, true));
         Json.Array types = (Json.Array) Json.parse(TYPES_JSON);
         objects = new ArrayList<>();
         ctx = new NodeFactory.BuildCtx(source, FrameDescriptor.newBuilder(),
@@ -173,6 +177,16 @@ public final class ChanBuilderTest {
     private GoExprNode recv(String chanJson, int typeId) {
         return buildExpr("{\"kind\":\"recv\",\"pos\":" + POS
                 + ",\"fields\":{\"x\":" + chanJson + ",\"type\":" + typeId + "}}");
+    }
+
+    private GoExprNode chanlen(String chanJson) {
+        return buildExpr("{\"kind\":\"chanlen\",\"pos\":" + POS
+                + ",\"fields\":{\"x\":" + chanJson + ",\"type\":" + T_INT + "}}");
+    }
+
+    private GoExprNode chancap(String chanJson) {
+        return buildExpr("{\"kind\":\"chancap\",\"pos\":" + POS
+                + ",\"fields\":{\"x\":" + chanJson + ",\"type\":" + T_INT + "}}");
     }
 
     private GoStmtNode chanclose(String chanJson) {
@@ -402,6 +416,91 @@ public final class ChanBuilderTest {
             Object v = recv(chId, T_STRUCT).executeObject(f);
             assertTrue(v instanceof GoStruct, "struct zero value");
             assertEq(0L, ((GoStruct) v).getLong(0), "struct field zero");
+        });
+    }
+
+    // ---------- chanlen / chancap ----------
+
+    /** len/cap of a buffered channel: len tracks sends/recvs, cap is fixed. */
+    public void testChanLenCapBuffered() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            f.setObject(slotOf(chObj), makechan(3, T_INT).executeObject(f));
+            GoExprNode lenNode = chanlen(chId);
+            GoExprNode capNode = chancap(chId);
+            assertEq(0L, lenNode.executeLong(f), "empty len");
+            assertEq(3L, capNode.executeLong(f), "buffered cap");
+            send(chId, basiclit("1", T_INT)).executeVoid(f);
+            send(chId, basiclit("2", T_INT)).executeVoid(f);
+            assertEq(2L, lenNode.executeLong(f), "len after two sends");
+            assertEq(3L, capNode.executeLong(f), "cap unchanged");
+            recv(chId, T_INT).executeObject(f);
+            assertEq(1L, lenNode.executeLong(f), "len after one recv");
+        });
+    }
+
+    /** len/cap of an unbuffered channel are 0 (GoChan cap 0). */
+    public void testChanLenCapUnbuffered() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            f.setObject(slotOf(chObj), makechan(null, T_INT).executeObject(f));
+            assertEq(0L, chanlen(chId).executeLong(f), "unbuffered len");
+            assertEq(0L, chancap(chId).executeLong(f), "unbuffered cap");
+        });
+    }
+
+    /** gc parity: len/cap of a nil channel are 0 (unlike recv, no blocking). */
+    public void testChanLenCapNil() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            f.setObject(slotOf(chObj), null); // nil channel
+            assertEq(0L, chanlen(chId).executeLong(f), "nil len");
+            assertEq(0L, chancap(chId).executeLong(f), "nil cap");
+        });
+    }
+
+    /**
+     * DIV-M3-1: {@code len}/{@code cap} of a timer channel report 0 even
+     * though the value sits physically buffered — the {@code TimerChan}
+     * override, exercised here through the builder wire path.
+     */
+    public void testChanLenCapTimerChan() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            int chObj = declareObj("ch", T_CHAN_INT, FrameSlotKind.Object);
+            String chId = ident(chObj, "ch", T_CHAN_INT);
+            VirtualFrame f = newFrame();
+            // TimerChan has a 1-slot buffer underneath (like the fire-value
+            // translator); send fills it so buffered() would be 1 on a
+            // plain GoChan. The override must still report 0.
+            TimerChan tc = new TimerChan();
+            f.setObject(slotOf(chObj), tc);
+            assertEq(0L, chanlen(chId).executeLong(f), "timer chan len pre-fill");
+            assertEq(0L, chancap(chId).executeLong(f), "timer chan cap pre-fill");
+            ChanOps.send(tc, 0L);
+            assertEq(0L, chanlen(chId).executeLong(f), "timer chan len after fill");
+            assertEq(0L, chancap(chId).executeLong(f), "timer chan cap after fill");
+        });
+    }
+
+    /** The node kind is the int result kind from the "type" field. */
+    public void testChanLenCapNodeKind() throws Exception {
+        withScheduler(() -> {
+            newBuild();
+            String mkJson = "{\"kind\":\"makechan\",\"pos\":" + POS
+                    + ",\"fields\":{\"elem\":" + T_INT + ",\"size\":1}}";
+            GoExprNode lenNode = buildExpr("{\"kind\":\"chanlen\",\"pos\":" + POS
+                    + ",\"fields\":{\"x\":" + mkJson + ",\"type\":" + T_INT + "}}");
+            assertTrue(lenNode.kind().isIntKind(), "chanlen node kind is an int kind");
         });
     }
 

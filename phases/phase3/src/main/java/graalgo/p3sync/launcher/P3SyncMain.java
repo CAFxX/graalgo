@@ -17,6 +17,7 @@ import graalgo.iface.IfaceDispatchBuilder;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
 import graalgo.p3chan.nodes.ChanCloseNode;
+import graalgo.p3chan.nodes.ChanLenCapNode;
 import graalgo.p3chan.nodes.ChanRecvNode;
 import graalgo.p3chan.nodes.ChanSendNode;
 import graalgo.p3chan.nodes.MakeChanNode;
@@ -192,6 +193,14 @@ public final class P3SyncMain {
                     (node, ctx) -> ChanSendNode.build(node, ctx, factory));
             factory.registerExprKind("recv",
                     (node, ctx) -> ChanRecvNode.build(node, ctx, factory));
+            // P3-M5 (WS E, ADR-0005 Appendix C): len/cap on channels (the
+            // frozen LenNode rejects CHAN, so the exporter emits additive
+            // chanlen/chancap nodes). Public extension hooks — no
+            // Phase-1/Phase-2 change.
+            factory.registerExprKind("chanlen",
+                    (node, ctx) -> ChanLenCapNode.build(node, ctx, factory, false));
+            factory.registerExprKind("chancap",
+                    (node, ctx) -> ChanLenCapNode.build(node, ctx, factory, true));
             factory.registerStmtKind("chanclose",
                     (node, ctx) -> ChanCloseNode.build(node, ctx, factory));
             factory.registerStmtKind("select",
