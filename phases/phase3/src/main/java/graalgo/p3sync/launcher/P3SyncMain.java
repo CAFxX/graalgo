@@ -13,6 +13,9 @@ import com.oracle.truffle.api.source.Source;
 
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
+import graalgo.iface.IfaceDispatchBuilder;
+import graalgo.iface.IfaceMethodTable;
+import graalgo.iface.IfaceMethodTables;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
 import graalgo.sched.SchedulerCore;
@@ -21,7 +24,8 @@ import graalgo.sched.nodes.GoStatementNode;
 
 /**
  * Phase-3 launcher for {@code sync}-binding programs (P3-M2b, WS D,
- * ADR-0002): {@code graalgo-sync-run --gmp=N file.go}.
+ * ADR-0002) with interface method dispatch (P3-M3, WS D, ADR-0003):
+ * {@code graalgo-sync-run --gmp=N file.go}.
  *
  * <p>Mirrors Phase-2 {@code SchedMain}'s flow (frontend, exit-code
  * contract) but additionally registers the {@code "syncnew"} /
@@ -128,12 +132,20 @@ public final class P3SyncMain {
             factory.registerExprKind("syncnew", SyncNewNode::build);
             factory.registerExprKind("syncop",
                     (node, ctx) -> SyncOpNode.build(node, ctx, factory));
+            // P3-M3 (WS D, ADR-0003): interface method dispatch. Public
+            // extension hook — no Phase-1 NodeFactory change.
+            factory.registerExprKind("ifacemethod", new IfaceDispatchBuilder(factory));
             // P2-M1 (WS A): the go statement, reused from Phase 2 via the
             // same public hook (no Phase-2 change — GoStatementNode is a
             // public class).
             factory.registerStmtKind("gostmt",
                     (node, ctx) -> GoStatementNode.build(node, ctx, factory));
             program = factory.buildProgram(json);
+            // P3-M3 (WS D, ADR-0003): install the interface method tables.
+            // Method objIDs resolve through Program.functions(); a missing
+            // objID fails fast here. Installed on every build (even empty)
+            // so a previous program's tables can never leak into this run.
+            IfaceMethodTable.install(IfaceMethodTables.resolve(json, program.functions()));
         } catch (FrontendException e) {
             System.err.println("graalgo-sync-run: internal error building AST: " + e.getMessage());
             return EXIT_INPUT_ERROR;

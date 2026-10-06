@@ -33,16 +33,19 @@ LIB := $(wildcard $(P1)/lib/*.jar)
 CP := $(subst $(eval) ,:,$(strip $(LIB)))
 
 SRC_MAIN := $(shell find src/main/java -name '*.java')
+SRC_TEST := $(shell find src/test/java -name '*.java' 2>/dev/null)
 OUT_MAIN := out/classes
+OUT_TEST := out/test-classes
 
 # Phase-3 runtime classpath: phase3 FIRST, then phase2 (overlay), then
 # phase1, then jars.
 RUN_CP := $(OUT_MAIN):$(P2_CLASSES):$(P1_CLASSES):$(CP)
+TEST_CP := $(OUT_TEST):$(RUN_CP)
 
 JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
-.PHONY: all main check clean run
+.PHONY: all main test check clean run
 
 all: main
 
@@ -64,11 +67,18 @@ $(OUT_MAIN)/.built: $(SRC_MAIN)
 run: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(RUN_CP)" graalgo.p3sync.launcher.P3SyncMain $(ARGS)
 
+test: main $(OUT_TEST)/.built
+	$(JAVA) $(JAVA_FLAGS) -cp "$(TEST_CP)" graalgo.iface.IfaceTestRunner
+$(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
+	mkdir -p $(OUT_TEST)
+	$(JAVAC) $(JAVAC_FLAGS) -cp "$(OUT_MAIN):$(P2_CLASSES):$(P1_CLASSES):$(CP)" -d $(OUT_TEST) $(SRC_TEST)
+	touch $(OUT_TEST)/.built
+
 # placeholder + debug-leftover grep gates (Phase-1 done-gate 5 discipline).
 # The launcher (P3SyncMain) is excluded from the debug gate: printing usage
 # and diagnostics to stderr is its job (same exclusion as SchedMain and
 # Phase-1 Main).
-check: main
+check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
 	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi

@@ -1,0 +1,119 @@
+package graalgo.iface;
+
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+
+import graalgo.frontend.FrontendException;
+import graalgo.values.GoFunc;
+
+/**
+ * Static registry of interface method tables (P3-M3, WS D, ADR-0003):
+ * descriptor name → (method name → {@link GoFunc}).
+ *
+ * <p>Installed once per program by the phase-3 launcher after
+ * {@code factory.build()} resolves method object ids through
+ * {@code Program.functions()}. Installs are synchronized and defensively
+ * copied; installing also drops the itab cache (itabs hold {@link GoFunc}s
+ * from the previous install).
+ *
+ * <p>Concurrency: the table reference is volatile and replaced wholesale,
+ * so the dispatch read path is lock-free; install/clear take the lock for
+ * the atomic table+cache swap. Installs happen before goroutines start
+ * (and single-threaded in tests), so a dispatch racing an install is
+ * outside the supported lifecycle.
+ *
+ * <p>Descriptor-name keying: named dynamic types key by the qualified
+ * name ({@code GoTypeDescriptor.name()}, canonical via the factory's
+ * {@code NAMED_DESCS}, equal to the exporter's {@code namedTypeName});
+ * pointer dynamic types key by the factory's structural descriptor name
+ * — see {@link DescriptorNames} for the replica and the recorded
+ * ADR-0003 D5 deviation.
+ */
+public final class IfaceMethodTable {
+    private IfaceMethodTable() {}
+
+    private static final Object LOCK = new Object();
+    private static volatile Map<String, Map<String, GoFunc>> table = Map.of();
+    /** (descriptor name, iface id) → built itab. */
+    private static final ConcurrentHashMap<ItabKey, IfaceItab> itabs = new ConcurrentHashMap<>();
+
+    private record ItabKey(String descriptorName, int ifaceId) {}
+
+    /**
+     * Installs the method tables. Defensive deep copy: later mutation of
+     * the caller's maps cannot corrupt the registry. Drops the itab cache.
+     */
+    public static void install(Map<String, Map<String, GoFunc>> methodTable) {
+        Map<String, Map<String, GoFunc>> copy = new HashMap<>();
+        for (Map.Entry<String, Map<String, GoFunc>> e : methodTable.entrySet()) {
+            copy.put(e.getKey(), Map.copyOf(e.getValue()));
+        }
+        Map<String, Map<String, GoFunc>> frozen = Map.copyOf(copy);
+        synchronized (LOCK) {
+            table = frozen;
+            itabs.clear();
+        }
+    }
+
+    /** Clears the registry and the itab cache (tests). */
+    public static void clear() {
+        synchronized (LOCK) {
+            table = Map.of();
+            itabs.clear();
+        }
+    }
+
+    /** Number of descriptor entries currently installed (tests). */
+    static int size() {
+        return table.size();
+    }
+
+    /** Number of cached itabs (tests: PIC-hit counting). */
+    static int itabCacheSize() {
+        return itabs.size();
+    }
+
+    static GoFunc lookup(String descriptorName, String methodName) {
+        Map<String, GoFunc> methods = table.get(descriptorName);
+        return methods == null ? null : methods.get(methodName);
+    }
+
+    /**
+     * Returns the itab for (descriptor name, interface id), building and
+     * caching it on first use. The method map is laid out in
+     * {@code ifaceMethodNames} order.
+     *
+     * @throws FrontendException if the descriptor has no installed table,
+     *         or a method is missing — both unreachable for well-formed
+     *         gofrontend ≥ 0.4.0 output (go/types verified assignability),
+     *         so both fail fast instead of dispatching wrong.
+     */
+    static IfaceItab itabFor(String descriptorName, int ifaceId, List<String> ifaceMethodNames) {
+        ItabKey key = new ItabKey(descriptorName, ifaceId);
+        return itabs.computeIfAbsent(key,
+                k -> buildItab(descriptorName, ifaceId, ifaceMethodNames, table));
+    }
+
+    private static IfaceItab buildItab(String descriptorName, int ifaceId,
+            List<String> ifaceMethodNames, Map<String, Map<String, GoFunc>> snapshot) {
+        Map<String, GoFunc> installed = snapshot.get(descriptorName);
+        if (installed == null) {
+            throw new FrontendException("interface dispatch: no method table installed for dynamic type \""
+                    + descriptorName + "\" (needs gofrontend >= 0.4.0 WS D method tables)");
+        }
+        Map<String, GoFunc> ordered = new LinkedHashMap<>();
+        for (String name : ifaceMethodNames) {
+            GoFunc f = installed.get(name);
+            if (f == null) {
+                throw new FrontendException("interface dispatch: method \"" + name
+                        + "\" missing for dynamic type \"" + descriptorName
+                        + "\" (unreachable: go/types verified assignability)");
+            }
+            ordered.put(name, f);
+        }
+        return new IfaceItab(descriptorName, ifaceId, ordered);
+    }
+}

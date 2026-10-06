@@ -1,0 +1,63 @@
+package graalgo.iface;
+
+import java.lang.reflect.Method;
+import java.lang.reflect.Modifier;
+import java.util.ArrayList;
+import java.util.List;
+
+/**
+ * Minimal red-green test runner (mirrors Phase-1 {@code graalgo.test.Runner}
+ * and Phase-2 {@code SchedTestRunner}): instantiates each registered test
+ * class and invokes every public no-arg method whose name starts with
+ * "test". Exits 0 on all-pass, 1 on any failure. New test classes register
+ * in TESTS below.
+ */
+public final class IfaceTestRunner {
+    private static final List<Class<?>> TESTS = new ArrayList<>();
+
+    static {
+        TESTS.add(IfaceDispatchNodeTest.class);
+        TESTS.add(IfaceMethodTablesTest.class);
+        TESTS.add(graalgo.frontend.DescriptorNamesTest.class);
+    }
+
+    private IfaceTestRunner() {}
+
+    public static void main(String[] args) {
+        int run = 0;
+        int failed = 0;
+        List<String> failures = new ArrayList<>();
+        for (Class<?> tc : TESTS) {
+            Object inst;
+            try {
+                inst = tc.getDeclaredConstructor().newInstance();
+            } catch (Exception e) {
+                throw new RuntimeException("cannot instantiate " + tc.getName(), e);
+            }
+            for (Method m : tc.getDeclaredMethods()) {
+                if (!m.getName().startsWith("test") || m.getParameterCount() != 0
+                        || !Modifier.isPublic(m.getModifiers())) {
+                    continue;
+                }
+                run++;
+                String name = tc.getSimpleName() + "." + m.getName();
+                try {
+                    m.invoke(inst);
+                    System.out.println("PASS " + name);
+                } catch (Exception e) {
+                    failed++;
+                    Throwable cause = e.getCause() != null ? e.getCause() : e;
+                    failures.add(name + ": " + cause);
+                    System.out.println("FAIL " + name + ": " + cause);
+                }
+            }
+        }
+        System.out.println(run + " tests, " + failed + " failures");
+        if (failed > 0) {
+            for (String f : failures) {
+                System.out.println("  " + f);
+            }
+            System.exit(1);
+        }
+    }
+}

@@ -1,0 +1,308 @@
+package graalgo.iface;
+
+import java.util.List;
+import java.util.Map;
+
+import com.oracle.truffle.api.frame.FrameSlotKind;
+import com.oracle.truffle.api.frame.VirtualFrame;
+
+import graalgo.frontend.FrontendException;
+import graalgo.frontend.GoExprNode;
+import graalgo.runtime.GoCalls;
+import graalgo.runtime.GoErrors;
+import graalgo.runtime.GoroutineState;
+import graalgo.runtime.Panic;
+import graalgo.values.GoFunc;
+import graalgo.values.GoInterface;
+import graalgo.values.GoKind;
+import graalgo.values.GoTypeDescriptor;
+import graalgo.values.InterfaceDispatchProbes;
+
+/**
+ * Interface method dispatch (P3-M3, WS D, ADR-0003): the
+ * {@code "ifacemethod"} wire node.
+ *
+ * <p>The receiver evaluates to a {@link GoInterface} (a nil interface —
+ * Java null or a descriptor-less {@code GoInterface} — is gc's
+ * nil-dereference panic, via the same {@code Panic.throwPanic} /
+ * {@code GoErrors.nilDereference()} path {@code FuncValueCallNode} uses
+ * for nil funcs). A typed nil (descriptor set, data null) proceeds with
+ * null receiver data.
+ *
+ * <p>The itab is built once per (descriptor name, interface id) as an
+ * immutable {@link IfaceItab} (D6) and cached in {@link IfaceMethodTable}.
+ * Dispatch polymorphic-caches on <em>itab identity</em>, limit 3; the 4th
+ * distinct itab flips the site megamorphic with a {@link java.util.HashMap}
+ * fallback keyed on itab identity (still correct, no deopt — itabs are
+ * immutable per D6). Megamorphic transitions are counted in a volatile
+ * long for observability. Every dispatch records
+ * {@code InterfaceDispatchProbes.record(itab)} (the M9 re-measurement
+ * hook).
+ *
+ * <p>Invocation follows the {@code FuncValueCallNode} protocol:
+ * {@code GoCalls.invoke(goFunc, prepend(data, argValues))} — the
+ * receiver's {@code data} as the method's params[0], exactly like
+ * {@code methodref} — including the {@code recoverAllowed} dance.
+ *
+ * <p>Registered on the factory via the public
+ * {@code NodeFactory.registerExprKind("ifacemethod", ...)} hook — no
+ * Phase-1 {@code NodeFactory} change.
+ *
+ * <p>verifies: GG-0014
+ */
+public final class IfaceDispatchNode extends GoExprNode {
+
+    /** PIC limit (SPEC §3.3). */
+    private static final int PIC_LIMIT = 3;
+
+    @Child
+    private GoExprNode recv;
+    @Children
+    private GoExprNode[] args;
+
+    private final String methodName;
+    private final List<String> ifaceMethodNames;
+    private final int ifaceId;
+    /**
+     * Enclosing funcdecl's object id (probe site naming, cf.
+     * {@code FuncValueCallNode}); -1 when unknown (tests).
+     */
+    private final int enclosingFuncObj;
+
+    /** One PIC slot: an itab identity and the resolved method func. Immutable. */
+    private record PicSlot(IfaceItab itab, GoFunc func) {}
+
+    private volatile PicSlot pic0;
+    private volatile PicSlot pic1;
+    private volatile PicSlot pic2;
+    /** Megamorphic fallback (identity-keyed: IfaceItab has no equals). Written under lock. */
+    private volatile Map<IfaceItab, GoFunc> megamorphic;
+    /** Process-wide count of megamorphic transitions (observability). */
+    private static volatile long megamorphicTransitions;
+
+    public IfaceDispatchNode(GoExprNode recv, GoExprNode[] args, String methodName,
+            List<String> ifaceMethodNames, int ifaceId, GoKind resultKind, int enclosingFuncObj) {
+        super(resultKind);
+        this.recv = recv;
+        this.args = args;
+        this.methodName = methodName;
+        this.ifaceMethodNames = List.copyOf(ifaceMethodNames);
+        this.ifaceId = ifaceId;
+        this.enclosingFuncObj = enclosingFuncObj;
+    }
+
+    /** Process-wide megamorphic-transition count (observability). */
+    public static long megamorphicTransitions() {
+        return megamorphicTransitions;
+    }
+
+    /** Resets the transition counter (tests). */
+    static void resetMegamorphicTransitions() {
+        megamorphicTransitions = 0;
+    }
+
+    private Object dispatch(VirtualFrame frame) {
+        GoInterface gi = requireReceiver(recv.executeObject(frame));
+        Object data = gi.data(); // null for typed-nil: passed through as params[0]
+        String descName = ((GoTypeDescriptor) gi.descriptor()).name();
+        IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
+        probe(itab);
+        GoFunc f = lookupPic(itab);
+        Object[] argVals = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            argVals[i] = boxArg(args[i], frame);
+        }
+        Object[] callArgs = new Object[argVals.length + 1];
+        callArgs[0] = data;
+        System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
+        // FuncValueCallNode's recoverAllowed dance: recover() is only
+        // non-nil when called directly by a deferred function — clear the
+        // flag for this nested call, restore afterwards.
+        GoroutineState state = GoroutineState.current();
+        boolean prev = state != null && state.isRecoverAllowed();
+        if (state != null) {
+            state.setRecoverAllowed(false);
+        }
+        try {
+            return GoCalls.invoke(f, callArgs);
+        } finally {
+            if (state != null) {
+                state.setRecoverAllowed(prev);
+            }
+        }
+    }
+
+    /**
+     * The receiver must be a non-nil interface value. Nil (Java null from
+     * a nil interface zero value, or a descriptor-less
+     * {@link GoInterface}) panics exactly like calling a nil func value.
+     */
+    private static GoInterface requireReceiver(Object r) {
+        if (r instanceof GoInterface gi) {
+            if (!gi.isNil()) {
+                return gi;
+            }
+            Panic.throwPanic(GoErrors.nilDereference());
+            throw new AssertionError("unreachable: Panic.throwPanic returned");
+        }
+        if (r == null) {
+            Panic.throwPanic(GoErrors.nilDereference());
+            throw new AssertionError("unreachable: Panic.throwPanic returned");
+        }
+        throw new FrontendException("ifacemethod: receiver evaluated to "
+                + r.getClass().getName() + ", not a GoInterface (internal error)");
+    }
+
+    private GoFunc lookupPic(IfaceItab itab) {
+        PicSlot s0 = pic0;
+        if (s0 != null && s0.itab == itab) {
+            return s0.func;
+        }
+        PicSlot s1 = pic1;
+        if (s1 != null && s1.itab == itab) {
+            return s1.func;
+        }
+        PicSlot s2 = pic2;
+        if (s2 != null && s2.itab == itab) {
+            return s2.func;
+        }
+        return lookupPicMiss(itab);
+    }
+
+    private synchronized GoFunc lookupPicMiss(IfaceItab itab) {
+        // Recheck under the lock: another thread may have filled the slot.
+        PicSlot s0 = pic0;
+        if (s0 != null && s0.itab == itab) {
+            return s0.func;
+        }
+        PicSlot s1 = pic1;
+        if (s1 != null && s1.itab == itab) {
+            return s1.func;
+        }
+        PicSlot s2 = pic2;
+        if (s2 != null && s2.itab == itab) {
+            return s2.func;
+        }
+        GoFunc f = itab.methods().get(methodName);
+        if (f == null) {
+            // Unreachable: itabFor already failed fast on a missing method.
+            throw new FrontendException("interface dispatch: method \"" + methodName
+                    + "\" missing from itab for \"" + itab.descriptorName() + "\" (internal error)");
+        }
+        if (pic0 == null) {
+            pic0 = new PicSlot(itab, f);
+            return f;
+        }
+        if (pic1 == null) {
+            pic1 = new PicSlot(itab, f);
+            return f;
+        }
+        if (pic2 == null) {
+            pic2 = new PicSlot(itab, f);
+            return f;
+        }
+        Map<IfaceItab, GoFunc> mm = megamorphic;
+        if (mm == null) {
+            mm = new java.util.HashMap<>();
+            megamorphic = mm;
+            megamorphicTransitions++;
+        }
+        GoFunc mf = mm.get(itab);
+        if (mf == null) {
+            mm.put(itab, f);
+            return f;
+        }
+        return mf;
+    }
+
+    /** M9 polymorphism probe site, created lazily on first probed dispatch. */
+    private volatile InterfaceDispatchProbes.Site probeSite;
+
+    private void probe(IfaceItab itab) {
+        if (!InterfaceDispatchProbes.isEnabled()) {
+            return;
+        }
+        InterfaceDispatchProbes.Site site = probeSite;
+        if (site == null) {
+            site = InterfaceDispatchProbes.registerSite(siteName());
+            probeSite = site;
+        }
+        site.record(itab);
+    }
+
+    private String siteName() {
+        String pos;
+        var section = getSourceSection();
+        if (section == null) {
+            pos = "unknown";
+        } else {
+            pos = section.getSource().getName() + ":" + section.getStartLine()
+                    + ":" + section.getStartColumn();
+        }
+        return "iface:" + enclosingFuncObj + "@" + pos + "#" + methodName;
+    }
+
+    /**
+     * Reads an argument at its kind's slot kind (replica of the
+     * package-private {@code Boxing.box}: canonical boxed values, e.g. all
+     * int/uint widths as {@link Long}).
+     */
+    private static Object boxArg(GoExprNode arg, VirtualFrame frame) {
+        FrameSlotKind slot = arg.kind().slotKind();
+        if (slot == FrameSlotKind.Int) {
+            return Integer.valueOf(arg.executeInt(frame));
+        }
+        if (slot == FrameSlotKind.Long) {
+            return Long.valueOf(arg.executeLong(frame));
+        }
+        if (slot == FrameSlotKind.Float) {
+            return Float.valueOf(arg.executeFloat(frame));
+        }
+        if (slot == FrameSlotKind.Double) {
+            return Double.valueOf(arg.executeDouble(frame));
+        }
+        if (slot == FrameSlotKind.Boolean) {
+            return Boolean.valueOf(arg.executeBoolean(frame));
+        }
+        if (slot == FrameSlotKind.Object) {
+            return arg.executeObject(frame);
+        }
+        throw new FrontendException("cannot box kind " + arg.kind() + " (WS E)");
+    }
+
+    @Override
+    public Object executeObject(VirtualFrame frame) {
+        return dispatch(frame);
+    }
+
+    @Override
+    public long executeLong(VirtualFrame frame) {
+        Object r = dispatch(frame);
+        return r == null ? 0L : ((Number) r).longValue();
+    }
+
+    @Override
+    public int executeInt(VirtualFrame frame) {
+        return ((Number) dispatch(frame)).intValue();
+    }
+
+    @Override
+    public double executeDouble(VirtualFrame frame) {
+        Object r = dispatch(frame);
+        return r == null ? 0d : ((Number) r).doubleValue();
+    }
+
+    @Override
+    public boolean executeBoolean(VirtualFrame frame) {
+        return (Boolean) dispatch(frame);
+    }
+
+    @Override
+    public String toString() {
+        int pic = (pic0 != null ? 1 : 0) + (pic1 != null ? 1 : 0) + (pic2 != null ? 1 : 0);
+        return "IfaceDispatchNode{" + methodName + ", iface=" + ifaceId
+                + ", pic=" + pic + "/" + PIC_LIMIT
+                + ", megamorphic=" + (megamorphic != null)
+                + ", megamorphicTransitions=" + megamorphicTransitions + "}";
+    }
+}

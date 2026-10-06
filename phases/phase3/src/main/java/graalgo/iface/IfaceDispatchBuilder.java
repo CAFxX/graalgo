@@ -1,0 +1,231 @@
+package graalgo.iface;
+
+import java.util.ArrayList;
+import java.util.List;
+
+import graalgo.frontend.FrontendException;
+import graalgo.frontend.GoExprNode;
+import graalgo.frontend.InterfaceBoxNode;
+import graalgo.frontend.Json;
+import graalgo.frontend.NodeFactory;
+import graalgo.values.GoKind;
+import graalgo.values.GoTypeDescriptor;
+
+/**
+ * Builds {@link IfaceDispatchNode} from the {@code "ifacemethod"} wire node
+ * (P3-M3, WS D, ADR-0003).
+ *
+ * <p>Wire fields: {@code recv} (evaluates to a {@code GoInterface}),
+ * {@code method} (name), {@code iface} (interface type-table id — the
+ * method list source), {@code args} (call args, receiver NOT included),
+ * {@code sig} (method signature type-table id, <em>no receiver</em>, for
+ * call-site arg adaptation), {@code type} (result type id, null when no
+ * results).
+ *
+ * <p>Call-site arg adaptation replicates the factory's private
+ * {@code adaptArgsForInterfaceParams} / {@code boxInterface} (read as the
+ * reference implementation; not modified — frozen): when a callee
+ * parameter has interface type and the argument is a concrete value, the
+ * argument is boxed with its exact static-type descriptor via the public
+ * {@link InterfaceBoxNode} constructor. The descriptor comes from the
+ * public {@code ctx.typeDescs} cache when interned, from the public
+ * {@link NodeFactory#basicDescriptorFor} for basic/untyped kinds
+ * (canonical), and from a name-exact {@link DescriptorNames} replica
+ * otherwise — the replica carries the factory's exact descriptor
+ * <em>name</em> (what dispatch keys on) but is not object-identical to the
+ * factory's canonical instance, so a type switch/assert inside the callee
+ * on that exact value could miss. In practice the miss path only triggers
+ * for named/structural types never otherwise interned in the enclosing
+ * function's build; the dispatch itself is always correct.
+ *
+ * <p>Registered via the public {@code NodeFactory.registerExprKind}
+ * hook — no Phase-1 change.
+ */
+public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
+    private final NodeFactory factory;
+
+    public IfaceDispatchBuilder(NodeFactory factory) {
+        this.factory = factory;
+    }
+
+    @Override
+    public GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx) {
+        Json.Object f = node.object("fields", "ifacemethod");
+        String path = "ifacemethod.fields";
+        GoExprNode recv = factory.buildExpr(f.object("recv", path), ctx);
+        if (recv.kind() != GoKind.INTERFACE) {
+            throw new FrontendException(path + ": ifacemethod receiver must have interface kind,"
+                    + " found " + recv.kind() + " (exporter bug)");
+        }
+        String method = f.string("method", path);
+        int ifaceId = f.intValue("iface", path);
+        Json.Array arr = f.array("args", path);
+        GoExprNode[] args = new GoExprNode[arr.size()];
+        for (int i = 0; i < args.length; i++) {
+            Json.Value v = arr.get(i);
+            if (!(v instanceof Json.Object o)) {
+                throw new FrontendException(path + ".args[" + i + "]: must be a node object");
+            }
+            args[i] = factory.buildExpr(o, ctx);
+        }
+        List<String> ifaceMethodNames = ifaceMethodNames(ctx, ifaceId, path);
+        args = adaptArgsForInterfaceParams(args, signatureParamTypeIds(ctx, f, path), ctx, path);
+        return new IfaceDispatchNode(recv, args, method, ifaceMethodNames, ifaceId,
+                resultKind(ctx, f, path), ctx.funcObjId);
+    }
+
+    /**
+     * Interface method names in declaration order, from the interface
+     * type-table entry's {@code detail.methods} (the exporter flattens
+     * embedded interfaces via go/types' method set).
+     */
+    private static List<String> ifaceMethodNames(NodeFactory.BuildCtx ctx, int ifaceId, String path) {
+        Json.Object entry = ctx.types.entry(ifaceId, path);
+        if (!"interface".equals(entry.string("kind", path))) {
+            throw new FrontendException(path + ": ifacemethod \"iface\" id " + ifaceId
+                    + " is not an interface type");
+        }
+        Json.Array methods = entry.object("detail", path).array("methods", path);
+        List<String> names = new ArrayList<>(methods.size());
+        for (int i = 0; i < methods.size(); i++) {
+            Json.Value mv = methods.get(i);
+            if (!(mv instanceof Json.Object mo)) {
+                throw new FrontendException(path + ": interface method entry " + i + " not an object");
+            }
+            names.add(mo.string("name", path));
+        }
+        return names;
+    }
+
+    /**
+     * Result kind from the wire {@code "type"} id (null → void: dummy
+     * kind, mirroring the factory's {@code callResultKind}).
+     */
+    private static GoKind resultKind(NodeFactory.BuildCtx ctx, Json.Object f, String path) {
+        Json.Value t = f.opt("type");
+        if (t == null || t instanceof Json.Null) {
+            return GoKind.INTERFACE;
+        }
+        if (!(t instanceof Json.Num n)) {
+            throw new FrontendException(path + ": ifacemethod \"type\" must be a type id or null");
+        }
+        return DescriptorNames.kindOf(ctx.types, (int) n.asLong(path), path);
+    }
+
+    /**
+     * Replica of the factory's private {@code signatureParamTypeIds}: the
+     * callee's parameter type ids, or null when the signature is absent,
+     * unreadable, or variadic (no adaptation — the methodref precedent).
+     */
+    private static List<Integer> signatureParamTypeIds(NodeFactory.BuildCtx ctx,
+            Json.Object f, String path) {
+        Json.Value sig = f.opt("sig");
+        if (sig == null || sig instanceof Json.Null) {
+            return null;
+        }
+        if (!(sig instanceof Json.Num n)) {
+            throw new FrontendException(path + ": ifacemethod \"sig\" must be a type id");
+        }
+        int sigId = (int) n.asLong(path);
+        Json.Object entry = ctx.types.entry(sigId, path);
+        if (!"signature".equals(entry.string("kind", path))) {
+            return null;
+        }
+        Json.Object detail = entry.object("detail", path);
+        if (detail.has("variadic") && detail.bool("variadic", path)) {
+            return null; // v1 has no variadic adaptation
+        }
+        Json.Array params = detail.array("params", path);
+        List<Integer> out = new ArrayList<>(params.size());
+        for (int i = 0; i < params.size(); i++) {
+            Json.Value pv = params.get(i);
+            if (!(pv instanceof Json.Object po)) {
+                return null;
+            }
+            out.add(po.intValue("type", path));
+        }
+        return out;
+    }
+
+    /**
+     * Replica of the factory's private {@code adaptArgsForInterfaceParams}:
+     * box concrete args passed to interface-typed params. The wire
+     * {@code sig} carries no receiver (unlike methodref), so args align
+     * 1:1 with params; the receiver is already a {@code GoInterface}.
+     */
+    private static GoExprNode[] adaptArgsForInterfaceParams(GoExprNode[] args,
+            List<Integer> paramTypeIds, NodeFactory.BuildCtx ctx, String path) {
+        if (paramTypeIds == null) {
+            return args;
+        }
+        for (int i = 0; i < args.length && i < paramTypeIds.size(); i++) {
+            if (args[i].kind() == GoKind.INTERFACE) {
+                continue; // already an interface value
+            }
+            int paramTid = DescriptorNames.resolveAlias(ctx.types, paramTypeIds.get(i), path);
+            Json.Object pentry = ctx.types.entry(paramTid, path);
+            if (!"interface".equals(pentry.string("kind", path))) {
+                continue;
+            }
+            args[i] = boxArg(args[i], ctx, path);
+        }
+        return args;
+    }
+
+    /**
+     * Replica of the factory's private {@code boxInterface}: box a
+     * concrete value into an interface with its exact static-type
+     * descriptor.
+     */
+    private static GoExprNode boxArg(GoExprNode child, NodeFactory.BuildCtx ctx, String path) {
+        GoKind from = child.kind();
+        GoKind dataKind;
+        GoTypeDescriptor descriptor;
+        if (from.isUntyped()) {
+            dataKind = defaultKind(from);
+            descriptor = NodeFactory.basicDescriptorFor(dataKind);
+        } else {
+            dataKind = from;
+            int fromId = child.typeId();
+            if (fromId < 0) {
+                throw new FrontendException(path
+                        + ": cannot box a node without a type-table id (WS E)");
+            }
+            descriptor = ctx.typeDescs.get(fromId);
+            if (descriptor == null) {
+                descriptor = replicaDescriptor(ctx, fromId, dataKind, path);
+            }
+        }
+        InterfaceBoxNode n = new InterfaceBoxNode(child, dataKind, descriptor);
+        n.setSourceSection(child.getSourceSection());
+        n.setTypeId(child.typeId());
+        return n;
+    }
+
+    /**
+     * Name-exact (not instance-canonical) descriptor for the
+     * {@code ctx.typeDescs} miss path — see the class javadoc.
+     */
+    private static GoTypeDescriptor replicaDescriptor(NodeFactory.BuildCtx ctx, int fromId,
+            GoKind dataKind, String path) {
+        int tid = DescriptorNames.resolveAlias(ctx.types, fromId, path);
+        String k = ctx.types.entry(tid, path).string("kind", path);
+        if ("basic".equals(k)) {
+            // Canonical: the factory interns basic descriptors process-wide.
+            return NodeFactory.basicDescriptorFor(DescriptorNames.kindOf(ctx.types, tid, path));
+        }
+        return new GoTypeDescriptor(DescriptorNames.descriptorName(ctx.types, fromId),
+                dataKind, false);
+    }
+
+    /** Replica of the factory's private {@code defaultKind}. */
+    private static GoKind defaultKind(GoKind untyped) {
+        return switch (untyped) {
+            case UNTYPED_INT -> GoKind.INT64;
+            case UNTYPED_FLOAT -> GoKind.FLOAT64;
+            case UNTYPED_STRING -> GoKind.STRING;
+            case UNTYPED_BOOL -> GoKind.BOOL;
+            default -> throw new FrontendException("no default type for kind " + untyped + " (WS E)");
+        };
+    }
+}
