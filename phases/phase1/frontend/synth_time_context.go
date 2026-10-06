@@ -1120,8 +1120,15 @@ type valueCtx struct {
 }
 
 func (c *valueCtx) Deadline() (deadline time.Time, ok bool) {
-	p := __deadlineOf(c.parent)
-	return p.d, p.ok
+	// Declared for go/types interface satisfaction only (see
+	// emptyCtx.Deadline). The pre-amendment real body (delegating to
+	// __deadlineOf(c.parent)) is removed: it is unreachable (the
+	// synthetic Context interface omits Deadline, so no call site
+	// type-checks, and nothing inside the synthetic package calls it —
+	// __deadlineOf handles *valueCtx via its own type-switch), and a
+	// silently-succeeding outlier among fail-fast siblings would mask a
+	// desugar escape (reviewer1 P2-5).
+	panic("context: valueCtx.Deadline: not in M5 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
 func (c *valueCtx) Done() <-chan struct{} { return c.parent.Done() }
