@@ -60,6 +60,12 @@ public final class PanicRendering {
         if (value instanceof GoErrorValue e) {
             return printIndented(e.errorString());
         }
+        // P3-M4: a GoString value renders as a string even when the kind
+        // is unknown (no descriptor — e.g. panics thrown from runtime
+        // helpers). Without this, string panics degrade to "(?) 0xADDR".
+        if (value instanceof GoString gs && kind == null) {
+            return printIndented(utf8(gs));
+        }
         if (kind == null) {
             return "(" + (typeName != null ? typeName : "?") + ") 0xADDR";
         }

@@ -11,6 +11,8 @@ import graalgo.runtime.GoErrors;
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.Panic;
 import graalgo.runtime.sync.GoMutex;
+import graalgo.values.GoString;
+import java.nio.charset.StandardCharsets;
 import graalgo.runtime.sync.GoOnce;
 import graalgo.runtime.sync.GoRWMutex;
 import graalgo.runtime.sync.GoWaitGroup;
@@ -99,7 +101,9 @@ public final class SyncOpNode extends GoExprNode {
         try {
             op.run();
         } catch (IllegalStateException e) {
-            Panic.throwPanic(e.getMessage());
+            // P3-M4: the message must be a D5 GoString, not a Java String —
+            // PanicRendering renders Java Strings as "(?) 0xADDR".
+            Panic.throwPanic(new GoString(e.getMessage().getBytes(StandardCharsets.UTF_8)));
         }
     }
 
