@@ -411,3 +411,15 @@ launcher's `awaitQuiescence` would hang on parked goroutines, unlike gc
 which exits with main). Lock discipline: snapshot children under muChan,
 recurse WITHOUT holding the lock (context tree is a DAG — no cycles).
 `Err()` uses select-on-done for the happens-before edge.
+
+## Appendix N — `go f(args)` desugar (added 2026-10-06, coordinator)
+
+**Problem:** P2-M1's `GoStatementNode` builds zero-arg spawns only. The
+P2-M2 channel corpus program ch04 uses `go f(ch, x)` with arguments.
+
+**Decision:** the exporter hoists call arguments to fresh temporaries and
+wraps the call in a zero-argument function literal:
+`go f(a, b)` → `__t1 := a; __t2 := b; go func() { f(__t1, __t2) }()`.
+Additive; follows the existing `exportCloseDeferGo`/`exportSyncGoStmt`
+patterns. (Committed as `c964852`; discovered during ch01–ch12
+graduation.)
