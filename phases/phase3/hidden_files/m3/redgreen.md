@@ -97,12 +97,53 @@ Red properties (each test fails against the named breakage):
   wiring (builder registration + table install on every build) does not
   disturb existing programs.
 
-## Open (pending the Go producer)
+## Resolved (2026-10-06)
 
-End-to-end dispatch against a real gofrontend ≥ 0.4.0 document
-(`ifacemethod` nodes + `methods` on named/pointer entries) and the
-ADR's differential corpus (`phases/phase3/corpus/iface/`, gc 1.27.1)
-run once the sibling Go worker lands the exporter half. The Java
-consumer honors the ADR wire format verbatim; the only intentional
-deviation is the pointer descriptor-name keying (this file's RED
-section), reported for ADR amendment.
+End-to-end is done: the exporter half landed in this workstream
+(commits `01ac1c5`, `3cec0fc`), the iface corpus
+(`phases/phase3/corpus/iface/`, if00–if10) is committed, and the
+differential vs gc 1.27.1 is 11/11 byte-identical. The pointer
+descriptor-name keying deviation was amended into ADR-0003
+(`417c3cc`).
+
+## End-to-end red-green: interface dispatch mutations (2026-10-06)
+
+Method: isolated copy of the tree at `~/workspace/mut` (never the live
+tree — AGENTS.md mutation lesson); copy verified clean first
+(`grep` for mutation markers: none; `if00` baseline byte-identical on
+the copy). Each mutation rebuilt the affected layer, ran the named
+corpus program(s), then was reverted before the next. All three went
+red — the PIC, the method tables, and the itab func mapping are all
+load-bearing; no dead code, no silent wrong-method divergence.
+
+- **Mutation A — break the PIC identity check** (Java,
+  `IfaceDispatchNode.lookupPic`: `s0 != null && s0.itab == itab` →
+  `s0 != null`, so slot 0 always hits and every dynamic type at the
+  site dispatches the first-seen type's method). Corpus `if05`
+  (4 types, 1 site): RED — `ClassCastException: Long cannot be cast
+  to GoStruct`, exit 1, output `8` vs expected `8/8/0/16`. The itab
+  identity comparison is load-bearing: without it, cross-type dispatch
+  is a crash, not a slowdown.
+- **Mutation B — drop pointer-receiver methods from `*T` sets** (Go
+  exporter, `methodTableEntries`: skip `recv == "pointer"` entries for
+  pointer types). Corpus `if00`, `if08`: RED —
+  `if00`: `interface dispatch: no method table installed for dynamic
+  type "pointer#…"` (the table went empty and was never installed);
+  `if08`: `interface dispatch: method "Write" missing for dynamic type
+  "pointer#…" (unreachable: go/types verified assignability)` — the
+  "unreachable" guard fired exactly as designed. Pointer-receiver
+  methods in `*T` sets are load-bearing.
+- **Mutation C — swap two methods' GoFuncs in one itab**
+  (`IfaceMethodTable.buildItab`: exchange the `GoFunc`s of the first
+  two installed methods, keeping names/paths). Corpus `if09`
+  (`Writer`+`Closer`, 2 methods): RED — `ArrayIndexOutOfBoundsException:
+  Index 2 out of bounds for length 2` (Close's func invoked with
+  Write's argument frame), empty stdout vs expected `3` / `3 true`.
+  A wrong-method dispatch cannot be silent: the arity mismatch crashes
+  loudly at the call boundary.
+
+Baseline restored after each mutation (revert + rebuild + `if00`
+byte-identical before the next mutation); the live tree never carried
+a mutation — all mutation edits and rebuilds happened under
+`~/workspace/mut`, and the live tree's `git diff` was verified to
+contain no `MUTATION_` markers at the end of the exercise.
