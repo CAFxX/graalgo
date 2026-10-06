@@ -461,17 +461,20 @@ func main() {}
 	}
 }
 
-// TestToolVersionBump: ADR-0004 §D1 — gofrontend 0.4.0 → 0.5.0.
+// TestToolVersionBump: ADR-0004 §D1 — gofrontend 0.4.0 → 0.5.0;
+// ADR-0005 §D3 — gofrontend 0.5.0 → 0.6.0 (synthetic time/context,
+// timenew/timeop/timec/timenow/timesleep/timeafter/timetick/timeafterfunc
+// wire nodes, chanclose marker).
 func TestToolVersionBump(t *testing.T) {
-	if toolVersion != "0.5.0" {
-		t.Fatalf("toolVersion = %q, want 0.5.0 (ADR-0004)", toolVersion)
+	if toolVersion != "0.6.0" {
+		t.Fatalf("toolVersion = %q, want 0.6.0 (ADR-0005)", toolVersion)
 	}
 	out, err := ExportFile(writeIfaceProg(t, "package main\n\nfunc main() {}\n"))
 	if err != nil {
 		t.Fatalf("ExportFile: %v", err)
 	}
-	if !strings.Contains(out, `"version": "0.5.0"`) {
-		t.Fatal("export generator stanza does not stamp version 0.5.0")
+	if !strings.Contains(out, `"version": "0.6.0"`) {
+		t.Fatal("export generator stanza does not stamp version 0.6.0")
 	}
 }
 

@@ -169,9 +169,12 @@ func (failImporter) Import(path string) (*types.Package, error) {
 
 // overlayImporter is the M5 (WS F) minimal import overlay, extended by M6
 // (WS H) with the D4 fmt stub, by P3-M2b (WS D, ADR-0002) with the
-// synthetic sync package, and by P3-M4 (WS C, ADR-0004) with the synthetic
+// synthetic sync package, by P3-M4 (WS C, ADR-0004) with the synthetic
 // sync/atomic package and the empty unsafe package (for //go:linkname's
-// blank import): it resolves exactly the synthetic package
+// blank import), and by P3-M5 (WS E, ADR-0005) with the synthetic time and
+// context packages (real-Go sources in synth_time_context.go, resolved via
+// getSyntheticPackage so synthetic->synthetic imports work): it resolves
+// exactly the synthetic package
 // "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface),
 // the synthetic package "fmt" exposing the seven D4 symbols (Print,
 // Printf, Println, Sprint, Sprintf, Sprintln, Errorf) with exact variadic
@@ -179,7 +182,11 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // primitives (Mutex, RWMutex, WaitGroup, Once) with exact gc method
 // signatures, the synthetic package "sync/atomic" exposing the P3-M4
 // typed wrappers (Int64, Uint64, Int32, Uint32, Bool, Uintptr) with exact
-// gc method signatures, and the empty synthetic package "unsafe".
+// gc method signatures, the synthetic package "time" (ADR-0005 D1:
+// Duration/Time/Month/Weekday as real Go, clock/timer intrinsics), the
+// synthetic package "context" (ADR-0005 D2: real Go on sync.Mutex,
+// channels, synthetic time, and P3-M3 interface dispatch), and the empty
+// synthetic package "unsafe".
 // Every other import still fails via failImporter. WS G's full
 // import overlay absorbs this carve-out.
 type overlayImporter struct{}
@@ -211,6 +218,10 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return syntheticSyncPackage(), nil
 	case "sync/atomic":
 		return syntheticAtomicPackage(), nil
+	case "time":
+		return getSyntheticPackage("time").pkg, nil
+	case "context":
+		return getSyntheticPackage("context").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -621,6 +632,9 @@ func ExportFile(path string) (string, error) {
 		// P3-M2b (WS D, ADR-0002): the import "sync" is allowed — resolved
 		// by overlayImporter to the synthetic sync package (the four
 		// Phase-2-bound primitives).
+		// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
+		// allowed — resolved by overlayImporter to the synthetic packages
+		// (real-Go sources with clock/timer intrinsics).
 		// P3-M4 (WS C, ADR-0004): the import "sync/atomic" is allowed —
 		// resolved by overlayImporter to the synthetic sync/atomic package
 		// (typed wrappers Int64/Uint64/Int32/Uint32/Bool/Uintptr).
@@ -628,8 +642,11 @@ func ExportFile(path string) (string, error) {
 		// by overlayImporter to an empty synthetic package. Only the blank
 		// form (`import _ "unsafe"`, required by //go:linkname directives)
 		// is useful: selections on unsafe.* fail as undefined.
+		// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
+		// allowed — resolved by overlayImporter to the synthetic packages
+		// (real-Go sources; see synth_time_context.go).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -658,9 +675,10 @@ func ExportFile(path string) (string, error) {
 	// P3-M2b (WS D, ADR-0002): with the "sync" import present, resolve it
 	// via the synthetic overlay package (four primitives).
 	// P3-M4 (WS C, ADR-0004): "sync/atomic" and "unsafe" likewise.
+	// P3-M5 (WS E, ADR-0005): "time" and "context" likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" {
+		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -744,6 +762,35 @@ func ExportFile(path string) (string, error) {
 	}
 	e.funcByObj = funcByObj
 	e.methodIndex = methodIndex
+	// P3-M5 (WS E, ADR-0005): import the synthetic time + context
+	// declarations (real-Go bodies) into the document's tables — but
+	// ONLY when the user program imports them. Unconditional import
+	// would bloat every document (and break golden tests); the context
+	// package implies time (its bodies call time.AfterFunc etc.).
+	// Their funcs/methods join funcByObj/methodIndex (shared *types
+	// objects via the overlay importer's package cache) and their
+	// package vars become document globals. Intrinsics (time.Now etc.,
+	// ctxChanClose) are skipped — every call site is intercepted into
+	// wire nodes.
+	needTime, needContext := false, false
+	for _, imp := range file.Imports {
+		switch strings.Trim(imp.Path.Value, "\"`") {
+		case "time":
+			needTime = true
+		case "context":
+			needTime, needContext = true, true
+		}
+	}
+	if needTime {
+		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+			return "", err
+		}
+	}
+	if needContext {
+		if err := e.importSyntheticPackage(getSyntheticPackage("context")); err != nil {
+			return "", err
+		}
+	}
 	// P3-M3 (WS D, ADR-0003): the "methods" lists on named/pointer entries
 	// are computed from funcByObj, which is only populated now. Any type
 	// described before this point (the GenDecl TYPE scan above,
@@ -778,7 +825,17 @@ func ExportFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	doc.Globals = globals
+	// P3-M5 (WS E, ADR-0005): synthetic package globals first — user
+	// initializers may reference them (e.g. var e error =
+	// context.Canceled); synthetic initializers never reference user
+	// vars, so declaration order within the synthetic set is safe.
+	// Only prepend when non-empty to preserve the "globals": [] wire
+	// shape for programs that don't import time/context.
+	if len(e.synthGlobals) > 0 {
+		doc.Globals = append(e.synthGlobals, globals...)
+	} else {
+		doc.Globals = globals
+	}
 	hasMain := false
 	for _, fi := range funcs {
 		if fi.isTemplate {
@@ -799,6 +856,12 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 		doc.Funcs = append(doc.Funcs, f)
+	}
+	// P3-M5 (WS E, ADR-0005): emit the synthetic time/context funcdecls
+	// after the user's (call sites resolve by object id, so order is
+	// irrelevant; appending keeps user code first for readability).
+	if err := e.exportSyntheticBodies(&doc); err != nil {
+		return "", err
 	}
 	if !hasMain {
 		return "", scopeErrorf("no func main found (frontend/v1 scope: single-file program with func main)")
@@ -904,6 +967,14 @@ func (e *exporter) exportPackageVars() ([]GlobalEnt, error) {
 		for i, n := range vs.Names {
 			var initNode *Node
 			var initExpr ast.Expr
+			// P3-M5 (WS E, ADR-0005 D1): package-level `var t time.Timer`
+			// / `var t time.Ticker` (with or without init) is not in M5
+			// scope (mirrors the local-var path).
+			if v, ok := e.info.Defs[n].(*types.Var); ok {
+				if nt := timeTimerTickerNamedExact(v.Type()); nt != nil {
+					return nil, timerScopeErrorf(nt, "var declaration")
+				}
+			}
 			if i < len(vs.Values) {
 				initExpr = vs.Values[i]
 				x, err := e.exportExpr(initExpr)
@@ -1077,6 +1148,15 @@ type exporter struct {
 	// hoisted by exportSyncGoStmt (__sync_go_arg<seq>_<i>); keeps the
 	// names unique across go statements in one export.
 	syncGoSeq int
+	// P3-M5 (WS E, ADR-0005): synthetic time/context package state.
+	// synthGlobals holds the synthetic packages' package-level globals
+	// in declaration order (exported during importSyntheticPackage;
+	// prepended to doc.Globals so user initializers referencing e.g.
+	// context.Canceled see initialized values). synthGroups holds the
+	// imported funcdecls per synthetic package; their bodies are emitted
+	// by exportSyntheticBodies after the user's.
+	synthGlobals []GlobalEnt
+	synthGroups  []synthGroup
 }
 
 // M10 (P1-4): struct-nesting depth cap for offset computation.
@@ -1716,6 +1796,11 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		if nt := syntheticPrimitiveNamed(t.Elem()); nt != nil {
 			return TypeEnt{}, syntheticCompositeScopeError(nt, "a slice element")
 		}
+		// P3-M5 (WS E, ADR-0005 D1): time.Timer/Ticker values in
+		// factory-zero-manufactured positions are not in M5 scope.
+		if nt := timeTimerTickerNamedExact(t.Elem()); nt != nil {
+			return TypeEnt{}, timerScopeErrorf(nt, "a slice element")
+		}
 		elem, err := e.typeID(t.Elem())
 		if err != nil {
 			return TypeEnt{}, err
@@ -1725,6 +1810,9 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		// P3-M2b (ADR-0002 D3): as for slices — array zeros are factory-made.
 		if nt := syntheticPrimitiveNamed(t.Elem()); nt != nil {
 			return TypeEnt{}, syntheticCompositeScopeError(nt, "an array element")
+		}
+		if nt := timeTimerTickerNamedExact(t.Elem()); nt != nil {
+			return TypeEnt{}, timerScopeErrorf(nt, "an array element")
 		}
 		elem, err := e.typeID(t.Elem())
 		if err != nil {
@@ -1740,6 +1828,12 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		}
 		if nt := syntheticPrimitiveNamed(t.Elem()); nt != nil {
 			return TypeEnt{}, syntheticCompositeScopeError(nt, "a map element")
+		}
+		if nt := timeTimerTickerNamedExact(t.Key()); nt != nil {
+			return TypeEnt{}, timerScopeErrorf(nt, "a map key")
+		}
+		if nt := timeTimerTickerNamedExact(t.Elem()); nt != nil {
+			return TypeEnt{}, timerScopeErrorf(nt, "a map element")
 		}
 		key, err := e.typeID(t.Key())
 		if err != nil {
@@ -1774,6 +1868,9 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 			// empty struct. *sync.X fields are fine (nil is correct).
 			if nt := syntheticPrimitiveNamed(t.Field(i).Type()); nt != nil {
 				return TypeEnt{}, syntheticCompositeScopeError(nt, "a struct field")
+			}
+			if nt := timeTimerTickerNamedExact(t.Field(i).Type()); nt != nil {
+				return TypeEnt{}, timerScopeErrorf(nt, "a struct field")
 			}
 			vars = append(vars, t.Field(i))
 		}
@@ -3166,6 +3263,7 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		}
 		var typeTid int
 		var typeIsSync *types.Named
+		var typeIsTimer *types.Named
 		hasType := false
 		if vs.Type != nil {
 			tid, err := e.exprType(vs.Type)
@@ -3178,6 +3276,9 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 				// P3-M4 (WS C, ADR-0004): the sync/atomic overlay shares
 				// the D3 zero-value normalization.
 				typeIsSync = syntheticPrimitiveNamed(tv.Type)
+				// P3-M5 (WS E, ADR-0005 D1): time.Timer/Ticker value
+				// positions are not in M5 scope (checked below).
+				typeIsTimer = timeTimerTickerNamedExact(tv.Type)
 			}
 		}
 		for _, n := range vs.Names {
@@ -3204,6 +3305,12 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		// factory's struct zero would be an unusable empty struct, and the
 		// factory is frozen, so the exporter supplies the init. One
 		// syncnew per name: each variable is a distinct mutex.
+		// P3-M5 (WS E, ADR-0005 D1): `var t time.Timer` / `var t
+		// time.Ticker` (with or without init) is not in M5 scope — gc's
+		// zero Timer is uninitialized; use time.NewTimer/NewTicker.
+		if hasType && typeIsTimer != nil {
+			return nil, timerScopeErrorf(typeIsTimer, "var declaration")
+		}
 		if hasType && typeIsSync != nil && len(vs.Values) == 0 {
 			for range vs.Names {
 				values = append(values, e.node("syncnew", vs, map[string]any{
@@ -3998,9 +4105,33 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// P3-M2b (sync bindings, ADR-0002 D2): method calls on the
 		// synthetic sync primitives lower to additive "syncop" wire nodes,
 		// bypassing exportMethodCall's WS D no-implicit-& rule.
+		// P3-M5 (WS E, ADR-0005 D1): time.X(...) package-level calls are
+		// intercepted above (exportSyntheticPkgCall); the real-Go
+		// package-level functions (time.Since/Until/ParseDuration,
+		// context.*) lower to direct calls of the imported synthetic
+		// funcdecls via exportFuncCall.
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok {
+			if pkgName, ok := e.info.Uses[pkgIdent].(*types.PkgName); ok {
+				if n, handled, err := e.exportSyntheticPkgCall(c, sel, pkgName); handled {
+					return n, err
+				}
+			}
+		}
 		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
 			if nt := syntheticPrimitiveRecv(selection.Recv()); nt != nil {
 				return e.exportSyncOp(c, sel, nt)
+			}
+			// P3-M5 (WS E, ADR-0005 D1): (*time.Timer).Stop/Reset and
+			// (*time.Ticker).Stop/Reset lower to additive "timeop" wire
+			// nodes (the Go values are opaque Java objects).
+			if nt := timeTimerTickerNamed(selection.Recv()); nt != nil {
+				return e.exportTimeOp(c, sel, nt)
+			}
+			// P3-M5 (WS E, ADR-0005): multi-result synthetic methods
+			// (Context.Deadline, Time.Date/...) fail fast (WS D; the
+			// P3-M3 F4 precedent) — the shape must not reach dispatch.
+			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+				return nil, multiResultSyntheticError(f)
 			}
 			// P3-M3 (WS D, ADR-0003): interface method call — the
 			// receiver's static type has an interface underlying (named
@@ -4084,35 +4215,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		return nil, scopeErrorf("non-identifier call target %T is not supported in frontend/v1 scope (WS D)", c.Fun)
 	}
 	if tn, ok := e.info.Uses[funIdent].(*types.TypeName); ok {
-		if len(c.Args) != 1 {
-			return nil, fmt.Errorf("gofrontend: conversion to %s has %d arguments (want 1)",
-				tn.Name(), len(c.Args))
-		}
-		x, err := e.exportExpr(c.Args[0])
-		if err != nil {
-			return nil, err
-		}
-		to, err := e.typeID(tn.Type())
-		if err != nil {
-			return nil, err
-		}
-		// M7: "from" records the source type id (needed for string<->
-		// slice conversions to get the element kind).
-		var from any
-		if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
-			fid, err := e.typeID(tv.Type)
-			if err != nil {
-				return nil, err
-			}
-			from = fid
-		}
-		// "type" records the conversion target: NodeFactory stamps it on
-		// the built node (M4: interface boxing needs the target type id).
-		fields := map[string]any{"x": x, "to": to, "type": to}
-		if from != nil {
-			fields["from"] = from
-		}
-		return e.node("convert", c, fields), nil
+		return e.exportTypeConversion(c, tn)
 	}
 	if v, ok := e.info.Uses[funIdent].(*types.Var); ok {
 		// M5 (WS F): call through a func-valued variable (recursion,
@@ -4187,6 +4290,11 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 						"synctyp": syntheticOpTypeName(nt), "type": ntyp,
 					}), nil
 				}
+				// P3-M5 (WS E, ADR-0005 D1): new(time.Timer/Ticker) is
+				// not in M5 scope (gc's zero Timer is uninitialized).
+				if nt := timeTimerTickerNamedExact(tv.Type); nt != nil {
+					return nil, timerScopeErrorf(nt, "new()")
+				}
 			}
 		}
 	case "make":
@@ -4259,6 +4367,23 @@ func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node,
 // info.Instances; the call target is an "ident" node whose obj is the
 // function/instantiation object id.
 func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *types.Func) (*Node, error) {
+	// P3-M5 (WS E, ADR-0005 D1): calls to synthetic time intrinsics from
+	// inside the synthetic packages (e.g. Since calling Now) lower to
+	// the §D3 wire nodes; the context package's ctxChanClose lowers to
+	// the "chanclose"-marked call node. Neither is exported as a
+	// funcdecl, so they must be intercepted before the funcByObj lookup.
+	if isTimeIntrinsicFunc(fn) {
+		return e.exportTimeIntrinsic(c, fn.Name())
+	}
+	if isChanCloseFunc(fn) {
+		return e.exportChanClose(c)
+	}
+	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
+	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
+	// time.ParseDuration.
+	if isMultiResultSynthetic(fn) {
+		return nil, multiResultSyntheticError(fn)
+	}
 	fi, ok := e.funcByObj[fn]
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
@@ -4886,6 +5011,13 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	if err != nil {
 		return nil, err
 	}
+	// P3-M5 (WS E, ADR-0005): multi-result synthetic interface methods
+	// (Context.Deadline) fail fast (WS D; the P3-M3 F4 precedent) — the
+	// shape must not reach dispatch. User 2-result methods keep the
+	// existing F4 behavior.
+	if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+		return nil, multiResultSyntheticError(f)
+	}
 	// Remediation (R1 P1-1, R2 P1-2): same variadic fail-fast as direct
 	// and concrete-method calls; the spread form passes the slice
 	// directly and works.
@@ -4977,6 +5109,41 @@ func (e *exporter) exportSyncOpNodes(c *ast.CallExpr, sel *ast.SelectorExpr, nt 
 	return e.node("syncop", c, map[string]any{
 		"op": op, "synctyp": syntheticOpTypeName(nt), "recv": recv, "args": args, "type": typ,
 	}), nil
+}
+
+// exportTypeConversion exports a Go conversion T(x) as a "convert" node
+// (M3, WS D). Factored so qualified conversions (time.Duration(5)) share
+// the unqualified path.
+func (e *exporter) exportTypeConversion(c *ast.CallExpr, tn *types.TypeName) (*Node, error) {
+	if len(c.Args) != 1 {
+		return nil, fmt.Errorf("gofrontend: conversion to %s has %d arguments (want 1)",
+			tn.Name(), len(c.Args))
+	}
+	x, err := e.exportExpr(c.Args[0])
+	if err != nil {
+		return nil, err
+	}
+	to, err := e.typeID(tn.Type())
+	if err != nil {
+		return nil, err
+	}
+	// M7: "from" records the source type id (needed for string<->
+	// slice conversions to get the element kind).
+	var from any
+	if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
+		fid, err := e.typeID(tv.Type)
+		if err != nil {
+			return nil, err
+		}
+		from = fid
+	}
+	// "type" records the conversion target: NodeFactory stamps it on
+	// the built node (M4: interface boxing needs the target type id).
+	fields := map[string]any{"x": x, "to": to, "type": to}
+	if from != nil {
+		fields["from"] = from
+	}
+	return e.node("convert", c, fields), nil
 }
 
 // exportCallArgs exports a call's argument expressions.
@@ -5097,6 +5264,12 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 			return e.node("syncnew", l, map[string]any{
 				"synctyp": syntheticOpTypeName(nt), "type": t,
 			}), nil
+		}
+		// P3-M5 (WS E, ADR-0005 D1): time.Timer{}/time.Ticker{} literals
+		// are not in M5 scope (gc's zero Timer is uninitialized; use
+		// time.NewTimer/time.NewTicker).
+		if nt := timeTimerTickerNamedExact(tv.Type); nt != nil {
+			return nil, timerScopeErrorf(nt, "composite literal")
 		}
 	}
 	keyed := false
@@ -5227,6 +5400,33 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	t, err := e.exprType(x)
 	if err != nil {
 		return nil, err
+	}
+	// P3-M5 (WS E, ADR-0005 D1): t.C on *time.Timer / *time.Ticker lowers
+	// to the additive "timec" wire node (the Go values are opaque Java
+	// objects; the struct field exists only for type-checking).
+	if x.Sel.Name == "C" {
+		if sel, ok := e.info.Selections[x]; ok && sel.Kind() == types.FieldVal {
+			if nt := timeTimerTickerNamed(sel.Recv()); nt != nil {
+				recv, err := e.exportExpr(x.X)
+				if err != nil {
+					return nil, err
+				}
+				return e.node("timec", x, map[string]any{"recv": recv, "type": t}), nil
+			}
+		}
+	}
+	// P3-M5 (WS E, ADR-0005): qualified identifiers time.X / context.X in
+	// expression position (time.Second consts, context.Canceled vars).
+	// Method expressions (time.Duration.String) have a SelectorExpr X and
+	// fall through to the normal path.
+	if ident, ok := x.X.(*ast.Ident); ok {
+		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" {
+				if _, isSel := e.info.Selections[x]; !isSel {
+					return e.exportSyntheticQualified(x, pkgName)
+				}
+			}
+		}
 	}
 	// P3-M3 (WS D, ADR-0003): a method expression on an interface type
 	// (T.M in value position) fails fast here, before x.X is exported —
