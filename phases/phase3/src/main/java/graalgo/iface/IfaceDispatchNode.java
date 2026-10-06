@@ -76,8 +76,13 @@ public final class IfaceDispatchNode extends GoExprNode {
     private volatile PicSlot pic2;
     /** Megamorphic fallback (identity-keyed: IfaceItab has no equals). Written under lock. */
     private volatile Map<IfaceItab, IfaceMethodTarget> megamorphic;
-    /** Process-wide count of megamorphic transitions (observability). */
-    private static volatile long megamorphicTransitions;
+    /**
+     * Process-wide count of megamorphic transitions (observability).
+     * Atomic: the increment races across dispatch threads (R2 P2-2) —
+     * a lost update would silently undercount transitions.
+     */
+    private static final java.util.concurrent.atomic.AtomicLong megamorphicTransitions =
+            new java.util.concurrent.atomic.AtomicLong();
 
     public IfaceDispatchNode(GoExprNode recv, GoExprNode[] args, String methodName,
             List<String> ifaceMethodNames, int ifaceId, GoKind resultKind, int enclosingFuncObj) {
@@ -92,12 +97,12 @@ public final class IfaceDispatchNode extends GoExprNode {
 
     /** Process-wide megamorphic-transition count (observability). */
     public static long megamorphicTransitions() {
-        return megamorphicTransitions;
+        return megamorphicTransitions.get();
     }
 
     /** Resets the transition counter (tests). */
     static void resetMegamorphicTransitions() {
-        megamorphicTransitions = 0;
+        megamorphicTransitions.set(0);
     }
 
     private Object dispatch(VirtualFrame frame) {
@@ -211,7 +216,7 @@ public final class IfaceDispatchNode extends GoExprNode {
         if (mm == null) {
             mm = new java.util.HashMap<>();
             megamorphic = mm;
-            megamorphicTransitions++;
+            megamorphicTransitions.incrementAndGet();
         }
         IfaceMethodTarget mt = mm.get(itab);
         if (mt == null) {
@@ -309,6 +314,6 @@ public final class IfaceDispatchNode extends GoExprNode {
         return "IfaceDispatchNode{" + methodName + ", iface=" + ifaceId
                 + ", pic=" + pic + "/" + PIC_LIMIT
                 + ", megamorphic=" + (megamorphic != null)
-                + ", megamorphicTransitions=" + megamorphicTransitions + "}";
+                + ", megamorphicTransitions=" + megamorphicTransitions.get() + "}";
     }
 }
