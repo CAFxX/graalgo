@@ -428,4 +428,55 @@ public final class IfaceDispatchNodeTest {
             tearDown();
         }
     }
+
+    /** Unsupported-promotion target (wire "index" null): fails fast only if dispatched. */
+    private static IfaceMethodTarget unsupportedTarget(CaptureRoot root) {
+        return new IfaceMethodTarget(goFunc(root), null, true);
+    }
+
+    /**
+     * R2 P2-7 (narrowing): dispatching an unsupported promotion (pointer
+     * receiver via a value-embedded field) fails fast with the named
+     * P3-M3 scope error — at dispatch, not at itab build.
+     * verifies: GG-0014
+     */
+    public void testUnsupportedPromotionFailsFastAtDispatch() {
+        CaptureRoot root = new CaptureRoot(42L);
+        setUp(Map.of("main.T", Map.of("M", unsupportedTarget(root))));
+        try {
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", "DATA"), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            try {
+                n.executeLong(frame());
+            } catch (FrontendException fe) {
+                assertTrue(fe.getMessage().contains("(P3-M3 scope)"),
+                        "named P3-M3 scope error: " + fe.getMessage());
+                return;
+            }
+            throw new AssertionError("expected FrontendException for unsupported-promotion dispatch");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * R2 P2-7 (narrowing): an itab carrying an unsupported promotion still
+     * dispatches its supported methods — the failure fires only when the
+     * unsupported method itself is dispatched. (Before narrowing, the itab
+     * build threw for the whole interface, so even this dispatch died.)
+     * verifies: GG-0014
+     */
+    public void testSupportedMethodBesideUnsupportedDispatches() {
+        CaptureRoot root = new CaptureRoot(42L);
+        setUp(Map.of("main.T", Map.of("M", target(root), "N", unsupportedTarget(root))));
+        try {
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", "DATA"), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M", "N"), 3);
+            assertEquals(42L, n.executeLong(frame()),
+                    "supported method dispatches despite unsupported sibling");
+            assertEquals(1, root.seen.size(), "method invoked once");
+        } finally {
+            tearDown();
+        }
+    }
 }

@@ -18,8 +18,9 @@ import graalgo.values.GoFunc;
  * pointer-embedded field gets one trailing dereference (gc's implicit
  * {@code (*p)}); the reverse combination (pointer receiver via a
  * value-embedded field) is marked unsupported (wire {@code "index"} null)
- * and fails fast with a named P3-M3 scope error at itab build — silently
- * type-unsound otherwise.
+ * and fails fast with a named P3-M3 scope error at dispatch — only when
+ * that method is actually dispatched (R2 P2-7: narrowing; the itab build
+ * carries the unsupported target so supported methods keep working).
  */
 public record IfaceMethodTarget(GoFunc func, int[] recvPath, boolean pointerReceiver) {
     public IfaceMethodTarget {

@@ -112,6 +112,15 @@ public final class IfaceDispatchNode extends GoExprNode {
         IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
         probe(itab);
         IfaceMethodTarget target = lookupPic(itab);
+        // R2 P2-7: an unsupported promotion (pointer receiver via a
+        // value-embedded field — wire "index" null) fails fast here, only
+        // when the method is actually dispatched. The itab build carries
+        // the unsupported target precisely so programs dispatching only
+        // supported methods through the interface keep working.
+        if (!target.supported()) {
+            throw new FrontendException("interface dispatch: method \"" + methodName
+                    + "\" promoted via value-embedded field is not supported (P3-M3 scope)");
+        }
         Object[] argVals = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
             argVals[i] = boxArg(args[i], frame);

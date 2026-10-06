@@ -85,6 +85,13 @@ public final class IfaceMethodTable {
      * caching it on first use. The method map is laid out in
      * {@code ifaceMethodNames} order.
      *
+     * <p>R2 P2-7: unsupported promotions (wire {@code "index"} null) do
+     * NOT fail here — the itab carries the unsupported target and the
+     * failure fires only if that method is actually dispatched (the
+     * dispatch node checks {@link IfaceMethodTarget#supported()}). A
+     * program that only dispatches supported methods through the
+     * interface works fine.
+     *
      * @throws FrontendException if the descriptor has no installed table,
      *         or a method is missing — both unreachable for well-formed
      *         gofrontend ≥ 0.4.0 output (go/types verified assignability),
@@ -110,11 +117,6 @@ public final class IfaceMethodTable {
                 throw new FrontendException("interface dispatch: method \"" + name
                         + "\" missing for dynamic type \"" + descriptorName
                         + "\" (unreachable: go/types verified assignability)");
-            }
-            if (!t.supported()) {
-                throw new FrontendException("interface dispatch: method \"" + name
-                        + "\" promoted via value-embedded field is not supported"
-                        + " (P3-M3 scope)");
             }
             ordered.put(name, t);
         }

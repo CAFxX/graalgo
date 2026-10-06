@@ -4362,9 +4362,10 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 		// of P3-M3 scope). Mark it unsupported ("index": null) rather than
 		// failing the export: the method table is computed for every type,
 		// but the failure must only fire if the method is actually
-		// dispatched through an interface (fail fast at itab build, named
-		// P3-M3 scope error) — never for programs that merely declare the
-		// type.
+		// dispatched through an interface (fail fast at dispatch, named
+		// P3-M3 scope error — R2 P2-7 narrowed the old whole-itab
+		// fail-fast to per-method) — never for programs that merely
+		// declare the type.
 		unsupported := false
 		if len(path) > 0 && recv == "pointer" {
 			if ft := embeddedFieldType(t, path); ft != nil {
