@@ -22,7 +22,7 @@ ExportDir(dir)
   ├─ loader.go    SelectFiles(dir): *.go, no *_test.go, build-tag filtered
   │               ResolveImport(fromDir, path): synthetic | stdlib | module-local
   │               LoadClosure(mainDir): dep-ordered local packages, cycle-checked
-  ├─ importer.go  p3Importer (types.Importer): synthetic runtime/fmt (exact
+  ├─ importer.go  p3Importer (types.Importer): synthetic runtime/fmt/sync (exact
   │               frozen signatures, reimplemented); local packages type-checked
   │               recursively with go/types (cached); stdlib → clear scope error
   ├─ flatten.go   rename every dep package-level identifier with
@@ -72,7 +72,7 @@ directory → module root.
 
 **`ResolveImport(fromDir, path) (*PackageRef, error)`** classifies:
 
-- `"runtime"`, `"fmt"` → synthetic marker (never flattened; the import spec
+- `"runtime"`, `"fmt"`, `"sync"` → synthetic marker (never flattened; the import spec
   is kept and resolved by the frozen overlay inside `ExportFile`).
 - Otherwise, if `$GOROOT/src/<path>` is a directory → stdlib marker with
   the resolved dir + selected file list (resolution is proven; *compiling*
@@ -100,6 +100,15 @@ over a visited set plus an explicit stack.
 - `"fmt"` → synthetic package with exactly the seven D4 symbols and their
   exact variadic signatures (`Print/Printf/Println` → `(int, error)`,
   `Sprint/Sprintf/Sprintln` → `string`, `Errorf` → `error`).
+- `"sync"` → synthetic package with the exact P3-M2b signatures
+  (ADR-0002): `Mutex`/`RWMutex`/`WaitGroup`/`Once` with pointer-receiver
+  methods (`Lock/Unlock`, `RLock/RUnlock`, `Add(int)/Done/Wait`,
+  `Do(func())`) plus the defined-but-out-of-scope `TryLock`/`TryRLock`/
+  `RLocker`/`WaitGroup.Go`. The mirror is pinned by
+  `TestSyncSyntheticSignatures`/`TestSyncMethodSetComplete`; the frozen
+  exporter (not p3frontend) lowers the calls to `syncnew`/`syncop` wire
+  nodes and raises the named `not in M2 scope` errors
+  (`TestSyncScopeErrorParity`).
 - Local packages → resolved via the loader and type-checked with
   `go/types` recursively (results cached by import path; the recursion
   carries its own cycle stack as defense in depth behind `LoadClosure`).

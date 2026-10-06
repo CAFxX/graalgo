@@ -16,6 +16,9 @@ import (
 //     frozen signatures (reimplemented here from the freeze spec —
 //     export.go's overlayImporter is unexported and frozen, so it cannot
 //     be reused, only matched);
+//   - "sync" resolves to the synthetic P3-M2b package (ADR-0002) with the
+//     exact frozen signatures (four primitives + the defined-but-out-of-
+//     scope methods, so the same named scope errors fire);
 //   - module-local packages are type-checked from source with go/types,
 //     recursively, with results cached by import path;
 //   - stdlib packages resolve (proving the GOROOT mapping) but fail with
@@ -64,6 +67,10 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		return pkg, nil
 	case "fmt":
 		pkg := syntheticFmtPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "sync":
+		pkg := syntheticSyncPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
 	}
@@ -196,4 +203,99 @@ func syntheticFmtPackage() *types.Package {
 	insert("Errorf", types.NewTuple(format, a), types.NewTuple(errResOnly))
 	pkg.MarkComplete()
 	return pkg
+}
+
+// syncMethodSpecs is the P3-M2b (ADR-0002) method surface each synthetic
+// sync primitive exposes: the M2-supported methods plus the defined-but-
+// out-of-scope ones (TryLock/TryRLock/RLocker/WaitGroup.Go), which the
+// frozen exporter rejects with a named "not in M2 scope" error. Kept as
+// data (not code) so the signature-equality test can enumerate it.
+var syncMethodSpecs = map[string][]struct {
+	name    string
+	params  []string // "name:type" — int, bool, func(), Locker
+	results []string
+}{
+	"Mutex": {
+		{"Lock", nil, nil},
+		{"Unlock", nil, nil},
+		{"TryLock", nil, []string{":bool"}},
+	},
+	"RWMutex": {
+		{"Lock", nil, nil},
+		{"Unlock", nil, nil},
+		{"RLock", nil, nil},
+		{"RUnlock", nil, nil},
+		{"TryLock", nil, []string{":bool"}},
+		{"TryRLock", nil, []string{":bool"}},
+		{"RLocker", nil, []string{":Locker"}},
+	},
+	"WaitGroup": {
+		{"Add", []string{"delta:int"}, nil},
+		{"Done", nil, nil},
+		{"Wait", nil, nil},
+		{"Go", []string{"f:func()"}, nil},
+	},
+	"Once": {
+		{"Do", []string{"f:func()"}, nil},
+	},
+}
+
+// syntheticSyncPackage mirrors the frozen P3-M2b synthetic "sync"
+// (phases/phase1/frontend/export.go's syntheticSyncPackage, reimplemented
+// — the frozen original is unexported, so this is matched, not reused).
+// All methods have pointer receivers with exact gc 1.27.1 signatures.
+func syntheticSyncPackage() *types.Package {
+	pkg := types.NewPackage("sync", "sync")
+	emptyStruct := types.NewStruct(nil, nil)
+	typeOf := func(spec string) types.Type {
+		name := spec
+		if i := strings.Index(spec, ":"); i >= 0 {
+			name = spec[i+1:]
+		}
+		switch name {
+		case "int":
+			return types.Typ[types.Int]
+		case "bool":
+			return types.Typ[types.Bool]
+		case "func()":
+			return types.NewSignatureType(nil, nil, nil, nil, nil, false)
+		case "Locker":
+			return syncLockerInterface(pkg)
+		}
+		panic("unknown sync param type " + spec)
+	}
+	names := []string{"Mutex", "RWMutex", "WaitGroup", "Once"}
+	for _, name := range names {
+		tname := types.NewTypeName(token.NoPos, pkg, name, nil)
+		pkg.Scope().Insert(tname)
+		named := types.NewNamed(tname, emptyStruct, nil)
+		for _, ms := range syncMethodSpecs[name] {
+			var params []*types.Var
+			for _, ps := range ms.params {
+				pname := ps[:strings.Index(ps, ":")]
+				params = append(params, types.NewParam(token.NoPos, pkg, pname, typeOf(ps)))
+			}
+			var results []*types.Var
+			for _, rs := range ms.results {
+				results = append(results, types.NewParam(token.NoPos, pkg, "", typeOf(rs)))
+			}
+			recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(named))
+			sig := types.NewSignatureType(recv, nil, nil,
+				types.NewTuple(params...), types.NewTuple(results...), false)
+			named.AddMethod(types.NewFunc(token.NoPos, pkg, ms.name, sig))
+		}
+	}
+	pkg.MarkComplete()
+	return pkg
+}
+
+// syncLockerInterface builds the synthesized sync.Locker interface
+// (Lock/Unlock) used as RWMutex.RLocker's result type.
+func syncLockerInterface(pkg *types.Package) types.Type {
+	return types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkg, "Lock",
+			types.NewSignatureType(nil, nil, nil, nil, nil, false)),
+		types.NewFunc(token.NoPos, pkg, "Unlock",
+			types.NewSignatureType(nil, nil, nil, nil, nil, false)),
+	}, nil).Complete()
 }

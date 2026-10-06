@@ -26,7 +26,7 @@ func prefixFor(importPath string) string {
 // deps must be in dependency order (LoadClosure). Every package-level
 // identifier of every dep is renamed with its content-derived prefix and
 // every use is rewritten via go/types Info (shadowing-safe); import specs
-// of flattened packages are dropped (runtime/fmt specs are kept).
+// of flattened packages are dropped (runtime/fmt/sync specs are kept).
 // The result is gofmt-rendered and deterministic for a fixed input.
 func Flatten(fset *token.FileSet, imp *Importer, mainRef *PackageRef, deps []*PackageRef) (string, error) {
 	mainPkg := imp.Package(mainRef.ImportPath)

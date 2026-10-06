@@ -3,7 +3,7 @@
 //
 // Architecture (see DESIGN.md): the loader selects buildable files and
 // resolves imports; the importer type-checks local packages with go/types
-// (synthetic runtime/fmt retained from the frozen overlay); the flattener
+// (synthetic runtime/fmt/sync retained from the frozen overlay); the flattener
 // merges every dependency into one package-main source file; export.go
 // hands the merged file to the frozen gofrontend binary, whose stdout is
 // the frontend/v1 document.
@@ -89,7 +89,7 @@ type PackageRef struct {
 type refKind int
 
 const (
-	kindSynthetic refKind = iota // "runtime"/"fmt": resolved by the frozen overlay
+	kindSynthetic refKind = iota // "runtime"/"fmt"/"sync": resolved by the frozen overlay
 	kindStdlib                   // $GOROOT/src/<path>: resolvable, not compilable in M1
 	kindLocal                    // module-local package: flattened
 )
@@ -383,7 +383,7 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 // mode (the importing package's directory); results are cached by
 // (fromDir, path) because resolution is anchored at fromDir — the same
 // path can resolve differently (or fail) from different modules.
-// "runtime"/"fmt" resolve to synthetic markers; stdlib paths resolve to
+// "runtime"/"fmt"/"sync" resolve to synthetic markers; stdlib paths resolve to
 // their GOROOT directory (proving the mapping — compiling them is a scope
 // error raised by the importer); module-path-prefixed imports resolve to
 // directories; anything else is an error.
@@ -391,7 +391,7 @@ func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	// Synthetic packages resolve independently of fromDir; keep them out
 	// of the anchored cache.
 	switch path {
-	case "runtime", "fmt":
+	case "runtime", "fmt", "sync":
 		return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
 	}
 	anchor, err := filepath.Abs(fromDir)
@@ -522,7 +522,7 @@ func importsOf(ref *PackageRef) ([]importSpec, error) {
 
 // LoadClosure returns the main package's local dependencies in dependency
 // order (dependencies before dependents; ties broken by import path).
-// Synthetic (runtime/fmt) imports are not part of the closure. An import
+// Synthetic (runtime/fmt/sync) imports are not part of the closure. An import
 // cycle is a fail-fast error containing "import cycle" and naming the
 // full path — the walk is iterative over a visited set plus an explicit
 // stack, so it cannot hang.
