@@ -16,6 +16,8 @@ import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceDispatchBuilder;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
+import graalgo.p3link.LinknameIntrinsics;
+import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
 import graalgo.sched.SchedulerCore;
@@ -136,8 +138,17 @@ public final class P3SyncMain {
             // P3-M2b (WS D, ADR-0002): the sync wire kinds. Public
             // extension hook — no Phase-1 NodeFactory change.
             factory.registerExprKind("syncnew", SyncNewNode::build);
-            factory.registerExprKind("syncop",
-                    (node, ctx) -> SyncOpNode.build(node, ctx, factory));
+            // P3-M4 (WS C, ADR-0004 D2): "syncop" with an "atomic.*"
+            // synctyp dispatches to AtomicOpNode (real result kinds);
+            // the sync.* namespace keeps SyncOpNode.
+            factory.registerExprKind("syncop", (node, ctx) -> {
+                String synctyp = node.object("fields", "syncop")
+                        .string("synctyp", "syncop.fields");
+                if (synctyp.startsWith("atomic.")) {
+                    return AtomicOpNode.build(node, ctx, factory);
+                }
+                return SyncOpNode.build(node, ctx, factory);
+            });
             // P3-M3 (WS D, ADR-0003): interface method dispatch. Public
             // extension hook — no Phase-1 NodeFactory change.
             factory.registerExprKind("ifacemethod", new IfaceDispatchBuilder(factory));
@@ -152,6 +163,12 @@ public final class P3SyncMain {
             // objID fails fast here. Installed on every build (even empty)
             // so a previous program's tables can never leak into this run.
             IfaceMethodTable.install(IfaceMethodTables.resolve(json, program.functions()));
+            // P3-M4 (WS C, ADR-0004): linkname symbol table (both
+            // directions), itabFor provider, interface method lists, and
+            // Go function bindings for callGo. Installed on every build
+            // (even empty) so a previous program's bindings can never
+            // leak into this run (registries are static).
+            LinknameIntrinsics.install(json, program);
         } catch (FrontendException e) {
             System.err.println("graalgo-sync-run: internal error building AST: " + e.getMessage());
             return EXIT_INPUT_ERROR;

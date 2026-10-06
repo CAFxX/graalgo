@@ -1,6 +1,8 @@
 package graalgo.iface;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import graalgo.frontend.FrontendException;
@@ -90,6 +92,63 @@ public final class IfaceMethodTables {
 
     /** Wire method entry: object id + receiver adaptation data. */
     private record MethodRef(int objId, int[] recvPath, boolean pointerReceiver) {}
+
+    /**
+     * Parses {@code jsonText}'s type table and returns the interface
+     * method-name lists (P3-M4, WS C, ADR-0004 D3): interface descriptor
+     * name → method names in declaration order, for the
+     * {@code Intrinsics.itabFor} intrinsic. Both named interfaces (keyed
+     * by their qualified name, e.g. {@code main.Writer}) and anonymous
+     * ones (keyed by the factory's structural name, e.g.
+     * {@code interface#3}) are covered.
+     */
+    public static Map<String, List<String>> resolveInterfaces(String jsonText) {
+        Json.Value v = Json.parse(jsonText);
+        if (!(v instanceof Json.Object doc)) {
+            throw new FrontendException("document: must be a JSON object");
+        }
+        TypeTable types = new TypeTable(doc.array("types", "document"));
+        Map<String, List<String>> out = new LinkedHashMap<>();
+        for (int id = 0; id < types.size(); id++) {
+            String path = "types[" + id + "]";
+            Json.Object entry = types.entry(id, path);
+            String kind = entry.string("kind", path);
+            if ("interface".equals(kind)) {
+                List<String> names = readInterfaceMethodNames(entry, path);
+                out.put(DescriptorNames.descriptorName(types, id), names);
+            } else if ("named".equals(kind)) {
+                Json.Object detail = entry.object("detail", path);
+                Json.Value underlying = detail.opt("underlying");
+                if (underlying instanceof Json.Num num) {
+                    int uid = (int) num.asLong(path + ".detail.underlying");
+                    String upath = "types[" + uid + "]";
+                    Json.Object uentry = types.entry(uid, upath);
+                    if ("interface".equals(uentry.string("kind", upath))) {
+                        List<String> names = readInterfaceMethodNames(uentry, upath);
+                        out.put(detail.string("name", path), names);
+                    }
+                }
+            }
+        }
+        return out;
+    }
+
+    private static List<String> readInterfaceMethodNames(Json.Object entry, String path) {
+        Json.Object detail = entry.object("detail", path);
+        Json.Value mv = detail.opt("methods");
+        List<String> names = new ArrayList<>();
+        if (mv instanceof Json.Array arr) {
+            for (int i = 0; i < arr.size(); i++) {
+                String mp = path + ".detail.methods[" + i + "]";
+                Json.Value ev = arr.get(i);
+                if (!(ev instanceof Json.Object eo)) {
+                    throw new FrontendException(mp + ": method entry must be an object");
+                }
+                names.add(eo.string("name", mp));
+            }
+        }
+        return names;
+    }
 
     private static Map<String, MethodRef> readMethods(Json.Object entry, String path) {
         Json.Object detail = entry.object("detail", path);

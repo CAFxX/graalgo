@@ -5,8 +5,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import graalgo.frontend.FrontendException;
+import graalgo.values.GoTypeDescriptor;
 
 /**
  * Static registry of interface method tables (P3-M3, WS D, ADR-0003):
@@ -38,6 +40,16 @@ public final class IfaceMethodTable {
     private static volatile Map<String, Map<String, IfaceMethodTarget>> table = Map.of();
     /** (descriptor name, iface id) → built itab. */
     private static final ConcurrentHashMap<ItabKey, IfaceItab> itabs = new ConcurrentHashMap<>();
+    /**
+     * P3-M4 (WS C, ADR-0004 D3): interface descriptor name → method names
+     * in declaration order, for the {@code Intrinsics.itabFor} intrinsic
+     * (which has no wire ifacemethod node to carry the list). Populated by
+     * the launcher from the doc type table alongside {@link #install}.
+     */
+    private static volatile Map<String, List<String>> ifaceMethods = Map.of();
+    /** Stable per-process iface ids for the intrinsic path (no collisions). */
+    private static final ConcurrentHashMap<String, Integer> IFACE_IDS = new ConcurrentHashMap<>();
+    private static final AtomicInteger IFACE_ID_GEN = new AtomicInteger(1);
 
     private record ItabKey(String descriptorName, int ifaceId) {}
 
@@ -61,8 +73,59 @@ public final class IfaceMethodTable {
     public static void clear() {
         synchronized (LOCK) {
             table = Map.of();
+            ifaceMethods = Map.of();
             itabs.clear();
         }
+    }
+
+    /**
+     * Installs the interface method-name lists (P3-M4, ADR-0004 D3):
+     * interface descriptor name → method names in declaration order.
+     * Called by the launcher alongside {@link #install}; like it, the
+     * install is wholesale and drops nothing else.
+     */
+    public static void installInterfaces(Map<String, List<String>> methods) {
+        Map<String, List<String>> copy = new HashMap<>();
+        for (Map.Entry<String, List<String>> e : methods.entrySet()) {
+            copy.put(e.getKey(), List.copyOf(e.getValue()));
+        }
+        synchronized (LOCK) {
+            ifaceMethods = Map.copyOf(copy);
+        }
+    }
+
+    /**
+     * The {@code Intrinsics.itabFor} intrinsic entry (P3-M4, ADR-0004 D3):
+     * builds (and caches) the itab for a concrete descriptor against the
+     * named interface, resolving the interface's method list from
+     * {@link #installInterfaces} and minting a stable per-process iface
+     * id. The returned itab is equal in content to the dispatch path's
+     * itab for the same (type, interface) pair (separate cache key —
+     * itabs are immutable value objects).
+     *
+     * @param descriptorName the concrete type's descriptor name
+     * @param ifaceName the interface's descriptor name
+     */
+    public static IfaceItab itabForIntrinsic(String descriptorName, String ifaceName) {
+        List<String> names = ifaceMethods.get(ifaceName);
+        if (names == null) {
+            throw new FrontendException("interface dispatch: no interface method list installed for \""
+                    + ifaceName + "\" (needs gofrontend >= 0.5.0 interface entries)");
+        }
+        int ifaceId = IFACE_IDS.computeIfAbsent(ifaceName, k -> IFACE_ID_GEN.getAndIncrement());
+        return itabFor(descriptorName, ifaceId, names);
+    }
+
+    /**
+     * The {@code Intrinsics.itabFor} provider target (P3-M4, ADR-0004 D3):
+     * adapts the frozen {@code (GoTypeDescriptor, GoTypeDescriptor)}
+     * intrinsic signature to {@link #itabForIntrinsic}.
+     */
+    public static Object itabForDescriptors(GoTypeDescriptor descriptor, GoTypeDescriptor iface) {
+        if (descriptor == null || iface == null) {
+            throw new FrontendException("itabFor: null descriptor");
+        }
+        return itabForIntrinsic(descriptor.name(), iface.name());
     }
 
     /** Number of descriptor entries currently installed (tests). */
