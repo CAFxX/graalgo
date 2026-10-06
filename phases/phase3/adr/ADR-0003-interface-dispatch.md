@@ -102,6 +102,31 @@ freeze §5):
    implemented the factory-accurate naming. The Go producer is unaffected
    (it never computes descriptor names).
 
+## Amendment 2026-10-06 (factory-side WS-D retirements)
+
+End-to-end testing found three fail-fasts in the frozen factory that made
+the ADR-0003 corpus unexpressible — each one's named condition ("WS D")
+is met by this milestone landing, so they are retired under this ADR
+(commit `39b6696`; all previously-working paths unaffected —
+phase-1 208/208, phase-2 194/194):
+
+1. `NodeFactory.maybeConvert`: concrete→non-empty-interface conversions
+   (`var w Writer = b`) now box via `boxInterface`. Boxing needs only the
+   dynamic-type descriptor; itabs are built lazily at dispatch from the
+   installed method tables. go/types already verified assignability
+   (signatures included) at the conversion site.
+2. `NodeFactory.adaptArgsForInterfaceParams`: now follows
+   named→underlying (new `isInterfaceType` helper) for interface params.
+   The old code skipped named interface params — passing the raw concrete
+   value, a silent miscompile. The P3 `IfaceDispatchBuilder` replica gets
+   the same fix.
+3. `NodeFactory.buildTypeAssert`/`buildCommaOk`: assertions to non-empty
+   interfaces (`a.(Writer)`) now allowed; the runtime `implements` check
+   compares the dynamic type's method set (per-document map from the type
+   table's named/pointer `"methods"`, carried in the node — no global
+   state) against the asserted interface's methods. A successful assertion
+   to an interface yields the interface value itself.
+
 ## Alternatives considered (and rejected)
 
 - **(a) Eager itabs at box sites:** rejected — `InterfaceBoxNode`'s wire
