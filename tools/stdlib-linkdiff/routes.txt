@@ -1,0 +1,17 @@
+# stdlib-linkdiff routes — explicit routings of stdlib linkname targets
+# that graalgo deliberately does not provide as symbols.
+#
+# Format:  target -> replacement # reason (the reason is mandatory)
+#
+# A ROUTED target does not appear on the skip-list. Add a route here
+# (with its justification) when a MISSING target is triaged as
+# deliberately-unprovided; the per-release workflow (README.md) diffs
+# this file alongside the skip-list size.
+
+# runtime/mgc.go: `//go:linkname writeBarrier` (variable). gc's writeBarrier
+# is a linknamed variable the compiler checks before emitting barrier
+# calls. In graalgo every Go store is a JVM store and the JVM's own
+# barriers cover them (P2 ADR-0002 D3); there is no concurrent-mark phase
+# needing a mutator barrier, so the analog of writeBarrier.enabled is the
+# constant false. Source: phases/phase3/hidden_files/m4/intrinsic-audit.md §4.
+runtime.writeBarrier -> const:false # JVM owns all barriers (P2 ADR-0002 D3); no mutator barrier exists, writeBarrier.enabled ≡ false

@@ -1,0 +1,16 @@
+--- /tmp/scan.go.orig	2026-10-06 23:06:51.373518515 +0000
++++ scan.go	2026-10-06 23:06:51.570531243 +0000
+@@ -89,11 +89,8 @@
+ 				return ferr
+ 			}
+ 		} else {
+-			var merr error
+-			match, merr = ctxt.MatchFile(dir, d.Name())
+-			if merr != nil {
+-				return fmt.Errorf("constraint check %s: %w", path, merr)
+-			}
++			// MUTATION (red-green evidence): tag filter disabled.
++			match = true
+ 		}
+ 		if !match {
+ 			res.ConstraintExcluded++

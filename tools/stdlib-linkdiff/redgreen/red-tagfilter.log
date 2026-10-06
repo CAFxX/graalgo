@@ -1,0 +1,5 @@
+--- FAIL: TestBuildTagGatedExcluded (0.07s)
+    main_test.go:128: darwinLocal: counted despite excluding build tag: &{File:pkggate/darwin.go Package:pkggate Local:darwinLocal Declared:darwinLocal Target:runtime.fastrand Status:SATISFIED Reason: Route: RouteReason: ProvidedFrom:p3link LinknameIntrinsics.java Linknames.register}
+FAIL
+FAIL	graalgo/tools/stdlib-linkdiff	0.112s
+FAIL

@@ -1,0 +1,2 @@
+# Fixture routes for stdlib-linkdiff tests (hermetic; not the shipped routes.txt).
+runtime.writeBarrier -> const:false # fixture mirror of the real writeBarrier route
