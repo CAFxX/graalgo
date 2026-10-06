@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -84,8 +85,9 @@ func TestDeterministic(t *testing.T) {
 func TestScopeErrors(t *testing.T) {
 	cases := map[string]string{
 		"testdata/bad_import.go": "WS G",
-		"testdata/bad_select.go": "WS E",
 		"testdata/bad_call.go":   "WS D",
+		// P3-M5 (WS E, ADR-0005 App C): select/send/close are now lowered;
+		// testdata/bad_select.go (select-with-default scope error) retired.
 	}
 	for f, want := range cases {
 		_, err := ExportFile(f)
@@ -165,5 +167,159 @@ func TestDeepNesting(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("ExportFile hung on 40-deep nesting (P1-4 regression)")
+	}
+}
+
+// TestChannelOpsM5 verifies: GG-0017 — P3-M5 (WS E, ADR-0005 Appendix C)
+// channel-operations lowering: make(chan)/send/recv/close/select lower to
+// the additive wire nodes (makechan/send/recv/chanclose/select), and
+// `for v := range ch` desugars to a for+select loop.
+func TestChannelOpsM5(t *testing.T) {
+	src := `package main
+
+func main() {
+	a := make(chan int)
+	b := make(chan int, 3)
+	a <- 1
+	x := <-b
+	y, ok := <-b
+	_ = x
+	_ = y
+	_ = ok
+	close(a)
+	select {
+	case v := <-a:
+		_ = v
+	case b <- 2:
+	default:
+	}
+	for v := range b {
+		_ = v
+	}
+	defer close(b)
+	go close(a)
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "chanops.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	// Walk the raw JSON collecting (kind, fields) pairs.
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	type nk struct {
+		kind   string
+		fields map[string]any
+	}
+	var nodes []nk
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if k, ok := v["kind"].(string); ok {
+				f, _ := v["fields"].(map[string]any)
+				nodes = append(nodes, nk{k, f})
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(raw)
+	kindCount := map[string]int{}
+	for _, n := range nodes {
+		kindCount[n.kind]++
+	}
+	for _, want := range []string{"makechan", "send", "recv", "chanclose", "select", "selectcase", "defer", "gostmt", "labeled"} {
+		if kindCount[want] == 0 {
+			t.Errorf("expected at least one %q node, got kinds %v", want, kindCount)
+		}
+	}
+	// No "unary" node may carry op "<-" anymore (frozen UnaryOpNode never
+	// implemented it; recv replaced it).
+	for _, n := range nodes {
+		if n.kind == "unary" && n.fields["op"] == "<-" {
+			t.Errorf("found legacy unary <- node; want recv")
+		}
+	}
+	// makechan: unbuffered has no "size"; buffered does; both carry elem+type.
+	var sawBare, sawSized bool
+	for _, n := range nodes {
+		if n.kind != "makechan" {
+			continue
+		}
+		if _, ok := n.fields["elem"]; !ok {
+			t.Errorf("makechan missing elem")
+		}
+		if _, ok := n.fields["type"]; !ok {
+			t.Errorf("makechan missing type")
+		}
+		if _, ok := n.fields["size"]; ok {
+			sawSized = true
+		} else {
+			sawBare = true
+		}
+	}
+	if !sawBare || !sawSized {
+		t.Errorf("want one bare and one sized makechan (bare=%v sized=%v)", sawBare, sawSized)
+	}
+	// recv: one plain (commaOk=false), one comma-ok (commaOk=true).
+	var plain, commaOk int
+	for _, n := range nodes {
+		if n.kind != "recv" {
+			continue
+		}
+		if n.fields["commaOk"] == true {
+			commaOk++
+		} else {
+			plain++
+		}
+	}
+	if plain == 0 || commaOk == 0 {
+		t.Errorf("want plain and comma-ok recv nodes (plain=%d commaOk=%d)", plain, commaOk)
+	}
+	// chanclose nodes are statements: none may appear under an "x" field
+	// of an exprstmt (they must be direct statement children).
+	for _, n := range nodes {
+		if n.kind == "exprstmt" {
+			if x, ok := n.fields["x"].(map[string]any); ok && x["kind"] == "chanclose" {
+				t.Errorf("chanclose wrapped in exprstmt; want bare statement")
+			}
+		}
+	}
+	// select cases: one recv with targets, one send, one default.
+	var recvCase, sendCase, defaultCase bool
+	for _, n := range nodes {
+		if n.kind != "selectcase" {
+			continue
+		}
+		switch n.fields["kind"] {
+		case "recv":
+			if _, ok := n.fields["targets"]; ok {
+				recvCase = true
+			}
+		case "send":
+			if _, ok := n.fields["chan"]; ok {
+				if _, ok := n.fields["value"]; ok {
+					sendCase = true
+				}
+			}
+		case "default":
+			defaultCase = true
+		}
+	}
+	if !recvCase || !sendCase || !defaultCase {
+		t.Errorf("want recv/send/default selectcases (recv=%v send=%v default=%v)", recvCase, sendCase, defaultCase)
 	}
 }

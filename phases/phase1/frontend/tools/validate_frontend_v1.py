@@ -354,6 +354,44 @@ def check_node(ctx, path, node, expr):
         type_ref("type")
         if not isinstance(f.get("commaOk"), bool):
             ctx.err(fp, "commaOk must be bool")
+    elif kind == "makechan":
+        # P3-M5 (WS E, ADR-0005 App C): make(chan T[, n]).
+        type_ref("elem")
+        if f.get("size") is not None:
+            check_node(ctx, f"{fp}.size", f["size"], True)
+        type_ref("type")
+    elif kind == "send":
+        # P3-M5 (WS E, ADR-0005 App C): ch <- v (statement).
+        expr_node("chan")
+        expr_node("value")
+    elif kind == "recv":
+        # P3-M5 (WS E, ADR-0005 App C): <-ch (commaOk for v, ok := <-ch).
+        expr_node("x")
+        type_ref("type")
+        if not isinstance(f.get("commaOk"), bool):
+            ctx.err(fp, "commaOk must be bool")
+    elif kind == "chanclose":
+        # P3-M5 (WS E, ADR-0005 App C): close(ch) (statement).
+        expr_node("x")
+    elif kind == "select":
+        # P3-M5 (WS E, ADR-0005 App C): select statement.
+        need("cases")
+        for j, c in enumerate(f.get("cases", [])):
+            check_node(ctx, f"{fp}.cases[{j}]", c, False)
+    elif kind == "selectcase":
+        # P3-M5 (WS E, ADR-0005 App C): one select case.
+        ck = f.get("kind")
+        if ck == "recv":
+            expr_node("chan")
+            if "targets" in f and not all(isinstance(t, int) for t in f["targets"]):
+                ctx.err(fp, "targets must be object ids")
+        elif ck == "send":
+            expr_node("chan")
+            expr_node("value")
+        elif ck != "default":
+            ctx.err(fp, f"selectcase: unknown kind {ck!r}")
+        if f.get("body") is not None:
+            check_node(ctx, f"{fp}.body", f["body"], False)
     else:
         ctx.err(path, f"unknown node kind {kind!r}")
 

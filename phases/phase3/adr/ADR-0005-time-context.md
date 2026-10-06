@@ -247,6 +247,30 @@ corpus programs (ch01–ch12) must run end-to-end through `graalgo-run`
 and produce their gc-recorded `.expected` output — the README's promise.
 (This is a P3-M5 acceptance item.)
 
+**Implementation notes (2026-10-06, exporter worker):** per the Appendix W
+precedent ("the D3 field lists are shorthand"), the Appendix C field
+lists are likewise shorthand:
+- `"makechan"` also carries `type` (the channel type-table id, for the
+  frame slot); `size` is absent (not null) when unbuffered.
+- `"recv"` also carries `commaOk: bool` (always present, mirroring the
+  `index` node): true for the `v, ok := <-ch` shape, in which case
+  `type` is the element type. Replaces the old `"unary"` `<-` emission
+  (the frozen `UnaryOpNode` never implemented `<-`); the `"unary"` op
+  set is unchanged (`+ - ! ^`).
+- `"selectcase"` is a real node kind (`{kind, pos, fields}`), like
+  `caseclause`/`typecase`.
+- `for v := range ch` (not listed above — the v1 `"range"` node has no
+  channel support) desugars in the exporter to a for+select loop over
+  existing wire nodes plus the new `"select"` (channel hoisted once;
+  `v := __rng_v` is an ordinary loop-body vardecl, so the factory's
+  loopcap pre-scan gives it per-iteration box semantics when captured).
+- The v1 `"call"`+`"chanclose"` marker (the `ctxChanClose` intrinsic) is
+  RETIRED: user `close(ch)` now lowers to the `"chanclose"` statement
+  node, and the synthetic context package uses real `close`. Java side
+  must implement the `"chanclose"` statement builder, not the marker.
+- `toolVersion` 0.6.0 → 0.7.0 (freeze §5: new wire node kinds are a JSON
+  behavior change).
+
 ## Appendix M — Multi-result call-site desugar (added 2026-10-06, coordinator)
 
 **Problem:** v1 cannot express multi-result function calls OR multi-value

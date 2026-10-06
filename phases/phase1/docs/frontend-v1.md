@@ -152,6 +152,12 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `selector` | `x`: expr node, `field`: str, `selpath`: [int] (field indices through embedding), `type`: type id |
 | `typeassert` | `x`: expr node, `type`: type id, `commaOk`: bool |
 | `nil` | `type`: type id (the switch tag's type for `case nil:`) |
+| `makechan` | `elem`: type id (channel element type), `size`: expr node or absent (buffer capacity; absent = unbuffered), `type`: type id (the channel type) — `make(chan T)` / `make(chan T, n)` (P3-M5, WS E, ADR-0005 App C; additive node kind, first emitted by gofrontend 0.7.0). Emitted instead of the generic `make` call node: the frozen builtin make path rejects chan types |
+| `send` | `chan`, `value`: expr nodes — `ch <- v` statement (P3-M5, WS E, ADR-0005 App C; additive node kind, first emitted by gofrontend 0.7.0) |
+| `recv` | `x`: expr node (the channel), `type`: type id (element type, also for comma-ok), `commaOk`: bool — `<-ch` (P3-M5, WS E, ADR-0005 App C; additive node kind, first emitted by gofrontend 0.7.0). Replaces the old `unary` `<-` emission (the frozen UnaryOpNode never implemented it) |
+| `chanclose` | `x`: expr node — `close(ch)` statement (P3-M5, WS E, ADR-0005 App C; additive node kind, first emitted by gofrontend 0.7.0). The builtin registry is untouched: intercepted by ident in the exporter |
+| `select` | `cases`: [`selectcase` nodes] — a `select` statement (P3-M5, WS E, ADR-0005 App C; additive node kind, first emitted by gofrontend 0.7.0) |
+| `selectcase` | `kind` ∈ {`recv`,`send`,`default`}; recv: `chan`: expr node, `targets`: [object ids] or absent (case-scoped `v := <-ch` / `v, ok := <-ch` targets, parallel to the lhs); send: `chan`, `value`: expr nodes; `body`: block node — one `select` case. Channel/value expressions are evaluated once up front (gc semantics) |
 
 Normalizations (applied by the exporter, part of the contract):
 - `*ast.EmptyStmt` is dropped (empty statements carry no semantics).

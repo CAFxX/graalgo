@@ -1148,6 +1148,11 @@ type exporter struct {
 	// hoisted by exportSyncGoStmt (__sync_go_arg<seq>_<i>); keeps the
 	// names unique across go statements in one export.
 	syncGoSeq int
+	// P3-M5 (WS E, ADR-0005 App C): sequence counter for synthetic
+	// temporaries created by the channel-ops lowering (__rng_*,
+	// __select_blank_*, __close_*); keeps the names unique across
+	// selects/ranges/closes in one export.
+	chanSeq int
 	// P3-M5 (WS E, ADR-0005): synthetic time/context package state.
 	// synthGlobals holds the synthetic packages' package-level globals
 	// in declaration order (exported during importSyntheticPackage;
@@ -2882,6 +2887,12 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 		}
 		return e.exportAssign(s)
 	case *ast.ExprStmt:
+		// P3-M5 (WS E, ADR-0005 App C): close(ch) lowers to the
+		// "chanclose" statement node (not wrapped in exprstmt). The
+		// frozen builtin registry is untouched — interception by ident.
+		if c, ok := isCloseCall(e.info, s.X); ok {
+			return e.exportChanCloseCall(c)
+		}
 		x, err := e.exportExpr(s.X)
 		if err != nil {
 			return nil, err
@@ -2921,6 +2932,12 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 		return e.exportDeferStmt(s)
 	case *ast.GoStmt:
 		return e.exportGoStmt(s)
+	case *ast.SendStmt:
+		// P3-M5 (WS E, ADR-0005 App C): ch <- v lowers to "send".
+		return e.exportSend(s)
+	case *ast.SelectStmt:
+		// P3-M5 (WS E, ADR-0005 App C): select lowers to "select".
+		return e.exportSelect(s)
 	default:
 		return nil, scopeErrorf("%T is not supported in frontend/v1 scope (%s)", s, stmtOwner(s))
 	}
@@ -2930,6 +2947,11 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 // exported as a call node; the call/args evaluation timing (evaluate now,
 // invoke at return/unwind) is the factory's job.
 func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
+	// P3-M5 (WS E, ADR-0005 App C): `defer close(ch)` desugars through a
+	// funclit (defer-time channel evaluation, close at return time).
+	if c, ok := isCloseCall(e.info, s.Call); ok {
+		return e.exportCloseDeferGo(s, c, true)
+	}
 	// P3-M2b (ADR-0002): `defer m.Unlock()` — the frozen buildDefer only
 	// understands funclit/ident/builtin deferred calls, so a deferred sync
 	// method call desugars to
@@ -3090,6 +3112,11 @@ func (e *exporter) exportSyncDefer(s *ast.DeferStmt, sel *ast.SelectorExpr, sele
 // §2.3 — old consumers reject it as unknown, which is the correct
 // forward-compatibility behavior for a kind they predate).
 func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
+	// P3-M5 (WS E, ADR-0005 App C): `go close(ch)` desugars through a
+	// funclit with the channel hoisted (go-time evaluation).
+	if c, ok := isCloseCall(e.info, s.Call); ok {
+		return e.exportCloseDeferGo(s, c, false)
+	}
 	// P3-M2b (ADR-0002): `go m.Op(args)` — GoStatementNode only builds
 	// zero-arg spawns (P2-M1), so a direct sync method go-statement
 	// desugars via exportSyncGoStmt: the receiver/args are evaluated at
@@ -3239,12 +3266,8 @@ func (e *exporter) exportSyncGoStmt(s *ast.GoStmt, sel *ast.SelectorExpr, select
 // stmtOwner attributes an unsupported statement to its workstream.
 func stmtOwner(s ast.Stmt) string {
 	switch s.(type) {
-	case *ast.SelectStmt:
-		return "WS E (Phase 2: channels)"
 	case *ast.GoStmt:
 		return "Phase 2 (goroutines; M5 task brief)"
-	case *ast.SendStmt:
-		return "WS E/F"
 	default:
 		return "a later workstream"
 	}
@@ -3418,14 +3441,17 @@ func (e *exporter) exportAssignable(l ast.Expr) (*Node, error) {
 	}
 }
 
-// exportCommaOk exports a two-valued map-index or type-assertion rhs
-// (already unparenthesized by the caller).
+// exportCommaOk exports a two-valued map-index, type-assertion, or
+// channel-receive rhs (already unparenthesized by the caller).
 func (e *exporter) exportCommaOk(r ast.Expr) (*Node, error) {
 	switch r := r.(type) {
 	case *ast.IndexExpr:
 		return e.exportIndex(r, true)
 	case *ast.TypeAssertExpr:
 		return e.exportTypeAssert(r, true)
+	case *ast.UnaryExpr:
+		// P3-M5 (WS E, ADR-0005 App C): v, ok := <-ch.
+		return e.exportRecv(r, true)
 	default:
 		return nil, fmt.Errorf("gofrontend: not a comma-ok expression: %T", r)
 	}
@@ -3527,6 +3553,13 @@ func (e *exporter) rangeVarId(x ast.Expr) (any, error) {
 // exportRange handles `for k, v := range x` and `for k, v = range x`
 // (define=false). Key/value are object ids or null (absent or blank).
 func (e *exporter) exportRange(s *ast.RangeStmt) (*Node, error) {
+	// P3-M5 (WS E, ADR-0005 App C): `for v := range ch` desugars to a
+	// for+select loop (the v1 "range" node has no channel support).
+	if tv, ok := e.info.Types[s.X]; ok && tv.Type != nil {
+		if _, ok := tv.Type.Underlying().(*types.Chan); ok {
+			return e.exportRangeChan(s)
+		}
+	}
 	var define bool
 	switch s.Tok {
 	case token.DEFINE:
@@ -3847,6 +3880,11 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 		}
 		return e.node("binary", x, map[string]any{"op": x.Op.String(), "x": l, "y": r, "type": t}), nil
 	case *ast.UnaryExpr:
+		// P3-M5 (WS E, ADR-0005 App C): <-ch lowers to the additive
+		// "recv" wire node (the frozen UnaryOpNode never implemented <-).
+		if x.Op == token.ARROW {
+			return e.exportRecv(x, false)
+		}
 		if x.Op == token.AND {
 			// &T{...}: normalize to a pointer-typed composite literal
 			// (M4, WS E). & on anything else stays a WS D scope error.
@@ -4301,6 +4339,14 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// make(T, len[, cap]): skip the type, export len/cap.
 		if len(c.Args) < 1 {
 			return nil, scopeErrorf("make without a type argument")
+		}
+		// P3-M5 (WS E, ADR-0005 App C): make(chan T[, n]) lowers to the
+		// additive "makechan" node — the frozen builtin make path
+		// rejects chan types, so we never send it one.
+		if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
+			if ct, ok := tv.Type.(*types.Chan); ok {
+				return e.exportMakeChan(c, ct)
+			}
 		}
 		for _, a := range c.Args[1:] {
 			x, err := e.exportExpr(a)
@@ -5518,12 +5564,16 @@ func unparen(x ast.Expr) ast.Expr {
 	}
 }
 
-// isCommaOkRhs reports whether r is a two-valued map-index or type-assertion
-// expression (the `v, ok := m[k]` / `v, ok := x.(T)` shapes).
+// isCommaOkRhs reports whether r is a two-valued map-index,
+// type-assertion, or channel-receive expression (the `v, ok := m[k]` /
+// `v, ok := x.(T)` / `v, ok := <-ch` shapes).
 func isCommaOkRhs(r ast.Expr) bool {
-	switch unparen(r).(type) {
+	switch r := unparen(r).(type) {
 	case *ast.IndexExpr, *ast.TypeAssertExpr:
 		return true
+	case *ast.UnaryExpr:
+		// P3-M5 (WS E, ADR-0005 App C): v, ok := <-ch.
+		return r.Op == token.ARROW
 	}
 	return false
 }
