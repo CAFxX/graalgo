@@ -4479,6 +4479,19 @@ func mentionsTypeParam(t types.Type) bool {
 	switch t := t.(type) {
 	case *types.TypeParam:
 		return true
+	case *types.Alias:
+		// R2 P2-4: an alias could smuggle a type parameter past the
+		// fail-fast (e.g. a substituted alias in a method signature).
+		return mentionsTypeParam(types.Unalias(t))
+	case *types.Union:
+		// R2 P2-4: unions cannot appear in method signatures today,
+		// but harden anyway — total function over go/types.
+		for i := 0; i < t.Len(); i++ {
+			if mentionsTypeParam(t.Term(i).Type()) {
+				return true
+			}
+		}
+		return false
 	case *types.Named:
 		if targs := t.TypeArgs(); targs != nil {
 			for i := 0; i < targs.Len(); i++ {

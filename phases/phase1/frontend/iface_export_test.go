@@ -824,3 +824,29 @@ func TestFreshSigIDKeepsTypeListParallel(t *testing.T) {
 		t.Fatalf("typeList placeholder = %v, want nil (signature entries have no go/types type)", e.typeList[0])
 	}
 }
+
+// TestMentionsTypeParamAliasUnion (R2 P2-4): mentionsTypeParam must see
+// through *types.Alias and *types.Union — an alias could otherwise
+// smuggle a type parameter past the P3-M3 template-method fail-fast.
+func TestMentionsTypeParamAliasUnion(t *testing.T) {
+	tp := types.NewTypeParam(types.NewTypeName(0, nil, "T", nil), nil)
+	// Alias to a bare type parameter.
+	a := types.NewAlias(types.NewTypeName(0, nil, "A", nil), tp)
+	if !mentionsTypeParam(a) {
+		t.Fatal("mentionsTypeParam(alias to TypeParam) = false, want true")
+	}
+	// Union with a type-parameter term.
+	u := types.NewUnion([]*types.Term{types.NewTerm(false, tp), types.NewTerm(false, types.Typ[types.Int])})
+	if !mentionsTypeParam(u) {
+		t.Fatal("mentionsTypeParam(union with TypeParam term) = false, want true")
+	}
+	// Negatives: alias/union without type parameters.
+	ai := types.NewAlias(types.NewTypeName(0, nil, "AI", nil), types.Typ[types.Int])
+	if mentionsTypeParam(ai) {
+		t.Fatal("mentionsTypeParam(alias to int) = true, want false")
+	}
+	ui := types.NewUnion([]*types.Term{types.NewTerm(false, types.Typ[types.Int])})
+	if mentionsTypeParam(ui) {
+		t.Fatal("mentionsTypeParam(union of int) = true, want false")
+	}
+}
