@@ -288,3 +288,15 @@ one-logical-change-per-commit sequence:
    concrete dynamic type (identity-only matching in `TypeSwitchNode`) —
    observed during remediation, pre-existing, out of P3-M3 scope; needs
    a P3-M(n) work item if interface-case switches are required.
+
+## 2026-10-06 — P3-M3 sign-off: interface dispatch (WS B)
+
+**Sign-off commit:** `5fde351` (tree clean; only `phases/phase3/`, `phases/phase1/frontend/{export.go,main.go,iface_export_test.go,docs/frontend-v1.md}`, and `phases/phase1/src/main/java/graalgo/frontend/{NodeFactory,TypeAssertNode,TypeAssertOkNode}.java` touched — all covered by ADR-0003 + 2 amendments).
+
+**Delivered:** `ifacemethod` wire nodes (gofrontend 0.4.0) for interface method calls; method tables on named/pointer type entries (incl. promoted methods, `implkey` signature keys, `index` receiver paths); `graalgo.iface` Java package — `IfaceDispatchNode` (PIC on itab identity, limit 3, megamorphic hash fallback, `GoCalls.invoke` protocol, nil-panic parity, `InterfaceDispatchProbes` per dispatch), `IfaceMethodTable` static registry installed by the launcher; three WS-D factory fail-fasts retired (concrete→non-empty-interface boxing, named-interface arg adaptation, interface type assertions); `--dump-polymorphism` launcher flag.
+
+**Reviews:** code reviewer **NO-GO** (2 P0 silent divergences — name-only assertion check, non-canonical descriptors — both proven empirically; 2 P1, 9 P2), methodology reviewer **GO-WITH-FINDINGS** (F1–F8). All remediated in 16 one-change-per-commit commits with red-green evidence; final reports: `reviews/phase3-m3/reviewer1-code.md`, `reviewer2-methodology.md`.
+
+**Final verification (sign-off tree `5fde351`, independent re-runs by coordinator):** phase-1 `make test` 208/208 + `make check` clean; phase-2 `make test` 194/194 + `make check` clean (pinning audit PASS, 0 unexpected); p3frontend `go test` ok; phase-3 `make test` 19/19; iface differential 13/13 byte-identical vs gc 1.27.1; sync differential 25/25. M9 re-measurement: 31 sites, 1227 dispatches — 41.9% mono / 51.6% poly (PIC-resident) / 6.5% mega (mechanism coverage, NOT a workload verdict; workload re-measurement deferred to Phase 4). GG-0014 →active; GG-0017 iface slice →active.
+
+**P3-M3 is COMPLETE.** Next: P3-M4 (intrinsic surface completion).
