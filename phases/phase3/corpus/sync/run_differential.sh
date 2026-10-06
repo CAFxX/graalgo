@@ -66,7 +66,7 @@ run_one() { # $1 = go file, $2 = gmp
 for go in sy*.go; do
     base="${go%.go}"
     case "$base" in
-        sy03_*|sy05_*|sy08_*|sy12_*|sy13_*|sy14_*) run_one "$go" 1 ;;  # panic programs: single gmp is enough
+        sy03_*|sy05_*|sy08_*|sy12_*|sy13_*|sy14_*|sy15_*) run_one "$go" 1 ;;  # panic programs: single gmp is enough
         *) run_one "$go" 1; run_one "$go" 4 ;;
     esac
 done

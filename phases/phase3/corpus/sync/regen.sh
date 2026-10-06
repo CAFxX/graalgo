@@ -14,7 +14,7 @@ export PATH="$HOME/tools/go-1.27.1/bin:$PATH"
 for go in sy*.go; do
     base="${go%.go}"
     case "$base" in
-        sy03_*|sy05_*|sy08_*|sy12_*|sy13_*|sy14_*)
+        sy03_*|sy05_*|sy08_*|sy12_*|sy13_*|sy14_*|sy15_*)
             go run "$go" > /dev/null 2> /tmp/sy-regen.stderr || true
             head -1 /tmp/sy-regen.stderr > "$base.panic.gc"
             : > "$base.expected"  # panic programs: empty stdout

@@ -811,6 +811,10 @@ type exporter struct {
 	// collectPackageVars during the declaration scan; exported in
 	// dependency order by exportPackageVars after the scan).
 	pkgVars []*pkgVarDecl
+	// P3-M2remed (P0-3): sequence counter for synthetic temporaries
+	// hoisted by exportSyncGoStmt (__sync_go_arg<seq>_<i>); keeps the
+	// names unique across go statements in one export.
+	syncGoSeq int
 }
 
 // M10 (P1-4): struct-nesting depth cap for offset computation.
@@ -2604,14 +2608,16 @@ func (e *exporter) exportSyncDefer(s *ast.DeferStmt, sel *ast.SelectorExpr, sele
 func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	// P3-M2b (ADR-0002): `go m.Op(args)` — GoStatementNode only builds
 	// zero-arg spawns (P2-M1), so a direct sync method go-statement
-	// desugars to go func() { <syncop> }() with the receiver/args
-	// captured. For race-free programs this is indistinguishable from
-	// evaluating them at go-time (the go statement happens-before the new
-	// goroutine; any concurrent reassignment would be a data race).
+	// desugars via exportSyncGoStmt: the receiver/args are evaluated at
+	// go-statement time into hoisted temporaries (Go spec: "the function
+	// value and parameters are evaluated as usual in the calling
+	// goroutine"), then a zero-arg funclit spawn runs the syncop against
+	// them. A value-typed ident receiver is captured by reference (gc's
+	// &m address semantics, cf. sy12).
 	if sel, ok := unwrapSelector(s.Call.Fun); ok {
 		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
 			if nt := syncPrimitiveRecv(selection.Recv()); nt != nil {
-				return e.exportSyncGoStmt(s, sel, nt)
+				return e.exportSyncGoStmt(s, sel, selection, nt)
 			}
 		}
 	}
@@ -2623,16 +2629,106 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 }
 
 // exportSyncGoStmt desugars `go m.Op(args)` on a sync primitive (see
-// exportGoStmt): a zero-arg funclit call whose body is the syncop — all
-// additive v1 wire, no factory change.
-func (e *exporter) exportSyncGoStmt(s *ast.GoStmt, sel *ast.SelectorExpr, nt *types.Named) (*Node, error) {
+// exportGoStmt): a block that first hoists every argument into a synthetic
+// temporary (`__sync_go_arg<seq>_<i> := <arg>`, via defVar + a vardecl node
+// like exportDefine) — the Go spec evaluates the function value and
+// parameters in the calling goroutine — then a zero-arg funclit spawn
+// (GoStatementNode's P2-M1 contract) whose body references the
+// temporaries. The temporaries are never reassigned, so the closure's
+// by-reference capture reads the go-time values. All additive v1 wire, no
+// factory change.
+//
+// Receiver: a value-typed ident receiver keeps the current behavior —
+// captured by reference in the body (gc's &m address semantics, cf.
+// exportSyncDefer and sy12: the address is fixed at go time, the object is
+// read at run time). A pointer-typed or non-ident receiver is hoisted
+// into a `__sync_go_recv<seq>` temporary the same way as the args (same
+// evaluation-timing rule: `go getMu().Unlock()` must call getMu at go
+// time).
+func (e *exporter) exportSyncGoStmt(s *ast.GoStmt, sel *ast.SelectorExpr, selection *types.Selection, nt *types.Named) (*Node, error) {
 	c := s.Call
 	typeName := nt.Obj().Name()
 	op := sel.Sel.Name
 	if !syncOpsInScope[typeName][op] {
 		return nil, scopeErrorf("sync.%s.%s is not in M2 scope", typeName, op)
 	}
-	inner, err := e.exportSyncOp(c, sel, nt)
+	argNodes, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	// The method's *types.Func gives the declared parameter types for the
+	// synthetic temporaries.
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync method %s.%s is not a *types.Func", typeName, op)
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync method %s.%s has non-signature type", typeName, op)
+	}
+	if sig.Params().Len() != len(argNodes) {
+		return nil, fmt.Errorf("gofrontend: sync.%s.%s arity mismatch (internal error)", typeName, op)
+	}
+	recvType := e.info.Types[sel.X].Type
+	if recvType == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for sync go receiver")
+	}
+	_, recvIsPtr := recvType.(*types.Pointer)
+	_, recvIsIdent := sel.X.(*ast.Ident)
+	captureRecv := !recvIsPtr && recvIsIdent
+
+	seq := e.syncGoSeq
+	e.syncGoSeq++
+
+	names := []string{}
+	objs := []int{}
+	values := []*Node{}
+	// hoist evaluates val now (go-statement time) into a synthetic
+	// temporary and returns an ident node referencing it for the body.
+	hoist := func(tag string, i int, typ types.Type, val *Node) (*Node, error) {
+		name := fmt.Sprintf("__sync_go_%s%d_%d", tag, seq, i)
+		v := types.NewVar(token.NoPos, nil, name, typ)
+		id, err := e.defVar(v, false)
+		if err != nil {
+			return nil, err
+		}
+		tid, err := e.typeID(typ)
+		if err != nil {
+			return nil, err
+		}
+		names = append(names, name)
+		objs = append(objs, id)
+		values = append(values, val)
+		return e.node("ident", c, map[string]any{
+			"name": name, "obj": id, "type": tid,
+		}), nil
+	}
+
+	var bodyRecv *Node
+	if captureRecv {
+		// Value-typed ident: captured by reference (&m address semantics).
+		bodyRecv, err = e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		recvNode, err := e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+		bodyRecv, err = hoist("recv", 0, recvType, recvNode)
+		if err != nil {
+			return nil, err
+		}
+	}
+	bodyArgs := make([]*Node, len(argNodes))
+	for i := range argNodes {
+		bodyArgs[i], err = hoist("arg", i, sig.Params().At(i).Type(), argNodes[i])
+		if err != nil {
+			return nil, err
+		}
+	}
+	inner, err := e.exportSyncOpNodes(c, sel, nt, bodyRecv, bodyArgs)
 	if err != nil {
 		return nil, err
 	}
@@ -2645,7 +2741,15 @@ func (e *exporter) exportSyncGoStmt(s *ast.GoStmt, sel *ast.SelectorExpr, nt *ty
 	call := e.node("call", c, map[string]any{
 		"fun": funclit, "args": []*Node{}, "type": nil,
 	})
-	return e.node("gostmt", s, map[string]any{"call": call}), nil
+	spawn := e.node("gostmt", s, map[string]any{"call": call})
+	stmts := []*Node{spawn}
+	if len(names) > 0 {
+		hoistDecl := e.node("vardecl", s, map[string]any{
+			"names": names, "objs": objs, "define": true, "type": nil, "values": values,
+		})
+		stmts = []*Node{hoistDecl, spawn}
+	}
+	return e.node("block", s, map[string]any{"stmts": stmts}), nil
 }
 
 // stmtOwner attributes an unsupported statement to its workstream.
@@ -3888,6 +3992,17 @@ func (e *exporter) exportSyncOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 	if err != nil {
 		return nil, err
 	}
+	return e.exportSyncOpNodes(c, sel, nt, recv, args)
+}
+
+// exportSyncOpNodes builds the "syncop" wire node from pre-exported
+// receiver/argument nodes (P3-M2b, WS D, ADR-0002). exportSyncOp is the
+// thin wrapper for the direct-call path; exportSyncGoStmt pre-exports
+// hoisted go-time temporaries and calls this directly so the syncop body
+// references the temporaries instead of the original expressions.
+func (e *exporter) exportSyncOpNodes(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named, recv *Node, args []*Node) (*Node, error) {
+	typeName := nt.Obj().Name()
+	op := sel.Sel.Name
 	typ, err := e.callType(c)
 	if err != nil {
 		return nil, err

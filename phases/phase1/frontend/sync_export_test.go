@@ -299,8 +299,44 @@ func main() {
 	}
 }
 
-// go m.Unlock() desugars to a zero-arg funclit spawn (GoStatementNode's
-// P2-M1 contract).
+// findGostmtBlock returns the first "block" node having a direct "gostmt"
+// child statement (the exportSyncGoStmt desugar shape), or nil.
+func findGostmtBlock(n any) map[string]any {
+	var rec func(n any) map[string]any
+	rec = func(n any) map[string]any {
+		switch v := n.(type) {
+		case map[string]any:
+			if v["kind"] == "block" {
+				if stmts, _ := fieldsOf(v)["stmts"].([]any); stmts != nil {
+					for _, s := range stmts {
+						if sm, ok := s.(map[string]any); ok && sm["kind"] == "gostmt" {
+							return v
+						}
+					}
+				}
+			}
+			for _, c := range v {
+				if r := rec(c); r != nil {
+					return r
+				}
+			}
+		case []any:
+			for _, c := range v {
+				if r := rec(c); r != nil {
+					return r
+				}
+			}
+		}
+		return nil
+	}
+	return rec(n)
+}
+
+// go m.Unlock() desugars to a block wrapping a zero-arg funclit spawn
+// (GoStatementNode's P2-M1 contract). With no args and a value-typed ident
+// receiver there is nothing to hoist, so the block holds just the spawn;
+// the receiver is captured by reference in the body (gc's &m address
+// semantics).
 func TestSyncGoUnlockDesugars(t *testing.T) {
 	src := `package main
 
@@ -321,9 +357,17 @@ func main() {
 	if err := json.Unmarshal([]byte(out), &doc); err != nil {
 		t.Fatalf("export is not JSON: %v", err)
 	}
-	goNode := findKind(doc, "gostmt")
-	if goNode == nil {
-		t.Fatal("no gostmt node in export")
+	blk := findGostmtBlock(doc)
+	if blk == nil {
+		t.Fatal("no block wrapping a gostmt in export")
+	}
+	stmts, _ := fieldsOf(blk)["stmts"].([]any)
+	if len(stmts) != 1 {
+		t.Fatalf("block stmts = %d, want 1 (no hoists for zero-arg go)", len(stmts))
+	}
+	goNode, _ := stmts[0].(map[string]any)
+	if goNode["kind"] != "gostmt" {
+		t.Fatalf("block stmt kind = %v, want gostmt", goNode["kind"])
 	}
 	call := fieldsOf(goNode)["call"].(map[string]any)
 	cf := fieldsOf(call)
@@ -335,10 +379,152 @@ func main() {
 		t.Fatalf("gostmt call args = %d, want 0", len(args))
 	}
 	body := fieldsOf(fun)["body"].(map[string]any)
-	stmts, _ := fieldsOf(body)["stmts"].([]any)
-	x := fieldsOf(stmts[0].(map[string]any))["x"].(map[string]any)
+	bstmts, _ := fieldsOf(body)["stmts"].([]any)
+	x := fieldsOf(bstmts[0].(map[string]any))["x"].(map[string]any)
 	if x["kind"] != "syncop" || fieldsOf(x)["op"] != "Unlock" {
 		t.Fatalf("spawned body = %v %v, want syncop Unlock", x["kind"], fieldsOf(x)["op"])
+	}
+	recv := fieldsOf(x)["recv"].(map[string]any)
+	if recv["kind"] != "ident" || fieldsOf(recv)["name"] != "gMu" {
+		t.Fatalf("syncop recv = %v %v, want captured ident gMu", recv["kind"], fieldsOf(recv)["name"])
+	}
+}
+
+// go wg.Add(n): the argument is hoisted into a synthetic temporary at
+// go-statement time (Go spec evaluation timing); the zero-arg spawn's body
+// references the temporary, and the temporary's value expression is the
+// original argument. The value-typed ident receiver stays captured.
+func TestSyncGoArgsHoisted(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+func main() {
+	var wg sync.WaitGroup
+	n := 3
+	go wg.Add(n)
+	wg.Wait()
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("export is not JSON: %v", err)
+	}
+	blk := findGostmtBlock(doc)
+	if blk == nil {
+		t.Fatal("no block wrapping a gostmt in export")
+	}
+	stmts, _ := fieldsOf(blk)["stmts"].([]any)
+	if len(stmts) != 2 {
+		t.Fatalf("block stmts = %d, want 2 (vardecl hoist + gostmt)", len(stmts))
+	}
+	vd, _ := stmts[0].(map[string]any)
+	if vd["kind"] != "vardecl" {
+		t.Fatalf("block stmt 0 kind = %v, want vardecl", vd["kind"])
+	}
+	vf := fieldsOf(vd)
+	names, _ := vf["names"].([]any)
+	if len(names) != 1 || names[0] != "__sync_go_arg0_0" {
+		t.Fatalf("vardecl names = %v, want [__sync_go_arg0_0]", names)
+	}
+	if vf["define"] != true {
+		t.Fatalf("vardecl define = %v, want true", vf["define"])
+	}
+	values, _ := vf["values"].([]any)
+	if len(values) != 1 {
+		t.Fatalf("vardecl values = %d, want 1", len(values))
+	}
+	val0, _ := values[0].(map[string]any)
+	if val0["kind"] != "ident" || fieldsOf(val0)["name"] != "n" {
+		t.Fatalf("hoist value = %v %v, want ident n", val0["kind"], fieldsOf(val0)["name"])
+	}
+	objs, _ := vf["objs"].([]any)
+	if len(objs) != 1 {
+		t.Fatalf("vardecl objs = %d, want 1", len(objs))
+	}
+	goNode, _ := stmts[1].(map[string]any)
+	call := fieldsOf(goNode)["call"].(map[string]any)
+	cf := fieldsOf(call)
+	if args, _ := cf["args"].([]any); len(args) != 0 {
+		t.Fatalf("gostmt call args = %d, want 0 (zero-arg spawn contract)", len(args))
+	}
+	fun := cf["fun"].(map[string]any)
+	body := fieldsOf(fun)["body"].(map[string]any)
+	bstmts, _ := fieldsOf(body)["stmts"].([]any)
+	x := fieldsOf(bstmts[0].(map[string]any))["x"].(map[string]any)
+	if x["kind"] != "syncop" || fieldsOf(x)["op"] != "Add" {
+		t.Fatalf("spawned body = %v %v, want syncop Add", x["kind"], fieldsOf(x)["op"])
+	}
+	xf := fieldsOf(x)
+	bargs, _ := xf["args"].([]any)
+	if len(bargs) != 1 {
+		t.Fatalf("syncop args = %d, want 1", len(bargs))
+	}
+	barg0, _ := bargs[0].(map[string]any)
+	bf := fieldsOf(barg0)
+	if barg0["kind"] != "ident" || bf["name"] != "__sync_go_arg0_0" {
+		t.Fatalf("syncop arg = %v %v, want ident __sync_go_arg0_0", barg0["kind"], bf["name"])
+	}
+	if bf["obj"] != objs[0] {
+		t.Fatalf("syncop arg obj = %v, want the hoisted temporary %v", bf["obj"], objs[0])
+	}
+	recv := xf["recv"].(map[string]any)
+	if recv["kind"] != "ident" || fieldsOf(recv)["name"] != "wg" {
+		t.Fatalf("syncop recv = %v %v, want captured ident wg", recv["kind"], fieldsOf(recv)["name"])
+	}
+}
+
+// go pm.Unlock() with a pointer-typed receiver: the receiver is hoisted
+// into a __sync_go_recv temporary evaluated at go-statement time (same
+// evaluation-timing rule as the args).
+func TestSyncGoPointerRecvHoisted(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+func main() {
+	pm := &sync.Mutex{}
+	pm.Lock()
+	go pm.Unlock()
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var doc any
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("export is not JSON: %v", err)
+	}
+	blk := findGostmtBlock(doc)
+	if blk == nil {
+		t.Fatal("no block wrapping a gostmt in export")
+	}
+	stmts, _ := fieldsOf(blk)["stmts"].([]any)
+	if len(stmts) != 2 {
+		t.Fatalf("block stmts = %d, want 2 (vardecl hoist + gostmt)", len(stmts))
+	}
+	vd, _ := stmts[0].(map[string]any)
+	names, _ := fieldsOf(vd)["names"].([]any)
+	if len(names) != 1 || names[0] != "__sync_go_recv0_0" {
+		t.Fatalf("vardecl names = %v, want [__sync_go_recv0_0]", names)
+	}
+	goNode, _ := stmts[1].(map[string]any)
+	call := fieldsOf(goNode)["call"].(map[string]any)
+	fun := fieldsOf(call)["fun"].(map[string]any)
+	body := fieldsOf(fun)["body"].(map[string]any)
+	bstmts, _ := fieldsOf(body)["stmts"].([]any)
+	x := fieldsOf(bstmts[0].(map[string]any))["x"].(map[string]any)
+	recv := fieldsOf(x)["recv"].(map[string]any)
+	if recv["kind"] != "ident" || fieldsOf(recv)["name"] != "__sync_go_recv0_0" {
+		t.Fatalf("syncop recv = %v %v, want ident __sync_go_recv0_0", recv["kind"], fieldsOf(recv)["name"])
+	}
+	if fieldsOf(recv)["obj"] != fieldsOf(vd)["objs"].([]any)[0] {
+		t.Fatal("syncop recv obj does not match the hoisted temporary")
 	}
 }
 
