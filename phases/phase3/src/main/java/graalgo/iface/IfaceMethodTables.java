@@ -80,15 +80,16 @@ public final class IfaceMethodTables {
                             + "\" refers to unknown function object id " + m.getValue().objId
                             + " (WS D)");
                 }
-                funcs.put(m.getKey(), new IfaceMethodTarget(f, m.getValue().recvPath));
+                funcs.put(m.getKey(), new IfaceMethodTarget(f, m.getValue().recvPath,
+                        m.getValue().pointerReceiver));
             }
             out.put(e.getKey(), funcs);
         }
         return out;
     }
 
-    /** Wire method entry: object id + receiver adaptation path. */
-    private record MethodRef(int objId, int[] recvPath) {}
+    /** Wire method entry: object id + receiver adaptation data. */
+    private record MethodRef(int objId, int[] recvPath, boolean pointerReceiver) {}
 
     private static Map<String, MethodRef> readMethods(Json.Object entry, String path) {
         Json.Object detail = entry.object("detail", path);
@@ -107,19 +108,27 @@ public final class IfaceMethodTables {
                 throw new FrontendException(mp + ": method entry must be an object");
             }
             int[] recvPath = readIndex(eo, mp);
-            out.put(eo.string("name", mp), new MethodRef(eo.intValue("obj", mp), recvPath));
+            boolean pointerReceiver = "pointer".equals(eo.string("recv", mp));
+            out.put(eo.string("name", mp),
+                    new MethodRef(eo.intValue("obj", mp), recvPath, pointerReceiver));
         }
         return out;
     }
 
     /**
      * The wire {@code "index"} field → receiver adaptation path.
-     * Missing (pre-promotion documents) means a direct method.
+     * Missing (pre-promotion documents) means a direct method; explicit
+     * JSON null marks an unsupported promotion (lazy fail-fast at itab
+     * build, not here — the table is per program, the dispatch is per
+     * call).
      */
     private static int[] readIndex(Json.Object eo, String mp) {
         Json.Value iv = eo.opt("index");
-        if (iv == null || iv instanceof Json.Null) {
+        if (iv == null) {
             return new int[0];
+        }
+        if (iv instanceof Json.Null) {
+            return null;
         }
         if (!(iv instanceof Json.Array arr)) {
             throw new FrontendException(mp + ": \"index\" must be an array");

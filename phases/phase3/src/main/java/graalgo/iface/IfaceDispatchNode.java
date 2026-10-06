@@ -113,10 +113,13 @@ public final class IfaceDispatchNode extends GoExprNode {
         }
         Object[] callArgs = new Object[argVals.length + 1];
         // P3-M3: promoted methods receive the embedded value — walk the
-        // exporter's "index" path from the dynamic value.
+        // exporter's "index" path from the dynamic value. A value-receiver
+        // method promoted via a pointer-embedded field gets the trailing
+        // dereference (gc's implicit (*p)).
         callArgs[0] = target.isDirect()
                 ? data
-                : graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath());
+                : graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath(),
+                        !target.pointerReceiver());
         System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
         // FuncValueCallNode's recoverAllowed dance: recover() is only
         // non-nil when called directly by a deferred function — clear the

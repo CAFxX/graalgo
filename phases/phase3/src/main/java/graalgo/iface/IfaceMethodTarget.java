@@ -4,7 +4,7 @@ import graalgo.values.GoFunc;
 
 /**
  * One installed interface method (P3-M3, WS D): the {@link GoFunc} to
- * invoke plus the receiver adaptation path.
+ * invoke plus the receiver adaptation data.
  *
  * <p>{@code recvPath} is the exporter's wire {@code "index"} field: the
  * go/types embedding path from the dynamic type to the method's declaring
@@ -12,14 +12,30 @@ import graalgo.values.GoFunc;
  * promoted via embedded field 0. Dispatch walks it
  * ({@code SelectorNode.readFieldPath}) so a promoted method receives the
  * embedded value, not the outer struct.
+ *
+ * <p>{@code pointerReceiver} is the wire {@code "recv"} field: true for
+ * pointer-receiver methods. A value-receiver method promoted via a
+ * pointer-embedded field gets one trailing dereference (gc's implicit
+ * {@code (*p)}); the reverse combination (pointer receiver via a
+ * value-embedded field) is marked unsupported (wire {@code "index"} null)
+ * and fails fast with a named P3-M3 scope error at itab build — silently
+ * type-unsound otherwise.
  */
-public record IfaceMethodTarget(GoFunc func, int[] recvPath) {
+public record IfaceMethodTarget(GoFunc func, int[] recvPath, boolean pointerReceiver) {
     public IfaceMethodTarget {
-        recvPath = recvPath == null ? new int[0] : recvPath.clone();
+        // A null path marks an unsupported promotion (wire "index": null);
+        // it must survive (not normalize to empty) so the itab build can
+        // fail fast with the named scope error.
+        recvPath = recvPath == null ? null : recvPath.clone();
+    }
+
+    /** False for unsupported promotions (wire {@code "index"} null). */
+    public boolean supported() {
+        return recvPath != null;
     }
 
     /** True for directly-declared methods (no receiver adaptation). */
     public boolean isDirect() {
-        return recvPath.length == 0;
+        return recvPath != null && recvPath.length == 0;
     }
 }

@@ -111,6 +111,11 @@ public final class IfaceMethodTable {
                         + "\" missing for dynamic type \"" + descriptorName
                         + "\" (unreachable: go/types verified assignability)");
             }
+            if (!t.supported()) {
+                throw new FrontendException("interface dispatch: method \"" + name
+                        + "\" promoted via value-embedded field is not supported"
+                        + " (P3-M3 scope)");
+            }
             ordered.put(name, t);
         }
         return new IfaceItab(descriptorName, ifaceId, ordered);

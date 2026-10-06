@@ -95,6 +95,28 @@ public final class IfaceMethodTablesTest {
     }
 
     /**
+     * A wire {@code "index": null} marks an unsupported promotion: the
+     * target resolves but reports unsupported (the itab build fails fast
+     * with the named P3-M3 scope error, not the table resolve).
+     * verifies: GG-0014
+     */
+    public void testNullIndexMarksUnsupported() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "named", "detail": {"name": "main.V", "underlying": 0,
+                     "methods": [{"name": "M", "obj": 3, "recv": "pointer", "index": null}]}},
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}}
+                 ],
+                 "objects": [], "funcs": []}""";
+        Map<String, Map<String, IfaceMethodTarget>> out =
+                IfaceMethodTables.resolve(doc, Map.of(3, goFunc()));
+        IfaceMethodTarget t = out.get("main.V").get("M");
+        assertTrue(t != null, "method present");
+        assertTrue(!t.supported(), "null index = unsupported promotion");
+    }
+
+    /**
      * A method objID missing from Program.functions() fails fast naming
      * the descriptor, method, and objID.
      * verifies: GG-0014

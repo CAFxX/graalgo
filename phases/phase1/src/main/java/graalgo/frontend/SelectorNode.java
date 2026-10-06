@@ -38,16 +38,21 @@ public final class SelectorNode extends GoExprNode {
 
     /** Navigates to the selected field's canonical boxed value. */
     static Object readField(GoExprNode objNode, int[] selpath, VirtualFrame frame) {
-        return readFieldPath(objNode.executeObject(frame), selpath);
+        return readFieldPath(objNode.executeObject(frame), selpath, false);
     }
 
     /**
      * Navigates a field-index path from a runtime value (P3-M3, WS D):
      * promoted-method receiver adaptation in interface dispatch walks the
      * exporter's {@code "index"} path exactly like a field selection.
-     * Empty path returns the value unchanged.
+     * Empty path returns the value unchanged (up to {@code derefResult}).
+     *
+     * @param derefResult when true, dereference the final value once more
+     *        (nil → gc's nil-dereference panic): a value-receiver method
+     *        promoted via a pointer-embedded field receives the pointed-to
+     *        struct, mirroring gc's implicit {@code (*p)}.
      */
-    public static Object readFieldPath(Object o, int[] selpath) {
+    public static Object readFieldPath(Object o, int[] selpath, boolean derefResult) {
         for (int idx : selpath) {
             o = deref(o);
             GoStruct s = (GoStruct) o;
@@ -57,7 +62,7 @@ public final class SelectorNode extends GoExprNode {
                 o = s.getObject(idx);
             }
         }
-        return o;
+        return derefResult ? deref(o) : o;
     }
 
     static Object deref(Object o) {

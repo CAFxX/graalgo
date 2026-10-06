@@ -97,12 +97,17 @@ public final class IfaceDispatchNodeTest {
 
     /** Direct (non-promoted) method target. */
     private static IfaceMethodTarget target(CaptureRoot root) {
-        return new IfaceMethodTarget(goFunc(root), new int[0]);
+        return new IfaceMethodTarget(goFunc(root), new int[0], true);
     }
 
     /** Promoted method target: receiver adapted via the field path. */
     private static IfaceMethodTarget promotedTarget(CaptureRoot root, int... recvPath) {
-        return new IfaceMethodTarget(goFunc(root), recvPath);
+        return new IfaceMethodTarget(goFunc(root), recvPath, true);
+    }
+
+    /** Promoted value-receiver target: trailing dereference applies. */
+    private static IfaceMethodTarget promotedValueTarget(CaptureRoot root, int... recvPath) {
+        return new IfaceMethodTarget(goFunc(root), recvPath, false);
     }
 
     private static VirtualFrame frame() {
@@ -393,6 +398,32 @@ public final class IfaceDispatchNodeTest {
             IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
             n.executeLong(frame());
             assertEquals("DATA", root.seen.get(0)[1], "params[0] is the receiver data");
+        } finally {
+            tearDown();
+        }
+    }
+    /**
+     * Value-receiver method promoted via a pointer-embedded field: the
+     * trailing dereference yields the pointed-to struct (gc's implicit
+     * (*p)), not the pointer.
+     * verifies: GG-0014
+     */
+    public void testPromotedValueReceiverDeref() {
+        CaptureRoot root = new CaptureRoot(7L);
+        setUp(Map.of("main.MW", Map.of("M", promotedValueTarget(root, 0))));
+        try {
+            graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.MW",
+                    List.of(new graalgo.values.GoStructDescriptor.Field("Buf",
+                            GoKind.POINTER, false, 0)));
+            Object referent = new Object();
+            graalgo.values.GoPointer ptr = new graalgo.values.GoPointer(referent);
+            graalgo.values.GoStruct outer =
+                    new graalgo.values.GoStruct(desc, new long[0], new Object[]{ptr});
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.MW", outer), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            assertEquals(7L, n.executeLong(frame()), "promoted dispatch result");
+            assertTrue(root.seen.get(0)[1] == referent,
+                    "params[0] is the dereferenced struct, not the pointer");
         } finally {
             tearDown();
         }
