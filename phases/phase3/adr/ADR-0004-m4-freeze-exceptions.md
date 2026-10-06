@@ -188,3 +188,24 @@ D3; gc's `writeBarrier` is a linknamed *variable*, not a function.
   phase-3, iface 13/13, sync 25/25.
 - `verifies: GG-0020` annotations; `requirements/GG-0020.yaml` history
   entry.
+
+## Remediation amendments (2026-10-06, review findings)
+
+Freeze-exception edits made during P3-M4 review remediation. Each is
+additive or comment-only on frozen files; no frozen signature changed.
+
+- **P0-1** (`Boxing.java`, `GoFuncRootNode.java`): the unconditional
+  `AtomicLong`/`AtomicInteger` clone in `copyForAssign` and in the
+  param loop is now gated on `kind == GoKind.STRUCT`. No new API; the
+  two clone sites keep their shape.
+- **P1-1** (`Intrinsics.java`): removed the `n <= 0` guard in
+  `fastrandn` (body change only; signature unchanged) so
+  `fastrandn(0)` returns 0 like gc's Lemire multiply-shift.
+- **P1-2** (`IndexNode.java`, `IndexWriteNode.java`, plus the same
+  class of runtime panic sites in `BinaryOpNode`, `CompositeLitNode`,
+  `SliceExprNode`, `SelectorNode`, `MakeNode`, `FuncValueCallNode`,
+  `PanicNode`, `DeferNode`, `TypeAssertNode`): runtime panics now pass
+  `this` to the additive `Panic.throwPanic(Object, Object, String,
+  Node)` overload (documented in `Panic`'s javadoc as the additive
+  throw-site carrier) so the panic renderer attributes the innermost
+  frame to the panicking statement, not the function definition line.

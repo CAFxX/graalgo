@@ -10,6 +10,7 @@ Go programs exercising the P3-M4 `sync/atomic` typed wrappers
 | `at00_ops.go` | All six types × five ops (Load/Store/Add/Swap/CompareAndSwap), sequential, deterministic values |
 | `at01_contention.go` | 8 goroutines × 1000 `Add` = 8000; 4 goroutines × 1000 CAS-loop increments = 4000 |
 | `at02_types.go` | Zero value usable; `new()` form; value-copy semantics (`b := a` copies, by-value param copies) |
+| `at03_atomic_pointers.go` | Pointer aliasing: `*atomic.Int64` param, pointer copy, interface-held pointer (P0-1); by-value still clones |
 
 ## Design notes
 

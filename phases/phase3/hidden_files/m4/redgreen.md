@@ -5,6 +5,39 @@ the RED (failing output before the fix), the fix, the GREEN (passing
 output after). Mutations were verified to genuinely fail — no
 tautologies.
 
+## 0. Remediation red-greens (2026-10-06 review findings)
+
+### R1. Atomic pointer aliasing (P0-1)
+
+**RED** — `p:=new(atomic.Int64); setIt(p); p.Load()` where
+`func setIt(p *atomic.Int64){p.Store(9)}`:
+
+```
+gc:       9
+graalgo:  0
+```
+
+and `p:=new(atomic.Int64); q:=p; q.Store(5); p.Load()`:
+
+```
+gc:       5
+graalgo:  0
+```
+
+`Boxing.copyForAssign` and `GoFuncRootNode` cloned `AtomicLong`/
+`AtomicInteger` unconditionally, severing the aliasing: the D5 carrier
+of a `*atomic.Int64` IS the same cell object, and a store through one
+pointer must be visible through every alias.
+
+Fix: gate both clone sites on `kind == GoKind.STRUCT` (mirroring the
+`GoStruct` branch directly above): struct-kind (by-value) copies still
+clone — `b:=a; b.Store(7)` leaves `a` alone, like gc — while
+POINTER-kind carriers pass the cell through by reference.
+
+**GREEN** — new corpus `at03_atomic_pointers`: `9`, `5 5`, `7`
+(interface-held pointer), `3 0` (by-value still clones); gc-identical,
+gmp=1 and gmp=4. Existing `at02_types` (value form) still passes.
+
 ## 1. Linkname arg/return boxing (`Linknames.callGo`)
 
 **RED** — calling a linknamed Go helper with a concrete arg, then
