@@ -886,6 +886,26 @@ public final class NodeFactory {
         return d;
     }
 
+    /**
+     * P3-M3 remediation (R1 P0-2, ADR-0003): public accessor returning the
+     * factory's canonical descriptor for a type-table id — the
+     * process-wide {@code NAMED_DESCS}/{@code STRUCTURAL_DESCS} instances
+     * for named/structural types (M6, WS H), {@code basicDescriptorFor} for
+     * basic kinds. Pure delegation to {@link #typeDescriptorFor}: additive
+     * new method, no behavior change to any existing path (the factory's
+     * own boxing already goes through {@code typeDescriptorFor}).
+     *
+     * <p>Consumed by the phase-3 {@code IfaceDispatchBuilder}'s
+     * call-site arg adaptation: boxing an argument whose type was never
+     * otherwise interned in the enclosing function's {@code BuildCtx} must
+     * still produce the canonical instance, because type assertions, type
+     * switches, and interface {@code ==} compare descriptors by identity.
+     */
+    public static graalgo.values.GoTypeDescriptor canonicalDescriptorFor(BuildCtx ctx, int typeId,
+            String path) {
+        return typeDescriptorFor(ctx, typeId, path);
+    }
+
     /** Unnamed composite kinds canonicalized by structure (M6, WS H). */
     private static boolean isStructuralComposite(String k) {
         return "struct".equals(k) || "array".equals(k) || "slice".equals(k)

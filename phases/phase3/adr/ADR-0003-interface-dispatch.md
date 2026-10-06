@@ -51,8 +51,19 @@ freeze §5):
    interfaces.
 2. **Method tables on type-table entries** (the WS D hook): populate
    `"methods"` on `named` entries as
-   `[{"name": "Write", "obj": 17, "recv": "pointer"}, ...]`
-   (`obj` = funcdecl object id; `recv` = declared receiver kind), and add
+   `[{"name": "Write", "obj": 17, "recv": "pointer", "index": [],
+   "implkey": "Write\x00func(slice(basic:8))(basic:2)"}, ...]`
+   (`obj` = funcdecl object id; `recv` = declared receiver kind;
+   `index` = receiver-adaptation path: `Selection.Index()` minus its last
+   entry — `[]` for direct methods, e.g. `[0]` for a method promoted via
+   embedded field 0, `null` for the unsupported value-embedded +
+   pointer-receiver shape, which fails fast at itab build with a named
+   error if dispatched; `implkey` = method-identity key: method name —
+   unexported names qualified with their package path, as gc compares
+   them — plus `\x00` plus a structural signature key with aliases
+   expanded, so `Write([]uint8)` and `Write([]byte)` share a key. The
+   runtime implements check compares `implkey`s, not bare names —
+   signature-aware since the R1 P0-1 remediation), and add
    the same field on `pointer` entries (full `*T` method set: value +
    pointer-receiver methods). Computed via `types.NewMethodSet` over the
    named type / pointer-to-named (this covers promoted/embedded methods,
@@ -101,6 +112,48 @@ freeze §5):
    factory source (red: `expected=pointer#12a82948 actual=pointer#2`) and
    implemented the factory-accurate naming. The Go producer is unaffected
    (it never computes descriptor names).
+
+## Amendment 2026-10-06 (P3-M3 remediation: R1 P0-1, R1 P0-2)
+
+Independent code-review remediation
+(`reviews/phase3-m3/reviewer1-code.md`). Two confirmed silent
+divergences vs gc, both fixed with red-green evidence
+(`phases/phase3/hidden_files/m3/redgreen.md`); both changes are additive:
+
+1. **Signature-aware implements check (R1 P0-1).** The type-assertion
+   implements check compared method NAMES only: `a.(Writer)` succeeded
+   when the dynamic type declared `Write(string)` instead of
+   `Write([]byte)` (gc: assertion fails). The exporter now emits an
+   `"implkey"` on every method-table entry and every interface method
+   entry (decision item 2, updated above); the runtime check
+   (`TypeAssertNode.holds`) tests implkey inclusion instead of
+   name inclusion. The key computation lives entirely in the exporter
+   (go/types is authoritative there); the Java side compares opaque
+   strings. A missing `"implkey"` on a method entry is a corrupt 0.4.0
+   document — fail fast, never fall back to the name-only comparison
+   (the fallback IS the soundness hole). Red-green: `p01.go` prints
+   `assert ok` pre-fix vs gc's `assert failed` (RED), `assert failed`
+   post-fix (GREEN); positive controls (correct signature with a
+   differently-named parameter; `byte`/`uint8`/alias cross-spellings)
+   stay `ok`. Pinned by corpus `if11_assert_signature.go`.
+2. **Canonical descriptors from the dispatch builder (R1 P0-2).**
+   `IfaceDispatchBuilder`'s call-site arg adaptation minted a
+   non-canonical `GoTypeDescriptor` on the `ctx.typeDescs` miss path —
+   name-correct but not instance-identical — so a type assert, type
+   switch, or interface `==` inside the callee on that exact value took
+   the wrong branch (repro: `i.M(&T{v:2})` with `x.(*T)` inside printed
+   `no`; gc prints `yes-*T`). The miss path is routine, not exceptional:
+   structural descriptors (notably every `&T{...}` pointer argument)
+   live only in the factory's process-wide structural cache, never in
+   the per-function `typeDescs` map. Fix: new public additive accessor
+   `NodeFactory.canonicalDescriptorFor(BuildCtx, int, String)` — pure
+   delegation to the existing `typeDescriptorFor`, no behavior change to
+   any existing path — documented here as part of the factory exception
+   (same change class as the WS-D retirement amendment, which already
+   modified the frozen factory). The builder uses it instead of minting
+   a replica. Red-green: the repro prints `no`/`no` pre-fix (RED),
+   `yes-*T`/`yes-*T` post-fix (GREEN, assert + type-switch variants);
+   pinned by corpus `if12_callee_type_identity.go`.
 
 ## Amendment 2026-10-06 (factory-side WS-D retirements)
 

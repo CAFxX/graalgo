@@ -30,16 +30,20 @@ import graalgo.values.GoTypeDescriptor;
  * {@link InterfaceBoxNode} constructor. The descriptor comes from the
  * public {@code ctx.typeDescs} cache when interned, from the public
  * {@link NodeFactory#basicDescriptorFor} for basic/untyped kinds
- * (canonical), and from a name-exact {@link DescriptorNames} replica
- * otherwise — the replica carries the factory's exact descriptor
- * <em>name</em> (what dispatch keys on) but is not object-identical to the
- * factory's canonical instance, so a type switch/assert inside the callee
- * on that exact value could miss. In practice the miss path only triggers
- * for named/structural types never otherwise interned in the enclosing
- * function's build; the dispatch itself is always correct.
+ * (canonical), and otherwise from the public
+ * {@link NodeFactory#canonicalDescriptorFor} accessor (R1 P0-2) — the
+ * miss path is routine, not exceptional: structural descriptors (notably
+ * every {@code &T{...}} pointer argument) live only in the factory's
+ * process-wide structural cache, never in the per-function
+ * {@code typeDescs} map. The miss-path descriptor is object-identical to
+ * the factory's canonical instance, so type switches/asserts and
+ * interface {@code ==} inside the callee behave exactly as on
+ * factory-boxed values. Dispatch itself keys on descriptor names and was
+ * always correct.
  *
  * <p>Registered via the public {@code NodeFactory.registerExprKind}
- * hook — no Phase-1 change.
+ * hook — no Phase-1 change (beyond the ADR-0003-documented
+ * {@code canonicalDescriptorFor} accessor).
  */
 public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
     private final NodeFactory factory;
@@ -216,7 +220,7 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
             }
             descriptor = ctx.typeDescs.get(fromId);
             if (descriptor == null) {
-                descriptor = replicaDescriptor(ctx, fromId, dataKind, path);
+                descriptor = replicaDescriptor(ctx, fromId, path);
             }
         }
         InterfaceBoxNode n = new InterfaceBoxNode(child, dataKind, descriptor);
@@ -226,19 +230,19 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
     }
 
     /**
-     * Name-exact (not instance-canonical) descriptor for the
-     * {@code ctx.typeDescs} miss path — see the class javadoc.
+     * The factory's canonical descriptor for the {@code ctx.typeDescs}
+     * miss path (R1 P0-2): the miss is normal, not exceptional — pointer
+     * (and other structural) descriptors live only in the factory's
+     * process-wide structural cache, never in the per-function
+     * {@code typeDescs} map, so boxing a {@code &T{...}} argument misses
+     * routinely. The returned instance is object-identical to the one the
+     * factory itself produces for the same type id, so type
+     * assertions/switches/interface {@code ==} on the boxed value behave
+     * exactly as on factory-boxed values.
      */
     private static GoTypeDescriptor replicaDescriptor(NodeFactory.BuildCtx ctx, int fromId,
-            GoKind dataKind, String path) {
-        int tid = DescriptorNames.resolveAlias(ctx.types, fromId, path);
-        String k = ctx.types.entry(tid, path).string("kind", path);
-        if ("basic".equals(k)) {
-            // Canonical: the factory interns basic descriptors process-wide.
-            return NodeFactory.basicDescriptorFor(DescriptorNames.kindOf(ctx.types, tid, path));
-        }
-        return new GoTypeDescriptor(DescriptorNames.descriptorName(ctx.types, fromId),
-                dataKind, false);
+            String path) {
+        return NodeFactory.canonicalDescriptorFor(ctx, fromId, path);
     }
 
     /** Replica of the factory's private {@code defaultKind}. */
