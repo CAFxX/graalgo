@@ -89,7 +89,7 @@ type PackageRef struct {
 type refKind int
 
 const (
-	kindSynthetic refKind = iota // "runtime"/"fmt"/"sync": resolved by the frozen overlay
+	kindSynthetic refKind = iota // "runtime"/"fmt"/"sync"/"time"/"context": resolved by the frozen overlay
 	kindStdlib                   // $GOROOT/src/<path>: resolvable, not compilable in M1
 	kindLocal                    // module-local package: flattened
 )
@@ -386,12 +386,15 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 // "runtime"/"fmt"/"sync" resolve to synthetic markers; stdlib paths resolve to
 // their GOROOT directory (proving the mapping — compiling them is a scope
 // error raised by the importer); module-path-prefixed imports resolve to
-// directories; anything else is an error.
+// directories; anything else is an error. "time" and "context" resolve to
+// synthetic markers (never GOROOT): the phase-1 exporter type-checks them
+// against its synthetic time/context packages (ADR-0005), so the p3frontend
+// mirror must not see the real GOROOT sources.
 func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	// Synthetic packages resolve independently of fromDir; keep them out
 	// of the anchored cache.
 	switch path {
-	case "runtime", "fmt", "sync":
+	case "runtime", "fmt", "sync", "time", "context":
 		return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
 	}
 	anchor, err := filepath.Abs(fromDir)

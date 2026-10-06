@@ -77,6 +77,21 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticAtomicPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "time":
+		pkg := syntheticTimePackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "context":
+		// Context references time.Time/time.Duration: ensure the
+		// synthetic time package is built and cached first.
+		timePkg, ok := imp.pkgs["time"]
+		if !ok {
+			timePkg = syntheticTimePackage()
+			imp.pkgs["time"] = timePkg
+		}
+		pkg := syntheticContextPackage(timePkg)
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	case "unsafe":
 		pkg := syntheticUnsafePackage()
 		imp.pkgs[path] = pkg
