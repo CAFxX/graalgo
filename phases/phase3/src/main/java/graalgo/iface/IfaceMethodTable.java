@@ -5,7 +5,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import graalgo.frontend.FrontendException;
 import graalgo.values.GoTypeDescriptor;
@@ -41,15 +40,24 @@ public final class IfaceMethodTable {
     /** (descriptor name, iface id) → built itab. */
     private static final ConcurrentHashMap<ItabKey, IfaceItab> itabs = new ConcurrentHashMap<>();
     /**
-     * P3-M4 (WS C, ADR-0004 D3): interface descriptor name → method names
-     * in declaration order, for the {@code Intrinsics.itabFor} intrinsic
-     * (which has no wire ifacemethod node to carry the list). Populated by
+     * P3-M4 (WS C, ADR-0004 D3; P2-1: values are now
+     * {@link IfaceWireEntry}): interface descriptor name → wire identity,
+     * for the {@code Intrinsics.itabFor} intrinsic (which has no wire
+     * ifacemethod node to carry the id or the method list). Populated by
      * the launcher from the doc type table alongside {@link #install}.
      */
-    private static volatile Map<String, List<String>> ifaceMethods = Map.of();
-    /** Stable per-process iface ids for the intrinsic path (no collisions). */
-    private static final ConcurrentHashMap<String, Integer> IFACE_IDS = new ConcurrentHashMap<>();
-    private static final AtomicInteger IFACE_ID_GEN = new AtomicInteger(1);
+    private static volatile Map<String, IfaceWireEntry> ifaceMethods = Map.of();
+    /**
+     * P3-M4 remediation (P2-1): the wire identity of an interface for the
+     * {@code Intrinsics.itabFor} intrinsic path — the type-table id plus
+     * the method names in declaration order. The intrinsic path uses the
+     * SAME id namespace as the dispatch path (whose ifacemethod "iface"
+     * field is a type-table id), so the two paths share the {@code itabs}
+     * cache key unambiguously. (The old process-counter minting, starting
+     * at 1, could collide with a wire id for a different interface and
+     * return the wrong itab.)
+     */
+    public record IfaceWireEntry(int wireId, List<String> methodNames) {}
 
     private record ItabKey(String descriptorName, int ifaceId) {}
 
@@ -84,10 +92,11 @@ public final class IfaceMethodTable {
      * Called by the launcher alongside {@link #install}; like it, the
      * install is wholesale and drops nothing else.
      */
-    public static void installInterfaces(Map<String, List<String>> methods) {
-        Map<String, List<String>> copy = new HashMap<>();
-        for (Map.Entry<String, List<String>> e : methods.entrySet()) {
-            copy.put(e.getKey(), List.copyOf(e.getValue()));
+    public static void installInterfaces(Map<String, IfaceWireEntry> methods) {
+        Map<String, IfaceWireEntry> copy = new HashMap<>();
+        for (Map.Entry<String, IfaceWireEntry> e : methods.entrySet()) {
+            IfaceWireEntry en = e.getValue();
+            copy.put(e.getKey(), new IfaceWireEntry(en.wireId(), List.copyOf(en.methodNames())));
         }
         synchronized (LOCK) {
             ifaceMethods = Map.copyOf(copy);
@@ -95,25 +104,25 @@ public final class IfaceMethodTable {
     }
 
     /**
-     * The {@code Intrinsics.itabFor} intrinsic entry (P3-M4, ADR-0004 D3):
-     * builds (and caches) the itab for a concrete descriptor against the
-     * named interface, resolving the interface's method list from
-     * {@link #installInterfaces} and minting a stable per-process iface
-     * id. The returned itab is equal in content to the dispatch path's
-     * itab for the same (type, interface) pair (separate cache key —
-     * itabs are immutable value objects).
+     * The {@code Intrinsics.itabFor} intrinsic entry (P3-M4, ADR-0004 D3;
+     * P2-1: one id namespace): builds (and caches) the itab for a concrete
+     * descriptor against the named interface, resolving the interface's
+     * wire id and method list from {@link #installInterfaces}. The
+     * returned itab is the identical cached instance the dispatch path
+     * builds for the same (type, wire iface id) pair — same key, same
+     * itab.
      *
      * @param descriptorName the concrete type's descriptor name
      * @param ifaceName the interface's descriptor name
      */
     public static IfaceItab itabForIntrinsic(String descriptorName, String ifaceName) {
-        List<String> names = ifaceMethods.get(ifaceName);
-        if (names == null) {
+        IfaceWireEntry entry = ifaceMethods.get(ifaceName);
+        if (entry == null) {
             throw new FrontendException("interface dispatch: no interface method list installed for \""
                     + ifaceName + "\" (needs gofrontend >= 0.5.0 interface entries)");
         }
-        int ifaceId = IFACE_IDS.computeIfAbsent(ifaceName, k -> IFACE_ID_GEN.getAndIncrement());
-        return itabFor(descriptorName, ifaceId, names);
+        // One namespace: the wire id, identical to the dispatch path's.
+        return itabFor(descriptorName, entry.wireId(), entry.methodNames());
     }
 
     /**

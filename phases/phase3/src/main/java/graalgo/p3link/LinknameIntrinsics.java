@@ -52,6 +52,11 @@ public final class LinknameIntrinsics {
      * after {@code IfaceMethodTable.install}, which this does not repeat).
      */
     public static void install(String jsonText, NodeFactory.Program program) {
+        // P3-M4 remediation (P2-2): the static registries must be cleared
+        // on every install — the launcher calls install per program build
+        // (even empty), and without this a previous program's symbols,
+        // intrinsics, and Go bindings would leak into this run.
+        Linknames.clear();
         // Go → intrinsic: the M4 gc-symbol table. D5 argument types:
         // fastrandn takes an int32 (Integer).
         Linknames.register("runtime.fastrand", args -> Intrinsics.fastrand(), 0);

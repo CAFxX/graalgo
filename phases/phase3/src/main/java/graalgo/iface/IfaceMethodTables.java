@@ -102,20 +102,21 @@ public final class IfaceMethodTables {
      * ones (keyed by the factory's structural name, e.g.
      * {@code interface#3}) are covered.
      */
-    public static Map<String, List<String>> resolveInterfaces(String jsonText) {
+    public static Map<String, IfaceMethodTable.IfaceWireEntry> resolveInterfaces(String jsonText) {
         Json.Value v = Json.parse(jsonText);
         if (!(v instanceof Json.Object doc)) {
             throw new FrontendException("document: must be a JSON object");
         }
         TypeTable types = new TypeTable(doc.array("types", "document"));
-        Map<String, List<String>> out = new LinkedHashMap<>();
+        Map<String, IfaceMethodTable.IfaceWireEntry> out = new LinkedHashMap<>();
         for (int id = 0; id < types.size(); id++) {
             String path = "types[" + id + "]";
             Json.Object entry = types.entry(id, path);
             String kind = entry.string("kind", path);
             if ("interface".equals(kind)) {
                 List<String> names = readInterfaceMethodNames(entry, path);
-                out.put(DescriptorNames.descriptorName(types, id), names);
+                out.put(DescriptorNames.descriptorName(types, id),
+                        new IfaceMethodTable.IfaceWireEntry(id, names));
             } else if ("named".equals(kind)) {
                 Json.Object detail = entry.object("detail", path);
                 Json.Value underlying = detail.opt("underlying");
@@ -125,7 +126,11 @@ public final class IfaceMethodTables {
                     Json.Object uentry = types.entry(uid, upath);
                     if ("interface".equals(uentry.string("kind", upath))) {
                         List<String> names = readInterfaceMethodNames(uentry, upath);
-                        out.put(detail.string("name", path), names);
+                        // The wire id is the *interface* entry's id (uid):
+                        // the dispatch path's ifacemethod "iface" field
+                        // always points at an "interface"-kind entry.
+                        out.put(detail.string("name", path),
+                                new IfaceMethodTable.IfaceWireEntry(uid, names));
                     }
                 }
             }

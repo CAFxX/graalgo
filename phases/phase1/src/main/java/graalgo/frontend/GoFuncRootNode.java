@@ -129,6 +129,21 @@ public final class GoFuncRootNode extends RootNode {
                 }
                 arg = data;
             }
+            // P3-M4 remediation (P2-5): assert the caller contract. After
+            // the unwrap above, a concrete parameter must carry a D5
+            // value, never an interface box: the linkname intrinsic→Go
+            // bridge boxes any-typed args as GoInterface (unwrapped
+            // here), while a direct Go call passes D5 values. If this
+            // fires, the caller path violated the contract — fail fast,
+            // never silently misbox. (Checked-in coverage:
+            // LinknameEndToEndTest.testCallGoEndToEndPrints42 drives the
+            // bridge with an any-typed arg for a concrete param.)
+            if (paramKinds[i] != graalgo.values.GoKind.INTERFACE
+                    && arg instanceof graalgo.values.GoInterface) {
+                throw new AssertionError("GoFuncRootNode(" + funcName
+                        + "): concrete param " + i
+                        + " still interface-boxed after unwrap (caller contract violated)");
+            }
             // P3-M4 (WS C; remediated P3-M4 P0-1): atomic cells are Go
             // values: a by-value (STRUCT-kind) parameter gets its own
             // cell (clone), so `f(a)` cannot observe or affect the

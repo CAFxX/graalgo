@@ -22,6 +22,7 @@ public final class IfaceTestRunner {
         TESTS.add(LinknameTest.class);
         TESTS.add(ItabForIntrinsicTest.class);
         TESTS.add(AtomicContentionTest.class);
+        TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
     }
 
     private IfaceTestRunner() {}

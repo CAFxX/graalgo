@@ -89,6 +89,53 @@ as known gaps.
 harness now compares the FULL normalized stderr for panic programs
 (P2-4), so a regression to the definition line fails the corpus.
 
+### R4. `Linknames` no-leak across programs (P2-2)
+
+**RED** — `LinknameIntrinsics.install` never called `Linknames.clear()`,
+despite the launcher comment claiming "a previous program's bindings
+can never leak into this run". In one JVM: run program A (defines
+`main.helper`), then program B (does NOT define it; calls
+`callGo("main.helper", …)`):
+
+```
+program B: exit 0, stdout "42"   (silently reused A's stale binding)
+```
+
+Fix (the honest one — the comment was right, the code was wrong): call
+`Linknames.clear()` at the top of `install`, before re-registering the
+M4 symbol table.
+
+**GREEN** — `LinknameEndToEndTest.testNoLeakAcrossProgramsInOneJvm`:
+program A prints 42; program B fails fast with
+`linkname: no Go function bound under name "main.helper"`, exit ≠ 0.
+
+### R5. itabFor one id namespace (P2-1)
+
+**RED** — the intrinsic path minted iface ids from a process counter
+starting at 1 while the dispatch path used wire type-table ids; both
+shared the `itabs` cache key `(descriptorName, ifaceId)`. Collision
+probe on the old code: dispatch builds itab for interface A with wire
+id 1 (methods `[String]`); intrinsic path for interface B mints id 1:
+
+```
+dispatch A itab:  [String] id=1
+intrinsic B itab: [String] id=1
+COLLISION: B got A's itab
+```
+
+B's itab should carry `[Write]` — it silently got A's method table.
+
+Fix: one namespace. `installInterfaces` now carries the wire id
+(`IfaceWireEntry(wireId, methodNames)`; `resolveInterfaces` reads it
+from the type table — the underlying interface entry's id for named
+interfaces, the entry id otherwise), and `itabForIntrinsic` uses it;
+the counter is gone.
+
+**GREEN** — `ItabForIntrinsicTest`: intrinsic and dispatch paths
+return the identical cached itab instance for the same (descriptor,
+wire id) pair; two interfaces with independently chosen wire ids
+(42/43) never collide.
+
 ## 1. Linkname arg/return boxing (`Linknames.callGo`)
 
 **RED** — calling a linknamed Go helper with a concrete arg, then
