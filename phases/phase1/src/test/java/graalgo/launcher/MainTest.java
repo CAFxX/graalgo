@@ -75,7 +75,9 @@ public final class MainTest {
         // P3-M5 (WS E, ADR-0005 App C): `select {}` is now IN scope (it
         // lowers to the "select" wire node). Use a multi-result function,
         // which remains out of scope (WS D), as the scope-error example.
-        Path bad = writeTempGo("package main\nfunc f() (int, int) { return 1, 2 }\nfunc main() {}\n");
+        // NB: writeTempGo prepends "package main\n\nfunc main() {\n", so the
+        // body must NOT include it.
+        Path bad = writeTempGo("func f() (int, int) { return 1, 2 }\n");
         final int[] code = new int[1];
         String err = captureStderr(() -> {
             code[0] = Main.run(new String[] {"--check", bad.toString()});
