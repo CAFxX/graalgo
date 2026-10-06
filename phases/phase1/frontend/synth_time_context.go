@@ -1053,10 +1053,19 @@ func __withDeadline(parent Context, d time.Time) *timerCtx {
 	}
 	c := &timerCtx{cancel: newCancelCtx(parent), deadline: d}
 	ctxPropagateCancel(parent, c.cancel)
-	if time.Until(d) <= 0 {
+	until := time.Until(d)
+	if until <= 0 {
 		c.cancelTimer(DeadlineExceeded, DeadlineExceeded)
-	} else {
-		c.timer = time.AfterFunc(time.Until(d), func() {
+	} else if c.cancel.Err() == nil {
+		// The parent was not already canceled (gc checks c.err under the
+		// lock before arming; Err() observes the same state via the
+		// done-close edge). Arming after a parent cancel would leave a
+		// timer that can only no-op fire later (reviewer1 P2-8: gc's
+		// timerCtx.cancel stops the timer; here the timer is unreachable
+		// from the propagation path, so the fire would be a wasted
+		// goroutine). Residual race (parent cancels after the check but
+		// before AfterFunc arms) still no-op fires — benign, as before.
+		c.timer = time.AfterFunc(until, func() {
 			c.cancelTimer(DeadlineExceeded, DeadlineExceeded)
 		})
 	}
