@@ -41,6 +41,20 @@ public final class GoroutineState {
         return goStack;
     }
 
+    /**
+     * Updates the innermost frame's section to the call site (P3-M4, WS
+     * C): the call node invokes this before the callee runs, so a panic
+     * traceback shows the call site in each caller frame (like gc),
+     * rather than the caller's function definition line. No-op when
+     * there is no frame or no section. (P2-D8 overlay: mirrors the
+     * Phase-1 method; the instance API is byte-identical.)
+     */
+    public void updateTopFrameSection(com.oracle.truffle.api.source.SourceSection section) {
+        if (section != null && goStack != null && !goStack.isEmpty()) {
+            goStack.setSection(section);
+        }
+    }
+
     /** The in-flight panic, or null when the goroutine is not panicking. */
     public PanicException panicking() {
         return panicking;

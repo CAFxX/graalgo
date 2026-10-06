@@ -14,11 +14,25 @@ import com.oracle.truffle.api.source.SourceSection;
 public final class GoStackFrame {
     private final GoStackFrame parent;
     private final String funcName;
-    private final SourceSection section;
+    /**
+     * The source section for this frame (P3-M4): updated to the call site
+     * when this function calls another (gc's trace shows the call site
+     * in each caller frame, not the function definition).
+     */
+    private SourceSection section;
 
     public GoStackFrame(GoStackFrame parent, String funcName, SourceSection section) {
         this.parent = parent;
         this.funcName = funcName;
+        this.section = section;
+    }
+
+    /**
+     * Updates the frame's section to the call site (P3-M4, WS C):
+     * called by the call node before invoking the callee, so a panic
+     * traceback shows where this function called, like gc.
+     */
+    public void setSection(SourceSection section) {
         this.section = section;
     }
 

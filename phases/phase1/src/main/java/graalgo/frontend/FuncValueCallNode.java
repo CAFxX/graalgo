@@ -100,6 +100,13 @@ public final class FuncValueCallNode extends GoExprNode {
         }
         try {
             probe(f, argVals);
+            // P3-M4 (WS C): record the call site in the caller's frame
+            // before the callee pushes its own — gc's traceback shows the
+            // call site in each caller frame.
+            GoroutineState callState = GoroutineState.current();
+            if (callState != null) {
+                callState.updateTopFrameSection(getSourceSection());
+            }
             return GoCalls.invoke(f, argVals);
         } finally {
             if (state != null) {
