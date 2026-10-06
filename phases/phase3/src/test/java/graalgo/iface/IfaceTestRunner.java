@@ -19,6 +19,9 @@ public final class IfaceTestRunner {
         TESTS.add(IfaceDispatchNodeTest.class);
         TESTS.add(IfaceMethodTablesTest.class);
         TESTS.add(graalgo.frontend.DescriptorNamesTest.class);
+        TESTS.add(LinknameTest.class);
+        TESTS.add(ItabForIntrinsicTest.class);
+        TESTS.add(AtomicContentionTest.class);
     }
 
     private IfaceTestRunner() {}
