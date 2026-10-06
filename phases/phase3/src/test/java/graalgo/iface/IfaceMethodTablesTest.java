@@ -14,6 +14,7 @@ import graalgo.values.GoFunc;
  * Unit tests for {@link IfaceMethodTables#resolve} (P3-M3, WS D,
  * ADR-0003): doc type-table → descriptor name → (method → GoFunc).
  * verifies: GG-0014
+ * verifies: GG-0017 (iface slice)
  */
 public final class IfaceMethodTablesTest {
 

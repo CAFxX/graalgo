@@ -44,6 +44,8 @@ import graalgo.values.GoTypeDescriptor;
  * <p>Registered via the public {@code NodeFactory.registerExprKind}
  * hook — no Phase-1 change (beyond the ADR-0003-documented
  * {@code canonicalDescriptorFor} accessor).
+ *
+ * <p>verifies: GG-0017 (iface slice)
  */
 public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
     private final NodeFactory factory;

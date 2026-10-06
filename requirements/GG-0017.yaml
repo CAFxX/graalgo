@@ -13,3 +13,4 @@ history:
     - '2026-10-03: active — Phase 1 started (coordinator)'
     - '2026-10-03: reverted active→locked — premature activation (rule c: active requires verifies: annotations; none exist yet); activating per-workstream as implementation+tests land'
     - '2026-10-05: active — P2-M1 core slice (SchedulerCoreTest lands with verifies: GG-0017 annotations); REGISTRY REPAIR 2026-10-06: the status line was never flipped though the Phase-2 checkpoint recorded the transition and the annotations exist (P2-M3 methodology-review class hunt); repaired by supervisor, no spec change'
+    - '2026-10-06: iface slice lands — verifies: GG-0017 (iface slice) annotations on IfaceDispatchNode, IfaceDispatchBuilder, IfaceDispatchNodeTest, IfaceMethodTablesTest (P3-M3 remediation, R2 F6)'
