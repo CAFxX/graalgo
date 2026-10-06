@@ -2087,7 +2087,11 @@ are the reasons-shaped knowledge that keeps us from re-learning them.
    base, where the feature was fused/microcode-disabled — building on it was
    building on sand *in practice*, not because the ISA was deprecated.
    **Routing:** don't build on features disabled across your deployment target,
-   even when the ISA itself is not formally deprecated. (T2)
+   even when the ISA itself is not formally deprecated. (T2) **Owner note
+   2026-10-06:** graalgo's target hardware may well have TSX enabled — on
+   such targets RTM-based lock elision / transactional techniques are fair
+   game for Phase 5, not a caution. Revisit as an optimization candidate when
+   the deployment target is pinned.
 3. **HotSpot stack-locking — dropped for compact headers (Lilliput).** The lightweight
    locking design was superseded; lesson folded into SURV-021's header design. (T2)
 4. **Graphite (GCC polyhedral loop optimization) — effectively unmaintained.** Failure
