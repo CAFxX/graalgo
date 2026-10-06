@@ -1,8 +1,9 @@
 # ADR-0002 — Phase-3 `sync` Go bindings: freeze exception for a synthetic `sync` package
 
 **Date:** 2026-10-06
-**Status:** proposed — implementation blocked until accepted (spec-first; the
-exporter change lands only after this ADR is accepted).
+**Status:** accepted 2026-10-06 — coordinator design direction (P3-M2b
+brief) validated as workable by the implementer; implementation follows this
+ADR. Spec-first ordering honored: ADR committed before the exporter change.
 **Scope:** closes PLAN.md §4 P3-M2 (WS D) `sync` slice; discharges the P2-M8
 re-test trigger ("when WS G overlay lands, bind the four primitives and
 re-run stress as Go programs differential vs gc",

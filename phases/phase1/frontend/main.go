@@ -13,7 +13,7 @@ import (
 	"os"
 )
 
-const toolVersion = "0.2.0"
+const toolVersion = "0.3.0"
 
 func main() {
 	if len(os.Args) != 2 {

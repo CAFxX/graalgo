@@ -167,11 +167,15 @@ func (failImporter) Import(path string) (*types.Package, error) {
 }
 
 // overlayImporter is the M5 (WS F) minimal import overlay, extended by M6
-// (WS H) with the D4 fmt stub: it resolves exactly the synthetic package
-// "runtime" exposing runtime.Goexit, and the synthetic package "fmt"
-// exposing the seven D4 symbols (Print, Printf, Println, Sprint, Sprintf,
-// Sprintln, Errorf) with exact variadic signatures. Every other import still
-// fails via failImporter. WS G's full import overlay absorbs this carve-out.
+// (WS H) with the D4 fmt stub and by P3-M2b (WS D, ADR-0002) with the
+// synthetic sync package: it resolves exactly the synthetic package
+// "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface),
+// the synthetic package "fmt" exposing the seven D4 symbols (Print,
+// Printf, Println, Sprint, Sprintf, Sprintln, Errorf) with exact variadic
+// signatures, and the synthetic package "sync" exposing the four P3-M2b
+// primitives (Mutex, RWMutex, WaitGroup, Once) with exact gc method
+// signatures. Every other import still fails via failImporter. WS G's full
+// import overlay absorbs this carve-out.
 type overlayImporter struct{}
 
 func (overlayImporter) Import(path string) (*types.Package, error) {
@@ -197,6 +201,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return pkg, nil
 	case "fmt":
 		return syntheticFmtPackage(), nil
+	case "sync":
+		return syntheticSyncPackage(), nil
 	}
 	return failImporter{}.Import(path)
 }
@@ -242,6 +248,117 @@ var fmtOverlayFuncs = map[string]bool{
 	"Sprint": true, "Sprintf": true, "Sprintln": true, "Errorf": true,
 }
 
+// syncPrimitiveNames are the four P3-M2b (WS D, ADR-0002) primitives bound
+// to the Phase-2 Java runtime (graalgo.runtime.sync).
+var syncPrimitiveNames = map[string]bool{
+	"Mutex": true, "RWMutex": true, "WaitGroup": true, "Once": true,
+}
+
+// syncOpsInScope is the M2-supported method set per primitive (ADR-0002
+// D6). Defined-but-out-of-scope methods (TryLock/TryRLock/RLocker,
+// WaitGroup.Go) fail fast in exportSyncOp with a named scope error.
+var syncOpsInScope = map[string]map[string]bool{
+	"Mutex":     {"Lock": true, "Unlock": true},
+	"RWMutex":   {"Lock": true, "Unlock": true, "RLock": true, "RUnlock": true},
+	"WaitGroup": {"Add": true, "Done": true, "Wait": true},
+	"Once":      {"Do": true},
+}
+
+// syncPrimitiveNamed reports whether t is exactly one of the synthetic
+// sync primitive named types (no pointer dereference).
+func syncPrimitiveNamed(t types.Type) *types.Named {
+	nt, ok := t.(*types.Named)
+	if !ok {
+		return nil
+	}
+	obj := nt.Obj()
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Name() != "sync" {
+		return nil
+	}
+	if !syncPrimitiveNames[obj.Name()] {
+		return nil
+	}
+	return nt
+}
+
+// syncPrimitiveRecv is syncPrimitiveNamed after one pointer dereference,
+// for method-call receivers (all real sync methods have pointer receivers;
+// the Go value IS the Java object, so &/* is a no-op at the value level).
+func syncPrimitiveRecv(t types.Type) *types.Named {
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	return syncPrimitiveNamed(t)
+}
+
+// syntheticSyncPackage builds the P3-M2b (WS D, ADR-0002) synthetic "sync"
+// package for the import overlay: the four Phase-2-bound primitives with
+// exact gc 1.27.1 method signatures (pointer receivers, like the real
+// package; verified against ~/tools/go-1.27.1/src/sync/*.go). Out-of-scope
+// methods (TryLock/TryRLock/RLocker/WaitGroup.Go) are defined with exact
+// signatures so misuse fails fast with a named "not in M2 scope" error
+// instead of a confusing "undefined" type error.
+func syntheticSyncPackage() *types.Package {
+	pkg := types.NewPackage("sync", "sync")
+	intT := types.Typ[types.Int]
+	boolT := types.Typ[types.Bool]
+	funcT := types.NewSignatureType(nil, nil, nil, nil, nil, false) // func()
+	emptyStruct := types.NewStruct(nil, nil)
+	param := func(name string, t types.Type) *types.Var {
+		return types.NewParam(token.NoPos, pkg, name, t)
+	}
+	tuple := func(v *types.Var) *types.Tuple {
+		return types.NewTuple(v)
+	}
+
+	// Locker interface (sync.Locker): result type of RWMutex.RLocker only.
+	// Never callable in M2 (RLocker is out of scope); the interface just
+	// needs to exist for the signature to type-check.
+	locker := types.NewInterfaceType([]*types.Func{
+		types.NewFunc(token.NoPos, pkg, "Lock",
+			types.NewSignatureType(nil, nil, nil, nil, nil, false)),
+		types.NewFunc(token.NoPos, pkg, "Unlock",
+			types.NewSignatureType(nil, nil, nil, nil, nil, false)),
+	}, nil).Complete()
+
+	newPrimitive := func(name string) *types.Named {
+		tname := types.NewTypeName(token.NoPos, pkg, name, nil)
+		pkg.Scope().Insert(tname)
+		return types.NewNamed(tname, emptyStruct, nil)
+	}
+	addMethod := func(named *types.Named, name string, params, results *types.Tuple) {
+		recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(named))
+		sig := types.NewSignatureType(recv, nil, nil, params, results, false)
+		named.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
+	}
+
+	mutex := newPrimitive("Mutex")
+	addMethod(mutex, "Lock", nil, nil)
+	addMethod(mutex, "Unlock", nil, nil)
+	addMethod(mutex, "TryLock", nil, tuple(param("", boolT)))
+
+	rwmutex := newPrimitive("RWMutex")
+	addMethod(rwmutex, "Lock", nil, nil)
+	addMethod(rwmutex, "Unlock", nil, nil)
+	addMethod(rwmutex, "RLock", nil, nil)
+	addMethod(rwmutex, "RUnlock", nil, nil)
+	addMethod(rwmutex, "TryLock", nil, tuple(param("", boolT)))
+	addMethod(rwmutex, "TryRLock", nil, tuple(param("", boolT)))
+	addMethod(rwmutex, "RLocker", nil, tuple(param("", locker)))
+
+	wg := newPrimitive("WaitGroup")
+	addMethod(wg, "Add", tuple(param("delta", intT)), nil)
+	addMethod(wg, "Done", nil, nil)
+	addMethod(wg, "Wait", nil, nil)
+	addMethod(wg, "Go", tuple(param("f", funcT)), nil)
+
+	once := newPrimitive("Once")
+	addMethod(once, "Do", tuple(param("f", funcT)), nil)
+
+	pkg.MarkComplete()
+	return pkg
+}
+
 // ExportFile type-checks the single Go source file at path and returns the
 // frontend/v1 JSON document.
 func ExportFile(path string) (string, error) {
@@ -268,8 +385,11 @@ func ExportFile(path string) (string, error) {
 		// overlayImporter to a synthetic package exposing runtime.Goexit.
 		// M6 (WS H): the import "fmt" is allowed — resolved by
 		// overlayImporter to the D4 fmt stub (seven pure functions).
+		// P3-M2b (WS D, ADR-0002): the import "sync" is allowed — resolved
+		// by overlayImporter to the synthetic sync package (the four
+		// Phase-2-bound primitives).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" {
+		if path != "runtime" && path != "fmt" && path != "sync" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 	}
@@ -289,9 +409,11 @@ func ExportFile(path string) (string, error) {
 	// synthetic overlay package (runtime.Goexit only).
 	// M6 (WS H): with the "fmt" import present, resolve it via the
 	// synthetic overlay package (D4 fmt stub).
+	// P3-M2b (WS D, ADR-0002): with the "sync" import present, resolve it
+	// via the synthetic overlay package (four primitives).
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" {
+		if p == "runtime" || p == "fmt" || p == "sync" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -1272,18 +1394,37 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		}
 		return mk("pointer", map[string]any{"elem": elem}), nil
 	case *types.Slice:
+		// P3-M2b (ADR-0002 D3): the factory manufactures element zeros
+		// (frozen); a sync primitive element would zero to an unusable
+		// empty struct. *sync.X elements are fine (nil is correct).
+		if nt := syncPrimitiveNamed(t.Elem()); nt != nil {
+			return TypeEnt{}, scopeErrorf("sync.%s as a slice element is not in M2 scope", nt.Obj().Name())
+		}
 		elem, err := e.typeID(t.Elem())
 		if err != nil {
 			return TypeEnt{}, err
 		}
 		return mk("slice", map[string]any{"elem": elem}), nil
 	case *types.Array:
+		// P3-M2b (ADR-0002 D3): as for slices — array zeros are factory-made.
+		if nt := syncPrimitiveNamed(t.Elem()); nt != nil {
+			return TypeEnt{}, scopeErrorf("sync.%s as an array element is not in M2 scope", nt.Obj().Name())
+		}
 		elem, err := e.typeID(t.Elem())
 		if err != nil {
 			return TypeEnt{}, err
 		}
 		return mk("array", map[string]any{"len": t.Len(), "elem": elem}), nil
 	case *types.Map:
+		// P3-M2b (ADR-0002 D3): missing-key reads manufacture the element
+		// zero in the factory; keys compare by value semantics the opaque
+		// model cannot provide. Both positions scope-error.
+		if nt := syncPrimitiveNamed(t.Key()); nt != nil {
+			return TypeEnt{}, scopeErrorf("sync.%s as a map key is not in M2 scope", nt.Obj().Name())
+		}
+		if nt := syncPrimitiveNamed(t.Elem()); nt != nil {
+			return TypeEnt{}, scopeErrorf("sync.%s as a map element is not in M2 scope", nt.Obj().Name())
+		}
 		key, err := e.typeID(t.Key())
 		if err != nil {
 			return TypeEnt{}, err
@@ -1312,6 +1453,12 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		fields := make([]any, 0, t.NumFields())
 		vars := make([]*types.Var, 0, t.NumFields())
 		for i := 0; i < t.NumFields(); i++ {
+			// P3-M2b (ADR-0002 D3): the factory manufactures field zeros
+			// (frozen); a sync primitive field would zero to an unusable
+			// empty struct. *sync.X fields are fine (nil is correct).
+			if nt := syncPrimitiveNamed(t.Field(i).Type()); nt != nil {
+				return TypeEnt{}, scopeErrorf("sync.%s as a struct field is not in M2 scope", nt.Obj().Name())
+			}
 			vars = append(vars, t.Field(i))
 		}
 		// M6 (WS H): go/types' gcSizes asserts on bare type parameters
@@ -1856,6 +2003,12 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 		if selection.Kind() != types.MethodVal {
 			continue
 		}
+		// P3-M2b (ADR-0002): sync primitive method calls lower to syncop
+		// nodes, never through resolveMethodCall/methodIndex (the
+		// synthetic methods have no funcdecl to instantiate).
+		if syncPrimitiveRecv(selection.Recv()) != nil {
+			continue
+		}
 		var mtargs []types.Type
 		if ii, ok := e.info.Instances[sel.Sel]; ok {
 			mtargs = typeList(ii.TypeArgs)
@@ -1922,6 +2075,11 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 		case *ast.SelectorExpr:
 			selection, ok := e.info.Selections[n]
 			if !ok || selection.Kind() != types.MethodVal {
+				return true
+			}
+			// P3-M2b (ADR-0002): sync primitives bypass the method index
+			// (same as the roots loop above).
+			if syncPrimitiveRecv(selection.Recv()) != nil {
 				return true
 			}
 			var mtargs []types.Type
@@ -2307,12 +2465,19 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		if !ok {
 			return nil, scopeErrorf("non-value var spec %T is not supported in frontend/v1 scope", spec)
 		}
+		var typeTid int
+		var typeIsSync *types.Named
+		hasType := false
 		if vs.Type != nil {
 			tid, err := e.exprType(vs.Type)
 			if err != nil {
 				return nil, err
 			}
 			typ = tid
+			typeTid, hasType = tid, true
+			if tv, ok := e.info.Types[vs.Type]; ok && tv.Type != nil {
+				typeIsSync = syncPrimitiveNamed(tv.Type)
+			}
 		}
 		for _, n := range vs.Names {
 			v, ok := e.info.Defs[n].(*types.Var)
@@ -2332,6 +2497,18 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 				return nil, err
 			}
 			values = append(values, x)
+		}
+		// P3-M2b (ADR-0002 D3): `var m sync.Mutex` (no init) normalizes to
+		// an implicit syncnew per name — gc's ready-to-use zero value. The
+		// factory's struct zero would be an unusable empty struct, and the
+		// factory is frozen, so the exporter supplies the init. One
+		// syncnew per name: each variable is a distinct mutex.
+		if hasType && typeIsSync != nil && len(vs.Values) == 0 {
+			for range vs.Names {
+				values = append(values, e.node("syncnew", vs, map[string]any{
+					"synctyp": typeIsSync.Obj().Name(), "type": typeTid,
+				}))
+			}
 		}
 	}
 	return e.node("vardecl", gd, map[string]any{
@@ -3108,6 +3285,14 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		// M6 (WS H): method call — receiver-based dispatch resolved by
 		// go/types to a (possibly instantiated) method.
+		// P3-M2b (sync bindings, ADR-0002 D2): method calls on the
+		// synthetic sync primitives lower to additive "syncop" wire nodes,
+		// bypassing exportMethodCall's WS D no-implicit-& rule.
+		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			if nt := syncPrimitiveRecv(selection.Recv()); nt != nil {
+				return e.exportSyncOp(c, sel, nt)
+			}
+		}
 		selection, ok := e.info.Selections[sel]
 		if !ok {
 			return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
@@ -3265,6 +3450,20 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	switch b.Name() {
 	case "new":
 		// new(T): no value arguments; the pointer type is the result.
+		// P3-M2b (ADR-0002 D3): new(sync.X) constructs the primitive.
+		if len(c.Args) == 1 {
+			if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
+				if nt := syncPrimitiveNamed(tv.Type); nt != nil {
+					ntyp, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("syncnew", c, map[string]any{
+						"synctyp": nt.Obj().Name(), "type": ntyp,
+					}), nil
+				}
+			}
+		}
 	case "make":
 		// make(T, len[, cap]): skip the type, export len/cap.
 		if len(c.Args) < 1 {
@@ -3458,6 +3657,38 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	}), nil
 }
 
+// exportSyncOp exports a method call on a synthetic sync primitive
+// (P3-M2b, WS D, ADR-0002) as an additive "syncop" wire node. The receiver
+// evaluates to the Java primitive object itself (ADR-0002 D1: the Go value
+// IS the object), so the pointer/value receiver distinction is a no-op at
+// the value level — this deliberately bypasses exportMethodCall's WS D
+// no-implicit-& rule, which would reject m.Lock() on an addressable value
+// despite every real sync method having a pointer receiver. Out-of-scope
+// methods (TryLock/TryRLock/RLocker/WaitGroup.Go) fail fast here with a
+// named M2 scope error (ADR-0002 D6).
+func (e *exporter) exportSyncOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named) (*Node, error) {
+	typeName := nt.Obj().Name()
+	op := sel.Sel.Name
+	if !syncOpsInScope[typeName][op] {
+		return nil, scopeErrorf("sync.%s.%s is not in M2 scope", typeName, op)
+	}
+	recv, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("syncop", c, map[string]any{
+		"op": op, "synctyp": typeName, "recv": recv, "args": args, "type": typ,
+	}), nil
+}
+
 // exportCallArgs exports a call's argument expressions.
 func (e *exporter) exportCallArgs(c *ast.CallExpr) ([]*Node, error) {
 	args := make([]*Node, 0, len(c.Args))
@@ -3561,6 +3792,20 @@ func (e *exporter) exportCompositeLit(l *ast.CompositeLit) (*Node, error) {
 // (used for the &T{...} normalization, where the pointer type comes from
 // the enclosing UnaryExpr).
 func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, error) {
+	// P3-M2b (ADR-0002 D3): a composite literal of a sync primitive
+	// constructs the Java object directly — gc's ready-to-use zero value.
+	// (Elements are impossible: the fields are unexported, so go/types
+	// rejects any; the guard is defense in depth.)
+	if tv, ok := e.info.Types[l]; ok && tv.Type != nil {
+		if nt := syncPrimitiveNamed(tv.Type); nt != nil {
+			if len(l.Elts) > 0 {
+				return nil, scopeErrorf("sync.%s literal with elements is not in M2 scope", nt.Obj().Name())
+			}
+			return e.node("syncnew", l, map[string]any{
+				"synctyp": nt.Obj().Name(), "type": t,
+			}), nil
+		}
+	}
 	keyed := false
 	var keys []*Node
 	var fieldKeys []string
