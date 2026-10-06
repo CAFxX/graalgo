@@ -139,11 +139,85 @@ load-bearing; no dead code, no silent wrong-method divergence.
   (`Writer`+`Closer`, 2 methods): RED — `ArrayIndexOutOfBoundsException:
   Index 2 out of bounds for length 2` (Close's func invoked with
   Write's argument frame), empty stdout vs expected `3` / `3 true`.
-  A wrong-method dispatch cannot be silent: the arity mismatch crashes
-  loudly at the call boundary.
+  What C proves, scoped honestly (R2 F3): the itab's name→`GoFunc`
+  mapping is load-bearing, and a wrong-method dispatch *with mismatched
+  arity* crashes loudly at the call boundary. C does NOT prove "a
+  wrong-method dispatch cannot be silent" in general — nothing at the
+  invoke boundary checks method identity (`GoCalls.invoke` receives a
+  `GoFunc`; the compiled `RootCallTarget` carries no method-name
+  check), so a same-arity swap would dispatch the wrong method with a
+  plausible frame and no crash. See Mutation C2.
+- **Mutation C2 — swap two SAME-ARITY methods' GoFuncs in one itab**
+  (R2 F3; `IfaceMethodTable.buildItab`: exchange the `GoFunc`s of
+  `Inc`/`Dec`, both `() int`, on a probe program with
+  `Inc()→11, Dec()→10`). RED via **output mismatch**, not a crash:
+  `9` / `10` vs expected `11` / `10` (Inc dispatched Dec's func).
+  This is the honest demonstration the methodology review asked for:
+  the mapping is load-bearing through wrong output, and a same-arity
+  wrong-method dispatch at the mechanism level IS silent (no crash,
+  no fail-fast — just wrong results). What keeps it correct in
+  production is the construction path: the mapping is built straight
+  from go/types method names (`methodTableEntries` → obj ids →
+  `Program.functions()`), guarded by the itab-build fail-fasts
+  (missing-method / missing-table), and any corruption of it would
+  surface as output divergence in the differential corpus (which
+  exercises multi-method interfaces: if02, if09, if11, if12).
 
 Baseline restored after each mutation (revert + rebuild + `if00`
 byte-identical before the next mutation); the live tree never carried
 a mutation — all mutation edits and rebuilds happened under
 `~/workspace/mut`, and the live tree's `git diff` was verified to
 contain no `MUTATION_` markers at the end of the exercise.
+
+## P3-M3 remediation red-green (2026-10-06)
+
+Review: `reviews/phase3-m3/reviewer1-code.md` (R1), `reviewer2-methodology.md` (R2).
+Each P0 has true red-green: the repro was run against the pre-fix build
+(RED) and the post-fix build (GREEN), via `git stash` of the fix with
+rebuilds on both sides. gc is 1.27.1 throughout.
+
+- **R1 P0-1 — signature-aware implements check.** Repro: `a.(Writer)` where
+  the dynamic type declares `Write(string)` instead of `Write([]byte)`.
+  RED (pre-fix): graalgo prints `assert ok`, gc prints `assert failed` —
+  the silent divergence. GREEN (post-fix): graalgo prints `assert failed`
+  (gc parity). Positive controls, all gc-identical post-fix: correct
+  signature with a differently-named parameter (`Write(p []byte)`) still
+  asserts ok; `byte`/`uint8`/alias (`type B = []byte`) cross-spellings
+  assert ok (the key expands aliases and keys basics by `BasicKind`).
+  Pinned by corpus `if11_assert_signature.go` (differential 13/13).
+- **R1 P0-2 — canonical descriptors from the builder.** Repro (reviewer's):
+  `i.M(&T{v:2})` with `x.(*T)` comma-ok inside, plus a type-switch variant.
+  RED (pre-fix): graalgo prints `no` / `no`, gc prints `yes-*T` / `yes-*T`.
+  GREEN (post-fix): `yes-*T` / `yes-*T` (gc parity), via the new public
+  `NodeFactory.canonicalDescriptorFor` accessor (additive; ADR-0003
+  amendment). Pinned by corpus `if12_callee_type_identity.go`.
+- **R1 P1-1 — alias-of-interface receiver.** Repro: `type W = Writer;
+  var w W = &Buf{}; w.Write(...)`. RED (pre-fix): gofrontend exits 2,
+  `receiver static type main.W is not an interface (exporter bug)`.
+  GREEN (post-fix): exports cleanly, graalgo prints `5` (gc parity).
+  Pinned by `TestIfaceMethodCallAliasReceiver`.
+- **R1 P1-2 — generic instantiation via non-empty interface.** Repro:
+  `var g Getter = Box[int]{v: 7}; println(g.Get())`. RED (pre-fix): dies
+  at first dispatch with the misleading `no method table installed for
+  dynamic type "main.Box[int]" (needs gofrontend >= 0.4.0 WS D method
+  tables)` — the document IS 0.4.0. GREEN (post-fix): fails fast at
+  frontend build time with the named scope error `cannot use generic
+  instantiation main.Box[int] as a non-empty interface: method tables
+  for instantiated methods are not supported (P3-M3 scope)` — at all
+  three boxing sites (`maybeConvert`, `adaptArgsForInterfaceParams`,
+  the P3 builder's `boxArg`) and, for the `any`-then-assert shape, at
+  assertion runtime via the `TEMPLATE_METHODS_SKIPPED` sentinel (a bare
+  `false` there would be a silent divergence vs gc, which decides by the
+  real method set). `Box[int]` boxed as `any` stays legal (gc parity).
+  Pinned by `TestIfaceInstantiationSkippedMarker` (wire marker).
+- **R2 P2-7 — narrowed unsupported-promotion fail-fast.** Repro: interface
+  with a supported method `Val` and an unsupported promotion `Ptr`
+  (pointer receiver via value-embedded field). RED (pre-fix): dispatching
+  only `Val` dies at itab build — gc prints `15`. GREEN (post-fix):
+  `Val` dispatches (gc parity `15`); dispatching `Ptr` still fails fast
+  with the named `(P3-M3 scope)` error. Pinned by
+  `testSupportedMethodBesideUnsupportedDispatches` (fails pre-fix) and
+  `testUnsupportedPromotionFailsFastAtDispatch`.
+- **Go unit red-greens** (each verified FAIL pre-fix / PASS post-fix via
+  stash): `TestFreshSigIDKeepsTypeListParallel` (R2 P2-3),
+  `TestMentionsTypeParamAliasUnion` (R2 P2-4).
