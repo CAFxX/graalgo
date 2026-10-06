@@ -470,8 +470,8 @@ func TestToolVersionBump(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ExportFile: %v", err)
 	}
-	if !strings.Contains(out, `"version": "0.4.0"`) {
-		t.Fatal("export generator stanza does not stamp version 0.4.0")
+	if !strings.Contains(out, `"version": "0.5.0"`) {
+		t.Fatal("export generator stanza does not stamp version 0.5.0")
 	}
 }
 
