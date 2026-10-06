@@ -1,0 +1,6 @@
+timer pre-fire: 0 0
+timer fired undrained: 0 0
+timer drained: 0 0
+ticker fired: 0 0
+ticker stopped: 0 0
+done

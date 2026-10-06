@@ -360,4 +360,41 @@ public final class TimerDifferentialTest {
         });
         assertEquals(expected("tm14_ticker_reset_buffered"), out.toString(), "tm14");
     }
+
+    // tm15: len/cap of timer channels report 0 in every state (gc presents
+    // timer channels as unbuffered). Red-green target for DIV-M3-1:
+    // fails while GoTimer uses a plain 1-buffered GoChan (len/cap = 1/1
+    // after the fire), passes with the TimerChan flavor.
+    //
+    // <p>verifies: GG-0048 (timer slice)
+    public void testTm15TimerChanLenCap() throws Exception {
+        StringBuilder out = new StringBuilder();
+        withScheduler(2, () -> {
+            sched.spawn(() -> {
+                GoTimer t = GoTimer.newTimer(100_000_000L);
+                out.append("timer pre-fire: ")
+                        .append(ChanOps.len(t.channel())).append(' ')
+                        .append(ChanOps.cap(t.channel())).append('\n');
+                Timers.sleep(400_000_000L); // fired, undrained
+                out.append("timer fired undrained: ")
+                        .append(ChanOps.len(t.channel())).append(' ')
+                        .append(ChanOps.cap(t.channel())).append('\n');
+                ChanOps.recv(t.channel());
+                out.append("timer drained: ")
+                        .append(ChanOps.len(t.channel())).append(' ')
+                        .append(ChanOps.cap(t.channel())).append('\n');
+                GoTimer tk = GoTimer.newTicker(20_000_000L);
+                Timers.sleep(400_000_000L); // ticks collapse to 1 buffered
+                out.append("ticker fired: ")
+                        .append(ChanOps.len(tk.channel())).append(' ')
+                        .append(ChanOps.cap(tk.channel())).append('\n');
+                tk.stop();
+                out.append("ticker stopped: ")
+                        .append(ChanOps.len(tk.channel())).append(' ')
+                        .append(ChanOps.cap(tk.channel())).append('\n');
+                out.append("done\n");
+            });
+        });
+        assertEquals(expected("tm15_timer_chan_len_cap"), out.toString(), "tm15");
+    }
 }
