@@ -287,14 +287,26 @@ public class GoTimerT {
                 }
                 GoStruct tv = new GoStruct(timeDesc,
                         new long[]{System.currentTimeMillis() * 1_000_000L}, new Object[0]);
-                // AfterFunc: claim f BEFORE delivering, so a concurrent
-                // stop()->true (which claims first) guarantees f never runs.
-                boolean runF = afterFunc != null && fCommitted.compareAndSet(false, true);
                 // Non-blocking delivery, mutually exclusive with stop()/
                 // reset()'s drain under lock: for one-shots the buffer is
                 // always free here; for tickers a slow receiver drops the
                 // tick (gc parity).
+                boolean runF = false;
                 synchronized (lock) {
+                    // P1-1 (reviewer2): if reset() intervened between the
+                    // claim (above, outside lock) and this delivery, the
+                    // generation moved — drop the stale pre-reset fire value
+                    // (gc timerchandrain parity) instead of delivering it.
+                    // (If stop() intervened, !armed — deliver as today: gc
+                    // Stop→false implies the value is in the channel.)
+                    if (armed && generation != myGen) {
+                        continue;
+                    }
+                    // AfterFunc: claim f BEFORE delivering, so a concurrent
+                    // stop()->true (which claims first) guarantees f never runs.
+                    // (Claimed here, after the generation check, so a dropped
+                    // stale fire does not consume the one-shot f.)
+                    runF = afterFunc != null && fCommitted.compareAndSet(false, true);
                     ChanOps.selectGo(new ChanOps.SelectCase[]{
                             new ChanOps.SelectCase(user, true, tv),
                             new ChanOps.SelectCase(null, false, null),
