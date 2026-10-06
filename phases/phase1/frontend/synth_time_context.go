@@ -1163,8 +1163,22 @@ func AfterFunc(ctx Context, f func()) (stop func() bool) {
 	cc := ctxUnwrapCancel(ctx)
 	if cc == nil {
 		// Exotic (user-defined) parent: no hook possible without a
-		// parked watcher goroutine. Documented M5 limitation.
-		return func() bool { return false }
+		// parked watcher goroutine (documented M5 limitation), so f never
+		// runs. stop() reports true on the first call (gc parity: the
+		// function was stopped before it started), false thereafter.
+		// (Reviewer1 P2-6: the old code returned false unconditionally.)
+		mu := make(chan struct{}, 1)
+		mu <- struct{}{}
+		stopped := false
+		return func() bool {
+			<-mu
+			defer func() { mu <- struct{}{} }()
+			if stopped {
+				return false
+			}
+			stopped = true
+			return true
+		}
 	}
 	e := &afterFuncEntry{f: f}
 	<-cc.muChan
