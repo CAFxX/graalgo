@@ -267,7 +267,7 @@ func syntheticContextPackage(timePkg *types.Package) *types.Package {
 	pkg := types.NewPackage("context", "context")
 	boolT := types.Typ[types.Bool]
 	errorT := types.Universe.Lookup("error").Type()
-	anyT := types.NewInterfaceType(nil, nil).Complete()
+	anyT := types.Universe.Lookup("any").Type()
 
 	// time.Time and time.Duration from the synthetic time package.
 	timeType := timePkg.Scope().Lookup("Time").Type()
@@ -277,19 +277,15 @@ func syntheticContextPackage(timePkg *types.Package) *types.Package {
 		return types.NewParam(token.NoPos, pkg, name, t)
 	}
 
-	// Context interface.
-	// Note: matches the phase-1 synthetic (Done() chan struct{}, not
-	// <-chan struct{} — the synthetic uses a bidirectional channel).
+	// Context interface. Matches the phase-1 synthetic exactly: Deadline
+	// is OMITTED (afc0dfb — v1 cannot emit multi-result methods, WS D),
+	// and Done() returns <-chan struct{} (receive-only, as in the
+	// synthetic source).
 	ctxMethods := []*types.Func{
-		types.NewFunc(token.NoPos, pkg, "Deadline",
-			types.NewSignatureType(nil, nil, nil, nil,
-				types.NewTuple(
-					newParam("deadline", timeType),
-					newParam("ok", boolT)), false)),
 		types.NewFunc(token.NoPos, pkg, "Done",
 			types.NewSignatureType(nil, nil, nil, nil,
 				types.NewTuple(
-					newParam("", types.NewChan(types.SendRecv,
+					newParam("", types.NewChan(types.RecvOnly,
 						types.NewStruct(nil, nil)))) , false)),
 		types.NewFunc(token.NoPos, pkg, "Err",
 			types.NewSignatureType(nil, nil, nil, nil,

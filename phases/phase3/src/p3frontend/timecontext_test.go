@@ -6,7 +6,12 @@ package p3frontend
 // these tests pin the mirror so drift fails fast.
 
 import (
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"go/types"
+	"strconv"
 	"testing"
 )
 
@@ -128,9 +133,98 @@ func TestTimeSyntheticSignatures(t *testing.T) {
 	}
 }
 
+// phase1SyntheticContextPackage type-checks the REAL phase-1 synthetic
+// context source (phases/phase1/frontend/synth_time_context.go,
+// syntheticContextSource const) and returns its *types.Package. This is
+// the drift oracle for the mirror: the test below compares the mirror's
+// Context interface method-by-method against this package, so a
+// phase-1-side change (like the afc0dfb Deadline removal) fails fast
+// here instead of silently diverging.
+func phase1SyntheticContextPackage(t *testing.T, timePkg *types.Package) *types.Package {
+	t.Helper()
+	srcPath := "../../../phase1/frontend/synth_time_context.go"
+	fset := token.NewFileSet()
+	file, err := parser.ParseFile(fset, srcPath, nil, 0)
+	if err != nil {
+		t.Fatalf("parsing phase-1 synth source: %v", err)
+	}
+	var raw string
+	found := false
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			vs, ok := spec.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for i, name := range vs.Names {
+				if name.Name == "syntheticContextSource" && i < len(vs.Values) {
+					lit, ok := vs.Values[i].(*ast.BasicLit)
+					if !ok || lit.Kind != token.STRING {
+						t.Fatalf("syntheticContextSource is not a string literal")
+					}
+					raw, err = strconv.Unquote(lit.Value)
+					if err != nil {
+						t.Fatalf("unquoting syntheticContextSource: %v", err)
+					}
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("syntheticContextSource const not found in %s", srcPath)
+	}
+	ctxFset := token.NewFileSet()
+	ctxFile, err := parser.ParseFile(ctxFset, "context.go", raw, parser.AllErrors)
+	if err != nil {
+		t.Fatalf("parsing synthetic context source: %v", err)
+	}
+	conf := types.Config{
+		Importer: importerFunc(func(path string) (*types.Package, error) {
+			if path == "time" {
+				return timePkg, nil
+			}
+			return nil, fmt.Errorf("unexpected synthetic import %q", path)
+		}),
+	}
+	pkg, err := conf.Check("context", ctxFset, []*ast.File{ctxFile}, nil)
+	if err != nil {
+		t.Fatalf("type-checking phase-1 synthetic context: %v", err)
+	}
+	return pkg
+}
+
+// importerFunc adapts a func to types.Importer.
+type importerFunc func(path string) (*types.Package, error)
+
+func (f importerFunc) Import(path string) (*types.Package, error) { return f(path) }
+
+// sigString renders a method signature with package-qualified type names
+// (both the mirror and the phase-1 check use packages named "context"
+// and "time", so equal signatures render equal strings).
+func sigString(sig *types.Signature) string {
+	return types.TypeString(sig, func(p *types.Package) string {
+		if p == nil {
+			return ""
+		}
+		return p.Name()
+	})
+}
+
 // TestContextSyntheticSignatures pins the mirrored synthetic context
 // package: Context interface, CancelFunc/CancelCauseFunc, package funcs,
 // and Canceled/DeadlineExceeded vars.
+//
+// The Context interface check is a REAL drift test: it compares the
+// mirror's method set (names + signatures) against the phase-1
+// synthetic package's actual *types.Package — not against the mirror
+// itself. (The pre-P1-6 version asserted 4 methods including Deadline
+// by inspecting only the mirror, which is why the afc0dfb interface fix
+// never tripped it.)
 func TestContextSyntheticSignatures(t *testing.T) {
 	timePkg := syntheticTimePackage()
 	pkg := syntheticContextPackage(timePkg)
@@ -139,33 +233,56 @@ func TestContextSyntheticSignatures(t *testing.T) {
 			pkg.Name(), pkg.Path())
 	}
 
-	// Context is a named interface with 4 methods.
-	ctxObj := pkg.Scope().Lookup("Context")
-	if ctxObj == nil {
-		t.Fatal("context.Context missing")
+	// Drift check: the mirror's Context interface must match the
+	// phase-1 synthetic's method-for-method (name + signature).
+	phase1Pkg := phase1SyntheticContextPackage(t, timePkg)
+	ifaceOf := func(p *types.Package) *types.Interface {
+		obj := p.Scope().Lookup("Context")
+		if obj == nil {
+			t.Fatalf("context.Context missing in %s", p.Path())
+		}
+		named, ok := obj.Type().(*types.Named)
+		if !ok {
+			t.Fatalf("context.Context is %T, want *types.Named", obj.Type())
+		}
+		iface, ok := named.Underlying().(*types.Interface)
+		if !ok {
+			t.Fatalf("context.Context underlying is %T, want *types.Interface",
+				named.Underlying())
+		}
+		return iface
 	}
-	ctxNamed, ok := ctxObj.Type().(*types.Named)
-	if !ok {
-		t.Fatalf("context.Context is %T, want *types.Named", ctxObj.Type())
+	mirrorIface, phase1Iface := ifaceOf(pkg), ifaceOf(phase1Pkg)
+	if mirrorIface.NumMethods() != phase1Iface.NumMethods() {
+		t.Fatalf("mirror Context has %d methods, phase-1 has %d",
+			mirrorIface.NumMethods(), phase1Iface.NumMethods())
 	}
-	ctxIface, ok := ctxNamed.Underlying().(*types.Interface)
-	if !ok {
-		t.Fatalf("context.Context underlying is %T, want *types.Interface",
-			ctxNamed.Underlying())
-	}
-	if ctxIface.NumMethods() != 4 {
-		t.Fatalf("context.Context has %d methods, want 4", ctxIface.NumMethods())
-	}
-	for _, name := range []string{"Deadline", "Done", "Err", "Value"} {
-		found := false
-		for i := 0; i < ctxIface.NumMethods(); i++ {
-			if ctxIface.Method(i).Name() == name {
-				found = true
+	for i := 0; i < phase1Iface.NumMethods(); i++ {
+		want := phase1Iface.Method(i)
+		var got *types.Func
+		for j := 0; j < mirrorIface.NumMethods(); j++ {
+			if mirrorIface.Method(j).Name() == want.Name() {
+				got = mirrorIface.Method(j)
 				break
 			}
 		}
-		if !found {
-			t.Fatalf("context.Context.%s missing", name)
+		if got == nil {
+			t.Fatalf("mirror Context missing method %q (phase-1 has it)", want.Name())
+		}
+		wantSig, gotSig := want.Type().(*types.Signature), got.Type().(*types.Signature)
+		if wantSig == nil || gotSig == nil {
+			t.Fatalf("context.Context.%s is not a signature", want.Name())
+		}
+		if sigString(wantSig) != sigString(gotSig) {
+			t.Fatalf("mirror Context.%s signature drift:\n phase-1: %s\n mirror:  %s",
+				want.Name(), sigString(wantSig), sigString(gotSig))
+		}
+	}
+	// Deadline must be absent from the mirror (afc0dfb): v1 cannot emit
+	// multi-result methods, so the synthetic interface omits it.
+	for i := 0; i < mirrorIface.NumMethods(); i++ {
+		if mirrorIface.Method(i).Name() == "Deadline" {
+			t.Fatal("mirror Context must not declare Deadline (afc0dfb)")
 		}
 	}
 
