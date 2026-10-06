@@ -1,0 +1,28 @@
+make: Entering directory '/home/hatch/workspace/graalgo/phases/phase1'
+== placeholder grep gate ==
+placeholder gate clean
+== debug-leftover grep gate (src/main only; test output is legitimate) ==
+debug-leftover gate clean
+== gofrontend check (gofmt/vet/tests/vendoring diff gate) ==
+cd frontend && PATH="/home/hatch/tools/go/bin/:$PATH" ./build.sh check
+build.sh: overlay maps 329 vendored go/*.go files over GOROOT
+== gofmt (excluding vendored tree) ==
+== go vet ==
+== go test ==
+ok  	graalgo-frontend	(cached)
+== vendoring diff gate ==
+vendored tree byte-identical to GOROOT/src/go
+== frontend/v1 wire-format validator ==
+selftest ok: ok-positive accepted
+selftest ok: bad-version rejected
+selftest ok: unknown-node-kind rejected
+selftest ok: dangling-type-id rejected
+selftest ok: dangling-obj-id rejected
+selftest ok: missing-pos rejected
+selftest ok: bad-binary-op rejected
+selftest ok: unknown-type-kind rejected
+selftest ok: missing-detail-field rejected
+selftest ok: convert-dangling-to rejected
+/tmp/v1doc.json: valid frontend/v1
+frontend/v1 validator: selftest + straight01.go accepted
+make: Leaving directory '/home/hatch/workspace/graalgo/phases/phase1'
