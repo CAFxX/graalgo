@@ -108,6 +108,13 @@ re-test trigger below.
   (WS G overlay). Java primitives implemented and stressed; Go bindings
   deferred. **Re-test trigger:** when WS G overlay lands, bind the four
   primitives and re-run stress as Go programs differential vs gc.
+  **DISCHARGED 2026-10-06 (P3-M2b, ADR-0002):** `import "sync"` lowers onto
+  the Phase-2 primitives; the stress suite re-ran as Go programs in
+  `phases/phase3/corpus/sync/` (sy01 exclusion 32×1000 incl. `--gmp=1`
+  cap-1 leg, sy04 RWMutex 16×500+2×100, sy06/sy07 WaitGroup 50 workers +
+  reuse + negative-counter, sy10 Once 32 racers) — differential vs gc
+  1.27.1, 22/22 byte-identical. Evidence: `phases/phase3/src/p3frontend/SYNC_DESIGN.md`
+  §7.5, `phases/phase3/corpus/sync/README.md`.
 - **F2 (O2–O5) not ported as a battery leg:** O2–O4 covered at unit level
   (ChannelTest, TimerTest/TimerDifferentialTest); O5 (spin-barrier scale)
   has no torture-level equivalent. **Re-test trigger:** port the O5
