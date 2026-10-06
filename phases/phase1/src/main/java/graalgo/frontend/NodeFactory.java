@@ -121,6 +121,14 @@ public final class NodeFactory {
         /** Canonical dynamic-type descriptors per type-table id (M4, WS E). */
         public final Map<Integer, graalgo.values.GoTypeDescriptor> typeDescs = new HashMap<>();
         /**
+         * P3-M3 (WS D): descriptor name → method names, from the type
+         * table's {@code named}/{@code pointer} entries' {@code "methods"}.
+         * Memoized per build (the type table is per-document); consumed by
+         * type assertions to non-empty interfaces, which check the dynamic
+         * type's method set at runtime.
+         */
+        public Map<String, Set<String>> dynamicMethodSets = null;
+        /**
          * Enclosing function's BuildCtx for function literals (M5, WS F):
          * null for {@code func main} and named func decls. Variable
          * resolution walks this chain for captured variables.
@@ -1065,11 +1073,106 @@ public final class NodeFactory {
      * <p>M4 (WS E): concrete→interface conversions box the value into a
      * {@link GoInterface} with the value's dynamic-type descriptor
      * ({@link InterfaceBoxNode}); interface→interface across different
-     * types passes only for the empty interface, and concrete→non-empty-
-     * interface is a factory error (needs method tables, WS D).
+     * types passes only for the empty interface. P3-M3 (WS D): the old
+     * "needs method tables" fail-fasts are retired — concrete values now
+     * box into non-empty interfaces too. Boxing needs only the dynamic
+     * type descriptor; itabs are built lazily at dispatch from the
+     * method tables (phase-3 {@code IfaceMethodTable}), so no method
+     * tables are required at the conversion site. go/types already
+     * verified the conversion's assignability (signatures included);
+     * the box preserves the dynamic type for the dispatch-time check.
      */
     private GoExprNode maybeConvert(GoExprNode child, GoKind to, int toTypeId, BuildCtx ctx, String path) {
         return maybeConvert(child, to, toTypeId, ctx, path, null);
+    }
+
+    /**
+     * True when the type-table id denotes an interface type (named
+     * interface types count: follows {@code named}→{@code underlying};
+     * P3-M3, WS D). Alias steps resolve first, as everywhere else.
+     */
+    static boolean isInterfaceType(BuildCtx ctx, int typeId, String path) {
+        typeId = resolveAlias(ctx, typeId, path);
+        for (int steps = 0; steps < MAX_TYPE_CHAIN_STEPS; steps++) {
+            Json.Object entry = ctx.types.entry(typeId, path);
+            String k = entry.string("kind", path);
+            if ("interface".equals(k)) {
+                return true;
+            }
+            if (!"named".equals(k)) {
+                return false;
+            }
+            typeId = entry.object("detail", path).intValue("underlying", path);
+        }
+        throw new FrontendException(path + ": type chain exceeds bound following named→underlying (WS E)");
+    }
+
+    /**
+     * Method names of an interface type-table id (P3-M3, WS D): the
+     * {@code "methods"} list of the {@code "interface"} entry, following
+     * {@code named}→{@code underlying} and aliases. Empty when the id does
+     * not denote an interface.
+     */
+    static Set<String> interfaceMethodNames(BuildCtx ctx, int typeId, String path) {
+        typeId = resolveAlias(ctx, typeId, path);
+        for (int steps = 0; steps < MAX_TYPE_CHAIN_STEPS; steps++) {
+            Json.Object entry = ctx.types.entry(typeId, path);
+            String k = entry.string("kind", path);
+            if ("interface".equals(k)) {
+                return methodNameSet(entry.object("detail", path), path);
+            }
+            if (!"named".equals(k)) {
+                return Set.of();
+            }
+            typeId = entry.object("detail", path).intValue("underlying", path);
+        }
+        throw new FrontendException(path + ": type chain exceeds bound following named→underlying (WS E)");
+    }
+
+    /** Names of a type-table entry's {@code detail.methods} list (tolerates a missing list). */
+    private static Set<String> methodNameSet(Json.Object detail, String path) {
+        Set<String> names = new HashSet<>();
+        Json.Value mv = detail.opt("methods");
+        if (!(mv instanceof Json.Array methods)) {
+            return names;
+        }
+        for (int i = 0; i < methods.size(); i++) {
+            Json.Value e = methods.get(i);
+            if (e instanceof Json.Object mo) {
+                names.add(mo.string("name", path));
+            }
+        }
+        return names;
+    }
+
+    /**
+     * P3-M3 (WS D): descriptor name → method names for every
+     * {@code named}/{@code pointer} type-table entry, memoized per build.
+     * Descriptor names replicate {@link #typeDescriptorFor} exactly
+     * ({@code named} → qualified name; {@code pointer} → structural
+     * {@code "pointer#"+hex}), so the keys match the dynamic-type
+     * descriptors boxing produces at runtime. Consumed by type assertions
+     * to non-empty interfaces (the implements check).
+     */
+    static Map<String, Set<String>> dynamicMethodSets(BuildCtx ctx, String path) {
+        if (ctx.dynamicMethodSets != null) {
+            return ctx.dynamicMethodSets;
+        }
+        Map<String, Set<String>> out = new HashMap<>();
+        for (int id = 0; id < ctx.types.size(); id++) {
+            Json.Object entry = ctx.types.entry(id, path);
+            String k = entry.string("kind", path);
+            Json.Object detail = entry.object("detail", path);
+            if ("named".equals(k)) {
+                out.put(detail.string("name", path), methodNameSet(detail, path));
+            } else if ("pointer".equals(k)) {
+                // Must equal typeDescriptorFor's structural naming.
+                String key = structuralKey(ctx, id, path);
+                out.put("pointer#" + Integer.toHexString(key.hashCode()), methodNameSet(detail, path));
+            }
+        }
+        ctx.dynamicMethodSets = out;
+        return out;
     }
 
     private GoExprNode maybeConvert(GoExprNode child, GoKind to, int toTypeId, BuildCtx ctx,
@@ -1095,10 +1198,8 @@ public final class NodeFactory {
                 throw new FrontendException(path + ": interface-to-interface conversion needs"
                         + " method tables (WS D)");
             }
-            if (!isEmptyInterface(ctx, toTypeId, path)) {
-                throw new FrontendException(path + ": conversion to non-empty interface needs"
-                        + " method tables (WS D)");
-            }
+            // P3-M3 (WS D): concrete→non-empty-interface boxes (see javadoc
+            // above). The empty-interface fast path below is subsumed.
             return boxInterface(child, ctx, path);
         }
         ConvertNode n = new ConvertNode(from, to, child, sliceElemKind);
@@ -1920,9 +2021,9 @@ public final class NodeFactory {
             if (args[i].kind() == GoKind.INTERFACE) {
                 continue; // already an interface value
             }
-            int paramTid = resolveAlias(ctx, paramTypeIds.get(i), path);
-            Json.Object pentry = ctx.types.entry(paramTid, path);
-            if (!"interface".equals(pentry.string("kind", path))) {
+            // P3-M3 (WS D): named interface types (e.g. main.Writer) box
+            // too — the old kind=="interface" check silently skipped them.
+            if (!isInterfaceType(ctx, paramTypeIds.get(i), path)) {
                 continue;
             }
             args[i] = boxInterface(args[i], ctx, path);
@@ -3169,15 +3270,23 @@ public final class NodeFactory {
             int assertTypeId = vf.intValue("type", path);
             GoKind ak = kindOf(ctx, assertTypeId, path);
             graalgo.values.GoTypeDescriptor adesc = typeDescriptorFor(ctx, assertTypeId, path);
+            // P3-M3 (WS D): assertion to a non-empty interface is allowed;
+            // the implements check runs at runtime against the dynamic
+            // type's method set (the old "needs method tables" fail-fast
+            // is retired — method tables exist now).
+            List<String> ifaceMethods = null;
+            Map<String, Set<String>> dynMethods = null;
             if (ak == GoKind.INTERFACE && !adesc.isEmptyInterface()) {
-                throw new FrontendException(path + ": assertion to non-empty interface needs"
-                        + " method tables (WS D)");
+                ifaceMethods = new ArrayList<>(interfaceMethodNames(ctx, assertTypeId, path));
+                dynMethods = dynamicMethodSets(ctx, path);
             }
             GoStructDescriptor sd = ak == GoKind.STRUCT
                     ? structDescriptorFor(ctx, assertTypeId, path) : null;
             valueNode = new TypeAssertNode(new VarReadNode(iface.kind(), tmpI), ak, adesc, true, sd,
-                    GoTypeStrings.of(ctx, iface.typeId()), GoTypeStrings.of(ctx, assertTypeId));
-            okNode = new TypeAssertOkNode(new VarReadNode(iface.kind(), tmpI), adesc);
+                    GoTypeStrings.of(ctx, iface.typeId()), GoTypeStrings.of(ctx, assertTypeId),
+                    ifaceMethods, dynMethods);
+            okNode = new TypeAssertOkNode(new VarReadNode(iface.kind(), tmpI), adesc,
+                    ifaceMethods, dynMethods);
         } else {
             throw new FrontendException(path + ": bad comma-ok kind \"" + vk + "\" (WS E)");
         }
@@ -3975,16 +4084,21 @@ public final class NodeFactory {
         int assertTid = f.intValue("type", path);
         GoKind ak = kindOf(ctx, assertTid, path);
         graalgo.values.GoTypeDescriptor adesc = typeDescriptorFor(ctx, assertTid, path);
+        // P3-M3 (WS D): assertion to a non-empty interface is allowed; the
+        // implements check runs at runtime (see buildCommaOk).
+        List<String> ifaceMethods = null;
+        Map<String, Set<String>> dynMethods = null;
         if (ak == GoKind.INTERFACE && !adesc.isEmptyInterface()) {
-            throw new FrontendException(path + ": assertion to non-empty interface needs"
-                    + " method tables (WS D)");
+            ifaceMethods = new ArrayList<>(interfaceMethodNames(ctx, assertTid, path));
+            dynMethods = dynamicMethodSets(ctx, path);
         }
         GoStructDescriptor sd =
                 ak == GoKind.STRUCT ? structDescriptorFor(ctx, assertTid, path) : null;
         // Single-valued form: a failed assertion panics (M5, WS F: gc's
         // interface-conversion panic).
         return new TypeAssertNode(x, ak, adesc, false, sd,
-                GoTypeStrings.of(ctx, x.typeId()), GoTypeStrings.of(ctx, assertTid));
+                GoTypeStrings.of(ctx, x.typeId()), GoTypeStrings.of(ctx, assertTid),
+                ifaceMethods, dynMethods);
     }
 
     private GoExprNode buildNil(Json.Object node, BuildCtx ctx) {

@@ -162,14 +162,37 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
             if (args[i].kind() == GoKind.INTERFACE) {
                 continue; // already an interface value
             }
-            int paramTid = DescriptorNames.resolveAlias(ctx.types, paramTypeIds.get(i), path);
-            Json.Object pentry = ctx.types.entry(paramTid, path);
-            if (!"interface".equals(pentry.string("kind", path))) {
+            // Named interface types (e.g. main.Writer) box too — the
+            // factory's adaptArgsForInterfaceParams had the same gap
+            // (fixed P3-M3 in NodeFactory.isInterfaceType).
+            if (!isInterfaceType(ctx, paramTypeIds.get(i), path)) {
                 continue;
             }
             args[i] = boxArg(args[i], ctx, path);
         }
         return args;
+    }
+
+    /**
+     * P3-M3: true when the type-table id denotes an interface type,
+     * following {@code named}→{@code underlying} (mirrors the factory's
+     * {@code NodeFactory.isInterfaceType}; kept local — the factory's is
+     * package-private).
+     */
+    private static boolean isInterfaceType(NodeFactory.BuildCtx ctx, int typeId, String path) {
+        typeId = DescriptorNames.resolveAlias(ctx.types, typeId, path);
+        for (int steps = 0; steps < 10_000; steps++) {
+            Json.Object entry = ctx.types.entry(typeId, path);
+            String k = entry.string("kind", path);
+            if ("interface".equals(k)) {
+                return true;
+            }
+            if (!"named".equals(k)) {
+                return false;
+            }
+            typeId = entry.object("detail", path).intValue("underlying", path);
+        }
+        throw new FrontendException(path + ": type chain exceeds bound following named→underlying");
     }
 
     /**

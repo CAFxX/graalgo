@@ -8,6 +8,9 @@ import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoStructDescriptor;
 import graalgo.values.GoTypeDescriptor;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
  * Type assertion {@code x.(T)} (M4, WS E).
@@ -28,10 +31,20 @@ public final class TypeAssertNode extends GoExprNode {
     private final GoStructDescriptor structDesc; // for struct-kind zero values
     private final String ifaceName; // Go-syntax static interface type (e.g. "interface {}")
     private final String assertedName; // Go-syntax asserted type (e.g. "int")
+    /**
+     * P3-M3 (WS D): when asserting to a non-empty interface, the asserted
+     * interface's method names and the per-document dynamic-type method
+     * sets (descriptor name → method names). Both null for non-interface
+     * targets.
+     */
+    private final List<String> assertedIfaceMethods;
+    private final Map<String, Set<String>> dynamicMethodSets;
 
     public TypeAssertNode(GoExprNode iface, GoKind kind, GoTypeDescriptor asserted,
                           boolean lenient, GoStructDescriptor structDesc,
-                          String ifaceName, String assertedName) {
+                          String ifaceName, String assertedName,
+                          List<String> assertedIfaceMethods,
+                          Map<String, Set<String>> dynamicMethodSets) {
         super(kind);
         this.iface = iface;
         this.asserted = asserted;
@@ -39,6 +52,8 @@ public final class TypeAssertNode extends GoExprNode {
         this.structDesc = structDesc;
         this.ifaceName = ifaceName;
         this.assertedName = assertedName;
+        this.assertedIfaceMethods = assertedIfaceMethods;
+        this.dynamicMethodSets = dynamicMethodSets;
     }
 
     public GoExprNode iface() {
@@ -47,15 +62,36 @@ public final class TypeAssertNode extends GoExprNode {
 
     /** The assertion predicate shared with {@link TypeAssertOkNode}. */
     static boolean holds(GoInterface gi, GoTypeDescriptor asserted) {
+        return holds(gi, asserted, null, null);
+    }
+
+    /**
+     * P3-M3 (WS D): assertion to a non-empty interface holds when the
+     * dynamic type's method set covers the asserted interface's methods
+     * (the runtime half of the implements check; go/types verified the
+     * static side where one exists — assertions from the empty interface
+     * have no static side, hence the runtime check).
+     */
+    static boolean holds(GoInterface gi, GoTypeDescriptor asserted,
+                         List<String> assertedIfaceMethods,
+                         Map<String, Set<String>> dynamicMethodSets) {
         if (asserted.isEmptyInterface()) {
             return !gi.isNil();
         }
-        return !gi.isNil() && gi.descriptor() == asserted;
+        if (gi.isNil()) {
+            return false;
+        }
+        if (assertedIfaceMethods != null && dynamicMethodSets != null) {
+            Set<String> dynMethods = dynamicMethodSets.getOrDefault(
+                    ((GoTypeDescriptor) gi.descriptor()).name(), Set.of());
+            return dynMethods.containsAll(assertedIfaceMethods);
+        }
+        return gi.descriptor() == asserted;
     }
 
     private Object read(VirtualFrame frame) {
         GoInterface gi = (GoInterface) iface.executeObject(frame);
-        if (!holds(gi, asserted)) {
+        if (!holds(gi, asserted, assertedIfaceMethods, dynamicMethodSets)) {
             if (lenient) {
                 return Boxing.zero(kind(), structDesc);
             }
@@ -68,6 +104,12 @@ public final class TypeAssertNode extends GoExprNode {
             Panic.throwPanic(GoErrors.interfaceConversion(ifaceName, dynamicName, assertedName));
         }
         if (asserted.isEmptyInterface()) {
+            return gi;
+        }
+        if (assertedIfaceMethods != null) {
+            // P3-M3 (WS D): asserting to a non-empty interface yields an
+            // interface value — the (descriptor, data) pair passes through
+            // unchanged; only the static type changes.
             return gi;
         }
         Object data = gi.data();
