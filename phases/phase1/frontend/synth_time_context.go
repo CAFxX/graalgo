@@ -2,8 +2,9 @@
 //
 // The two packages below are REAL Go source, embedded as text and
 // type-checked on demand with the overlay importer (so `context`'s
-// `import ("sync"; "time")` resolves to the synthetic packages —
-// synthetic→synthetic imports). The resulting *types.Package instances
+// `import "time"` resolves to the synthetic package —
+// synthetic→synthetic imports; the channel-mutex design needs no
+// `sync`). The resulting *types.Package instances
 // are what overlayImporter.Import("time"/"context") returns, so the
 // user's type-check and the synthetic sources' own type-check share
 // identical *types.Func/*types.TypeName objects; the exporter then emits
@@ -24,8 +25,9 @@
 //     intrinsics at all): cancelCtx with done/cancelCh/muChan/children,
 //     timerCtx via time.AfterFunc, valueCtx, and the __withCancel/
 //     __withDeadline/__withTimeout/__deadlineOf single-result desugar
-//     targets behind the 6 multi-result operations (which keep exact gc
-//     signatures with fail-fast bodies for type-checking).
+//     targets behind the 6 Appendix M multi-result operations (5 reachable
+//     in M5 — Context.Deadline() is not callable post-afc0dfb; which keep
+//     exact gc signatures with fail-fast bodies for type-checking).
 //
 // Out-of-scope members are declared with exact gc signatures and panic
 // bodies reporting "not in M5 scope" — fail fast, never silently.
@@ -707,23 +709,6 @@ func (t *Ticker) Reset(d Duration) { panic("time: intrinsic Ticker.Reset") }
 `
 
 // syntheticContextSource is the P3-M5 synthetic `context` package
-// (ADR-0005 D2): REAL Go composing the synthetic sync.Mutex, channel
-// receive, synthetic time, and P3-M3 interface dispatch (a combination
-// test of M2+M3+M5). Exact gc 1.27.1 signatures for the in-scope API.
-//
-// Two deliberate simplifications vs the stdlib (documented in
-// TIME_CONTEXT_DESIGN.md):
-//   - No embedding: timerCtx/valueCtx/withoutCancelCtx delegate
-//     explicitly (the exporter resolves promoted methods, but explicit
-//     delegation keeps the method tables obvious).
-//   - Parent cancellation propagates via a children registry on
-//     *cancelCtx (no goroutine per child); exotic (user-defined) parent
-//     Contexts fall back to a watcher goroutine, which is reaped when
-//     the parent fires.
-//   - emptyCtx.Done() returns a package-level never-closed channel, not
-//     nil: the runtime's channel receive throws on nil channels (spike),
-//     so nil would not block forever (ADR-0005 fallback).
-// syntheticContextSource is the P3-M5 synthetic `context` package
 // (ADR-0005 D2, Appendix M): REAL Go on the channel-mutex design — no
 // Java intrinsics, no goroutine leaks. It composes channel operations
 // (make/send/recv/close/select, Appendix C), synthetic time, and P3-M3
@@ -742,13 +727,15 @@ func (t *Ticker) Reset(d Duration) { panic("time: intrinsic Ticker.Reset") }
 //   - Lock discipline: snapshot children/hooks under muChan, recurse and
 //     spawn hook goroutines WITHOUT holding the lock (the context tree
 //     is a DAG — no cycles).
-//   - The 6 multi-result operations keep exact gc signatures with
-//     fail-fast bodies (for type-checking); the exporter desugars the
-//     2-target call sites to the __withCancel/__withCancelCause/
-//     __withDeadline/__withTimeout/__deadlineOf single-result helpers
-//     plus cancelFunc/cancelCauseFunc methods (Appendix M). The concrete
+//   - The 6 Appendix M multi-result operations keep exact gc signatures
+//     with fail-fast bodies (for type-checking); the exporter desugars
+//     the 5 reachable ones' 2-target call sites to the __withCancel/
+//     __withCancelCause/__withDeadline/__withTimeout/__deadlineOf
+//     single-result helpers plus cancelFunc/cancelCauseFunc methods
+//     (Appendix M; Deadline() is not callable in M5). The concrete
 //     Deadline() methods are declared for go/types interface
-//     satisfaction only — every call site desugars, so their fail-fast
+//     satisfaction only — no call site type-checks (the synthetic
+//     interface omits Deadline post-afc0dfb), so their fail-fast
 //     bodies are unreachable.
 //   - AfterFunc registers a hook run at cancel time (go f() per hook,
 //     spawned by the canceler — never a parked watcher goroutine).

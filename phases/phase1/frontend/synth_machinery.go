@@ -34,8 +34,8 @@ var syntheticSources = map[string]string{
 
 // getSyntheticPackage parses and type-checks the embedded source for
 // path ("time" or "context"), caching the result. The type-check uses
-// the overlay importer, so the context source's `import ("sync"; "time")`
-// resolves to the synthetic packages (synthetic→synthetic imports).
+// the overlay importer, so the context source's `import "time"` resolves
+// to the synthetic package (synthetic→synthetic imports).
 // The same *types.Package instance is returned to every importer, so
 // *types.Func/*types.TypeName objects are identical between the user's
 // type-check and the synthetic sources' own.

@@ -81,8 +81,10 @@ type mrPlan struct {
 	pairFields []string
 }
 
-// classifyMultiResultCall recognizes the 6 Appendix M operations.
-// It returns nil when c is not one of them.
+// classifyMultiResultCall recognizes the Appendix M operations (the 5
+// reachable ones; the mrDeadline path is retained defense-in-depth for
+// WS D — see the package header). It returns nil when c is not one of
+// them.
 func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	sel, ok := c.Fun.(*ast.SelectorExpr)
 	if !ok {
