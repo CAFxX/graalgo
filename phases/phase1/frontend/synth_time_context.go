@@ -362,7 +362,10 @@ func __parseDuration(s string) durationPair {
 	for s != "" {
 		var v, f uint64
 		scale := float64(1)
-		if !(s[0] == '.' || ('0' <= s[0] && s[0] <= '9')) {
+		// NB: written without !(...) — go/types infers untyped bool for
+		// !(paren-expr) in this position, which the v1 wire cannot express
+		// (P3-M5: BOOL -> UNTYPED_BOOL rejection).
+		if s[0] != '.' && (s[0] < '0' || s[0] > '9') {
 			return durationPair{err: &timeParseError{"invalid duration", orig}}
 		}
 		pl := len(s)
