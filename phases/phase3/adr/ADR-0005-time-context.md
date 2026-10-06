@@ -484,6 +484,33 @@ remains in the corpus as a regression guard.
 (tc08, tc09, tc10, tc12, tc13, tc14) — all pass. tc11 (WithValue) is
 auxiliary.
 
+## Known limitation: uncomparable context keys (2026-10-06)
+
+`valueCtx.Value` compares `any` keys with `==`. Verified behavior
+(reviewer1 P2-9 — previously "unrecorded"):
+
+- gc 1.27.1: `context.WithValue` panics `"key is not comparable"` at
+  construction for uncomparable dynamic key types (slices, maps, funcs);
+  a direct `any == any` comparison of uncomparable dynamics panics
+  `"comparing uncomparable type <T>"`.
+- graalgo: `WithValue` accepts uncomparable keys (no panic), and the
+  `==` in `Value` is reference-identity-based — the same reference
+  compares equal, different references compare unequal, and it never
+  panics. Verified end to end: a `[]int` key program prints
+  `same-ref: v` / `diff-ref: nil` under P3SyncMain vs
+  `panic: key is not comparable` under gc
+  (`GoEquality.equal` has no uncomparable-type panic path; see
+  `BinaryOpNode.interfaceEqual`).
+
+This is a P3-M3/WS D interface-equality limitation, not a P3-M5 bug:
+gc-exact panics need runtime comparability info in the (frozen)
+phase-1 `GoEquality`, which is a semantic change requiring its own ADR
+per the interface-freeze rules.
+
+**Re-test trigger**: when interface `==` gains comparability-aware
+panics, `WithValue` must also gain the `"key is not comparable"`
+construction panic, and the probe above must print the gc panic line.
+
 **D5 exception, recorded 2026-10-06 (P3-M5 coordinator): `GoStatementNode`
 TextMap clamp (phase-2).** The desugared `go f(args)` nodes (Appendix N)
 may carry out-of-range synthesized positions; `GoStatementNode.build`
