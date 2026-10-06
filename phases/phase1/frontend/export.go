@@ -4165,14 +4165,15 @@ func mentionsTypeParam(t types.Type) bool {
 //
 // The receiver evaluates to a GoInterface; the factory dispatches through
 // the itab built from the interface's method list. The "iface" field is the
-// type-table id of the receiver's static interface type (named or
-// anonymous); the method-name list is the "methods" list of the
-// "interface" type-table entry (following "underlying" for "named"
-// entries). The "sig" field is the method signature type id (no receiver)
-// for call-site argument adaptation — the methodref precedent. The "type"
-// field is the result type id, null when the call has no results.
-// Variadic misuse fails fast via checkVariadicCall, as for concrete method
-// calls.
+// *interface* type-table id (the method list source): when the receiver's
+// static type is a named interface type (e.g. main.Writer), the exporter
+// emits the id of its underlying interface entry — the Java consumer reads
+// "methods" from the interface entry and does not follow "underlying" for
+// named entries (ADR-0003 §2.1 wire). The "sig" field is the method
+// signature type id (no receiver) for call-site argument adaptation — the
+// methodref precedent. The "type" field is the result type id, null when
+// the call has no results. Variadic misuse fails fast via
+// checkVariadicCall, as for concrete method calls.
 func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection) (*Node, error) {
 	mname := sel.Sel.Name
 	sig, err := e.resolveIfaceMethod(selection.Recv(), mname)
@@ -4185,7 +4186,24 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	if err := checkVariadicCall(c, sig); err != nil {
 		return nil, err
 	}
-	ifaceID, err := e.typeID(selection.Recv())
+	// ADR-0003 wire: "iface" is the interface type-table id, not the id
+	// of a named type whose underlying is the interface. The dispatch
+	// site's caller has already established an interface underlying;
+	// anything else reaching here is an exporter bug — fail fast, never
+	// emit a corrupt id.
+	ifaceType := selection.Recv()
+	if nt, ok := ifaceType.(*types.Named); ok {
+		ui, ok := nt.Underlying().(*types.Interface)
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: receiver static type %s is named with non-interface underlying %T (exporter bug)",
+				types.TypeString(ifaceType, nil), nt.Underlying())
+		}
+		ifaceType = ui
+	} else if _, ok := ifaceType.(*types.Interface); !ok {
+		return nil, fmt.Errorf("gofrontend: receiver static type %s is not an interface (exporter bug)",
+			types.TypeString(ifaceType, nil))
+	}
+	ifaceID, err := e.typeID(ifaceType)
 	if err != nil {
 		return nil, err
 	}

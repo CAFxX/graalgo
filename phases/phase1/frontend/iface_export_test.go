@@ -209,9 +209,16 @@ func TestIfaceMethodCallExports(t *testing.T) {
 		t.Fatalf("sig variadic = %v, want false", sdetail["variadic"])
 	}
 
-	// The iface id is the receiver's static type id (the named entry).
-	if int(ifaceID) != namedIDOf(t, entries, "main.Writer") {
-		t.Fatalf("iface id = %v, want the main.Writer named entry id", ifaceID)
+	// The iface id is the *interface* type-table id (ADR-0003 §2.1 wire:
+	// "iface" is the interface type-table id, the method list source) —
+	// the underlying of the main.Writer named entry, not the named id.
+	// (Regression: the exporter used to emit the named id, which the
+	// Java consumer rejects — "iface id is not an interface type".)
+	if int(ifaceID) != int(under) {
+		t.Fatalf("iface id = %v, want the underlying interface entry id %v", ifaceID, under)
+	}
+	if ientry["kind"] != "interface" {
+		t.Fatalf("iface entry kind = %v, want interface", ientry["kind"])
 	}
 }
 
