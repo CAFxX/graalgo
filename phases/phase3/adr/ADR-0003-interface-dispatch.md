@@ -87,11 +87,20 @@ freeze §5):
      ...)` hook by the P3 launcher (no `NodeFactory` change).
 5. **Descriptor-name keying:** named dynamic types key by
    `GoTypeDescriptor.name()` (canonical via the factory's `NAMED_DESCS`,
-   equal to the exporter's `namedTypeName`); pointer dynamic types key
-   by `"pointer#"+typeId`, matching the factory's descriptor naming
-   (`NodeFactory` line ~876) — the launcher computes the same strings
-   from the doc's type table, so exporter and runtime agree without a
-   shared-code change.
+   equal to the exporter's `namedTypeName`); pointer dynamic types key by
+   the factory's structural-descriptor naming —
+   `"pointer#" + Integer.toHexString(structuralKey.hashCode())`
+   (`NodeFactory.typeDescriptorFor`: `pointer` is a structural composite,
+   so the `k+"#"+typeId` branch is unreachable for it). The launcher
+   replicates `structuralKey` exactly (see `DescriptorNames` in P3 code,
+   cross-checked by `DescriptorNamesTest` over 14 type-table shapes) and
+   computes the same strings from the doc's type table, so exporter and
+   runtime agree without a shared-code change.
+   **Amendment 2026-10-06:** the original text claimed
+   `"pointer#"+typeId`; the Java worker proved this wrong against the
+   factory source (red: `expected=pointer#12a82948 actual=pointer#2`) and
+   implemented the factory-accurate naming. The Go producer is unaffected
+   (it never computes descriptor names).
 
 ## Alternatives considered (and rejected)
 
