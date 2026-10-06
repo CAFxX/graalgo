@@ -169,6 +169,25 @@ safepoint overhead, pinning audit, deopt torture, stack-depth parity).
 
 **Candidate optimization backlog** (each needs its falsifying benchmark per done-gate 1
 before it becomes a claimed win):
+- **Closed-world whole-program optimization (owner directive 2026-10-06).**
+  gc compiles packages separately and never sees the whole program; graalgo
+  does. Exploit the closed-world assumption thoroughly: extreme LTO/WPO across
+  package boundaries that the vanilla toolchain is structurally unable to do,
+  **extreme devirtualization** (the headline win — speculative interface
+  devirtualization via PICs → inlining of concrete method bodies → escape
+  analysis promoting heap to stack across abstraction boundaries, per the
+  FEASIBILITY.md §6.5a thesis), and every other whole-program transform the
+  closed world enables. Hard requirement: **single-callsite callees are ALWAYS
+  inlined** — with a complete call graph this is provably safe, so no
+  code-bloat heuristics are needed where gc must guess. The same closed-world
+  leverage extends to: whole-program dead-code elimination; specialization of
+  hot generic instantiations (monomorphization where it pays); whole-program
+  escape analysis (the devirtualization cascade's final step);
+  devirtualization of interface calls with a single observed concrete type
+  (PIC evidence from P3-M3's re-measurement feeds this). Verification is
+  mechanical, not heuristic: a call-graph audit asserts that no non-inlined
+  single-callsite callee survives the build. The falsifying benchmark must
+  show the win vs gc+PGO on interface-heavy and abstraction-heavy workloads.
 - **Profile-guided struct field reorder/pack for locality.** gc already sorts fields by
   alignment for size; it does no hot/cold splitting or PGO field layout. Validity: field
   order is observable only via `reflect` field order, serialization order (e.g.
