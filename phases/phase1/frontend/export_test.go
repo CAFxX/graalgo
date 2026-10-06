@@ -214,18 +214,14 @@ func main() {
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
 		t.Fatal(err)
 	}
-	type nk struct {
-		kind   string
-		fields map[string]any
-	}
-	var nodes []nk
+	var nodes []nodeKind
 	var walk func(v any)
 	walk = func(v any) {
 		switch v := v.(type) {
 		case map[string]any:
 			if k, ok := v["kind"].(string); ok {
 				f, _ := v["fields"].(map[string]any)
-				nodes = append(nodes, nk{k, f})
+				nodes = append(nodes, nodeKind{k, f})
 			}
 			for _, c := range v {
 				walk(c)
@@ -351,5 +347,206 @@ func main() {
 	}
 	if !recvCase || !sendCase || !defaultCase {
 		t.Errorf("want recv/send/default selectcases (recv=%v send=%v default=%v)", recvCase, sendCase, defaultCase)
+	}
+	// P1-1 shape pin: every gostmt must be a zero-arg funclit call (the
+	// Java GoStatementNode rejects args>0 at build time). `go close(a)`
+	// desugars to hoisted-temp + go func() { close(tmp) }().
+	assertGostmtZeroArg(t, nodes)
+}
+
+// nodeKind is a walked (kind, fields) pair from exported wire JSON.
+type nodeKind struct {
+	kind   string
+	fields map[string]any
+}
+
+// assertGostmtZeroArg pins the GoStatementNode contract: every "gostmt"
+// node's call has zero args and its fun is a funclit with zero params.
+// (Reviewer1 P1-1 test gap: TestChannelOpsM5 only asserted a gostmt
+// node exists.)
+func assertGostmtZeroArg(t *testing.T, nodes []nodeKind) {
+	t.Helper()
+	var count int
+	for _, n := range nodes {
+		if n.kind != "gostmt" {
+			continue
+		}
+		count++
+		call, ok := n.fields["call"].(map[string]any)
+		if !ok || call["kind"] != "call" {
+			t.Errorf("gostmt call field is not a call node: %v", n.fields["call"])
+			continue
+		}
+		cf, _ := call["fields"].(map[string]any)
+		if args, ok := cf["args"].([]any); !ok || len(args) != 0 {
+			t.Errorf("gostmt call has %d args, want 0 (GoStatementNode rejects args>0)", len(args))
+		}
+		fun, ok := cf["fun"].(map[string]any)
+		if !ok || fun["kind"] != "funclit" {
+			t.Errorf("gostmt call fun is not a funclit: %v", cf["fun"])
+			continue
+		}
+		ff, _ := fun["fields"].(map[string]any)
+		if params, ok := ff["params"].([]any); !ok || len(params) != 0 {
+			t.Errorf("gostmt funclit has %d params, want 0", len(params))
+		}
+	}
+	if count == 0 {
+		t.Errorf("no gostmt nodes found for shape assertion")
+	}
+}
+
+// TestGoWithArgsInLoop verifies: GG-0017 — P3-M5 (reviewer1 P2-4) the
+// `go f(args)` desugar inside a loop. The Appendix N desugar emits one
+// __go_arg_* temp per go *statement*; in a loop the temp vardecls must
+// sit inside the loop body (so the factory's loopcap pre-scan gives
+// them per-iteration box semantics when the funclit captures them) and
+// the spawn must keep the zero-arg funclit shape. Per-iteration VALUES
+// are asserted end to end (see the P2-4 commit message for the
+// P3SyncMain run: sum 0+10+20=30, not 3×30).
+func TestGoWithArgsInLoop(t *testing.T) {
+	src := `package main
+
+func f(a int, ch chan int) { ch <- a * 10 }
+
+func main() {
+	ch := make(chan int, 3)
+	for i := 0; i < 3; i++ {
+		go f(i, ch)
+	}
+	s := 0
+	for i := 0; i < 3; i++ {
+		s += <-ch
+	}
+	println(s)
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "goargsloop.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	// Find the first for-loop body block.
+	var loopBody map[string]any
+	var findLoop func(v any) bool
+	findLoop = func(v any) bool {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["kind"] == "for" {
+				if f, ok := v["fields"].(map[string]any); ok {
+					if b, ok := f["body"].(map[string]any); ok {
+						loopBody = b
+						return true
+					}
+				}
+			}
+			for _, c := range v {
+				if findLoop(c) {
+					return true
+				}
+			}
+		case []any:
+			for _, c := range v {
+				if findLoop(c) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if !findLoop(raw) {
+		t.Fatal("no for loop found in export")
+	}
+	// The loop body must contain the desugar block: __go_arg_* vardecls
+	// dominating the gostmt, all inside the loop (per-iteration boxes).
+	bodyFields, _ := loopBody["fields"].(map[string]any)
+	stmts, _ := bodyFields["stmts"].([]any)
+	var sawArgHoist, sawGostmt bool
+	var gostmtNode map[string]any
+	for _, st := range stmts {
+		sm, ok := st.(map[string]any)
+		if !ok {
+			continue
+		}
+		if sm["kind"] == "block" {
+			bf, _ := sm["fields"].(map[string]any)
+			inner, _ := bf["stmts"].([]any)
+			for _, in := range inner {
+				im, ok := in.(map[string]any)
+				if !ok {
+					continue
+				}
+				if im["kind"] == "vardecl" {
+					iff, _ := im["fields"].(map[string]any)
+					if names, ok := iff["names"].([]any); ok {
+						for _, nm := range names {
+							if s, ok := nm.(string); ok && strings.HasPrefix(s, "__go_arg_") {
+								sawArgHoist = true
+							}
+						}
+					}
+				}
+				if im["kind"] == "gostmt" {
+					sawGostmt = true
+					gostmtNode = im
+				}
+			}
+		}
+	}
+	if !sawArgHoist {
+		t.Errorf("loop body missing __go_arg_* hoist vardecls (per-iteration capture precondition)")
+	}
+	if !sawGostmt {
+		t.Errorf("loop body missing gostmt")
+	}
+	// Zero-arg funclit shape on the loop's gostmt.
+	if gostmtNode != nil {
+		gf, _ := gostmtNode["fields"].(map[string]any)
+		call, _ := gf["call"].(map[string]any)
+		cf, _ := call["fields"].(map[string]any)
+		if args, ok := cf["args"].([]any); !ok || len(args) != 0 {
+			t.Errorf("loop gostmt call has args, want 0")
+		}
+		fun, _ := cf["fun"].(map[string]any)
+		ff, _ := fun["fields"].(map[string]any)
+		if params, ok := ff["params"].([]any); !ok || len(params) != 0 {
+			t.Errorf("loop gostmt funclit has params, want 0")
+		}
+		// The funclit's inner call must reference the hoisted temps
+		// (i.e. capture them — the loopcap precondition for per-iteration
+		// values).
+		var refsTemp bool
+		var findIdent func(v any)
+		findIdent = func(v any) {
+			switch v := v.(type) {
+			case map[string]any:
+				if v["kind"] == "ident" {
+					if f, ok := v["fields"].(map[string]any); ok {
+						if s, ok := f["name"].(string); ok && strings.HasPrefix(s, "__go_arg_") {
+							refsTemp = true
+						}
+					}
+				}
+				for _, c := range v {
+					findIdent(c)
+				}
+			case []any:
+				for _, c := range v {
+					findIdent(c)
+				}
+			}
+		}
+		findIdent(fun)
+		if !refsTemp {
+			t.Errorf("loop gostmt funclit does not reference the __go_arg_* temps")
+		}
 	}
 }
