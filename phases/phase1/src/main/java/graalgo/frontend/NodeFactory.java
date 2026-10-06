@@ -1184,7 +1184,10 @@ public final class NodeFactory {
         // routing it through ConvertNode would throw "illegal conversion:
         // INTERFACE -> POINTER". A nil-to-non-nillable conversion can never
         // appear here: go/types rejects such programs before export.
-        if (child instanceof NilNode && isNillable(to)) {
+        // P3-M3 (WS D): the shortcut does NOT apply for INTERFACE targets —
+        // a typed nil (e.g. (*Buf)(nil)) must box to a non-nil interface
+        // holding a nil pointer, not collapse to the nil interface.
+        if (child instanceof NilNode && isNillable(to) && to != GoKind.INTERFACE) {
             return child;
         }
         if (GoKind.transparent(from, to)) {
@@ -1870,6 +1873,19 @@ public final class NodeFactory {
         int toId = f.intValue("to", path);
         GoKind to = kindOf(ctx, toId, path);
         GoExprNode x = buildExpr(f.object("x", path), ctx);
+        // P3-M3 (WS D): T(nil) is the nil value of T — retype the NilNode
+        // to the target kind instead of passing the exporter's
+        // empty-interface-typed nil through. Otherwise a typed nil loses
+        // its type: (*Buf)(nil) would box as the nil interface rather
+        // than a *Buf-typed nil, and dispatch would panic instead of
+        // running the method with a nil receiver (if07).
+        if (x instanceof NilNode && isNillable(to)) {
+            GoStructDescriptor nilSd =
+                    to == GoKind.STRUCT ? structDescriptorFor(ctx, toId, path) : null;
+            NilNode n = new NilNode(to, nilSd);
+            n.setTypeId(toId);
+            return n;
+        }
         // M7: string <-> slice conversions need the element kind, from the
         // "from" (source type) field.
         GoKind sliceElemKind = null;
@@ -4108,6 +4124,8 @@ public final class NodeFactory {
         GoKind kind = kindOf(ctx, typeId, path);
         GoStructDescriptor sd =
                 kind == GoKind.STRUCT ? structDescriptorFor(ctx, typeId, path) : null;
-        return new NilNode(kind, sd);
+        NilNode n = new NilNode(kind, sd);
+        n.setTypeId(typeId);
+        return n;
     }
 }
