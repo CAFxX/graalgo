@@ -415,17 +415,31 @@ public final class SchedulerCore {
         if (panicCount.getAndIncrement() == 0) {
             firstPanicMessage = String.valueOf(pe.goValue());
         }
-        // gc prints "panic: <value>" for an uncaught panic. Full gc-style
-        // stack rendering is Phase-1's reportPanic; M1 prints the value
-        // (PanicRendering is Phase-1-internal, not in the freeze).
-        // P2-M5: with GODEBUG=panicnil=1, an uncaught panic(nil) prints
-        // "panic: nil" like pre-1.21 gc (instead of "panic: null").
+        // P3-M4 (WS C, ADR-0004 D3): full gc-style traceback, sharing the
+        // phase-1 rendering (header via PanicRendering, frames via
+        // Intrinsics.renderGoStack). Previously only the raw value was
+        // printed (no trace; error values rendered via toString, diverging
+        // from gc and from the phase-1 launcher). The goroutine id is the
+        // scheduler handle id (main is 1, like gc).
         Object v = pe.goValue();
         if (v == null && graalgo.runtime.Panic.isPanicNilOldBehavior()) {
+            // P2-M5: with GODEBUG=panicnil=1, an uncaught panic(nil) prints
+            // "panic: nil" like pre-1.21 gc (instead of "panic: null").
             System.err.println("panic: nil");
         } else {
-            System.err.println("panic: " + v);
+            System.err.println(graalgo.runtime.PanicRendering.renderPanicLine(pe));
         }
+        if (v instanceof graalgo.runtime.GoErrorValue e && e.signalSegv()) {
+            System.err.println("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0xADDR]");
+        }
+        System.err.println();
+        com.oracle.truffle.api.source.SourceSection throwSec = null;
+        if (pe.throwSite() != null && pe.throwSite().getSourceSection() != null) {
+            throwSec = pe.throwSite().getSourceSection();
+        }
+        graalgo.sched.GoroutineHandle h = currentHandle.get();
+        long gid = h != null ? h.id : 1;
+        System.err.print(graalgo.runtime.Intrinsics.renderGoStack(gid, pe.stackTop(), throwSec));
     }
 
     private void recordCrash(String what, Throwable t) {
