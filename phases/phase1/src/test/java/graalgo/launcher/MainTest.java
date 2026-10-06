@@ -73,11 +73,13 @@ public final class MainTest {
 
     public void testCheckRejectsScopeError() throws Exception {
         // P3-M5 (WS E, ADR-0005 App C): `select {}` is now IN scope (it
-        // lowers to the "select" wire node). Use a multi-result function,
-        // which remains out of scope (WS D), as the scope-error example.
-        // NB: writeTempGo prepends "package main\n\nfunc main() {\n", so the
-        // body must NOT include it.
-        Path bad = writeTempGo("func f() (int, int) { return 1, 2 }\n");
+        // lowers to the "select" wire node). Use a multi-result function
+        // literal, which remains out of scope (WS D), as the scope-error
+        // example. NB: writeTempGo prepends "package main\n\nfunc main() {\n",
+        // so the body must be valid INSIDE main: a func literal (not a
+        // nested func declaration, which is a Go syntax error that fires
+        // before the scope check).
+        Path bad = writeTempGo("f := func() (int, int) { return 1, 2 }\n_ = f\n");
         final int[] code = new int[1];
         String err = captureStderr(() -> {
             code[0] = Main.run(new String[] {"--check", bad.toString()});
