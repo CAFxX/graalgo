@@ -30,7 +30,10 @@ GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-NORM="$(cd "$(dirname "$0")" && pwd)/../traceback/normalize.py"
+# NOTE: the script already did `cd "$(dirname "$0")"` above, so a second
+# `cd "$(dirname "$0")"` would resolve relative to the corpus dir and fail.
+# Resolve against the current (already-changed) directory instead.
+NORM="$(pwd)/../traceback/normalize.py"
 
 pass=0; fail=0
 filter_stderr() { grep -v '^WARNING: ' || true; }
