@@ -311,3 +311,26 @@ bool. P3-M5's own synthetic source (not frozen Phase-1 interface).
 **GREEN**: tc00 runs end-to-end (output: non-zero, unix-positive,
 unixnano-positive, monotonic, sub-nonnegative). Full differential
 re-running.
+
+## 2026-10-06: Context interface fix (coordinator)
+
+**RED**: tc12_context_parent failed with `interface dispatch: method
+"Deadline" missing for dynamic type "pointer#..."`.
+
+**Root cause**: The synthetic `Context` interface included `Deadline()
+(Time, bool)` (multi-result). v1 cannot emit multi-result methods (WS D),
+so the exporter skipped them, leaving P3-M3 method tables incomplete. Any
+`Context` interface boxing (e.g. `Context(__p5c)` conversion, or passing a
+concrete type as `Context` parent) failed at runtime.
+
+**Fix** (commit afc0dfb):
+1. Synthetic `Context` interface omits `Deadline()` — deliberate,
+   documented divergence (M5 scope never calls it directly; all call
+   sites desugared via `__deadlineOf`).
+2. Appendix M desugar does NOT emit `Context(__p5c)` conversion; the
+   extracted `ctx` keeps concrete `*cancelCtx`/`*timerCtx` type.
+3. `GoStatementNode.build` (phase-2) gets the same TextMap clamp as
+   `NodeFactory.sectionFor` (desugared `go` nodes may carry out-of-range
+   positions).
+
+**GREEN**: tc12 outputs "propagated" (parent-cancel propagation works).
