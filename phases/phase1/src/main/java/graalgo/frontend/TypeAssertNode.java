@@ -76,6 +76,13 @@ public final class TypeAssertNode extends GoExprNode {
      * interface have no static side, hence the runtime check). Implkeys
      * (not bare names) make the check signature-aware: a method with the
      * right name but the wrong signature does not satisfy the assertion.
+     *
+     * <p>P3-M3 remediation (R1 P1-2): when the dynamic type is a generic
+     * instantiation whose method table was skipped (the
+     * {@link NodeFactory#TEMPLATE_METHODS_SKIPPED} sentinel), the check
+     * cannot be decided — fail fast with the named P3-M3 scope error
+     * instead of reporting "not implemented" (a bare {@code false} would
+     * be a silent divergence vs gc, which decides by the real method set).
      */
     static boolean holds(GoInterface gi, GoTypeDescriptor asserted,
                          List<String> assertedIfaceMethods,
@@ -89,6 +96,12 @@ public final class TypeAssertNode extends GoExprNode {
         if (assertedIfaceMethods != null && dynamicMethodSets != null) {
             Set<String> dynMethods = dynamicMethodSets.getOrDefault(
                     ((GoTypeDescriptor) gi.descriptor()).name(), Set.of());
+            if (dynMethods.contains(NodeFactory.TEMPLATE_METHODS_SKIPPED)) {
+                throw new FrontendException("cannot assert generic instantiation "
+                        + ((GoTypeDescriptor) gi.descriptor()).name() + " to interface "
+                        + asserted.name() + ": method tables for instantiated methods"
+                        + " are not supported (P3-M3 scope)");
+            }
             return dynMethods.containsAll(assertedIfaceMethods);
         }
         return gi.descriptor() == asserted;

@@ -113,7 +113,7 @@ freeze §5):
    implemented the factory-accurate naming. The Go producer is unaffected
    (it never computes descriptor names).
 
-## Amendment 2026-10-06 (P3-M3 remediation: R1 P0-1, R1 P0-2)
+## Amendment 2026-10-06 (P3-M3 remediation: R1 P0-1, R1 P0-2, R1 P1-2)
 
 Independent code-review remediation
 (`reviews/phase3-m3/reviewer1-code.md`). Two confirmed silent
@@ -154,6 +154,28 @@ divergences vs gc, both fixed with red-green evidence
    a replica. Red-green: the repro prints `no`/`no` pre-fix (RED),
    `yes-*T`/`yes-*T` post-fix (GREEN, assert + type-switch variants);
    pinned by corpus `if12_callee_type_identity.go`.
+3. **Generic instantiation via a non-empty interface (R1 P1-2).** A
+   generic instantiation (e.g. `Box[int]`) used where a non-empty
+   interface is expected got an empty wire method table (template methods
+   are skipped — out of P3-M3 scope), then died at first dispatch with
+   the misleading `no method table installed ... (needs gofrontend >=
+   0.4.0 WS D method tables)` — misleading because the document IS
+   0.4.0. Chosen direction: fail fast with the named P3-M3 scope error
+   (supporting instantiation method tables is the re-test trigger; grep
+   `templateMethodsSkipped` + `P3-M3 scope`). The exporter marks such
+   entries `"templateMethodsSkipped": true`; the frontend fails fast at
+   every boxing site (`NodeFactory.maybeConvert`,
+   `NodeFactory.adaptArgsForInterfaceParams`, the P3
+   `IfaceDispatchBuilder.boxArg`) and — for the `any`-then-assert shape,
+   where no boxing site sees the instantiation — at assertion runtime
+   via a sentinel in the dynamic method set (`TypeAssertNode.holds`
+   throws instead of reporting a silent wrong `false`). Boxing an
+   instantiation as the empty interface stays legal. Red-green: `p12.go`
+   dies pre-fix with the misleading runtime error (RED); post-fix all
+   three box sites and the assert path fail fast with
+   `cannot use generic instantiation main.Box[int] as a non-empty
+   interface: method tables for instantiated methods are not supported
+   (P3-M3 scope)` (GREEN).
 
 ## Amendment 2026-10-06 (factory-side WS-D retirements)
 

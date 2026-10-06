@@ -1431,13 +1431,20 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		if err != nil {
 			return TypeEnt{}, err
 		}
-		methods, err := e.methodTableEntries(t)
+		methods, tmplSkipped, err := e.methodTableEntries(t)
 		if err != nil {
 			return TypeEnt{}, err
 		}
-		return mk("named", map[string]any{
+		detail := map[string]any{
 			"name": namedTypeName(t), "underlying": under, "methods": methods,
-		}), nil
+		}
+		if tmplSkipped {
+			// P3-M3 remediation (R1 P1-2): the frontend fails fast
+			// with the named P3-M3 scope error when such an
+			// instantiation is boxed into a non-empty interface.
+			detail["templateMethodsSkipped"] = true
+		}
+		return mk("named", detail), nil
 	case *types.Pointer:
 		elem, err := e.typeID(t.Elem())
 		if err != nil {
@@ -1446,11 +1453,16 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		// P3-M3 (WS D, ADR-0003): the same "methods" field as named
 		// entries, holding the full *T method set (value + pointer
 		// receivers) for itab construction.
-		methods, err := e.methodTableEntries(t)
+		methods, tmplSkipped, err := e.methodTableEntries(t)
 		if err != nil {
 			return TypeEnt{}, err
 		}
-		return mk("pointer", map[string]any{"elem": elem, "methods": methods}), nil
+		detail := map[string]any{"elem": elem, "methods": methods}
+		if tmplSkipped {
+			// P3-M3 remediation (R1 P1-2): see the "named" case above.
+			detail["templateMethodsSkipped"] = true
+		}
+		return mk("pointer", detail), nil
 	case *types.Slice:
 		// P3-M2b (ADR-0002 D3): the factory manufactures element zeros
 		// (frozen); a sync primitive element would zero to an unusable
@@ -4093,17 +4105,26 @@ func embeddedFieldType(t types.Type, path []int) types.Type {
 }
 
 // recomputeMethodTables recomputes the wire "methods" list of every
-// named/pointer type-table entry described so far (P3-M3, WS D). Called
-// once from ExportFile after funcByObj is populated; see the call site.
+// named/pointer type-table entry described so far (P3-M3, WS D,
+// ADR-0003). Called once from ExportFile after funcByObj is populated;
+// see the call site.
 func (e *exporter) recomputeMethodTables() error {
 	for id, t := range e.typeList {
 		switch t.(type) {
 		case *types.Named, *types.Pointer:
-			methods, err := e.methodTableEntries(t)
+			methods, tmplSkipped, err := e.methodTableEntries(t)
 			if err != nil {
 				return err
 			}
 			e.types[id].Detail["methods"] = methods
+			// P3-M3 remediation (R1 P1-2): keep the
+			// "templateMethodsSkipped" marker in sync — the recompute
+			// pass is authoritative (funcByObj is populated here).
+			if tmplSkipped {
+				e.types[id].Detail["templateMethodsSkipped"] = true
+			} else {
+				delete(e.types[id].Detail, "templateMethodsSkipped")
+			}
 		}
 	}
 	return nil
@@ -4266,7 +4287,7 @@ func typeKeyOf(t types.Type) string {
 }
 
 // methodTableEntries computes the wire "methods" list for a named type or
-// a pointer type (P3-M3, WS D, ADR-0003): one {"name","obj","recv","index"}
+// a pointer type (P3-M3, WS D, ADR-0003): one {"name","obj","recv","index","implkey"}
 // entry per method in types.NewMethodSet(t), resolved to declarations via
 // funcByObj (this covers promoted/embedded methods, which methodIndex
 // lacks). "obj" is the funcdecl object id; "recv" is the declared receiver
@@ -4277,7 +4298,14 @@ func typeKeyOf(t types.Type) string {
 // adapt the receiver (P3-M3). Interface-declared methods (no funcdecl
 // exists to point at) and template methods are skipped — the latter are
 // out of P3-M3 scope. Sorted by method name for determinism.
-func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
+//
+// The second return value reports whether any template method was skipped
+// for this type (P3-M3 remediation, R1 P1-2): the caller records it as
+// "templateMethodsSkipped" on the entry detail so the frontend can fail
+// fast with the named P3-M3 scope error when such an instantiation is
+// boxed into a non-empty interface, instead of dying at first dispatch
+// with a misleading "no method table installed" error.
+func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 	ms := types.NewMethodSet(t)
 	type entry struct {
 		name        string
@@ -4288,6 +4316,7 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
 		unsupported bool
 	}
 	entries := make([]entry, 0, ms.Len())
+	tmplSkipped := false
 	for i := 0; i < ms.Len(); i++ {
 		sel := ms.At(i)
 		mobj, ok := sel.Obj().(*types.Func)
@@ -4295,7 +4324,11 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
 			continue
 		}
 		fi, ok := e.funcByObj[mobj]
-		if !ok || fi.isTemplate {
+		if !ok {
+			continue
+		}
+		if fi.isTemplate {
+			tmplSkipped = true
 			continue
 		}
 		recv := "value"
@@ -4347,7 +4380,7 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
 		// so no stripping is needed for the implements-check identity key.
 		msig, ok := mobj.Type().(*types.Signature)
 		if !ok {
-			return nil, fmt.Errorf("gofrontend: method %s has non-signature type %T (exporter bug)",
+			return nil, false, fmt.Errorf("gofrontend: method %s has non-signature type %T (exporter bug)",
 				mobj.Name(), mobj.Type())
 		}
 		entries = append(entries, entry{name: mobj.Name(), obj: fi.funcID, recv: recv, index: path,
@@ -4369,7 +4402,29 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
 		out = append(out, map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv,
 			"index": idx, "implkey": en.implkey})
 	}
-	return out, nil
+	if !tmplSkipped && ms.Len() > 0 && isGenericInstantiation(t) {
+		// The method-set objects of an instantiation (e.g. Box[int])
+		// are instantiated copies, never the origin's *types.Func, so
+		// they miss funcByObj above (the !ok path) rather than hitting
+		// the isTemplate path — but every one of them is template-derived
+		// and therefore skipped. Mark it: boxing such an instantiation
+		// into a non-empty interface fails fast with the named P3-M3
+		// scope error (R1 P1-2) instead of dying at first dispatch.
+		tmplSkipped = true
+	}
+	return out, tmplSkipped, nil
+}
+
+// isGenericInstantiation reports whether t is a generic instantiation
+// (a *types.Named with type arguments, or a pointer to one).
+func isGenericInstantiation(t types.Type) bool {
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	if n, ok := t.(*types.Named); ok {
+		return n.TypeArgs() != nil && n.TypeArgs().Len() > 0
+	}
+	return false
 }
 
 // resolveIfaceMethod looks the method up in the method set of the

@@ -759,3 +759,49 @@ func main() {
 		t.Fatalf("error %q does not contain %q", err, want)
 	}
 }
+
+// TestIfaceInstantiationSkippedMarker (R1 P1-2): the named entry for a
+// generic instantiation with methods (Box[int]) carries an empty
+// "methods" list AND "templateMethodsSkipped": true — the marker the
+// frontend's box sites read to fail fast with the named P3-M3 scope
+// error instead of dying at first dispatch with a misleading
+// "no method table installed" error.
+func TestIfaceInstantiationSkippedMarker(t *testing.T) {
+	const src = `package main
+
+type Getter interface{ Get() int }
+
+type Box[T any] struct{ v T }
+
+func (b Box[T]) Get() int { return 42 }
+
+func main() {
+	var g Getter = Box[int]{v: 7}
+	println(g.Get())
+}
+`
+	// The program itself is out of P3-M3 scope (instantiation method
+	// tables); what this test pins is the wire marker, not a successful
+	// export of the dispatch. Export must succeed — the scope error
+	// fires at frontend build time (Java), not here.
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	doc := decodeExport(t, out)
+	entries := typeEntries(t, doc)
+	_, detail := findNamedEntry(t, entries, "main.Box[int]")
+	methods, _ := detail["methods"].([]any)
+	if len(methods) != 0 {
+		t.Fatalf("main.Box[int] methods = %d entries, want 0 (template methods skipped)", len(methods))
+	}
+	skipped, _ := detail["templateMethodsSkipped"].(bool)
+	if !skipped {
+		t.Fatal("main.Box[int] missing templateMethodsSkipped=true marker")
+	}
+	// A non-generic named type with methods must NOT carry the marker.
+	_, bdetail := findNamedEntry(t, entries, "main.Getter")
+	if _, has := bdetail["templateMethodsSkipped"]; has {
+		t.Fatal("main.Getter unexpectedly carries templateMethodsSkipped")
+	}
+}

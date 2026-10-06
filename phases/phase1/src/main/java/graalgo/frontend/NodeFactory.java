@@ -1010,6 +1010,53 @@ public final class NodeFactory {
     }
 
     /**
+     * P3-M3 remediation (R1 P1-2): fail fast with the named P3-M3 scope
+     * error when a generic instantiation (e.g. {@code Box[int]}) would be
+     * boxed into a non-empty interface. The exporter's method tables skip
+     * template methods, so the instantiation's wire {@code "methods"} list
+     * is empty (marked {@code "templateMethodsSkipped"}) and the first
+     * dispatch would otherwise die with the misleading "no method table
+     * installed" error. Boxing into the empty interface stays legal (no
+     * method table is consulted there).
+     *
+     * <p>Greppable re-test trigger: when instantiation method tables are
+     * supported, delete this check and the exporter's
+     * {@code "templateMethodsSkipped"} marker.
+     */
+    public static void checkInstantiationBoxedAsInterface(BuildCtx ctx, int fromId, int toTypeId,
+            String path) {
+        if (fromId < 0 || isEmptyInterface(ctx, toTypeId, path)) {
+            return;
+        }
+        int tid = resolveAlias(ctx, fromId, path);
+        Json.Object entry = ctx.types.entry(tid, path);
+        String k = entry.string("kind", path);
+        if (!"named".equals(k) && !"pointer".equals(k)) {
+            return;
+        }
+        Json.Object detail = entry.object("detail", path);
+        Json.Value v = detail.opt("templateMethodsSkipped");
+        if (!(v instanceof Json.Bool b) || !b.value()) {
+            return;
+        }
+        String display = "named".equals(k) ? detail.string("name", path)
+                : "*" + namedDisplayName(ctx, detail.intValue("elem", path), path);
+        throw new FrontendException(path + ": cannot use generic instantiation " + display
+                + " as a non-empty interface: method tables for instantiated methods"
+                + " are not supported (P3-M3 scope)");
+    }
+
+    /** Display name for a type-table id: the qualified name for named types, else the kind. */
+    private static String namedDisplayName(BuildCtx ctx, int typeId, String path) {
+        int tid = resolveAlias(ctx, typeId, path);
+        Json.Object entry = ctx.types.entry(tid, path);
+        if ("named".equals(entry.string("kind", path))) {
+            return entry.object("detail", path).string("name", path);
+        }
+        return "<" + entry.string("kind", path) + ">";
+    }
+
+    /**
      * Fresh Go zero value for a struct type id, recursively zeroing nested
      * struct/array fields (M4, WS E). The template is built once per type;
      * callers copy it per evaluation (never share mutable zeros).
@@ -1177,6 +1224,23 @@ public final class NodeFactory {
     }
 
     /**
+     * Sentinel member of a descriptor's implkey set (P3-M3 remediation, R1
+     * P1-2): the wire method table skipped template methods, so the set is
+     * empty by design — not because the type has no methods. The runtime
+     * implements check fails fast with the named P3-M3 scope error on this
+     * sentinel instead of reporting "not implemented": the instantiation
+     * may well implement the interface (gc decides by its real method
+     * set), and a bare {@code false} would be a silent divergence.
+     */
+    public static final String TEMPLATE_METHODS_SKIPPED =
+            "\u0000<instantiation: template methods skipped (P3-M3 scope)>";
+
+    /** True when a type-table entry's detail carries the templateMethodsSkipped marker. */
+    private static boolean templateMethodsSkipped(Json.Object detail) {
+        return detail.opt("templateMethodsSkipped") instanceof Json.Bool b && b.value();
+    }
+
+    /**
      * P3-M3 (WS D): descriptor name → method implkeys for every
      * {@code named}/{@code pointer} type-table entry, memoized per build.
      * Descriptor names replicate {@link #typeDescriptorFor} exactly
@@ -1199,11 +1263,19 @@ public final class NodeFactory {
             String k = entry.string("kind", path);
             Json.Object detail = entry.object("detail", path);
             if ("named".equals(k)) {
-                out.put(detail.string("name", path), methodImplKeys(detail, path));
+                Set<String> implkeys = methodImplKeys(detail, path);
+                if (templateMethodsSkipped(detail)) {
+                    implkeys.add(TEMPLATE_METHODS_SKIPPED);
+                }
+                out.put(detail.string("name", path), implkeys);
             } else if ("pointer".equals(k)) {
                 // Must equal typeDescriptorFor's structural naming.
                 String key = structuralKey(ctx, id, path);
-                out.put("pointer#" + Integer.toHexString(key.hashCode()), methodImplKeys(detail, path));
+                Set<String> implkeys = methodImplKeys(detail, path);
+                if (templateMethodsSkipped(detail)) {
+                    implkeys.add(TEMPLATE_METHODS_SKIPPED);
+                }
+                out.put("pointer#" + Integer.toHexString(key.hashCode()), implkeys);
             }
         }
         ctx.dynamicMethodSets = out;
@@ -1236,6 +1308,10 @@ public final class NodeFactory {
                 throw new FrontendException(path + ": interface-to-interface conversion needs"
                         + " method tables (WS D)");
             }
+            // P3-M3 remediation (R1 P1-2): a generic instantiation boxed
+            // into a non-empty interface fails fast with the named P3-M3
+            // scope error (its wire method table is empty by design).
+            checkInstantiationBoxedAsInterface(ctx, child.typeId(), toTypeId, path);
             // P3-M3 (WS D): concrete→non-empty-interface boxes (see javadoc
             // above). The empty-interface fast path below is subsumed.
             return boxInterface(child, ctx, path);
@@ -2077,6 +2153,10 @@ public final class NodeFactory {
             if (!isInterfaceType(ctx, paramTypeIds.get(i), path)) {
                 continue;
             }
+            // P3-M3 remediation (R1 P1-2): a generic instantiation passed
+            // to a non-empty interface parameter fails fast with the named
+            // P3-M3 scope error (its wire method table is empty by design).
+            checkInstantiationBoxedAsInterface(ctx, args[i].typeId(), paramTypeIds.get(i), path);
             args[i] = boxInterface(args[i], ctx, path);
         }
         return args;

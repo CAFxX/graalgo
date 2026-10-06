@@ -172,7 +172,7 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
             if (!isInterfaceType(ctx, paramTypeIds.get(i), path)) {
                 continue;
             }
-            args[i] = boxArg(args[i], ctx, path);
+            args[i] = boxArg(args[i], paramTypeIds.get(i), ctx, path);
         }
         return args;
     }
@@ -202,9 +202,11 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
     /**
      * Replica of the factory's private {@code boxInterface}: box a
      * concrete value into an interface with its exact static-type
-     * descriptor.
+     * descriptor. {@code toTypeId} is the interface parameter's type id,
+     * for the R1 P1-2 generic-instantiation scope check.
      */
-    private static GoExprNode boxArg(GoExprNode child, NodeFactory.BuildCtx ctx, String path) {
+    private static GoExprNode boxArg(GoExprNode child, int toTypeId, NodeFactory.BuildCtx ctx,
+            String path) {
         GoKind from = child.kind();
         GoKind dataKind;
         GoTypeDescriptor descriptor;
@@ -218,6 +220,10 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
                 throw new FrontendException(path
                         + ": cannot box a node without a type-table id (WS E)");
             }
+            // P3-M3 remediation (R1 P1-2): a generic instantiation boxed
+            // into a non-empty interface fails fast with the named P3-M3
+            // scope error (its wire method table is empty by design).
+            NodeFactory.checkInstantiationBoxedAsInterface(ctx, fromId, toTypeId, path);
             descriptor = ctx.typeDescs.get(fromId);
             if (descriptor == null) {
                 descriptor = replicaDescriptor(ctx, fromId, path);
