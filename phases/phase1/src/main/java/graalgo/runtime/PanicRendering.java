@@ -31,6 +31,21 @@ public final class PanicRendering {
     private PanicRendering() {}
 
     /**
+     * Renders the full {@code panic: <value>} header line for an uncaught
+     * panic (P3-M4, WS C): the same header the phase-1 launcher prints,
+     * shared with the phase-2/3 scheduler panic path so both render
+     * gc-identical headers (previously the scheduler printed the raw
+     * {@code toString}, diverging on error values).
+     */
+    public static String renderPanicLine(PanicException p) {
+        Object v = p.goValue();
+        RenderInfo info = infoFor(p.descriptor(), p.goTypeName());
+        GoKind kind = info != null ? info.kind() : null;
+        String typeName = info != null ? info.typeName() : p.goTypeName();
+        return "panic: " + renderValue(v, kind, typeName);
+    }
+
+    /**
      * Renders the panic header value.
      *
      * @param value    the Go value (D5 mapping; a {@link GoErrorValue} for

@@ -331,39 +331,19 @@ public final class Main {
     }
 
     private static void reportPanic(graalgo.runtime.PanicException p) {
-        Object v = p.goValue();
-        graalgo.runtime.PanicRendering.RenderInfo info =
-                graalgo.runtime.PanicRendering.infoFor(p.descriptor(), p.goTypeName());
-        graalgo.values.GoKind kind = info != null ? info.kind() : null;
-        String typeName = info != null ? info.typeName() : p.goTypeName();
-        String value = graalgo.runtime.PanicRendering.renderValue(v, kind, typeName);
-        System.err.println("panic: " + value);
-        if (v instanceof graalgo.runtime.GoErrorValue e && e.signalSegv()) {
+        // P3-M4 (WS C, ADR-0004): header via PanicRendering.renderPanicLine
+        // and frames via Intrinsics.renderGoStack — the same rendering the
+        // phase-2/3 scheduler panic path now shares. Byte-identical to the
+        // previous inline version (verified by diff).
+        System.err.println(graalgo.runtime.PanicRendering.renderPanicLine(p));
+        if (p.goValue() instanceof graalgo.runtime.GoErrorValue e && e.signalSegv()) {
             System.err.println("[signal SIGSEGV: segmentation violation code=0x1 addr=0x0 pc=0xADDR]");
         }
         System.err.println();
-        System.err.println("goroutine 1 [running]:");
-        // Go stack frames, innermost first (gc order). The synthetic root
-        // frame is skipped; bodies are graalgo-shaped (documented divergence).
-        // The innermost frame uses the panic throw site for the source ref.
-        graalgo.runtime.GoStackFrame f = p.stackTop();
-        boolean first = true;
-        while (f != null && !f.isEmpty()) {
-            String name = f.funcName();
-            // gc qualifies main as main.main; funclits as main.main.funcN.
-            if ("main".equals(name)) {
-                name = "main.main";
-            }
-            System.err.println(name + "()");
-            com.oracle.truffle.api.source.SourceSection sec = f.section();
-            if (first && p.throwSite() != null && p.throwSite().getSourceSection() != null) {
-                sec = p.throwSite().getSourceSection();
-            }
-            first = false;
-            if (sec != null) {
-                System.err.println("\t" + sec.getSource().getName() + ":" + sec.getStartLine());
-            }
-            f = f.parent();
+        com.oracle.truffle.api.source.SourceSection throwSec = null;
+        if (p.throwSite() != null && p.throwSite().getSourceSection() != null) {
+            throwSec = p.throwSite().getSourceSection();
         }
+        System.err.print(graalgo.runtime.Intrinsics.renderGoStack(1, p.stackTop(), throwSec));
     }
 }

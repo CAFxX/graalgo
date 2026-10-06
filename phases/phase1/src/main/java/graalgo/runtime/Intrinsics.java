@@ -1,9 +1,14 @@
 package graalgo.runtime;
 // verifies: GG-0020 (WS G intrinsic surface)
 
+import java.util.function.BiFunction;
+
+import com.oracle.truffle.api.source.SourceSection;
+
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
 import graalgo.values.GoSlice;
+import graalgo.values.GoTypeDescriptor;
 
 /**
  * Frozen runtime intrinsic surface, Phase-1 slice (WS G, GG-0020).
@@ -20,8 +25,9 @@ import graalgo.values.GoSlice;
  * {@link #mapIterInit}, {@link #mapIterNext}, {@link #fastrand},
  * {@link #fastrandn}.
  *
- * <p>STUB (Phase 2 owns the implementation): {@link #itabFor},
- * {@link #traceback}.
+ * <p>REAL since P3-M4 (WS C, ADR-0004): {@link #itabFor} (delegates to the
+ * P3-M3 itab machinery via an installed provider), {@link #traceback}
+ * (renders {@link GoroutineState} stacks).
  *
  * <p>Related frozen surfaces live in sibling classes:
  * {@link BuiltinPrint} (print/println), {@link Fmt} (fmt stub),
@@ -506,25 +512,94 @@ public final class Intrinsics {
     }
 
     // ------------------------------------------------------------------
-    // Stubs (Phase 2 owns the implementation).
+    // Itab + traceback (P3-M4, WS C, ADR-0004; GG-0020 completion).
     // ------------------------------------------------------------------
 
     /**
-     * STUB — itab lookup (interface method table for a concrete type).
-     * Needs Phase-2 type metadata; throws until then.
+     * Provider hook for {@link #itabFor} (P3-M4, ADR-0004): phase-1 has no
+     * method tables, so the real lookup lives in phase-3
+     * ({@code graalgo.iface.IfaceMethodTable}, P3-M3), which installs its
+     * provider at launcher startup. The frozen signature is unchanged;
+     * STUB bodies are INTERNAL per freeze §8.
      */
-    public static Object itabFor(graalgo.values.GoTypeDescriptor descriptor,
-            graalgo.values.GoTypeDescriptor iface) {
-        throw new UnsupportedOperationException(
-                "Phase 2: itab lookup needs the Phase-2 type/metadata tables (GG-0020)");
+    private static volatile BiFunction<GoTypeDescriptor, GoTypeDescriptor, Object> itabProvider;
+
+    /**
+     * Installs the itab provider (phase-3 launcher). A null provider
+     * restores the unimplemented state.
+     */
+    public static void setItabProvider(
+            BiFunction<GoTypeDescriptor, GoTypeDescriptor, Object> provider) {
+        itabProvider = provider;
     }
 
     /**
-     * STUB — goroutine traceback. Needs Phase-2 scheduler stacks; throws
-     * until then.
+     * Itab lookup (interface method table for a concrete type) — REAL via
+     * the installed provider (P3-M3 itab machinery). Without a provider
+     * (phase-1-only mode, which has no method tables) throws, as before.
+     */
+    public static Object itabFor(GoTypeDescriptor descriptor, GoTypeDescriptor iface) {
+        BiFunction<GoTypeDescriptor, GoTypeDescriptor, Object> p = itabProvider;
+        if (p == null) {
+            throw new UnsupportedOperationException(
+                    "itab lookup needs the P3-M3 itab machinery (GG-0020): no provider installed");
+        }
+        return p.apply(descriptor, iface);
+    }
+
+    /**
+     * Goroutine traceback (REAL): renders the current goroutine's Go call
+     * stack in gc's single-goroutine shape. Works through
+     * {@link GoroutineState#current()}, so under phase-2/3 classpaths it
+     * sees the virtual-thread-scoped holder.
      */
     public static String traceback() {
-        throw new UnsupportedOperationException(
-                "Phase 2: traceback needs scheduler goroutine stacks (GG-0020)");
+        GoroutineState state = GoroutineState.current();
+        if (state == null) {
+            throw new IllegalStateException("traceback: no goroutine is running on this thread");
+        }
+        return renderGoStack(1, state.goStack(), null);
+    }
+
+    /**
+     * Renders a Go stack in gc's single-goroutine shape:
+     * {@code goroutine <id> [running]:} followed by one {@code name()} line
+     * and one {@code \tfile:line} line per frame, innermost first
+     * (shared with the panic path). Known divergences from gc, documented:
+     * no {@code +0x} pc offsets (no machine code), no argument lists
+     * (graalgo frames carry no arg words), unqualified frame names (the
+     * wire carries no package path), no {@code created by} line (the
+     * scheduler does not record creators — re-test trigger when it does).
+     *
+     * @param goroutineId the id to print (gc: the main goroutine is 1)
+     * @param top the innermost frame (null renders an empty stack)
+     * @param throwSiteOverride source section for the innermost frame
+     *        (the panic throw site), or null to use the frame's own
+     */
+    public static String renderGoStack(long goroutineId, GoStackFrame top,
+            SourceSection throwSiteOverride) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("goroutine ").append(goroutineId).append(" [running]:\n");
+        GoStackFrame f = top;
+        boolean first = true;
+        while (f != null && !f.isEmpty()) {
+            String name = f.funcName();
+            // gc qualifies main as main.main; funclits as main.main.funcN.
+            if ("main".equals(name)) {
+                name = "main.main";
+            }
+            sb.append(name).append("()\n");
+            SourceSection sec = f.section();
+            if (first && throwSiteOverride != null) {
+                sec = throwSiteOverride;
+            }
+            first = false;
+            if (sec != null) {
+                sb.append('\t').append(sec.getSource().getName()).append(':')
+                        .append(sec.getStartLine()).append('\n');
+            }
+            f = f.parent();
+        }
+        return sb.toString();
     }
 }
