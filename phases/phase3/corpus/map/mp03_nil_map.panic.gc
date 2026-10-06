@@ -1,1 +1,5 @@
 panic: assignment to entry in nil map
+
+goroutine N [running]:
+main()
+	mp03_nil_map.go:14

@@ -116,7 +116,7 @@ public final class TypeAssertNode extends GoExprNode {
             // (GoKind has a single INT64/UINT64 slot; not part of GG-0045).
             String dynamicName = gi.isNil() ? "nil"
                     : ((GoTypeDescriptor) gi.descriptor()).name();
-            Panic.throwPanic(GoErrors.interfaceConversion(ifaceName, dynamicName, assertedName));
+            Panic.throwPanic(GoErrors.interfaceConversion(ifaceName, dynamicName, assertedName), null, null, this);
         }
         if (asserted.isEmptyInterface()) {
             return gi;

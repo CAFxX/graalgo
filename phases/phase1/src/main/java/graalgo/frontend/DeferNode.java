@@ -95,12 +95,15 @@ public final class DeferNode extends GoStmtNode {
             }
             if (builtinName != null) {
                 dc = DeferredCall.builtin(builtinName, argVals, argKinds);
+                // P3-M4 remediation (P1-2): a deferred panic(x) throws at
+                // unwind time; the site is the defer statement (gc's line).
+                dc.setCallSite(this);
             } else {
                 GoFunc f = (GoFunc) fn.executeObject(frame);
                 if (f == null) {
                     // Deferring a nil func value: gc panics at defer time with
                     // the nil-dereference panic.
-                    graalgo.runtime.Panic.throwPanic(graalgo.runtime.GoErrors.nilDereference());
+                    graalgo.runtime.Panic.throwPanic(graalgo.runtime.GoErrors.nilDereference(), null, null, this);
                 }
                 dc = DeferredCall.func(f, argVals);
                 // M9 (P1-2): attach the probe site so the deferred invocation

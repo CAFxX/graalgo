@@ -54,7 +54,7 @@ public final class SelectorNode extends GoExprNode {
      */
     public static Object readFieldPath(Object o, int[] selpath, boolean derefResult) {
         for (int idx : selpath) {
-            o = deref(o);
+            o = deref(o, this);
             GoStruct s = (GoStruct) o;
             if (s.descriptor().field(idx).inLongs()) {
                 o = Long.valueOf(s.getLong(idx));
@@ -62,17 +62,17 @@ public final class SelectorNode extends GoExprNode {
                 o = s.getObject(idx);
             }
         }
-        return derefResult ? deref(o) : o;
+        return derefResult ? deref(o, this) : o;
     }
 
-    static Object deref(Object o) {
+    static Object deref(Object o, Node site) {
         if (o == null) {
             // Nil pointer (Java null): gc's nil-dereference panic.
-            Panic.throwPanic(GoErrors.nilDereference());
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
         }
         if (o instanceof GoPointer p) {
             if (p.isNil()) {
-                Panic.throwPanic(GoErrors.nilDereference());
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
             }
             return p.referent();
         }

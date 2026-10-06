@@ -1,0 +1,7 @@
+panic: assignment to entry in nil map
+
+goroutine N [running]:
+helper()
+	mp04_nil_map_inner.go:15
+main()
+	mp04_nil_map_inner.go:20

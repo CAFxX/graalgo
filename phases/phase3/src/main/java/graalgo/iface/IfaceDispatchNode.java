@@ -158,16 +158,16 @@ public final class IfaceDispatchNode extends GoExprNode {
      * a nil interface zero value, or a descriptor-less
      * {@link GoInterface}) panics exactly like calling a nil func value.
      */
-    private static GoInterface requireReceiver(Object r) {
+    private GoInterface requireReceiver(Object r) {
         if (r instanceof GoInterface gi) {
             if (!gi.isNil()) {
                 return gi;
             }
-            Panic.throwPanic(GoErrors.nilDereference());
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
             throw new AssertionError("unreachable: Panic.throwPanic returned");
         }
         if (r == null) {
-            Panic.throwPanic(GoErrors.nilDereference());
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
             throw new AssertionError("unreachable: Panic.throwPanic returned");
         }
         throw new FrontendException("ifacemethod: receiver evaluated to "

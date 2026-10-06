@@ -2,7 +2,11 @@
 # Differential runner for the P3-M4 map corpus (GG-0020): each program
 # runs under stock gc 1.27.1 (built binary, run directly — `go run` masks
 # the exit code) and under graalgo-sync-run. Compares stdout bytes, exit
-# codes, and — for panic programs — the first stderr line.
+# codes, and — for panic programs — the FULL normalized stderr (P3-M4
+# remediation P2-4: first-line-only comparison could not catch a wrong
+# innermost frame line, cf. P1-2). Panic stderr is normalized with the
+# traceback corpus's normalize.py and compared both differentially
+# (gc vs graalgo) and against the checked-in `$base.panic` anchor.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
 # p3frontend/DESIGN.md §7).
@@ -26,6 +30,8 @@ GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+NORM="$(cd "$(dirname "$0")" && pwd)/../traceback/normalize.py"
+
 pass=0; fail=0
 filter_stderr() { grep -v '^WARNING: ' || true; }
 
@@ -43,13 +49,17 @@ run_one() { # $1 = go file, $2 = gmp
         ok=0; echo "FAIL $base (gmp=$gmp): exit gc=$gc_exit graalgo=$gr_exit"
     fi
     if [ -f "$base.panic" ]; then
-        local gr_first
-        gr_first="$(filter_stderr < "$TMP/gr.err" | head -1)"
-        local want
-        want="$(cat "$base.panic")"
-        if [ "$gr_first" != "$want" ]; then
-            ok=0; echo "FAIL $base (gmp=$gmp): stderr first line: got [$gr_first] want [$want]"
-        fi
+        # P3-M4 remediation (P1-2/P2-4): compare the FULL normalized
+        # stderr, not just the first line — the innermost frame's
+        # file:line is part of the contract now.
+        filter_stderr < "$TMP/gc.err" | "$NORM" > "$TMP/gc.panic.norm"
+        filter_stderr < "$TMP/gr.err" | "$NORM" > "$TMP/gr.panic.norm"
+        cmp -s "$TMP/gc.panic.norm" "$TMP/gr.panic.norm" || {
+            ok=0; echo "FAIL $base (gmp=$gmp): normalized panic stderr differs"
+        }
+        cmp -s "$base.panic" "$TMP/gr.panic.norm" || {
+            ok=0; echo "FAIL $base (gmp=$gmp): differs from checked-in .panic anchor"
+        }
     fi
     cmp -s "$base.expected" "$TMP/gr.out" || { ok=0; echo "FAIL $base (gmp=$gmp): differs from .expected"; }
     if [ "$ok" = 1 ]; then

@@ -107,7 +107,7 @@ public final class CompositeLitNode extends GoExprNode {
             if (idx < 0 || idx >= n) {
                 // Unreachable via valid Go (go/types rejects out-of-range
                 // literal indices at compile time); gc-exact shape anyway.
-                Panic.throwPanic(GoErrors.indexOutOfRange(idx, n, true));
+                Panic.throwPanic(GoErrors.indexOutOfRange(idx, n, true), null, null, this);
             }
             Boxing.arraySet(arr, elemKind, idx, elemValue(frame, j));
             set[idx] = true;

@@ -85,7 +85,7 @@ public final class FuncValueCallNode extends GoExprNode {
     private Object invoke(VirtualFrame frame) {
         GoFunc f = (GoFunc) fn.executeObject(frame);
         if (f == null) {
-            graalgo.runtime.Panic.throwPanic(graalgo.runtime.GoErrors.nilDereference());
+            graalgo.runtime.Panic.throwPanic(graalgo.runtime.GoErrors.nilDereference(), null, null, this);
         }
         Object[] argVals = new Object[args.length];
         for (int i = 0; i < args.length; i++) {

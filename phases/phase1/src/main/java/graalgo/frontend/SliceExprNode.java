@@ -58,10 +58,10 @@ public final class SliceExprNode extends GoExprNode {
      * selects the overriding negative format; otherwise the bound must not
      * exceed {@code limit} (compared unsigned for unsigned bounds).
      */
-    private static void checkBound(GoErrors.BoundsCode code, Bound b, long limit) {
+    private void checkBound(GoErrors.BoundsCode code, Bound b, long limit) {
         boolean bad = b.signed ? (b.v < 0 || b.v > limit) : Long.compareUnsigned(b.v, limit) > 0;
         if (bad) {
-            Panic.throwPanic(GoErrors.bounds(code, b.v, limit, b.signed));
+            Panic.throwPanic(GoErrors.bounds(code, b.v, limit, b.signed), null, null, this);
         }
     }
 

@@ -74,7 +74,7 @@ public final class SyncOpNode extends GoExprNode {
     public Object executeObject(VirtualFrame frame) {
         Object r = recv.executeObject(frame);
         if (r == null) {
-            Panic.throwPanic(GoErrors.nilDereference());
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
         }
         switch (syncType + "." + op) {
             case "Mutex.Lock" -> ((GoMutex) r).lock();
@@ -97,13 +97,13 @@ public final class SyncOpNode extends GoExprNode {
      * misuse signal (which carries gc's message text) into a Go panic
      * (ADR-0002 D4).
      */
-    private static void panicOnMisuse(Runnable op) {
+    private void panicOnMisuse(Runnable op) {
         try {
             op.run();
         } catch (IllegalStateException e) {
             // P3-M4: the message must be a D5 GoString, not a Java String —
             // PanicRendering renders Java Strings as "(?) 0xADDR".
-            Panic.throwPanic(new GoString(e.getMessage().getBytes(StandardCharsets.UTF_8)));
+            Panic.throwPanic(new GoString(e.getMessage().getBytes(StandardCharsets.UTF_8)), null, null, this);
         }
     }
 
@@ -117,7 +117,7 @@ public final class SyncOpNode extends GoExprNode {
         if (!(fv instanceof GoFunc f)) {
             // fv is null only: a nil func value is a Go nil-dereference
             // panic (GoCalls.nilFuncCall parity).
-            Panic.throwPanic(GoCalls.nilFuncCall());
+            Panic.throwPanic(GoCalls.nilFuncCall(), null, null, this);
             return;
         }
         // FuncValueCallNode's recoverAllowed dance: recover() is only

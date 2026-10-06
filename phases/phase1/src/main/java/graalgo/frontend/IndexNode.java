@@ -55,7 +55,7 @@ public final class IndexNode extends GoExprNode {
         boolean signed = keyKind().isSigned();
         boolean bad = signed ? (idx < 0 || idx >= len) : Long.compareUnsigned(idx, len) >= 0;
         if (bad) {
-            Panic.throwPanic(GoErrors.indexOutOfRange(idx, len, signed));
+            Panic.throwPanic(GoErrors.indexOutOfRange(idx, len, signed), null, null, this);
         }
         return (int) idx;
     }

@@ -1,5 +1,7 @@
 package graalgo.runtime;
 
+import com.oracle.truffle.api.nodes.Node;
+
 import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
@@ -82,6 +84,20 @@ public final class DeferredCall {
         this.probeSite = site;
     }
 
+    /**
+     * P3-M4 remediation (P1-2): the AST node whose execution created this
+     * deferred call (the {@code defer} statement). A deferred
+     * {@code panic(x)} throws with this as the throw site so the panic
+     * renderer attributes the innermost frame to the defer statement
+     * (gc's line), not the function definition line. Null when unset.
+     */
+    private Node callSite;
+
+    /** Attaches the call site (called by DeferNode at defer time). */
+    public void setCallSite(Node site) {
+        this.callSite = site;
+    }
+
     /** A deferred function-value call. */
     public static DeferredCall func(GoFunc func, Object[] args) {
         return new DeferredCall(Kind.FUNC, func, args, null, null, null, null, null, null, null, null, null, null, null, null);
@@ -130,7 +146,7 @@ public final class DeferredCall {
         switch (builtinName) {
             case "println" -> BuiltinPrint.println(toArgs());
             case "print" -> BuiltinPrint.print(toArgs());
-            case "panic" -> Panic.throwPanic(args[0]);
+            case "panic" -> Panic.throwPanic(args[0], null, null, callSite);
             case "recover" -> Panic.recover(); // result discarded; never stops the panic
             default -> throw new IllegalStateException("cannot defer builtin " + builtinName + " (WS G)");
         }

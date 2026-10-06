@@ -88,7 +88,7 @@ public final class AtomicOpNode extends GoExprNode {
     private Object cell(VirtualFrame frame) {
         Object r = recv.executeObject(frame);
         if (r == null) {
-            Panic.throwPanic(GoErrors.nilDereference());
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
         }
         return r;
     }

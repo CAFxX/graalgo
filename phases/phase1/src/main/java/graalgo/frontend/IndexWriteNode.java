@@ -42,7 +42,7 @@ public final class IndexWriteNode extends GoStmtNode {
             case MAP -> {
                 GoMap m = (GoMap) container.executeObject(frame);
                 if (m == null) {
-                    Panic.throwPanic(GoErrors.assignmentToNilMap());
+                    Panic.throwPanic(GoErrors.assignmentToNilMap(), null, null, this);
                 }
                 m.put(MapKeys.box(key.kind(), key, frame), boxed);
             }
@@ -51,7 +51,7 @@ public final class IndexWriteNode extends GoStmtNode {
                 GoSlice s = (GoSlice) container.executeObject(frame);
                 long n = s == null ? 0 : s.len();
                 if (badIndex(idx, n)) {
-                    Panic.throwPanic(GoErrors.indexOutOfRange(idx, n, key.kind().isSigned()));
+                    Panic.throwPanic(GoErrors.indexOutOfRange(idx, n, key.kind().isSigned()), null, null, this);
                 }
                 Boxing.arraySet(s.array(), elemKind, s.offset() + (int) idx, boxed);
             }
@@ -60,7 +60,7 @@ public final class IndexWriteNode extends GoStmtNode {
                 Object arr = container.executeObject(frame);
                 int n = java.lang.reflect.Array.getLength(arr);
                 if (badIndex(idx, n)) {
-                    Panic.throwPanic(GoErrors.indexOutOfRange(idx, n, key.kind().isSigned()));
+                    Panic.throwPanic(GoErrors.indexOutOfRange(idx, n, key.kind().isSigned()), null, null, this);
                 }
                 Boxing.arraySet(arr, elemKind, (int) idx, boxed);
             }

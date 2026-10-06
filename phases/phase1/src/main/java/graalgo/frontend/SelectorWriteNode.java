@@ -33,10 +33,10 @@ public final class SelectorWriteNode extends GoStmtNode {
         // Intermediate path elements are (possibly embedded) struct or
         // pointer-to-struct fields — always objects-carried.
         for (int d = 0; d < selpath.length - 1; d++) {
-            o = SelectorNode.deref(o);
+            o = SelectorNode.deref(o, this);
             o = ((GoStruct) o).getObject(selpath[d]);
         }
-        o = SelectorNode.deref(o);
+        o = SelectorNode.deref(o, this);
         GoStruct s = (GoStruct) o;
         int idx = selpath[selpath.length - 1];
         GoStructDescriptor.Field f = s.descriptor().field(idx);

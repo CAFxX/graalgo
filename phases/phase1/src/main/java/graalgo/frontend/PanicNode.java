@@ -40,7 +40,7 @@ public final class PanicNode extends GoExprNode {
         if (arg == null) {
             return Panic.recover();
         }
-        Panic.throwPanic(readArg(arg, frame));
+        Panic.throwPanic(readArg(arg, frame), null, null, this);
         throw new IllegalStateException("throwPanic returned");
     }
 

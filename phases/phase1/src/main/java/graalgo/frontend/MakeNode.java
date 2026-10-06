@@ -60,7 +60,7 @@ public final class MakeNode extends GoExprNode {
         long cap = capChild != null ? capChild.executeLong(frame) : len;
         if (len < 0 || cap < 0 || len > cap) {
             // gc: "makeslice: len out of range" panic.
-            Panic.throwPanic("makeslice: len out of range");
+            Panic.throwPanic("makeslice: len out of range", null, null, this);
         }
         return Intrinsics.makeslice(elemKind, (int) len, (int) cap);
     }

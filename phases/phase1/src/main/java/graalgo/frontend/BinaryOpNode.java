@@ -188,13 +188,13 @@ public final class BinaryOpNode extends GoExprNode {
             case MUL -> l * r;
             case DIV -> {
                 if (r == 0) {
-                    Panic.throwPanic(GoErrors.integerDivideByZero());
+                    Panic.throwPanic(GoErrors.integerDivideByZero(), null, null, this);
                 }
                 yield unsigned ? Long.divideUnsigned(l, r) : l / r;
             }
             case MOD -> {
                 if (r == 0) {
-                    Panic.throwPanic(GoErrors.integerDivideByZero());
+                    Panic.throwPanic(GoErrors.integerDivideByZero(), null, null, this);
                 }
                 yield unsigned ? Long.remainderUnsigned(l, r) : l % r;
             }
@@ -204,13 +204,13 @@ public final class BinaryOpNode extends GoExprNode {
             case AND_NOT -> l & ~r;
             case SHL -> {
                 if (r < 0) {
-                    Panic.throwPanic(GoErrors.negativeShift());
+                    Panic.throwPanic(GoErrors.negativeShift(), null, null, this);
                 }
                 yield r >= 64 ? 0L : l << r;
             }
             case SHR -> {
                 if (r < 0) {
-                    Panic.throwPanic(GoErrors.negativeShift());
+                    Panic.throwPanic(GoErrors.negativeShift(), null, null, this);
                 }
                 if (r >= 64) {
                     yield unsigned ? 0L : (l < 0 ? -1L : 0L);
