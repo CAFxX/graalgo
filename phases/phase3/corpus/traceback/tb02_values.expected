@@ -1,0 +1,7 @@
+panic: code=42 msg=broken
+
+goroutine N [running]:
+fail()
+	tb02_values.go:6
+main()
+	tb02_values.go:10

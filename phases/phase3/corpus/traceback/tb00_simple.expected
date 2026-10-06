@@ -1,0 +1,5 @@
+panic: boom
+
+goroutine N [running]:
+main()
+	tb00_simple.go:4

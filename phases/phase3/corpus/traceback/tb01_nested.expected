@@ -1,0 +1,11 @@
+panic: deep boom
+
+goroutine N [running]:
+inner()
+	tb01_nested.go:4
+middle()
+	tb01_nested.go:8
+outer()
+	tb01_nested.go:12
+main()
+	tb01_nested.go:16

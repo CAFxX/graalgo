@@ -1,0 +1,6 @@
+cleaned
+panic: with defer
+
+goroutine N [running]:
+main()
+	tb03_defer.go:11
