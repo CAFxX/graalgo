@@ -4463,9 +4463,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// P3-M5 (WS E, ADR-0005 App C): len(cap)/cap(chan) lower to the
 		// additive "chanlen"/"chancap" nodes — the frozen LenNode rejects
 		// CHAN (WS G). DIV-M3-1: timer channels report 0 via TimerChan.
+		// Named channel types match via Underlying (P2-2).
 		if len(c.Args) == 1 {
 			if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
-				if _, ok := tv.Type.(*types.Chan); ok {
+				if _, ok := tv.Type.Underlying().(*types.Chan); ok {
 					x, err := e.exportExpr(c.Args[0])
 					if err != nil {
 						return nil, err
@@ -4495,9 +4496,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		// P3-M5 (WS E, ADR-0005 App C): make(chan T[, n]) lowers to the
 		// additive "makechan" node — the frozen builtin make path
-		// rejects chan types, so we never send it one.
+		// rejects chan types, so we never send it one. Named channel
+		// types match via Underlying (P2-2).
 		if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
-			if ct, ok := tv.Type.(*types.Chan); ok {
+			if ct, ok := tv.Type.Underlying().(*types.Chan); ok {
 				return e.exportMakeChan(c, ct)
 			}
 		}
