@@ -198,3 +198,131 @@ fail-fast by the Java builders (never guessed):
 evaluating to int64. The `time.Time` descriptor is resolved from the
 type-table's named `time.Time` entry (must be `struct{ unixnano int64 }`)
 by every builder that needs it — no cross-node ordering contract.
+
+---
+
+## Appendix C — Frontend channel operations (added 2026-10-06, coordinator)
+
+**Problem:** P2-M2 implemented channels/select at the Java level only. The
+P2-M2 corpus README states: "the Phase-1 exporter rejects these programs
+(`SendStmt`/`SelectStmt` are 'not supported in frontend/v1 scope'), so
+end-to-end `graalgo-run` execution awaits the exporter lowering (parent
+track)." P3-M5 IS that parent track: `time`/`context` are unusable without
+Go-level channel operations, and P3-M7's real stdlib needs them.
+
+**Decision:** the exporter lowers Go channel syntax to additive wire nodes;
+phase-3 registers builders via the public hooks (no frozen NodeFactory
+change). The Phase-2 Java primitives (`ChanOps`, `SelectOp`, `GoChan`) are
+consumed as-is.
+
+Wire nodes (all additive, v1):
+- `"makechan"`: {elem: type-id, size?: expr} — from `make(chan T)` /
+  `make(chan T, n)`. The exporter emits this INSTEAD OF the generic
+  `make` call node when the type is a chan (the frozen `buildMakeBuiltin`
+  still rejects chan — we never send it one).
+- `"send"`: {chan, value} — STATEMENT kind, from `ch <- v` (SendStmt).
+  Send on closed channel panics (gc parity — the Java `ChanOps.send`
+  already does this); send on nil channel blocks forever (gc parity).
+- `"recv"`: {x: chan-expr, type} — EXPRESSION kind, from `<-ch`. The
+  exporter currently emits `"unary"` with op `"<-"`; it now emits `"recv"`
+  (the frozen `UnaryOpNode` cannot be extended — `registerExprKind`
+  rejects duplicates — and `<-` was never implemented there).
+- `"chanclose"`: {x: chan-expr} — STATEMENT kind, from `close(ch)`. The
+  exporter intercepts the `close` identifier (it is NOT in the frozen
+  builtin registry — we do not touch the registry; the exporter emits the
+  wire node directly). Close of closed channel panics; close of nil
+  channel panics (gc parity — verify against the Java `ChanOps.close`).
+- `"select"`: STATEMENT kind, from `select` statements. Cases:
+  `{kind: "recv", chan, targets?: [v(, ok)], body}`,
+  `{kind: "send", chan, value, body}`,
+  `{kind: "default", body}`.
+  Evaluation: channel/value exprs evaluated once up front (gc semantics);
+  `ChanOps.selectGo` picks the case (uniform random among ready, default
+  if none ready and present, else scheduler-aware park); recv values
+  assigned via `selectRecvValue`/`selectRecvOk`. `v := <-ch` introduces
+  case-scoped variables (exporter handles the scope).
+
+**P2-M2 corpus graduation:** once the lowering lands, the P2-M2 channel
+corpus programs (ch01–ch12) must run end-to-end through `graalgo-run`
+and produce their gc-recorded `.expected` output — the README's promise.
+(This is a P3-M5 acceptance item.)
+
+## Appendix M — Multi-result call-site desugar (added 2026-10-06, coordinator)
+
+**Problem:** v1 cannot express multi-result function calls OR multi-value
+returns (the wire `return` node carries a list, but `buildReturn` rejects
+>1; `buildUnary` never implemented `<-`). Six operations need it:
+`context.WithCancel`, `WithCancelCause`, `WithDeadline`, `WithTimeout`
+(all `(Context, CancelFunc)`), `Context.Deadline()` (`(Time, bool)`),
+`time.ParseDuration` (`(Duration, error)`). General multi-result support
+is out of scope; the milestone uses targeted call-site desugar
+(precedent: P3-M2's `defer`/`go` desugar).
+
+**Decision:** the synthetic packages keep exact gc signatures. The
+exporter recognizes calls to these 6 operations WHEN they are the RHS of
+a 2-target assignment (`:=` or `=`) and desugars:
+
+```go
+ctx, cancel := context.WithCancel(parent)
+// →
+__p5c := context.__withCancel(parent)  // *cancelCtx, single result, real Go
+ctx := Context(__p5c)                  // concrete→interface conversion (P3-M3)
+cancel := __p5c.cancelFunc()           // CancelFunc
+```
+
+```go
+d, ok := ctx.Deadline()
+// →
+__p5p := context.__deadlineOf(ctx)     // deadlinePair, real Go
+d := __p5p.d
+ok := __p5p.ok
+```
+
+```go
+d, err := time.ParseDuration(s)
+// →
+__p5p := time.__parseDuration(s)       // durationPair, real Go
+d := __p5p.d
+err := __p5p.err
+```
+
+Synthetic helpers (all REAL GO, single-value — no new Java nodes):
+- `context.__withCancel(parent) *cancelCtx`,
+  `__withCancelCause(parent, cause) *cancelCtx`,
+  `__withDeadline(parent, d) *timerCtx`,
+  `__withTimeout(parent, t) *timerCtx`
+- `(*cancelCtx).cancelFunc() CancelFunc`,
+  `(*cancelCtx).cancelCauseFunc() CancelCauseFunc`
+- `context.__deadlineOf(c Context) deadlinePair` (type-switch on
+  `*timerCtx`/`*valueCtx`; `default` → no deadline — user-defined
+  Context implementations are a documented limitation)
+- `time.__parseDuration(s string) durationPair`
+- `type deadlinePair struct { d time.Time; ok bool }`,
+  `type durationPair struct { d Duration; err error }` (unexported;
+  exporter references them by type-table id — trusted-exporter pattern)
+
+The concrete `Deadline()` methods are DECLARED (for go/types interface
+satisfaction) with fail-fast bodies — they are unreachable because the
+exporter desugars every `Deadline()` call site. Other syntactic positions
+(non-2-target assignment) keep the fail-fast scope error, documented.
+
+**Context implementation** (pure Go, channel-mutex design — no Java
+intrinsics, no goroutine leak):
+```go
+type cancelCtx struct {
+    parent   Context
+    done     chan struct{}       // closed on cancel (broadcast)
+    cancelCh chan error          // buffer 1; occupancy = "cancel claimed"
+    err      error
+    muChan   chan struct{}       // binary semaphore (buffer 1, pre-filled)
+    children map[*cancelCtx]struct{}
+}
+// cancel: select { case cancelCh <- err: (won) set err, close done,
+//   propagate to snapshotted children, remove self from parent
+//   case <-done: (already canceled) }
+```
+Parent-cancel propagation is synchronous (no leaked goroutine — the
+launcher's `awaitQuiescence` would hang on parked goroutines, unlike gc
+which exits with main). Lock discipline: snapshot children under muChan,
+recurse WITHOUT holding the lock (context tree is a DAG — no cycles).
+`Err()` uses select-on-done for the happens-before edge.
