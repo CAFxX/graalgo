@@ -138,3 +138,68 @@ empty) and the suite re-run green afterwards. Only
 `phases/phase3/CHECKPOINT.md`, `phases/phase3/PLAN.md`, and
 `requirements/GG-0012.yaml`, `requirements/GG-0013.yaml`,
 `requirements/GG-0023.yaml` modified.
+
+## 2026-10-06 — P3-M2 sign-off: `sync` Go bindings + DIV-M3-1 fix (WS D)
+
+**Recovery note:** the original coordinator's VM was rebooted mid-milestone;
+a recovery coordinator audited the tree against the acceptance criteria,
+finished the missing P2-M8 discharge note, ran two independent reviews, and
+remediated all findings before sign-off. Sign-off commit: `f1d7de0`.
+
+**M2a — DIV-M3-1 FIXED** (`ef830ad` red + `052c752` fix): `TimerChan extends
+GoChan` masks `buffered()`/`capacity()` to 0 while `trySend`/`tryRecv` still
+deliver fire values. Red-green evidence: `phases/phase3/hidden_files/m2/
+redgreen.md` (red run `0 1`/`1 1`, green `0 0` byte-matching the gc-recorded
+`.expected`). `DIV-M3-1` marked FIXED in `phases/phase2/DIVERGENCES.md`;
+the Phase-3 blocking trigger is discharged — `time` may now be lowered
+(P3-M5). New `TimerDifferentialTest#testTm15TimerChanLenCap`
+(`verifies: GG-0048`); phase-2 suite is 194/194.
+
+**M2b — `import "sync"` lowers onto the Phase-2 Java primitives** (ADR-0002,
+accepted 2026-10-06): synthetic `sync` package in the frozen exporter's
+`overlayImporter` (documented freeze exception, P2-D8 precedent `2e5f012`
+verified); additive `syncnew`/`syncop` wire nodes (wire stays v1);
+`gofrontend` toolVersion 0.2.0→0.3.0; phase-3 Java module
+(`SyncNewNode`/`SyncOpNode`/`P3SyncMain`, `verifies: GG-0017` — sync slice
+now active); exporter defer/go desugars (D5b); misuse → Go panic with gc's
+message (D4, with the scoped fatal-vs-panic divergence honestly recorded).
+Corpus `phases/phase3/corpus/sync/` sy00–sy15 (16 programs):
+`run_differential.sh` 25/25 vs gc 1.27.1 (stdout bytes, exit codes, first
+stderr line). **P2-M8 re-test trigger discharged** (note in
+`torture/REPORT.md` §5, commit `39c5b77`): the `SyncStressTest` legs
+re-ran as Go programs (exclusion 32×1000 incl. `--gmp=1` cap-1 leg, RWMutex,
+WaitGroup, Once).
+
+**Reviews** (fixed diff `e0c07a5..39c5b77`; reports archived in
+`reviews/phase3-m2/` — the P3-M1 process gap is closed):
+- Code: **NO-GO** → all remediated. 3 P0 (P0-1 `RWMutex.Unlock` and P0-2
+  `WaitGroup.Done` misuse escaping as host exceptions — `72c4432` wraps
+  both in `panicOnMisuse`, adds sy13/sy14; P0-3 `go m.Op(args)` arg timing
+  — `3c163d5` hoists args/receivers to go-time temporaries, adds sy15) +
+  3 P1 (P1-1 independent GOROOT signature oracle `ab00108`; P1-2
+  `GoRWMutex` message → gc's `Unlock` `2bb8c18`; P1-3 covered by sy15) +
+  6 P2 (docs/hygiene `5e6c34e`; P2-6 render wart noted, out of scope).
+- Methodology: **GO-WITH-FINDINGS** → all remediated. 3 P2 (commit-message
+  count typos corrected in `reviewer2.md` — commits immutable; nil-safe
+  red test `f6800ad`).
+- Post-remediation follow-up: sy06/sy07 had racy counters (one flake each
+  observed) — de-flaked with mutex guards (`f1d7de0`); per the standing
+  "issues get fixed, not just documented" principle.
+
+**Process answers recorded:** (1) Phase-2 source edits post-sign-off
+(M2a's `GoChan`/`GoTimer`/`TimerChan`, P1-2's one-word message fix) are
+permitted as *documented milestone exceptions* with red-green evidence —
+not silent edits; future phase-2 edits should get their own ADR (ADR-0002
+§4 + phase-3 Makefile header rewritten to say exactly this). (2) The
+freeze exception for the synthetic `sync` package follows the P2-D8
+precedent and stays within freeze §§2.3/5; `INTERFACE_FREEZE.md` itself
+was not edited.
+
+**Final verification (sign-off tree, independent re-runs):**
+`make -C phases/phase1 test` 208/208; `make -C phases/phase2 test`
+194/194; `go test -count=1 ./...` in `phases/phase3/src/p3frontend` green;
+`bash phases/phase3/corpus/sync/run_differential.sh` 25/25;
+`make -C phases/phase3 check` clean. No orphan [OPEN]s; kill criteria not
+triggered. GG-0017 sync slice →active.
+
+**P3-M2 is COMPLETE.** Next: P3-M3 (interface dispatch).
