@@ -3155,11 +3155,19 @@ func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
 	c := s.Call
 	e.chanSeq++
 	seq := e.chanSeq
+	vardecls := make([]*Node, 0, len(c.Args)+1)
+	// Hoist the function value FIRST (Go spec: the function value is
+	// evaluated before the arguments, all in the calling goroutine).
+	// P3-M5 remediation (reviewer1 P2-3): the old code evaluated the fun
+	// expression inside the spawned funclit for non-ident forms.
+	funNode, err := e.hoistGoFunValue(s, c, seq, &vardecls)
+	if err != nil {
+		return nil, err
+	}
 	// Hoist args.
 	tempNames := make([]string, 0, len(c.Args))
 	tempObjs := make([]int, 0, len(c.Args))
 	tempIdents := make([]*Node, 0, len(c.Args))
-	vardecls := make([]*Node, 0, len(c.Args))
 	for i, arg := range c.Args {
 		tv, ok := e.info.Types[arg]
 		if !ok || tv.Type == nil {
@@ -3189,34 +3197,7 @@ func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
 			"name": name, "obj": oid, "type": tid,
 		}))
 	}
-	// Build the call f(temps).
-	// Reconstruct the call with temp idents as args.
-	var funNode *Node
-	switch fun := c.Fun.(type) {
-	case *ast.Ident:
-		// Direct function call: go f(args).
-		obj := e.info.ObjectOf(fun)
-		if obj == nil {
-			return nil, fmt.Errorf("gofrontend: no object for go func %q", fun.Name)
-		}
-		oid, ok := e.objIDs[obj]
-		if !ok {
-			return nil, fmt.Errorf("gofrontend: go func %q not declared", fun.Name)
-		}
-		tid, err := e.typeID(obj.Type())
-		if err != nil {
-			return nil, err
-		}
-		funNode = e.node("ident", s, map[string]any{"name": fun.Name, "obj": oid, "type": tid})
-	default:
-		// For other forms (method calls, etc.), export the fun expr and
-		// hope it's a zero-arg-callable. This is a best-effort fallback.
-		var err error
-		funNode, err = e.exportExpr(c.Fun)
-		if err != nil {
-			return nil, err
-		}
-	}
+	// Build the call f(temps) with the hoisted fun node.
 	callType, err := e.callType(c)
 	if err != nil {
 		return nil, err
@@ -3239,6 +3220,135 @@ func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
 	// Block: hoists + gostmt.
 	stmts := append(vardecls, gostmt)
 	return e.node("block", s, map[string]any{"stmts": stmts}), nil
+}
+
+// hoistGoFunValue evaluates the go statement's function value in the
+// calling goroutine (Go spec: "the function value and parameters are
+// evaluated as usual in the calling goroutine") into a hoisted temporary,
+// and returns the fun node for the zero-arg funclit's inner call. The
+// hoist vardecl(s) are appended to *vardecls ahead of the argument
+// hoists (function value evaluates before arguments).
+//
+//   - Declared function ident (`go f(args)`): the function value is
+//     fixed — reference it directly, as before.
+//   - Func-valued ident (`go fv(args)` where fv is a variable):
+//     hoist the variable's go-time value (a reassignment racing the
+//     goroutine must not change which function runs).
+//   - Method call (`go obj.M(args)`, plain MethodVal): hoist the
+//     receiver to `__go_recv_<seq>` and build a methodref against the
+//     temp (same resolution as exportMethodCall). This also retires the
+//     old WS H "method value (bound receiver) is not supported" fail-fast
+//     for this shape — a method call is not a method value.
+//   - Anything else: hoist the whole fun expression to `__go_fun_<seq>`
+//     (covers func-valued fields, index/call results, ...). Shapes whose
+//     fun expression cannot be exported (interface method values,
+//     synthetic time/timer methods, multi-result synthetics, builtins)
+//     keep their existing fail-fast via exportExpr.
+//
+// (P3-M5 remediation, reviewer1 P2-3.)
+func (e *exporter) hoistGoFunValue(s *ast.GoStmt, c *ast.CallExpr, seq int, vardecls *[]*Node) (*Node, error) {
+	switch fun := c.Fun.(type) {
+	case *ast.Ident:
+		obj := e.info.ObjectOf(fun)
+		if obj == nil {
+			return nil, fmt.Errorf("gofrontend: no object for go func %q", fun.Name)
+		}
+		if _, ok := obj.(*types.Func); ok {
+			// Declared function: fixed function value.
+			oid, ok := e.objIDs[obj]
+			if !ok {
+				return nil, fmt.Errorf("gofrontend: go func %q not declared", fun.Name)
+			}
+			tid, err := e.typeID(obj.Type())
+			if err != nil {
+				return nil, err
+			}
+			return e.node("ident", s, map[string]any{"name": fun.Name, "obj": oid, "type": tid}), nil
+		}
+		if _, ok := obj.(*types.Var); !ok {
+			// Builtins, consts, typenames, ...: keep the historical
+			// fail-fast (previously "go func %q not declared").
+			return nil, fmt.Errorf("gofrontend: go func %q not declared", fun.Name)
+		}
+		// Func variable: hoist its go-time value.
+		return e.hoistGoFunExpr(s, c.Fun, seq, vardecls)
+	case *ast.SelectorExpr:
+		if selection, ok := e.info.Selections[fun]; ok && selection.Kind() == types.MethodVal &&
+			syntheticPrimitiveRecv(selection.Recv()) == nil &&
+			timeTimerTickerNamed(selection.Recv()) == nil &&
+			recvIface(selection.Recv()) == nil &&
+			!isMultiResultSyntheticFunc(selection.Obj()) {
+			return e.hoistGoMethodRecv(s, c, fun, selection, seq, vardecls)
+		}
+		return e.hoistGoFunExpr(s, c.Fun, seq, vardecls)
+	default:
+		return e.hoistGoFunExpr(s, c.Fun, seq, vardecls)
+	}
+}
+
+// hoistGoFunExpr hoists an arbitrary function-value expression to
+// `__go_fun_<seq>` at go-statement time and returns an ident to the temp.
+func (e *exporter) hoistGoFunExpr(s *ast.GoStmt, funExpr ast.Expr, seq int, vardecls *[]*Node) (*Node, error) {
+	tv, ok := e.info.Types[funExpr]
+	if !ok || tv.Type == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for go func value")
+	}
+	funx, err := e.exportExpr(funExpr)
+	if err != nil {
+		return nil, err
+	}
+	name := fmt.Sprintf("__go_fun_%d", seq)
+	v := types.NewVar(token.NoPos, nil, name, tv.Type)
+	oid, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	tid, err := e.typeID(tv.Type)
+	if err != nil {
+		return nil, err
+	}
+	*vardecls = append(*vardecls, e.node("vardecl", s, map[string]any{
+		"names": []string{name}, "objs": []int{oid},
+		"define": true, "type": nil, "values": []*Node{funx},
+	}))
+	return e.node("ident", s, map[string]any{"name": name, "obj": oid, "type": tid}), nil
+}
+
+// hoistGoMethodRecv hoists a method call's receiver to `__go_recv_<seq>`
+// at go-statement time and returns a methodref against the temp (using
+// exportMethodCall's exact resolution via methodRefNode).
+func (e *exporter) hoistGoMethodRecv(s *ast.GoStmt, c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, seq int, vardecls *[]*Node) (*Node, error) {
+	xt, ok := e.info.Types[sel.X]
+	if !ok || xt.Type == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for go method receiver")
+	}
+	recvx, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	name := fmt.Sprintf("__go_recv_%d", seq)
+	v := types.NewVar(token.NoPos, nil, name, xt.Type)
+	oid, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	tid, err := e.typeID(xt.Type)
+	if err != nil {
+		return nil, err
+	}
+	*vardecls = append(*vardecls, e.node("vardecl", s, map[string]any{
+		"names": []string{name}, "objs": []int{oid},
+		"define": true, "type": nil, "values": []*Node{recvx},
+	}))
+	recvIdent := e.node("ident", s, map[string]any{"name": name, "obj": oid, "type": tid})
+	return e.methodRefNode(c, sel, selection, recvIdent)
+}
+
+// isMultiResultSyntheticFunc reports whether obj is one of the synthetic
+// multi-result functions/methods (fail-fast under WS D).
+func isMultiResultSyntheticFunc(obj types.Object) bool {
+	f, ok := obj.(*types.Func)
+	return ok && isMultiResultSynthetic(f)
 }
 
 // exportSyncGoStmt desugars `go m.Op(args)` on a sync primitive (see
@@ -4628,14 +4738,14 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	}), nil
 }
 
-// exportMethodCall exports a method call x.M(args) (M6, WS H). The receiver
-// x is emitted as a "methodref" fun target carrying the resolved
-// function/instantiation object id; the factory evaluates the receiver
-// first and passes it as the first argument (params[0] of the method's
-// funcdecl). Receiver-based dispatch only: the receiver type must match the
-// declared receiver type after substitution — implicit &/* adjustments are
-// a scope error (WS D).
-func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection) (*Node, error) {
+// methodRefNode resolves a MethodVal selector to a "methodref" fun node
+// carrying the resolved function/instantiation object id, with a
+// caller-supplied receiver node (the receiver is NOT exported here).
+// It mirrors exportMethodCall's resolution exactly; the factory
+// evaluates the receiver first and passes it as params[0].
+// Used by exportGoWithArgs to hoist the receiver to go-statement time
+// (P3-M5 remediation, reviewer1 P2-3).
+func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, recv *Node) (*Node, error) {
 	if selection.Kind() != types.MethodVal {
 		return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
 			sel.X, sel.Sel.Name)
@@ -4686,7 +4796,22 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 			return nil, err
 		}
 	}
+	return e.node("methodref", sel, map[string]any{"obj": objID, "recv": recv, "type": sigID}), nil
+}
+
+// exportMethodCall exports a method call x.M(args) (M6, WS H). The receiver
+// x is emitted as a "methodref" fun target carrying the resolved
+// function/instantiation object id; the factory evaluates the receiver
+// first and passes it as the first argument (params[0] of the method's
+// funcdecl). Receiver-based dispatch only: the receiver type must match the
+// declared receiver type after substitution — implicit &/* adjustments are
+// a scope error (WS D).
+func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection) (*Node, error) {
 	recv, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	fun, err := e.methodRefNode(c, sel, selection, recv)
 	if err != nil {
 		return nil, err
 	}
@@ -4698,7 +4823,6 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	if err != nil {
 		return nil, err
 	}
-	fun := e.node("methodref", sel, map[string]any{"obj": objID, "recv": recv, "type": sigID})
 	return e.node("call", c, map[string]any{
 		"fun": fun, "args": args, "type": typ,
 	}), nil
