@@ -203,3 +203,88 @@ was not edited.
 triggered. GG-0017 sync slice →active.
 
 **P3-M2 is COMPLETE.** Next: P3-M3 (interface dispatch).
+
+## 2026-10-06 — P3-M3 review remediation (code + methodology reviews)
+
+**Every finding remediated** from the two independent reviews of
+`1bc1f36..0fe5b6c` (code review verdict: **NO-GO** — 2 P0 silent
+divergences, 2 P1, 9 P2; methodology review: **GO-WITH-FINDINGS**, F1–F8;
+final reports: `reviews/phase3-m3/reviewer1-code.md`,
+`reviews/phase3-m3/reviewer2-methodology.md`), in
+one-logical-change-per-commit sequence:
+
+1. `4586f00` **R1 P0-1 signature-aware implements check**: the exporter
+   emits `implkey` (method name — unexported names package-qualified — +
+   structural signature key with aliases expanded, basics by `BasicKind`)
+   on method-table and interface entries; `TypeAssertNode.holds` tests
+   implkey inclusion. Red-green: wrong-signature assert prints
+   `assert ok` pre-fix vs gc `assert failed` (RED), `assert failed`
+   post-fix (GREEN); corpus `if11_assert_signature.go`.
+2. `4e6d84f` **R1 P0-2 canonical descriptors**: new public additive
+   `NodeFactory.canonicalDescriptorFor` (ADR-0003 amendment, factory
+   exception); the P3 builder's `ctx.typeDescs` miss path uses it instead
+   of minting a replica. Red-green: callee assert/switch prints `no`
+   pre-fix vs gc `yes-*T` (RED), `yes-*T` post-fix (GREEN); corpus
+   `if12_callee_type_identity.go`.
+3. `98fb39d` **R1 P1-1 alias-of-interface receiver**: `types.Unalias`
+   before the iface-id switch (`type W = Writer`). Red-green: export
+   error pre-fix, gc-identical output post-fix;
+   `TestIfaceMethodCallAliasReceiver`.
+4. `2ef6540` **R1 P1-2 generic instantiation via interface**: exporter
+   marks `"templateMethodsSkipped": true`; the frontend fails fast with
+   the named P3-M3 scope error at all boxing sites and — for the
+   `any`-then-assert shape — at assertion runtime via a sentinel (a bare
+   `false` there would be a silent divergence vs gc). Red-green:
+   misleading runtime error pre-fix, named scope error post-fix;
+   `TestIfaceInstantiationSkippedMarker`. Direction chosen: fail fast
+   (supporting instantiation method tables is the greppable re-test
+   trigger).
+5. `9412471` **wire pins + R2 F4**: `TestIfaceImplKey` (alias-expanded
+   signatures share the interface's implkey; wrong signatures differ),
+   `TestIfaceMultiResultScopeError` (two-result interface methods fail
+   fast — the multi-result dispatch mechanics are untested, so the shape
+   must not reach dispatch).
+6. `b257cfc` **R2 P2-1 M9 classification**: 1=mono, 2–3=poly
+   (PIC-resident), ≥4=mega (true PIC overflow, limit 3) — headline
+   corrected to 41.9% / 51.6% / 6.5% (was 22.6% "mega").
+7. `a4c9383` **R2 P2-2**: `megamorphicTransitions` now `AtomicLong`.
+8. `d14100e` **R2 P2-3**: `freshSigID` appends a nil `typeList`
+   placeholder (parallelism invariant);
+   `TestFreshSigIDKeepsTypeListParallel` (red-green verified).
+9. `cf30a67` **R2 P2-4**: `mentionsTypeParam` covers `Alias`/`Union`;
+   `TestMentionsTypeParamAliasUnion` (red-green verified).
+10. `4a198a2` **R2 P2-5**: dead code removed (unreachable
+    interface→interface throw in `maybeConvert`; callerless 2-arg
+    `holds`).
+11. `a4222cc` **R2 P2-7**: unsupported-promotion fail-fast narrowed from
+    whole-itab to per-method dispatch (the documented intent).
+    Red-green: supported-only dispatch dies pre-fix, gc-identical
+    post-fix; `testSupportedMethodBesideUnsupportedDispatches` (fails
+    pre-fix), `testUnsupportedPromotionFailsFastAtDispatch`.
+12. `7c1e218` **R2 F3**: Mutation C2 — same-arity GoFunc swap goes RED
+    via output mismatch (9/10 vs 11/10), honestly scoping C's claim;
+    remediation red-green evidence appended to `hidden_files/m3/redgreen.md`.
+13. **R2 F6**: `verifies: GG-0017 (iface slice)` annotations on the iface
+    code/tests + dated history entry in `requirements/GG-0017.yaml`.
+14. **R2 F1 / R2 P2-6**: wire `index` field documented in ADR-0003 item 2
+    and `frontend-v1.md` (path semantics + null case); `implkey` and
+    `templateMethodsSkipped` documented alongside.
+
+**Open items carried forward:**
+
+1. **Phase-4 workload-representative polymorphism re-measurement (R2 F5).**
+   The M9 re-measurement (`hidden_files/m3/polymorphism.md`: 41.9% mono /
+   51.6% poly / 6.5% mega over 31 sites) is mechanism coverage, not a
+   workload verdict — the probe set is adversarial by construction. The
+   Phase-2 PLAN.md trigger's actual content ("(Phase 4 input)") needs a
+   workload-representative interface-heavy program set, which requires
+   the P3-M7+ frontend waves. **Re-measure at Phase-4 entry; the
+   41.9/51.6/6.5 split must not be cited as a workload distribution.**
+2. **R1 P1-2 re-test trigger:** when instantiation method tables are
+   supported, delete the `templateMethodsSkipped` marker, the box-site
+   checks, and the assertion sentinel (grep `templateMethodsSkipped` +
+   `P3-M3 scope`).
+3. **Type switches with interface cases** (`case Getter:`) never match a
+   concrete dynamic type (identity-only matching in `TypeSwitchNode`) —
+   observed during remediation, pre-existing, out of P3-M3 scope; needs
+   a P3-M(n) work item if interface-case switches are required.
