@@ -134,7 +134,7 @@ public final class IfaceDispatchNode extends GoExprNode {
         callArgs[0] = target.isDirect()
                 ? data
                 : graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath(),
-                        !target.pointerReceiver());
+                        !target.pointerReceiver(), this);
         System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
         // FuncValueCallNode's recoverAllowed dance: recover() is only
         // non-nil when called directly by a deferred function — clear the

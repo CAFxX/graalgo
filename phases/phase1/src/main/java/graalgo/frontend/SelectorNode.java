@@ -36,11 +36,6 @@ public final class SelectorNode extends GoExprNode {
         return selpath;
     }
 
-    /** Navigates to the selected field's canonical boxed value. */
-    static Object readField(GoExprNode objNode, int[] selpath, VirtualFrame frame) {
-        return readFieldPath(objNode.executeObject(frame), selpath, false);
-    }
-
     /**
      * Navigates a field-index path from a runtime value (P3-M3, WS D):
      * promoted-method receiver adaptation in interface dispatch walks the
@@ -53,8 +48,16 @@ public final class SelectorNode extends GoExprNode {
      *        struct, mirroring gc's implicit {@code (*p)}.
      */
     public static Object readFieldPath(Object o, int[] selpath, boolean derefResult) {
+        return readFieldPath(o, selpath, derefResult, null);
+    }
+
+    /**
+     * Site-carrying overload (P3-M4 remediation P1-2): nil-dereference
+     * panics while walking the path are attributed to {@code site}.
+     */
+    public static Object readFieldPath(Object o, int[] selpath, boolean derefResult, Node site) {
         for (int idx : selpath) {
-            o = deref(o, this);
+            o = deref(o, site);
             GoStruct s = (GoStruct) o;
             if (s.descriptor().field(idx).inLongs()) {
                 o = Long.valueOf(s.getLong(idx));
@@ -62,7 +65,7 @@ public final class SelectorNode extends GoExprNode {
                 o = s.getObject(idx);
             }
         }
-        return derefResult ? deref(o, this) : o;
+        return derefResult ? deref(o, site) : o;
     }
 
     static Object deref(Object o, Node site) {
@@ -80,7 +83,9 @@ public final class SelectorNode extends GoExprNode {
     }
 
     private Object read(VirtualFrame frame) {
-        Object o = readField(obj, selpath, frame);
+        // P3-M4 remediation (P1-2): site-carrying path — a nil pointer in
+        // the selection chain panics at this selector's line.
+        Object o = readFieldPath(obj.executeObject(frame), selpath, false, this);
         if (o instanceof Long l) {
             // Longs-carried field: decode per the node's kind.
             return Boxing.fromLongBits(kind(), l.longValue());
