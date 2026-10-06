@@ -34,6 +34,10 @@ public final class DeleteNode extends GoExprNode {
         // etc.), matching the index-write path — otherwise delete(m, 1)
         // won't find a key stored as Long by m[1] = ....
         Object k = MapKeys.box(keyChild.kind(), keyChild, frame);
+        // P3-M4 (WS C): delete on a nil map is a no-op (gc parity).
+        if (m == null) {
+            return 0L;
+        }
         m.delete(k);
         return 0L;
     }
