@@ -930,7 +930,7 @@ func (c *cancelCtx) cancelCauseFunc() CancelCauseFunc {
 // the single-result constructors behind WithCancel/WithCancelCause.
 func __withCancel(parent Context) *cancelCtx {
 	if parent == nil {
-		panic("context: nil parent")
+		panic("cannot create context from nil parent")
 	}
 	c := newCancelCtx(parent)
 	ctxPropagateCancel(parent, c)
@@ -939,7 +939,7 @@ func __withCancel(parent Context) *cancelCtx {
 
 func __withCancelCause(parent Context) *cancelCtx {
 	if parent == nil {
-		panic("context: nil parent")
+		panic("cannot create context from nil parent")
 	}
 	c := newCancelCtx(parent)
 	ctxPropagateCancel(parent, c)
@@ -1049,7 +1049,7 @@ func (c *timerCtx) cancelFunc() CancelFunc {
 // __withDeadline/__withTimeout are the Appendix M desugar targets.
 func __withDeadline(parent Context, d time.Time) *timerCtx {
 	if parent == nil {
-		panic("context: nil parent")
+		panic("cannot create context from nil parent")
 	}
 	c := &timerCtx{cancel: newCancelCtx(parent), deadline: d}
 	ctxPropagateCancel(parent, c.cancel)
@@ -1152,10 +1152,10 @@ func (c *valueCtx) Value(key any) any {
 
 func WithValue(parent Context, key, val any) Context {
 	if parent == nil {
-		panic("context: nil parent")
+		panic("cannot create context from nil parent")
 	}
 	if key == nil {
-		panic("context: nil key")
+		panic("nil key")
 	}
 	return &valueCtx{parent: parent, key: key, val: val}
 }
@@ -1227,7 +1227,7 @@ func (c *withoutCancelCtx) Value(key any) any {
 
 func WithoutCancel(parent Context) Context {
 	if parent == nil {
-		panic("context: nil parent")
+		panic("cannot create context from nil parent")
 	}
 	// gc 1.27.1 always wraps (no Done()==nil shortcut — verified
 	// against the gc source and empirically: WithoutCancel(Background())
