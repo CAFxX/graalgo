@@ -56,8 +56,65 @@ capable of failing (proven) and passes only when both report 0.
 
 ## Fix (commit 2 of 2)
 
-...to be written...
+Dedicated channel flavor, per the DIV-M3-1 re-test trigger:
+
+- New `graalgo.runtime.TimerChan extends GoChan` (was `final`; now
+  subclassable with the masking contract documented on the `GoChan`
+  class javadoc): `super(1, 0L)` real buffer underneath, but
+  `buffered()` and `capacity()` overridden to return 0. The mask lives
+  in the observation probes only — `trySend`/`tryRecv`/send/recv/close/
+  select all use the buffer fields directly, so fire values remain
+  deliverable.
+- `GoTimer` now builds `new TimerChan()` instead of `new GoChan(1, 0L)`
+  (field type `TimerChan`); `channelImpl()` return type stays `GoChan`
+  so `TimerHeap` (drain via `tryRecv`, fire via `trySend`) is untouched.
+- Verified pre-commit: `buffered()` is called only from `ChanOps.len`
+  and `capacity()` only from `ChanOps.cap` (re-grep; the only other
+  `buffered()` caller is a `ChannelTest` probe on a plain `GoChan`);
+  `TimerHeap`'s `channelImpl()` uses are `tryRecv`/`trySend` only;
+  `requireGoChan`'s `instanceof GoChan` still passes for the subclass;
+  `ChanOps.len`/`cap` signatures frozen (bodies internal — no version
+  bump).
+- Docs in the same change: `GoTimer` "Known divergence (P2-1)" javadoc
+  → resolved; `DIV-M3-1` marked FIXED in
+  `phases/phase2/DIVERGENCES.md` with evidence pointers.
 
 ## GREEN
 
-...to be written...
+Isolated differential test, post-fix:
+
+```
+$ java ... RedRun
+RED-RUN PASSED (unexpected)     # label kept for red/green symmetry; exit=0
+```
+
+i.e. `testTm15TimerChanLenCap` byte-matches the gc-recorded
+`.expected` (`0 0` in all five states).
+
+Full regression, post-fix (exact commands):
+
+```
+$ cd phases/phase2 && make test
+194 tests, 0 failures
+```
+(`194 = 193 sign-off count + 1 new testTm15TimerChanLenCap`; includes
+`PASS TimerDifferentialTest.testTm15TimerChanLenCap` and all delivery
+tests proving the buffered fire value is still reachable: tm02/tm03
+recv, tm11 select-after, tm13/tm14 drain-on-stop/reset, TimerTest
+ticker/select paths.)
+
+```
+$ cd phases/phase1 && make test
+208 tests, 0 failures
+```
+
+The sibling worker's sync bindings were not touched; no `sync/` or
+`research/phase5-opt-survey/` files appear in this change, and no
+`phases/phase1/` source was modified (phase-1 suite re-ran only as
+regression evidence).
+
+Two commits, no amends:
+- `ef830ad`: red test + red half of this evidence (no fix).
+- this commit: `TimerChan` fix + green evidence + doc updates
+  (`GoTimer` javadoc, `DIV-M3-1` → FIXED in `phases/phase2/DIVERGENCES.md`,
+  timer corpus README), with the Phase-3 blocking trigger discharged.

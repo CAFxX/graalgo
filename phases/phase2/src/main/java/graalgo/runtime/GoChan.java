@@ -38,8 +38,16 @@ import graalgo.jfr.ParkReason;
  * either complete or report "would block" atomically under one monitor
  * hold (a select waiter claimed by another channel between the readiness
  * peek and the handoff just makes trySend return false).
+ *
+ * <p>Subclassing (P3-M2a): the class is intentionally non-final for the
+ * single dedicated {@link TimerChan} flavor. The masking contract is:
+ * {@code buffered()} is called only from {@code ChanOps.len} and
+ * {@code capacity()} only from {@code ChanOps.cap}; ALL internal logic
+ * (send/recv/select/waiters/{@code trySend}/{@code tryRecv}) uses the
+ * buffer fields directly. A subclass may therefore mask the observation
+ * probes without changing delivery behavior.
  */
-public final class GoChan implements ChanOps.Chan {
+public class GoChan implements ChanOps.Chan {
     private static final java.util.concurrent.atomic.AtomicLong ID_GEN =
             new java.util.concurrent.atomic.AtomicLong(1);
 

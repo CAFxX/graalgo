@@ -16,11 +16,10 @@ These .go files double as the future end-to-end corpus: once the
 exporter lowers the `time` package (parent dependency), the same
 programs run through `graalgo-run` and must produce identical output.
 
-**Known divergence (P2-1):** gc presents timer channels as unbuffered
-(`len(t.C)` always 0); this implementation uses 1-buffered channels, so
-a program observing `len(t.C)` would diverge. No corpus program uses
-`len()` on a timer channel. Must be resolved before Phase 3 lowers
-`time`.
+**Resolved divergence (P3-M2a; was P2-1/DIV-M3-1):** gc presents
+timer channels as unbuffered (`len(t.C)` and `cap(t.C)` always 0); the
+implementation now uses the `TimerChan` flavor of `GoChan` (real 1-slot
+buffer, observation probes masked to 0). tm15 is the differential proof.
 
 Programs:
 - tm01: sleep completion order (3 goroutines; 300/600/900ms)
@@ -37,3 +36,4 @@ Programs:
 - tm12: Sleep(0)/Sleep(-1) return immediately
 - tm13: Ticker Stop with buffered tick → drained, 0 remaining (Go 1.23+)
 - tm14: Ticker Reset with buffered tick → stale drained, fresh tick arrives
+- tm15: len/cap of timer/ticker channels are 0 in every state (DIV-M3-1)

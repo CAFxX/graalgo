@@ -5,9 +5,11 @@ import graalgo.sched.SchedulerCore;
 /**
  * Go timer/ticker (P2-M3, WS C; GG-SCHED-0004).
  *
- * <p>Models {@code time.Timer} / {@code time.Ticker}: a 1-buffered
- * channel that receives the fire nanotime. Stop/Reset follow gc
- * semantics exactly (verified differentially vs gc 1.27.1):
+ * <p>Models {@code time.Timer} / {@code time.Ticker}: a timer channel
+ * (physical 1-slot buffer for the fire nanotime, observed as unbuffered
+ * per gc — see {@link TimerChan}) that receives the fire nanotime.
+ * Stop/Reset follow gc semantics exactly (verified differentially vs
+ * gc 1.27.1):
  * <ul>
  *   <li>{@link #stop()} returns true iff the timer was stopped before
  *       firing; false if it already fired or was stopped. It does not
@@ -31,18 +33,22 @@ import graalgo.sched.SchedulerCore;
  * <p>The channel element is the fire nanotime boxed as {@link Long}
  * (opaque until Phase 3 brings {@code time.Time}).
  *
- * <p><b>Known divergence (P2-1):</b> gc presents timer channels as
- * unbuffered — {@code len(t.C)} always returns 0. This implementation
- * uses a 1-buffered {@link GoChan}, so {@code ChanOps.len} returns 1
- * when a tick is buffered but undelivered. Accepted for Phase 2 (the
- * {@code time} package is not lowered yet); must be resolved before
- * Phase 3 lowers {@code time}.
+ * <p><b>Resolved divergence (P3-M2a; was P2-1/DIV-M3-1):</b> gc
+ * presents timer channels as unbuffered — {@code len(t.C)} and
+ * {@code cap(t.C)} always report 0. The timer channel is now the
+ * dedicated {@link TimerChan} flavor of {@link GoChan}: the real
+ * 1-slot buffer underneath keeps fire values deliverable (recv,
+ * select, close-drain) while the observation probes are masked to 0.
+ * Red-green evidence:
+ * {@code phases/phase3/hidden_files/m2/redgreen.md}; the
+ * {@code DIV-M3-1} re-test trigger is discharged by the differential
+ * timer corpus (tm15) re-run.
  *
  * <p>verifies: GG-SCHED-0004 (timer slice)
  */
 public final class GoTimer implements TimerHeap.ChanOwner {
     private final TimerHeap heap;
-    private final GoChan chan;
+    private final TimerChan chan;
     private final long periodNanos; // 0 → one-shot timer
     // Guarded by heap-lock → this-lock order (see TimerHeap).
     private long id = -1;
@@ -50,7 +56,7 @@ public final class GoTimer implements TimerHeap.ChanOwner {
 
     private GoTimer(TimerHeap heap, long ns, long periodNanos) {
         this.heap = heap;
-        this.chan = new GoChan(1, 0L);
+        this.chan = new TimerChan();
         this.periodNanos = periodNanos;
         long deadline = System.nanoTime() + Math.max(0, ns);
         // P1-1: addChan assigns this.id under heap→owner locks before
@@ -100,7 +106,7 @@ public final class GoTimer implements TimerHeap.ChanOwner {
         return newTicker(ns).channel();
     }
 
-    /** The timer channel (1-buffered; receives the fire nanotime). */
+    /** The timer channel ({@link TimerChan}: physically 1-buffered for the fire value, observed as unbuffered). */
     public ChanOps.Chan channel() {
         return chan;
     }

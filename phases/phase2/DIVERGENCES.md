@@ -7,21 +7,27 @@ that introduces them, in the same commit as the implementation.
 
 ## P2-M3 (timers/sleep + netpoller deletion, WS C)
 
-### DIV-M3-1: `len()` on a buffered timer channel returns 1 (gc: 0)
+### DIV-M3-1: `len()` on a buffered timer channel returns 1 (gc: 0) — FIXED
 
-gc's `time.NewTimer`/`NewTicker` channels always report `len() == 0` — the
-timer send is a non-blocking value-injection the runtime does not count.
-graalgo's `GoTimer` uses a real buffered channel, so after the timer fires
-`len()` returns 1.
+**Status: FIXED in P3-M2a** (was an accepted Phase-2 divergence;
+re-test trigger discharged).
 
-Consequence: any Go program that branches on `len(timerCh)` diverges
-observably. This was an accepted Phase-2 divergence, documented in the
-`GoTimer` javadoc and the timer corpus README at sign-off.
+Fix: the timer channel is now the dedicated `TimerChan` flavor of
+`GoChan` (`phases/phase2/src/main/java/graalgo/runtime/TimerChan.java`):
+the real 1-slot buffer underneath keeps fire values deliverable (recv,
+select, close-drain) while `buffered()`/`capacity()` are
+overridden to report 0. gc truth established empirically vs gc 1.27.1:
+`len()` AND `cap()` report 0 on timer/ticker channels in every state
+(pre-fire, fired-undrained, drained, stopped).
 
-**Re-test trigger (blocking for Phase 3):** must be fixed before Phase 3
-lowers `time` — the timer channel must expose `len() == 0` (e.g. a
-dedicated channel flavor or a length-masking wrapper), with the
-differential timer corpus re-run to prove it.
+Evidence: `phases/phase3/hidden_files/m2/redgreen.md` (red run showing
+`cap=1`/`len=1` pre-fix, green post-fix) and the differential timer
+corpus: `corpus/timers/tm15_timer_chan_len_cap.go` (+ gc-recorded
+`.expected`) with its Java translation `testTm15TimerChanLenCap`
+(`verifies: GG-0048`), re-run green as part of the full phase-2 suite
+post-fix.
+
+(The remainder of this entry is the pre-fix record.)
 
 ## P2-M4 (GC interop, ADR-0002)
 
