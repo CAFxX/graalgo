@@ -158,6 +158,16 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `chanclose` | `x`: expr node — `close(ch)` statement (P3-M5, WS E, ADR-0005 App C; additive node kind, first emitted by gofrontend 0.7.0). The builtin registry is untouched: intercepted by ident in the exporter |
 | `select` | `cases`: [`selectcase` nodes] — a `select` statement (P3-M5, WS E, ADR-0005 App C; additive node kind, first emitted by gofrontend 0.7.0) |
 | `selectcase` | `kind` ∈ {`recv`,`send`,`default`}; recv: `chan`: expr node, `targets`: [object ids] or absent (case-scoped `v := <-ch` / `v, ok := <-ch` targets, parallel to the lhs); send: `chan`, `value`: expr nodes; `body`: block node — one `select` case. Channel/value expressions are evaluated once up front (gc semantics) |
+| `chanlen` | `x`: expr node (the channel), `type`: type id (int result type) — `len(ch)` (P3-M5, WS E, ADR-0005 App C; additive node kind, first emitted by gofrontend 0.7.0). The frozen `LenNode` rejects chan (WS G); `TimerChan` (hence `TimeChan`) reports 0 via the DIV-M3-1 override |
+| `chancap` | `x`: expr node (the channel), `type`: type id (int result type) — `cap(ch)` (P3-M5, WS E, ADR-0005 App C; additive node kind, first emitted by gofrontend 0.7.0). Same builder path as `chanlen` |
+| `timenew` | `kind` ∈ {`timer`,`ticker`}, `duration`: expr node (or JSON number: nanoseconds — the Java builders accept both), `type`: type id (`*time.Timer` / `*time.Ticker`) — `time.NewTimer(d)` / `time.NewTicker(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `timeop` | `op` ∈ {`Stop`,`Reset`}, `recv`: expr node (the timer/ticker), `duration`: expr node or absent (required for `Reset`, absent for `Stop`), `type`: type id (bool) or absent — `(*Timer).Stop/Reset`, `(*Ticker).Stop/Reset` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0). `type` is absent for void `(*Ticker).Stop()` |
+| `timec` | `recv`: expr node (the timer/ticker), `type`: type id (channel) — `t.C` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `timenow` | `type`: type id (the named `time.Time`) — `time.Now()` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `timesleep` | `duration`: expr node (or JSON number: nanoseconds) — `time.Sleep(d)`, void: no `type` field (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `timeafter` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.After(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `timetick` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.Tick(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `timeafterfunc` | `duration`: expr node (or JSON number: nanoseconds), `func`: expr node, `type`: type id (`*time.Timer`) — `time.AfterFunc(d, f)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 
 Normalizations (applied by the exporter, part of the contract):
 - `*ast.EmptyStmt` is dropped (empty statements carry no semantics).

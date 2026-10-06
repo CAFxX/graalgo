@@ -213,8 +213,10 @@ fail-fast by the Java builders (never guessed):
 
 - `"timenew"`: {kind: "timer"|"ticker", duration, type} — type is a
   pointer (`*time.Timer` / `*time.Ticker`).
-- `"timeop"`: {op: "Stop"|"Reset", recv, duration?, type} — type is bool;
-  `duration` required for Reset, absent for Stop.
+- `"timeop"`: {op: "Stop"|"Reset", recv, duration?, type?} — type is
+  bool when present; `duration` required for Reset, absent for Stop;
+  `type` is ABSENT for void `(*Ticker).Stop()` (the exporter omits it;
+  the Java builders treat it as optional).
 - `"timec"`: {recv, type} — type is a channel.
 - `"timenow"`: {type} — type is the named `time.Time`.
 - `"timesleep"`: {duration} — void; no `type`.
@@ -315,6 +317,13 @@ builders agree on this wire; it is the contract:
   and with `n` beyond int range panics (`"makechan: size out of
   range"`) — gc parity, in the builder (the `new GoChan` construction
   itself is exactly the Phase-2 tests').
+- `"chanlen"` / `"chancap"`: `{"x": chan-expr, "type": int-type-id}` —
+  EXPRESSION kind, from `len(ch)` / `cap(ch)` (the frozen `LenNode`
+  rejects chan — WS G — so the exporter emits these instead). `nil`
+  channel → 0 (gc parity, non-blocking); `TimerChan` (hence `TimeChan`)
+  reports 0 via the DIV-M3-1 override even with a physically filled
+  buffer. Semantics via `ChanOps.len`/`cap` → `GoChan.buffered()` /
+  `capacity()`.
 
 **P2-M2 corpus graduation:** once the lowering lands, the P2-M2 channel
 corpus programs (ch01–ch12) must run end-to-end through `graalgo-run`

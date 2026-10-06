@@ -166,6 +166,19 @@ def check_node(ctx, path, node, expr):
     f = f or {}
     fp = f"{path}.fields"
 
+    def duration_field(ctx, fp, f):
+        # P3-M5 (WS E, ADR-0005 App W): the `duration` field of time
+        # nodes accepts an expression node (what the exporter emits) or
+        # a JSON number of nanoseconds (what the Java builders accept).
+        if "duration" not in f:
+            ctx.err(fp, "time node: missing field 'duration'")
+            return
+        d = f["duration"]
+        if isinstance(d, dict):
+            check_node(ctx, f"{fp}.duration", d, True)
+        elif not isinstance(d, (int, float)) or isinstance(d, bool):
+            ctx.err(fp, f"time node: duration must be an expr node or a number, got {d!r}")
+
     def need(k):
         if k not in f:
             ctx.err(fp, f"kind {kind}: missing field {k!r}")
@@ -365,11 +378,23 @@ def check_node(ctx, path, node, expr):
         expr_node("chan")
         expr_node("value")
     elif kind == "recv":
-        # P3-M5 (WS E, ADR-0005 App C): <-ch (commaOk for v, ok := <-ch).
+        # P3-M5 (WS E, ADR-0005 App C): <-ch. The exporter NEVER emits
+        # commaOk on recv (the v, ok := <-ch shape desugars to a
+        # single-case select); a present commaOk is rejected as a
+        # contract violation.
         expr_node("x")
         type_ref("type")
-        if not isinstance(f.get("commaOk"), bool):
-            ctx.err(fp, "commaOk must be bool")
+        if "commaOk" in f:
+            ctx.err(fp, "recv must not carry commaOk (desugared to select)")
+    elif kind == "chanlen":
+        # P3-M5 (WS E, ADR-0005 App C): len(ch) — additive expression
+        # kind; type is the int result type id (validated when present).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "chancap":
+        # P3-M5 (WS E, ADR-0005 App C): cap(ch) — same shape as chanlen.
+        expr_node("x")
+        type_ref("type")
     elif kind == "chanclose":
         # P3-M5 (WS E, ADR-0005 App C): close(ch) (statement).
         expr_node("x")
@@ -392,6 +417,46 @@ def check_node(ctx, path, node, expr):
             ctx.err(fp, f"selectcase: unknown kind {ck!r}")
         if f.get("body") is not None:
             check_node(ctx, f"{fp}.body", f["body"], False)
+    elif kind == "timenew":
+        # P3-M5 (WS E, ADR-0005 App W): time.NewTimer/NewTicker.
+        if f.get("kind") not in ("timer", "ticker"):
+            ctx.err(fp, f"timenew kind must be 'timer' or 'ticker', got {f.get('kind')!r}")
+        duration_field(ctx, fp, f)
+        type_ref("type")
+    elif kind == "timeop":
+        # P3-M5 (WS E, ADR-0005 App W): (*Timer/*Ticker).Stop/Reset.
+        # duration required for Reset, absent for Stop; type is bool,
+        # absent for void (*Ticker).Stop().
+        if f.get("op") not in ("Stop", "Reset"):
+            ctx.err(fp, f"timeop op must be 'Stop' or 'Reset', got {f.get('op')!r}")
+        expr_node("recv")
+        if f.get("op") == "Reset":
+            duration_field(ctx, fp, f)
+        if "type" in f and f["type"] is not None:
+            ctx.check_type_id(f"{fp}.type", f["type"])
+    elif kind == "timec":
+        # P3-M5 (WS E, ADR-0005 App W): t.C channel accessor.
+        expr_node("recv")
+        type_ref("type")
+    elif kind == "timenow":
+        # P3-M5 (WS E, ADR-0005 App W): time.Now().
+        type_ref("type")
+    elif kind == "timesleep":
+        # P3-M5 (WS E, ADR-0005 App W): time.Sleep(d) — void, no type.
+        duration_field(ctx, fp, f)
+    elif kind == "timeafter":
+        # P3-M5 (WS E, ADR-0005 App W): time.After(d).
+        duration_field(ctx, fp, f)
+        type_ref("type")
+    elif kind == "timetick":
+        # P3-M5 (WS E, ADR-0005 App W): time.Tick(d).
+        duration_field(ctx, fp, f)
+        type_ref("type")
+    elif kind == "timeafterfunc":
+        # P3-M5 (WS E, ADR-0005 App W): time.AfterFunc(d, f).
+        duration_field(ctx, fp, f)
+        expr_node("func")
+        type_ref("type")
     else:
         ctx.err(path, f"unknown node kind {kind!r}")
 
