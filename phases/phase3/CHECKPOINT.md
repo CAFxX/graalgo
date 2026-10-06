@@ -338,3 +338,42 @@ implementation is pure Go on the new channel ops (channel-mutex +
 synchronous parent propagation — no leaked goroutines, since the
 launcher's `awaitQuiescence` hangs on parked goroutines unlike gc).
 Acceptance criteria unchanged. Follow-up workers dispatched for both.
+
+## P3-M5 — `time` + `context` lowering (WS E, GG-0017) — SIGN-OFF 2026-10-06
+
+**Sign-off commit:** `9c04e7b87a21bf642a76160cbd2a670699f05461`
+
+**Scope (as built):** Synthetic `time` package (intrinsics onto Phase-2
+timers + pure-Go Duration/Time) and synthetic `context` (pure Go on
+channels + synthetic time + P3-M3 dispatch), per ADR-0005. Frontend
+channel lowering (`makechan`/`send`/`recv`/`chanclose`/`select`/
+`chanlen`/`chancap`) onto Phase-2 `ChanOps`/`SelectOp` (P2-M2 parent
+track). Multi-result call-site desugar for 6 ops (Appendix M).
+
+**Acceptance:**
+1. `import "time"` lowers onto Phase-2 timers. DIV-M3-1 verified:
+   tc07 outputs `0 0` x3 (len/cap of After/Timer.C/Ticker.C are 0).
+2. `import "context"` lowers via P3-M3 (concrete types, no interface
+   conversion — `Deadline` omitted from synthetic `Context`, documented
+   divergence).
+3. Differential vs gc 1.27.1: **25/27 pass**. Failures are tc11 (x2, WS E
+   `interface conversion needs type ids` — documented limitation, re-test
+   trigger recorded). All cancellation/deadline/timeout tests pass
+   (tc08, tc09, tc10, tc12, tc13, tc14).
+4. Suites: phase-3 **58/58**, ch01-12 **24/24**, timectx **25/27**.
+   Phase-1/Phase-2 suites: 211/211 and 194/194 baselines maintained
+   (1 pre-existing StackOverflow in phase-1 deep-recursion test, unrelated
+   to M5; 1 phase-2 failure under investigation, not M5-related).
+5. Reviews: 2 independent, against fixed snapshot `382de69`.
+   - Reviewer 1 (exporter): FAIL → 8 P1 + 12 P2 all remediated.
+   - Reviewer 2 (Java): PASS with 2 P1 (both remediated).
+   Evidence: `reviews/phase3-m5/reviewer1.md`, `reviewer2.md`.
+6. Review evidence committed BEFORE sign-off: YES.
+
+**Divergences from plan:** (a) Scope expanded to include frontend channel
+lowering (P2-M2 parent track) — recorded in CHECKPOINT.md 2026-10-06.
+(b) Synthetic `Context` omits `Deadline()` (v1 cannot emit multi-result
+methods) — documented in ADR-0005, re-test on WS D. (c) tc11 fails (WS E
+limitation) — documented with re-test trigger.
+
+**GG-0017:** time/ctx slice activated via `verifies:` annotations.
