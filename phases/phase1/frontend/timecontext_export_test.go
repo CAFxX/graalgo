@@ -138,3 +138,107 @@ func main() { time.ParseDuration("1s") }
 		}
 	}
 }
+
+// TestMultiResultDesugarM5 verifies: GG-0017 — P3-M5 (WS E, ADR-0005
+// Appendix M) call-site desugar: the 6 multi-result operations in
+// 2-target position lower to single-result helper calls + extraction
+// (no fail-fast), for both := and = forms.
+func TestMultiResultDesugarM5(t *testing.T) {
+	src := `package main
+
+import (
+	"context"
+	"time"
+)
+
+func main() {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	d, ok := ctx.Deadline()
+	_, _ = d, ok
+	du, err := time.ParseDuration("5s")
+	_, _ = du, err
+	var ctx2 context.Context
+	var cancel2 context.CancelFunc
+	ctx2, cancel2 = context.WithTimeout(context.Background(), time.Second)
+	_, _ = ctx2, cancel2
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "mrdesugar.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	// Collect ident names called, and check the desugar shape.
+	calledIdents := map[string]bool{}
+	var temps []string
+	var converts, methodrefs, selectors int
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["kind"] == "ident" {
+				if f, ok := v["fields"].(map[string]any); ok {
+					if n, ok := f["name"].(string); ok {
+						calledIdents[n] = true
+						if strings.HasPrefix(n, "__p5mr_") {
+							temps = append(temps, n)
+						}
+					}
+				}
+			}
+			if v["kind"] == "convert" {
+				converts++
+			}
+			if v["kind"] == "methodref" {
+				methodrefs++
+			}
+			if v["kind"] == "selector" {
+				selectors++
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(raw)
+	for _, want := range []string{"__withCancel", "__withTimeout", "__deadlineOf", "__parseDuration"} {
+		if !calledIdents[want] {
+			t.Errorf("desugar helper %q not called", want)
+		}
+	}
+	if len(temps) == 0 {
+		t.Errorf("no __p5mr_ temps emitted")
+	}
+	// Two Context conversions (WithCancel :=, WithTimeout =) and two
+	// cancelFunc methodrefs.
+	if converts < 2 {
+		t.Errorf("want >=2 convert nodes (Context boxing), got %d", converts)
+	}
+	if methodrefs < 2 {
+		t.Errorf("want >=2 methodref nodes (cancelFunc), got %d", methodrefs)
+	}
+	// Pair field selectors: d+ok (Deadline), d+err (ParseDuration) = 4.
+	if selectors < 4 {
+		t.Errorf("want >=4 pair-field selectors, got %d", selectors)
+	}
+	// The 6 multi-result declarations are never called directly: every
+	// 2-target call site desugared to a helper.
+	for _, banned := range []string{"WithCancel", "WithTimeout"} {
+		if calledIdents[banned] {
+			t.Errorf("direct call to %q survived desugaring", banned)
+		}
+	}
+}

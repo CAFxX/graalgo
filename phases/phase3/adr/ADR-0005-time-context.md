@@ -140,6 +140,19 @@ No factory change (Time/Duration are plain Go values; Timer/Ticker are
 opaque Java). No phase-2 source change expected (timers consumed as-is);
 if one proves necessary it gets its own ADR per the ADR-0004 rule.
 
+**D5 exception, recorded 2026-10-06 (P3-M5 Java): `NodeFactory.sectionFor`
+TextMap clamp.** Synthesized wire nodes (from the synthetic `time` package)
+may carry `pos.line` past the end of the source text; Truffle's
+`TextMap.lineStartOffset` rejects them with
+`IllegalArgumentException: line out of bounds`, failing the build. The fix
+is additive and behavior-preserving for in-range positions: `sectionFor`
+tries the requested `(line, col, len)` exactly as before, and on
+`IllegalArgumentException` synthesizes a valid zero-length section at
+column 1 of the clamped line (`clamp(line, 1, lineCount)`). Red-green:
+`SectionClampTest` (phase-1 `graalgo.test.Runner`) — red on the unfixed
+factory (`line out of bounds` / `column out of range`), green after, with
+an in-range control asserting the identical section as before.
+
 ## Consequences
 
 - GG-0017 time/ctx slice →active when the first `verifies: GG-0017`
@@ -242,6 +255,47 @@ Wire nodes (all additive, v1):
   assigned via `selectRecvValue`/`selectRecvOk`. `v := <-ch` introduces
   case-scoped variables (exporter handles the scope).
 
+**Appendix C wire detail (P3-M5 Java, 2026-10-06)** — the D3 shorthand
+above is exact except for the following points, which the Java builders
+define and the exporter must match:
+- `"select"` fields: `{"cases": [...]}`. Each case is
+  `{"kind": "recv"|"send"|"default", "chan"?: expr, "value"?: expr,
+  "targets"?: [...], "body": [stmt, ...]}` — `body` is an array of
+  statement nodes (possibly empty); `chan` is absent on `default`;
+  `value` is present only on `send`; `targets` only on `recv` (a
+  `targets` on `send` is a fail-fast exporter bug).
+- `targets` entries are `{"obj": objid, "type": type-table-id}` or
+  `{"blank": true}` (for `_`); entry 0 is the value, entry 1 the ok bit
+  (must be bool). The exporter declares `:=` variables with an ordinary
+  `vardecl` dominating the select (fresh objids per case — it owns
+  scope) and passes their objids here; the builder writes them with a
+  plain slot assign after `selectGo`, before the body. Targets must be
+  plain locals of the current function frame — boxed, captured-outer, or
+  global targets fail fast (the exporter desugars those through a
+  temporary + ordinary assign in the body, which reuses all of phase-1's
+  machinery).
+- **Nil-channel cases are dropped** by the builder before `selectGo` (a
+  nil Go channel is Java `null`, which the Phase-2 `chan==null`=default
+  convention would misread). Dropping is gc-exact: a nil-channel case is
+  never ready and can never be chosen, and a nil channel cannot be
+  closed (no poison) — all-dropped with no default parks forever
+  (`select {}` semantics), all-dropped with a default takes it. No
+  phase-2 change.
+- **Comma-ok receive** (`v, ok := <-ch`, outside select) has no wire
+  node of its own: the exporter lowers it to a single-case, no-default
+  `"select"` with `targets: [v, ok]` — a blocking receive with the ok
+  bit, semantically identical to `<-ch` plus the closed-channel bit.
+  (The `for v := range ch` form desugars through the same pattern.)
+- `"recv"` carries `type` = the *element* type-table id (determines the
+  node's `GoKind` — never guessed); `"makechan"` carries `elem` + the
+  `type`-directed zero is computed by the builder (no `type` field
+  needed — the result kind is always `CHAN`); `"send"`/`"chanclose"`
+  carry no type (their operands are dynamically checked).
+- `make(chan T, n)` with `n < 0` panics (`"makechan: negative size"`)
+  and with `n` beyond int range panics (`"makechan: size out of
+  range"`) — gc parity, in the builder (the `new GoChan` construction
+  itself is exactly the Phase-2 tests').
+
 **P2-M2 corpus graduation:** once the lowering lands, the P2-M2 channel
 corpus programs (ch01–ch12) must run end-to-end through `graalgo-run`
 and produce their gc-recorded `.expected` output — the README's promise.
@@ -312,11 +366,13 @@ err := __p5p.err
 
 Synthetic helpers (all REAL GO, single-value — no new Java nodes):
 - `context.__withCancel(parent) *cancelCtx`,
-  `__withCancelCause(parent, cause) *cancelCtx`,
+  `__withCancelCause(parent) *cancelCtx`,
   `__withDeadline(parent, d) *timerCtx`,
   `__withTimeout(parent, t) *timerCtx`
 - `(*cancelCtx).cancelFunc() CancelFunc`,
-  `(*cancelCtx).cancelCauseFunc() CancelCauseFunc`
+  `(*cancelCtx).cancelCauseFunc() CancelCauseFunc`,
+  `(*timerCtx).cancelFunc() CancelFunc` (stops the timer too — the
+  desugar target for the WithDeadline/WithTimeout cancel function)
 - `context.__deadlineOf(c Context) deadlinePair` (type-switch on
   `*timerCtx`/`*valueCtx`; `default` → no deadline — user-defined
   Context implementations are a documented limitation)

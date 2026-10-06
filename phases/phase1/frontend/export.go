@@ -3348,6 +3348,11 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 
 // exportDefine handles `:=` (short variable declarations).
 func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
+	// P3-M5 (WS E, ADR-0005 App M): multi-result time/context calls in
+	// 2-target position desugar to single-result helper calls.
+	if n, handled, err := e.exportMultiResultDesugar(s, true); handled {
+		return n, err
+	}
 	names := make([]string, 0, len(s.Lhs))
 	objs := make([]int, 0, len(s.Lhs))
 	for _, lhs := range s.Lhs {
@@ -3393,6 +3398,11 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 // identifier, an index expression, or a selector (M4, WS E); op-assignments
 // require a single lhs (go/types: "requires single-valued expressions").
 func (e *exporter) exportAssign(s *ast.AssignStmt) (*Node, error) {
+	// P3-M5 (WS E, ADR-0005 App M): multi-result time/context calls in
+	// 2-target position desugar to single-result helper calls.
+	if n, handled, err := e.exportMultiResultDesugar(s, false); handled {
+		return n, err
+	}
 	commaOk := len(s.Lhs) == 2 && len(s.Rhs) == 1 && isCommaOkRhs(s.Rhs[0])
 	lhs := make([]*Node, 0, len(s.Lhs))
 	for _, l := range s.Lhs {
@@ -4258,14 +4268,16 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// M5 (WS F): call through a func-valued variable (recursion,
 		// `defer f()`). The variable's signature type is already in the
 		// type table; the factory builds a func-value call node.
-		if _, ok := v.Type().(*types.Signature); !ok {
+		// P3-M5 (WS E, ADR-0005 App M): the variable may have a NAMED
+		// func type (context.CancelFunc) — unwrap to the underlying
+		// signature.
+		sig, ok := v.Type().Underlying().(*types.Signature)
+		if !ok {
 			return nil, scopeErrorf("call of non-function variable %s is not supported in frontend/v1 scope (WS D)",
 				funIdent.Name)
 		}
-		if sig, ok := v.Type().(*types.Signature); ok {
-			if err := checkVariadicCall(c, sig); err != nil {
-				return nil, err
-			}
+		if err := checkVariadicCall(c, sig); err != nil {
+			return nil, err
 		}
 		fun, err := e.exportIdent(funIdent)
 		if err != nil {
