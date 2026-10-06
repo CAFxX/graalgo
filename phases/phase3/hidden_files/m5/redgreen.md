@@ -148,3 +148,94 @@ Corpus `phases/phase3/corpus/timectx/` (tc00-tc16) differential vs gc 1.27.1:
 3. Implement `chanclose` marker handling for `ctxChanClose` intrinsic.
 4. Implement the seven time wire nodes per Appendix W (already done
    per commit 0ca2dce, but end-to-end not yet verified).
+
+## Java section (Java follow-up worker, 2026-10-06)
+
+### Channel builders (`ChanBuilderTest`, 18 tests)
+
+Unit suite: `phases/phase3/src/test/java/graalgo/frontend/ChanBuilderTest.java`
+(registered in `IfaceTestRunner`; `make -C phases/phase3 test` → 51 tests,
+0 failures, 2026-10-06). Each builder is driven on parsed wire fragments
+(the exporter's exact JSON shape) through the real `NodeFactory` with the
+five kinds registered as in `P3SyncMain`; execution runs on the real
+scheduler so park/unpark paths are exercised.
+
+- RED (2026-10-06): the first run caught a genuine builder bug —
+  `ChanSendNode`/`SelectNode` read send values via `executeObject`, which
+  is null for primitive-kind value nodes (e.g. an int literal), so
+  `testSendRecvBuffered`/`testRecvOnClosedDrainedYieldsZero` failed with
+  NPE. Fixed with the kind-aware `ChanWire.evalBoxed` (mirrors
+  `AssignNode`'s dispatch). Restored → green.
+- Semantics pinned: makechan buffered/unbuffered/negative-size panic;
+  send/recv round trip; send-on-closed / close-of-closed / close-of-nil
+  panics with gc messages; recv on closed+drained yields zero (int and
+  struct element); select ready-choice + target assign, default,
+  send-case win, poison-before-default (ch11 parity), nil-channel case
+  drop (gc-exact), single-case two-value recv `(0, false)` (the comma-ok
+  desugar pattern), park-until-send wakeup (deterministic via
+  `recvWaitersCount`); wire rejections (targets on send case,
+  undeclared target objid).
+
+### TextMap `sectionFor` clamp (`SectionClampTest`, 3 tests)
+
+`phases/phase1/src/test/java/graalgo/frontend/SectionClampTest.java`
+(registered in phase-1 `graalgo.test.Runner`). Unblocks tc15 (see
+"Exporter worker" note above).
+
+- RED (2026-10-06, fix reverted): `testOutOfRangeLineClamped` FAILS with
+  `java.lang.IllegalArgumentException: line out of bounds` and
+  `testOutOfRangeColumnClamped` FAILS with `column out of range` — the
+  exact reported failure. `testInRangePositionUnchanged` passes.
+- GREEN (fix applied): all 3 pass; in-range positions produce the
+  identical section as before (byte-identical path); out-of-range
+  positions clamp to a zero-length section at column 1 of the nearest
+  valid line.
+
+## Wire reconciliation with the committed exporter (2026-10-06, post-build)
+
+The exporter worker committed `chanops_m5.go` (c669fc5) with a wire
+shape differing from the Java builder's first cut:
+
+| aspect | exporter (committed) | builder (first cut) |
+|---|---|---|
+| select cases | `"selectcase"` wrapper nodes | bare `{"kind":"recv"...}` objects |
+| case body | a `"block"` node | raw statement array |
+| targets | bare objid array `[12,15]` | `[{"obj":12,"type":5}]` |
+| makechan | extra `"type"` chan-type-id field | ignored |
+
+Resolution (exporter's wire wins — committed + more wire-idiomatic):
+- `SelectNode` now unwraps `selectcase` nodes, builds the body via
+  `factory.buildStmt` on the block node, and resolves target types from
+  the wire `objects` array; undeclared objids fail fast (this also
+  soundly rejects global `=` targets, which must be desugared by the
+  exporter through a temporary).
+- `MakeChanNode` accepts and lightly validates the optional `type`
+  field (kind `chan`, `detail.elem` == `elem` field); RED-proven by
+  `testMakechanMismatchedTypeField` (non-chan type id, elem mismatch).
+- The exporter's `recv{commaOk:true}` shape is rejected by the FROZEN
+  factory (`isCommaOkValue` only recognizes `index`/`typeassert`) — the
+  exporter must desugar `v, ok := <-ch` to a single-case no-default
+  select (works today, tested); no factory change without its own ADR.
+- ADR-0005 Appendix C rewritten to the reconciled contract; the
+  earlier "Java Worker Coordination Needed" note asking for
+  `registerExprKind("unary")` for `<-` is obsolete (exporter emits
+  `"recv"`; the builder handles it).
+
+### Shared-tree stale-build incident (2026-10-06)
+
+The first post-reconciliation `make -C phases/phase3 test` reported
+"53 tests, 1 failure" (`testMakechanMismatchedTypeField`) — but the
+failure was a STALE CLASS: another process on this shared tree ran
+`make -C phases/phase3 main` at 16:52:21 UTC, ~2s after the
+`MakeChanNode.java` edit (16:52:19), and javac read the pre-edit
+source; the resulting `.built` (16:52:22) was newer than the edited
+source, so my `make test` skipped recompilation. Verified via
+`javap`/`strings` (no `"must be a chan"` in the .class). Fix:
+`rm phases/phase3/out/classes/.built`, full recompile, string-check
+the classes, re-run. The 53/53 green run above is the valid evidence.
+Process note: timestamp-incremental `make` on a tree shared with other
+workers (exporter, survey, acceptance runner — the latter was running
+`P3SyncMain ... ch12_select_poison_ready.go` concurrently) is racy;
+when a test result contradicts the source on disk, suspect a stale
+build first (`javap`/`strings` the class) before suspecting the code.
+Companion of the 2026-10-06 worktree lesson in AGENTS.md.

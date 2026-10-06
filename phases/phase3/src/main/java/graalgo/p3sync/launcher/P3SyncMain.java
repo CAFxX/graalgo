@@ -16,6 +16,11 @@ import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceDispatchBuilder;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
+import graalgo.p3chan.nodes.ChanCloseNode;
+import graalgo.p3chan.nodes.ChanRecvNode;
+import graalgo.p3chan.nodes.ChanSendNode;
+import graalgo.p3chan.nodes.MakeChanNode;
+import graalgo.p3chan.nodes.SelectNode;
 import graalgo.p3link.LinknameIntrinsics;
 import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
@@ -44,11 +49,13 @@ import graalgo.sched.nodes.GoStatementNode;
  * {@code "syncop"} wire kinds (P3-M2b), the {@code "ifacemethod"} kind
  * (P3-M3), and the {@code "timenew"}/{@code "timeop"}/{@code "timec"}/
  * {@code "timenow"}/{@code "timesleep"}/{@code "timeafter"}/
- * {@code "timetick"}/{@code "timeafterfunc"} kinds (P3-M5) on the factory
- * via the public {@code registerExprKind} hook (P2-D8 precedent). No
- * Phase-1 or Phase-2 source is modified; the classpath order phase3 &gt;
- * phase2 &gt; phase1 (see the phase-3 Makefile) keeps every overlay in
- * force.
+ * {@code "timetick"}/{@code "timeafterfunc"} kinds (P3-M5) and the
+ * {@code "makechan"}/{@code "send"}/{@code "recv"}/{@code "chanclose"}/
+ * {@code "select"} channel kinds (P3-M5, ADR-0005 Appendix C) on the
+ * factory via the public {@code registerExprKind}/{@code registerStmtKind}
+ * hooks (P2-D8 precedent). No Phase-1 or Phase-2 source is modified; the
+ * classpath order phase3 &gt; phase2 &gt; phase1 (see the phase-3 Makefile)
+ * keeps every overlay in force.
  *
  * <p>Exit codes match Phase 1/2: 0 ok, 1 usage/input, 2 build failure or
  * uncaught Go panic (gc parity).
@@ -177,6 +184,18 @@ public final class P3SyncMain {
             factory.registerExprKind("timetick", (node, ctx) -> TimeTickNode.build(node, ctx, factory));
             factory.registerExprKind("timeafterfunc",
                     (node, ctx) -> TimeAfterFuncNode.build(node, ctx, factory));
+            // P3-M5 (WS E, ADR-0005 Appendix C): the channel wire kinds.
+            // Public extension hooks — no Phase-1/Phase-2 change.
+            factory.registerExprKind("makechan",
+                    (node, ctx) -> MakeChanNode.build(node, ctx, factory));
+            factory.registerStmtKind("send",
+                    (node, ctx) -> ChanSendNode.build(node, ctx, factory));
+            factory.registerExprKind("recv",
+                    (node, ctx) -> ChanRecvNode.build(node, ctx, factory));
+            factory.registerStmtKind("chanclose",
+                    (node, ctx) -> ChanCloseNode.build(node, ctx, factory));
+            factory.registerStmtKind("select",
+                    (node, ctx) -> SelectNode.build(node, ctx, factory));
             // P2-M1 (WS A): the go statement, reused from Phase 2 via the
             // same public hook (no Phase-2 change — GoStatementNode is a
             // public class).

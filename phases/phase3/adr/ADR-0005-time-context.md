@@ -255,25 +255,27 @@ Wire nodes (all additive, v1):
   assigned via `selectRecvValue`/`selectRecvOk`. `v := <-ch` introduces
   case-scoped variables (exporter handles the scope).
 
-**Appendix C wire detail (P3-M5 Java, 2026-10-06)** — the D3 shorthand
-above is exact except for the following points, which the Java builders
-define and the exporter must match:
-- `"select"` fields: `{"cases": [...]}`. Each case is
-  `{"kind": "recv"|"send"|"default", "chan"?: expr, "value"?: expr,
-  "targets"?: [...], "body": [stmt, ...]}` — `body` is an array of
-  statement nodes (possibly empty); `chan` is absent on `default`;
-  `value` is present only on `send`; `targets` only on `recv` (a
-  `targets` on `send` is a fail-fast exporter bug).
-- `targets` entries are `{"obj": objid, "type": type-table-id}` or
-  `{"blank": true}` (for `_`); entry 0 is the value, entry 1 the ok bit
-  (must be bool). The exporter declares `:=` variables with an ordinary
+**Appendix C wire detail (reconciled 2026-10-06, Java + exporter)** —
+the D3 shorthand above is exact except for the following points. The
+exporter (committed c669fc5, `chanops_m5.go` header) and the Java
+builders agree on this wire; it is the contract:
+- `"select"` fields: `{"cases": [...]}`. Each case is a
+  `"selectcase"` node: `{"kind": "selectcase", "fields": {"kind":
+  "recv"|"send"|"default", "chan"?: expr, "value"?: expr,
+  "targets"?: [...], "body": blocknode}}` — `body` is a `"block"` node;
+  `chan` is absent on `default`; `value` is present only on `send`;
+  `targets` only on `recv` (a `targets` on `send` is a fail-fast
+  exporter bug).
+- `targets` is an array of 0–2 objids (entry 0 the value, entry 1 the
+  ok bit, which must be bool). The exporter declares EVERY target —
+  including `:=` variables and `_` blank temps — with an ordinary
   `vardecl` dominating the select (fresh objids per case — it owns
-  scope) and passes their objids here; the builder writes them with a
-  plain slot assign after `selectGo`, before the body. Targets must be
-  plain locals of the current function frame — boxed, captured-outer, or
-  global targets fail fast (the exporter desugars those through a
-  temporary + ordinary assign in the body, which reuses all of phase-1's
-  machinery).
+  scope); the builder reads the variable's type from the wire
+  `objects` array and writes it with a plain slot assign after
+  `selectGo`, before the body. Targets must be plain locals of the
+  current function frame: an undeclared objid fails fast (a global
+  `=` target is not in the frame maps — the exporter desugars it
+  through a temporary), as do boxed targets.
 - **Nil-channel cases are dropped** by the builder before `selectGo` (a
   nil Go channel is Java `null`, which the Phase-2 `chan==null`=default
   convention would misread). Dropping is gc-exact: a nil-channel case is
@@ -281,16 +283,19 @@ define and the exporter must match:
   closed (no poison) — all-dropped with no default parks forever
   (`select {}` semantics), all-dropped with a default takes it. No
   phase-2 change.
-- **Comma-ok receive** (`v, ok := <-ch`, outside select) has no wire
-  node of its own: the exporter lowers it to a single-case, no-default
+- **Comma-ok receive** (`v, ok := <-ch`, outside select): the exporter
+  must NOT emit `recv{commaOk: true}` — the frozen factory's
+  `isCommaOkValue` only recognizes `index`/`typeassert`, so that shape
+  fails with "lhs/rhs length mismatch" (a factory change would need its
+  own ADR). Instead the exporter lowers it to a single-case, no-default
   `"select"` with `targets: [v, ok]` — a blocking receive with the ok
   bit, semantically identical to `<-ch` plus the closed-channel bit.
   (The `for v := range ch` form desugars through the same pattern.)
 - `"recv"` carries `type` = the *element* type-table id (determines the
-  node's `GoKind` — never guessed); `"makechan"` carries `elem` + the
-  `type`-directed zero is computed by the builder (no `type` field
-  needed — the result kind is always `CHAN`); `"send"`/`"chanclose"`
-  carry no type (their operands are dynamically checked).
+  node's `GoKind` — never guessed); `"makechan"` carries `elem` and an
+  optional `type` (channel type-table id — validated when present:
+  kind `chan` and matching `elem`); `"send"`/`"chanclose"` carry no
+  type (their operands are dynamically checked).
 - `make(chan T, n)` with `n < 0` panics (`"makechan: negative size"`)
   and with `n` beyond int range panics (`"makechan: size out of
   range"`) — gc parity, in the builder (the `new GoChan` construction

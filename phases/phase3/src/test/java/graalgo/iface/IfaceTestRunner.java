@@ -24,6 +24,7 @@ public final class IfaceTestRunner {
         TESTS.add(AtomicContentionTest.class);
         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
+        TESTS.add(graalgo.frontend.ChanBuilderTest.class);
     }
 
     private IfaceTestRunner() {}
