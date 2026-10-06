@@ -461,10 +461,10 @@ func main() {}
 	}
 }
 
-// TestToolVersionBump: ADR-0003 §D3 — gofrontend 0.3.0 → 0.4.0.
+// TestToolVersionBump: ADR-0004 §D1 — gofrontend 0.4.0 → 0.5.0.
 func TestToolVersionBump(t *testing.T) {
-	if toolVersion != "0.4.0" {
-		t.Fatalf("toolVersion = %q, want 0.4.0 (ADR-0003)", toolVersion)
+	if toolVersion != "0.5.0" {
+		t.Fatalf("toolVersion = %q, want 0.5.0 (ADR-0004)", toolVersion)
 	}
 	out, err := ExportFile(writeIfaceProg(t, "package main\n\nfunc main() {}\n"))
 	if err != nil {

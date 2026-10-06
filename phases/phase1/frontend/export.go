@@ -168,14 +168,19 @@ func (failImporter) Import(path string) (*types.Package, error) {
 }
 
 // overlayImporter is the M5 (WS F) minimal import overlay, extended by M6
-// (WS H) with the D4 fmt stub and by P3-M2b (WS D, ADR-0002) with the
-// synthetic sync package: it resolves exactly the synthetic package
+// (WS H) with the D4 fmt stub, by P3-M2b (WS D, ADR-0002) with the
+// synthetic sync package, and by P3-M4 (WS C, ADR-0004) with the synthetic
+// sync/atomic package and the empty unsafe package (for //go:linkname's
+// blank import): it resolves exactly the synthetic package
 // "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface),
 // the synthetic package "fmt" exposing the seven D4 symbols (Print,
 // Printf, Println, Sprint, Sprintf, Sprintln, Errorf) with exact variadic
-// signatures, and the synthetic package "sync" exposing the four P3-M2b
+// signatures, the synthetic package "sync" exposing the four P3-M2b
 // primitives (Mutex, RWMutex, WaitGroup, Once) with exact gc method
-// signatures. Every other import still fails via failImporter. WS G's full
+// signatures, the synthetic package "sync/atomic" exposing the P3-M4
+// typed wrappers (Int64, Uint64, Int32, Uint32, Bool, Uintptr) with exact
+// gc method signatures, and the empty synthetic package "unsafe".
+// Every other import still fails via failImporter. WS G's full
 // import overlay absorbs this carve-out.
 type overlayImporter struct{}
 
@@ -204,6 +209,10 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return syntheticFmtPackage(), nil
 	case "sync":
 		return syntheticSyncPackage(), nil
+	case "sync/atomic":
+		return syntheticAtomicPackage(), nil
+	case "unsafe":
+		return syntheticUnsafePackage(), nil
 	}
 	return failImporter{}.Import(path)
 }
@@ -360,6 +369,227 @@ func syntheticSyncPackage() *types.Package {
 	return pkg
 }
 
+// atomicPrimitiveNames are the P3-M4 (WS C, ADR-0004) typed wrappers bound
+// to the phase-1 JVM atomics (graalgo.runtime.Atomics).
+var atomicPrimitiveNames = map[string]bool{
+	"Int64": true, "Uint64": true, "Int32": true, "Uint32": true, "Bool": true, "Uintptr": true,
+}
+
+// atomicOpsInScope is the M4-supported method set per wrapper (ADR-0004
+// D2). And/Or are defined with exact gc signatures and rejected with a
+// named M4 scope error (trivial future additions).
+var atomicOpsInScope = map[string]map[string]bool{
+	"Int64":   {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true},
+	"Uint64":  {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true},
+	"Int32":   {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true},
+	"Uint32":  {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true},
+	"Bool":    {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
+	"Uintptr": {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true},
+}
+
+// atomicPrimitiveNamed reports whether t is exactly one of the synthetic
+// sync/atomic wrapper named types (no pointer dereference).
+func atomicPrimitiveNamed(t types.Type) *types.Named {
+	nt, ok := t.(*types.Named)
+	if !ok {
+		return nil
+	}
+	obj := nt.Obj()
+	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" {
+		return nil
+	}
+	if !atomicPrimitiveNames[obj.Name()] {
+		return nil
+	}
+	return nt
+}
+
+// atomicPrimitiveRecv is atomicPrimitiveNamed after one pointer dereference,
+// for method-call receivers (all atomic methods have pointer receivers;
+// the Go value IS the Java atomic cell, so &/* is a no-op at the value
+// level — the ADR-0002 D2/D1 value model).
+func atomicPrimitiveRecv(t types.Type) *types.Named {
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	return atomicPrimitiveNamed(t)
+}
+
+// syntheticPrimitiveNamed is syncPrimitiveNamed generalized to the
+// sync/atomic overlay (P3-M4, ADR-0004).
+func syntheticPrimitiveNamed(t types.Type) *types.Named {
+	if nt := syncPrimitiveNamed(t); nt != nil {
+		return nt
+	}
+	return atomicPrimitiveNamed(t)
+}
+
+// syntheticPrimitiveRecv is syncPrimitiveRecv generalized to the
+// sync/atomic overlay (P3-M4, ADR-0004).
+func syntheticPrimitiveRecv(t types.Type) *types.Named {
+	if nt := syncPrimitiveRecv(t); nt != nil {
+		return nt
+	}
+	return atomicPrimitiveRecv(t)
+}
+
+// syntheticOpTypeName returns the syncop "synctyp" for a synthetic primitive
+// named type: the bare name for sync ("Mutex"), the "atomic."-qualified
+// name for sync/atomic ("atomic.Int64").
+func syntheticOpTypeName(nt *types.Named) string {
+	if atomicPrimitiveNamed(nt) != nil {
+		return "atomic." + nt.Obj().Name()
+	}
+	return nt.Obj().Name()
+}
+
+// syntheticScopeLabel returns the milestone scope label for a synthetic
+// primitive's package: "M2" for sync, "M4" for sync/atomic (error text).
+func syntheticScopeLabel(nt *types.Named) string {
+	if atomicPrimitiveNamed(nt) != nil {
+		return "M4"
+	}
+	return "M2"
+}
+
+// syntheticAtomicPackage builds the P3-M4 (WS C, ADR-0004) synthetic
+// "sync/atomic" package for the import overlay: the six typed wrappers
+// with exact gc 1.27.1 method signatures (pointer receivers, like the
+// real package; verified against ~/tools/go-1.27.1/src/sync/atomic/type.go).
+// And/Or are defined with exact signatures so misuse fails fast with a
+// named "not in M4 scope" error. Package-level functions (AddInt32, …)
+// are defined with exact signatures and rejected at call sites (they need
+// &x — WS D); Pointer[T]/Value are out of scope entirely.
+func syntheticAtomicPackage() *types.Package {
+	pkg := types.NewPackage("sync/atomic", "atomic")
+	int64T := types.Typ[types.Int64]
+	uint64T := types.Typ[types.Uint64]
+	int32T := types.Typ[types.Int32]
+	uint32T := types.Typ[types.Uint32]
+	boolT := types.Typ[types.Bool]
+	uintptrT := types.Typ[types.Uintptr]
+	emptyStruct := types.NewStruct(nil, nil)
+	param := func(name string, t types.Type) *types.Var {
+		return types.NewParam(token.NoPos, pkg, name, t)
+	}
+	tuple := func(v *types.Var) *types.Tuple {
+		return types.NewTuple(v)
+	}
+
+	newWrapper := func(name string) *types.Named {
+		tname := types.NewTypeName(token.NoPos, pkg, name, nil)
+		pkg.Scope().Insert(tname)
+		return types.NewNamed(tname, emptyStruct, nil)
+	}
+	addMethod := func(named *types.Named, name string, params, results *types.Tuple) {
+		recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(named))
+		sig := types.NewSignatureType(recv, nil, nil, params, results, false)
+		named.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
+	}
+	// The five M4 ops per wrapper: Load() T, Store(T), Add(T) T,
+	// Swap(T) T, CompareAndSwap(T, T) bool. And/Or defined, rejected.
+	fiveOps := func(named *types.Named, t types.Type) {
+		boolRes := tuple(param("", boolT))
+		addMethod(named, "Load", nil, tuple(param("", t)))
+		addMethod(named, "Store", tuple(param("val", t)), nil)
+		addMethod(named, "Add", tuple(param("delta", t)), tuple(param("new", t)))
+		addMethod(named, "Swap", tuple(param("new", t)), tuple(param("old", t)))
+		addMethod(named, "CompareAndSwap",
+			types.NewTuple(param("old", t), param("new", t)), boolRes)
+		addMethod(named, "And", tuple(param("mask", t)), tuple(param("old", t)))
+		addMethod(named, "Or", tuple(param("mask", t)), tuple(param("old", t)))
+	}
+	fiveOps(newWrapper("Int64"), int64T)
+	fiveOps(newWrapper("Uint64"), uint64T)
+	fiveOps(newWrapper("Int32"), int32T)
+	fiveOps(newWrapper("Uint32"), uint32T)
+	fiveOps(newWrapper("Uintptr"), uintptrT)
+	// Bool has no Add/And/Or in gc.
+	b := newWrapper("Bool")
+	boolRes := tuple(param("", boolT))
+	addMethod(b, "Load", nil, tuple(param("", boolT)))
+	addMethod(b, "Store", tuple(param("val", boolT)), nil)
+	addMethod(b, "Swap", tuple(param("new", boolT)), tuple(param("old", boolT)))
+	addMethod(b, "CompareAndSwap",
+		types.NewTuple(param("old", boolT), param("new", boolT)), boolRes)
+
+	// Package-level functions: exact gc signatures, rejected at call
+	// sites (ADR-0004 D2 — they need &x, WS D).
+	addFunc := func(name string, params, results *types.Tuple) {
+		sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, name, sig))
+	}
+	for _, wt := range []types.Type{int32T, int64T} {
+		nm := map[types.Type]string{int32T: "Int32", int64T: "Int64"}[wt]
+		paddr := types.NewPointer(wt)
+		addFunc("Load"+nm, tuple(param("addr", paddr)), tuple(param("", wt)))
+		addFunc("Store"+nm, types.NewTuple(param("addr", paddr), param("val", wt)), nil)
+		addFunc("Add"+nm, types.NewTuple(param("addr", paddr), param("delta", wt)), tuple(param("new", wt)))
+		addFunc("Swap"+nm, types.NewTuple(param("addr", paddr), param("new", wt)), tuple(param("old", wt)))
+		addFunc("CompareAndSwap"+nm,
+			types.NewTuple(param("addr", paddr), param("old", wt), param("new", wt)), boolRes)
+	}
+	for _, wt := range []types.Type{uint32T, uint64T, uintptrT} {
+		nm := map[types.Type]string{uint32T: "Uint32", uint64T: "Uint64", uintptrT: "Uintptr"}[wt]
+		paddr := types.NewPointer(wt)
+		addFunc("Load"+nm, tuple(param("addr", paddr)), tuple(param("", wt)))
+		addFunc("Store"+nm, types.NewTuple(param("addr", paddr), param("val", wt)), nil)
+		addFunc("Add"+nm, types.NewTuple(param("addr", paddr), param("delta", wt)), tuple(param("new", wt)))
+		addFunc("Swap"+nm, types.NewTuple(param("addr", paddr), param("new", wt)), tuple(param("old", wt)))
+		addFunc("CompareAndSwap"+nm,
+			types.NewTuple(param("addr", paddr), param("old", wt), param("new", wt)), boolRes)
+	}
+	{
+		paddr := types.NewPointer(boolT)
+		addFunc("LoadBool", tuple(param("addr", paddr)), tuple(param("", boolT)))
+		addFunc("StoreBool", types.NewTuple(param("addr", paddr), param("val", boolT)), nil)
+		addFunc("SwapBool", types.NewTuple(param("addr", paddr), param("new", boolT)), tuple(param("old", boolT)))
+		addFunc("CompareAndSwapBool",
+			types.NewTuple(param("addr", paddr), param("old", boolT), param("new", boolT)), boolRes)
+	}
+
+	pkg.MarkComplete()
+	return pkg
+}
+
+// syntheticOpInScope reports whether op is an in-scope method of the
+// synthetic primitive nt (P3-M4, ADR-0004: package-aware — sync/M2 vs
+// sync/atomic/M4), failing fast with the named scope error otherwise.
+func syntheticOpInScope(nt *types.Named, op string) error {
+	typeName := nt.Obj().Name()
+	if atomicPrimitiveNamed(nt) != nil {
+		if !atomicOpsInScope[typeName][op] {
+			return scopeErrorf("sync/atomic.%s.%s is not in M4 scope", typeName, op)
+		}
+		return nil
+	}
+	if !syncOpsInScope[typeName][op] {
+		return scopeErrorf("sync.%s.%s is not in M2 scope", typeName, op)
+	}
+	return nil
+}
+
+// syntheticCompositeScopeError returns the D3 scope error for a synthetic
+// primitive in a factory-zero-manufactured position (slice/array/map
+// element, map key, struct field): the factory would manufacture an
+// unusable empty-struct zero. Package-aware (sync/M2 vs sync/atomic/M4).
+func syntheticCompositeScopeError(nt *types.Named, position string) error {
+	if atomicPrimitiveNamed(nt) != nil {
+		return scopeErrorf("sync/atomic.%s as %s is not in M4 scope", nt.Obj().Name(), position)
+	}
+	return scopeErrorf("sync.%s as %s is not in M2 scope", nt.Obj().Name(), position)
+}
+
+// syntheticUnsafePackage builds the P3-M4 (WS C, ADR-0004) empty synthetic
+// "unsafe" package: it exists only so `import _ "unsafe"` (required by
+// //go:linkname directives) type-checks. Any selection on unsafe.* fails
+// as undefined against the empty scope.
+func syntheticUnsafePackage() *types.Package {
+	pkg := types.NewPackage("unsafe", "unsafe")
+	pkg.MarkComplete()
+	return pkg
+}
+
 // ExportFile type-checks the single Go source file at path and returns the
 // frontend/v1 JSON document.
 func ExportFile(path string) (string, error) {
@@ -376,7 +606,9 @@ func ExportFile(path string) (string, error) {
 	}
 
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path, src, parser.AllErrors)
+	// P3-M4 (WS C, ADR-0004): parser.ParseComments populates doc comments
+	// so //go:linkname directives are visible (fd.Doc).
+	file, err := parser.ParseFile(fset, path, src, parser.AllErrors|parser.ParseComments)
 	if err != nil {
 		return "", fmt.Errorf("gofrontend: parse error: %v", err)
 	}
@@ -389,9 +621,22 @@ func ExportFile(path string) (string, error) {
 		// P3-M2b (WS D, ADR-0002): the import "sync" is allowed — resolved
 		// by overlayImporter to the synthetic sync package (the four
 		// Phase-2-bound primitives).
+		// P3-M4 (WS C, ADR-0004): the import "sync/atomic" is allowed —
+		// resolved by overlayImporter to the synthetic sync/atomic package
+		// (typed wrappers Int64/Uint64/Int32/Uint32/Bool/Uintptr).
+		// P3-M4 (WS C, ADR-0004): the import "unsafe" is allowed — resolved
+		// by overlayImporter to an empty synthetic package. Only the blank
+		// form (`import _ "unsafe"`, required by //go:linkname directives)
+		// is useful: selections on unsafe.* fail as undefined.
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
+		}
+		// P3-M4: a non-blank "unsafe" import is a named scope error —
+		// unsafe.* selections cannot resolve against the empty synthetic
+		// package, and failing here is clearer than "undefined: unsafe.X".
+		if path == "unsafe" && (imp.Name == nil || imp.Name.Name != "_") {
+			return "", scopeErrorf("import \"unsafe\": only the blank form (import _ \"unsafe\") is supported in frontend/v1 scope (P3-M4)")
 		}
 	}
 
@@ -412,9 +657,10 @@ func ExportFile(path string) (string, error) {
 	// synthetic overlay package (D4 fmt stub).
 	// P3-M2b (WS D, ADR-0002): with the "sync" import present, resolve it
 	// via the synthetic overlay package (four primitives).
+	// P3-M4 (WS C, ADR-0004): "sync/atomic" and "unsafe" likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" {
+		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -672,13 +918,13 @@ func (e *exporter) exportPackageVars() ([]GlobalEnt, error) {
 				// Without it the frozen factory's struct zero (GoStruct)
 				// would be installed and every method call would CCE.
 				if v, ok := e.info.Defs[n].(*types.Var); ok {
-					if nt := syncPrimitiveNamed(v.Type()); nt != nil {
+					if nt := syntheticPrimitiveNamed(v.Type()); nt != nil {
 						tid, err := e.typeID(v.Type())
 						if err != nil {
 							return nil, err
 						}
 						initNode = e.node("syncnew", vs, map[string]any{
-							"synctyp": nt.Obj().Name(), "type": tid,
+							"synctyp": syntheticOpTypeName(nt), "type": tid,
 						})
 					}
 				}
@@ -1467,8 +1713,8 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		// P3-M2b (ADR-0002 D3): the factory manufactures element zeros
 		// (frozen); a sync primitive element would zero to an unusable
 		// empty struct. *sync.X elements are fine (nil is correct).
-		if nt := syncPrimitiveNamed(t.Elem()); nt != nil {
-			return TypeEnt{}, scopeErrorf("sync.%s as a slice element is not in M2 scope", nt.Obj().Name())
+		if nt := syntheticPrimitiveNamed(t.Elem()); nt != nil {
+			return TypeEnt{}, syntheticCompositeScopeError(nt, "a slice element")
 		}
 		elem, err := e.typeID(t.Elem())
 		if err != nil {
@@ -1477,8 +1723,8 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		return mk("slice", map[string]any{"elem": elem}), nil
 	case *types.Array:
 		// P3-M2b (ADR-0002 D3): as for slices — array zeros are factory-made.
-		if nt := syncPrimitiveNamed(t.Elem()); nt != nil {
-			return TypeEnt{}, scopeErrorf("sync.%s as an array element is not in M2 scope", nt.Obj().Name())
+		if nt := syntheticPrimitiveNamed(t.Elem()); nt != nil {
+			return TypeEnt{}, syntheticCompositeScopeError(nt, "an array element")
 		}
 		elem, err := e.typeID(t.Elem())
 		if err != nil {
@@ -1489,11 +1735,11 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		// P3-M2b (ADR-0002 D3): missing-key reads manufacture the element
 		// zero in the factory; keys compare by value semantics the opaque
 		// model cannot provide. Both positions scope-error.
-		if nt := syncPrimitiveNamed(t.Key()); nt != nil {
-			return TypeEnt{}, scopeErrorf("sync.%s as a map key is not in M2 scope", nt.Obj().Name())
+		if nt := syntheticPrimitiveNamed(t.Key()); nt != nil {
+			return TypeEnt{}, syntheticCompositeScopeError(nt, "a map key")
 		}
-		if nt := syncPrimitiveNamed(t.Elem()); nt != nil {
-			return TypeEnt{}, scopeErrorf("sync.%s as a map element is not in M2 scope", nt.Obj().Name())
+		if nt := syntheticPrimitiveNamed(t.Elem()); nt != nil {
+			return TypeEnt{}, syntheticCompositeScopeError(nt, "a map element")
 		}
 		key, err := e.typeID(t.Key())
 		if err != nil {
@@ -1526,8 +1772,8 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 			// P3-M2b (ADR-0002 D3): the factory manufactures field zeros
 			// (frozen); a sync primitive field would zero to an unusable
 			// empty struct. *sync.X fields are fine (nil is correct).
-			if nt := syncPrimitiveNamed(t.Field(i).Type()); nt != nil {
-				return TypeEnt{}, scopeErrorf("sync.%s as a struct field is not in M2 scope", nt.Obj().Name())
+			if nt := syntheticPrimitiveNamed(t.Field(i).Type()); nt != nil {
+				return TypeEnt{}, syntheticCompositeScopeError(nt, "a struct field")
 			}
 			vars = append(vars, t.Field(i))
 		}
@@ -2086,7 +2332,7 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 		// P3-M2b (ADR-0002): sync primitive method calls lower to syncop
 		// nodes, never through resolveMethodCall/methodIndex (the
 		// synthetic methods have no funcdecl to instantiate).
-		if syncPrimitiveRecv(selection.Recv()) != nil {
+		if syntheticPrimitiveRecv(selection.Recv()) != nil {
 			continue
 		}
 		// P3-M3 (WS D, ADR-0003): interface method calls lower to
@@ -2165,7 +2411,7 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			}
 			// P3-M2b (ADR-0002): sync primitives bypass the method index
 			// (same as the roots loop above).
-			if syncPrimitiveRecv(selection.Recv()) != nil {
+			if syntheticPrimitiveRecv(selection.Recv()) != nil {
 				return true
 			}
 			// P3-M3 (WS D, ADR-0003): interface method calls need no
@@ -2222,7 +2468,9 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
 	if fd.Body == nil {
-		return nil, scopeErrorf("func %s without body", fd.Name.Name)
+		// P3-M4 (WS C, ADR-0004 D1): a bodyless function carrying
+		// //go:linkname binds to an intrinsic by symbol name.
+		return e.exportLinknameDecl(fi)
 	}
 	params := []*Node{}
 	if fi.recv != nil {
@@ -2254,6 +2502,76 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	}
 	fields := map[string]any{
 		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
+	}
+	if len(results) > 0 {
+		fields["results"] = results
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
+// linknameDirective scans fd's doc comment for gc's //go:linkname
+// directive ("//go:linkname <local> <symbol>"). Returns "" when absent.
+// A malformed directive or a local name that does not match the declared
+// function is a scope error (gc rejects both at compile time).
+func linknameDirective(fd *ast.FuncDecl) (string, error) {
+	if fd.Doc == nil {
+		return "", nil
+	}
+	for _, c := range fd.Doc.List {
+		text := strings.TrimSpace(strings.TrimPrefix(c.Text, "//"))
+		if !strings.HasPrefix(text, "go:linkname ") {
+			continue
+		}
+		fields := strings.Fields(text[len("go:linkname "):])
+		if len(fields) != 2 {
+			return "", scopeErrorf("//go:linkname on func %s must have exactly two fields (local symbol)", fd.Name.Name)
+		}
+		if fields[0] != fd.Name.Name {
+			return "", scopeErrorf("//go:linkname local name %q does not match func %s", fields[0], fd.Name.Name)
+		}
+		return fields[1], nil
+	}
+	return "", nil
+}
+
+// exportLinknameDecl emits a bodyless //go:linkname function (P3-M4, WS C,
+// ADR-0004 D1) as a funcdecl carrying the additive "linkname" field and no
+// "body". The factory builds a LinknameRootNode dispatching by symbol
+// name; a bodyless function WITHOUT the directive keeps the historical
+// scope error.
+func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
+	fd := fi.fd
+	symbol, err := linknameDirective(fd)
+	if err != nil {
+		return nil, err
+	}
+	if symbol == "" {
+		return nil, scopeErrorf("func %s without body", fd.Name.Name)
+	}
+	if fi.recv != nil {
+		return nil, scopeErrorf("//go:linkname on method %s is not in M4 scope", fd.Name.Name)
+	}
+	if fi.isTemplate {
+		return nil, scopeErrorf("//go:linkname on generic func %s is not in M4 scope", fd.Name.Name)
+	}
+	params, err := e.exportSignatureVars(fd.Type, fi.sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	results, err := e.exportSignatureVars(fd.Type, fi.sig.Results())
+	if err != nil {
+		return nil, err
+	}
+	if len(results) > 1 {
+		return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
+	}
+	sig, err := e.freshSigID(nil, fi.sig.Params(), fi.sig.Results(), fi.sig.Variadic())
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params,
+		"linkname": symbol,
 	}
 	if len(results) > 0 {
 		fields["results"] = results
@@ -2527,7 +2845,7 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 	// deferred-time object.
 	if sel, ok := unwrapSelector(s.Call.Fun); ok {
 		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
-			if nt := syncPrimitiveRecv(selection.Recv()); nt != nil {
+			if nt := syntheticPrimitiveRecv(selection.Recv()); nt != nil {
 				return e.exportSyncDefer(s, sel, selection, nt)
 			}
 		}
@@ -2555,8 +2873,8 @@ func (e *exporter) exportSyncDefer(s *ast.DeferStmt, sel *ast.SelectorExpr, sele
 	c := s.Call
 	typeName := nt.Obj().Name()
 	op := sel.Sel.Name
-	if !syncOpsInScope[typeName][op] {
-		return nil, scopeErrorf("sync.%s.%s is not in M2 scope", typeName, op)
+	if err := syntheticOpInScope(nt, op); err != nil {
+		return nil, err
 	}
 	argNodes, err := e.exportCallArgs(c)
 	if err != nil {
@@ -2685,7 +3003,7 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	// &m address semantics, cf. sy12).
 	if sel, ok := unwrapSelector(s.Call.Fun); ok {
 		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
-			if nt := syncPrimitiveRecv(selection.Recv()); nt != nil {
+			if nt := syntheticPrimitiveRecv(selection.Recv()); nt != nil {
 				return e.exportSyncGoStmt(s, sel, selection, nt)
 			}
 		}
@@ -2718,8 +3036,8 @@ func (e *exporter) exportSyncGoStmt(s *ast.GoStmt, sel *ast.SelectorExpr, select
 	c := s.Call
 	typeName := nt.Obj().Name()
 	op := sel.Sel.Name
-	if !syncOpsInScope[typeName][op] {
-		return nil, scopeErrorf("sync.%s.%s is not in M2 scope", typeName, op)
+	if err := syntheticOpInScope(nt, op); err != nil {
+		return nil, err
 	}
 	argNodes, err := e.exportCallArgs(c)
 	if err != nil {
@@ -2857,7 +3175,9 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 			typ = tid
 			typeTid, hasType = tid, true
 			if tv, ok := e.info.Types[vs.Type]; ok && tv.Type != nil {
-				typeIsSync = syncPrimitiveNamed(tv.Type)
+				// P3-M4 (WS C, ADR-0004): the sync/atomic overlay shares
+				// the D3 zero-value normalization.
+				typeIsSync = syntheticPrimitiveNamed(tv.Type)
 			}
 		}
 		for _, n := range vs.Names {
@@ -2887,7 +3207,7 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		if hasType && typeIsSync != nil && len(vs.Values) == 0 {
 			for range vs.Names {
 				values = append(values, e.node("syncnew", vs, map[string]any{
-					"synctyp": typeIsSync.Obj().Name(), "type": typeTid,
+					"synctyp": syntheticOpTypeName(typeIsSync), "type": typeTid,
 				}))
 			}
 		}
@@ -3632,6 +3952,15 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				return e.exportFmtCall(c, sel)
 			}
 		}
+		// P3-M4 (WS C, ADR-0004 D2): package-level sync/atomic functions
+		// are defined with exact gc signatures but not implemented — they
+		// need &x (WS D). Fail fast with the named scope error, never a
+		// confusing "undefined".
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "atomic" {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "sync/atomic" {
+				return nil, scopeErrorf("sync/atomic.%s is not in M4 scope (package-level atomics need addressable operands, WS D)", sel.Sel.Name)
+			}
+		}
 		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "runtime" && sel.Sel.Name == "Goexit" {
 			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
 				return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
@@ -3670,7 +3999,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// synthetic sync primitives lower to additive "syncop" wire nodes,
 		// bypassing exportMethodCall's WS D no-implicit-& rule.
 		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
-			if nt := syncPrimitiveRecv(selection.Recv()); nt != nil {
+			if nt := syntheticPrimitiveRecv(selection.Recv()); nt != nil {
 				return e.exportSyncOp(c, sel, nt)
 			}
 			// P3-M3 (WS D, ADR-0003): interface method call — the
@@ -3846,15 +4175,16 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	case "new":
 		// new(T): no value arguments; the pointer type is the result.
 		// P3-M2b (ADR-0002 D3): new(sync.X) constructs the primitive.
+		// P3-M4 (WS C, ADR-0004): new(atomic.X) likewise.
 		if len(c.Args) == 1 {
 			if tv, ok := e.info.Types[c.Args[0]]; ok && tv.Type != nil {
-				if nt := syncPrimitiveNamed(tv.Type); nt != nil {
+				if nt := syntheticPrimitiveNamed(tv.Type); nt != nil {
 					ntyp, err := e.callType(c)
 					if err != nil {
 						return nil, err
 					}
 					return e.node("syncnew", c, map[string]any{
-						"synctyp": nt.Obj().Name(), "type": ntyp,
+						"synctyp": syntheticOpTypeName(nt), "type": ntyp,
 					}), nil
 				}
 			}
@@ -4617,10 +4947,10 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 // methods (TryLock/TryRLock/RLocker/WaitGroup.Go) fail fast here with a
 // named M2 scope error (ADR-0002 D6).
 func (e *exporter) exportSyncOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named) (*Node, error) {
-	typeName := nt.Obj().Name()
-	op := sel.Sel.Name
-	if !syncOpsInScope[typeName][op] {
-		return nil, scopeErrorf("sync.%s.%s is not in M2 scope", typeName, op)
+	// P3-M4 (WS C, ADR-0004): the sync/atomic overlay shares this path
+	// (package-aware scope check via syntheticOpInScope).
+	if err := syntheticOpInScope(nt, sel.Sel.Name); err != nil {
+		return nil, err
 	}
 	recv, err := e.exportExpr(sel.X)
 	if err != nil {
@@ -4639,14 +4969,13 @@ func (e *exporter) exportSyncOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 // hoisted go-time temporaries and calls this directly so the syncop body
 // references the temporaries instead of the original expressions.
 func (e *exporter) exportSyncOpNodes(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named, recv *Node, args []*Node) (*Node, error) {
-	typeName := nt.Obj().Name()
 	op := sel.Sel.Name
 	typ, err := e.callType(c)
 	if err != nil {
 		return nil, err
 	}
 	return e.node("syncop", c, map[string]any{
-		"op": op, "synctyp": typeName, "recv": recv, "args": args, "type": typ,
+		"op": op, "synctyp": syntheticOpTypeName(nt), "recv": recv, "args": args, "type": typ,
 	}), nil
 }
 
@@ -4758,12 +5087,15 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 	// (Elements are impossible: the fields are unexported, so go/types
 	// rejects any; the guard is defense in depth.)
 	if tv, ok := e.info.Types[l]; ok && tv.Type != nil {
-		if nt := syncPrimitiveNamed(tv.Type); nt != nil {
+		if nt := syntheticPrimitiveNamed(tv.Type); nt != nil {
 			if len(l.Elts) > 0 {
+				if atomicPrimitiveNamed(nt) != nil {
+					return nil, scopeErrorf("sync/atomic.%s literal with elements is not in M4 scope", nt.Obj().Name())
+				}
 				return nil, scopeErrorf("sync.%s literal with elements is not in M2 scope", nt.Obj().Name())
 			}
 			return e.node("syncnew", l, map[string]any{
-				"synctyp": nt.Obj().Name(), "type": t,
+				"synctyp": syntheticOpTypeName(nt), "type": t,
 			}), nil
 		}
 	}

@@ -116,7 +116,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 
 | kind | fields |
 |---|---|
-| `funcdecl` | `name`, `sig`: type id, `params`: [param nodes], `body`: block node |
+| `funcdecl` | `name`, `sig`: type id, `params`: [param nodes], `body`: block node — or, for a `//go:linkname`-bound function (P3-M4, WS C, ADR-0004; first emitted by gofrontend 0.5.0): `name`, `sig`, `params`, `results` (optional), `linkname`: str (the target symbol) and NO `body` field; the factory builds a `LinknameRootNode` dispatching by symbol name instead of a Go body |
 | `param` | `name`, `obj`: object id, `type`: type id |
 | `block` | `stmts`: [stmt nodes] |
 | `vardecl` | `names`: [str], `objs`: [object ids] (parallel to `names`), `define`: bool (`true` for `:=`), `type`: type id or null, `values`: [expr nodes] |
