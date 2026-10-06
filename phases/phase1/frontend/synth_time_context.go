@@ -1220,9 +1220,12 @@ func WithoutCancel(parent Context) Context {
 	if parent == nil {
 		panic("context: nil parent")
 	}
-	if parent.Done() == nil {
-		return parent
-	}
+	// gc 1.27.1 always wraps (no Done()==nil shortcut — verified
+	// against the gc source and empirically: WithoutCancel(Background())
+	// != Background()). The old "if parent.Done() == nil { return parent }"
+	// check was dead for synthetic parents (emptyCtx.Done() is never nil)
+	// and wrong for exotic ones, so it is removed. (Reviewer1 P2-7 —
+	// the reviewer's gc premise was stale; corrected per gc 1.27.1.)
 	return &withoutCancelCtx{parent: parent}
 }
 `
