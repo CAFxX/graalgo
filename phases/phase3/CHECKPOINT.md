@@ -314,3 +314,13 @@ one-logical-change-per-commit sequence:
 **Final verification (sign-off tree, independent re-runs by coordinator):** phase-1 `make test` 208/208 + `make check` clean; phase-2 `make test` 194/194; p3frontend `go test` ok; phase-3 `make test` 29/29 + `make check` clean; corpora vs gc 1.27.1 — atomic 8/8, map 9/9, slice 6/6, fastrand 8/8, traceback 4/4, iface 13/13, sync 25/25. GG-0020 stays active (already activated 2026-10-04; 17 new `verifies:` annotations).
 
 **P3-M4 is COMPLETE.** Next: P3-M5 (`time` + `context` lowering).
+
+---
+
+## P3-M5: `time` + `context` lowering (WS E) — IN PROGRESS (2026-10-06)
+
+**Design:** ADR-0005 (`phases/phase3/adr/ADR-0005-time-context.md`, committed `e9b102b` before any code): synthetic `time` package (clock/timer intrinsics onto Phase-2 timers + pure-Go `Duration`/`Time` value types) and synthetic `context` package as **real Go** on channels + synthetic time + P3-M3 interface dispatch (a combination test of M2+M3+M5). Wire nodes additive (v1), toolVersion 0.5.0→0.6.0. DIV-M3-1 regression in the loop (corpus tc07 + Java unit test). Accepted divergence: `time.Local` ≡ UTC until P3-M7's real package.
+
+**Work split:** exporter worker (synthetic packages, exporter interceptions, p3frontend mirrors, timectx corpus tc00–tc16, red-green) + Java worker (`graalgo.p3time`, launcher registration, DIV-M3-1 unit regression). Spike-first risks: `any == any` (valueCtx keys), nil-channel blocking.
+
+**GG-0017 time/ctx slice:** activates when the first `verifies: GG-0017` timectx test lands.
