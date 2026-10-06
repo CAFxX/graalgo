@@ -147,8 +147,15 @@ func (e *exporter) exportCloseDeferGo(s ast.Stmt, c *ast.CallExpr, isDefer bool)
 		"names": []string{tname}, "objs": []int{tid},
 		"define": true, "type": nil, "values": []*Node{argx},
 	})
+	// Zero-arg funclit capturing the hoisted temp (Appendix N pattern).
+	// The temp is evaluated in the spawning goroutine (Go semantics).
 	tident := e.node("ident", c, map[string]any{"name": tname, "obj": tid, "type": ptid})
-	call := e.node("call", c, map[string]any{"fun": funclit, "args": []*Node{tident}, "type": nil})
+	closeNode2 := e.node("chanclose", c, map[string]any{"x": tident})
+	body2 := e.node("block", c, map[string]any{"stmts": []*Node{closeNode2}})
+	funclit2 := e.node("funclit", c, map[string]any{
+		"params": []*Node{}, "results": []*Node{}, "body": body2,
+	})
+	call := e.node("call", c, map[string]any{"fun": funclit2, "args": []*Node{}, "type": nil})
 	spawn := e.node("gostmt", s, map[string]any{"call": call})
 	return e.node("block", s, map[string]any{"stmts": []*Node{hoist, spawn}}), nil
 }

@@ -877,12 +877,15 @@ func (c *cancelCtx) cancel(err, cause error) {
 	}
 	select {
 	case c.cancelCh <- err:
-		// Won the claim: publish err/cause, broadcast, then
-		// propagate without holding the semaphore.
+		// Won the claim. Acquire muChan BEFORE publishing err/cause:
+		// readers (Cause(), ctxPropagateCancel, AfterFunc) access them
+		// under muChan, so the write must hold it for the happens-before
+		// edge (P1-3). The cancelCh claim synchronizes the winner election
+		// only, not the payload.
+		<-c.muChan
 		c.err = err
 		c.cause = cause
 		close(c.done)
-		<-c.muChan
 		children := c.children
 		c.children = nil
 		hooks := c.afterFuncs
