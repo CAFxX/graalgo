@@ -10,25 +10,24 @@ import (
 // P3-M5 (WS E, ADR-0005 Appendix M): multi-result call-site desugar.
 //
 // v1 cannot emit or call multi-result functions (WS D; the P3-M3 F4
-// fail-fast precedent). The 6 operations that need it —
+// fail-fast precedent). Five operations desugar at call sites —
 // context.WithCancel, context.WithCancelCause, context.WithDeadline,
-// context.WithTimeout, Context.Deadline(), time.ParseDuration — keep
-// exact gc 1.27.1 signatures (so type-checking works) with fail-fast
-// bodies. When one of them is the RHS of a 2-target assignment
-// (`:=` or `=`), the exporter desugars to the synthetic single-result
-// helpers plus field extraction:
+// context.WithTimeout, time.ParseDuration — keeping exact gc 1.27.1
+// signatures (so type-checking works) with fail-fast bodies. When one
+// of them is the RHS of a 2-target assignment (`:=` or `=`), the
+// exporter desugars to the synthetic single-result helpers plus field
+// extraction:
 //
 //	ctx, cancel := context.WithCancel(parent)
 //	// →
 //	__p5mr_N := context.__withCancel(parent) // *cancelCtx, real Go
-//	ctx := Context(__p5mr_N)                 // concrete→interface (P3-M3)
+//	ctx := __p5mr_N                         // concrete type, no Context()
+//	                                        // boxing (afc0dfb amendment:
+//	                                        // v1 cannot emit the
+//	                                        // multi-result Deadline
+//	                                        // method the interface
+//	                                        // would require)
 //	cancel := __p5mr_N.cancelFunc()          // CancelFunc
-//
-//	d, ok := ctx.Deadline()
-//	// →
-//	__p5mr_N := context.__deadlineOf(ctx)    // deadlinePair, real Go
-//	d := __p5mr_N.d
-//	ok := __p5mr_N.ok
 //
 //	d, err := time.ParseDuration(s)
 //	// →
@@ -36,20 +35,34 @@ import (
 //	d := __p5mr_N.d
 //	err := __p5mr_N.err
 //
+// The sixth Appendix M operation, ctx.Deadline(), is NOT callable in M5:
+// the afc0dfb amendment removed Deadline from the synthetic Context
+// interface (v1 cannot emit multi-result methods, WS D), so an
+// interface-typed call is a go/types type error that never reaches the
+// exporter (see TestDeadlineNotCallableM5). The mrDeadline
+// classification path below is retained defense-in-depth — it keeps the
+// __deadlineOf desugar wired for the day WS D lands and Deadline returns
+// to the interface (re-test trigger: add a 2-target ctx.Deadline()
+// corpus test then). It is currently unreachable from user code: the
+// synthetic interface omits Deadline, the concrete types are unexported,
+// and a user interface re-adding Deadline fails isDeadlineMethod.
+//
 // Every other syntactic position keeps the fail-fast scope error. The
 // helpers are real Go (no new Java nodes); the unexported names are
 // resolved by the exporter directly off the synthetic package scope
 // (user code can never name them — go/types rejects unexported
 // cross-package references — so there is no collision).
 
-// mrKind classifies the 6 Appendix M operations.
+// mrKind classifies the Appendix M operations: the 5 reachable ones
+// plus mrDeadline, retained defense-in-depth for WS D (see the package
+// header — currently unreachable from user code).
 type mrKind int
 
 const (
 	mrNone mrKind = iota
 	mrWithCancel   // context.WithCancel / context.WithCancelCause
 	mrWithDeadline // context.WithDeadline / context.WithTimeout
-	mrDeadline     // ctx.Deadline() (method)
+	mrDeadline     // ctx.Deadline() (method) — retained, unreachable in M5
 	mrParseDur     // time.ParseDuration
 )
 
@@ -141,7 +154,10 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	}
 	// Method call: ctx.Deadline(). Must be the synthetic context method
 	// (declared in package "context", 2 results) — a user type's
-	// Deadline method is not desugared.
+	// Deadline method is not desugared. NOTE: unreachable in M5 (the
+	// synthetic Context interface omits Deadline post-afc0dfb, so no
+	// user call site type-checks); retained for WS D — see the package
+	// header.
 	if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
 		if f, ok := selection.Obj().(*types.Func); ok && isDeadlineMethod(f) {
 			nt := named(ctxPkg, "deadlinePair")
@@ -159,8 +175,10 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 }
 
 // isDeadlineMethod reports whether f is the synthetic context package's
-// Deadline method (2 results). The exporter desugars every call site,
-// so the fail-fast body is unreachable.
+// Deadline method (2 results). The mrDeadline desugar path is retained
+// defense-in-depth for WS D (see the package header); in M5 it is
+// unreachable from user code, so the concrete types' fail-fast Deadline
+// bodies never execute via this path either.
 func isDeadlineMethod(f *types.Func) bool {
 	if f == nil || f.Pkg() == nil || f.Pkg().Path() != "context" || f.Name() != "Deadline" {
 		return false
@@ -171,7 +189,7 @@ func isDeadlineMethod(f *types.Func) bool {
 
 // exportMultiResultDesugar implements the Appendix M desugar for
 // 2-target assignments. It returns handled=false when s is not a
-// 2-target assignment of one of the 6 operations.
+// 2-target assignment of one of the Appendix M operations.
 func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*Node, bool, error) {
 	if len(s.Lhs) != 2 || len(s.Rhs) != 1 {
 		return nil, false, nil
@@ -317,23 +335,6 @@ func (e *exporter) synthHelperCall(c *ast.CallExpr, fn *types.Func, resultType t
 		return nil, "", 0, 0, err
 	}
 	return call, tmpName, tmpID, resTid, nil
-}
-
-// synthConvert builds the Context(__p5mr_N) conversion node (the P3-M3
-// concrete→interface boxing, mirroring exportTypeConversion).
-func (e *exporter) synthConvert(c *ast.CallExpr, tmpName string, tmpID, tmpTid int, pkg *types.Package, ifaceName string) (*Node, error) {
-	obj := pkg.Scope().Lookup(ifaceName)
-	if obj == nil {
-		return nil, fmt.Errorf("gofrontend: synthetic interface %s missing", ifaceName)
-	}
-	to, err := e.typeID(obj.Type())
-	if err != nil {
-		return nil, err
-	}
-	x := e.node("ident", c, map[string]any{"name": tmpName, "obj": tmpID, "type": tmpTid})
-	return e.node("convert", c, map[string]any{
-		"x": x, "to": to, "from": tmpTid, "type": to,
-	}), nil
 }
 
 // synthMethodCall builds the __p5mr_N.method() call node (mirroring

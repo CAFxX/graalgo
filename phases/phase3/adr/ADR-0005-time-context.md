@@ -163,32 +163,47 @@ an in-range control asserting the identical section as before.
 - Re-test triggers: `any`-equality and nil-channel behavior (if scoped
   down); full `time` surface at P3-M7 supersedes this package.
 
-### Accepted deviation (2026-10-06, exporter worker): multi-result calls
+### Accepted deviation (2026-10-06, exporter worker; RESTATED 2026-10-06 — the
+original text below predates the Appendix M desugar and the afc0dfb
+interface amendment and is superseded)
 
 v1 cannot emit or call multi-result functions (WS D; the P3-M3 F4
-fail-fast precedent). The following are declared with exact gc 1.27.1
-signatures (so type-checking works) but every call site fails fast with
-"not in M5 scope (multi-result calls need WS D; re-test when it lands)":
+fail-fast precedent). Five operations desugar at call sites in 2-target
+position (Appendix M) and fail fast with "not in M5 scope
+(multi-result calls need WS D; re-test when it lands)" in every other
+syntactic position:
 
-- `time.ParseDuration(string) (Duration, error)`
-- `Time.Date() (year int, month Month, day int)`
-- `Time.Clock() (hour, min, sec int)`
-- `Time.Zone() (name string, offset int)`
-- `Context.Deadline() (deadline Time, ok bool)`
 - `context.WithCancel(parent Context) (Context, CancelFunc)`
 - `context.WithCancelCause(parent Context) (Context, CancelCauseFunc)`
 - `context.WithDeadline(parent Context, d Time) (Context, CancelFunc)`
 - `context.WithTimeout(parent Context, timeout Duration) (Context, CancelFunc)`
+- `time.ParseDuration(string) (Duration, error)`
 
-**Impact**: The core context cancellation constructors cannot be called
-in v1 programs. The context package type-checks and exports (Background,
-TODO, WithValue, Cause, AfterFunc, WithoutCancel, Canceled,
-DeadlineExceeded all work), but cancellation via WithCancel/WithDeadline/
-WithTimeout requires WS D multi-result support. This is the primary
-P3-M5 blocker — escalated to coordinator.
+Still fail-fast at every call site (WS D, unchanged):
 
-Re-test trigger: when WS D lands, remove the `isMultiResultSynthetic`
-fail-fast and verify tc08-tc10, tc12-tc14 go green end to end.
+- `Time.Date() (year int, month Month, day int)`
+- `Time.Clock() (hour, min, sec int)`
+- `Time.Zone() (name string, offset int)`
+
+`Context.Deadline() (deadline Time, ok bool)` is NOT callable in M5 at
+all: the afc0dfb amendment removed `Deadline` from the synthetic
+`Context` interface (v1 cannot emit multi-result methods), so a call on
+an interface-typed value is a go/types type error — it never reaches the
+exporter and never produces the M5 scope error. The concrete types
+still declare `Deadline()` (for go/types interface satisfaction) with
+fail-fast bodies; those bodies are unreachable. `__deadlineOf` remains
+as the desugar target for the retained `mrDeadline` exporter path
+(defense-in-depth; currently unreachable from user code).
+
+**Impact**: cancellation via WithCancel/WithDeadline/WithTimeout works
+in 2-target position (tc08–tc10, tc12–tc14 pass end to end); the
+"primary P3-M5 blocker" escalation is resolved. `Time.Date`/`Clock`/
+`Zone` remain WS D-blocked.
+
+Re-test trigger: when WS D lands, re-add `Deadline` to the synthetic
+interface, remove the `isMultiResultSynthetic` fail-fast, and verify
+tc08–tc10, tc12–tc14 go green end to end (plus a new `ctx.Deadline()`
+2-target corpus test exercising the `mrDeadline` desugar).
 
 ## Appendix W — wire field detail as implemented (P3-M5 Java, 2026-10-06)
 
@@ -339,7 +354,12 @@ returns (the wire `return` node carries a list, but `buildReturn` rejects
 (all `(Context, CancelFunc)`), `Context.Deadline()` (`(Time, bool)`),
 `time.ParseDuration` (`(Duration, error)`). General multi-result support
 is out of scope; the milestone uses targeted call-site desugar
-(precedent: P3-M2's `defer`/`go` desugar).
+(precedent: P3-M2's `defer`/`go` desugar). NOTE (afc0dfb amendment):
+`Context.Deadline()` is not callable in M5 — the synthetic `Context`
+interface omits it (v1 cannot emit multi-result methods, WS D), so
+interface-typed call sites are go/types type errors. The Deadline
+desugar below is retained defense-in-depth for WS D; it is currently
+unreachable from user code.
 
 **Decision:** the synthetic packages keep exact gc signatures. The
 exporter recognizes calls to these 6 operations WHEN they are the RHS of
@@ -355,7 +375,8 @@ cancel := __p5c.cancelFunc()           // CancelFunc
 
 ```go
 d, ok := ctx.Deadline()
-// →
+// → (RETAINED FOR WS D — not reachable in M5: interface-typed
+//    ctx.Deadline() is a type error post-afc0dfb)
 __p5p := context.__deadlineOf(ctx)     // deadlinePair, real Go
 d := __p5p.d
 ok := __p5p.ok
@@ -388,8 +409,11 @@ Synthetic helpers (all REAL GO, single-value — no new Java nodes):
 
 The concrete `Deadline()` methods are DECLARED (for go/types interface
 satisfaction) with fail-fast bodies — they are unreachable because the
-exporter desugars every `Deadline()` call site. Other syntactic positions
-(non-2-target assignment) keep the fail-fast scope error, documented.
+synthetic `Context` interface omits `Deadline` (afc0dfb): no user call
+site can type-check. (Pre-amendment they were unreachable because the
+exporter desugared every call site; the amendment moved the barrier to
+the type level.) Other syntactic positions (non-2-target assignment) of
+the 5 reachable operations keep the fail-fast scope error, documented.
 
 **Context implementation** (pure Go, channel-mutex design — no Java
 intrinsics, no goroutine leak):
