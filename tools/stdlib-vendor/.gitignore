@@ -1,0 +1,2 @@
+# build output of `go build ./...` — never commit binaries
+/stdlib-vendor
