@@ -12,7 +12,6 @@ import graalgo.runtime.GoCalls;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.Panic;
-import graalgo.values.GoFunc;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoTypeDescriptor;
@@ -69,14 +68,14 @@ public final class IfaceDispatchNode extends GoExprNode {
      */
     private final int enclosingFuncObj;
 
-    /** One PIC slot: an itab identity and the resolved method func. Immutable. */
-    private record PicSlot(IfaceItab itab, GoFunc func) {}
+    /** One PIC slot: an itab identity and the resolved method target. Immutable. */
+    private record PicSlot(IfaceItab itab, IfaceMethodTarget target) {}
 
     private volatile PicSlot pic0;
     private volatile PicSlot pic1;
     private volatile PicSlot pic2;
     /** Megamorphic fallback (identity-keyed: IfaceItab has no equals). Written under lock. */
-    private volatile Map<IfaceItab, GoFunc> megamorphic;
+    private volatile Map<IfaceItab, IfaceMethodTarget> megamorphic;
     /** Process-wide count of megamorphic transitions (observability). */
     private static volatile long megamorphicTransitions;
 
@@ -107,13 +106,17 @@ public final class IfaceDispatchNode extends GoExprNode {
         String descName = ((GoTypeDescriptor) gi.descriptor()).name();
         IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
         probe(itab);
-        GoFunc f = lookupPic(itab);
+        IfaceMethodTarget target = lookupPic(itab);
         Object[] argVals = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
             argVals[i] = boxArg(args[i], frame);
         }
         Object[] callArgs = new Object[argVals.length + 1];
-        callArgs[0] = data;
+        // P3-M3: promoted methods receive the embedded value — walk the
+        // exporter's "index" path from the dynamic value.
+        callArgs[0] = target.isDirect()
+                ? data
+                : graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath());
         System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
         // FuncValueCallNode's recoverAllowed dance: recover() is only
         // non-nil when called directly by a deferred function — clear the
@@ -124,7 +127,7 @@ public final class IfaceDispatchNode extends GoExprNode {
             state.setRecoverAllowed(false);
         }
         try {
-            return GoCalls.invoke(f, callArgs);
+            return GoCalls.invoke(target.func(), callArgs);
         } finally {
             if (state != null) {
                 state.setRecoverAllowed(prev);
@@ -153,66 +156,66 @@ public final class IfaceDispatchNode extends GoExprNode {
                 + r.getClass().getName() + ", not a GoInterface (internal error)");
     }
 
-    private GoFunc lookupPic(IfaceItab itab) {
+    private IfaceMethodTarget lookupPic(IfaceItab itab) {
         PicSlot s0 = pic0;
         if (s0 != null && s0.itab == itab) {
-            return s0.func;
+            return s0.target;
         }
         PicSlot s1 = pic1;
         if (s1 != null && s1.itab == itab) {
-            return s1.func;
+            return s1.target;
         }
         PicSlot s2 = pic2;
         if (s2 != null && s2.itab == itab) {
-            return s2.func;
+            return s2.target;
         }
         return lookupPicMiss(itab);
     }
 
-    private synchronized GoFunc lookupPicMiss(IfaceItab itab) {
+    private synchronized IfaceMethodTarget lookupPicMiss(IfaceItab itab) {
         // Recheck under the lock: another thread may have filled the slot.
         PicSlot s0 = pic0;
         if (s0 != null && s0.itab == itab) {
-            return s0.func;
+            return s0.target;
         }
         PicSlot s1 = pic1;
         if (s1 != null && s1.itab == itab) {
-            return s1.func;
+            return s1.target;
         }
         PicSlot s2 = pic2;
         if (s2 != null && s2.itab == itab) {
-            return s2.func;
+            return s2.target;
         }
-        GoFunc f = itab.methods().get(methodName);
-        if (f == null) {
+        IfaceMethodTarget t = itab.methods().get(methodName);
+        if (t == null) {
             // Unreachable: itabFor already failed fast on a missing method.
             throw new FrontendException("interface dispatch: method \"" + methodName
                     + "\" missing from itab for \"" + itab.descriptorName() + "\" (internal error)");
         }
         if (pic0 == null) {
-            pic0 = new PicSlot(itab, f);
-            return f;
+            pic0 = new PicSlot(itab, t);
+            return t;
         }
         if (pic1 == null) {
-            pic1 = new PicSlot(itab, f);
-            return f;
+            pic1 = new PicSlot(itab, t);
+            return t;
         }
         if (pic2 == null) {
-            pic2 = new PicSlot(itab, f);
-            return f;
+            pic2 = new PicSlot(itab, t);
+            return t;
         }
-        Map<IfaceItab, GoFunc> mm = megamorphic;
+        Map<IfaceItab, IfaceMethodTarget> mm = megamorphic;
         if (mm == null) {
             mm = new java.util.HashMap<>();
             megamorphic = mm;
             megamorphicTransitions++;
         }
-        GoFunc mf = mm.get(itab);
-        if (mf == null) {
-            mm.put(itab, f);
-            return f;
+        IfaceMethodTarget mt = mm.get(itab);
+        if (mt == null) {
+            mm.put(itab, t);
+            return t;
         }
-        return mf;
+        return mt;
     }
 
     /** M9 polymorphism probe site, created lazily on first probed dispatch. */

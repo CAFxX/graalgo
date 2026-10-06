@@ -11,7 +11,7 @@ import graalgo.values.GoFunc;
 /**
  * Launcher support for interface method tables (P3-M3, WS D, ADR-0003):
  * parses the document's type table into descriptor name → (method name →
- * function object id), then resolves the object ids through
+ * {@link IfaceMethodTarget}), then resolves the object ids through
  * {@code Program.functions()} into {@link GoFunc}s for
  * {@link IfaceMethodTable#install}.
  *
@@ -20,8 +20,10 @@ import graalgo.values.GoFunc;
  * factory's structural descriptor name via {@link DescriptorNames} — see
  * its javadoc for the recorded ADR-0003 D5 deviation
  * ({@code "pointer#"+typeId} does not match the factory's actual
- * naming). Method entries are {@code {"name": ..., "obj": ...}}
- * ({@code "recv"} is informational only).
+ * naming). Method entries are {@code {"name": ..., "obj": ...,
+ * "index": [...]}} ({@code "recv"} is informational only;
+ * {@code "index"} is the receiver adaptation path, empty for direct
+ * methods).
  *
  * <p>Fail-fast: a method entry without a name/obj, or an obj id absent
  * from {@code Program.functions()}, is a {@link FrontendException} naming
@@ -37,14 +39,14 @@ public final class IfaceMethodTables {
      * @param jsonText  the frontend/v1 document
      * @param functions obj id → GoFunc, from {@code Program.functions()}
      */
-    public static Map<String, Map<String, GoFunc>> resolve(String jsonText,
+    public static Map<String, Map<String, IfaceMethodTarget>> resolve(String jsonText,
             Map<Integer, GoFunc> functions) {
         Json.Value v = Json.parse(jsonText);
         if (!(v instanceof Json.Object doc)) {
             throw new FrontendException("document: must be a JSON object");
         }
         TypeTable types = new TypeTable(doc.array("types", "document"));
-        Map<String, Map<String, Integer>> objIds = new LinkedHashMap<>();
+        Map<String, Map<String, MethodRef>> objIds = new LinkedHashMap<>();
         for (int id = 0; id < types.size(); id++) {
             String path = "types[" + id + "]";
             Json.Object entry = types.entry(id, path);
@@ -53,7 +55,7 @@ public final class IfaceMethodTables {
                 continue;
             }
             String descName = DescriptorNames.descriptorName(types, id);
-            Map<String, Integer> methods = readMethods(entry, path);
+            Map<String, MethodRef> methods = readMethods(entry, path);
             if (methods.isEmpty()) {
                 continue;
             }
@@ -62,30 +64,33 @@ public final class IfaceMethodTables {
             // factory canonicalizes them to one descriptor, and both
             // carry the same *T method set — merge, last wins.
             objIds.merge(descName, methods, (a, b) -> {
-                Map<String, Integer> merged = new LinkedHashMap<>(a);
+                Map<String, MethodRef> merged = new LinkedHashMap<>(a);
                 merged.putAll(b);
                 return merged;
             });
         }
-        Map<String, Map<String, GoFunc>> out = new LinkedHashMap<>();
-        for (Map.Entry<String, Map<String, Integer>> e : objIds.entrySet()) {
-            Map<String, GoFunc> funcs = new LinkedHashMap<>();
-            for (Map.Entry<String, Integer> m : e.getValue().entrySet()) {
-                GoFunc f = functions.get(m.getValue());
+        Map<String, Map<String, IfaceMethodTarget>> out = new LinkedHashMap<>();
+        for (Map.Entry<String, Map<String, MethodRef>> e : objIds.entrySet()) {
+            Map<String, IfaceMethodTarget> funcs = new LinkedHashMap<>();
+            for (Map.Entry<String, MethodRef> m : e.getValue().entrySet()) {
+                GoFunc f = functions.get(m.getValue().objId);
                 if (f == null) {
                     throw new FrontendException("ifacemethod: method \"" + m.getKey()
                             + "\" on dynamic type \"" + e.getKey()
-                            + "\" refers to unknown function object id " + m.getValue()
+                            + "\" refers to unknown function object id " + m.getValue().objId
                             + " (WS D)");
                 }
-                funcs.put(m.getKey(), f);
+                funcs.put(m.getKey(), new IfaceMethodTarget(f, m.getValue().recvPath));
             }
             out.put(e.getKey(), funcs);
         }
         return out;
     }
 
-    private static Map<String, Integer> readMethods(Json.Object entry, String path) {
+    /** Wire method entry: object id + receiver adaptation path. */
+    private record MethodRef(int objId, int[] recvPath) {}
+
+    private static Map<String, MethodRef> readMethods(Json.Object entry, String path) {
         Json.Object detail = entry.object("detail", path);
         Json.Value mv = detail.opt("methods");
         if (mv == null || mv instanceof Json.Null) {
@@ -94,14 +99,38 @@ public final class IfaceMethodTables {
         if (!(mv instanceof Json.Array arr)) {
             throw new FrontendException(path + ": \"methods\" must be an array");
         }
-        Map<String, Integer> out = new LinkedHashMap<>();
+        Map<String, MethodRef> out = new LinkedHashMap<>();
         for (int i = 0; i < arr.size(); i++) {
             String mp = path + ".detail.methods[" + i + "]";
             Json.Value ev = arr.get(i);
             if (!(ev instanceof Json.Object eo)) {
                 throw new FrontendException(mp + ": method entry must be an object");
             }
-            out.put(eo.string("name", mp), eo.intValue("obj", mp));
+            int[] recvPath = readIndex(eo, mp);
+            out.put(eo.string("name", mp), new MethodRef(eo.intValue("obj", mp), recvPath));
+        }
+        return out;
+    }
+
+    /**
+     * The wire {@code "index"} field → receiver adaptation path.
+     * Missing (pre-promotion documents) means a direct method.
+     */
+    private static int[] readIndex(Json.Object eo, String mp) {
+        Json.Value iv = eo.opt("index");
+        if (iv == null || iv instanceof Json.Null) {
+            return new int[0];
+        }
+        if (!(iv instanceof Json.Array arr)) {
+            throw new FrontendException(mp + ": \"index\" must be an array");
+        }
+        int[] out = new int[arr.size()];
+        for (int i = 0; i < arr.size(); i++) {
+            Json.Value e = arr.get(i);
+            if (!(e instanceof Json.Num n)) {
+                throw new FrontendException(mp + ": \"index\" entries must be numbers");
+            }
+            out[i] = (int) n.asLong(mp);
         }
         return out;
     }

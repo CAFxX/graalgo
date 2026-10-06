@@ -4,11 +4,9 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import graalgo.values.GoFunc;
-
 /**
- * An immutable interface method table (D6): method name → {@link GoFunc}
- * for one (dynamic type, interface) pair.
+ * An immutable interface method table (D6): method name →
+ * {@link IfaceMethodTarget} for one (dynamic type, interface) pair.
  *
  * <p>Built once per (descriptor name, interface id) and cached in
  * {@link IfaceMethodTable}; itabs never change afterwards, so dispatch
@@ -19,9 +17,9 @@ import graalgo.values.GoFunc;
 public final class IfaceItab {
     private final String descriptorName;
     private final int ifaceId;
-    private final Map<String, GoFunc> methods;
+    private final Map<String, IfaceMethodTarget> methods;
 
-    IfaceItab(String descriptorName, int ifaceId, Map<String, GoFunc> methodsInIfaceOrder) {
+    IfaceItab(String descriptorName, int ifaceId, Map<String, IfaceMethodTarget> methodsInIfaceOrder) {
         this.descriptorName = descriptorName;
         this.ifaceId = ifaceId;
         this.methods = Collections.unmodifiableMap(new LinkedHashMap<>(methodsInIfaceOrder));
@@ -37,8 +35,8 @@ public final class IfaceItab {
         return ifaceId;
     }
 
-    /** Method name → GoFunc, in interface-method order. Never null values. */
-    public Map<String, GoFunc> methods() {
+    /** Method name → target, in interface-method order. Never null values. */
+    public Map<String, IfaceMethodTarget> methods() {
         return methods;
     }
 

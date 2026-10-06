@@ -47,8 +47,8 @@ public final class IfaceMethodTablesTest {
                {"kind": "named", "detail": {"name": "main.T", "underlying": 0,
                  "methods": [{"name": "M", "obj": 7, "recv": "value"}]}},
                {"kind": "pointer", "detail": {"elem": 1,
-                 "methods": [{"name": "M", "obj": 8, "recv": "pointer"},
-                             {"name": "N", "obj": 9, "recv": "pointer"}]}},
+                 "methods": [{"name": "M", "obj": 8, "recv": "pointer", "index": []},
+                             {"name": "N", "obj": 9, "recv": "pointer", "index": [0]}]}},
                {"kind": "named", "detail": {"name": "main.U", "underlying": 0,
                  "methods": []}}
              ],
@@ -57,7 +57,8 @@ public final class IfaceMethodTablesTest {
     /**
      * Named entries key by detail.name; pointer entries key by the
      * factory's structural descriptor name; objIDs resolve through
-     * Program.functions().
+     * Program.functions(); the wire "index" becomes the receiver path
+     * (missing "index" = direct).
      * verifies: GG-0014
      */
     public void testResolve() {
@@ -65,18 +66,32 @@ public final class IfaceMethodTablesTest {
         GoFunc fmp = goFunc();
         GoFunc fnp = goFunc();
         Map<Integer, GoFunc> functions = Map.of(7, fm, 8, fmp, 9, fnp);
-        Map<String, Map<String, GoFunc>> out = IfaceMethodTables.resolve(DOC, functions);
+        Map<String, Map<String, IfaceMethodTarget>> out = IfaceMethodTables.resolve(DOC, functions);
         assertEquals(2, out.size(), "two descriptors with methods");
-        assertEquals(Map.of("M", fm), out.get("main.T"), "named entry keyed by detail.name");
+        IfaceMethodTarget mt = out.get("main.T").get("M");
+        assertTrue(mt != null, "main.T has M");
+        assertTrue(mt.func() == fm, "M resolves to obj 7");
+        assertTrue(mt.isDirect(), "missing wire index = direct method");
         String ptrName = DescriptorNames.descriptorName(
                 new graalgo.frontend.TypeTable(
                         ((graalgo.frontend.Json.Object) graalgo.frontend.Json.parse(DOC))
                                 .array("types", "t")),
                 2);
-        Map<String, GoFunc> ptrMethods = out.get(ptrName);
+        Map<String, IfaceMethodTarget> ptrMethods = out.get(ptrName);
         assertTrue(ptrMethods != null, "pointer entry present under " + ptrName);
-        assertEquals(Map.of("M", fmp, "N", fnp), ptrMethods, "pointer method set");
+        assertTrue(ptrMethods.get("M").func() == fmp, "M resolves to obj 8");
+        assertTrue(ptrMethods.get("M").isDirect(), "empty index = direct");
+        assertTrue(ptrMethods.get("N").func() == fnp, "N resolves to obj 9");
+        assertTrue(!ptrMethods.get("N").isDirect(), "index [0] = promoted");
+        assertEquals(1, ptrMethods.get("N").recvPath().length, "recvPath length");
+        assertEquals(0, ptrMethods.get("N").recvPath()[0], "recvPath[0]");
         assertTrue(!out.containsKey("main.U"), "empty method list installs nothing");
+    }
+
+    private static void assertEquals(int expected, int actual, String msg) {
+        if (expected != actual) {
+            throw new AssertionError(msg + " expected=" + expected + " actual=" + actual);
+        }
     }
 
     /**

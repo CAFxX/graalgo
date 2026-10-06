@@ -38,7 +38,16 @@ public final class SelectorNode extends GoExprNode {
 
     /** Navigates to the selected field's canonical boxed value. */
     static Object readField(GoExprNode objNode, int[] selpath, VirtualFrame frame) {
-        Object o = objNode.executeObject(frame);
+        return readFieldPath(objNode.executeObject(frame), selpath);
+    }
+
+    /**
+     * Navigates a field-index path from a runtime value (P3-M3, WS D):
+     * promoted-method receiver adaptation in interface dispatch walks the
+     * exporter's {@code "index"} path exactly like a field selection.
+     * Empty path returns the value unchanged.
+     */
+    public static Object readFieldPath(Object o, int[] selpath) {
         for (int idx : selpath) {
             o = deref(o);
             GoStruct s = (GoStruct) o;

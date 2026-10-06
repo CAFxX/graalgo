@@ -474,3 +474,76 @@ func TestToolVersionBump(t *testing.T) {
 		t.Fatal("export generator stanza does not stamp version 0.4.0")
 	}
 }
+
+// TestIfaceMethodTablePromotedIndex: promoted methods carry the go/types
+// Selection.Index() field path in the wire "index" field (P3-M3 receiver
+// adaptation); direct methods carry an empty path.
+func TestIfaceMethodTablePromotedIndex(t *testing.T) {
+	const src = `package main
+
+type Writer interface{ Write(p []byte) int }
+
+type Buf struct{ n int }
+
+func (b *Buf) Write(p []byte) int { b.n += len(p); return len(p) }
+
+type MyWriter struct{ *Buf }
+
+func main() {
+	mw := &MyWriter{}
+	var w Writer = mw
+	println(w.Write([]byte("hi")))
+}
+`
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	doc := decodeExport(t, out)
+	entries := typeEntries(t, doc)
+
+	indexOf := func(typeName string, method string) []any {
+		t.Helper()
+		id, _ := findNamedEntry(t, entries, typeName)
+		for _, e := range entries {
+			em, _ := e.(map[string]any)
+			if em["kind"] != "pointer" {
+				continue
+			}
+			d, _ := em["detail"].(map[string]any)
+			if elem, _ := d["elem"].(float64); int(elem) != id {
+				continue
+			}
+			methods, _ := d["methods"].([]any)
+			for _, m := range methods {
+				mm, _ := m.(map[string]any)
+				if mm["name"] == method {
+					idx, ok := mm["index"].([]any)
+					if !ok {
+						t.Fatalf("%s.%s: no wire \"index\" field", typeName, method)
+					}
+					return idx
+				}
+			}
+			// Duplicate structural pointer entries can exist (one minted
+			// while exporting the method's own receiver, before funcByObj
+			// registration); the launcher merges by descriptor name.
+			// Keep scanning for the entry that carries the method.
+		}
+		t.Fatalf("no pointer entry for %s carries method %s", typeName, method)
+		return nil
+	}
+
+	// *Buf.Write is direct: empty path.
+	if idx := indexOf("main.Buf", "Write"); len(idx) != 0 {
+		t.Fatalf("*Buf.Write index = %v, want empty (direct method)", idx)
+	}
+	// *MyWriter.Write is promoted via embedded field 0: path [0].
+	idx := indexOf("main.MyWriter", "Write")
+	if len(idx) != 1 {
+		t.Fatalf("*MyWriter.Write index = %v, want [0] (promoted via field 0)", idx)
+	}
+	if f, _ := idx[0].(float64); f != 0 {
+		t.Fatalf("*MyWriter.Write index = %v, want [0]", idx)
+	}
+}

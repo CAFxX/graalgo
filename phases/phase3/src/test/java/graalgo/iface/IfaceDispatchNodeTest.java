@@ -15,7 +15,6 @@ import graalgo.frontend.GoExprNode;
 import graalgo.runtime.GoErrorValue;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.PanicException;
-import graalgo.values.GoFunc;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoTypeDescriptor;
@@ -91,9 +90,19 @@ public final class IfaceDispatchNodeTest {
         }
     }
 
-    private static GoFunc goFunc(CaptureRoot root) {
+    private static graalgo.values.GoFunc goFunc(CaptureRoot root) {
         RootCallTarget target = root.getCallTarget();
-        return new GoFunc(target, null, null);
+        return new graalgo.values.GoFunc(target, null, null);
+    }
+
+    /** Direct (non-promoted) method target. */
+    private static IfaceMethodTarget target(CaptureRoot root) {
+        return new IfaceMethodTarget(goFunc(root), new int[0]);
+    }
+
+    /** Promoted method target: receiver adapted via the field path. */
+    private static IfaceMethodTarget promotedTarget(CaptureRoot root, int... recvPath) {
+        return new IfaceMethodTarget(goFunc(root), recvPath);
     }
 
     private static VirtualFrame frame() {
@@ -111,7 +120,7 @@ public final class IfaceDispatchNodeTest {
                 GoKind.INT64, -1);
     }
 
-    private void setUp(Map<String, Map<String, GoFunc>> table) {
+    private void setUp(Map<String, Map<String, IfaceMethodTarget>> table) {
         IfaceMethodTable.clear();
         IfaceDispatchNode.resetMegamorphicTransitions();
         IfaceMethodTable.install(table);
@@ -132,7 +141,7 @@ public final class IfaceDispatchNodeTest {
      */
     public void testPicHit() {
         CaptureRoot root = new CaptureRoot(42L);
-        setUp(Map.of("main.T", Map.of("M", goFunc(root))));
+        setUp(Map.of("main.T", Map.of("M", target(root))));
         try {
             GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", "DATA"), 0);
             GoExprNode[] args = {new ConstNode(GoKind.INT64, null, 7L)};
@@ -160,10 +169,10 @@ public final class IfaceDispatchNodeTest {
      */
     public void testPicOverflowMegamorphic() {
         CaptureRoot[] roots = new CaptureRoot[4];
-        java.util.Map<String, Map<String, GoFunc>> table = new java.util.HashMap<>();
+        java.util.Map<String, Map<String, IfaceMethodTarget>> table = new java.util.HashMap<>();
         for (int i = 0; i < 4; i++) {
             roots[i] = new CaptureRoot((long) (i + 1));
-            table.put("main.T" + i, Map.of("M", goFunc(roots[i])));
+            table.put("main.T" + i, Map.of("M", target(roots[i])));
         }
         setUp(table);
         try {
@@ -221,7 +230,7 @@ public final class IfaceDispatchNodeTest {
      */
     public void testNilPanics() {
         CaptureRoot root = new CaptureRoot(0L);
-        setUp(Map.of("main.T", Map.of("M", goFunc(root))));
+        setUp(Map.of("main.T", Map.of("M", target(root))));
         try {
             String want = GoErrors.nilDereference().errorString();
             assertEquals("runtime error: invalid memory address or nil pointer dereference",
@@ -258,7 +267,7 @@ public final class IfaceDispatchNodeTest {
      */
     public void testTypedNilProceeds() {
         CaptureRoot root = new CaptureRoot(9L);
-        setUp(Map.of("main.T", Map.of("M", goFunc(root))));
+        setUp(Map.of("main.T", Map.of("M", target(root))));
         try {
             GoInterface typedNil = iface("main.T", null);
             assertTrue(!typedNil.isNil(), "test builds a typed nil");
@@ -324,7 +333,7 @@ public final class IfaceDispatchNodeTest {
      */
     public void testProbesRecorded() {
         CaptureRoot root = new CaptureRoot(1L);
-        setUp(Map.of("main.T", Map.of("M", goFunc(root))));
+        setUp(Map.of("main.T", Map.of("M", target(root))));
         InterfaceDispatchProbes.setEnabled(true);
         try {
             IfaceDispatchNode n = node(new ConstNode(GoKind.INTERFACE, iface("main.T", "d"), 0),
@@ -338,6 +347,52 @@ public final class IfaceDispatchNodeTest {
                     sites.values().iterator().next();
             assertEquals(2, site.total(), "two dispatches recorded");
             assertEquals(1, site.histogram().size(), "one itab identity observed");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * Promoted method (recvPath [0]): the embedded field value — not the
+     * outer struct — is passed as the method's params[0]. Red: without
+     * receiver adaptation the outer struct reaches the method (the
+     * end-to-end ClassCastException on embedded promotion).
+     * verifies: GG-0014
+     */
+    public void testPromotedReceiverAdapted() {
+        CaptureRoot root = new CaptureRoot(9L);
+        setUp(Map.of("main.MW", Map.of("M", promotedTarget(root, 0))));
+        try {
+            graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.MW",
+                    List.of(new graalgo.values.GoStructDescriptor.Field("Buf",
+                            GoKind.POINTER, false, 0)));
+            graalgo.values.GoStruct outer =
+                    new graalgo.values.GoStruct(desc, new long[0], new Object[]{"EMBEDDED"});
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.MW", outer), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            VirtualFrame f = frame();
+            assertEquals(9L, n.executeLong(f), "promoted dispatch result");
+            assertEquals(1, root.seen.size(), "method invoked once");
+            assertEquals("EMBEDDED", root.seen.get(0)[1],
+                    "params[0] is the embedded field value, not the outer struct");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * Direct method (empty recvPath): the receiver's data passes through
+     * unchanged — the adaptation walk is a no-op.
+     * verifies: GG-0014
+     */
+    public void testDirectReceiverUnchanged() {
+        CaptureRoot root = new CaptureRoot(3L);
+        setUp(Map.of("main.T", Map.of("M", target(root))));
+        try {
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.T", "DATA"), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            n.executeLong(frame());
+            assertEquals("DATA", root.seen.get(0)[1], "params[0] is the receiver data");
         } finally {
             tearDown();
         }

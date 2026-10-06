@@ -1399,7 +1399,7 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		// M6 (WS H): named types may have methods (emitted as funcdecls /
 		// instantiations; dispatch resolves by object id).
 		// P3-M3 (WS D, ADR-0003): the "methods" list is populated here —
-		// one {"name","obj","recv"} per method in types.NewMethodSet order
+		// one {"name","obj","recv","index"} per method in types.NewMethodSet order
 		// (covers promoted/embedded methods, which methodIndex lacks),
 		// resolved to declarations via funcByObj. "obj" is the funcdecl
 		// object id; "recv" is the declared receiver kind
@@ -4030,23 +4030,29 @@ func recvIface(t types.Type) *types.Interface {
 }
 
 // methodTableEntries computes the wire "methods" list for a named type or
-// a pointer type (P3-M3, WS D, ADR-0003): one {"name","obj","recv"} entry
-// per method in types.NewMethodSet(t), resolved to declarations via
+// a pointer type (P3-M3, WS D, ADR-0003): one {"name","obj","recv","index"}
+// entry per method in types.NewMethodSet(t), resolved to declarations via
 // funcByObj (this covers promoted/embedded methods, which methodIndex
 // lacks). "obj" is the funcdecl object id; "recv" is the declared receiver
-// kind ("value" or "pointer"). Interface-declared methods (no funcdecl
+// kind ("value" or "pointer"); "index" is the receiver adaptation path:
+// Selection.Index() minus its last entry (the method's own index in the
+// declaring type) — empty for direct methods, e.g. [0] for a method
+// promoted via embedded field 0. The Java dispatcher walks "index" to
+// adapt the receiver (P3-M3). Interface-declared methods (no funcdecl
 // exists to point at) and template methods are skipped — the latter are
 // out of P3-M3 scope. Sorted by method name for determinism.
 func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
 	ms := types.NewMethodSet(t)
 	type entry struct {
-		name string
-		obj  int
-		recv string
+		name  string
+		obj   int
+		recv  string
+		index []int
 	}
 	entries := make([]entry, 0, ms.Len())
 	for i := 0; i < ms.Len(); i++ {
-		mobj, ok := ms.At(i).Obj().(*types.Func)
+		sel := ms.At(i)
+		mobj, ok := sel.Obj().(*types.Func)
 		if !ok {
 			continue
 		}
@@ -4060,12 +4066,29 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, error) {
 				recv = "pointer"
 			}
 		}
-		entries = append(entries, entry{name: mobj.Name(), obj: fi.funcID, recv: recv})
+		// Selection.Index() for a method is [embedded field path...,
+		// method index in the declaring type] (go/types selection.go):
+		// the receiver adaptation path is everything but the last entry —
+		// empty for direct methods, e.g. [0] for a method promoted via
+		// embedded field 0. Normalize nil to [] so the wire field is
+		// always an array, never null.
+		index := sel.Index()
+		var path []int
+		if len(index) > 1 {
+			path = index[:len(index)-1]
+		} else {
+			path = []int{}
+		}
+		entries = append(entries, entry{name: mobj.Name(), obj: fi.funcID, recv: recv, index: path})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 	out := make([]any, 0, len(entries))
 	for _, en := range entries {
-		out = append(out, map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv})
+		idx := make([]any, len(en.index))
+		for i, v := range en.index {
+			idx[i] = v
+		}
+		out = append(out, map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv, "index": idx})
 	}
 	return out, nil
 }
