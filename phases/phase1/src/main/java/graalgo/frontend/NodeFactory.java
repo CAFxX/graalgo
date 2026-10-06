@@ -533,8 +533,21 @@ public final class NodeFactory {
                 mainSlots = Map.copyOf(ctx.slotsByName);
                 mainKinds = Map.copyOf(ctx.kindsByName);
             } else {
-                GoFuncRootNode root = buildNamedFunc(fn, fields, ctx);
-                RootCallTarget target = root.getCallTarget();
+                // P3-M4 (WS C, ADR-0004): a funcdecl carrying "linkname"
+                // (exporter-validated //go:linkname on a bodyless function)
+                // builds a LinknameRootNode dispatching by symbol name
+                // instead of a Go body. Old consumers fail fast on the
+                // missing "body" field (additive wire data, freeze §2.3).
+                Json.Value linkname = fields.opt("linkname");
+                RootCallTarget target;
+                if (linkname instanceof Json.Str sym) {
+                    LinknameRootNode root = new LinknameRootNode(sym.value(), name);
+                    root.setSourceSection(sectionFor(fn, "funcdecl"));
+                    target = root.getCallTarget();
+                } else {
+                    GoFuncRootNode root = buildNamedFunc(fn, fields, ctx);
+                    target = root.getCallTarget();
+                }
                 if (funcTable.put(objId, new GoFunc(target, null, null)) != null) {
                     throw new FrontendException("duplicate function object id " + objId
                             + " for " + name + " (WS H)");
