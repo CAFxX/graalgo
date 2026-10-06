@@ -1301,13 +1301,11 @@ public final class NodeFactory {
             return child;
         }
         if (to == GoKind.INTERFACE) {
-            if (from == GoKind.INTERFACE) {
-                if (isEmptyInterface(ctx, toTypeId, path)) {
-                    return child;
-                }
-                throw new FrontendException(path + ": interface-to-interface conversion needs"
-                        + " method tables (WS D)");
-            }
+            // R2 P2-5: the old from==INTERFACE inner branch (empty-interface
+            // fast path / "needs method tables" throw) is unreachable —
+            // GoKind.transparent(INTERFACE, INTERFACE) returns true above,
+            // so interface-to-interface never reaches here; the WS-D
+            // retirement amendment covers the live paths.
             // P3-M3 remediation (R1 P1-2): a generic instantiation boxed
             // into a non-empty interface fails fast with the named P3-M3
             // scope error (its wire method table is empty by design).

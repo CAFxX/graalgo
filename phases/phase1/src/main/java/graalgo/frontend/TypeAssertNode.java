@@ -64,9 +64,6 @@ public final class TypeAssertNode extends GoExprNode {
     }
 
     /** The assertion predicate shared with {@link TypeAssertOkNode}. */
-    static boolean holds(GoInterface gi, GoTypeDescriptor asserted) {
-        return holds(gi, asserted, null, null);
-    }
 
     /**
      * P3-M3 (WS D): assertion to a non-empty interface holds when the
