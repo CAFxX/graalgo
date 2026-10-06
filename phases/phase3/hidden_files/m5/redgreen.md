@@ -114,7 +114,9 @@ Corpus `phases/phase3/corpus/timectx/` (tc00-tc16) differential vs gc 1.27.1:
   constructors blocked, see WS D blocker above)
 
 **End-to-end** (via P3SyncMain, Java worker's domain):
-- 0 passed, 27 failed (2026-10-06 run)
+- [SUPERSEDED 2026-10-06 — predates the Appendix M desugar (3e9e463);
+  see "2026-10-06: remediation red-green" below for the current table]
+  0 passed, 27 failed (2026-10-06 run)
 - Failures:
   - Multi-result fail-fast (expected, exporter by design): tc08-tc10,
     tc12-tc14
@@ -126,6 +128,10 @@ Corpus `phases/phase3/corpus/timectx/` (tc00-tc16) differential vs gc 1.27.1:
     reported to Java worker)
 
 ### ADR Deviations
+
+[SUPERSEDED 2026-10-06 — the Appendix M desugar (3e9e463) plus the
+afc0dfb interface amendment resolved these; the "Accepted deviation"
+section of ADR-0005 is restated. The escalation is closed.]
 
 1. **Multi-result deferral**: `Context.Deadline()`, `time.ParseDuration`,
    `Time.Date`/`Clock`/`Zone`, AND `context.WithCancel`/`WithCancelCause`/
@@ -334,3 +340,59 @@ concrete type as `Context` parent) failed at runtime.
    positions).
 
 **GREEN**: tc12 outputs "propagated" (parent-cancel propagation works).
+
+## 2026-10-06: remediation red-green (reviewer1 P1-7)
+
+Supersedes the "0 passed, 27 failed" end-to-end entry and the "ADR
+Deviations #1 — ESCALATED" entry above (both predate the Appendix M
+desugar `3e9e463` and the afc0dfb interface amendment). All breaks below
+were applied to a scratch copy, verified, and reverted; `git diff`
+confirmed the tree identical before and after.
+
+### RED: Appendix M desugar disabled → tc08/tc12 fail with the named scope error
+
+Break: `exportMultiResultDesugar` short-circuited to `return nil, false,
+nil` (mrdesugar_m5.go). Exporting tc08/tc12 then fails with:
+`gofrontend: context.WithCancel is not in M5 scope (multi-result calls
+need WS D; re-test when it lands)` — the exact fail-fast the desugar
+replaces. Restore → both export clean (exit 0). This pins that the
+desugar (not some other path) is what makes the 2-target call sites
+work.
+
+### RED: cancel propagation broken → tc12 hangs (parent-cancel red)
+
+Break: `cancelCtx.cancel`'s winner branch no longer propagates to
+snapshotted children (synthetic context source). tc12
+(parent → child → grandchild, then `parentCancel()`) run under
+P3SyncMain: no output, killed by `timeout` after 60s (exit 124) —
+`< -child.Done()` never fires. Restore → tc12 prints "propagated".
+This pins that parent-cancel delivery (not e.g. Done-channel plumbing
+alone) is what the "propagated" assertion exercises.
+
+### RED: AfterFunc hook dropped → tc13 hangs
+
+Break: synthetic `context.AfterFunc` no longer appends the hook entry
+(`_ = e` instead of `cc.afterFuncs = append(...)`), so `f` never runs
+on cancel. tc13 (`cancel()` then `<-fired`) under P3SyncMain: no
+output, `timeout` after 60s (exit 124). Restore → tc13 prints
+"ctx-afterfunc-fired".
+
+### GREEN: current differential table (2026-10-06, post-remediation)
+
+`phases/phase3/corpus/timectx/run_differential.sh` — full run after the
+P1-4..P2-12 remediation (synthetic-source changes P2-5…P2-11 included):
+
+**25 passed, 2 failed.** The 2 failures are both `tc11_context_value`
+(gmp=1 and gmp=4), failing with `binary.fields: interface conversion
+needs type ids (WS E)` — exactly the documented WS E limitation in the
+ADR's "Known limitation: tc11_context_value" section (unchanged by this
+remediation). tc08/tc09/tc10/tc12/tc13/tc14 (multi-result desugar),
+tc04/tc05/tc16 (timers), tc06 (time.AfterFunc), tc07 (DIV-M3-1
+chanlen/chancap) all pass end to end at both gmp settings.
+
+### GREEN: ch01–ch12 graduation 24/24 (re-run post-remediation)
+
+`phases/phase2/corpus/channels/run_e2e.sh` re-run 2026-10-06 after the
+full P1-4…P2-12 remediation (exporter changes P2-1…P2-4 included):
+**24 passed, 0 failed** (12 programs × gmp=1/gmp=4, gc-recorded
+`.expected` output).
