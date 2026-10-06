@@ -455,3 +455,12 @@ remains in the corpus as a regression guard.
 **Scope**: M5 acceptance requires cancellation/deadline/timeout programs
 (tc08, tc09, tc10, tc12, tc13, tc14) — all pass. tc11 (WithValue) is
 auxiliary.
+
+**D5 exception, recorded 2026-10-06 (P3-M5 coordinator): `GoStatementNode`
+TextMap clamp (phase-2).** The desugared `go f(args)` nodes (Appendix N)
+may carry out-of-range synthesized positions; `GoStatementNode.build`
+(phase-2) called `Source.createSection` directly, bypassing the
+`NodeFactory.sectionFor` clamp. The fix is additive and
+behavior-preserving: try the requested `(line, col, len)` exactly as
+before, and on `IllegalArgumentException` synthesize a valid zero-length
+section at column 1 of the clamped line. (Reviewer 2 P1-2.)
