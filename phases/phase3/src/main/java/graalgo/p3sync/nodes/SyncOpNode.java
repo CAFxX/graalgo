@@ -27,8 +27,10 @@ import graalgo.values.GoKind;
  * gc's message text) are translated to Go panics via
  * {@link Panic#throwPanic} (ADR-0002 D4):
  * <ul>
- *   <li>{@code sync: negative WaitGroup counter} — gc panics: full parity;</li>
+ *   <li>{@code sync: negative WaitGroup counter} (WaitGroup.Add and
+ *       WaitGroup.Done) — gc panics: full parity;</li>
  *   <li>{@code sync: unlock of unlocked mutex} /
+ *       {@code sync: unlock of unlocked RWMutex} /
  *       {@code sync: RUnlock of unlocked RWMutex} — gc <em>fatal-errors</em>:
  *       same message text and exit code, but ours is a (recoverable) Go
  *       panic — scoped divergence, re-test trigger in ADR-0002 D4.</li>
@@ -76,11 +78,11 @@ public final class SyncOpNode extends GoExprNode {
             case "Mutex.Lock" -> ((GoMutex) r).lock();
             case "Mutex.Unlock" -> panicOnMisuse(() -> ((GoMutex) r).unlock());
             case "RWMutex.Lock" -> ((GoRWMutex) r).lock();
-            case "RWMutex.Unlock" -> ((GoRWMutex) r).unlock();
+            case "RWMutex.Unlock" -> panicOnMisuse(() -> ((GoRWMutex) r).unlock());
             case "RWMutex.RLock" -> ((GoRWMutex) r).rLock();
             case "RWMutex.RUnlock" -> panicOnMisuse(() -> ((GoRWMutex) r).rUnlock());
             case "WaitGroup.Add" -> panicOnMisuse(() -> ((GoWaitGroup) r).add((int) args[0].executeLong(frame)));
-            case "WaitGroup.Done" -> ((GoWaitGroup) r).done();
+            case "WaitGroup.Done" -> panicOnMisuse(() -> ((GoWaitGroup) r).done());
             case "WaitGroup.Wait" -> ((GoWaitGroup) r).await();
             case "Once.Do" -> doOnce((GoOnce) r, frame);
             default -> throw new FrontendException("unknown sync op " + syncType + "." + op);
