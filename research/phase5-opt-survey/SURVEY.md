@@ -43,7 +43,7 @@ renumbered. Merges across tracks are noted so traceability survives.
 
 ---
 
-## §1 Ranked candidates (waves 1–6) — 77 active ranked (SURV-001…078 minus struck SURV-077; tiers 7/39/17/14)
+## §1 Ranked candidates (waves 1–55) — 77 active ranked (SURV-001…078 minus struck SURV-077; tiers 7/39/17/14)
 
 ### Tier 1 — build first (highest expected value × feasibility)
 
@@ -1244,6 +1244,9 @@ per-call-site inlining-benefit simulation — GraalCC is at most a size-flag
 on/off experiment, never a SURV-006 profile source.
 **Tracks:** wave 4, CGO'25 pair (T2/T5 lane) → `track-cgo25-wave4.md`;
 wave 5, protocol design + GraalCC verdict → `track-surv075-wave5.md`.
+**Owner decision (2026-10-04 14:11 CEST):** DEFER Stage-0 execution to Phase 5 —
+do not execute now; waves should NOT re-check for this decision; the question
+re-opens at Phase-5 entry.
 
 #### SURV-077 — [STRUCK, wave 5] Speculative declared-type-exact array-store check removal for Go slices
 **Status:** STRUCK (wave 5) — the direct analog is vacuous: Go has no array
@@ -2075,9 +2078,16 @@ are the reasons-shaped knowledge that keeps us from re-learning them.
    headers to bias and goroutines never pin an OS thread across a wait; the lesson that
    transfers is "use guard+deopt, not per-thread bias state" — our speculation discipline
    is the cheaper mechanism. (T2)
-2. **Intel TSX lock elision — hardware deprecated RTM.** Failure reason: the silicon
-   feature was fused off / deprecated — building on it was building on sand.
-   **Routing:** don't build on fusable-off silicon features. (T2)
+2. **Intel TSX lock elision — disabled across much of the installed base, NOT
+   deprecated (owner correction 2026-10-06).** Failure reason: after the TAA
+   (TSX Asynchronous Abort) vulnerabilities Intel disabled TSX via microcode on
+   affected CPUs and removed HLE — but RTM (XBEGIN/XEND/XABORT) remains a
+   supported, non-deprecated ISA feature on current server CPUs (Sapphire
+   Rapids and later). HotSpot's lock-elision work targeted the broad installed
+   base, where the feature was fused/microcode-disabled — building on it was
+   building on sand *in practice*, not because the ISA was deprecated.
+   **Routing:** don't build on features disabled across your deployment target,
+   even when the ISA itself is not formally deprecated. (T2)
 3. **HotSpot stack-locking — dropped for compact headers (Lilliput).** The lightweight
    locking design was superseded; lesson folded into SURV-021's header design. (T2)
 4. **Graphite (GCC polyhedral loop optimization) — effectively unmaintained.** Failure
@@ -2622,6 +2632,2484 @@ Transfers that strengthen — not duplicate — the Phase-5 backlog (PHASES.md �
   #77893's five CLs all still NEW (SURV-041's gap does not narrow);
   label-probe watches (#81887, #81846/#81755, #81957, #81968) zero
   activity. (wave 6, re-sweep)
+- **Leyden JEP 544 — wave-7 direct re-verification SUCCEEDED (wave-6 gap
+  closed).** curl of openjdk.org/jeps/544 returned HTTP 200 (the wave-6
+  403 was a browser-tool block, not upstream); Status=Targeted,
+  Release=28 (Owner John Rose; page updated 2026/09/29 15:23). Raw page
+  archived at `jep544_2026-10-04.html` (md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d). No Integrated movement, no
+  ramp-down notes; survival watch continues to the JDK 28 ramp-down
+  (Dec 2026–Jan 2027) and 28 GA (~Mar 2027). (wave 7, coordinator)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  #163338 still OPEN (unmerged, last activity 2026-09-30 force-push);
+  no try-perf on #163338 (exactly one comment — the author's 2026-09-25
+  LLM disclosure); RFC #3943 Open (rust-lang/rfcs, 58 review comments,
+  deep in review, not accepted). Siblings all open (#163335/#163337/
+  #163339/#163340/#163359; #163336 stays merged). Freshest stack motion:
+  #163337 (PreciseLiveness) review activity 2026-10-03 (tmiasko
+  dataflow pretty-printing discussion) spawning supporting PR #163721.
+  #163359's try-perf numbers unchanged since wave 5, and Amanieu
+  attributes the instr/binary deltas to CGU-partitioning noise, not real
+  codegen — no new measured numbers anywhere in the stack. §5
+  static-core strike stands; guarded-speculative arm (E3) only; trips
+  re-armed (RFC #3943 acceptance is the most plausible near-term trip).
+  (wave 7, #157943 watch)
+- **SURV-075 — Stage-0 execution decision still pending.** Wave 7
+  re-checked memory (2026-10-04 log), the survey dir, and goal files for
+  a program-owner decision to execute the designed gc-only protocol:
+  none recorded. Protocol (K1–K4 armed, ≥1.5% M2 geomean bar) remains
+  designed and constructible; execution is not survey work. (wave 7,
+  owner-decision check)
+- **T3/T2/T4 wave-7 negatives are all negative.** 0/6 standing T3
+  triggers fired (wave-6 GraalPy refinement honored: file-history latest
+  Aug 18 2026 AND raw-master vs pin 178ea261 byte-identical; TruffleRuby
+  Options.java 86-field set diffed vs wave-3 pin c734f265 identical,
+  zero speculat/guard matches; Pyston pyston_main still Aug 12 2024;
+  SE-0474 still Accepted/partial behind CoroutineAccessors flag). Method
+  corrections vs wave 6: the 628-line Options.java and 935-line GraalPy
+  CHANGELOG records were fetch artifacts — both files are 472/498 lines
+  at pin and master; wave-8 trusts deterministic diffs, not line counts.
+  T2: Graal 25.x changelog byte-identical waves 5–7 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  unchanged (Integrated, Release 28, Dan Smith); OpenJ9 still v0.62.0
+  (2026-09-15); Azul Cloud Native Compiler stays a watch note (full-text
+  press reads — only "predicts what code a new instance is likely to
+  need based on previous starts"; no whitepaper, no technique, no
+  independent measurement; 2x–5x warm-up claim still unverified
+  marketing); .NET 11 perf post skimmed — incremental only
+  (GDV/deabstraction extensions, loop-cloning `!=` handling, broader IV
+  forms; GDV already an ABLE precedent; nothing bar-clearing). T4:
+  #24314 static (open, updated 2022-07-13, 8 comments); #77893's five
+  CLs all still NEW with unchanged timestamps (758140 2026-03-23
+  20:06:55; 758141 2026-03-30 16:55:26; 764220 2026-04-08 21:07:18;
+  793780 2026-07-16 12:53:37; 793920 2026-06-24 17:14:56 — SURV-041's
+  per-site edge intact); label probes #81887/#81846/#81755/#81957/#81968
+  zero activity since wave 6 (comment counts + updated_at byte-identical).
+  (wave 7, re-sweep)
+- **Leyden JEP 544 — wave-8 direct re-verification re-run, still
+  Targeted/28.** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — same size as the wave-7 fetch). Metadata read verbatim:
+  Owner=John Rose, Type=Feature, Scope=Implementation,
+  **Status=Targeted, Release=28** (page updated 2026/09/29 15:23). No
+  Targeted→Integrated movement, no ramp-down notes. Raw page archived
+  as `jep544_2026-10-04_w8.html`. Ramp-down survival watch continues
+  to the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+  (wave 8, coordinator)
+- **SURV-075 — Stage-0 decision RESOLVED (2026-10-04, program-owner).**
+  The wave-8 coordinator found the decision in the standing record
+  (2026-10-04 14:11 CEST): **DEFER Stage-0 execution to Phase-5
+  entry** — do not execute now; waves must NOT re-check for this
+  decision; the question re-opens at Phase-5 entry. SURV-075's §1
+  entry carries the decision; the standing wave-queue re-check is
+  retired (absent from the wave-9 queue). (wave 8, owner-decision
+  resolution)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  Byte-identical to the wave-7 baselines (GitHub API, ~14:38 CEST):
+  #163338 OPEN/unmerged (updated 2026-09-30T13:03:50Z); no try-perf
+  on #163338 (exactly one comment — the author's 2026-09-25 LLM
+  disclosure); RFC #3943 Open, 58 review comments, not accepted.
+  Siblings zero movement (#163335/#163337/#163339/#163340/#163359
+  open unchanged; #163336 stays the only merged). §5 static-core
+  strike stands; guarded-speculative arm (E3) only; trips re-armed
+  (RFC #3943 acceptance most plausible near-term). (wave 8,
+  #157943 watch)
+- **T3/T2/T4 wave-8 negatives are all negative.** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java master vs pin c734f265
+  diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both endpoints,
+  86-field set identical, zero speculat/guard matches); GraalPy
+  file-history head Aug 18 2026 (pre-pin) AND raw-master vs pin
+  178ea261 diff EMPTY (md5 52c85a03991d970d41b4746b06a72c19);
+  Pyston pyston_main still 2024-08-12; SE-0474 still Accepted, partial
+  behind CoroutineAccessors flag; Swift move-only activity still
+  enforcement/docs only, no new SIL pass; no Meta JIT. Deterministic-
+  diff discipline held. T2: Graal 25.x changelog byte-identical
+  waves 5–8 (14,501 bytes, md5 6397c38a55572509df12814180ec458f;
+  tops at 25.5, no 25.6); JEP 401 unchanged (Integrated, Release 28,
+  Dan Smith); Valhalla project page JEP list unchanged (no new
+  primitive-class JEP); Azul Cloud Native Compiler stays a watch note
+  (press rewrites only — no whitepaper, no technique, no independent
+  measurement; 2x–5x warm-up claim still unverified marketing);
+  OpenJ9 latest still v0.62.0 (2026-09-15); .NET 11 perf post
+  incremental only (a secondary source explicitly notes "no single new
+  JIT feature" in .NET 11 — incremental GDV/deabstraction, loop-cloning
+  `!=` handling, broader IV forms, SELECT(cns,cns) folding, ARM64
+  Vector<T> codegen tweaks; nothing bar-clearing). T4: #24314 static
+  (open, updated 2022-07-13, 8 comments); #77893's five CLs all still
+  NEW with unchanged timestamps (SURV-041's per-site gap does not
+  narrow); label probes #81887/#81846/#81755/#81957/#81968 zero
+  activity since wave 7 (counts + updated_at byte-identical). Method
+  notes for wave 9: naive `public final \S+` regex overcounts
+  Options.java fields (87 vs the true 86) — the md5-identical diff is
+  authoritative; the T4.2 Gerrit pipeline's `curl | sed | python3`
+  silently parsed empty (XSSI-prefix quirk) — prefer file staging
+  (curl to file, strip `)]}'` with `tail -c +6`, then JSON-parse).
+  (wave 8, re-sweep)
+- **Leyden JEP 544 — wave-9 direct re-verification re-run, still
+  Targeted/28.** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — same size as the wave-7/8 fetches). Metadata read
+  verbatim: Owner=John Rose, Type=Feature, Scope=Implementation,
+  **Status=Targeted, Release=28** (page updated 2026/09/29 15:23). No
+  Targeted→Integrated movement, no ramp-down notes. Raw page archived
+  as `jep544_2026-10-04_w9.html`. Ramp-down survival watch continues
+  to the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+  (wave 9, coordinator)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  Byte-identical to the wave-8 baselines (GitHub API, ~16:50 CEST):
+  #163338 OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no
+  try-perf/trybot run (timeline: exactly one comment — rustbot
+  auto-labels only); RFC #3943 Open under review (comments 11 /
+  review_comments 58, unchanged). All six sibling PRs zero movement
+  (#163336 remains the only merged). §5 static-core strike stands;
+  guarded-speculative arm (E3) only; trips re-armed (RFC #3943
+  acceptance most plausible near-term). (wave 9, #157943 watch)
+- **T3/T2/T4 wave-9 negatives are all negative.** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java raw-master vs pin c734f265
+  diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both endpoints,
+  zero speculat/guard/optim matches); GraalPy file-history head Aug 18
+  2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints; latest §25.4
+  unchanged); Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag; Swift move-only
+  activity still enforcement/docs/infra only, no new SIL pass; no new
+  Meta runtime optimizing-JIT (hits: 2024 LLM Compiler + React
+  Compiler only). Diff-discipline held — md5-identical diffs
+  authoritative. T2: Graal 25.x changelog byte-identical waves 5–9
+  (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 unchanged (Integrated, Release 28, Dan Smith)
+  with the same 8-JEP Valhalla index; Azul Cloud Native Compiler
+  stays a watch note (press rewrites only — no technique, no whitepaper,
+  no independent measurement; 2x–5x warm-up claim still unverified
+  marketing); OpenJ9 latest still v0.62.0 (2026-09-15); .NET 11 JIT
+  items incremental (GVM devirtualization is precedent-strengthening,
+  not bar-clearing). T4: #24314 static (open, updated 2022-07-13,
+  8 comments); #77893's five CLs all still NEW with unchanged
+  timestamps (SURV-041's per-site gap intact); label probes
+  #81887/#81846/#81755/#81957/#81968 byte-identical to wave 8
+  (zero activity). No bar-clearing material anywhere; no gaps.
+  (wave 9, re-sweep)
+- **Leyden JEP 544 — wave-10 direct re-verification re-run, still
+  Targeted/28.** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the wave-9 raw archive**, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d). Metadata read verbatim:
+  Owner=John Rose, Type=Feature, Scope=Implementation,
+  **Status=Targeted, Release=28** (page updated 2026/09/29 15:23). No
+  Targeted→Integrated movement, no ramp-down notes. Raw page archived
+  as `jep544_2026-10-04_w10.html`. Ramp-down survival watch continues
+  to the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+  (wave 10, coordinator)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  Byte-identical to the wave-9 baselines (GitHub API, ~17:40 CEST):
+  #163338 OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no
+  try-perf/trybot run (timeline: exactly one comment — Amanieu's
+  2026-09-25 LLM disclosure; rustbot auto-labels only); RFC #3943 Open
+  under review (comments 11 / review_comments 58, unchanged). All six
+  sibling PRs zero movement (#163336 remains the only merged). Method
+  note: wave-9's track table paraphrased #163339/#163340 titles ("MIR
+  construction"/"MIR traversal"); verbatim API titles are "Storage
+  reconstruction"/"Miri support" — byte-identical updated_at proves
+  no title change, paraphrase only. §5 static-core strike stands;
+  guarded-speculative arm (E3) only; trips re-armed (RFC #3943
+  acceptance most plausible near-term). (wave 10, #157943 watch)
+- **T3/T2/T4 wave-10 negatives are all negative.** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java raw-master vs pin c734f265
+  diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both endpoints,
+  zero speculat/guard/optim matches); GraalPy file-history head Aug 18
+  2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints; latest §25.4
+  unchanged); Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag (raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5); Swift move-only activity still
+  enforcement/docs/infra only, no new SIL pass; no new Meta runtime
+  optimizing-JIT. Diff-discipline held — md5-identical diffs
+  authoritative. T2: Graal 25.x changelog byte-identical waves 5–10
+  (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 unchanged (Integrated, Release 28, Dan Smith;
+  `<td>`-only metadata rows, not `<th>`) with the same 8-JEP Valhalla
+  index; Azul Cloud Native Compiler stays a watch note (press rewrites
+  only — no technique, no whitepaper, no independent measurement;
+  2x–5x warm-up claim still unverified marketing); OpenJ9 latest still
+  v0.62.0 (2026-09-15); .NET 11 JIT items incremental (GVM
+  devirtualization precedent-strengthening, not bar-clearing). T4:
+  #24314 static (open, updated 2022-07-13, 8 comments); #77893's five
+  CLs all still NEW with unchanged timestamps (SURV-041's per-site gap
+  intact; Gerrit note: `?O=ALL_REVISIONS` is invalid — plain endpoint
+  returns the full entity); label probes
+  #81887/#81846/#81755/#81957/#81968 byte-identical to wave 9
+  (zero activity). No bar-clearing material anywhere; no gaps.
+  (wave 10, re-sweep)
+- **Leyden JEP 544 — wave-11 direct re-verification re-run, still
+  Targeted/28.** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the wave-10 raw archive**, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d). Metadata read verbatim:
+  Owner=John Rose, Type=Feature, Scope=Implementation,
+  **Status=Targeted, Release=28** (page updated 2026/09/29 15:23). No
+  Targeted→Integrated movement, no ramp-down notes. Raw page archived
+  as `jep544_2026-10-04_w11.html`. Ramp-down survival watch continues
+  to the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+  (wave 11, coordinator)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  Byte-identical to the wave-10 baselines (GitHub API, ~18:40 CEST):
+  #163338 OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no
+  try-perf/trybot run (timeline: 21 events, keyword scan over all
+  payloads for try-perf/trybot/rust-timer/`@bors try`/bors-try = zero
+  hits; latest event still Amanieu's 2026-10-01 cross-reference); RFC
+  #3943 Open under review (comments 11 / review_comments 58,
+  unchanged). All six sibling PRs zero movement (#163336 remains the
+  only merged; verbatim titles recorded — "Storage reconstruction" /
+  "Miri support" — consistent with the wave-10 correction). §5
+  static-core strike stands; guarded-speculative arm (E3) only; trips
+  re-armed (RFC #3943 acceptance most plausible near-term).
+  (wave 11, #157943 watch)
+- **T3/T2/T4 wave-11 negatives are all negative.** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java raw-master vs pin c734f265
+  diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both endpoints,
+  zero speculat/guard/optim matches); GraalPy file-history head Aug 18
+  2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints; latest §25.4
+  unchanged); Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag (raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5; method note: header is a
+  `*`-prefixed bullet list, not a markdown table — read `sed -n
+  '1,10p'` for Status:/Implementation: directly); Swift move-only
+  activity still enforcement/docs/infra only, no new SIL pass; no new
+  Meta runtime optimizing-JIT. Diff-discipline held — md5-identical
+  diffs authoritative. T2: Graal 25.x changelog byte-identical waves
+  5–11 (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at
+  25.5, no 25.6); JEP 401 unchanged (Integrated, Release 28, Dan
+  Smith); Valhalla project page same 8-JEP list, no new
+  primitive-class JEP; Azul Cloud Native Compiler stays a watch note
+  (press rewrites only — no whitepaper, no technique, no independent
+  measurement; 2x–5x warm-up claim still unverified marketing; new
+  background detail: Azul frames it as extending ReadyNow 2014 /
+  ReadyNow Orchestrator — restatement of the fleet-history claim,
+  still vendor-only); OpenJ9 latest still v0.62.0 (2026-09-15); .NET 11
+  JIT items incremental only (GVM devirtualization is
+  precedent-strengthening, not bar-clearing). T4: #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW
+  with unchanged timestamps (SURV-041's per-site gap intact); label
+  probes #81887/#81846/#81755/#81957/#81968 byte-identical to wave 10
+  (zero activity). No bar-clearing material anywhere; no gaps.
+  (wave 11, re-sweep)
+- **Leyden JEP 544 — wave-12 direct re-verification re-run, still
+  Targeted/28.** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the wave-9/10/11 raw archives**,
+  md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — four consecutive identical
+  archives). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw page archived as `jep544_2026-10-04_w12.html`.
+  Ramp-down survival watch continues to the JDK 28 ramp-down
+  (Dec 2026–Jan 2027) and 28 GA (~Mar 2027). (wave 12, coordinator)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  Byte-identical to the wave-11 baselines (GitHub API, ~19:30 CEST):
+  #163338 OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no
+  try-perf/trybot run (timeline: 21 events, keyword scan over all
+  payloads for try-perf/trybot/rust-timer/`@bors try`/bors-try = zero
+  hits); RFC #3943 Open under review (comments 11 / review_comments
+  58, unchanged — fourth consecutive wave). All six sibling PRs zero
+  movement (#163336 remains the only merged). §5 static-core strike
+  stands; guarded-speculative arm (E3) only; trips re-armed (RFC #3943
+  acceptance most plausible near-term). (wave 12, #157943 watch)
+- **T3/T2/T4 wave-12 negatives are all negative.** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java raw-master vs pin c734f265
+  diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both endpoints,
+  zero speculat/guard/optim matches); GraalPy file-history head Aug 18
+  2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints; latest §25.4
+  unchanged); Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag (raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8); Swift
+  move-only activity still enforcement/docs/infra only, no new SIL
+  pass; no new Meta runtime optimizing-JIT (identical search results
+  as waves 9–11). Diff-discipline held — md5-identical diffs
+  authoritative. T2: Graal 25.x changelog byte-identical waves 5–12
+  (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 unchanged (Integrated, Release 28, Dan Smith);
+  Valhalla project page same 8-JEP list, no new primitive-class JEP;
+  Azul Cloud Native Compiler stays a watch note (press rewrites only —
+  smbtech.au ~17h, Business Wire syndication ~3d; no whitepaper, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing); OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 JIT items incremental only (Microsoft Learn runtime page
+  confirms the already-assessed set: GVM devirtualization
+  #123183/#130202, inlining-observation #111948, empty-span BCE —
+  precedent extensions, not bar-clearing). T4: #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW
+  with unchanged timestamps (SURV-041's per-site gap intact); label
+  probes #81887/#81846/#81755/#81957/#81968 byte-identical to wave 11
+  (zero activity). No bar-clearing material anywhere; no gaps.
+  (wave 12, re-sweep)
+- **Leyden JEP 544 — wave-13 direct re-verification re-run, still
+  Targeted/28.** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the wave-9/10/11/12 raw archives**,
+  md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — five consecutive identical
+  archives). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw page archived as `jep544_2026-10-04_w13.html`.
+  Ramp-down survival watch continues to the JDK 28 ramp-down
+  (Dec 2026–Jan 2027) and 28 GA (~Mar 2027). (wave 13, coordinator)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  Byte-identical to the wave-12 baselines (GitHub API, ~19:38 CEST):
+  #163338 OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no
+  try-perf/trybot run (timeline: 21 events, keyword scan over all
+  payloads for try-perf/trybot/rust-timer/`@bors try`/bors-try = zero
+  hits); RFC #3943 Open under review (comments 11 / review_comments
+  58, unchanged — fifth consecutive wave). All six sibling PRs zero
+  movement (#163336 remains the only merged; wave-13 read its
+  `merged_at` as 2026-09-30T12:11:35Z vs wave-12's 12:11:39Z with
+  `updated_at` byte-identical — GitHub serialization variance, not a
+  new event). §5 static-core strike stands; guarded-speculative arm
+  (E3) only; trips re-armed (RFC #3943 acceptance most plausible
+  near-term). (wave 13, #157943 watch)
+- **T3/T2/T4 wave-13 negatives are all negative.** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java raw-master vs pin c734f265
+  diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both endpoints,
+  zero speculat/guard/optim matches); GraalPy file-history head Aug 18
+  2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints; latest Version
+  25.4 unchanged); Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag (raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8); Swift
+  move-only activity still enforcement/docs/infra only, no new SIL
+  pass; no new Meta runtime optimizing-JIT (identical search results
+  as waves 9–12). Diff-discipline held — md5-identical diffs
+  authoritative. T2: Graal 25.x changelog byte-identical waves 5–13
+  (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 unchanged (Integrated, Release 28, Dan Smith);
+  Valhalla project page same 8-JEP list, no new primitive-class JEP;
+  Azul Cloud Native Compiler stays a watch note (press rewrites only —
+  Business Wire ~3d, smbtech.au ~17h, itbrief.asia ~2d joins the set,
+  i-programmer older; the wave-11/12 ReadyNow-2014/Orchestrator
+  fleet-history framing now echoes in press coverage — still vendor
+  only; no whitepaper, no technique, no independent measurement;
+  2x–5x warm-up claim still unverified marketing); OpenJ9 latest still
+  v0.62.0 (2026-09-15); .NET 11 JIT items incremental only
+  (devblogs "Performance Improvements in .NET 11" + daily-devops JIT
+  internals confirm the already-assessed set: GVM devirtualization,
+  inlining-observation, empty-span BCE, broader IV forms, SELECT
+  folding, SequenceEqual constant-folding, Runtime Async tiering —
+  precedent extensions, not bar-clearing). T4: #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW
+  with unchanged timestamps (SURV-041's per-site gap intact); label
+  probes #81887/#81846/#81755/#81957/#81968 byte-identical to wave 12
+  (zero activity). No bar-clearing material anywhere; no gaps.
+  (wave 13, re-sweep)
+- **Leyden JEP 544 — wave-14 direct re-verification re-run, still
+  Targeted/28.** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the wave-9/10/11/12/13 raw
+  archives**, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — six consecutive
+  identical archives). Metadata read verbatim: Owner=John Rose,
+  Type=Feature, Scope=Implementation, **Status=Targeted, Release=28**
+  (page updated 2026/09/29 15:23). No Targeted→Integrated movement, no
+  ramp-down notes. Raw page archived as `jep544_2026-10-04_w14.html`.
+  Ramp-down survival watch continues to the JDK 28 ramp-down
+  (Dec 2026–Jan 2027) and 28 GA (~Mar 2027). (wave 14, coordinator)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  Byte-identical to the wave-13 baselines (GitHub API, ~20:50 CEST):
+  #163338 OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no
+  try-perf/trybot run (timeline: 21 events, keyword scan over all
+  payloads for try-perf/trybot/rust-timer/`@bors try`/bors-try/`bors
+  try` = zero hits); RFC #3943 Open under review (comments 11 /
+  review_comments 58, unchanged — sixth consecutive wave). All six
+  sibling PRs zero movement (#163336 remains the only merged;
+  `merged_at` reads 2026-09-30T12:11:35Z as in wave 13 — GitHub
+  serialization variance vs wave 12's 12:11:39Z, `updated_at`
+  byte-identical, not a new event). §5 static-core strike stands;
+  guarded-speculative arm (E3) only; trips re-armed (RFC #3943
+  acceptance most plausible near-term). (wave 14, #157943 watch)
+- **T3/T2/T4 wave-14 negatives are all negative.** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java raw-master vs pin c734f265
+  diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both endpoints,
+  zero speculat/guard/optim matches); GraalPy file-history head Aug 18
+  2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints; latest Version
+  25.4 unchanged); Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag (raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8); Swift
+  move-only activity still enforcement/docs/infra only, no new SIL
+  pass; no new Meta runtime optimizing-JIT (identical search results
+  as waves 9–13). Diff-discipline held — md5-identical diffs
+  authoritative. T2: Graal 25.x changelog byte-identical waves 5–14
+  (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 unchanged (Integrated, Release 28, Dan Smith);
+  Valhalla project page same 8-JEP list, no new primitive-class JEP;
+  Azul Cloud Native Compiler stays a watch note (press rewrites only —
+  Business Wire ~3d, financialcontent + mediatrainingforceos
+  syndications, smbtech.au ~18h, itbrief.asia ~2d; the wave-11/12/13
+  ReadyNow-2014/Orchestrator fleet-history framing continues in
+  coverage — still vendor only; no whitepaper, no technique, no
+  independent measurement; 2x–5x warm-up claim still unverified
+  marketing); OpenJ9 latest still v0.62.0 (2026-09-15); .NET 11 JIT
+  items incremental only (Microsoft Learn runtime page + devblogs
+  "Performance Improvements in .NET 11" confirm the already-assessed
+  set: GVM devirtualization, inlining-observation, empty-span BCE,
+  broader IV forms, SELECT folding, SequenceEqual constant-folding,
+  Runtime Async tiering — precedent extensions, not bar-clearing). T4:
+  #24314 static (open, updated 2022-07-13, 8 comments); #77893's five
+  CLs all still NEW with unchanged timestamps (SURV-041's per-site gap
+  intact); label probes #81887/#81846/#81755/#81957/#81968
+  byte-identical to wave 13 (zero activity). No bar-clearing material
+  anywhere; no gaps. (wave 14, re-sweep)
+- **Leyden JEP 544 — wave-15 direct re-verification re-run, still
+  Targeted/28.** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the wave-9/10/11/12/13/14 raw
+  archives**, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — seven consecutive
+  identical archives). Metadata read verbatim: Owner=John Rose,
+  Type=Feature, Scope=Implementation, **Status=Targeted, Release=28**
+  (page updated 2026/09/29 15:23). No Targeted→Integrated movement, no
+  ramp-down notes. Raw page archived as `jep544_2026-10-04_w15.html`.
+  Ramp-down survival watch continues to the JDK 28 ramp-down
+  (Dec 2026–Jan 2027) and 28 GA (~Mar 2027). (wave 15, coordinator)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  Byte-identical to the wave-14 baselines (GitHub API, ~21:45 CEST):
+  #163338 OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no
+  try-perf/trybot run (timeline: 21 events, keyword scan over all
+  payloads for try-perf/trybot/rust-timer/`@bors try`/bors-try/`bors
+  try` = zero hits); RFC #3943 Open under review (comments 11 /
+  review_comments 58, unchanged — seventh consecutive wave). All six
+  sibling PRs zero movement (#163336 remains the only merged;
+  `merged_at` reads 2026-09-30T12:11:35Z as in waves 13/14 — GitHub
+  serialization variance vs wave 12's 12:11:39Z, `updated_at`
+  byte-identical, not a new event). §5 static-core strike stands;
+  guarded-speculative arm (E3) only; trips re-armed (RFC #3943
+  acceptance most plausible near-term). (wave 15, #157943 watch)
+- **T3/T2/T4 wave-15 negatives are all negative.** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java raw-master vs pin c734f265
+  diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both endpoints,
+  zero speculat/guard/optim matches); GraalPy file-history head Aug 18
+  2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints; latest Version
+  25.4 unchanged, verified via `^## ` headers); Pyston pyston_main
+  still 2024-08-12; SE-0474 still Accepted, partial behind
+  CoroutineAccessors flag (raw md md5 e8f962dbd12172d2f2a44410e727d7b5
+  — unchanged since wave 8); Swift move-only activity still
+  enforcement/docs/infra only, no new SIL pass; no new Meta runtime
+  optimizing-JIT (identical search results as waves 9–14).
+  Diff-discipline held — md5-identical diffs authoritative. T2: Graal
+  25.x changelog byte-identical waves 5–15 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  unchanged (Integrated, Release 28, Dan Smith; page Updated
+  2026/08/07 18:02); Valhalla project page same 8-JEP list, no new
+  primitive-class JEP; Azul Cloud Native Compiler stays a watch note
+  (press rewrites only — Business Wire ~3d, financialcontent +
+  mediatrainingforceos syndications, smbtech.au ~19h, itbrief.asia
+  ~2d with the wave-11/12/13/14 ReadyNow-2014/Orchestrator
+  fleet-history framing continuing in coverage — still vendor only; no
+  whitepaper, no technique, no independent measurement; 2x–5x warm-up
+  claim still unverified marketing); OpenJ9 latest still v0.62.0
+  (2026-09-15); .NET 11 JIT items incremental only — this wave's
+  visible sub-items (#127329 Vector256/512.Sum full-width reduction,
+  #127402 vector-const-prop extended to 256/512-bit, Runtime Async
+  tiered compilation of async methods, NativeAOT shared-dispatch
+  interface helper, JIT `Enum.Equals` typed comparisons, single-`MUL`
+  `Math.BigMul`) are precedent extensions, not bar-clearing. T4:
+  #24314 static (open, updated 2022-07-13, 8 comments); #77893's five
+  CLs all still NEW with unchanged timestamps (SURV-041's per-site gap
+  intact); label probes #81887/#81846/#81755/#81957/#81968
+  byte-identical to wave 14 (zero activity). No bar-clearing material
+  anywhere; no gaps. (wave 15, re-sweep)
+- **Leyden JEP 544 — wave-16 direct re-verification re-run, still
+  Targeted/28.** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the wave-9/10/11/12/13/14/15 raw
+  archives**, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — eight consecutive
+  identical archives). Metadata read verbatim: Owner=John Rose,
+  Type=Feature, Scope=Implementation, **Status=Targeted, Release=28**
+  (page updated 2026/09/29 15:23). No Targeted→Integrated movement, no
+  ramp-down notes. Raw page archived as `jep544_2026-10-04_w16.html`.
+  Ramp-down survival watch continues to the JDK 28 ramp-down
+  (Dec 2026–Jan 2027) and 28 GA (~Mar 2027). (wave 16, coordinator)
+- **SURV-024 (#157943) — 0/3 trip conditions fired; ruling unchanged.**
+  Byte-identical to the wave-15 baselines (GitHub API, ~22:05 CEST):
+  #163338 OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no
+  try-perf/trybot run (timeline: 21 events, keyword scan of all
+  payloads for try-perf = zero hits); RFC #3943 Open under review
+  (comments 11 / review_comments 58 — eighth consecutive unchanged
+  wave). All six sibling PRs zero movement (#163336 remains the only
+  merged; `merged_at` 2026-09-30T12:11:35Z as in waves 13/14/15 —
+  GitHub serialization variance vs wave 12's 12:11:39Z, `updated_at`
+  byte-identical, not a new event). §5 static-core strike stands;
+  guarded-speculative arm (E3) only; trips re-armed (RFC #3943
+  acceptance most plausible near-term). Method note: the pulls/timeline
+  API path requires the `/repos/` segment
+  (`/repos/{owner}/{repo}/pulls/{n}`) — the bare path 404s. (wave 16,
+  #157943 watch)
+- **T3/T2/T4 wave-16 negatives are all negative.** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java raw-master vs pin c734f265
+  diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both endpoints,
+  zero speculat/guard/optim matches); GraalPy file-history head Aug 18
+  2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints; latest Version
+  25.4 unchanged); Pyston pyston_main still 2024-08-12 (fe8afded);
+  SE-0474 still Accepted, partial behind CoroutineAccessors flag (raw
+  md md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8);
+  Swift move-only activity still enforcement/docs/infra only, no new
+  SIL pass; no new Meta runtime optimizing-JIT (disqualified hobby-repo
+  noise only). **Method note:** the wave-16 coordinator reconstructed
+  three raw URLs from checkpoint-log summaries instead of copying them
+  verbatim from the wave-15 track file — all three 404'd
+  (`GraalVM/graalpython` vs `oracle/graalpython`; `graalpython/CHANGELOG.md`
+  vs repo-root `CHANGELOG.md`;
+  `truffleruby/src/main/java/org/truffleruby/Options.java` vs
+  `src/main/java/org/truffleruby/options/Options.java`). The md5-pin
+  discipline caught every one before any conclusion was drawn; the
+  correct URLs verified byte-identical to pins. Rule for wave 17:
+  copy URLs verbatim from the prior wave's track file. Diff-discipline
+  held. T2: Graal 25.x changelog byte-identical waves 5–16 (14,501
+  bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6;
+  note the URL is under `compiler/`, not repo root); JEP 401 unchanged
+  (Integrated, Release 28, Dan Smith; page Updated 2026/08/07 18:02);
+  Valhalla project page same 8-JEP list; Azul Cloud Native Compiler
+  stays a watch note (press rewrites only — smbtech.au ~20h,
+  itbrief.asia ~2d, mediatrainingforceos + financialcontent
+  syndications; smbtech.au adds one mechanism detail — preemptive
+  single-stream compiled-code delivery at start-up vs per-method
+  on-request — still vendor only; no whitepaper, no technique, no
+  independent measurement; 2x–5x warm-up claim still unverified
+  marketing); OpenJ9 latest still v0.62.0 (2026-09-15); .NET 11 JIT
+  items incremental only (the "Performance Improvements in .NET 11"
+  deep-dive confirms RC1 ~Nov 10 2026 GA with the already-assessed
+  set — precedent extensions, not bar-clearing). T4: #24314 static
+  (open, updated 2022-07-13, 8 comments); #77893's five CLs all still
+  NEW with unchanged timestamps (SURV-041's per-site gap intact);
+  label probes #81887/#81846/#81755/#81957/#81968 show only bot
+  activity (GerritBot cross-refs, subscriptions) — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`) is
+  adjacent to SURV-004/SURV-006 and becomes a watch note, not a new
+  candidate; #81957's CL 844405 and #81968's related-issue link are
+  runtime topics, not optimizer-relevant. No bar-clearing material
+  anywhere; no gaps. (wave 16, re-sweep)
+- **Leyden JEP 544 — wave-17 direct re-verification re-run, still
+  Targeted.** curl https://openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the wave-9/10/11/12/13/14/15/16
+  raw archives**, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — nine
+  consecutive identical archives). Metadata read verbatim: Owner=John
+  Rose, Type=Feature, Scope=Implementation, **Status=Targeted,
+  Release=28** (page Updated 2026/09/29 15:23). No
+  Targeted→Integrated movement, no ramp-down notes. Raw archived as
+  `jep544_2026-10-04_w17.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+  (wave 17, JEP 544)
+- **#157943 trip conditions (wave 17): 0/3 fired, byte-identical to
+  wave-16 baselines.** #163338 open/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (issues-timeline: 21
+  events, keyword scan zero hits); RFC #3943 (rust-lang/rfcs) open,
+  comments 11 / review_comments 58 — ninth consecutive unchanged
+  wave. All six sibling PRs zero movement (#163336 remains the only
+  merged; `merged_at` 2026-09-30T12:11:35Z as in waves 13/14/15/16 —
+  GitHub serialization variance vs wave 12's 12:11:39Z, `updated_at`
+  byte-identical, not a new event). §5 static-core strike stands;
+  guarded-speculative arm (E3) only; trips re-armed (RFC #3943
+  acceptance most plausible near-term). Method notes: the timeline
+  endpoint is the **issues** timeline
+  (`/repos/{owner}/{repo}/issues/{n}/timeline`) — the pulls timeline
+  404s; RFC #3943 lives in **rust-lang/rfcs**, not rust-lang/rust
+  (the bare rust-lang/rust/pulls/3943 resolves to a 2015-era closed
+  PR — always qualify owner/repo). (wave 17, #157943 watch)
+- **T3/T2/T4 wave-17 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-16 track
+  file (no 404s; the wave-16 verbatim-copy rule worked as designed).
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1 =
+  zero-hit confirmation); GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 —
+  identical to pin, file-history head Aug 18 2026 (pre-pin), latest
+  Version 25.4 unchanged; Pyston pyston_main still 2024-08-12
+  (fe8afded); SE-0474 still Accepted, partial behind
+  CoroutineAccessors flag (raw md5 e8f962dbd12172d2f2a44410e727d7b5 —
+  unchanged since wave 8); Swift move-only activity still
+  enforcement/bug-fix/docs only (index_addr projection fix, address-cast
+  lifetime checks, compiler-crash dossiers) — no new SIL optimization
+  pass; no new Meta runtime optimizing-JIT (only disqualified noise —
+  2024 LLM Compiler, Muse Code terminal agent, React Compiler). T2:
+  Graal 25.x changelog byte-identical waves 5–17 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6; URL under
+  `compiler/`); JEP 401 unchanged (Integrated, Release 28, Dan Smith;
+  page Updated 2026/08/07 18:02); Valhalla project page same 8-JEP
+  list; Azul Cloud Native Compiler stays a watch note (no new
+  announcement since the Oct 1 BusinessWire piece already captured in
+  wave 16 — same five-outlet press-rewrite set; still vendor only; no
+  whitepaper, no technique, no independent measurement; 2x–5x warm-up
+  claim still unverified marketing); OpenJ9 latest still v0.62.0
+  (2026-09-15); .NET 11 JIT-internals article restates the
+  already-assessed incremental set — precedent extensions, not
+  bar-clearing. T4: #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; Gerrit method note:
+  `?O=DETAILED_ACCOUNTS` 400s — the bare `/changes/{id}` endpoint
+  already carries `status`/`updated`); label probes
+  #81887/#81846/#81755/#81957/#81968 show only non-substantive events
+  (human subscribes, gopherbot CL cross-refs) — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`) stays a
+  watch note adjacent to SURV-004/SURV-006, not a new candidate; #81957's
+  CL 844405 and #81968's activity are runtime topics, not
+  optimizer-relevant. No bar-clearing material anywhere; no gaps.
+  (wave 17, re-sweep)
+- **Leyden JEP 544 — wave-18 direct re-verification re-run, still
+  Targeted.** curl https://openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the wave-9/10/11/12/13/14/15/16/17
+  raw archives**, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — **ten**
+  consecutive identical archives). Metadata unchanged: Owner=John
+  Rose, Type=Feature, Scope=Implementation, **Status=Targeted,
+  Release=28** (page Updated 2026/09/29 15:23). No
+  Targeted→Integrated movement, no ramp-down notes. Raw archived as
+  `jep544_2026-10-04_w18.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+  (wave 18, JEP 544)
+- **#157943 trip conditions (wave 18): 0/3 fired, byte-identical to
+  wave-16/17 baselines.** #163338 open/unmerged (updated_at
+  2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run (#163338
+  timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 — **tenth**
+  consecutive unchanged wave. Siblings zero movement (#163336 remains
+  the only merged, `merged_at` 2026-09-30T12:11:35Z — unchanged since
+  waves 13–17; #163337 still open; #157943 itself closed,
+  updated 2026-09-25T22:14:46Z). SURV-024's ruling stands; trips
+  re-armed (RFC #3943 acceptance most plausible near-term). Method
+  corrections: (1) the wave-18 task brief said "golang/go issue
+  #157943" — that number **does not exist in golang/go** (its issues
+  are ~81k); the PR lives in **rust-lang/rust** — always qualify
+  owner/repo; (2) GitHub API requires a `User-Agent` header on some
+  paths (bare curls 404'd); (3) #163338's timeline is the 21-event
+  one; #157943's own timeline is 100 events (paginated, first page)
+  incl. two pre-existing rust-timer comments from 2026-08-29 — wave
+  17's log conflated the two; scan the correct PR's timeline.
+  (wave 18, #157943 watch)
+- **Leyden JEP 544 — wave-23 direct re-verification re-run, still
+  Targeted.** curl https://openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical to the wave-21/22 raw archive**, md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation
+  did not move again — raw-page diff vs w22 is empty;
+  **fifteen** consecutive content-identical archives, waves 9–23).
+  Metadata unchanged: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page Updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-05_w23.html`. Method note
+  carried: diff page bodies before concluding a pin break. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan
+  2027) and 28 GA (~Mar 2027). (wave 23, JEP 544)
+- **#157943 trip conditions (wave 23): 0/3 fired, byte-identical to
+  wave-16/17/18/19/20/21/22 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits; latest event
+  still Amanieu's 2026-10-01 cross-reference); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **fifteenth** consecutive unchanged wave. Sibling note: #163337 still
+  open but has ONE new event since wave 22 — rust-bors[bot]
+  "unmergeable" comment 2026-10-05T01:37:55Z (upstream #163721 made it
+  conflict; rebase requested — informational, not a trip);
+  #163336 still the only merged (merged_at 2026-09-30T12:11:35Z —
+  unchanged since waves 13–22). SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips
+  re-armed. Transfer impact: NONE. (wave 23, #157943 watch)
+- **T3/T2/T4 wave-23 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-22 track
+  file (no 404s; the verbatim-copy rule holds).
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to
+  pin, file-history head same sha 9712c23b (sha-comparison discipline
+  holds; author/committer date variance on the same sha); Pyston
+  pyston_main still 2024-08-12 (fe8afded); SE-0474 still Accepted,
+  partial behind flag, raw md5 e8f962dbd12172d2f2a44410e727d7b5 —
+  unchanged since wave 8; no new Meta runtime optimizing-JIT (only
+  disqualified noise: 2024 LLM Compiler, Muse Code terminal agent,
+  CompilerGym); Swift move-only still bug-fix dossiers only — no new
+  SIL optimization pass (adjacent-but-not-move-only: PR #89784
+  `SimplifyIndexingInstructions` for `index_addr`, and Sept-18
+  `raw_pointer_to_ref` immortal-flag simplification — both general
+  SIL simplifications, noted for honesty, not fired).
+  T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul still the Oct 1 BusinessWire piece + rewrites
+  (re-dated again, financialcontent syndication; 2021/2025 pieces are
+  background — no new technique, the 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0 (2026-09-15); .NET 11: nothing
+  bar-clearing beyond the assessed set — a third-party daily-devops
+  .NET 11 JIT-internals digest stays inside the already-assessed
+  incremental buckets (devirtualization, escape analysis, delegate
+  layout, bounds-check elimination, Runtime Async architectural).
+  T4: #24314 static (open, updated 2022-07-13, 8 comments);
+  #77893's five CLs all still NEW with byte-identical timestamps
+  (SURV-041's per-site gap intact); label probes #81887/#81957/#81968
+  show only non-substantive events (subscribe mvdan
+  2026-10-04T19:29:35Z, gopherbot comment 2026-10-03T10:50:39Z,
+  subscribe qiulaidongfeng 2026-10-03T08:44:02Z — all unchanged) —
+  #81887's CL 842885/842886 (`slices: make BinarySearchFunc inlinable`,
+  842885 ABANDONED 2026-10-01, 842886 NEW) stays a watch note
+  adjacent to SURV-004/SURV-006, not a new candidate. No bar-clearing
+  material anywhere; no gaps. (wave 23, re-sweep)
+- **JEP 544 (wave 24):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the wave-21/22/23 archive, raw
+  md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>`
+  URL rotation stayed dormant a third wave — **sixteen** consecutive
+  content-identical archives, waves 9–24). Status/Release were NOT
+  just carried this wave: grepped verbatim in the new archive —
+  Status=Targeted, Release=28, no Targeted→Integrated movement.
+  Raw archived as `jep544_2026-10-05_w24.html`. Ramp-down survival
+  watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 24,
+  JEP 544)
+- **#157943 trip conditions (wave 24): 0/3 fired, byte-identical to
+  wave-16/17/18/19/20/21/22/23 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **sixteenth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  without needing a tail-page re-read of the 33-page paginated
+  timeline. Method note carried forward: PR `updated_at` equality with
+  a recorded last-event timestamp is a sufficient no-new-events check
+  for paginated timelines. #163336 still the only merged
+  (merged_at 2026-09-30T12:11:35Z). SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips
+  re-armed. Transfer impact: NONE. (wave 24, #157943 watch)
+- **T3/T2/T4 wave-24 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-23 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, Muse Code terminal agent,
+  Quest Runtime Optimizer graphics tool); Pyston `pyston_main` head
+  unchanged (2024-08-12, fe8afded); Swift move-only still bug-fix
+  dossiers only — no new SIL optimization pass (`cond_fail true`
+  pass-out-of-SILCombine is an instruction pass, not move-only;
+  `raw_pointer_to_ref` immortal-flag is a simplification;
+  address-cast lifetime fix is a verifier bug fix); SE-0474 still
+  Accepted, partial behind flag, raw md5 e8f962dbd12172d2f2a44410e727d7b5
+  — unchanged since wave 8; TruffleRuby Options.java md5
+  801fd357c11fd16c87f1764777e67b4a — identical to pin, zero
+  speculat/guard/optim matches (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline
+  holds; author/committer date variance on the same sha).
+  T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites only — vendor marketing, 2x–5x unverified);
+  OpenJ9 still v0.62.0 (2026-09-15); .NET 11: the "Performance
+  Improvements in .NET 11" devblog's JIT list (range-check cloning
+  #124705, intra-basic-block bounds-check coalescing #127439, SELECT
+  folding, AVX-VNNI-512, saturating conversions, ARM64 Vector-by-ref
+  for SVE, constant-folding SequenceEqual) stays inside the
+  already-assessed incremental buckets — nothing bar-clearing.
+  T4: #24314 static (open, updated 2022-07-13, 8 comments);
+  #77893's five CLs all still NEW with byte-identical timestamps
+  (SURV-041's per-site gap intact); label probes #81887/#81957/#81968
+  show only non-substantive events (subscribe mvdan
+  2026-10-04T19:29:35Z, gopherbot comment 2026-10-03T10:50:39Z,
+  subscribe qiulaidongfeng 2026-10-03T08:44:02Z — all unchanged) —
+  #81887's CL 842885/842886 (`slices: make BinarySearchFunc inlinable`,
+  842885 ABANDONED, 842886 NEW) stays a watch note
+  adjacent to SURV-004/SURV-006, not a new candidate. No bar-clearing
+  material anywhere; no gaps. (wave 24, re-sweep)
+- **JEP 544 (wave 25):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the wave-21/22/23/24 archive, raw
+  md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>`
+  URL rotation stayed dormant a fourth wave — **seventeen** consecutive
+  content-identical archives, waves 9–25). Status/Release re-verified
+  verbatim in the NEW archive (per the wave-24 method refinement — not
+  just the md5): Status=Targeted, Release=28, Updated 2026/09/29 15:23 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w25.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 25, JEP 544)
+- **#157943 trip conditions (wave 25): 0/3 fired, byte-identical to
+  wave-16…24 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **seventeenth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged
+  (merged_at 2026-09-30T12:11:35Z). SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips
+  re-armed. Transfer impact: NONE. (wave 25, #157943 watch)
+- **T3/T2/T4 wave-25 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-24 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, Muse Code terminal agent,
+  Quest Runtime Optimizer graphics tool, Static Hermes — AOT, not a new
+  runtime optimizing JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); Swift move-only still bug-fix dossiers only —
+  no new SIL optimization pass (#88805/#90282 convert_function
+  partial_apply checker hardening is defensive crash-prep; #86178 is a
+  verifier workaround; store_borrow/consume-during-borrow are checker
+  correctness); SE-0474 still Accepted, partial behind flag, raw md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline
+  holds). T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites — itbrief adds ReadyNow lineage background but no
+  published technique, 2x–5x still unverified vendor marketing);
+  OpenJ9 still v0.62.0 (2026-09-15; bare releases/latest 301s —
+  follow the redirect); .NET 11: the devblog JIT list (#124705,
+  #127439, SELECT folding, AVX-VNNI-512, saturating conversions,
+  ARM64 Vector-by-ref SVE, SequenceEqual folding) plus the Preview-1
+  notes' JIT list (Multicore JIT MAX_METHODS, Arm64 stackalloc zeroing,
+  IV analysis, non-shared-generic devirtualization, bitfield
+  extraction) all sit inside the already-assessed incremental buckets —
+  nothing bar-clearing. T4: #24314 static (open, updated 2022-07-13,
+  8 comments); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; method note: they live on
+  **go-review.googlesource.com**, not chromium-review — chromium-review
+  serves unrelated 2017 changes for the same numbers); label probes
+  #81887/#81957/#81968 show only non-substantive events (subscribe mvdan
+  2026-10-04T19:29:35Z, gopherbot comment 2026-10-03T10:50:39Z,
+  subscribe qiulaidongfeng 2026-10-03T08:44:02Z — all unchanged) —
+  #81887's CL 842885/842886 (`slices: make BinarySearchFunc inlinable`,
+  842885 ABANDONED, 842886 NEW) stays a watch note adjacent to
+  SURV-004/SURV-006, not a new candidate. No bar-clearing material
+  anywhere; no gaps. (wave 25, re-sweep)
+- **JEP 544 (wave 26):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the wave-21/22/23/24/25 archive, raw
+  md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>`
+  URL rotation stayed dormant a fifth wave — **eighteen** consecutive
+  content-identical archives, waves 9–26). Status/Release re-verified
+  verbatim in the NEW archive (per the wave-24 method refinement — not
+  just the md5): Status=Targeted, Release=28 — no Targeted→Integrated
+  movement. Raw archived as `jep544_2026-10-05_w26.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027).
+  (wave 26, JEP 544)
+- **#157943 trip conditions (wave 26): 0/3 fired, byte-identical to
+  wave-16…25 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **eighteenth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged
+  (merged_at 2026-09-30T12:11:35Z). SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips
+  re-armed. Transfer impact: NONE. Method note: unauthenticated GitHub
+  API core rate limit (60/hr) hit mid-wave — reset 05:55:56 UTC; the
+  affected checks (#163336, Pyston head, GraalPy history head, label
+  probes, #24314) were re-run post-reset — no gaps. (wave 26, #157943 watch)
+- **T3/T2/T4 wave-26 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-25 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, Muse Code terminal agent,
+  Quest Runtime Optimizer graphics tool, Static Hermes — AOT, not a new
+  runtime optimizing JIT; jemalloc 5.4.0 cleanup release — allocator
+  maintenance, not a JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); Swift move-only still bug-fix dossiers only —
+  no new SIL optimization pass (MoveOnlyChecker/CopyPropagation
+  borrow-scope crash dossier is checker-correctness; SIL opaque-values
+  is compiler infrastructure; cond_fail pass already assessed);
+  SE-0474 still Accepted, partial behind flag, raw md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline
+  holds). T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites — smbtech.au rewrite adds nothing; no published
+  technique, 2x–5x still unverified vendor marketing); OpenJ9 still
+  v0.62.0 (releases/latest 302s — follow the redirect); .NET 11:
+  daily-devops.net JIT-internals + Microsoft devblogs "Performance
+  Improvements in .NET 11" detail new sub-items (inequality-assertion
+  range analysis #121273, same-block propagation #121527, bitwise-op
+  bounds #122263, unsigned-guard deduction #125056, slice bounds
+  tracking #127488, `!=`-terminator loop cloning #129268) — all inside
+  the already-assessed incremental bounds-check-elimination bucket;
+  runtime-async tiered compile, NativeAOT shared-dispatch helper —
+  assessed buckets — nothing bar-clearing. T4: #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact; method note:
+  they live on **go-review.googlesource.com**, not chromium-review —
+  chromium-review serves unrelated 2017 changes for the same numbers);
+  label probes #81887/#81957/#81968 show only non-substantive events
+  (subscribe mvdan 2026-10-04T19:29:35Z, gopherbot comment
+  2026-10-03T10:50:39Z, subscribe qiulaidongfeng 2026-10-03T08:44:02Z —
+  all unchanged) — #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`, 842885 ABANDONED, 842886 NEW) stays a
+  watch note adjacent to SURV-004/SURV-006, not a new candidate. No
+  bar-clearing material anywhere; no gaps. (wave 26, re-sweep)
+- **JEP 544 (wave 27):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26 archive,
+  raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>`
+  URL rotation stayed dormant a sixth wave — **nineteen** consecutive
+  content-identical archives, waves 9–27). Status/Release re-verified
+  verbatim in the NEW archive (per the wave-24 method refinement — not
+  just the md5): Status=Targeted, Release=28 — no Targeted→Integrated
+  movement. Raw archived as `jep544_2026-10-05_w27.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027).
+  (wave 27, JEP 544)
+- **#157943 trip conditions (wave 27): 0/3 fired, byte-identical to
+  wave-16…26 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **nineteenth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged
+  (merged_at 2026-09-30T12:11:35Z). SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips
+  re-armed. Transfer impact: NONE. (wave 27, #157943 watch)
+- **T3/T2/T4 wave-27 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-26 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, Muse Code terminal agent,
+  jemalloc 5.4.0 cleanup release — allocator maintenance, not a JIT);
+  Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); Swift move-only still bug-fix/crash dossiers only —
+  no new SIL optimization pass (MoveOnlyChecker/CopyPropagation
+  borrow-scope crash dossier is checker-correctness; compiler-crash
+  dossier's miscompiles are fixes, not passes; cond_fail pass already
+  assessed);
+  SE-0474 still Accepted, partial behind flag, raw md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline
+  holds). T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites — smbtech.au 1-day-ago rewrite adds nothing; no
+  published technique, 2x–5x still unverified vendor marketing);
+  OpenJ9 still v0.62.0 (releases/latest redirects — follow them); .NET
+  11: nothing new beyond the assessed set (Preview-6 announcement,
+  devblogs "Performance Improvements in .NET 11", daily-devops
+  JIT-internals writeup — all inside the already-assessed incremental
+  bounds-check-elimination / runtime-async / NativeAOT buckets).
+  T4: #24314 static (open, updated 2022-07-13, 8 comments); #77893's
+  five CLs all still NEW with byte-identical timestamps (SURV-041's
+  per-site gap intact; method note: they live on
+  **go-review.googlesource.com**, not chromium-review);
+  label probes #81887/#81957/#81968 show only non-substantive events
+  (subscribe mvdan 2026-10-04T19:29:35Z, gopherbot comment
+  2026-10-03T10:50:39Z, subscribe qiulaidongfeng 2026-10-03T08:44:02Z —
+  all unchanged) — #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`, 842885 ABANDONED, 842886 NEW) stays a
+  watch note adjacent to SURV-004/SURV-006, not a new candidate. No
+  bar-clearing material anywhere; no gaps. (wave 27, re-sweep)
+- **JEP 544 (wave 28):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27
+  archive, raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot
+  `<script src>` URL rotation stayed dormant a seventh wave —
+  **twenty** consecutive content-identical archives, waves 9–28;
+  empty raw body diff). Status/Release re-verified verbatim in the NEW
+  archive (per the wave-24 method refinement — not just the md5):
+  Status=Targeted, Release=28 — no Targeted→Integrated movement. Raw
+  archived as `jep544_2026-10-05_w28.html`. Ramp-down survival watch
+  continues to the JDK 28 ramp-down (Dec 2026–Jan 2027).
+  (wave 28, JEP 544)
+- **#157943 trip conditions (wave 28): 0/3 fired, byte-identical to
+  wave-16…27 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twentieth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged
+  (merged_at 2026-09-30T12:11:35Z). Rate limit NOT hit (57 remaining
+  at wave start). SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 28, #157943 watch)
+- **T3/T2/T4 wave-28 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-27 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, Muse Code terminal agent,
+  MTIA inference-chip roadmap, Zoomer GPU-workload platform,
+  hyperagents AI hype — none a runtime optimizing JIT); Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); Swift move-only
+  still bug-fix/crash dossiers and docs only — no new SIL optimization
+  pass (cond_fail extraction #88258 and DeinitDevirtualizer #69955
+  both already assessed); SE-0474 still Accepted, partial behind flag,
+  raw md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline
+  holds). T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites — smbtech.au 1-day-ago rewrite adds no technique; no
+  published technique, 2x–5x still unverified vendor marketing);
+  OpenJ9 still v0.62.0 (releases/latest redirects — follow them); .NET
+  11: Learn runtime page now "last updated for Preview 7" (wave 27 saw
+  Preview-6) — full JIT list re-read; Preview-7 additions beyond the
+  wave-27 assessed set (switch-expression folding, redundant
+  checked-context removal, `Activator.CreateInstance<T>()` exact-type
+  devirtualization, SIMD cost-model modernization) all inside the
+  already-assessed incremental JIT buckets — nothing bar-clearing.
+  T4: #24314 static (open, updated 2022-07-13, 8 comments); #77893's
+  five CLs all still NEW with byte-identical timestamps (SURV-041's
+  per-site gap intact; method note: they live on
+  **go-review.googlesource.com**, not chromium-review);
+  label probes #81887/#81957/#81968 show only non-substantive events
+  (subscribe mvdan 2026-10-04T19:29:35Z, gopherbot comment
+  2026-10-03T10:50:39Z, subscribe qiulaidongfeng 2026-10-03T08:44:02Z —
+  all unchanged) — #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`, 842885 ABANDONED, 842886 NEW) stays a
+  watch note adjacent to SURV-004/SURV-006, not a new candidate. No
+  bar-clearing material anywhere; no gaps. (wave 28, re-sweep)
+- **JEP 544 (wave 29):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant an eighth wave — **twenty-one** consecutive
+  content-identical archives, waves 9–29; empty raw body diff).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w29.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 29, JEP 544)
+- **#157943 trip conditions (wave 29): 0/3 fired, byte-identical to
+  wave-16…28 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-first** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged
+  (merged_at 2026-09-30T12:11:35Z). Rate limit NOT hit (57 remaining
+  at wave start). SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 29, #157943 watch)
+- **T3/T2/T4 wave-29 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-28 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, React Compiler, Static Hermes,
+  Druid arXiv paper, .NET 11 JIT-internals writeup — none a Meta
+  runtime optimizing JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); Swift move-only still docs and bug-fix/crash
+  dossiers only — no new SIL optimization pass (ownership-model docs,
+  `[SILCombine] Bail load[copy](uteda) if move-only` commit
+  2025-07-29 = crash-bail correctness fix inside SILCombine, not a new
+  pass; swift-institute copy-propagation crash dossier = miscompile
+  analysis, not a pass); SE-0474 still Accepted, partial behind flag,
+  raw md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline
+  holds). T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites — smbtech.au rewrite now carries a channel-partner
+  angle, still no technique; 2x–5x still unverified vendor marketing);
+  OpenJ9 still v0.62.0 (releases/latest redirects — follow them); .NET
+  11: Learn runtime page now "last updated for release candidate 1
+  (RC 1)" (wave 28 saw Preview-7) — full JIT section re-read; the new
+  Runtime Async material (JIT async-version compilation, tail-merged
+  suspension points, tiered async compilation) is tied to .NET's async
+  state-machine lowering and does not transfer to Go's goroutine model
+  — nothing bar-clearing. T4: #24314 static (open, updated 2022-07-13,
+  8 comments); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; method note: they live on
+  **go-review.googlesource.com**, not chromium-review); label probes
+  #81887/#81957/#81968 show only non-substantive events (subscribe
+  mvdan 2026-10-04T19:29:35Z, gopherbot comment 2026-10-03T10:50:39Z,
+  subscribe qiulaidongfeng 2026-10-03T08:44:02Z — all unchanged) —
+  #81887's CL 842885/842886 (`slices: make BinarySearchFunc inlinable`,
+  842885 ABANDONED, 842886 NEW) stays a watch note adjacent to
+  SURV-004/SURV-006, not a new candidate. No bar-clearing material
+  anywhere; no gaps. (wave 29, re-sweep)
+- **JEP 544 (wave 32):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant an eleventh wave — **twenty-four** consecutive
+  content-identical archives, waves 9–32; empty raw body diff vs w31).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w32.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 32, JEP 544)
+- **#157943 trip conditions (wave 32): 0/3 fired, byte-identical to
+  wave-16…31 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-fourth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged.
+  Rate limit NOT hit (60 remaining at wave start, 59 at end of checks).
+  SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 32, #157943 watch)
+- **T3/T2/T4 wave-32 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-31 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, 2026 Muse Code terminal coding
+  agent, jemalloc 5.4.0 Meta-revival maintenance release, Cinder/Static
+  Python packaging writeup — none a Meta runtime optimizing JIT); Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); Swift move-only —
+  no new SIL optimization pass (swiftlang/swift commit ec74abb6
+  2026-09-18, `raw_pointer_to_ref` immortal-flag optimization, is a
+  SILCombiner instruction simplification — adjacent general SIL
+  optimization, excluded per the move-only discipline like
+  `SimplifyIndexingInstructions` and the cond_fail instruction pass;
+  move-only docs/skill notes otherwise); SE-0474 still Accepted,
+  partial behind flag, raw md5 e8f962dbd12172d2f2a44410e727d7b5 —
+  unchanged since wave 8; TruffleRuby Options.java md5
+  801fd357c11fd16c87f1764777e67b4a — identical to pin, zero
+  speculat/guard/optim matches (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history
+  head same sha 9712c23b (sha-comparison discipline holds). T2: Graal
+  25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs (watch note: raw markdown carries unused `[218]`/`[303]`
+  reference-style link definitions never referenced in the body —
+  non-substantive doc content, not deliverables); Azul no new
+  announcement since Oct 1 (BusinessWire + press rewrites — itbrief/smbtech
+  rewrites 3–4 days old, still no technique; 2x–5x still unverified
+  vendor marketing); OpenJ9 still v0.62.0 (releases/latest redirects —
+  follow with -L); .NET 11: Learn runtime page still "last updated for
+  release candidate 1 (RC 1)" (unchanged vs wave 31; URL re-established
+  verbatim from search — JIT-improvements and hardware-intrinsics
+  sections fully re-read, all headings inside the wave-29/30/31
+  assessed set, nothing bar-clearing); Runtime Async material still tied
+  to .NET's async state-machine lowering, non-transferable to Go's
+  goroutine model. T4: #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; method note: they live on
+  **go-review.googlesource.com**, not chromium-review); label probes
+  #81887/#81957/#81968 show only non-substantive events (subscribe mvdan
+  2026-10-04T19:29:35Z, gopherbot comment 2026-10-03T10:50:39Z, subscribe
+  qiulaidongfeng 2026-10-03T08:44:02Z — all unchanged) — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`, 842885
+  ABANDONED, 842886 NEW) stays a watch note adjacent to SURV-004/SURV-006,
+  not a new candidate. No bar-clearing material anywhere; no gaps.
+  (wave 32, re-sweep)
+- **JEP 544 (wave 33):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a twelfth wave — **twenty-five** consecutive
+  content-identical archives, waves 9–33; empty raw body diff vs w32).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w33.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 33, JEP 544)
+- **#157943 trip conditions (wave 33): 0/3 fired, byte-identical to
+  wave-16…32 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-fifth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged.
+  Rate limit NOT hit (58 remaining at wave start, no gaps).
+  SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 33, #157943 watch)
+- **T3/T2/T4 wave-34 negatives are all negative, with one upstream
+  resolution.** T3: 0/6 standing triggers fired — all URLs copied
+  **verbatim** from the wave-33 track file (no 404s; the verbatim-copy
+  rule holds). Meta search = disqualified noise (2024 LLM Compiler, 2026
+  Muse Code terminal coding agent, React Compiler 2023-era, jemalloc 5.4.0
+  Meta-revival maintenance release, Cinder/CinderX packaging writeup —
+  none a Meta runtime optimizing JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); Swift move-only — no new SIL optimization pass
+  (swift-institute CopyPropagation crash dossier = checker correctness,
+  not a pass; cond_fail PR #88258 already-assessed adjacent general SIL
+  pass; docs/pl-reference forks = reference content, not passes);
+  SE-0474 still Accepted, partial behind flag, raw md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8; TruffleRuby
+  Options.java md5 801fd357c11fd16c87f1764777e67b4a — identical to pin,
+  zero speculat/guard/optim matches (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history
+  head same sha 9712c23b (sha-comparison discipline holds). T2: Graal
+  25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs (watch note: docs raw markdown still carries unused
+  `[218]`/`[303]` reference definitions — non-substantive doc content,
+  not deliverables; the project page 301s without trailing slash —
+  fetch with `-L`); Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites — smbtech.au rewrite now 1-day-old with channel-partner
+  angle, still no technique; 2x–5x still unverified vendor marketing);
+  OpenJ9 still v0.62.0 (releases/latest redirects — follow with -L);
+  .NET 11: Learn runtime page still "last updated for release candidate 1
+  (RC 1)" (unchanged vs waves 31–33; JIT-improvements + hardware-intrinsics
+  sections confirmed present, "empty-span check" prose confirmed on-page —
+  keyword scan misses it only on hyphenation); Runtime Async material
+  still tied to .NET's async state-machine lowering, non-transferable to
+  Go's goroutine model. T4: #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; go-review.googlesource.com,
+  `tail -n +2` XSSI strip); label probes #81957/#81968 show only
+  non-substantive events (commented gopherbot 2026-10-03T10:50:39Z,
+  subscribed qiulaidongfeng 2026-10-03T08:44:02Z — both unchanged; timeline
+  counts drifted 21→25 / 11→12 with unchanged last events — endpoint
+  accounting drift, not new activity). **#81887 RESOLVED upstream
+  2026-10-05:** CL 842886 (`slices: make BinarySearchFunc inlinable`,
+  Cuong Manh Le) MERGED 12:44:57Z; gopherbot closed #81887 at 12:45:43Z;
+  842885 stays ABANDONED. Fix mechanics: BinarySearchFunc's cost 95
+  exceeded gc's fixed inliner budget (80) → restructured to reuse the
+  loop's already-made comparison (cost 77, one fewer `cmp` call),
+  reported -36.39% on BenchmarkSlicesBinarySearchFunc. This is a
+  *code-shape workaround to fit the budget*, not an inliner capability
+  improvement — it **confirms** SURV-006's thesis ("gc's inliner is
+  budget-based… never simulates the consequence of inlining") rather than
+  weakening it. The SURV-004/SURV-006-adjacent watch note retires
+  (resolved); #81887's label-probe slot retires. No bar-clearing material
+  anywhere; no gaps. (wave 34, re-sweep)
+- **JEP 544 (wave 34):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a thirteenth wave — **twenty-six** consecutive
+  content-identical archives, waves 9–34; empty raw body diff vs w33).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w34.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 34, JEP 544)
+- **#157943 trip conditions (wave 34): 0/3 fired, byte-identical to
+  wave-16…33 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits; ordering detail:
+  this wave's last listed event is the known `cross-referenced`
+  2026-10-01 entry — both candidates are within the known 21); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-sixth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged.
+  Rate limit NOT hit (60 remaining at wave start, no gaps). Method
+  incident recovered: an unquoted shell `$UA` variable produced an empty
+  User-Agent (GitHub 403s); re-ran with quoted `-H` headers — all HTTP
+  200. SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 34, #157943 watch)
+- **JEP 544 (wave 37):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a sixteenth wave — **twenty-nine** consecutive
+  content-identical archives, waves 9–37; empty raw body diff vs w36).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w37.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 37, JEP 544)
+- **#157943 trip conditions (wave 37): 0/3 fired, byte-identical to
+  wave-36 baselines.** #163338 open/unmerged, `updated_at`
+  2026-09-30T13:03:50Z; the 21-event issues-timeline keyword scan
+  (try-perf/trybot/try perf/@bors try/bors-try/@rust-timer) zero hits,
+  last event the known `cross-referenced` 2026-10-01T13:27:54Z (Amanieu).
+  RFC #3943 (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-ninth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged.
+  Rate limit NOT hit (60 remaining at wave start, no gaps). Wave-34
+  UA-quoting discipline held — all HTTP 200. SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips re-armed.
+  Transfer impact: NONE. (wave 37, #157943 watch)
+- **T3/T2/T4 wave-37 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-36 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, 2026 Muse Code terminal coding
+  agent, techrepublic Muse Spark 1.3 model-tier piece, .NET 11 JIT-internals
+  writeup [not Meta] — none a Meta runtime optimizing JIT);
+  Pyston `pyston_main` head unchanged (2024-08-12, fe8afded); Swift
+  move-only — no new SIL optimization pass (cond_fail #88258 already-assessed
+  adjacent general SIL; swift-institute CopyPropagation crash dossier =
+  bug-fix investigation, not a pass; SIL docs = prose, not passes;
+  ryo-lang reference prose, 2019 forums proposal = stale); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8 — pin
+  `e8f962dbd12172d2f2a44410e727d7b5`; `*`-prefixed bullet header read
+  `sed -n '1,10p'`); TruffleRuby Options.java md5 identical to pin
+  (zero keyword hits, grep exit 1); GraalPy raw md5 identical to pin,
+  history head same sha 9712c23b. T2: Graal 25.x changelog byte-identical
+  to pin (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 Integrated/Release 28 unchanged; Valhalla same 8
+  JEPs; docs markdown re-verified — still carries unused `[218]`/`[303]`
+  reference definitions (non-substantive; project page 301s without
+  trailing slash — fetch with `-L`); Azul no new announcement since Oct 1
+  (BusinessWire + press rewrites — cxotoday rewrite now ~16h-old,
+  smbtech.au 1-day-old, itbrief.asia with ReadyNow lineage; still no
+  technique, no independent measurement; 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0 (API releases/latest tag_name
+  confirms); .NET 11: Learn runtime page still "last updated for
+  release candidate 1 (RC 1)" (unchanged vs waves 29–36; "empty-span"
+  prose confirmed on-page, grep count 2; Runtime Async material still
+  non-transferable to Go's goroutine model), nothing bar-clearing. T4:
+  #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z);
+  #77893's five CLs still NEW with byte-identical timestamps
+  (go-review, `tail -n +2` XSSI strip); label probes #81957/#81968
+  non-substantive only (timeline counts unchanged at 25/12, last events
+  unchanged); #81887's slot stays retired (resolved wave 34 — CL 842886's
+  merge CONFIRMED SURV-006's thesis; no re-check). No bar-clearing
+  material anywhere; no gaps. (wave 37, re-sweep)
+- **JEP 544 (wave 40):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a nineteenth wave — **thirty-two** consecutive
+  content-identical archives, waves 9–40; empty `cmp` body diff vs w39).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w40.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 40, JEP 544)
+- **#157943 trip conditions (wave 40): 0/3 fired, #163338 baseline
+  byte-identical to wave 39.** #163338 open/unmerged, `updated_at`
+  2026-09-30T13:03:50Z (**thirty-second** consecutive unchanged wave); the
+  21-event issues-timeline keyword scan
+  (try-perf/trybot/try perf/@bors try/bors-try/@rust-timer) zero hits,
+  last event the known `cross-referenced` 2026-10-01T13:27:54Z (Amanieu).
+  RFC #3943 (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **thirty-second** consecutive unchanged wave. Watch note: RFC #3943's
+  PR-object `updated_at` stays 2026-10-02T15:30:51Z with unchanged
+  comment/review counts, and the issues-timeline last page (page 4 of 4,
+  15 events at per_page=50) ends at the known 2026-10-01T13:27:54Z event
+  while the reviews list (45) ends 2026-09-30T12:43:24Z — the touch carries
+  no substantive event (GitHub-internal accounting, not a trip;
+  `updated_at` drift without timeline/reviews movement is accounting,
+  not signal). Watch note: the timeline event count grew to ~165
+  (subscribed events accumulating) since wave 39's 65-event count — per
+  method note (b), event-count drift with unchanged last event is endpoint
+  accounting drift, not new activity. Sibling note: #163337's PR-object
+  `updated_at` is 2026-10-05T18:09:57Z — **unchanged vs wave 39's recorded
+  value** (no further drift); its issues-timeline (33 events) still ends at
+  the known rust-bors[bot] "unmergeable" commented event
+  2026-10-05T01:37:55Z — no new events, accounting not a trip. #163336
+  still the only merged. Rate limit NOT hit (58 remaining at wave start;
+  no gaps). Wave-34 UA-quoting discipline held — all HTTP 200.
+  SURV-024's ruling stands (static-core strike; guarded-speculative E3 arm
+  only); trips re-armed. Transfer impact: NONE. (wave 40, #157943 watch)
+- **T3/T2/T4 wave-40 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-39 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, 2026 Muse Code terminal coding
+  agent, .NET 11 JIT-internals daily-devops writeup [not Meta], .NET 10
+  medium piece [not Meta], Meta React Compiler [871-day-old] — none a
+  Meta runtime optimizing JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); Swift move-only — no new SIL optimization pass
+  (cond_fail #88258 already-assessed adjacent general SIL; #88270 fast
+  conformance casts = compile-time; #88404 nonisolated(nonsending)
+  isolation = OptimizeHopToExecutor-adjacent representation change;
+  FieldSensitivePrunedLiveness/address-cast-lifetime commits = verifier/
+  checker bug-fixes, not passes; RemoveSILGenLifetimes extension =
+  existing-pass improvement; SIL docs/forks = prose, not passes);
+  SE-0474 still Accepted/partial-behind-flag (raw md5 unchanged since
+  wave 8 — pin `e8f962dbd12172d2f2a44410e727d7b5`; `*`-prefixed bullet
+  header read `sed -n '1,10p'`); TruffleRuby Options.java md5 identical
+  to pin (zero keyword hits, grep exit 1); GraalPy raw md5 identical to
+  pin, history head same sha 9712c23b. T2: Graal 25.x changelog
+  byte-identical to pin (14,501 bytes, 6397c38a55572509df12814180ec458f;
+  tops at 25.5, no 25.6); JEP 401 Integrated/Release 28 unchanged;
+  Valhalla same 8 JEPs; docs markdown re-verified — still carries unused
+  `[218]`/`[303]` reference definitions (non-substantive; project page
+  301s without trailing slash — fetch with `-L`; grep count 2); Azul no
+  new announcement since Oct 1 (BusinessWire + press rewrites —
+  cxotoday rewrite now ~19h-old, smbtech.au 1-day-old, itbrief.asia
+  3-day-old, financialcontent/mediatrainingforceos syndications,
+  enterprisetimes.co.uk weekly digest recaps the same piece — not new;
+  still no technique, no independent measurement; 2x–5x still unverified
+  vendor marketing); OpenJ9 still v0.62.0 (API releases/latest tag_name
+  confirms; -L method); .NET 11: Learn runtime page still "last updated
+  for release candidate 1 (RC 1)" (unchanged vs waves 29–39;
+  "empty-span" prose confirmed on-page, grep count 2; Runtime Async
+  material still non-transferable to Go's goroutine model), nothing
+  bar-clearing. T4: #24314 static (open, 8 comments, updated
+  2022-07-13T16:58:42Z); #77893's five CLs still NEW with byte-identical
+  timestamps (go-review, `tail -n +2` XSSI strip); label probes
+  #81957/#81968 non-substantive only (timeline counts unchanged at 25/12,
+  last events unchanged); #81887's slot stays retired (resolved wave 34
+  — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check). No
+  bar-clearing material anywhere; no gaps. (wave 40, re-sweep)
+- **JEP 544 (wave 41):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a twentieth wave — **thirty-three** consecutive
+  content-identical archives, waves 9–41; empty `cmp` body diff vs w40).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w41.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 41, JEP 544)
+- **#157943 trip conditions (wave 41): 0/3 fired, #163338 baseline
+  unchanged a thirty-third consecutive wave.** #163338 open/unmerged,
+  `updated_at` 2026-09-30T13:03:50Z (**thirty-third** consecutive unchanged
+  wave); the 21-event issues-timeline keyword scan
+  (try-perf/trybot/try perf/@bors try/bors-try/@rust-timer) zero hits,
+  last event the known `cross-referenced` 2026-10-01T13:27:54Z (Amanieu).
+  RFC #3943 (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  unchanged (**thirty-third** consecutive). `updated_at`
+  2026-10-02T15:30:51Z unchanged vs waves 38–40; the issues-timeline last
+  page (page 4 of 4, 15 events at per_page=50) ends at the known
+  `cross-referenced` 2026-10-01T13:27:54Z (Amanieu); the reviews list (45)
+  ends 2026-09-30T12:43:24Z — the `updated_at` touch carries no substantive
+  event, so this is GitHub-internal accounting, not a trip (method note:
+  the `pulls/{n}/timeline` endpoint 404s for this repo/PR combo — the
+  **issues** timeline is the working one, established at wave 37; event-count
+  drift with unchanged last event is endpoint accounting drift, not new
+  activity). Sibling note (wave 41): #163337's PR-object `updated_at`
+  **drifted to 2026-10-05T20:36:31Z** (was 2026-10-05T18:09:57Z in wave
+  40) — the wave-24 equality shortcut did NOT hold, so the timeline tail
+  was re-read: new events = rustbot rebase range-diff notice (mechanical),
+  mention/subscribed hygiene, and a tmiasko COMMENTED review with an
+  inline review comment questioning kill-point design complexity —
+  **non-substantive for the trips** (PR open/unmerged, no try-perf run, no
+  relation to #163338 merge or RFC #3943 acceptance). Timeline now 41
+  events (was 33). #163336 still the only merged. Rate limit NOT hit (60
+  remaining at wave start; no gaps). Wave-34 UA-quoting discipline held —
+  all HTTP 200. SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact: NONE.
+  (wave 41, #157943 watch)
+- **T3/T2/T4 wave-41 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-40 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, Muse Code terminal coding agent
+  60-day-old, .NET 10 medium piece [not Meta], Meta React Compiler
+  [871-day-old] — none a Meta runtime optimizing JIT); Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); Swift move-only —
+  no new SIL optimization pass (cond_fail #88258 already-assessed adjacent
+  general SIL pass; swift-institute crash dossiers = bug-fix
+  investigations, not passes; SIL ownership docs = prose; "Progress on
+  Opaque SIL Values" = representation infrastructure, not a move-only opt
+  pass); SE-0474 still Accepted/partial-behind-flag (raw md5 unchanged
+  since wave 8 — pin `e8f962dbd12172d2f2a44410e727d7b5`; `*`-prefixed bullet
+  header read `sed -n '1,10p'`); TruffleRuby Options.java md5 identical
+  to pin (zero keyword hits, grep exit 1); GraalPy raw md5 identical to
+  pin, history head same sha 9712c23b. T2: Graal 25.x changelog
+  byte-identical to pin (14,501 bytes, 6397c38a55572509df12814180ec458f;
+  tops at 25.5, no 25.6); JEP 401 Integrated/Release 28 unchanged;
+  Valhalla same 8 JEPs; docs markdown re-verified — still carries unused
+  `[218]`/`[303]` reference definitions (non-substantive; project page
+  301s without trailing slash — fetch with `-L`; grep count 2); Azul no
+  new announcement since Oct 1 (BusinessWire + press rewrites —
+  cxotoday rewrite now ~20h-old, smbtech.au 1-day-old, itbrief.asia
+  3-day-old, financialcontent/mediatrainingforceos syndications — all
+  4-day-old re-publications, not new; still no technique, no independent
+  measurement; 2x–5x still unverified vendor marketing); OpenJ9 still
+  v0.62.0 (API releases/latest tag_name confirms; -L method); .NET 11:
+  Learn runtime page still "last updated for release candidate 1 (RC 1)"
+  (unchanged vs waves 29–40; "empty-span" prose confirmed on-page, grep
+  count 2; Runtime Async material still non-transferable to Go's goroutine
+  model), nothing bar-clearing. T4: #24314 static (open, 8 comments,
+  updated 2022-07-13T16:58:42Z); #77893's five CLs still NEW with
+  byte-identical timestamps (go-review, `tail -n +2` XSSI strip); label
+  probes #81957/#81968 non-substantive only (timeline counts unchanged at
+  25/12, last events unchanged); #81887's slot stays retired (resolved
+  wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check).
+  No bar-clearing material anywhere; no gaps. (wave 41, re-sweep)
+- **JEP 544 (wave 44):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 raw bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a twenty-third wave — **thirty-six** consecutive
+  content-identical archives, waves 9–44; empty `cmp` body diff vs w43).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-06_w44.html`. Wave-44 equality shortcut held, so the
+  archive compare sufficed — the w43 archive was the immediate predecessor.
+  Still no ramp-down movement with the JDK 28 ramp-down (Dec 2026–Jan 2027).
+  (wave 44, JEP 544)
+- **#157943 (wave 44):** 0/3 trips fired. #163338 (rust-lang/rust) open,
+  unmerged, `updated_at` 2026-09-30T13:03:50Z — **thirty-sixth** consecutive
+  unchanged wave; issues-timeline 21 events, try-perf keyword scan zero
+  hits, last event the known cross-referenced 2026-10-01T13:27:54Z
+  (Amanieu). RFC #3943 (rust-lang/rfcs) open, comments 11 /
+  review_comments 58 — **thirty-sixth** consecutive unchanged wave;
+  `updated_at` 2026-10-02T15:30:51Z unchanged vs waves 38–43, so per the
+  wave-24 equality shortcut no tail-page re-read was needed (accounting,
+  not a trip; the `pulls/{n}/timeline` endpoint 404s — the issues
+  timeline is the working one). Sibling note (wave 44): #163337's
+  PR-object `updated_at` 2026-10-05T21:50:06Z — **equality shortcut
+  HOLDS** vs the wave-43 recorded value (no drift), so no timeline tail
+  re-read was needed; the wave-43 inline design-discussion exchange
+  (Amanieu's empty-body COMMENTED review with substance inline on
+  precise_liveness.rs — backwards-analysis belongs in the PR, DSE-only
+  copy→move covers a subset, kill points restrict lifetimes of
+  non-borrowed locals) stands as the last recorded activity —
+  **non-substantive for the trips** (PR open/unmerged, no try-perf).
+  Rate limit NOT hit (58 remaining at wave start; no gaps). Wave-34
+  UA-quoting discipline held — all HTTP 200. SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips re-armed.
+  Transfer impact: NONE. (wave 44, #157943 watch)
+- **T3/T2/T4 wave-44 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-43 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler; Meta React Compiler build-time
+  pieces; Static Hermes 1020-day-old writeup; React 19 Medium performance
+  guide; ai-demand LLM Compiler re-post — none a Meta runtime optimizing
+  JIT); Pyston `pyston_main` head unchanged (2024-08-12, fe8afded); Swift
+  move-only — no new SIL optimization pass (cond_fail #88258
+  already-assessed adjacent general SIL pass; deinit-devirtualizer
+  #69955 already assessed; address-cast consumption in lifetime checks =
+  checker/verifier bug-fix; swift-institute crash dossiers = bug-fix
+  investigations; #87489 re-opened crash dossier = bug, not a pass; ryo
+  docs = prose; middas-0706 fork Ownership.md = fork mirror);
+  SE-0474 still Accepted/partial-behind-flag (raw md5 unchanged since
+  wave 8 — pin `e8f962dbd12172d2f2a44410e727d7b5`; `*`-prefixed bullet
+  header read `sed -n '1,10p'`); TruffleRuby Options.java md5 identical
+  to pin (zero keyword hits, grep count 0); GraalPy raw md5 identical to
+  pin, history head same commit (`9712c23b12` prefix recorded in wave 43;
+  full sha 9712c23b129d… "Address review comments" 2026-08-18 —
+  sha-comparison discipline holds). T2: Graal 25.x changelog byte-identical
+  to pin (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 Integrated/Release 28 unchanged; Valhalla: full
+  deliverables-table row count = 10 (header + 9 data rows) = the same 8
+  JEPs **plus the one pre-existing non-JEP draft row** ("Null-Restricted
+  Value Class Types (Preview)" → jeps/8316779, Status Draft — the
+  `/jeps/8316779` regex hit is the bug-id URL for the pre-existing draft
+  row, NOT a new JEP; single hit, matching the method note; project page
+  301s without trailing slash — fetch with `-L`); Azul no new
+  announcement since Oct 1 (BusinessWire + press rewrites — cxotoday
+  ~23h-old, businesswire 4d, financialcontent/mediatrainingforceos
+  syndications, itbrief.asia 3d — all re-publications of the same
+  release, not new; Azul's own product page frames Cloud Native Compiler
+  as centralized JIT-as-a-service with preemptive fleet code streaming —
+  still no technique, no independent measurement; 2x–5x still unverified
+  vendor marketing); OpenJ9 still v0.62.0 (API releases/latest tag_name
+  confirms; -L method); .NET 11: Learn runtime page still "last updated
+  for release candidate 1 (RC 1)" (unchanged vs waves 29–43; fresh-fetch
+  prose confirmed on-page; Runtime Async material still non-transferable
+  to Go's goroutine model), nothing bar-clearing. T4: #24314 static
+  (open, 8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs
+  still NEW with byte-identical timestamps (go-review, `tail -n +2` XSSI
+  strip); label probes: #81957 non-substantive only (timeline count
+  unchanged at 25, last event unchanged); **#81968 NEW substantive watch
+  activity — timeline 12→24 events; dmitshur (2026-10-05T22:49–22:50Z)
+  commented "CC @golang/runtime", added labels NeedsInvestigation +
+  Performance, milestone Backlog** (labels: Performance,
+  NeedsInvestigation, compiler/runtime) — issue = "runtime: bound
+  overtakes of lock2 sleepers", proposing Dice & Kogan's Reciprocating
+  Locks (doi 10.1145/3710848.3710862; two LIFO stacks; single-uintptr
+  constraint kept; barging still allowed); **not bar-clearing**
+  (proposal-level only, no prototype, no measurement) — recorded as a
+  watch item for the adaptive-concurrency-primitives area; wave 45: watch
+  for a prototype CL or benchmark; #81887's slot stays retired (resolved
+  wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check).
+  No bar-clearing material anywhere; no gaps. (wave 44, re-sweep)
+- **JEP 544 (wave 43):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a twenty-second wave — **thirty-five** consecutive
+  content-identical archives, waves 9–43; empty `cmp` body diff vs w42).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-06_w43.html`. Wave-43 equality shortcut held, so the
+  archive compare sufficed — the w42 archive was the immediate predecessor.
+  Still no ramp-down movement with the JDK 28 ramp-down (Dec 2026–Jan 2027).
+  (wave 43, JEP 544)
+- **#157943 (wave 43):** 0/3 trips fired. #163338 (rust-lang/rust) open,
+  unmerged, `updated_at` 2026-09-30T13:03:50Z — **thirty-fifth** consecutive
+  unchanged wave; issues-timeline 21 events, try-perf keyword scan zero
+  hits, last event the known cross-referenced 2026-10-01T13:27:54Z
+  (Amanieu). RFC #3943 (rust-lang/rfcs) open, comments 11 /
+  review_comments 58 — **thirty-fifth** consecutive unchanged wave;
+  `updated_at` 2026-10-02T15:30:51Z unchanged vs waves 38–42, so per the
+  wave-24 equality shortcut no tail-page re-read was needed (accounting,
+  not a trip; the `pulls/{n}/timeline` endpoint 404s — the issues
+  timeline is the working one, established wave 37/38). Sibling note
+  (wave 43): #163337's PR-object `updated_at` **drifted to
+  2026-10-05T21:50:06Z** (was 2026-10-05T21:27:04Z in wave 42) — the
+  wave-24 equality shortcut did NOT hold, so the timeline tail AND the
+  reviews list were re-read (wave-42 method note: new reviews can carry
+  empty bodies with substance in inline review comments — fetch
+  `pulls/{n}/comments`): the new event is one Amanieu COMMENTED review
+  (2026-10-05T21:50:06Z) with an EMPTY body whose substance lives in an
+  inline comment on
+  compiler/rustc_mir_dataflow/src/impls/precise_liveness.rs — Amanieu
+  argues the backwards-analysis logic belongs in this PR (a DSE-only
+  copy→move covers a subset; the backwards analysis is needed for
+  precision anyway), offers to split the implementation commit in two
+  (kill points added later — kill points only restrict lifetimes of
+  non-borrowed locals to last use; without them the intermediate
+  analysis stays correct but conservative), and notes kill points add
+  substantial complexity only if they must precede the main change —
+  **non-substantive for the trips** (PR open/unmerged, no try-perf run,
+  no relation to #163338 merge or RFC #3943 acceptance). Timeline still
+  41 events (last still the known tmiasko "reviewed" 2026-10-05T20:36:31Z
+  event); reviews 3→4, review_comments 3→4. #163336 still the only merged.
+  Rate limit NOT hit (37 remaining at wave start; no gaps). Wave-34
+  UA-quoting discipline held — all HTTP 200. SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips re-armed.
+  Transfer impact: NONE. (wave 43, #157943 watch)
+- **T3/T2/T4 wave-43 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-42 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler; Meta React Compiler build-time
+  pieces; Muse Code terminal coding agent ~61-day-old; Meta Runtime
+  Optimizer for Unity — experimental graphics optimization tool;
+  "Druid" meta-compilation of baseline JITs — Pharo/Cog academic work;
+  gwf/x2c lisp compiler notes — none a Meta runtime optimizing JIT);
+  Pyston `pyston_main` head unchanged (2024-08-12, fe8afded); Swift
+  move-only — no new SIL optimization pass (cond_fail #88258
+  already-assessed adjacent general SIL pass; FieldSensitivePrunedLiveness
+  dominance fix = checker/verifier bug-fix; RemoveSILGenLifetimes
+  extension = existing-pass improvement; [rbi] Partition note-emitter =
+  diagnostic change; copying-casts liveness = checker util fix;
+  ownership-for-trivial-values flag + LifetimeResolution consume =
+  representation infrastructure; embedded deinit specialization =
+  embedded-specific; deinit-devirtualizer PR #69955 ~1042-day-old already
+  assessed — not new); SE-0474 still Accepted/partial-behind-flag
+  (raw md5 unchanged since wave 8 — pin `e8f962dbd12172d2f2a44410e727d7b5`;
+  `*`-prefixed bullet header read `sed -n '1,10p'`); TruffleRuby
+  Options.java md5 identical to pin (zero keyword hits, grep count 0);
+  GraalPy raw md5 identical to pin, history head same sha 9712c23b. T2:
+  Graal 25.x changelog byte-identical to pin (14,501 bytes,
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla: full deliverables-table row
+  count = 10 (header + 9 data rows) = the same 8 JEPs **plus the one
+  pre-existing non-JEP draft row** ("Null-Restricted Value Class Types
+  (Preview)" → jeps/8316779, Status Draft — the `/jeps/8316779` regex
+  hit is the bug-id URL for the pre-existing draft row, NOT a new JEP;
+  single hit, matching the method note); docs markdown re-verified —
+  still carries unused `[218]`/`[303]` reference definitions
+  (non-substantive; project page 301s without trailing slash — fetch
+  with `-L`; grep count 2); Azul no new announcement since Oct 1
+  (BusinessWire + press rewrites — cxotoday ~22h-old, smbtech.au
+  1-day-old, itbrief.asia 3-day-old, financialcontent/mediatrainingforceos
+  syndications — all re-publications of the same release, not new; Azul's
+  own product page frames Cloud Native Compiler as centralized
+  JIT-as-a-service with preemptive fleet code streaming — still no
+  technique, no independent measurement; 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0 (API releases/latest tag_name
+  confirms; -L method); .NET 11: Learn runtime page still "last updated
+  for release candidate 1 (RC 1)" (unchanged vs waves 29–42; fresh-fetch
+  prose confirmed on-page; Runtime Async material still non-transferable
+  to Go's goroutine model), nothing bar-clearing. T4: #24314 static
+  (open, 8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs
+  still NEW with byte-identical timestamps (go-review, `tail -n +2` XSSI
+  strip); label probes #81957/#81968 non-substantive only (timeline
+  counts unchanged at 25/12, last events unchanged); #81887's slot stays
+  retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's
+  thesis; no re-check). No bar-clearing material anywhere; no gaps.
+  (wave 43, re-sweep)
+- **JEP 544 (wave 42):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a twenty-first wave — **thirty-four** consecutive
+  content-identical archives, waves 9–42; empty `cmp` body diff vs w41).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w42.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 42, JEP 544)
+- **#157943 trip conditions (wave 42): 0/3 fired, #163338 baseline
+  unchanged a thirty-fourth consecutive wave.** #163338 open/unmerged,
+  `updated_at` 2026-09-30T13:03:50Z (**thirty-fourth** consecutive unchanged
+  wave); the 21-event issues-timeline keyword scan
+  (try-perf/trybot/try perf/@bors try/bors-try/@rust-timer) zero hits,
+  last event the known `cross-referenced` 2026-10-01T13:27:54Z (Amanieu).
+  RFC #3943 (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  unchanged (**thirty-fourth** consecutive). `updated_at`
+  2026-10-02T15:30:51Z unchanged vs waves 38–41; per the wave-24 equality
+  shortcut (established for #163337), with the recorded last-event
+  timestamps unchanged, no tail-page re-read needed — the `updated_at`
+  touches carry no substantive event, so this is GitHub-internal
+  accounting, not a trip (method note: the `pulls/{n}/timeline` endpoint
+  404s for this repo/PR combo — the **issues** timeline is the working
+  one, established at wave 37; event-count drift with unchanged last
+  event is endpoint accounting drift, not new activity). Sibling note
+  (wave 42): #163337's PR-object `updated_at` **drifted to
+  2026-10-05T21:27:04Z** (was 2026-10-05T20:36:31Z in wave 41) — the
+  wave-24 equality shortcut did NOT hold, so the timeline tail was
+  re-read: new events = an Amanieu COMMENTED review (2026-10-05T20:47:03Z)
+  replying to tmiasko's kill-point complexity concern (defending the
+  kill-point analysis scope: projections/non-operand uses/dead branches)
+  and a tmiasko COMMENTED review (2026-10-05T21:27:04Z) acknowledging the
+  limited scope and framing his push as review-manageability — inline
+  review-comment exchange, **non-substantive for the trips** (PR
+  open/unmerged, no try-perf run, no relation to #163338 merge or RFC
+  #3943 acceptance). Timeline still 41 events, reviews now 3 (was 2).
+  #163336 still the only merged. Rate limit NOT hit (59 remaining at
+  wave end; no gaps). Wave-34 UA-quoting discipline held — all HTTP 200.
+  SURV-024's ruling stands (static-core strike; guarded-speculative E3
+  arm only); trips re-armed. Transfer impact: NONE. (wave 42, #157943
+  watch)
+- **T3/T2/T4 wave-42 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-41 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, Meta React Compiler build-time
+  pieces, Muse Code terminal coding agent 60-day-old — none a Meta
+  runtime optimizing JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); Swift move-only — no new SIL optimization pass
+  (cond_fail #88258 already-assessed adjacent general SIL pass;
+  swift-institute crash dossiers = bug-fix investigations, not passes;
+  SIL ownership docs = prose; llvm-mlir-book SIL chapter = prose pass
+  catalog, not a NEW pass); SE-0474 still Accepted/partial-behind-flag
+  (raw md5 unchanged since wave 8 — pin `e8f962dbd12172d2f2a44410e727d7b5`;
+  `*`-prefixed bullet header read `sed -n '1,10p'`); TruffleRuby
+  Options.java md5 identical to pin (zero keyword hits, grep exit 1);
+  GraalPy raw md5 identical to pin, history head same sha 9712c23b. T2:
+  Graal 25.x changelog byte-identical to pin (14,501 bytes,
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla: the same 8 JEPs **plus one
+  non-JEP draft row** ("Null-Restricted Value Class Types (Preview)"
+  → jeps/8316779, Status Draft) — the row was already present in wave-5's
+  record (only JEP-numbered rows were listed since, so verify the full row
+  count each wave; draft: owner Dan Smith, created 2023/09/22, updated
+  2026/05/28 — no technique, no measurement, not bar-clearing); docs
+  markdown re-verified — still carries unused `[218]`/`[303]` reference
+  definitions (non-substantive; project page 301s without trailing slash
+  — fetch with `-L`; grep count 2); Azul no new announcement since Oct 1
+  (BusinessWire + press rewrites — cxotoday ~21h-old, smbtech.au
+  1-day-old, itbrief.asia 3-day-old, financialcontent syndications — all
+  4-day-old re-publications, not new; Azul's own product page now frames
+  Cloud Native Compiler as centralized JIT-as-a-service with preemptive
+  fleet code streaming — still no technique, no independent measurement;
+  2x–5x still unverified vendor marketing); OpenJ9 still v0.62.0 (API
+  releases/latest tag_name confirms; -L method); .NET 11: Learn runtime
+  page still "last updated for release candidate 1 (RC 1)" (unchanged vs
+  waves 29–41; prose confirmed on-page; Runtime Async material still
+  non-transferable to Go's goroutine model), nothing bar-clearing. T4:
+  #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z); #77893's
+  five CLs still NEW with byte-identical timestamps (go-review,
+  `tail -n +2` XSSI strip); label probes #81957/#81968 non-substantive
+  only (timeline counts unchanged at 25/12, last events unchanged);
+  #81887's slot stays retired (resolved wave 34 — CL 842886's merge
+  CONFIRMED SURV-006's thesis; no re-check). No bar-clearing material
+  anywhere; no gaps. (wave 42, re-sweep)
+- **JEP 544 (wave 39):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant an eighteenth wave — **thirty-one** consecutive
+  content-identical archives, waves 9–39; empty `cmp` body diff vs w38).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w39.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 39, JEP 544)
+- **#157943 trip conditions (wave 39): 0/3 fired, byte-identical to
+  wave-38 baselines.** #163338 open/unmerged, `updated_at`
+  2026-09-30T13:03:50Z (**thirty-first** consecutive unchanged wave); the
+  21-event issues-timeline keyword scan
+  (try-perf/trybot/try perf/@bors try/bors-try/@rust-timer) zero hits,
+  last event the known `cross-referenced` 2026-10-01T13:27:54Z (Amanieu).
+  RFC #3943 (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **thirty-first** consecutive unchanged wave. Watch note: RFC #3943's PR-object
+  `updated_at` stays 2026-10-02T15:30:51Z with unchanged comment/review
+  counts, and the issues-timeline last page (page 2, 65 events) ends at the
+  known 2026-10-01T13:27:54Z event while the reviews list (45) ends
+  2026-09-30T12:43:24Z — the touch carries no substantive event
+  (GitHub-internal accounting, not a trip; `updated_at` drift without
+  timeline/reviews movement is accounting, not signal). Method note:
+  `pulls/{n}/timeline` 404s for this repo/PR combo — the issues timeline is
+  the working one (established wave 37/38). Sibling note: #163337's PR
+  `updated_at` drifted to 2026-10-05T18:09:57Z vs the recorded
+  2026-10-05T01:37:55Z, but its issues-timeline (33 events) still ends at
+  the known rust-bors[bot] "unmergeable" commented event — **no new
+  events**; the touch is accounting, not a trip (the wave-24 equality
+  shortcut did NOT hold here, so the timeline tail was re-read and
+  confirmed no new event). #163336 still the only merged.
+  Rate limit NOT hit (59 remaining at wave start, 60 by re-check — hourly
+  reset; no gaps). Wave-34 UA-quoting discipline held — all HTTP 200.
+  SURV-024's ruling stands (static-core strike; guarded-speculative E3 arm
+  only); trips re-armed. Transfer impact: NONE. (wave 39, #157943 watch)
+- **T3/T2/T4 wave-39 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-38 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, 2026 Muse Code terminal coding
+  agent, .NET 11 JIT-internals c-sharpcorner writeup, .NET 10 medium piece
+  [not Meta], TypeScript 7 native Go port [Microsoft — not Meta] —
+  none a Meta runtime optimizing JIT);
+  Pyston `pyston_main` head unchanged (2024-08-12, fe8afded); Swift
+  move-only — no new SIL optimization pass (cond_fail #88258 already-assessed
+  adjacent general SIL; swift-institute CopyPropagation crash dossier =
+  bug-fix investigation, not a pass; SIL docs = prose, not passes (incl.
+  middas-0706 and spevans forks); ryo-lang reference prose, llvm-mlir-book
+  chapter = prose, not swiftlang passes); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8 — pin
+  `e8f962dbd12172d2f2a44410e727d7b5`; `*`-prefixed bullet header read
+  `sed -n '1,10p'`); TruffleRuby Options.java md5 identical to pin
+  (zero keyword hits, grep exit 1); GraalPy raw md5 identical to pin,
+  history head same sha 9712c23b. T2: Graal 25.x changelog byte-identical
+  to pin (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 Integrated/Release 28 unchanged; Valhalla same 8
+  JEPs; docs markdown re-verified — still carries unused `[218]`/`[303]`
+  reference definitions (non-substantive; project page 301s without
+  trailing slash — fetch with `-L`; grep count 2); Azul no new announcement
+  since Oct 1 (BusinessWire + press rewrites — cxotoday rewrite now
+  ~18h-old, smbtech.au 1-day-old, itbrief.asia 3-day-old,
+  financialcontent/mediatrainingforceos syndications; 2021 Intelligence
+  Cloud and Sep 2025 10,000-JVMs pieces recirculated — not new; still no
+  technique, no independent measurement; 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0 (API releases/latest tag_name confirms;
+  -L method); .NET 11: Learn runtime page still "last updated for release
+  candidate 1 (RC 1)" (unchanged vs waves 29–38; "empty-span" prose confirmed
+  on-page, grep count 2; Runtime Async material still non-transferable to
+  Go's goroutine model), nothing bar-clearing. T4: #24314 static (open, 8
+  comments, updated 2022-07-13T16:58:42Z); #77893's five CLs still NEW
+  with byte-identical timestamps (go-review, `tail -n +2` XSSI strip);
+  label probes #81957/#81968 non-substantive only (timeline counts
+  unchanged at 25/12, last events unchanged); #81887's slot stays retired
+  (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no
+  re-check). No bar-clearing material anywhere; no gaps. (wave 39, re-sweep)
+- **JEP 544 (wave 38):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a seventeenth wave — **thirty** consecutive
+  content-identical archives, waves 9–38; empty `cmp` body diff vs w37).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w38.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 38, JEP 544)
+- **#157943 trip conditions (wave 38): 0/3 fired, byte-identical to
+  wave-37 baselines.** #163338 open/unmerged, `updated_at`
+  2026-09-30T13:03:50Z; the 21-event issues-timeline keyword scan
+  (try-perf/trybot/try perf/@bors try/bors-try/@rust-timer) zero hits,
+  last event the known `cross-referenced` 2026-10-01T13:27:54Z (Amanieu).
+  RFC #3943 (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **thirtieth** consecutive unchanged wave. Watch note: RFC #3943's PR-object
+  `updated_at` now reads 2026-10-02T15:30:51Z with unchanged comment/review
+  counts, but the issues-timeline last page ends at the known 2026-10-01T13:27:54Z
+  event and the reviews list ends 2026-09-30T12:43:24Z — the touch carries no
+  substantive event (GitHub-internal accounting, not a trip; `updated_at` drift
+  without timeline/reviews movement is accounting, not signal). Method note:
+  `pulls/{n}/timeline` 404s for this repo/PR combo — the issues timeline is
+  the working one (established wave 38). Sibling note: #163337's PR
+  `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged.
+  Rate limit NOT hit (60 remaining at wave start, no gaps). Wave-34
+  UA-quoting discipline held — all HTTP 200. SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips re-armed.
+  Transfer impact: NONE. (wave 38, #157943 watch)
+- **T3/T2/T4 wave-38 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-37 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, 2026 Muse Code terminal coding
+  agent, techrepublic Muse Spark 1.3 model-tier piece, .NET 11 JIT-internals
+  writeups [not Meta], Druid meta-compilation of baseline JIT compilers
+  (Pharo — not Meta) — none a Meta runtime optimizing JIT);
+  Pyston `pyston_main` head unchanged (2024-08-12, fe8afded); Swift
+  move-only — no new SIL optimization pass (cond_fail #88258 already-assessed
+  adjacent general SIL; swift-institute CopyPropagation crash dossier =
+  bug-fix investigation, not a pass; SIL docs = prose, not passes;
+  ryo-lang reference prose, 2019 forums proposal = stale); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8 — pin
+  `e8f962dbd12172d2f2a44410e727d7b5`; `*`-prefixed bullet header read
+  `sed -n '1,10p'`); TruffleRuby Options.java md5 identical to pin
+  (zero keyword hits, grep exit 1); GraalPy raw md5 identical to pin,
+  history head same sha 9712c23b. T2: Graal 25.x changelog byte-identical
+  to pin (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 Integrated/Release 28 unchanged; Valhalla same 8
+  JEPs; docs markdown re-verified — still carries unused `[218]`/`[303]`
+  reference definitions (non-substantive; project page 301s without
+  trailing slash — fetch with `-L`); Azul no new announcement since Oct 1
+  (BusinessWire + press rewrites — cxotoday rewrite now ~17h-old,
+  smbtech.au 1-day-old, itbrief.asia with ReadyNow lineage,
+  financialcontent/mediatrainingforceos syndications;
+  enterprisetimes.co.uk weekly news-digest recaps the same BusinessWire
+  piece — not a new announcement; still no technique, no independent
+  measurement; 2x–5x still unverified vendor marketing); OpenJ9 still
+  v0.62.0 (API releases/latest tag_name confirms; -L method); .NET 11:
+  Learn runtime page still "last updated for release candidate 1 (RC 1)"
+  (unchanged vs waves 29–37; "empty-span" prose confirmed on-page,
+  grep count 2; Runtime Async material still non-transferable to Go's
+  goroutine model), nothing bar-clearing. T4: #24314 static (open, 8
+  comments, updated 2022-07-13T16:58:42Z); #77893's five CLs still NEW
+  with byte-identical timestamps (go-review, `tail -n +2` XSSI strip);
+  label probes #81957/#81968 non-substantive only (timeline counts
+  unchanged at 25/12, last events unchanged); #81887's slot stays retired
+  (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no
+  re-check). No bar-clearing material anywhere; no gaps. (wave 38, re-sweep)
+- **JEP 544 (wave 36):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a fifteenth wave — **twenty-eight** consecutive
+  content-identical archives, waves 9–36; empty raw body diff vs w35).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w36.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 36, JEP 544)
+- **#157943 trip conditions (wave 36): 0/3 fired, byte-identical to
+  wave-16…35 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits; last listed event
+  the known `cross-referenced` 2026-10-01 Amanieu entry); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-eighth** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged.
+  Rate limit NOT hit (60 remaining at wave start, no gaps); the wave-34
+  UA-quoting incident held — all HTTP 200 with properly quoted `-H`
+  headers. SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 36, #157943 watch)
+- **T3/T2/T4 wave-36 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-35 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, 2026 Muse Code terminal coding
+  agent, CompilerGym 2021 ML-for-compilers framework, React Compiler
+  2024 UI-layer [not Meta runtime] — none a Meta runtime optimizing JIT);
+  Pyston `pyston_main` head unchanged (2024-08-12, fe8afded); Swift
+  move-only — no new SIL optimization pass (cond_fail #88258 already-assessed
+  adjacent general SIL; crash dossiers #87489/#88956 = bug-fixes;
+  address-cast consumption commit 9f408874 = move-only infrastructure/
+  correctness, already-assessed class; ownership/SIL docs = prose, not
+  passes); SE-0474 still Accepted, partial behind flag, raw
+  md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep count 0);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline holds).
+  T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs (watch note: docs raw markdown re-verified this wave —
+  still carries unused `[218]`/`[303]` reference definitions,
+  non-substantive doc content, not deliverables; project page 301s
+  without trailing slash — fetch with `-L`); Azul no new announcement
+  since Oct 1 (BusinessWire + press rewrites — cxotoday rewrite now
+  ~15h-old, itbrief.asia with ReadyNow lineage, financialcontent /
+  mediatrainingforceos syndications, azul.com FAQ documents the product GA
+  since Oct 2021; still no technique, 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0 (API releases/latest tag_name confirms —
+  method note: the API 301s on the repo-name form, follow with `-L`,
+  a bare read returns `{"message":"Moved Permanently"}`); .NET 11: Learn
+  runtime page still "last updated for release candidate 1 (RC 1)"
+  (unchanged vs waves 29–35; same h2 set — JIT-improvements section
+  confirmed present, "empty-span check" prose confirmed on-page via grep
+  count 2; Runtime Async material still non-transferable to
+  Go's goroutine model), nothing bar-clearing. T4: #24314 static (open,
+  8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs still NEW
+  with byte-identical timestamps (go-review, `tail -n +2` XSSI strip);
+  label probes #81957/#81968 non-substantive only (timeline counts
+  unchanged at 25/12, last events unchanged); #81887's slot stays retired
+  (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no
+  re-check). No bar-clearing material anywhere; no gaps. (wave 36,
+  re-sweep)
+- **JEP 544 (wave 35):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a fourteenth wave — **twenty-seven** consecutive
+  content-identical archives, waves 9–35; empty raw body diff vs w34).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w35.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 35, JEP 544)
+- **#157943 trip conditions (wave 35): 0/3 fired, byte-identical to
+  wave-16…34 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits; last listed event
+  the known `cross-referenced` 2026-10-01 Amanieu entry); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-seventh** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged.
+  Rate limit NOT hit (39 remaining at wave start, no gaps); the wave-34
+  UA-quoting incident held — all HTTP 200 with properly quoted `-H`
+  headers. SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 35, #157943 watch)
+- **T3/T2/T4 wave-35 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-34 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, 2026 Muse Code terminal coding
+  agent, .NET 11 JIT-internals writeup [not Meta], TypeScript 7.0 Go port
+  [Microsoft, not Meta] — none a Meta runtime optimizing JIT);
+  Pyston `pyston_main` head unchanged (2024-08-12, fe8afded); Swift
+  move-only — no new SIL optimization pass ("ownership for trivial
+  values" SILGen flag = move-only infrastructure, already-assessed;
+  SILBuilder/MoveOnlyChecker fixes = bug-fixes; ManualOwnership =
+  diagnostics; cond_fail #88258 and the SILCombiner move-only bail
+  already-assessed; `raw_pointer_to_ref` [immortal] already-assessed
+  adjacent general SIL); SE-0474 still Accepted, partial behind flag, raw
+  md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep count 0);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline holds).
+  T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs (watch note: docs raw markdown re-verified this wave —
+  still carries unused `[218]`/`[303]` reference definitions,
+  non-substantive doc content, not deliverables; project page 301s
+  without trailing slash — fetch with `-L`); Azul no new announcement
+  since Oct 1 (BusinessWire + press rewrites — smbtech.au rewrite now
+  1-day-old with channel-partner angle, itbrief.asia with ReadyNow
+  lineage, azul.com FAQ documents the product GA since Oct 2021; still
+  no technique, 2x–5x still unverified vendor marketing); OpenJ9 still
+  v0.62.0 (API releases/latest tag_name confirms); .NET 11: Learn runtime
+  page still "last updated for release candidate 1 (RC 1)" (unchanged vs
+  waves 29–34; same h2 set — JIT-improvements + hardware-intrinsics
+  sections confirmed present, "empty-span check" prose confirmed on-page
+  via grep count 2; Runtime Async material still non-transferable to
+  Go's goroutine model), nothing bar-clearing. T4: #24314 static (open,
+  8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs still NEW
+  with byte-identical timestamps (go-review, `tail -n +2` XSSI strip);
+  label probes #81957/#81968 non-substantive only (timeline counts
+  unchanged at 25/12, last events unchanged); #81887's slot stays retired
+  (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no
+  re-check). No bar-clearing material anywhere; no gaps. (wave 35,
+  re-sweep)
+- **T3/T2/T4 wave-33 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-32 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, 2026 Muse Code terminal coding
+  agent, React Compiler 2023-era, jemalloc 5.4.0 Meta-revival maintenance
+  release, Cinder/Static Python packaging writeup — none a Meta runtime
+  optimizing JIT); Pyston `pyston_main` head unchanged (2024-08-12,
+  fe8afded); Swift move-only — no new SIL optimization pass
+  (FieldSensitivePrunedLiveness/copying-cast crash dossiers = checker
+  correctness, not passes; RemoveSILGenLifetimes 2026-09-16 extension =
+  extension to an existing mandatory pass; cond_fail PR #88258 and
+  DeinitDevirtualizer 2023-era already-assessed; "ownership for trivial
+  values" SILGen flag = move-only infrastructure, not an optimizer pass);
+  SE-0474 still Accepted, partial behind flag, raw md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8; TruffleRuby
+  Options.java md5 801fd357c11fd16c87f1764777e67b4a — identical to pin,
+  zero speculat/guard/optim matches (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history
+  head same sha 9712c23b (sha-comparison discipline holds). T2: Graal
+  25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs (watch note: raw markdown carries unused `[218]`/`[303]`
+  reference-style link definitions never referenced in the body —
+  non-substantive doc content, not deliverables); Azul no new
+  announcement since Oct 1 (BusinessWire + press rewrites — smbtech.au
+  rewrite now 1-day-old with channel-partner angle, still no technique;
+  2x–5x still unverified vendor marketing); OpenJ9 still v0.62.0
+  (releases/latest redirects — follow with -L); .NET 11: Learn runtime
+  page still "last updated for release candidate 1 (RC 1)" (unchanged vs
+  waves 31–32; all 23 assessed JIT headings confirmed present —
+  "empty-span check" phrasing confirmed on-page; keyword scan initially
+  missed it only on hyphenation); Runtime Async material still tied
+  to .NET's async state-machine lowering, non-transferable to Go's
+  goroutine model. T4: #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; method note: they live on
+  **go-review.googlesource.com**, not chromium-review; one batch call
+  backgrounded itself — result awaited via process.poll before filing);
+  label probes #81887/#81957/#81968 show only non-substantive events
+  (subscribed mvdan 2026-10-04T19:29:35Z, commented gopherbot
+  2026-10-03T10:50:39Z, subscribed qiulaidongfeng 2026-10-03T08:44:02Z —
+  all unchanged; note: plain `/events` returns 14 vs 17 timeline
+  events — endpoint difference, timeline count is wave-standard) —
+  #81887's CL 842885/842886 (`slices: make BinarySearchFunc inlinable`,
+  842885 ABANDONED, 842886 NEW) stays a watch note adjacent to
+  SURV-004/SURV-006, not a new candidate. No bar-clearing material
+  anywhere; no gaps. (wave 33, re-sweep)
+- **JEP 544 (wave 31):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29/30 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a tenth wave — **twenty-three** consecutive
+  content-identical archives, waves 9–31; empty raw body diff vs w30).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w31.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 31, JEP 544)
+- **#157943 trip conditions (wave 31): 0/3 fired, byte-identical to
+  wave-16…30 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-third** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged.
+  Rate limit NOT hit (60 remaining at wave start).
+  SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 31, #157943 watch)
+- **T3/T2/T4 wave-31 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-30 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, 2024 React Compiler, Static
+  Hermes writeup, Druid arXiv meta-compilation paper — none a Meta
+  runtime optimizing JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); Swift move-only still docs/infra/crash
+  dossiers only — no new SIL optimization pass (anupamme/abi SIL notes =
+  docs; swift-institute `@_optimize(none)` deinit crash dossier =
+  miscompile analysis, not a pass; already-assessed #88258 re-surfaced);
+  SE-0474 still Accepted, partial behind flag, raw md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline
+  holds). T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites — itbrief/sm tech rewrites 1–4 days old, still no
+  technique; 2x–5x still unverified vendor marketing); OpenJ9 still
+  v0.62.0 (releases/latest redirects — follow with -L); .NET 11: Learn
+  runtime page still "last updated for release candidate 1 (RC 1)"
+  (unchanged vs wave 30) — full 539-line body re-read, all JIT headings
+  inside the wave-29/30 assessed set; Runtime Async material still tied
+  to .NET's async state-machine lowering, non-transferable to Go's
+  goroutine model — nothing bar-clearing. T4: #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact; method
+  note: they live on **go-review.googlesource.com**, not
+  chromium-review); label probes #81887/#81957/#81968 show only
+  non-substantive events (subscribe mvdan 2026-10-04T19:29:35Z,
+  gopherbot comment 2026-10-03T10:50:39Z, subscribe qiulaidongfeng
+  2026-10-03T08:44:02Z — all unchanged) — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006, not a
+  new candidate. No bar-clearing material anywhere; no gaps. (wave 31,
+  re-sweep)
+- **JEP 544 (wave 30):** curl of openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical** to the
+  wave-21/22/23/24/25/26/27/28/29 archive, raw md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a ninth wave — **twenty-two** consecutive
+  content-identical archives, waves 9–30; empty raw body diff).
+  Status/Release re-verified verbatim in the NEW archive (per the wave-24
+  method refinement — not just the md5): Status=Targeted, Release=28 —
+  no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w30.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027). (wave 30, JEP 544)
+- **#157943 trip conditions (wave 30): 0/3 fired, byte-identical to
+  wave-16…29 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-second** consecutive unchanged wave. Sibling note: #163337's
+  PR `updated_at` (2026-10-05T01:37:55Z) equals the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — **no new events**,
+  no tail-page re-read needed. #163336 still the only merged.
+  Rate limit NOT hit (58 remaining at wave start).
+  SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 30, #157943 watch)
+- **T3/T2/T4 wave-30 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-29 track
+  file (no 404s; the verbatim-copy rule holds). Meta search =
+  disqualified noise (2024 LLM Compiler, Muse Code terminal AI agent,
+  jemalloc 5.4.0, Meta Python 3.12/Cinder writeup, Meta Muse Spark 1.3
+  coding-model claims — none a Meta runtime optimizing JIT); Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); Swift move-only
+  still docs/infra/bug-fix dossiers only — no new SIL optimization
+  pass (SendNonSendable diagnostics, FieldSensitivePrunedLiveness
+  dominance fix, RemoveSILGenLifetimes extension, MoveOnlyAddressChecker
+  fixes, "ownership for trivial values" SILGen flag = move-only
+  infrastructure not an optimizer pass; already-assessed #88258 and
+  #69955 re-surfaced); SE-0474 still Accepted, partial behind flag,
+  raw md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline
+  holds). T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites — no published technique; 2x–5x still unverified
+  vendor marketing); OpenJ9 still v0.62.0 (releases/latest redirects —
+  follow them); .NET 11: Learn runtime page still "last updated for
+  release candidate 1 (RC 1)" (unchanged vs wave 29) — JIT section
+  re-scanned, all headings inside the already-assessed incremental
+  buckets; Runtime Async material still non-transferable — nothing
+  bar-clearing. T4: #24314 static (open, updated 2022-07-13,
+  8 comments); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; method note: they live on
+  **go-review.googlesource.com**, not chromium-review); label probes
+  #81887/#81957/#81968 show only non-substantive events (subscribe
+  mvdan 2026-10-04T19:29:35Z, gopherbot comment 2026-10-03T10:50:39Z,
+  subscribe qiulaidongfeng 2026-10-03T08:44:02Z — all unchanged) —
+  #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`, 842885 ABANDONED, 842886 NEW) stays a
+  watch note adjacent to SURV-004/SURV-006, not a new candidate. No
+  bar-clearing material anywhere; no gaps. (wave 30, re-sweep)
+- **Leyden JEP 544 — wave-22 direct re-verification re-run, still
+  Targeted.** curl https://openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **byte-identical to the wave-21 raw archive**, md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation
+  did not even move this wave — raw-page diff vs w21 is empty;
+  **fourteen** consecutive content-identical archives, waves 9–22).
+  Metadata unchanged: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page Updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-05_w22.html`. Method note
+  carried: diff page bodies before concluding a pin break. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan
+  2027) and 28 GA (~Mar 2027). (wave 22, JEP 544)
+- **#157943 trip conditions (wave 22): 0/3 fired, byte-identical to
+  wave-16/17/18/19/20/21 baselines.** #163338 open/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run
+  (#163338 timeline: 21 events, keyword scan zero hits; latest event
+  still Amanieu's 2026-10-01 cross-reference); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **fourteenth** consecutive unchanged wave. Sibling note: #163337 still
+  open (updated_at 2026-10-04T20:58:17Z — no new events since wave 19);
+  #163336 still the only merged (merged_at 2026-09-30T12:11:35Z —
+  unchanged since waves 13–21). SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips
+  re-armed. Transfer impact: NONE. (wave 22, #157943 watch)
+- **T3/T2/T4 wave-22 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-21 track
+  file (no 404s; the verbatim-copy rule holds).
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to
+  pin, file-history head same sha 9712c23b (sha-comparison discipline
+  holds; author/committer date variance on the same sha); Pyston
+  pyston_main still 2024-08-12 (fe8afded); SE-0474 still Accepted,
+  partial behind flag, raw md5 e8f962dbd12172d2f2a44410e727d7b5 —
+  unchanged since wave 8; no new Meta runtime optimizing-JIT (only
+  disqualified noise: 2024 LLM Compiler, Muse Code terminal agent,
+  CompilerGym); Swift move-only still bug-fix dossiers only
+  (MoveOnlyChecker crash #89250, canonical-SIL crashes #87489/#88956,
+  DeinitDevirtualizer pass-loop hang fix #89534, SILMem2Reg OSSA disable
+  #89997) — the DeinitDevirtualizer pass is 2023-era, not a new pass.
+  T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul still the Oct 1 BusinessWire piece + rewrites
+  (smbtech.au re-dated again, itbrief.asia, syndication set;
+  docs.azul.com CNC sizing docs are product docs, not a technique —
+  the 2x–5x still unverified vendor marketing); OpenJ9 still v0.62.0
+  (2026-09-15); .NET 11: nothing bar-clearing beyond the assessed
+  set — the performance-post JIT set is incremental, same assessed
+  classes. T4: #24314 static (open, updated 2022-07-13, 8 comments);
+  #77893's five CLs all still NEW with byte-identical timestamps
+  (SURV-041's per-site gap intact); label probes #81887/#81957/#81968
+  show only non-substantive events (subscribe mvdan
+  2026-10-04T19:29:35Z, gopherbot comment 2026-10-03T10:50:39Z,
+  subscribe qiulaidongfeng 2026-10-03T08:44:02Z — all unchanged) —
+  #81887's CL 842885/842886 (`slices: make BinarySearchFunc inlinable`,
+  842885 ABANDONED 2026-10-01, 842886 NEW) stays a watch note
+  adjacent to SURV-004/SURV-006, not a new candidate. No bar-clearing
+  material anywhere; no gaps. (wave 22, re-sweep)
+- **Leyden JEP 544 — wave-21 direct re-verification re-run, still
+  Targeted.** curl https://openjdk.org/jeps/544 returned HTTP 200
+  (33,897 bytes — **content-identical to the
+  wave-9/10/11/12/13/14/15/16/17/18/19/20 raw archives**; raw md5
+  682b4a7689dc106ffa20dd9e868398cd differs from the w9–w20 pin
+  0024bc1ea0e660e97b7cf5a6f1c9da7d by exactly one line — the
+  obfuscated anti-bot `<script src>` URL rotated between fetches; diff
+  of the page bodies shows only that line). Metadata unchanged:
+  Owner=John Rose, Type=Feature, Scope=Implementation,
+  **Status=Targeted, Release=28** (page Updated 2026/09/29 15:23). No
+  Targeted→Integrated movement, no ramp-down notes. Raw archived as
+  `jep544_2026-10-05_w21.html`. Method note: JEP pages rotate
+  bot-detection script URLs between fetches — diff page bodies before
+  concluding a pin break. Ramp-down survival watch continues to the
+  JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+  (wave 21, JEP 544)
+- **#157943 trip conditions (wave 21): 0/3 fired, byte-identical to
+  wave-16/17/18/19/20 baselines.** #163338 open/unmerged (updated_at
+  2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run (#163338
+  timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **thirteenth** consecutive unchanged wave. Sibling note: #163337 still
+  open (updated_at 2026-10-04T20:58:17Z — no new events since wave 19);
+  #163336 still the only merged (merged_at 2026-09-30T12:11:35Z —
+  unchanged since waves 13–20). SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips
+  re-armed. Transfer impact: NONE. (wave 21, #157943 watch)
+- **T3/T2/T4 wave-21 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-20 track
+  file (no 404s; the wave-16/17/18/19/20 verbatim-copy rule holds).
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to
+  pin, file-history head same sha 9712c23b (2026-08-18T18:10:52Z —
+  sha-comparison discipline; latest §25.4 unchanged); Pyston
+  pyston_main still 2024-08-12 (fe8afded); SE-0474 still Accepted,
+  partial behind flag, raw md5 e8f962dbd12172d2f2a44410e727d7b5 —
+  unchanged since wave 8; no new Meta runtime optimizing-JIT (only
+  disqualified noise: 2024 LLM Compiler, Muse Code terminal agent,
+  CompilerGym); Swift move-only still bug-fix dossiers only — the one
+  genuinely new SIL pass surfaced (`cond_fail true` optimization moved
+  out of SILCombine, cc3c7014) is a cond_fail instruction pass, not
+  move-only. T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul still the Oct 1 BusinessWire piece + rewrites (the
+  2x–5x still unverified vendor marketing); OpenJ9 still v0.62.0
+  (2026-09-15); .NET 11: nothing bar-clearing beyond the assessed
+  .NET 11 set — the performance-post JIT set (range-analysis
+  refinements #124705/#127439, conditional escape analysis, Runtime
+  Async tiering/dedicated-JIT) is incremental, same assessed classes.
+  T4: #24314 static (open, updated 2022-07-13, 8 comments); #77893's
+  five CLs all still NEW with byte-identical timestamps (SURV-041's
+  per-site gap intact); label probes #81887/#81957/#81968 show only
+  non-substantive events (subscribe mvdan 2026-10-04T19:29:35Z,
+  gopherbot comment 2026-10-03T10:50:39Z, subscribe qiulaidongfeng
+  2026-10-03T08:44:02Z — all unchanged) — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`) stays a watch note
+  adjacent to SURV-004/SURV-006, not a new candidate. No bar-clearing
+  material anywhere; no gaps. (wave 21, re-sweep)
+- **Leyden JEP 544 — wave-20 direct re-verification re-run, still
+  Targeted.** curl https://openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the
+  wave-9/10/11/12/13/14/15/16/17/18/19 raw archives**,
+  md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — **twelve** consecutive
+  identical archives). Metadata unchanged: Owner=John Rose,
+  Type=Feature, Scope=Implementation, **Status=Targeted, Release=28**
+  (page Updated 2026/09/29 15:23). No Targeted→Integrated movement,
+  no ramp-down notes. Raw archived as
+  `jep544_2026-10-05_w20.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+  (wave 20, JEP 544)
+- **#157943 trip conditions (wave 20): 0/3 fired, byte-identical to
+  wave-16/17/18/19 baselines.** #163338 open/unmerged (updated_at
+  2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run (#163338
+  timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twelfth** consecutive unchanged wave. Sibling note: #163337 still
+  open at 32 events (no new events since wave 19 — last three comments
+  unchanged: Amanieu 2026-10-02T16:47:23Z, tmiasko 2026-10-03T21:33:54Z,
+  Amanieu 2026-10-04T20:58:17Z, non-substantive); #163336 still the
+  only merged (merged_at 2026-09-30T12:11:35Z — unchanged since waves
+  13–19). SURV-024's ruling stands (static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE. (wave 20, #157943 watch)
+- **T3/T2/T4 wave-20 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-19 track
+  file (no 404s; the wave-16/17/18/19 verbatim-copy rule holds).
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to
+  pin, file-history head same sha 9712c23b (author.date
+  2026-08-18T18:10:52Z — same sha as waves 18–19, sha-comparison
+  discipline; latest §25.4 unchanged); Pyston pyston_main still
+  2024-08-12 (fe8afded); SE-0474 still Accepted, partial behind flag,
+  raw md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  no new Meta runtime optimizing-JIT (only disqualified noise: 2024
+  LLM Compiler, Muse Code terminal agent, CompilerGym); Swift
+  move-only still bug-fix dossiers only — no new SIL optimization
+  pass. T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul still the Oct 1 BusinessWire piece + rewrites (the
+  smbtech.au rewrite re-dated Oct 4, same piece; 2x–5x still
+  unverified vendor marketing); OpenJ9 still v0.62.0 (2026-09-15);
+  .NET 11: nothing bar-clearing beyond the assessed .NET 11 set — the
+  performance-post JIT set (range-analysis refinements
+  #119474/#124415/#123624/#129390/#129354/#126917/#124711,
+  conditional escape analysis #111473, Runtime Async) is incremental,
+  same assessed classes. T4: #24314 static (open, updated
+  2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact); label
+  probes #81887/#81957/#81968 show only non-substantive events
+  (subscribe mvdan 2026-10-04T19:29:35Z, gopherbot comment
+  2026-10-03T10:50:39Z, subscribe qiulaidongfeng
+  2026-10-03T08:44:02Z — all unchanged) — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`) stays a watch note
+  adjacent to SURV-004/SURV-006, not a new candidate. No bar-clearing
+  material anywhere; no gaps. (wave 20, re-sweep)
+- **Leyden JEP 544 — wave-19 direct re-verification re-run, still
+  Targeted.** curl https://openjdk.org/jeps/544 returned HTTP 200
+  (33,894 bytes — **byte-identical to the
+  wave-9/10/11/12/13/14/15/16/17/18 raw archives**,
+  md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — **eleven** consecutive
+  identical archives). Metadata unchanged: Owner=John Rose,
+  Type=Feature, Scope=Implementation, **Status=Targeted, Release=28**
+  (page Updated 2026/09/29 15:23). No Targeted→Integrated movement,
+  no ramp-down notes. Raw archived as
+  `jep544_2026-10-05_w19.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+  (wave 19, JEP 544)
+- **#157943 trip conditions (wave 19): 0/3 fired, byte-identical to
+  wave-16/17/18 baselines.** #163338 open/unmerged (updated_at
+  2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run (#163338
+  timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **eleventh** consecutive unchanged wave. Sibling note: #163337 still
+  open but gained a routine maintainer comment (Amanieu,
+  2026-10-04T20:58:17Z — predates wave 18's check, non-substantive);
+  #163336 still the only merged (merged_at 2026-09-30T12:11:35Z,
+  serialization-variance note continues). SURV-024's ruling stands
+  (static-core strike; guarded-speculative E3 arm only); trips
+  re-armed. Transfer impact: NONE. (wave 19, #157943 watch)
+- **T3/T2/T4 wave-19 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-18 track
+  file (no 404s; the wave-16/17/18 verbatim-copy rule holds).
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to
+  pin, file-history head same sha 9712c23b (pre-pin, unchanged;
+  wave-18 read `committer.date` 18:21:08Z vs this wave's
+  `author.date` 18:10:52Z — same commit, a field read difference, not
+  a new commit), latest Version 25.4 unchanged; Pyston pyston_main
+  still 2024-08-12 (fe8afded); SE-0474 still Accepted, partial behind
+  flag, raw md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since
+  wave 8; no new Meta runtime optimizing-JIT (only disqualified
+  noise: LLM Compiler, Muse Code agent, Zoomer AI infra, MTIA chips,
+  Unity Runtime Optimizer, Muse Spark 1.3 coding model); Swift
+  move-only still bug-fix dossiers only — no new SIL optimization
+  pass. T2: Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul still the Oct 1 BusinessWire piece + rewrites (no
+  new announcement; 2x–5x still unverified vendor marketing); OpenJ9
+  still v0.62.0 (2026-09-15); .NET 11: nothing bar-clearing beyond the
+  assessed .NET 11 set — new detail inside the same
+  bounds-check/range-analysis bucket (range-analysis strategies
+  #121273/#121527/#122263/#125056/#127439/#127488/#129268) and
+  Runtime Async JIT work — incremental, same assessed classes. T4:
+  #24314 static (open, updated 2022-07-13, 8 comments); #77893's five
+  CLs all still NEW with byte-identical timestamps (SURV-041's
+  per-site gap intact); label probes #81887/#81957/#81968 show only
+  non-substantive events (subscribes, gopherbot CL 844405 cross-ref,
+  qiulaidongfeng triage) — #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`) stays a watch note adjacent to
+  SURV-004/SURV-006, not a new candidate. No bar-clearing material
+  anywhere; no gaps. (wave 19, re-sweep)
+- **T3/T2/T4 wave-18 negatives are all negative.** T3: 0/6 standing
+  triggers fired — all URLs copied **verbatim** from the wave-17 track
+  file (no 404s; the wave-16/17 verbatim-copy rule holds). TruffleRuby
+  Options.java md5 801fd357c11fd16c87f1764777e67b4a — identical to pin,
+  zero speculat/guard/optim matches (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history
+  head Aug 18 2026 (pre-pin), latest Version 25.4 unchanged; Pyston
+  pyston_main still 2024-08-12 (fe8afded); SE-0474 still Accepted,
+  partial behind flag, raw md5 e8f962dbd12172d2f2a44410e727d7b5 —
+  unchanged since wave 8; no new Meta runtime optimizing-JIT (only
+  disqualified noise: LLM Compiler, Muse Code agent, Zoomer AI infra,
+  MTIA chips, Unity Runtime Optimizer); Swift move-only still
+  bug-fix dossiers only (swift-institute crash investigations, old PR
+  #69955 deinit devirtualization) — no new SIL optimization pass. T2:
+  Graal 25.x changelog byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul still the Oct 1 BusinessWire piece + rewrites (no
+  new announcement; 2x–5x still unverified vendor marketing); OpenJ9
+  still v0.62.0 (2026-09-15); .NET 11: one new detail inside the
+  already-assessed bounds-check-elimination bucket (range-check cloning
+  eligible for return statements #124705, intra-block coalescing
+  #127439) — incremental, not bar-clearing. T4: #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact); label
+  probes #81887/#81957/#81968 show only non-substantive events
+  (subscribes, gopherbot CL 844405 cross-ref) — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`) stays a
+  watch note adjacent to SURV-004/SURV-006, not a new candidate. No
+  bar-clearing material anywhere; no gaps.
+  (wave 18, re-sweep)
 
 ---
 
@@ -3151,6 +5639,1262 @@ it doesn't transfer.*
   path, so the dominant-type guard's marginal saving is not load-bearing
   (details in `track-surv070-wave6-c4hotness.md`; stays a §3 angle).
   (wave 6)
+- **Wave-7 re-sweep negatives (2026-10-04, all exact-check records in the
+  wave-7 track files):** T3 — 0/6 standing triggers fired (~1h after the
+  wave-6 baseline; GraalPy refinement honored — file-history latest
+  Aug 18 2026 AND raw-master vs pin 178ea261 byte-identical; TruffleRuby
+  Options.java 86-field set diffed vs wave-3 pin c734f265 identical).
+  T2 — Graal 25.x changelog byte-identical waves 5–7 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; no 25.6, no new compiler entries);
+  JEP 544 direct re-verification SUCCEEDED (wave-6 gap closed; HTTP 200,
+  Status=Targeted, Release=28, no Integrated movement — raw archived as
+  `jep544_2026-10-04.html`); JEP 401 unchanged (Integrated/Release 28,
+  Dan Smith, no primitive-class movement); Azul Cloud Native Compiler
+  stays a watch note (press full-text only — no whitepaper, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing); OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 perf post — incremental only (GDV/deabstraction extensions,
+  loop-cloning `!=` handling, broader IV forms; GDV already an ABLE
+  precedent; nothing bar-clearing). T4 — #24314 static (open, updated
+  2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  unchanged timestamps (SURV-041's per-site edge intact); label probes
+  #81887/#81846/#81755/#81957/#81968 zero activity since wave 6
+  (counts + updated_at byte-identical). #157943 — 0/3 trip conditions
+  fired; freshest stack motion is #163337 review churn spawning #163721
+  (not a trip); #163359's try-perf numbers attributed to
+  CGU-partitioning noise (Amanieu) — no new measured numbers. Method
+  corrections: the wave-6 line counts for Options.java (628) and GraalPy
+  CHANGELOG (935) were fetch artifacts; both files are 472/498 lines at
+  pin and master — wave-8 trusts deterministic diffs, not line counts.
+  (wave 7)
+- **Wave-8 re-sweep negatives (2026-10-04, all exact-check records in the
+  wave-8 track files):** T3 — 0/6 standing triggers fired (TruffleRuby
+  Options.java master vs pin c734f265 diff EMPTY, md5
+  801fd357c11fd16c87f1764777e67b4a both endpoints, 86 fields; GraalPy
+  file-history latest Aug 18 2026 AND raw-master vs pin 178ea261 diff
+  EMPTY, md5 52c85a03991d970d41b4746b06a72c19; Pyston pyston_main still
+  2024-08-12; SE-0474 still Accepted/partial behind flag; Swift
+  enforcement/docs only; no Meta JIT). T2 — Graal 25.x changelog
+  byte-identical waves 5–8 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6, no new
+  compiler entries); JEP 544 direct curl re-verification re-run
+  (HTTP 200, 33,894 bytes — Targeted/28, no Integrated movement; raw
+  archived as `jep544_2026-10-04_w8.html`); JEP 401 unchanged
+  (Integrated/Release 28, Dan Smith); Valhalla project page — same
+  8-JEP list, no new primitive-class JEP; Azul Cloud Native Compiler
+  stays a watch note (press rewrites only — no whitepaper, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing); OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 perf post — incremental only, a secondary source explicitly
+  notes "no single new JIT feature" in .NET 11 (nothing
+  bar-clearing). T4 — #24314 static (open, updated 2022-07-13,
+  8 comments); #77893's five CLs all still NEW with unchanged
+  timestamps (SURV-041's per-site edge intact; the Gerrit pipeline's
+  `curl | sed | python3` silently parsed empty — file staging with
+  XSSI-prefix strip succeeded); label probes
+  #81887/#81846/#81755/#81957/#81968 zero activity since wave 7
+  (counts + updated_at byte-identical). #157943 — 0/3 trip conditions
+  fired, byte-identical to wave-7 baselines (no new measured numbers).
+  Method notes: naive `public final \S+` regex overcounts
+  Options.java fields (87 vs true 86) — the md5-identical diff is
+  authoritative. (wave 8)
+- **Wave-9 re-sweep negatives (2026-10-04, all exact-check records in the
+  wave-9 track files):** T3 — 0/6 standing triggers fired (TruffleRuby
+  Options.java raw-master vs pin c734f265 diff EMPTY, md5
+  801fd357c11fd16c87f1764777e67b4a both endpoints, zero
+  speculat/guard/optim matches; GraalPy file-history head Aug 18 2026
+  (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY, md5
+  52c85a03991d970d41b4746b06a72c19 both endpoints, latest §25.4
+  unchanged; Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag; Swift move-only
+  activity still enforcement/docs/infra only, no new SIL pass; no new
+  Meta runtime optimizing-JIT). T2 — Graal 25.x changelog
+  byte-identical waves 5–9 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 544
+  direct curl re-verification re-run (HTTP 200, 33,894 bytes —
+  Targeted/28, no Integrated movement; raw archived as
+  `jep544_2026-10-04_w9.html`); JEP 401 unchanged (Integrated/Release
+  28, Dan Smith; same 8-JEP Valhalla index); Azul Cloud Native Compiler
+  stays a watch note (press rewrites only; 2x–5x warm-up claim still
+  unverified marketing); OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 JIT items incremental (GVM devirtualization
+  precedent-strengthening, not bar-clearing). T4 — #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  unchanged timestamps (SURV-041's per-site gap intact); label probes
+  #81887/#81846/#81755/#81957/#81968 byte-identical to wave 8 (zero
+  activity). #157943 — 0/3 trip conditions fired, byte-identical to
+  wave-8 baselines (#163338 open/unmerged, updated 2026-09-30T13:03:50Z;
+  no try-perf; RFC #3943 open, comments 11 / review_comments 58). No
+  bar-clearing material anywhere; no gaps. (wave 9)
+- **Wave-10 re-sweep negatives (2026-10-04, all exact-check records in the
+  wave-10 track files):** T3 — 0/6 standing triggers fired (TruffleRuby
+  Options.java raw-master vs pin c734f265 diff EMPTY, md5
+  801fd357c11fd16c87f1764777e67b4a both endpoints, zero
+  speculat/guard/optim matches; GraalPy file-history head Aug 18 2026
+  (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY, md5
+  52c85a03991d970d41b4746b06a72c19 both endpoints, latest §25.4
+  unchanged; Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag; Swift move-only
+  activity still enforcement/docs/infra only, no new SIL pass; no new
+  Meta runtime optimizing-JIT). T2 — Graal 25.x changelog
+  byte-identical waves 5–10 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 544
+  direct curl re-verification re-run (HTTP 200, 33,894 bytes —
+  BYTE-IDENTICAL to the wave-9 raw archive; Targeted/28, no Integrated
+  movement; raw archived as `jep544_2026-10-04_w10.html`); JEP 401
+  unchanged (Integrated/Release 28, Dan Smith; same 8-JEP Valhalla
+  index); Azul Cloud Native Compiler stays a watch note (press rewrites
+  only; 2x–5x warm-up claim still unverified marketing); OpenJ9 latest
+  still v0.62.0 (2026-09-15); .NET 11 JIT items incremental (GVM
+  devirtualization precedent-strengthening, not bar-clearing). T4 —
+  #24314 static (open, updated 2022-07-13, 8 comments); #77893's five
+  CLs all still NEW with unchanged timestamps (SURV-041's per-site gap
+  intact); label probes #81887/#81846/#81755/#81957/#81968
+  byte-identical to wave 9 (zero activity). #157943 — 0/3 trip
+  conditions fired, byte-identical to wave-9 baselines (method note:
+  wave-9 paraphrased #163339/#163340 titles — verbatim API titles are
+  "Storage reconstruction"/"Miri support", byte-identical updated_at
+  confirms no change). No bar-clearing material anywhere; no gaps.
+  (wave 10)
+- **Wave-11 re-sweep negatives (2026-10-04, all exact-check records in the
+  wave-11 track files):** T3 — 0/6 standing triggers fired (TruffleRuby
+  Options.java raw-master vs pin c734f265 diff EMPTY, md5
+  801fd357c11fd16c87f1764777e67b4a both endpoints, zero
+  speculat/guard/optim matches; GraalPy file-history head Aug 18 2026
+  (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY, md5
+  52c85a03991d970d41b4746b06a72c19 both endpoints, latest §25.4
+  unchanged; Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag — header is a
+  `*`-prefixed bullet list, not a markdown table; Swift move-only
+  activity still enforcement/docs/infra only, no new SIL pass; no new
+  Meta runtime optimizing-JIT). T2 — Graal 25.x changelog
+  byte-identical waves 5–11 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 544
+  direct curl re-verification re-run (HTTP 200, 33,894 bytes —
+  BYTE-IDENTICAL to the wave-10 raw archive; Targeted/28, no Integrated
+  movement; raw archived as `jep544_2026-10-04_w11.html`); JEP 401
+  unchanged (Integrated/Release 28, Dan Smith; same 8-JEP Valhalla
+  index); Azul Cloud Native Compiler stays a watch note (press rewrites
+  only; 2x–5x warm-up claim still unverified marketing; Azul frames it
+  as extending ReadyNow 2014 / ReadyNow Orchestrator — restatement of
+  the fleet-history claim, still vendor-only); OpenJ9 latest
+  still v0.62.0 (2026-09-15); .NET 11 JIT items incremental (GVM
+  devirtualization precedent-strengthening, not bar-clearing). T4 —
+  #24314 static (open, updated 2022-07-13, 8 comments); #77893's five
+  CLs all still NEW with unchanged timestamps (SURV-041's per-site gap
+  intact); label probes #81887/#81846/#81755/#81957/#81968
+  byte-identical to wave 10 (zero activity). #157943 — 0/3 trip
+  conditions fired, byte-identical to wave-10 baselines (#163338
+  open/unmerged, updated 2026-09-30T13:03:50Z; no try-perf; RFC #3943
+  open, comments 11 / review_comments 58). No bar-clearing material
+  anywhere; no gaps. (wave 11)
+- **Wave-12 re-sweep negatives (2026-10-04, all exact-check records in the
+  wave-12 track files):** T3 — 0/6 standing triggers fired (TruffleRuby
+  Options.java raw-master vs pin c734f265 diff EMPTY, md5
+  801fd357c11fd16c87f1764777e67b4a both endpoints, zero
+  speculat/guard/optim matches; GraalPy file-history head Aug 18 2026
+  (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY, md5
+  52c85a03991d970d41b4746b06a72c19 both endpoints, latest §25.4
+  unchanged; Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag — raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5, unchanged since wave 8; Swift
+  move-only activity still enforcement/docs/infra only, no new SIL
+  pass; no new Meta runtime optimizing-JIT). T2 — Graal 25.x changelog
+  byte-identical waves 5–12 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 544
+  direct curl re-verification re-run (HTTP 200, 33,894 bytes —
+  BYTE-IDENTICAL to the wave-9/10/11 raw archives, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — four consecutive identical
+  archives; Targeted/28, no Integrated movement; raw archived as
+  `jep544_2026-10-04_w12.html`); JEP 401 unchanged (Integrated/Release
+  28, Dan Smith; same 8-JEP Valhalla index); Azul Cloud Native Compiler
+  stays a watch note (press rewrites only; 2x–5x warm-up claim still
+  unverified marketing); OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 JIT items incremental (Microsoft Learn runtime page confirms
+  the already-assessed set — GVM devirtualization #123183/#130202,
+  inlining-observation #111948, empty-span BCE; precedent extensions,
+  not bar-clearing). T4 — #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with unchanged timestamps
+  (SURV-041's per-site gap intact); label probes #81887/#81846/#81755
+  /#81957/#81968 byte-identical to wave 11 (zero activity). #157943 —
+  0/3 trip conditions fired, byte-identical to wave-11 baselines
+  (#163338 open/unmerged, updated 2026-09-30T13:03:50Z; no try-perf;
+  RFC #3943 open, comments 11 / review_comments 58 — fourth consecutive
+  unchanged wave). No bar-clearing material anywhere; no gaps.
+  (wave 12)
+
+**Wave-13 re-sweep negatives (per-track wave-13 files):** T3 — 0/6
+  standing triggers fired (TruffleRuby Options.java raw-master vs pin
+  c734f265 diff EMPTY, md5 801fd357c11fd16c87f1764777e67b4a at both
+  endpoints, zero speculat/guard/optim matches; GraalPy file-history
+  head Aug 18 2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY, md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints, latest Version
+  25.4 unchanged; Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag, raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5 unchanged since wave 8; Swift
+  move-only activity still enforcement/docs/infra only — no new SIL
+  pass; Meta JIT search returns the same 7-result set as waves 9–12,
+  all disqualified). T2 — Graal 25.x compiler CHANGELOG.md
+  byte-identical waves 5–13 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 544
+  direct curl re-verification re-run (HTTP 200, 33,894 bytes —
+  BYTE-IDENTICAL to the wave-9/10/11/12 raw archives, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — five consecutive identical
+  archives; Targeted/28, no Integrated movement; raw archived as
+  `jep544_2026-10-04_w13.html`); JEP 401 unchanged (Integrated/Release
+  28, Dan Smith; same 8-JEP Valhalla index); Azul Cloud Native Compiler
+  stays a watch note (press rewrites only — the wave-11/12
+  ReadyNow-2014/Orchestrator fleet-history framing now echoes in the
+  itbrief.asia rewrite, still vendor-only; 2x–5x warm-up claim still
+  unverified marketing); OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 JIT items incremental (devblogs + daily-devops JIT internals
+  confirm the already-assessed set — GVM devirtualization,
+  inlining-observation, empty-span BCE, broader IV forms, SELECT
+  folding, SequenceEqual constant-folding, Runtime Async tiering;
+  precedent extensions, not bar-clearing). T4 — #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  unchanged timestamps (SURV-041's per-site gap intact); label probes
+  #81887/#81846/#81755/#81957/#81968 byte-identical to wave 12 (zero
+  activity). #157943 — 0/3 trip conditions fired, byte-identical to
+  wave-12 baselines (#163338 open/unmerged, updated
+  2026-09-30T13:03:50Z; no try-perf; RFC #3943 open, comments 11 /
+  review_comments 58 — fifth consecutive unchanged wave). No
+  bar-clearing material anywhere; no gaps.
+  (wave 13)
+
+**Wave-14 re-sweep negatives (per-track wave-14 files):** T3 — 0/6
+  standing triggers fired (TruffleRuby Options.java raw-master vs pin
+  c734f265 diff EMPTY, md5 801fd357c11fd16c87f1764777e67b4a at both
+  endpoints, zero speculat/guard/optim matches; GraalPy file-history
+  head Aug 18 2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY, md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints, latest Version
+  25.4 unchanged; Pyston pyston_main still 2024-08-12; SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag, raw md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8; no new
+  Meta runtime optimizing-JIT (identical search results as waves
+  9–13); Swift move-only still enforcement/docs/infra only, no new
+  SIL pass). T2 — Graal 25.x changelog byte-identical waves 5–14
+  (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 544 direct re-verification: HTTP 200, 33,894 bytes,
+  byte-identical to wave-9/10/11/12/13 archives, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — six consecutive identical
+  archives; Targeted/28, no Integrated movement; raw archived as
+  `jep544_2026-10-04_w14.html`); JEP 401 unchanged (Integrated/Release
+  28, Dan Smith; same 8-JEP Valhalla index); Azul Cloud Native Compiler
+  stays a watch note (press rewrites only — Business Wire ~3d,
+  financialcontent + mediatrainingforceos syndications, smbtech.au
+  ~18h, itbrief.asia ~2d; the wave-11/12/13 ReadyNow-2014/Orchestrator
+  fleet-history framing continues in coverage — still vendor-only; no
+  whitepaper, no technique, no independent measurement; 2x–5x warm-up
+  claim still unverified marketing); OpenJ9 latest still v0.62.0
+  (2026-09-15); .NET 11 JIT items incremental (Microsoft Learn runtime
+  page + devblogs "Performance Improvements in .NET 11" confirm the
+  already-assessed set — GVM devirtualization, inlining-observation,
+  empty-span BCE, broader IV forms, SELECT folding, SequenceEqual
+  constant-folding, Runtime Async tiering; precedent extensions, not
+  bar-clearing). T4 — #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with unchanged timestamps
+  (SURV-041's per-site gap intact); label probes #81887/#81846/#81755
+  /#81957/#81968 byte-identical to wave 13 (zero activity). #157943 —
+  0/3 trip conditions fired, byte-identical to wave-13 baselines
+  (#163338 open/unmerged, updated 2026-09-30T13:03:50Z; no try-perf;
+  RFC #3943 open, comments 11 / review_comments 58 — sixth consecutive
+  unchanged wave). No bar-clearing material anywhere; no gaps.
+  (wave 14)
+
+**Wave-15 re-sweep negatives (per-track wave-15 files):** T3 — 0/6
+  standing triggers fired (TruffleRuby Options.java raw-master vs pin
+  c734f265 diff EMPTY, md5 801fd357c11fd16c87f1764777e67b4a at both
+  endpoints, zero speculat/guard/optim matches; GraalPy file-history
+  head Aug 18 2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY, md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints, latest Version
+  25.4 unchanged — verified via `^## ` headers; Pyston pyston_main
+  still 2024-08-12; SE-0474 still Accepted, partial behind
+  CoroutineAccessors flag, raw md5 e8f962dbd12172d2f2a44410e727d7b5 —
+  unchanged since wave 8; no new Meta runtime optimizing-JIT (identical
+  search results as waves 9–14); Swift move-only still
+  enforcement/docs/infra only, no new SIL pass). T2 — Graal 25.x
+  changelog byte-identical waves 5–15 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 544
+  direct re-verification: HTTP 200, 33,894 bytes, byte-identical to
+  wave-9/10/11/12/13/14 archives, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d
+  — seven consecutive identical archives; Targeted/28, no Integrated
+  movement; raw archived as `jep544_2026-10-04_w15.html`); JEP 401
+  unchanged (Integrated/Release 28, Dan Smith; same 8-JEP Valhalla
+  index); Azul Cloud Native Compiler stays a watch note (press
+  rewrites only — Business Wire ~3d, financialcontent +
+  mediatrainingforceos syndications, smbtech.au ~19h, itbrief.asia ~2d
+  with the wave-11/12/13/14 ReadyNow-2014/Orchestrator fleet-history
+  framing continuing in coverage — still vendor-only; no whitepaper, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing); OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 JIT items incremental (Microsoft Learn Preview-6 runtime
+  page + devblogs "Performance Improvements in .NET 11" + c-sharpcorner
+  Runtime-Async deep-dive surface new sub-items — #127329
+  Vector256/512.Sum full-width reduction, #127402 vector-const-prop to
+  256/512-bit, Runtime Async tiered compilation of async methods,
+  NativeAOT shared-dispatch interface helper, JIT `Enum.Equals` typed
+  comparisons, single-`MUL` `Math.BigMul` — all precedent extensions,
+  not bar-clearing). T4 — #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with unchanged timestamps
+  (SURV-041's per-site gap intact); label probes #81887/#81846/#81755
+  /#81957/#81968 byte-identical to wave 14 (zero activity). #157943 —
+  0/3 trip conditions fired, byte-identical to wave-14 baselines
+  (#163338 open/unmerged, updated 2026-09-30T13:03:50Z; no try-perf;
+  RFC #3943 open, comments 11 / review_comments 58 — seventh
+  consecutive unchanged wave). No bar-clearing material anywhere; no
+  gaps.
+  (wave 15)
+
+**Wave-16 re-sweep negatives (per-track wave-16 files):** T3 — 0/6
+  standing triggers fired (TruffleRuby Options.java raw-master vs pin
+  c734f265 diff EMPTY, md5 801fd357c11fd16c87f1764777e67b4a at both
+  endpoints, zero speculat/guard/optim matches; GraalPy file-history
+  head Aug 18 2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY, md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints, latest Version
+  25.4 unchanged; Pyston pyston_main still 2024-08-12 (fe8afded);
+  SE-0474 still Accepted, partial behind CoroutineAccessors flag, raw
+  md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8; no new
+  Meta runtime optimizing-JIT — disqualified hobby-repo noise only;
+  Swift move-only still enforcement/docs/infra only, no new SIL pass).
+  T2 — Graal 25.x changelog byte-identical waves 5–16 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6; URL under
+  `compiler/`); JEP 544 direct re-verification: HTTP 200, 33,894 bytes,
+  byte-identical to wave-9/10/11/12/13/14/15 archives, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — eight consecutive identical
+  archives; Targeted/28, no Integrated movement; raw archived as
+  `jep544_2026-10-04_w16.html`); JEP 401 unchanged (Integrated/Release
+  28, Dan Smith; same 8-JEP Valhalla index); Azul Cloud Native Compiler
+  stays a watch note (press rewrites only — smbtech.au ~20h adds the
+  preemptive single-stream delivery detail, itbrief.asia ~2d,
+  mediatrainingforceos + financialcontent syndications; still
+  vendor-only; 2x–5x warm-up claim still unverified marketing); OpenJ9
+  latest still v0.62.0 (2026-09-15); .NET 11 JIT items incremental (the
+  .NET 11 deep-dive confirms RC1 ~Nov 10 2026 GA with the
+  already-assessed set — precedent extensions, not bar-clearing). T4 —
+  #24314 static (open, updated 2022-07-13, 8 comments); #77893's five
+  CLs all still NEW with unchanged timestamps (SURV-041's per-site gap
+  intact); label probes #81887/#81846/#81755/#81957/#81968 show only
+  bot activity (GerritBot cross-refs, subscriptions) — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`) adjacent to
+  SURV-004/SURV-006, watch note only. #157943 — 0/3 trip conditions
+  fired, byte-identical to wave-15 baselines (#163338 open/unmerged,
+  updated 2026-09-30T13:03:50Z; no try-perf; RFC #3943 open, comments 11
+  / review_comments 58 — eighth consecutive unchanged wave). No
+  bar-clearing material anywhere; no gaps.
+  (wave 16)
+
+**Wave-17 re-sweep negatives (per-track wave-17 files):** T3 — 0/6
+  standing triggers fired (TruffleRuby Options.java md5
+  801fd357c11fd16c87f1764777e67b4a — identical to pin, zero
+  speculat/guard/optim matches; GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history
+  head Aug 18 2026 (pre-pin), latest Version 25.4 unchanged; Pyston
+  pyston_main still 2024-08-12 (fe8afded); SE-0474 still Accepted,
+  partial behind CoroutineAccessors flag, raw md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8; no new
+  Meta runtime optimizing-JIT — only disqualified noise (2024 LLM
+  Compiler, Muse Code terminal agent, React Compiler); Swift
+  move-only still enforcement/bug-fix/docs only — no new SIL
+  optimization pass). T2 — Graal 25.x changelog byte-identical waves
+  5–17 (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at
+  25.5, no 25.6; URL under `compiler/`); JEP 544 direct re-verification:
+  HTTP 200, 33,894 bytes, byte-identical to wave-9/10/11/12/13/14/15/16
+  archives, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — nine consecutive
+  identical archives; Targeted/28, no Integrated movement; raw archived
+  as `jep544_2026-10-04_w17.html`); JEP 401 unchanged
+  (Integrated/Release 28, Dan Smith; same 8-JEP Valhalla index); Azul
+  Cloud Native Compiler stays a watch note (no new announcement since
+  the Oct 1 BusinessWire piece already captured in wave 16 — same
+  five-outlet press-rewrite set; still vendor-only; 2x–5x warm-up claim
+  still unverified marketing); OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 JIT-internals article restates the already-assessed
+  incremental set — precedent extensions, not bar-clearing. T4 —
+  #24314 static (open, updated 2022-07-13, 8 comments); #77893's five
+  CLs all still NEW with byte-identical timestamps (SURV-041's
+  per-site gap intact; Gerrit method note: `?O=DETAILED_ACCOUNTS`
+  400s — the bare `/changes/{id}` endpoint already carries
+  `status`/`updated`); label probes #81887/#81846/#81755/#81957/#81968
+  show only non-substantive events (human subscribes, gopherbot CL
+  cross-refs) — #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`) adjacent to SURV-004/SURV-006, watch
+  note only. #157943 — 0/3 trip conditions fired, byte-identical to
+  wave-16 baselines (#163338 open/unmerged, updated
+  2026-09-30T13:03:50Z; no try-perf/trybot run — issues timeline: 21
+  events, keyword scan zero hits; RFC #3943 (rust-lang/rfcs) open,
+  comments 11 / review_comments 58 — ninth consecutive unchanged
+  wave; method notes: timeline endpoint is the issues timeline
+  (`/repos/{owner}/{repo}/issues/{n}/timeline`); RFC #3943 lives in
+  rust-lang/rfcs). No bar-clearing material anywhere; no gaps.
+  (wave 17)
+
+**Wave-18 re-sweep negatives (per-track wave-18 files):** T3 — 0/6
+  standing triggers fired (TruffleRuby Options.java md5
+  801fd357c11fd16c87f1764777e67b4a — identical to pin, zero
+  speculat/guard/optim matches; GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history
+  head Aug 18 2026 (pre-pin), latest Version 25.4 unchanged; Pyston
+  pyston_main still 2024-08-12 (fe8afded); SE-0474 still Accepted,
+  partial behind flag, raw md5 e8f962dbd12172d2f2a44410e727d7b5 —
+  unchanged since wave 8; no new Meta runtime optimizing-JIT — only
+  disqualified noise (2024 LLM Compiler, Muse Code terminal agent,
+  Zoomer AI infra, MTIA chips, Unity Runtime Optimizer); Swift
+  move-only still bug-fix dossiers only (swift-institute crash
+  investigations, old PR #69955) — no new SIL optimization pass;
+  verbatim-URL-copy rule held, no 404s). T2 — Graal 25.x changelog
+  byte-identical (14,501 bytes, md5 6397c38a55572509df12814180ec458f;
+  tops at 25.5, no 25.6; URL under `compiler/`); JEP 544 direct
+  re-verification: HTTP 200, 33,894 bytes, byte-identical to
+  wave-9/10/11/12/13/14/15/16/17 archives, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — **ten** consecutive identical
+  archives; Targeted/28, no Integrated movement; raw archived as
+  `jep544_2026-10-04_w18.html`); JEP 401 unchanged
+  (Integrated/Release 28, Dan Smith; same 8-JEP Valhalla index); Azul
+  Cloud Native Compiler stays a watch note (no new announcement since
+  the Oct 1 BusinessWire piece — same rewrite set re-dated; still
+  vendor-only; 2x–5x claim still unverified marketing); OpenJ9 latest
+  still v0.62.0 (2026-09-15); .NET 11 adds one detail inside the
+  already-assessed bounds-check-elimination bucket (range-check cloning
+  for return statements #124705, intra-block coalescing #127439) —
+  incremental, not bar-clearing. T4 — #24314 static (open, updated
+  2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact); label
+  probes #81887/#81957/#81968 show only non-substantive events
+  (subscribes, gopherbot CL 844405 cross-ref) — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`) adjacent
+  to SURV-004/SURV-006, watch note only. #157943 — 0/3 trip conditions
+  fired, byte-identical to wave-16/17 baselines (#163338 open/unmerged,
+  updated 2026-09-30T13:03:50Z; no try-perf/trybot run — #163338's
+  timeline: 21 events, keyword scan zero hits; RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 — **tenth**
+  consecutive unchanged wave; method corrections: issue lives in
+  **rust-lang/rust** (golang/go has no #157943 — task-brief error),
+  GitHub API needs a `User-Agent` header on some paths, #163338's
+  timeline is the 21-event one). No bar-clearing material anywhere; no
+  gaps. (wave 18)
+
+- **Wave-23 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — TruffleRuby Options.java and GraalPy
+  raw-vs-pin md5s byte-identical to pins (GraalPy file-history head
+  same sha 9712c23b, sha-comparison discipline); Pyston `pyston_main`
+  head unchanged (2024-08-12, fe8afded); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8); no new
+  Meta runtime optimizing-JIT (LLM Compiler 2024, Muse Code,
+  CompilerGym — all disqualified noise); no new Swift move-only SIL
+  optimization pass (bug-fix dossiers only; PR #89784
+  `SimplifyIndexingInstructions` and the Sept-18 immortal-flag
+  simplification are general SIL passes, not move-only). T2: Graal 25.x
+  changelog byte-identical to the pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs; Azul still
+  the Oct 1 BusinessWire piece + press rewrites (vendor-only, 2x–5x
+  unverified); OpenJ9 still v0.62.0; .NET 11: nothing bar-clearing
+  beyond the assessed incremental set (daily-devops digest stays
+  inside devirtualization/escape-analysis/bounds-check-elimination/
+  Runtime-Async buckets). T4: #24314 static; #77893's five CLs all still
+  NEW (SURV-041's per-site gap intact); label probes
+  #81887/#81957/#81968 non-substantive only — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+  #157943 — 0/3 trip conditions fired, byte-identical to
+  wave-16/17/18/19/20/21/22 baselines (#163338 open/unmerged, updated
+  2026-09-30T13:03:50Z; no try-perf/trybot run — #163338's timeline:
+  21 events, keyword scan zero hits; RFC #3943 (rust-lang/rfcs) open,
+  comments 11 / review_comments 58 — **fifteenth** consecutive
+  unchanged wave); sibling #163337 has a new rust-bors[bot]
+  "unmergeable" comment (2026-10-05, upstream conflict — informational,
+  not a trip). No bar-clearing material anywhere; no gaps. (wave 23)
+- **Wave-24 re-sweep negatives (T3/T2/T4 + #157943).** JEP 544 curl
+  re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the
+  wave-21/22/23 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd;
+  anti-bot script-URL rotation dormant a third wave; sixteen
+  consecutive content-identical archives, waves 9–24), Status=Targeted
+  / Release=28 (grep-confirmed verbatim in the new archive, not
+  carried), archived as `jep544_2026-10-05_w24.html`. T3: 0/6
+  standing triggers fired — Meta search = disqualified noise only
+  (2024 LLM Compiler, Muse Code, Quest Runtime Optimizer); Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); Swift
+  move-only still bug-fix dossiers only (cond_fail instruction pass,
+  raw_pointer_to_ref simplification, address-cast verifier fix — none
+  move-only); SE-0474 raw md5 unchanged since wave 8
+  (e8f962dbd12172d2f2a44410e727d7b5); TruffleRuby Options.java md5
+  801fd357c11fd16c87f1764777e67b4a — identical to pin, zero keyword
+  hits; GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical
+  to pin, history head same sha 9712c23b (sha-comparison discipline).
+  T2: Graal 25.x changelog byte-identical to pin (14,501 bytes,
+  6397c38a55572509df12814180ec458f; 25.5 tops, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs; Azul no new
+  announcement since Oct 1 (vendor-only, 2x–5x unverified); OpenJ9
+  still v0.62.0; .NET 11 devblog JIT list (#124705 range-check
+  cloning, #127439 intra-basic-block coalescing, SELECT folding,
+  AVX-VNNI-512, saturating conversions, ARM64 Vector-by-ref SVE,
+  SequenceEqual folding) — all inside the already-assessed
+  incremental buckets, nothing bar-clearing. T4: #24314 static;
+  #77893's five CLs all still NEW (SURV-041's per-site gap intact);
+  label probes #81887/#81957/#81968 non-substantive only —
+  #81887's CL 842885/842886 (842885 ABANDONED, 842886 NEW) stays a
+  watch note adjacent to SURV-004/SURV-006. #157943 — 0/3 trip
+  conditions fired, **sixteenth** consecutive unchanged wave for
+  RFC #3943; sibling #163337 `updated_at` equals the recorded
+  unmergeable-comment timestamp → no new events (method note: PR
+  `updated_at` equality with a recorded last-event timestamp is a
+  sufficient no-new-events check for paginated timelines). No
+  bar-clearing material anywhere; no gaps. (wave 24)
+- **Wave-40 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (thirty-two
+  consecutive archives, waves 9–40; Status=Targeted/Release=28
+  re-verified verbatim in the new archive; archived as
+  `jep544_2026-10-05_w40.html`), Meta search disqualified noise only
+  (2024 LLM Compiler, 2026 Muse Code coding agent, .NET 11/10 JIT-internals
+  writeups [not Meta], Meta React Compiler [871-day-old] — none a Meta
+  runtime optimizing JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); no new Swift move-only SIL optimization pass
+  (cond_fail #88258 already-assessed; #88270 compile-time; #88404
+  isolation = not a move-only pass; verifier/checker bug-fix commits,
+  RemoveSILGenLifetimes extension = existing-pass improvement; SIL docs /
+  forks = prose); SE-0474 still Accepted/partial-behind-flag (raw md5
+  unchanged since wave 8); TruffleRuby Options.java md5 identical to pin,
+  zero keyword hits (grep exit 1); GraalPy raw md5 identical to pin,
+  history head same sha 9712c23b. T2: Graal 25.x changelog byte-identical
+  to pin (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5, no
+  25.6); JEP 401 Integrated/Release 28 unchanged; Valhalla same 8 JEPs
+  (docs markdown re-verified — still carries unused `[218]`/`[303]`
+  reference definitions, non-substantive; grep count 2); Azul no new
+  announcement since Oct 1 (BusinessWire + press rewrites; enterprisetimes
+  weekly digest recaps the same piece — not new; still no technique, 2x–5x
+  still unverified vendor marketing); OpenJ9 still v0.62.0; .NET 11: Learn
+  runtime page still "last updated for release candidate 1 (RC 1)" —
+  nothing bar-clearing (Runtime Async material still non-transferable to
+  Go's goroutine model). T4: #24314 static; #77893's five CLs all still NEW
+  with byte-identical timestamps (SURV-041's per-site edge intact;
+  go-review.googlesource.com); label probes #81957/#81968 non-substantive
+  only (timeline counts unchanged at 25/12, last events unchanged) —
+  #81887's slot stays retired (resolved wave 34 — CL 842886's merge
+  CONFIRMED SURV-006's thesis; no re-check). #157943 — 0/3 trip conditions
+  fired, **thirty-second** consecutive unchanged wave for RFC #3943; watch
+  note: RFC #3943's PR-object `updated_at` stays 2026-10-02T15:30:51Z with
+  unchanged comment/review counts, but the issues-timeline last page ends
+  at the known 2026-10-01T13:27:54Z event and reviews end 2026-09-30T12:43:24Z
+  — the touch carries no substantive event (GitHub-internal accounting,
+  not a trip); watch note: timeline event count grew to ~165 (subscribed
+  events accumulating) since wave 39's 65-event count — endpoint
+  accounting drift, not new activity (per method note (b)); sibling #163337
+  `updated_at` unchanged vs wave 39 (2026-10-05T18:09:57Z), timeline tail
+  still the known unmergeable comment → no new events (accounting, not a
+  trip); #163336 still the only merged. No bar-clearing material anywhere;
+  no gaps. (wave 40)
+- **Wave-41 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (thirty-three
+  consecutive archives, waves 9–41; Status=Targeted/Release=28
+  re-verified verbatim in the new archive; archived as
+  `jep544_2026-10-05_w41.html`), Meta search disqualified noise only
+  (2024 LLM Compiler, Muse Code coding agent 60-day-old, .NET 10 medium
+  piece [not Meta], Meta React Compiler [871-day-old] — none a Meta
+  runtime optimizing JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); no new Swift move-only SIL optimization pass
+  (cond_fail #88258 already-assessed; swift-institute crash dossiers =
+  bug-fix investigations, not passes; SIL docs = prose; "Progress on
+  Opaque SIL Values" = representation infrastructure, not a move-only opt
+  pass); SE-0474 still Accepted/partial-behind-flag (raw md5 unchanged
+  since wave 8); TruffleRuby Options.java md5 identical to pin, zero
+  keyword hits (grep exit 1); GraalPy raw md5 identical to pin, history
+  head same sha 9712c23b. T2: Graal 25.x changelog byte-identical to pin
+  (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6);
+  JEP 401 Integrated/Release 28 unchanged; Valhalla same 8 JEPs (docs
+  markdown re-verified — still carries unused `[218]`/`[303]` reference
+  definitions, non-substantive; grep count 2); Azul no new announcement
+  since Oct 1 (BusinessWire + press rewrites, all 4-day-old
+  re-publications — not new; still no technique, 2x–5x still unverified
+  vendor marketing); OpenJ9 still v0.62.0; .NET 11: Learn runtime page
+  still "last updated for release candidate 1 (RC 1)" — nothing
+  bar-clearing (Runtime Async material still non-transferable to Go's
+  goroutine model). T4: #24314 static; #77893's five CLs all still NEW
+  with byte-identical timestamps (SURV-041's per-site edge intact;
+  go-review.googlesource.com); label probes #81957/#81968 non-substantive
+  only (timeline counts unchanged at 25/12, last events unchanged) —
+  #81887's slot stays retired (resolved wave 34 — CL 842886's merge
+  CONFIRMED SURV-006's thesis; no re-check). #157943 — 0/3 trip conditions
+  fired, **thirty-third** consecutive unchanged wave for RFC #3943; watch
+  note: RFC #3943's PR-object `updated_at` stays 2026-10-02T15:30:51Z with
+  unchanged comment/review counts, but the issues-timeline last page ends
+  at the known 2026-10-01T13:27:54Z event and reviews end 2026-09-30T12:43:24Z
+  — the touch carries no substantive event (GitHub-internal accounting,
+  not a trip); sibling #163337 `updated_at` DRIFTED to 2026-10-05T20:36:31Z
+  (was 2026-10-05T18:09:57Z) — the wave-24 equality shortcut did NOT hold,
+  so the timeline tail was re-read: rustbot rebase notice (mechanical) +
+  tmiasko COMMENTED review questioning kill-point design complexity — non-
+  substantive for the trips (no merge, no try-perf). Timeline now 41 events
+  (was 33). #163336 still the only merged. No bar-clearing material
+  anywhere; no gaps. (wave 41)
+- **Wave-44 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (**thirty-six**
+  consecutive archives, waves 9–44; Status=Targeted/Release=28
+  re-verified verbatim in the new archive; archived as
+  `jep544_2026-10-06_w44.html`), Meta search disqualified noise only
+  (2024 LLM Compiler, React Compiler build-time pieces, Static Hermes
+  writeup, React 19 Medium guide — none a Meta runtime optimizing JIT);
+  Pyston `pyston_main` head unchanged (2024-08-12, fe8afded); no new Swift
+  move-only SIL optimization pass (cond_fail #88258 already-assessed;
+  deinit-devirtualizer #69955 already assessed; address-cast lifetime
+  fix, swift-institute crash dossiers, #87489 crash = checker/verifier
+  bug-fixes, not passes; ryo docs = prose; middas-0706 fork = mirror);
+  SE-0474 still Accepted/partial-behind-flag (raw md5 unchanged since
+  wave 8); TruffleRuby Options.java md5 identical to pin, zero keyword
+  hits (grep count 0); GraalPy raw md5 identical to pin, history head
+  same commit 9712c23b (sha-comparison discipline). T2: Graal 25.x
+  changelog byte-identical to pin (14,501 bytes,
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6);
+  JEP 401 Integrated/Release 28 unchanged; Valhalla: full
+  deliverables-table row count = 10 (header + 9 data) = same 8 JEPs
+  **plus the one pre-existing non-JEP draft row** ("Null-Restricted
+  Value Class Types (Preview)", jeps/8316779, Draft since 2023 — owner
+  Dan Smith, updated 2026/05/28; no technique, not bar-clearing; the
+  `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP; project
+  page 301s without trailing slash — fetch with `-L`); Azul no new
+  announcement since Oct 1 (BusinessWire + press rewrites, all
+  re-publications — not new; still no technique, 2x–5x still unverified
+  vendor marketing); OpenJ9 still v0.62.0; .NET 11: Learn runtime page
+  still "last updated for release candidate 1 (RC 1)" (unchanged vs
+  waves 29–43; fresh-fetch prose confirmed on-page; Runtime Async
+  material still non-transferable to Go's goroutine model), nothing
+  bar-clearing. T4: #24314 static (open, 8 comments, updated
+  2022-07-13T16:58:42Z); #77893's five CLs all still NEW with
+  byte-identical timestamps (go-review, `tail -n +2` XSSI strip);
+  label probes: #81957 non-substantive only (timeline count unchanged at
+  25, last event unchanged); **#81968 NEW substantive watch activity**
+  (timeline 12→24 events; dmitshur 2026-10-05T22:49–22:50Z commented
+  "CC @golang/runtime", added labels NeedsInvestigation + Performance,
+  milestone Backlog) — issue "runtime: bound overtakes of lock2 sleepers"
+  proposes Dice & Kogan's Reciprocating Locks (doi
+  10.1145/3710848.3710862; two LIFO stacks; single-uintptr constraint
+  kept; barging still allowed); **not bar-clearing** (proposal-level,
+  no prototype, no measurement) — watch item for the
+  adaptive-concurrency-primitives area; #81887's slot stays retired
+  (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no
+  re-check). #157943 — 0/3 trip conditions fired, **thirty-sixth**
+  consecutive unchanged wave for RFC #3943 (comments 11 /
+  review_comments 58 unchanged; `updated_at` 2026-10-02T15:30:51Z —
+  equality shortcut holds, no tail-page re-read needed); sibling #163337
+  `updated_at` 2026-10-05T21:50:06Z — equality shortcut HOLDS vs wave 43
+  (no drift, no re-read). Rate limit NOT hit (58 remaining at wave start;
+  no gaps); wave-34 UA-quoting discipline held — all HTTP 200. No
+  bar-clearing material anywhere; no gaps. (wave 44)
+- **Wave-42 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (thirty-four
+  consecutive archives, waves 9–42; Status=Targeted/Release=28
+  re-verified verbatim in the new archive; archived as
+  `jep544_2026-10-05_w42.html`), Meta search disqualified noise only
+  (2024 LLM Compiler, React Compiler build-time pieces, Muse Code coding
+  agent 60-day-old — none a Meta runtime optimizing JIT); Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); no new Swift
+  move-only SIL optimization pass (cond_fail #88258 already-assessed;
+  swift-institute crash dossiers = bug-fix investigations, not passes;
+  SIL docs / llvm-mlir-book = prose); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8);
+  TruffleRuby Options.java md5 identical to pin, zero keyword hits (grep
+  exit 1); GraalPy raw md5 identical to pin, history head same sha
+  9712c23b. T2: Graal 25.x changelog byte-identical to pin
+  (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6);
+  JEP 401 Integrated/Release 28 unchanged; Valhalla same 8 JEPs plus the
+  pre-existing non-JEP draft row ("Null-Restricted Value Class Types
+  (Preview)", jeps/8316779, Draft since 2023 — owner Dan Smith, updated
+  2026/05/28; no technique, not bar-clearing; method note: verify the full
+  table row count each wave, not just JEP links); docs markdown re-verified
+  — still carries unused `[218]`/`[303]` reference definitions,
+  non-substantive; grep count 2); Azul no new announcement since Oct 1
+  (BusinessWire + press rewrites, all re-publications — not new; Azul's
+  own page frames Cloud Native Compiler as centralized JIT-as-a-service
+  with fleet code streaming — still no technique, 2x–5x still unverified
+  vendor marketing); OpenJ9 still v0.62.0; .NET 11: Learn runtime page
+  still "last updated for release candidate 1 (RC 1)" — nothing
+  bar-clearing (Runtime Async material still non-transferable to Go's
+  goroutine model). T4: #24314 static; #77893's five CLs all still NEW
+  with byte-identical timestamps (SURV-041's per-site edge intact;
+  go-review.googlesource.com); label probes #81957/#81968 non-substantive
+  only (timeline counts unchanged at 25/12, last events unchanged) —
+  #81887's slot stays retired (resolved wave 34 — CL 842886's merge
+  CONFIRMED SURV-006's thesis; no re-check). #157943 — 0/3 trip conditions
+  fired, **thirty-fourth** consecutive unchanged wave for RFC #3943 (comments
+  11 / review_comments 58 unchanged; `updated_at` 2026-10-02T15:30:51Z —
+  equality shortcut holds, no tail-page re-read needed); sibling #163337
+  `updated_at` DRIFTED to 2026-10-05T21:27:04Z (was 2026-10-05T20:36:31Z) —
+  equality shortcut did NOT hold, so the timeline tail was re-read: an
+  Amanieu COMMENTED review (defending kill-point analysis scope) and a
+  tmiasko COMMENTED reply (review-manageability framing) — inline
+  design-discussion exchange, non-substantive for the trips (PR
+  open/unmerged, no try-perf; reviews now 3, timeline still 41 events).
+  #163336 still the only merged. No bar-clearing material anywhere; no
+  gaps. (wave 42)
+- **Wave-39 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (thirty-one
+  consecutive archives, waves 9–39; Status=Targeted/Release=28
+  re-verified verbatim in the new archive; archived as
+  `jep544_2026-10-05_w39.html`), Meta search disqualified noise only
+  (2024 LLM Compiler, 2026 Muse Code coding agent, .NET 11 JIT-internals
+  writeup, .NET 10 piece, TypeScript 7 native Go port [Microsoft] — none a
+  Meta runtime optimizing JIT); Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); no new Swift move-only SIL optimization pass
+  (cond_fail #88258 already-assessed; CopyPropagation crash dossier =
+  bug-fix investigation; SIL docs / forks / ryo-lang / llvm-mlir-book =
+  prose); SE-0474 still Accepted/partial-behind-flag (raw md5 unchanged
+  since wave 8); TruffleRuby Options.java md5 identical to pin, zero
+  keyword hits (grep exit 1); GraalPy raw md5 identical to pin, history
+  head same sha 9712c23b. T2: Graal 25.x changelog byte-identical to pin
+  (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6);
+  JEP 401 Integrated/Release 28 unchanged; Valhalla same 8 JEPs (docs
+  markdown re-verified — still carries unused `[218]`/`[303]` reference
+  definitions, non-substantive; grep count 2); Azul no new announcement
+  since Oct 1 (BusinessWire + press rewrites; 2021 and Sep 2025 pieces
+  recirculated — not new; still no technique, 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0; .NET 11: Learn runtime page still
+  "last updated for release candidate 1 (RC 1)" — nothing bar-clearing
+  (Runtime Async material still non-transferable to Go's goroutine model).
+  T4: #24314 static; #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site edge intact; go-review.googlesource.com);
+  label probes #81957/#81968 non-substantive only (timeline counts unchanged
+  at 25/12, last events unchanged) — #81887's slot stays retired (resolved
+  wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check).
+  #157943 — 0/3 trip conditions fired, **thirty-first** consecutive
+  unchanged wave for RFC #3943; watch note: RFC #3943's PR-object
+  `updated_at` stays 2026-10-02T15:30:51Z with unchanged comment/review
+  counts, but the issues-timeline last page ends at the known
+  2026-10-01T13:27:54Z event and reviews end 2026-09-30T12:43:24Z — the
+  touch carries no substantive event (GitHub-internal accounting, not a
+  trip); sibling #163337's `updated_at` drifted to 2026-10-05T18:09:57Z
+  but its issues-timeline (33 events) still ends at the known
+  rust-bors[bot] "unmergeable" event 2026-10-05T01:37:55Z — no new events
+  (the wave-24 equality shortcut did NOT hold, so the timeline tail was
+  re-read and confirmed no new event). No bar-clearing material anywhere;
+  no gaps. (wave 39)
+- **Wave-38 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (thirty consecutive
+  archives, waves 9–38; Status=Targeted/Release=28 re-verified verbatim in
+  the new archive), Meta search disqualified noise only (2024 LLM Compiler,
+  2026 Muse Code coding agent, techrepublic Muse Spark 1.3 model-tier piece,
+  .NET 11 JIT-internals writeups, Druid meta-compilation of baseline JITs
+  (Pharo — not Meta) — none a Meta runtime optimizing JIT); Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); no new Swift move-only
+  SIL optimization pass (cond_fail #88258 already-assessed; CopyPropagation
+  crash dossier = bug-fix investigation; SIL docs / ryo-lang prose; 2019
+  forums proposal = stale); SE-0474 still Accepted/partial-behind-flag (raw
+  md5 unchanged since wave 8); TruffleRuby Options.java md5 identical to pin,
+  zero keyword hits (grep exit 1); GraalPy raw md5 identical to pin, history
+  head same sha 9712c23b. T2: Graal 25.x changelog byte-identical to pin
+  (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6);
+  JEP 401 Integrated/Release 28 unchanged; Valhalla same 8 JEPs (docs
+  markdown re-verified — still carries unused `[218]`/`[303]` reference
+  definitions, non-substantive); Azul no new announcement since Oct 1
+  (BusinessWire + press rewrites; enterprisetimes.co.uk weekly digest recaps
+  the same piece — not new; still no technique, 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0; .NET 11: Learn runtime page still
+  "last updated for release candidate 1 (RC 1)" — nothing bar-clearing
+  (Runtime Async material still non-transferable to Go's goroutine model).
+  T4: #24314 static; #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; go-review.googlesource.com);
+  label probes #81957/#81968 non-substantive only (timeline counts unchanged
+  at 25/12, last events unchanged) — #81887's slot stays retired (resolved
+  wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check).
+  #157943 — 0/3 trip conditions fired, **thirtieth** consecutive unchanged
+  wave for RFC #3943; watch note: RFC #3943's PR-object `updated_at` now
+  2026-10-02T15:30:51Z with unchanged comment/review counts, but the
+  issues-timeline last page ends at the known 2026-10-01T13:27:54Z event
+  and reviews end 2026-09-30T12:43:24Z — the touch carries no substantive
+  event (GitHub-internal accounting, not a trip); sibling #163337
+  `updated_at` equals the recorded unmergeable-comment timestamp → no new
+  events (method note: PR `updated_at` equality with a recorded last-event
+  timestamp is a sufficient no-new-events check for paginated timelines;
+  `pulls/{n}/timeline` 404s for this repo/PR combo — the issues timeline is
+  the working one, established wave 38). No bar-clearing material anywhere;
+  no gaps. (wave 38)
+- **Wave-37 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (twenty-nine
+  consecutive archives, waves 9–37; Status=Targeted/Release=28
+  re-verified verbatim in the new archive), Meta search disqualified
+  noise only, Pyston `pyston_main` head unchanged (2024-08-12,
+  fe8afded); SE-0474 still Accepted/partial-behind-flag (raw md5
+  unchanged since wave 8); no new Meta runtime optimizing-JIT; no new
+  Swift move-only SIL optimization pass (cond_fail #88258
+  already-assessed; CopyPropagation crash dossier = bug-fix
+  investigation; SIL docs = prose). TruffleRuby Options.java md5
+  identical to pin, zero keyword hits (grep exit 1); GraalPy raw md5
+  identical to pin, history head same sha 9712c23b. T2: Graal 25.x
+  changelog byte-identical to pin (14,501 bytes,
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6);
+  JEP 401 Integrated/Release 28 unchanged; Valhalla same 8 JEPs (docs
+  markdown re-verified — still carries unused `[218]`/`[303]`
+  reference definitions, non-substantive); Azul no new announcement
+  since Oct 1 (BusinessWire + press rewrites; still no technique, 2x–5x
+  still unverified vendor marketing); OpenJ9 still v0.62.0; .NET 11:
+  Learn runtime page still "last updated for release candidate 1
+  (RC 1)" — nothing bar-clearing (Runtime Async material still
+  non-transferable to Go's goroutine model). T4: #24314 static;
+  #77893's five CLs all still NEW with byte-identical timestamps
+  (SURV-041's per-site gap intact; go-review.googlesource.com); label
+  probes #81957/#81968 non-substantive only — #81887's slot stays
+  retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's
+  thesis; no re-check). #157943 — 0/3 trip conditions fired,
+  **twenty-ninth** consecutive unchanged wave for RFC #3943; sibling
+  #163337 `updated_at` equals the recorded unmergeable-comment
+  timestamp → no new events (method note: PR `updated_at` equality
+  with a recorded last-event timestamp is a sufficient no-new-events
+  check for paginated timelines). No bar-clearing material anywhere;
+  no gaps. (wave 37)
+- **Wave-36 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (twenty-eight consecutive
+  archives, waves 9–36; Status=Targeted/Release=28 re-verified verbatim
+  in the new archive), Meta search disqualified noise only (2024 LLM
+  Compiler, 2026 Muse Code coding agent, CompilerGym 2021, React Compiler
+  2024 [not Meta runtime] — none a Meta runtime optimizing JIT), Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8); no new
+  Swift move-only SIL optimization pass (cond_fail #88258 already-assessed;
+  crash dossiers #87489/#88956 = bug-fixes; address-cast consumption commit
+  9f408874 = move-only infrastructure, already-assessed class); TruffleRuby
+  Options.java md5 identical to pin, zero keyword hits (grep count 0);
+  GraalPy raw md5 identical to pin, history head same sha 9712c23b. T2:
+  Graal 25.x changelog byte-identical to pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs (unused
+  `[218]`/`[303]` link definitions re-verified in the raw docs markdown
+  this wave — non-substantive; project page 301s without trailing slash —
+  fetch with `-L`); Azul no new announcement since Oct 1 (BusinessWire +
+  press rewrites, still no technique; 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0 (API releases/latest tag_name confirms —
+  follow the repo-name 301 with `-L`); .NET 11: Learn runtime page still
+  "last updated for release candidate 1 (RC 1)" — same h2 set
+  ("empty-span check" prose confirmed on-page); Runtime Async still
+  non-transferable. T4: #24314 static; #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact;
+  go-review.googlesource.com); label probes #81957/#81968 non-substantive
+  only (timeline counts unchanged at 25/12, last events unchanged);
+  #81887's slot stays retired (resolved wave 34 — CL 842886's merge
+  CONFIRMED SURV-006's thesis; no re-check). #157943 — 0/3 trip conditions
+  fired, byte-identical to wave-16…35 baselines (#163338 open/unmerged,
+  updated 2026-09-30T13:03:50Z; no try-perf/trybot run — #163338's timeline:
+  21 events, keyword scan zero hits; RFC #3943 (rust-lang/rfcs) open,
+  comments 11 / review_comments 58 — **twenty-eighth** consecutive unchanged
+  wave; rate limit NOT hit this wave — 60 remaining at start, no gaps).
+  No bar-clearing material anywhere; no gaps. (wave 36)
+- **Wave-35 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (twenty-seven consecutive
+  archives, waves 9–35; Status=Targeted/Release=28 re-verified verbatim
+  in the new archive), Meta search disqualified noise only (2024 LLM
+  Compiler, 2026 Muse Code coding agent, .NET 11 JIT-internals writeup
+  [not Meta], TypeScript 7.0 Go port [Microsoft, not Meta] — none a Meta
+  runtime optimizing JIT), Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); SE-0474 still Accepted/partial-behind-flag (raw
+  md5 unchanged since wave 8); no new Swift move-only SIL optimization
+  pass (trivial-values SILGen flag = infrastructure, already-assessed;
+  SILBuilder/MoveOnlyChecker fixes = bug-fixes; ManualOwnership =
+  diagnostics; cond_fail #88258 and the SILCombine move-only bail
+  already-assessed); TruffleRuby Options.java md5 identical to pin, zero
+  keyword hits (grep count 0); GraalPy raw md5 identical to pin, history
+  head same sha 9712c23b. T2: Graal 25.x changelog byte-identical to pin
+  (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5, no
+  25.6); JEP 401 Integrated/Release 28 unchanged; Valhalla same 8 JEPs
+  (unused `[218]`/`[303]` link definitions re-verified in the raw docs
+  markdown this wave — non-substantive; project page 301s without
+  trailing slash — fetch with `-L`); Azul no new announcement since
+  Oct 1 (BusinessWire + press rewrites, still no technique; 2x–5x still
+  unverified vendor marketing); OpenJ9 still v0.62.0 (API releases/latest
+  tag_name confirms); .NET 11: Learn runtime page still "last updated for
+  release candidate 1 (RC 1)" — same h2 set ("empty-span check" prose
+  confirmed on-page); Runtime Async still non-transferable. T4: #24314
+  static; #77893's five CLs all still NEW with byte-identical timestamps
+  (SURV-041's per-site gap intact; go-review.googlesource.com); label
+  probes #81957/#81968 non-substantive only (timeline counts unchanged at
+  25/12, last events unchanged); #81887's slot stays retired (resolved
+  wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check).
+  #157943 — 0/3 trip conditions fired, byte-identical to wave-16…34
+  baselines (#163338 open/unmerged, updated 2026-09-30T13:03:50Z; no
+  try-perf/trybot run — #163338's timeline: 21 events, keyword scan zero
+  hits; RFC #3943 (rust-lang/rfcs) open, comments 11 / review_comments 58
+  — **twenty-seventh** consecutive unchanged wave; rate limit NOT hit this
+  wave — 39 remaining at start, no gaps). No bar-clearing material
+  anywhere; no gaps. (wave 35)
+- **Wave-33 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (twenty-five consecutive
+  archives, waves 9–33; Status=Targeted/Release=28 re-verified verbatim
+  in the new archive), Meta search disqualified noise only (2024 LLM
+  Compiler, 2026 Muse Code coding agent, 2023-era React Compiler, jemalloc
+  5.4.0 maintenance, Cinder writeup — none a Meta runtime optimizing JIT),
+  Pyston `pyston_main` head unchanged (2024-08-12, fe8afded); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8); no new Swift
+  move-only SIL optimization pass (crash dossiers = checker correctness;
+  RemoveSILGenLifetimes extension = existing-pass extension; already-assessed
+  cond_fail/DeinitDevirtualizer; SILGen trivial-values flag = infrastructure,
+  not a pass); TruffleRuby Options.java md5 identical to pin, zero keyword
+  hits (grep exit 1); GraalPy raw md5 identical to pin, history head same
+  sha 9712c23b. T2: Graal 25.x changelog byte-identical to pin (14,501
+  bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6);
+  JEP 401 Integrated/Release 28 unchanged; Valhalla same 8 JEPs (unused
+  [218]/[303] link-definition watch note, non-substantive); Azul no new
+  announcement since Oct 1 (BusinessWire + press rewrites, still no
+  technique; 2x–5x still unverified vendor marketing); OpenJ9 still
+  v0.62.0; .NET 11: Learn runtime page still "last updated for release
+  candidate 1 (RC 1)" — all 23 assessed JIT headings present ("empty-span
+  check" prose confirmed); Runtime Async still non-transferable. T4: #24314
+  static; #77893's five CLs all still NEW with byte-identical timestamps
+  (SURV-041's per-site gap intact; go-review.googlesource.com); label
+  probes #81887/#81957/#81968 non-substantive only — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`, 842885
+  ABANDONED, 842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+  #157943 — 0/3 trip conditions fired, byte-identical to wave-16…32
+  baselines (#163338 open/unmerged, updated 2026-09-30T13:03:50Z; no
+  try-perf/trybot run — #163338's timeline: 21 events, keyword scan zero
+  hits; RFC #3943 (rust-lang/rfcs) open, comments 11 / review_comments 58
+  — **twenty-fifth** consecutive unchanged wave; rate limit NOT hit this
+  wave — 58 remaining at start, no gaps). No bar-clearing material
+  anywhere; no gaps. (wave 33)
+- **Wave-32 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (twenty-four consecutive
+  archives, waves 9–32; Status=Targeted/Release=28 re-verified verbatim
+  in the new archive), Meta search disqualified noise only (2024 LLM
+  Compiler, 2026 Muse Code coding agent, jemalloc 5.4.0 maintenance,
+  Cinder writeup — none a Meta runtime optimizing JIT), Pyston `pyston_main`
+  head unchanged (2024-08-12, fe8afded); SE-0474 still Accepted/
+  partial-behind-flag (raw md5 unchanged since wave 8); no new Swift
+  move-only SIL optimization pass (2026-09-18 `raw_pointer_to_ref`
+  immortal-flag commit = SILCombiner instruction simplification,
+  adjacent general SIL optimization — excluded per the move-only
+  discipline); TruffleRuby Options.java md5 identical to pin, zero
+  keyword hits (grep exit 1); GraalPy raw md5 identical to pin,
+  history head same sha 9712c23b. T2: Graal 25.x changelog
+  byte-identical to pin (14,501 bytes, md5 6397c38a55572509df12814180ec458f;
+  tops at 25.5, no 25.6); JEP 401 Integrated/Release 28 unchanged;
+  Valhalla same 8 JEPs (unused [218]/[303] link-definition watch note,
+  non-substantive); Azul no new announcement since Oct 1 (BusinessWire
+  + press rewrites, still no technique; 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0; .NET 11: Learn runtime page still
+  "last updated for release candidate 1 (RC 1)" — full body re-read,
+  all JIT headings inside the wave-29/30/31 assessed set; Runtime Async
+  still non-transferable. T4: #24314 static; #77893's five CLs all
+  still NEW with byte-identical timestamps (SURV-041's per-site gap
+  intact; go-review.googlesource.com); label probes
+  #81887/#81957/#81968 non-substantive only — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006. #157943
+  — 0/3 trip conditions fired, byte-identical to wave-16…31 baselines
+  (#163338 open/unmerged, updated 2026-09-30T13:03:50Z; no try-perf/trybot
+  run — #163338's timeline: 21 events, keyword scan zero hits; RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-fourth** consecutive unchanged wave; rate limit NOT hit this
+  wave — 60 remaining at start, 59 at end of checks, no gaps). No
+  bar-clearing material anywhere; no gaps. (wave 32)
+- **Wave-31 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (twenty-three consecutive
+  archives, waves 9–31; Status=Targeted/Release=28 re-verified verbatim
+  in the new archive), Meta search disqualified noise only (2024 LLM
+  Compiler, 2024 React Compiler, Static Hermes writeup, Druid arXiv
+  paper — none a Meta runtime optimizing JIT), Pyston `pyston_main`
+  head unchanged (2024-08-12, fe8afded); SE-0474 still Accepted/
+  partial-behind-flag (raw md5 unchanged since wave 8); no new Swift
+  move-only SIL optimization pass (ABI SIL docs, crash dossiers, #88258
+  re-surfaced); TruffleRuby Options.java md5 identical to pin, zero
+  keyword hits (grep exit 1); GraalPy raw md5 identical to pin,
+  history head same sha 9712c23b. T2: Graal 25.x changelog
+  byte-identical to pin (14,501 bytes, md5 6397c38a55572509df12814180ec458f;
+  tops at 25.5, no 25.6); JEP 401 Integrated/Release 28 unchanged;
+  Valhalla same 8 JEPs; Azul no new announcement since Oct 1 (BusinessWire
+  + press rewrites, still no technique; 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0; .NET 11: Learn runtime page still
+  "last updated for release candidate 1 (RC 1)" — full body re-read,
+  all JIT headings inside the wave-29/30 assessed set; Runtime Async
+  still non-transferable. T4: #24314 static; #77893's five CLs all
+  still NEW with byte-identical timestamps (SURV-041's per-site gap
+  intact; go-review.googlesource.com); label probes
+  #81887/#81957/#81968 non-substantive only — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006. #157943
+  — 0/3 trip conditions fired, byte-identical to wave-16…30 baselines
+  (#163338 open/unmerged, updated 2026-09-30T13:03:50Z; no try-perf/trybot
+  run — #163338's timeline: 21 events, keyword scan zero hits; RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twenty-third** consecutive unchanged wave; rate limit NOT hit this
+  wave — 60 remaining at start, no gaps). No bar-clearing material
+  anywhere; no gaps. (wave 31)
+- **Wave-30 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (twenty-two consecutive
+  archives, waves 9–30; Status=Targeted/Release=28 re-verified verbatim
+  in the new archive), Meta search disqualified noise only (2024 LLM
+  Compiler, Muse Code terminal AI agent, jemalloc 5.4.0, Meta Python
+  3.12/Cinder writeup, Muse Spark 1.3 claims — none a Meta runtime
+  optimizing JIT), Pyston `pyston_main` head unchanged (2024-08-12,
+  fe8afded); SE-0474 still Accepted/partial-behind-flag (raw md5
+  unchanged since wave 8); no new Swift move-only SIL optimization pass
+  (SendNonSendable diagnostics, FieldSensitivePrunedLiveness fix,
+  RemoveSILGenLifetimes extension, MoveOnlyAddressChecker fixes,
+  "ownership for trivial values" SILGen flag = move-only infra not a
+  pass; already-assessed #88258/#69955 re-surfaced). TruffleRuby
+  Options.java md5 identical to pin, zero keyword hits (grep exit 1);
+  GraalPy raw md5 identical to pin, history head same sha 9712c23b. T2:
+  Graal 25.x changelog byte-identical to pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs; Azul no new
+  announcement since Oct 1 (BusinessWire + press rewrites, still no
+  technique; 2x–5x still unverified vendor marketing); OpenJ9 still
+  v0.62.0; .NET 11: Learn runtime page still "last updated for release
+  candidate 1 (RC 1)" — JIT section re-scanned, all headings inside the
+  already-assessed incremental buckets; Runtime Async still
+  non-transferable. T4: #24314 static; #77893's five CLs all still NEW
+  with byte-identical timestamps (SURV-041's per-site gap intact;
+  go-review.googlesource.com); label probes #81887/#81957/#81968
+  non-substantive only — #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`, 842885 ABANDONED, 842886 NEW) stays a
+  watch note adjacent to SURV-004/SURV-006. #157943 — 0/3 trip
+  conditions fired, byte-identical to wave-16/17/18/19/20/21/22/23/24/
+  25/26/27/28/29 baselines (#163338 open/unmerged, updated
+  2026-09-30T13:03:50Z; no try-perf/trybot run — #163338's timeline: 21
+  events, keyword scan zero hits; RFC #3943 (rust-lang/rfcs) open,
+  comments 11 / review_comments 58 — **twenty-second** consecutive
+  unchanged wave; rate limit NOT hit this wave — 58 remaining at start,
+  no gaps). No bar-clearing material anywhere; no gaps. (wave 30)
+- **Wave-29 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (twenty-one consecutive
+  archives, waves 9–29; Status=Targeted/Release=28 re-verified verbatim
+  in the new archive), Meta search disqualified noise only (2024 LLM
+  Compiler, React Compiler, Static Hermes, Druid arXiv paper, .NET 11
+  JIT-internals — none a Meta runtime optimizing JIT), Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8); no new
+  Swift move-only SIL optimization pass (ownership-model docs,
+  SILCombine move-only bail 2025-07-29, swift-institute crash dossier —
+  none a new pass). TruffleRuby Options.java md5 identical to pin, zero
+  keyword hits (grep exit 1); GraalPy raw md5 identical to pin, history
+  head same sha 9712c23b. T2: Graal 25.x changelog byte-identical to
+  pin (14,501 bytes, 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6); JEP 401 Integrated/Release 28 unchanged; Valhalla same 8
+  JEPs; Azul no new announcement since Oct 1 (BusinessWire + press
+  rewrites — channel-partner angle added, still no technique; 2x–5x
+  still unverified vendor marketing); OpenJ9 still v0.62.0; .NET 11:
+  Learn runtime page now "last updated for release candidate 1 (RC 1)"
+  (wave 28 saw Preview-7) — full JIT section re-read; new Runtime Async
+  material is .NET-async-specific, nothing bar-clearing. T4: #24314
+  static; #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact;
+  go-review.googlesource.com); label probes #81887/#81957/#81968
+  non-substantive only — #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`, 842885 ABANDONED, 842886 NEW) stays a
+  watch note adjacent to SURV-004/SURV-006. #157943 — 0/3 trip
+  conditions fired, byte-identical to wave-16/17/18/19/20/21/22/23/24/
+  25/26/27/28 baselines (#163338 open/unmerged, updated
+  2026-09-30T13:03:50Z; no try-perf/trybot run — #163338's timeline: 21
+  events, keyword scan zero hits; RFC #3943 (rust-lang/rfcs) open,
+  comments 11 / review_comments 58 — **twenty-first** consecutive
+  unchanged wave; rate limit NOT hit this wave — 57 remaining at start,
+  no gaps). No bar-clearing material anywhere; no gaps. (wave 29)
+- **Wave-28 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (twenty consecutive
+  archives, waves 9–28; Status=Targeted/Release=28 re-verified verbatim
+  in the new archive), Meta search disqualified noise only (2024 LLM
+  Compiler, Muse Code terminal agent, MTIA inference-chip roadmap,
+  Zoomer GPU-workload platform, hyperagents hype — none a runtime
+  optimizing JIT), Pyston `pyston_main` head unchanged (2024-08-12,
+  fe8afded); SE-0474 still Accepted/partial-behind-flag (raw md5
+  unchanged since wave 8); no new Swift move-only SIL optimization pass
+  (ownership-model docs, already-assessed cond_fail #88258 and
+  DeinitDevirtualizer #69955, compiler-crash dossier — none new).
+  TruffleRuby Options.java md5 identical to pin, zero keyword hits
+  (grep exit 1); GraalPy raw md5 identical to pin, history head same
+  sha 9712c23b. T2: Graal 25.x changelog byte-identical to pin (14,501
+  bytes, 6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6);
+  JEP 401 Integrated/Release 28 unchanged; Valhalla same 8 JEPs; Azul
+  no new announcement since Oct 1 (BusinessWire + press rewrites —
+  smbtech.au 1-day-ago rewrite adds no technique; 2x–5x still
+  unverified vendor marketing); OpenJ9 still v0.62.0; .NET 11: Learn
+  runtime page now "last updated for Preview 7" (wave 27 saw
+  Preview-6) — full JIT list re-read; Preview-7 additions
+  (switch-expression folding, checked-context removal,
+  `Activator.CreateInstance<T>()` exact-type devirtualization, SIMD
+  cost-model modernization) all inside the already-assessed incremental
+  buckets, nothing bar-clearing. T4: #24314 static; #77893's five CLs
+  all still NEW with byte-identical timestamps (SURV-041's per-site
+  gap intact; go-review.googlesource.com); label probes
+  #81887/#81957/#81968 non-substantive only — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED, 842886
+  NEW) stays a watch note adjacent to SURV-004/SURV-006. #157943 —
+  0/3 trip conditions fired, byte-identical to
+  wave-16/17/18/19/20/21/22/23/24/25/26/27 baselines (#163338
+  open/unmerged, updated 2026-09-30T13:03:50Z; no try-perf/trybot run —
+  #163338's timeline: 21 events, keyword scan zero hits; RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 —
+  **twentieth** consecutive unchanged wave; rate limit NOT hit this
+  wave — 57 remaining at start, no gaps). No bar-clearing material
+  anywhere; no gaps. (wave 28)
+- **Wave-27 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (nineteen consecutive
+  archives, waves 9–27; Status=Targeted/Release=28 re-verified verbatim
+  in the new archive), Meta search disqualified noise only, Pyston
+  `pyston_main` head unchanged (2024-08-12, fe8afded); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8); no new
+  Meta runtime optimizing-JIT (LLM Compiler 2024, Muse Code,
+  jemalloc 5.4.0 — all disqualified noise); no new Swift move-only SIL
+  optimization pass (MoveOnlyChecker/CopyPropagation crash dossier =
+  checker correctness; compiler-crash dossier = miscompile fixes, not
+  passes; cond_fail pass already assessed). TruffleRuby Options.java
+  md5 identical to pin, zero keyword hits (grep exit 1); GraalPy raw md5
+  identical to pin, history head same sha 9712c23b. T2: Graal 25.x
+  changelog byte-identical to pin (14,501 bytes,
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs; Azul no new
+  announcement since Oct 1 (BusinessWire + press rewrites — vendor-only,
+  2x–5x unverified); OpenJ9 still v0.62.0; .NET 11: nothing new beyond
+  the assessed set (Preview 6, devblog "Performance Improvements in
+  .NET 11", daily-devops JIT-internals — all inside the assessed
+  incremental buckets). T4: #24314 static; #77893's five CLs all still
+  NEW with byte-identical timestamps (SURV-041's per-site gap intact;
+  go-review.googlesource.com); label probes #81887/#81957/#81968
+  non-substantive only — #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`, 842885 ABANDONED, 842886 NEW) stays a
+  watch note adjacent to SURV-004/SURV-006. #157943 — 0/3 trip
+  conditions fired, byte-identical to wave-16/17/18/19/20/21/22/23/24/25/26
+  baselines (#163338 open/unmerged, updated 2026-09-30T13:03:50Z; no
+  try-perf/trybot run — #163338's timeline: 21 events, keyword scan
+  zero hits; RFC #3943 (rust-lang/rfcs) open, comments 11 /
+  review_comments 58 — **nineteenth** consecutive unchanged wave; rate
+  limit NOT hit this wave, no gaps). No bar-clearing material anywhere;
+  no gaps. (wave 27)
+- **Wave-26 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (18 consecutive
+  archives; metadata re-verified in the new archive, not just the md5);
+  Pyston `pyston_main` head unchanged; Swift move-only bug-fix/crash
+  dossiers only (no new SIL optimization pass); SE-0474/TruffleRuby/GraalPy
+  raw-vs-pin md5s byte-identical (GraalPy head sha 9712c23b,
+  sha-comparison discipline). T2: Graal 25.x changelog byte-identical
+  (md5 6397c38a55572509df12814180ec458f); JEP 401 Integrated/28;
+  Valhalla same 8 JEPs; Azul Oct 1 only (press rewrites, no published
+  technique, 2x–5x unverified); OpenJ9 0.62.0; .NET 11 deeper writeups
+  only — new sub-items (#121273, #121527, #122263, #125056, #127488,
+  #129268, runtime-async tiering) all inside the assessed incremental
+  buckets. T4: #24314 static; #77893's five CLs still NEW with
+  byte-identical timestamps (SURV-041 gap intact; go-review, not
+  chromium-review); label probes #81887/#81957/#81968 non-substantive
+  only; #81887's CL 842885/842886 watch note adjacent to SURV-004/SURV-006
+  carried. #157943 — 0/3 trip conditions fired, **eighteenth**
+  consecutive unchanged wave for RFC #3943; sibling #163337 `updated_at`
+  equals the recorded unmergeable-comment timestamp → no new events.
+  GitHub API rate limit hit mid-wave (60/hr, reset 05:55:56 UTC) — affected
+  checks re-run post-reset, no gaps. No bar-clearing material anywhere;
+  no gaps. (wave 26)
+- **Wave-25 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — JEP 544 byte-identical (17 consecutive
+  archives; metadata re-verified in the new archive, not just the md5);
+  Pyston `pyston_main` head unchanged; Swift move-only checker bug-fix
+  dossiers only; SE-0474/TruffleRuby/GraalPy raw-vs-pin md5s
+  byte-identical (GraalPy head sha 9712c23b, sha-comparison discipline).
+  T2: Graal 25.x changelog byte-identical (md5 6397c38a55572509df12814180ec458f);
+  JEP 401 Integrated/28; Valhalla same 8 JEPs; Azul Oct 1 only; OpenJ9
+  0.62.0; .NET 11 devblog + Preview-1 JIT lists all inside the
+  assessed incremental buckets. T4: #24314 static; #77893's five CLs
+  still NEW with byte-identical timestamps (SURV-041 gap intact; they
+  live on go-review, not chromium-review); label probes #81887/#81957/#81968
+  non-substantive only; #81887's CL 842885/842886 watch note adjacent
+  to SURV-004/SURV-006 carried. #157943 — 0/3 trip conditions fired,
+  **seventeenth** consecutive unchanged wave for RFC #3943; sibling
+  #163337 `updated_at` equals the recorded unmergeable-comment
+  timestamp → no new events. No bar-clearing material anywhere; no
+  gaps. (wave 25)
+- **Wave-22 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — TruffleRuby Options.java and GraalPy
+  raw-vs-pin md5s byte-identical to pins (GraalPy file-history head
+  same sha 9712c23b, sha-comparison discipline); Pyston `pyston_main`
+  head unchanged (2024-08-12, fe8afded); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8); no new
+  Meta runtime optimizing-JIT (LLM Compiler 2024, Muse Code,
+  CompilerGym — all disqualified noise); no new Swift move-only SIL
+  optimization pass (bug-fix dossiers only — #89250, #87489/#88956,
+  #89534, #89997; DeinitDevirtualizer is 2023-era). T2: Graal 25.x
+  changelog byte-identical to the pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs; Azul still
+  the Oct 1 BusinessWire piece + press rewrites (vendor-only, 2x–5x
+  unverified; docs.azul.com CNC sizing docs are product docs); OpenJ9
+  still v0.62.0; .NET 11: nothing bar-clearing beyond the assessed
+  incremental set. T4: #24314 static; #77893's five CLs all still NEW
+  (SURV-041's per-site gap intact); label probes
+  #81887/#81957/#81968 non-substantive only — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+  #157943 — 0/3 trip conditions fired, byte-identical to
+  wave-16/17/18/19/20/21 baselines (#163338 open/unmerged, updated
+  2026-09-30T13:03:50Z; no try-perf/trybot run — #163338's timeline:
+  21 events, keyword scan zero hits; RFC #3943 (rust-lang/rfcs) open,
+  comments 11 / review_comments 58 — **fourteenth** consecutive
+  unchanged wave). No bar-clearing material anywhere; no gaps. (wave 22)
+- **Wave-21 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6
+  standing triggers fired — TruffleRuby Options.java and GraalPy
+  raw-vs-pin md5s byte-identical to pins; Pyston `pyston_main` head
+  unchanged (2024-08-12, fe8afded); SE-0474 still
+  Accepted/partial-behind-flag (raw md5 unchanged since wave 8); no new
+  Meta runtime optimizing-JIT (LLM Compiler 2024, Muse Code,
+  CompilerGym — all disqualified noise); no new Swift move-only SIL
+  optimization pass (bug-fix dossiers only; the one new pass surfaced
+  is a `cond_fail` instruction pass, not move-only). T2: Graal 25.x
+  changelog byte-identical to the pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs; Azul still
+  the Oct 1 BusinessWire piece + press rewrites (vendor-only, 2x–5x
+  unverified); OpenJ9 still v0.62.0; .NET 11: nothing bar-clearing
+  beyond the assessed set (performance-post JIT set + Runtime Async
+  tiering — incremental, same assessed classes). T4: #24314 static;
+  #77893's five CLs all still NEW (SURV-041's per-site gap intact);
+  label probes #81887/#81957/#81968 non-substantive only — #81887's
+  CL 842885/842886 (`slices: make BinarySearchFunc inlinable`) stays
+  a watch note adjacent to SURV-004/SURV-006. #157943 — 0/3 trip
+  conditions fired, byte-identical to wave-16/17/18/19/20 baselines
+  (#163338 open/unmerged, updated 2026-09-30T13:03:50Z; no
+  try-perf/trybot run — #163338's timeline: 21 events, keyword scan
+  zero hits; RFC #3943 (rust-lang/rfcs) open, comments 11 /
+  review_comments 58 — **thirteenth** consecutive unchanged wave). No
+  bar-clearing material anywhere; no gaps. (wave 21)
+- **Wave-20 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java and GraalPy raw-vs-pin
+  md5s byte-identical to pins; Pyston `pyston_main` head unchanged
+  (2024-08-12, fe8afded); SE-0474 still Accepted/partial-behind-flag
+  (raw md5 unchanged since wave 8); no new Meta runtime
+  optimizing-JIT (LLM Compiler 2024, Muse Code, CompilerGym — all
+  disqualified noise); no new Swift move-only SIL optimization pass
+  (bug-fix dossiers only). T2: Graal 25.x changelog byte-identical to
+  the pin (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at
+  25.5, no 25.6); JEP 401 Integrated/Release 28 unchanged; Valhalla
+  same 8 JEPs; Azul still the Oct 1 BusinessWire piece + press rewrites
+  (vendor-only, 2x–5x unverified); OpenJ9 still v0.62.0; .NET 11:
+  nothing bar-clearing beyond the assessed set (performance-post JIT
+  set — range-analysis refinements, conditional escape analysis,
+  Runtime Async — incremental, same assessed classes). T4: #24314
+  static; #77893's five CLs all still NEW (SURV-041's per-site gap
+  intact); label probes #81887/#81957/#81968 non-substantive only —
+  #81887's CL 842885/842886 (`slices: make BinarySearchFunc
+  inlinable`) stays a watch note adjacent to SURV-004/SURV-006.
+  #157943 — 0/3 trip conditions fired, byte-identical to
+  wave-16/17/18/19 baselines (#163338 open/unmerged, updated
+  2026-09-30T13:03:50Z; no try-perf/trybot run — #163338's timeline:
+  21 events, keyword scan zero hits; RFC #3943 (rust-lang/rfcs) open,
+  comments 11 / review_comments 58 — **twelfth** consecutive unchanged
+  wave). No bar-clearing material anywhere; no gaps. (wave 20)
+
+- **Wave-19 re-sweep negatives (T3/T2/T4 + #157943).** T3: 0/6 standing
+  triggers fired — TruffleRuby Options.java and GraalPy raw-vs-pin
+  md5s byte-identical to pins; Pyston `pyston_main` head unchanged
+  (2024-08-12); SE-0474 still Accepted/partial-behind-flag (raw md5
+  unchanged since wave 8); no new Meta runtime optimizing-JIT; no new
+  Swift move-only SIL optimization pass. T2: Graal 25.x changelog
+  byte-identical to the pin (no 25.6); JEP 401 Integrated/Release 28
+  unchanged; Valhalla same 8 JEPs; Azul still the Oct 1 BusinessWire
+  piece + press rewrites (vendor-only, 2x–5x unverified); OpenJ9
+  still v0.62.0; .NET 11: nothing bar-clearing beyond the assessed
+  set (range-analysis strategies and Runtime Async JIT are incremental,
+  same assessed classes). T4: #24314 static; #77893's five CLs all
+  still NEW (SURV-041's per-site gap intact); label probes
+  #81887/#81957/#81968 non-substantive only — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`) stays a watch note
+  adjacent to SURV-004/SURV-006. #157943 — 0/3 trip conditions fired,
+  byte-identical to wave-16/17/18 baselines (#163338 open/unmerged,
+  updated 2026-09-30T13:03:50Z; no try-perf/trybot run — #163338's
+  timeline: 21 events, keyword scan zero hits; RFC #3943
+  (rust-lang/rfcs) open, comments 11 / review_comments 58 — **eleventh**
+  consecutive unchanged wave). No bar-clearing material anywhere; no
+  gaps. (wave 19)
 
 ---
 
@@ -3623,7 +7367,7 @@ never promote; Azul's 2x–5x and the #163359 try-perf numbers are source
 claims). **77 active ranked (SURV-001…078 minus struck SURV-077):
 7 / 39 / 17 / 14.**
 
-### Wave-7 queue (prioritized)
+### Wave-7 queue (prioritized) — ALL COMPLETE 2026-10-04
 
 1. **JEP 544 direct re-verification** — wave 6's fetch was 403-blocked;
    re-verify Status/Release directly, then continue the ramp-down
@@ -3645,6 +7389,5941 @@ claims). **77 active ranked (SURV-001…078 minus struck SURV-077):
    (the survey does not execute the protocol itself).
 7. **Re-rank pass** — promote prototype-gated items only on measured
    prototypes.
+
+### Per-track wave-7 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~13:45 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes; the wave-6 403
+  was a browser-tool block, not upstream). Status=**Targeted**,
+  Release=**28** (Owner John Rose; page updated 2026/09/29 15:23). Raw
+  archived as `jep544_2026-10-04.html` (md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d). Wave-5's Candidate→Targeted reading
+  confirmed directly; no Integrated movement; survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave7-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, 4 calls, ~13:40 CEST) — #163338 OPEN
+  (unmerged, last push 2026-09-30); no try-perf on #163338 (single
+  comment); RFC #3943 Open (58 review comments, not accepted). Siblings
+  all open (#163335/#163337/#163339/#163340/#163359; #163336 stays
+  merged); freshest motion is #163337 review activity 2026-10-03
+  spawning supporting PR #163721; #163359's numbers unchanged and
+  attributed by Amanieu to CGU-partitioning noise — no new measured
+  numbers anywhere. SURV-024's transfer ruling stands (§5 static-core
+  strike; guarded-speculative E3 arm only); trips re-armed (RFC #3943
+  acceptance most plausible near-term).
+- **T3 standing triggers** (`track-t3-wave7-triggers.md`): 0/6 fired
+  (~13:38–13:50 CEST, ~1h after the wave-6 baseline) — no Meta JIT
+  (hits: 2024 LLM Compiler, model news, .NET 11 explainer, Quest GPU
+  tool); Pyston pyston_main still 2024-08-12 "(No longer maintained)";
+  Swift move-only activity still enforcement/bug-fixing, no new SIL pass;
+  SE-0474 still Accepted, partial behind CoroutineAccessors flag;
+  TruffleRuby Options.java 86-field set diffed vs wave-3 pin c734f265
+  identical (zero speculat/guard matches); GraalPy BOTH sub-checks clean
+  (file-history latest Aug 18 2026; raw-master vs pin 178ea261
+  byte-identical, latest §25.4). Method corrections: wave-6's 628-line
+  Options.java and 935-line CHANGELOG counts were fetch artifacts
+  (actual 472/498 at both endpoints); wave-8 trusts deterministic diffs,
+  not line counts. All six triggers re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave7-resweep.md`): Graal 25.x changelog
+  byte-identical waves 5–7 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6); JEP 401
+  unchanged (Integrated/Release 28, Dan Smith); Azul still a watch note
+  (no whitepaper/technique/independent measurement — press rewrites only;
+  2x–5x claim remains unverified marketing); OpenJ9 latest still v0.62.0
+  (2026-09-15); .NET 11 perf post — incremental JIT only (GDV/
+  deabstraction extensions, loop-cloning `!=` handling, broader IV
+  forms; GDV already an ABLE precedent; nothing bar-clearing). T4:
+  #24314 open/static (8 comments, updated 2022-07-13); #77893's five CLs
+  all still NEW with wave-5/6 timestamps (SURV-041's gap intact);
+  label probes #81887/#81846/#81755/#81957/#81968 zero activity since
+  wave 6 (byte-identical counts + timestamps). No bar-clearing material
+  anywhere; no gaps.
+- **SURV-075 Stage-0 owner decision** (coordinator check): memory
+  (2026-10-04 log), survey dir, and goal files re-checked — no
+  program-owner decision recorded. Remains pending; wave 8 re-checks.
+
+### Wave-7 re-rank pass (2026-10-04)
+
+No promotions. JEP 544's state is now directly verified (Targeted/28);
+SURV-024's stack shows review motion but no trips; #163359's only
+measured numbers are attributed to CGU-partitioning noise. No new ranked
+IDs this wave (nothing bar-cleared); no prototype-gated promotions (no
+new measured prototypes — the rule holds: paper numbers never promote;
+Azul's 2x–5x and the #163359 try-perf numbers are source claims).
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-8 queue (prioritized) — ALL COMPLETE 2026-10-04
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool); watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip. Method: GitHub API state/timeline
+   endpoints; 4 calls/wave is affordable.
+3. **T3 standing triggers** — wave-7 method discipline in force: Pyston
+   via `pyston_main` commits page; TruffleRuby via Options.java option-set
+   diff vs pin c734f265 (never line counts); GraalPy via BOTH file-history
+   and raw-vs-pin diff (178ea261). Trust deterministic diffs, not line
+   counts.
+4. **T2 continuous re-sweep** — Graal changelog 25.x (record md5 each
+   wave); JEP 401 / primitive-class movement; Azul Cloud Native Compiler
+   watch note (any published technique or independent measurement);
+   OpenJ9/.NET optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap); label-probe watch notes (#81887, #81846/#81755,
+   #81957, #81968) for anything bar-clearing.
+6. **SURV-075 Stage-0 decision** — re-check for a program-owner decision
+   (the survey does not execute the protocol itself).
+7. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+### Per-track wave-8 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~14:40 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes — same size as the
+  wave-7 fetch). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down notes.
+  Raw archived as `jep544_2026-10-04_w8.html`. Ramp-down survival watch
+  continues to the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA
+  (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave8-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~14:38 CEST) — byte-identical to the
+  wave-7 baselines: #163338 OPEN/unmerged (updated
+  2026-09-30T13:03:50Z); no try-perf on #163338 (exactly one comment —
+  the author's 2026-09-25 LLM disclosure); RFC #3943 Open, 58 review
+  comments, not accepted. Siblings zero movement (#163335/#163337/
+  #163339/#163340/#163359 open unchanged; #163336 stays the only
+  merged). SURV-024's transfer ruling stands (§5 static-core strike;
+  guarded-speculative E3 arm only); trips re-armed (RFC #3943 acceptance
+  most plausible near-term). Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave8-triggers.md`): 0/6 fired
+  (~14:38–14:45 CEST, ~1h after the wave-7 baseline) — no Meta JIT
+  (hits: 2024 LLM Compiler, model news, .NET 11 explainer, Quest GPU
+  tool); Pyston pyston_main still 2024-08-12 "(No longer maintained)";
+  Swift move-only activity still enforcement/bug-fixing, no new SIL pass;
+  SE-0474 still Accepted, partial behind CoroutineAccessors flag;
+  TruffleRuby Options.java master vs pin c734f265 diff EMPTY (md5
+  801fd357c11fd16c87f1764777e67b4a at both endpoints; 86-field set
+  identical; zero speculat/guard matches); GraalPy file-history latest
+  Aug 18 2026 (pre-pin) AND raw-master vs pin 178ea261 diff EMPTY
+  (md5 52c85a03991d970d41b4746b06a72c19; latest §25.4). Deterministic-
+  diff discipline held. Method note for wave 9: the naive
+  `public final \S+` regex overcounts Options.java fields (87 vs the
+  true 86) — the md5-identical diff is authoritative. All six triggers
+  re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave8-resweep.md`): all negative with
+  exact-check records (~14:38–14:45 CEST). Graal 25.x changelog
+  byte-identical waves 5–8 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28, Dan Smith); Valhalla project page
+  JEP list unchanged (no new primitive-class JEP). Azul Cloud Native
+  Compiler stays a watch note (press rewrites only — no whitepaper, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing). OpenJ9 latest still v0.62.0 (2026-09-15).
+  .NET 11 perf post — incremental JIT only (a secondary source
+  explicitly notes "no single new JIT feature" in .NET 11;
+  nothing bar-clearing). T4: #24314 open/static (8 comments, updated
+  2022-07-13); #77893's five CLs all still NEW with unchanged
+  timestamps (SURV-041's per-site gap intact); label probes
+  #81887/#81846/#81755/#81957/#81968 zero activity since wave 7
+  (counts + updated_at byte-identical). Method note: the T4.2 Gerrit
+  pipeline's `curl | sed | python3` silently parsed empty
+  (XSSI-prefix handling quirk) — re-ran with file staging (curl to
+  file, strip `)]}'` via `tail -c +6`, JSON-parse); prefer file
+  staging for Gerrit REST checks going forward. No bar-clearing
+  material anywhere; no gaps.
+- **SURV-075 Stage-0 owner decision** (coordinator check): RESOLVED
+  this wave — the standing record (MEMORY.md, 2026-10-04) carries the
+  program-owner call (2026-10-04 14:11 CEST): **DEFER Stage-0
+  execution to Phase-5 entry**; waves must NOT re-check for this
+  decision; the question re-opens at Phase-5 entry. SURV-075's §1
+  entry updated. Queue item closed; the standing re-check is retired
+  from the wave-9 queue.
+
+### Wave-8 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 unchanged,
+#157943 0/3 trips on byte-identical baselines, T3 0/6 triggers,
+T2/T4 all negative); no prototype-gated promotions (no new measured
+prototypes — the rule holds: paper numbers never promote; Azul's
+2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-9 queue (prioritized) — ALL COMPLETE 2026-10-04
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool); watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+   *→ done (coordinator, ~16:48 CEST): HTTP 200, 33,894 bytes;
+   Status=Targeted, Release=28, Updated 2026/09/29 15:23; raw archived
+   as `jep544_2026-10-04_w9.html`. No movement.*
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip. Method: GitHub API state/timeline
+   endpoints; 4 calls/wave is affordable.
+   *→ done (Worker A → `track-surv024-wave9-watch.md`, ~16:50 CEST):
+   0/3 fired, baselines byte-identical to wave 8.*
+3. **T3 standing triggers** — diff-discipline: Pyston via `pyston_main`
+   commits page; TruffleRuby via Options.java option-set diff vs pin
+   c734f265 (md5-identical diff authoritative — the naive
+   `public final \S+` regex overcounts 87 vs true 86); GraalPy via BOTH
+   file-history and raw-vs-pin diff (178ea261). Trust deterministic
+   diffs, not line counts.
+   *→ done (Worker B → `track-t3-wave9-triggers.md`, ~17:05 CEST):
+   0/6 fired; diff-discipline held.*
+4. **T2 continuous re-sweep** — Graal changelog 25.x (record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch);
+   Azul Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only.
+   *→ done (Worker C → `track-t2t4-wave9-resweep.md`, ~17:10 CEST):
+   all negative; Graal 25.x md5 byte-identical waves 5–9.*
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   XSSI prefix); label-probe watch notes (#81887, #81846/#81755,
+   #81957, #81968) for anything bar-clearing.
+   *→ done (Worker C → `track-t2t4-wave9-resweep.md`, ~17:10 CEST):
+   all negative; #77893 five CLs all still NEW.*
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+   *→ done (coordinator, 2026-10-04): no movements, no
+   prototype-gated promotions.*
+
+*Standing re-check for SURV-075 Stage-0 retired 2026-10-04 per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check); it no longer appears in the wave queue.*
+
+### Per-track wave-9 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~16:48 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes — same size as
+  the wave-7/8 fetches). Metadata read verbatim: Owner=John Rose,
+  Type=Feature, Scope=Implementation, **Status=Targeted, Release=28**
+  (page updated 2026/09/29 15:23). No Targeted→Integrated movement, no
+  ramp-down notes. Raw archived as `jep544_2026-10-04_w9.html`.
+  Ramp-down survival watch continues to the JDK 28 ramp-down
+  (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave9-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~16:50 CEST) — byte-identical to the
+  wave-8 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: exactly one
+  comment — rustbot auto-labels only); RFC #3943 Open under review
+  (comments 11 / review_comments 58, unchanged). All six sibling PRs
+  zero movement (#163336 remains the only merged). SURV-024's transfer
+  ruling stands (§5 static-core strike; guarded-speculative E3 arm
+  only); trips re-armed (RFC #3943 acceptance most plausible
+  near-term). Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave9-triggers.md`): 0/6 fired
+  (~16:38–17:00 CEST) — no new Meta runtime optimizing-JIT (hits: 2024
+  LLM Compiler + React Compiler only); Pyston pyston_main still
+  2024-08-12; Swift move-only activity still enforcement/docs/infra,
+  no new SIL pass; SE-0474 still Accepted, partial behind
+  CoroutineAccessors flag; TruffleRuby Options.java raw-master vs pin
+  c734f265 diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both
+  endpoints; zero speculat/guard/optim matches); GraalPy file-history
+  head Aug 18 2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 both endpoints; latest §25.4
+  unchanged). Deterministic-diff discipline held. All six triggers
+  re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave9-resweep.md`): all negative with
+  exact-check records (~16:50–17:10 CEST). Graal 25.x changelog
+  byte-identical waves 5–9 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28, Dan Smith); Valhalla project page
+  same 8-JEP list, no new primitive-class JEP. Azul Cloud Native
+  Compiler stays a watch note (press rewrites only — no whitepaper, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing). OpenJ9 latest still v0.62.0 (2026-09-15).
+  .NET 11 JIT items incremental only (GVM devirtualization is
+  precedent-strengthening, not bar-clearing; nothing bar-clearing).
+  T4: #24314 open/static (8 comments, updated 2022-07-13); #77893's
+  five CLs all still NEW with unchanged timestamps (SURV-041's
+  per-site gap intact; Gerrit REST reads file-staged with XSSI strip
+  per wave-8 method note); label probes #81887/#81846/#81755/#81957/
+  #81968 zero activity since wave 8 (counts + updated_at
+  byte-identical). No bar-clearing material anywhere; no gaps.
+
+### Wave-9 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 unchanged,
+#157943 0/3 trips on byte-identical baselines, T3 0/6 triggers,
+T2/T4 all negative); no prototype-gated promotions (no new measured
+prototypes — the rule holds: paper numbers never promote; Azul's
+2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Per-track wave-10 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~17:40 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes — **byte-identical
+  to the wave-9 raw archive**, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d).
+  Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-04_w10.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave10-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~17:40 CEST) — byte-identical to the
+  wave-9 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: exactly one
+  comment — Amanieu's 2026-09-25 LLM disclosure; rustbot auto-labels
+  only); RFC #3943 Open under review (comments 11 / review_comments 58,
+  unchanged). All six sibling PRs zero movement (#163336 remains the
+  only merged; title paraphrases in the wave-9 table corrected:
+  verbatim API titles are "Storage reconstruction"/"Miri support").
+  SURV-024's transfer ruling stands (§5 static-core strike;
+  guarded-speculative E3 arm only); trips re-armed (RFC #3943
+  acceptance most plausible near-term). Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave10-triggers.md`): 0/6 fired
+  (~17:45–17:58 CEST) — no new Meta runtime optimizing-JIT (hits: 2024
+  LLM Compiler + React Compiler only); Pyston pyston_main still
+  2024-08-12; Swift move-only activity still enforcement/docs/infra,
+  no new SIL pass; SE-0474 still Accepted, partial behind
+  CoroutineAccessors flag (raw md md5 e8f962dbd12172d2f2a44410e727d7b5);
+  TruffleRuby Options.java raw-master vs pin c734f265 diff EMPTY (md5
+  801fd357c11fd16c87f1764777e67b4a at both endpoints; zero
+  speculat/guard/optim matches); GraalPy file-history head Aug 18 2026
+  (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 both endpoints; latest §25.4
+  unchanged). Deterministic-diff discipline held. All six triggers
+  re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave10-resweep.md`): all negative with
+  exact-check records (~17:40–17:55 CEST). Graal 25.x changelog
+  byte-identical waves 5–10 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28, Dan Smith; metadata rows are
+  `<td>`-only, no `<th>`); Valhalla project page same 8-JEP list, no
+  new primitive-class JEP. Azul Cloud Native Compiler stays a watch
+  note (press rewrites only — no whitepaper, no technique, no
+  independent measurement; 2x–5x warm-up claim still unverified
+  marketing). OpenJ9 latest still v0.62.0 (2026-09-15). .NET 11 JIT
+  items incremental only (GVM devirtualization is
+  precedent-strengthening, not bar-clearing). T4: #24314 open/static
+  (8 comments, updated 2022-07-13); #77893's five CLs all still NEW
+  with unchanged timestamps (SURV-041's per-site gap intact; Gerrit
+  method note: `?O=ALL_REVISIONS` is invalid — plain endpoint returns
+  the full entity); label probes #81887/#81846/#81755/#81957/#81968
+  zero activity since wave 9 (counts + updated_at byte-identical).
+  No bar-clearing material anywhere; no gaps.
+
+### Wave-10 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9 archive, #157943 0/3 trips on byte-identical baselines, T3 0/6
+triggers, T2/T4 all negative); no prototype-gated promotions (no new
+measured prototypes — the rule holds: paper numbers never promote;
+Azul's 2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-11 queue (prioritized) — ALL COMPLETE 2026-10-04
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool); watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip. Method: GitHub API state/timeline
+   endpoints; ~11 calls/wave is affordable.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java option-set
+   diff vs pin c734f265 (md5-identical diff authoritative); GraalPy via
+   BOTH file-history and raw-vs-pin diff (178ea261). Trust deterministic
+   diffs, not line counts.
+4. **T2 continuous re-sweep** — Graal changelog 25.x (record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch);
+   Azul Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   XSSI prefix; note `?O=ALL_REVISIONS` is invalid); label-probe watch
+   notes (#81887, #81846/#81755, #81957, #81968) for anything
+   bar-clearing.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-17 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~22:37 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes —
+  **byte-identical to the wave-9/10/11/12/13/14/15/16 raw archives**, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — nine consecutive identical
+  archives). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-04_w17.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave17-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~22:37–22:45 CEST) — byte-identical
+  to the wave-16 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (issues timeline: 21
+  events, keyword scan of all payloads for try-perf/try_perf = zero
+  hits); RFC #3943 (rust-lang/rfcs) Open under review (comments 11 /
+  review_comments 58 — unchanged, ninth consecutive wave). All six
+  sibling PRs zero movement (#163336 remains the only merged; its
+  `merged_at` reads 2026-09-30T12:11:35Z as in waves 13/14/15/16 —
+  GitHub serialization variance vs wave 12, `updated_at` byte-identical,
+  not a new event). SURV-024's transfer ruling stands (§5 static-core
+  strike; guarded-speculative E3 arm only); trips re-armed (RFC #3943
+  acceptance most plausible near-term). Transfer impact: NONE. Method
+  notes: the timeline endpoint is the **issues** timeline
+  (`/repos/{owner}/{repo}/issues/{n}/timeline`) — the pulls timeline
+  404s; RFC #3943 lives in **`rust-lang/rfcs`**, not rust-lang/rust
+  (the bare path resolves to a 2015-era closed PR — always qualify
+  owner/repo).
+- **T3 standing triggers** (`track-t3-wave17-triggers.md`): 0/6 fired
+  (~22:45–22:55 CEST) — no new Meta runtime optimizing-JIT (only
+  disqualified noise: 2024 LLM Compiler research model, Muse Code
+  terminal agent, React Compiler); Pyston pyston_main still 2024-08-12
+  (fe8afded); Swift move-only activity still enforcement/bug-fix/docs
+  (index_addr projection fix, address-cast lifetime checks,
+  compiler-crash dossiers) — no new SIL optimization pass; SE-0474
+  still Accepted, partial behind CoroutineAccessors flag (raw
+  `proposals/0474-yielding-accessors.md`, md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8; header is
+  a `*`-prefixed bullet list); TruffleRuby Options.java
+  (`src/main/java/org/truffleruby/options/Options.java`) md5
+  801fd357c11fd16c87f1764777e67b4a — identical to pin (zero
+  speculat/guard/optim matches, grep exit 1 = zero-hit confirmation);
+  GraalPy (`oracle/graalpython`, repo-root `CHANGELOG.md`) file-history
+  head Aug 18 2026 (pre-pin) AND raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin (latest Version
+  25.4 unchanged). All URLs copied **verbatim** from the wave-16 track
+  file — no 404s this wave; the wave-16 verbatim-copy rule worked as
+  designed. Diff-discipline held. All six triggers re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave17-resweep.md`): all negative with
+  exact-check records (~22:55–23:05 CEST). Graal 25.x changelog
+  byte-identical waves 5–17 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6; URL under
+  `compiler/`). JEP 401 unchanged (Integrated, Release 28, Owner Dan
+  Smith; page Updated 2026/08/07 18:02); Valhalla project page same
+  8-JEP list (181/309/334/371/390/401/402/539), no new primitive-class
+  JEP. Azul Cloud Native Compiler stays a watch note (no new
+  announcement since the Oct 1 BusinessWire piece already captured in
+  wave 16 — same five-outlet press-rewrite set; still vendor only; no
+  whitepaper, no technique, no independent measurement; 2x–5x warm-up
+  claim still unverified marketing). OpenJ9 latest still v0.62.0
+  (2026-09-15); .NET 11 JIT-internals article restates the
+  already-assessed incremental set (precedent extensions, not
+  bar-clearing). T4: #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; Gerrit REST returns
+  `)]}'`-prefixed JSON — strip the 4-byte XSSI prefix; `?O=DETAILED_ACCOUNTS`
+  400s, the bare `/changes/{id}` endpoint already carries
+  `status`/`updated`; `?O=ALL_REVISIONS` remains invalid); label probes
+  #81887/#81846/#81755/#81957/#81968 show only non-substantive events
+  (human subscribes, gopherbot CL cross-refs) — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`) stays a
+  watch note adjacent to SURV-004/SURV-006, not a new candidate;
+  #81957's CL 844405 and #81968's activity are runtime topics, not
+  optimizer-relevant. No bar-clearing material anywhere; no gaps.
+
+### Wave-17 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9/10/11/12/13/14/15/16 archives — nine consecutive identical
+archives; #157943 0/3 trips on byte-identical baselines; T3 0/6
+triggers; T2/T4 all negative); no prototype-gated promotions (no new
+measured prototypes — the rule holds: paper numbers never promote;
+Azul's 2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-18 queue (prioritized) — ALL COMPLETE 2026-10-04
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-04_w17.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for nine consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`); RFC #3943 lives in
+   `rust-lang/rfcs`, not `rust-lang/rust`. ~13 calls/wave is
+   affordable. Note: #163336's `merged_at` may show GitHub
+   serialization variance (wave-12 12:11:39Z vs waves 13/14/15/16/17
+   12:11:35Z) while `updated_at` is byte-identical — that is not a new
+   event.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java option-set
+   diff vs pin c734f265 (md5-identical diff authoritative; verbatim URL
+   in `track-t3-wave17-triggers.md`); GraalPy via BOTH file-history and
+   raw-vs-pin diff (178ea261; verbatim URL in
+   `track-t3-wave17-triggers.md`). Trust deterministic diffs, not line
+   counts. SE-0474: header is a `*`-prefixed bullet list, not a markdown
+   table — read `sed -n '1,10p'`. grep exit 1 is the zero-hit
+   confirmation, not an error. **Copy raw URLs verbatim from the prior
+   wave's track file — never reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   4-byte XSSI prefix `)]}'`; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated` — note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid); label-probe watch notes
+   (#81887, #81846/#81755, #81957, #81968) for anything bar-clearing;
+   #81887's CL 842885/842886 (`slices: make BinarySearchFunc inlinable`)
+   stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-18 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~23:37 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes —
+  **byte-identical to the wave-9/10/11/12/13/14/15/16/17 raw archives**,
+  md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — **ten** consecutive identical
+  archives). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-04_w18.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave18-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~23:40–23:45 CEST) — byte-identical
+  to the wave-16/17 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (#163338 timeline: 21
+  events, keyword scan zero hits); RFC #3943 (rust-lang/rfcs) Open
+  under review (comments 11 / review_comments 58, unchanged — **tenth**
+  consecutive wave). Siblings zero movement (#163336 remains the only
+  merged, `merged_at` 2026-09-30T12:11:35Z, unchanged since waves
+  13–17; #163337 still open; #157943 itself closed,
+  updated 2026-09-25T22:14:46Z). SURV-024's transfer ruling stands (§5
+  static-core strike; guarded-speculative E3 arm only); trips re-armed
+  (RFC #3943 acceptance most plausible near-term). Transfer impact:
+  NONE. Method corrections: the issue lives in **rust-lang/rust** —
+  the wave-18 task brief said "golang/go issue #157943" but that number
+  does not exist in golang/go (its issues are ~81k); GitHub API needs
+  a `User-Agent` header on some paths (bare curls 404'd); #163338's
+  timeline is the 21-event one — #157943's own timeline is 100 events
+  (paginated), wave-17's log conflated the two.
+- **T3 standing triggers** (`track-t3-wave18-triggers.md`): 0/6 fired
+  (~23:45–23:55 CEST) — no new Meta runtime optimizing-JIT (only
+  disqualified noise: 2024 LLM Compiler, Muse Code terminal agent,
+  Zoomer AI infra, MTIA chips, Unity Runtime Optimizer); Pyston
+  pyston_main still 2024-08-12 (fe8afded); Swift move-only activity
+  still bug-fix dossiers only (swift-institute crash investigations,
+  old PR #69955 deinit devirtualization) — no new SIL optimization
+  pass; SE-0474 still Accepted, partial behind flag (raw
+  `proposals/0474-yielding-accessors.md`, md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8);
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin (zero speculat/guard/optim matches, grep exit 1);
+  GraalPy file-history head Aug 18 2026 (pre-pin) AND raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin (latest Version
+  25.4 unchanged). All URLs copied **verbatim** from the wave-17 track
+  file (no 404s; the verbatim-copy rule holds).
+- **T2 continuous re-sweep + T4 watches**
+  (`track-t2t4-wave18-resweep.md`): **all negative, no deltas**
+  (~23:55–00:05 CEST). Graal 25.x changelog byte-identical to the pin
+  (14,501 bytes, md5 6397c38a55572509df12814180ec458f; tops at 25.5,
+  no 25.6; URL under `compiler/`); JEP 401 Integrated/Release 28
+  unchanged (Updated 2026/08/07 18:02); Valhalla project page same 8
+  JEPs (181, 309, 334, 371, 390, 401, 402, 539); Azul Cloud Native
+  Compiler — no new announcement (still the Oct 1 BusinessWire piece
+  and its rewrites, one re-dated Oct 4; vendor-only, 2x–5x unverified
+  marketing); OpenJ9 latest still v0.62.0 (2026-09-15); .NET 11: one
+  new detail inside the already-assessed bounds-check-elimination
+  bucket (range-check cloning eligible for return statements #124705,
+  intra-block coalescing #127439) — incremental, not bar-clearing;
+  #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z);
+  #77893's five Gerrit CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site edge intact); label probes #81887 /
+  #81957 / #81968 show only non-substantive events (subscribes,
+  gopherbot CL 844405 cross-ref) — #81887's CL 842885/842886 (`slices:
+  make BinarySearchFunc inlinable`) stays a watch note adjacent to
+  SURV-004/SURV-006. No gaps; all watches re-armed for wave 19.
+
+### Wave-18 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9/10/11/12/13/14/15/16/17 archives — **ten** consecutive identical
+archives; #157943 0/3 trips on byte-identical baselines; T3 0/6
+triggers; T2/T4 all negative); no prototype-gated promotions (no new
+measured prototypes — the rule holds: paper numbers never promote;
+Azul's 2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-19 queue (prioritized)
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-04_w18.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for ten consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**, not golang/go (that number does not exist
+   there); RFC #3943 lives in `rust-lang/rfcs`, not `rust-lang/rust`.
+   Note: #163336's `merged_at` may show GitHub serialization variance
+   (wave-12 12:11:39Z vs waves 13–18 12:11:35Z) while `updated_at` is
+   byte-identical — that is not a new event.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave18-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. **Copy raw URLs verbatim
+   from the prior wave's track file — never reconstruct from
+   checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   4-byte XSSI prefix `)]}'`; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated` — note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid); label-probe watch notes
+   (#81887, #81957, #81968) for anything bar-clearing; #81887's CL
+   842885/842886 (`slices: make BinarySearchFunc inlinable`)
+   stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-19 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+All six items executed by the coordinator-level wave-19 run (single
+owner, no child coordinator, 2026-10-05 ~00:37–01:05 CEST). Track
+files: `track-surv024-wave19-watch.md`,
+`track-t3-wave19-triggers.md`, `track-t2t4-wave19-resweep.md` +
+`jep544_2026-10-05_w19.html` (byte-identical to the w9–w18 archives).
+
+### Per-track wave-19 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~00:38 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes —
+  **byte-identical to the wave-9/10/11/12/13/14/15/16/17/18 raw
+  archives**, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — **eleven**
+  consecutive identical archives). Metadata verbatim: Owner=John Rose,
+  Type=Feature, Scope=Implementation, **Status=Targeted, Release=28**
+  (page updated 2026/09/29 15:23). No Targeted→Integrated movement, no
+  ramp-down notes. Raw archived as `jep544_2026-10-05_w19.html`.
+  Ramp-down survival watch continues to the JDK 28 ramp-down
+  (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave19-watch.md`): 0/3 trip
+  conditions fired (GitHub API state/timeline, ~00:40 CEST) —
+  byte-identical to the wave-16/17/18 baselines: #163338 OPEN/unmerged
+  (updated_at 2026-09-30T13:03:50Z); no try-perf/trybot run (timeline:
+  21 events, keyword scan zero hits; latest event still the 2026-10-01
+  cross-reference); RFC #3943 Open under review (comments 11 /
+  review_comments 58, unchanged — eleventh consecutive unchanged
+  wave). Sibling note: #163337 still open but gained a routine
+  maintainer comment (Amanieu, 2026-10-04T20:58:17Z — predates wave
+  18's check, non-substantive); #163336 remains the only merged
+  (merged_at 2026-09-30T12:11:35Z — unchanged since waves 13–18).
+  SURV-024's transfer ruling stands (§5 static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE.
+- **T3 standing triggers** (`track-t3-wave19-triggers.md`): 0/6 fired
+  (~00:40–00:50 CEST) — no new Meta runtime optimizing-JIT (same
+  disqualified noise set: 2024 LLM Compiler, Muse Code terminal agent,
+  Zoomer AI-infra platform, MTIA inference chips, Unity Runtime
+  Optimizer, Muse Spark 1.3 coding model); Pyston pyston_main still
+  2024-08-12 (fe8afded); Swift move-only activity still bug-fix
+  dossiers and enforcement docs only, no new SIL optimization pass;
+  SE-0474 still Accepted, partial behind CoroutineAccessors flag (raw
+  md md5 e8f962dbd12172d2f2a44410e727d7b5, unchanged since wave 8);
+  TruffleRuby Options.java raw-master vs pin md5
+  801fd357c11fd16c87f1764777e67b4a (identical; zero speculat/guard/optim
+  matches, grep exit 1); GraalPy file-history head same sha 9712c23b
+  (pre-pin; the wave-18 vs wave-19 timestamp read differed only by
+  author.date vs committer.date — same commit) AND raw-vs-pin md5
+  52c85a03991d970d41b4746b06a72c19 (identical; latest §25.4
+  unchanged). Deterministic-diff discipline held. All six triggers
+  re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave19-resweep.md`): all negative
+  with exact-check records (~00:40–01:00 CEST). Graal 25.x changelog
+  byte-identical to the pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28, Updated 2026/08/07 18:02).
+  Valhalla project page same 8-JEP list, no new primitive-class JEP.
+  Azul Cloud Native Compiler stays a watch note (same Oct 1
+  BusinessWire piece + press rewrites — no whitepaper, no technique,
+  no independent measurement; 2x–5x warm-up claim still unverified
+  marketing; ReadyNow-2014/Orchestrator framing continues in
+  coverage, still vendor-only). OpenJ9 latest still v0.62.0
+  (2026-09-15). .NET 11 JIT items incremental only (range-analysis
+  strategy set #121273/#121527/#122263/#125056/#127439/#127488/#129268
+  and Runtime Async JIT work are within the already-assessed
+  bounds-check-elimination/async classes — precedent-strengthening,
+  not bar-clearing). T4: #24314 open/static (8 comments, updated
+  2022-07-13); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact); label probes
+  #81887/#81957/#81968 non-substantive events only (#81887 last event:
+  subscribe mvdan 2026-10-04T19:29:35Z, unchanged; #81957 gopherbot
+  comment 2026-10-03T10:50:39Z, unchanged; #81968 subscribe
+  qiulaidongfeng 2026-10-03T08:44:02Z, unchanged) — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`) stays a
+  watch note adjacent to SURV-004/SURV-006. No bar-clearing material
+  anywhere; no gaps.
+
+### Wave-19 re-rank pass (2026-10-05)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9/10/11/12/13/14/15/16/17/18 archives — **eleven** consecutive
+identical archives; #157943 0/3 trips on byte-identical baselines; T3
+0/6 triggers; T2/T4 all negative); no prototype-gated promotions (no
+new measured prototypes — the rule holds: paper numbers never
+promote; Azul's 2x–5x claim is still vendor marketing). No new ranked
+IDs. **77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-20 queue (prioritized)
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w19.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for eleven consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**, not golang/go (that number does not exist
+   there); RFC #3943 lives in `rust-lang/rfcs`, not `rust-lang/rust`.
+   Note: #163336's `merged_at` may show GitHub serialization variance
+   (wave-12 12:11:39Z vs waves 13–19 12:11:35Z) while `updated_at` is
+   byte-identical — that is not a new event. Note: the GitHub commits
+   API `commit.author.date` and `commit.committer.date` may differ by
+   minutes on the same sha (GraalPy CHANGELOG.md head, waves 18–19) —
+   compare shas, not just timestamps.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave19-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. **Copy raw URLs verbatim
+   from the prior wave's track file — never reconstruct from
+   checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   4-byte XSSI prefix `)]}'`; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated` — note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid); label-probe watch notes
+   (#81887, #81957, #81968) for anything bar-clearing; #81887's CL
+   842885/842886 (`slices: make BinarySearchFunc inlinable`)
+   stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+### Wave-20 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+All six items executed by the coordinator-level wave-20 run (single
+owner, no child coordinator, 2026-10-05 ~01:36–02:10 CEST). Track
+files: `track-surv024-wave20-watch.md`,
+`track-t3-wave20-triggers.md`, `track-t2t4-wave20-resweep.md` +
+`jep544_2026-10-05_w20.html` (byte-identical to the w9–w19 archives).
+
+### Per-track wave-20 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~01:38 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes —
+  **byte-identical to the wave-9/10/11/12/13/14/15/16/17/18/19 raw
+  archives**, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — **twelve**
+  consecutive identical archives). Metadata verbatim: Owner=John Rose,
+  Type=Feature, Scope=Implementation, **Status=Targeted, Release=28**
+  (page updated 2026/09/29 15:23). No Targeted→Integrated movement, no
+  ramp-down notes. Raw archived as `jep544_2026-10-05_w20.html`.
+  Ramp-down survival watch continues to the JDK 28 ramp-down
+  (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave20-watch.md`): 0/3 trip
+  conditions fired (GitHub API state/timeline, ~01:40 CEST) —
+  byte-identical to the wave-16/17/18/19 baselines: #163338
+  OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no try-perf/trybot
+  run (timeline: 21 events, keyword scan zero hits; latest event still
+  the 2026-10-01 cross-reference); RFC #3943 Open under review
+  (comments 11 / review_comments 58, unchanged — twelfth consecutive
+  unchanged wave). Sibling note: #163336 remains the only merged
+  (merged_at 2026-09-30T12:11:35Z — unchanged since waves 13–19);
+  #163337 still open at 32 events with no new events since wave 19.
+  SURV-024's transfer ruling stands (§5 static-core strike;
+  guarded-speculative E3 arm only); trips re-armed. Transfer impact:
+  NONE.
+- **T3 standing triggers** (`track-t3-wave20-triggers.md`): 0/6 fired
+  (~01:45–01:55 CEST) — no new Meta runtime optimizing-JIT (same
+  disqualified noise set: 2024 LLM Compiler, Muse Code terminal agent,
+  CompilerGym); Pyston pyston_main still 2024-08-12 (fe8afded); Swift
+  move-only activity still bug-fix dossiers and documentation only, no
+  new SIL optimization pass; SE-0474 still Accepted, partial behind
+  flag (raw md md5 e8f962dbd12172d2f2a44410e727d7b5, unchanged since
+  wave 8); TruffleRuby Options.java raw-master vs pin md5
+  801fd357c11fd16c87f1764777e67b4a (identical; zero
+  speculat/guard/optim matches, grep exit 1); GraalPy file-history
+  head same sha 9712c23b (pre-pin; author.date 2026-08-18T18:10:52Z —
+  same sha as waves 18–19, sha-comparison discipline holds) AND
+  raw-vs-pin md5 52c85a03991d970d41b4746b06a72c19 (identical; latest
+  §25.4 unchanged). Deterministic-diff discipline held. All six
+  triggers re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave20-resweep.md`): all negative
+  with exact-check records (~01:55–02:05 CEST). Graal 25.x changelog
+  byte-identical to the pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28, Updated 2026/08/07 18:02).
+  Valhalla project page same 8-JEP list, no new primitive-class JEP.
+  Azul Cloud Native Compiler stays a watch note (same Oct 1
+  BusinessWire piece + press rewrites — smbtech.au re-dated Oct 4,
+  same piece; no whitepaper, no technique, no independent measurement;
+  2x–5x warm-up claim still unverified marketing). OpenJ9 latest still
+  v0.62.0 (2026-09-15). .NET 11 JIT items incremental only (the
+  performance-post set: range-analysis refinements #119474/#124415/
+  #123624/#129390/#129354/#126917/#124711, conditional escape analysis
+  #111473, Runtime Async JIT — all within the already-assessed
+  bounds-check-elimination/async classes, precedent-strengthening, not
+  bar-clearing). T4: #24314 open/static (8 comments, updated
+  2022-07-13); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact); label probes
+  #81887/#81957/#81968 non-substantive events only (#81887 last event:
+  subscribe mvdan 2026-10-04T19:29:35Z, unchanged; #81957 gopherbot
+  comment 2026-10-03T10:50:39Z, unchanged; #81968 subscribe
+  qiulaidongfeng 2026-10-03T08:44:02Z, unchanged) — #81887's CL
+  842885/842886 (`slices: make BinarySearchFunc inlinable`) stays a
+  watch note adjacent to SURV-004/SURV-006. No bar-clearing material
+  anywhere; no gaps.
+
+### Wave-20 re-rank pass (2026-10-05)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9/10/11/12/13/14/15/16/17/18/19 archives — **twelve** consecutive
+identical archives; #157943 0/3 trips on byte-identical baselines; T3
+0/6 triggers; T2/T4 all negative); no prototype-gated promotions (no
+new measured prototypes — the rule holds: paper numbers never
+promote; Azul's 2x–5x claim is still vendor marketing). No new ranked
+IDs. **77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-21 queue (prioritized)
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w20.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twelve consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**, not golang/go (that number does not exist
+   there); RFC #3943 lives in `rust-lang/rfcs`, not `rust-lang/rust`.
+   Note: #163336's `merged_at` may show GitHub serialization variance
+   (wave-12 12:11:39Z vs waves 13–20 12:11:35Z) while `updated_at` is
+   byte-identical — that is not a new event. Note: the GitHub commits
+   API `commit.author.date` and `commit.committer.date` may differ by
+   minutes on the same sha (GraalPy CHANGELOG.md head, waves 18–20) —
+   compare shas, not just timestamps.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave20-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. **Copy raw URLs verbatim
+   from the prior wave's track file — never reconstruct from
+   checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   4-byte XSSI prefix `)]}'`; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated` — note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid); label-probe watch notes
+   (#81887, #81957, #81968) for anything bar-clearing; #81887's CL
+   842885/842886 (`slices: make BinarySearchFunc inlinable`)
+   stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-21 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+All six items executed by the coordinator-level wave-21 run (single
+owner, no child coordinator, 2026-10-05 ~02:37–03:15 CEST). Track
+files: `track-surv024-wave21-watch.md`,
+`track-t3-wave21-triggers.md`, `track-t2t4-wave21-resweep.md` +
+`jep544_2026-10-05_w21.html` (content-identical to the w9–w20
+archives — raw md5 682b4a7689dc106ffa20dd9e868398cd differs from the
+w9–w20 pin 0024bc1ea0e660e97b7cf5a6f1c9da7d by exactly one line: the
+obfuscated anti-bot `<script src>` URL rotated; metadata
+Status=Targeted/Release=28/Updated=2026/09/29 15:23 unchanged).
+
+### Per-track wave-21 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~02:40 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes). Page-body diff
+  vs the w20 archive shows only the rotated anti-bot script URL —
+  **content-identical to the wave-9/10/11/12/13/14/15/16/17/18/19/20
+  raw archives**, thirteen consecutive content-identical archives.
+  Metadata verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-05_w21.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave21-watch.md`): 0/3 trip
+  conditions fired (GitHub API state/timeline, ~02:40–02:50 CEST) —
+  byte-identical to the wave-16/17/18/19/20 baselines: #163338
+  OPEN/unmerged (updated_at 2026-09-30T13:03:50Z); no try-perf/trybot
+  run (timeline: 21 events, keyword scan zero hits); RFC #3943
+  (rust-lang/rfcs) open unmerged (comments 11 / review_comments 58,
+  updated 2026-10-02T15:30:51Z — thirteenth consecutive unchanged
+  wave). Siblings: #163336 still the only merged (merged_at
+  2026-09-30T12:11:35Z); #163337 still open, no new events since wave
+  19 (updated_at 2026-10-04T20:58:17Z); #157943 closed unchanged
+  (2026-09-25T22:14:46Z). SURV-024's ruling stands; trips re-armed.
+  Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave21-triggers.md`): 0/6 fired
+  (~02:50–03:00 CEST) — all URLs copied **verbatim** from the wave-20
+  track file (no 404s; the verbatim-copy rule holds). TruffleRuby
+  Options.java md5 801fd357c11fd16c87f1764777e67b4a — identical to
+  pin, zero speculat/guard/optim matches (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history
+  head same sha 9712c23b (2026-08-18T18:10:52Z, sha-comparison
+  discipline; latest §25.4 unchanged); Pyston pyston_main still
+  2024-08-12 (fe8afded); SE-0474 still Accepted, partial behind flag,
+  raw md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  no new Meta runtime optimizing-JIT (only disqualified noise: 2024
+  LLM Compiler, Muse Code terminal agent, CompilerGym); Swift
+  move-only still bug-fix dossiers only — the one genuinely new SIL
+  pass surfaced (`cond_fail true` moved out of SILCombine, cc3c7014)
+  is a cond_fail instruction pass, not move-only. All six triggers
+  re-armed.
+- **T2 re-sweep** (`track-t2t4-wave21-resweep.md`): Graal 25.x changelog
+  byte-identical (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6, URL under
+  `compiler/`); JEP 401 Integrated/Release 28 unchanged; Valhalla page
+  same 8 JEPs; Azul still the Oct 1 BusinessWire piece + rewrites (the
+  smbtech.au rewrite updated Oct 4, same piece; 2x–5x still unverified
+  vendor marketing); OpenJ9 still v0.62.0 (2026-09-15); .NET 11:
+  nothing bar-clearing beyond the assessed .NET 11 set — the
+  performance-post JIT set (range-analysis refinements #124705/#127439,
+  conditional escape analysis #111473, Runtime Async
+  tiering/dedicated-JIT) is incremental, same assessed classes.
+- **T4 watches** (`track-t2t4-wave21-resweep.md`): #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW
+  with byte-identical timestamps (SURV-041's per-site gap intact);
+  label probes #81887/#81957/#81968 show only non-substantive events
+  (subscribe mvdan 2026-10-04T19:29:35Z, gopherbot comment
+  2026-10-03T10:50:39Z, subscribe qiulaidongfeng
+  2026-10-03T08:44:02Z — all unchanged) — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`) stays a watch note
+  adjacent to SURV-004/SURV-006, not a new candidate. No bar-clearing
+  material anywhere; no gaps.
+
+### Wave-21 re-rank pass (2026-10-05)
+
+No promotions. Nothing bar-cleared this wave (JEP 544
+content-identical to wave-9/10/11/12/13/14/15/16/17/18/19/20 archives —
+**thirteen** consecutive content-identical archives; #157943 0/3 trips
+on byte-identical baselines; T3 0/6 triggers; T2/T4 all negative); no
+prototype-gated promotions (no new measured prototypes — the rule
+holds: paper numbers never promote; Azul's 2x–5x claim is still vendor
+marketing). No new ranked IDs. **77 active ranked (SURV-001…078 minus
+struck SURV-077): 7 / 39 / 17 / 14.**
+
+### Wave-22 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w21.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   note: w9–w20 pin was 0024bc1ea0e660e97b7cf5a6f1c9da7d; the w21 md5
+   differs by exactly one line — the obfuscated anti-bot `<script
+   src>` URL rotates between fetches; **diff page bodies before
+   concluding a pin break**); watch for Targeted→Integrated movement
+   as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirteen consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**, not golang/go (that number does not exist
+   there); RFC #3943 lives in `rust-lang/rfcs`, not `rust-lang/rust`.
+   Note: #163336's `merged_at` may show GitHub serialization variance
+   (wave-12 12:11:39Z vs waves 13–21 12:11:35Z) while `updated_at` is
+   byte-identical — that is not a new event. Note: the GitHub commits
+   API `commit.author.date` and `commit.committer.date` may differ by
+   minutes on the same sha (GraalPy CHANGELOG.md head, waves 18–21) —
+   compare shas, not just timestamps.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave21-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (swift-institute); note adjacent passes
+   (e.g. `cond_fail` out of SILCombine) that are not move-only.
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   4-byte XSSI prefix `)]}'`; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated` — note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid); label-probe watch notes
+   (#81887, #81957, #81968) for anything bar-clearing; #81887's CL
+   842885/842886 (`slices: make BinarySearchFunc inlinable`)
+   stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+
+### Per-track wave-22 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~03:39 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes — **byte-identical
+  to the wave-21 raw archive**, md5 682b4a7689dc106ffa20dd9e868398cd;
+  the anti-bot `<script src>` URL rotation did not even move this wave
+  — **fourteen** consecutive content-identical archives, waves 9–22).
+  Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-05_w22.html`. Method note
+  carried: diff page bodies before concluding a pin break. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave22-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~03:39–03:45 CEST) — byte-identical
+  to the wave-16…21 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads for try-perf/trybot/`try perf`/`@bors
+  try`/bors-try = zero hits; latest event still Amanieu's 2026-10-01
+  cross-reference); RFC #3943 Open under review (comments 11 /
+  review_comments 58, unchanged — **fourteenth** consecutive unchanged
+  wave). Sibling PRs zero movement (#163336 remains the only merged;
+  #163337 open unchanged since wave 19; #157943 closed unchanged).
+  SURV-024's ruling stands; trips re-armed (RFC #3943 acceptance most
+  plausible near-term). Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave22-triggers.md`): 0/6 fired
+  (~03:45–03:50 CEST) — no new Meta runtime optimizing-JIT (same
+  disqualified noise: 2024 LLM Compiler + Muse Code + CompilerGym);
+  Pyston pyston_main still 2024-08-12; Swift move-only activity still
+  bug-fix dossiers only (DeinitDevirtualizer is 2023-era, not a new
+  pass); SE-0474 still Accepted, partial behind flag (raw md5
+  e8f962dbd12172d2f2a44410e727d7b5, unchanged since wave 8);
+  TruffleRuby Options.java raw-vs-pin md5 identical to the
+  wave-3→21 pin (801fd357c11fd16c87f1764777e67b4a; zero
+  speculat/guard/optim matches); GraalPy raw-vs-pin md5 identical to
+  pin (52c85a03991d970d41b4746b06a72c19; file-history head same sha
+  9712c23b, sha-comparison discipline). Verbatim-URL-copy rule held
+  (no 404s). All six triggers re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave22-resweep.md`): all negative with
+  exact-check records (~03:45–03:55 CEST). Graal 25.x changelog
+  byte-identical to the pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28); Valhalla project page same 8-JEP
+  list. Azul Cloud Native Compiler stays a watch note (Oct 1
+  BusinessWire + press rewrites only — no whitepaper, no technique, no
+  independent measurement; 2x–5x claim still unverified marketing;
+  docs.azul.com CNC sizing docs are product docs). OpenJ9 latest still
+  v0.62.0 (2026-09-15). .NET 11: nothing bar-clearing beyond the
+  assessed incremental set. T4: #24314 open/static; #77893's five CLs
+  all still NEW with byte-identical timestamps (SURV-041's per-site
+  gap intact); label probes #81887/#81957/#81968 non-substantive only
+  (#81887's CL 842885/842886 `slices: make BinarySearchFunc inlinable`
+  stays a watch note adjacent to SURV-004/SURV-006 — 842885 ABANDONED,
+  842886 NEW, unchanged). No gaps.
+
+### Wave-22 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–22; §3 +3 wave-22 angles; §5 wave-22 re-sweep
+  negatives; §6 wave-22 queue ALL COMPLETE + per-track wave-22
+  coverage + wave-22 re-rank + wave-23 queue; §7 wave-22 footer).
+
+### Wave-23 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w22.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   note: the w9–w20 pin 0024bc1ea0e660e97b7cf5a6f1c9da7d was superseded
+   at wave 21 by the anti-bot script-URL rotation; w21 and w22 are
+   byte-identical; **diff page bodies before concluding a pin break**);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for fourteen consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**, not golang/go (that number does not exist
+   there); RFC #3943 lives in `rust-lang/rfcs`, not `rust-lang/rust`.
+   Note: #163336's `merged_at` may show GitHub serialization variance
+   (wave-12 12:11:39Z vs waves 13–22 12:11:35Z) while `updated_at` is
+   byte-identical — that is not a new event. Note: the GitHub commits
+   API `commit.author.date` and `commit.committer.date` may differ by
+   minutes on the same sha (GraalPy CHANGELOG.md head, waves 18–22) —
+   compare shas, not just timestamps.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave22-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers; note adjacent passes that are not
+   move-only. **Copy raw URLs verbatim from the prior wave's track file
+   — never reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   first line (`)]}'` XSSI prefix — a bare `sed 's/^)]}//'` leaves
+   the trailing `'` and breaks JSON); the bare `/changes/{id}` endpoint
+   already carries `status`/`updated` — note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid); label-probe watch notes
+   (#81887, #81957, #81968) for anything bar-clearing; #81887's CL
+   842885/842886 (`slices: make BinarySearchFunc inlinable`, 842885
+   ABANDONED / 842886 NEW) stays a watch note adjacent to
+   SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+
+### Per-track wave-23 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~04:40 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes —
+  **byte-identical to the wave-21/22 raw archive**, md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation did not move again — **fifteen** consecutive
+  content-identical archives, waves 9–23). Metadata unchanged:
+  Owner=John Rose, Type=Feature, Scope=Implementation,
+  **Status=Targeted, Release=28** (page updated 2026/09/29 15:23). No
+  Targeted→Integrated movement, no ramp-down notes. Raw archived as
+  `jep544_2026-10-05_w23.html`. Method note carried: diff page bodies
+  before concluding a pin break. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave23-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~04:40–04:45 CEST) — byte-identical
+  to the wave-16…22 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads for try-perf/trybot/`try perf`/`@bors
+  try`/bors-try = zero hits; latest event still Amanieu's 2026-10-01
+  cross-reference); RFC #3943 Open under review (comments 11 /
+  review_comments 58, unchanged — **fifteenth** consecutive unchanged
+  wave). Sibling note: #163337 still open but now has a new
+  rust-bors[bot] "unmergeable" comment 2026-10-05T01:37:55Z (upstream
+  #163721 conflict — informational, not a trip); #163336 remains the
+  only merged; #157943 closed unchanged. SURV-024's ruling stands;
+  trips re-armed (RFC #3943 acceptance most plausible near-term).
+  Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave23-triggers.md`): 0/6 fired
+  (~04:45–04:50 CEST) — no new Meta runtime optimizing-JIT (same
+  disqualified noise: 2024 LLM Compiler + Muse Code + CompilerGym);
+  Pyston pyston_main still 2024-08-12; Swift move-only activity still
+  bug-fix dossiers only — no new SIL optimization pass
+  (adjacent-but-not-move-only noted for honesty: PR #89784
+  `SimplifyIndexingInstructions` and the Sept-18
+  `raw_pointer_to_ref` immortal-flag simplification are general SIL
+  passes); SE-0474 still Accepted, partial behind flag (raw md5
+  e8f962dbd12172d2f2a44410e727d7b5, unchanged since wave 8);
+  TruffleRuby Options.java raw-vs-pin md5 identical to the
+  wave-3→22 pin (801fd357c11fd16c87f1764777e67b4a; zero
+  speculat/guard/optim matches); GraalPy raw-vs-pin md5 identical to
+  pin (52c85a03991d970d41b4746b06a72c19; file-history head same sha
+  9712c23b, sha-comparison discipline). Verbatim-URL-copy rule held
+  (no 404s). All six triggers re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave23-resweep.md`): all negative with
+  exact-check records (~04:50–04:55 CEST). Graal 25.x changelog
+  byte-identical to the pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28); Valhalla project page same 8-JEP
+  list. Azul Cloud Native Compiler stays a watch note (Oct 1
+  BusinessWire + press rewrites only — re-dated again, new
+  financialcontent syndication; no whitepaper, no technique, no
+  independent measurement; 2x–5x claim still unverified marketing).
+  OpenJ9 latest still v0.62.0 (2026-09-15). .NET 11: nothing
+  bar-clearing beyond the assessed incremental set (daily-devops.net
+  .NET 11 JIT-internals digest stays inside the
+  devirtualization/escape-analysis/bounds-check-elimination/Runtime
+  Async buckets). T4: #24314 open/static; #77893's five CLs all still
+  NEW with byte-identical timestamps (SURV-041's per-site gap
+  intact); label probes #81887/#81957/#81968 non-substantive only
+  (#81887's CL 842885/842886 `slices: make BinarySearchFunc inlinable`
+  stays a watch note adjacent to SURV-004/SURV-006 — 842885 ABANDONED,
+  842886 NEW, unchanged). No gaps.
+
+### Wave-23 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–23; §3 +3 wave-23 angles; §5 wave-23 re-sweep
+  negatives; §6 wave-23 queue ALL COMPLETE + per-track wave-23
+  coverage + wave-23 re-rank + wave-24 queue; §7 wave-23 footer).
+
+### Wave-24 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w23.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21/w22/w23 are byte-identical; **diff page bodies before
+   concluding a pin break**); watch for Targeted→Integrated movement
+   as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for fifteen consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**, not golang/go (that number does not exist
+   there); RFC #3943 lives in `rust-lang/rfcs`, not `rust-lang/rust`.
+   Note: #163336's `merged_at` may show GitHub serialization variance
+   while `updated_at` is byte-identical — that is not a new event.
+   Note: the GitHub commits API `commit.author.date` and
+   `commit.committer.date` may differ by minutes on the same sha
+   (GraalPy CHANGELOG.md head, waves 18–23) — compare shas, not just
+   timestamps. Note: sibling #163337's timeline is paginated (33 pages
+   at per_page=1) — read the tail page for the latest event.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave23-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers; note adjacent passes that are not
+   move-only (e.g. PR #89784 `SimplifyIndexingInstructions` — general
+   SIL, not move-only). **Copy raw URLs verbatim from the prior
+   wave's track file — never reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   first line (`)]}'` XSSI prefix — a bare `sed 's/^)]}//'` leaves
+   the trailing `'` and breaks JSON); the bare `/changes/{id}` endpoint
+   already carries `status`/`updated` — note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid); label-probe watch notes
+   (#81887, #81957, #81968) for anything bar-clearing; #81887's CL
+   842885/842886 (`slices: make BinarySearchFunc inlinable`, 842885
+   ABANDONED / 842886 NEW) stays a watch note adjacent to
+   SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+
+### Per-track wave-24 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~05:37 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes —
+  **byte-identical to the wave-21/22/23 raw archive**, md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a third wave — **sixteen** consecutive
+  content-identical archives, waves 9–24). Metadata grepped verbatim
+  in the new archive (not carried): Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w24.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave24-watch.md`): 0/3 trip
+  conditions fired (GitHub API state/timeline, ~05:40–05:50 CEST) —
+  byte-identical to the wave-16…23 baselines: #163338 OPEN/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged, sixteenth consecutive
+  unchanged wave); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads = zero hits); RFC #3943 Open under
+  review (comments 11 / review_comments 58, unchanged, sixteenth
+  consecutive unchanged wave). #163336 still the only merged
+  (merged_at 2026-09-30T12:11:35Z); #163337 open — its PR
+  `updated_at` equals the recorded rust-bors[bot] "unmergeable"
+  comment timestamp (2026-10-05T01:37:55Z), i.e. no new events;
+  method note: PR `updated_at` equality with a recorded last-event
+  timestamp is a sufficient no-new-events check for paginated
+  timelines (skips the tail-page re-read). SURV-024's transfer ruling
+  stands (§5 static-core strike; guarded-speculative E3 arm only);
+  trips re-armed (RFC #3943 acceptance most plausible near-term).
+  Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave24-triggers.md`): 0/6 fired
+  (~05:45–05:55 CEST) — Meta search = disqualified noise only (2024
+  LLM Compiler, Muse Code terminal agent, Quest Runtime Optimizer
+  graphics tool); Pyston pyston_main still 2024-08-12 (fe8afded);
+  Swift move-only still bug-fix dossiers only (`cond_fail true`
+  pass-out-of-SILCombine = instruction pass not move-only,
+  Sept-18 `raw_pointer_to_ref` immortal-flag = instruction
+  simplification, 2026-09-17 address-cast = lifetime-verifier bug fix);
+  SE-0474 raw md5 e8f962dbd12172d2f2a44410e727d7b5 unchanged since
+  wave 8, still Accepted/partial behind flag; TruffleRuby
+  Options.java md5 801fd357c11fd16c87f1764777e67b4a identical to pin,
+  zero speculat/guard/optim matches (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 identical to pin, file-history
+  head same sha 9712c23b (sha-comparison discipline; author/committer
+  date variance on the same sha). Verbatim-URL-copy rule held —
+  no 404s. No gaps.
+- **T2 continuous re-sweep + T4 watches**
+  (`track-t2t4-wave24-resweep.md`): all negative, no deltas
+  (~05:45–06:00 CEST). Graal 25.x changelog byte-identical to pin
+  (14,501 bytes, 6397c38a55572509df12814180ec458f — tops at 25.5,
+  no 25.6, URL under `compiler/`); JEP 401 Integrated/Release 28
+  unchanged; Valhalla page same 8 JEPs; Azul no new announcement
+  (Oct 1 BusinessWire + press rewrites only; 2x–5x unverified vendor
+  marketing); OpenJ9 still v0.62.0 (2026-09-15); .NET 11 devblog JIT
+  list inside the already-assessed incremental buckets (range-check
+  cloning #124705, intra-basic-block bounds-check coalescing #127439,
+  SELECT folding, AVX-VNNI-512, saturating conversions, ARM64
+  Vector-by-ref for SVE, SequenceEqual folding — no bar-clearing).
+  T4: #24314 static (open, updated 2022-07-13, 8 comments);
+  #77893's five CLs all still NEW with byte-identical timestamps
+  (SURV-041's per-site gap intact; `tail -n +2` is the correct
+  `)]}'` XSSI-prefix strip — a bare sed leaves the trailing `'`);
+  label probes #81887/#81957/#81968 non-substantive only (unchanged
+  since waves 20–23; #81887: subscribe mvdan 2026-10-04T19:29:35Z) —
+  CL 842885 ABANDONED 2026-10-01 / 842886 NEW 2026-10-04 stay a watch
+  note adjacent to SURV-004/SURV-006. No gaps.
+
+### Wave-24 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–24; §3 +3 wave-24 angles; §5 wave-24 re-sweep
+  negatives; §6 wave-24 queue ALL COMPLETE + per-track wave-24
+  coverage + wave-24 re-rank + wave-25 queue; §7 wave-24 footer).
+
+### Wave-25 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w24.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21/w22/w23/w24 are byte-identical (sixteen consecutive
+   content-identical archives, waves 9–24); **diff page bodies before
+   concluding a pin break**); wave 24 grep-confirmed Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for sixteen consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave24-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass).
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+
+### Per-track wave-25 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~06:40 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes —
+  **byte-identical to the wave-21/22/23/24 raw archive**, md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a fourth wave — **seventeen** consecutive
+  content-identical archives, waves 9–25). Metadata re-verified
+  verbatim in the NEW archive (not carried): Owner=John Rose,
+  Type=Feature, Scope=Implementation, **Status=Targeted,
+  Release=28** (page updated 2026/09/29 15:23). No
+  Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w25.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave25-watch.md`): 0/3 trip
+  conditions fired (GitHub API state/timeline, ~06:40–06:50 CEST) —
+  byte-identical to the wave-16…24 baselines: #163338 OPEN/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged, seventeenth consecutive
+  unchanged wave); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads = zero hits); RFC #3943 Open under
+  review (comments 11 / review_comments 58, unchanged, seventeenth
+  consecutive unchanged wave). #163336 still the only merged
+  (merged_at 2026-09-30T12:11:35Z); #163337 open — its PR
+  `updated_at` equals the recorded rust-bors[bot] "unmergeable"
+  comment timestamp (2026-10-05T01:37:55Z), i.e. no new events;
+  method note: PR `updated_at` equality with a recorded last-event
+  timestamp is a sufficient no-new-events check for paginated
+  timelines (skips the tail-page re-read). SURV-024's transfer ruling
+  stands (§5 static-core strike; guarded-speculative E3 arm only);
+  trips re-armed (RFC #3943 acceptance most plausible near-term).
+  Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave25-triggers.md`): 0/6 fired
+  (~06:50–07:00 CEST) — Meta search = disqualified noise only (2024
+  LLM Compiler, Muse Code terminal agent, Quest Runtime Optimizer
+  graphics tool, Static Hermes — AOT, not a new runtime optimizing
+  JIT); Pyston pyston_main still 2024-08-12 (fe8afded);
+  Swift move-only still bug-fix dossiers only (#88805/#90282
+  convert_function partial_apply checker hardening = defensive
+  crash-prep, #86178 = verifier workaround, store_borrow /
+  consume-during-borrow = checker correctness — none a new SIL
+  optimization pass); SE-0474 raw md5 e8f962dbd12172d2f2a44410e727d7b5
+  unchanged since wave 8, still Accepted/partial behind flag;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline;
+  author/committer date variance on the same sha). Verbatim-URL-copy
+  rule held — no 404s. No gaps.
+- **T2 continuous re-sweep + T4 watches**
+  (`track-t2t4-wave25-resweep.md`): all negative, no deltas
+  (~06:50–07:00 CEST). Graal 25.x changelog byte-identical to pin
+  (14,501 bytes, 6397c38a55572509df12814180ec458f — tops at 25.5,
+  no 25.6, URL under `compiler/`); JEP 401 Integrated/Release 28
+  unchanged; Valhalla page same 8 JEPs; Azul no new announcement
+  (Oct 1 BusinessWire + press rewrites only — itbrief adds ReadyNow
+  lineage background, no published technique; 2x–5x unverified vendor
+  marketing); OpenJ9 still v0.62.0 (2026-09-15; method note: bare
+  `releases/latest` 301s — follow the redirect); .NET 11 devblog and
+  Preview-1 JIT lists (range-check cloning #124705, intra-basic-block
+  bounds-check coalescing #127439, SELECT folding, AVX-VNNI-512,
+  saturating conversions, ARM64 Vector-by-ref for SVE, SequenceEqual
+  folding, Multicore JIT MAX_METHODS, Arm64 stackalloc zeroing, IV
+  analysis, non-shared-generic devirtualization, bitfield extraction)
+  all inside the already-assessed incremental buckets — no
+  bar-clearing. T4: #24314 static (open, updated 2022-07-13,
+  8 comments); #77893's five CLs all still NEW with byte-identical
+  timestamps (SURV-041's per-site gap intact; method note: they live
+  on go-review.googlesource.com, not chromium-review); label probes
+  #81887/#81957/#81968 non-substantive only (subscribe mvdan
+  2026-10-04T19:29:35Z; gopherbot comment 2026-10-03T10:50:39Z;
+  subscribe qiulaidongfeng 2026-10-03T08:44:02Z — all unchanged) —
+  CL 842885 ABANDONED 2026-10-01 / 842886 NEW 2026-10-04 stay a watch
+  note adjacent to SURV-004/SURV-006. No gaps.
+
+### Wave-25 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–25; §3 +3 wave-25 angles; §5 wave-25 re-sweep
+  negatives; §6 wave-25 queue ALL COMPLETE + per-track wave-25
+  coverage + wave-25 re-rank + wave-26 queue; §7 wave-25 footer).
+
+### Wave-26 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w25.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w25 are byte-identical (seventeen consecutive
+   content-identical archives, waves 9–25); **diff page bodies before
+   concluding a pin break**); wave 25 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for seventeen consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave25-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass).
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s — follow the redirect).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+
+### Per-track wave-26 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~07:40 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes —
+  **byte-identical to the wave-21/22/23/24/25 raw archive**, md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a fifth wave — **eighteen** consecutive
+  content-identical archives, waves 9–26). Metadata re-verified
+  verbatim in the NEW archive (not carried): **Status=Targeted,
+  Release=28**. No Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w26.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027) and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave26-watch.md`): 0/3 trip
+  conditions fired (GitHub API state/timeline, ~07:42–07:58 CEST) —
+  byte-identical to the wave-16…25 baselines: #163338 OPEN/unmerged
+  (updated_at 2026-09-30T13:03:50Z — unchanged, eighteenth consecutive
+  unchanged wave); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads = zero hits); RFC #3943 Open under
+  review (comments 11 / review_comments 58, unchanged, eighteenth
+  consecutive unchanged wave). #163336 still the only merged
+  (merged_at 2026-09-30T12:11:35Z); #163337 open — its PR
+  `updated_at` equals the recorded rust-bors[bot] "unmergeable"
+  comment timestamp (2026-10-05T01:37:55Z), i.e. no new events.
+  Method note: unauthenticated GitHub API core rate limit (60/hr) hit
+  mid-wave — reset 05:55:56 UTC; affected checks (#163336, Pyston head,
+  GraalPy history head, label probes, #24314) re-run post-reset, no
+  gaps. SURV-024's transfer ruling stands (§5 static-core strike;
+  guarded-speculative E3 arm only); trips re-armed (RFC #3943
+  acceptance most plausible near-term). Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave26-triggers.md`): 0/6 fired
+  (~07:44–07:58 CEST) — Meta search = disqualified noise only (2024
+  LLM Compiler, Muse Code terminal agent, Quest Runtime Optimizer
+  graphics tool, Static Hermes — AOT, not a new runtime optimizing
+  JIT; jemalloc 5.4.0 cleanup release — allocator maintenance, not a
+  JIT); Pyston pyston_main still 2024-08-12 (fe8afded); Swift
+  move-only still bug-fix/crash dossiers only
+  (MoveOnlyChecker/CopyPropagation borrow-scope crash dossier =
+  checker correctness, SIL opaque-values = compiler infrastructure,
+  cond_fail pass already assessed — none a new move-only SIL
+  optimization pass); SE-0474 raw md5 e8f962dbd12172d2f2a44410e727d7b5
+  unchanged since wave 8, still Accepted/partial behind flag;
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline;
+  author/committer date variance on the same sha). Verbatim-URL-copy
+  rule held — no 404s. No gaps.
+- **T2 continuous re-sweep + T4 watches**
+  (`track-t2t4-wave26-resweep.md`): all negative, no deltas
+  (~07:45–07:58 CEST). Graal 25.x changelog byte-identical to pin
+  (14,501 bytes, 6397c38a55572509df12814180ec458f — tops at 25.5,
+  no 25.6, URL under `compiler/`); JEP 401 Integrated/Release 28
+  unchanged; Valhalla page same 8 JEPs; Azul no new announcement
+  since Oct 1 (BusinessWire + press rewrites — smbtech.au rewrite adds
+  nothing; no published technique, 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0 (method note: bare `releases/latest`
+  301s/302s — follow the redirect); .NET 11 deeper writeups only —
+  new sub-items (inequality-assertion range analysis #121273,
+  same-block propagation #121527, bitwise-op bounds #122263,
+  unsigned-guard deduction #125056, slice bounds tracking #127488,
+  `!=`-terminator loop cloning #129268, runtime-async tiered compile,
+  NativeAOT shared-dispatch helper) all inside the already-assessed
+  incremental buckets — nothing bar-clearing. T4: #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact; method
+  note: they live on go-review.googlesource.com, not chromium-review);
+  label probes #81887/#81957/#81968 non-substantive only (subscribe
+  mvdan 2026-10-04T19:29:35Z; gopherbot comment 2026-10-03T10:50:39Z;
+  subscribe qiulaidongfeng 2026-10-03T08:44:02Z — all unchanged) —
+  CL 842885 ABANDONED 2026-10-01 / 842886 NEW 2026-10-04 stay a watch
+  note adjacent to SURV-004/SURV-006. No gaps.
+
+### Wave-26 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–26; §3 +3 wave-26 angles; §5 wave-26 re-sweep
+  negatives; §6 wave-26 queue ALL COMPLETE + per-track wave-26
+  coverage + wave-26 re-rank + wave-27 queue; §7 wave-26 footer).
+
+### Wave-27 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w26.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w26 are byte-identical (eighteen consecutive
+   content-identical archives, waves 9–26); **diff page bodies before
+   concluding a pin break**); wave 26 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for eighteen consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24). Unauthenticated
+   core rate limit is 60/hr — if hit mid-wave, wait for reset and re-run
+   the affected checks (wave-26 precedent).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave26-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass).
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s — follow the redirect).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-27 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~08:45 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes —
+  **byte-identical to the wave-21/22/23/24/25/26 raw archive**, md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a sixth wave — **nineteen** consecutive
+  content-identical archives, waves 9–27). Metadata re-verified
+  verbatim in the NEW archive (not carried): **Status=Targeted,
+  Release=28** — no Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w27.html`. Method note carried: diff page bodies
+  before concluding a pin break; re-verify metadata in the new archive
+  each wave, not just the md5.
+- **#157943 watch** (`track-surv024-wave27-watch.md`): 0/3 trip
+  conditions fired (GitHub API state/timeline, ~08:45–08:50 CEST,
+  User-Agent header; rate limit NOT hit this wave — 58 remaining, no
+  reset-wait): #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run (#163338
+  timeline: 21 events, keyword scan of all payloads for try-perf/trybot/
+  `try perf`/`@bors try`/bors-try = zero hits); RFC #3943 Open
+  (comments 11 / review_comments 58 — **nineteenth** consecutive
+  unchanged wave, still the most plausible near-term trip); #163337
+  open with `updated_at` (2026-10-05T01:37:55Z) equal to the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — no new events, no
+  tail-page re-read needed; #163336 still the only merged.
+- **T3 standing triggers** (`track-t3-wave27-triggers.md`): 0/6 fired,
+  verbatim-URL-copy rule held (no 404s). Meta search = disqualified
+  noise only (2024 LLM Compiler, Muse Code terminal agent,
+  jemalloc 5.4.0 cleanup release — allocator maintenance, not a JIT);
+  Pyston `pyston_main` head unchanged (2024-08-12T16:30:56Z,
+  fe8afded); Swift = bug-fix/crash dossiers only (MoveOnlyChecker/
+  CopyPropagation borrow-scope crash dossier — checker correctness;
+  compiler-crash dossier — miscompile fixes, not passes; cond_fail
+  pass already assessed); SE-0474 still Accepted/partial-behind-flag
+  (raw md5 e8f962dbd12172d2f2a44410e727d7b5, unchanged since wave 8);
+  TruffleRuby Options.java raw md5 801fd357c11fd16c87f1764777e67b4a
+  — identical to pin, zero keyword hits (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history
+  head same sha 9712c23b (sha-comparison discipline holds).
+- **T2/T4 re-sweep** (`track-t2t4-wave27-resweep.md`): all negative.
+  Graal 25.x changelog byte-identical to pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs; Azul no new
+  announcement since Oct 1 (BusinessWire + press rewrites — smbtech.au
+  1-day-ago rewrite adds nothing; no published technique, 2x–5x still
+  unverified vendor marketing); OpenJ9 still v0.62.0 (releases/latest
+  redirects — follow with -L); .NET 11: nothing new beyond the
+  already-assessed set (Preview-6 announcement, devblogs "Performance
+  Improvements in .NET 11", daily-devops JIT-internals writeup — all
+  inside the assessed incremental buckets). #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact; method
+  note: go-review, not chromium-review); label probes
+  #81887/#81957/#81968 non-substantive only — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+
+### Wave-27 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–27; §3 +3 wave-27 angles; §5 wave-27 re-sweep
+  negatives; §6 wave-27 queue ALL COMPLETE + per-track wave-27
+  coverage + wave-27 re-rank + wave-28 queue; §7 wave-27 footer).
+
+### Wave-28 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w27.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w27 are byte-identical (nineteen consecutive
+   content-identical archives, waves 9–27); **diff page bodies before
+   concluding a pin break**); wave 27 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for nineteen consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24). Unauthenticated
+   core rate limit is 60/hr — if hit mid-wave, wait for reset and re-run
+   the affected checks (wave-26 precedent; wave 27 did NOT hit the limit).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave27-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass).
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s — follow the redirect).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+
+### Per-track wave-28 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~09:37 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes —
+  **byte-identical to the wave-21/22/23/24/25/26/27 raw archive**, md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>` URL
+  rotation stayed dormant a seventh wave — **twenty** consecutive
+  content-identical archives, waves 9–28; empty raw body diff).
+  Metadata re-verified verbatim in the NEW archive (not carried):
+  **Status=Targeted, Release=28** — no Targeted→Integrated movement.
+  Raw archived as `jep544_2026-10-05_w28.html`. Method note carried:
+  diff page bodies before concluding a pin break; re-verify metadata
+  in the new archive each wave, not just the md5.
+- **#157943 watch** (`track-surv024-wave28-watch.md`): 0/3 trip
+  conditions fired (GitHub API state/timeline, ~09:37–09:42 CEST,
+  User-Agent header; rate limit NOT hit this wave — 57 remaining at
+  start, no reset-wait): #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run (#163338
+  timeline: 21 events, keyword scan of all payloads for try-perf/trybot/
+  `try perf`/`@bors try`/bors-try = zero hits); RFC #3943 Open
+  (comments 11 / review_comments 58 — **twentieth** consecutive
+  unchanged wave, still the most plausible near-term trip); #163337
+  open with `updated_at` (2026-10-05T01:37:55Z) equal to the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — no new events, no
+  tail-page re-read needed; #163336 still the only merged.
+- **T3 standing triggers** (`track-t3-wave28-triggers.md`): 0/6 fired,
+  verbatim-URL-copy rule held (no 404s). Meta search = disqualified
+  noise only (2024 LLM Compiler, Muse Code terminal agent, MTIA
+  inference-chip roadmap, Zoomer GPU-workload platform, hyperagents
+  AI hype — none a runtime optimizing JIT); Pyston `pyston_main` head
+  unchanged (2024-08-12T16:30:56Z, fe8afded); Swift =
+  ownership-model docs + already-assessed passes only (cond_fail
+  extraction #88258, DeinitDevirtualizer #69955 — both previously
+  assessed; compiler-crash dossier — miscompile fixes, not passes) —
+  no new move-only SIL optimization pass; SE-0474 still
+  Accepted/partial-behind-flag (raw md5 e8f962dbd12172d2f2a44410e727d7b5,
+  unchanged since wave 8); TruffleRuby Options.java raw md5
+  801fd357c11fd16c87f1764777e67b4a — identical to pin, zero keyword
+  hits (grep exit 1); GraalPy raw md5 52c85a03991d970d41b4746b06a72c19
+  — identical to pin, file-history head same sha 9712c23b
+  (sha-comparison discipline holds).
+- **T2/T4 re-sweep** (`track-t2t4-wave28-resweep.md`): all negative.
+  Graal 25.x changelog byte-identical to pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs (181, 309, 334,
+  371, 390, 401, 402, 539); Azul no new announcement since Oct 1
+  (BusinessWire + press rewrites — smbtech.au 1-day-ago rewrite adds
+  no technique; no published technique, 2x–5x still unverified vendor
+  marketing); OpenJ9 still v0.62.0 (releases/latest redirects — follow
+  with -L); .NET 11: Learn runtime page now "last updated for
+  **Preview 7**" (wave 27 saw Preview-6) — full JIT list re-read;
+  Preview-7 additions beyond the wave-27 assessed set
+  (switch-expression folding, redundant checked-context removal,
+  `Activator.CreateInstance<T>()` exact-type devirtualization, SIMD
+  cost-model modernization) all inside the already-assessed
+  incremental buckets, nothing bar-clearing. #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact; method
+  note: go-review, not chromium-review); label probes
+  #81887/#81957/#81968 non-substantive only — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+
+### Wave-28 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–28; §3 +3 wave-28 angles; §5 wave-28 re-sweep
+  negatives; §6 wave-28 queue ALL COMPLETE + per-track wave-28
+  coverage + wave-28 re-rank + wave-29 queue; §7 wave-28 footer).
+
+### Wave-29 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w28.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w28 are byte-identical (twenty consecutive
+   content-identical archives, waves 9–28); **diff page bodies before
+   concluding a pin break**); wave 28 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24). Unauthenticated
+   core rate limit is 60/hr — if hit mid-wave, wait for reset and re-run
+   the affected checks (wave-26 precedent).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave27-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass).
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s — follow the redirect).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-29 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~10:38 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes —
+  **byte-identical to the wave-21/22/23/24/25/26/27/28 raw archive**,
+  md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot `<script src>`
+  URL rotation stayed dormant an eighth wave — **twenty-one**
+  consecutive content-identical archives, waves 9–29; empty raw body
+  diff). Metadata re-verified verbatim in the NEW archive (not
+  carried): **Status=Targeted, Release=28** — no Targeted→Integrated
+  movement. Raw archived as `jep544_2026-10-05_w29.html`. Method note
+  carried: diff page bodies before concluding a pin break; re-verify
+  metadata in the new archive each wave, not just the md5.
+- **#157943 watch** (`track-surv024-wave29-watch.md`): 0/3 trip
+  conditions fired (GitHub API state/timeline, ~10:38–10:42 CEST,
+  User-Agent header; rate limit NOT hit this wave — 57 remaining at
+  start, no reset-wait): #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z — unchanged); no try-perf/trybot run (#163338
+  timeline: 21 events, keyword scan of all payloads for try-perf/trybot/
+  `try perf`/`@bors try`/bors-try = zero hits); RFC #3943 Open
+  (comments 11 / review_comments 58 — **twenty-first** consecutive
+  unchanged wave, still the most plausible near-term trip); #163337
+  open with `updated_at` (2026-10-05T01:37:55Z) equal to the recorded
+  rust-bors[bot] "unmergeable" comment timestamp — no new events, no
+  tail-page re-read needed; #163336 still the only merged.
+- **T3 standing triggers** (`track-t3-wave29-triggers.md`): 0/6 fired,
+  verbatim-URL-copy rule held (no 404s). Meta search = disqualified
+  noise only (2024 LLM Compiler, React Compiler, Static Hermes, Druid
+  arXiv paper, .NET 11 JIT-internals — none a Meta runtime optimizing
+  JIT); Pyston `pyston_main` head unchanged (2024-08-12T16:30:56Z,
+  fe8afded); Swift = docs and already-assessed items only
+  (ownership-model docs, `[SILCombine] Bail load[copy](uteda) if
+  move-only` commit 2025-07-29 = crash-bail correctness fix inside
+  SILCombine, not a new pass; swift-institute copy-propagation crash
+  dossier — miscompile analysis, not a pass) — no new move-only SIL
+  optimization pass; SE-0474 still Accepted/partial-behind-flag (raw
+  md5 e8f962dbd12172d2f2a44410e727d7b5, unchanged since wave 8);
+  TruffleRuby Options.java raw md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero keyword hits (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history
+  head same sha 9712c23b (sha-comparison discipline holds).
+- **T2/T4 re-sweep** (`track-t2t4-wave29-resweep.md`): all negative.
+  Graal 25.x changelog byte-identical to pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f — tops at 25.5, no 25.6); JEP 401
+  Integrated/Release 28 unchanged; Valhalla same 8 JEPs (181, 309, 334,
+  371, 390, 401, 402, 539); Azul no new announcement since Oct 1
+  (BusinessWire + press rewrites — smbtech.au rewrite adds a
+  channel-partner angle, still no technique; 2x–5x still unverified
+  vendor marketing); OpenJ9 still v0.62.0 (releases/latest redirects —
+  follow with -L); .NET 11: Learn runtime page now "last updated for
+  **release candidate 1 (RC 1)**" (wave 28 saw Preview-7) — full JIT
+  section re-read; the new Runtime Async material (JIT async-version
+  compilation, tail-merged suspension points, tiered async compilation)
+  is tied to .NET's async state-machine lowering and does not transfer
+  to Go's goroutine model — nothing bar-clearing. #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  byte-identical timestamps (SURV-041's per-site gap intact; method
+  note: go-review, not chromium-review); label probes
+  #81887/#81957/#81968 non-substantive only — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+
+### Wave-29 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–29; §3 +3 wave-29 angles; §5 wave-29 re-sweep
+  negatives; §6 wave-29 queue ALL COMPLETE + per-track wave-29
+  coverage + wave-29 re-rank + wave-30 queue; §7 wave-29 footer).
+
+### Wave-30 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w29.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w29 are byte-identical (twenty-one consecutive
+   content-identical archives, waves 9–29); **diff page bodies before
+   concluding a pin break**); wave 29 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty-one consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24).
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave29-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass).
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s — follow the redirect).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-30 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~11:38 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes — **byte-identical
+  to the wave-21/22/23/24/25/26/27/28/29 raw archive**, md5
+  682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation
+  stayed dormant a ninth wave — **twenty-two** consecutive
+  content-identical archives, waves 9–30). Status/Release re-verified
+  verbatim in the NEW archive: `<td>Status</td><td>Targeted</td>`,
+  `<td>Release</td><td>28</td>` — no Targeted→Integrated movement, no
+  ramp-down notes. Raw archived as `jep544_2026-10-05_w30.html`.
+- **#157943 watch** (`track-surv024-wave30-watch.md`): 0/3 trip conditions
+  fired (GitHub API, User-Agent header, ~11:38–11:40 CEST; rate limit NOT
+  hit — 58 remaining at wave start) — #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z — twenty-second consecutive unchanged wave); no
+  try-perf/trybot run (timeline: 21 events, keyword scan of all payloads
+  for try-perf/trybot/try perf/@bors try/bors-try = zero hits; latest
+  event still Amanieu's 2026-10-01 cross-reference); RFC #3943 Open in
+  rust-lang/rfcs (comments 11 / review_comments 58, unchanged —
+  twenty-second consecutive); #163337 open with updated_at equal to the
+  recorded rust-bors[bot] "unmergeable" timestamp
+  (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed;
+  #163336 remains the only merged sibling. SURV-024's transfer ruling
+  stands (§5 static-core strike; guarded-speculative E3 arm only);
+  trips re-armed. Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave30-triggers.md`): 0/6 fired
+  (~11:40–11:45 CEST) — no new Meta runtime optimizing-JIT (2024 LLM
+  Compiler, Muse Code terminal AI agent, jemalloc 5.4.0, Meta Python
+  3.12/Cinder writeup, Muse Spark 1.3 claims — none a runtime
+  optimizing JIT); Pyston pyston_main still 2024-08-12; Swift move-only
+  activity still enforcement/docs/infra/bug-fixes only — no new SIL
+  optimization pass (note: the Sept 2026 "ownership for trivial values"
+  SILGen function flag is move-only *infrastructure* for the
+  lifetime-resolution pipeline, not an optimizer pass — recorded for
+  provenance, not a trigger); SE-0474 still Accepted, partial behind
+  flag (raw md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave
+  8); TruffleRuby Options.java md5 identical to pin (zero
+  speculat/guard/optim matches, grep exit 1); GraalPy raw md5 identical
+  to pin, file-history head same sha 9712c23b (sha-comparison
+  discipline). Verbatim-URL-copy rule held, no 404s. All six triggers
+  re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave30-resweep.md`): all negative with
+  exact-check records (~11:45–11:50 CEST). Graal 25.x changelog
+  byte-identical (14,501 bytes, md5 6397c38a55572509df12814180ec458f;
+  tops at 25.5, no 25.6). JEP 401 unchanged (Integrated/Release 28).
+  Valhalla project page same 8-JEP list. Azul no new announcement
+  since Oct 1 (BusinessWire + press rewrites only — no published
+  technique; 2x–5x still unverified vendor marketing). OpenJ9 still
+  v0.62.0 (releases/latest redirects — follow with -L). .NET 11 Learn
+  runtime page still "last updated for release candidate 1 (RC 1)"
+  (unchanged vs wave 29) — JIT section re-scanned; all headings inside
+  the already-assessed incremental buckets; Runtime Async material
+  still non-transferable to Go's goroutine model — nothing
+  bar-clearing. #24314 static (open, updated 2022-07-13, 8 comments);
+  #77893's five CLs all still NEW with byte-identical timestamps
+  (SURV-041's per-site gap intact; go-review.googlesource.com, `tail -n
+  +2` XSSI strip); label probes #81887/#81957/#81968 show only
+  non-substantive events (subscribe mvdan 2026-10-04T19:29:35Z,
+  gopherbot comment 2026-10-03T10:50:39Z, subscribe qiulaidongfeng
+  2026-10-03T08:44:02Z — all unchanged) — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006, not a
+  new candidate. No bar-clearing material anywhere; no gaps.
+
+### Wave-30 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–30; §3 +3 wave-30 angles; §5 wave-30 re-sweep
+  negatives; §6 wave-30 queue ALL COMPLETE + per-track wave-30
+  coverage + wave-30 re-rank + wave-31 queue; §7 wave-30 footer).
+
+### Wave-31 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w30.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w30 are byte-identical (twenty-two consecutive
+   content-identical archives, waves 9–30); **diff page bodies before
+   concluding a pin break**); wave 30 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty-two consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24).
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave30-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass);
+   move-only *infrastructure* (e.g. the Sept 2026 "ownership for trivial
+   values" SILGen flag) is provenance, not a trigger.
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s — follow the redirect).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-11 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~18:36 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes — **byte-identical
+  to the wave-10 raw archive**, md5 0024bc1ea0e660e97b7cf5a6f1c9da7d).
+  Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-04_w11.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave11-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~18:40 CEST) — byte-identical to the
+  wave-10 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads for try-perf/trybot/rust-timer/`@bors
+  try`/bors-try = zero hits; latest event still Amanieu's 2026-10-01
+  cross-reference); RFC #3943 Open under review (comments 11 /
+  review_comments 58, unchanged). All six sibling PRs zero movement
+  (#163336 remains the only merged; verbatim titles recorded —
+  "Storage reconstruction"/"Miri support" — consistent with the wave-10
+  correction). SURV-024's transfer ruling stands (§5 static-core strike;
+  guarded-speculative E3 arm only); trips re-armed (RFC #3943
+  acceptance most plausible near-term). Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave11-triggers.md`): 0/6 fired
+  (~18:40–18:52 CEST) — no new Meta runtime optimizing-JIT (same 7
+  search results: 2024 LLM Compiler + React Compiler only); Pyston
+  pyston_main still 2024-08-12; Swift move-only activity still
+  enforcement/docs/infra, no new SIL pass; SE-0474 still Accepted,
+  partial behind CoroutineAccessors flag (raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5; method note: header is a
+  `*`-prefixed bullet list, not a markdown table — read `sed -n
+  '1,10p'` for Status:/Implementation:); TruffleRuby Options.java
+  raw-master vs pin c734f265 diff EMPTY (md5
+  801fd357c11fd16c87f1764777e67b4a at both endpoints; zero
+  speculat/guard/optim matches); GraalPy file-history head Aug 18 2026
+  (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 both endpoints; latest §25.4
+  unchanged). Deterministic-diff discipline held. All six triggers
+  re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave11-resweep.md`): all negative with
+  exact-check records (~18:36–18:55 CEST). Graal 25.x changelog
+  byte-identical waves 5–11 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28, Dan Smith; metadata rows are
+  `<td>`-only, no `<th>`); Valhalla project page same 8-JEP list, no
+  new primitive-class JEP. Azul Cloud Native Compiler stays a watch
+  note (press rewrites only — no whitepaper, no technique, no
+  independent measurement; 2x–5x warm-up claim still unverified
+  marketing; new background detail: Azul frames it as extending
+  ReadyNow 2014 / ReadyNow Orchestrator — restatement of the
+  fleet-history claim, still vendor-only). OpenJ9 latest still
+  v0.62.0 (2026-09-15). .NET 11 JIT items incremental only (GVM
+  devirtualization is precedent-strengthening, not bar-clearing;
+  "Runtime Async" mention is architectural, not an optimizer
+  technique). T4: #24314 open/static (8 comments, updated 2022-07-13);
+  #77893's five CLs all still NEW with unchanged timestamps
+  (SURV-041's per-site gap intact; Gerrit plain endpoint returns the
+  full entity); label probes #81887/#81846/#81755/#81957/#81968 zero
+  activity since wave 10 (counts + updated_at byte-identical).
+  No bar-clearing material anywhere; no gaps.
+
+### Per-track wave-31 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~12:37 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes — **byte-identical
+  to the wave-21…30 raw archive**, md5 682b4a7689dc106ffa20dd9e868398cd;
+  the anti-bot `<script src>` URL rotation stayed dormant a tenth wave —
+  **twenty-three** consecutive content-identical archives, waves 9–31;
+  raw body diff vs w30 EMPTY). Status/Release re-verified verbatim in the
+  NEW archive (not carried): Status=Targeted, Release=28 — no
+  Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w31.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027).
+- **#157943 watch** (`track-surv024-wave31-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline with User-Agent header, ~12:37–12:40
+  CEST) — byte-identical to the wave-30 baselines: #163338 OPEN/unmerged
+  (updated_at 2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: 21
+  events, keyword scan of all payloads for try-perf/trybot/try
+  perf/@bors try/bors-try/@rust-timer = zero hits; latest event still
+  Amanieu's 2026-10-01 cross-reference); RFC #3943 open
+  (comments 11 / review_comments 58 — **twenty-third** consecutive
+  unchanged wave). Sibling note: #163337 open, `updated_at`
+  2026-10-05T01:37:55Z = recorded rust-bors[bot] "unmergeable" comment
+  timestamp — no new events (wave-24 sufficiency rule); #163336 remains
+  the only merged. Rate limit NOT hit (60 remaining at wave start).
+  SURV-024's transfer ruling stands (§5 static-core strike;
+  guarded-speculative E3 arm only); trips re-armed (RFC #3943
+  acceptance most plausible near-term). Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave31-triggers.md`): 0/6 fired
+  (~12:40–12:46 CEST) — no new Meta runtime optimizing-JIT (disqualified
+  noise: 2024 LLM Compiler, 2024 React Compiler, Static Hermes writeup,
+  Druid arXiv paper); Pyston pyston_main still 2024-08-12 (fe8afded);
+  Swift move-only activity still docs/infra/crash dossiers only, no new
+  SIL optimization pass; SE-0474 still Accepted, partial behind
+  CoroutineAccessors flag (raw md md5 e8f962dbd12172d2f2a44410e727d7b5
+  — header is a `*`-prefixed bullet list, read `sed -n '1,10p'`);
+  TruffleRuby Options.java md5 801fd357c11fd16c87f1764777e67b4a —
+  identical to pin, zero speculat/guard/optim matches (grep exit 1);
+  GraalPy raw md5 52c85a03991d970d41b4746b06a72c19 — identical to pin,
+  file-history head same sha 9712c23b (sha-comparison discipline holds).
+  Verbatim-URL-copy rule held (no 404s). All six triggers re-armed; no
+  gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave31-resweep.md`): all negative with
+  exact-check records (~12:46–12:56 CEST). Graal 25.x changelog
+  byte-identical to pin (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28); Valhalla project page same 8-JEP
+  list, no new primitive-class JEP. Azul Cloud Native Compiler stays a
+  watch note (Oct 1 BusinessWire + press rewrites only — no published
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified vendor marketing). OpenJ9 latest still v0.62.0
+  (releases/latest redirects — follow with -L). .NET 11 Learn runtime
+  page still "last updated for release candidate 1 (RC 1)" (unchanged
+  vs wave 30; full 539-line body re-read — all JIT headings inside the
+  wave-29/30 assessed incremental buckets; Runtime Async material
+  remains tied to .NET's async state-machine lowering, does not
+  transfer to Go's goroutine model — nothing bar-clearing). T4: #24314
+  static (open, 8 comments, updated 2022-07-13); #77893's five CLs all
+  still NEW with byte-identical timestamps (SURV-041's per-site gap
+  intact; method note: go-review.googlesource.com, file-stage Gerrit
+  REST reads and strip the `)]}'` XSSI prefix with `tail -n +2`); label
+  probes #81887/#81957/#81968 non-substantive only (subscribe mvdan
+  2026-10-04T19:29:35Z / 17 events; commented gopherbot
+  2026-10-03T10:50:39Z / 25 events; subscribed qiulaidongfeng
+  2026-10-03T08:44:02Z / 12 events) — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED,
+  842886 NEW) stays a watch note adjacent to SURV-004/SURV-006, not a
+  new candidate. No bar-clearing material anywhere; no gaps.
+
+### Wave-31 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–31; §3 +3 wave-31 angles; §5 wave-31 re-sweep
+  negatives; §6 wave-31 queue ALL COMPLETE + per-track wave-31
+  coverage + wave-31 re-rank + wave-32 queue; §7 wave-31 footer).
+
+### Wave-32 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w31.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w31 are byte-identical (twenty-three consecutive
+   content-identical archives, waves 9–31); **diff page bodies before
+   concluding a pin break**); wave 31 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty-three consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24).
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave31-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass);
+   move-only *infrastructure* (e.g. the Sept 2026 "ownership for trivial
+   values" SILGen flag) is provenance, not a trigger.
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s — follow the redirect).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-32 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~13:36 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,897 bytes — **byte-identical
+  to the wave-21…31 raw archive**, md5 682b4a7689dc106ffa20dd9e868398cd;
+  the anti-bot `<script src>` URL rotation stayed dormant an eleventh
+  wave — **twenty-four** consecutive content-identical archives, waves
+  9–32; raw body diff vs w31 EMPTY). Status/Release re-verified verbatim
+  in the NEW archive (not carried): Status=Targeted, Release=28 — no
+  Targeted→Integrated movement. Raw archived as
+  `jep544_2026-10-05_w32.html`. Ramp-down survival watch continues to
+  the JDK 28 ramp-down (Dec 2026–Jan 2027).
+- **#157943 watch** (`track-surv024-wave32-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline with User-Agent header, ~13:36–13:40
+  CEST) — byte-identical to the wave-31 baselines: #163338 OPEN/unmerged
+  (updated_at 2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: 21
+  events, keyword scan of all payloads for try-perf/trybot/try
+  perf/@bors try/bors-try/@rust-timer = zero hits; latest event still
+  Amanieu's 2026-10-01 cross-reference); RFC #3943 open
+  (comments 11 / review_comments 58 — **twenty-fourth** consecutive
+  unchanged wave). Sibling note: #163337 open, `updated_at`
+  2026-10-05T01:37:55Z = recorded rust-bors[bot] "unmergeable" comment
+  timestamp — no new events (wave-24 sufficiency rule); #163336 remains
+  the only merged. Rate limit NOT hit (60 remaining at wave start, 59 at
+  end of checks). SURV-024's transfer ruling stands (§5 static-core
+  strike; guarded-speculative E3 arm only); trips re-armed (RFC #3943
+  acceptance most plausible near-term). Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave32-triggers.md`): 0/6 fired
+  (~13:40–13:48 CEST) — no new Meta runtime optimizing-JIT (disqualified
+  noise: 2024 LLM Compiler, 2026 Muse Code terminal coding agent, jemalloc
+  5.4.0 Meta-revival maintenance release, Cinder/Static Python packaging
+  writeup); Pyston pyston_main still 2024-08-12 (fe8afded); Swift
+  move-only — no new SIL optimization pass (swiftlang/swift commit
+  ec74abb6 2026-09-18, `raw_pointer_to_ref` immortal-flag optimization, is
+  a SILCombiner instruction simplification — adjacent general SIL
+  optimization, excluded per the move-only discipline); SE-0474 still
+  Accepted, partial behind CoroutineAccessors flag (raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5 — header is a `*`-prefixed bullet
+  list, read `sed -n '1,10p'`); TruffleRuby Options.java md5
+  801fd357c11fd16c87f1764777e67b4a — identical to pin, zero
+  speculat/guard/optim matches (grep exit 1); GraalPy raw md5
+  52c85a03991d970d41b4746b06a72c19 — identical to pin, file-history head
+  same sha 9712c23b (sha-comparison discipline holds).
+  Verbatim-URL-copy rule held (no 404s). All six triggers re-armed; no
+  gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave32-resweep.md`): all negative with
+  exact-check records (~13:48–13:58 CEST). Graal 25.x changelog
+  byte-identical waves 21–32 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28); Valhalla project page same 8-JEP
+  deliverables table (watch note: raw markdown carries unused
+  `[218]`/`[303]` reference-style link definitions — non-substantive
+  doc content, not deliverables). Azul Cloud Native Compiler stays a
+  watch note (press rewrites only — itbrief/smbtech 3–4 days old, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing). OpenJ9 latest still v0.62.0
+  (releases/latest redirects — follow with -L). .NET 11: Learn runtime
+  page still "last updated for release candidate 1 (RC 1)" — URL
+  re-established verbatim from search, full JIT-improvements +
+  hardware-intrinsics sections re-read, all headings inside the
+  wave-29/30/31 assessed set, nothing bar-clearing; Runtime Async still
+  tied to .NET's async state-machine lowering, non-transferable to Go's
+  goroutine model. T4: #24314 open/static (8 comments, updated
+  2022-07-13); #77893's five CLs all still NEW with unchanged
+  timestamps (SURV-041's per-site gap intact; method note: they live on
+  **go-review.googlesource.com**, not chromium-review — file-stage
+  Gerrit REST reads, strip the `)]}'` XSSI prefix with `tail -n +2`);
+  label probes #81887/#81957/#81968 show only non-substantive events
+  (subscribe mvdan 2026-10-04T19:29:35Z, gopherbot comment
+  2026-10-03T10:50:39Z, subscribe qiulaidongfeng 2026-10-03T08:44:02Z —
+  all unchanged) — #81887's CL 842885/842886 (`slices: make
+  BinarySearchFunc inlinable`, 842885 ABANDONED, 842886 NEW) stays a
+  watch note adjacent to SURV-004/SURV-006, not a new candidate. No
+  bar-clearing material anywhere; no gaps.
+
+### Wave-32 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–32; §3 +3 wave-32 angles; §5 wave-32 re-sweep
+  negatives; §6 wave-32 queue ALL COMPLETE + per-track wave-32
+  coverage + wave-32 re-rank + wave-33 queue; §7 wave-32 footer).
+
+### Wave-33 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w32.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w32 are byte-identical (twenty-four consecutive
+   content-identical archives, waves 9–32); **diff page bodies before
+   concluding a pin break**); wave 32 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty-four consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24).
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave32-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass —
+   wave 32 excluded the Sept 2026 `raw_pointer_to_ref` immortal-flag
+   SILCombiner simplification on the same basis); move-only
+   *infrastructure* (e.g. the Sept 2026 "ownership for trivial values"
+   SILGen flag) is provenance, not a trigger.
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch; wave-32 watch note: the docs markdown
+   carries unused `[218]`/`[303]` reference definitions — do not
+   misread them as deliverables); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s — follow the redirect; .NET Learn
+   runtime page URL verbatim in `track-t2t4-wave32-resweep.md`).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-33 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** Verification: 78 `#### SURV-` headers, no dupes, IDs
+  001–078 all present; synthesis present exactly once per section (§1
+  header waves 1–33; §3 +3 wave-33 angles; §5 wave-33 re-sweep
+  negatives; §6 wave-33 queue ALL COMPLETE + per-track wave-33
+  coverage + wave-33 re-rank + wave-34 queue; §7 wave-33 footer).
+
+### Wave-34 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w33.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w33 are byte-identical (twenty-five consecutive
+   content-identical archives, waves 9–33); **diff page bodies before
+   concluding a pin break**); wave 33 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty-five consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (some paths 404 without it);
+   the timeline endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24).
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent). (Wave-33
+   method note: batch Gerrit/GitHub calls can background themselves —
+   await the result before filing, never re-run the batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave33-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass —
+   wave 33 also excluded the 2026-09-16 RemoveSILGenLifetimes extension
+   and the "ownership for trivial values" SILGen flag on the same
+   basis); move-only *infrastructure* is provenance, not a trigger.
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch; wave-33 watch note: the docs markdown
+   carries unused `[218]`/`[303]` reference definitions — do not
+   misread them as deliverables); Azul Cloud Native Compiler watch note
+   (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s — follow the redirect; .NET Learn
+   runtime page URL verbatim in `track-t2t4-wave33-resweep.md`; note:
+   a keyword scan can miss hyphenated headings like "empty-span" —
+   verify prose on-page).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid);
+   label-probe watch notes (#81887, #81957, #81968) for anything
+   bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`, 842885 ABANDONED /
+   842886 NEW) stays a watch note adjacent to SURV-004/SURV-006. (Method
+   note from wave 33: the plain issue `/events` endpoint returns fewer
+   events than the `/issues/{n}/timeline` endpoint — the timeline count
+   is the wave-standard for these probes.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-34 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** State change recorded, no movement: #81887's CL 842886
+  (`slices: make BinarySearchFunc inlinable`) MERGED 2026-10-05 and
+  gopherbot closed the issue — a code-shape workaround to fit gc's fixed
+  inliner budget (95→77), which **confirms** SURV-006's standing thesis
+  ("gc's inliner is budget-based… never simulates the consequence of
+  inlining") rather than weakening it; the SURV-004/SURV-006-adjacent
+  watch note and #81887's label-probe slot retire. Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–34; §3 +3 wave-34
+  angles; §5 re-sweep negatives via §3; §6 wave-34 queue ALL COMPLETE +
+  wave-34 re-rank + wave-35 queue; §7 wave-34 footer).
+
+### Wave-35 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w34.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w34 are byte-identical (twenty-six consecutive
+   content-identical archives, waves 9–34); **diff page bodies before
+   concluding a pin break**); wave 34 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty-six consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (quote it properly — wave-34
+   incident: an unquoted shell `$UA` variable produced an empty
+   User-Agent and GitHub 403s); the timeline endpoint is the **issues**
+   timeline (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's
+   timeline is the 21-event one (scan that one for try-perf); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24).
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent). (Wave-33
+   method note: batch Gerrit/GitHub calls can background themselves —
+   await the result before filing, never re-run the batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave34-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass);
+   move-only *infrastructure* is provenance, not a trigger.
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch; wave-34 watch note: the docs markdown
+   carries unused `[218]`/`[303]` reference definitions — do not
+   misread them as deliverables; the project page 301s without
+   trailing slash — fetch with `-L`); Azul Cloud Native Compiler watch
+   note (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s — follow the redirect; .NET Learn
+   runtime page URL verbatim in `track-t2t4-wave34-resweep.md`; note:
+   a keyword scan can miss hyphenated headings like "empty-span" —
+   verify prose on-page).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid;
+   Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged) for anything
+   bar-clearing. (Wave-34 update: #81887 closed 2026-10-05 after CL
+   842886 `slices: make BinarySearchFunc inlinable` MERGED; 842885
+   ABANDONED; the SURV-004/SURV-006-adjacent watch note retired —
+   recorded as confirming, not weakening, SURV-006. Method note from
+   wave 34: the plain issue `/events` endpoint returns fewer events
+   than the `/issues/{n}/timeline` endpoint — the timeline count is the
+   wave-standard; timeline counts can drift ±few events with unchanged
+   last event — endpoint accounting drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-35 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (27th consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4 static (#81887's slot stays retired). Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–35; §3 +3 wave-35
+  angles; §5 wave-35 re-sweep negatives; §6 wave-35 queue ALL COMPLETE +
+  wave-35 re-rank + wave-36 queue; §7 wave-35 footer).
+
+### Wave-36 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w35.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w35 are byte-identical (twenty-seven consecutive
+   content-identical archives, waves 9–35); **diff page bodies before
+   concluding a pin break**); wave 35 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty-seven consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24).
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent). (Wave-33
+   method note: batch Gerrit/GitHub calls can background themselves —
+   await the result before filing, never re-run a genuinely-pending
+   batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java raw-vs-pin
+   md5 (pin 801fd357c11fd16c87f1764777e67b4a; md5-identical
+   authoritative; zero-hit grep confirmation); GraalPy via BOTH
+   file-history and raw-vs-pin md5 (pin 52c85a03991d970d41b4746b06a72c19;
+   verbatim URL in `track-t3-wave35-triggers.md`). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. Swift move-only:
+   distinguish genuine new SIL optimization passes from the move-only
+   *bug-fix/crash* dossiers (and from adjacent general SIL passes like
+   `SimplifyIndexingInstructions` or the cond_fail instruction pass);
+   move-only *infrastructure* is provenance, not a trigger.
+   **Copy raw URLs verbatim from the prior wave's track file — never
+   reconstruct from checkpoint summaries.**
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave; pin
+   6397c38a55572509df12814180ec458f); JEP 401 / Valhalla project page
+   (primitive-class JEP watch; wave-35 watch note: the docs markdown
+   re-verified this wave — still carries unused `[218]`/`[303]`
+   reference definitions, do not misread them as deliverables; project
+   page 301s without trailing slash — fetch with `-L`); Azul Cloud
+   Native Compiler watch note (any published technique or independent
+   measurement); OpenJ9/.NET optimizer-relevant items only (method note:
+   eclipse/openj9 `releases/latest` 301s/302s — follow the redirect;
+   .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave35-resweep.md`; note: a keyword scan can miss
+   hyphenated headings like "empty-span" — verify prose on-page).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; they live on **go-review.googlesource.com**, not
+   chromium-review — file-stage the Gerrit REST reads and strip the
+   first line — the `)]}'` XSSI prefix — with `tail -n +2`; a bare
+   `sed 's/^)]}//'` leaves the trailing `'` and breaks JSON; the
+   bare `/changes/{id}` endpoint already carries `status`/`updated`;
+   note `?O=ALL_REVISIONS` and `?O=DETAILED_ACCOUNTS` are invalid;
+   Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged) for anything
+   bar-clearing. (Method note from wave 34: the plain issue `/events`
+   endpoint returns fewer events than the `/issues/{n}/timeline`
+   endpoint — the timeline count is the wave-standard; timeline counts
+   can drift ±few events with unchanged last event — endpoint accounting
+   drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-36 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (28th consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4 static (#81887's slot stays retired). Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–36; §3 +3 wave-36
+  angles; §5 wave-36 re-sweep negatives; §6 wave-36 queue ALL COMPLETE +
+  wave-36 re-rank (no wave-37 queue yet — left for the supervisor); §7
+  wave-36 footer).
+
+### Wave-37 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w36.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w36 are byte-identical (twenty-eight consecutive
+   content-identical archives, waves 9–36); **diff page bodies before
+   concluding a pin break**); wave 36 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty-eight consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf); the issue lives in
+   **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`. Note:
+   PR `updated_at` equality with a recorded last-event timestamp is a
+   sufficient no-new-events check for paginated timelines (skips the
+   tail-page re-read — established for #163337 at wave 24).
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent). (Wave-33
+   method note: batch Gerrit/GitHub calls can background themselves —
+   await the result before filing, never re-run a genuinely-pending
+   batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 36); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-36 list: cond_fail #88258,
+   crash dossiers #87489/#88956, address-cast consumption commit
+   9f408874); SE-0474 via raw-page md5 (pin `e8f962dbd12172d2f2a44410e727d7b5`;
+   header is a `*`-prefixed bullet list — read `sed -n '1,10p`);
+   TruffleRuby `Options.java` md5 pin `801fd357c11fd16c87f1764777e67b4a` +
+   keyword scan (grep exit 1 = zero-hit); GraalPy CHANGELOG md5 pin
+   `52c85a03991d970d41b4746b06a72c19` + history-head sha pin `9712c23b`
+   (sha-comparison discipline). Copy raw URLs verbatim from
+   `track-t3-wave36-triggers.md` — do NOT reconstruct from memory;
+   md5-identical is authoritative. Meta search = disqualified-noise
+   filter (must be a Meta runtime optimizing JIT to fire).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (8-JEP deliverables table;
+   primitive-class JEP watch; wave-36 watch note: the docs markdown
+   carries unused `[218]`/`[303]` reference definitions — do not
+   misread them as deliverables; the project page 301s without
+   trailing slash — fetch with `-L`); Azul Cloud Native Compiler watch
+   note (any published technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s/302s on the repo-name form — ALWAYS follow
+   with `-L`; a bare read returns `{"message":"Moved Permanently"}`
+   and parses `tag_name` as None; .NET Learn runtime page URL verbatim
+   in `track-t2t4-wave36-resweep.md`; note: a keyword scan can miss
+   hyphenated headings like "empty-span" — verify prose on-page).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged, which
+   CONFIRMED SURV-006's thesis; no re-check) for anything
+   bar-clearing. (Timeline count is the wave-standard; timeline counts
+   can drift ±few events with unchanged last event — endpoint
+   accounting drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-37 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (29th consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4 static (#81887's slot stays retired). Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–37; §3 +3 wave-37
+  angles; §5 wave-37 re-sweep negatives; §6 wave-37 queue ALL COMPLETE +
+  wave-37 re-rank + wave-38 queue; §7 wave-37 footer).
+
+### Wave-38 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w37.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w37 are byte-identical (twenty-nine consecutive
+   content-identical archives, waves 9–37); **diff page bodies before
+   concluding a pin break**); wave 37 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for twenty-nine consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24).
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent). (Wave-33
+   method note: batch Gerrit/GitHub calls can background themselves —
+   await the result before filing, never re-run a genuinely-pending
+   batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 37); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-37 list: cond_fail #88258,
+   swift-institute CopyPropagation crash dossier, SIL ownership docs,
+   ryo-lang reference prose); SE-0474 via raw-page md5 (pin
+   `e8f962dbd12172d2f2a44410e727d7b5`; header is a `*`-prefixed bullet
+   list — read `sed -n '1,10p`); TruffleRuby `Options.java` md5 pin
+   `801fd357c11fd16c87f1764777e67b4a` + keyword scan (grep exit 1 =
+   zero-hit); GraalPy CHANGELOG md5 pin
+   `52c85a03991d970d41b4746b06a72c19` + history-head sha pin `9712c23b`
+   (sha-comparison discipline). Copy raw URLs verbatim from
+   `track-t3-wave37-triggers.md` — do NOT reconstruct from memory;
+   md5-identical is authoritative. Meta search = disqualified-noise
+   filter (must be a Meta runtime optimizing JIT to fire).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (8-JEP deliverables table;
+   wave-37 watch note: the docs markdown carries unused `[218]`/`[303]`
+   reference definitions — do not misread them as deliverables; the
+   project page 301s without trailing slash — fetch with `-L`); Azul
+   Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only
+   (method note: eclipse/openj9 `releases/latest` 301s on the
+   repo-name form — follow with `-L`; a bare read returns
+   `{"message":"Moved Permanently"}` and parses `tag_name` as None;
+   .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave37-resweep.md`; note: a keyword scan can miss
+   hyphenated headings like "empty-span" — verify prose on-page;
+   .NET 11 GA expected ~Nov 10 2026 per daily-devops).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged, which
+   CONFIRMED SURV-006's thesis; no re-check) for anything
+   bar-clearing. (Timeline count is the wave-standard; timeline counts
+   can drift ±few events with unchanged last event — endpoint
+   accounting drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-38 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (30th consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4 static (#81887's slot stays retired). Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–38; §3 +3 wave-38
+  angles; §5 wave-38 re-sweep negatives; §6 wave-38 queue ALL COMPLETE +
+  wave-38 re-rank + wave-39 queue; §7 wave-38 footer).
+
+### Wave-39 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w38.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w38 are byte-identical (thirty consecutive
+   content-identical archives, waves 9–38); **diff page bodies before
+   concluding a pin break**); wave 38 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); `pulls/{n}/timeline`
+   404s for this repo/PR combo — the issues timeline is the working
+   one. Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait
+   for reset and re-run the affected checks (wave-26 precedent).
+   (Wave-33 method note: batch Gerrit/GitHub calls can background
+   themselves — await the result before filing, never re-run a
+   genuinely-pending batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 38); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-38 list: cond_fail #88258,
+   swift-institute CopyPropagation crash dossier, SIL ownership docs,
+   ryo-lang reference prose, 2019 forums proposal); SE-0474 via raw-page
+   md5 (pin `e8f962dbd12172d2f2a44410e727d7b5`; header is a `*`-prefixed
+   bullet list — read `sed -n '1,10p`); TruffleRuby `Options.java` md5 pin
+   `801fd357c11fd16c87f1764777e67b4a` + keyword scan (grep exit 1 =
+   zero-hit); GraalPy CHANGELOG md5 pin
+   `52c85a03991d970d41b4746b06a72c19` + history-head sha pin `9712c23b`
+   (sha-comparison discipline). Copy raw URLs verbatim from
+   `track-t3-wave38-triggers.md` — do NOT reconstruct from memory;
+   md5-identical is authoritative. Meta search = disqualified-noise
+   filter (must be a Meta runtime optimizing JIT to fire — wave-38
+   noise: 2024 LLM Compiler, 2026 Muse Code coding agent, techrepublic
+   Muse Spark 1.3 model-tier piece, .NET 11 JIT-internals writeups,
+   Druid meta-compilation of baseline JITs (Pharo — not Meta)).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (8-JEP deliverables table;
+   wave-38 watch note: the docs markdown carries unused `[218]`/`[303]`
+   reference definitions — do not misread them as deliverables; the
+   project page 301s without trailing slash — fetch with `-L`); Azul
+   Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only
+   (method note: eclipse/openj9 `releases/latest` 301s on the
+   repo-name form — follow with `-L`; a bare read returns
+   `{\"message\":\"Moved Permanently\"}` and parses `tag_name` as None;
+   .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave38-resweep.md`; note: a keyword scan can miss
+   hyphenated headings like "empty-span" — verify prose on-page;
+   .NET 11 GA expected ~Nov 10 2026 per daily-devops).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged, which
+   CONFIRMED SURV-006's thesis; no re-check) for anything
+   bar-clearing. (Timeline count is the wave-standard; timeline counts
+   can drift ±few events with unchanged last event — endpoint
+   accounting drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-10 archive, #157943 0/3 trips on byte-identical baselines, T3 0/6
+triggers, T2/T4 all negative); no prototype-gated promotions (no new
+measured prototypes — the rule holds: paper numbers never promote;
+Azul's 2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-39 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (31st consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4 static (#81887's slot stays retired). Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–39; §3 +3 wave-39
+  angles; §5 wave-39 re-sweep negatives; §6 wave-39 queue ALL COMPLETE +
+  wave-39 re-rank + wave-40 queue; §7 wave-39 footer).
+
+### Wave-40 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w39.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w39 are byte-identical (thirty-one consecutive
+   content-identical archives, waves 9–39); **diff page bodies before
+   concluding a pin break**); wave 39 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty-one consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 39): #163337's PR-object `updated_at` drifted to
+   2026-10-05T18:09:57Z vs the recorded 2026-10-05T01:37:55Z with no
+   new timeline event — when the wave-24 equality shortcut does NOT
+   hold, re-read the timeline tail before concluding. `pulls/{n}/timeline`
+   404s for this repo/PR combo — the issues timeline is the working
+   one. Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait
+   for reset and re-run the affected checks (wave-26 precedent).
+   (Wave-33 method note: batch Gerrit/GitHub calls can background
+   themselves — await the result before filing, never re-run a
+   genuinely-pending batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 39); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-39 list: cond_fail #88258,
+   swift-institute CopyPropagation crash dossier, SIL ownership docs
+   (swiftlang + forks), ryo-lang/llvm-mlir-book prose); SE-0474 via raw-page
+   md5 (pin `e8f962dbd12172d2f2a44410e727d7b5`; header is a `*`-prefixed
+   bullet list — read `sed -n '1,10p`); TruffleRuby `Options.java` md5 pin
+   `801fd357c11fd16c87f1764777e67b4a` + keyword scan (grep exit 1 =
+   zero-hit); GraalPy CHANGELOG md5 pin
+   `52c85a03991d970d41b4746b06a72c19` + history-head sha pin `9712c23b`
+   (sha-comparison discipline). Copy raw URLs verbatim from
+   `track-t3-wave39-triggers.md` — do NOT reconstruct from memory;
+   md5-identical is authoritative. Meta search = disqualified-noise
+   filter (must be a Meta runtime optimizing JIT to fire — wave-39
+   noise: 2024 LLM Compiler, 2026 Muse Code coding agent, .NET 11/10
+   JIT-internals writeups [not Meta], TypeScript 7 native Go port
+   [Microsoft — not Meta]).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (8-JEP deliverables table;
+   wave-39 watch note: the docs markdown carries unused `[218]`/`[303]`
+   reference definitions — do not misread them as deliverables; the
+   project page 301s without trailing slash — fetch with `-L`; grep
+   count 2); Azul Cloud Native Compiler watch note (any published
+   technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s on the repo-name form — follow with `-L`; a
+   bare read returns `{\"message\":\"Moved Permanently\"}` and parses
+   `tag_name` as None; .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave39-resweep.md`; note: a keyword scan can miss
+   hyphenated headings like "empty-span" — verify prose on-page;
+   .NET 11 GA expected ~Nov 10 2026 per daily-devops).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged, which
+   CONFIRMED SURV-006's thesis; no re-check) for anything
+   bar-clearing. (Timeline count is the wave-standard; timeline counts
+   can drift ±few events with unchanged last event — endpoint
+   accounting drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-39 archive, #157943 0/3 trips on unchanged baselines, T3 0/6
+triggers, T2/T4 all negative); no prototype-gated promotions (no new
+measured prototypes — the rule holds: paper numbers never promote;
+Azul's 2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-40 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (32nd consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4 static (#81887's slot stays retired). Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–40; §3 +3 wave-40
+  angles; §5 wave-40 re-sweep negatives; §6 wave-40 queue ALL COMPLETE +
+  wave-40 re-rank + wave-41 queue; §7 wave-40 footer).
+
+### Wave-41 queue (prioritized) — ALL COMPLETE 2026-10-05
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w40.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w40 are byte-identical (thirty-two consecutive
+   content-identical archives, waves 9–40); **diff page bodies before
+   concluding a pin break**); wave 40 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty-two consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 39/40): #163337's PR-object `updated_at` 2026-10-05T18:09:57Z
+   with no new timeline event (33-event timeline still ends at the
+   known rust-bors[bot] "unmergeable" comment) — when the wave-24
+   equality shortcut does NOT hold, re-read the timeline tail before
+   concluding. `pulls/{n}/timeline` 404s for this repo/PR combo — the
+   issues timeline is the working one. Unauthenticated core rate limit
+   is 60/hr — if hit mid-wave, wait for reset and re-run the affected
+   checks (wave-26 precedent). (Wave-33 method note: batch Gerrit/GitHub
+   calls can background themselves — await the result before filing,
+   never re-run a genuinely-pending batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 40); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-40 list: cond_fail #88258,
+   swift-institute CopyPropagation crash dossier, SIL ownership docs
+   (swiftlang + forks), FieldSensitivePrunedLiveness/address-cast-lifetime
+   verifier commits, RemoveSILGenLifetimes extension); SE-0474 via
+   raw-page md5 (pin `e8f962dbd12172d2f2a44410e727d7b5`; header is a
+   `*`-prefixed bullet list — read `sed -n '1,10p`); TruffleRuby
+   `Options.java` md5 pin `801fd357c11fd16c87f1764777e67b4a` +
+   keyword scan (grep exit 1 = zero-hit); GraalPy CHANGELOG md5 pin
+   `52c85a03991d970d41b4746b06a72c19` + history-head sha pin `9712c23b`
+   (sha-comparison discipline). Copy raw URLs verbatim from
+   `track-t3-wave40-triggers.md` — do NOT reconstruct from memory;
+   md5-identical is authoritative. Meta search = disqualified-noise
+   filter (must be a Meta runtime optimizing JIT to fire — wave-40
+   noise: 2024 LLM Compiler, 2026 Muse Code coding agent, .NET 11/10
+   JIT-internals writeups [not Meta], Meta React Compiler
+   [871-day-old]).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (8-JEP deliverables table;
+   wave-40 watch note: the docs markdown carries unused `[218]`/`[303]`
+   reference definitions — do not misread them as deliverables; the
+   project page 301s without trailing slash — fetch with `-L`; grep
+   count 2); Azul Cloud Native Compiler watch note (any published
+   technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s on the repo-name form — follow with `-L`; a
+   bare read returns `{\"message\":\"Moved Permanently\"}` and parses
+   `tag_name` as None; .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave40-resweep.md`; note: a keyword scan can miss
+   hyphenated headings like "empty-span" — verify prose on-page;
+   .NET 11 GA expected ~Nov 10 2026 per daily-devops).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged, which
+   CONFIRMED SURV-006's thesis; no re-check) for anything
+   bar-clearing. (Timeline count is the wave-standard; timeline counts
+   can drift ±few events with unchanged last event — endpoint
+   accounting drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-40 archive, #157943 0/3 trips on unchanged baselines, T3 0/6
+triggers, T2/T4 all negative); no prototype-gated promotions (no new
+measured prototypes — the rule holds: paper numbers never promote;
+Azul's 2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-41 re-rank pass (2026-10-05)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (33rd consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4 static (#81887's slot stays retired). Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–41; §3 +3 wave-41
+  angles; §5 wave-41 re-sweep negatives; §6 wave-41 queue ALL COMPLETE +
+  wave-41 re-rank + wave-42 queue; §7 wave-41 footer).
+
+### Wave-42 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w41.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w41 are byte-identical (thirty-three consecutive
+   content-identical archives, waves 9–41); **diff page bodies before
+   concluding a pin break**); wave 41 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty-three consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 41): #163337's PR-object `updated_at` 2026-10-05T20:36:31Z
+   (drifted since 2026-10-05T18:09:57Z) with a timeline that grew to 41
+   events — the new events were a rustbot rebase notice (mechanical) and
+   a tmiasko COMMENTED review questioning kill-point design complexity,
+   non-substantive for the trips — when the wave-24 equality shortcut
+   does NOT hold, re-read the timeline tail before concluding.
+   `pulls/{n}/timeline` 404s for this repo/PR combo — the issues
+   timeline is the working one. Unauthenticated core rate limit is
+   60/hr — if hit mid-wave, wait for reset and re-run the affected
+   checks (wave-26 precedent). (Wave-33 method note: batch Gerrit/GitHub
+   calls can background themselves — await the result before filing,
+   never re-run a genuinely-pending batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 41); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-41 list: cond_fail #88258,
+   swift-institute crash dossiers, SIL ownership docs, Opaque SIL Values
+   representation infrastructure); SE-0474 via
+   raw-page md5 (pin `e8f962dbd12172d2f2a44410e727d7b5`; header is a
+   `*`-prefixed bullet list — read `sed -n '1,10p`); TruffleRuby
+   `Options.java` md5 pin `801fd357c11fd16c87f1764777e67b4a` +
+   keyword scan (grep exit 1 = zero-hit); GraalPy CHANGELOG md5 pin
+   `52c85a03991d970d41b4746b06a72c19` + history-head sha pin `9712c23b`
+   (sha-comparison discipline). Copy raw URLs verbatim from
+   `track-t3-wave41-triggers.md` — do NOT reconstruct from memory;
+   md5-identical is authoritative. Meta search = disqualified-noise
+   filter (must be a Meta runtime optimizing JIT to fire — wave-41
+   noise: 2024 LLM Compiler, Muse Code coding agent 60-day-old, .NET 10
+   medium piece [not Meta], Meta React Compiler [871-day-old]).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (8-JEP deliverables table;
+   wave-41 watch note: the docs markdown carries unused `[218]`/`[303]`
+   reference definitions — do not misread them as deliverables; the
+   project page 301s without trailing slash — fetch with `-L`; grep
+   count 2); Azul Cloud Native Compiler watch note (any published
+   technique or independent measurement); OpenJ9/.NET
+   optimizer-relevant items only (method note: eclipse/openj9
+   `releases/latest` 301s on the repo-name form — follow with `-L`; a
+   bare read returns `{\"message\":\"Moved Permanently\"}` and parses
+   `tag_name` as None; .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave41-resweep.md`; note: a keyword scan can miss
+   hyphenated headings like "empty-span" — verify prose on-page;
+   .NET 11 GA expected ~Nov 10 2026 per daily-devops).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged, which
+   CONFIRMED SURV-006's thesis; no re-check) for anything
+   bar-clearing. (Timeline count is the wave-standard; timeline counts
+   can drift ±few events with unchanged last event — endpoint
+   accounting drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-42 re-rank pass (2026-10-06)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (34th consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4 static (#81887's slot stays retired). Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–42; §3 +3 wave-42
+  angles; §5 wave-42 re-sweep negatives; §6 wave-42 queue ALL COMPLETE +
+  wave-42 re-rank + wave-43 queue; §7 wave-42 footer).
+
+### Wave-43 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-05_w42.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w42 are byte-identical (thirty-four consecutive
+   content-identical archives, waves 9–42); **diff page bodies before
+   concluding a pin break**); wave 42 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty-four consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 42): #163337's PR-object `updated_at` 2026-10-05T21:27:04Z
+   (drifted since 2026-10-05T20:36:31Z) with reviews 2→3 (an Amanieu
+   COMMENTED review defending the kill-point analysis scope and a
+   tmiasko COMMENTED reply framing review-manageability) — inline
+   design-discussion exchange, non-substantive for the trips — when the
+   wave-24 equality shortcut does NOT hold, re-read the timeline tail
+   before concluding. `pulls/{n}/timeline` 404s for this repo/PR
+   combo — the issues timeline is the working one. Unauthenticated core
+   rate limit is 60/hr — if hit mid-wave, wait for reset and re-run the
+   affected checks (wave-26 precedent). (Wave-33 method note: batch
+   Gerrit/GitHub calls can background themselves — await the result
+   before filing, never re-run a genuinely-pending batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 42); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-42 list: cond_fail #88258,
+   swift-institute crash dossiers, SIL ownership docs, llvm-mlir-book
+   prose pass catalog); SE-0474 via raw-page md5 (pin
+   `e8f962dbd12172d2f2a44410e727d7b5`; header is a `*`-prefixed bullet
+   list — read `sed -n '1,10p`); TruffleRuby `Options.java` md5 pin
+   `801fd357c11fd16c87f1764777e67b4a` + keyword scan (grep exit 1 =
+   zero-hit); GraalPy CHANGELOG md5 pin `52c85a03991d970d41b4746b06a72c19`
+   + history-head sha pin `9712c23b` (sha-comparison discipline). Copy raw
+   URLs verbatim from `track-t3-wave42-triggers.md` — do NOT reconstruct
+   from memory; md5-identical is authoritative. Meta search =
+   disqualified-noise filter (must be a Meta runtime optimizing JIT to
+   fire — wave-42 noise: 2024 LLM Compiler, Meta React Compiler build-time
+   pieces, Muse Code coding agent 60-day-old).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (8-JEP deliverables table **plus the
+   pre-existing non-JEP draft row** — "Null-Restricted Value Class Types
+   (Preview)" → jeps/8316779, Draft since 2023; verify the full table row
+   count each wave, not just JEP links; wave-42 watch note: the docs
+   markdown carries unused `[218]`/`[303]` reference definitions — do not
+   misread them as deliverables; the project page 301s without trailing
+   slash — fetch with `-L`; grep count 2); Azul Cloud Native Compiler
+   watch note (any published technique or independent measurement);
+   OpenJ9/.NET optimizer-relevant items only (method note:
+   eclipse/openj9 `releases/latest` 301s on the repo-name form — follow
+   with `-L`; a bare read returns `{\"message\":\"Moved Permanently\"}`
+   and parses `tag_name` as None; .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave42-resweep.md`; note: a keyword scan can miss
+   hyphenated headings like "empty-span" — verify prose on-page; .NET 11
+   GA expected ~Nov 10 2026 per daily-devops).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged, which
+   CONFIRMED SURV-006's thesis; no re-check) for anything
+   bar-clearing. (Timeline count is the wave-standard; timeline counts
+   can drift ±few events with unchanged last event — endpoint
+   accounting drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-43 re-rank pass (2026-10-06)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (35th consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4 static (#81887's slot stays retired). Verification: 78
+  `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–43; §3 +3 wave-43
+  angles; §5 wave-43 re-sweep negatives; §6 wave-43 queue ALL COMPLETE +
+  wave-43 re-rank + wave-44 queue; §7 wave-43 footer).
+
+### Wave-44 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w43.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w43 are byte-identical (thirty-five consecutive
+   content-identical archives, waves 9–43); **diff page bodies before
+   concluding a pin break**); wave 43 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty-five consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 43): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   (drifted since 2026-10-05T21:27:04Z) with reviews 3→4 (an Amanieu
+   COMMENTED review whose body was EMPTY but whose substance lived in
+   an inline review comment — Amanieu arguing the backwards-analysis
+   belongs in the PR, a DSE-only copy→move covers a subset, offering a
+   split commit, kill points only restrict lifetimes of non-borrowed
+   locals) — inline design-discussion exchange, non-substantive for the
+   trips — when the wave-24 equality shortcut does NOT hold, re-read the
+   timeline tail AND the reviews list before concluding, and fetch
+   `pulls/{n}/comments` for empty-body reviews (wave-42 method note).
+   `pulls/{n}/timeline` 404s for this repo/PR combo — the issues
+   timeline is the working one. Unauthenticated core rate limit is 60/hr
+   — if hit mid-wave, wait for reset and re-run the affected checks
+   (wave-26 precedent). (Wave-33 method note: batch Gerrit/GitHub calls
+   can background themselves — await the result before filing, never
+   re-run a genuinely-pending batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 43); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-43 list: cond_fail #88258,
+   FieldSensitivePrunedLiveness dominance fix, RemoveSILGenLifetimes
+   extension, [rbi] Partition note-emitter, copying-casts liveness fix,
+   ownership-for-trivial-values flag, LifetimeResolution consume,
+   embedded deinit specialization); SE-0474 via raw-page md5 (pin
+   `e8f962dbd12172d2f2a44410e727d7b5`; header is a `*`-prefixed bullet
+   list — read `sed -n '1,10p`); TruffleRuby `Options.java` md5 pin
+   `801fd357c11fd16c87f1764777e67b4a` + keyword scan (grep count 0 =
+   zero-hit); GraalPy CHANGELOG md5 pin `52c85a03991d970d41b4746b06a72c19`
+   + history-head sha pin `9712c23b` (sha-comparison discipline). Copy raw
+   URLs verbatim from `track-t3-wave43-triggers.md` — do NOT reconstruct
+   from memory; md5-identical is authoritative. Meta search =
+   disqualified-noise filter (must be a Meta runtime optimizing JIT to
+   fire — wave-43 noise: 2024 LLM Compiler, Meta React Compiler build-time
+   pieces, Muse Code coding agent ~61-day-old, Meta Runtime Optimizer for
+   Unity graphics tool, "Druid" Pharo/Cog meta-compilation, gwf/x2c).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (deliverables-table row count = 10
+   rows: header + 9 data = 8 JEPs **plus the pre-existing non-JEP draft
+   row** — "Null-Restricted Value Class Types (Preview)" → jeps/8316779
+   bug-id URL, Draft since 2023; verify the full table row count each
+   wave, not just JEP links — a `/jeps/8316779` regex hit is the bug-id
+   URL for the pre-existing draft row, NOT a new JEP; wave-42/43 watch
+   note: the docs markdown carries unused `[218]`/`[303]` reference
+   definitions — do not misread them as deliverables; the project page
+   301s without trailing slash — fetch with `-L`; grep count 2); Azul
+   Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only
+   (method note: eclipse/openj9 `releases/latest` 301s on the repo-name
+   form — follow with `-L`; a bare read returns
+   `{\"message\":\"Moved Permanently\"}` and parses `tag_name` as None;
+   .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave43-resweep.md`; .NET 11 GA expected ~Nov 10 2026 per
+   daily-devops — the page still said "last updated for release candidate
+   1 (RC 1)" in wave 43).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — #81887 retired wave 34 after its fix CL merged, which
+   CONFIRMED SURV-006's thesis; no re-check) for anything
+   bar-clearing. (Timeline count is the wave-standard; timeline counts
+   can drift ±few events with unchanged last event — endpoint
+   accounting drift, not new activity.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-44 re-rank pass (2026-10-06)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical
+  (36th consecutive), #157943 0/3 trips, T3 0/6 triggers, T2 all
+  negative, T4: #81957 static + #81968 new substantive watch activity
+  (dmitshur labels/milestone on the lock2-reciprocating-locks proposal —
+  proposal-level, not bar-clearing). Verification: 78 `#### SURV-`
+  headers, no dupes, IDs 001–078 all present; synthesis present exactly
+  once per section (§1 header waves 1–44; §3 +3 wave-44 angles; §5
+  wave-44 re-sweep negatives; §6 wave-44 queue ALL COMPLETE + wave-44
+  re-rank + wave-45 queue; §7 wave-44 footer).
+
+### Wave-45 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w44.html` = 682b4a7689dc106ffa20dd9e868398cd —
+   w21–w44 are byte-identical (thirty-six consecutive
+   content-identical archives, waves 9–44); **diff page bodies before
+   concluding a pin break**); wave 44 re-verified Status/Release
+   verbatim in the new archive — re-verify at least the metadata
+   each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty-six consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 44): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43 value — equality shortcut HELD, no re-read
+   needed (the wave-43 inline design-discussion exchange stands as the
+   last recorded activity) — when the wave-24 equality shortcut does NOT
+   hold, re-read the timeline tail AND the reviews list before
+   concluding, and fetch `pulls/{n}/comments` for empty-body reviews
+   (wave-42 method note). `pulls/{n}/timeline` 404s for this repo/PR
+   combo — the issues timeline is the working one. Unauthenticated core
+   rate limit is 60/hr — if hit mid-wave, wait for reset and re-run the
+   affected checks (wave-26 precedent). (Wave-33 method note: batch
+   Gerrit/GitHub calls can background themselves — await the result
+   before filing, never re-run a genuinely-pending batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 44); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-44 list: cond_fail #88258,
+   deinit-devirtualizer #69955 already assessed, address-cast
+   consumption in lifetime checks, swift-institute crash dossiers,
+   #87489 re-opened crash dossier, ryo docs, middas-0706 fork
+   Ownership.md); SE-0474 via raw-page md5 (pin
+   `e8f962dbd12172d2f2a44410e727d7b5`; header is a `*`-prefixed bullet
+   list — read `sed -n '1,10p`); TruffleRuby `Options.java` md5 pin
+   `801fd357c11fd16c87f1764777e67b4a` + keyword scan (grep count 0 =
+   zero-hit); GraalPy CHANGELOG md5 pin `52c85a03991d970d41b4746b06a72c19`
+   + history-head sha pin `9712c23b` (full sha
+   `9712c23b129dd8803ef77e685a1036e8dd08738c` verified in wave 44;
+   sha-comparison discipline). Copy raw URLs verbatim from
+   `track-t3-wave44-triggers.md` — do NOT reconstruct from memory;
+   md5-identical is authoritative. Meta search = disqualified-noise
+   filter (must be a Meta runtime optimizing JIT to fire — wave-44
+   noise: 2024 LLM Compiler, Meta React Compiler build-time pieces,
+   Static Hermes writeup, React 19 Medium guide, ai-demand LLM Compiler
+   re-post).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (deliverables-table row count = 10
+   rows: header + 9 data = 8 JEPs **plus the pre-existing non-JEP draft
+   row** — "Null-Restricted Value Class Types (Preview)" → jeps/8316779
+   bug-id URL, Draft since 2023; verify the full table row count each
+   wave, not just JEP links — a `/jeps/8316779` regex hit is the bug-id
+   URL for the pre-existing draft row, NOT a new JEP; wave-42/43/44 watch
+   note: the docs markdown carries unused `[218]`/`[303]` reference
+   definitions — do not misread them as deliverables; the project page
+   301s without trailing slash — fetch with `-L`; grep count 2); Azul
+   Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only
+   (method note: eclipse/openj9 `releases/latest` 301s on the repo-name
+   form — follow with `-L`; a bare read returns
+   `{\"message\":\"Moved Permanently\"}` and parses `tag_name` as None;
+   .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave44-resweep.md`; .NET 11 GA expected ~Nov 10 2026 per
+   daily-devops — the page still said "last updated for release candidate
+   1 (RC 1)" in wave 44).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — **#81968 NEW watch item wave 44**: dmitshur
+   2026-10-05T22:49–22:50Z commented "CC @golang/runtime", labeled
+   NeedsInvestigation + Performance, milestone Backlog — issue
+   "runtime: bound overtakes of lock2 sleepers", Dice & Kogan
+   Reciprocating Locks proposal, proposal-level only; wave 45: watch
+   for a prototype CL or benchmark — #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check) for
+   anything bar-clearing. (Timeline count is the wave-standard;
+   timeline counts can drift ±few events with unchanged last event —
+   endpoint accounting drift, not new activity — but #81968's 12→24
+   jump came WITH new substantive events, which is real signal.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-45 re-rank pass (2026-10-06)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 content-identical
+  (37th consecutive — anti-bot script URL rotated again this wave,
+  body-diff held; new pin archived); #157943 0/3 trips; T3 0/6 triggers;
+  T2 all negative; T4: #81957 static, **#81968 quiet this wave — no
+  prototype CL or benchmark landed** (24 events, unchanged). Verification:
+  78 `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–45; §6 wave-45
+  queue ALL COMPLETE + wave-45 re-rank + wave-46 queue; §7 wave-45
+  footer).
+
+### Wave-46 queue (prioritized) — ALL COMPLETE 2026-10-06
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w45.html` = 5b074b447092005a265862c8fc935dad —
+   w21–w45 are content-identical (thirty-seven consecutive
+   content-identical archives, waves 9–45); the anti-bot script-URL
+   rotation was dormant 23 waves and rotated again at w45 — **diff page
+   bodies before concluding a pin break** (a script-URL-only delta is
+   content-preserving, not a pin break)); wave 45 re-verified
+   Status/Release verbatim in the new archive — re-verify at least the
+   metadata each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027). — DONE:
+   HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad —
+   **byte-identical** to the wave-45 pin (the wave-45 anti-bot script-URL
+   rotation carried over unchanged — **thirty-eight consecutive
+   content-identical archives, waves 9–46**), Status=Targeted/Release=28
+   re-verified verbatim in the NEW archive, archived as
+   `jep544_2026-10-06_w46.html` (pin for wave 47).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty-seven consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 45): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44 value — equality shortcut HELD two waves
+   running (the wave-43 inline design-discussion exchange stands as the
+   last recorded activity) — when the wave-24 equality shortcut does NOT
+   hold, re-read the timeline tail AND the reviews list before
+   concluding, and fetch `pulls/{n}/comments` for empty-body reviews
+   (wave-42 method note). `pulls/{n}/timeline` 404s for this repo/PR
+   combo — the issues timeline is the working one. Unauthenticated core
+   rate limit is 60/hr — if hit mid-wave, wait for reset and re-run the
+   affected checks (wave-26 precedent). (Wave-33 method note: batch
+   Gerrit/GitHub calls can background themselves — await the result
+   before filing, never re-run a genuinely-pending batch.)
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` branch head sha (pin `fe8afded6166`, wave 45); Swift
+   move-only: genuine NEW SIL optimization passes only (bug-fix/crash
+   dossiers, move-only infrastructure, and already-assessed adjacent
+   general SIL passes are excluded — wave-45 list: cond_fail #88258,
+   ryo docs, swift-institute crash dossiers, SimplifyIndexingInstructions
+   #89784, raw_pointer_to_ref immortal-flag commit, address-cast
+   consumption in lifetime checks commit); SE-0474 via raw-page md5 (pin
+   `e8f962dbd12172d2f2a44410e727d7b5`; header is a `*`-prefixed bullet
+   list — read `sed -n '1,10p`); TruffleRuby `Options.java` md5 pin
+   `801fd357c11fd16c87f1764777e67b4a` + keyword scan (grep count 0 =
+   zero-hit); GraalPy CHANGELOG md5 pin `52c85a03991d970d41b4746b06a72c19`
+   + history-head sha pin `9712c23b` (full sha
+   `9712c23b129dd8803ef77e685a1036e8dd08738c` verified waves 44–45;
+   sha-comparison discipline). Copy raw URLs verbatim from
+   `track-t3-wave45-triggers.md` — do NOT reconstruct from memory;
+   md5-identical is authoritative. Meta search = disqualified-noise
+   filter (must be a Meta runtime optimizing JIT to fire — wave-45
+   noise: 2024 LLM Compiler, .NET 10 Medium writeup, React 19 Medium
+   guide, Meta Muse Code/terminal coding agent, "Druid" Pharo/Cog
+   meta-compilation paper).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   `6397c38a55572509df12814180ec458f` (byte-identical discipline; tops
+   at 25.5); JEP 401 / Valhalla (deliverables-table row count = 10
+   rows: header + 9 data = 8 JEPs **plus the pre-existing non-JEP draft
+   row** — "Null-Restricted Value Class Types (Preview)" → jeps/8316779
+   bug-id URL, Draft since 2023; verify the full table row count each
+   wave, not just JEP links — a `/jeps/8316779` regex hit is the bug-id
+   URL for the pre-existing draft row, NOT a new JEP; the project page
+   301s without trailing slash — fetch with `-L`); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement); OpenJ9/.NET optimizer-relevant items only (method note:
+   **canonical URL is now `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`**
+   — GitHub org rename `eclipse/openj9` → `eclipse-openj9`; the old
+   short form 404s outright; wave-45 supersedes the old 301 note;
+   .NET Learn runtime page URL verbatim in
+   `track-t2t4-wave45-resweep.md`; .NET 11 GA expected ~Nov 10 2026 per
+   daily-devops — the page still said "last updated for release candidate
+   1 (RC 1)" in wave 45).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   **go-review.googlesource.com**, not chromium-review — file-stage the
+   Gerrit REST reads and strip the first line — the `)]}'` XSSI
+   prefix — with `tail -n +2`; a bare `sed 's/^)]}//'` leaves the
+   trailing `'` and breaks JSON; the bare `/changes/{id}` endpoint
+   already carries `status`/`updated`; note `?O=ALL_REVISIONS` and
+   `?O=DETAILED_ACCOUNTS` are invalid; Gerrit commit message lives at
+   `/changes/{id}/revisions/current/commit` — `?o=CURRENT_COMMIT` is
+   NOT a valid list-changes option); label-probe watch notes (#81957,
+   #81968 — **#81968 quiet in wave 45: timeline 24 events unchanged,
+   last event dmitshur's 2026-10-05T22:50:12Z labeling; no prototype CL
+   or benchmark landed** — wave 46: still watch for a prototype CL or
+   benchmark on the reciprocating-locks proposal; #81887 retired wave
+   34 after its fix CL merged, which CONFIRMED SURV-006's thesis; no
+   re-check) for anything bar-clearing. (Timeline count is the
+   wave-standard; timeline counts can drift ±few events with unchanged
+   last event — endpoint accounting drift, not new activity — but
+   #81968's 12→24 jump in wave 44 came WITH new substantive events,
+   which is real signal.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-46 re-rank pass (2026-10-06)
+
+- **No new ranked IDs** (nothing bar-cleared); no prototype-gated
+  promotions (no measured prototypes — watch-only survey). **77 active
+  ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14 —
+  unchanged.** No state changes this wave: JEP 544 byte-identical to
+  the wave-45 pin (38th consecutive — 33,898 bytes raw, md5
+  5b074b447092005a265862c8fc935dad; the wave-45 anti-bot script-URL
+  rotation carried over unchanged; Status/Release re-verified verbatim);
+  #157943 0/3 trips (38th consecutive unchanged wave; #163337 equality
+  shortcut HELD a third wave running); T3 0/6 triggers; T2 all negative;
+  T4: #81957 static, #24314 static, #77893's five CLs still NEW with
+  byte-identical timestamps, **#81968 quiet again — no prototype CL or
+  benchmark landed** (24 events, second quiet wave; Gerrit "81968" query
+  returns 0 matches — proposal stays proposal-level). Verification:
+  78 `#### SURV-` headers, no dupes, IDs 001–078 all present; synthesis
+  present exactly once per section (§1 header waves 1–47; §6 wave-47
+  queue ALL COMPLETE + wave-47 re-rank + wave-48 queue; §7 wave-47
+  footer).
+
+### Wave-47 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w46.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–46 are content-identical (thirty-eight consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45) — **diff page bodies
+   before concluding a pin break** (a script-URL-only delta is
+   content-preserving, not a pin break)); wave 46 re-verified
+   Status/Release verbatim in the new archive — re-verify at least the
+   metadata each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027). — DONE:
+   HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad —
+   **byte-identical** to the wave-46 pin (no body-diff needed; the wave-45
+   anti-bot script-URL rotation carried over unchanged a second wave —
+   **thirty-nine consecutive content-identical archives, waves 9–47**),
+   Status=Targeted/Release=28 re-verified verbatim in the NEW archive,
+   archived as `jep544_2026-10-06_w47.html` (pin for wave 48).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty-eight consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 46): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45 value — equality shortcut HELD a third
+   wave running, no re-read needed (the wave-43 inline design-discussion
+   exchange stands as the last recorded activity) — when the wave-24
+   equality shortcut does NOT hold, re-read the timeline tail AND the
+   reviews list before concluding, and fetch `pulls/{n}/comments` for
+   empty-body reviews (wave-42/43 method note). `pulls/{n}/timeline`
+   404s for this repo/PR combo — the issues timeline is the working one.
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent). — DONE: 0/3
+   trips fired (rate limit 60 remaining at wave start, no gaps, all HTTP
+   200; wave-34 UA-quoting discipline held) — #163338 open/unmerged,
+   `updated_at` 2026-09-30T13:03:50Z unchanged (thirty-ninth consecutive
+   unchanged wave), issues-timeline 21 events, try-perf zero hits, last
+   event the known `cross-referenced` 2026-10-01T13:27:54Z Amanieu; RFC
+   #3943 open, comments 11 / review_comments 58, `updated_at`
+   2026-10-02T15:30:51Z unchanged (thirty-ninth consecutive unchanged
+   wave); #163337 `updated_at` 2026-10-05T21:50:06Z — equality shortcut
+   HELD a fourth wave running, no tail re-read needed.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, Quest Runtime Optimizer, CPython 3.15 JIT, MTIA chips,
+   AutoTTS). Swift move-only: web search, triage against the
+   already-assessed set (cond_fail #88258, deinit-devirtualizer #69955,
+   #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose,
+   middas-0706 fork mirror). — DONE: 0/6 fired, all exact-check records —
+   Meta search = same disqualified noise set (LLM Compiler, React Compiler,
+   Static Hermes writeup, React 19 guide, LLM Compiler re-publications);
+   Pyston `fe8afded6166` 2024-08-12T16:30:56Z unchanged; Swift move-only no
+   new SIL pass (cond_fail #88258, ryo docs, swift-institute crash dossiers,
+   SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal commit,
+   address-cast consumption commit, llvm-mlir-book prose — all excluded per
+   discipline); SE-0474 md5 pin holds, Accepted; TruffleRuby Options.java
+   md5 pin holds, 0 keyword hits; GraalPy CHANGELOG md5 pin holds,
+   history-head sha 9712c23b… unchanged (waves 19–47). All re-armed for
+   wave 48.
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026). — DONE: all negative, no deltas vs wave 46 — Graal
+   changelog 14,501 bytes, md5 pin holds, tops at 25.5, no 25.6; JEP 401
+   Integrated/28; Valhalla full-table row count 10 (header + 9 data) = 8
+   JEPs + pre-existing non-JEP draft row, single /jeps/8316779 regex hit
+   (bug-id URL, NOT a new JEP); Azul = Oct 1 BusinessWire + press rewrites
+   only (businesswire 5d, smbtech.au 2d, cxotoday 1d, techcoffeehouse 1d,
+   itbrief.asia 4d, financialcontent/mediatrainingforceos syndications,
+   enterprisetimes.co.uk weekly digest recap — all re-publications, not
+   new; still no technique, 2x–5x still unverified vendor marketing);
+   OpenJ9 latest still openj9-0.62.0 (2026-09-15T20:16:10Z) via the
+   wave-45 canonical URL; .NET 11 Learn page still "last updated for
+   release candidate 1 (RC 1)" (fresh-fetch prose confirmed, empty-span
+   grep count 2), GA ~Nov 10 2026 — nothing bar-clearing.
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–46: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches — no prototype CL or
+   benchmark** — wave 47: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check) for
+   anything bar-clearing. (Timeline count is the wave-standard;
+   timeline counts can drift ±few events with unchanged last event —
+   endpoint accounting drift, not new activity — but #81968's 12→24
+   jump in wave 44 came WITH new substantive events, which is real
+   signal.). — DONE: #24314 static (open, 8 comments, updated
+   2022-07-13T16:58:42Z); #77893's five CLs all still NEW with
+   byte-identical timestamps (758140/758141/764220/793780/793920 —
+   go-review + tail -n +2 XSSI discipline, SURV-041's gap intact); label
+   probe #81957 non-substantive only (25 events, last event gopherbot's
+   2026-10-03T10:50:39Z comment, unchanged); **#81968 QUIET AGAIN —
+   third quiet wave: timeline 24 events unchanged, last event dmitshur's
+   2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no
+   prototype CL or benchmark landed; reciprocating-locks proposal stays
+   proposal-level**; #81887's slot stays retired (resolved wave 34 — no
+   re-check). All watches re-armed for wave 48.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes. — DONE: no promotions (nothing bar-cleared this wave —
+   #81968's proposal has no prototype; Azul's 2x–5x claim still vendor
+   marketing; JEP 544 byte-identical); no new ranked IDs. **77 active
+   ranked (SURV-001…078 minus struck SURV-077): 7 / 39 / 17 / 14.**
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-47 re-rank pass (2026-10-06)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+the wave-46 pin — thirty-nine consecutive content-identical archives;
+#157943 0/3 trips on byte-identical baselines; T3 0/6 triggers; T2/T4 all
+negative); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote; Azul's 2x–5x claim is
+still vendor marketing; #81968's reciprocating-locks proposal still has
+no prototype or benchmark). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-48 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w47.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–47 are content-identical (thirty-nine consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45, w46–w47 carried over) —
+   **diff page bodies before concluding a pin break** (a script-URL-only
+   delta is content-preserving, not a pin break)); wave 47 re-verified
+   Status/Release verbatim in the new archive — re-verify at least the
+   metadata each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027). — DONE: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-47 pin (`cmp` empty; the wave-45 anti-bot script-URL rotation carried over unchanged a third wave — **forty consecutive content-identical archives, waves 9–48**); Status=Targeted/Release=28 re-verified verbatim in the NEW archive; archived as `jep544_2026-10-06_w48.html` (pin for wave 49).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for thirty-nine consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 47): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45/46 value — equality shortcut HELD a fourth
+   wave running, no re-read needed (the wave-43 inline design-discussion
+   exchange stands as the last recorded activity) — when the wave-24
+   equality shortcut does NOT hold, re-read the timeline tail AND the
+   reviews list before concluding, and fetch `pulls/{n}/comments` for
+   empty-body reviews (wave-42/43 method note). `pulls/{n}/timeline`
+   404s for this repo/PR combo — the issues timeline is the working one.
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent). — DONE: 0/3 trips. #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z (fortieth consecutive unchanged); 21-event timeline, 0 try-perf hits, last event the known 2026-10-01T13:27:54Z. RFC #3943 open, comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z — fortieth consecutive unchanged. #163337 `updated_at` 2026-10-05T21:50:06Z — equality shortcut HELD a fifth wave running, no tail re-read. #163336 still merged. Rate limit NOT hit (57 core remaining at wave start). Trips re-armed.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, React Compiler, Static Hermes, React 19 guide, LLM Compiler
+   re-publications). Swift move-only: web search, triage against the
+   already-assessed set (cond_fail #88258, SimplifyIndexingInstructions
+   #89784, raw_pointer_to_ref immortal commit, address-cast consumption
+   commit, deinit-devirtualizer #69955, #66727, swift-institute crash
+   dossiers, ryo/llvm-mlir-book prose, middas-0706 fork mirror). — DONE: 0/6 fired. Pyston head `fe8afded6166` 2024-08-12T16:30:56Z unchanged; SE-0474 raw md5 pin + Status Accepted; TruffleRuby Options.java raw md5 pin + 0 keyword hits; GraalPy raw md5 pin + history-head sha 9712c23b unchanged (waves 19–48); Meta search = same disqualified noise (no Meta runtime JIT); Swift move-only = no new pass. Verbatim-URL-copy rule held — no 404s. Re-armed for wave 49.
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026). — DONE: all negative, no deltas vs the wave-47 baseline. Graal changelog byte-identical to pin (14,501 bytes, tops at `## GraalVM 25.5 (Internal Version 25.5.5)`); JEP 401 Integrated/28; Valhalla 10 table rows (`<tr[^>]*>`) = 8 JEPs + pre-existing non-JEP draft row (single `/jeps/8316779` bug-id URL hit; the `/jeps/1` hit is the page's boilerplate JEP-process link — prose, not a deliverable); docs markdown unused [218]/[303] ref definitions count 2, non-substantive; Azul no new announcement since Oct 1 (BusinessWire + press-rewrite set only — still no technique, 2x–5x still unverified vendor marketing); OpenJ9 still openj9-0.62.0 (wave-45 canonical URL; old short form 404s); .NET 11 Learn page still "last updated for RC 1" (empty-span count 2), GA ~Nov 10 2026. Nothing bar-clearing.
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–47: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches at waves 46–47 — no prototype
+   CL or benchmark** — wave 48: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check) for
+   anything bar-clearing. (Timeline count is the wave-standard;
+   timeline counts can drift ±few events with unchanged last event —
+   endpoint accounting drift, not new activity — but #81968's 12→24
+   jump in wave 44 came WITH new substantive events, which is real
+   signal.) — DONE: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs all NEW with byte-identical timestamps (SURV-041's per-site edge intact; go-review + `tail -n +2` XSSI discipline); #81957 non-substantive only (25 events, last gopherbot 2026-10-03T10:50:39Z); **#81968 QUIET again — 24 events unchanged (fourth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-49 watch stands**; #81887's probe slot stays retired (resolved wave 34 — no re-check).
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not — DONE: no promotions. Nothing bar-cleared this wave; no prototype-gated promotions (no new measured prototypes — the rule holds: paper numbers never promote). No new ranked IDs. **77 active ranked (SURV-001…078 minus struck SURV-077): 7 / 39 / 17 / 14.**
+re-check).*
+
+### Wave-48 re-rank pass (2026-10-06)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+the wave-47 pin — forty consecutive content-identical archives, waves
+9–48; #157943 0/3 trips on byte-identical baselines; T3 0/6 triggers;
+T2/T4 all negative; #81968 quiet a fourth wave — no prototype CL or
+benchmark); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-49 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w48.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–48 are content-identical (forty consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45, w46–w48 carried over) —
+   **diff page bodies before concluding a pin break** (a script-URL-only
+   delta is content-preserving, not a pin break)); wave 48 re-verified
+   Status/Release verbatim in the new archive — re-verify at least the
+   metadata each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+— DONE: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-48 pin (`cmp` empty; the wave-45 anti-bot script-URL rotation carried over unchanged a fourth wave — **forty-one consecutive content-identical archives, waves 9–49**); Status=Targeted/Release=28 re-verified verbatim in the NEW archive; archived as `jep544_2026-10-06_w49.html` (pin for wave 50).2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for forty consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 48): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45/46/47 value — equality shortcut HELD a fifth
+   wave running, no re-read needed (the wave-43 inline design-discussion
+   exchange stands as the last recorded activity) — when the wave-24
+   equality shortcut does NOT hold, re-read the timeline tail AND the
+   reviews list before concluding, and fetch `pulls/{n}/comments` for
+   empty-body reviews (wave-42/43 method note). `pulls/{n}/timeline`
+   404s for this repo/PR combo — the issues timeline is the working one.
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent).
+— DONE: 0/3 trips. #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z (forty-first consecutive unchanged); 21-event timeline, 0 try-perf hits, last event the known 2026-10-01T13:27:54Z. RFC #3943 open, comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z — forty-first consecutive unchanged. #163337 `updated_at` 2026-10-05T21:50:06Z — equality shortcut HELD a sixth wave running, no tail re-read. #163336 still merged. Rate limit NOT hit (57 core remaining at wave start). Trips re-armed.3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, React Compiler, Static Hermes, React 19 guide, LLM Compiler
+   re-publications). Swift move-only: web search, triage against the
+   already-assessed set (cond_fail #88258, SimplifyIndexingInstructions
+   #89784, raw_pointer_to_ref immortal commit, address-cast consumption
+   commit, deinit-devirtualizer #69955, #66727, swift-institute crash
+   dossiers, ryo/llvm-mlir-book prose, middas-0706 fork mirror).
+— DONE: 0/6 fired. Pyston head `fe8afded6166` 2024-08-12T16:30:56Z unchanged; SE-0474 raw md5 pin + Status Accepted; TruffleRuby Options.java raw md5 pin + 0 keyword hits; GraalPy raw md5 pin + history-head sha 9712c23b unchanged (waves 19–49); Meta search = same disqualified noise (no Meta runtime JIT); Swift move-only = no new pass. Verbatim-URL-copy rule held — no 404s. Re-armed for wave 50.4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026).
+— DONE: all negative, no deltas vs the wave-48 baseline. Graal changelog byte-identical to pin (14,501 bytes, tops at `## GraalVM 25.5 (Internal Version 25.5.5)`); JEP 401 Integrated/28; Valhalla 10 table rows (`<tr[^>]*>`) = 8 JEPs + pre-existing non-JEP draft row (single `/jeps/8316779` bug-id URL hit; the `/jeps/1` hits are the page's boilerplate JEP-process link — prose, not a deliverable); docs markdown unused [218]/[303] ref definitions count 2, non-substantive; Azul no new announcement since Oct 1 (BusinessWire + press-rewrite set only — still no technique, 2x–5x still unverified vendor marketing); OpenJ9 still openj9-0.62.0 (wave-45 canonical URL; old short form 404s); .NET 11 Learn page still "last updated for RC 1" (empty-span count 2), GA ~Nov 10 2026. Nothing bar-clearing.5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–48: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches at waves 46–48 — no prototype
+   CL or benchmark** — wave 49: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check) for
+   anything bar-clearing. (Timeline count is the wave-standard;
+   timeline counts can drift ±few events with unchanged last event —
+   endpoint accounting drift, not new activity — but #81968's 12→24
+   jump in wave 44 came WITH new substantive events, which is real
+   signal.) — DONE: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs all NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline); #81957 non-substantive only (25 events, last gopherbot 2026-10-03T10:50:39Z); **#81968 QUIET again — 24 events unchanged (fifth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-50 watch stands**; #81887's probe slot stays retired (resolved wave 34 — no re-check).
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not — DONE: no promotions. Nothing bar-cleared this wave; no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+re-check).*
+
+
+### Wave-49 re-rank pass (2026-10-06)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+the wave-48 pin — forty-one consecutive content-identical archives, waves
+9–49; #157943 0/3 trips on unchanged baselines; T3 0/6 triggers;
+T2/T4 all negative; #81968 quiet a fifth wave — no prototype CL or
+benchmark); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-50 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w49.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–49 are content-identical (forty-one consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45, w46–w49 carried over) —
+   **diff page bodies before concluding a pin break** (a script-URL-only
+   delta is content-preserving, not a pin break)); wave 49 re-verified
+   Status/Release verbatim in the new archive — re-verify at least the
+   metadata each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+— DONE: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-49 pin (`cmp` empty; the wave-45 anti-bot script-URL rotation carried over unchanged a fifth wave — **forty-two consecutive content-identical archives, waves 9–50**); Status=Targeted/Release=28 re-verified verbatim in the NEW archive; archived as `jep544_2026-10-06_w50.html` (pin for wave 51).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for forty-one consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 49): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45/46/47/48 value — equality shortcut HELD a sixth
+   wave running, no re-read needed (the wave-43 inline design-discussion
+   exchange stands as the last recorded activity) — when the wave-24
+   equality shortcut does NOT hold, re-read the timeline tail AND the
+   reviews list before concluding, and fetch `pulls/{n}/comments` for
+   empty-body reviews (wave-42/43 method note). `pulls/{n}/timeline`
+   404s for this repo/PR combo — the issues timeline is the working one.
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent).
+— DONE: 0/3 trips. #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z (forty-second consecutive unchanged); 21-event timeline, 0 try-perf/trybot hits, last event the known 2026-10-01T13:27:54Z. RFC #3943 open, comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z — forty-second consecutive unchanged. #163337 `updated_at` 2026-10-05T21:50:06Z — equality shortcut HELD a seventh wave running, no tail re-read. #163336 still merged. Rate limit NOT hit. Trips re-armed.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, React Compiler, Static Hermes, React 19 guide, LLM Compiler
+   re-publications, Muse Code / Muse Spark coding agents — coding agents
+   and LLM training research, not runtime JITs). Swift move-only: web
+   search, triage against the already-assessed set (cond_fail #88258,
+   SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal
+   commit, address-cast consumption commit, deinit-devirtualizer #69955,
+   #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose,
+   middas-0706 fork mirror).
+— DONE: 0/6 fired. Pyston head `fe8afded6166` 2024-08-12T16:30:56Z unchanged; SE-0474 raw md5 pin + Status Accepted; TruffleRuby Options.java raw md5 pin + 0 keyword hits; GraalPy raw md5 pin + history-head sha 9712c23b unchanged (waves 19–50); Meta search = same disqualified noise (LLM Compiler, Muse Code coding agent, Meta Runtime Optimizer for Horizon OS/Unity, CompilerGym, jemalloc 5.4.0 — no Meta runtime JIT); Swift move-only = no new SIL optimization pass (store_borrow checker fix #69169, address-cast consumption 9f408874, fork-mirror prose — all excluded per the move-only discipline). Verbatim-URL-copy rule held — no 404s. Re-armed for wave 51.
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026).
+— DONE: all negative, no deltas vs the wave-49 baseline. Graal changelog byte-identical to pin (14,501 bytes, md5 6397c38a55572509df12814180ec458f); JEP 401 Integrated/28; Valhalla 10 table rows (`<tr[^>]*>`) = 8 JEPs + pre-existing non-JEP draft row (single `/jeps/8316779` bug-id URL hit; the 2 `/jeps/1` hits are the page's boilerplate JEP-process link — prose, not a deliverable); docs markdown unused [218]/[303] ref definitions count 2, non-substantive; Azul no new announcement since Oct 1 (BusinessWire + press-rewrite set only — techcoffeehouse ~1d reiterates the ReadyNow-2014/Orchestrator→CNC fleet-history framing, still vendor-only; 2x–5x still unverified marketing); OpenJ9 still openj9-0.62.0 (wave-45 canonical URL; old short form 404s); .NET 11 Learn page still "last updated for RC 1", GA ~Nov 10 2026. Nothing bar-clearing.
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–49: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches at waves 46–49 — no prototype
+   CL or benchmark** — wave 50: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check) for
+   anything bar-clearing. (Timeline count is the wave-standard;
+   timeline counts can drift ±few events with unchanged last event —
+   endpoint accounting drift, not new activity — but #81968's 12→24
+   jump in wave 44 came WITH new substantive events, which is real
+   signal.)
+— DONE: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs all NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline); #81957 non-substantive only (25 events, last gopherbot 2026-10-03T10:50:39Z); **#81968 QUIET again — 24 events unchanged (sixth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-51 watch stands**; #81887's probe slot stays retired (resolved wave 34 — no re-check).
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not — DONE: no promotions. Nothing bar-cleared this wave; no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+re-check).*
+### Wave-50 re-rank pass (2026-10-06)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+the wave-49 pin — forty-two consecutive content-identical archives, waves
+9–50; #157943 0/3 trips on unchanged baselines; T3 0/6 triggers;
+T2/T4 all negative; #81968 quiet a sixth wave — no prototype CL or
+benchmark); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-51 queue (prioritized)
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w50.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–50 are content-identical (forty-two consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45, w46–w50 carried over) —
+   **diff page bodies before concluding a pin break** (a script-URL-only
+   delta is content-preserving, not a pin break)); wave 50 re-verified
+   Status/Release verbatim in the new archive — re-verify at least the
+   metadata each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027).
+— DONE: byte-identical to the wave-50 pin (forty-third consecutive content-identical archive, waves 9–51); 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad; `cmp` vs jep544_2026-10-06_w50.html empty; the wave-45 anti-bot script-URL rotation carried over unchanged a sixth wave; Status=Targeted/Release=28 re-verified verbatim in the NEW archive; archived as jep544_2026-10-06_w51.html (pin for wave 52).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for forty-two consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 50): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45/46/47/48/49 value — equality shortcut HELD a seventh
+   wave running, no re-read needed (the wave-43 inline design-discussion
+   exchange stands as the last recorded activity) — when the wave-24
+   equality shortcut does NOT hold, re-read the timeline tail AND the
+   reviews list before concluding, and fetch `pulls/{n}/comments` for
+   empty-body reviews (wave-42/43 method note). `pulls/{n}/timeline`
+   404s for this repo/PR combo — the issues timeline is the working one.
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent).
+— DONE: 0/3 trips. #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z (forty-third consecutive unchanged); 21-event timeline, 0 try-perf/trybot hits, last event the known 2026-10-01T13:27:54Z. RFC #3943 open, comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z — forty-third consecutive unchanged. #163337 `updated_at` 2026-10-05T21:50:06Z — equality shortcut HELD an eighth wave running, no tail re-read. #163336 still merged. Rate limit NOT hit. Trips re-armed.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, React Compiler, Static Hermes, React 19 guide, LLM Compiler
+   re-publications, Muse Code / Muse Spark coding agents — coding agents
+   and LLM training research, not runtime JITs). Swift move-only: web
+   search, triage against the already-assessed set (cond_fail #88258,
+   SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal
+   commit, address-cast consumption commit, deinit-devirtualizer #69955,
+   #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose,
+   middas-0706 fork mirror).
+— DONE: 0/6 fired. Pyston head `fe8afded6166` 2024-08-12T16:30:56Z unchanged; SE-0474 raw md5 pin + Status Accepted; TruffleRuby Options.java raw md5 pin + 0 keyword hits; GraalPy raw md5 pin + history-head sha 9712c23b unchanged (waves 19–51); Meta search = same disqualified noise (LLM Compiler, Muse Code coding agent, Muse Spark 1.3 AI coding news, Meta Runtime Optimizer for Horizon OS/Unity, jemalloc 5.4.0 — no Meta runtime JIT); Swift move-only = no new SIL optimization pass (cond_fail #88258, SimplifyIndexingInstructions #89784, swift-institute crash dossiers, ryo/llvm-mlir-book/kstdlib prose — all excluded per the move-only discipline). Verbatim-URL-copy rule held — no 404s. Re-armed for wave 52.
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026).
+— DONE: all negative, no deltas vs the wave-50 baseline. Graal changelog byte-identical to pin (14,501 bytes, md5 6397c38a55572509df12814180ec458f); JEP 401 Integrated/28; Valhalla 10 table rows (`<tr[^>]*>`) = 8 JEPs + pre-existing non-JEP draft row (single `/jeps/8316779` bug-id URL hit; the 2 `/jeps/1` hits are the page's boilerplate JEP-process link — prose, not a deliverable); docs markdown unused [218]/[303] ref definitions count 2, non-substantive; Azul no new announcement since Oct 1 (BusinessWire + press-rewrite set only — techcoffeehouse ~1d reiterates the ReadyNow-2014/Orchestrator→CNC fleet-history framing, still vendor-only; 2x–5x still unverified marketing); OpenJ9 still openj9-0.62.0 (wave-45 canonical URL; old short form 404s); .NET 11 Learn page still "last updated for RC 1", GA ~Nov 10 2026. Nothing bar-clearing.
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–50: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches at waves 46–50 — no prototype
+   CL or benchmark** — wave 51: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check) for
+   anything bar-clearing. (Timeline count is the wave-standard;
+   timeline counts can drift ±few events with unchanged last event —
+   endpoint accounting drift, not new activity — but #81968's 12→24
+   jump in wave 44 came WITH new substantive events, which is real
+   signal.)
+— DONE: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs all NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline); #81957 non-substantive only (25 events, last gopherbot 2026-10-03T10:50:39Z); **#81968 QUIET again — 24 events unchanged (seventh quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-52 watch stands**; #81887's probe slot stays retired (resolved wave 34 — no re-check).
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+— DONE: no promotions. Nothing bar-cleared this wave; no prototype-gated promotions (no new measured prototypes — the rule holds: paper numbers never promote). No new ranked IDs. **77 active ranked (SURV-001…078 minus struck SURV-077): 7 / 39 / 17 / 14.**
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+### Wave-51 re-rank pass (2026-10-06)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+the wave-50 pin — forty-three consecutive content-identical archives, waves
+9–51; #157943 0/3 trips on unchanged baselines; T3 0/6 triggers;
+T2/T4 all negative; #81968 quiet a seventh wave — no prototype CL or
+benchmark); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-52 queue (prioritized)
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w51.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–51 are content-identical (forty-three consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45, w46–w51 carried over) —
+   **diff page bodies before concluding a pin break** (a script-URL-only
+   delta is content-preserving, not a pin break)); wave 51 re-verified
+   Status/Release verbatim in the new archive — re-verify at least the
+   metadata each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027). — DONE: byte-identical to the wave-51 pin (forty-fourth consecutive content-identical archive, waves 9–52); Status=Targeted/Release=28 re-verified verbatim in the NEW archive; archived as `jep544_2026-10-06_w52.html` (pin for wave 53).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for forty-three consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 51): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45/46/47/48/49/50 value — equality shortcut HELD an eighth
+   wave running, no re-read needed (the wave-43 inline design-discussion
+   exchange stands as the last recorded activity) — when the wave-24
+   equality shortcut does NOT hold, re-read the timeline tail AND the
+   reviews list before concluding, and fetch `pulls/{n}/comments` for
+   empty-body reviews (wave-42/43 method note). `pulls/{n}/timeline`
+   404s for this repo/PR combo — the issues timeline is the working one.
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent). — DONE: 0/3 trips. #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z (forty-fourth consecutive unchanged); 21-event timeline, 0 try-perf hits, last event the known 2026-10-01T13:27:54Z. RFC #3943 open, comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z — forty-fourth consecutive unchanged. #163337 `updated_at` 2026-10-05T21:50:06Z — equality shortcut HELD a ninth wave running, no tail re-read. #163336 still merged. Rate limit NOT hit. Trips re-armed.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, React Compiler, Static Hermes, React 19 guide, LLM Compiler
+   re-publications, Muse Code / Muse Spark coding agents — coding agents
+   and LLM training research, not runtime JITs). Swift move-only: web
+   search, triage against the already-assessed set (cond_fail #88258,
+   SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal
+   commit, address-cast consumption commit, deinit-devirtualizer #69955,
+   #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose,
+   middas-0706 fork mirror). — DONE: 0/6 fired. Pyston head `fe8afded6166` 2024-08-12T16:30:56Z unchanged; SE-0474 raw md5 pin + Status Accepted; TruffleRuby Options.java raw md5 pin + 0 keyword hits; GraalPy raw md5 pin + history-head sha 9712c23b unchanged (waves 19–52); Meta search = same disqualified noise (no Meta runtime JIT); Swift move-only = no new pass. Verbatim-URL-copy rule held — no 404s. Re-armed for wave 53.
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026). — DONE: all negative, no deltas vs the wave-51 baseline. Graal changelog byte-identical to pin (14,501 bytes); Valhalla 10 table rows (`<tr[^>]*>`) = 8 JEPs + pre-existing non-JEP draft row (single `/jeps/8316779` bug-id URL hit; the `/jeps/1` hit is the page's boilerplate JEP-process link — prose, not a deliverable); docs markdown unused [218]/[303] ref definitions count 2, non-substantive; Azul no new announcement since Oct 1 (BusinessWire + press-rewrite set only — still no technique, 2x–5x still unverified vendor marketing); OpenJ9 still openj9-0.62.0 (wave-45 canonical URL; old short form 404s); .NET 11 Learn page still "last updated for RC 1" (fresh-fetch prose confirmed on-page), GA ~Nov 10 2026. Nothing bar-clearing.
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–51: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches at waves 46–51 — no prototype
+   CL or benchmark** — wave 52: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check) for
+   anything bar-clearing. (Timeline count is the wave-standard;
+   timeline counts can drift ±few events with unchanged last event —
+   endpoint accounting drift, not new activity — but #81968's 12→24
+   jump in wave 44 came WITH new substantive events, which is real
+   signal.) — DONE: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs all NEW with byte-identical timestamps (SURV-041's per-site edge intact; go-review + `tail -n +2` XSSI discipline); #81957 non-substantive only (25 events, last gopherbot 2026-10-03T10:50:39Z); **#81968 QUIET again — 24 events unchanged (eighth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-53 watch stands**; #81887's probe slot stays retired (resolved wave 34 — no re-check).
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes. — DONE: no promotions. Nothing bar-cleared this wave; no prototype-gated promotions (no new measured prototypes — the rule holds: paper numbers never promote). No new ranked IDs.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-52 re-rank pass (2026-10-06)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+the wave-51 pin — forty-four consecutive content-identical archives
+waves 9–52; #157943 0/3 trips on unchanged baselines; T3 0/6 triggers;
+T2/T4 all negative; #81968 quiet an eighth wave — no prototype CL or
+benchmark); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-53 queue (prioritized)
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w52.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–52 are content-identical (forty-four consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45, w46–w52 carried over) —
+   **diff page bodies before concluding a pin break** (a script-URL-only
+   delta is content-preserving, not a pin break)); wave 52 re-verified
+   Status/Release verbatim in the new archive — re-verify at least the
+   metadata each wave, not just the md5. Watch for Targeted→Integrated
+   movement as the JDK 28 ramp-down approaches (Dec 2026–Jan 2027). — DONE: byte-identical to the wave-52 pin (forty-fifth consecutive content-identical archive, waves 9–53; anti-bot script-URL rotation dormant an eighth wave); Status=Targeted/Release=28 re-verified verbatim in the NEW archive; archived as `jep544_2026-10-06_w53.html` (pin for wave 54).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for forty-four consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 52): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45/46/47/48/49/50/51 value — equality shortcut HELD a ninth
+   wave running, no re-read needed (the wave-43 inline design-discussion
+   exchange stands as the last recorded activity) — when the wave-24
+   equality shortcut does NOT hold, re-read the timeline tail AND the
+   reviews list before concluding, and fetch `pulls/{n}/comments` for
+   empty-body reviews (wave-42/43 method note). `pulls/{n}/timeline`
+   404s for this repo/PR combo — the issues timeline is the working one.
+   Unauthenticated core rate limit is 60/hr — if hit mid-wave, wait for
+   reset and re-run the affected checks (wave-26 precedent). — DONE: 0/3 trips; RFC #3943 open 11/58, updated_at 2026-10-02T15:30:51Z — forty-fifth consecutive unchanged wave; #163337 equality shortcut HELD a tenth wave running (updated_at 2026-10-05T21:50:06Z); #163338 open/unmerged unchanged; trips re-armed.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, React Compiler, Static Hermes, React 19 guide, LLM Compiler
+   re-publications, Muse Code / Muse Spark coding agents — coding agents
+   and LLM training research, not runtime JITs). Swift move-only: web
+   search, triage against the already-assessed set (cond_fail #88258,
+   SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal
+   commit, address-cast consumption commit, deinit-devirtualizer #69955,
+   #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose,
+   middas-0706 fork mirror). — DONE: 0/6 triggers; Meta = disqualified noise only (2024 LLM Compiler, React/compiler tooling, coding agents, allocator maintenance — none a Meta runtime JIT); Pyston head 2024-08-12 fe8afded6166; Swift move-only = crash dossiers/prose/guides only (no new SIL pass); SE-0474 md5 pin match, still Accepted; TruffleRuby md5 pin match, 0 keyword hits; GraalPy CHANGELOG md5 pin match, history head same sha 9712c23b.
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026). — DONE: all negative; Graal compiler CHANGELOG byte-identical to pin (14,501 bytes, md5 6397c38a55572509df12814180ec458f); Valhalla `<tr[^>]*>` count 10 (header + 9 data = same 8 JEPs + pre-existing draft row, no new JEPs); Azul = same Oct 1 BusinessWire release + rewrites only (no technique, 2x–5x still unverified vendor marketing); OpenJ9 still v0.62.0; .NET 11 Learn page still "last updated for release candidate 1 (RC 1)".
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–52: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches at waves 46–52 — no prototype
+   CL or benchmark** — wave 53: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check) for
+   anything bar-clearing. (Timeline count is the wave-standard;
+   timeline counts can drift ±few events with unchanged last event —
+   endpoint accounting drift, not new activity — but #81968's 12→24
+   jump in wave 44 came WITH new substantive events, which is real
+   signal.) — DONE: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z); #77893's five CLs all NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline); #81957 count 25→26 — new last event `subscribed` by mpx 2026-10-06T08:12:49Z (non-substantive user subscribe, same class as earlier subscribe noise — no bar-clearing content); **#81968 QUIET again — 24 events unchanged (ninth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-54 watch stands**; #81887's probe slot stays retired (resolved wave 34 — no re-check).
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes. — DONE: no promotions. Nothing bar-cleared this wave; no prototype-gated promotions (no new measured prototypes — the rule holds: paper numbers never promote). No new ranked IDs.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Wave-53 re-rank pass (2026-10-06)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+the wave-52 pin — forty-five consecutive content-identical archives,
+waves 9–53; #157943 0/3 trips on unchanged baselines; T3 0/6 triggers;
+T2/T4 all negative; #81968 quiet a ninth wave — no prototype CL or
+benchmark); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-54 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w53.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–53 are content-identical (forty-five consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45, w46–w53 dormant eight
+   waves) — **diff page bodies before concluding a pin break**
+   (a script-URL-only delta is content-preserving, not a pin break));
+   wave 53 re-verified Status/Release verbatim in the new archive —
+   re-verify at least the metadata each wave, not just the md5. Watch
+   for Targeted→Integrated movement as the JDK 28 ramp-down approaches
+   (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for forty-five consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 53): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45/46/47/48/49/50/51/52 value — equality
+   shortcut HELD a tenth wave running, no re-read needed (the wave-43
+   inline design-discussion exchange stands as the last recorded
+   activity) — when the wave-24 equality shortcut does NOT hold,
+   re-read the timeline tail AND the reviews list, and fetch
+   `pulls/{n}/comments` for empty-body reviews (wave-42/43 method note).
+   `pulls/{n}/timeline` 404s for this repo/PR combo — the issues
+   timeline is the working one. Unauthenticated core rate limit is
+   60/hr — if hit mid-wave, wait for reset and re-run the affected
+   checks (wave-26 precedent).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, React Compiler, Static Hermes, React 19 guide, LLM Compiler
+   re-publications, Muse Code / Muse Spark coding agents — coding agents
+   and LLM training research, not runtime JITs; jemalloc 5.4.0 —
+   allocator maintenance; Android Runtime glossary — personal-blog
+   glossary; Druid/Pharo meta-compilation — Smalltalk research, not
+   Meta). Swift move-only: web search, triage against the
+   already-assessed set (cond_fail #88258,
+   SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal
+   commit, address-cast consumption commit, deinit-devirtualizer #69955,
+   #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose,
+   middas-0706 fork mirror).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–53: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches at waves 46–53 — no prototype
+   CL or benchmark** — wave 54: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check) for
+   anything bar-clearing. (Timeline count is the wave-standard;
+   timeline counts can drift ±few events with unchanged last event —
+   endpoint accounting drift, not new activity — but #81968's 12→24
+   jump in wave 44 came WITH new substantive events, which is real
+   signal; #81957's 25→26 jump in wave 53 came with a
+   non-substantive user `subscribed` event — record honestly, treat as
+   noise.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+### Wave-54 re-rank pass (2026-10-06)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+the wave-53 pin — forty-six consecutive content-identical archives,
+waves 9–54; #157943 0/3 trips on unchanged baselines; T3 0/6 triggers;
+T2/T4 all negative; #81968 quiet a tenth wave — no prototype CL or
+benchmark); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-55 queue (prioritized) — ALL COMPLETE 2026-10-06
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w54.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–54 are content-identical (forty-six consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45, w46–w54 dormant nine
+   waves) — **diff page bodies before concluding a pin break**
+   (a script-URL-only delta is content-preserving, not a pin break));
+   wave 54 re-verified Status/Release verbatim in the new archive —
+   re-verify at least the metadata each wave, not just the md5. Watch
+   for Targeted→Integrated movement as the JDK 28 ramp-down approaches
+   (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for forty-six consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 54): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45/46/47/48/49/50/51/52/53 value — equality
+   shortcut HELD an eleventh wave running, no re-read needed (the wave-43
+   inline design-discussion exchange stands as the last recorded
+   activity) — when the wave-24 equality shortcut does NOT hold,
+   re-read the timeline tail AND the reviews list, and fetch
+   `pulls/{n}/comments` for empty-body reviews (wave-42/43 method note).
+   `pulls/{n}/timeline` 404s for this repo/PR combo — the issues
+   timeline is the working one. Unauthenticated core rate limit is
+   60/hr — if hit mid-wave, wait for reset and re-run the affected
+   checks (wave-26 precedent).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, React Compiler, Static Hermes, React 19 guide, LLM Compiler
+   re-publications, Muse Code / Muse Spark coding agents — coding agents
+   and LLM training research, not runtime JITs; jemalloc 5.4.0 —
+   allocator maintenance; Android Runtime glossary — personal-blog
+   glossary; Druid/Pharo meta-compilation — Smalltalk research, not
+   Meta). Swift move-only: web search, triage against the
+   already-assessed set (cond_fail #88258,
+   SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal
+   commit, address-cast consumption commit, deinit-devirtualizer #69955,
+   #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose,
+   middas-0706 fork mirror).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–54: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches at waves 46–54 — no prototype
+   CL or benchmark** — wave 55: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check; #81957
+   count 26 baseline — last event mpx `subscribed` 2026-10-06T08:12:49Z,
+   non-substantive) for anything bar-clearing. (Timeline count is the
+   wave-standard; timeline counts can drift ±few events with unchanged
+   last event — endpoint accounting drift, not new activity — but
+   #81968's 12→24 jump in wave 44 came WITH new substantive events,
+   which is real signal; #81957's 25→26 jump in wave 53 came with a
+   non-substantive user `subscribed` event — record honestly, treat as
+   noise.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+### Wave-55 re-rank pass (2026-10-06)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+the wave-54 pin — forty-seven consecutive content-identical archives,
+waves 9–55; #157943 0/3 trips on unchanged baselines; T3 0/6 triggers;
+T2/T4 all negative; #81968 quiet an eleventh wave — no prototype CL or
+benchmark); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-56 queue (prioritized)
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-06_w55.html` = 5b074b447092005a265862c8fc935dad —
+   waves 9–55 are content-identical (forty-seven consecutive
+   content-identical archives); the anti-bot script-URL rotation has
+   rotated twice (w22–w44 dormant, rotated w45, w46–w55 dormant ten
+   waves) — **diff page bodies before concluding a pin break**
+   (a script-URL-only delta is content-preserving, not a pin break));
+   wave 55 re-verified Status/Release verbatim in the new archive —
+   re-verify at least the metadata each wave, not just the md5. Watch
+   for Targeted→Integrated movement as the JDK 28 ramp-down approaches
+   (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for forty-seven consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); send a `User-Agent` header (properly quoted — wave-34
+   incident: unquoted `$UA` → empty UA → GitHub 403s); the timeline
+   endpoint is the **issues** timeline
+   (`/repos/{owner}/{repo}/issues/{n}/timeline`) and #163338's timeline
+   is the 21-event one (scan that one for try-perf; last event the
+   known `cross-referenced` 2026-10-01T13:27:54Z Amanieu); the issue
+   lives in **rust-lang/rust**; RFC #3943 lives in `rust-lang/rfcs`.
+   Note: PR `updated_at` equality with a recorded last-event timestamp
+   is a sufficient no-new-events check for paginated timelines (skips
+   the tail-page re-read — established for #163337 at wave 24);
+   `updated_at` drift with unchanged comments/reviews and no new
+   timeline/reviews events is GitHub-internal accounting, not signal
+   (RFC #3943 watch note, established wave 38); sibling watch note
+   (wave 55): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z
+   matched the wave-43/44/45/46/47/48/49/50/51/52/53/54 value — equality
+   shortcut HELD a twelfth wave running, no re-read needed (the wave-43
+   inline design-discussion exchange stands as the last recorded
+   activity) — when the wave-24 equality shortcut does NOT hold,
+   re-read the timeline tail AND the reviews list, and fetch
+   `pulls/{n}/comments` for empty-body reviews (wave-42/43 method note).
+   `pulls/{n}/timeline` 404s for this repo/PR combo — the issues
+   timeline is the working one. Unauthenticated core rate limit is
+   60/hr — if hit mid-wave, wait for reset and re-run the affected
+   checks (wave-26 precedent).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page (pin: head 2024-08-12T16:30:56Z,
+   `fe8afded6166`); TruffleRuby via Options.java option-set diff vs pin
+   801fd357c11fd16c87f1764777e67b4a (md5-identical diff authoritative;
+   keyword grep speculat/guard/optim = 0); GraalPy via BOTH file-history
+   (sha-comparison; pin head `9712c23b129dd8803ef77e685a1036e8dd08738c`)
+   and raw-vs-pin diff (52c85a03991d970d41b4746b06a72c19). Trust
+   deterministic diffs, not line counts. SE-0474: header is a
+   `*`-prefixed bullet list, not a markdown table (pin
+   e8f962dbd12172d2f2a44410e727d7b5, Status Accepted). Meta optimizing
+   JIT: web search, triage against the disqualified noise set (LLM
+   Compiler, React Compiler, Static Hermes, React 19 guide, LLM Compiler
+   re-publications, Muse Code / Muse Spark coding agents — coding agents
+   and LLM training research, not runtime JITs; jemalloc 5.4.0 —
+   allocator maintenance; Android Runtime glossary — personal-blog
+   glossary; Druid/Pharo meta-compilation — Smalltalk research, not
+   Meta). Swift move-only: web search, triage against the
+   already-assessed set (cond_fail #88258,
+   SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal
+   commit, address-cast consumption commit, deinit-devirtualizer #69955,
+   #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose,
+   middas-0706 fork mirror).
+4. **T2 continuous re-sweep** — Graal 25.x CHANGELOG md5 pin
+   (6397c38a55572509df12814180ec458f, 14,501 bytes; record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch;
+   **Valhalla row-count discipline: count `<tr[^>]*>` — rows carry class
+   attributes; 10 rows = header + 9 data = 8 JEPs + 1 pre-existing draft
+   row; a `/jeps/8316779` regex hit is the bug-id URL, NOT a new JEP**;
+   page 301s without trailing slash — fetch with -L); Azul Cloud Native
+   Compiler watch note (any published technique or independent
+   measurement — Oct 1 BusinessWire 2x–5x claim still unverified vendor
+   marketing); OpenJ9 via the wave-45 canonical URL
+   `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest`
+   (org rename — old short form 404s outright); .NET optimizer-relevant
+   items only (Learn .NET 11 runtime page still "last updated for RC 1";
+   GA ~Nov 10 2026).
+5. **T4 watches** — #24314; #77893 CLs (they live on
+   go-review.googlesource.com — strip the XSSI prefix with `tail -n +2`;
+   match `updated` verbatim, not just date-stems); label-probe watch
+   notes (#81957, #81968 — **#81968 quiet waves 45–55: timeline 24
+   events unchanged, last event dmitshur's 2026-10-05T22:50:12Z
+   labeling; Gerrit "81968" query 0 matches at waves 46–55 — no prototype
+   CL or benchmark** — wave 56: still watch for a prototype CL or benchmark
+   on the reciprocating-locks proposal; #81887 retired wave 34 after its
+   fix CL merged, which CONFIRMED SURV-006's thesis; no re-check; #81957
+   count 26 baseline — last event mpx `subscribed` 2026-10-06T08:12:49Z,
+   non-substantive) for anything bar-clearing. (Timeline count is the
+   wave-standard; timeline counts can drift ±few events with unchanged
+   last event — endpoint accounting drift, not new activity — but
+   #81968's 12→24 jump in wave 44 came WITH new substantive events,
+   which is real signal; #81957's 25→26 jump in wave 53 came with a
+   non-substantive user `subscribed` event — record honestly, treat as
+   noise.)
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+
+### Wave-12 queue (prioritized) — ALL COMPLETE 2026-10-04
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-04_w11.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027).
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip. Method: GitHub API state/timeline
+   endpoints; ~11 calls/wave is affordable.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java option-set
+   diff vs pin c734f265 (md5-identical diff authoritative); GraalPy via
+   BOTH file-history and raw-vs-pin diff (178ea261). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`.
+4. **T2 continuous re-sweep** — Graal changelog 25.x (record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch);
+   Azul Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   XSSI prefix; note `?O=ALL_REVISIONS` is invalid); label-probe watch
+   notes (#81887, #81846/#81755, #81957, #81968) for anything
+   bar-clearing.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-12 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~19:30 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes —
+  **byte-identical to the wave-9/10/11 raw archives**, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — four consecutive identical
+  archives). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-04_w12.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave12-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~19:30 CEST) — byte-identical to the
+  wave-11 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads for try-perf/trybot/rust-timer/`@bors
+  try`/bors-try = zero hits); RFC #3943 Open under review (comments 11 /
+  review_comments 58 — unchanged, fourth consecutive wave). All six
+  sibling PRs zero movement (#163336 remains the only merged).
+  SURV-024's transfer ruling stands (§5 static-core strike;
+  guarded-speculative E3 arm only); trips re-armed (RFC #3943
+  acceptance most plausible near-term). Transfer impact: NONE.
+- **T3 standing triggers** (`track-t3-wave12-triggers.md`): 0/6 fired
+  (~19:30–19:36 CEST) — no new Meta runtime optimizing-JIT (identical
+  7 search results as waves 9–11: 2024 LLM Compiler + React Compiler
+  only, plus Aug-2026 Muse Code/jemalloc noise); Pyston pyston_main
+  still 2024-08-12; Swift move-only activity still enforcement/docs/
+  infra, no new SIL pass (identical result set as waves 9–11);
+  SE-0474 still Accepted, partial behind CoroutineAccessors flag (raw
+  md md5 e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8;
+  header is a `*`-prefixed bullet list); TruffleRuby Options.java
+  raw-master vs pin c734f265 diff EMPTY (md5
+  801fd357c11fd16c87f1764777e67b4a at both endpoints; zero
+  speculat/guard/optim matches); GraalPy file-history head Aug 18 2026
+  (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 both endpoints; latest §25.4
+  unchanged). Deterministic-diff discipline held. All six triggers
+  re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave12-resweep.md`): all negative with
+  exact-check records (~19:31–19:36 CEST). Graal 25.x changelog
+  byte-identical waves 5–12 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated/Release 28, Dan Smith; metadata rows are
+  `<td>`-only, no `<th>`); Valhalla project page same 8-JEP list, no
+  new primitive-class JEP. Azul Cloud Native Compiler stays a watch
+  note (press rewrites only — smbtech.au ~17h, Business Wire
+  syndication ~3d, i-programmer older; no whitepaper, no technique, no
+  independent measurement; 2x–5x warm-up claim still unverified
+  marketing). OpenJ9 latest still v0.62.0 (2026-09-15). .NET 11 JIT
+  items incremental only (Microsoft Learn runtime page confirms the
+  already-assessed set: GVM devirtualization #123183/#130202,
+  inlining-observation #111948, empty-span BCE, broader IV forms —
+  precedent extensions, not bar-clearing). T4: #24314 open/static (8
+  comments, updated 2022-07-13); #77893's five CLs all still NEW with
+  unchanged timestamps (SURV-041's per-site gap intact; Gerrit plain
+  endpoint + XSSI-prefix assertion); label probes
+  #81887/#81846/#81755/#81957/#81968 zero activity since wave 11
+  (counts + updated_at byte-identical). No bar-clearing material
+  anywhere; no gaps.
+
+### Wave-12 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9/10/11 archives — four consecutive identical archives; #157943
+0/3 trips on byte-identical baselines; T3 0/6 triggers; T2/T4 all
+negative); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote; Azul's 2x–5x claim is
+still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-13 queue (prioritized) — ALL COMPLETE
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-04_w12.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027). — DONE: byte-identical (five
+   consecutive identical archives), still Targeted/28, archived as
+   `jep544_2026-10-04_w13.html`.
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for four consecutive waves).
+   Method: GitHub API state/timeline endpoints; ~11 calls/wave is affordable. —
+   DONE: 0/3 trips fired; all fields byte-identical to wave-12
+   baselines (RFC #3943 open, 11/58 comments — fifth consecutive wave).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java option-set
+   diff vs pin c734f265 (md5-identical diff authoritative); GraalPy via
+   BOTH file-history and raw-vs-pin diff (178ea261). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. — DONE: 0/6
+   fired; all diffs EMPTY / md5-identical.
+4. **T2 continuous re-sweep** — Graal changelog 25.x (record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch);
+   Azul Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only. —
+   DONE: all negative, byte-identical on every byte-comparable check.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   XSSI prefix; note `?O=ALL_REVISIONS` is invalid); label-probe watch
+   notes (#81887, #81846/#81755, #81957, #81968) for anything
+   bar-clearing. — DONE: no movement anywhere; SURV-041's gap intact.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes. — DONE: no movements; 77 active ranked, tiers 7/39/17/14.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-13 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~19:38 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes —
+  **byte-identical to the wave-9/10/11/12 raw archives**, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — five consecutive identical
+  archives). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-04_w13.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave13-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline/comments, ~19:38–19:45 CEST) —
+  byte-identical to the wave-12 baselines (#163338 open/unmerged,
+  updated_at 2026-09-30T13:03:50Z; timeline 21 events, try-perf keyword
+  scan zero hits; RFC #3943 open, comments 11 / review_comments 58 —
+  fifth consecutive wave). Sibling PRs zero movement (#163336 still the
+  only merged). SURV-024 ruling stands; trips re-armed.
+- **T3 triggers** (`track-t3-wave13-triggers.md`): 0/6 fired with
+  exact-check records (~19:38–19:50 CEST). TruffleRuby Options.java:
+  raw-master vs pin c734f265 diff EMPTY, md5 801fd357c11fd16c87f1764777e67b4a
+  at both endpoints, zero speculat/guard/optim matches (grep exit 1 is
+  the zero-hit confirmation). GraalPy: file-history head 2026-08-18
+  (pre-pin); raw-vs-pin 178ea261 diff EMPTY, md5
+  52c85a03991d970d41b4746b06a72c19 at both endpoints, latest section
+  Version 25.4. Pyston pyston_main head still 2024-08-12 (HTTP 200,
+  526,859 bytes). SE-0474 raw md md5 e8f962dbd12172d2f2a44410e727d7b5 —
+  pin match, still Accepted/partial behind flag. Swift move-only:
+  same 7-result search set as waves 9–12, enforcement/docs/infra only.
+  Meta JIT: same 7-result set as waves 9–12, all disqualified. All six
+  triggers re-armed.
+- **T2/T4 re-sweep** (`track-t2t4-wave13-resweep.md`): all negative.
+  Graal 25.x changelog 14,501 bytes, md5 6397c38a55572509df12814180ec458f
+  (waves 5–13 byte-identical; tops at 25.5, no 25.6). JEP 401 Integrated/
+  Release 28 / Dan Smith (page Updated 2026/08/07 18:02); Valhalla
+  project page same 8 JEPs (181, 309, 334, 371, 390, 401, 402, 539), no
+  new primitive-class JEP. Azul: press-rewrite set now includes
+  itbrief.asia (~2d) alongside Business Wire (~3d), smbtech.au (~17h),
+  i-programmer (older); the wave-11/12 ReadyNow-2014/Orchestrator
+  fleet-history framing echoes in press coverage — still vendor-only;
+  no whitepaper, no technique detail, no independent measurement;
+  watch note carried. OpenJ9: latest still openj9-0.62.0 (2026-09-15).
+  .NET: no new optimizer-relevant items beyond the assessed .NET 11
+  set (devblogs "Performance Improvements in .NET 11" + daily-devops
+  JIT internals confirm: GVM GDV, inlining-observation devirtualization,
+  SELECT folding, SequenceEqual constant-folding, Runtime Async
+  tiering, empty-span BCE, broader IV forms — precedent extensions,
+  not bar-clearing). T4: #24314 open/static (8 comments, updated
+  2022-07-13); #77893's five CLs all still NEW with unchanged
+  timestamps (SURV-041's per-site gap intact; Gerrit plain endpoint +
+  XSSI-prefix assertion); label probes
+  #81887/#81846/#81755/#81957/#81968 zero activity since wave 12
+  (counts + updated_at byte-identical). No bar-clearing material
+  anywhere; no gaps.
+
+### Wave-13 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9/10/11/12 archives — five consecutive identical archives; #157943
+0/3 trips on byte-identical baselines; T3 0/6 triggers; T2/T4 all
+negative); no prototype-gated promotions (no new measured prototypes —
+the rule holds: paper numbers never promote; Azul's 2x–5x claim is
+still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-14 queue (prioritized) — ALL COMPLETE
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-04_w13.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027). — DONE: byte-identical (six
+   consecutive identical archives), still Targeted/28, archived as
+   `jep544_2026-10-04_w14.html`.
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for five consecutive waves).
+   Method: GitHub API state/timeline endpoints; ~13 calls/wave is
+   affordable. — DONE: 0/3 trips fired; all fields byte-identical to
+   wave-13 baselines; trips re-armed (RFC #3943 still most plausible,
+   sixth consecutive unchanged wave).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java option-set
+   diff vs pin c734f265 (md5-identical diff authoritative); GraalPy via
+   BOTH file-history and raw-vs-pin diff (178ea261). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. — DONE: 0/6 fired; all
+   byte-level checks negative; triggers re-armed.
+4. **T2 continuous re-sweep** — Graal changelog 25.x (record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch);
+   Azul Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only.
+   — DONE: all negative, byte-identical on every comparable check;
+   Azul stays a watch note (press rewrites only).
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   XSSI prefix; note `?O=ALL_REVISIONS` is invalid); label-probe watch
+   notes (#81887, #81846/#81755, #81957, #81968) for anything
+   bar-clearing. — DONE: all five CLs still NEW with identical
+   timestamps; label probes zero activity since wave 13 (counts +
+   updated_at byte-identical). No bar-clearing material anywhere;
+   no gaps.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes. — DONE: no promotions (no prototypes measured; paper
+   numbers never promote; Azul's 2x–5x claim still vendor marketing).
+   No new ranked IDs.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-14 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~20:38 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes —
+  **byte-identical to the wave-9/10/11/12/13 raw archives**, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — six consecutive identical
+  archives). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-04_w14.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave14-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~20:50 CEST) — byte-identical to the
+  wave-13 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads for try-perf/tryperf/trybot/rust-timer/
+  `@bors try`/bors-try = zero hits); RFC #3943 Open under review
+  (comments 11 / review_comments 58 — unchanged, sixth consecutive
+  wave). All six sibling PRs zero movement (#163336 remains the only
+  merged; its `merged_at` reads 2026-09-30T12:11:35Z as in wave 13 —
+  GitHub serialization variance vs wave 12, `updated_at`
+  byte-identical, not a new event). SURV-024's transfer ruling stands
+  (§5 static-core strike; guarded-speculative E3 arm only); trips
+  re-armed (RFC #3943 acceptance most plausible near-term). Transfer
+  impact: NONE.
+- **T3 standing triggers** (`track-t3-wave14-triggers.md`): 0/6 fired
+  (~20:38–20:55 CEST) — no new Meta runtime optimizing-JIT (identical
+  7 search results as waves 9–13: 2024 LLM Compiler items + Aug-2026
+  Muse Code/jemalloc noise); Pyston pyston_main still 2024-08-12;
+  Swift move-only activity still enforcement/docs/infra, no new SIL
+  pass (identical result set as waves 9–13); SE-0474 still Accepted,
+  partial behind CoroutineAccessors flag (raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8; header
+  is a `*`-prefixed bullet list); TruffleRuby Options.java raw-master
+  vs pin c734f265 diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a
+  at both endpoints; zero speculat/guard/optim matches); GraalPy
+  file-history head Aug 18 2026 (pre-pin) AND raw-vs-pin 178ea261 diff
+  EMPTY (md5 52c85a03991d970d41b4746b06a72c19 both endpoints; latest
+  Version 25.4 unchanged). Deterministic-diff discipline held. All six
+  triggers re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave14-resweep.md`): all negative with
+  exact-check records (~20:40–20:56 CEST). Graal 25.x changelog
+  byte-identical waves 5–14 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated, Release 28, Owner Dan Smith; page Updated
+  2026/08/07 18:02); Valhalla project page (10,913 bytes) same 8-JEP
+  list (181/309/334/371/390/401/402/539), no new primitive-class JEP.
+  Azul Cloud Native Compiler stays a watch note (press rewrites only —
+  Business Wire ~3d, financialcontent + mediatrainingforceos
+  syndications ~3d/~3h, smbtech.au ~18h, itbrief.asia ~2d; the
+  wave-11/12/13 ReadyNow-2014/Orchestrator fleet-history framing
+  continues in coverage — still vendor only; no whitepaper, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing). OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 JIT items incremental (Microsoft Learn "What's new in .NET
+  11 runtime" + devblogs "Performance Improvements in .NET 11" (19
+  days) confirm the already-assessed set: GVM devirtualization,
+  inlining-observation, empty-span BCE, broader IV forms, SELECT
+  folding, SequenceEqual constant-folding, Runtime Async tiering —
+  precedent extensions, not bar-clearing). T4: #24314 static (open,
+  updated 2022-07-13, 8 comments); #77893's five CLs all still NEW with
+  unchanged timestamps (SURV-041's per-site gap intact); label probes
+  #81887/#81846/#81755/#81957/#81968 byte-identical to wave 13 (zero
+  activity). No bar-clearing material anywhere; no gaps.
+
+### Wave-14 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9/10/11/12/13 archives — six consecutive identical archives;
+#157943 0/3 trips on byte-identical baselines; T3 0/6 triggers; T2/T4
+all negative); no prototype-gated promotions (no new measured
+prototypes — the rule holds: paper numbers never promote; Azul's
+2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-15 queue (prioritized) — ALL COMPLETE
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-04_w14.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027). — DONE: byte-identical (seven
+   consecutive identical archives), still Targeted/28, archived as
+   `jep544_2026-10-04_w15.html`.
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for six consecutive waves).
+   Method: GitHub API state/timeline endpoints; ~13 calls/wave is
+   affordable. Note: #163336's `merged_at` may show GitHub
+   serialization variance (wave-12 12:11:39Z vs wave-13/14 12:11:35Z)
+   while `updated_at` is byte-identical — that is not a new event.
+   — DONE: 0/3 trips fired; all fields byte-identical to wave-14
+   baselines; trips re-armed (RFC #3943 still most plausible, seventh
+   consecutive unchanged wave).
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java option-set
+   diff vs pin c734f265 (md5-identical diff authoritative); GraalPy via
+   BOTH file-history and raw-vs-pin diff (178ea261). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. — DONE: 0/6 fired; all
+   byte-level checks negative; triggers re-armed.
+4. **T2 continuous re-sweep** — Graal changelog 25.x (record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch);
+   Azul Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only.
+   — DONE: all negative, byte-identical on every comparable check;
+   Azul stays a watch note (press rewrites only); .NET 11 sub-items
+   incremental only.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   XSSI prefix; note `?O=ALL_REVISIONS` is invalid); label-probe watch
+   notes (#81887, #81846/#81755, #81957, #81968) for anything
+   bar-clearing. — DONE: all five CLs still NEW with identical
+   timestamps; label probes zero activity since wave 14 (counts +
+   updated_at byte-identical). No bar-clearing material anywhere;
+   no gaps.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes. — DONE: no promotions (no prototypes measured; paper
+   numbers never promote; Azul's 2x–5x claim still vendor marketing).
+   No new ranked IDs.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-15 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~21:38 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes —
+  **byte-identical to the wave-9/10/11/12/13/14 raw archives**, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — seven consecutive identical
+  archives). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-04_w15.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave15-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~21:45 CEST) — byte-identical to the
+  wave-14 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads for try-perf/tryperf/trybot/rust-timer/
+  `@bors try`/bors-try/`bors try` = zero hits); RFC #3943 Open under
+  review (comments 11 / review_comments 58 — unchanged, seventh
+  consecutive wave). All six sibling PRs zero movement (#163336 remains
+  the only merged; its `merged_at` reads 2026-09-30T12:11:35Z as in
+  waves 13/14 — GitHub serialization variance vs wave 12, `updated_at`
+  byte-identical, not a new event). SURV-024's transfer ruling stands
+  (§5 static-core strike; guarded-speculative E3 arm only); trips
+  re-armed (RFC #3943 acceptance most plausible near-term). Transfer
+  impact: NONE.
+- **T3 standing triggers** (`track-t3-wave15-triggers.md`): 0/6 fired
+  (~21:38–21:50 CEST) — no new Meta runtime optimizing-JIT (identical
+  7 search results as waves 9–14: 2024 LLM Compiler items + Aug-2026
+  Muse Code/jemalloc noise); Pyston pyston_main still 2024-08-12;
+  Swift move-only activity still enforcement/docs/infra, no new SIL
+  pass (identical result set as waves 9–14); SE-0474 still Accepted,
+  partial behind CoroutineAccessors flag (raw md md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8; header
+  is a `*`-prefixed bullet list); TruffleRuby Options.java raw-master
+  vs pin c734f265 diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a
+  at both endpoints; zero speculat/guard/optim matches); GraalPy
+  file-history head Aug 18 2026 (pre-pin) AND raw-vs-pin 178ea261 diff
+  EMPTY (md5 52c85a03991d970d41b4746b06a72c19 both endpoints; latest
+  Version 25.4 unchanged, verified via `^## ` headers).
+  Deterministic-diff discipline held. All six triggers re-armed; no
+  gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave15-resweep.md`): all negative with
+  exact-check records (~21:40–21:55 CEST). Graal 25.x changelog
+  byte-identical waves 5–15 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6). JEP 401
+  unchanged (Integrated, Release 28, Owner Dan Smith; page Updated
+  2026/08/07 18:02); Valhalla project page (10,913 bytes) same 8-JEP
+  list (181/309/334/371/390/401/402/539), no new primitive-class JEP.
+  Azul Cloud Native Compiler stays a watch note (press rewrites only —
+  Business Wire ~3d, financialcontent + mediatrainingforceos
+  syndications ~3d/~4h, smbtech.au ~19h, itbrief.asia ~2d; the
+  wave-11/12/13/14 ReadyNow-2014/Orchestrator fleet-history framing
+  continues in coverage — still vendor only; no whitepaper, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing). OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 JIT items incremental (Microsoft Learn Preview-6 runtime
+  page + devblogs "Performance Improvements in .NET 11" + c-sharpcorner
+  Runtime-Async deep-dive surface new sub-items: #127329 Vector256/512
+  Sum full-width reduction, #127402 vector-const-prop to 256/512-bit,
+  Runtime Async tiered compilation of async methods, NativeAOT
+  shared-dispatch interface helper, JIT `Enum.Equals` typed
+  comparisons, single-`MUL` `Math.BigMul` — all precedent extensions,
+  not bar-clearing). T4: #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with unchanged timestamps
+  (SURV-041's per-site gap intact); label probes
+  #81887/#81846/#81755/#81957/#81968 byte-identical to wave 14 (zero
+  activity). No bar-clearing material anywhere; no gaps.
+
+### Wave-15 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9/10/11/12/13/14 archives — seven consecutive identical archives;
+#157943 0/3 trips on byte-identical baselines; T3 0/6 triggers; T2/T4
+all negative); no prototype-gated promotions (no new measured
+prototypes — the rule holds: paper numbers never promote; Azul's
+2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-16 queue (prioritized) — ALL COMPLETE
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-04_w15.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027). — DONE: HTTP 200, 33,894 bytes,
+   byte-identical (eight consecutive identical archives), still
+   Targeted/28, archived as `jep544_2026-10-04_w16.html`.
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for seven consecutive
+   waves). Method: GitHub API state/timeline endpoints; ~13 calls/wave
+   is affordable. Note: #163336's `merged_at` may show GitHub
+   serialization variance (wave-12 12:11:39Z vs waves 13/14/15
+   12:11:35Z) while `updated_at` is byte-identical — that is not a new
+   event. — DONE: 0/3 trips fired; all fields byte-identical to wave-15
+   baselines; trips re-armed (RFC #3943 still most plausible, eighth
+   consecutive unchanged wave). Method note: API path needs the
+   `/repos/` segment.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java option-set
+   diff vs pin c734f265 (md5-identical diff authoritative); GraalPy via
+   BOTH file-history and raw-vs-pin diff (178ea261). Trust deterministic
+   diffs, not line counts. SE-0474: header is a `*`-prefixed bullet
+   list, not a markdown table — read `sed -n '1,10p'`. grep exit 1 is
+   the zero-hit confirmation, not an error. — DONE: 0/6 fired; all
+   byte-level checks negative; triggers re-armed. Method note: copy
+   raw URLs verbatim from the prior wave's track file — the wave-16
+   coordinator reconstructed three from checkpoint summaries and all
+   three 404'd; the md5-pin discipline caught every one.
+4. **T2 continuous re-sweep** — Graal changelog 25.x (record md5 each
+   wave); JEP 401 / Valhalla project page (primitive-class JEP watch);
+   Azul Cloud Native Compiler watch note (any published technique or
+   independent measurement); OpenJ9/.NET optimizer-relevant items only.
+   — DONE: all negative, byte-identical on every comparable check
+   (Graal changelog URL is under `compiler/`); Azul stays a watch note
+   (press rewrites only); .NET 11 RC1 confirms the assessed set.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   XSSI prefix; note `?O=ALL_REVISIONS` is invalid); label-probe watch
+   notes (#81887, #81846/#81755, #81957, #81968) for anything
+   bar-clearing. — DONE: all five CLs still NEW with identical
+   timestamps; label probes show bot activity only (#81887's CL
+   842885/842886 adjacent to SURV-004/SURV-006 — watch note, not a
+   candidate). No bar-clearing material anywhere; no gaps.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes. — DONE: no promotions (no prototypes measured; paper
+   numbers never promote; Azul's 2x–5x claim still vendor marketing).
+   No new ranked IDs.
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
+
+### Per-track wave-16 coverage
+
+- **JEP 544 direct re-verification** (coordinator, ~22:00 CEST): curl of
+  openjdk.org/jeps/544 returned HTTP 200 (33,894 bytes —
+  **byte-identical to the wave-9/10/11/12/13/14/15 raw archives**, md5
+  0024bc1ea0e660e97b7cf5a6f1c9da7d — eight consecutive identical
+  archives). Metadata read verbatim: Owner=John Rose, Type=Feature,
+  Scope=Implementation, **Status=Targeted, Release=28** (page updated
+  2026/09/29 15:23). No Targeted→Integrated movement, no ramp-down
+  notes. Raw archived as `jep544_2026-10-04_w16.html`. Ramp-down
+  survival watch continues to the JDK 28 ramp-down (Dec 2026–Jan 2027)
+  and 28 GA (~Mar 2027).
+- **#157943 watch** (`track-surv024-wave16-watch.md`): 0/3 trip conditions
+  fired (GitHub API state/timeline, ~22:05 CEST) — byte-identical to the
+  wave-15 baselines: #163338 OPEN/unmerged (updated_at
+  2026-09-30T13:03:50Z); no try-perf/trybot run (timeline: 21 events,
+  keyword scan of all payloads for try-perf = zero hits); RFC #3943 Open
+  under review (comments 11 / review_comments 58 — unchanged, eighth
+  consecutive wave). All six sibling PRs zero movement (#163336 remains
+  the only merged; its `merged_at` reads 2026-09-30T12:11:35Z as in
+  waves 13/14/15 — GitHub serialization variance vs wave 12,
+  `updated_at` byte-identical, not a new event). SURV-024's transfer
+  ruling stands (§5 static-core strike; guarded-speculative E3 arm only);
+  trips re-armed (RFC #3943 acceptance most plausible near-term).
+  Transfer impact: NONE. Method note: the pulls/timeline API path
+  requires the `/repos/` segment (`/repos/{owner}/{repo}/pulls/{n}`);
+  the bare path 404s.
+- **T3 standing triggers** (`track-t3-wave16-triggers.md`): 0/6 fired
+  (~22:00–22:15 CEST) — no new Meta runtime optimizing-JIT
+  (disqualified hobby-repo noise only); Pyston pyston_main still
+  2024-08-12 (fe8afded); Swift move-only activity still
+  enforcement/docs/infra, no new SIL pass; SE-0474 still Accepted,
+  partial behind CoroutineAccessors flag (raw
+  `proposals/0474-yielding-accessors.md`, md5
+  e8f962dbd12172d2f2a44410e727d7b5 — unchanged since wave 8; header is
+  a `*`-prefixed bullet list); TruffleRuby Options.java
+  (`src/main/java/org/truffleruby/options/Options.java`) raw-master vs
+  pin c734f265 diff EMPTY (md5 801fd357c11fd16c87f1764777e67b4a at both
+  endpoints; zero speculat/guard/optim matches); GraalPy
+  (`oracle/graalpython`, repo-root `CHANGELOG.md`) file-history head
+  Aug 18 2026 (pre-pin) AND raw-vs-pin 178ea261 diff EMPTY (md5
+  52c85a03991d970d41b4746b06a72c19 both endpoints; latest Version 25.4
+  unchanged). Deterministic-diff discipline held. **Method note for
+  wave 17:** copy raw URLs verbatim from the prior wave's track file —
+  never reconstruct from checkpoint-log summaries (three reconstructed
+  URLs 404'd this wave; the md5-pin discipline caught all three before
+  any conclusion). GitHub repo renames surface as `301 →
+  /repositories/{id}` — follow with `-L` or use the `oracle/` org name.
+  All six triggers re-armed; no gaps.
+- **T2/T4 re-sweep** (`track-t2t4-wave16-resweep.md`): all negative with
+  exact-check records (~22:05–22:20 CEST). Graal 25.x changelog
+  byte-identical waves 5–16 (14,501 bytes, md5
+  6397c38a55572509df12814180ec458f; tops at 25.5, no 25.6; URL under
+  `compiler/`). JEP 401 unchanged (Integrated, Release 28, Owner Dan
+  Smith; page Updated 2026/08/07 18:02); Valhalla project page same
+  8-JEP list (181/309/334/371/390/401/402/539), no new primitive-class
+  JEP. Azul Cloud Native Compiler stays a watch note (press rewrites
+  only — smbtech.au ~20h, itbrief.asia ~2d, mediatrainingforceos +
+  financialcontent syndications; smbtech.au adds one mechanism detail —
+  preemptive single-stream compiled-code delivery at start-up vs
+  per-method on-request — still vendor only; no whitepaper, no
+  technique, no independent measurement; 2x–5x warm-up claim still
+  unverified marketing). OpenJ9 latest still v0.62.0 (2026-09-15);
+  .NET 11 JIT items incremental (the .NET 11 deep-dive confirms RC1
+  ~Nov 10 2026 GA with the already-assessed set — precedent extensions,
+  not bar-clearing). T4: #24314 static (open, updated 2022-07-13, 8
+  comments); #77893's five CLs all still NEW with unchanged timestamps
+  (SURV-041's per-site gap intact; Gerrit REST returns `)]}'`-prefixed
+  JSON — strip the 4-byte XSSI prefix); label probes
+  #81887/#81846/#81755/#81957/#81968 show only bot activity
+  (GerritBot cross-refs, subscriptions) — #81887's CL 842885/842886
+  (`slices: make BinarySearchFunc inlinable`) is adjacent to
+  SURV-004/SURV-006 and becomes a watch note, not a new candidate;
+  #81957's CL 844405 and #81968's related-issue link are runtime
+  topics, not optimizer-relevant. No bar-clearing material anywhere;
+  no gaps.
+
+### Wave-16 re-rank pass (2026-10-04)
+
+No promotions. Nothing bar-cleared this wave (JEP 544 byte-identical to
+wave-9/10/11/12/13/14/15 archives — eight consecutive identical
+archives; #157943 0/3 trips on byte-identical baselines; T3 0/6
+triggers; T2/T4 all negative); no prototype-gated promotions (no new
+measured prototypes — the rule holds: paper numbers never promote;
+Azul's 2x–5x claim is still vendor marketing). No new ranked IDs.
+**77 active ranked (SURV-001…078 minus struck SURV-077):
+7 / 39 / 17 / 14.**
+
+### Wave-17 queue (prioritized) — ALL COMPLETE
+
+1. **JEP 544 ramp-down survival watch** — direct re-verification each
+   wave (curl, not the browser tool; compare md5 against
+   `jep544_2026-10-04_w16.html` = 0024bc1ea0e660e97b7cf5a6f1c9da7d);
+   watch for Targeted→Integrated movement as the JDK 28 ramp-down
+   approaches (Dec 2026–Jan 2027). — DONE: HTTP 200, 33,894 bytes,
+   byte-identical (nine consecutive identical archives), still
+   Targeted/28, archived as `jep544_2026-10-04_w17.html`.
+2. **#157943 trip conditions (re-armed)** — #163338 merges, try-perf run
+   lands on #163338, or RFC #3943 accepted. RFC #3943 acceptance is the
+   most plausible near-term trip (unchanged for eight consecutive
+   waves). Method: GitHub API state/timeline endpoints
+   (`/repos/{owner}/{repo}/pulls/{n}` — the `/repos/` segment is
+   mandatory); ~13 calls/wave is affordable. Note: #163336's
+   `merged_at` may show GitHub serialization variance
+   (wave-12 12:11:39Z vs waves 13/14/15/16 12:11:35Z) while
+   `updated_at` is byte-identical — that is not a new event. — DONE:
+   0/3 trips fired; all fields byte-identical to wave-16 baselines;
+   trips re-armed (RFC #3943 still most plausible, ninth consecutive
+   unchanged wave). Method notes: the timeline endpoint is the ISSUES
+   timeline (`/repos/{owner}/{repo}/issues/{n}/timeline`) — the pulls
+   timeline 404s; RFC #3943 lives in `rust-lang/rfcs`, not
+   `rust-lang/rust`.
+3. **T3 standing triggers** — diff-discipline in force: Pyston via
+   `pyston_main` commits page; TruffleRuby via Options.java option-set
+   diff vs pin c734f265 (md5-identical diff authoritative; verbatim URL
+   in `track-t3-wave16-triggers.md`); GraalPy via BOTH file-history and
+   raw-vs-pin diff (178ea261; verbatim URL in
+   `track-t3-wave16-triggers.md`). Trust deterministic diffs, not line
+   counts. SE-0474: header is a `*`-prefixed bullet list, not a markdown
+   table — read `sed -n '1,10p'`. grep exit 1 is the zero-hit
+   confirmation, not an error. **Copy raw URLs verbatim from the prior
+   wave's track file — never reconstruct from checkpoint summaries.** —
+   DONE: 0/6 fired; all md5 pins match exactly; zero keyword hits;
+   triggers re-armed. URLs copied verbatim from the wave-16 track file
+   this wave — no 404s; the wave-16 verbatim-copy rule worked.
+4. **T2 continuous re-sweep** — Graal changelog 25.x
+   (`compiler/CHANGELOG.md`, record md5 each wave); JEP 401 / Valhalla
+   project page (primitive-class JEP watch); Azul Cloud Native Compiler
+   watch note (any published technique or independent measurement);
+   OpenJ9/.NET optimizer-relevant items only. — DONE: all negative,
+   byte-identical on every comparable check (Graal changelog 14,501
+   bytes, md5 6397c38a55572509df12814180ec458f, still tops at 25.5);
+   JEP 401 unchanged (Integrated/28); Azul stays a watch note (no new
+   announcement since Oct 1; press rewrites only; 2x–5x unverified
+   marketing); OpenJ9 still v0.62.0; .NET 11 JIT-internals restates the
+   assessed set.
+5. **T4 watches** — #24314; #77893 CLs (MERGED/ABANDONED narrows
+   SURV-041's gap; file-stage the Gerrit REST reads and strip the
+   4-byte XSSI prefix `)]}'`; note `?O=ALL_REVISIONS` is invalid);
+   label-probe watch notes (#81887, #81846/#81755, #81957, #81968) for
+   anything bar-clearing; #81887's CL 842885/842886
+   (`slices: make BinarySearchFunc inlinable`) stays a watch note
+   adjacent to SURV-004/SURV-006. — DONE: #24314 static; all five CLs
+   still NEW with byte-identical timestamps; label probes show
+   non-substantive events only (subscribes, gopherbot cross-refs) —
+   #81887's watch note carried. Method note: `?O=DETAILED_ACCOUNTS`
+   400s; the bare `/changes/{id}` endpoint already carries
+   `status`/`updated`. No bar-clearing material anywhere; no gaps.
+6. **Re-rank pass** — promote prototype-gated items only on measured
+   prototypes. — DONE: no promotions (no prototypes measured; paper
+   numbers never promote; Azul's 2x–5x claim still vendor marketing).
+   No new ranked IDs. **77 active ranked (SURV-001…078 minus struck
+   SURV-077): 7 / 39 / 17 / 14.**
+
+*Standing re-check for SURV-075 Stage-0 remains retired per the
+program-owner decision (deferred to Phase-5 entry — waves must not
+re-check).*
 
 ---
 
@@ -3697,4 +13376,131 @@ filed as watch note only; SURV-075 Stage-0 still no owner decision;
 SURV-070 C4 hotness MEASURED (sites hot, probe residual sub-1%,
 monomorphic site 4.78 ns/op — not bar-clearing, stays a §3 angle);
 re-rank: no movements, no prototype-gated promotions. Next SURV- IDs:
+079+.* Wave-7 synthesis 2026-10-04: 77 active
+ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs
+(nothing bar-cleared); wave-6's JEP-544 403 gap CLOSED by direct curl
+re-verification (Status=Targeted, Release=28; raw archived); T3 0/6
+triggers (GraalPy file-history + raw-vs-pin both clean; wave-6 line
+counts corrected as fetch artifacts — diffs, not line counts, going
+forward), #157943 0/3 trips (#163337 review churn spawning #163721,
+#163359 numbers attributed to CGU-partitioning noise; ruling unchanged,
+trips re-armed), T2/T4 all negative (Graal 25.x byte-identical, JEP 401
+static, Azul watch note stands, .NET 11 incremental only, #77893 CLs all
+NEW, label probes silent); SURV-075 Stage-0 still no owner decision;
+re-rank: no movements, no prototype-gated promotions. Next SURV- IDs:
+079+.* Wave-8 synthesis 2026-10-04: 77 active ranked (SURV-001…078
+minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared);
+JEP 544 direct re-verification re-run (HTTP 200, Targeted/28, raw
+archived as `jep544_2026-10-04_w8.html`); #157943 0/3 trips
+(byte-identical baselines; ruling unchanged, trips re-armed); T3 0/6
+triggers (deterministic-diff discipline; regex-overcount method note);
+T2/T4 all negative (Graal 25.x byte-identical waves 5–8, JEP 401
+unchanged, Valhalla 8-JEP list unchanged, Azul watch note, OpenJ9
+v0.62.0, .NET 11 incremental only, #77893 CLs all NEW, label probes
+silent; Gerrit XSSI file-staging method note); SURV-075 Stage-0 decision
+RESOLVED — program-owner deferred to Phase-5 entry, waves must not
+re-check (retired from wave-9 queue); re-rank: no movements, no
+prototype-gated promotions. Next SURV- IDs: 079+.* Wave-9 synthesis
+2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077,
+7/39/17/14) — no new IDs (nothing bar-cleared); JEP 544 direct
+re-verification re-run (HTTP 200, Targeted/28, raw archived as
+`jep544_2026-10-04_w9.html`); #157943 0/3 trips (byte-identical to
+wave-8 baselines; #163338 open/unmerged 2026-09-30T13:03:50Z, no
+try-perf, RFC #3943 open 11/58; ruling unchanged, trips re-armed);
+T3 0/6 triggers (md5-identical diffs authoritative: TruffleRuby vs
+c734f265 and GraalPy vs 178ea261 both EMPTY); T2/T4 all negative
+(Graal 25.x byte-identical waves 5–9, JEP 401 unchanged, Valhalla
+8-JEP list unchanged, Azul watch note, OpenJ9 v0.62.0, .NET 11
+incremental only, #77893 CLs all NEW, label probes silent);
+re-rank: no movements, no prototype-gated promotions. Next SURV- IDs:
 079+.*
+ Wave-10 synthesis
+2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077,
+7/39/17/14) — no new IDs (nothing bar-cleared); JEP 544 direct
+re-verification re-run (HTTP 200, 33,894 bytes, BYTE-IDENTICAL to the
+wave-9 raw archive md5 0024bc1ea0e660e97b7cf5a6f1c9da7d; Targeted/28;
+raw archived as `jep544_2026-10-04_w10.html`); #157943 0/3 trips
+(byte-identical to wave-9 baselines; #163338 open/unmerged
+2026-09-30T13:03:50Z, no try-perf, RFC #3943 open 11/58; verbatim API
+titles "Storage reconstruction"/"Miri support" correct the wave-9
+paraphrases; ruling unchanged, trips re-armed); T3 0/6 triggers
+(md5-identical diffs authoritative: TruffleRuby vs c734f265 and
+GraalPy vs 178ea261 both EMPTY; SE-0474 raw md md5 pinned);
+T2/T4 all negative (Graal 25.x byte-identical waves 5–10, JEP 401
+unchanged — metadata rows are `<td>`-only, Valhalla 8-JEP list
+unchanged, Azul watch note, OpenJ9 v0.62.0, .NET 11 incremental
+only, #77893 CLs all NEW — Gerrit `?O=ALL_REVISIONS` invalid,
+label probes silent); re-rank: no movements, no prototype-gated
+promotions. Next SURV- IDs: 079+.
+
+Wave-11 synthesis 2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–11; §3 +3 angles (JEP 544 wave-11 curl re-verification: HTTP 200, byte-identical to wave-10 archive md5 0024bc1ea0e660e97b7cf5a6f1c9da7d, Targeted/28, archived as `jep544_2026-10-04_w11.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed; T3 0/6 triggers, T2/T4 all negative — method notes: SE-0474 header is a `*`-bullet list not a markdown table, Azul frames the feature as extending ReadyNow 2014/Orchestrator — restatement of the fleet-history claim); §5 extended (wave-11 re-sweep negatives); §6 wave-11 queue ALL COMPLETE, wave-12 queue written; re-rank: no movements, no prototype-gated promotions. Next SURV- IDs: 079+.
+
+Wave-12 synthesis 2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–12; §3 +3 angles (JEP 544 wave-12 curl re-verification: HTTP 200, byte-identical to wave-9/10/11 archives md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — four consecutive identical archives, Targeted/28, archived as `jep544_2026-10-04_w12.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed; T3 0/6 triggers, T2/T4 all negative — .NET 11 set confirmed fully assessed via Microsoft Learn runtime page, Azul press rewrites only); §5 extended (wave-12 re-sweep negatives); §6 wave-12 queue ALL COMPLETE, per-track wave-12 coverage, wave-12 re-rank pass (no movements, no prototype-gated promotions), wave-13 queue written; coordinator-level resume run (no child coordinator — single owner, duplicate-guard marker). Next SURV- IDs: 079+.
+
+Wave-13 synthesis 2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–13; §3 +3 angles (JEP 544 wave-13 curl re-verification: HTTP 200, byte-identical to wave-9/10/11/12 archives md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — five consecutive identical archives, Targeted/28, archived as `jep544_2026-10-04_w13.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed; T3 0/6 triggers, T2/T4 all negative — #163336 merged_at serialization variance noted (12:11:35Z vs wave-12's 12:11:39Z, updated_at byte-identical, not a new event), Azul ReadyNow-2014/Orchestrator framing now echoes in third-day press rewrites); §5 extended (wave-13 re-sweep negatives); §6 wave-13 queue ALL COMPLETE, per-track wave-13 coverage, wave-13 re-rank pass (no movements, no prototype-gated promotions), wave-14 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV- IDs: 079+.
+
+Wave-14 synthesis 2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–14; §3 +3 angles (JEP 544 wave-14 curl re-verification: HTTP 200, byte-identical to wave-9/10/11/12/13 archives md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — six consecutive identical archives, Targeted/28, archived as `jep544_2026-10-04_w14.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed; T3 0/6 triggers, T2/T4 all negative — Azul press rewrites continue with the wave-11/12/13 ReadyNow-2014/Orchestrator framing, still vendor-only; .NET 11 set confirms fully assessed); §5 extended (wave-14 re-sweep negatives); §6 wave-14 queue ALL COMPLETE, per-track wave-14 coverage, wave-14 re-rank pass (no movements, no prototype-gated promotions), wave-15 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-15 synthesis 2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–15; §3 +3 angles (JEP 544 wave-15 curl re-verification: HTTP 200, byte-identical to wave-9/10/11/12/13/14 archives md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — seven consecutive identical archives, Targeted/28, archived as `jep544_2026-10-04_w15.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed; T3 0/6 triggers, T2/T4 all negative — .NET 11 wave-15 visible sub-items (#127329, #127402, Runtime Async tiering, NativeAOT dispatch helper, JIT `Enum.Equals`, single-`MUL` `Math.BigMul`) all precedent extensions, itbrief.asia restates the ReadyNow-2014/Orchestrator framing in Azul coverage, still vendor-only); §5 extended (wave-15 re-sweep negatives); §6 wave-15 queue ALL COMPLETE, per-track wave-15 coverage, wave-15 re-rank pass (no movements, no prototype-gated promotions), wave-16 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+Wave-16 synthesis 2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–16; §3 +3 angles (JEP 544 wave-16 curl re-verification: HTTP 200, byte-identical to wave-9/10/11/12/13/14/15 archives md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — eight consecutive identical archives, Targeted/28, archived as `jep544_2026-10-04_w16.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — eighth consecutive unchanged wave for RFC #3943, API `/repos/` segment method note; T3 0/6 triggers, T2/T4 all negative — URL-verbatim method note (three reconstructed URLs 404'd, md5-pin discipline caught all), Graal changelog URL under `compiler/`, Azul preemptive single-stream delivery detail still vendor-only, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-16 re-sweep negatives); §6 wave-16 queue ALL COMPLETE, per-track wave-16 coverage, wave-16 re-rank pass (no movements, no prototype-gated promotions), wave-17 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker; post-reboot resume, no work lost — wave 15 was complete on disk). Next SURV-IDs: 079+.
+
+Wave-17 synthesis 2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–17; §3 +3 angles (JEP 544 wave-17 curl re-verification: HTTP 200, byte-identical to wave-9/10/11/12/13/14/15/16 archives md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — nine consecutive identical archives, Targeted/28, archived as `jep544_2026-10-04_w17.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — ninth consecutive unchanged wave for RFC #3943, issues-timeline + rust-lang/rfcs-repo method notes; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule worked (no 404s this wave), `?O=DETAILED_ACCOUNTS` 400s so Gerrit bare `/changes/{id}` carries status/updated, Azul no new announcement since Oct 1, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-17 re-sweep negatives); §6 wave-17 queue ALL COMPLETE, per-track wave-17 coverage, wave-17 re-rank pass (no movements, no prototype-gated promotions), wave-18 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-18 synthesis 2026-10-04: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–18; §3 +3 angles (JEP 544 wave-18 curl re-verification: HTTP 200, byte-identical to wave-9/10/11/12/13/14/15/16/17 archives md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — ten consecutive identical archives, Targeted/28, archived as `jep544_2026-10-04_w18.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — tenth consecutive unchanged wave for RFC #3943, method corrections (issue lives in rust-lang/rust not golang/go — task-brief error; GitHub API needs User-Agent; #163338's 21-event timeline is the try-perf scan target); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), Azul no new announcement since Oct 1 (one rewrite re-dated Oct 4), .NET 11 bounds-check-coalescing detail inside the already-assessed incremental bucket, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-18 re-sweep negatives); §6 wave-18 queue ALL COMPLETE, per-track wave-18 coverage, wave-18 re-rank pass (no movements, no prototype-gated promotions), wave-19 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-19 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–19; §3 +3 angles (JEP 544 wave-19 curl re-verification: HTTP 200, byte-identical to wave-9/10/11/12/13/14/15/16/17/18 archives md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — eleven consecutive identical archives, Targeted/28, archived as `jep544_2026-10-05_w19.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — eleventh consecutive unchanged wave for RFC #3943, sibling note: #163337 still open with a routine pre-wave-18 maintainer comment (non-substantive); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy history timestamp read corrected to sha-comparison discipline (author.date vs committer.date field difference on the same sha), Azul no new announcement since Oct 1, .NET 11 range-analysis set + Runtime Async JIT inside the already-assessed incremental buckets, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-19 re-sweep negatives); §6 wave-19 queue ALL COMPLETE, per-track wave-19 coverage, wave-19 re-rank pass (no movements, no prototype-gated promotions), wave-20 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-20 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–20; §3 +3 angles (JEP 544 wave-20 curl re-verification: HTTP 200, byte-identical to wave-9/10/11/12/13/14/15/16/17/18/19 archives md5 0024bc1ea0e660e97b7cf5a6f1c9da7d — twelve consecutive identical archives, Targeted/28, archived as `jep544_2026-10-05_w20.html`; #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twelfth consecutive unchanged wave for RFC #3943, sibling note: #163337 still open at 32 events with no new events since wave 19; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (smbtech.au rewrite re-dated Oct 4, same piece), .NET 11 performance-post JIT set inside the already-assessed incremental buckets, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-20 re-sweep negatives); §6 wave-20 queue ALL COMPLETE, per-track wave-20 coverage, wave-20 re-rank pass (no movements, no prototype-gated promotions), wave-21 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-21 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–21; §3 +3 angles (JEP 544 wave-21 curl re-verification: HTTP 200, 33,897 bytes — content-identical to the wave-9/10/11/12/13/14/15/16/17/18/19/20 archives (raw md5 682b4a7689dc106ffa20dd9e868398cd differs from the w9–w20 pin only by the rotated anti-bot `<script src>` URL — one line, page-body diff; thirteen consecutive content-identical archives), Targeted/28, archived as `jep544_2026-10-05_w21.html`, method note carried (diff page bodies before concluding a pin break); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — thirteenth consecutive unchanged wave for RFC #3943, sibling note: #163337 still open with no new events since wave 19; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (smbtech.au rewrite updated Oct 4, same piece), .NET 11 performance-post JIT set + Runtime Async tiering inside the already-assessed incremental buckets, Swift move-only still bug-fix dossiers only (the one new SIL pass surfaced is a `cond_fail` instruction pass, not move-only), #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-21 re-sweep negatives); §6 wave-21 queue ALL COMPLETE, per-track wave-21 coverage, wave-21 re-rank pass (no movements, no prototype-gated promotions), wave-22 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-22 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–22; §3 +3 angles (JEP 544 wave-22 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation did not move this wave; fourteen consecutive content-identical archives, waves 9–22), Targeted/28, archived as `jep544_2026-10-05_w22.html`, method note carried (diff page bodies before concluding a pin break); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — fourteenth consecutive unchanged wave for RFC #3943, sibling note: #163337 still open with no new events since wave 19; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds (author/committer date variance on same sha), Azul no new announcement since Oct 1 (docs.azul.com CNC sizing docs are product docs, not a technique), .NET 11 performance-post JIT set inside the already-assessed incremental buckets, Swift move-only still bug-fix dossiers only (DeinitDevirtualizer is 2023-era, not new), #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-22 re-sweep negatives); §6 wave-22 queue ALL COMPLETE, per-track wave-22 coverage, wave-22 re-rank pass (no movements, no prototype-gated promotions), wave-23 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+
+Wave-23 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–23; §3 +3 angles (JEP 544 wave-23 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation did not move again; fifteen consecutive content-identical archives, waves 9–23), Targeted/28, archived as `jep544_2026-10-05_w23.html`, method note carried (diff page bodies before concluding a pin break); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — fifteenth consecutive unchanged wave for RFC #3943, sibling note: #163337 now has ONE new rust-bors[bot] "unmergeable" comment 2026-10-05T01:37:55Z (upstream conflict — informational, not a trip); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds (author/committer date variance on same sha), Azul no new announcement since Oct 1 (press-rewrite set + financialcontent syndication only), .NET 11 daily-devops JIT-internals digest inside the already-assessed incremental buckets, Swift move-only still bug-fix dossiers only (adjacent-but-not-move-only: PR #89784 `SimplifyIndexingInstructions`, Sept-18 immortal-flag simplification), #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-23 re-sweep negatives); §6 wave-23 queue ALL COMPLETE, per-track wave-23 coverage, wave-23 re-rank pass (no movements, no prototype-gated promotions), wave-24 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-24 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–24; §3 +3 angles (JEP 544 wave-24 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a third wave; sixteen consecutive content-identical archives, waves 9–24), Status=Targeted/Release=28 grep-confirmed verbatim in the new archive (not carried), archived as `jep544_2026-10-05_w24.html`, method note carried (diff page bodies before concluding a pin break, and re-verify the metadata in the new archive each wave, not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — sixteenth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events without a tail-page re-read; method note: PR `updated_at` equality with a recorded last-event timestamp is a sufficient no-new-events check for paginated timelines; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1, .NET 11 devblog JIT list (#124705 range-check cloning, #127439 intra-basic-block coalescing, SELECT folding, AVX-VNNI-512, saturating conversions, ARM64 Vector-by-ref SVE, SequenceEqual folding) inside the already-assessed incremental buckets, Swift move-only still bug-fix dossiers only (cond_fail instruction pass / raw_pointer_to_ref simplification / address-cast verifier fix — none move-only), #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-24 re-sweep negatives); §6 wave-24 queue ALL COMPLETE, per-track wave-24 coverage, wave-24 re-rank pass (no movements, no prototype-gated promotions), wave-25 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+Wave-25 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–25; §3 +3 angles (JEP 544 wave-25 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a fourth wave; seventeen consecutive content-identical archives, waves 9–25), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w25.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — seventeenth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (itbrief adds ReadyNow lineage background, no published technique; 2x–5x still unverified vendor marketing), .NET 11 devblog + Preview-1 JIT lists all inside the already-assessed incremental buckets, Swift move-only still bug-fix dossiers only (#88805/#90282 defensive checker prep, #86178 verifier workaround), #77893 CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review), OpenJ9 releases/latest 301s — follow redirect, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-25 re-sweep negatives); §6 wave-25 queue ALL COMPLETE, per-track wave-25 coverage, wave-25 re-rank pass (no movements, no prototype-gated promotions), wave-26 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+Wave-26 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–26; §3 +3 angles (JEP 544 wave-26 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a fifth wave; eighteen consecutive content-identical archives, waves 9–26), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w26.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — eighteenth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (smbtech.au rewrite adds nothing; no published technique, 2x–5x still unverified vendor marketing), .NET 11 deeper writeups only — new sub-items (#121273, #121527, #122263, #125056, #127488, #129268, runtime-async tiering) all inside the already-assessed incremental buckets, Swift move-only still bug-fix/crash dossiers only (MoveOnlyChecker/CopyPropagation crash dossier = checker correctness; SIL opaque-values = compiler infra), #77893 CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review), OpenJ9 releases/latest 301s/302s — follow redirect, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-26 re-sweep negatives); §6 wave-26 queue ALL COMPLETE, per-track wave-26 coverage, wave-26 re-rank pass (no movements, no prototype-gated promotions), wave-27 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker); wave-26 also root-caused the wave-25 heartbeat "anomaly" (registry hb is UTC — `workreg.py _now()` stamps `datetime.now(timezone.utc)`; 05:28 in the supervisor's 07:36-CEST list = 07:28 CEST, a genuine later heartbeat, not a silent write failure; wave-26 heartbeats verified persisting via read-back). Next SURV-IDs: 079+.
+Wave-27 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–27; §3 +3 angles (JEP 544 wave-27 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a sixth wave; nineteen consecutive content-identical archives, waves 9–27), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w27.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — nineteenth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (58 remaining, no gaps); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (smbtech.au 1-day-ago rewrite adds nothing; no published technique, 2x–5x still unverified vendor marketing), .NET 11 nothing new beyond the assessed set (Preview-6 announcement, devblogs "Performance Improvements in .NET 11", daily-devops JIT-internals — all inside the already-assessed incremental buckets), Swift move-only still bug-fix/crash dossiers only (MoveOnlyChecker/CopyPropagation crash dossier = checker correctness; compiler-crash dossier = miscompile fixes, not passes), #77893 CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review), OpenJ9 releases/latest redirects — follow with -L, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-27 re-sweep negatives); §6 wave-27 queue ALL COMPLETE, per-track wave-27 coverage, wave-27 re-rank pass (no movements, no prototype-gated promotions), wave-28 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+Wave-28 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–28; §3 +3 angles (JEP 544 wave-28 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a seventh wave; twenty consecutive content-identical archives, waves 9–28), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w28.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twentieth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (57 remaining at start, no gaps); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (smbtech.au 1-day-ago rewrite adds no technique; no published technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page now "last updated for Preview 7" (wave 27 saw Preview-6) — full JIT list re-read; Preview-7 additions beyond the wave-27 assessed set (switch-expression folding, redundant checked-context removal, `Activator.CreateInstance<T>()` exact-type devirtualization, SIMD cost-model modernization) all inside the already-assessed incremental buckets, nothing bar-clearing, Swift move-only still docs/bug-fix dossiers + already-assessed passes only (#88258, #69955), #77893 CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review), OpenJ9 releases/latest redirects — follow with -L, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-28 re-sweep negatives); §6 wave-28 queue ALL COMPLETE, per-track wave-28 coverage, wave-28 re-rank pass (no movements, no prototype-gated promotions), wave-29 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-29 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–29; §3 +3 angles (JEP 544 wave-29 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant an eighth wave; twenty-one consecutive content-identical archives, waves 9–29), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w29.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twenty-first consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (57 remaining at start, no gaps); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — smbtech.au rewrite now carries a channel-partner angle, still no technique; 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page now "last updated for release candidate 1 (RC 1)" (wave 28 saw Preview-7) — full JIT section re-read; the new Runtime Async material (JIT async-version compilation, tail-merged suspension points, tiered async compilation) is tied to .NET's async state-machine lowering and does not transfer to Go's goroutine model — nothing bar-clearing, Swift move-only still docs/dossiers + already-assessed items only (SILCombine move-only bail 2025-07-29 = crash-bail correctness, not a pass), #77893 CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review), OpenJ9 releases/latest redirects — follow with -L, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-29 re-sweep negatives); §6 wave-29 queue ALL COMPLETE, per-track wave-29 coverage, wave-29 re-rank pass (no movements, no prototype-gated promotions), wave-30 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-30 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–30; §3 +3 angles (JEP 544 wave-30 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a ninth wave; twenty-two consecutive content-identical archives, waves 9–30), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w30.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twenty-second consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (58 remaining at start, no gaps); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — still no technique; 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs wave 29) — JIT section re-scanned, all inside the already-assessed incremental buckets, Swift move-only still infra/docs/bug-fix dossiers only ("ownership for trivial values" SILGen flag = move-only infrastructure, not an optimizer pass), #77893 CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review), OpenJ9 releases/latest redirects — follow with -L, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-30 re-sweep negatives); §6 wave-30 queue ALL COMPLETE, per-track wave-30 coverage, wave-30 re-rank pass (no movements, no prototype-gated promotions), wave-31 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-31 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–31; §3 +3 angles (JEP 544 wave-31 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a tenth wave; twenty-three consecutive content-identical archives, waves 9–31), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w31.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twenty-third consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (60 remaining at start, no gaps); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — itbrief/smbtech rewrites 1–4 days old, still no technique; 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs wave 30) — full 539-line body re-read, all JIT headings inside the already-assessed incremental buckets, nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still docs/infra/crash dossiers only (ABI SIL notes = docs; swift-institute crash dossier = miscompile analysis; already-assessed #88258 re-surfaced), #77893 CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review), OpenJ9 releases/latest redirects — follow with -L, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-31 re-sweep negatives); §6 wave-31 queue ALL COMPLETE, per-track wave-31 coverage, wave-31 re-rank pass (no movements, no prototype-gated promotions), wave-32 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+Wave-32 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–32; §3 +3 angles (JEP 544 wave-32 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant an eleventh wave; twenty-four consecutive content-identical archives, waves 9–32), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w32.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twenty-fourth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (60 remaining at start, 59 at end of checks, no gaps); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — itbrief/smbtech rewrites 3–4 days old, still no technique; 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs wave 31) — URL re-established verbatim from search, full JIT-improvements + hardware-intrinsics sections re-read, all headings inside the wave-29/30/31 assessed set, nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (2026-09-18 `raw_pointer_to_ref` immortal-flag commit = SILCombiner instruction simplification, adjacent general SIL optimization — excluded per the move-only discipline), Valhalla docs markdown carries unused [218]/[303] reference definitions (non-substantive, not deliverables), #77893 CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review), OpenJ9 releases/latest redirects — follow with -L, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-32 re-sweep negatives); §6 wave-32 queue ALL COMPLETE, per-track wave-32 coverage, wave-32 re-rank pass (no movements, no prototype-gated promotions), wave-33 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-33 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–33; §3 +3 angles (JEP 544 wave-33 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a twelfth wave; twenty-five consecutive content-identical archives, waves 9–33), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w33.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twenty-fifth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (58 remaining at start, no gaps); T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — smbtech.au rewrite now 1-day-old with channel-partner angle, still no technique; 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 31–32) — all 23 assessed JIT headings confirmed present ("empty-span check" prose confirmed on-page), nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (crash dossiers = checker correctness; RemoveSILGenLifetimes extension = existing-pass extension; already-assessed cond_fail/DeinitDevirtualizer; SILGen trivial-values flag = infrastructure, not a pass), Valhalla docs markdown carries unused [218]/[303] reference definitions (non-substantive, not deliverables), #77893 CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; batch call backgrounded itself — awaited via process.poll before filing), OpenJ9 releases/latest redirects — follow with -L, #81887's CL 842885/842886 adjacent to SURV-004/SURV-006 as watch note); §5 extended (wave-33 re-sweep negatives); §6 wave-33 queue ALL COMPLETE, per-track wave-33 coverage, wave-33 re-rank pass (no movements, no prototype-gated promotions), wave-34 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+Wave-34 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–34; §3 +3 angles (JEP 544 wave-34 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a thirteenth wave; twenty-six consecutive content-identical archives, waves 9–34), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w34.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twenty-sixth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (60 remaining at start, no gaps); method incident recovered (unquoted shell $UA → empty User-Agent → GitHub 403s; re-ran quoted — all HTTP 200); T3 0/6 triggers, T2 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — smbtech.au rewrite now 1-day-old with channel-partner angle, still no technique; 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 31–33) — JIT-improvements + hardware-intrinsics sections confirmed present ("empty-span check" prose confirmed on-page), nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (CopyPropagation crash dossier = checker correctness; cond_fail PR #88258 already-assessed; docs forks = reference content), Valhalla same 8 JEPs, docs markdown still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; project page 301s without trailing slash — fetch with -L), OpenJ9 releases/latest redirects — follow with -L, still v0.62.0; T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probes #81957/#81968 non-substantive only (timeline counts drifted 21→25 / 11→12 with unchanged last events — endpoint accounting drift); **#81887 RESOLVED upstream 2026-10-05**: CL 842886 (`slices: make BinarySearchFunc inlinable`, Cuong Manh Le) MERGED 12:44:57Z, gopherbot closed the issue 12:45:43Z, 842885 ABANDONED — code-shape workaround (cost 95→77 to fit gc's fixed inliner budget of 80; reported -36.39% benchmark), **confirms** SURV-006's thesis rather than weakening it; SURV-004/SURV-006-adjacent watch note retired, #81887's label-probe slot retired); §5 re-sweep negatives via §3; §6 wave-34 queue ALL COMPLETE, wave-34 re-rank pass (no movements, no prototype-gated promotions), wave-35 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+Wave-35 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–35; §3 +3 angles (JEP 544 wave-35 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a fourteenth wave; twenty-seven consecutive content-identical archives, waves 9–35), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w35.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twenty-seventh consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (39 remaining at start, no gaps); wave-34 UA-quoting incident held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — smbtech.au rewrite now 1-day-old with channel-partner angle, itbrief.asia with ReadyNow lineage, azul.com FAQ documents the product GA since Oct 2021; still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–34) — same h2 set ("empty-span check" prose confirmed on-page), nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (trivial-values SILGen flag = infrastructure; SILBuilder/MoveOnlyChecker fixes = bug-fixes; ManualOwnership = diagnostics; already-assessed cond_fail/Combine-bail/raw_pointer_to_ref), Valhalla same 8 JEPs, docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probes #81957/#81968 non-substantive only (timeline counts unchanged at 25/12, last events unchanged — no drift this wave); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-35 re-sweep negatives; §6 wave-35 queue ALL COMPLETE, wave-35 re-rank pass (no movements, no prototype-gated promotions), wave-36 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-36 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–36; §3 +3 angles (JEP 544 wave-36 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a fifteenth wave; twenty-eight consecutive content-identical archives, waves 9–36), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w36.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twenty-eighth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (60 remaining at start, no gaps); wave-34 UA-quoting incident held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — cxotoday rewrite now ~15h-old, itbrief.asia with ReadyNow lineage, financialcontent/mediatrainingforceos syndications, azul.com FAQ documents the product GA since Oct 2021; still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–35) — same h2 set ("empty-span check" prose confirmed on-page), nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (cond_fail #88258 already-assessed; crash dossiers #87489/#88956 = bug-fixes; address-cast consumption commit 9f408874 = move-only infrastructure; docs = prose, not passes), Valhalla same 8 JEPs, docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms; method note: the API 301s on the repo-name form — follow with -L); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probes #81957/#81968 non-substantive only (timeline counts unchanged at 25/12, last events unchanged — no drift this wave); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-36 re-sweep negatives; §6 wave-36 queue ALL COMPLETE, wave-36 re-rank pass (no movements, no prototype-gated promotions), wave-37 queue NOT written (left for the supervisor); coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-37 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–37; §3 +3 angles (JEP 544 wave-37 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a sixteenth wave; twenty-nine consecutive content-identical archives, waves 9–37), Status=Targeted/Release=28 re-verified verbatim in the NEW archive (not carried), archived as `jep544_2026-10-05_w37.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — twenty-ninth consecutive unchanged wave for RFC #3943, sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (60 remaining at start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — cxotoday rewrite now ~16h-old, smbtech.au 1-day-old, itbrief.asia with ReadyNow lineage, financialcontent/mediatrainingforceos syndications, azul.com FAQ documents the product GA since Oct 2021; still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–36; GA expected ~Nov 10 2026 per daily-devops) — same h2 set ("empty-span" prose confirmed on-page, grep count 2), nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (cond_fail #88258 already-assessed; swift-institute CopyPropagation crash dossier = bug-fix investigation; SIL docs = prose, ryo-lang prose stale), Valhalla same 8 JEPs, docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit; note: commit-message endpoint is /changes/{id}/revisions/current/commit, not ?o=CURRENT_COMMIT), label probes #81957/#81968 non-substantive only (timeline counts unchanged at 25/12, last events unchanged — no drift this wave); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-37 re-sweep negatives; §6 wave-37 queue ALL COMPLETE, wave-37 re-rank pass (no movements, no prototype-gated promotions), wave-38 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+Wave-38 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–38; §3 +3 angles (JEP 544 wave-38 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a seventeenth wave; thirty consecutive content-identical archives, waves 9–38), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-05_w38.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — thirtieth consecutive unchanged wave for RFC #3943; watch note: RFC #3943's PR-object `updated_at` now 2026-10-02T15:30:51Z with unchanged comment/review counts, but the issues-timeline last page ends at the known 2026-10-01T13:27:54Z event and the reviews list ends 2026-09-30T12:43:24Z — the touch carries no substantive event (GitHub-internal accounting, not a trip; `updated_at` drift without timeline/reviews movement is accounting, not signal); method note: `pulls/{n}/timeline` 404s for this repo/PR combo — the issues timeline is the working one (established wave 38); sibling note: #163337 `updated_at` equals the recorded rust-bors[bot] "unmergeable" comment timestamp (2026-10-05T01:37:55Z) — no new events, no tail-page re-read needed; rate limit NOT hit this wave (60 remaining at start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — cxotoday rewrite now ~17h-old, smbtech.au 1-day-old, itbrief.asia with ReadyNow lineage, financialcontent/mediatrainingforceos syndications, enterprisetimes.co.uk weekly news-digest recaps the same BusinessWire piece — not a new announcement; azul.com FAQ documents the product GA since Oct 2021; still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–37; GA expected ~Nov 10 2026 per daily-devops) — same h2 set ("empty-span" prose confirmed on-page, grep count 2), nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (cond_fail #88258 already-assessed; swift-institute CopyPropagation crash dossier = bug-fix investigation; SIL docs = prose, ryo-lang reference prose, 2019 forums proposal = stale), Valhalla same 8 JEPs, docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probes #81957/#81968 non-substantive only (timeline counts unchanged at 25/12, last events unchanged — no drift this wave); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-38 re-sweep negatives; §6 wave-38 queue ALL COMPLETE, wave-38 re-rank pass (no movements, no prototype-gated promotions), wave-39 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+Wave-39 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–39; §3 +3 angles (JEP 544 wave-39 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant an eighteenth wave; thirty-one consecutive content-identical archives, waves 9–39), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-05_w39.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on byte-identical baselines, ruling unchanged, trips re-armed — thirty-first consecutive unchanged wave for RFC #3943; watch note: RFC #3943's PR-object `updated_at` stays 2026-10-02T15:30:51Z with unchanged comment/review counts, but the issues-timeline last page (page 2, 65 events) ends at the known 2026-10-01T13:27:54Z event and the reviews list (45) ends 2026-09-30T12:43:24Z — the touch carries no substantive event (GitHub-internal accounting, not a trip; `updated_at` drift without timeline/reviews movement is accounting, not signal); method note: `pulls/{n}/timeline` 404s for this repo/PR combo — the issues timeline is the working one (established wave 37/38); sibling watch note (wave 39): #163337's PR-object `updated_at` drifted to 2026-10-05T18:09:57Z vs the recorded 2026-10-05T01:37:55Z, but its issues-timeline (33 events) still ends at the known rust-bors[bot] "unmergeable" commented event 2026-10-05T01:37:55Z — no new events; the touch is accounting, not a trip (the wave-24 equality shortcut did NOT hold, so the timeline tail was re-read and confirmed no new event); rate limit NOT hit this wave (59 remaining at start, 60 by re-check — hourly reset; no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — cxotoday rewrite now ~18h-old, smbtech.au 1-day-old, itbrief.asia 3-day-old, financialcontent/mediatrainingforceos syndications; 2021 Intelligence Cloud and Sep 2025 10,000-JVMs pieces recirculated — not new; still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–38; GA expected ~Nov 10 2026 per daily-devops) — same h2 set ("empty-span" prose confirmed on-page, grep count 2), nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (cond_fail #88258 already-assessed; swift-institute CopyPropagation crash dossier = bug-fix investigation; SIL docs/forks = prose, ryo-lang/llvm-mlir-book prose = not swiftlang passes), Valhalla same 8 JEPs, docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms; method note: the API 301s on the repo-name form — follow with -L); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probes #81957/#81968 non-substantive only (timeline counts unchanged at 25/12, last events unchanged — no drift this wave); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-39 re-sweep negatives; §6 wave-39 queue ALL COMPLETE, wave-39 re-rank pass (no movements, no prototype-gated promotions), wave-40 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-40 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–40; §3 +3 angles (JEP 544 wave-40 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a nineteenth wave; thirty-two consecutive content-identical archives, waves 9–40), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-05_w40.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — thirty-second consecutive unchanged wave for RFC #3943; watch note: RFC #3943's PR-object `updated_at` stays 2026-10-02T15:30:51Z with unchanged comment/review counts, but the issues-timeline last page (page 4 of 4, 15 events at per_page=50) ends at the known 2026-10-01T13:27:54Z event and the reviews list (45) ends 2026-09-30T12:43:24Z — the touch carries no substantive event (GitHub-internal accounting, not a trip; `updated_at` drift without timeline/reviews movement is accounting, not signal); watch note: the timeline event count grew to ~165 (subscribed events accumulating) since wave 39's 65-event count — endpoint accounting drift, not new activity (per method note (b)); method note: `pulls/{n}/timeline` 404s for this repo/PR combo — the issues timeline is the working one (established wave 37/38); sibling watch note (wave 40): #163337's PR-object `updated_at` unchanged vs wave 39 (2026-10-05T18:09:57Z) — no further drift, its issues-timeline (33 events) still ends at the known rust-bors[bot] "unmergeable" commented event 2026-10-05T01:37:55Z — no new events; the touch is accounting, not a trip (the wave-24 equality shortcut did NOT hold, so the timeline tail was re-read and confirmed no new event); rate limit NOT hit this wave (58 remaining at wave start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — cxotoday rewrite now ~19h-old, smbtech.au 1-day-old, itbrief.asia 3-day-old, financialcontent/mediatrainingforceos syndications; enterprisetimes.co.uk weekly digest recaps the same BusinessWire piece — not new; still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–39; GA expected ~Nov 10 2026 per daily-devops) — same h2 set ("empty-span" prose confirmed on-page, grep count 2), nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (cond_fail #88258 already-assessed; swift-institute CopyPropagation crash dossier = bug-fix investigation; SIL docs/forks = prose, FieldSensitivePrunedLiveness/address-cast-lifetime commits = verifier/checker bug-fixes, RemoveSILGenLifetimes extension = existing-pass improvement), Valhalla same 8 JEPs, docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms; method note: the API 301s on the repo-name form — follow with -L); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probes #81957/#81968 non-substantive only (timeline counts unchanged at 25/12, last events unchanged — no drift this wave); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-40 re-sweep negatives; §6 wave-40 queue ALL COMPLETE, wave-40 re-rank pass (no movements, no prototype-gated promotions), wave-41 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-41 synthesis 2026-10-05: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–41; §3 +3 angles (JEP 544 wave-41 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a twentieth wave; thirty-three consecutive content-identical archives, waves 9–41), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-05_w41.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — thirty-third consecutive unchanged wave for RFC #3943; watch note: RFC #3943's PR-object `updated_at` stays 2026-10-02T15:30:51Z with unchanged comment/review counts, but the issues-timeline last page (page 4 of 4, 15 events at per_page=50) ends at the known 2026-10-01T13:27:54Z event and the reviews list (45) ends 2026-09-30T12:43:24Z — the touch carries no substantive event (GitHub-internal accounting, not a trip; `updated_at` drift without timeline/reviews movement is accounting, not signal); method note: `pulls/{n}/timeline` 404s for this repo/PR combo — the issues timeline is the working one (established wave 37/38); sibling watch note (wave 41): #163337's PR-object `updated_at` DRIFTED to 2026-10-05T20:36:31Z (was 2026-10-05T18:09:57Z in wave 40) — the wave-24 equality shortcut did NOT hold, so the timeline tail was re-read: new events = rustbot rebase range-diff notice (mechanical) + mention/subscribed hygiene + a tmiasko COMMENTED review with an inline review comment questioning kill-point design complexity — non-substantive for the trips (no merge, no try-perf run; timeline grew to 41 events); rate limit NOT hit this wave (60 remaining at wave start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — cxotoday rewrite now ~20h-old, smbtech.au 1-day-old, itbrief.asia 3-day-old, financialcontent/mediatrainingforceos syndications — all 4-day-old re-publications, not new; still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–40; GA expected ~Nov 10 2026 per daily-devops) — "empty-span" prose confirmed on-page, grep count 2, nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (cond_fail #88258 already-assessed; swift-institute crash dossiers = bug-fix investigations, not passes; SIL docs = prose; Opaque SIL Values forums = representation infrastructure, not a move-only opt pass), Valhalla same 8 JEPs, docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms; method note: the API 301s on the repo-name form — follow with -L); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probes #81957/#81968 non-substantive only (timeline counts unchanged at 25/12, last events unchanged — no drift this wave); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-41 re-sweep negatives; §6 wave-41 queue ALL COMPLETE, wave-41 re-rank pass (no movements, no prototype-gated promotions), wave-42 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Next SURV-IDs: 079+.
+
+Wave-42 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–42; §3 +3 angles (JEP 544 wave-42 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a twenty-first wave; thirty-four consecutive content-identical archives, waves 9–42), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-05_w42.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — thirty-fourth consecutive unchanged wave for RFC #3943 (comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z; equality shortcut holds, no tail-page re-read needed); sibling watch note (wave 42): #163337's PR-object `updated_at` DRIFTED to 2026-10-05T21:27:04Z (was 2026-10-05T20:36:31Z in wave 41) — the wave-24 equality shortcut did NOT hold, so the timeline tail was re-read: new events = an Amanieu COMMENTED review (defending kill-point analysis scope: projections/non-operand uses/dead-branch forcible kills) and a tmiasko COMMENTED reply (review-manageability framing) — inline design-discussion exchange, non-substantive for the trips (PR open/unmerged, no try-perf; reviews now 3, timeline still 41 events); rate limit NOT hit this wave (59 remaining at wave end, no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — cxotoday ~21h-old, smbtech.au 1-day-old, itbrief.asia 3-day-old, financialcontent syndications — all 4-day-old re-publications, not new; Azul's own product page frames Cloud Native Compiler as centralized JIT-as-a-service with preemptive fleet code streaming — still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–41; GA expected ~Nov 10 2026 per daily-devops) — prose confirmed on-page, nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (cond_fail #88258 already-assessed; swift-institute crash dossiers = bug-fix investigations, not passes; SIL docs / llvm-mlir-book = prose), Valhalla = same 8 JEPs **plus the pre-existing non-JEP draft row** ("Null-Restricted Value Class Types (Preview)", jeps/8316779, Draft since 2023 — owner Dan Smith, updated 2026/05/28; no technique, not bar-clearing; method note: verify the FULL deliverables-table row count each wave, not just JEP links — the row was already in wave-5's record), docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms; method note: the API 301s on the repo-name form — follow with -L); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probes #81957/#81968 non-substantive only (timeline counts unchanged at 25/12, last events unchanged — no drift this wave); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-42 re-sweep negatives; §6 wave-42 queue ALL COMPLETE, wave-42 re-rank pass (no movements, no prototype-gated promotions), wave-43 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker); infra note: /tmp was wiped VM-side between 21:38 and 21:44 UTC mid-wave — all in-flight fetch findings already captured in the track files, no data loss; lesson: stage volatile intermediate fetches under /tmp only with immediate extraction, or use a workspace scratch dir. Edits anchored on repeated boilerplate were count-audited before AND after (wave-39 lesson held). Next SURV-IDs: 079+.
+Wave-43 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–43; §3 +3 angles (JEP 544 wave-43 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a twenty-second wave; thirty-five consecutive content-identical archives, waves 9–43), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w43.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5; wave-43 equality shortcut held — the w42 archive was the immediate predecessor); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — thirty-fifth consecutive unchanged wave for RFC #3943 (comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z; equality shortcut holds, no tail-page re-read needed); sibling watch note (wave 43): #163337's PR-object `updated_at` DRIFTED to 2026-10-05T21:50:06Z (was 2026-10-05T21:27:04Z in wave 42) — the wave-24 equality shortcut did NOT hold, so the timeline tail AND the reviews list were re-read per the wave-42 method note (new reviews can carry empty bodies with substance in inline review comments — fetch `pulls/{n}/comments`): the new event is one Amanieu COMMENTED review (2026-10-05T21:50:06Z) with an EMPTY body whose substance lives inline on compiler/rustc_mir_dataflow/src/impls/precise_liveness.rs — backwards-analysis belongs in this PR (DSE-only copy→move covers a subset), offering a split commit, kill points only restrict lifetimes of non-borrowed locals — non-substantive for the trips (PR open/unmerged, no try-perf; timeline still 41 events, reviews/reviews_comments 3→4); rate limit NOT hit this wave (37 remaining at wave start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — cxotoday ~22h-old, smbtech.au 1-day-old, itbrief.asia 3-day-old, financialcontent/mediatrainingforceos syndications — all re-publications of the same release, not new; Azul's own product page frames Cloud Native Compiler as centralized JIT-as-a-service with preemptive fleet code streaming — still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–42, fresh-fetch prose confirmed on-page; GA expected ~Nov 10 2026 per daily-devops) — nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (cond_fail #88258 already-assessed; checker/verifier bug-fixes, note-emitters, representation infrastructure excluded per the move-only discipline), Valhalla = full table row count 10 (header + 9 data) = same 8 JEPs **plus the pre-existing non-JEP draft row** ("Null-Restricted Value Class Types (Preview)", jeps/8316779 bug-id URL — a `/jeps/8316779` regex hit is NOT a new JEP; draft since 2023 — owner Dan Smith, updated 2026/05/28; no technique, not bar-clearing; method note: verify the FULL deliverables-table row count each wave, not just JEP links — the row was already in wave-5's record), docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms; method note: the API 301s on the repo-name form — follow with -L); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probes #81957/#81968 non-substantive only (timeline counts unchanged at 25/12, last events unchanged — no drift this wave); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-43 re-sweep negatives; §6 wave-43 queue ALL COMPLETE, wave-43 re-rank pass (no movements, no prototype-gated promotions), wave-44 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Edits anchored on repeated boilerplate were count-audited before AND after (wave-39 lesson held). Next SURV-IDs: 079+.
+Wave-44 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–44; §3 +3 angles (JEP 544 wave-44 curl re-verification: HTTP 200, 33,897 bytes — **byte-identical** to the wave-21/22/23/24/25/26/27/28/29/30/31/32/33/34/35/36/37/38/39/40/41/42/43 archive (raw md5 682b4a7689dc106ffa20dd9e868398cd; the anti-bot script-URL rotation stayed dormant a twenty-third wave; thirty-six consecutive content-identical archives, waves 9–44), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w44.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5; wave-44 equality shortcut held — the w43 archive was the immediate predecessor); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — thirty-sixth consecutive unchanged wave for RFC #3943 (comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z; equality shortcut holds, no tail-page re-read needed); sibling watch note (wave 44): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z matched the wave-43 value — equality shortcut HELD, no re-read needed (the wave-43 inline design-discussion exchange stands as the last recorded activity); rate limit NOT hit this wave (58 remaining at wave start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds (full sha 9712c23b129d… verified, "Address review comments" 2026-08-18), Azul no new announcement since Oct 1 (BusinessWire + press rewrites — cxotoday ~23h-old, businesswire 4d, financialcontent/mediatrainingforceos syndications, itbrief.asia 3d — all re-publications of the same release, not new; Azul's own product page frames Cloud Native Compiler as centralized JIT-as-a-service with preemptive fleet code streaming — still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–43, fresh-fetch prose confirmed on-page; GA expected ~Nov 10 2026 per daily-devops) — nothing bar-clearing; Runtime Async material still tied to .NET's async state-machine lowering, non-transferable to Go's goroutine model, Swift move-only still no new SIL optimization pass (cond_fail #88258 + deinit-devirtualizer #69955 already-assessed; address-cast lifetime fix, swift-institute crash dossiers, #87489 re-opened crash = checker/verifier bug-fixes; ryo docs = prose; middas-0706 fork = mirror), Valhalla = full table row count 10 (header + 9 data) = same 8 JEPs **plus the pre-existing non-JEP draft row** ("Null-Restricted Value Class Types (Preview)", jeps/8316779 bug-id URL — a `/jeps/8316779` regex hit is NOT a new JEP; draft since 2023 — owner Dan Smith, updated 2026/05/28; no technique, not bar-clearing; method note: verify the FULL deliverables-table row count each wave, not just JEP links — the row was already in wave-5's record; project page 301s without trailing slash — fetch with -L), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms; method note: the API 301s on the repo-name form — follow with -L); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (method note: go-review, not chromium-review; Gerrit commit message at /changes/{id}/revisions/current/commit), label probe #81957 non-substantive only (timeline count unchanged at 25, last event unchanged); **label probe #81968 NEW substantive watch activity** (timeline 12→24 events; dmitshur 2026-10-05T22:49–22:50Z commented "CC @golang/runtime", added labels NeedsInvestigation + Performance, milestone Backlog — issue "runtime: bound overtakes of lock2 sleepers", Dice & Kogan Reciprocating Locks proposal, doi 10.1145/3710848.3710862; proposal-level only, no prototype — not bar-clearing; wave-45 watch for a prototype CL or benchmark); #81887's slot stays retired (resolved wave 34 — CL 842886's merge CONFIRMED SURV-006's thesis; no re-check)); §5 wave-44 re-sweep negatives; §6 wave-44 queue ALL COMPLETE, wave-44 re-rank pass (no movements, no prototype-gated promotions), wave-45 queue written; coordinator-level run (no child coordinator — single owner, duplicate-guard marker). Edits anchored on repeated boilerplate were count-audited before AND after (wave-39 lesson held). Doc-integrity note: the wave-43 synthesis claimed "§5 wave-43 re-sweep negatives" but no wave-43 §5 entry was ever added (wave-42's entry sits directly above wave-41's); wave-43's data all exists in the wave-43 track files and §3 angles — flagged, not repaired (wave-43's coordinator's deliverable). Next SURV-IDs: 079+.
+Wave-45 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–45; §6 wave-45 queue ALL COMPLETE, wave-45 re-rank pass (no movements, no prototype-gated promotions), wave-46 queue written; JEP 544 wave-45 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — DIFFERS from the w21–w44 pin 682b4a7689dc106ffa20dd9e868398cd, but per wave-45 body-diff discipline the ONLY delta is line 206 (anti-bot <script src> URL rotated to a fresh randomized path — the rotation had been dormant 23 waves, waves ~22–44; all JEP content identical → **thirty-seven consecutive content-identical archives, waves 9–45**), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w45.html` (new pin for wave 46); #157943 0/3 trips on unchanged baselines — thirty-seventh consecutive unchanged wave (RFC #3943 comments 11 / review_comments 58, updated_at 2026-10-02T15:30:51Z unchanged; #163338 updated_at 2026-09-30T13:03:50Z unchanged, 21-event timeline, try-perf zero hits; #163337 updated_at 2026-10-05T21:50:06Z — equality shortcut HELD two waves running); rate limit NOT hit (58 remaining at wave start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200; T3 0/6 triggers (Meta search = disqualified noise; Pyston fe8afded6166 unchanged; Swift move-only no new SIL pass — cond_fail #88258, ryo docs, swift-institute crash dossiers, SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal commit, address-cast consumption commit all excluded per discipline; SE-0474 md5 pin holds, Accepted; TruffleRuby Options.java md5 pin holds, 0 keyword hits; GraalPy CHANGELOG md5 pin holds, history-head sha 9712c23b… verified waves 44–45); T2 all negative (Graal changelog md5 pin, tops 25.5; JEP 401 Integrated/28; Valhalla full-table row count 10 = 8 JEPs + pre-existing non-JEP draft row, single /jeps/8316779 hit; Azul = Oct 1 BusinessWire + press rewrites only — cxotoday 1d, techcoffeehouse 1d, itbrief.asia 4d, financialcontent/mediatrainingforceos syndications; still no technique, 2x–5x still unverified marketing; **OpenJ9 method-note update: canonical URL now `https://api.github.com/repos/eclipse-openj9/openj9/releases/latest` — org rename eclipse/openj9 → eclipse-openj9; old short form 404s outright (supersedes the 301 note); still openj9-0.62.0**; .NET 11 Learn page still "last updated for release candidate 1 (RC 1)", GA ~Nov 10 2026 — nothing bar-clearing); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (go-review + tail -n +2 XSSI discipline), #81957 non-substantive only (25 events, last unchanged), **#81968 QUIET this wave — 24 events unchanged, last event dmitshur's 2026-10-05T22:50:12Z labeling; no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; wave-46 watch stands**; #81887's slot stays retired (resolved wave 34 — CL 842886 confirmed SURV-006's thesis; no re-check); verbatim-URL-copy rule held (no 404s except the superseded OpenJ9 short form); SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner); edits anchored on repeated boilerplate count-audited before AND after (wave-39 lesson held). Next SURV-IDs: 079+.
+Wave-46 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–46; §6 wave-46 queue ALL COMPLETE, wave-46 re-rank pass (no movements, no prototype-gated promotions), wave-47 queue written; JEP 544 wave-46 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-45 pin (the wave-45 anti-bot script-URL rotation carried over unchanged → **thirty-eight consecutive content-identical archives, waves 9–46**), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w46.html` (pin for wave 47); #157943 0/3 trips on unchanged baselines — thirty-eighth consecutive unchanged wave (RFC #3943 comments 11 / review_comments 58, updated_at 2026-10-02T15:30:51Z unchanged; #163338 updated_at 2026-09-30T13:03:50Z unchanged, 21-event timeline, try-perf zero hits; #163337 updated_at 2026-10-05T21:50:06Z — equality shortcut HELD a third wave running); rate limit NOT hit (60 remaining at wave start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200; T3 0/6 triggers (Meta search = disqualified noise — LLM Compiler, Quest Runtime Optimizer, CPython 3.15 JIT, MTIA chips, AutoTTS; Pyston fe8afded6166 unchanged; Swift move-only no new SIL pass — cond_fail #88258, deinit-devirtualizer #69955, #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose, middas-0706 mirror all excluded per discipline; SE-0474 md5 pin holds, Accepted; TruffleRuby Options.java md5 pin holds, 0 keyword hits; GraalPy CHANGELOG md5 pin holds, history-head sha 9712c23b… verified waves 44–46); T2 all negative (Graal changelog md5 pin, tops 25.5; JEP 401 Integrated/28; Valhalla full-table row count 10 = 8 JEPs + pre-existing non-JEP draft row, single /jeps/8316779 hit — method note: rows carry class attributes, grep `<tr[^>]*>` not bare `<tr>`; Azul = Oct 1 BusinessWire + press rewrites only — businesswire 5d, smbtech.au 2d, cxotoday 1d, itbrief.asia 4d, financialcontent/mediatrainingforceos syndications, enterprisetimes.co.uk weekly digest recap; still no technique, 2x–5x still unverified marketing; OpenJ9 latest openj9-0.62.0 via the wave-45 canonical URL (org rename held; old short form 404s); .NET 11 Learn page still "last updated for release candidate 1 (RC 1)", GA ~Nov 10 2026 — nothing bar-clearing); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (go-review + tail -n +2 XSSI discipline), #81957 non-substantive only (25 events, last unchanged), **#81968 QUIET again this wave — 24 events unchanged, last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; wave-47 watch stands**; #81887's slot stays retired (resolved wave 34 — CL 842886 confirmed SURV-006's thesis; no re-check); verbatim-URL-copy rule held (no 404s); SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner); edits anchored on repeated boilerplate count-audited before AND after (wave-39 lesson held). Next SURV-IDs: 079+.
+Wave-47 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–47; §6 wave-47 queue ALL COMPLETE, wave-47 re-rank pass
+Wave-48 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–48; §6 wave-48 queue ALL COMPLETE, wave-48 re-rank pass (no movements, no prototype-gated promotions), wave-49 queue written; JEP 544 wave-48 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-47 pin (`cmp` empty; the wave-45 anti-bot script-URL rotation carried over unchanged a third wave — **forty consecutive content-identical archives, waves 9–48**), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w48.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — fortieth consecutive unchanged wave for RFC #3943 (comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z; equality shortcut holds, no tail-page re-read needed); sibling watch note (wave 48): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z matched the wave-43/44/45/46/47 value — equality shortcut HELD a fifth wave running, no re-read needed (the wave-43 inline design-discussion exchange stands as the last recorded activity) — when the wave-24 equality shortcut does NOT hold, re-read the timeline tail AND the reviews list, and fetch `pulls/{n}/comments` for empty-body reviews (wave-42/43 method note); #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z, 21-event timeline, 0 try-perf hits, last event the known 2026-10-01T13:27:54Z; #163336 still merged; rate limit NOT hit this wave (57 core remaining at wave start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — businesswire 5d, smbtech.au 2d, itbrief.asia 4d, cxotoday 1d, techcoffeehouse 1d, financialcontent/mediatrainingforceos syndications — all re-publications of the same release, not new; Azul's own page frames Cloud Native Compiler as JIT-as-a-service with fleet code streaming — still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–47, fresh-fetch prose confirmed on-page, `empty-span` grep count 2; GA expected ~Nov 10 2026 per daily-devops) — nothing bar-clearing; Meta search = same disqualified noise (Muse Code coding agent ~61-day-old, Turbo Haskell HN roundup — none a Meta runtime JIT); Swift move-only still no new SIL optimization pass (raw_pointer_to_ref immortal commit ec74abb6 already-assessed; skill prose, OptimizeHopToExecutor medium piece on the existing mandatory pass — all excluded per the move-only discipline), Valhalla = full table row count 10 (header + 9 data) = same 8 JEPs **plus the pre-existing non-JEP draft row** ("Null-Restricted Value Class Types (Preview)", jeps/8316779 bug-id URL — a `/jeps/8316779` regex hit is NOT a new JEP; method note: rows carry class attributes, grep `<tr[^>]*>` not bare `<tr>`; a `/jeps/1` hit is the page's boilerplate JEP-process link — prose, not a deliverable), docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms; the API 301s on the repo-name form — follow with -L); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline), label probes #81957/#81968 non-substantive only — **#81968 QUIET again this wave — 24 events unchanged (fourth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-49 watch stands**; #81887's slot stays retired (resolved wave 34 — CL 842886 confirmed SURV-006's thesis; no re-check); SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner); edits anchored on repeated boilerplate count-audited before AND after (wave-39 lesson held — DONE markers applied via a line-scoped block pass, 6/6 items; §1 header "waves 1–48" exactly once, §6 queue order wave-48 → re-rank → wave-49 → wave-12 verified; 78 real `#### SURV-` headers, no dupes, IDs 001–078 all present — wave-47's "103" note counted prose mentions, corrected). Next SURV-IDs: 079+.
+Wave-49 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–49; §6 wave-49 queue ALL COMPLETE, wave-49 re-rank pass (no movements, no prototype-gated promotions), wave-50 queue written; JEP 544 wave-49 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-48 pin (`cmp` empty; the wave-45 anti-bot script-URL rotation carried over unchanged a fourth wave — **forty-one consecutive content-identical archives, waves 9–49**), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w49.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — forty-first consecutive unchanged wave for RFC #3943 (comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z; equality shortcut holds a sixth wave running for #163337, no tail-page re-read needed); sibling watch note (wave 49): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z matched the wave-43/44/45/46/47/48 value — equality shortcut HELD a sixth wave running, no re-read needed (the wave-43 inline design-discussion exchange stands as the last recorded activity) — when the wave-24 equality shortcut does NOT hold, re-read the timeline tail AND the reviews list, and fetch `pulls/{n}/comments` for empty-body reviews (wave-42/43 method note); #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z, 21-event timeline, 0 try-perf hits, last event the known 2026-10-01T13:27:54Z; #163336 still merged; rate limit NOT hit this wave (57 core remaining at wave start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200 with quoted headers; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — businesswire 5d, techcoffeehouse 1d, cxotoday 1d, smbtech.au 2d, itbrief.asia 4d, financialcontent syndication — all re-publications of the same release, not new; Azul's own page frames Cloud Native Compiler as JIT-as-a-service with fleet code streaming — still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (unchanged vs waves 29–48, fresh-fetch prose confirmed on-page, `empty-span` grep count 2; GA expected ~Nov 10 2026 per daily-devops) — nothing bar-clearing; Meta search = same disqualified noise set (Muse Code coding agent ~61-day-old, Muse Spark 1.3 coding-model pieces, Turbo Haskell HN roundup — none a Meta runtime JIT); Swift move-only still no new SIL optimization pass (cond_fail #88258, SimplifyIndexingInstructions #89784 already-assessed; skill prose — all excluded per the move-only discipline), Valhalla = full table row count 10 (header + 9 data) = same 8 JEPs **plus the pre-existing non-JEP draft row** ("Null-Restricted Value Class Types (Preview)", jeps/8316779 bug-id URL — a `/jeps/8316779` regex hit is NOT a new JEP; method note: rows carry class attributes, grep `<tr[^>]*>` not bare `<tr>`; the `/jeps/1` hits are the page's boilerplate JEP-process link — prose, not a deliverable), docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2), OpenJ9 still v0.62.0 (API releases/latest tag_name confirms; the API 301s on the repo-name form — follow with -L); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline), label probes #81957/#81968 non-substantive only — **#81968 QUIET again this wave — 24 events unchanged (fifth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-50 watch stands**; #81887's slot stays retired (resolved wave 34 — CL 842886 confirmed SURV-006's thesis; no re-check); SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner); edits anchored on repeated boilerplate count-audited before AND after (wave-39 lesson held — DONE markers applied via a line-scoped block pass: 6/6 items, §1 header "waves 1–49" exactly once, §6 queue order wave-49 → re-rank → wave-50 → wave-12 verified; 78 real `#### SURV-` headers, no dupes, IDs 001–078 all present). Next SURV-IDs: 079+.
+(no movements, no prototype-gated promotions), wave-48 queue written; JEP 544 wave-47 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-46 pin (the wave-45 anti-bot script-URL rotation carried over unchanged a second wave → **thirty-nine consecutive content-identical archives, waves 9–47**), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w47.html` (pin for wave 48); #157943 0/3 trips on unchanged baselines — thirty-ninth consecutive unchanged wave (RFC #3943 comments 11 / review_comments 58, updated_at 2026-10-02T15:30:51Z unchanged; #163338 updated_at 2026-09-30T13:03:50Z unchanged, 21-event timeline, try-perf zero hits; #163337 updated_at 2026-10-05T21:50:06Z — equality shortcut HELD a fourth wave running); rate limit NOT hit (60 remaining at wave start, no gaps); wave-34 UA-quoting discipline held — all HTTP 200; T3 0/6 triggers (Meta search = disqualified noise — LLM Compiler, React Compiler, Static Hermes writeup, React 19 guide, LLM Compiler re-publications; Pyston fe8afded6166 unchanged; Swift move-only no new SIL pass — cond_fail #88258, SimplifyIndexingInstructions #89784, raw_pointer_to_ref immortal commit, address-cast consumption commit, deinit-devirtualizer #69955, #66727, swift-institute crash dossiers, ryo/llvm-mlir-book prose, middas-0706 mirror all excluded per discipline; SE-0474 md5 pin holds, Accepted; TruffleRuby Options.java md5 pin holds, 0 keyword hits; GraalPy CHANGELOG md5 pin holds, history-head sha 9712c23b… unchanged waves 19–47); T2 all negative (Graal changelog 14,501 bytes md5 pin, tops 25.5; JEP 401 Integrated/28; Valhalla full-table row count 10 = 8 JEPs + pre-existing non-JEP draft row, single /jeps/8316779 hit — method note: rows carry class attributes, grep `<tr[^>]*>` not bare `<tr>`; Azul = Oct 1 BusinessWire + press rewrites only — businesswire 5d, smbtech.au 2d, cxotoday 1d, techcoffeehouse 1d, itbrief.asia 4d, financialcontent/mediatrainingforceos syndications, enterprisetimes.co.uk weekly digest recap; still no technique, 2x–5x still unverified marketing; OpenJ9 latest openj9-0.62.0 via the wave-45 canonical URL (org rename held; old short form 404s); .NET 11 Learn page still "last updated for release candidate 1 (RC 1)", GA ~Nov 10 2026 — nothing bar-clearing); T4: #24314 static, #77893's five CLs still NEW with byte-identical timestamps (go-review + tail -n +2 XSSI discipline), #81957 non-substantive only (25 events, last gopherbot 2026-10-03T10:50:39Z), **#81968 QUIET again this wave — 24 events unchanged (third quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; wave-48 watch stands**; #81887's slot stays retired (resolved wave 34 — CL 842886 confirmed SURV-006's thesis; no re-check); verbatim-URL-copy rule held (no 404s); SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner); edits anchored on repeated boilerplate count-audited before AND after (wave-39 lesson held — wave-47 repair note: one DONE marker initially applied to the wave-46 queue's JEP-544 item before anchoring was tightened to wave-47-unique pins; reverted and re-applied cleanly). Next SURV-IDs: 079+.
+
+Wave-50 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–50; §6 wave-50 queue ALL COMPLETE, wave-50 re-rank pass (no movements, no prototype-gated promotions), wave-51 queue written; JEP 544 wave-50 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-49 pin (`cmp` empty; the wave-45 anti-bot script-URL rotation carried over unchanged a fifth wave — **forty-two consecutive content-identical archives, waves 9–50**), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w50.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — forty-second consecutive unchanged wave for RFC #3943 (comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z; equality shortcut holds a seventh wave running for #163337, no tail-page re-read needed); sibling watch note (wave 50): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z matched the wave-43/44/45/46/47/48/49 value — equality shortcut HELD a seventh wave running, no re-read needed (the wave-43 inline design-discussion exchange stands as the last recorded activity) — when the wave-24 equality shortcut does NOT hold, re-read the timeline tail AND the reviews list, and fetch `pulls/{n}/comments` for empty-body reviews (wave-42/43 method note); #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z, 21-event timeline, 0 try-perf/trybot hits, last event the known 2026-10-01T13:27:54Z; #163336 still merged; rate limit NOT hit this wave (all HTTP 200, no gaps); wave-34 UA-quoting discipline held — quoted UA header; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — businesswire 5d, techcoffeehouse 1d, cxotoday 1d, itbrief.asia 4d, financialcontent/mediatrainingforceos syndications — all re-publications of the same release, not new; techcoffeehouse ~1d reiterates the ReadyNow-2014/Orchestrator→CNC fleet-history framing — still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (fresh-fetch prose confirmed on-page; GA expected ~Nov 10 2026) — nothing bar-clearing; Meta search = same disqualified noise set (Muse Code coding agent, Meta Runtime Optimizer for Horizon OS/Unity, CompilerGym, jemalloc 5.4.0 — none a Meta runtime JIT); Swift move-only still no new SIL optimization pass (store_borrow checker fix #69169, address-cast consumption 9f408874, fork-mirror prose — all excluded per the move-only discipline), Valhalla = full table row count 10 (header + 9 data) = same 8 JEPs **plus the pre-existing non-JEP draft row** ("Null-Restricted Value Class Types (Preview)", jeps/8316779 bug-id URL — a `/jeps/8316779` regex hit is NOT a new JEP; method note: rows carry class attributes, grep `<tr[^>]*>` not bare `<tr>`; the 2 `/jeps/1` hits are the page's boilerplate JEP-process link — prose, not a deliverable), docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2), OpenJ9 still v0.62.0 (published 2026-09-15T20:16:10Z; wave-45 canonical URL; old short form 404s); T4: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z), #77893's five CLs still NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline), label probes #81957/#81968 non-substantive only — **#81968 QUIET again this wave — 24 events unchanged (sixth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-51 watch stands**; #81887's slot stays retired (resolved wave 34 — CL 842886 confirmed SURV-006's thesis; no re-check); SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner); edits anchored on repeated boilerplate count-audited before AND after (wave-39 lesson held — DONE markers applied via a line-scoped block pass: 6/6 items, §1 header "waves 1–50" exactly once, §6 queue order wave-50 → re-rank → wave-51 → wave-12 verified; 78 real `#### SURV-` headers, no dupes, IDs 001–078 all present). Next SURV-IDs: 079+.
+
+Wave-51 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–51; §6 wave-51 queue ALL COMPLETE (6/6 items DONE-marked via line-scoped block pass), wave-51 re-rank pass (no movements, no prototype-gated promotions), wave-52 queue written; JEP 544 wave-51 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-50 pin (`cmp` empty; the wave-45 anti-bot script-URL rotation carried over unchanged a sixth wave — **forty-three consecutive content-identical archives, waves 9–51**), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w51.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — forty-third consecutive unchanged wave for RFC #3943 (comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z; equality shortcut holds an eighth wave running for #163337, no tail-page re-read needed); sibling watch note (wave 51): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z matched the wave-43/44/45/46/47/48/49/50 value — equality shortcut HELD an eighth wave running, no re-read needed (the wave-43 inline design-discussion exchange stands as the last recorded activity) — when the wave-24 equality shortcut does NOT hold, re-read the timeline tail AND the reviews list, and fetch `pulls/{n}/comments` for empty-body reviews (wave-42/43 method note); #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z, 21-event timeline, 0 try-perf/trybot hits, last event the known 2026-10-01T13:27:54Z; #163336 still merged; rate limit NOT hit this wave (all HTTP 200, no gaps); wave-34 UA-quoting discipline held — quoted UA header; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — businesswire 5d, cxotoday 1d, techcoffeehouse 1d, itbrief.asia 4d, financialcontent/mediatrainingforceos syndications — all re-publications of the same release, not new; techcoffeehouse ~1d reiterates the ReadyNow-2014/Orchestrator→CNC fleet-history framing — still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (fresh-fetch prose confirmed on-page; GA expected ~Nov 10 2026) — nothing bar-clearing; Meta search = same disqualified noise set (Muse Code coding agent, Muse Spark 1.3 AI coding news, Meta Runtime Optimizer for Horizon OS/Unity, jemalloc 5.4.0 — none a Meta runtime JIT); Swift move-only still no new SIL optimization pass (cond_fail #88258, SimplifyIndexingInstructions #89784, swift-institute crash dossiers, ryo/llvm-mlir-book/kstdlib prose — all excluded per the move-only discipline), Valhalla = full table row count 10 (header + 9 data) = same 8 JEPs **plus the pre-existing non-JEP draft row** ("Null-Restricted Value Class Types (Preview)", jeps/8316779 bug-id URL — a `/jeps/8316779` regex hit is NOT a new JEP; method note: rows carry class attributes, grep `<tr[^>]*>` not bare `<tr>`; the 2 `/jeps/1` hits are the page's boilerplate JEP-process link — prose, not a deliverable), docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2), OpenJ9 still v0.62.0 (published 2026-09-15T20:16:10Z; wave-45 canonical URL; old short form 404s); T4: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z), #77893's five CLs still NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline), label probes #81957/#81968 non-substantive only — **#81968 QUIET again this wave — 24 events unchanged (seventh quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-52 watch stands**; #81887's slot stays retired (resolved wave 34 — CL 842886 confirmed SURV-006's thesis; no re-check); SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner); edits anchored on repeated boilerplate count-audited before AND after (wave-39 lesson held — DONE markers applied via a line-scoped block pass: 6/6 items, §1 header "waves 1–51" exactly once, §6 queue order wave-51 → re-rank → wave-52 → wave-12 verified; 78 real `#### SURV-` headers, no dupes, IDs 001–078 all present). Next SURV-IDs: 079+.
+
+Wave-52 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–52; §6 wave-52 queue ALL COMPLETE (6/6 items DONE-marked via line-scoped block pass), wave-52 re-rank pass (no movements, no prototype-gated promotions), wave-53 queue written; JEP 544 wave-52 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-51 pin (`md5sum` equal; the wave-45 anti-bot script-URL rotation carried over unchanged a seventh wave — **forty-four consecutive content-identical archives, waves 9–52**), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w52.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — forty-fourth consecutive unchanged wave for RFC #3943 (comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z; equality shortcut holds a ninth wave running for #163337, no tail-page re-read needed); sibling watch note (wave 52): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z matched the wave-43/44/45/46/47/48/49/50/51 value — equality shortcut HELD a ninth wave running, no re-read needed (the wave-43 inline design-discussion exchange stands as the last recorded activity) — when the wave-24 equality shortcut does NOT hold, re-read the timeline tail AND the reviews list, and fetch `pulls/{n}/comments` for empty-body reviews (wave-42/43 method note); #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z, 21-event timeline, 0 try-perf/trybot hits, last event the known 2026-10-01T13:27:54Z; #163336 still merged; rate limit NOT hit this wave (all HTTP 200, no gaps); wave-34 UA-quoting discipline held — quoted UA header; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — businesswire 5d, cxotoday 1d, techcoffeehouse 1d, itbrief.asia 4d, financialcontent/mediatrainingforceos syndications — all re-publications of the same release, not new; techcoffeehouse ~1d reiterates the ReadyNow-2014/Orchestrator→CNC fleet-history framing — still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (fresh-fetch prose confirmed on-page; GA expected ~Nov 10 2026) — nothing bar-clearing; Meta search = same disqualified noise set (Muse Code coding agent, Muse Spark 1.3 AI coding news, Meta Runtime Optimizer for Horizon OS/Unity, jemalloc 5.4.0 — none a Meta runtime JIT); Swift move-only still no new SIL optimization pass (cond_fail #88258, SimplifyIndexingInstructions #89784, #87489/#88956 crash issues, raw_pointer_to_ref immortal commit, ReleaseDevirtualizer OSSA commits — all excluded per the move-only discipline), Valhalla = full table row count 10 (header + 9 data) = same 8 JEPs **plus the pre-existing non-JEP draft row** ("Null-Restricted Value Class Types (Preview)", jeps/8316779 bug-id URL — a `/jeps/8316779` regex hit is NOT a new JEP; method note: rows carry class attributes, grep `<tr[^>]*>` not bare `<tr>`; the 1 `/jeps/1` hit is the page's boilerplate JEP-process link — prose, not a deliverable), docs markdown re-verified this wave — still carries unused [218]/[303] reference definitions (non-substantive, not deliverables; grep count 2), OpenJ9 still v0.62.0 (published 2026-09-15T20:16:10Z; wave-45 canonical URL; old short form 404s); T4: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z), #77893's five CLs still NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline), label probes #81957/#81968 non-substantive only — **#81968 QUIET again this wave — 24 events unchanged (eighth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-53 watch stands**; #81887's slot stays retired (resolved wave 34 — CL 842886 confirmed SURV-006's thesis; no re-check); SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner); edits anchored on repeated boilerplate count-audited before AND after (wave-39 lesson held — DONE markers applied via a line-scoped block pass: 6/6 items, §1 header "waves 1–52" exactly once, §6 queue order wave-52 → re-rank → wave-53 → wave-12 verified; 78 real `#### SURV-` headers, no dupes, IDs 001–078 all present). Next SURV-IDs: 079+.
+Wave-53 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–53; §6 wave-53 queue ALL COMPLETE (6/6 items DONE-marked via line-scoped block pass), wave-53 re-rank pass (no movements, no prototype-gated promotions), wave-54 queue written; JEP 544 wave-53 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-52 pin (`md5sum` equal; the wave-45 anti-bot script-URL rotation dormant an eighth wave — **forty-five consecutive content-identical archives, waves 9–53**), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w53.html`, method note carried (diff page bodies before concluding a pin break, re-verify metadata in the new archive each wave not just the md5); #157943 0/3 trips on unchanged baselines, ruling unchanged, trips re-armed — forty-fifth consecutive unchanged wave for RFC #3943 (comments 11 / review_comments 58, `updated_at` 2026-10-02T15:30:51Z; equality shortcut holds a tenth wave running for #163337, no tail-page re-read needed); sibling watch note (wave 53): #163337's PR-object `updated_at` 2026-10-05T21:50:06Z matched the wave-43/44/45/46/47/48/49/50/51/52 value — equality shortcut HELD a tenth wave running, no re-read needed (the wave-43 inline design-discussion exchange stands as the last recorded activity) — when the wave-24 equality shortcut does NOT hold, re-read the timeline tail AND the reviews list, and fetch `pulls/{n}/comments` for empty-body reviews (wave-42/43 method note); #163338 open/unmerged, `updated_at` 2026-09-30T13:03:50Z; rate limit NOT hit this wave (all HTTP 200, no gaps); wave-34 UA-quoting discipline held — quoted UA header; T3 0/6 triggers, T2/T4 all negative — verbatim-URL-copy rule held (no 404s), GraalPy sha-comparison discipline holds, Azul no new announcement since Oct 1 (BusinessWire + press rewrites — businesswire 5d, cxotoday 1d, techcoffeehouse 1d (re-dated Oct 5), itbrief.asia 4d, financialcontent/mediatrainingforceos syndications — all re-publications of the same release, not new; itbrief.asia reiterates the ReadyNow-2014/Orchestrator→CNC fleet-history framing — still no technique, 2x–5x still unverified vendor marketing), .NET 11 Learn runtime page still "last updated for release candidate 1 (RC 1)" (fresh-fetch prose confirmed on-page; GA expected ~Nov 10 2026) — nothing bar-clearing; Meta search = same disqualified noise set (2024 LLM Compiler, React compiler tooling, Muse Code coding agents, jemalloc 5.4.0 allocator maintenance, Android Runtime glossary, Druid/Pharo meta-compilation — none a Meta runtime JIT); Swift move-only still no new SIL optimization pass (swift-institute crash dossiers, ryo/llvm-mlir-book prose, livsy90 guide — all excluded per the move-only discipline), Valhalla = full table row count 10 (header + 9 data) = same 8 JEPs **plus the pre-existing non-JEP draft row** ("Null-Restricted Value Class Types (Preview)", jeps/8316779 bug-id URL — a `/jeps/8316779` regex hit is NOT a new JEP; method note: rows carry class attributes, grep `<tr[^>]*>` not bare `<tr>`; the `/jeps/1` and `/jeps/181` hits are the page's boilerplate JEP-process link — prose, not deliverables), OpenJ9 still v0.62.0 (published 2026-09-15T20:16:10Z; wave-45 canonical URL; old short form 404s); T4: #24314 static (open, 8 comments, updated 2022-07-13T16:58:42Z), #77893's five CLs still NEW with byte-identical timestamps (go-review + `tail -n +2` XSSI discipline), label probes #81957/#81968 — **#81968 QUIET again this wave — 24 events unchanged (ninth quiet wave), last event dmitshur's 2026-10-05T22:50:12Z labeling; Gerrit "81968" query 0 matches — no prototype CL or benchmark landed — reciprocating-locks proposal stays proposal-level; the wave-54 watch stands**; #81957 count 25→26 — new last event `subscribed` by mpx 2026-10-06T08:12:49Z (non-substantive user subscribe, same class as earlier subscribe noise — no bar-clearing content); #81887's slot stays retired (resolved wave 34 — CL 842886 confirmed SURV-006's thesis; no re-check); SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner); edits anchored on repeated boilerplate count-audited before AND after (wave-39 lesson held — DONE markers applied via a line-scoped block pass: 6/6 items, §1 header "waves 1–53" exactly once, §6 queue order wave-53 → re-rank → wave-54 → wave-12 verified; 78 real `#### SURV-` headers, no dupes, IDs 001–078 all present). Next SURV-IDs: 079+.
+Wave-54 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–54; §6 wave-54 queue ALL COMPLETE (6/6 items), wave-54 re-rank pass (no movements, no prototype-gated promotions), wave-55 queue written; JEP 544 wave-54 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-53 pin (**forty-six consecutive content-identical archives, waves 9–54**; anti-bot script-URL rotation dormant a ninth wave w46–w54), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w54.html`; #157943 0/3 trips on unchanged baselines — RFC #3943 forty-sixth consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z), #163337 equality shortcut HELD an eleventh wave running (updated_at 2026-10-05T21:50:06Z), #163338 21-event timeline unchanged (last cross-referenced 2026-10-01T13:27:54Z Amanieu, no try-perf); GitHub unauthenticated core quota dipped mid-wave (~6/hr remaining; no wait-for-reset needed, all reads HTTP 200); T3 0/6 triggers (SE-0474 md5 pin matches, TruffleRuby pin matches + 0 keyword hits, GraalPy raw pin + history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5; process note: wrong-URL 404 recovered via verbatim-copy discipline, no conclusion drawn), JEP 401 Integrated/Release 28, Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + rewrites (no technique, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC 1; T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, #81957 count 26 unchanged (last mpx subscribe 2026-10-06T08:12:49Z — noise), **#81968 QUIET a tenth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-55 watch stands**; SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner). Next SURV-IDs: 079+.
+Wave-55 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–55; §6 wave-55 queue ALL COMPLETE (6/6 items), wave-55 re-rank pass (no movements, no prototype-gated promotions), wave-56 queue written; JEP 544 wave-55 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-54 pin (**forty-seven consecutive content-identical archives, waves 9–55**; anti-bot script-URL rotation dormant a tenth wave w46–w55), Status=Targeted/Release=28 re-verified verbatim in the NEW archive, archived as `jep544_2026-10-06_w55.html`; #157943 0/3 trips on unchanged baselines — RFC #3943 forty-seventh consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z), #163337 equality shortcut HELD a twelfth wave running (updated_at 2026-10-05T21:50:06Z), #163338 21-event timeline unchanged (last cross-referenced 2026-10-01T13:27:54Z Amanieu, no try-perf); GitHub unauthenticated core quota healthy (59/hr post-burst, all reads HTTP 200); T3 0/6 triggers (SE-0474 md5 pin matches, TruffleRuby pin matches + 0 keyword hits, GraalPy raw pin + history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only — new-but-excluded Swift #89784 SimplifyIndexingInstructions, not a move-only pass); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5), JEP 401 Integrated/Release 28, Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + rewrites (no technique, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC 1; T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, #81957 count 26 unchanged (last mpx subscribe 2026-10-06T08:12:49Z — noise), **#81968 QUIET an eleventh wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-56 watch stands**; SURV-075 Stage-0 not re-checked (standing owner exception); coordinator-level run (no child coordinator — single owner). Next SURV-IDs: 079+.

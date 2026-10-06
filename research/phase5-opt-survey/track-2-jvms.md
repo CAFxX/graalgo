@@ -497,7 +497,7 @@ them.
 
 - **ABLE:** 14 (biased-locking replacements, C2 loop opts ×3, C2 EA, barrier designs, Graal PEA/vectorization/Truffle/strip-mining/low-tier phases, OpenJ9 AOT+JITServer+Xtune+balanced, Azul C4/Falcon/ReadyNow/Hub, .NET tiered-PGO/GDV/loop-cloning/R2R/NativeAOT, Leyden delivered JEPs 483/514/515/516, Lilliput JEP 450/519/534)
 - **THINKING:** 4 (Valhalla JEP 401/539, Leyden JEP 544, 4-byte headers draft, + cross-run cache's THINKING tail)
-- **ATTEMPTED:** 3 (biased locking — complexity vs payoff; Intel TSX lock elision — hardware deprecated RTM, don't build on fusable-off silicon features; HotSpot stack-locking — dropped for compact headers)
+- **ATTEMPTED:** 3 (biased locking — complexity vs payoff; Intel TSX lock elision — disabled across the installed base (RTM not formally deprecated; owner correction 2026-10-06), don't build on features disabled on your deployment target; HotSpot stack-locking — dropped for compact headers)
 - **WOULD-LIKE:** 1 (guard+deopt GDV — .NET's inline-fallback GDV has no deopt; our design requirement)
 
 **Candidates passing the bar (6):** cross-run speculation-profile cache; per-site compact
