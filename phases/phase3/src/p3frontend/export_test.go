@@ -484,3 +484,46 @@ func TestStdlibScopeError(t *testing.T) {
 		t.Logf("stdlib compile correctly refused: %v", err)
 	}
 }
+
+// TestIfaceMethodCallFlowThrough (P3-M3, WS D, ADR-0003): a program using
+// an interface method call flows through ExportDir (merge → gofrontend)
+// and yields an ifacemethod node — not a scope error. The frozen exporter
+// emits it since gofrontend 0.4.0 (ADR-0003 freeze exception); p3frontend
+// itself needs no change — this test pins the flow-through.
+func TestIfaceMethodCallFlowThrough(t *testing.T) {
+	dir := t.TempDir()
+	src := `package main
+
+type Writer interface {
+	Write(p []byte) int
+}
+
+type Buf struct{ n int }
+
+func (b *Buf) Write(p []byte) int {
+	b.n += len(p)
+	return len(p)
+}
+
+func main() {
+	var w Writer = &Buf{}
+	println(w.Write([]byte("hi")))
+}
+`
+	formatted, err := format.Source([]byte(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.go"), formatted, 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportDir(dir)
+	if err != nil {
+		t.Fatalf("ExportDir with interface method call: %v", err)
+	}
+	for _, want := range []string{`"kind": "ifacemethod"`, `"method": "Write"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ExportDir output missing %s", want)
+		}
+	}
+}
