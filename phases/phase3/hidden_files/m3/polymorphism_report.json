@@ -1,0 +1,276 @@
+{
+ "sites": {
+  "if00_basic_dispatch.go :: iface:3@if00_basic_dispatch.go:19:44#Write": {
+   "program": "if00_basic_dispatch.go",
+   "kind": "corpus",
+   "site": "iface:3@if00_basic_dispatch.go:19:44#Write",
+   "itabs": 2,
+   "dispatches": 3,
+   "truncated": false
+  },
+  "if01_multi_writer.go :: iface:3@if01_multi_writer.go:27:9#Write": {
+   "program": "if01_multi_writer.go",
+   "kind": "corpus",
+   "site": "iface:3@if01_multi_writer.go:27:9#Write",
+   "itabs": 3,
+   "dispatches": 3,
+   "truncated": false
+  },
+  "if02_sort_iface.go :: iface:0@if02_sort_iface.go:17:7#Len": {
+   "program": "if02_sort_iface.go",
+   "kind": "corpus",
+   "site": "iface:0@if02_sort_iface.go:17:7#Len",
+   "itabs": 2,
+   "dispatches": 2,
+   "truncated": false
+  },
+  "if02_sort_iface.go :: iface:0@if02_sort_iface.go:19:24#Less": {
+   "program": "if02_sort_iface.go",
+   "kind": "corpus",
+   "site": "iface:0@if02_sort_iface.go:19:24#Less",
+   "itabs": 2,
+   "dispatches": 21,
+   "truncated": false
+  },
+  "if02_sort_iface.go :: iface:0@if02_sort_iface.go:20:4#Swap": {
+   "program": "if02_sort_iface.go",
+   "kind": "corpus",
+   "site": "iface:0@if02_sort_iface.go:20:4#Swap",
+   "itabs": 2,
+   "dispatches": 15,
+   "truncated": false
+  },
+  "if03_error_iface.go :: iface:3@if03_error_iface.go:32:16#Error": {
+   "program": "if03_error_iface.go",
+   "kind": "corpus",
+   "site": "iface:3@if03_error_iface.go:32:16#Error",
+   "itabs": 2,
+   "dispatches": 3,
+   "truncated": false
+  },
+  "if04_assert_iface.go :: iface:1@if04_assert_iface.go:19:14#Write": {
+   "program": "if04_assert_iface.go",
+   "kind": "corpus",
+   "site": "iface:1@if04_assert_iface.go:19:14#Write",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "if05_megamorphic.go :: iface:4@if05_megamorphic.go:28:12#Write": {
+   "program": "if05_megamorphic.go",
+   "kind": "corpus",
+   "site": "iface:4@if05_megamorphic.go:28:12#Write",
+   "itabs": 4,
+   "dispatches": 16,
+   "truncated": false
+  },
+  "if07_typed_nil.go :: iface:1@if07_typed_nil.go:21:14#Write": {
+   "program": "if07_typed_nil.go",
+   "kind": "corpus",
+   "site": "iface:1@if07_typed_nil.go:21:14#Write",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "if08_embedded_promotion.go :: iface:2@if08_embedded_promotion.go:26:14#Write": {
+   "program": "if08_embedded_promotion.go",
+   "kind": "corpus",
+   "site": "iface:2@if08_embedded_promotion.go:26:14#Write",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "if08_embedded_promotion.go :: iface:2@if08_embedded_promotion.go:32:14#Size": {
+   "program": "if08_embedded_promotion.go",
+   "kind": "corpus",
+   "site": "iface:2@if08_embedded_promotion.go:32:14#Size",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "if09_iface_embedding.go :: iface:2@if09_iface_embedding.go:28:2#Write": {
+   "program": "if09_iface_embedding.go",
+   "kind": "corpus",
+   "site": "iface:2@if09_iface_embedding.go:28:2#Write",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "if09_iface_embedding.go :: iface:2@if09_iface_embedding.go:29:9#Close": {
+   "program": "if09_iface_embedding.go",
+   "kind": "corpus",
+   "site": "iface:2@if09_iface_embedding.go:29:9#Close",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "if10_iface_param.go :: iface:1@if10_iface_param.go:15:7#Write": {
+   "program": "if10_iface_param.go",
+   "kind": "corpus",
+   "site": "iface:1@if10_iface_param.go:15:7#Write",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "if10_iface_param.go :: iface:1@if10_iface_param.go:16:7#Write": {
+   "program": "if10_iface_param.go",
+   "kind": "corpus",
+   "site": "iface:1@if10_iface_param.go:16:7#Write",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "if10_iface_param.go :: iface:2@if10_iface_param.go:28:7#Write": {
+   "program": "if10_iface_param.go",
+   "kind": "corpus",
+   "site": "iface:2@if10_iface_param.go:28:7#Write",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "if10_iface_param.go :: iface:3@if10_iface_param.go:38:14#CopyFrom": {
+   "program": "if10_iface_param.go",
+   "kind": "corpus",
+   "site": "iface:3@if10_iface_param.go:38:14#CopyFrom",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "mp01_hot_mono.go :: iface:1@mp01_hot_mono.go:15:10#Add": {
+   "program": "mp01_hot_mono.go",
+   "kind": "probe",
+   "site": "iface:1@mp01_hot_mono.go:15:10#Add",
+   "itabs": 1,
+   "dispatches": 1000,
+   "truncated": false
+  },
+  "mp02_bimorphic.go :: iface:2@mp02_bimorphic.go:24:12#Size": {
+   "program": "mp02_bimorphic.go",
+   "kind": "probe",
+   "site": "iface:2@mp02_bimorphic.go:24:12#Size",
+   "itabs": 2,
+   "dispatches": 100,
+   "truncated": false
+  },
+  "mp03_many_types.go :: iface:6@mp03_many_types.go:35:10#ID": {
+   "program": "mp03_many_types.go",
+   "kind": "probe",
+   "site": "iface:6@mp03_many_types.go:35:10#ID",
+   "itabs": 6,
+   "dispatches": 6,
+   "truncated": false
+  },
+  "mp04_errors.go :: iface:4@mp04_errors.go:32:16#Error": {
+   "program": "mp04_errors.go",
+   "kind": "probe",
+   "site": "iface:4@mp04_errors.go:32:16#Error",
+   "itabs": 3,
+   "dispatches": 9,
+   "truncated": false
+  },
+  "mp05_sorters.go :: iface:4@mp05_sorters.go:47:15#Name": {
+   "program": "mp05_sorters.go",
+   "kind": "probe",
+   "site": "iface:4@mp05_sorters.go:47:15#Name",
+   "itabs": 2,
+   "dispatches": 4,
+   "truncated": false
+  },
+  "mp05_sorters.go :: iface:4@mp05_sorters.go:47:25#Sort": {
+   "program": "mp05_sorters.go",
+   "kind": "probe",
+   "site": "iface:4@mp05_sorters.go:47:25#Sort",
+   "itabs": 2,
+   "dispatches": 4,
+   "truncated": false
+  },
+  "mp06_nested_iface.go :: iface:2@mp06_nested_iface.go:14:9#Value": {
+   "program": "mp06_nested_iface.go",
+   "kind": "probe",
+   "site": "iface:2@mp06_nested_iface.go:14:9#Value",
+   "itabs": 1,
+   "dispatches": 1,
+   "truncated": false
+  },
+  "mp06_nested_iface.go :: iface:3@mp06_nested_iface.go:20:7#Double": {
+   "program": "mp06_nested_iface.go",
+   "kind": "probe",
+   "site": "iface:3@mp06_nested_iface.go:20:7#Double",
+   "itabs": 1,
+   "dispatches": 5,
+   "truncated": false
+  },
+  "mp07_value_pointer_mix.go :: iface:2@mp07_value_pointer_mix.go:24:12#Next": {
+   "program": "mp07_value_pointer_mix.go",
+   "kind": "probe",
+   "site": "iface:2@mp07_value_pointer_mix.go:24:12#Next",
+   "itabs": 2,
+   "dispatches": 10,
+   "truncated": false
+  },
+  "mp08_recursive.go :: iface:1@mp08_recursive.go:15:36#Sum": {
+   "program": "mp08_recursive.go",
+   "kind": "probe",
+   "site": "iface:1@mp08_recursive.go:15:36#Sum",
+   "itabs": 2,
+   "dispatches": 3,
+   "truncated": false
+  },
+  "mp08_recursive.go :: iface:1@mp08_recursive.go:15:51#Sum": {
+   "program": "mp08_recursive.go",
+   "kind": "probe",
+   "site": "iface:1@mp08_recursive.go:15:51#Sum",
+   "itabs": 2,
+   "dispatches": 3,
+   "truncated": false
+  },
+  "mp09_embedded_3impl.go :: iface:6@mp09_embedded_3impl.go:28:7#Write": {
+   "program": "mp09_embedded_3impl.go",
+   "kind": "probe",
+   "site": "iface:6@mp09_embedded_3impl.go:28:7#Write",
+   "itabs": 3,
+   "dispatches": 3,
+   "truncated": false
+  },
+  "mp09_embedded_3impl.go :: iface:6@mp09_embedded_3impl.go:29:8#Close": {
+   "program": "mp09_embedded_3impl.go",
+   "kind": "probe",
+   "site": "iface:6@mp09_embedded_3impl.go:29:8#Close",
+   "itabs": 3,
+   "dispatches": 3,
+   "truncated": false
+  },
+  "mp10_nonstrukt.go :: iface:3@mp10_nonstrukt.go:22:15#String": {
+   "program": "mp10_nonstrukt.go",
+   "kind": "probe",
+   "site": "iface:3@mp10_nonstrukt.go:22:15#String",
+   "itabs": 3,
+   "dispatches": 3,
+   "truncated": false
+  }
+ },
+ "truncated": {},
+ "programs": {
+  "if00_basic_dispatch.go": "exit=0 sites=1",
+  "if01_multi_writer.go": "exit=0 sites=1",
+  "if02_sort_iface.go": "exit=0 sites=3",
+  "if03_error_iface.go": "exit=0 sites=1",
+  "if04_assert_iface.go": "exit=0 sites=1",
+  "if05_megamorphic.go": "exit=0 sites=1",
+  "if06_nil_panic.go": "exit=2 sites=0 TRUNCATED",
+  "if07_typed_nil.go": "exit=0 sites=1",
+  "if08_embedded_promotion.go": "exit=0 sites=2",
+  "if09_iface_embedding.go": "exit=0 sites=2",
+  "if10_iface_param.go": "exit=0 sites=4",
+  "mp01_hot_mono.go": "exit=0 sites=1",
+  "mp02_bimorphic.go": "exit=0 sites=1",
+  "mp03_many_types.go": "exit=0 sites=1",
+  "mp04_errors.go": "exit=0 sites=1",
+  "mp05_sorters.go": "exit=0 sites=2",
+  "mp06_nested_iface.go": "exit=0 sites=2",
+  "mp07_value_pointer_mix.go": "exit=0 sites=1",
+  "mp08_recursive.go": "exit=0 sites=2",
+  "mp09_embedded_3impl.go": "exit=0 sites=2",
+  "mp10_nonstrukt.go": "exit=0 sites=1"
+ }
+}
