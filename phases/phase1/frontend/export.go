@@ -4483,7 +4483,8 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			}
 		}
 		// Non-chan: fall through to default builtin handling (frozen LenNode).
-		args, err := e.exportCallArgs(c)
+		var err error
+		args, err = e.exportCallArgs(c)
 		if err != nil {
 			return nil, err
 		}
