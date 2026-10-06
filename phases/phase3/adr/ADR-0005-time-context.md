@@ -150,6 +150,33 @@ if one proves necessary it gets its own ADR per the ADR-0004 rule.
 - Re-test triggers: `any`-equality and nil-channel behavior (if scoped
   down); full `time` surface at P3-M7 supersedes this package.
 
+### Accepted deviation (2026-10-06, exporter worker): multi-result calls
+
+v1 cannot emit or call multi-result functions (WS D; the P3-M3 F4
+fail-fast precedent). The following are declared with exact gc 1.27.1
+signatures (so type-checking works) but every call site fails fast with
+"not in M5 scope (multi-result calls need WS D; re-test when it lands)":
+
+- `time.ParseDuration(string) (Duration, error)`
+- `Time.Date() (year int, month Month, day int)`
+- `Time.Clock() (hour, min, sec int)`
+- `Time.Zone() (name string, offset int)`
+- `Context.Deadline() (deadline Time, ok bool)`
+- `context.WithCancel(parent Context) (Context, CancelFunc)`
+- `context.WithCancelCause(parent Context) (Context, CancelCauseFunc)`
+- `context.WithDeadline(parent Context, d Time) (Context, CancelFunc)`
+- `context.WithTimeout(parent Context, timeout Duration) (Context, CancelFunc)`
+
+**Impact**: The core context cancellation constructors cannot be called
+in v1 programs. The context package type-checks and exports (Background,
+TODO, WithValue, Cause, AfterFunc, WithoutCancel, Canceled,
+DeadlineExceeded all work), but cancellation via WithCancel/WithDeadline/
+WithTimeout requires WS D multi-result support. This is the primary
+P3-M5 blocker — escalated to coordinator.
+
+Re-test trigger: when WS D lands, remove the `isMultiResultSynthetic`
+fail-fast and verify tc08-tc10, tc12-tc14 go green end to end.
+
 ## Appendix W — wire field detail as implemented (P3-M5 Java, 2026-10-06)
 
 The D3 field lists are shorthand. Per the ADR-0002 `syncnew` precedent,
