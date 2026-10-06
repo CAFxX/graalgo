@@ -423,3 +423,15 @@ wraps the call in a zero-argument function literal:
 Additive; follows the existing `exportCloseDeferGo`/`exportSyncGoStmt`
 patterns. (Committed as `c964852`; discovered during ch01–ch12
 graduation.)
+
+## Appendix M, amendment (2026-10-06, coordinator)
+
+The desugar does NOT emit the `Context(__p5c)` interface conversion. The
+extracted `ctx` variable keeps the concrete `*cancelCtx`/`*timerCtx` type
+(no P3-M3 interface boxing). Rationale: the `Context` interface requires
+the multi-result `Deadline` method, which v1 cannot emit (WS D); emitting
+it would require frozen-file changes on both sides. The concrete type
+supports all method calls (`Done`, `Err`, `Value`) directly; interface
+satisfaction is unnecessary within the M5 scope (no user code passes the
+desugared `ctx` to a function expecting `Context` — the desugar is
+call-site-local).

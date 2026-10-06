@@ -772,7 +772,11 @@ var DeadlineExceeded error = &ctxErrorString{s: "context deadline exceeded"}
 
 // Context is the gc 1.27.1 interface (method set identical).
 type Context interface {
-	Deadline() (deadline time.Time, ok bool)
+	// NB: Deadline() omitted (P3-M5, ADR-0005): v1 cannot emit multi-result
+	// methods (WS D), and M5 scope does not need Context.Deadline() — all
+	// call sites are desugared via __deadlineOf (Appendix M) or out of scope.
+	// This is a deliberate, documented divergence from gc's interface.
+	// Re-test when WS D lands.
 	Done() <-chan struct{}
 	Err() error
 	Value(key any) any
@@ -806,6 +810,8 @@ type CancelFunc func()
 
 // CancelCauseFunc is gc's func(cause error).
 type CancelCauseFunc func(cause error)
+
+// the multi-result Deadline method.
 
 // cancelCtx is the channel-mutex context (ADR-0005 Appendix M).
 type cancelCtx struct {

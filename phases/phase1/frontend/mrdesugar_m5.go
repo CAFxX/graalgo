@@ -229,10 +229,12 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	var extracts []*Node
 	switch plan.kind {
 	case mrWithCancel, mrWithDeadline:
-		conv, err := e.synthConvert(c, tmpName, tmpID, tmpTid, sp.pkg, "Context")
-		if err != nil {
-			return nil, err
-		}
+		// P3-M5: use the concrete *cancelCtx/*timerCtx directly (no
+		// Context() interface conversion). The interface conversion would
+		// require the multi-result Deadline method in the P3-M3 method
+		// table (v1 cannot emit it); the concrete type supports all
+		// method calls directly.
+		conv := e.node("ident", c, map[string]any{"name": tmpName, "obj": tmpID, "type": tmpTid})
 		mcall, err := e.synthMethodCall(c, tmpName, tmpID, tmpTid, plan.methodRecv, plan.methodName)
 		if err != nil {
 			return nil, err

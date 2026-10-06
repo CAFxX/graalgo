@@ -180,9 +180,11 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			// are declared with exact gc signatures for type-checking,
 			// but v1 cannot emit or call multi-result functions (WS D;
 			// the P3-M3 F4 fail-fast precedent). They are skipped here —
-			// never in funcByObj/methodIndex, so method tables stay
-			// dangling-ref-free — and every call site fails fast with a
-			// named M5 scope error (see isMultiResultSynthetic).
+			// never in funcByObj/methodIndex. The Appendix M desugar avoids
+			// interface conversions (uses concrete *cancelCtx/*timerCtx
+			// directly), so P3-M3 method tables do not need the multi-result
+			// Deadline methods. Every call site fails fast with a named M5
+			// scope error (see isMultiResultSynthetic), or is desugared.
 			if sig.Results().Len() > 1 {
 				continue
 			}

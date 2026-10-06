@@ -69,8 +69,18 @@ public final class GoStatementNode extends GoStmtNode {
         GoStatementNode n = new GoStatementNode(fn);
         Json.Object pos = node.object("pos", "gostmt");
         String p = "gostmt.pos";
-        SourceSection ss = ctx.source.createSection(
-                pos.intValue("line", p), pos.intValue("col", p), pos.intValue("len", p));
+        SourceSection ss;
+        try {
+            ss = ctx.source.createSection(
+                    pos.intValue("line", p), pos.intValue("col", p), pos.intValue("len", p));
+        } catch (IllegalArgumentException outOfRange) {
+            // P3-M5 (WS E; ADR-0005 §D5 documented exception): desugared
+            // `go` nodes (e.g. from `go f(args)` funclit wrapping) may carry
+            // out-of-range synthesized positions; clamp like NodeFactory.
+            int lineCount = ctx.source.getLineCount();
+            int line = Math.max(1, Math.min(pos.intValue("line", p), lineCount));
+            ss = ctx.source.createSection(line, 1, 0);
+        }
         n.setSourceSection(ss);
         return n;
     }
