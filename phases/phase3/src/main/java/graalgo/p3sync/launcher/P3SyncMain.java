@@ -20,21 +20,35 @@ import graalgo.p3link.LinknameIntrinsics;
 import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
+import graalgo.p3time.P3TimeRuntime;
+import graalgo.p3time.nodes.TimeAfterFuncNode;
+import graalgo.p3time.nodes.TimeAfterNode;
+import graalgo.p3time.nodes.TimeCNode;
+import graalgo.p3time.nodes.TimeNewNode;
+import graalgo.p3time.nodes.TimeNowNode;
+import graalgo.p3time.nodes.TimeOpNode;
+import graalgo.p3time.nodes.TimeSleepNode;
+import graalgo.p3time.nodes.TimeTickNode;
 import graalgo.sched.SchedulerCore;
 import graalgo.sched.launcher.GoDebug;
 import graalgo.sched.nodes.GoStatementNode;
 
 /**
  * Phase-3 launcher for {@code sync}-binding programs (P3-M2b, WS D,
- * ADR-0002) with interface method dispatch (P3-M3, WS D, ADR-0003):
+ * ADR-0002) with interface method dispatch (P3-M3, WS D, ADR-0003) and
+ * the synthetic {@code time} package (P3-M5, WS E, ADR-0005):
  * {@code graalgo-sync-run --gmp=N file.go}.
  *
  * <p>Mirrors Phase-2 {@code SchedMain}'s flow (frontend, exit-code
  * contract) but additionally registers the {@code "syncnew"} /
- * {@code "syncop"} wire kinds on the factory via the public
- * {@code registerExprKind} hook (P2-D8 precedent). No Phase-1 or Phase-2
- * source is modified; the classpath order phase3 &gt; phase2 &gt; phase1
- * (see the phase-3 Makefile) keeps every overlay in force.
+ * {@code "syncop"} wire kinds (P3-M2b), the {@code "ifacemethod"} kind
+ * (P3-M3), and the {@code "timenew"}/{@code "timeop"}/{@code "timec"}/
+ * {@code "timenow"}/{@code "timesleep"}/{@code "timeafter"}/
+ * {@code "timetick"}/{@code "timeafterfunc"} kinds (P3-M5) on the factory
+ * via the public {@code registerExprKind} hook (P2-D8 precedent). No
+ * Phase-1 or Phase-2 source is modified; the classpath order phase3 &gt;
+ * phase2 &gt; phase1 (see the phase-3 Makefile) keeps every overlay in
+ * force.
  *
  * <p>Exit codes match Phase 1/2: 0 ok, 1 usage/input, 2 build failure or
  * uncaught Go panic (gc parity).
@@ -152,6 +166,17 @@ public final class P3SyncMain {
             // P3-M3 (WS D, ADR-0003): interface method dispatch. Public
             // extension hook — no Phase-1 NodeFactory change.
             factory.registerExprKind("ifacemethod", new IfaceDispatchBuilder(factory));
+            // P3-M5 (WS E, ADR-0005 D3): the synthetic time wire kinds.
+            // Public extension hook — no Phase-1 NodeFactory change.
+            factory.registerExprKind("timenew", (node, ctx) -> TimeNewNode.build(node, ctx, factory));
+            factory.registerExprKind("timeop", (node, ctx) -> TimeOpNode.build(node, ctx, factory));
+            factory.registerExprKind("timec", (node, ctx) -> TimeCNode.build(node, ctx, factory));
+            factory.registerExprKind("timenow", TimeNowNode::build);
+            factory.registerExprKind("timesleep", (node, ctx) -> TimeSleepNode.build(node, ctx, factory));
+            factory.registerExprKind("timeafter", (node, ctx) -> TimeAfterNode.build(node, ctx, factory));
+            factory.registerExprKind("timetick", (node, ctx) -> TimeTickNode.build(node, ctx, factory));
+            factory.registerExprKind("timeafterfunc",
+                    (node, ctx) -> TimeAfterFuncNode.build(node, ctx, factory));
             // P2-M1 (WS A): the go statement, reused from Phase 2 via the
             // same public hook (no Phase-2 change — GoStatementNode is a
             // public class).
@@ -205,6 +230,14 @@ public final class P3SyncMain {
                     exitCode[0] = EXIT_PANIC;
                 }
             });
+            // P3-M5 (WS E, ADR-0005): timer translators are background
+            // goroutines that may outlive the Go program's own goroutines
+            // (gc: process exit abandons pending timers; time.Tick's ticker
+            // leaks by design). awaitQuiescence waits for EVERY goroutine,
+            // so first wait until only translators remain, shut them down,
+            // then await full quiescence. With no timers this is just the
+            // ordinary quiescence wait at 1ms poll granularity.
+            P3TimeRuntime.awaitBackgroundDrain(sched);
             sched.awaitQuiescence();
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();

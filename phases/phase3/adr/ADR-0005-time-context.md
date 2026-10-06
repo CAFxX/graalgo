@@ -149,3 +149,25 @@ if one proves necessary it gets its own ADR per the ADR-0004 rule.
 - Accepted divergence (this ADR): `time.Local` ≡ UTC until P3-M7.
 - Re-test triggers: `any`-equality and nil-channel behavior (if scoped
   down); full `time` surface at P3-M7 supersedes this package.
+
+## Appendix W — wire field detail as implemented (P3-M5 Java, 2026-10-06)
+
+The D3 field lists are shorthand. Per the ADR-0002 `syncnew` precedent,
+every time node carries `type`: the result type-table id, validated
+fail-fast by the Java builders (never guessed):
+
+- `"timenew"`: {kind: "timer"|"ticker", duration, type} — type is a
+  pointer (`*time.Timer` / `*time.Ticker`).
+- `"timeop"`: {op: "Stop"|"Reset", recv, duration?, type} — type is bool;
+  `duration` required for Reset, absent for Stop.
+- `"timec"`: {recv, type} — type is a channel.
+- `"timenow"`: {type} — type is the named `time.Time`.
+- `"timesleep"`: {duration} — void; no `type`.
+- `"timeafter"`: {duration, type} — type is a channel.
+- `"timetick"`: {duration, type} — type is a channel.
+- `"timeafterfunc"`: {duration, func, type} — type is a pointer.
+
+`duration` accepts a literal number (nanoseconds) or an expression node
+evaluating to int64. The `time.Time` descriptor is resolved from the
+type-table's named `time.Time` entry (must be `struct{ unixnano int64 }`)
+by every builder that needs it — no cross-node ordering contract.
