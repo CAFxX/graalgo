@@ -28,12 +28,20 @@ import graalgo.safepoint.Safepoint;
 public final class LinknameRootNode extends RootNode {
     private final String symbol;
     private final String funcName;
+    /**
+     * True when the declared Go result type is an interface (P3-M4): the
+     * D5 dispatch result is boxed into a {@code GoInterface} exactly as
+     * {@code GoFuncRootNode} boxes interface results, so callers see the
+     * same value shape as for a Go-bodied function.
+     */
+    private final boolean boxResult;
     private SourceSection sourceSection;
 
-    public LinknameRootNode(String symbol, String funcName) {
+    public LinknameRootNode(String symbol, String funcName, boolean boxResult) {
         super((TruffleLanguage<?>) null, FrameDescriptor.newBuilder().build());
         this.symbol = symbol;
         this.funcName = funcName;
+        this.boxResult = boxResult;
     }
 
     @Override
@@ -41,7 +49,12 @@ public final class LinknameRootNode extends RootNode {
         Safepoint.poll();
         Object[] args = frame.getArguments();
         Object[] callArgs = Arrays.copyOfRange(args, 1, args.length);
-        return Linknames.dispatch(symbol, callArgs);
+        Object result = Linknames.dispatch(symbol, callArgs);
+        if (boxResult && result != null
+                && !(result instanceof graalgo.values.GoInterface)) {
+            return GoFuncRootNode.wrapInterface(result);
+        }
+        return result;
     }
 
     @Override

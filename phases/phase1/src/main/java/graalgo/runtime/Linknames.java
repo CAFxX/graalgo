@@ -107,6 +107,12 @@ public final class Linknames {
      * Intrinsic → Go helper by symbol name: invokes the Go function bound
      * under {@code qualifiedName} with the given D5-boxed arguments via
      * the {@link GoCalls} protocol. Unbound names fail fast.
+     *
+     * <p>Arguments may arrive boxed as {@link graalgo.values.GoInterface}
+     * (the call-site adaptation boxes concrete values for
+     * {@code any}-typed parameters); {@code GoFuncRootNode} unwraps those
+     * for concrete parameters, so the helper sees the D5 values a direct
+     * Go call would pass (P3-M4).
      */
     public static Object callGo(String qualifiedName, Object[] args) {
         GoFunc fn = GO_FUNCS.get(qualifiedName);

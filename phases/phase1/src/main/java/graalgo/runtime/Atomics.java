@@ -85,6 +85,22 @@ public final class Atomics {
         return addr.compareAndSet(old, new_);
     }
 
+    /**
+     * Atomic uintptr add (P3-M4, WS C: the {@code atomic.Uintptr} wrapper's
+     * {@code Add}).
+     */
+    public static long addUintptr(AtomicLong addr, long delta) {
+        return addr.addAndGet(delta);
+    }
+
+    /**
+     * Atomic uintptr swap (P3-M4, WS C: the {@code atomic.Uintptr}
+     * wrapper's {@code Swap}).
+     */
+    public static long swapUintptr(AtomicLong addr, long new_) {
+        return addr.getAndSet(new_);
+    }
+
     // -- bool -------------------------------------------------------------
 
     /**
@@ -103,5 +119,13 @@ public final class Atomics {
     /** Atomic bool compare-and-swap. */
     public static boolean compareAndSwapBool(AtomicInteger addr, boolean old, boolean new_) {
         return addr.compareAndSet(old ? 1 : 0, new_ ? 1 : 0);
+    }
+
+    /**
+     * Atomic bool swap (P3-M4, WS C: the {@code atomic.Bool} wrapper's
+     * {@code Swap}).
+     */
+    public static boolean swapBool(AtomicInteger addr, boolean new_) {
+        return addr.getAndSet(new_ ? 1 : 0) != 0;
     }
 }

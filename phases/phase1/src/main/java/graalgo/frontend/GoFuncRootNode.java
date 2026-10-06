@@ -75,6 +75,17 @@ public final class GoFuncRootNode extends RootNode {
         this.snapSlots = snapSlots;
     }
 
+    /**
+     * The parameter kinds, parallel to the call argument array (P3-M4, WS
+     * C): documents the per-parameter boxing contract used by
+     * {@link #execute} — interface parameters keep {@code GoInterface}
+     * values, concrete parameters carry D5 values (unwrapped from any
+     * interface boxing by the caller path). The returned array is a copy.
+     */
+    public GoKind[] paramKinds() {
+        return paramKinds.clone();
+    }
+
     @Override
     public Object execute(VirtualFrame frame) {
         Safepoint.poll();
@@ -100,6 +111,23 @@ public final class GoFuncRootNode extends RootNode {
             if (paramKinds[i] == graalgo.values.GoKind.INTERFACE
                     && arg != null && !(arg instanceof graalgo.values.GoInterface)) {
                 arg = wrapInterface(arg);
+            }
+            // P3-M4 (WS C): concrete params unwrap interface-boxed values.
+            // The linkname intrinsic→Go bridge (Linknames.callGo) forwards
+            // call-site arguments, which the call adaptation boxes for
+            // any-typed parameters; a direct Go call would pass D5 values,
+            // so the root normalizes here, next to the interface-param
+            // wrap above. A nil interface for a concrete parameter is a
+            // caller type error and fails fast (never a silent null slot).
+            if (paramKinds[i] != graalgo.values.GoKind.INTERFACE
+                    && arg instanceof graalgo.values.GoInterface gi) {
+                Object data = gi.data();
+                if (data == null) {
+                    throw new graalgo.frontend.FrontendException(
+                            "linkname: nil interface value for concrete parameter "
+                                    + i + " of " + funcName);
+                }
+                arg = data;
             }
             Boxing.setSlot(frame, paramSlots[i], paramKinds[i], arg);
         }
@@ -178,9 +206,11 @@ public final class GoFuncRootNode extends RootNode {
 
     /**
      * Wraps a concrete value in a GoInterface for interface params (M5, WS F).
-     * Infers the basic descriptor from the Java type.
+     * Infers the basic descriptor from the Java type. Package-visible for
+     * {@link LinknameRootNode} (P3-M4): a linkname target returning a
+     * declared interface type boxes its D5 result the same way.
      */
-    private static graalgo.values.GoInterface wrapInterface(Object arg) {
+    static graalgo.values.GoInterface wrapInterface(Object arg) {
         graalgo.values.GoKind kind;
         if (arg instanceof Long) {
             kind = graalgo.values.GoKind.INT64;

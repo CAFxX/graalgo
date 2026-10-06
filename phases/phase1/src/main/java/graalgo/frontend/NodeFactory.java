@@ -541,7 +541,21 @@ public final class NodeFactory {
                 Json.Value linkname = fields.opt("linkname");
                 RootCallTarget target;
                 if (linkname instanceof Json.Str sym) {
-                    LinknameRootNode root = new LinknameRootNode(sym.value(), name);
+                    // P3-M4: the declared result type decides whether the
+                    // D5 dispatch result is boxed into a GoInterface
+                    // (interface result, like a Go-bodied function).
+                    boolean boxResult = false;
+                    Json.Value results = fields.opt("results");
+                    if (results instanceof Json.Array rarr && rarr.size() > 0
+                            && rarr.get(0) instanceof Json.Object r0) {
+                        Json.Object rf = r0.object("fields", "funcdecl.fields.results[0]");
+                        String rp = "funcdecl.fields.results[0].fields";
+                        if (rf.opt("type") instanceof Json.Num) {
+                            int resultTid = rf.intValue("type", rp);
+                            boxResult = kindOf(ctx, resultTid, rp) == GoKind.INTERFACE;
+                        }
+                    }
+                    LinknameRootNode root = new LinknameRootNode(sym.value(), name, boxResult);
                     root.setSourceSection(sectionFor(fn, "funcdecl"));
                     target = root.getCallTarget();
                 } else {
