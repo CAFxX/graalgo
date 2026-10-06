@@ -169,7 +169,9 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			if !ok {
 				return scopeErrorf("synthetic %s: %s has no *types.Func object", sp.path, d.Name.Name)
 			}
-			if isSyntheticIntrinsic(sp.path, obj.Name()) {
+			// Intrinsics are package-level functions only; methods with the
+			// same name (e.g. Time.After vs time.After) are real methods.
+			if d.Recv == nil && isSyntheticIntrinsic(sp.path, obj.Name()) {
 				continue
 			}
 			sig, ok := obj.Type().(*types.Signature)
