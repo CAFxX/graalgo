@@ -3135,7 +3135,110 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P3-M5 (WS E): `go f(args)` with args desugars through a funclit.
+	// GoStatementNode (P2-M1) only builds zero-arg spawns; the function
+	// value and args are evaluated at go time (Go spec) into hoisted
+	// temps, then a zero-arg funclit runs the call. (Specific cases like
+	// `go close(ch)` and sync primitives are handled above.)
+	if len(s.Call.Args) > 0 {
+		return e.exportGoWithArgs(s)
+	}
 	return e.node("gostmt", s, map[string]any{"call": call}), nil
+}
+
+// exportGoWithArgs desugars `go f(args)` (args non-empty) to hoisted
+// temps + `go func() { f(temps) }()`. The temps are evaluated in the
+// calling goroutine at go-statement time (Go spec); the funclit captures
+// them by reference (they are never reassigned, so the goroutine sees
+// the go-time values).
+func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
+	c := s.Call
+	e.chanSeq++
+	seq := e.chanSeq
+	// Hoist args.
+	tempNames := make([]string, 0, len(c.Args))
+	tempObjs := make([]int, 0, len(c.Args))
+	tempIdents := make([]*Node, 0, len(c.Args))
+	vardecls := make([]*Node, 0, len(c.Args))
+	for i, arg := range c.Args {
+		tv, ok := e.info.Types[arg]
+		if !ok || tv.Type == nil {
+			return nil, fmt.Errorf("gofrontend: no type info for go arg %d", i)
+		}
+		name := fmt.Sprintf("__go_arg_%d_%d", seq, i)
+		v := types.NewVar(token.NoPos, nil, name, tv.Type)
+		oid, err := e.defVar(v, false)
+		if err != nil {
+			return nil, err
+		}
+		tid, err := e.typeID(tv.Type)
+		if err != nil {
+			return nil, err
+		}
+		argx, err := e.exportExpr(arg)
+		if err != nil {
+			return nil, err
+		}
+		vardecls = append(vardecls, e.node("vardecl", s, map[string]any{
+			"names": []string{name}, "objs": []int{oid},
+			"define": true, "type": nil, "values": []*Node{argx},
+		}))
+		tempNames = append(tempNames, name)
+		tempObjs = append(tempObjs, oid)
+		tempIdents = append(tempIdents, e.node("ident", s, map[string]any{
+			"name": name, "obj": oid, "type": tid,
+		}))
+	}
+	// Build the call f(temps).
+	// Reconstruct the call with temp idents as args.
+	var funNode *Node
+	switch fun := c.Fun.(type) {
+	case *ast.Ident:
+		// Direct function call: go f(args).
+		obj := e.info.ObjectOf(fun)
+		if obj == nil {
+			return nil, fmt.Errorf("gofrontend: no object for go func %q", fun.Name)
+		}
+		oid, ok := e.objIDs[obj]
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: go func %q not declared", fun.Name)
+		}
+		tid, err := e.typeID(obj.Type())
+		if err != nil {
+			return nil, err
+		}
+		funNode = e.node("ident", s, map[string]any{"name": fun.Name, "obj": oid, "type": tid})
+	default:
+		// For other forms (method calls, etc.), export the fun expr and
+		// hope it's a zero-arg-callable. This is a best-effort fallback.
+		var err error
+		funNode, err = e.exportExpr(c.Fun)
+		if err != nil {
+			return nil, err
+		}
+	}
+	callType, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	innerCall := e.node("call", s, map[string]any{
+		"fun": funNode, "args": tempIdents, "type": callType,
+	})
+	// Funclit body: the call as an expression statement.
+	body := e.node("block", s, map[string]any{"stmts": []*Node{
+		e.node("exprstmt", s, map[string]any{"x": innerCall}),
+	}})
+	funclit := e.node("funclit", s, map[string]any{
+		"params": []*Node{}, "results": []*Node{}, "body": body,
+	})
+	// go func() { ... }().
+	goCall := e.node("call", s, map[string]any{
+		"fun": funclit, "args": []*Node{}, "type": nil,
+	})
+	gostmt := e.node("gostmt", s, map[string]any{"call": goCall})
+	// Block: hoists + gostmt.
+	stmts := append(vardecls, gostmt)
+	return e.node("block", s, map[string]any{"stmts": stmts}), nil
 }
 
 // exportSyncGoStmt desugars `go m.Op(args)` on a sync primitive (see
@@ -3353,6 +3456,12 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 	if n, handled, err := e.exportMultiResultDesugar(s, true); handled {
 		return n, err
 	}
+	// P3-M5 (WS E, ADR-0005 App C): v, ok := <-ch desugars to a
+	// single-case, no-default select (recv{commaOk:true} is not
+	// emittable — the frozen factory only knows index/typeassert).
+	if isCommaOkRecv(s) {
+		return e.exportRecvCommaOkDesugar(s, true)
+	}
 	names := make([]string, 0, len(s.Lhs))
 	objs := make([]int, 0, len(s.Lhs))
 	for _, lhs := range s.Lhs {
@@ -3403,6 +3512,12 @@ func (e *exporter) exportAssign(s *ast.AssignStmt) (*Node, error) {
 	if n, handled, err := e.exportMultiResultDesugar(s, false); handled {
 		return n, err
 	}
+	// P3-M5 (WS E, ADR-0005 App C): v, ok = <-ch desugars to a
+	// single-case, no-default select (recv{commaOk:true} is not
+	// emittable — the frozen factory only knows index/typeassert).
+	if isCommaOkRecv(s) {
+		return e.exportRecvCommaOkDesugar(s, false)
+	}
 	commaOk := len(s.Lhs) == 2 && len(s.Rhs) == 1 && isCommaOkRhs(s.Rhs[0])
 	lhs := make([]*Node, 0, len(s.Lhs))
 	for _, l := range s.Lhs {
@@ -3450,17 +3565,15 @@ func (e *exporter) exportAssignable(l ast.Expr) (*Node, error) {
 	}
 }
 
-// exportCommaOk exports a two-valued map-index, type-assertion, or
-// channel-receive rhs (already unparenthesized by the caller).
+// exportCommaOk exports a two-valued map-index or type-assertion rhs
+// (already unparenthesized by the caller). Channel receives (<-ch) are
+// intercepted earlier by exportRecvCommaOkDesugar (ADR-0005 App C).
 func (e *exporter) exportCommaOk(r ast.Expr) (*Node, error) {
 	switch r := r.(type) {
 	case *ast.IndexExpr:
 		return e.exportIndex(r, true)
 	case *ast.TypeAssertExpr:
 		return e.exportTypeAssert(r, true)
-	case *ast.UnaryExpr:
-		// P3-M5 (WS E, ADR-0005 App C): v, ok := <-ch.
-		return e.exportRecv(r, true)
 	default:
 		return nil, fmt.Errorf("gofrontend: not a comma-ok expression: %T", r)
 	}
@@ -3892,7 +4005,7 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 		// P3-M5 (WS E, ADR-0005 App C): <-ch lowers to the additive
 		// "recv" wire node (the frozen UnaryOpNode never implemented <-).
 		if x.Op == token.ARROW {
-			return e.exportRecv(x, false)
+			return e.exportRecv(x)
 		}
 		if x.Op == token.AND {
 			// &T{...}: normalize to a pointer-typed composite literal

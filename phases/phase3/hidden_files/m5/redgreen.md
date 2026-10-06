@@ -239,3 +239,52 @@ workers (exporter, survey, acceptance runner — the latter was running
 when a test result contradicts the source on disk, suspect a stale
 build first (`javap`/`strings` the class) before suspecting the code.
 Companion of the 2026-10-06 worktree lesson in AGENTS.md.
+
+## Go section — comma-ok desugar + test fixes (2026-10-06, exporter worker)
+
+### RED: recv{commaOk:true} rejected by frozen factory
+The `v, ok := <-ch` shape emitted `recv{commaOk: true}`. The frozen
+factory's `isCommaOkValue` only recognizes `index`/`typeassert`, so
+`buildVarDecl` failed with "values/objs length mismatch" (ch08).
+Per ADR-0005 Appendix C (reconciled 2026-10-06), the exporter must NOT
+emit `recv{commaOk:true}`.
+
+### GREEN: single-case select desugar
+`exportRecvCommaOkDesugar` lowers `v, ok := <-ch` / `v, ok = <-ch` to a
+single-case, no-default `select` with `targets: [v, ok]`:
+- `:=`: defines the targets, emits dominating `vardecl` (values=[]),
+  then `select`.
+- `=`: uses existing local objs directly (no vardecl); globals desugar
+  through temps + copy-back assign (ADR-0005 App C: globals not in frame
+  maps); blank `_` uses a synthetic temp.
+The `recv` node no longer carries `commaOk`. `exportCommaOk` drops the
+`UnaryExpr` case (now unreachable).
+
+### RED: MainTest.testCheckRejectsScopeError
+Phase-1 `MainTest.testCheckRejectsScopeError` used `select {}` as the
+scope-error example. After c669fc5, `select` lowers instead of
+scope-erroring, so the test failed.
+
+### GREEN: test updated to WS D example
+The test now uses `func f() (int, int)` (multi-result function, still
+out of scope) and expects "WS D" in the error. Comment notes that
+`select` is now in scope (P3-M5).
+
+### RED: TestChannelOpsM5 expected commaOk
+`TestChannelOpsM5` asserted both plain and comma-ok `recv` nodes exist.
+After the desugar, no `recv` carries `commaOk`.
+
+### GREEN: test updated to desugar
+The test now asserts: (1) no `recv` node has `commaOk`, (2) plain `recv`
+nodes exist, (3) a single-case `select` with 2 targets exists for the
+`v, ok := <-ch` shape.
+
+### GREEN: ch01-ch12 graduation (24/24)
+`phases/phase2/corpus/channels/run_e2e.sh`: all 12 programs at gmp=1 and
+gmp=4 produce their `.expected` output through the full pipeline
+(gofrontend → P3SyncMain). Notes:
+- ch04 required `go producer(ch)` (go with args). The exporter now
+  desugars `go f(args)` to hoisted temps + `go func() { f(temps) }()`
+  (GoStatementNode P2-M1 only builds zero-arg spawns).
+- ch12 is racy in gc (select between panic-on-closed-send and recv);
+  the script prioritizes `.expected` over fresh gc runs for such cases.

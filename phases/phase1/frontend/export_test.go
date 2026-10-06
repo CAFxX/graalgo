@@ -274,20 +274,50 @@ func main() {
 	if !sawBare || !sawSized {
 		t.Errorf("want one bare and one sized makechan (bare=%v sized=%v)", sawBare, sawSized)
 	}
-	// recv: one plain (commaOk=false), one comma-ok (commaOk=true).
-	var plain, commaOk int
+	// recv: plain `<-ch` emits recv nodes; the v, ok := <-ch shape
+	// desugars to a single-case select (ADR-0005 App C, reconciled
+	// 2026-10-06) — no recv node may carry commaOk.
+	var plain int
 	for _, n := range nodes {
 		if n.kind != "recv" {
 			continue
 		}
-		if n.fields["commaOk"] == true {
-			commaOk++
+		if _, hasCommaOk := n.fields["commaOk"]; hasCommaOk {
+			t.Errorf("recv node carries commaOk; want select desugar")
 		} else {
 			plain++
 		}
 	}
-	if plain == 0 || commaOk == 0 {
-		t.Errorf("want plain and comma-ok recv nodes (plain=%d commaOk=%d)", plain, commaOk)
+	if plain == 0 {
+		t.Errorf("want plain recv nodes (plain=%d)", plain)
+	}
+	// The comma-ok desugar emits a single-case, no-default select with
+	// two targets.
+	var sawCommaOkSelect bool
+	for _, n := range nodes {
+		if n.kind != "select" {
+			continue
+		}
+		cases, ok := n.fields["cases"].([]any)
+		if !ok || len(cases) != 1 {
+			continue
+		}
+		c, ok := cases[0].(map[string]any)
+		if !ok {
+			continue
+		}
+		cf, ok := c["fields"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if cf["kind"] == "recv" {
+			if tgts, ok := cf["targets"].([]any); ok && len(tgts) == 2 {
+				sawCommaOkSelect = true
+			}
+		}
+	}
+	if !sawCommaOkSelect {
+		t.Errorf("want single-case select desugar for v, ok := <-ch")
 	}
 	// chanclose nodes are statements: none may appear under an "x" field
 	// of an exprstmt (they must be direct statement children).

@@ -72,14 +72,17 @@ public final class MainTest {
     }
 
     public void testCheckRejectsScopeError() throws Exception {
-        Path bad = writeTempGo("select {\n}\n");
+        // P3-M5 (WS E, ADR-0005 App C): `select {}` is now IN scope (it
+        // lowers to the "select" wire node). Use a multi-result function,
+        // which remains out of scope (WS D), as the scope-error example.
+        Path bad = writeTempGo("package main\nfunc f() (int, int) { return 1, 2 }\nfunc main() {}\n");
         final int[] code = new int[1];
         String err = captureStderr(() -> {
             code[0] = Main.run(new String[] {"--check", bad.toString()});
             return code[0];
         });
-        assertEq(Main.EXIT_BUILD_FAILURE, code[0], "--check exit on out-of-scope stmt");
-        assertContains(err, "WS E", "--check stderr names the owning workstream");
+        assertEq(Main.EXIT_BUILD_FAILURE, code[0], "--check exit on out-of-scope decl");
+        assertContains(err, "WS D", "--check stderr names the owning workstream");
     }
 
     public void testCheckRejectsSyntaxError() throws Exception {
