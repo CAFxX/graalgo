@@ -576,7 +576,10 @@ func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*No
 			lhs := make([]*Node, 0, 2)
 			rhs := make([]*Node, 0, 2)
 			for i, l := range s.Lhs {
-				id := l.(*ast.Ident)
+				id, ok := l.(*ast.Ident)
+				if !ok {
+					return nil, scopeErrorf("comma-ok recv with non-identifier target %T is not supported in frontend/v1 scope (WS D)", l)
+				}
 				var typ types.Type
 				var userName string
 				if id.Name == "_" {
@@ -619,7 +622,10 @@ func (e *exporter) exportRecvCommaOkDesugar(s *ast.AssignStmt, define bool) (*No
 		} else {
 			// Locals: use directly, no declaration needed.
 			for _, lhs := range s.Lhs {
-				id := lhs.(*ast.Ident)
+				id, ok := lhs.(*ast.Ident)
+				if !ok {
+					return nil, scopeErrorf("comma-ok recv with non-identifier target %T is not supported in frontend/v1 scope (WS D)", lhs)
+				}
 				if id.Name == "_" {
 					// Blank local? `_ = <-ch` — use a temp.
 					e.chanSeq++
