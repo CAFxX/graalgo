@@ -650,3 +650,112 @@ func main() {
 	}
 }
 
+
+// TestIfaceImplKey (R1 P0-1): method-table entries and interface method
+// entries carry "implkey" (method name + structural signature, aliases
+// expanded). Write([]byte) [interface] and Write(s B) with `type B =
+// []byte` [method] share an implkey; Write(string) keys differently —
+// the runtime implements check compares these, not bare names.
+func TestIfaceImplKey(t *testing.T) {
+	const src = `package main
+
+type Writer interface{ Write(p []byte) int }
+
+type B = []byte
+
+type Good struct{}
+
+func (g Good) Write(s B) int { return len(s) }
+
+type Bad struct{}
+
+func (b Bad) Write(s string) int { return 1 }
+
+func main() {
+	var w Writer = Good{}
+	println(w.Write(nil))
+	var _ = Bad{}
+}
+`
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	doc := decodeExport(t, out)
+	entries := typeEntries(t, doc)
+	implkeys := map[string]string{} // "iface.Write" / "main.Good.Write" / ...
+	for _, e := range entries {
+		em, _ := e.(map[string]any)
+		kind, _ := em["kind"].(string)
+		d, _ := em["detail"].(map[string]any)
+		if kind != "interface" && kind != "named" {
+			continue
+		}
+		name, _ := d["name"].(string)
+		if kind == "named" && name != "main.Good" && name != "main.Bad" {
+			continue
+		}
+		methods, _ := d["methods"].([]any)
+		for _, m := range methods {
+			mm, _ := m.(map[string]any)
+			mn, _ := mm["name"].(string)
+			ik, ok := mm["implkey"].(string)
+			if !ok || ik == "" {
+				t.Fatalf("%s.%s: missing implkey (want method-identity key)", name, mn)
+			}
+			if kind == "interface" {
+				implkeys["iface."+mn] = ik
+			} else {
+				implkeys[name+"."+mn] = ik
+			}
+		}
+	}
+	ifaceWrite, ok := implkeys["iface.Write"]
+	if !ok {
+		t.Fatal("no implkey for interface Writer.Write")
+	}
+	// Alias-expanded: Good.Write(s B) with B = []byte shares the
+	// interface's implkey.
+	if goodWrite, ok := implkeys["main.Good.Write"]; !ok {
+		t.Fatal("no implkey for main.Good.Write")
+	} else if goodWrite != ifaceWrite {
+		t.Fatalf("main.Good.Write implkey = %q, want the interface's %q (alias not expanded)",
+			goodWrite, ifaceWrite)
+	}
+	// Wrong signature: Bad.Write(string) keys differently.
+	if badWrite, ok := implkeys["main.Bad.Write"]; !ok {
+		t.Fatal("no implkey for main.Bad.Write")
+	} else if badWrite == ifaceWrite {
+		t.Fatalf("main.Bad.Write implkey = %q, must differ from the interface's (name-only check would collide)",
+			badWrite)
+	}
+}
+
+// TestIfaceMultiResultScopeError (R2 F4): an interface method with two
+// results (e.g. Read(p []byte) (int, error)) is a named frontend/v1 scope
+// error — the dispatch mechanics for multi-result methods are untested,
+// so the shape must fail fast, never silently miscompile.
+func TestIfaceMultiResultScopeError(t *testing.T) {
+	const src = `package main
+
+type Reader interface{ Read(p []byte) (int, error) }
+
+type B struct{}
+
+func (b B) Read(p []byte) (int, error) { return 0, nil }
+
+func main() {
+	var r Reader = B{}
+	n, _ := r.Read(nil)
+	println(n)
+}
+`
+	_, err := ExportFile(writeIfaceProg(t, src))
+	if err == nil {
+		t.Fatal("expected multi-result scope error, got success")
+	}
+	const want = "at most one result is supported in frontend/v1 scope (WS D)"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("error %q does not contain %q", err, want)
+	}
+}
