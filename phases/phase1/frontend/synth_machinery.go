@@ -374,7 +374,11 @@ func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 	if err != nil {
 		return nil, err
 	}
-	fields["type"] = typ
+	// P3-M5: Ticker.Stop() is void — omit the type field (Java side makes it
+	// optional). Timer.Stop() returns bool.
+	if typ != nil {
+		fields["type"] = typ
+	}
 	return e.node("timeop", c, fields), nil
 }
 

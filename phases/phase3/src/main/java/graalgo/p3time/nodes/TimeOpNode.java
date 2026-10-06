@@ -76,8 +76,12 @@ public final class TimeOpNode extends GoExprNode {
             case "Reset" -> duration = TimeWire.durationNode(f, "timeop", factory, ctx);
             default -> throw new FrontendException(path + ": unknown time op " + op);
         }
-        int typeId = TimeWire.requireTypeId(f, "timeop");
-        expectBool(ctx, typeId, path);
+        // P3-M5: Ticker.Stop() is void (no result); Timer.Stop() returns bool.
+        // The type field is optional — only checked when present.
+        if (f.has("type")) {
+            int typeId = TimeWire.requireTypeId(f, "timeop");
+            expectBool(ctx, typeId, path);
+        }
         GoExprNode recv = factory.buildExpr(f.object("recv", path), ctx);
         return new TimeOpNode(op, recv, duration);
     }
