@@ -288,3 +288,26 @@ gmp=4 produce their `.expected` output through the full pipeline
   (GoStatementNode P2-M1 only builds zero-arg spawns).
 - ch12 is racy in gc (select between panic-on-closed-send and recv);
   the script prioritizes `.expected` over fresh gc runs for such cases.
+
+## 2026-10-06: BOOL->UNTYPED_BOOL fix (coordinator)
+
+**RED**: timectx differential 0/27 — all programs failed with
+`IllegalArgumentException: illegal conversion: BOOL -> UNTYPED_BOOL` at
+`NodeFactory.buildUnary` → `maybeConvert`.
+
+**Root cause**: go/types infers `untyped bool` (not `bool`) for the unary
+`!` in `if !(s[0] == '.' || ('0' <= s[0] && s[0] <= '9'))` within the
+synthetic `__parseDuration` (verified via standalone type-check: the full
+package context yields untyped, a minimal snippet yields typed — a
+go/types quirk). The exporter emitted type 101 (`untyped bool`); the
+frozen `ConvertNode.checkCombo` rejects `BOOL -> UNTYPED_BOOL`. Since the
+synthetic `time` package is compiled whole, this broke every
+`import "time"` program.
+
+**Fix** (commit 8692da5): rewrote as De Morgan equivalent
+`if s[0] != '.' && (s[0] < '0' || s[0] > '9')` — no `!(...)`, no untyped
+bool. P3-M5's own synthetic source (not frozen Phase-1 interface).
+
+**GREEN**: tc00 runs end-to-end (output: non-zero, unix-positive,
+unixnano-positive, monotonic, sub-nonnegative). Full differential
+re-running.
