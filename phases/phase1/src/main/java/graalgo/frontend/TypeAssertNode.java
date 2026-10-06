@@ -33,9 +33,12 @@ public final class TypeAssertNode extends GoExprNode {
     private final String assertedName; // Go-syntax asserted type (e.g. "int")
     /**
      * P3-M3 (WS D): when asserting to a non-empty interface, the asserted
-     * interface's method names and the per-document dynamic-type method
-     * sets (descriptor name → method names). Both null for non-interface
-     * targets.
+     * interface's method implkeys (method name + structural signature —
+     * see export.go {@code implKeyOf}) and the per-document dynamic-type
+     * method implkey sets (descriptor name → implkeys). Both null for
+     * non-interface targets. The runtime implements check is a subset
+     * test on implkeys, so a same-name/wrong-signature method does NOT
+     * satisfy the assertion (gc parity; R1 P0-1).
      */
     private final List<String> assertedIfaceMethods;
     private final Map<String, Set<String>> dynamicMethodSets;
@@ -67,10 +70,12 @@ public final class TypeAssertNode extends GoExprNode {
 
     /**
      * P3-M3 (WS D): assertion to a non-empty interface holds when the
-     * dynamic type's method set covers the asserted interface's methods
-     * (the runtime half of the implements check; go/types verified the
-     * static side where one exists — assertions from the empty interface
-     * have no static side, hence the runtime check).
+     * dynamic type's method implkey set covers the asserted interface's
+     * implkeys (the runtime half of the implements check; go/types verified
+     * the static side where one exists — assertions from the empty
+     * interface have no static side, hence the runtime check). Implkeys
+     * (not bare names) make the check signature-aware: a method with the
+     * right name but the wrong signature does not satisfy the assertion.
      */
     static boolean holds(GoInterface gi, GoTypeDescriptor asserted,
                          List<String> assertedIfaceMethods,

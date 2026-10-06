@@ -1108,18 +1108,24 @@ public final class NodeFactory {
     }
 
     /**
-     * Method names of an interface type-table id (P3-M3, WS D): the
-     * {@code "methods"} list of the {@code "interface"} entry, following
-     * {@code named}→{@code underlying} and aliases. Empty when the id does
-     * not denote an interface.
+     * Method implkeys of an interface type-table id (P3-M3, WS D): the
+     * {@code "implkey"} of each entry in the {@code "interface"} entry's
+     * {@code "methods"} list, following {@code named}→{@code underlying}
+     * and aliases. Empty when the id does not denote an interface.
+     *
+     * <p>An implkey is the method-identity key the exporter computes
+     * (method name, unexported names package-qualified, plus a structural
+     * signature key with aliases expanded — see export.go {@code implKeyOf});
+     * comparing implkeys (not bare names) is what makes the assertion
+     * implements check signature-aware (R1 P0-1).
      */
-    static Set<String> interfaceMethodNames(BuildCtx ctx, int typeId, String path) {
+    static Set<String> interfaceMethodImplKeys(BuildCtx ctx, int typeId, String path) {
         typeId = resolveAlias(ctx, typeId, path);
         for (int steps = 0; steps < MAX_TYPE_CHAIN_STEPS; steps++) {
             Json.Object entry = ctx.types.entry(typeId, path);
             String k = entry.string("kind", path);
             if ("interface".equals(k)) {
-                return methodNameSet(entry.object("detail", path), path);
+                return methodImplKeys(entry.object("detail", path), path);
             }
             if (!"named".equals(k)) {
                 return Set.of();
@@ -1129,30 +1135,39 @@ public final class NodeFactory {
         throw new FrontendException(path + ": type chain exceeds bound following named→underlying (WS E)");
     }
 
-    /** Names of a type-table entry's {@code detail.methods} list (tolerates a missing list). */
-    private static Set<String> methodNameSet(Json.Object detail, String path) {
-        Set<String> names = new HashSet<>();
+    /**
+     * Implkeys of a type-table entry's {@code detail.methods} list
+     * (tolerates a missing list). A missing {@code "implkey"} on an entry
+     * is a corrupt 0.4.0 document — fail fast, never fall back to the
+     * name-only comparison (that fallback IS the R1 P0-1 soundness hole).
+     */
+    private static Set<String> methodImplKeys(Json.Object detail, String path) {
+        Set<String> keys = new HashSet<>();
         Json.Value mv = detail.opt("methods");
         if (!(mv instanceof Json.Array methods)) {
-            return names;
+            return keys;
         }
         for (int i = 0; i < methods.size(); i++) {
             Json.Value e = methods.get(i);
             if (e instanceof Json.Object mo) {
-                names.add(mo.string("name", path));
+                keys.add(mo.string("implkey", path));
             }
         }
-        return names;
+        return keys;
     }
 
     /**
-     * P3-M3 (WS D): descriptor name → method names for every
+     * P3-M3 (WS D): descriptor name → method implkeys for every
      * {@code named}/{@code pointer} type-table entry, memoized per build.
      * Descriptor names replicate {@link #typeDescriptorFor} exactly
      * ({@code named} → qualified name; {@code pointer} → structural
      * {@code "pointer#"+hex}), so the keys match the dynamic-type
-     * descriptors boxing produces at runtime. Consumed by type assertions
-     * to non-empty interfaces (the implements check).
+     * descriptors boxing produces at runtime. Each implkey is the
+     * exporter's method-identity key (name + structural signature, see
+     * {@link #interfaceMethodImplKeys}) — the implements check compares
+     * implkeys, not bare names, so same-name/wrong-signature methods do
+     * not satisfy an assertion (R1 P0-1). Consumed by type assertions to
+     * non-empty interfaces.
      */
     static Map<String, Set<String>> dynamicMethodSets(BuildCtx ctx, String path) {
         if (ctx.dynamicMethodSets != null) {
@@ -1164,11 +1179,11 @@ public final class NodeFactory {
             String k = entry.string("kind", path);
             Json.Object detail = entry.object("detail", path);
             if ("named".equals(k)) {
-                out.put(detail.string("name", path), methodNameSet(detail, path));
+                out.put(detail.string("name", path), methodImplKeys(detail, path));
             } else if ("pointer".equals(k)) {
                 // Must equal typeDescriptorFor's structural naming.
                 String key = structuralKey(ctx, id, path);
-                out.put("pointer#" + Integer.toHexString(key.hashCode()), methodNameSet(detail, path));
+                out.put("pointer#" + Integer.toHexString(key.hashCode()), methodImplKeys(detail, path));
             }
         }
         ctx.dynamicMethodSets = out;
@@ -3293,7 +3308,7 @@ public final class NodeFactory {
             List<String> ifaceMethods = null;
             Map<String, Set<String>> dynMethods = null;
             if (ak == GoKind.INTERFACE && !adesc.isEmptyInterface()) {
-                ifaceMethods = new ArrayList<>(interfaceMethodNames(ctx, assertTypeId, path));
+                ifaceMethods = new ArrayList<>(interfaceMethodImplKeys(ctx, assertTypeId, path));
                 dynMethods = dynamicMethodSets(ctx, path);
             }
             GoStructDescriptor sd = ak == GoKind.STRUCT
@@ -4105,7 +4120,7 @@ public final class NodeFactory {
         List<String> ifaceMethods = null;
         Map<String, Set<String>> dynMethods = null;
         if (ak == GoKind.INTERFACE && !adesc.isEmptyInterface()) {
-            ifaceMethods = new ArrayList<>(interfaceMethodNames(ctx, assertTid, path));
+            ifaceMethods = new ArrayList<>(interfaceMethodImplKeys(ctx, assertTid, path));
             dynMethods = dynamicMethodSets(ctx, path);
         }
         GoStructDescriptor sd =

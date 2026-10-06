@@ -66,7 +66,7 @@ entries by index. Shape: `{ "kind": "<kind>", "detail": { ... } }`.
 | kind | detail fields |
 |---|---|
 | `basic` | `name` (e.g. `"int64"`), `class` ∈ {`bool`,`int`,`uint`,`float`,`complex`,`string`,`pointer`,`untyped`,`unknown`}, `untyped` bool |
-| `named` | `name` (qualified `"path.Name"`, or bare for universe scope), `underlying`: type id, `methods`: [{`name`, `obj`: funcdecl object id, `recv` ∈ {`value`,`pointer`} (declared receiver kind)}] — populated since P3-M3 (ADR-0003) via `types.NewMethodSet` (covers promoted/embedded methods); interface-declared methods (no funcdecl) and template methods are skipped |
+| `named` | `name` (qualified `"path.Name"`, or bare for universe scope), `underlying`: type id, `methods`: [{`name`, `obj`: funcdecl object id, `recv` ∈ {`value`,`pointer`} (declared receiver kind), `index`: receiver-adaptation path — `Selection.Index()` minus its last entry, `[]` for direct methods, `[0]` for a method promoted via embedded field 0, `null` for the unsupported value-embedded/pointer-receiver shape (itab build fails fast with a named error if dispatched), `implkey`: method-identity key — method name (unexported names package-qualified) + `\x00` + structural signature key with aliases expanded (so `Write([]uint8)` and `Write([]byte)` share a key); the runtime implements check compares `implkey`s, not bare names}] — populated since P3-M3 (ADR-0003) via `types.NewMethodSet` (covers promoted/embedded methods); interface-declared methods (no funcdecl) and template methods are skipped |
 | `pointer` | `elem`: type id, `methods`: same shape as `named` — the full `*T` method set (value + pointer receivers; P3-M3/ADR-0003) |
 | `slice` | `elem`: type id |
 | `array` | `len`: int, `elem`: type id |
@@ -74,7 +74,7 @@ entries by index. Shape: `{ "kind": "<kind>", "detail": { ... } }`.
 | `chan` | `dir` ∈ {`both`,`send`,`recv`}, `elem`: type id |
 | `struct` | `fields`: [{`name`, `type`: id, `tag`, `embedded`: bool, `offset`: bytes via `types.SizesFor("gc","amd64")`}] |
 | `signature` | `params`, `results`: [{`name`, `type`: id}], `variadic`: bool |
-| `interface` | `empty`: bool, `methods`: [{`name`, `sig`: id}], `embedded`: [ids] |
+| `interface` | `empty`: bool, `methods`: [{`name`, `sig`: id, `implkey`: method-identity key, same computation as on `named`/`pointer` `methods` entries — the assertion implements check tests `implkey` inclusion}], `embedded`: [ids] |
 | `union` | `terms`: [{`tilde`: bool, `type`: id}] |
 | `typeparam` | `name`, `constraint`: type id |
 | `alias` | `name` (qualified), `rhs`: type id |
