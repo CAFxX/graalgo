@@ -129,6 +129,17 @@ public final class GoFuncRootNode extends RootNode {
                 }
                 arg = data;
             }
+            // P3-M4 (WS C): atomic cells are Go values: a by-value
+            // parameter gets its own cell (clone), so `f(a)` cannot
+            // observe or affect the caller's cell — like gc. (Struct
+            // by-value params are not deep-copied today, a pre-existing
+            // gap out of M4 scope; atomic cells clone because their
+            // entire state is the integer.)
+            if (arg instanceof java.util.concurrent.atomic.AtomicLong al) {
+                arg = new java.util.concurrent.atomic.AtomicLong(al.get());
+            } else if (arg instanceof java.util.concurrent.atomic.AtomicInteger ai) {
+                arg = new java.util.concurrent.atomic.AtomicInteger(ai.get());
+            }
             Boxing.setSlot(frame, paramSlots[i], paramKinds[i], arg);
         }
         GoroutineState state = GoroutineState.current();

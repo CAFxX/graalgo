@@ -89,6 +89,18 @@ final class Boxing {
         if (value instanceof GoStruct gs && kind == GoKind.STRUCT) {
             return gs.deepCopy();
         }
+        // P3-M4 (WS C, ADR-0004 D2): atomic cells are values in Go (the
+        // struct copy copies the integer; copying is a vet error but
+        // defined). The cell's entire state is the integer, so a copy
+        // clones it — `b := a; b.Store(7)` leaves a alone, like gc.
+        // (sync.Mutex etc. keep reference semantics per ADR-0002 D1: a
+        // lock has no meaningful value-copy.)
+        if (value instanceof java.util.concurrent.atomic.AtomicLong al) {
+            return new java.util.concurrent.atomic.AtomicLong(al.get());
+        }
+        if (value instanceof java.util.concurrent.atomic.AtomicInteger ai) {
+            return new java.util.concurrent.atomic.AtomicInteger(ai.get());
+        }
         if (value instanceof GoInterface gi && kind == GoKind.INTERFACE) {
             // Boxing a struct/array into an interface copies the value.
             Object d = gi.data();
