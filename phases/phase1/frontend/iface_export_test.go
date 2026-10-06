@@ -650,7 +650,6 @@ func main() {
 	}
 }
 
-
 // TestIfaceImplKey (R1 P0-1): method-table entries and interface method
 // entries carry "implkey" (method name + structural signature, aliases
 // expanded). Write([]byte) [interface] and Write(s B) with `type B =
