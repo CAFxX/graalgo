@@ -377,3 +377,30 @@ methods) — documented in ADR-0005, re-test on WS D. (c) tc11 fails (WS E
 limitation) — documented with re-test trigger.
 
 **GG-0017:** time/ctx slice activated via `verifies:` annotations.
+
+## P3-M5 accepted (supervisor verification, 2026-10-07 ~01:30 CEST)
+
+- Sign-off tree 0c7f252 + supervisor remediation bc2ea38.
+- Coordinator report: time lowers onto Phase-2 timers (DIV-M3-1 verified via tc07:
+  len/cap of After/Timer.C/Ticker.C are 0, byte-identical to gc); context lowers
+  via P3-M3 concrete types; Deadline() omitted from synthetic Context (v1 cannot
+  emit multi-result methods, ADR-0005, re-test trigger on WS D).
+- Supervisor found the sign-off tree RED: testCheckRejectsScopeError failed
+  (M5-introduced, not pre-existing as claimed). Root cause: writeTempGo wraps the
+  body inside func main(), so the nested `func f() (int,int)` decl was a Go
+  syntax error firing before the WS D scope check. Fixed with a func literal
+  (valid inside main, rejected by NodeFactory with the WS D message). Two prior
+  fix attempts (bbc24c4, 382de69) missed the wrapping.
+- Also caught during verification: /tmp 100% full (512M tmpfs) poisoned the
+  typeparam differential with a phantom "1 divergence"; cleaned 300M+ of stale
+  worktree/repro/go-build dirs, re-ran green.
+- Independent verification on the fixed tree: phase-1 211/211, phase-2 194/194,
+  phase-3 58/58, p3frontend ok, phase3 check clean, timectx differential 25/27
+  (tc11 gmp=1,4 fail on documented WS E interface-conversion limitation).
+- Reviews committed: reviews/phase3-m5/reviewer1.md (FAIL -> 8 P1 + 12 P2 all
+  remediated), reviewer2.md (PASS -> 2 P1 remediated); 18 remediation commits.
+- Process lesson: a coordinator's "pre-existing failures" claim must be checked
+  against the actual failing test's history, not taken at face value; and /tmp
+  fullness is now a pre-suite-run check (Makefile already routes GOTMPDIR to
+  out/test-tmp, but stray /tmp consumers can still fill the tmpfs).
+- Next: P3-M6 (stdlib fork mechanics).
