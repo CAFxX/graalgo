@@ -24,18 +24,36 @@ public final class AppendNode extends GoExprNode {
     private final GoKind elemKind;
     /** True for append(s, x...) where x is a string (spread its bytes). */
     private final boolean ellipsis;
+    /**
+     * Element size in bytes for the growslice math (P3-M4): for structs,
+     * the ABI size from the descriptor (0 = unknown → the zero-size
+     * path, which is only correct for actual zero-size types).
+     */
+    private final long elemSizeBytes;
 
     public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren) {
-        this(sliceChild, elemKind, elemChildren, false);
+        this(sliceChild, elemKind, elemChildren, false, 0);
     }
 
     public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren,
             boolean ellipsis) {
+        this(sliceChild, elemKind, elemChildren, ellipsis, 0);
+    }
+
+    public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren,
+            boolean ellipsis, long elemSizeBytes) {
         super(GoKind.SLICE);
         this.sliceChild = sliceChild;
         this.elemKind = elemKind;
         this.elemChildren = elemChildren;
         this.ellipsis = ellipsis;
+        this.elemSizeBytes = elemSizeBytes;
+    }
+
+    /** Effective element size for growslice: the struct ABI size when
+     * supplied, else the kind's natural size. */
+    private long effectiveElemSize() {
+        return elemSizeBytes != 0 ? elemSizeBytes : Intrinsics.elemSizeBytes(elemKind);
     }
 
     @Override
@@ -62,7 +80,9 @@ public final class AppendNode extends GoExprNode {
                 if (s != null && n <= s.cap() - s.len()) {
                     out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
                 } else {
-                    out = Intrinsics.growslice(s, elemKind, n);
+                    int newLen1 = (s == null ? 0 : s.len()) + n;
+                    out = Intrinsics.growslice(s, elemKind, newLen1, effectiveElemSize(),
+                            Intrinsics.elemHasPointers(elemKind));
                 }
                 Object arr = out.array();
                 int base = out.offset() + (s == null ? 0 : s.len());
@@ -84,7 +104,9 @@ public final class AppendNode extends GoExprNode {
                 if (s != null && n <= s.cap() - s.len()) {
                     out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
                 } else {
-                    out = Intrinsics.growslice(s, elemKind, n);
+                    int newLen1 = (s == null ? 0 : s.len()) + n;
+                    out = Intrinsics.growslice(s, elemKind, newLen1, effectiveElemSize(),
+                            Intrinsics.elemHasPointers(elemKind));
                 }
                 Object arr = out.array();
                 int base = out.offset() + (s == null ? 0 : s.len());
@@ -135,7 +157,9 @@ public final class AppendNode extends GoExprNode {
         if (s != null && n <= s.cap() - s.len()) {
             out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
         } else {
-            out = Intrinsics.growslice(s, elemKind, n);
+            int newLen2 = (s == null ? 0 : s.len()) + n;
+            out = Intrinsics.growslice(s, elemKind, newLen2, effectiveElemSize(),
+                    Intrinsics.elemHasPointers(elemKind));
         }
         Object arr = out.array();
         // M7: appending to a nil slice is legal (treat as empty); growslice

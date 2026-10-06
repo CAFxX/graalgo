@@ -393,6 +393,31 @@ public final class Intrinsics {
     }
 
     /**
+     * The ABI size in bytes of a struct type (P3-M4, WS C): Go field
+     * layout — fields in declaration order, each aligned to its natural
+     * alignment, struct size rounded up to the max field alignment.
+     * Only flat structs with basic-kind fields are supported; nested
+     * structs/arrays fail fast (their sizes are not on the wire).
+     */
+    public static long structSizeBytes(graalgo.values.GoStructDescriptor desc) {
+        long offset = 0;
+        long maxAlign = 1;
+        for (graalgo.values.GoStructDescriptor.Field f : desc.fields()) {
+            long fieldSize = elemSizeBytes(f.kind());
+            if (fieldSize == 0) {
+                throw new graalgo.frontend.FrontendException("structSizeBytes: field \"" + f.name()
+                        + "\" has non-basic kind " + f.kind()
+                        + " (nested structs/arrays not in M4 scope)");
+            }
+            long align = Math.min(fieldSize, 8);
+            maxAlign = Math.max(maxAlign, align);
+            offset = (offset + align - 1) / align * align;
+            offset += fieldSize;
+        }
+        return (offset + maxAlign - 1) / maxAlign * maxAlign;
+    }
+
+    /**
      * Convenience overload for {@code append}: grows {@code old} by
      * {@code additional} elements. {@code old} may be null (append to nil).
      */

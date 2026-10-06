@@ -2533,14 +2533,29 @@ public final class NodeFactory {
         if (t instanceof Json.Null || t == null) {
             throw new FrontendException(path + ": append without a result type id");
         }
-        GoKind elemKind = builtinElemKind(ctx, f.intValue("type", path), path, "append");
+        int typeId = f.intValue("type", path);
+        Json.Object entry = underlyingEntry(ctx, typeId, path);
+        Json.Object detail = entry.object("detail", path);
+        if (!detail.has("elem")) {
+            throw new FrontendException(path + ": append on non-composite type");
+        }
+        int elemId = detail.intValue("elem", path);
+        GoKind elemKind = kindOf(ctx, elemId, path);
         // M7: append(s, x...) with a string x spreads the string's bytes.
         boolean ellipsis = false;
         Json.Value e = f.opt("ellipsis");
         if (e instanceof Json.Bool b) {
             ellipsis = b.value();
         }
-        return new AppendNode(args[0], elemKind, Arrays.copyOfRange(args, 1, args.length), ellipsis);
+        // P3-M4 (WS C): struct elements need their ABI size for the
+        // growslice math (elemSizeBytes(STRUCT) is 0 by design).
+        long elemSizeBytes = 0;
+        if (elemKind == GoKind.STRUCT) {
+            elemSizeBytes = graalgo.runtime.Intrinsics.structSizeBytes(
+                    structDescriptorFor(ctx, elemId, path));
+        }
+        return new AppendNode(args[0], elemKind, Arrays.copyOfRange(args, 1, args.length),
+                ellipsis, elemSizeBytes);
     }
 
     /** {@code copy(dst, src)}: slice-to-slice only (string sources are WS D). */
