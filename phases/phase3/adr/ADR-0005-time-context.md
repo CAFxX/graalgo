@@ -335,11 +335,6 @@ precedent ("the D3 field lists are shorthand"), the Appendix C field
 lists are likewise shorthand:
 - `"makechan"` also carries `type` (the channel type-table id, for the
   frame slot); `size` is absent (not null) when unbuffered.
-- `"recv"` also carries `commaOk: bool` (always present, mirroring the
-  `index` node): true for the `v, ok := <-ch` shape, in which case
-  `type` is the element type. Replaces the old `"unary"` `<-` emission
-  (the frozen `UnaryOpNode` never implemented `<-`); the `"unary"` op
-  set is unchanged (`+ - ! ^`).
 - `"selectcase"` is a real node kind (`{kind, pos, fields}`), like
   `caseclause`/`typecase`.
 - `for v := range ch` (not listed above — the v1 `"range"` node has no
