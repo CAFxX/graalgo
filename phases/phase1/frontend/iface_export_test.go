@@ -605,3 +605,48 @@ func main() {
 		t.Fatal("no *V pointer entry carries Write")
 	}
 }
+
+// TestIfaceMethodCallAliasReceiver (R1 P1-1): a method call through an
+// alias of an interface type (type W = Writer) exports an "ifacemethod"
+// wire node — the alias unwraps to the named interface, whose underlying
+// interface entry is the "iface" id. Pre-fix this failed export with
+// "receiver static type main.W is not an interface (exporter bug)".
+func TestIfaceMethodCallAliasReceiver(t *testing.T) {
+	const src = `package main
+
+type Writer interface{ Write(p []byte) int }
+type W = Writer
+
+type Buf struct{ n int }
+
+func (b *Buf) Write(p []byte) int { b.n += len(p); return len(p) }
+
+func main() {
+	var w W = &Buf{}
+	println(w.Write([]byte("hi")))
+}
+`
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with alias-of-interface receiver: %v", err)
+	}
+	doc := decodeExport(t, out)
+	nodes := findAllKind(doc, "ifacemethod")
+	if len(nodes) != 1 {
+		t.Fatalf("ifacemethod nodes = %d, want 1", len(nodes))
+	}
+	f := fieldsOf(nodes[0])
+	if f["method"] != "Write" {
+		t.Fatalf("method = %v, want Write", f["method"])
+	}
+	// The iface id is the underlying interface entry of main.Writer
+	// (the alias resolves to the named type; the named type's
+	// underlying is the interface entry).
+	entries := typeEntries(t, doc)
+	_, wdetail := findNamedEntry(t, entries, "main.Writer")
+	under, _ := wdetail["underlying"].(float64)
+	if f["iface"] != under {
+		t.Fatalf("iface id = %v, want main.Writer's underlying interface id %v", f["iface"], under)
+	}
+}
+

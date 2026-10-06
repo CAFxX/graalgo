@@ -4492,8 +4492,10 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	// of a named type whose underlying is the interface. The dispatch
 	// site's caller has already established an interface underlying;
 	// anything else reaching here is an exporter bug — fail fast, never
-	// emit a corrupt id.
-	ifaceType := selection.Recv()
+	// emit a corrupt id. Aliases (type W = Writer) unwrap first: the
+	// receiver's static type may be a *types.Alias whose underlying is
+	// the interface (R1 P1-1).
+	ifaceType := types.Unalias(selection.Recv())
 	if nt, ok := ifaceType.(*types.Named); ok {
 		ui, ok := nt.Underlying().(*types.Interface)
 		if !ok {
