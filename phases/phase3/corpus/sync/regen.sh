@@ -1,12 +1,17 @@
 #!/bin/bash
-# Regenerates .expected (stdout) and .panic (first stderr line) files for
-# the P3-M2b sync corpus using stock gc 1.27.1. Review the diff before
-# committing: a changed .expected means a semantic change.
+# Regenerates .expected (stdout) and .panic.gc (gc's first stderr line)
+# files for the P3-M2b sync corpus using stock gc 1.27.1. Review the diff
+# before committing: a changed .expected means a semantic change.
 #
-# Panic programs (sy03, sy05, sy08): gc's first stderr line goes to
-# .panic.gc; the graalgo leg's expected first line goes to .panic (these
-# differ for sy03/sy05 by the ADR-0002 D4 scoped divergence: gc
-# fatal-errors, graalgo panics — same message text, same exit code).
+# .panic files (the graalgo leg's expected first stderr line) are NOT
+# written by this script — they are hand-maintained, since for the D4
+# scoped-divergence programs they intentionally differ from gc.
+#
+# Panic programs (sy03, sy05, sy08, sy12, sy13, sy14, sy15): gc's first
+# stderr line goes to .panic.gc; the graalgo leg's expected first line
+# goes to .panic (these differ for sy03/sy05 by the ADR-0002 D4 scoped
+# divergence: gc fatal-errors, graalgo panics — same message text, same
+# exit code).
 set -euo pipefail
 cd "$(dirname "$0")"
 export PATH="$HOME/tools/go-1.27.1/bin:$PATH"

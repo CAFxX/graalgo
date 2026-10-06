@@ -114,7 +114,7 @@ re-test trigger below.
   cap-1 leg, sy04 RWMutex 16×500+2×100, sy06/sy07 WaitGroup 50 workers +
   reuse + negative-counter, sy10 Once 32 racers) — differential vs gc
   1.27.1, 22/22 byte-identical. Evidence: `phases/phase3/src/p3frontend/SYNC_DESIGN.md`
-  §7.5, `phases/phase3/corpus/sync/README.md`.
+  §7 item 5, `phases/phase3/corpus/sync/README.md`.
 - **F2 (O2–O5) not ported as a battery leg:** O2–O4 covered at unit level
   (ChannelTest, TimerTest/TimerDifferentialTest); O5 (spin-barrier scale)
   has no torture-level equivalent. **Re-test trigger:** port the O5

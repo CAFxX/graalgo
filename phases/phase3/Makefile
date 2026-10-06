@@ -2,11 +2,17 @@
 #
 # Own build module mirroring the Phase-2 layout. Phase 1 and Phase 2 are
 # consumed as FROZEN dependencies: this module compiles against their
-# out/classes and NEVER modifies their sources (the single documented
-# exception is the exporter's synthetic sync package + syncnew/syncop
-# wire nodes, a separate Phase-1 commit under the freeze change policy;
-# the Java side consumes the new kinds through the public
-# NodeFactory.registerExprKind hook — no NodeFactory change).
+# out/classes and does not modify their sources. Documented exceptions:
+# the exporter's synthetic sync package + syncnew/syncop wire nodes (a
+# separate Phase-1 commit under the freeze change policy; the Java side
+# consumes the new kinds through the public NodeFactory.registerExprKind
+# hook — no NodeFactory change). Phase-2 sources are frozen post-sign-off;
+# M2a's edits (052c752: GoChan un-final'd, GoTimer, new TimerChan +
+# phase-2 test — behavior-preserving, red-green evidenced in
+# phases/phase3/hidden_files/m2/redgreen.md, 194/194 green) were the first
+# documented exception, and the P3-M2remed P1-2 one-word gc-parity message
+# fix in GoRWMutex the second. Future phase-2 source edits each get their
+# own ADR.
 #
 # Classpath order is load-bearing: phase3/out/classes comes FIRST, then
 # phase2/out/classes (so the Phase-2 "owns" same-FQN replacements shadow

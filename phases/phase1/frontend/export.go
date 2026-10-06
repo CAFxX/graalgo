@@ -2467,12 +2467,6 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 // exportSyncDefer desugars `defer m.Op(args)` on a sync primitive (see
 // exportDeferStmt). The returned node is a "defer" wrapping a "call" of a
 // synthesized funclit — all additive v1 wire, no factory change.
-// exportSyncDefer desugars `defer m.Op(args)` on a sync primitive (see
-// exportDeferStmt). The returned node is a "defer" wrapping a "call" of a
-// synthesized funclit — all additive v1 wire, no factory change.
-// exportSyncDefer desugars `defer m.Op(args)` on a sync primitive (see
-// exportDeferStmt). The returned node is a "defer" wrapping a "call" of a
-// synthesized funclit — all additive v1 wire, no factory change.
 //
 // Receiver semantics (verified against gc 1.27.1): a method with pointer
 // receiver called on a value-typed receiver R uses &R — the ADDRESS — so a

@@ -64,9 +64,16 @@ overlay packages are INTERNAL per freeze §1, not enumerated in frozen
    `graalgo.p3sync.nodes`): `SyncNewNode`/`SyncOpNode` builders registered
    via the public `registerExprKind` hook; a phase-3 launcher
    (`graalgo.p3sync.launcher.P3SyncMain`) mirroring `SchedMain`'s flow with
-   classpath phase3 > phase2 > phase1. **No `phases/phase2/` source is
-   modified** (Phase 2 is signed off); **no Phase-1 file changes** beyond
-   this ADR's exception.
+   classpath phase3 > phase2 > phase1. **No Phase-1 file changes** beyond
+   this ADR's exception. Phase-2 sources are **frozen post-sign-off**;
+   the documented exceptions to date:
+   - **M2a** (`052c752`, DIV-M3-1 fix): `GoChan` un-final'd, `GoTimer`
+     retargeted, new `TimerChan` + phase-2 test — behavior-preserving,
+     red-green evidenced in
+     `phases/phase3/hidden_files/m2/redgreen.md`, phase-2 suite 194/194.
+   - **P3-M2remed P1-2**: one-word gc-parity fix to `GoRWMutex`'s unlock
+     message (`sync: Unlock of unlocked RWMutex`, capital U).
+   Future phase-2 source edits each get their own ADR.
 5. **Version**: `gofrontend` toolVersion **0.2.0 → 0.3.0** per freeze §5
    ("any CLI/JSON behavior change"): `import "sync"` previously a scope
    error now compiles, and the JSON gains the two node kinds. Wire stays
@@ -221,8 +228,8 @@ exporter desugars (all standard v1 wire, no factory change):
   Go program using `import "sync"` (mutex exclusion 32×1000, cap-1,
   unlock-misuse message, RWMutex readers/writers, WaitGroup 50 workers +
   reuse + negative-counter message, Once 32 racers) — differential vs gc.
-- Suites stay green: phase-1 (208/208), phase-2 (193/193), p3frontend
-  (`go test`).
+- Suites stay green: phase-1 (208/208), phase-2 (194/194, post-DIV-M3-1-fix),
+  p3frontend (`go test`).
 - `verifies: GG-0017` annotations on the new Java nodes (GG-0017 already
   →active since P2-M1; this activates its sync slice).
 
