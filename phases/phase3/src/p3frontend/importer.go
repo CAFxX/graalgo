@@ -73,6 +73,14 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticSyncPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "sync/atomic":
+		pkg := syntheticAtomicPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "unsafe":
+		pkg := syntheticUnsafePackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	}
 	ref, err := imp.loader.ResolveImport(imp.mainDir, path)
 	if err != nil {
@@ -298,4 +306,110 @@ func syncLockerInterface(pkg *types.Package) types.Type {
 		types.NewFunc(token.NoPos, pkg, "Unlock",
 			types.NewSignatureType(nil, nil, nil, nil, nil, false)),
 	}, nil).Complete()
+}
+
+// syntheticAtomicPackage mirrors the frozen P3-M4 synthetic "sync/atomic"
+// (phases/phase1/frontend/export.go's syntheticAtomicPackage, reimplemented
+// — the frozen original is unexported, so this is matched, not reused).
+// The six typed wrappers with exact gc 1.27.1 method signatures (pointer
+// receivers), plus the package-level functions with exact signatures.
+func syntheticAtomicPackage() *types.Package {
+	pkg := types.NewPackage("sync/atomic", "atomic")
+	int64T := types.Typ[types.Int64]
+	uint64T := types.Typ[types.Uint64]
+	int32T := types.Typ[types.Int32]
+	uint32T := types.Typ[types.Uint32]
+	boolT := types.Typ[types.Bool]
+	uintptrT := types.Typ[types.Uintptr]
+	emptyStruct := types.NewStruct(nil, nil)
+	param := func(name string, t types.Type) *types.Var {
+		return types.NewParam(token.NoPos, pkg, name, t)
+	}
+	tuple := func(v *types.Var) *types.Tuple {
+		return types.NewTuple(v)
+	}
+
+	newWrapper := func(name string) *types.Named {
+		tname := types.NewTypeName(token.NoPos, pkg, name, nil)
+		pkg.Scope().Insert(tname)
+		return types.NewNamed(tname, emptyStruct, nil)
+	}
+	addMethod := func(named *types.Named, name string, params, results *types.Tuple) {
+		recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(named))
+		sig := types.NewSignatureType(recv, nil, nil, params, results, false)
+		named.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
+	}
+	// The five M4 ops per wrapper: Load() T, Store(T), Add(T) T,
+	// Swap(T) T, CompareAndSwap(T, T) bool. And/Or defined, rejected.
+	fiveOps := func(named *types.Named, t types.Type) {
+		boolRes := tuple(param("", boolT))
+		addMethod(named, "Load", nil, tuple(param("", t)))
+		addMethod(named, "Store", tuple(param("val", t)), nil)
+		addMethod(named, "Add", tuple(param("delta", t)), tuple(param("new", t)))
+		addMethod(named, "Swap", tuple(param("new", t)), tuple(param("old", t)))
+		addMethod(named, "CompareAndSwap",
+			types.NewTuple(param("old", t), param("new", t)), boolRes)
+		addMethod(named, "And", tuple(param("mask", t)), tuple(param("old", t)))
+		addMethod(named, "Or", tuple(param("mask", t)), tuple(param("old", t)))
+	}
+	fiveOps(newWrapper("Int64"), int64T)
+	fiveOps(newWrapper("Uint64"), uint64T)
+	fiveOps(newWrapper("Int32"), int32T)
+	fiveOps(newWrapper("Uint32"), uint32T)
+	fiveOps(newWrapper("Uintptr"), uintptrT)
+	// Bool has no Add/And/Or in gc.
+	b := newWrapper("Bool")
+	boolRes := tuple(param("", boolT))
+	addMethod(b, "Load", nil, tuple(param("", boolT)))
+	addMethod(b, "Store", tuple(param("val", boolT)), nil)
+	addMethod(b, "Swap", tuple(param("new", boolT)), tuple(param("old", boolT)))
+	addMethod(b, "CompareAndSwap",
+		types.NewTuple(param("old", boolT), param("new", boolT)), boolRes)
+
+	// Package-level functions: exact gc signatures.
+	addFunc := func(name string, params, results *types.Tuple) {
+		sig := types.NewSignatureType(nil, nil, nil, params, results, false)
+		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, name, sig))
+	}
+	for _, wt := range []types.Type{int32T, int64T} {
+		nm := map[types.Type]string{int32T: "Int32", int64T: "Int64"}[wt]
+		paddr := types.NewPointer(wt)
+		addFunc("Load"+nm, tuple(param("addr", paddr)), tuple(param("", wt)))
+		addFunc("Store"+nm, types.NewTuple(param("addr", paddr), param("val", wt)), nil)
+		addFunc("Add"+nm, types.NewTuple(param("addr", paddr), param("delta", wt)), tuple(param("new", wt)))
+		addFunc("Swap"+nm, types.NewTuple(param("addr", paddr), param("new", wt)), tuple(param("old", wt)))
+		addFunc("CompareAndSwap"+nm,
+			types.NewTuple(param("addr", paddr), param("old", wt), param("new", wt)), boolRes)
+	}
+	for _, wt := range []types.Type{uint32T, uint64T, uintptrT} {
+		nm := map[types.Type]string{uint32T: "Uint32", uint64T: "Uint64", uintptrT: "Uintptr"}[wt]
+		paddr := types.NewPointer(wt)
+		addFunc("Load"+nm, tuple(param("addr", paddr)), tuple(param("", wt)))
+		addFunc("Store"+nm, types.NewTuple(param("addr", paddr), param("val", wt)), nil)
+		addFunc("Add"+nm, types.NewTuple(param("addr", paddr), param("delta", wt)), tuple(param("new", wt)))
+		addFunc("Swap"+nm, types.NewTuple(param("addr", paddr), param("new", wt)), tuple(param("old", wt)))
+		addFunc("CompareAndSwap"+nm,
+			types.NewTuple(param("addr", paddr), param("old", wt), param("new", wt)), boolRes)
+	}
+	{
+		paddr := types.NewPointer(boolT)
+		addFunc("LoadBool", tuple(param("addr", paddr)), tuple(param("", boolT)))
+		addFunc("StoreBool", types.NewTuple(param("addr", paddr), param("val", boolT)), nil)
+		addFunc("SwapBool", types.NewTuple(param("addr", paddr), param("new", boolT)), tuple(param("old", boolT)))
+		addFunc("CompareAndSwapBool",
+			types.NewTuple(param("addr", paddr), param("old", boolT), param("new", boolT)), boolRes)
+	}
+
+	pkg.MarkComplete()
+	return pkg
+}
+
+// syntheticUnsafePackage mirrors the frozen P3-M4 empty synthetic "unsafe"
+// (phases/phase1/frontend/export.go's syntheticUnsafePackage): it exists
+// only so `import _ "unsafe"` (required by //go:linkname directives)
+// type-checks.
+func syntheticUnsafePackage() *types.Package {
+	pkg := types.NewPackage("unsafe", "unsafe")
+	pkg.MarkComplete()
+	return pkg
 }
