@@ -2397,6 +2397,11 @@ func (e *exporter) freshSigID(recv *types.Var, params, results *types.Tuple, var
 	e.types = append(e.types, TypeEnt{Kind: "signature", Detail: map[string]any{
 		"params": pp, "results": rr, "variadic": variadic,
 	}})
+	// R2 P2-3: keep e.typeList parallel to e.types (recomputeMethodTables
+	// indexes e.types by e.typeList position). Signature entries have no
+	// go/types type to record — the placeholder preserves the invariant;
+	// the sole typeList consumer skips nil via its type switch.
+	e.typeList = append(e.typeList, nil)
 	return id, nil
 }
 

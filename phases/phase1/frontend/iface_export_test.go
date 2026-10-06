@@ -805,3 +805,22 @@ func main() {
 		t.Fatal("main.Getter unexpectedly carries templateMethodsSkipped")
 	}
 }
+
+// TestFreshSigIDKeepsTypeListParallel (R2 P2-3): freshSigID appends to
+// e.types, so it must append a (nil) placeholder to e.typeList to keep
+// the two parallel — recomputeMethodTables indexes e.types by e.typeList
+// position, and a future pre-recompute caller would otherwise silently
+// misalign method tables. Red-green: fails before the placeholder
+// (len 1 vs 0), passes after.
+func TestFreshSigIDKeepsTypeListParallel(t *testing.T) {
+	e := &exporter{}
+	if _, err := e.freshSigID(nil, types.NewTuple(), types.NewTuple(), false); err != nil {
+		t.Fatalf("freshSigID: %v", err)
+	}
+	if len(e.types) != len(e.typeList) {
+		t.Fatalf("len(types)=%d != len(typeList)=%d after freshSigID", len(e.types), len(e.typeList))
+	}
+	if e.typeList[0] != nil {
+		t.Fatalf("typeList placeholder = %v, want nil (signature entries have no go/types type)", e.typeList[0])
+	}
+}
