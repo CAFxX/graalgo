@@ -452,6 +452,16 @@ Additive; follows the existing `exportCloseDeferGo`/`exportSyncGoStmt`
 patterns. (Committed as `c964852`; discovered during ch01–ch12
 graduation.)
 
+**Known gap (reviewer1 P2-12, 2026-10-06):** `go time.Sleep(d)` does not
+lower to a goroutine running `timesleep`. `exportGoWithArgs`'s fallback
+routes `time.Sleep` through `exportSyntheticQualified`, which
+fail-fasts with "time.Sleep is an intrinsic and cannot be used in value
+position (M5)". `go time.Sleep(d)` is legal Go; the honest scope error
+stands until an M5 follow-up teaches the go-desugar to recognize
+intrinsic idents and emit the corresponding wire node directly.
+Re-test trigger: a `go time.Sleep(d)` corpus program printing after the
+sleep.
+
 ## Appendix M, amendment (2026-10-06, coordinator)
 
 The desugar does NOT emit the `Context(__p5c)` interface conversion. The
