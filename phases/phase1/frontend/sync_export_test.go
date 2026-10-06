@@ -285,9 +285,9 @@ func main() {
 	if deferNode == nil {
 		t.Fatal("no defer node in export")
 	}
-	call := fieldsOf(deferNode)["call"].(map[string]any)
+	call := mustNodeField(t, deferNode, "call")
 	cf := fieldsOf(call)
-	fun := cf["fun"].(map[string]any)
+	fun := mustNodeField(t, call, "fun")
 	ff := fieldsOf(fun)
 	params, _ := ff["params"].([]any)
 	// wg is value-typed ident -> captured; n -> one param.
@@ -297,6 +297,20 @@ func main() {
 	if args, _ := cf["args"].([]any); len(args) != 1 {
 		t.Fatalf("defer call args = %d, want 1 (n evaluated at defer time)", len(args))
 	}
+}
+
+// mustNodeField fetches a node-valued field from a decoded export node,
+// failing the test with a message instead of panicking on a bare type
+// assertion when the shape is absent (methodology P2-3: a red run must
+// fail cleanly without aborting sibling tests).
+func mustNodeField(t *testing.T, n map[string]any, field string) map[string]any {
+	t.Helper()
+	f := fieldsOf(n)[field]
+	m, ok := f.(map[string]any)
+	if !ok {
+		t.Fatalf("node kind %v: field %q is %T, want a node object", n["kind"], field, f)
+	}
+	return m
 }
 
 // findGostmtBlock returns the first "block" node having a direct "gostmt"
