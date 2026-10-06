@@ -324,3 +324,17 @@ one-logical-change-per-commit sequence:
 **Work split:** exporter worker (synthetic packages, exporter interceptions, p3frontend mirrors, timectx corpus tc00–tc16, red-green) + Java worker (`graalgo.p3time`, launcher registration, DIV-M3-1 unit regression). Spike-first risks: `any == any` (valueCtx keys), nil-channel blocking.
 
 **GG-0017 time/ctx slice:** activates when the first `verifies: GG-0017` timectx test lands.
+
+**Scope expansion (coordinator decision 2026-10-06, recorded):** both
+implementation workers completed their briefs, but integration exposed two
+gaps the plan had assumed away: (a) the Go frontend has NO channel
+operations — P2-M2 was Java-level only and its README explicitly deferred
+`SendStmt`/`SelectStmt`/`< -ch`/`close` to "the exporter lowering (parent
+track)"; P3-M5 is that track, so the milestone now includes the frontend
+channel lowering (Appendix C); (b) v1 cannot express multi-result calls,
+so the 6 multi-result operations use targeted call-site desugar
+(Appendix M; precedent: P3-M2 defer/go desugar). The context
+implementation is pure Go on the new channel ops (channel-mutex +
+synchronous parent propagation — no leaked goroutines, since the
+launcher's `awaitQuiescence` hangs on parked goroutines unlike gc).
+Acceptance criteria unchanged. Follow-up workers dispatched for both.
