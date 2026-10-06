@@ -372,6 +372,12 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P3-M6 (GG-0009): every buildable .s file in a compiled package must
+	// resolve to an inventory category; unsupported/uncategorized files
+	// fail the build here -- never silently ignored.
+	if _, err := l.CheckAsmFiles(dir, importPath); err != nil {
+		return nil, err
+	}
 	name, err := packageClause(dir, files)
 	if err != nil {
 		return nil, err
@@ -442,6 +448,10 @@ func (l *Loader) mainRef(dir string) (*PackageRef, error) {
 	}
 	if len(files) == 0 {
 		return nil, fmt.Errorf("p3frontend: no buildable Go files in %s", dir)
+	}
+	// P3-M6 (GG-0009): same .s fail-fast as localRef -- see above.
+	if _, err := l.CheckAsmFiles(dir, l.mainImportPath(dir)); err != nil {
+		return nil, err
 	}
 	name, err := packageClause(dir, files)
 	if err != nil {
