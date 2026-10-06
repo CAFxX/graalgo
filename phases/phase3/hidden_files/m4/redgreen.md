@@ -34,9 +34,60 @@ Fix: gate both clone sites on `kind == GoKind.STRUCT` (mirroring the
 clone — `b:=a; b.Store(7)` leaves `a` alone, like gc — while
 POINTER-kind carriers pass the cell through by reference.
 
-**GREEN** — new corpus `at03_atomic_pointers`: `9`, `5 5`, `7`
-(interface-held pointer), `3 0` (by-value still clones); gc-identical,
-gmp=1 and gmp=4. Existing `at02_types` (value form) still passes.
+### R2. `fastrandn(0)` (P1-1)
+
+**RED** — `fastrandn(0)` via `//go:linkname fastrandn runtime.fastrandn`:
+
+```
+gc:       fastrandn(0) = 0, exit 0
+graalgo:  graalgo-run: fatal internal error in goroutine:
+          java.lang.IllegalArgumentException: fastrandn: n must be positive, got 0, exit 1
+```
+
+gc 1.27's `randn` has no positivity check; Lemire's multiply-shift
+with n=0 yields 0. The guard turned a defined gc result into a fatal
+exception.
+
+Fix: drop the `n <= 0` guard (body change only); the multiply-shift
+already returns 0 for n=0.
+
+**GREEN** — new corpus `fr03_zero`: `fastrandn(0) = 0`, exit 0,
+gc-identical.
+
+### R3. Innermost runtime panic frame line (P1-2)
+
+**RED** — nil-map write inside `helper()` (write at `main.go:6`,
+`helper` defined at `main.go:5`):
+
+```
+gc:       helper() at main.go:6   (the panicking statement)
+graalgo:  helper() at main.go:5   (the function definition line)
+```
+
+`IndexWriteNode`/`IndexNode` (and every other runtime panic site)
+called `Panic.throwPanic(goValue)` with no throw-site node, so
+`renderGoStack` fell back to the frame's funcdecl section.
+
+Fix: pass `this` to the additive
+`Panic.throwPanic(Object, Object, String, Node)` overload at every
+runtime panic site in the frontend nodes (`BinaryOpNode`,
+`CompositeLitNode`, `IndexNode`, `IndexWriteNode`, `SliceExprNode`
+(`checkBound` made an instance method), `SelectorNode`/`SelectorWriteNode`
+(`deref` takes the site), `PanicNode`, `DeferNode`, `TypeAssertNode`,
+`MakeNode`, `FuncValueCallNode`) and the phase-3 nodes
+(`SyncOpNode` — `panicOnMisuse` made an instance method,
+`AtomicOpNode`, `IfaceDispatchNode` — `requireReceiver` made an
+instance method). Deferred `panic(x)` also carries the site now:
+`DeferNode` attaches itself via `DeferredCall.setCallSite` (gc
+attributes the deferred panic to the defer statement line — verified).
+Sites with no node available (phase-2 channel/timer runtime,
+deferred-builtin dispatch internals) keep the old behavior; recorded
+as known gaps.
+
+**GREEN** — new corpus `mp04_nil_map_inner`: graalgo attributes
+`helper()` to the panicking statement line, gc-identical. The map
+harness now compares the FULL normalized stderr for panic programs
+(P2-4), so a regression to the definition line fails the corpus.
 
 ## 1. Linkname arg/return boxing (`Linknames.callGo`)
 

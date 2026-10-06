@@ -10,6 +10,7 @@ Go programs exercising `runtime.fastrand` / `runtime.fastrandn`
 | `fr00_range.go` | `fastrandn(n) ∈ [0,n)` for 10000 draws × several n; `fastrand()` full-range |
 | `fr01_uniformity.go` | 100000 draws of `fastrandn(1000)`: all 10 bucket counts within [5000,15000] (wide bounds — a property, not a sequence) |
 | `fr02_variety.go` | 10000 draws contain >9000 distinct values (not degenerate) |
+| `fr03_zero.go` | `fastrandn(0) == 0` (defined, like gc — no positivity guard) |
 
 ## Design notes
 

@@ -528,11 +528,14 @@ public final class Intrinsics {
         return (int) fastrand64();
     }
 
-    /** {@code fastrandn(n)}: unbiased-below-n via Lemire's multiply-shift (REAL). */
+    /**
+     * {@code fastrandn(n)}: unbiased-below-n via Lemire's multiply-shift
+     * (REAL). P3-M4 remediation (P1-1): no positivity guard — gc 1.27's
+     * {@code randn} has no check, and the multiply-shift with n=0 yields
+     * 0, so {@code fastrandn(0) == 0} (a guard would turn a defined gc
+     * result into a fatal exception).
+     */
     public static int fastrandn(int n) {
-        if (n <= 0) {
-            throw new IllegalArgumentException("fastrandn: n must be positive, got " + n);
-        }
         return (int) ((Integer.toUnsignedLong(fastrand()) * Integer.toUnsignedLong(n)) >>> 32);
     }
 
