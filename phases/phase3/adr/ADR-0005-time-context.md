@@ -435,3 +435,23 @@ supports all method calls (`Done`, `Err`, `Value`) directly; interface
 satisfaction is unnecessary within the M5 scope (no user code passes the
 desugared `ctx` to a function expecting `Context` — the desugar is
 call-site-local).
+
+## Known limitation: tc11_context_value (2026-10-06)
+
+`tc11_context_value` fails with `binary.fields: interface conversion needs
+type ids (WS E)`. The test does `ctx.Value("key") == "val"` where `Value()`
+returns `any` (interface). Comparing an interface with a string constant
+requires P3-M3 interface conversion type ids, which the v1 exporter does
+not emit for this pattern.
+
+This is a WS E (P3-M3 interface dispatch) limitation, not a P3-M5 bug. The
+`context` package itself is correct; the issue is in the frontend's handling
+of interface-vs-concrete comparisons.
+
+**Re-test trigger**: When WS E (or a later milestone) implements interface
+conversion type-id emission for binary operations, re-run tc11. The test
+remains in the corpus as a regression guard.
+
+**Scope**: M5 acceptance requires cancellation/deadline/timeout programs
+(tc08, tc09, tc10, tc12, tc13, tc14) — all pass. tc11 (WithValue) is
+auxiliary.
