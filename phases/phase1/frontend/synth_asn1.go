@@ -23,6 +23,9 @@
 //   Marshal: nil (error), bool, Flag, signed ints, []byte, string
 //     (PrintableString/UTF8String), BitString, ObjectIdentifier,
 //     Enumerated, RawValue, RawContent.
+//   Scalar types gc rejects without reflect (float32/64, complex64/128,
+//     uint..uintptr) return StructuralError{"unknown Go type: <T>"}
+//     exactly like gc, instead of panicking.
 //   Unmarshal: *RawValue (full TLV), *bool, *int..*int64, *[]byte,
 //     *string (Printable/UTF8/IA5/Numeric/T61/BMP strings), *BitString,
 //     *ObjectIdentifier, *Enumerated, *Flag.
@@ -749,8 +752,30 @@ func __asn1Marshal(val any) asn1MarshalPair {
 		return asn1MarshalPair{b: asn1Tagged(ClassUniversal, TagOID, body)}
 	case Enumerated:
 		return asn1MarshalPair{b: asn1Tagged(ClassUniversal, TagEnum, asn1EncodeInt64(nil, int64(v)))}
+	case float32:
+		// gc rejects these scalar types without needing reflect:
+		// StructuralError{"unknown Go type: <T>"}.
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: float32"}}
+	case float64:
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: float64"}}
+	case complex64:
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: complex64"}}
+	case complex128:
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: complex128"}}
+	case uint:
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: uint"}}
+	case uint8:
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: uint8"}}
+	case uint16:
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: uint16"}}
+	case uint32:
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: uint32"}}
+	case uint64:
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: uint64"}}
+	case uintptr:
+		return asn1MarshalPair{err: StructuralError{"unknown Go type: uintptr"}}
 	}
-	panic("encoding/asn1: Marshal: not in M7 scope (needs reflect for composite types, big.Int and named types; re-test when reflect lands)")
+	panic("encoding/asn1: Marshal: not in M7 scope (needs reflect for composite types, big.Int, time.Time and named types; re-test when reflect lands)")
 }
 
 // asn1ExpectTag parses one TLV and checks class/tag/compound, returning
