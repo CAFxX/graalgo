@@ -975,3 +975,15 @@ BLOCKED: M7 rebase clearance (F12). Zero graalgo legs run. No sign-off.
   P3SyncMain imports (non-standard @@ header skipped by git apply).
 - phase3 main builds clean (0 javac errors); go vet/gofmt clean.
 - Shared-file freeze LIFTED. Next: Phase 2 (D1 WS-D multi-result dispatch).
+
+## P3-M8: D1 design complete, integration blockers fixed (2026-10-07 ~19:45 CEST)
+
+- D1 worker (c7f11262) completed DESIGN.md: multi-result interface dispatch
+  via __-helper pair structs in itab; no Java change needed. Implementing.
+- Fixed integration blockers found during smoke test:
+  - reflect/06 pkgpath nil-safety (pkgPathOf helper).
+  - Removed reflectlite type aliases (exporter has no alias kind).
+  - ReflectTypes.java: alias kind support, invalid/untyped basic handling,
+    infoOrShell for forward refs, tolerant captureDescriptors.
+- `import "errors"` and `import "io"` now work (were panicking).
+- Committed as 8a3f2e1 (integration fixes).

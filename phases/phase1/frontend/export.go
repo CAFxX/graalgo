@@ -862,6 +862,8 @@ func ExportFile(path string) (string, error) {
 			// P3-M8: the synthetic strings source imports errors (gc-exact
 			// errors.New in Reader.ReadAt/Seek) — bytes/strconv precedent.
 			needErrors = true
+			// P3-M8: strings also imports io (io.EOF in Reader.Read).
+			needIo = true
 		case "encoding/xml":
 			needXml = true
 		case "strconv":
@@ -941,8 +943,15 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 	}
+	// P3-M8 (wave 2): synthetic io (depends on synthetic errors).
+	// Must come before strings (which imports io for io.EOF).
+	if needIo {
+		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+			return "", err
+		}
+	}
 	// P3-M7 (wave 1): the synthetic strings package (see synth_strings.go).
-	// Self-contained: no synthetic dependencies.
+	// P3-M8: imports synthetic io (io.EOF), so io must be imported first.
 	if needStrings {
 		if err := e.importSyntheticPackage(getSyntheticPackage("strings")); err != nil {
 			return "", err
@@ -1025,17 +1034,7 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 	}
-	// P3-M8 (wave 2): synthetic io (see synth_io.go). The error vars are
-	// built on the P3-M7 synthetic errors package — import it first. The
-	// P3-M2 sync surface (Mutex/Once) needs no import step.
-	if needIo {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
-			return "", err
-		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
-			return "", err
-		}
-	}
+	// (needIo handled before strings import above)
 	// P3-M8 (wave 2): synthetic syscall (depends on the synthetic io/fs
 	// registration for its Errno.Is sentinels - os worker, R5).
 	if needSyscall {
