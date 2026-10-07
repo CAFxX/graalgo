@@ -280,31 +280,70 @@ func (d *digest) UnmarshalBinary(b []byte) error {
 		return errors.New("crypto/sha256: invalid hash state size")
 	}
 	b = b[len(magic224):]
-	b, d.h[0] = consumeUint32(b)
-	b, d.h[1] = consumeUint32(b)
-	b, d.h[2] = consumeUint32(b)
-	b, d.h[3] = consumeUint32(b)
-	b, d.h[4] = consumeUint32(b)
-	b, d.h[5] = consumeUint32(b)
-	b, d.h[6] = consumeUint32(b)
-	b, d.h[7] = consumeUint32(b)
+	// Intra-package calls: the Appendix-M desugar only rewrites
+	// package-qualified call sites, so use the single-result __-helpers
+	// directly (same pattern as the syscall/reflect packages).
+	q0 := __consumeUint32(b)
+	b, d.h[0] = q0.rest, q0.v
+	q1 := __consumeUint32(b)
+	b, d.h[1] = q1.rest, q1.v
+	q2 := __consumeUint32(b)
+	b, d.h[2] = q2.rest, q2.v
+	q3 := __consumeUint32(b)
+	b, d.h[3] = q3.rest, q3.v
+	q4 := __consumeUint32(b)
+	b, d.h[4] = q4.rest, q4.v
+	q5 := __consumeUint32(b)
+	b, d.h[5] = q5.rest, q5.v
+	q6 := __consumeUint32(b)
+	b, d.h[6] = q6.rest, q6.v
+	q7 := __consumeUint32(b)
+	b, d.h[7] = q7.rest, q7.v
 	b = b[copy(d.x[:], b):]
-	b, d.len = consumeUint64(b)
+	q8 := __consumeUint64(b)
+	b, d.len = q8.rest, q8.v
 	d.nx = int(d.len % chunk)
 	return nil
 }
 
+// consumeUint64/consumeUint32 are multi-result helpers for the digest's
+// UnmarshalBinary. The multi-result bodies below run only on the gc
+// reference leg (they are skipped at synthetic import, WS D); the
+// single-result __-helpers carry the real implementations used by the
+// intra-package call sites above.
+type consumeUint64Pair struct {
+	rest []byte
+	v    uint64
+}
+
+func __consumeUint64(b []byte) consumeUint64Pair {
+	return consumeUint64Pair{b[8:], boBEUint64(b)}
+}
+
 func consumeUint64(b []byte) ([]byte, uint64) {
-	return b[8:], boBEUint64(b)
+	p := __consumeUint64(b)
+	return p.rest, p.v
+}
+
+type consumeUint32Pair struct {
+	rest []byte
+	v    uint32
+}
+
+func __consumeUint32(b []byte) consumeUint32Pair {
+	return consumeUint32Pair{b[4:], boBEUint32(b)}
 }
 
 func consumeUint32(b []byte) ([]byte, uint32) {
-	return b[4:], boBEUint32(b)
+	p := __consumeUint32(b)
+	return p.rest, p.v
 }
 
 func (d *digest) CloneSinglePair() hash.ClonePair {
-	r := *d
-	return hash.ClonePair{C: &r}
+	// (*d) is not expressible in frontend/v1 (WS D); &digest{...} on a
+	// composite literal is. Field-by-field copy (arrays are values, so
+	// the copy is complete).
+	return hash.ClonePair{C: &digest{h: d.h, x: d.x, nx: d.nx, len: d.len, is224: d.is224}}
 }
 
 // Clone implements hash.Cloner (fail-fast stub; real logic is
@@ -401,7 +440,11 @@ func (d *digest) Write(p []byte) (nn int, err error) {
 
 func (d *digest) Sum(in []byte) []byte {
 	// Make a copy of d so that caller can keep writing and summing.
-	d0 := *d
+	// (*d) is not expressible in frontend/v1 (WS D); copy field by
+	// field into a fresh composite literal (arrays are values, so the
+	// copy is complete). d0 is a *digest so checkSum's pointer receiver
+	// resolves without an implicit address-of.
+	d0 := &digest{h: d.h, x: d.x, nx: d.nx, len: d.len, is224: d.is224}
 	hash := d0.checkSum()
 	if d0.is224 {
 		return append(in, hash[:size224]...)

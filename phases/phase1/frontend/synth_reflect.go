@@ -564,10 +564,13 @@ func __reflectTryRecv(v Value) reflectValueBoolPair {
 		panic(&ValueError{"reflect.Value.TryRecv", ch.Kind()})
 	}
 	// Non-blocking receive via a select with a default case.
-	chosen, recv, recvOK := Select([]SelectCase{
+	// (Intra-package call: the Appendix-M desugar only rewrites
+	// package-qualified call sites, so call the __-helper directly.)
+	p := __reflectSelect([]SelectCase{
 		{Dir: SelectRecv, Chan: ch},
 		{Dir: SelectDefault},
 	})
+	chosen, recv, recvOK := p.chosen, p.recv, p.recvOK
 	if chosen == 1 {
 		return reflectValueBoolPair{Value{}, false}
 	}
@@ -905,7 +908,10 @@ func (v Value) __mustBeAssignable(method string) {
 	}
 }
 
-func (v Value) __mustBeKind(method string, kinds ...Kind) {
+// __mustBeKind takes a slice, not variadic args: the frontend cannot
+// pack arguments for variadic calls (WS D), so intra-package callers
+// pass an explicit slice literal.
+func (v Value) __mustBeKind(method string, kinds []Kind) {
 	k := v.Kind()
 	for _, want := range kinds {
 		if k == want {
@@ -1068,7 +1074,7 @@ func (v Value) FieldByIndex(index []int) Value {
 	if len(index) == 1 {
 		return v.Field(index[0])
 	}
-	v.__mustBeKind("reflect.Value.FieldByIndex", Struct)
+	v.__mustBeKind("reflect.Value.FieldByIndex", []Kind{Struct})
 	f := v
 	for _, i := range index {
 		if f.Kind() == Pointer {
@@ -1087,7 +1093,7 @@ func (v Value) FieldByIndexErr(index []int) (Value, error) {
 
 // FieldByName returns the struct field with the given name.
 func (v Value) FieldByName(name string) Value {
-	v.__mustBeKind("reflect.Value.FieldByName", Struct)
+	v.__mustBeKind("reflect.Value.FieldByName", []Kind{Struct})
 	for i := 0; i < v.NumField(); i++ {
 		if f := v.Type().Field(i); f.Name == name {
 			return v.Field(i)
@@ -1098,7 +1104,7 @@ func (v Value) FieldByName(name string) Value {
 
 // FieldByNameFunc returns the first struct field whose name satisfies match.
 func (v Value) FieldByNameFunc(match func(string) bool) Value {
-	v.__mustBeKind("reflect.Value.FieldByNameFunc", Struct)
+	v.__mustBeKind("reflect.Value.FieldByNameFunc", []Kind{Struct})
 	for i := 0; i < v.NumField(); i++ {
 		if f := v.Type().Field(i); match(f.Name) {
 			return v.Field(i)
@@ -1130,7 +1136,7 @@ func (v Value) Index(i int) Value {
 
 // NumField returns the number of fields in the struct v.
 func (v Value) NumField() int {
-	v.__mustBeKind("reflect.Value.NumField", Struct)
+	v.__mustBeKind("reflect.Value.NumField", []Kind{Struct})
 	return v.Type().NumField()
 }
 
@@ -1633,7 +1639,7 @@ func (v Value) MapRange() *MapIter {
 
 // Slice returns a slice of v.
 func (v Value) Slice(i, j int) Value {
-	v.__mustBeKind("reflect.Value.Slice", Array, Slice, String)
+	v.__mustBeKind("reflect.Value.Slice", []Kind{Array, Slice, String})
 	n := v.Len()
 	var capv int
 	if v.Kind() == Slice || v.Kind() == Array {
@@ -1655,7 +1661,7 @@ func (v Value) Slice(i, j int) Value {
 
 // Slice3 is the 3-index form of Slice.
 func (v Value) Slice3(i, j, k int) Value {
-	v.__mustBeKind("reflect.Value.Slice3", Array, Slice)
+	v.__mustBeKind("reflect.Value.Slice3", []Kind{Array, Slice})
 	n := v.Len()
 	capv := v.Cap()
 	if i < 0 || j < i || k < j || k > capv {
@@ -1849,7 +1855,7 @@ func (v Value) Fields() iter.Seq2[StructField, Value] {
 
 // Append appends the values x to a slice s and returns the resulting slice.
 func Append(s Value, x ...Value) Value {
-	s.__mustBeKind("reflect.Append", Slice)
+	s.__mustBeKind("reflect.Append", []Kind{Slice})
 	n := len(x)
 	if n == 0 {
 		return s
@@ -1868,8 +1874,8 @@ func Append(s Value, x ...Value) Value {
 
 // AppendSlice appends a slice t to a slice s and returns the resulting slice.
 func AppendSlice(s, t Value) Value {
-	s.__mustBeKind("reflect.AppendSlice", Slice)
-	t.__mustBeKind("reflect.AppendSlice", Slice)
+	s.__mustBeKind("reflect.AppendSlice", []Kind{Slice})
+	t.__mustBeKind("reflect.AppendSlice", []Kind{Slice})
 	if !t.Type().AssignableTo(s.Type()) {
 		panic("reflect.AppendSlice: " + t.Type().String() + " is not assignable to " + s.Type().String())
 	}

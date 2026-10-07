@@ -557,6 +557,13 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/xml" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "unsafe" &&
 		// P3-M8 (wave 2): the synthetic os package and io/fs core.
 		path != "os" && path != "io" && path != "io/fs" &&
+		// P3-M8 (wave 2): the synthetic syscall package.
+		path != "syscall" &&
+		// P3-M8 (wave 2): the synthetic hash/cipher/digest packages.
+		path != "hash" && path != "crypto" &&
+		path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" &&
+		path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" &&
+		path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" &&
 		path != "reflect" && path != "internal/reflectlite" && path != "iter" {
 		return nil, false, nil
 	}
@@ -659,9 +666,14 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" &&
 		p != "encoding/base32" && p != "encoding/base64" && p != "encoding/hex" && p != "encoding/binary" &&
 		p != "encoding/ascii85" && p != "encoding/pem" && p != "encoding/asn1" && p != "encoding" && p != "encoding/csv" && p != "encoding/gob" && p != "strconv" && p != "encoding/json" && p != "io" &&
-		// P3-M8 (wave 2): os + io/fs.
-		p != "os" && p != "io/fs" &&
-		p != "reflect" && p != "internal/reflectlite" && p != "iter" {
+		// P3-M8 (wave 2): os + io/fs + syscall.
+		p != "os" && p != "io/fs" && p != "syscall" &&
+		p != "reflect" && p != "internal/reflectlite" && p != "iter" &&
+		// P3-M8 (wave 2): hash + crypto/*.
+		p != "hash" && p != "crypto" &&
+		p != "crypto/aes" && p != "crypto/cipher" && p != "crypto/des" && p != "crypto/hmac" &&
+		p != "crypto/md5" && p != "crypto/rand" && p != "crypto/rc4" && p != "crypto/sha1" &&
+		p != "crypto/sha256" && p != "crypto/sha3" && p != "crypto/sha512" && p != "crypto/subtle" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -682,7 +694,13 @@ func multiResultSyntheticError(fn *types.Func) error {
 		milestone = "M7"
 	}
 	if fn.Pkg().Path() == "io" || fn.Pkg().Path() == "os" || fn.Pkg().Path() == "io/fs" ||
-		fn.Pkg().Path() == "reflect" || fn.Pkg().Path() == "internal/reflectlite" || fn.Pkg().Path() == "iter" {
+		fn.Pkg().Path() == "syscall" ||
+		fn.Pkg().Path() == "reflect" || fn.Pkg().Path() == "internal/reflectlite" || fn.Pkg().Path() == "iter" ||
+		fn.Pkg().Path() == "hash" || fn.Pkg().Path() == "crypto" ||
+		fn.Pkg().Path() == "crypto/aes" || fn.Pkg().Path() == "crypto/cipher" || fn.Pkg().Path() == "crypto/des" ||
+		fn.Pkg().Path() == "crypto/hmac" || fn.Pkg().Path() == "crypto/md5" || fn.Pkg().Path() == "crypto/rand" ||
+		fn.Pkg().Path() == "crypto/rc4" || fn.Pkg().Path() == "crypto/sha1" || fn.Pkg().Path() == "crypto/sha256" ||
+		fn.Pkg().Path() == "crypto/sha3" || fn.Pkg().Path() == "crypto/sha512" || fn.Pkg().Path() == "crypto/subtle" {
 		// P3-M8 (wave 2).
 		milestone = "M8"
 	}

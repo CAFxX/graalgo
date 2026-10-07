@@ -284,11 +284,19 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	// P3-M8 (wave 2): synthetic reflect package (real-Go source in
-	// synth_reflect.go).
+	// synth_reflect.go). The reflect source imports the synthetic iter
+	// and internal/reflectlite packages, so they need overlay cases too.
 	case "reflect":
 		return getSyntheticPackage("reflect").pkg, nil
+	case "iter":
+		return getSyntheticPackage("iter").pkg, nil
+	case "internal/reflectlite":
+		return getSyntheticPackage("internal/reflectlite").pkg, nil
 	// P3-M8 (wave 2): synthetic crypto packages (real-Go sources in
-	// synth_crypto*.go).
+	// synth_crypto*.go). The crypto sources import the synthetic hash
+	// package, so it needs an overlay case too.
+	case "hash":
+		return getSyntheticPackage("hash").pkg, nil
 	case "crypto":
 		return getSyntheticPackage("crypto").pkg, nil
 	case "crypto/aes":
@@ -740,8 +748,9 @@ func ExportFile(path string) (string, error) {
 		// synth_io.go).
 		// Every other import is still a scope error (WS G import overlay).
 		// P3-M8 (wave 2): "syscall", "reflect", and crypto/* likewise.
+		// P3-M8 (wave 2): "hash" and "iter" (synthetic support packages).
 		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
-			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "syscall" && path != "os" && path != "io/fs" && path != "reflect" &&
+			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "syscall" && path != "os" && path != "io/fs" && path != "reflect" && path != "hash" && path != "iter" &&
 			path != "crypto" && path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" && path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" && path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
@@ -772,12 +781,12 @@ func ExportFile(path string) (string, error) {
 	// (m7-wenc-core: "strings" was missing from this list — the allow-list
 	// above admitted it but type-checking still used failImporter. Fixed
 	// here; re-test trigger: a program importing "strings" must export.)
-	// P3-M8 (wave 2): "io", "syscall", "os", "io/fs", "reflect", and the
-	// crypto/* packages likewise.
+	// P3-M8 (wave 2): "io", "syscall", "os", "io/fs", "reflect", "hash",
+	// "iter", and the crypto/* packages likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
 		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
-			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" ||
+			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "iter" ||
 			p == "crypto" || p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" {
 			conf.Importer = overlayImporter{}
 			break
@@ -880,6 +889,11 @@ func ExportFile(path string) (string, error) {
 	needAscii85, needPem, needAsn1, needEncoding := false, false, false, false
 	needIo := false
 	needSyscall := false
+	needIoFs := false
+	needReflect := false
+	needCryptoSha256 := false
+	needHash := false
+	needIter := false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -944,6 +958,37 @@ func ExportFile(path string) (string, error) {
 		// synthetic package (synth_syscall.go).
 		case "syscall":
 			needSyscall = true
+		// P3-M8 (wave 2): a user import of "io/fs" pulls in the minimal
+		// synthetic io/fs core (synth_iofs.go). Its Err* sentinel
+		// initializers call errors.New; the source also imports time.
+		case "io/fs":
+			needIoFs = true
+			needErrors = true
+			needTime = true
+		// P3-M8 (wave 2): a user import of "reflect" pulls in the
+		// synthetic package (synth_reflect.go). The source imports
+		// errors, iter, strconv (unsafe is a builtin surface, not a
+		// synthetic package).
+		case "reflect":
+			needReflect = true
+			needErrors = true
+			needStrconv = true
+		// P3-M8 (wave 2): a user import of "crypto/sha256" pulls in the
+		// synthetic package (synth_crypto_sha256.go). The source imports
+		// crypto, errors, hash; hash imports io; crypto imports hash, io,
+		// strconv.
+		case "crypto/sha256":
+			needCryptoSha256 = true
+			needErrors = true
+			needStrconv = true
+		// P3-M8 (wave 2): direct user imports of the synthetic hash and
+		// iter support packages.
+		case "hash":
+			needHash = true
+			needErrors = true
+			needIo = true
+		case "iter":
+			needIter = true
 		}
 	}
 	if needTime {
@@ -1079,22 +1124,108 @@ func ExportFile(path string) (string, error) {
 		}
 	}
 	// (needIo handled before strings import above)
-	// P3-M8 (wave 2): synthetic syscall (depends on the synthetic io/fs
-	// registration for its Errno.Is sentinels - os worker, R5).
-	if needSyscall {
-		// P3-M8: the synthetic syscall source references strconv.Itoa and
-		// errors.ErrUnsupported; import them directly. Ordering matters:
-		// strconv's package-level var initializers call errors.New, so
-		// errors must be imported before strconv. (The needStrconv/
-		// needErrors blocks above only ran if the user imported those
-		// packages directly — not for a pure `import "syscall"` program.)
+	// P3-M8 (wave 2): synthetic hash package (synth_crypto_hash.go).
+	// Imports io (needIo block above imports errors first, then io).
+	if needHash {
+		if err := e.importSyntheticPackage(getSyntheticPackage("hash")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic iter package (synth_reflect.go).
+	// Self-contained: no synthetic imports.
+	if needIter {
+		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic reflect (synth_reflect.go). The source
+	// imports errors, iter, strconv (unsafe is a builtin surface, not a
+	// synthetic package); iter is self-contained. Dependencies are
+	// imported before reflect itself (package-level initializers may
+	// call synthetic functions).
+	if needReflect {
 		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
 			return "", err
 		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("reflect")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic io/fs core (synth_iofs.go). Depends on
+	// the synthetic errors package (its Err* sentinel initializers call
+	// errors.New) and imports time (time.Time in the FileInfo/DirEntry
+	// signatures), so errors and time are imported first.
+	if needIoFs {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic syscall (depends on the synthetic io/fs
+	// registration for its Errno.Is sentinels - os worker, R5).
+	if needSyscall {
+		// P3-M8: the synthetic syscall source references strconv.Itoa,
+		// errors.ErrUnsupported, and the io/fs sentinels (fs.ErrPermission
+		// etc. in Errno.Is); import them directly. Ordering matters:
+		// package-level var initializers may call synthetic functions, so
+		// each dependency is imported before its dependents: errors
+		// (strconv's ErrRange/ErrSyntax and io/fs's ErrInvalid/ErrClosed
+		// initializers call errors.New), time (imported by io/fs), io/fs
+		// (syscall's Errno.Is references its Err* sentinels), strconv
+		// (syscall's Errno.Error calls strconv.Itoa), then syscall itself.
+		// (The needStrconv/needErrors blocks above only ran if the user
+		// imported those packages directly — not for a pure
+		// `import "syscall"` program.)
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic crypto/sha256 (synth_crypto_sha256.go).
+	// Dependency chain, imported in order: errors (sha256's
+	// package-level code calls errors.New); io (imported by hash);
+	// hash (sha256's New/digest use hash.Hash and the __hash*
+	// helpers); strconv (imported by crypto); crypto (sha256 calls
+	// crypto.RegisterHash); then crypto/sha256 itself.
+	if needCryptoSha256 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("hash")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("crypto")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/sha256")); err != nil {
 			return "", err
 		}
 	}
@@ -5123,6 +5254,31 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// M7: conversion with a composite type target, e.g. []byte("hi").
 		// The target is an *ast.ArrayType/*ast.MapType, not an identifier.
 		if tv, ok := e.info.Types[c.Fun]; ok && tv.Type != nil {
+			// P3-M8 (wave 2, reflect): call to a computed func value,
+			// e.g. reflect.Swapper(s)(0, 2) — c.Fun is a call expression
+			// whose type is a signature, not a composite type target.
+			// Export the fun expression and emit a plain call node
+			// (mirrors the func-valued variable branch below).
+			if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
+				if err := checkVariadicCall(c, sig); err != nil {
+					return nil, err
+				}
+				fun, err := e.exportExpr(c.Fun)
+				if err != nil {
+					return nil, err
+				}
+				args, err := e.exportCallArgs(c)
+				if err != nil {
+					return nil, err
+				}
+				typ, err := e.callType(c)
+				if err != nil {
+					return nil, err
+				}
+				return e.node("call", c, map[string]any{
+					"fun": fun, "args": args, "type": typ,
+				}), nil
+			}
 			if len(c.Args) != 1 {
 				return nil, fmt.Errorf("gofrontend: conversion has %d arguments (want 1)", len(c.Args))
 			}
@@ -6584,12 +6740,15 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// P3-M7 (wave 1): errors/sort/bytes/math/strings consts/vars likewise,
 	// plus the 8 encoding/* primitives' consts/vars (base64.StdEncoding,
 	// binary.LittleEndian, hex.ErrLength, asn1.TagNull, ...).
+	// P3-M8 (wave 2): syscall/os/io/fs/reflect/hash/crypto/crypto/*
+	// consts/vars likewise (syscall.EINVAL, reflect.Int, ...).
 	// Method expressions (time.Duration.String) have a SelectorExpr X and
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
 			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" ||
-				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" {
+				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "crypto" ||
+				p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

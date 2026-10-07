@@ -211,6 +211,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"syscall", "Getgroups", "", "__getgroups", "gidsErrorPair", []string{"gids", "err"}},
 	{"syscall", "Getwd", "", "__getwd", "stringErrorPair", []string{"v", "err"}},
 	{"syscall", "ByteSliceFromString", "", "__byteSliceFromString", "bytesErrorPair", []string{"v", "err"}},
+	{"syscall", "BytePtrFromString", "", "__bytePtrFromString", "bytePtrErrorPair", []string{"p", "err"}},
 	{"syscall", "Syscall", "", "__syscall", "syscallTriple", []string{"r1", "r2", "err"}},
 	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}},
 	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}},
@@ -375,6 +376,14 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"io", "Read", "ioReadPair", []string{"n", "err"}},
 	{"io", "Write", "ioWritePair", []string{"n", "err"}},
 	{"io", "WriteString", "ioWritePair", []string{"n", "err"}},
+	// P3-M8 (wave 2, reflect): the Type interface's multi-result methods.
+	// The itab maps each to the concrete rtype's pair-returning
+	// __-helper (wired via multiResultHelperFor/methodTableEntries); the
+	// pair field names/types are positionally identical to the method's
+	// results (checked by classifyIfaceMultiResultCall).
+	{"reflect", "MethodByName", "reflectMethodPair", []string{"m", "ok"}},
+	{"reflect", "FieldByName", "reflectStructFieldPair", []string{"f", "ok"}},
+	{"reflect", "FieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}},
 }
 
 // mrPlan is the desugar plan for one classified call.

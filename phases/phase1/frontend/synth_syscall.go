@@ -34,7 +34,7 @@ import (
 	"io/fs"
 	"strconv"
 
-	_ "unsafe"
+	"unsafe"
 )
 
 // An Errno is an unsigned number describing an error condition.
@@ -2228,7 +2228,7 @@ func (tv *Timeval) Nano() int64 {
 }
 
 // TimespecToNsec returns the time stored in ts as nanoseconds.
-func TimespecToNsec(ts Timespec) int64 { return ts.Nano() }
+func TimespecToNsec(ts Timespec) int64 { return int64(ts.Sec)*1e9 + int64(ts.Nsec) }
 
 // NsecToTimespec converts a number of nanoseconds into a [Timespec].
 func NsecToTimespec(nsec int64) Timespec {
@@ -2242,7 +2242,7 @@ func NsecToTimespec(nsec int64) Timespec {
 }
 
 // TimevalToNsec returns the time stored in tv as nanoseconds.
-func TimevalToNsec(tv Timeval) int64 { return tv.Nano() }
+func TimevalToNsec(tv Timeval) int64 { return int64(tv.Sec)*1e9 + int64(tv.Usec)*1000 }
 
 // NsecToTimeval converts a number of nanoseconds into a [Timeval].
 func NsecToTimeval(nsec int64) Timeval {
@@ -2260,24 +2260,32 @@ func NsecToTimeval(nsec int64) Timeval {
 // If s contains a NUL byte, it panics (gc 1.27.1:
 // "syscall: string with NUL passed to StringByteSlice").
 func StringByteSlice(s string) []byte {
-	a, err := ByteSliceFromString(s)
-	if err != nil {
+	p := __byteSliceFromString(s)
+	if p.err != nil {
 		panic("syscall: string with NUL passed to StringByteSlice")
 	}
-	return a
+	return p.v
 }
 
 // ByteSliceFromString returns a NUL-terminated []byte with the text of
 // s. If s contains a NUL byte, it returns (nil, [EINVAL]).
+// Multi-result: call sites desugar to __byteSliceFromString via Appendix M
+// (staged mrdesugar_m5.go entry); the body below runs only on the gc
+// reference leg and is unreachable on graalgo.
 func ByteSliceFromString(s string) ([]byte, error) {
+	p := __byteSliceFromString(s)
+	return p.v, p.err
+}
+
+func __byteSliceFromString(s string) bytesErrorPair {
 	for i := 0; i < len(s); i++ {
 		if s[i] == 0 {
-			return nil, EINVAL
+			return bytesErrorPair{v: nil, err: EINVAL}
 		}
 	}
 	a := make([]byte, len(s)+1)
 	copy(a, s)
-	return a, nil
+	return bytesErrorPair{v: a, err: nil}
 }
 
 // StringBytePtr returns a pointer to a NUL-terminated array of bytes.
@@ -2285,17 +2293,33 @@ func ByteSliceFromString(s string) ([]byte, error) {
 // an error.
 //
 // Deprecated: Use [BytePtrFromString] instead.
-func StringBytePtr(s string) *byte { return &StringByteSlice(s)[0] }
+//
+// Fail-fast: the gc body (&StringByteSlice(s)[0]) takes the address of
+// an index expression, which is not expressible in frontend/v1 (WS D).
+const failStringBytePtr = "syscall.StringBytePtr: no graalgo intrinsic; re-test: address-of on index expr (WS D)"
+
+func StringBytePtr(s string) *byte { panic(failStringBytePtr) }
 
 // BytePtrFromString returns a pointer to a NUL-terminated array of
 // bytes containing the text of s. If s contains a NUL byte at any
 // location, it returns (nil, [EINVAL]).
 func BytePtrFromString(s string) (*byte, error) {
-	a, err := ByteSliceFromString(s)
-	if err != nil {
-		return nil, err
+	p := __bytePtrFromString(s)
+	return p.p, p.err
+}
+
+type bytePtrErrorPair struct {
+	p   *byte
+	err error
+}
+
+func __bytePtrFromString(s string) bytePtrErrorPair {
+	p := __byteSliceFromString(s)
+	if p.err != nil {
+		return bytePtrErrorPair{err: p.err}
 	}
-	return &a[0], nil
+	// unsafe.SliceData: &p.v[0] is not expressible in frontend/v1 (WS D).
+	return bytePtrErrorPair{p: unsafe.SliceData(p.v)}
 }
 
 // entersyscall/exitsyscall are no-ops on graalgo: blocking intrinsics
@@ -2519,28 +2543,42 @@ func __getgroups() gidsErrorPair {
 		if p == "" {
 			continue
 		}
-		v, ok := parseUint(p)
-		if !ok {
+		r := __parseUint(p)
+		if !r.ok {
 			return gidsErrorPair{err: EINVAL}
 		}
-		gids = append(gids, int(v))
+		gids = append(gids, int(r.v))
 	}
 	return gidsErrorPair{gids: gids}
 }
 
 // parseUint parses a decimal string; ok=false on any non-digit.
+// Multi-result: the single internal caller (__getgroups) uses
+// __parseUint directly; the body below runs only on the gc reference
+// leg and is unreachable on graalgo.
 func parseUint(s string) (v uint64, ok bool) {
+	p := __parseUint(s)
+	return p.v, p.ok
+}
+
+type uint64BoolPair struct {
+	v  uint64
+	ok bool
+}
+
+func __parseUint(s string) uint64BoolPair {
 	if s == "" {
-		return 0, false
+		return uint64BoolPair{}
 	}
+	var v uint64
 	for i := 0; i < len(s); i++ {
 		c := s[i]
 		if c < '0' || c > '9' {
-			return 0, false
+			return uint64BoolPair{}
 		}
 		v = v*10 + uint64(c-'0')
 	}
-	return v, true
+	return uint64BoolPair{v: v, ok: true}
 }
 
 // Getwd returns the current working directory.
