@@ -94,9 +94,15 @@ public final class GoFloatFmt {
     /**
      * Shortest digits from {@link Double#toString}/{@link Float#toString}.
      * Both produce the unique shortest round-trip decimal, identical to
-     * what Go's Ryu emits for prec=-1.
+     * what Go's Ryu emits for prec=-1 — except for subnormals, where
+     * Java's algorithm is not shortest-optimal (e.g. 5e-324 prints as
+     * "4.9E-324"; Go prints "5e-324"). Subnormals take a dedicated
+     * verified-search path below.
      */
     private static DecParts shortestParts(double av, int bitSize) {
+        if (isSubnormal(av, bitSize)) {
+            return shortestSubnormalParts(av, bitSize);
+        }
         String s = bitSize == 32 ? Float.toString((float) av) : Double.toString(av);
         // Forms: "1.0", "0.001", "1.0E23", "1.0E-4".
         int epos = s.indexOf('E');
@@ -138,6 +144,109 @@ public final class GoFloatFmt {
         // decimal terms (value = D * 10^(dp - nd)): dp = pointPos + exp - lead.
         int dp = pointPos + exp - lead;
         return new DecParts(digits, dp);
+    }
+
+    /**
+     * True when {@code av} (positive, nonzero — callers abs and zero-check
+     * first) is subnormal at the given bit size.
+     */
+    private static boolean isSubnormal(double av, int bitSize) {
+        if (bitSize == 32) {
+            int bits = Float.floatToRawIntBits((float) av);
+            return (bits & 0x7F800000) == 0 && (bits & 0x007FFFFF) != 0;
+        }
+        long bits = Double.doubleToRawLongBits(av);
+        return (bits & 0x7FF0000000000000L) == 0 && (bits & 0x000FFFFFFFFFFFFFL) != 0;
+    }
+
+    /**
+     * Shortest round-trip digits for a positive subnormal, matching Go's
+     * Ryu output exactly.
+     *
+     * <p>Searches increasing significant-digit counts k = 1, 2, ...: a
+     * k-digit decimal parses back to {@code av} iff it lies in the
+     * round-to-nearest interval [exact - ulp/2, exact + ulp/2], so every
+     * integer mantissa in that range is tested by parsing (no wrong answer
+     * is possible — only verified round-trips are returned). Among the
+     * matches at the smallest k, Go's tie-break applies: closest to the
+     * exact value, then the even last digit. Termination is guaranteed:
+     * the exact binary expansion itself (<= 767 digits) round-trips.
+     */
+    private static DecParts shortestSubnormalParts(double av, int bitSize) {
+        java.math.BigDecimal exact = bitSize == 32
+                ? new java.math.BigDecimal((double) (float) av) // widening is exact
+                : new java.math.BigDecimal(av); // exact binary expansion
+        // Subnormal ulp is constant: 2^-1074 (float64), 2^-149 (float32) —
+        // the exact value of the smallest positive subnormal.
+        java.math.BigDecimal ulp = bitSize == 32
+                ? new java.math.BigDecimal((double) Float.intBitsToFloat(1))
+                : new java.math.BigDecimal(Double.longBitsToDouble(1));
+        java.math.BigDecimal halfUlp = ulp.divide(java.math.BigDecimal.valueOf(2));
+        java.math.BigDecimal lo = exact.subtract(halfUlp);
+        java.math.BigDecimal hi = exact.add(halfUlp);
+        // floor(log10(exact)): BigDecimal precision/scale give it exactly.
+        int exp10 = exact.precision() - exact.scale() - 1;
+        for (int k = 1; k <= 800; k++) {
+            java.math.BigInteger bestM = null;
+            java.math.BigDecimal bestDist = null;
+            int bestDp = 0;
+            // Two unit alignments: the k-digit mantissa may sit at
+            // 10^(exp10-k+1) or, when exact rounds up across a power of
+            // ten (e.g. 9.88e-324 -> "1e-323"), at 10^(exp10-k+2).
+            for (int eShift = 0; eShift <= 1; eShift++) {
+                java.math.BigDecimal unit =
+                        java.math.BigDecimal.ONE.movePointRight(exp10 - k + 1 + eShift);
+                java.math.BigInteger mLo =
+                        lo.divide(unit, 0, java.math.RoundingMode.CEILING).toBigInteger();
+                java.math.BigInteger mHi =
+                        hi.divide(unit, 0, java.math.RoundingMode.FLOOR).toBigInteger();
+                // k-digit mantissas live in [10^(k-1), 10^k).
+                java.math.BigInteger minM = java.math.BigInteger.TEN.pow(k - 1);
+                java.math.BigInteger maxM = java.math.BigInteger.TEN.pow(k)
+                        .subtract(java.math.BigInteger.ONE);
+                if (mLo.compareTo(minM) < 0) {
+                    mLo = minM;
+                }
+                if (mHi.compareTo(maxM) > 0) {
+                    mHi = maxM;
+                }
+                for (java.math.BigInteger m = mLo; m.compareTo(mHi) <= 0;
+                        m = m.add(java.math.BigInteger.ONE)) {
+                    String cand = new java.math.BigDecimal(m).multiply(unit).toPlainString();
+                    boolean roundTrips;
+                    if (bitSize == 32) {
+                        roundTrips = Float.floatToRawIntBits(Float.parseFloat(cand))
+                                == Float.floatToRawIntBits((float) av);
+                    } else {
+                        roundTrips = Double.doubleToRawLongBits(Double.parseDouble(cand))
+                                == Double.doubleToRawLongBits(av);
+                    }
+                    if (!roundTrips) {
+                        continue;
+                    }
+                    java.math.BigDecimal dist = new java.math.BigDecimal(m).multiply(unit)
+                            .subtract(exact).abs();
+                    if (bestM == null || dist.compareTo(bestDist) < 0
+                            || (dist.compareTo(bestDist) == 0
+                                && !m.testBit(0) && bestM.testBit(0))) {
+                        bestM = m;
+                        bestDist = dist;
+                        // value = D * 10^(dp - nd), D = m, nd = k.
+                        bestDp = exp10 + 1 + eShift;
+                    }
+                }
+            }
+            if (bestM != null) {
+                String digits = bestM.toString();
+                byte[] db = new byte[digits.length()];
+                for (int i = 0; i < db.length; i++) {
+                    db[i] = (byte) digits.charAt(i);
+                }
+                return new DecParts(db, bestDp);
+            }
+        }
+        throw new IllegalStateException(
+                "shortestSubnormalParts: no round-trip found (unreachable)");
     }
 
     /**
