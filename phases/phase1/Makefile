@@ -26,7 +26,11 @@ OUT_SMOKE := out/smoke-classes
 # graalgo-run locates it via GRAALGO_GOFRONTEND, else at this path
 # (see graalgo.launcher.ToolPaths).
 GOFRONTEND := frontend/gofrontend
-GOFRONTEND_SRC := frontend/main.go frontend/export.go frontend/build.sh frontend/go.mod
+# P3-M7: the gofrontend binary embeds every non-test frontend/*.go source
+# (synth_*.go, synth_machinery.go, ...). An explicit file list goes stale
+# the moment a new synthetic package lands — a stale binary then silently
+# tests the wrong sources (the errors/sort wave-1 packages hit this).
+GOFRONTEND_SRC := $(wildcard frontend/*.go) frontend/build.sh frontend/go.mod
 $(GOFRONTEND): $(GOFRONTEND_SRC)
 	cd frontend && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh build
 
