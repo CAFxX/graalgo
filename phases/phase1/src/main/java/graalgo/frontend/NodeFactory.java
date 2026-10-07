@@ -909,7 +909,16 @@ public final class NodeFactory {
             String key = structuralKey(ctx, typeId, path);
             graalgo.values.GoTypeDescriptor d = STRUCTURAL_DESCS.get(key);
             if (d == null) {
-                d = new graalgo.values.GoTypeDescriptor(k + "#" + Integer.toHexString(key.hashCode()),
+                // P3-M7: use a Go-syntax type name for the descriptor (used
+                // by %T) instead of the opaque k#hash — e.g. "func()",
+                // "chan int". Falls back to k#hash if the name can't be built.
+                String dispName;
+                try {
+                    dispName = goSyntaxName(ctx, typeId, path);
+                } catch (FrontendException e) {
+                    dispName = k + "#" + Integer.toHexString(key.hashCode());
+                }
+                d = new graalgo.values.GoTypeDescriptor(dispName,
                         kindOf(ctx, typeId, path), false);
                 graalgo.values.GoTypeDescriptor prev =
                         STRUCTURAL_DESCS.putIfAbsent(key, d);
@@ -974,13 +983,90 @@ public final class NodeFactory {
         return typeDescriptorFor(ctx, typeId, path);
     }
 
+    /**
+     * Go-syntax type name for a type-table entry (P3-M7): used as the
+     * display name of structural descriptors (so %T prints "func()",
+     * "chan int", etc., like gc). Only the kinds that can appear as
+     * structural descriptors are handled; others throw FrontendException
+     * (caller falls back to k#hash).
+     */
+    private static String goSyntaxName(BuildCtx ctx, int typeId, String path) {
+        typeId = resolveAlias(ctx, typeId, path);
+        Json.Object entry = ctx.types.entry(typeId, path);
+        String k = entry.string("kind", path);
+        Json.Object detail = entry.object("detail", path);
+        return switch (k) {
+            case "basic" -> detail.string("name", path);
+            case "named" -> detail.string("name", path);
+            case "signature" -> {
+                StringBuilder sb = new StringBuilder("func(");
+                Json.Array params = detail.array("params", path);
+                for (int i = 0; i < params.size(); i++) {
+                    if (i > 0) {
+                        sb.append(", ");
+                    }
+                    Json.Object p = (Json.Object) params.get(i);
+                    sb.append(goSyntaxName(ctx, p.intValue("type", path), path));
+                }
+                sb.append(')');
+                Json.Array results = detail.array("results", path);
+                if (results.size() == 1) {
+                    sb.append(' ').append(goSyntaxName(ctx,
+                            ((Json.Object) results.get(0)).intValue("type", path), path));
+                } else if (results.size() > 1) {
+                    sb.append(" (");
+                    for (int i = 0; i < results.size(); i++) {
+                        if (i > 0) {
+                            sb.append(", ");
+                        }
+                        Json.Object r = (Json.Object) results.get(i);
+                        sb.append(goSyntaxName(ctx, r.intValue("type", path), path));
+                    }
+                    sb.append(')');
+                }
+                yield sb.toString();
+            }
+            case "chan" -> "chan " + goSyntaxName(ctx, detail.intValue("elem", path), path);
+            case "pointer" -> {
+                int elemId = resolveAlias(ctx, detail.intValue("elem", path), path);
+                Json.Object elemEntry = ctx.types.entry(elemId, path);
+                if ("named".equals(elemEntry.string("kind", path))) {
+                    yield "*" + elemEntry.object("detail", path).string("name", path);
+                }
+                yield "*" + goSyntaxName(ctx, elemId, path);
+            }
+            case "slice" -> "[]" + goSyntaxName(ctx, detail.intValue("elem", path), path);
+            case "array" -> "[" + detail.intValue("len", path) + "]"
+                    + goSyntaxName(ctx, detail.intValue("elem", path), path);
+            case "map" -> "map[" + goSyntaxName(ctx, detail.intValue("key", path), path) + "]"
+                    + goSyntaxName(ctx, detail.intValue("elem", path), path);
+            case "struct" -> {
+                StringBuilder sb = new StringBuilder("struct{");
+                Json.Array fields = detail.array("fields", path);
+                for (int i = 0; i < fields.size(); i++) {
+                    if (i > 0) {
+                        sb.append("; ");
+                    }
+                    Json.Object fo = (Json.Object) fields.get(i);
+                    sb.append(fo.string("name", path)).append(' ')
+                            .append(goSyntaxName(ctx, fo.intValue("type", path), path));
+                }
+                yield sb.append('}').toString();
+            }
+            case "interface" -> detail.bool("empty", path) ? "interface{}" : "interface{...}";
+            default -> throw new FrontendException(path + ": no Go-syntax name for kind " + k);
+        };
+    }
+
     /** Unnamed composite kinds canonicalized by structure (M6, WS H). */
     private static boolean isStructuralComposite(String k) {
         // P3-M7: "signature" added — func types are structural (two func()
         // types are identical even across packages; the type switch in
         // synthetic json's marshalValue must match main-package funcs).
+        // P3-M7: "chan" added — chan types are structural too.
         return "struct".equals(k) || "array".equals(k) || "slice".equals(k)
-                || "map".equals(k) || "pointer".equals(k) || "signature".equals(k);
+                || "map".equals(k) || "pointer".equals(k) || "signature".equals(k)
+                || "chan".equals(k);
     }
 
     /** Process-wide canonical descriptors for named types, keyed by qualified
@@ -1038,6 +1124,10 @@ public final class NodeFactory {
                         + structuralKey(ctx, detail.intValue("elem", path), path);
             case "pointer":
                 return "ptr(" + structuralKey(ctx, detail.intValue("elem", path), path) + ")";
+            case "chan":
+                // P3-M7: chan types are structural (chan int is chan int
+                // across packages).
+                return "chan(" + structuralKey(ctx, detail.intValue("elem", path), path) + ")";
             case "signature": {
                 // P3-M7: func types are structural (two func() types are
                 // identical, even across packages). Params/results are
