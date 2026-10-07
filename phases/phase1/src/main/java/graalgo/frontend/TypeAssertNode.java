@@ -105,7 +105,9 @@ public final class TypeAssertNode extends GoExprNode {
     }
 
     private Object read(VirtualFrame frame) {
-        GoInterface gi = (GoInterface) iface.executeObject(frame);
+        // P3-M7: a nil interface may flow as Java null — narrow to NIL so
+        // the nil-interface paths below apply instead of NPEing.
+        GoInterface gi = GoInterface.narrow(iface.executeObject(frame));
         if (!holds(gi, asserted, assertedIfaceMethods, dynamicMethodSets)) {
             if (lenient) {
                 return Boxing.zero(kind(), structDesc);
