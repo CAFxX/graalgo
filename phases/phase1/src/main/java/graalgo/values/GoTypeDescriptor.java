@@ -7,7 +7,9 @@ package graalgo.values;
  *
  * <p>Canonicalization rules (see {@code NodeFactory.typeDescriptorFor}):
  * <ul>
- *   <li>basic types: one instance per {@link GoKind} — the default type of
+ *   <li>basic types: one instance per Go type <em>name</em> — {@code int}
+ *       and {@code int64} are distinct types (distinct %T, distinct type
+ *       switch cases) even though they share a kind; the default type of
  *       an untyped constant ({@code int}, {@code float64}, {@code string},
  *       {@code bool}) shares the instance with the corresponding basic
  *       type-table entry;</li>

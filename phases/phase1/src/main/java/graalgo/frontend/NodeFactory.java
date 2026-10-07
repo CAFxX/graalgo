@@ -765,7 +765,16 @@ public final class NodeFactory {
      * descriptors keep named types distinct).
      */
     private static int resolveAlias(BuildCtx ctx, int typeId, String path) {
-        Json.Object entry = ctx.types.entry(typeId, path);
+        return resolveAlias(ctx.types, typeId, path);
+    }
+
+    /**
+     * Alias resolution over a bare type table (P3-M7R2): overload for
+     * naming helpers that don't have a {@link BuildCtx}. Public for the
+     * phase-3 {@code DescriptorNames} replica.
+     */
+    public static int resolveAlias(TypeTable types, int typeId, String path) {
+        Json.Object entry = types.entry(typeId, path);
         // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
         for (int steps = 0; ; steps++) {
             if (steps > MAX_TYPE_CHAIN_STEPS) {
@@ -776,7 +785,7 @@ public final class NodeFactory {
                 return typeId;
             }
             typeId = entry.object("detail", path).intValue("rhs", path);
-            entry = ctx.types.entry(typeId, path);
+            entry = types.entry(typeId, path);
         }
     }
 
@@ -882,18 +891,8 @@ public final class NodeFactory {
             // P3-M7: basic types are named by their Go name ("int" vs
             // "int64"), not just kind — %T must distinguish them, and
             // type switches must not conflate them. Canonicalized by
-            // name in a process-wide cache.
-            String name = entry.object("detail", path).string("name", path);
-            GoKind kind = kindOf(ctx, typeId, path);
-            graalgo.values.GoTypeDescriptor d = BASIC_NAMED_DESCS.get(name);
-            if (d == null) {
-                d = new graalgo.values.GoTypeDescriptor(name, kind, false);
-                graalgo.values.GoTypeDescriptor prev = BASIC_NAMED_DESCS.putIfAbsent(name, d);
-                if (prev != null) {
-                    d = prev;
-                }
-            }
-            return d;
+            // name in a process-wide cache (see basicDescriptorForName).
+            return basicDescriptorFor(ctx, typeId, path);
         }
         // P3-M7: a pointer to a named type is named "*"+qualifiedName
         // (like gc's %T), not structural. Two distinct named types with
@@ -928,7 +927,7 @@ public final class NodeFactory {
                 // "chan int". Falls back to k#hash if the name can't be built.
                 String dispName;
                 try {
-                    dispName = goSyntaxName(ctx, typeId, path);
+                    dispName = goSyntaxName(ctx.types, typeId, path);
                 } catch (FrontendException e) {
                     dispName = k + "#" + Integer.toHexString(key.hashCode());
                 }
@@ -1007,8 +1006,12 @@ public final class NodeFactory {
      * %T prints. Uses the package NAME, not the full path ("json.Number",
      * not "encoding/json.Number"). gc 1.27 aliases encoding/json.RawMessage
      * to encoding/json/jsontext.Value, so it displays as jsontext.Value.
+     *
+     * <p>Public (P3-M7R2) for the phase-3 {@code DescriptorNames} replica:
+     * leaf naming is a single source of truth; the replica independently
+     * pins the branch dispatch.
      */
-    private static String displayNameFor(String qname) {
+    public static String displayNameFor(String qname) {
         if ("encoding/json.RawMessage".equals(qname)) {
             return "jsontext.Value";
         }
@@ -1030,10 +1033,13 @@ public final class NodeFactory {
      * "chan int", etc., like gc). Only the kinds that can appear as
      * structural descriptors are handled; others throw FrontendException
      * (caller falls back to k#hash).
+     *
+     * <p>Public (P3-M7R2) for the phase-3 {@code DescriptorNames} replica.
+     * Takes a bare {@link TypeTable}: naming is pure over the table.
      */
-    private static String goSyntaxName(BuildCtx ctx, int typeId, String path) {
-        typeId = resolveAlias(ctx, typeId, path);
-        Json.Object entry = ctx.types.entry(typeId, path);
+    public static String goSyntaxName(TypeTable types, int typeId, String path) {
+        typeId = resolveAlias(types, typeId, path);
+        Json.Object entry = types.entry(typeId, path);
         String k = entry.string("kind", path);
         Json.Object detail = entry.object("detail", path);
         return switch (k) {
@@ -1047,12 +1053,12 @@ public final class NodeFactory {
                         sb.append(", ");
                     }
                     Json.Object p = (Json.Object) params.get(i);
-                    sb.append(goSyntaxName(ctx, p.intValue("type", path), path));
+                    sb.append(goSyntaxName(types, p.intValue("type", path), path));
                 }
                 sb.append(')');
                 Json.Array results = detail.array("results", path);
                 if (results.size() == 1) {
-                    sb.append(' ').append(goSyntaxName(ctx,
+                    sb.append(' ').append(goSyntaxName(types,
                             ((Json.Object) results.get(0)).intValue("type", path), path));
                 } else if (results.size() > 1) {
                     sb.append(" (");
@@ -1061,26 +1067,26 @@ public final class NodeFactory {
                             sb.append(", ");
                         }
                         Json.Object r = (Json.Object) results.get(i);
-                        sb.append(goSyntaxName(ctx, r.intValue("type", path), path));
+                        sb.append(goSyntaxName(types, r.intValue("type", path), path));
                     }
                     sb.append(')');
                 }
                 yield sb.toString();
             }
-            case "chan" -> "chan " + goSyntaxName(ctx, detail.intValue("elem", path), path);
+            case "chan" -> "chan " + goSyntaxName(types, detail.intValue("elem", path), path);
             case "pointer" -> {
-                int elemId = resolveAlias(ctx, detail.intValue("elem", path), path);
-                Json.Object elemEntry = ctx.types.entry(elemId, path);
+                int elemId = resolveAlias(types, detail.intValue("elem", path), path);
+                Json.Object elemEntry = types.entry(elemId, path);
                 if ("named".equals(elemEntry.string("kind", path))) {
                     yield "*" + elemEntry.object("detail", path).string("name", path);
                 }
-                yield "*" + goSyntaxName(ctx, elemId, path);
+                yield "*" + goSyntaxName(types, elemId, path);
             }
-            case "slice" -> "[]" + goSyntaxName(ctx, detail.intValue("elem", path), path);
+            case "slice" -> "[]" + goSyntaxName(types, detail.intValue("elem", path), path);
             case "array" -> "[" + detail.intValue("len", path) + "]"
-                    + goSyntaxName(ctx, detail.intValue("elem", path), path);
-            case "map" -> "map[" + goSyntaxName(ctx, detail.intValue("key", path), path) + "]"
-                    + goSyntaxName(ctx, detail.intValue("elem", path), path);
+                    + goSyntaxName(types, detail.intValue("elem", path), path);
+            case "map" -> "map[" + goSyntaxName(types, detail.intValue("key", path), path) + "]"
+                    + goSyntaxName(types, detail.intValue("elem", path), path);
             case "struct" -> {
                 StringBuilder sb = new StringBuilder("struct{");
                 Json.Array fields = detail.array("fields", path);
@@ -1090,7 +1096,7 @@ public final class NodeFactory {
                     }
                     Json.Object fo = (Json.Object) fields.get(i);
                     sb.append(fo.string("name", path)).append(' ')
-                            .append(goSyntaxName(ctx, fo.intValue("type", path), path));
+                            .append(goSyntaxName(types, fo.intValue("type", path), path));
                 }
                 yield sb.append('}').toString();
             }
@@ -1197,31 +1203,125 @@ public final class NodeFactory {
         }
     }
 
-    /** Canonical dynamic-type descriptor per basic kind (M4, WS E). */
-    private static final Map<GoKind, graalgo.values.GoTypeDescriptor> BASIC_DESCS = new HashMap<>();
-
     /**
      * Canonical dynamic-type descriptors per basic Go type name (P3-M7):
      * "int" and "int64" are distinct types (different %T, different type
      * switch cases) even though they share a kind. Process-wide cache.
+     *
+     * <p>P3-M7R2: this is the SINGLE unification point for basic-type
+     * identity. Every path that mints a descriptor for a Go basic type —
+     * {@code typeDescriptorFor}, {@code basicDescriptorFor},
+     * {@code boxInterface}, {@code wrapInterface} — must go through
+     * {@link #basicDescriptorForName}, or two paths will mint different
+     * objects for one Go type and identity comparisons (type assertions,
+     * type switches, interface ==) will fail with the maddening
+     * "interface {} is int64, not int64" symptom. The kind-keyed
+     * {@code BASIC_DESCS} cache was removed: a GoKind alone cannot
+     * identify a Go type (INT64 is both "int" and "int64").
      */
     private static final java.util.concurrent.ConcurrentHashMap<String,
             graalgo.values.GoTypeDescriptor> BASIC_NAMED_DESCS =
             new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * Canonical descriptor for the Go basic type {@code goName} (P3-M7R2):
+     * the unification point for basic-type identity. {@code kind} is the
+     * value-representation kind (e.g. INT64 for both "int" and "int64").
+     */
+    public static graalgo.values.GoTypeDescriptor basicDescriptorForName(String goName,
+            GoKind kind) {
+        graalgo.values.GoTypeDescriptor d = BASIC_NAMED_DESCS.get(goName);
+        if (d == null) {
+            d = new graalgo.values.GoTypeDescriptor(goName, kind, false);
+            graalgo.values.GoTypeDescriptor prev = BASIC_NAMED_DESCS.putIfAbsent(goName, d);
+            if (prev != null) {
+                d = prev;
+            }
+        }
+        return d;
+    }
+
+    /**
+     * Canonical descriptor for a basic type-table entry (P3-M7R2):
+     * resolves the Go type name and delegates to the name-keyed
+     * unification point ({@link #basicDescriptorForName}). Untyped
+     * constants ("untyped int") normalize to their default Go type
+     * ("int"), so every path mints the same instance.
+     */
+    private static graalgo.values.GoTypeDescriptor basicDescriptorFor(BuildCtx ctx, int typeId,
+            String path) {
+        Json.Object entry = ctx.types.entry(typeId, path);
+        String name = entry.object("detail", path).string("name", path);
+        if (name.startsWith("untyped ")) {
+            String defName = defaultBasicName(name);
+            return basicDescriptorForName(defName, kindForBasicName(defName));
+        }
+        return basicDescriptorForName(name, kindOf(ctx, typeId, path));
+    }
+
+    /**
+     * Default Go type name for an untyped constant (P3-M7R2): the type gc
+     * gives the value when it acquires one. Note "int", not "int64"; an
+     * untyped rune constant defaults to {@code rune}, which is identical
+     * to {@code int32} (so the canonical "int32" descriptor is used —
+     * gc's %T prints "int32" for {@code any('a')}).
+     *
+     * <p>Public for the phase-3 {@code DescriptorNames} naming replica.
+     */
+    public static String defaultBasicName(String untypedName) {
+        return switch (untypedName) {
+            case "untyped int" -> "int";
+            case "untyped rune" -> "int32";
+            case "untyped float" -> "float64";
+            case "untyped complex" -> "complex128";
+            case "untyped string" -> "string";
+            case "untyped bool" -> "bool";
+            default -> throw new FrontendException(
+                    "no default type for " + untypedName + " (WS E)");
+        };
+    }
+
+    /** Value-representation kind for a Go basic type name (P3-M7R2). */
+    private static GoKind kindForBasicName(String name) {
+        return switch (name) {
+            case "int8" -> GoKind.INT8;
+            case "int16" -> GoKind.INT16;
+            case "int32" -> GoKind.INT32;
+            case "int", "int64" -> GoKind.INT64;
+            case "uint8" -> GoKind.UINT8;
+            case "uint16" -> GoKind.UINT16;
+            case "uint32" -> GoKind.UINT32;
+            case "uint", "uint64", "uintptr" -> GoKind.UINT64;
+            case "float32" -> GoKind.FLOAT32;
+            case "float64" -> GoKind.FLOAT64;
+            case "complex64" -> GoKind.COMPLEX64;
+            case "complex128" -> GoKind.COMPLEX128;
+            case "string" -> GoKind.STRING;
+            case "bool" -> GoKind.BOOL;
+            default -> throw new FrontendException(
+                    "no kind for basic type name " + name + " (WS E)");
+        };
+    }
+
+    /**
+     * Canonical dynamic-type descriptor per basic kind (M4, WS E).
+     * P3-M7R2: delegates to the name-keyed unification point with the
+     * kind's canonical Go spelling ("int64" for INT64). Callers that know
+     * the actual Go type name (e.g. "int" vs "int64", or an untyped
+     * constant's default type) must use {@link #basicDescriptorForName}
+     * instead — a kind alone cannot distinguish them.
+     */
     public static graalgo.values.GoTypeDescriptor basicDescriptorFor(GoKind kind) {
-        return BASIC_DESCS.computeIfAbsent(kind,
-                k -> new graalgo.values.GoTypeDescriptor(k.name().toLowerCase(), k, false));
+        return basicDescriptorForName(kind.name().toLowerCase(), kind);
     }
 
     /**
      * True if the descriptor is one of the canonical predeclared-basic
      * descriptors (M5, WS F): used by panic rendering to distinguish
-     * {@code 5} (bare) from {@code main.MyInt(5)} (named). P3-M7: also
-     * recognizes the name-based basic descriptors ("int" vs "int64").
+     * {@code 5} (bare) from {@code main.MyInt(5)} (named).
      */
     public static boolean isPredeclaredBasic(graalgo.values.GoTypeDescriptor d) {
-        return BASIC_DESCS.containsValue(d) || BASIC_NAMED_DESCS.containsValue(d);
+        return BASIC_NAMED_DESCS.containsValue(d);
     }
 
     /** Default kind of an untyped constant kind (for interface boxing). */
@@ -1229,6 +1329,7 @@ public final class NodeFactory {
         return switch (untyped) {
             case UNTYPED_INT -> GoKind.INT64;
             case UNTYPED_FLOAT -> GoKind.FLOAT64;
+            case UNTYPED_COMPLEX -> GoKind.COMPLEX128;
             case UNTYPED_STRING -> GoKind.STRING;
             case UNTYPED_BOOL -> GoKind.BOOL;
             default -> throw new FrontendException("no default type for kind " + untyped + " (WS E)");
@@ -1478,14 +1579,18 @@ public final class NodeFactory {
      * P3-M3 (WS D): descriptor name → method implkeys for every
      * {@code named}/{@code pointer} type-table entry, memoized per build.
      * Descriptor names replicate {@link #typeDescriptorFor} exactly
-     * ({@code named} → qualified name; {@code pointer} → structural
-     * {@code "pointer#"+hex}), so the keys match the dynamic-type
-     * descriptors boxing produces at runtime. Each implkey is the
+     * ({@code named} → display name; {@code pointer} → "*"+qualifiedName
+     * for pointer-to-named, structural otherwise), so the keys match the
+     * dynamic-type descriptors boxing produces at runtime. Each implkey is the
      * exporter's method-identity key (name + structural signature, see
      * {@link #interfaceMethodImplKeys}) — the implements check compares
      * implkeys, not bare names, so same-name/wrong-signature methods do
      * not satisfy an assertion (R1 P0-1). Consumed by type assertions to
      * non-empty interfaces.
+     *
+     * <p>P3-M7R2: the pointer branch mirrors dbd728c and the named branch
+     * mirrors fa099f2's displayNameFor — both install sides must agree
+     * with typeDescriptorFor byte-exactly, or assertions miss.
      */
     static Map<String, Set<String>> dynamicMethodSets(BuildCtx ctx, String path) {
         if (ctx.dynamicMethodSets != null) {
@@ -1501,15 +1606,25 @@ public final class NodeFactory {
                 if (templateMethodsSkipped(detail)) {
                     implkeys.add(TEMPLATE_METHODS_SKIPPED);
                 }
-                out.put(detail.string("name", path), implkeys);
+                out.put(displayNameFor(detail.string("name", path)), implkeys);
             } else if ("pointer".equals(k)) {
-                // Must equal typeDescriptorFor's structural naming.
-                String key = structuralKey(ctx, id, path);
+                // Must equal typeDescriptorFor's naming: "*"+qualifiedName
+                // for pointer-to-named, structural otherwise.
+                int elemId = resolveAlias(ctx,
+                        detail.intValue("elem", path), path);
+                Json.Object elemEntry = ctx.types.entry(elemId, path);
+                String key;
+                if ("named".equals(elemEntry.string("kind", path))) {
+                    key = "*" + elemEntry.object("detail", path).string("name", path);
+                } else {
+                    String skey = structuralKey(ctx, id, path);
+                    key = "pointer#" + Integer.toHexString(skey.hashCode());
+                }
                 Set<String> implkeys = methodImplKeys(detail, path);
                 if (templateMethodsSkipped(detail)) {
                     implkeys.add(TEMPLATE_METHODS_SKIPPED);
                 }
-                out.put("pointer#" + Integer.toHexString(key.hashCode()), implkeys);
+                out.put(key, implkeys);
             }
         }
         ctx.dynamicMethodSets = out;
@@ -1564,7 +1679,10 @@ public final class NodeFactory {
         graalgo.values.GoTypeDescriptor descriptor;
         if (from.isUntyped()) {
             dataKind = defaultKind(from);
-            descriptor = basicDescriptorFor(dataKind);
+            // P3-M7R2: the default Go type name ("int", not "int64"; untyped
+            // rune -> "int32"), resolved from the node's type-table id when
+            // available so every boxing path mints the identical descriptor.
+            descriptor = untypedDefaultDescriptor(ctx, child, dataKind, path);
         } else {
             dataKind = from;
             int fromId = child.typeId();
@@ -1577,6 +1695,46 @@ public final class NodeFactory {
         n.setSourceSection(child.getSourceSection());
         n.setTypeId(child.typeId());
         return n;
+    }
+
+    /**
+     * Canonical descriptor for an untyped constant's default Go type
+     * (P3-M7R2): resolves the exact untyped name from the node's
+     * type-table id when available ("untyped int" -> "int", "untyped
+     * rune" -> "int32"), so boxing, type switches, and assertions all
+     * mint the identical instance. Falls back to the kind's conventional
+     * default when the node carries no type id. Public for the phase-3
+     * {@code IfaceDispatchBuilder} boxing replica.
+     */
+    public static graalgo.values.GoTypeDescriptor untypedDefaultDescriptor(BuildCtx ctx,
+            GoExprNode child, GoKind dataKind, String path) {
+        int tid = child.typeId();
+        if (tid >= 0) {
+            String name = ctx.types.entry(tid, path).object("detail", path)
+                    .string("name", path);
+            if (name.startsWith("untyped ")) {
+                String defName = defaultBasicName(name);
+                return basicDescriptorForName(defName, kindForBasicName(defName));
+            }
+        }
+        return basicDescriptorForName(defaultNameForKind(dataKind), dataKind);
+    }
+
+    /**
+     * Conventional default Go type name for a value kind (P3-M7R2):
+     * used when no type-table id is available to resolve the exact
+     * untyped name.
+     */
+    private static String defaultNameForKind(GoKind kind) {
+        return switch (kind) {
+            case INT64 -> "int";
+            case FLOAT64 -> "float64";
+            case COMPLEX128 -> "complex128";
+            case STRING -> "string";
+            case BOOL -> "bool";
+            default -> throw new FrontendException(
+                    "no default basic type name for kind " + kind + " (WS E)");
+        };
     }
 
     /**
@@ -2092,7 +2250,7 @@ public final class NodeFactory {
         }
         GoKind kind = kindOf(ctx, f.intValue("type", path), path);
         String c = f.string("const", path);
-        return switch (kind) {
+        GoExprNode lit = switch (kind) {
             case INT8, INT16, INT32, INT64, UINT8, UINT16, UINT32, UINT64 ->
                 ConstNode.ofInt(kind, parseGoIntConst(c, path));
             case UNTYPED_INT ->
@@ -2118,6 +2276,11 @@ public final class NodeFactory {
             default -> throw new FrontendException(
                     path + ": constant of kind " + kind + " is not supported (WS C/D)");
         };
+        // P3-M7R2: carry the type-table id so interface boxing can resolve
+        // the exact untyped name ("untyped int" vs "untyped rune") for the
+        // default-type descriptor.
+        lit.setTypeId(f.intValue("type", path));
+        return lit;
     }
 
     /**
@@ -4144,14 +4307,11 @@ public final class NodeFactory {
                     // untyped constants take their default type.
                     GoKind ck = ce.kind();
                     graalgo.values.GoTypeDescriptor cd;
-                    if (ck == GoKind.UNTYPED_INT) {
-                        cd = basicDescriptorFor(GoKind.INT64);
-                    } else if (ck == GoKind.UNTYPED_FLOAT) {
-                        cd = basicDescriptorFor(GoKind.FLOAT64);
-                    } else if (ck == GoKind.UNTYPED_STRING) {
-                        cd = basicDescriptorFor(GoKind.STRING);
-                    } else if (ck == GoKind.UNTYPED_BOOL) {
-                        cd = basicDescriptorFor(GoKind.BOOL);
+                    if (ck.isUntyped()) {
+                        // P3-M7R2: same default-type descriptor as boxing —
+                        // "int", not "int64" — or case/int-tag comparisons
+                        // mint a different instance than the boxed tag.
+                        cd = untypedDefaultDescriptor(ctx, ce, defaultKind(ck), ep);
                     } else if (ce.typeId() >= 0) {
                         cd = typeDescriptorFor(ctx, ce.typeId(), ep);
                     } else {

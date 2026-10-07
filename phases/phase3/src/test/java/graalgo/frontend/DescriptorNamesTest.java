@@ -69,23 +69,24 @@ public final class DescriptorNamesTest {
     }
 
     /**
-     * The pointer-to-named name is structural (NOT "pointer#"+typeId):
-     * two entries with the same shape share one name.
+     * Pointer-to-named uses "*"+qualifiedName (dbd728c), NOT a structural
+     * hash: two distinct named types with identical structure must not
+     * share a descriptor. Pointer-to-unnamed uses Go-syntax names
+     * (fa099f2), falling back to structural hashes only when no syntax
+     * name exists.
      * verifies: GG-0014
      */
-    public void testPointerNameIsStructural() {
+    public void testPointerToNamedUsesQualifiedName() {
         TypeTable types = new TypeTable((Json.Array) Json.parse(TYPES));
-        String p1 = DescriptorNames.descriptorName(types, 2); // *main.T
-        assertTrue(p1.startsWith("pointer#"), "pointer name shape: " + p1);
-        assertTrue(!p1.equals("pointer#2"), "not the raw type id: " + p1);
-        // id 11 is pointer-to-pointer-to-named: nested structural shape.
+        // id 2 is *main.T (pointer to named).
+        String p1 = DescriptorNames.descriptorName(types, 2);
+        assertEquals("*main.T", p1, "pointer-to-named name");
+        // id 11 is pointer-to-pointer-to-named: Go-syntax "**main.T".
         String p2 = DescriptorNames.descriptorName(types, 11);
-        assertTrue(p2.startsWith("pointer#") && !p2.equals(p1),
-                "nested pointer differs: " + p2);
-        // id 12 is pointer-to-slice-of-int.
+        assertEquals("**main.T", p2, "nested pointer name");
+        // id 12 is pointer-to-slice-of-int: Go-syntax "*[]int".
         String p3 = DescriptorNames.descriptorName(types, 12);
-        assertTrue(p3.startsWith("pointer#") && !p3.equals(p1) && !p3.equals(p2),
-                "pointer-to-slice differs: " + p3);
+        assertEquals("*[]int", p3, "pointer-to-slice name");
     }
 
     /**

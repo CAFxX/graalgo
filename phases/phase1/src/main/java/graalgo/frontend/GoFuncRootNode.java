@@ -240,28 +240,46 @@ public final class GoFuncRootNode extends RootNode {
      * Infers the basic descriptor from the Java type. Package-visible for
      * {@link LinknameRootNode} (P3-M4): a linkname target returning a
      * declared interface type boxes its D5 result the same way.
+     *
+     * <p>P3-M7R2: uses the name-keyed canonical descriptors (see
+     * {@code NodeFactory.basicDescriptorForName}) — the kind-keyed cache
+     * is gone, and every path must mint the identical instance for one
+     * Go type or identity comparisons fail ("is int64, not int64").
+     * The Java carrier -> Go name mapping is conventional: a D5
+     * {@code Long} is the 64-bit carrier shared by Go {@code int} and
+     * {@code int64}; "int64" is used (matching the pre-P3-M7 observable
+     * behavior on the linkname path). Callers that know the exact Go
+     * type must box via the type table instead.
      */
     static graalgo.values.GoInterface wrapInterface(Object arg) {
         graalgo.values.GoKind kind;
+        String goName;
         if (arg instanceof Long) {
             kind = graalgo.values.GoKind.INT64;
+            goName = "int64";
         } else if (arg instanceof Integer) {
             kind = graalgo.values.GoKind.INT32;
+            goName = "int32";
         } else if (arg instanceof Double) {
             kind = graalgo.values.GoKind.FLOAT64;
+            goName = "float64";
         } else if (arg instanceof Float) {
             kind = graalgo.values.GoKind.FLOAT32;
+            goName = "float32";
         } else if (arg instanceof Boolean) {
             kind = graalgo.values.GoKind.BOOL;
+            goName = "bool";
         } else if (arg instanceof graalgo.values.GoString) {
             kind = graalgo.values.GoKind.STRING;
+            goName = "string";
         } else {
             // Unknown: use the arg's class name; the type switch will not
             // match, which is acceptable for v1.
             kind = graalgo.values.GoKind.INTERFACE;
+            goName = "interface";
         }
         graalgo.values.GoTypeDescriptor desc =
-                graalgo.frontend.NodeFactory.basicDescriptorFor(kind);
+                graalgo.frontend.NodeFactory.basicDescriptorForName(goName, kind);
         return new graalgo.values.GoInterface(desc, arg, null);
     }
 }

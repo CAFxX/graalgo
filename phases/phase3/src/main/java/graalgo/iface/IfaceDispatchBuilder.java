@@ -214,7 +214,10 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
         GoTypeDescriptor descriptor;
         if (from.isUntyped()) {
             dataKind = defaultKind(from);
-            descriptor = NodeFactory.basicDescriptorFor(dataKind);
+            // P3-M7R2: delegate to the factory's default-type descriptor
+            // ("int", not "int64") so this replica mints the identical
+            // instance the factory's boxInterface mints.
+            descriptor = NodeFactory.untypedDefaultDescriptor(ctx, child, dataKind, path);
         } else {
             dataKind = from;
             int fromId = child.typeId();

@@ -6,30 +6,37 @@ import graalgo.frontend.TypeTable;
 import graalgo.values.GoKind;
 
 /**
- * Byte-exact replica of {@code NodeFactory}'s private descriptor-naming
- * logic ({@code typeDescriptorFor} / {@code kindOf} / {@code resolveAlias} /
+ * Replica of {@code NodeFactory}'s descriptor-naming branch dispatch
+ * ({@code typeDescriptorFor} / {@code kindOf} / {@code resolveAlias} /
  * {@code structuralKey}), for use from the {@code graalgo.iface} package,
  * which may not touch Phase-1 privates (frozen).
  *
- * <p>Only the <em>names</em> are replicated, never the canonical
+ * <p>Only the branch <em>dispatch</em> is replicated, never the canonical
  * instances: the dispatch path keys itabs by descriptor name, and the
  * launcher must compute the same name strings the factory mints at box
  * sites so exporter and runtime agree without a shared-code change
- * (ADR-0003 D5). Where the factory returns a canonical instance
- * ({@code basicDescriptorFor}, {@code ctx.typeDescs}), callers use the
- * public routes; this class covers only the name computation.
+ * (ADR-0003 D5). Leaf naming ({@code displayNameFor},
+ * {@code goSyntaxName}, {@code defaultBasicName}) delegates to the
+ * factory's public methods — a single source of truth, so the
+ * dbd728c/fa099f2 drift (replica silently stale while the factory moved
+ * on, breaking method-table keys) cannot recur. Where the factory returns
+ * a canonical instance ({@code basicDescriptorForName},
+ * {@code ctx.typeDescs}), callers use the public routes; this class
+ * covers only the name computation.
  *
- * <p>Deviation note (ADR-0003 D5): the ADR claims pointer dynamic types
- * key by {@code "pointer#"+typeId}. The factory ({@code NodeFactory},
- * {@code typeDescriptorFor}) in fact routes every {@code pointer} entry
- * through the structural branch, naming it
- * {@code "pointer#" + hex(structuralKey.hashCode())} — the
- * {@code k + "#" + typeId} branch the ADR cites is unreachable for
- * pointers. This class replicates the factory's <em>actual</em> naming;
- * using the ADR's literal string would never match a runtime descriptor
- * and every pointer-receiver interface call would fail table lookup.
- * ADR-0003 itself is not modified here (frozen doc); the deviation is
- * reported to the coordinator for an ADR amendment.
+ * <p>Deviation note (ADR-0003 D5, updated P3-M7R2): the ADR claims pointer
+ * dynamic types key by {@code "pointer#"+typeId}. The factory
+ * ({@code NodeFactory}, {@code typeDescriptorFor}) routes pointer-to-named
+ * types to {@code "*"+qualifiedName} (dbd728c) and other pointers through
+ * the structural branch, naming them via {@code goSyntaxName} (fa099f2)
+ * with a {@code "pointer#" + hex(structuralKey.hashCode())} fallback —
+ * the {@code k + "#" + typeId} branch the ADR cites is unreachable for
+ * pointers. Named types use the display name ({@code displayNameFor}),
+ * not the qualified name (fa099f2). This class replicates the factory's
+ * <em>actual</em> branch dispatch; leaf naming ({@code displayNameFor},
+ * {@code goSyntaxName}) delegates to the factory as a single source of
+ * truth. ADR-0003 itself is not modified here (frozen doc); the deviation
+ * is reported to the coordinator for an ADR amendment.
  *
  * <p>Correctness of the replica is pinned by
  * {@code graalgo.frontend.DescriptorNamesTest}, which compares these
@@ -45,6 +52,12 @@ public final class DescriptorNames {
     /**
      * The descriptor name {@code NodeFactory.typeDescriptorFor} would mint
      * for {@code typeId} (basic/named/interface/structural/other branches).
+     *
+     * <p>P3-M7R2: the branch dispatch is replicated independently (this is
+     * what the test pins), but leaf naming delegates to the factory's
+     * {@code displayNameFor}/{@code goSyntaxName} — a single source of
+     * truth, so the dbd728c/fa099f2 drift (replica silently stale while
+     * the factory moved on) cannot recur.
      */
     public static String descriptorName(TypeTable types, int typeId) {
         String path = "types[" + typeId + "]";
@@ -52,16 +65,39 @@ public final class DescriptorNames {
         Json.Object entry = types.entry(typeId, path);
         String k = entry.string("kind", path);
         if ("basic".equals(k)) {
-            // Factory: basicDescriptorFor(kindOf(...)) names by kind.
-            return kindOf(types, typeId, path).name().toLowerCase();
-        }
-        if (isStructuralComposite(k)) {
-            String key = structuralKey(types, typeId, path);
-            return k + "#" + Integer.toHexString(key.hashCode());
+            // Factory (P3-M7, P3-M7R2): basic types canonicalize by Go
+            // name via basicDescriptorForName ("int" vs "int64" are
+            // distinct); untyped constants normalize to their default
+            // type name.
+            String name = entry.object("detail", path).string("name", path);
+            if (name.startsWith("untyped ")) {
+                name = graalgo.frontend.NodeFactory.defaultBasicName(name);
+            }
+            return name;
         }
         Json.Object detail = entry.object("detail", path);
+        if ("pointer".equals(k)) {
+            // Factory (dbd728c): pointer-to-named is "*"+qualifiedName,
+            // not structural. Pointer-to-unnamed falls through to the
+            // structural branch below.
+            int elemId = resolveAlias(types, detail.intValue("elem", path), path);
+            Json.Object elemEntry = types.entry(elemId, path);
+            if ("named".equals(elemEntry.string("kind", path))) {
+                return "*" + elemEntry.object("detail", path).string("name", path);
+            }
+        }
+        if (isStructuralComposite(k)) {
+            // Factory (fa099f2): structural descriptors use goSyntaxName
+            // for %T, falling back to k#hash.
+            try {
+                return graalgo.frontend.NodeFactory.goSyntaxName(types, typeId, path);
+            } catch (FrontendException e) {
+                String key = structuralKey(types, typeId, path);
+                return k + "#" + Integer.toHexString(key.hashCode());
+            }
+        }
         if ("named".equals(k)) {
-            return detail.string("name", path);
+            return graalgo.frontend.NodeFactory.displayNameFor(detail.string("name", path));
         }
         if ("interface".equals(k)) {
             boolean empty = detail.bool("empty", path);
@@ -123,8 +159,11 @@ public final class DescriptorNames {
     }
 
     private static boolean isStructuralComposite(String k) {
+        // Mirrors NodeFactory.isStructuralComposite (P3-M7: signature and
+        // chan are structural).
         return "struct".equals(k) || "array".equals(k) || "slice".equals(k)
-                || "map".equals(k) || "pointer".equals(k);
+                || "map".equals(k) || "pointer".equals(k) || "signature".equals(k)
+                || "chan".equals(k);
     }
 
     /** Replica of {@code NodeFactory.structuralKey}. */

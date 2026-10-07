@@ -129,7 +129,11 @@ public final class IfaceMethodTables {
                         // The wire id is the *interface* entry's id (uid):
                         // the dispatch path's ifacemethod "iface" field
                         // always points at an "interface"-kind entry.
-                        out.put(detail.string("name", path),
+                        // P3-M7R2: key by the display name (fa099f2), not
+                        // the qualified name — the lookup side uses
+                        // iface.name(), the descriptor's display name.
+                        out.put(graalgo.frontend.NodeFactory.displayNameFor(
+                                        detail.string("name", path)),
                                 new IfaceMethodTable.IfaceWireEntry(uid, names));
                     }
                 }
