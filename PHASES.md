@@ -275,6 +275,22 @@ before it becomes a claimed win):
   virtual-thread stacks; reflect/unsafe escape = bail or guard, as usual.
   Candidate benchmarks: producer-consumer pipelines, errgroup fan-out, decode
   into transient structs.
+- **Build on Truffle/Graal machinery — don't reimplement it (owner directive
+  2026-10-07).** The speculation discipline running through this entire
+  backlog (speculate on observed behavior → guard → deopt on violation) is
+  Truffle's native idiom, and every candidate's guard/deopt story must be
+  expressed in Truffle terms, not as a parallel mechanism: the Truffle DSL
+  (`@Specialization` with guards, `@Cached` inline caches, `@TruffleBoundary`
+  for slow paths), assumptions + `transferToInterpreterAndInvalidate` for
+  deopt, OSR for hot loops, `CompilerDirectives` for interpreter/compiler
+  signaling. At the Graal level, feed the compiler well-shaped graphs and let
+  its existing machinery (partial evaluation, PEA, inlining, auto-vectorization
+  via the Vector API) do the work — hand-rolling optimizations Graal already
+  does is pure cost. This is also what makes the graalgo/x polyglot feature
+  cheap: cross-language calls ride the standard Truffle polyglot API, and
+  cross-language inlining falls out of partial evaluation. The bar for any
+  Phase-5 design doc: name the Truffle/Graal mechanism it builds on, or
+  justify why a new one is needed.
 - **Demand-driven (lazy) evaluation of expensive, usually-unused
   computations.** Go is strict: arguments evaluate before the call, struct
   literals populate every field, error values format eagerly. When profiling
