@@ -976,8 +976,11 @@ public final class NodeFactory {
 
     /** Unnamed composite kinds canonicalized by structure (M6, WS H). */
     private static boolean isStructuralComposite(String k) {
+        // P3-M7: "signature" added — func types are structural (two func()
+        // types are identical even across packages; the type switch in
+        // synthetic json's marshalValue must match main-package funcs).
         return "struct".equals(k) || "array".equals(k) || "slice".equals(k)
-                || "map".equals(k) || "pointer".equals(k);
+                || "map".equals(k) || "pointer".equals(k) || "signature".equals(k);
     }
 
     /** Process-wide canonical descriptors for named types, keyed by qualified
@@ -1035,8 +1038,30 @@ public final class NodeFactory {
                         + structuralKey(ctx, detail.intValue("elem", path), path);
             case "pointer":
                 return "ptr(" + structuralKey(ctx, detail.intValue("elem", path), path) + ")";
+            case "signature": {
+                // P3-M7: func types are structural (two func() types are
+                // identical, even across packages). Params/results are
+                // [{"name":..,"type":tid}] objects.
+                StringBuilder sb = new StringBuilder("func(");
+                Json.Array params = detail.array("params", path);
+                for (int i = 0; i < params.size(); i++) {
+                    Json.Object p = (Json.Object) params.get(i);
+                    sb.append(structuralKey(ctx, p.intValue("type", path), path)).append(',');
+                }
+                sb.append(")(");
+                Json.Array results = detail.array("results", path);
+                for (int i = 0; i < results.size(); i++) {
+                    Json.Object r = (Json.Object) results.get(i);
+                    sb.append(structuralKey(ctx, r.intValue("type", path), path)).append(',');
+                }
+                sb.append(')');
+                if (detail.opt("variadic") instanceof Json.Bool b && b.value()) {
+                    sb.append("variadic");
+                }
+                return sb.toString();
+            }
             default:
-                // interface, signature, invalid: program-local identity.
+                // interface, invalid: program-local identity.
                 return k + "#" + typeId;
         }
     }

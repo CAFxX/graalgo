@@ -2069,6 +2069,14 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 		// which v1 cannot emit (WS D). RawMessage is handled in its
 		// own case above.
 		panic("json.Marshaler: not in M7 scope (needs 2-result methods; re-test when WS D lands)")
+	case complex64:
+		return &UnsupportedTypeError{typ: "complex64"}
+	case complex128:
+		return &UnsupportedTypeError{typ: "complex128"}
+	case func():
+		return &UnsupportedTypeError{typ: "func()"}
+	case chan int:
+		return &UnsupportedTypeError{typ: "chan int"}
 	default:
 		panic("not in M7 scope (needs reflect, P3-M8)")
 	}
@@ -2091,6 +2099,15 @@ type UnsupportedValueError struct {
 }
 
 func (e *UnsupportedValueError) Error() string { return "json: unsupported value: " + e.Str }
+
+// UnsupportedTypeError is gc's error for values of types that cannot be
+// encoded (complex, func, chan, ...). gc carries a reflect.Type; without
+// reflect (P3-M8) we carry the Go type name string directly.
+type UnsupportedTypeError struct {
+	typ string
+}
+
+func (e *UnsupportedTypeError) Error() string { return "json: unsupported type: " + e.typ }
 
 // jsonAppendInt appends a signed integer.
 func jsonAppendInt(b []byte, v int64) []byte {
