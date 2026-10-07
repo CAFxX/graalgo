@@ -40,6 +40,26 @@ gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
    (WARNING-filtered) stderr line against it.
 5. Real-Go synthetic sources only: programs may import only packages the
    wave-1 importer supports; anything else is a scope error by design.
+6. **Scope-limited programs** get a `<nn>_<name>.scopelimited` file (same
+   base name as the program) with two lines:
+   `reason: <why it can never pass the frontend>` and
+   `retest: <trigger that would un-block it, e.g. WS D / P3-M8 / unicode>`.
+   The runner does not run these under graalgo and counts them separately
+   (neither passing nor failing) — but it still builds and runs the gc
+   leg, so a program that is not even valid Go surfaces as FAIL, not
+   scope-limited. A `.scopelimited` file without a `retest:` line is a
+   harness FAIL. Never mark a program scope-limited to hide a corpus bug
+   or a frontend bug that has an owner: the reason must name an honest
+   scope boundary and the re-test trigger must name the blocker.
+7. **Synthetic-reference programs** get an empty `<nn>_<name>.synthetic`
+   file (a comment inside may document why). These programs use
+   M7-extension constructors (`csv.NewReaderString`,
+   `gob.NewBufferEncoder`, ...) absent from real std, so the gc leg
+   cannot build them against GOROOT — a GOPATH cannot shadow the
+   standard library. For these, the runner builds the gc leg against
+   the extracted phase-1 synthetic sources (`extract_synth_ref.py`;
+   imports rewritten to a temp GOPATH), i.e. the reference behavior is
+   the synthetic source executed by stock gc.
 
 ## The runner
 
@@ -73,10 +93,11 @@ not scratch space:
 
 Every wave-1 worker must export, for **every** `go`/`java` command
 (ad-hoc builds included — the phase Makefiles already route the test
-temp dirs to `out/test-tmp`, this covers the rest):
+temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
+these itself to the wave-1 dirs):
 
 ```bash
-export TMPDIR=$HOME/workspace/graalgo/phases/phase3/hidden_files/m7-tmp/<pkg>
+export TMPDIR=$HOME/workspace/graalgo-m7-int/phases/phase3/hidden_files/m7-tmp/<pkg>
 export GOCACHE=$HOME/workspace/.gocache-m7-<pkg>
 ```
 

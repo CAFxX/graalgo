@@ -1,0 +1,2 @@
+reason: strings.Title is fail-fast (deprecated upstream; needs unicode tables not in M7 scope)
+retest: unicode tables land (P3-M8+); then re-run this program differentially

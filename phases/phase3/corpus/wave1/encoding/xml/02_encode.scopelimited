@@ -1,0 +1,2 @@
+reason: dual-mode Read(p []byte) (int, error) / Write method declarations — the same file must compile under gc (needs Read/Write) but the frontend forbids 2-result method declarations; corpus/harness design limitation
+retest: corpus redesign to single-mode programs, or frontend support for 2-result method declarations (P3-M8)

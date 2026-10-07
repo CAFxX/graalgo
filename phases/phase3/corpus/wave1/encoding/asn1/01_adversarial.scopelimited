@@ -1,0 +1,2 @@
+reason: uses asn1.MarshalWithParams (documented out-of-scope; needs reflect)
+retest: reflect support lands (P3-M8+); then re-run this program differentially

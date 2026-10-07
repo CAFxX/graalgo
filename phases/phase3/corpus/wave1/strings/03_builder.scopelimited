@@ -1,0 +1,2 @@
+reason: implicit address-of on method receiver (b.WriteByte on an addressable value needs implicit &); the exporter fails fast by design (WS D limitation) — keep the exporter fail-fast, do not weaken it
+retest: WS D lands implicit &/deref on method calls (P3-M8+); then re-run this program differentially

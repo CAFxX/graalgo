@@ -10,18 +10,41 @@
 # durations) and run with gmp=1 only; all other programs run with gmp=1
 # and gmp=4 (the timectx convention).
 #
+# Scope-limited programs (marked with a <base>.scopelimited file naming
+# the reason and a retest: trigger) can never pass the frontend for honest
+# scope reasons. They are NOT run under graalgo and are counted separately
+# (neither passing nor failing); the gc leg still builds and runs them so
+# a program that is not even valid Go surfaces as FAIL, not scope-limited.
+# A .scopelimited file without a retest: trigger is a harness FAIL.
+#
+# Synthetic-reference programs (marked with an empty <base>.synthetic file)
+# use M7-extension constructors (csv.NewReaderString, gob.NewBufferEncoder,
+# ...) absent from real std, so the gc leg cannot build them against GOROOT
+# (a GOPATH cannot shadow the standard library). For these, the gc leg
+# builds the program against the extracted phase-1 synthetic sources
+# (extract_synth_ref.py) — the same sources the P3-M7 review §11 validated
+# as gc-faithful — with imports rewritten to a temp GOPATH.
+#
 # Usage: run_wave.sh [pkg|all] — run one package subdir, or every wave-1
 # package dir when omitted. Underscore-prefixed dirs (_smoke, infra) run
 # only when named explicitly.
+#
+# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
+#   GR=~/workspace/graalgo-m7-int run_wave.sh strings
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
+GR="${GR:-$HOME/workspace/graalgo}"
 P3="$GR/phases/phase3"
 P2="$GR/phases/phase2"
 P1="$GR/phases/phase1"
 export PATH="$HOME/tools/go/bin:$PATH"
 JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
+
+# Tmp discipline (corpus/wave1/README.md): never write to /tmp.
+export TMPDIR="$P3/hidden_files/m7-tmp/wave1"
+export GOCACHE="$HOME/workspace/.gocache-m7-wave1"
+mkdir -p "$TMPDIR"
 
 case "${1-all}" in
     all)
@@ -47,15 +70,58 @@ GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-pass=0; fail=0
+pass=0; fail=0; scopelimited=0
 # filter_stderr: drop the known JVM Unsafe warning lines.
 filter_stderr() { grep -v '^WARNING: ' || true; }
+
+# build_gc <go file> <gcbin>: stock-gc reference leg. Programs marked
+# <base>.synthetic build against the extracted phase-1 synthetic sources;
+# all others build against real std.
+build_gc() {
+    local go="$1" gcbin="$2" base="${1%.go}"
+    if [ -f "$base.synthetic" ]; then
+        local refdir="$TMP/synthref-$(basename "$base")"
+        local gopath
+        gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
+            "$P1/frontend" "$go" "$refdir")" \
+            || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
+        GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
+            "$gopath/src/m7prog/main.go" \
+            || { echo "FAIL $base: gc build failed (synthetic ref)"; return 1; }
+    else
+        go build -o "$gcbin" "$go" \
+            || { echo "FAIL $base: gc build failed"; return 1; }
+    fi
+}
+
+run_scope_limited() { # $1 = go file
+    local go="$1" base="${1%.go}"
+    local reason retest
+    reason="$(sed -n 's/^reason: //p' "$base.scopelimited" | head -1)"
+    retest="$(sed -n 's/^retest: //p' "$base.scopelimited" | head -1)"
+    if [ -z "${retest:-}" ]; then
+        echo "FAIL $base: .scopelimited marker lacks a retest: trigger"
+        fail=$((fail+1)); return
+    fi
+    # The program must still be valid runnable Go; otherwise it is a
+    # corpus bug, not a scope limitation.
+    local gcbin="$TMP/$base.gc"
+    build_gc "$go" "$gcbin" || { fail=$((fail+1)); return; }
+    "$gcbin" > /dev/null 2>&1
+    local gc_exit=$?
+    if [ "$gc_exit" != 0 ]; then
+        echo "FAIL $base: scope-limited program exits $gc_exit under gc (corpus bug)"
+        fail=$((fail+1)); return
+    fi
+    scopelimited=$((scopelimited+1))
+    echo "SCOPE-LIMITED $base: ${reason:-<no reason given>} [retest: $retest]"
+}
 
 run_one() { # $1 = go file, $2 = gmp
     local go="$1" gmp="$2" base="${1%.go}"
     local gcbin="$TMP/$base.gc"
 
-    go build -o "$gcbin" "$go" || { echo "FAIL $base: gc build failed"; fail=$((fail+1)); return; }
+    build_gc "$go" "$gcbin" || { fail=$((fail+1)); return; }
     "$gcbin" > "$TMP/gc.out" 2> "$TMP/gc.err"; local gc_exit=$?
     "${GRAALGO_RUN[@]}" --gmp="$gmp" "$go" > "$TMP/gr.out" 2> "$TMP/gr.err"; local gr_exit=$?
 
@@ -86,6 +152,12 @@ run_one() { # $1 = go file, $2 = gmp
 for dir in "${dirs[@]}"; do
     for go in "$dir"/[0-9][0-9]_*.go; do
         [ -e "$go" ] || continue
+        base="${go%.go}"
+        # Scope-limited programs: gc leg only, counted separately.
+        if [ -f "$base.scopelimited" ]; then
+            run_scope_limited "$go"
+            continue
+        fi
         # Timing-sensitive programs (marked <base>.timing) run with gmp=1
         # only (single-threaded is enough; the multi-gmp leg adds
         # scheduling noise for sleeps).
@@ -97,5 +169,5 @@ for dir in "${dirs[@]}"; do
     done
 done
 
-echo "== differential: $pass passed, $fail failed =="
+echo "== differential: $pass passed, $scopelimited scope-limited, $fail failed =="
 [ "$fail" = 0 ]
