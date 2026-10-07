@@ -5,63 +5,84 @@ import (
 	"fmt"
 )
 
-type Point struct {
-	X, Y int
-	Name string
-}
-
 func main() {
 	// In-scope constructors: NewBufferEncoder / NewBufferDecoder.
 	// (gc's NewEncoder/NewDecoder take io.Writer/io.Reader; io is out
 	// of M7 scope by design.)
+	//
+	// NOTE: the synthetic gob encodes only scalar values, []byte, []any
+	// and map[string]any -- struct/array encoding needs reflect, which
+	// is out of M7 scope. Re-test trigger: when reflect lands (P3-M8),
+	// add a struct round-trip (the original Point-struct program).
 
-	// Basic encode/decode round-trip.
+	// Basic encode/decode round-trip: int, string, bool, float64.
 	enc := gob.NewBufferEncoder()
-	p := Point{X: 1, Y: 2, Name: "origin"}
-	if err := enc.Encode(p); err != nil {
-		fmt.Printf("Encode err: %v\n", err)
-		return
-	}
+	mustEncode(enc, 42)
+	mustEncode(enc, "hello")
+	mustEncode(enc, true)
+	mustEncode(enc, 3.25)
 	data := enc.Bytes()
 	fmt.Printf("Encoded %d bytes\n", len(data))
 
-	var p2 Point
 	dec := gob.NewBufferDecoder(data)
-	if err := dec.Decode(&p2); err != nil {
-		fmt.Printf("Decode err: %v\n", err)
-		return
-	}
-	fmt.Printf("Decoded: %+v\n", p2)
-
-	// Multiple values: scalar, string, slice.
-	enc2 := gob.NewBufferEncoder()
-	enc2.Encode(42)
-	enc2.Encode("hello")
-	enc2.Encode([]int{1, 2, 3})
-
-	dec2 := gob.NewBufferDecoder(enc2.Bytes())
 	var i int
 	var s string
-	var sl []int
-	dec2.Decode(&i)
-	dec2.Decode(&s)
-	dec2.Decode(&sl)
-	fmt.Printf("Multi: %d %q %v\n", i, s, sl)
+	var b bool
+	var f float64
+	mustDecode(dec, &i)
+	mustDecode(dec, &s)
+	mustDecode(dec, &b)
+	mustDecode(dec, &f)
+	fmt.Printf("Decoded: %d %q %v %v\n", i, s, b, f)
 
-	// Adversarial: empty struct, negative ints, empty string/slice.
+	// Composite values: []any and map[string]any round-trip.
+	enc2 := gob.NewBufferEncoder()
+	mustEncode(enc2, []any{1, "two", false})
+	mustEncode(enc2, map[string]any{"a": 1, "b": "two"})
+	dec2 := gob.NewBufferDecoder(enc2.Bytes())
+	var sl []any
+	var m map[string]any
+	mustDecode(dec2, &sl)
+	mustDecode(dec2, &m)
+	fmt.Printf("Slice: %v\n", sl)
+	fmt.Printf("Map: %v %v\n", m["a"], m["b"])
+
+	// Adversarial: negative ints, empty string, empty composites,
+	// max uint64, []byte with binary data.
 	enc3 := gob.NewBufferEncoder()
-	enc3.Encode(Point{})
-	enc3.Encode(-12345)
-	enc3.Encode("")
-	enc3.Encode([]int{})
+	mustEncode(enc3, -12345)
+	mustEncode(enc3, "")
+	mustEncode(enc3, []any{})
+	mustEncode(enc3, map[string]any{})
+	mustEncode(enc3, uint64(18446744073709551615))
+	mustEncode(enc3, []byte{0, 1, 2, 255})
 	dec3 := gob.NewBufferDecoder(enc3.Bytes())
-	var p3 Point
 	var n int
 	var e string
-	var z []int
-	dec3.Decode(&p3)
-	dec3.Decode(&n)
-	dec3.Decode(&e)
-	dec3.Decode(&z)
-	fmt.Printf("Adversarial: %+v %d %q %v\n", p3, n, e, z)
+	var z []any
+	var zm map[string]any
+	var u uint64
+	var by []byte
+	mustDecode(dec3, &n)
+	mustDecode(dec3, &e)
+	mustDecode(dec3, &z)
+	mustDecode(dec3, &zm)
+	mustDecode(dec3, &u)
+	mustDecode(dec3, &by)
+	fmt.Printf("Adversarial: %d %q len(z)=%d len(zm)=%d %d %v\n",
+		n, e, len(z), len(zm), u, by)
+}
+
+func mustEncode(enc *gob.Encoder, v any) {
+	if err := enc.Encode(v); err != nil {
+		fmt.Printf("Encode err: %v\n", err)
+		panic("encode failed")
+	}
+}
+
+func mustDecode(dec *gob.Decoder, e any) {
+	if err := dec.Decode(e); err != nil {
+		fmt.Printf("Decode err: %v\n", err)
+		panic("decode failed")
+	}
 }
