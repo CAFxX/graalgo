@@ -206,22 +206,40 @@ final class Boxing {
     /**
      * Encodes a canonical boxed value into the {@code long[]} struct carrier
      * (ints as raw bits, floats as IEEE bits, bools as 0/1).
+     *
+     * <p>P3-M7: sub-64-bit int kinds (INT8/16/32, UINT8/16/32) are
+     * canonically boxed as {@link Integer} (see {@link #box}), not
+     * {@link Long} — accept any {@link Number} here. (Before: a blind
+     * {@code (Long)} cast threw ClassCastException for struct literals
+     * like {@code runePair{rune(c0), 1}}.)
      */
     static long toLongBits(GoKind kind, Object boxed) {
         return switch (kind) {
             case FLOAT32 -> (long) Float.floatToIntBits((Float) boxed);
             case FLOAT64 -> Double.doubleToLongBits((Double) boxed);
             case BOOL, UNTYPED_BOOL -> ((Boolean) boxed) ? 1L : 0L;
-            default -> ((Long) boxed).longValue();
+            default -> ((Number) boxed).longValue();
         };
     }
 
-    /** Decodes the {@code long[]} struct carrier back to canonical boxed form. */
+    /**
+     * Decodes the {@code long[]} struct carrier back to canonical boxed form.
+     *
+     * <p>P3-M7: must return the canonical boxing per kind ({@link #box}):
+     * sub-64-bit int kinds come back as {@link Integer} (sign/zero-extended
+     * per {@code extendInt}), not {@link Long} — {@code SelectorNode}
+     * callers cast to {@code Integer} for these kinds.
+     */
     static Object fromLongBits(GoKind kind, long bits) {
         return switch (kind) {
             case FLOAT32 -> Float.valueOf(Float.intBitsToFloat((int) bits));
             case FLOAT64 -> Double.valueOf(Double.longBitsToDouble(bits));
             case BOOL, UNTYPED_BOOL -> bits != 0 ? Boolean.TRUE : Boolean.FALSE;
+            case INT8 -> Integer.valueOf((int) (byte) bits);
+            case INT16 -> Integer.valueOf((int) (short) bits);
+            case INT32, UINT32 -> Integer.valueOf((int) bits);
+            case UINT8 -> Integer.valueOf((int) bits & 0xFF);
+            case UINT16 -> Integer.valueOf((int) bits & 0xFFFF);
             default -> Long.valueOf(bits);
         };
     }
