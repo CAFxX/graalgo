@@ -4426,6 +4426,19 @@ func (e *exporter) foldedConst(x ast.Expr, v constant.Value) (*Node, error) {
 	return e.node("basiclit", x, fields), nil
 }
 
+// isComplexType reports whether t's underlying type is a complex basic
+// type (M7: complex basiclit emission gates on the type kind, matching
+// the factory's buildBasicLit).
+func isComplexType(t types.Type) bool {
+	if t == nil {
+		return false
+	}
+	if b, ok := t.Underlying().(*types.Basic); ok {
+		return b.Info()&types.IsComplex != 0
+	}
+	return false
+}
+
 func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 	switch x := x.(type) {
 	case *ast.Ident:
@@ -4456,6 +4469,26 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 				f64, _ := constant.Float64Val(tv.Value)
 				fields["f32bits"] = int32(math.Float32bits(f32))
 				fields["f64bits"] = int64(math.Float64bits(f64))
+			}
+			if isComplexType(tv.Type) {
+				// M7: complex-typed literals carry the real/imag parts as
+				// bit patterns, mirroring foldedConst. Gate on the TYPE
+				// kind, not the constant kind: a literal like the bare 0
+				// in parseComplexPair{0, err} is an int-kind constant in
+				// complex128 context, and the factory requires
+				// creal64/cimag64 for every complex-typed basiclit.
+				// constant.Real/Imag pass non-complex values through
+				// (real part as-is, imag part zero).
+				realPart := constant.Real(tv.Value)
+				imagPart := constant.Imag(tv.Value)
+				r32, _ := constant.Float32Val(realPart)
+				r64, _ := constant.Float64Val(realPart)
+				i32, _ := constant.Float32Val(imagPart)
+				i64, _ := constant.Float64Val(imagPart)
+				fields["creal32"] = int32(math.Float32bits(r32))
+				fields["creal64"] = int64(math.Float64bits(r64))
+				fields["cimag32"] = int32(math.Float32bits(i32))
+				fields["cimag64"] = int64(math.Float64bits(i64))
 			}
 		}
 		return e.node("basiclit", x, fields), nil
