@@ -210,6 +210,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"syscall", "Getenv", "", "__getenv", "getenvPair", []string{"value", "found"}},
 	{"syscall", "Getgroups", "", "__getgroups", "gidsErrorPair", []string{"gids", "err"}},
 	{"syscall", "Getwd", "", "__getwd", "stringErrorPair", []string{"v", "err"}},
+	{"syscall", "ByteSliceFromString", "", "__byteSliceFromString", "bytesErrorPair", []string{"v", "err"}},
 	{"syscall", "Syscall", "", "__syscall", "syscallTriple", []string{"r1", "r2", "err"}},
 	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}},
 	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}},
@@ -241,15 +242,15 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	// crypto/md5, sha1, sha256, sha512, sha3: Hash.Write methods
 	// (via hash.__hashWrite) + md5 binary marshaling (via
 	// hash.__binaryMarshal/__binaryAppend).
-	{"crypto/md5", "Write", "digest", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
-	{"crypto/md5", "MarshalBinary", "digest", "__binaryMarshal", "hash", "marshalPair", []string{"data", "err"}},
-	{"crypto/md5", "AppendBinary", "digest", "__binaryAppend", "hash", "appendPair", []string{"b", "err"}},
+	{"crypto/md5", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"crypto/md5", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"crypto/md5", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
 	// crypto/sha256, sha512: same pattern (digest types).
-	{"crypto/sha256", "Write", "digest", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
-	{"crypto/sha512", "Write", "digest", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
-	{"crypto/sha1", "Write", "digest", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
-	{"crypto/sha3", "Write", "SHA3", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
-	{"crypto/sha3", "Write", "SHAKE", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
+	{"crypto/sha256", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"crypto/sha512", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"crypto/sha1", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"crypto/sha3", "Write", "SHA3", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"crypto/sha3", "Write", "SHAKE", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
 	// crypto/hmac: New returns a single hash.Hash (not multi-result);
 	// no desugar entry needed.
 	// crypto/aes, des, rc4: NewCipher is multi-result.
@@ -1070,12 +1071,38 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	if plan.kind == mrIfaceMethod {
 		return e.desugarIfaceMultiResult(s, c, plan, define)
 	}
+	helperFn, err := multiResultHelper(plan)
+	if err != nil {
+		return nil, err
+	}
+	args, err := e.multiResultHelperArgs(c, plan)
+	if err != nil {
+		return nil, err
+	}
+	helperCall, tmpName, tmpID, tmpTid, err := e.synthHelperCall(c, helperFn, plan.tmpType, args)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, helperCall)
+}
+
+// multiResultHelper resolves a desugar plan's __-helper to its
+// *types.Func in the synthetic package scope.
+func multiResultHelper(plan *mrPlan) (*types.Func, error) {
 	sp := getSyntheticPackage(plan.helperPkg)
 	helperObj := sp.pkg.Scope().Lookup(plan.helperName)
 	helperFn, ok := helperObj.(*types.Func)
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: synthetic helper %s.%s missing", plan.helperPkg, plan.helperName)
 	}
+	return helperFn, nil
+}
+
+// multiResultHelperArgs exports a desugar plan's helper-call argument
+// expressions: the original call's args, except for the Deadline method
+// where the receiver becomes the argument; the receiver is prepended
+// when the plan sets prependRecv.
+func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node, error) {
 	// Helper call args: the original call's args, except for the
 	// Deadline method where the receiver becomes the argument.
 	var argExprs []ast.Expr
@@ -1103,11 +1130,32 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 		}
 		args = append(args, x)
 	}
-	helperCall, tmpName, tmpID, tmpTid, err := e.synthHelperCall(c, helperFn, plan.tmpType, args)
+	return args, nil
+}
+
+// exportBareMultiResultCall desugars a concrete multi-result call in
+// bare-statement position (w.Write(data) — legal Go, results discarded):
+// the __-helper call runs for its effects and the pair is dropped,
+// exactly gc's statement-position semantics. Only the concrete
+// helper-call plans (mrM7, mrXmlToken) reach here — the M5 kinds keep
+// their pinned statement-position fail-fast (TestMultiResultFailFastKept,
+// GG-0017), mrDeadline is unreachable defense-in-depth, and mrIfaceMethod
+// is handled by the D1 path (exportIfaceMethodCall) before this
+// interception.
+func (e *exporter) exportBareMultiResultCall(s *ast.ExprStmt, c *ast.CallExpr, plan *mrPlan) (*Node, error) {
+	helperFn, err := multiResultHelper(plan)
 	if err != nil {
 		return nil, err
 	}
-	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, helperCall)
+	args, err := e.multiResultHelperArgs(c, plan)
+	if err != nil {
+		return nil, err
+	}
+	call, err := e.synthHelperCallNode(c, helperFn, plan.tmpType, args)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("exprstmt", s, map[string]any{"x": call}), nil
 }
 
 // desugarIfaceMultiResult emits the desugared block for an mrIfaceMethod
@@ -1213,29 +1261,42 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 	return e.node("block", s, map[string]any{"stmts": stmts}), nil
 }
 
-// synthHelperCall builds a "call" node to a synthetic package-level
-// function (mirroring exportFuncCall's non-generic path) and declares
-// the __p5mr_N temp holding its result, returning the call node plus
-// the temp's name/obj/type ids.
-func (e *exporter) synthHelperCall(c *ast.CallExpr, fn *types.Func, resultType types.Type, args []*Node) (*Node, string, int, int, error) {
+// synthHelperCallNode builds a "call" node to a synthetic package-level
+// function (mirroring exportFuncCall's non-generic path).
+func (e *exporter) synthHelperCallNode(c *ast.CallExpr, fn *types.Func, resultType types.Type, args []*Node) (*Node, error) {
 	fi, ok := e.funcByObj[fn]
 	if !ok {
-		return nil, "", 0, 0, fmt.Errorf("gofrontend: synthetic helper %s not in funcByObj", fn.Name())
+		return nil, fmt.Errorf("gofrontend: synthetic helper %s not in funcByObj", fn.Name())
 	}
 	sigID, err := e.typeID(fn.Type())
 	if err != nil {
-		return nil, "", 0, 0, err
+		return nil, err
 	}
 	fun := e.node("ident", c, map[string]any{
 		"name": fn.Name(), "obj": fi.funcID, "type": sigID,
 	})
 	resTid, err := e.typeID(resultType)
 	if err != nil {
+		return nil, err
+	}
+	return e.node("call", c, map[string]any{
+		"fun": fun, "args": args, "type": resTid,
+	}), nil
+}
+
+// synthHelperCall builds a "call" node to a synthetic package-level
+// function (mirroring exportFuncCall's non-generic path) and declares
+// the __p5mr_N temp holding its result, returning the call node plus
+// the temp's name/obj/type ids.
+func (e *exporter) synthHelperCall(c *ast.CallExpr, fn *types.Func, resultType types.Type, args []*Node) (*Node, string, int, int, error) {
+	call, err := e.synthHelperCallNode(c, fn, resultType, args)
+	if err != nil {
 		return nil, "", 0, 0, err
 	}
-	call := e.node("call", c, map[string]any{
-		"fun": fun, "args": args, "type": resTid,
-	})
+	resTid, err := e.typeID(resultType)
+	if err != nil {
+		return nil, "", 0, 0, err
+	}
 	e.chanSeq++
 	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
 	v := types.NewVar(token.NoPos, nil, tmpName, resultType)
