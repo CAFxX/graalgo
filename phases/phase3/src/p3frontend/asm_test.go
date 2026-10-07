@@ -29,8 +29,9 @@ func gorootSrc(t *testing.T) string {
 	return src
 }
 
-// enumerateSFiles walks root and returns every *.s path relative to
-// root, slash-separated and sorted.
+// enumerateSFiles walks root and returns every assembly-file path
+// (.s/.S/.sx, like go/build) relative to root, slash-separated and
+// sorted.
 func enumerateSFiles(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
@@ -38,7 +39,9 @@ func enumerateSFiles(t *testing.T, root string) []string {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && strings.HasSuffix(d.Name(), ".s") {
+		name := d.Name()
+		if !d.IsDir() && (strings.HasSuffix(name, ".s") ||
+			strings.HasSuffix(name, ".S") || strings.HasSuffix(name, ".sx")) {
 			rel, err := filepath.Rel(root, p)
 			if err != nil {
 				return err
@@ -54,10 +57,16 @@ func enumerateSFiles(t *testing.T, root string) []string {
 	return out
 }
 
-// oracleSFiles is the independent go/build oracle for .s selection:
-// (*build.Context{GOOS:linux, GOARCH:amd64}).ImportDir, i.e. the file
-// set the stock toolchain would assemble.
-func oracleSFiles(t *testing.T, dir string) []string {
+// oracleAsmFiles is the independent go/build oracle for assembly
+// selection: (*build.Context{GOOS:linux, GOARCH:amd64}).ImportDir, i.e.
+// the SFiles the stock toolchain would assemble, plus the
+// constraint-matched .S/.sx files go/build gates on cgo (they land in
+// IgnoredOtherFiles when cgo is disabled; matched here via the public
+// ctxt.MatchFile, which applies exactly go/build's goodOSArchFile +
+// shouldBuild pre-filter). The loader is deliberately stricter than the
+// cgo gate (see asm.go: no cgo/gcc path exists in graalgo), so the
+// oracle for the loader's selection is the union.
+func oracleAsmFiles(t *testing.T, dir string) []string {
 	t.Helper()
 	tags := []string{}
 	for v := 1; v <= 27; v++ {
@@ -68,7 +77,34 @@ func oracleSFiles(t *testing.T, dir string) []string {
 	if err != nil {
 		t.Fatalf("oracle ImportDir(%s): %v", dir, err)
 	}
-	got := append([]string{}, p.SFiles...)
+	set := map[string]bool{}
+	for _, f := range p.SFiles {
+		set[f] = true
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() {
+			continue
+		}
+		if !(strings.HasSuffix(name, ".S") || strings.HasSuffix(name, ".sx")) {
+			continue
+		}
+		ok, err := ctxt.MatchFile(dir, name)
+		if err != nil {
+			t.Fatalf("oracle MatchFile(%s, %s): %v", dir, name, err)
+		}
+		if ok {
+			set[name] = true
+		}
+	}
+	var got []string
+	for f := range set {
+		got = append(got, f)
+	}
 	sort.Strings(got)
 	return got
 }
@@ -138,9 +174,12 @@ func TestAsmInventoryCategoriesKnown(t *testing.T) {
 	}
 }
 
-// TestAsmSelectionMatchesGoBuildOracle verifies the .s buildability
-// filter (filename suffix + build constraints) agrees file-for-file
-// with the stock go/build oracle on real stdlib dirs. If the filter
+// TestAsmSelectionMatchesGoBuildOracle verifies the assembly
+// buildability filter (filename suffix + build constraints, over
+// .s/.S/.sx) agrees file-for-file with the stock go/build oracle on
+// real stdlib dirs -- on EVERY sampled dir, including unsupported and
+// cgo dirs (a filter bug that spuriously dropped an unsupported file,
+// i.e. a missing fail-fast, must be caught too). If the filter
 // drifted, replaced files could be skipped or foreign-arch files could
 // fail the build spuriously.
 func TestAsmSelectionMatchesGoBuildOracle(t *testing.T) {
@@ -150,25 +189,18 @@ func TestAsmSelectionMatchesGoBuildOracle(t *testing.T) {
 		"runtime", "internal/bytealg", "internal/cpu", "math", "math/big",
 		"sync/atomic", "crypto/sha1", "crypto/internal/fips140/aes",
 		"hash/crc32", "syscall", "reflect", "internal/abi",
+		"runtime/cgo",
 	} {
 		dir := filepath.Join(src, pkg)
-		want := oracleSFiles(t, dir)
-		res, err := loader.CheckAsmFiles(dir, pkg)
+		want := oracleAsmFiles(t, dir)
+		got, err := loader.SelectAsmFiles(dir)
 		if err != nil {
-			// Unsupported packages fail fast by design; the oracle
-			// comparison only applies to replaced categories.
-			t.Logf("%s: CheckAsmFiles fail-fast (expected for unsupported): %v", pkg, err)
-			continue
+			t.Fatalf("%s: SelectAsmFiles: %v", pkg, err)
 		}
-		var got []string
-		for _, r := range res {
-			got = append(got, filepath.Base(r.File))
-		}
-		sort.Strings(got)
 		if strings.Join(got, ",") != strings.Join(want, ",") {
 			t.Errorf("%s: selection mismatch:\n got  %v\n want %v", pkg, got, want)
 		} else {
-			t.Logf("%s: %d .s files selected, oracle agrees", pkg, len(got))
+			t.Logf("%s: %d assembly files selected, oracle agrees", pkg, len(got))
 		}
 	}
 }
@@ -222,6 +254,7 @@ func TestAsmCategoriesEndToEnd(t *testing.T) {
 		{"hash/crc32", "no graalgo intrinsic yet"},
 		{"syscall", "Panama FFI"},
 		{"reflect", "reimplemented on Truffle"},
+		{"runtime/cgo", "cgo gcc-assembly"},
 	}
 	for _, tc := range unsupported {
 		_, err := loader.CheckAsmFiles(filepath.Join(src, tc.pkg), tc.pkg)
@@ -283,6 +316,59 @@ func TestAsmUncategorizedFails(t *testing.T) {
 	})
 }
 
+// TestAsmUppercaseSFailsFast is the regression test for the .S/.sx
+// blind spot (P3-M6 remediation P1-1): go/build treats .s, .S and .sx
+// identically as assembly, so a build-tagged evil_amd64.S must fail
+// fast exactly like its lowercase twin -- never pass silently. (The
+// pre-fix code ignored .S files entirely: this test failed with
+// "build proceeded silently".)
+func TestAsmUppercaseSFailsFast(t *testing.T) {
+	t.Run("scratch-goroot", func(t *testing.T) {
+		fakeRoot := t.TempDir()
+		pkgDir := filepath.Join(fakeRoot, "src", "fakelib")
+		writeFiles(t, pkgDir, map[string]string{
+			"newfeature_amd64.S": "TEXT ·newfeature(SB),$0-0\n\tRET\n",
+		})
+		loader := NewLoader()
+		loader.goroot = fakeRoot
+		_, err := loader.CheckAsmFiles(pkgDir, "fakelib")
+		if err == nil {
+			t.Fatal("uncategorized .S file under scratch GOROOT: build proceeded silently")
+		}
+		assertAsmError(t, err, filepath.Join(pkgDir, "newfeature_amd64.S"),
+			"fakelib", "uncategorized", "no inventory entry")
+	})
+	t.Run("module-local", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFiles(t, dir, map[string]string{
+			"evil_amd64.S": "TEXT ·evil(SB),$0-0\n\tRET\n",
+		})
+		loader := NewLoader() // real GOROOT: dir is outside GOROOT/src
+		_, err := loader.CheckAsmFiles(dir, "example.com/mod/evil")
+		if err == nil {
+			t.Fatal("module-local .S file: build proceeded silently")
+		}
+		assertAsmError(t, err, filepath.Join(dir, "evil_amd64.S"),
+			"example.com/mod/evil", "uncategorized", "outside the inventoried GOROOT/src")
+	})
+	t.Run("selection", func(t *testing.T) {
+		// The .S/.sx files must be SELECTED (not skipped) for the
+		// fail-fast to even see them.
+		dir := t.TempDir()
+		writeFiles(t, dir, map[string]string{
+			"evil_amd64.S":  "TEXT ·evil(SB),$0-0\n\tRET\n",
+			"helper_amd64.sx": "TEXT ·helper(SB),$0-0\n\tRET\n",
+		})
+		names, err := NewLoader().SelectAsmFiles(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(names, ",") != "evil_amd64.S,helper_amd64.sx" {
+			t.Fatalf("SelectAsmFiles missed a .S/.sx file: %v", names)
+		}
+	})
+}
+
 // TestAsmNonBuildableSkipped proves the buildability filter: .s files
 // excluded for linux/amd64 (foreign-arch suffix, //go:build ignore)
 // are NOT resolved -- even when uncategorized, they must not fail the
@@ -293,6 +379,10 @@ func TestAsmNonBuildableSkipped(t *testing.T) {
 		"foreign_windows.s": "// no build tags; suffix excludes it on linux\nTEXT ·x(SB),$0-0\n\tRET\n",
 		"ignored.s":         "//go:build ignore\n\nTEXT ·y(SB),$0-0\n\tRET\n",
 		"future.s":          "//go:build go1.99\n\nTEXT ·z(SB),$0-0\n\tRET\n",
+		// The .S/.sx suffixes get the same buildability filtering:
+		// foreign-arch and constraint-excluded files stay skipped.
+		"foreign_windows.S": "// no build tags; suffix excludes it on linux\nTEXT ·w(SB),$0-0\n\tRET\n",
+		"ignored.S":         "//go:build ignore\n\nTEXT ·v(SB),$0-0\n\tRET\n",
 	})
 	loader := NewLoader()
 	res, err := loader.CheckAsmFiles(dir, "example.com/mod/noasm")
@@ -351,8 +441,8 @@ func TestAsmHookInLoader(t *testing.T) {
 
 // TestAsmCompletenessCheckerDetectsFakeFile proves the completeness
 // checker used by TestAsmInventoryComplete is capable of failing: run
-// it against a scratch tree containing a fake .s file and require it
-// to report exactly that file.
+// it against a scratch tree containing fake .s AND .S files and
+// require it to report exactly those files.
 func TestAsmCompletenessCheckerDetectsFakeFile(t *testing.T) {
 	inv, err := loadAsmInventory()
 	if err != nil {
@@ -361,10 +451,12 @@ func TestAsmCompletenessCheckerDetectsFakeFile(t *testing.T) {
 	fakeRoot := t.TempDir()
 	writeFiles(t, fakeRoot, map[string]string{
 		"src/fakepkg/sneaky_amd64.s": "TEXT ·sneaky(SB),$0-0\n\tRET\n",
+		"src/fakepkg/sneaky_amd64.S": "TEXT ·sneaky2(SB),$0-0\n\tRET\n",
 	})
 	uncovered := checkInventoryCoversList(t, filepath.Join(fakeRoot, "src"), inv)
-	if len(uncovered) != 1 || uncovered[0] != "fakepkg/sneaky_amd64.s" {
-		t.Fatalf("completeness checker failed to flag the fake file: %v", uncovered)
+	want := []string{"fakepkg/sneaky_amd64.S", "fakepkg/sneaky_amd64.s"}
+	if strings.Join(uncovered, ",") != strings.Join(want, ",") {
+		t.Fatalf("completeness checker failed to flag the fake files: %v", uncovered)
 	}
 }
 
