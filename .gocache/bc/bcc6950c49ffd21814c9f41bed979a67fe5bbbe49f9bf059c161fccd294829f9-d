@@ -1,0 +1,5 @@
+=== RUN   TestDebugExportFile
+    dbg2_test.go:24: ExportFile error: gofrontend: method Read not found on Buffer
+--- PASS: TestDebugExportFile (0.23s)
+PASS
+ok  	graalgo-frontend	0.250s

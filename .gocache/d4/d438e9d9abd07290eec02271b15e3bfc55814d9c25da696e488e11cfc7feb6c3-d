@@ -1,0 +1,4 @@
+=== RUN   TestSyntheticBytesM7
+--- PASS: TestSyntheticBytesM7 (0.95s)
+PASS
+ok  	graalgo-frontend	0.994s

@@ -1,0 +1,6 @@
+# test log
+getenv GOTMPDIR
+open /home/hatch/workspace/graalgo-m7-int/.tmp/TestDebugExportFile1878635974/001/test.go
+stat /home/hatch/workspace/graalgo-m7-int/.tmp/TestDebugExportFile1878635974/001/test.go
+open /home/hatch/workspace/graalgo-m7-int/.tmp/TestDebugExportFile1878635974/001/test.go
+open /home/hatch/workspace/graalgo-m7-int/.tmp

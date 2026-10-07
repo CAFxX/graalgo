@@ -236,6 +236,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("math").pkg, nil
 	case "strings":
 		return getSyntheticPackage("strings").pkg, nil
+	case "bytes":
+		return getSyntheticPackage("bytes").pkg, nil
 	case "encoding/xml":
 		return getSyntheticPackage("encoding/xml").pkg, nil
 	case "unsafe":
@@ -808,6 +810,7 @@ func ExportFile(path string) (string, error) {
 			// bytes' ErrTooLarge initializer calls errors.New.
 			// NB: requires m7-errors-sort (integration dependency).
 			needBytes = true
+			needErrors = true
 		case "math":
 			needMath = true
 		case "strings":
@@ -2473,6 +2476,13 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 			if !ok {
 				return nil, fmt.Errorf("gofrontend: no selection for %s", sel.Sel.Name)
 			}
+			// P3-M7: synthetic multi-result methods (bytes.Buffer.Read, etc.)
+			// fail fast at the call site (WS D) — they are not in methodIndex
+			// (skipped during synthetic import) and must not be resolved here.
+			// The named M7 scope error is reported during main export.
+			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+				continue
+			}
 			mc, err := e.resolveMethodCall(sel, selection, typeList(inst.TypeArgs), nil)
 			if err != nil {
 				return nil, err
@@ -2517,6 +2527,12 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 		// ifacemethod nodes, never through resolveMethodCall/methodIndex
 		// (dispatch is dynamic via the itab; nothing to instantiate).
 		if recvIface(selection.Recv()) != nil {
+			continue
+		}
+		// P3-M7: synthetic multi-result methods (bytes.Buffer.Read, etc.)
+		// fail fast at the call site (WS D) — they are not in methodIndex
+		// (skipped during synthetic import) and must not be resolved here.
+		if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
 			continue
 		}
 		var mtargs []types.Type
