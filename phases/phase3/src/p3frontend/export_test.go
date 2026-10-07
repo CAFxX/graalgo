@@ -454,12 +454,13 @@ func TestInitRejected(t *testing.T) {
 	})
 }
 
-// TestStdlibScopeError verifies methodology P1-4: import "os"
-// resolves via ResolveImport (proving the GOROOT mapping at
-// ~/tools/go-1.27.1/src/os) and then fails fast through the public
-// API with the named "P3-M7+ waves" scope error — compiling the real
-// stdlib is out of M1 scope. (Note: "strings" was the original test
-// package, but P3-M7 wave 1 implements it as a synthetic package.)
+// TestStdlibScopeError verifies methodology P1-4: import "os" (a stdlib
+// package with no synthetic mirror) resolves via ResolveImport (proving
+// the GOROOT mapping) and then fails fast through the public API with
+// the named "P3-M7+ waves" scope error — compiling the real stdlib is
+// out of M1 scope.
+// (m7-wenc-core: this test used "strings", which has since become a
+// synthetic package — updated to "os".)
 func TestStdlibScopeError(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{

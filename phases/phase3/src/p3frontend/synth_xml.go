@@ -17,6 +17,8 @@ import (
 // syntheticXmlPackage mirrors the frozen P3-M7 synthetic "encoding/xml".
 func syntheticXmlPackage() *types.Package {
 	pkg := types.NewPackage("encoding/xml", "xml")
+	// NB: types.Typ[types.Byte] renders as "uint8"; the universe "byte"
+	// object renders as the source spells it ("[]byte").
 	byteT := types.Universe.Lookup("byte").Type()
 	intT := types.Typ[types.Int]
 	int64T := types.Typ[types.Int64]
@@ -35,8 +37,9 @@ func syntheticXmlPackage() *types.Package {
 
 	// Token = any.
 	tokenObj := types.NewTypeName(token.NoPos, pkg, "Token", nil)
-	tokenNamed := types.NewNamed(tokenObj, anyT, nil)
+	_ = types.NewNamed(tokenObj, anyT, nil)
 	pkg.Scope().Insert(tokenObj)
+	tokenT := tokenObj.Type()
 
 	// ReadResult = struct{ Byte byte; OK bool }.
 	readResultObj := types.NewTypeName(token.NoPos, pkg, "ReadResult", nil)
@@ -157,33 +160,33 @@ func syntheticXmlPackage() *types.Package {
 	tokenReaderObj := types.NewTypeName(token.NoPos, pkg, "TokenReader", nil)
 	tokenReaderSig := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(),
-		types.NewTuple(newParam("", anyT), newParam("", errorT)), false)
+		types.NewTuple(newParam("", tokenT), newParam("", errorT)), false)
 	tokenReaderNamed := types.NewNamed(tokenReaderObj,
 		types.NewInterfaceType([]*types.Func{
 			types.NewFunc(token.NoPos, pkg, "Token", tokenReaderSig),
 		}, nil).Complete(), nil)
 	pkg.Scope().Insert(tokenReaderObj)
 
-	// Decoder = struct{ ... } (opaque fields; mirror only needs the type).
-	// We model it with the exported fields — the drift test compares
-	// exported fields. (The phase-1 type has other unexported fields.)
+	// Decoder struct with exported fields (Strict, AutoClose, Entity,
+	// DefaultSpace); unexported fields omitted (the drift test checks
+	// exported fields only).
 	decoderObj := types.NewTypeName(token.NoPos, pkg, "Decoder", nil)
 	decoderNamed := types.NewNamed(decoderObj, types.NewStruct([]*types.Var{
-		types.NewField(token.NoPos, pkg, "Strict", boolT, false),
-		types.NewField(token.NoPos, pkg, "AutoClose", types.NewSlice(stringT), false),
-		types.NewField(token.NoPos, pkg, "Entity", types.NewMap(stringT, stringT), false),
-		types.NewField(token.NoPos, pkg, "DefaultSpace", stringT, false),
+		newField("Strict", boolT),
+		newField("AutoClose", types.NewSlice(stringT)),
+		newField("Entity", types.NewMap(stringT, stringT)),
+		newField("DefaultSpace", stringT),
 	}, nil), nil)
 	decoderPtr := types.NewPointer(decoderNamed)
 	// Methods: Token, RawToken, InputOffset, InputPos, Skip, Decode, DecodeElement.
 	decoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "Token",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "d", decoderPtr),
 			nil, nil, types.NewTuple(),
-			types.NewTuple(newParam("", tokenNamed), newParam("", errorT)), false)))
+			types.NewTuple(newParam("", tokenT), newParam("", errorT)), false)))
 	decoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "RawToken",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "d", decoderPtr),
 			nil, nil, types.NewTuple(),
-			types.NewTuple(newParam("", tokenNamed), newParam("", errorT)), false)))
+			types.NewTuple(newParam("", tokenT), newParam("", errorT)), false)))
 	decoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "InputOffset",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "d", decoderPtr),
 			nil, nil, types.NewTuple(), types.NewTuple(newParam("", int64T)), false)))
@@ -214,7 +217,7 @@ func syntheticXmlPackage() *types.Package {
 			types.NewTuple(), false)))
 	encoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "EncodeToken",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "enc", encoderPtr),
-			nil, nil, types.NewTuple(newParam("t", tokenNamed)),
+			nil, nil, types.NewTuple(newParam("t", tokenT)),
 			types.NewTuple(newParam("", errorT)), false)))
 	encoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "Flush",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "enc", encoderPtr),
@@ -295,8 +298,8 @@ func syntheticXmlPackage() *types.Package {
 			types.NewTuple(newParam("", decoderPtr)), false)))
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "CopyToken",
 		types.NewSignatureType(nil, nil, nil,
-			types.NewTuple(newParam("t", tokenNamed)),
-			types.NewTuple(newParam("", tokenNamed)), false)))
+			types.NewTuple(newParam("t", tokenObj.Type())),
+			types.NewTuple(newParam("", tokenObj.Type())), false)))
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "NewEncoder",
 		types.NewSignatureType(nil, nil, nil,
 			types.NewTuple(newParam("w", writerNamed)),

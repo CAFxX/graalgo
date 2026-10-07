@@ -47,6 +47,17 @@ import (
 // synthetic interface omits Deadline, the concrete types are unexported,
 // and a user interface re-adding Deadline fails isDeadlineMethod.
 //
+// P3-M7 (wave 1) extends Appendix M to the encoding/* synthetic
+// packages (mrM7, m7MultiResultFuncs table below): their multi-result
+// members keep exact gc signatures with fail-fast bodies, and the real
+// implementations live in single-result __-helpers returning
+// pair/triple structs. 2-target (and, for ascii85.Decode, 3-target)
+// assignments desugar to a helper call plus field extractions; every
+// other position fails fast with the named M7 scope error via
+// isMultiResultSynthetic. asn1.Unmarshal is the deliberate exception:
+// decoding stores through the recipient pointer, which v1 cannot
+// express (WS D), so it is not in the table and fails fast everywhere.
+//
 // Every other syntactic position keeps the fail-fast scope error. The
 // helpers are real Go (no new Java nodes); the unexported names are
 // resolved by the exporter directly off the synthetic package scope
@@ -66,11 +77,68 @@ const (
 	mrParseDur     // time.ParseDuration
 	// P3-M7 (wave 1): xml.Decoder.Token / xml.Decoder.RawToken.
 	mrXmlToken // xml.Decoder.Token() / xml.Decoder.RawToken()
-	// P3-M7 (wave 1): csv.Reader.Read / ReadAll / FieldPos.
-	mrCsvRead     // csv.Reader.Read()
-	mrCsvReadAll  // csv.Reader.ReadAll()
-	mrCsvFieldPos // csv.Reader.FieldPos()
+	// P3-M7 (wave 1): csv.Reader.Read / csv.Reader.ReadAll.
+	mrCsvRead // csv.Reader.Read() / csv.Reader.ReadAll()
+	mrCsvFieldPos // csv.Reader.FieldPos
+	// P3-M7 (wave 1): the encoding/* multi-result members (Decode,
+	// DecodeString, AppendDecode, Uvarint, Varint, ascii85.Decode,
+	// pem.Decode, asn1.Marshal/Unmarshal). One kind for all of them —
+	// the pair/triple distinction is data (len(pairFields)), selected
+	// from the m7MultiResultFuncs table below.
+	mrM7
 )
+
+// m7MultiResultFunc describes one desugarable M7 multi-result function:
+// the exact gc 1.27.1 multi-result signature is kept for type-checking
+// with a fail-fast body, and the real implementation lives in the
+// single-result __-helper returning the pair/triple struct.
+type m7MultiResultFunc struct {
+	pkgPath    string   // synthetic package path
+	name       string   // function/method name
+	recvType   string   // receiver named type ("" for package-level funcs)
+	helper     string   // __-helper name
+	pairType   string   // pair/triple struct type name
+	pairFields []string // field names in result order (must match the
+	// multi-result signature's result order positionally)
+}
+
+// m7MultiResultFuncs is the desugar table for the encoding/* packages.
+// Every entry was verified against the synthetic source it names:
+// helper name, pair struct name, and field names/order match the
+// source's __-helper and pair struct exactly (e.g. base32's AppendDecode
+// desugars through base32DecodeStringPair{b, err} — there is no
+// base32AppendPair).
+var m7MultiResultFuncs = []m7MultiResultFunc{
+	// encoding/base32: methods on *Encoding.
+	{"encoding/base32", "Decode", "Encoding", "__base32Decode", "base32DecodePair", []string{"n", "err"}},
+	{"encoding/base32", "DecodeString", "Encoding", "__base32DecodeString", "base32DecodeStringPair", []string{"b", "err"}},
+	{"encoding/base32", "AppendDecode", "Encoding", "__base32AppendDecode", "base32DecodeStringPair", []string{"b", "err"}},
+	// encoding/base64: methods on *Encoding.
+	{"encoding/base64", "Decode", "Encoding", "__base64Decode", "base64DecodePair", []string{"n", "err"}},
+	{"encoding/base64", "DecodeString", "Encoding", "__base64DecodeString", "base64DecodeStringPair", []string{"b", "err"}},
+	{"encoding/base64", "AppendDecode", "Encoding", "__base64AppendDecode", "base64DecodeStringPair", []string{"b", "err"}},
+	// encoding/hex: package-level funcs.
+	{"encoding/hex", "Decode", "", "__hexDecode", "hexDecodePair", []string{"n", "err"}},
+	{"encoding/hex", "DecodeString", "", "__hexDecodeString", "hexDecodeStringPair", []string{"b", "err"}},
+	{"encoding/hex", "AppendDecode", "", "__hexAppendDecode", "hexDecodeStringPair", []string{"b", "err"}},
+	// encoding/binary: package-level funcs.
+	{"encoding/binary", "Uvarint", "", "__binaryUvarint", "binaryUvarintPair", []string{"x", "n"}},
+	{"encoding/binary", "Varint", "", "__binaryVarint", "binaryVarintPair", []string{"x", "n"}},
+	// encoding/ascii85: package-level func, 3 results.
+	{"encoding/ascii85", "Decode", "", "__ascii85Decode", "ascii85DecodeTriple", []string{"ndst", "nsrc", "err"}},
+	// encoding/pem: package-level func.
+	{"encoding/pem", "Decode", "", "__pemDecode", "pemDecodePair", []string{"p", "rest"}},
+	// encoding/asn1: package-level func. The __-helper implements the
+	// scalar cases in real Go and fails fast (needs reflect) for composite
+	// types — the desugar applies, the reflect limit moves into the helper.
+	// (Unmarshal is NOT desugared: decoding stores through the recipient
+	// pointer, which v1 cannot express — WS D — so it fails fast at every
+	// call site via isMultiResultSynthetic.)
+	{"encoding/asn1", "Marshal", "", "__asn1Marshal", "asn1MarshalPair", []string{"b", "err"}},
+	// NOTE: the top-level "encoding" package has no functions (only the six
+	// marshaling interfaces), so it needs no desugar entry. Its interface
+	// methods are multi-result and fail fast via isMultiResultSynthetic.
+}
 
 // mrPlan is the desugar plan for one classified call.
 type mrPlan struct {
@@ -114,6 +182,12 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			fn, ok := obj.(*types.Func)
 			if !ok {
 				return nil
+			}
+			// P3-M7 (wave 1): encoding/* package-level multi-result
+			// members (hex.Decode, binary.Uvarint, ascii85.Decode,
+			// pem.Decode, asn1.Marshal/Unmarshal).
+			if plan := classifyM7MultiResultCall(pn.Imported().Path(), fn); plan != nil {
+				return plan
 			}
 			switch pn.Imported().Path() {
 			case "context":
@@ -180,37 +254,6 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			}
 		}
 		if f, ok := selection.Obj().(*types.Func); ok {
-			if helper, ok := isCsvReadMethod(f); ok {
-				csvPkg := getSyntheticPackage("encoding/csv").pkg
-				var pairName string
-				var fields []string
-				switch helper {
-				case "__csvRead":
-					pairName, fields = "csvReadPair", []string{"rec", "err"}
-				case "__csvReadAll":
-					pairName, fields = "csvReadAllPair", []string{"recs", "err"}
-				case "__csvFieldPos":
-					pairName, fields = "csvFieldPosPair", []string{"line", "column"}
-				}
-				nt := named(csvPkg, pairName)
-				if nt == nil {
-					return nil
-				}
-				var kind mrKind
-				switch helper {
-				case "__csvRead":
-					kind = mrCsvRead
-				case "__csvReadAll":
-					kind = mrCsvReadAll
-				default:
-					kind = mrCsvFieldPos
-				}
-				return &mrPlan{
-					kind: kind, helperPkg: "encoding/csv",
-					helperName: helper, prependRecv: true,
-					tmpType:    nt, pairFields: fields,
-				}
-			}
 			if helper, ok := isXmlTokenMethod(f); ok {
 				xmlPkg := getSyntheticPackage("encoding/xml").pkg
 				nt := named(xmlPkg, "tokenPair")
@@ -224,25 +267,38 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				}
 			}
 		}
+		// P3-M7 (wave 1): csv.Reader.Read / csv.Reader.ReadAll.
+		// The receiver's named type must match — a user method with the
+		// same name is never desugared.
+		if f, ok := selection.Obj().(*types.Func); ok && f.Pkg() != nil && f.Pkg().Path() == "encoding/csv" {
+			if sig, ok := f.Type().(*types.Signature); ok && sig.Recv() != nil {
+				if recvNamed, ok := sig.Recv().Type().(*types.Named); ok && recvNamed.Obj().Name() == "Reader" {
+					if sel.Sel.Name == "Read" || sel.Sel.Name == "ReadAll" {
+						csvPkg := getSyntheticPackage("encoding/csv").pkg
+						nt := named(csvPkg, "csvReadPair")
+						if nt == nil {
+							return nil
+						}
+						return &mrPlan{
+							kind: mrCsvRead, helperPkg: "encoding/csv",
+							helperName: "csvReadPair", prependRecv: true,
+							tmpType: nt, pairFields: []string{"rec", "err"},
+						}
+					}
+				}
+			}
+		}
+		// P3-M7 (wave 1): encoding/* multi-result methods
+		// (base32/base64 (*Encoding).Decode/DecodeString/AppendDecode).
+		// The receiver's named type must match the table — a user method
+		// with the same name is never desugared.
+		if f, ok := selection.Obj().(*types.Func); ok && f.Pkg() != nil {
+			if plan := classifyM7MultiResultCall(f.Pkg().Path(), f); plan != nil {
+				return plan
+			}
+		}
 	}
 	return nil
-}
-
-// isCsvReadMethod reports whether f is csv.Reader.Read, ReadAll, or FieldPos,
-// returning the __-helper name.
-func isCsvReadMethod(f *types.Func) (string, bool) {
-	if f.Pkg() == nil || f.Pkg().Path() != "encoding/csv" {
-		return "", false
-	}
-	switch f.Name() {
-	case "Read":
-		return "__csvRead", true
-	case "ReadAll":
-		return "__csvReadAll", true
-	case "FieldPos":
-		return "__csvFieldPos", true
-	}
-	return "", false
 }
 
 func isXmlTokenMethod(f *types.Func) (string, bool) {
@@ -277,6 +333,59 @@ func isXmlTokenMethod(f *types.Func) (string, bool) {
 	return "__rawTokenOf", true
 }
 
+// classifyM7MultiResultCall recognizes the P3-M7 (wave 1) Appendix M
+// operations (the m7MultiResultFuncs table). pkgPath is the called
+// function's declaring package; for methods the receiver's named type
+// must match the table entry — a user type with the same method name
+// (e.g. a local Encoding.Decode) is never desugared. Returns nil when
+// the call is not one of the table's operations.
+func classifyM7MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	recvName := ""
+	if recv := sig.Recv(); recv != nil {
+		rt := recv.Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			recvName = nt.Obj().Name()
+		}
+	}
+	for _, mf := range m7MultiResultFuncs {
+		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != recvName {
+			continue
+		}
+		// The result count must match the pair/triple arity: a signature
+		// change in the synthetic source fails the desugar loudly instead
+		// of extracting the wrong fields.
+		if sig.Results().Len() != len(mf.pairFields) {
+			return nil
+		}
+		sp := getSyntheticPackage(mf.pkgPath)
+		obj := sp.pkg.Scope().Lookup(mf.pairType)
+		if obj == nil {
+			return nil
+		}
+		nt, _ := obj.Type().(*types.Named)
+		if nt == nil {
+			return nil
+		}
+		return &mrPlan{
+			kind: mrM7, helperPkg: mf.pkgPath,
+			helperName: mf.helper,
+			tmpType:    nt, pairFields: mf.pairFields,
+			prependRecv: mf.recvType != "",
+		}
+	}
+	return nil
+}
+
 // isDeadlineMethod reports whether f is the synthetic context package's
 // Deadline method (2 results). The mrDeadline desugar path is retained
 // defense-in-depth for WS D (see the package header); in M5 it is
@@ -291,10 +400,10 @@ func isDeadlineMethod(f *types.Func) bool {
 }
 
 // exportMultiResultDesugar implements the Appendix M desugar for
-// 2-target assignments. It returns handled=false when s is not a
-// 2-target assignment of one of the Appendix M operations.
+// N-target assignments. It returns handled=false when s is not an
+// N-target assignment of one of the Appendix M operations.
 func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*Node, bool, error) {
-	if len(s.Lhs) != 2 || len(s.Rhs) != 1 {
+	if len(s.Rhs) != 1 {
 		return nil, false, nil
 	}
 	c, ok := unparen(s.Rhs[0]).(*ast.CallExpr)
@@ -303,6 +412,16 @@ func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*No
 	}
 	plan := e.classifyMultiResultCall(c)
 	if plan == nil {
+		return nil, false, nil
+	}
+	// The target count must match the plan's extraction count: 2 for the
+	// M5 kinds and the 2-result M7 ops; 3 for the 3-result M7 op
+	// (ascii85.Decode). Any other arity is not a desugar position.
+	want := len(plan.pairFields)
+	if plan.kind == mrWithCancel || plan.kind == mrWithDeadline {
+		want = 2
+	}
+	if len(s.Lhs) != want {
 		return nil, false, nil
 	}
 	n, err := e.desugarMultiResult(s, c, plan, define)
@@ -368,7 +487,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrCsvRead, mrCsvReadAll, mrCsvFieldPos:
+	case mrDeadline, mrParseDur, mrXmlToken, mrCsvRead, mrCsvFieldPos, mrM7:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {

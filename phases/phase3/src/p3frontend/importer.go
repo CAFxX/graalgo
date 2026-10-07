@@ -148,6 +148,62 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticGobPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "encoding/base32":
+		// P3-M7 (wave 1): synthetic encoding/base32 (m7-wenc-core).
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticBase32Package()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding/base64":
+		// P3-M7 (wave 1): synthetic encoding/base64 (m7-wenc-core).
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticBase64Package()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding/hex":
+		// P3-M7 (wave 1): synthetic encoding/hex (m7-wenc-core).
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticHexPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding/binary":
+		// P3-M7 (wave 1): synthetic encoding/binary (m7-wenc-core).
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticBinaryPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding/ascii85":
+		// P3-M7 (wave 1): synthetic encoding/ascii85 (m7-wenc-core).
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticAscii85Package()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding/pem":
+		// P3-M7 (wave 1): synthetic encoding/pem (m7-wenc-core).
+		// Imports synthetic encoding/base64: ensure the base64 mirror is
+		// built and cached first (the context->time precedent).
+		base64Pkg, ok := imp.pkgs["encoding/base64"]
+		if !ok {
+			base64Pkg = syntheticBase64Package()
+			imp.pkgs["encoding/base64"] = base64Pkg
+		}
+		_ = base64Pkg
+		pkg := syntheticPemPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding/asn1":
+		// P3-M7 (wave 1): synthetic encoding/asn1 (m7-wenc-core).
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticAsn1Package()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding":
+		// P3-M7 (wave 1): synthetic top-level encoding (m7-wenc-core):
+		// the six marshaling interfaces only.
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticEncodingPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	}
 	ref, err := imp.loader.ResolveImport(imp.mainDir, path)
 	if err != nil {

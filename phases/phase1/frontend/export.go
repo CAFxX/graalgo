@@ -191,7 +191,11 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // package "errors" (P3-M7: New/Is/Unwrap/Join as real Go; As/AsType
 // fail-fast — they need reflect), the synthetic package "sort" (P3-M7:
 // pdqsort/stable/search as real Go; Find/Slice/SliceStable/SliceIsSorted
-// fail-fast — multi-result/reflect), and the empty synthetic package
+// fail-fast — multi-result/reflect), the 8 P3-M7 (wave 1) encoding/*
+// primitive packages (encoding/base32, encoding/base64, encoding/hex,
+// encoding/binary, encoding/ascii85, encoding/pem, encoding/asn1,
+// encoding) as real-Go sources via getSyntheticPackage (encoding/pem
+// imports synthetic encoding/base64), and the empty synthetic package
 // "unsafe".
 // Every other import still fails via failImporter. WS G's full
 // import overlay absorbs this carve-out.
@@ -244,6 +248,22 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("encoding/csv").pkg, nil
 	case "encoding/gob":
 		return getSyntheticPackage("encoding/gob").pkg, nil
+	case "encoding/base32":
+		return getSyntheticPackage("encoding/base32").pkg, nil
+	case "encoding/base64":
+		return getSyntheticPackage("encoding/base64").pkg, nil
+	case "encoding/hex":
+		return getSyntheticPackage("encoding/hex").pkg, nil
+	case "encoding/binary":
+		return getSyntheticPackage("encoding/binary").pkg, nil
+	case "encoding/ascii85":
+		return getSyntheticPackage("encoding/ascii85").pkg, nil
+	case "encoding/pem":
+		return getSyntheticPackage("encoding/pem").pkg, nil
+	case "encoding/asn1":
+		return getSyntheticPackage("encoding/asn1").pkg, nil
+	case "encoding":
+		return getSyntheticPackage("encoding").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -671,8 +691,14 @@ func ExportFile(path string) (string, error) {
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_errors.go / synth_sort.go /
 		// synth_bytes.go / synth_math.go).
+		// P3-M7 (wave 1): the 8 encoding/* primitive packages
+		// (encoding/base32, encoding/base64, encoding/hex, encoding/binary,
+		// encoding/ascii85, encoding/pem, encoding/asn1, encoding) are
+		// allowed — resolved by overlayImporter to the synthetic packages
+		// (real-Go sources; see synth_base32.go etc.).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" && path != "encoding/csv" && path != "encoding/gob" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
+			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -702,10 +728,16 @@ func ExportFile(path string) (string, error) {
 	// via the synthetic overlay package (four primitives).
 	// P3-M4 (WS C, ADR-0004): "sync/atomic" and "unsafe" likewise.
 	// P3-M5 (WS E, ADR-0005): "time" and "context" likewise.
-	// P3-M7 (wave 1): "errors", "sort", "bytes", "math" likewise.
+	// P3-M7 (wave 1): "errors", "sort", "bytes", "math", "strings",
+	// "encoding/xml" likewise.
+	// P3-M7 (wave 1): the 8 encoding/* primitive packages likewise.
+	// (m7-wenc-core: "strings" was missing from this list — the allow-list
+	// above admitted it but type-checking still used failImporter. Fixed
+	// here; re-test trigger: a program importing "strings" must export.)
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" {
+		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
+			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -800,6 +832,8 @@ func ExportFile(path string) (string, error) {
 	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
 	needErrors, needSort, needBytes, needMath, needStrings, needXml, needCsv, needGob := false, false, false, false, false, false, false, false
+	needBase32, needBase64, needHex, needBinary := false, false, false, false
+	needAscii85, needPem, needAsn1, needEncoding := false, false, false, false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -825,6 +859,26 @@ func ExportFile(path string) (string, error) {
 			needCsv = true
 		case "encoding/gob":
 			needGob = true
+		case "encoding/base32":
+			needBase32 = true
+		case "encoding/base64":
+			needBase64 = true
+		case "encoding/hex":
+			needHex = true
+		case "encoding/binary":
+			needBinary = true
+		case "encoding/ascii85":
+			needAscii85 = true
+		case "encoding/pem":
+			// pem's bodies reference base64.CorruptInputError and
+			// base64.StdEncoding (type conversion, package var, methods).
+			// NB: requires m7-wenc-core (integration dependency).
+			needPem = true
+			needBase64 = true
+		case "encoding/asn1":
+			needAsn1 = true
+		case "encoding":
+			needEncoding = true
 		}
 	}
 	if needTime {
@@ -879,7 +933,6 @@ func ExportFile(path string) (string, error) {
 		}
 	}
 	// P3-M7 (wave 1): encoding/csv + encoding/gob (see synth_enc_csv_gob.go).
-	// Self-contained: no synthetic dependencies.
 	if needCsv {
 		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/csv")); err != nil {
 			return "", err
@@ -887,6 +940,53 @@ func ExportFile(path string) (string, error) {
 	}
 	if needGob {
 		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/gob")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): the 8 encoding/* primitive packages (see
+	// synth_base32.go ... synth_encoding.go). The multi-result members
+	// (Decode/DecodeString/AppendDecode, Uvarint/Varint, ascii85.Decode,
+	// pem.Decode, asn1.Marshal/Unmarshal) are skipped at import (WS D);
+	// 2-/3-target call sites desugar via Appendix M (mrM7 in
+	// mrdesugar_m5.go). encoding/pem implies encoding/base64 (its bodies
+	// reference base64.CorruptInputError and base64.StdEncoding).
+	if needBase32 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/base32")); err != nil {
+			return "", err
+		}
+	}
+	if needBase64 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/base64")); err != nil {
+			return "", err
+		}
+	}
+	if needHex {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/hex")); err != nil {
+			return "", err
+		}
+	}
+	if needBinary {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/binary")); err != nil {
+			return "", err
+		}
+	}
+	if needAscii85 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/ascii85")); err != nil {
+			return "", err
+		}
+	}
+	if needPem {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/pem")); err != nil {
+			return "", err
+		}
+	}
+	if needAsn1 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/asn1")); err != nil {
+			return "", err
+		}
+	}
+	if needEncoding {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding")); err != nil {
 			return "", err
 		}
 	}
@@ -5862,11 +5962,15 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	}
 	// P3-M5 (WS E, ADR-0005): qualified identifiers time.X / context.X in
 	// expression position (time.Second consts, context.Canceled vars).
+	// P3-M7 (wave 1): errors/sort/bytes/math/strings consts/vars likewise,
+	// plus the 8 encoding/* primitives' consts/vars (base64.StdEncoding,
+	// binary.LittleEndian, hex.ErrLength, asn1.TagNull, ...).
 	// Method expressions (time.Duration.String) have a SelectorExpr X and
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" {
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" ||
+				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

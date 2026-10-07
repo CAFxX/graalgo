@@ -43,7 +43,9 @@ func syntheticBytesPackage() *types.Package {
 	runeFunc := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(newParam("r", runeT)),
 		types.NewTuple(newParam("", boolT)), false)
-	// runeFuncUnnamed is func(rune) bool (for ContainsFunc/FieldsFunc).
+	// runeFuncUnnamed is func(rune) bool — ContainsFunc and FieldsFunc
+	// spell the func param unnamed in the phase-1 source (renders
+	// without the name); the other func(rune) bool users name it r.
 	runeFuncUnnamed := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(newParam("", runeT)),
 		types.NewTuple(newParam("", boolT)), false)
