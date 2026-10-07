@@ -30,7 +30,7 @@ func syntheticStringsPackage() *types.Package {
 	int64T := types.Typ[types.Int64]
 	stringT := types.Typ[types.String]
 	boolT := types.Typ[types.Bool]
-	byteT := types.Typ[types.Byte]
+	byteT := types.Universe.Lookup("byte").Type()
 	runeT := types.Universe.Lookup("rune").Type()
 	errorT := types.Universe.Lookup("error").Type()
 
@@ -59,7 +59,7 @@ func syntheticStringsPackage() *types.Package {
 			p = []*types.Var{newParam("s", stringT), newParam("prefix", stringT)}
 		}
 		if name == "HasSuffix" {
-			p[1].SetName("suffix")
+			p[1] = types.NewParam(token.NoPos, pkg, "suffix", p[1].Type())
 		}
 		insertFunc(name, p, boolRes, false)
 	}
@@ -74,7 +74,7 @@ func syntheticStringsPackage() *types.Package {
 		boolRes, false)
 	// ContainsFunc(s string, f func(rune) bool) bool
 	funcRuneBool := types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(newParam("r", runeT)), types.NewTuple(newParam("", boolT)), false)
+		types.NewTuple(newParam("", runeT)), types.NewTuple(newParam("", boolT)), false)
 	insertFunc("ContainsFunc",
 		[]*types.Var{newParam("s", stringT), newParam("f", funcRuneBool)},
 		boolRes, false)
@@ -147,7 +147,7 @@ func syntheticStringsPackage() *types.Package {
 
 	// Map(mapping func(rune) rune, s string) string
 	funcRuneRune := types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(newParam("r", runeT)), types.NewTuple(newParam("", runeT)), false)
+		types.NewTuple(newParam("", runeT)), types.NewTuple(newParam("", runeT)), false)
 	insertFunc("Map",
 		[]*types.Var{newParam("mapping", funcRuneRune), newParam("s", stringT)},
 		strRes, false)
@@ -227,7 +227,7 @@ func syntheticStringsPackage() *types.Package {
 	pkg.Scope().Insert(builderName)
 	builderPtr := types.NewPointer(builder)
 	addMethod := func(name string, params, results []*types.Var) {
-		sig := types.NewSignatureType(builderPtr, nil, nil,
+		sig := types.NewSignatureType(types.NewParam(token.NoPos, pkg, "", builderPtr), nil, nil,
 			types.NewTuple(params...), types.NewTuple(results...), false)
 		builder.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
 	}
@@ -257,7 +257,7 @@ func syntheticStringsPackage() *types.Package {
 	replacer := types.NewNamed(replacerName, types.NewStruct(nil, nil), nil)
 	pkg.Scope().Insert(replacerName)
 	replacerPtr := types.NewPointer(replacer)
-	replaceSig := types.NewSignatureType(replacerPtr, nil, nil,
+	replaceSig := types.NewSignatureType(types.NewParam(token.NoPos, pkg, "", replacerPtr), nil, nil,
 		types.NewTuple(str...), types.NewTuple(strRes...), false)
 	replacer.AddMethod(types.NewFunc(token.NoPos, pkg, "Replace", replaceSig))
 	insertFunc("NewReplacer",
@@ -270,7 +270,7 @@ func syntheticStringsPackage() *types.Package {
 	pkg.Scope().Insert(readerName)
 	readerPtr := types.NewPointer(reader)
 	addReaderMethod := func(name string, params, results []*types.Var) {
-		sig := types.NewSignatureType(readerPtr, nil, nil,
+		sig := types.NewSignatureType(types.NewParam(token.NoPos, pkg, "", readerPtr), nil, nil,
 			types.NewTuple(params...), types.NewTuple(results...), false)
 		reader.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
 	}

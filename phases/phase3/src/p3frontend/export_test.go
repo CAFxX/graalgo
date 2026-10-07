@@ -454,29 +454,30 @@ func TestInitRejected(t *testing.T) {
 	})
 }
 
-// TestStdlibScopeError verifies methodology P1-4: import "strings"
+// TestStdlibScopeError verifies methodology P1-4: import "os"
 // resolves via ResolveImport (proving the GOROOT mapping at
-// ~/tools/go-1.27.1/src/strings) and then fails fast through the public
+// ~/tools/go-1.27.1/src/os) and then fails fast through the public
 // API with the named "P3-M7+ waves" scope error — compiling the real
-// stdlib is out of M1 scope.
+// stdlib is out of M1 scope. (Note: "strings" was the original test
+// package, but P3-M7 wave 1 implements it as a synthetic package.)
 func TestStdlibScopeError(t *testing.T) {
 	dir := t.TempDir()
 	writeFiles(t, dir, map[string]string{
-		"main.go": "package main\n\nimport \"strings\"\n\nfunc main() { println(strings.ToUpper(\"x\")) }\n",
+		"main.go": "package main\n\nimport \"os\"\n\nfunc main() { println(os.Args[0]) }\n",
 	})
 
-	ref, err := NewLoader().ResolveImport(dir, "strings")
+	ref, err := NewLoader().ResolveImport(dir, "os")
 	if err != nil {
-		t.Fatalf("ResolveImport(strings): %v", err)
+		t.Fatalf("ResolveImport(os): %v", err)
 	}
 	if ref.Kind != kindStdlib {
-		t.Fatalf("strings resolved as kind %d, want kindStdlib", ref.Kind)
+		t.Fatalf("os resolved as kind %d, want kindStdlib", ref.Kind)
 	}
-	wantDir := filepath.Join(NewLoader().GOROOT(), "src", "strings")
+	wantDir := filepath.Join(NewLoader().GOROOT(), "src", "os")
 	if ref.Dir != wantDir {
-		t.Fatalf("strings resolved at %s, want %s", ref.Dir, wantDir)
+		t.Fatalf("os resolved at %s, want %s", ref.Dir, wantDir)
 	}
-	t.Logf("strings resolves to %s", ref.Dir)
+	t.Logf("os resolves to %s", ref.Dir)
 
 	if _, err := MergeDir(dir); err == nil || !strings.Contains(err.Error(), "P3-M7+ waves") {
 		t.Fatalf("expected stdlib scope error, got: %v", err)
