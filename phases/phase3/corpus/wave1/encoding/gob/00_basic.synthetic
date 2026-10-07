@@ -1,0 +1,8 @@
+# Empty marker: the gc reference leg builds this program against the
+# extracted phase-1 synthetic sources (extract_synth_ref.py) instead of
+# real std. Reason: the program uses the M7-extension constructors
+# gob.NewBufferEncoder / gob.NewBufferDecoder, which do not exist in
+# gc 1.27.1 std (a GOPATH cannot shadow the standard library).
+# Re-test trigger: none needed for the harness — if io lands (P3-M8) and
+# NewEncoder/NewDecoder are added to the synthetic package, rewrite this
+# program to the gc constructors and delete this marker.
