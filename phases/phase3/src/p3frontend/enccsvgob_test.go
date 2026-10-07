@@ -5,130 +5,285 @@ package p3frontend
 // exporter's synthetic signatures (it cannot reuse them — unexported);
 // these tests pin the mirror against the REAL phase-1 synthetic source
 // so drift fails fast.
+//
+// Each test extracts the syntheticCsvSource / syntheticGobSource const
+// from phases/phase1/frontend/synth_enc_csv_gob.go, type-checks it, and
+// compares the mirror (syntheticCsvPackage / syntheticGobPackage)
+// declaration-by-declaration against the resulting *types.Package: every
+// exported type (with exported struct fields and methods), function, and
+// var must match in name and signature. The synthetic sources import the
+// synthetic errors package, resolved here to the drift-pinned errors
+// mirror (errors_test.go pins that mirror against the phase-1 errors
+// source, so this stays honest).
 
 import (
+	"fmt"
+	"go/ast"
 	"go/types"
+	"regexp"
 	"testing"
 )
 
-// TestCsvSyntheticSignatures pins the mirrored synthetic csv package.
-func TestCsvSyntheticSignatures(t *testing.T) {
-	pkg := syntheticCsvPackage()
-	if pkg.Name() != "csv" || pkg.Path() != "encoding/csv" {
-		t.Fatalf("package name/path = %s/%s, want csv/encoding/csv", pkg.Name(), pkg.Path())
-	}
+// csvGobTestImporter resolves the synthetic csv/gob sources' single
+// import ("errors") to the drift-pinned synthetic errors mirror.
+func csvGobTestImporter() types.Importer {
+	return importerFunc(func(path string) (*types.Package, error) {
+		if path == "errors" {
+			pkg := syntheticErrorsPackage()
+			// The drift type-check needs a complete package or the
+			// import resolves to an empty scope ("undefined: errors")
+			// — cf. bytes_test.go. Fresh per call, so side-effect free.
+			pkg.MarkComplete()
+			return pkg, nil
+		}
+		return nil, fmt.Errorf("unexpected synthetic import %q", path)
+	})
+}
 
-	// Reader type with fields.
-	rObj := pkg.Scope().Lookup("Reader")
-	if rObj == nil {
-		t.Fatal("csv.Reader missing")
+// phase1SyntheticCsvPackage type-checks the real phase-1 synthetic csv
+// source. This is the drift oracle for the csv mirror: the test below
+// compares the mirror's declarations against this package — not against
+// itself — so a phase-1-side change fails fast instead of silently
+// diverging.
+func phase1SyntheticCsvPackage(t *testing.T) *types.Package {
+	t.Helper()
+	return phase1SyntheticPackageForTest(t,
+		"../../../phase1/frontend/synth_enc_csv_gob.go", "syntheticCsvSource",
+		"encoding/csv", csvGobTestImporter())
+}
+
+// phase1SyntheticGobPackage type-checks the real phase-1 synthetic gob
+// source (drift oracle for the gob mirror).
+func phase1SyntheticGobPackage(t *testing.T) *types.Package {
+	t.Helper()
+	return phase1SyntheticPackageForTest(t,
+		"../../../phase1/frontend/synth_enc_csv_gob.go", "syntheticGobSource",
+		"encoding/gob", csvGobTestImporter())
+}
+
+// csvGobSigString renders a signature with package-qualified type names.
+func csvGobSigString(sig *types.Signature) string {
+	return canonCsvGobSpelling(types.TypeString(sig, func(p *types.Package) string {
+		if p == nil {
+			return ""
+		}
+		return p.Name()
+	}))
+}
+
+// csvGobTypeString renders a type like csvGobSigString does for signatures.
+func csvGobTypeString(typ types.Type, qual types.Qualifier) string {
+	return canonCsvGobSpelling(types.TypeString(typ, qual))
+}
+
+var (
+	csvGobUint8Re = regexp.MustCompile(`\buint8\b`)
+	csvGobInt32Re = regexp.MustCompile(`\bint32\b`)
+)
+
+// canonCsvGobSpelling canonicalizes the two alias spellings go/types can
+// produce for the same type: the csv/gob mirror builds byte/rune slices
+// and fields with types.Typ[types.Byte]/types.Typ[types.Rune], which
+// render as "uint8"/"int32", while the type-checked phase-1 source
+// renders the universe "byte"/"rune" objects. (The json/xml/bytes
+// mirrors already use the universe objects; the csv/gob mirror is owned
+// by other workers, so the test normalizes instead of touching it.)
+// Comparison is therefore up to Go alias equivalence: byte == uint8 and
+// rune == int32 are the same type, so no real drift is masked — a change
+// to a genuinely different type still fails.
+func canonCsvGobSpelling(s string) string {
+	s = csvGobUint8Re.ReplaceAllString(s, "byte")
+	s = csvGobInt32Re.ReplaceAllString(s, "rune")
+	return s
+}
+
+// assertCsvGobMirrorMatches is the drift check: every exported declaration
+// in the phase-1 synthetic package must exist in the mirror with an
+// identical rendered type/signature (types: exported struct fields and
+// exported methods compared individually; unexported members are skipped —
+// they are deliberately not mirrored), and the mirror must not export
+// anything the phase-1 source lacks.
+func assertCsvGobMirrorMatches(t *testing.T, pkgName string, mirror, phase1 *types.Package) {
+	t.Helper()
+	qual := func(p *types.Package) string {
+		if p == nil {
+			return ""
+		}
+		return p.Name()
 	}
-	rNamed, ok := rObj.Type().(*types.Named)
-	if !ok {
-		t.Fatalf("csv.Reader is %T, want *types.Named", rObj.Type())
-	}
-	// Reader methods.
-	for _, name := range []string{"Read", "ReadAll", "FieldPos", "InputOffset"} {
-		found := false
-		for i := 0; i < rNamed.NumMethods(); i++ {
-			if rNamed.Method(i).Name() == name {
-				found = true
-				break
+	for _, name := range phase1.Scope().Names() {
+		if !ast.IsExported(name) {
+			continue
+		}
+		obj := phase1.Scope().Lookup(name)
+		mobj := mirror.Scope().Lookup(name)
+		if mobj == nil {
+			t.Fatalf("%s: mirror missing %q (phase-1 has it)", pkgName, name)
+		}
+		switch want := obj.(type) {
+		case *types.TypeName:
+			got, ok := mobj.(*types.TypeName)
+			if !ok {
+				t.Fatalf("%s: mirror %s is %T, want *types.TypeName", pkgName, name, mobj)
 			}
-		}
-		if !found {
-			t.Errorf("csv.Reader.%s missing", name)
-		}
-	}
-
-	// Writer type with methods.
-	wObj := pkg.Scope().Lookup("Writer")
-	if wObj == nil {
-		t.Fatal("csv.Writer missing")
-	}
-	wNamed, ok := wObj.Type().(*types.Named)
-	if !ok {
-		t.Fatalf("csv.Writer is %T, want *types.Named", wObj.Type())
-	}
-	for _, name := range []string{"Write", "WriteAll", "Flush", "Error", "Bytes"} {
-		found := false
-		for i := 0; i < wNamed.NumMethods(); i++ {
-			if wNamed.Method(i).Name() == name {
-				found = true
-				break
+			wantNamed, ok := want.Type().(*types.Named)
+			if !ok {
+				t.Fatalf("%s: phase-1 %s is %T, want *types.Named", pkgName, name, want.Type())
 			}
-		}
-		if !found {
-			t.Errorf("csv.Writer.%s missing", name)
+			gotNamed, ok := got.Type().(*types.Named)
+			if !ok {
+				t.Fatalf("%s: mirror %s is %T, want *types.Named", pkgName, name, got.Type())
+			}
+			// For structs, compare exported fields (unexported fields
+			// are omitted in the mirror by design).
+			if wantSt, ok := wantNamed.Underlying().(*types.Struct); ok {
+				gotSt, ok := gotNamed.Underlying().(*types.Struct)
+				if !ok {
+					t.Fatalf("%s: mirror %s underlying is %T, want *types.Struct",
+						pkgName, name, gotNamed.Underlying())
+				}
+				for i := 0; i < wantSt.NumFields(); i++ {
+					f := wantSt.Field(i)
+					if !ast.IsExported(f.Name()) {
+						continue
+					}
+					found := false
+					for j := 0; j < gotSt.NumFields(); j++ {
+						gf := gotSt.Field(j)
+						if gf.Name() == f.Name() {
+							found = true
+							wantFT := csvGobTypeString(f.Type(), qual)
+							gotFT := csvGobTypeString(gf.Type(), qual)
+							if wantFT != gotFT {
+								t.Fatalf("%s: mirror %s field %s type drift:\n phase-1: %s\n mirror:  %s",
+									pkgName, name, f.Name(), wantFT, gotFT)
+							}
+							break
+						}
+					}
+					if !found {
+						t.Fatalf("%s: mirror %s missing exported field %q", pkgName, name, f.Name())
+					}
+				}
+			} else if csvGobTypeString(wantNamed.Underlying(), qual) !=
+				csvGobTypeString(gotNamed.Underlying(), qual) {
+				t.Fatalf("%s: mirror %s underlying drift:\n phase-1: %s\n mirror:  %s",
+					pkgName, name,
+					csvGobTypeString(wantNamed.Underlying(), qual),
+					csvGobTypeString(gotNamed.Underlying(), qual))
+			}
+			// Exported methods must match (name + signature).
+			for i := 0; i < wantNamed.NumMethods(); i++ {
+				wm := wantNamed.Method(i)
+				if !ast.IsExported(wm.Name()) {
+					continue
+				}
+				var gm *types.Func
+				for j := 0; j < gotNamed.NumMethods(); j++ {
+					if gotNamed.Method(j).Name() == wm.Name() {
+						gm = gotNamed.Method(j)
+						break
+					}
+				}
+				if gm == nil {
+					t.Fatalf("%s: mirror %s missing method %q", pkgName, name, wm.Name())
+				}
+				wantSig, ok := wm.Type().(*types.Signature)
+				if !ok {
+					t.Fatalf("%s: phase-1 %s.%s is not a signature", pkgName, name, wm.Name())
+				}
+				gotSig, ok := gm.Type().(*types.Signature)
+				if !ok {
+					t.Fatalf("%s: mirror %s.%s is not a signature", pkgName, name, wm.Name())
+				}
+				if csvGobSigString(wantSig) != csvGobSigString(gotSig) {
+					t.Fatalf("%s: mirror %s.%s signature drift:\n phase-1: %s\n mirror:  %s",
+						pkgName, name, wm.Name(), csvGobSigString(wantSig), csvGobSigString(gotSig))
+				}
+			}
+			// Mirror must not have extra exported methods.
+			for j := 0; j < gotNamed.NumMethods(); j++ {
+				gm := gotNamed.Method(j)
+				if !ast.IsExported(gm.Name()) {
+					continue
+				}
+				found := false
+				for i := 0; i < wantNamed.NumMethods(); i++ {
+					if wantNamed.Method(i).Name() == gm.Name() {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("%s: mirror %s has extra method %q (phase-1 lacks it)",
+						pkgName, name, gm.Name())
+				}
+			}
+		case *types.Func:
+			got, ok := mobj.(*types.Func)
+			if !ok {
+				t.Fatalf("%s: mirror %s is %T, want *types.Func", pkgName, name, mobj)
+			}
+			wantSig, ok := want.Type().(*types.Signature)
+			if !ok {
+				t.Fatalf("%s: phase-1 %s is not a signature", pkgName, name)
+			}
+			gotSig, ok := got.Type().(*types.Signature)
+			if !ok {
+				t.Fatalf("%s: mirror %s is not a signature", pkgName, name)
+			}
+			if csvGobSigString(wantSig) != csvGobSigString(gotSig) {
+				t.Fatalf("%s: mirror %s signature drift:\n phase-1: %s\n mirror:  %s",
+					pkgName, name, csvGobSigString(wantSig), csvGobSigString(gotSig))
+			}
+		case *types.Var:
+			got, ok := mobj.(*types.Var)
+			if !ok {
+				t.Fatalf("%s: mirror %s is %T, want *types.Var", pkgName, name, mobj)
+			}
+			wantT := csvGobTypeString(want.Type(), qual)
+			gotT := csvGobTypeString(got.Type(), qual)
+			if wantT != gotT {
+				t.Fatalf("%s: mirror %s type drift:\n phase-1: %s\n mirror:  %s",
+					pkgName, name, wantT, gotT)
+			}
+		default:
+			t.Fatalf("%s: phase-1 %s is %T (unexpected)", pkgName, name, obj)
 		}
 	}
-
-	// ParseError type.
-	if pkg.Scope().Lookup("ParseError") == nil {
-		t.Error("csv.ParseError missing")
-	}
-
-	// Package-level functions.
-	for _, name := range []string{"NewReaderString", "NewBufferWriter"} {
-		if pkg.Scope().Lookup(name) == nil {
-			t.Errorf("csv.%s missing", name)
+	// Mirror must not export anything the phase-1 source lacks.
+	for _, name := range mirror.Scope().Names() {
+		if !ast.IsExported(name) {
+			continue
+		}
+		if phase1.Scope().Lookup(name) == nil {
+			t.Fatalf("%s: mirror exports %q which phase-1 lacks", pkgName, name)
 		}
 	}
 }
 
-// TestGobSyntheticSignatures pins the mirrored synthetic gob package.
+// TestCsvSyntheticSignatures pins the mirrored synthetic csv package
+// against the real phase-1 synthetic source: every exported type (with
+// methods), function, and var must match declaration-by-declaration.
+func TestCsvSyntheticSignatures(t *testing.T) {
+	mirror := syntheticCsvPackage()
+	if mirror.Name() != "csv" || mirror.Path() != "encoding/csv" {
+		t.Fatalf("package name/path = %s/%s, want csv/encoding/csv",
+			mirror.Name(), mirror.Path())
+	}
+	phase1 := phase1SyntheticCsvPackage(t)
+	assertCsvGobMirrorMatches(t, "csv", mirror, phase1)
+}
+
+// TestGobSyntheticSignatures pins the mirrored synthetic gob package
+// against the real phase-1 synthetic source: every exported type (with
+// methods) and function must match declaration-by-declaration.
 func TestGobSyntheticSignatures(t *testing.T) {
-	pkg := syntheticGobPackage()
-	if pkg.Name() != "gob" || pkg.Path() != "encoding/gob" {
-		t.Fatalf("package name/path = %s/%s, want gob/encoding/gob", pkg.Name(), pkg.Path())
+	mirror := syntheticGobPackage()
+	if mirror.Name() != "gob" || mirror.Path() != "encoding/gob" {
+		t.Fatalf("package name/path = %s/%s, want gob/encoding/gob",
+			mirror.Name(), mirror.Path())
 	}
-
-	// Encoder type with methods.
-	encObj := pkg.Scope().Lookup("Encoder")
-	if encObj == nil {
-		t.Fatal("gob.Encoder missing")
-	}
-	encNamed, ok := encObj.Type().(*types.Named)
-	if !ok {
-		t.Fatalf("gob.Encoder is %T, want *types.Named", encObj.Type())
-	}
-	for _, name := range []string{"Encode", "Bytes"} {
-		found := false
-		for i := 0; i < encNamed.NumMethods(); i++ {
-			if encNamed.Method(i).Name() == name {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("gob.Encoder.%s missing", name)
-		}
-	}
-
-	// Decoder type with Decode method.
-	decObj := pkg.Scope().Lookup("Decoder")
-	if decObj == nil {
-		t.Fatal("gob.Decoder missing")
-	}
-	decNamed, ok := decObj.Type().(*types.Named)
-	if !ok {
-		t.Fatalf("gob.Decoder is %T, want *types.Named", decObj.Type())
-	}
-	found := false
-	for i := 0; i < decNamed.NumMethods(); i++ {
-		if decNamed.Method(i).Name() == "Decode" {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Error("gob.Decoder.Decode missing")
-	}
-
-	// Package-level functions.
-	for _, name := range []string{"NewBufferEncoder", "NewBufferDecoder", "Register", "RegisterName"} {
-		if pkg.Scope().Lookup(name) == nil {
-			t.Errorf("gob.%s missing", name)
-		}
-	}
+	phase1 := phase1SyntheticGobPackage(t)
+	assertCsvGobMirrorMatches(t, "gob", mirror, phase1)
 }
