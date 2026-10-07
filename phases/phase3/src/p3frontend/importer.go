@@ -115,6 +115,12 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticBytesPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "strings":
+		// P3-M7 (wave 1): synthetic strings package (synth_strings.go).
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticStringsPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	case "unsafe":
 		pkg := syntheticUnsafePackage()
 		imp.pkgs[path] = pkg

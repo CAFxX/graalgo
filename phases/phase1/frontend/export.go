@@ -234,6 +234,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("sort").pkg, nil
 	case "math":
 		return getSyntheticPackage("math").pkg, nil
+	case "strings":
+		return getSyntheticPackage("strings").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -662,7 +664,7 @@ func ExportFile(path string) (string, error) {
 		// (real-Go sources; see synth_errors.go / synth_sort.go /
 		// synth_bytes.go / synth_math.go).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -789,7 +791,7 @@ func ExportFile(path string) (string, error) {
 	// package vars become document globals. Intrinsics (time.Now etc.)
 	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
-	needErrors, needSort, needBytes, needMath := false, false, false, false
+	needErrors, needSort, needBytes, needMath, needStrings := false, false, false, false, false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -806,6 +808,8 @@ func ExportFile(path string) (string, error) {
 			needBytes = true
 		case "math":
 			needMath = true
+		case "strings":
+			needStrings = true
 		}
 	}
 	if needTime {
@@ -842,6 +846,13 @@ func ExportFile(path string) (string, error) {
 	// constraints.
 	if needMath {
 		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): the synthetic strings package (see synth_strings.go).
+	// Self-contained: no synthetic dependencies.
+	if needStrings {
+		if err := e.importSyntheticPackage(getSyntheticPackage("strings")); err != nil {
 			return "", err
 		}
 	}
@@ -5808,7 +5819,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" {
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

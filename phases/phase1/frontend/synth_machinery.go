@@ -39,6 +39,7 @@ var syntheticSources = map[string]string{
 	"sort":   syntheticSortSource,
 	"bytes":  syntheticBytesSource,
 	"math":   syntheticMathSource,
+	"strings": syntheticStringsSource,
 }
 
 // getSyntheticPackage parses and type-checks the embedded source for
@@ -534,7 +535,7 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" {
+	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -548,7 +549,7 @@ func multiResultSyntheticError(fn *types.Func) error {
 	// P3-M7: the milestone tag follows the synthetic package (time/context
 	// are M5, errors/sort/bytes/math are wave-1 M7).
 	milestone := "M5"
-	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" {
+	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" {
 		milestone = "M7"
 	}
 	// Qualify method names with the receiver type name
