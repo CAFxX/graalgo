@@ -8551,7 +8551,13 @@ func bytesStringHasRune(chars string, want rune) bool {
 			r, size = rune(c), 1
 		} else {
 			var buf [bytesUTFMax]byte
-			n := copy(buf[:], chars[i:])
+			// WS D: copy(dst, string) is not supported in frontend/v1, so
+			// the copy is a manual loop (same precedent as strings.Clone).
+			n := 0
+			for j := i; j < len(chars) && n < bytesUTFMax; j++ {
+				buf[n] = chars[j]
+				n++
+			}
 			d := bytesDecodeRune(buf[:n])
 			r, size = d.r, d.size
 		}
