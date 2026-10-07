@@ -12,10 +12,11 @@
 // frontend/v1-supported constructs (no generics, no multi-result
 // declarations with real bodies — WS D): Encode, EncodeToString,
 // EncodedLen, DecodedLen, AppendEncode, NewEncoding, WithPadding,
-// CorruptInputError.Error are real Go, adapted from the gc 1.27.1
-// implementation (io-free; the streaming encoder/decoder types,
-// NewEncoder/NewDecoder, readEncodedData and newlineFilteringReader are
-// omitted — see below).
+// CorruptInputError.Error, NewEncoder, NewDecoder are real Go, adapted
+// from the gc 1.27.1 implementation. The streaming encoder/decoder
+// Read/Write/Close stay fail-fast (they need r.Read/w.Write — 2-result
+// interface calls, WS D); readEncodedData and newlineFilteringReader are
+// unexported helpers of those paths and stay omitted with them.
 //
 // Multi-result members (Decode, DecodeString, AppendDecode) keep exact
 // gc signatures with fail-fast bodies for type-checking; their real
@@ -25,21 +26,22 @@
 // mrdesugar_m7.go). Any other call position fails fast with the named
 // M7 scope error.
 //
-// Omitted (io is not in M7 scope — NOT OK per the wave-1 import rules,
-// so the exact gc signatures cannot even be declared):
-//   func NewEncoder(enc *Encoding, w io.Writer) io.WriteCloser
-//   func NewDecoder(enc *Encoding, r io.Reader) io.Reader
-// Re-test trigger: when io lands (P3-M8), declare these with exact gc
-// signatures and implement the streaming encoder/decoder over the
-// synthetic Encode/decode core. This omission is deliberate and loud —
-// never silent (the p3frontend drift test asserts the omission list).
+// P3-M8: NewEncoder/NewDecoder and the encoder/decoder types are declared
+// with exact gc signatures (io landed, so the signatures are nameable).
+// The constructors are real; the streaming Read/Write/Close methods fail
+// fast with the named M8/WS-D error (re-test when WS D lands multi-result
+// calls). The p3frontend drift test pins the declared surface.
 package main
 
 // syntheticBase32Source is the P3-M7 synthetic `encoding/base32`
 // package: exact gc 1.27.1 signatures for the in-scope API; real-Go
 // encode/decode core; fail-fast bodies for the multi-result members
-// (desugared) and the io-dependent streaming API (omitted).
+// (desugared) and for the streaming encoder/decoder Read/Write/Close
+// (P3-M8: declared with exact gc signatures; need 2-result interface
+// dispatch — WS D).
 const syntheticBase32Source = `package base32
+
+import "io"
 
 // Encoding is a radix 32 encoding/decoding scheme, defined by a
 // 32-character alphabet.
@@ -219,6 +221,59 @@ func (enc *Encoding) EncodedLen(n int) int {
 		return n/5*8 + (n%5*8+4)/5
 	}
 	return (n + 4) / 5 * 8
+}
+
+// ---------------------------------------------------------------------------
+// Streaming encoder/decoder (P3-M8 — exact gc 1.27.1 shapes, now nameable
+// since io landed). The constructors are real; Read/Write/Close stay
+// fail-fast — they need r.Read/w.Write (2-result interface calls, WS D).
+// Re-test when WS D lands.
+// ---------------------------------------------------------------------------
+
+type encoder struct {
+	err  error
+	enc  *Encoding
+	w    io.Writer
+	buf  [5]byte    // buffered data waiting to be encoded
+	nbuf int        // number of bytes in buf
+	out  [1024]byte // output buffer
+}
+
+// Write implements io.Writer. M8 scope: fail-fast (see above).
+func (e *encoder) Write(p []byte) (n int, err error) {
+	panic("base32.encoder.Write: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+}
+
+// Close implements io.Closer. M8 scope: fail-fast (see above).
+func (e *encoder) Close() error {
+	panic("base32.encoder.Close: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+}
+
+// NewEncoder returns a new base32 stream encoder. Data written to
+// the returned writer will be encoded using enc and then written to w.
+func NewEncoder(enc *Encoding, w io.Writer) io.WriteCloser {
+	return &encoder{enc: enc, w: w}
+}
+
+type decoder struct {
+	err    error
+	enc    *Encoding
+	r      io.Reader
+	end    bool         // saw end of message
+	buf    [1024]byte   // leftover input
+	nbuf   int
+	out    []byte       // leftover decoded output
+	outbuf [1024 / 8 * 5]byte
+}
+
+// Read implements io.Reader. M8 scope: fail-fast (see above).
+func (d *decoder) Read(p []byte) (n int, err error) {
+	panic("base32.decoder.Read: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+}
+
+// NewDecoder returns a new base32 stream decoder.
+func NewDecoder(enc *Encoding, r io.Reader) io.Reader {
+	return &decoder{enc: enc, r: r}
 }
 
 // CorruptInputError is returned when the input is invalid.

@@ -23,9 +23,19 @@ import graalgo.p3chan.nodes.ChanSendNode;
 import graalgo.p3chan.nodes.MakeChanNode;
 import graalgo.p3chan.nodes.SelectNode;
 import graalgo.p3link.LinknameIntrinsics;
+import graalgo.p3os.GoOs;
 import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
+import graalgo.p3unsafe.UnsafeAddNode;
+import graalgo.p3unsafe.UnsafeFromPtrNode;
+import graalgo.p3unsafe.UnsafeFromUintNode;
+import graalgo.p3unsafe.UnsafeSliceDataNode;
+import graalgo.p3unsafe.UnsafeSliceNode;
+import graalgo.p3unsafe.UnsafeStringDataNode;
+import graalgo.p3unsafe.UnsafeStringNode;
+import graalgo.p3unsafe.UnsafeTable;
+import graalgo.p3unsafe.UnsafeToPtrNode;
 import graalgo.p3math.nodes.MathF32BitsNode;
 import graalgo.p3math.nodes.MathF32FromBitsNode;
 import graalgo.p3math.nodes.MathF64BitsNode;
@@ -94,7 +104,21 @@ public final class P3SyncMain {
         boolean check = false;
         boolean dumpPolymorphism = false;
         String file = null;
+        // P3-M8 (wave 2, R6): program argv. Everything after a bare
+        // "--" is the Go program's argv (os.Args); the first element is
+        // always the input-file path. Without "--", os.Args is just
+        // [input-file].
+        boolean dashdash = false;
+        java.util.List<String> goArgs = new java.util.ArrayList<>();
         for (String a : args) {
+            if (dashdash) {
+                if (file == null) {
+                    file = a;
+                } else {
+                    goArgs.add(a);
+                }
+                continue;
+            }
             if (a.startsWith("--gmp=")) {
                 try {
                     gmp = Integer.parseInt(a.substring("--gmp=".length()));
@@ -107,6 +131,7 @@ public final class P3SyncMain {
                 continue;
             }
             switch (a) {
+                case "--" -> dashdash = true;
                 case "--check" -> check = true;
                 // P3-M3 (M9 re-measure): enable the InterfaceDispatchProbes
                 // (WS D hooks) and dump per-site itab-identity histograms
@@ -226,6 +251,34 @@ public final class P3SyncMain {
                     (node, ctx) -> MathSqrtNode.build(node, factory, ctx));
             factory.registerExprKind("mathfma",
                     (node, ctx) -> MathFmaNode.build(node, factory, ctx));
+            // P3-M8: the synthetic unsafe wire kinds (Pointer conversions,
+            // Slice/SliceData/String/StringData, Add trap). Public extension
+            // hooks — no Phase-1/Phase-2 change. The per-run handle table is
+            // installed here (same pattern as LinknameIntrinsics.install
+            // below: static registries are re-installed on every build so a
+            // previous program's handles can never leak into this run).
+            factory.registerExprKind("unsafefromptr",
+                    (node, ctx) -> UnsafeFromPtrNode.build(node, factory, ctx));
+            factory.registerExprKind("unsafetooptr",
+                    (node, ctx) -> UnsafeToPtrNode.build(node, factory, ctx));
+            factory.registerExprKind("unsafefromuint",
+                    (node, ctx) -> UnsafeFromUintNode.build(node, factory, ctx));
+            factory.registerExprKind("unsafeslice",
+                    (node, ctx) -> UnsafeSliceNode.build(node, factory, ctx));
+            factory.registerExprKind("unsafeslicedata",
+                    (node, ctx) -> UnsafeSliceDataNode.build(node, factory, ctx));
+            factory.registerExprKind("unsafestring",
+                    (node, ctx) -> UnsafeStringNode.build(node, factory, ctx));
+            factory.registerExprKind("unsafestringdata",
+                    (node, ctx) -> UnsafeStringDataNode.build(node, factory, ctx));
+            factory.registerExprKind("unsafeadd",
+                    (node, ctx) -> UnsafeAddNode.build(node, factory, ctx));
+            UnsafeTable.install();
+            // P3-M8 (wave 2, reflect): the "reflectop" wire node (single
+            // kind dispatching on "op"). Public extension hook — no
+            // Phase-1/Phase-2 change.
+            factory.registerExprKind("reflectop",
+                    (node, ctx) -> graalgo.p3reflect.ReflectOpNode.build(node, ctx, factory));
             // P2-M1 (WS A): the go statement, reused from Phase 2 via the
             // same public hook (no Phase-2 change — GoStatementNode is a
             // public class).
@@ -237,6 +290,12 @@ public final class P3SyncMain {
             // objID fails fast here. Installed on every build (even empty)
             // so a previous program's tables can never leak into this run.
             IfaceMethodTable.install(IfaceMethodTables.resolve(json, program.functions()));
+            // P3-M8 (wave 2, reflect): install the GoRType table (canonical
+            // per structural identity) and the unsafe handle table. Installed
+            // on every build (even empty) so a previous program's tables can
+            // never leak into this run.
+            graalgo.p3unsafe.UnsafeTable.install();
+            graalgo.p3reflect.ReflectTypes.install(json, program.functions());
             // P3-M4 (WS C, ADR-0004): linkname symbol table (both
             // directions), itabFor provider, interface method lists, and
             // Go function bindings for callGo. Installed on every build
@@ -254,6 +313,17 @@ public final class P3SyncMain {
             graalgo.values.InterfaceDispatchProbes.reset();
             graalgo.values.InterfaceDispatchProbes.setEnabled(true);
         }
+
+        // P3-M8 (wave 2, R6): initialize the os surface's process-wide
+        // state (virtual cwd, env overlay, stdio cookies, argv) BEFORE
+        // Go initialization runs — os.Args[i] must already be visible
+        // to package-var initializers. os.Args[0] is the input-file path.
+        String[] goArgv = new String[goArgs.size() + 1];
+        goArgv[0] = file;
+        for (int i = 0; i < goArgs.size(); i++) {
+            goArgv[i + 1] = goArgs.get(i);
+        }
+        GoOs.init(goArgv);
 
         // Install the scheduler and run main as the first goroutine
         // (SchedMain's flow, verbatim).
@@ -421,7 +491,10 @@ public final class P3SyncMain {
     }
 
     private static void usage() {
-        System.err.println("usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] file.go");
+        System.err.println(
+                "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] file.go [-- args...]");
+        System.err.println(
+                "  --            program argv follow (os.Args[0] is always the input-file path)");
         System.err.println("  --gmp=N   in-flight cap (default: carriers); effective cap = min(gmp, carriers)");
         System.err.println("  --check   build only, do not execute");
         System.err.println("  --dump-polymorphism  M9: dump per-site itab-identity histograms to stderr");

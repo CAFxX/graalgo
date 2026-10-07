@@ -70,11 +70,11 @@ import (
 type mrKind int
 
 const (
-	mrNone mrKind = iota
-	mrWithCancel   // context.WithCancel / context.WithCancelCause
-	mrWithDeadline // context.WithDeadline / context.WithTimeout
-	mrDeadline     // ctx.Deadline() (method) — retained, unreachable in M5
-	mrParseDur     // time.ParseDuration
+	mrNone         mrKind = iota
+	mrWithCancel          // context.WithCancel / context.WithCancelCause
+	mrWithDeadline        // context.WithDeadline / context.WithTimeout
+	mrDeadline            // ctx.Deadline() (method) — retained, unreachable in M5
+	mrParseDur            // time.ParseDuration
 	// P3-M7 (wave 1): xml.Decoder.Token / xml.Decoder.RawToken.
 	mrXmlToken // xml.Decoder.Token() / xml.Decoder.RawToken()
 	// P3-M7 (wave 1): the encoding/* multi-result members (Decode,
@@ -156,9 +156,169 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"encoding/json", "Float64", "Number", "__numberFloat64", "numberFloat64Pair", []string{"f", "err"}},
 	{"encoding/json", "Int64", "Number", "__numberInt64", "numberInt64Pair", []string{"i", "err"}},
 	{"encoding/json", "MarshalJSON", "RawMessage", "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}},
+	// P3-M8 (wave 2): synthetic io (synth_io.go). Only the members with
+	// real single-result __-helpers are desugared — see the SCOPE NOTE in
+	// the patch header; everything else fails at export via
+	// isMultiResultSynthetic. prependRecv applies (all have receivers).
+	{"io", "Pipe", "", "__pipe", "pipePair", []string{"r", "w"}},
+	{"io", "Read", "PipeReader", "__pipeReaderRead", "pipeReaderReadPair", []string{"n", "err"}},
+	{"io", "Write", "PipeWriter", "__pipeWriterWrite", "pipeWriterWritePair", []string{"n", "err"}},
+	{"io", "Seek", "SectionReader", "__sectionReaderSeek", "sectionReaderSeekPair", []string{"n", "err"}},
+	{"io", "Outer", "SectionReader", "__sectionReaderOuter", "sectionReaderOuterTriple", []string{"r", "off", "n"}},
+	{"io", "Seek", "OffsetWriter", "__offsetWriterSeek", "offsetWriterSeekPair", []string{"n", "err"}},
+	// P3-M8 (wave 2): strings.Reader methods discharged from their M7
+	// fail-fast (patch 06, synth_strings.go). They need only io.EOF and
+	// the io.Seek* consts — no interface dispatch — so their __-helpers
+	// are real. strings.Reader.WriteTo stays fail-fast (needs w.Write).
+	{"strings", "Read", "Reader", "__stringsReaderRead", "stringsReaderReadPair", []string{"n", "err"}},
+	{"strings", "ReadAt", "Reader", "__stringsReaderReadAt", "stringsReaderReadAtPair", []string{"n", "err"}},
+	{"strings", "ReadByte", "Reader", "__stringsReaderReadByte", "stringsReaderReadBytePair", []string{"b", "err"}},
+	{"strings", "ReadRune", "Reader", "__stringsReaderReadRune", "stringsReaderReadRuneTriple", []string{"ch", "size", "err"}},
+	{"strings", "Seek", "Reader", "__stringsReaderSeek", "stringsReaderSeekPair", []string{"n", "err"}},
+	// P3-M8 (wave 2): synthetic syscall package (synth_syscall.go).
+	// The multi-result members keep exact gc signatures with fail-fast
+	// bodies; the __-helpers return pair structs (real implementations
+	// for Getenv/Getgroups/Getwd, exact-message panics for the rest).
+	{"syscall", "Open", "", "__open", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Read", "", "__read", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Write", "", "__write", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Pread", "", "__pread", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Pwrite", "", "__pwrite", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Seek", "", "__seek", "int64ErrorPair", []string{"v", "err"}},
+	{"syscall", "Readlink", "", "__readlink", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Mmap", "", "__mmap", "bytesErrorPair", []string{"v", "err"}},
+	{"syscall", "StartProcess", "", "__startprocess", "startProcessTriple", []string{"pid", "handle", "err"}},
+	{"syscall", "ForkExec", "", "__forkexec", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Wait4", "", "__wait4", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Socket", "", "__socket", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Accept", "", "__accept", "acceptTriple", []string{"fd", "sa", "err"}},
+	{"syscall", "GetsockoptInt", "", "__getsockoptint", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Recvmsg", "", "__recvmsg", "recvmsgTuple", []string{"n", "oobn", "recvflags", "from", "err"}},
+	{"syscall", "EpollCreate", "", "__epollcreate", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "EpollCreate1", "", "__epollcreate1", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "EpollWait", "", "__epollwait", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "InotifyInit", "", "__inotifyinit", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "InotifyAddWatch", "", "__inotifyaddwatch", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "InotifyRmWatch", "", "__inotifyrmwatch", "intErrorPair", []string{"v", "err"}},
+	{"syscall", "Getenv", "", "__getenv", "getenvPair", []string{"value", "found"}},
+	{"syscall", "Getgroups", "", "__getgroups", "gidsErrorPair", []string{"gids", "err"}},
+	{"syscall", "Getwd", "", "__getwd", "stringErrorPair", []string{"v", "err"}},
+	{"syscall", "Syscall", "", "__syscall", "syscallTriple", []string{"r1", "r2", "err"}},
+	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}},
+	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}},
+	{"syscall", "RawSyscall6", "", "__rawsyscall6", "syscallTriple", []string{"r1", "r2", "err"}},
+	// P3-M8 (wave 2, reflect): multi-result members desugared via the
+	// single-result __-helpers. Select is package-level; the Value methods
+	// are on the Value struct; the Type methods are on rtype but usually
+	// called via the Type interface (the classify function retries with
+	// recvType="rtype" for reflect interface methods); StructTag.Lookup is
+	// on the named string type StructTag.
+	{"reflect", "Select", "", "__reflectSelect", "reflectSelectTriple", []string{"chosen", "recv", "recvOK"}},
+	{"reflect", "FieldByIndexErr", "Value", "__reflectFieldByIndexErr", "reflectValuePair", []string{"v", "err"}},
+	{"reflect", "TryRecv", "Value", "__reflectTryRecv", "reflectValueBoolPair", []string{"x", "ok"}},
+	{"reflect", "MethodByName", "rtype", "__reflectTMethodByName", "reflectMethodPair", []string{"m", "ok"}},
+	{"reflect", "FieldByName", "rtype", "__reflectTFieldByName", "reflectStructFieldPair", []string{"f", "ok"}},
+	{"reflect", "FieldByNameFunc", "rtype", "__reflectTFieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}},
+	{"reflect", "Lookup", "StructTag", "__reflect_taglookup", "reflectTagPair", []string{"value", "ok"}},
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
+}
+
+// m8MultiResultFuncs is the desugar table for the crypto/* packages (P3-M8).
+// Pattern: exact gc signature + fail-fast stub body + real single-result
+// helper + pair struct. The helperPkg is the synthetic package path.
+// Interface multi-result (cipher AEAD.Open, io.Reader.Read) needs the
+// interface receiver form; see handoff.
+var m8MultiResultFuncs = []osMultiResultFunc{
+	// crypto/md5, sha1, sha256, sha512, sha3: Hash.Write methods
+	// (via hash.__hashWrite) + md5 binary marshaling (via
+	// hash.__binaryMarshal/__binaryAppend).
+	{"crypto/md5", "Write", "digest", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
+	{"crypto/md5", "MarshalBinary", "digest", "__binaryMarshal", "hash", "marshalPair", []string{"data", "err"}},
+	{"crypto/md5", "AppendBinary", "digest", "__binaryAppend", "hash", "appendPair", []string{"b", "err"}},
+	// crypto/sha256, sha512: same pattern (digest types).
+	{"crypto/sha256", "Write", "digest", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
+	{"crypto/sha512", "Write", "digest", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
+	{"crypto/sha1", "Write", "digest", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
+	{"crypto/sha3", "Write", "SHA3", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
+	{"crypto/sha3", "Write", "SHAKE", "__hashWrite", "hash", "writePair", []string{"n", "err"}},
+	// crypto/hmac: New returns a single hash.Hash (not multi-result);
+	// no desugar entry needed.
+	// crypto/aes, des, rc4: NewCipher is multi-result.
+	{"crypto/aes", "NewCipher", "", "__aesNewCipher", "", "newCipherPair", []string{"block", "err"}},
+	{"crypto/des", "NewCipher", "", "__desNewCipher", "", "newCipherPair", []string{"block", "err"}},
+	{"crypto/des", "NewTripleDESCipher", "", "__desNewTripleDESCipher", "", "newCipherPair", []string{"block", "err"}},
+	{"crypto/rc4", "NewCipher", "", "__rc4NewCipher", "", "newCipherPair", []string{"cipher", "err"}},
+	// crypto/cipher: NewGCM* and AEAD.Open (interface receiver).
+	{"crypto/cipher", "NewGCM", "", "__newGCM", "", "newGCMAEADPair", []string{"aead", "err"}},
+	{"crypto/cipher", "NewGCMWithNonceSize", "", "__newGCMWithNonceSize", "", "newGCMAEADPair", []string{"aead", "err"}},
+	{"crypto/cipher", "NewGCMWithTagSize", "", "__newGCMWithTagSize", "", "newGCMAEADPair", []string{"aead", "err"}},
+	{"crypto/cipher", "Open", "AEAD", "__aeadOpen", "", "aeadOpenPair", []string{"out", "err"}},
+	// crypto/cipher: StreamReader.Read, StreamWriter.Write (need io desugar).
+	{"crypto/cipher", "Read", "StreamReader", "__streamReaderRead", "", "streamReaderReadPair", []string{"n", "err"}},
+	{"crypto/cipher", "Write", "StreamWriter", "__streamWriterWrite", "", "streamWriterWritePair", []string{"n", "err"}},
+	// crypto/rand: Read is multi-result (fail-fast).
+	{"crypto/rand", "Read", "", "__randRead", "", "readPair", []string{"n", "err"}},
+}
+
+// osMultiResultFunc describes one desugarable P3-M8 (wave 2) multi-result
+// function: the synthetic os package's multi-result API (exact gc 1.27.1
+// signatures, fail-fast bodies) plus io/fs's DirEntry.Info (desugared
+// through an os helper via the helperPkg override). Same contract as
+// m7MultiResultFunc; kept as a separate table so the M7 entries (and
+// their positional literals) are untouched.
+type osMultiResultFunc struct {
+	pkgPath    string   // declaring package ("os", or "io/fs" for DirEntry.Info)
+	name       string   // function/method name
+	recvType   string   // receiver named type ("" for package-level funcs)
+	helper     string   // __-helper name
+	helperPkg  string   // package holding the helper+pair ("" = pkgPath)
+	pairType   string   // pair/triple struct type name
+	pairFields []string // field names in result order (must match the
+	// multi-result signature's result order positionally)
+}
+
+// osMultiResultFuncs is the desugar table for the synthetic os package
+// (P3-M8 wave 2). Every entry was verified against synth_os.go: helper
+// name, pair struct name, and field names/order match the source's
+// __-helper and pair struct exactly.
+var osMultiResultFuncs = []osMultiResultFunc{
+	// os: package-level funcs.
+	{"os", "Open", "", "__open", "", "openPair", []string{"f", "err"}},
+	{"os", "Create", "", "__create", "", "openPair", []string{"f", "err"}},
+	{"os", "OpenFile", "", "__openFile", "", "openPair", []string{"f", "err"}},
+	{"os", "Stat", "", "__stat", "", "statPair", []string{"fi", "err"}},
+	{"os", "Lstat", "", "__lstat", "", "statPair", []string{"fi", "err"}},
+	{"os", "ReadFile", "", "__readFile", "", "readFilePair", []string{"b", "err"}},
+	{"os", "ReadDir", "", "__readDir", "", "readDirPair", []string{"de", "err"}},
+	{"os", "CreateTemp", "", "__createTemp", "", "openPair", []string{"f", "err"}},
+	{"os", "MkdirTemp", "", "__mkdirTemp", "", "mkdirTempPair", []string{"s", "err"}},
+	{"os", "Readlink", "", "__readlink", "", "readlinkPair", []string{"s", "err"}},
+	{"os", "Getwd", "", "__getwd", "", "getwdPair", []string{"s", "err"}},
+	{"os", "Pipe", "", "__pipe", "", "pipeTriple", []string{"r", "w", "err"}},
+	{"os", "Hostname", "", "__hostname", "", "hostnamePair", []string{"s", "err"}},
+	{"os", "LookupEnv", "", "__lookupEnv", "", "lookupEnvPair", []string{"s", "ok"}},
+	{"os", "UserHomeDir", "", "__userHomeDir", "", "stringErrPair", []string{"s", "err"}},
+	{"os", "UserConfigDir", "", "__userConfigDir", "", "stringErrPair", []string{"s", "err"}},
+	{"os", "UserCacheDir", "", "__userCacheDir", "", "stringErrPair", []string{"s", "err"}},
+	// os: methods on *File.
+	{"os", "Read", "File", "__fileRead", "", "readPair", []string{"n", "err"}},
+	{"os", "ReadAt", "File", "__fileReadAt", "", "readPair", []string{"n", "err"}},
+	{"os", "Write", "File", "__fileWrite", "", "writePair", []string{"n", "err"}},
+	{"os", "WriteAt", "File", "__fileWriteAt", "", "writePair", []string{"n", "err"}},
+	{"os", "WriteString", "File", "__fileWriteString", "", "writePair", []string{"n", "err"}},
+	{"os", "Seek", "File", "__fileSeek", "", "seekPair", []string{"off", "err"}},
+	{"os", "Stat", "File", "__fileStat", "", "statPair", []string{"fi", "err"}},
+	{"os", "ReadDir", "File", "__fileReadDir", "", "readDirPair", []string{"de", "err"}},
+	{"os", "Readdir", "File", "__fileReaddir", "", "readdirPair", []string{"fi", "err"}},
+	{"os", "Readdirnames", "File", "__fileReaddirnames", "", "readdirnamesPair", []string{"names", "err"}},
+	{"os", "ReadFrom", "File", "__fileReadFrom", "", "readFromPair", []string{"n", "err"}},
+	{"os", "WriteTo", "File", "__fileWriteTo", "", "writeToPair", []string{"n", "err"}},
+	// io/fs: DirEntry.Info (interface method) desugared through the os
+	// helper __dirEntryInfo (helperPkg override — the concrete dirEntry
+	// type lives in the synthetic os package).
+	{"io/fs", "Info", "DirEntry", "__dirEntryInfo", "os", "infoPair", []string{"fi", "err"}},
 }
 
 // mrPlan is the desugar plan for one classified call.
@@ -173,7 +333,7 @@ type mrPlan struct {
 	methodRecv *types.Named
 	methodName string
 	// For mrDeadline/mrParseDur: the pair field names ([d, ok]/[d, err]).
-	pairFields []string
+	pairFields  []string
 	prependRecv bool
 }
 
@@ -208,6 +368,16 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// members (hex.Decode, binary.Uvarint, ascii85.Decode,
 			// pem.Decode, asn1.Marshal/Unmarshal).
 			if plan := classifyM7MultiResultCall(pn.Imported().Path(), fn); plan != nil {
+				return plan
+			}
+			// P3-M8 (wave 2): the synthetic os package's multi-result
+			// API (osMultiResultFuncs table above).
+			if plan := classifyOsMultiResultCall(pn.Imported().Path(), fn); plan != nil {
+				return plan
+			}
+			// P3-M8 (wave 2): the crypto/* multi-result API
+			// (m8MultiResultFuncs table above).
+			if plan := classifyM8MultiResultCall(pn.Imported().Path(), fn); plan != nil {
 				return plan
 			}
 			switch pn.Imported().Path() {
@@ -284,7 +454,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				return &mrPlan{
 					kind: mrXmlToken, helperPkg: "encoding/xml",
 					helperName: helper, prependRecv: true,
-					tmpType:    nt, pairFields: []string{"tok", "err"},
+					tmpType: nt, pairFields: []string{"tok", "err"},
 				}
 			}
 		}
@@ -294,6 +464,14 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		// with the same name is never desugared.
 		if f, ok := selection.Obj().(*types.Func); ok && f.Pkg() != nil {
 			if plan := classifyM7MultiResultCall(f.Pkg().Path(), f); plan != nil {
+				return plan
+			}
+			// P3-M8 (wave 2): os methods + io/fs DirEntry.Info.
+			if plan := classifyOsMultiResultCall(f.Pkg().Path(), f); plan != nil {
+				return plan
+			}
+			// P3-M8 (wave 2): crypto/* multi-result API.
+			if plan := classifyM8MultiResultCall(f.Pkg().Path(), f); plan != nil {
 				return plan
 			}
 		}
@@ -357,6 +535,15 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 			recvName = nt.Obj().Name()
 		}
 	}
+	// P3-M8 (wave 2, reflect): the Type interface's multi-result methods
+	// (MethodByName, FieldByName, FieldByNameFunc) are usually called via
+	// the Type interface, where the selected method has no receiver. Retry
+	// such reflect interface methods against the rtype entries.
+	if recvName == "" && pkgPath == "reflect" {
+		if plan := classifyM7MultiResultCallRtype(pkgPath, fn); plan != nil {
+			return plan
+		}
+	}
 	for _, mf := range m7MultiResultFuncs {
 		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != recvName {
 			continue
@@ -381,6 +568,150 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
+		}
+	}
+	return nil
+}
+
+// classifyOsMultiResultCall recognizes the P3-M8 (wave 2) Appendix M
+// operations (the osMultiResultFuncs table). pkgPath is the called
+// function's declaring package; for methods the receiver's named type
+// must match the table entry — a user type with the same method name
+// is never desugared. helperPkg overrides the package the __-helper and
+// pair struct are looked up in (used for io/fs DirEntry.Info, whose
+// helper lives in the synthetic os package). Returns nil when the call
+// is not one of the table's operations.
+func classifyOsMultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	recvName := ""
+	if recv := sig.Recv(); recv != nil {
+		rt := recv.Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			recvName = nt.Obj().Name()
+		}
+	}
+	for _, mf := range osMultiResultFuncs {
+		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != recvName {
+			continue
+		}
+		// The result count must match the pair/triple arity: a signature
+		// change in the synthetic source fails the desugar loudly instead
+		// of extracting the wrong fields.
+		if sig.Results().Len() != len(mf.pairFields) {
+			return nil
+		}
+		helperPkg := mf.helperPkg
+		if helperPkg == "" {
+			helperPkg = mf.pkgPath
+		}
+		sp := getSyntheticPackage(helperPkg)
+		obj := sp.pkg.Scope().Lookup(mf.pairType)
+		if obj == nil {
+			return nil
+		}
+		nt, _ := obj.Type().(*types.Named)
+		if nt == nil {
+			return nil
+		}
+		return &mrPlan{
+			kind: mrM7, helperPkg: helperPkg,
+			helperName: mf.helper,
+			tmpType:    nt, pairFields: mf.pairFields,
+			prependRecv: mf.recvType != "",
+		}
+	}
+	return nil
+}
+
+// classifyM8MultiResultCall recognizes the P3-M8 (wave 2) crypto/*
+// multi-result API (m8MultiResultFuncs table above). Same contract as
+// classifyOsMultiResultCall: helperPkg overrides the package the __-helper
+// and pair struct are looked up in.
+func classifyM8MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	recvName := ""
+	if recv := sig.Recv(); recv != nil {
+		rt := recv.Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			recvName = nt.Obj().Name()
+		}
+	}
+	for _, mf := range m8MultiResultFuncs {
+		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != recvName {
+			continue
+		}
+		if sig.Results().Len() != len(mf.pairFields) {
+			return nil
+		}
+		helperPkg := mf.helperPkg
+		if helperPkg == "" {
+			helperPkg = mf.pkgPath
+		}
+		sp := getSyntheticPackage(helperPkg)
+		obj := sp.pkg.Scope().Lookup(mf.pairType)
+		if obj == nil {
+			return nil
+		}
+		nt, _ := obj.Type().(*types.Named)
+		if nt == nil {
+			return nil
+		}
+		return &mrPlan{
+			kind: mrM7, helperPkg: helperPkg,
+			helperName: mf.helper,
+			tmpType:    nt, pairFields: mf.pairFields,
+			prependRecv: mf.recvType != "",
+		}
+	}
+	return nil
+}
+
+// classifyM7MultiResultCallRtype retries a reflect interface method
+// against the rtype entries (P3-M8 wave 2).
+func classifyM7MultiResultCallRtype(pkgPath string, fn *types.Func) *mrPlan {
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	for _, mf := range m7MultiResultFuncs {
+		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != "rtype" {
+			continue
+		}
+		if sig.Results().Len() != len(mf.pairFields) {
+			return nil
+		}
+		sp := getSyntheticPackage(mf.pkgPath)
+		obj := sp.pkg.Scope().Lookup(mf.pairType)
+		if obj == nil {
+			return nil
+		}
+		nt, _ := obj.Type().(*types.Named)
+		if nt == nil {
+			return nil
+		}
+		return &mrPlan{
+			kind: mrM7, helperPkg: mf.pkgPath,
+			helperName: mf.helper,
+			tmpType:    nt, pairFields: mf.pairFields,
+			prependRecv: true,
 		}
 	}
 	return nil

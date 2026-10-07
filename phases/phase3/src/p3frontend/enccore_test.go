@@ -13,6 +13,7 @@ package p3frontend
 import (
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/token"
 	"go/types"
 	"strings"
@@ -129,6 +130,23 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 	imp := importerFunc(func(p string) (*types.Package, error) {
 		if p == "encoding/base64" {
 			return phase1EncCorePackage(t, "encoding/base64"), nil
+		}
+		// P3-M8: the base32 synthetic source imports io (streaming API).
+		if p == "io" {
+			return phase1SyntheticPackageForTest(t,
+				"../../../phase1/frontend/synth_io.go",
+				"syntheticIoSource", "io", imp), nil
+		}
+		if p == "errors" {
+			return phase1SyntheticPackageForTest(t,
+				"../../../phase1/frontend/synth_errors.go",
+				"syntheticErrorsSource", "errors", imp), nil
+		}
+		if p == "sync" {
+			// The synthetic sync surface is unexported in the phase-1
+			// frontend; real sync is a superset and the drift comparison
+			// never observes it (every sync use is unexported).
+			return importer.Default().Import("sync")
 		}
 		return nil, fmt.Errorf("unexpected synthetic import %q", p)
 	})
@@ -267,8 +285,9 @@ func TestEncCoreOmissionsPinned(t *testing.T) {
 		reason string
 		detail string
 	}{
-		{"encoding/base32", "NewEncoder", "DEFERRED_WAVE", "streaming encoder needs io (P3-M8)"},
-		{"encoding/base32", "NewDecoder", "DEFERRED_WAVE", "streaming decoder needs io (P3-M8)"},
+		// P3-M8: base32's NewEncoder/NewDecoder are DECLARED now (exact gc
+		// signatures; streaming Read/Write/Close fail fast — WS D). The
+		// remaining rows still wait on io-adjacent work in their waves.
 		{"encoding/base64", "NewEncoder", "DEFERRED_WAVE", "streaming encoder needs io (P3-M8)"},
 		{"encoding/base64", "NewDecoder", "DEFERRED_WAVE", "streaming decoder needs io (P3-M8)"},
 		{"encoding/hex", "NewEncoder", "DEFERRED_WAVE", "streaming encoder needs io (P3-M8)"},

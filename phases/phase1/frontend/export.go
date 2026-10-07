@@ -268,6 +268,18 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("encoding/asn1").pkg, nil
 	case "encoding":
 		return getSyntheticPackage("encoding").pkg, nil
+	case "io":
+		return getSyntheticPackage("io").pkg, nil
+	// P3-M8 (wave 2): synthetic syscall package (Errno vocabulary +
+	// scalar services; real-Go source in synth_syscall.go).
+	case "syscall":
+		return getSyntheticPackage("syscall").pkg, nil
+	// P3-M8 (wave 2): the synthetic os package (real-Go source in
+	// synth_os.go) and the minimal synthetic io/fs core (synth_iofs.go).
+	case "os":
+		return getSyntheticPackage("os").pkg, nil
+	case "io/fs":
+		return getSyntheticPackage("io/fs").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -637,16 +649,6 @@ func syntheticCompositeScopeError(nt *types.Named, position string) error {
 	return scopeErrorf("sync.%s as %s is not in M2 scope", nt.Obj().Name(), position)
 }
 
-// syntheticUnsafePackage builds the P3-M4 (WS C, ADR-0004) empty synthetic
-// "unsafe" package: it exists only so `import _ "unsafe"` (required by
-// //go:linkname directives) type-checks. Any selection on unsafe.* fails
-// as undefined against the empty scope.
-func syntheticUnsafePackage() *types.Package {
-	pkg := types.NewPackage("unsafe", "unsafe")
-	pkg.MarkComplete()
-	return pkg
-}
-
 // ExportFile type-checks the single Go source file at path and returns the
 // frontend/v1 JSON document.
 func ExportFile(path string) (string, error) {
@@ -700,16 +702,13 @@ func ExportFile(path string) (string, error) {
 		// encoding/ascii85, encoding/pem, encoding/asn1, encoding) are
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_base32.go etc.).
+		// P3-M8 (wave 2): the import "io" is allowed — resolved by
+		// overlayImporter to the synthetic package (real-Go source; see
+		// synth_io.go).
 		// Every other import is still a scope error (WS G import overlay).
 		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
-			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" {
+			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "os" && path != "io/fs" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
-		}
-		// P3-M4: a non-blank "unsafe" import is a named scope error —
-		// unsafe.* selections cannot resolve against the empty synthetic
-		// package, and failing here is clearer than "undefined: unsafe.X".
-		if path == "unsafe" && (imp.Name == nil || imp.Name.Name != "_") {
-			return "", scopeErrorf("import \"unsafe\": only the blank form (import _ \"unsafe\") is supported in frontend/v1 scope (P3-M4)")
 		}
 	}
 
@@ -741,7 +740,7 @@ func ExportFile(path string) (string, error) {
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
 		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
-			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" {
+			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -839,6 +838,8 @@ func ExportFile(path string) (string, error) {
 	needStrconv, needJson := false, false
 	needBase32, needBase64, needHex, needBinary := false, false, false, false
 	needAscii85, needPem, needAsn1, needEncoding := false, false, false, false
+	needIo := false
+	needSyscall := false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -858,6 +859,9 @@ func ExportFile(path string) (string, error) {
 			needMath = true
 		case "strings":
 			needStrings = true
+			// P3-M8: the synthetic strings source imports errors (gc-exact
+			// errors.New in Reader.ReadAt/Seek) — bytes/strconv precedent.
+			needErrors = true
 		case "encoding/xml":
 			needXml = true
 		case "strconv":
@@ -892,6 +896,12 @@ func ExportFile(path string) (string, error) {
 			needAsn1 = true
 		case "encoding":
 			needEncoding = true
+		case "io":
+			needIo = true
+		// P3-M8 (wave 2): a user import of "syscall" pulls in the
+		// synthetic package (synth_syscall.go).
+		case "syscall":
+			needSyscall = true
 		}
 	}
 	if needTime {
@@ -1012,6 +1022,24 @@ func ExportFile(path string) (string, error) {
 	}
 	if needEncoding {
 		if err := e.importSyntheticPackage(getSyntheticPackage("encoding")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic io (see synth_io.go). The error vars are
+	// built on the P3-M7 synthetic errors package — import it first. The
+	// P3-M2 sync surface (Mutex/Once) needs no import step.
+	if needIo {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic syscall (depends on the synthetic io/fs
+	// registration for its Errno.Is sentinels - os worker, R5).
+	if needSyscall {
+		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
 			return "", err
 		}
 	}
@@ -2076,6 +2104,8 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		}
 		detail := map[string]any{
 			"name": namedTypeName(t), "underlying": under, "methods": methods,
+			// P3-M8 (wave 2, reflect): package path for Type.PkgPath.
+			"pkgpath": t.Obj().Pkg().Path(),
 		}
 		if tmplSkipped {
 			// P3-M3 remediation (R1 P1-2): the frontend fails fast
@@ -2221,9 +2251,16 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 			if err != nil {
 				return TypeEnt{}, err
 			}
+			// P3-M8 (wave 2, reflect): "exported" and "pkgpath" for
+			// unexported-field flagRO parity (StructField.PkgPath).
+			pkgPath := ""
+			if !f.Exported() && f.Pkg() != nil {
+				pkgPath = f.Pkg().Path()
+			}
 			fields = append(fields, map[string]any{
 				"name": f.Name(), "type": ft, "tag": t.Tag(i),
 				"embedded": f.Embedded(), "offset": offsets[i],
+				"exported": f.Exported(), "pkgpath": pkgPath,
 			})
 		}
 		return mk("struct", map[string]any{"fields": fields}), nil
@@ -4949,6 +4986,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			if err != nil {
 				return nil, err
 			}
+			// P3-M8: unsafe.Pointer conversions (synth_unsafe.go); see hunk 1.
+			if n, handled, err := e.exportUnsafeConversion(c, tv.Type, x, to); handled {
+				return n, err
+			}
 			// M7: "from" records the source type id.
 			var from any
 			if atv, ok := e.info.Types[c.Args[0]]; ok && atv.Type != nil {
@@ -5172,6 +5213,12 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// "math*" wire nodes. Intercepted before the funcByObj lookup.
 	if isMathIntrinsicFunc(fn) {
 		return e.exportMathIntrinsic(c, fn.Name())
+	}
+	// P3-M8 (wave 2, reflect): reflect intrinsics called from within the
+	// synthetic reflect package (e.g. __reflect_tKind in rtype.Kind) lower
+	// to the "reflectop" wire node. Intercepted before the funcByObj lookup.
+	if isReflectIntrinsicFunc(fn) {
+		return e.exportReflectIntrinsic(c, fn.Name())
 	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
@@ -5992,6 +6039,11 @@ func (e *exporter) exportTypeConversion(c *ast.CallExpr, tn *types.TypeName) (*N
 	if err != nil {
 		return nil, err
 	}
+	// P3-M8: unsafe.Pointer conversions (synth_unsafe.go). handled=false
+	// keeps the existing path (notably unsafe.Pointer→uintptr, the D5 trap).
+	if n, handled, err := e.exportUnsafeConversion(c, tn.Type(), x, to); handled {
+		return n, err
+	}
 	// M7: "from" records the source type id (needed for string<->
 	// slice conversions to get the element kind).
 	var from any
@@ -6336,7 +6388,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
 			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" ||
-				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" {
+				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}
