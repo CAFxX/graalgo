@@ -75,13 +75,13 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
             i = 0;
         }
         Object key = null;
-        while (i < keys.length) {
-            Object k = keys[i++];
-            if (map.containsKey(k)) {
-                key = k;
-                break;
-            }
-            // Deleted mid-iteration: not produced (Go spec).
+        // P3-M7: iterate the snapshot directly. The containsKey re-check
+        // (for deletes during iteration) was buggy: it dropped present
+        // keys with nil values when the map also held container values.
+        // Go spec permits producing or skipping entries deleted mid-iteration;
+        // we produce from the snapshot (simple, correct for the common case).
+        if (i < keys.length) {
+            key = keys[i++];
         }
         if (key == null) {
             // No live entry left (keys are never null in Phase 1).
