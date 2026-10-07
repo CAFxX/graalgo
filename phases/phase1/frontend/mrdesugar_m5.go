@@ -60,7 +60,8 @@ import (
 //     hardcoded 2, so N-target assignments of pair-kind calls desugar.
 //   - mrJson: the synthetic encoding/json package-level multi-result
 //     functions (Marshal → __marshal/marshalPair, MarshalIndent →
-//     __marshalIndent/marshalIndentPair, Indent → __indent/indentPair;
+//     Marshal → __marshal/marshalPair, MarshalIndent →
+//     __marshalIndent/marshalIndentPair;
 //     fields [data, err]).
 //   - mrJsonMethod: the synthetic encoding/json multi-result methods
 //     ((Number).Float64 → __numberFloat64, (Number).Int64 →
@@ -342,7 +343,6 @@ func classifyJsonFunc(jsonPkg *types.Package, fn *types.Func) *mrPlan {
 	targets := map[string]target{
 		"Marshal":       {"__marshal", "marshalPair"},
 		"MarshalIndent": {"__marshalIndent", "marshalIndentPair"},
-		"Indent":        {"__indent", "indentPair"},
 	}
 	t, ok := targets[fn.Name()]
 	if !ok {

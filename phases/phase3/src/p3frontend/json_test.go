@@ -71,6 +71,16 @@ func phase1SyntheticJsonPackage(t *testing.T) *types.Package {
 	}
 	conf := types.Config{
 		Importer: importerFunc(func(path string) (*types.Package, error) {
+			if path == "bytes" {
+				// Minimal stub: the synthetic json source only needs
+				// *bytes.Buffer as a parameter type for Indent.
+				bytesPkg := types.NewPackage("bytes", "bytes")
+				bufName := types.NewTypeName(token.NoPos, bytesPkg, "Buffer", nil)
+				types.NewNamed(bufName, types.NewStruct(nil, nil), nil)
+				bytesPkg.Scope().Insert(bufName)
+				bytesPkg.MarkComplete()
+				return bytesPkg, nil
+			}
 			return nil, fmt.Errorf("unexpected synthetic import %q", path)
 		}),
 	}

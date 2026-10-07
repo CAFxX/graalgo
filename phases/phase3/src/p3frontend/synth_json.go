@@ -20,6 +20,9 @@ import (
 // syntheticJsonPackage mirrors the P3-M7 synthetic "encoding/json".
 func syntheticJsonPackage() *types.Package {
 	pkg := types.NewPackage("encoding/json", "json")
+	bytesPkg := types.NewPackage("bytes", "bytes")
+	bytesBufferName := types.NewTypeName(token.NoPos, bytesPkg, "Buffer", nil)
+	bytesBuffer := types.NewNamed(bytesBufferName, types.NewStruct(nil, nil), nil)
 	intT := types.Typ[types.Int]
 	int64T := types.Typ[types.Int64]
 	stringT := types.Typ[types.String]
@@ -129,8 +132,8 @@ func syntheticJsonPackage() *types.Package {
 	pkg.Scope().Insert(jsonWriterName)
 
 	// ---- Functions, vars, consts ----
-	// Indent func(dst []byte, src []byte, prefix string, indent string) ([]byte, error)
-	insertFunc("Indent", []*types.Var{newParam("dst", types.NewSlice(byteT)), newParam("src", types.NewSlice(byteT)), newParam("prefix", stringT), newParam("indent", stringT)}, []*types.Var{newParam("", types.NewSlice(byteT)), newParam("", errorT)}, false)
+	// Indent func(dst *bytes.Buffer, src []byte, prefix string, indent string) error
+	insertFunc("Indent", []*types.Var{newParam("dst", types.NewPointer(bytesBuffer)), newParam("src", types.NewSlice(byteT)), newParam("prefix", stringT), newParam("indent", stringT)}, []*types.Var{newParam("", errorT)}, false)
 	// Marshal func(v any) ([]byte, error)
 	insertFunc("Marshal", []*types.Var{newParam("v", anyT)}, []*types.Var{newParam("", types.NewSlice(byteT)), newParam("", errorT)}, false)
 	// MarshalIndent func(v any, prefix string, indent string) ([]byte, error)

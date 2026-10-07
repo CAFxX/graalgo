@@ -162,8 +162,8 @@ func main() {
 	println(len(b), err == nil)
 	b2, err := json.MarshalIndent("hello", "", "  ")
 	println(len(b2), err == nil)
-	b3, err := json.Indent(nil, b, "", " ")
-	println(len(b3), err == nil)
+	// NB: json.Indent needs *bytes.Buffer (unreachable in v1: needs &buf);
+	// it is verified as an exported fail-fast funcdecl below.
 	println(json.Valid(b))
 	n := json.Number("42")
 	f, err := n.Float64()
@@ -217,17 +217,17 @@ func main() {
 	walk(raw)
 	for _, want := range []string{
 		"Valid", "NewDecoder", "NewEncoder", "Encode",
-		"__marshal", "__marshalIndent", "__indent", "__decoderToken",
+		"__marshal", "__marshalIndent", "__decoderToken",
 		"__numberFloat64", "__numberInt64",
 		// Fail-fast single-result members are exported (panic bodies).
-		"Unmarshal",
+		"Unmarshal", "Indent",
 	} {
 		if !names[want] {
 			t.Errorf("wire doc missing funcdecl %q", want)
 		}
 	}
 	for _, absent := range []string{
-		"Marshal", "MarshalIndent", "Indent",
+		"Marshal", "MarshalIndent",
 	} {
 		if names[absent] {
 			t.Errorf("wire doc must not contain multi-result funcdecl %q", absent)

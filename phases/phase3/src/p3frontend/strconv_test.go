@@ -76,6 +76,7 @@ func phase1SyntheticErrorsPackage(t *testing.T) *types.Package {
 	if err != nil {
 		t.Fatalf("type-checking phase-1 synthetic errors: %v", err)
 	}
+	pkg.MarkComplete()
 	return pkg
 }
 

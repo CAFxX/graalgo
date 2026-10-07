@@ -4,6 +4,8 @@ package main
 // syntheticJsonSource is the P3-M7 synthetic `encoding/json` package.
 const syntheticJsonSource = `package json
 
+import "bytes"
+
 // Float formatting and parsing for the synthetic encoding/json.
 //
 // All algorithms are clean-room and use only integer arithmetic (no
@@ -2370,35 +2372,12 @@ func Valid(data []byte) bool {
 // Indent appends to dst an indented form of the JSON-encoded src.
 // Indent appends to dst an indented form of the JSON-encoded src.
 //
-// (WS D: desugars to __indent.)
-func Indent(dst []byte, src []byte, prefix, indent string) ([]byte, error) {
-	panic("json.Indent: unreachable (call sites desugar to __indent)")
-}
-
-// indentPair is the single-result form of Indent (WS D).
-type indentPair struct {
-	data []byte
-	err  error
-}
-
-// __indent is the single-result Indent helper.
-func __indent(dst []byte, src []byte, prefix, indent string) indentPair {
-	// Validate src.
-	if !Valid(src) {
-		// Find the error.
-		parser := &jsonParser{data: src}
-		jvp := parser.parseValue()
-		_, err := jvp.v, jvp.err
-		if err != nil {
-			return indentPair{dst, err}
-		}
-		parser.skipSpace()
-		if parser.off < len(src) {
-			c := src[parser.off]
-			return indentPair{dst, jsonSyntaxError(src, parser.off, c, "after top-level value")}
-		}
-	}
-	return indentPair{append(dst, jsonIndent(src, prefix, indent)...), nil}
+// M7 scope: exact gc 1.27.1 signature, fail-fast body. Calling Indent
+// needs &buf (address of a bytes.Buffer variable), which v1 cannot emit
+// (WS D), so Indent has no reachable use in M7 scope. Re-test when WS D
+// lands.
+func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
+	panic("json.Indent: not in M7 scope (needs address-of variable; re-test when WS D lands)")
 }
 
 // HTMLEscape is omitted in wave 1 (needs *bytes.Buffer, inexpressible);
