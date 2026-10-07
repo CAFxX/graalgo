@@ -1,4 +1,6 @@
-# exclusions.yaml — versioned stdlib-package exclusion list, v1 (P3-M6).
+# exclusions.yaml — versioned stdlib-package exclusion list, v2 (P3-M6;
+# v2: ASM_UNCATEGORIZED renamed to ASM_UNSUPPORTED -- the old name
+# contradicted the asm inventory's generator invariant).
 #
 # GG-0033 machinery applies: flat "- file:" entries, "reason:" mandatory per
 # entry, "detail:" carries the evidence, "version:" line present. Parsed with
@@ -25,11 +27,12 @@
 #                         (SPEC §3.8, GG-0023).
 #   CGO                 — package requires `import "C"`; cgo is banned in
 #                         module code by verifier rule GG-0058 (SPEC §3.7).
-#   ASM_UNCATEGORIZED   — package has .s files with no assigned P3-M6 asm
-#                         strategy category yet. Categories per SPEC §2.8:
-#                         runtime-core evaporates, atomics/bytealg
-#                         intrinsified, crypto emulate-then-intrinsify,
-#                         math covered by JVM IEEE754.
+#   ASM_UNSUPPORTED       — package's .s/.S/.sx files sit in the P3-M6 asm
+#                         inventory's "unsupported" (fail-fast) category:
+#                         no replacement strategy decided yet (SPEC §2.8;
+#                         ADR-0007). (The inventory itself has no
+#                         "uncategorized" files by construction -- the
+#                         generator fails on any file matching no rule.)
 #   LINKNAME_MISSING    — package needs a //go:linkname symbol the graalgo
 #                         intrinsic surface does not provide (linkname-diff
 #                         worker taxonomy, P3-M6).
@@ -41,14 +44,14 @@
 #                         backend-specific behavior that is not a
 #                         portability observable (mirrors GG-0033
 #                         unspecified-behavior).
-version: 1
+version: 2
 reason_codes:
 - code: PLATFORM
   description: outside OS/arch scope (linux/amd64 first; darwin deferred; Windows out of v1 per SPEC §3.8 GG-0023)
 - code: CGO
   description: requires import "C"; banned in module code by verifier rule GG-0058 (SPEC §3.7)
-- code: ASM_UNCATEGORIZED
-  description: has .s files with no assigned P3-M6 asm strategy category yet (categories: SPEC §2.8)
+- code: ASM_UNSUPPORTED
+  description: package's .s/.S/.sx files are in the asm inventory's unsupported (fail-fast) category -- no replacement strategy decided yet (SPEC §2.8; ADR-0007)
 - code: LINKNAME_MISSING
   description: needs a //go:linkname symbol the intrinsic surface does not provide
 - code: UNSUPPORTED_FEATURE
