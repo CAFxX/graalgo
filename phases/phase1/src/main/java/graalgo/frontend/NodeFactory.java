@@ -2012,6 +2012,15 @@ public final class NodeFactory {
         String path = "unary.fields";
         UnaryOpNode.Op op = UnaryOpNode.Op.fromToken(f.string("op", path));
         GoKind kind = kindOf(ctx, f.intValue("type", path), path);
+        if (op == UnaryOpNode.Op.LOGNOT) {
+            // P3-M7: go/types types every comparison as untyped bool (spec:
+            // "comparison operators ... yield an untyped boolean value"),
+            // so !(a && b) carries UNTYPED_BOOL on the wire while its
+            // operand materializes to BOOL (comparisons and &&/|| build
+            // BOOL nodes). The result of ! is always a bool at runtime —
+            // mirror buildBinary's logical-op handling and use BOOL.
+            kind = GoKind.BOOL;
+        }
         return new UnaryOpNode(op, kind, maybeConvert(buildExpr(f.object("x", path), ctx), kind, path));
     }
 
