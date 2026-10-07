@@ -120,3 +120,24 @@ report commit hashes + file lists.
   NOTE: m7-enc-xml also contains non-xml commits (2ebe8c4, 4d08294, 6e5af41) —
   integrate by content. Worker also left commits 0a77fa7, 92f8bd4, 2c7ea39 on
   m7-strings (accidental) — content already cherry-picked to m7-enc-xml.
+
+## 2026-10-07 ~04:30 UTC update — ALL 10 WORKERS DONE
+- math worker DONE (10/10): m7-math, 6 commits (7de8703 source 3748 lines,
+  28b2685 exporter, c64ac0f mirror+drift, 5818e3e 6 Java nodes, 5b7e01a corpus
+  5/5 PASS, 3d4e0eb redgreen). CRITICAL: StrictMath != gc for transcendentals
+  (11k-35k mismatches/50k); only Sqrt/FMA are JVM intrinsics (0/50,071
+  mismatches); rest pure-Go verbatim gc ports. Carried: Exp FMA-path only
+  (146 1-ulp diffs on non-FMA hosts — re-test trigger).
+
+## INTEGRATION PHASE STARTS
+Order:
+1. Merge content-complete branches into integration worktree (master@d493a2a):
+   m7-errors-sort (a4fa2bf), m7-bytes (9019842), m7-math (6 commits),
+   m7-strings (77b5c6d, 5d7c9c1 + apply .final mirror fix),
+   m7-enc-xml (9 xml commits by content), m7-enc-core csv/gob (1836c8e, 8992dc2),
+   enc-core sources (m7-enc-json@2ebe8c4), strconv source (aed88b7),
+   enc-json source (f3c078f).
+2. Spawn wiring follow-ups: enc-core, strconv, enc-csv-gob, enc-json
+   (exporter+mirror+importer+drift+corpus+redgreen).
+3. Bytes corpus + redgreen follow-up; strings drift fix verification.
+4. Full suites + all corpora green → 2 independent reviews → sign-off.
