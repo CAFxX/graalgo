@@ -404,3 +404,63 @@ limitation) — documented with re-test trigger.
   fullness is now a pre-suite-run check (Makefile already routes GOTMPDIR to
   out/test-tmp, but stray /tmp consumers can still fill the tmpfs).
 - Next: P3-M6 (stdlib fork mechanics).
+
+## P3-M6 accepted (supervisor verification, 2026-10-07 ~02:30 CEST)
+
+Sign-off tree: aaf1d04 (plus this checkpoint entry).
+
+### Deliverables (all five, per plan WS F)
+1. **Vendoring pipeline** (`tools/stdlib-vendor/`, commit cf59713): reproducible
+   vendor of go1.27.1 to `~/workspace/graalgo-stdlib/go1.27.1/` (12,018 files),
+   byte-deterministic manifest in-repo, version-pin enforcement, tamper-detecting
+   `verify`. ADR-0006 + VENDORING.md update procedure.
+2. **Linkname-diff tooling** (`tools/stdlib-linkdiff/`, commit 188b90a): full-tree
+   scan (615 linknames: 8 satisfied, 1 routed, 606 missing), mechanical
+   provided-set extraction (241 symbols, never hand-maintained), skip-list size
+   525 as the first per-release churn baseline for the SPEC §3.6 kill trigger.
+3. **Assembly strategy** (`phases/phase3/src/p3frontend/asm.go`, commit 62cc214):
+   639 .s/.S/.sx files inventoried (SPEC said 485 — drift is fips140 growth),
+   categorized evaporate 238 / intrinsify 61 / emulate-then-intrinsify 71 /
+   jvm-math 54 / unsupported 215; fail-fast in the importer, never silent.
+   ADR-0007.
+4. **Exclusion list** (`phases/phase3/stdlib-fork/exclusions.yaml`, v2): 2 entries
+   (runtime/cgo→CGO, plugin→UNSUPPORTED_FEATURE), 7-code vocabulary, strict
+   validator wired into `make check`; 5% clause binds at 13 packages.
+5. **Coupled-package re-measurement**: 236/399 pure-Go (59%), 142 coupled with
+   per-dir reasons (build-tags 133, linkname 69, asm 35, cgo 15, overlapping).
+
+### P3-D1 re-examination (trigger fired, boundary stands)
+142 vs SPEC ~78 = 82% drift. Decomposition: 47 build-tags-only (mechanical
+filtering, no adaptation), 51 linkname-driven (sources unchanged once GG-0021
+surface provided), ~44 asm/cgo (real adaptation — within the original
+estimate's spirit). Recorded in ADR-0001-addendum. Reviewer 2 independently
+re-derived the 142 and concurs: STANDS.
+
+### Reviews (reports committed BEFORE sign-off)
+- reviewer1.md (1205b1b): PASS-with-findings — 0 P0, 1 P1, 3 P2. Reproduced all
+  6 red-green claims independently.
+- reviewer2.md (294eca5): PASS-WITH-FINDINGS — 0 P0, 2 P1, 8 P2. Included a
+  live-breach demo (evil_amd64.S sailed through CheckAsmFiles).
+- Remediation (13 commits, 3a7c218…fdbde78 + aaf1d04): all 2 P1 + 12 P2 fixed
+  with red-green evidence (hidden_files/m6-remediation/redgreen.md). Notable
+  nuance found during P1-1 fix: go/build gates .S/.sx on cgo; graalgo is
+  deliberately stricter (no cgo path per SPEC §3.7).
+
+### Independent verification (final tree, supervisor-run)
+- phase-1: 211/211, phase-2: 194/194, phase-3: 58/58
+- `make -C phases/phase3 check`: clean — exclusion gate validates v2 against
+  the VENDORED tree (proving the dead-probe P1 fix), asm-inventory --check OK
+- Go tools green: stdlib-vendor, stdlib-linkdiff, stdlib-excl, p3frontend
+- /tmp monitored (512M tmpfs); cleaned ~90M of other tracks' stale scratch
+  mid-run after the M5 lesson.
+
+### Carried divergences / re-test triggers
+- Skip-list 525: waves M7–M9 drive it down; SPEC §3.6 kill trigger (growth >15
+  twice per release) armed on the linkname-diff tool output.
+- Crypto emulate leg: intrinsify leg deferred to Phase 5+ (ADR-0007).
+- `.S` cgo-strictness: 11 runtime/cgo/gcc_*.S categorized unsupported with
+  P3-M8 re-test trigger.
+- Per-release re-measurement re-fires P3-D1 on >15% coupled-count moves.
+
+### Next
+P3-M7: package wave 1 (errors, sort, strings, bytes, strconv, math, encoding/*).
