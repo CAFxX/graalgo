@@ -43,6 +43,10 @@ var syntheticSources = map[string]string{
 	// P3-M7 (wave 1): encoding/csv + encoding/gob (synth_enc_csv_gob.go).
 	"encoding/csv": syntheticCsvSource,
 	"encoding/gob": syntheticGobSource,
+	// P3-M7 (wave 1): strconv (synth_strconv.go) and encoding/json
+	// (synth_json.go). Pure-Go, self-contained.
+	"strconv":        syntheticStrconvSource,
+	"encoding/json": syntheticJsonSource,
 }
 // the overlay importer, so the context source's `import "time"` resolves
 // to the synthetic package (synthetic→synthetic imports).
