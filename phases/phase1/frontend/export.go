@@ -759,6 +759,8 @@ func ExportFile(path string) (string, error) {
 		namedIDs: make(map[string]int),
 		objIDs:   make(map[types.Object]int),
 		sizes:    types.SizesFor("gc", "amd64"),
+		// P3-M8: track imported synthetic packages for idempotency.
+		importedSynthetic: make(map[string]bool),
 	}
 	doc := Doc{
 		Frontend:  frontendVersion,
@@ -1483,6 +1485,10 @@ type exporter struct {
 	// collectPackageVars during the declaration scan; exported in
 	// dependency order by exportPackageVars after the scan).
 	pkgVars []*pkgVarDecl
+	// P3-M8: synthetic packages already imported (importSyntheticPackage
+	// is idempotent; prevents duplicate globals when a dependency like
+	// errors is imported both directly and via io).
+	importedSynthetic map[string]bool
 	// P3-M2remed (P0-3): sequence counter for synthetic temporaries
 	// hoisted by exportSyncGoStmt (__sync_go_arg<seq>_<i>); keeps the
 	// names unique across go statements in one export.

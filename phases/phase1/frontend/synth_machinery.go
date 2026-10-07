@@ -229,6 +229,12 @@ type synthGroup struct {
 // later by exportSyntheticBodies). Intrinsics are skipped. The exporter's
 // per-file state is swapped for the duration.
 func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
+	// P3-M8: idempotent — skip if already imported (prevents duplicate
+	// globals when e.g. errors is imported both directly and via io).
+	if e.importedSynthetic[sp.path] {
+		return nil
+	}
+	e.importedSynthetic[sp.path] = true
 	savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
 	savedSubst, savedSubstTypeIDs := e.subst, e.substTypeIDs
 	e.fset, e.src, e.info, e.pkg = sp.fset, sp.raw, sp.info, sp.pkg
