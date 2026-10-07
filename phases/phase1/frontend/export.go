@@ -222,6 +222,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("time").pkg, nil
 	case "context":
 		return getSyntheticPackage("context").pkg, nil
+	case "math":
+		return getSyntheticPackage("math").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -645,8 +647,11 @@ func ExportFile(path string) (string, error) {
 		// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_time_context.go).
+		// P3-M7 (wave 1): the import "math" is allowed — resolved by
+		// overlayImporter to the synthetic package (real-Go source with
+		// bit-conversion/Sqrt/FMA intrinsics; see synth_math.go).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "math" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -676,9 +681,10 @@ func ExportFile(path string) (string, error) {
 	// via the synthetic overlay package (four primitives).
 	// P3-M4 (WS C, ADR-0004): "sync/atomic" and "unsafe" likewise.
 	// P3-M5 (WS E, ADR-0005): "time" and "context" likewise.
+	// P3-M7 (wave 1): "math" likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" {
+		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "math" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -772,12 +778,15 @@ func ExportFile(path string) (string, error) {
 	// package vars become document globals. Intrinsics (time.Now etc.)
 	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
+	needMath := false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
 			needTime = true
 		case "context":
 			needTime, needContext = true, true
+		case "math":
+			needMath = true
 		}
 	}
 	if needTime {
@@ -787,6 +796,14 @@ func ExportFile(path string) (string, error) {
 	}
 	if needContext {
 		if err := e.importSyntheticPackage(getSyntheticPackage("context")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): the synthetic math package (see synth_math.go).
+	// Self-contained: no synthetic->synthetic imports, so no ordering
+	// constraints.
+	if needMath {
+		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
 			return "", err
 		}
 	}
@@ -2877,6 +2894,11 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 				}
 			}
 			return nil, nil
+		case token.CONST:
+			// P3-M7 (WS G): function-local const declarations (used by
+			// the synthetic math package, e.g. polynomial coefficients)
+			// are compile-time only; normalized away like EmptyStmt.
+			return nil, nil
 		default:
 			return nil, scopeErrorf("only var/type declarations are supported in frontend/v1 scope (WS G/H)")
 		}
@@ -4685,6 +4707,12 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if isTimeIntrinsicFunc(fn) {
 		return e.exportTimeIntrinsic(c, fn.Name())
 	}
+	// P3-M7 (WS G, ADR-0007 D5): math intrinsics called from within the
+	// synthetic math package (e.g. Float64bits in Abs) lower to the
+	// "math*" wire nodes. Intercepted before the funcByObj lookup.
+	if isMathIntrinsicFunc(fn) {
+		return e.exportMathIntrinsic(c, fn.Name())
+	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
 	// time.ParseDuration.
@@ -5742,7 +5770,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" {
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "math" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}
