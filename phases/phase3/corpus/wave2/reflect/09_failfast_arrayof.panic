@@ -1,0 +1,1 @@
+reflect: ArrayOf: not in M8 scope (needs runtime type synthesis; re-test when it lands)

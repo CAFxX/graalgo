@@ -1,0 +1,47 @@
+diff --git a/phases/phase1/frontend/mrdesugar_m5.go b/phases/phase1/frontend/mrdesugar_m5.go
+index cf688bf..b4e899e 100644
+--- a/phases/phase1/frontend/mrdesugar_m5.go
++++ b/phases/phase1/frontend/mrdesugar_m5.go
+@@ -160,6 +160,42 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
+ 	// marshaling interfaces), so it needs no desugar entry. Its interface
+ 	// methods are multi-result and fail fast via isMultiResultSynthetic.
+ }
++// m8MultiResultFuncs is the desugar table for the crypto/* packages (P3-M8).
++// Pattern: exact gc signature + fail-fast stub body + real single-result
++// helper + pair struct. The helperPkg is the synthetic package path.
++// Interface multi-result (cipher AEAD.Open, io.Reader.Read) needs the
++// interface receiver form; see handoff.
++var m8MultiResultFuncs = []m7MultiResultFunc{
++	// crypto/md5, sha1, sha256, sha512, sha3: Hash.Write methods
++	// (via hash.__hashWrite) + md5 binary marshaling (via
++	// hash.__binaryMarshal/__binaryAppend).
++	{"crypto/md5", "Write", "digest", "__hashWrite", "writePair", []string{"n", "err"}, "hash"},
++	{"crypto/md5", "MarshalBinary", "digest", "__binaryMarshal", "marshalPair", []string{"data", "err"}, "hash"},
++	{"crypto/md5", "AppendBinary", "digest", "__binaryAppend", "appendPair", []string{"b", "err"}, "hash"},
++	// crypto/sha256, sha512: same pattern (digest types).
++	{"crypto/sha256", "Write", "digest", "__hashWrite", "writePair", []string{"n", "err"}, "hash"},
++	{"crypto/sha512", "Write", "digest", "__hashWrite", "writePair", []string{"n", "err"}, "hash"},
++	{"crypto/sha1", "Write", "digest", "__hashWrite", "writePair", []string{"n", "err"}, "hash"},
++	{"crypto/sha3", "Write", "SHA3", "__hashWrite", "writePair", []string{"n", "err"}, "hash"},
++	{"crypto/sha3", "Write", "SHAKE", "__hashWrite", "writePair", []string{"n", "err"}, "hash"},
++	// crypto/hmac: New returns a single hash.Hash (not multi-result);
++	// no desugar entry needed.
++	// crypto/aes, des, rc4: NewCipher is multi-result.
++	{"crypto/aes", "NewCipher", "", "__aesNewCipher", "newCipherPair", []string{"block", "err"}, ""},
++	{"crypto/des", "NewCipher", "", "__desNewCipher", "newCipherPair", []string{"block", "err"}, ""},
++	{"crypto/des", "NewTripleDESCipher", "", "__desNewTripleDESCipher", "newCipherPair", []string{"block", "err"}, ""},
++	{"crypto/rc4", "NewCipher", "", "__rc4NewCipher", "newCipherPair", []string{"cipher", "err"}, ""},
++	// crypto/cipher: NewGCM* and AEAD.Open (interface receiver).
++	{"crypto/cipher", "NewGCM", "", "__newGCM", "newGCMAEADPair", []string{"aead", "err"}, ""},
++	{"crypto/cipher", "NewGCMWithNonceSize", "", "__newGCMWithNonceSize", "newGCMAEADPair", []string{"aead", "err"}, ""},
++	{"crypto/cipher", "NewGCMWithTagSize", "", "__newGCMWithTagSize", "newGCMAEADPair", []string{"aead", "err"}, ""},
++	{"crypto/cipher", "Open", "AEAD", "__aeadOpen", "aeadOpenPair", []string{"out", "err"}, ""},
++	// crypto/cipher: StreamReader.Read, StreamWriter.Write (need io desugar).
++	{"crypto/cipher", "Read", "StreamReader", "__streamReaderRead", "streamReaderReadPair", []string{"n", "err"}, ""},
++	{"crypto/cipher", "Write", "StreamWriter", "__streamWriterWrite", "streamWriterWritePair", []string{"n", "err"}, ""},
++	// crypto/rand: Read is multi-result (fail-fast).
++	{"crypto/rand", "Read", "", "__randRead", "readPair", []string{"n", "err"}, ""},
++}
+ 
+ // mrPlan is the desugar plan for one classified call.
+ type mrPlan struct {

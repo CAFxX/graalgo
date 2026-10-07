@@ -1,0 +1,43 @@
+--- a/phases/phase1/frontend/mrdesugar_m5.go
++++ b/phases/phase1/frontend/mrdesugar_m5.go
+@@ -156,8 +156,40 @@
+ 	{"encoding/json", "Token", "Decoder", "__decoderToken", "decoderTokenPair", []string{"tok", "err"}},
+ 	{"encoding/json", "Float64", "Number", "__numberFloat64", "numberFloat64Pair", []string{"f", "err"}},
+ 	{"encoding/json", "Int64", "Number", "__numberInt64", "numberInt64Pair", []string{"i", "err"}},
+ 	{"encoding/json", "MarshalJSON", "RawMessage", "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}},
++// P3-M8 (wave 2): synthetic syscall package (synth_syscall.go).
++// The multi-result members keep exact gc signatures with fail-fast
++// bodies; the __-helpers return pair structs (real implementations
++// for Getenv/Getgroups/Getwd, exact-message panics for the rest).
++	{"syscall", "Open", "", "__open", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Read", "", "__read", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Write", "", "__write", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Pread", "", "__pread", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Pwrite", "", "__pwrite", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Seek", "", "__seek", "int64ErrorPair", []string{"v", "err"}},
++	{"syscall", "Readlink", "", "__readlink", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Mmap", "", "__mmap", "bytesErrorPair", []string{"v", "err"}},
++	{"syscall", "StartProcess", "", "__startprocess", "startProcessTriple", []string{"pid", "handle", "err"}},
++	{"syscall", "ForkExec", "", "__forkexec", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Wait4", "", "__wait4", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Socket", "", "__socket", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Accept", "", "__accept", "acceptTriple", []string{"fd", "sa", "err"}},
++	{"syscall", "GetsockoptInt", "", "__getsockoptint", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Recvmsg", "", "__recvmsg", "recvmsgTuple", []string{"n", "oobn", "recvflags", "from", "err"}},
++	{"syscall", "EpollCreate", "", "__epollcreate", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "EpollCreate1", "", "__epollcreate1", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "EpollWait", "", "__epollwait", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "InotifyInit", "", "__inotifyinit", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "InotifyAddWatch", "", "__inotifyaddwatch", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "InotifyRmWatch", "", "__inotifyrmwatch", "intErrorPair", []string{"v", "err"}},
++	{"syscall", "Getenv", "", "__getenv", "getenvPair", []string{"value", "found"}},
++	{"syscall", "Getgroups", "", "__getgroups", "gidsErrorPair", []string{"gids", "err"}},
++	{"syscall", "Getwd", "", "__getwd", "stringErrorPair", []string{"v", "err"}},
++	{"syscall", "Syscall", "", "__syscall", "syscallTriple", []string{"r1", "r2", "err"}},
++	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}},
++	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}},
++	{"syscall", "RawSyscall6", "", "__rawsyscall6", "syscallTriple", []string{"r1", "r2", "err"}},
+ 	// NOTE: the top-level "encoding" package has no functions (only the six
+ 	// marshaling interfaces), so it needs no desugar entry. Its interface
+ 	// methods are multi-result and fail fast via isMultiResultSynthetic.
+ }

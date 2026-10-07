@@ -1,0 +1,47 @@
+--- a/phases/phase1/frontend/synth_xml.go
++++ b/phases/phase1/frontend/synth_xml.go
+@@ -23,9 +23,13 @@
+ //     Decode/DecodeElement/Encode/EncodeElement (need reflect, P3-M8);
+ //     InputPos (multi-result, WS D); Decoder.CharsetReader (needs io,
+ //     P3-M8); NewTokenDecoder for non-*Decoder readers (needs WS D).
+-//   - io is P3-M8: NewDecoder takes the structural M7 Reader interface
+-//     (single-result Next), NewEncoder/EscapeText/Escape take Writer.
+-//     Re-test P3-M8: switch to io.Reader/io.Writer.
++//   - P3-M8: io landed, but NewDecoder keeps the structural Reader
++//     interface (single-result Next) and NewEncoder/EscapeText/Escape
++//     keep Writer. Switching to io.Reader/io.Writer needs 2-result
++//     interface dispatch (r.Read/w.Write in the decoder/encoder bodies —
++//     WS D), not just nameable signatures. Re-test when WS D lands;
++//     until then the stand-ins are the honest subset (the corpus
++//     dual-mode reader/writer documents the migration).
+ //   - v1 cannot call multi-result functions (WS D): Token/RawToken keep
+ //     exact gc signatures with panic bodies; 2-target := and = call
+ //     sites desugar to the __tokenOf/__rawTokenOf single-result helpers.
+@@ -57,11 +61,11 @@ const syntheticXmlSource = `package xml
+ //     it additionally implements Write (io.Writer).
+ //
+ // v1 cannot emit or call multi-result methods (WS D), so the interfaces
+-// use single-result methods only. Re-test P3-M8: switch NewDecoder,
+-// NewEncoder, EscapeText and Escape to io.Reader/io.Writer and retire
+-// Reader/Writer/ReadResult (call sites keep working: every io.Reader
+-// with a Next method... — see redgreen.md; the corpus dual-mode
+-// reader/writer documents the migration).
++// use single-result methods only. P3-M8 re-test (WS D, not io — io has
++// landed): switch NewDecoder, NewEncoder, EscapeText and Escape to
++// io.Reader/io.Writer and retire Reader/Writer/ReadResult (call sites
++// keep working: every io.Reader with a Next method... — see redgreen.md;
++// the corpus dual-mode reader/writer documents the migration).
+ // =====================================================================
+ 
+ // ReadResult is the single-result carrier for Reader.Next: one input
+@@ -345,7 +349,9 @@ func NewTokenDecoder(t TokenReader) *Decoder {
+ //     P3-M8). A non-UTF-8 encoding declaration therefore always fails
+ //     exactly as gc fails with a nil CharsetReader:
+ //     'xml: encoding %q declared but Decoder.CharsetReader is nil'.
+-//     Re-test P3-M8: restore the field.
++//     P3-M8: io landed so the type is nameable, but calling the field
++//     needs 2-result dispatch (WS D); declaring it without calling it
++//     would silently drop user charsets. Re-test when WS D lands.
+ //   - The Unmarshal stack (stk/free/saved/inUnmarshalXML) is omitted:
+ //     Decode/DecodeElement/Unmarshal need reflect (P3-M8) and fail fast.
+ //     The Token()-level element/namespace stack below is the part of

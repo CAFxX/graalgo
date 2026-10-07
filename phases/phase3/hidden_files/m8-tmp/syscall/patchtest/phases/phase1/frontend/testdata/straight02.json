@@ -1,0 +1,1882 @@
+{
+  "frontend": "v1",
+  "generator": {
+    "tool": "gofrontend",
+    "version": "0.7.0",
+    "goroot": "go1.27.1"
+  },
+  "package": {
+    "name": "main",
+    "files": [
+      "straight02.go"
+    ],
+    "lang": "go1.27"
+  },
+  "types": [
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "signature",
+      "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "basic",
+      "detail": {
+        "class": "int",
+        "name": "int",
+        "untyped": false
+      }
+    },
+    {
+      "kind": "basic",
+      "detail": {
+        "class": "int",
+        "name": "untyped int",
+        "untyped": true
+      }
+    }
+  ],
+  "objects": [
+    {
+      "kind": "func",
+      "name": "main",
+      "type": 0,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "a",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "b",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "c",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "d",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "e",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "f",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "g",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "h",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "i",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "j",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "k",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "m",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "n",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "p",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "q",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "var",
+      "name": "sum",
+      "type": 2,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    }
+  ],
+  "funcs": [
+    {
+      "kind": "funcdecl",
+      "pos": {
+        "file": 0,
+        "line": 7,
+        "col": 1,
+        "off": 257,
+        "len": 434
+      },
+      "fields": {
+        "body": {
+          "kind": "block",
+          "pos": {
+            "file": 0,
+            "line": 7,
+            "col": 13,
+            "off": 269,
+            "len": 422
+          },
+          "fields": {
+            "stmts": [
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 8,
+                  "col": 2,
+                  "off": 272,
+                  "len": 14
+                },
+                "fields": {
+                  "define": false,
+                  "names": [
+                    "a"
+                  ],
+                  "objs": [
+                    1
+                  ],
+                  "type": 2,
+                  "values": [
+                    {
+                      "kind": "basiclit",
+                      "pos": {
+                        "file": 0,
+                        "line": 8,
+                        "col": 14,
+                        "off": 284,
+                        "len": 2
+                      },
+                      "fields": {
+                        "const": "20",
+                        "f32bits": 1101004800,
+                        "f64bits": 4626322717216342016,
+                        "type": 2,
+                        "value": "20"
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 9,
+                  "col": 2,
+                  "off": 288,
+                  "len": 9
+                },
+                "fields": {
+                  "define": false,
+                  "names": [
+                    "b"
+                  ],
+                  "objs": [
+                    2
+                  ],
+                  "type": 2,
+                  "values": []
+                }
+              },
+              {
+                "kind": "assign",
+                "pos": {
+                  "file": 0,
+                  "line": 10,
+                  "col": 2,
+                  "off": 299,
+                  "len": 10
+                },
+                "fields": {
+                  "lhs": [
+                    {
+                      "kind": "ident",
+                      "pos": {
+                        "file": 0,
+                        "line": 10,
+                        "col": 2,
+                        "off": 299,
+                        "len": 1
+                      },
+                      "fields": {
+                        "name": "b",
+                        "obj": 2,
+                        "type": 2
+                      }
+                    }
+                  ],
+                  "rhs": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 10,
+                        "col": 6,
+                        "off": 303,
+                        "len": 6
+                      },
+                      "fields": {
+                        "op": "+",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 10,
+                            "col": 6,
+                            "off": 303,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "a",
+                            "obj": 1,
+                            "type": 2
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 10,
+                            "col": 10,
+                            "off": 307,
+                            "len": 2
+                          },
+                          "fields": {
+                            "const": "22",
+                            "f32bits": 1102053376,
+                            "f64bits": 4626885667169763328,
+                            "type": 2,
+                            "value": "22"
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "tok": "="
+                }
+              },
+              {
+                "kind": "incdec",
+                "pos": {
+                  "file": 0,
+                  "line": 11,
+                  "col": 2,
+                  "off": 311,
+                  "len": 3
+                },
+                "fields": {
+                  "tok": "++",
+                  "x": {
+                    "kind": "ident",
+                    "pos": {
+                      "file": 0,
+                      "line": 11,
+                      "col": 2,
+                      "off": 311,
+                      "len": 1
+                    },
+                    "fields": {
+                      "name": "b",
+                      "obj": 2,
+                      "type": 2
+                    }
+                  }
+                }
+              },
+              {
+                "kind": "assign",
+                "pos": {
+                  "file": 0,
+                  "line": 12,
+                  "col": 2,
+                  "off": 316,
+                  "len": 6
+                },
+                "fields": {
+                  "lhs": [
+                    {
+                      "kind": "ident",
+                      "pos": {
+                        "file": 0,
+                        "line": 12,
+                        "col": 2,
+                        "off": 316,
+                        "len": 1
+                      },
+                      "fields": {
+                        "name": "b",
+                        "obj": 2,
+                        "type": 2
+                      }
+                    }
+                  ],
+                  "rhs": [
+                    {
+                      "kind": "basiclit",
+                      "pos": {
+                        "file": 0,
+                        "line": 12,
+                        "col": 7,
+                        "off": 321,
+                        "len": 1
+                      },
+                      "fields": {
+                        "const": "1",
+                        "f32bits": 1065353216,
+                        "f64bits": 4607182418800017408,
+                        "type": 2,
+                        "value": "1"
+                      }
+                    }
+                  ],
+                  "tok": "+="
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 13,
+                  "col": 2,
+                  "off": 324,
+                  "len": 16
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "c"
+                  ],
+                  "objs": [
+                    3
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 13,
+                        "col": 7,
+                        "off": 329,
+                        "len": 11
+                      },
+                      "fields": {
+                        "op": "*",
+                        "type": 2,
+                        "x": {
+                          "kind": "paren",
+                          "pos": {
+                            "file": 0,
+                            "line": 13,
+                            "col": 7,
+                            "off": 329,
+                            "len": 7
+                          },
+                          "fields": {
+                            "type": 2,
+                            "x": {
+                              "kind": "binary",
+                              "pos": {
+                                "file": 0,
+                                "line": 13,
+                                "col": 8,
+                                "off": 330,
+                                "len": 5
+                              },
+                              "fields": {
+                                "op": "-",
+                                "type": 2,
+                                "x": {
+                                  "kind": "ident",
+                                  "pos": {
+                                    "file": 0,
+                                    "line": 13,
+                                    "col": 8,
+                                    "off": 330,
+                                    "len": 1
+                                  },
+                                  "fields": {
+                                    "name": "b",
+                                    "obj": 2,
+                                    "type": 2
+                                  }
+                                },
+                                "y": {
+                                  "kind": "basiclit",
+                                  "pos": {
+                                    "file": 0,
+                                    "line": 13,
+                                    "col": 12,
+                                    "off": 334,
+                                    "len": 1
+                                  },
+                                  "fields": {
+                                    "const": "2",
+                                    "f32bits": 1073741824,
+                                    "f64bits": 4611686018427387904,
+                                    "type": 2,
+                                    "value": "2"
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 13,
+                            "col": 17,
+                            "off": 339,
+                            "len": 1
+                          },
+                          "fields": {
+                            "const": "2",
+                            "f32bits": 1073741824,
+                            "f64bits": 4611686018427387904,
+                            "type": 2,
+                            "value": "2"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 14,
+                  "col": 2,
+                  "off": 342,
+                  "len": 7
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "d"
+                  ],
+                  "objs": [
+                    4
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "unary",
+                      "pos": {
+                        "file": 0,
+                        "line": 14,
+                        "col": 7,
+                        "off": 347,
+                        "len": 2
+                      },
+                      "fields": {
+                        "op": "-",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 14,
+                            "col": 8,
+                            "off": 348,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "c",
+                            "obj": 3,
+                            "type": 2
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 15,
+                  "col": 2,
+                  "off": 351,
+                  "len": 11
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "e"
+                  ],
+                  "objs": [
+                    5
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 15,
+                        "col": 7,
+                        "off": 356,
+                        "len": 6
+                      },
+                      "fields": {
+                        "op": "/",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 15,
+                            "col": 7,
+                            "off": 356,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "d",
+                            "obj": 4,
+                            "type": 2
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 15,
+                            "col": 11,
+                            "off": 360,
+                            "len": 2
+                          },
+                          "fields": {
+                            "const": "-4",
+                            "f32bits": -1065353216,
+                            "f64bits": -4607182418800017408,
+                            "type": 2,
+                            "value": ""
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 16,
+                  "col": 2,
+                  "off": 364,
+                  "len": 10
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "f"
+                  ],
+                  "objs": [
+                    6
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 16,
+                        "col": 7,
+                        "off": 369,
+                        "len": 5
+                      },
+                      "fields": {
+                        "op": "%",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 16,
+                            "col": 7,
+                            "off": 369,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "e",
+                            "obj": 5,
+                            "type": 2
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 16,
+                            "col": 11,
+                            "off": 373,
+                            "len": 1
+                          },
+                          "fields": {
+                            "const": "3",
+                            "f32bits": 1077936128,
+                            "f64bits": 4613937818241073152,
+                            "type": 2,
+                            "value": "3"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 17,
+                  "col": 2,
+                  "off": 376,
+                  "len": 10
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "g"
+                  ],
+                  "objs": [
+                    7
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 17,
+                        "col": 7,
+                        "off": 381,
+                        "len": 5
+                      },
+                      "fields": {
+                        "op": "\u0026",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 17,
+                            "col": 7,
+                            "off": 381,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "f",
+                            "obj": 6,
+                            "type": 2
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 17,
+                            "col": 11,
+                            "off": 385,
+                            "len": 1
+                          },
+                          "fields": {
+                            "const": "7",
+                            "f32bits": 1088421888,
+                            "f64bits": 4619567317775286272,
+                            "type": 2,
+                            "value": "7"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 18,
+                  "col": 2,
+                  "off": 388,
+                  "len": 10
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "h"
+                  ],
+                  "objs": [
+                    8
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 18,
+                        "col": 7,
+                        "off": 393,
+                        "len": 5
+                      },
+                      "fields": {
+                        "op": "|",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 18,
+                            "col": 7,
+                            "off": 393,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "g",
+                            "obj": 7,
+                            "type": 2
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 18,
+                            "col": 11,
+                            "off": 397,
+                            "len": 1
+                          },
+                          "fields": {
+                            "const": "8",
+                            "f32bits": 1090519040,
+                            "f64bits": 4620693217682128896,
+                            "type": 2,
+                            "value": "8"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 19,
+                  "col": 2,
+                  "off": 400,
+                  "len": 10
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "i"
+                  ],
+                  "objs": [
+                    9
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 19,
+                        "col": 7,
+                        "off": 405,
+                        "len": 5
+                      },
+                      "fields": {
+                        "op": "^",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 19,
+                            "col": 7,
+                            "off": 405,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "h",
+                            "obj": 8,
+                            "type": 2
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 19,
+                            "col": 11,
+                            "off": 409,
+                            "len": 1
+                          },
+                          "fields": {
+                            "const": "3",
+                            "f32bits": 1077936128,
+                            "f64bits": 4613937818241073152,
+                            "type": 2,
+                            "value": "3"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 20,
+                  "col": 2,
+                  "off": 412,
+                  "len": 11
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "j"
+                  ],
+                  "objs": [
+                    10
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 20,
+                        "col": 7,
+                        "off": 417,
+                        "len": 6
+                      },
+                      "fields": {
+                        "op": "\u003c\u003c",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 20,
+                            "col": 7,
+                            "off": 417,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "i",
+                            "obj": 9,
+                            "type": 2
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 20,
+                            "col": 12,
+                            "off": 422,
+                            "len": 1
+                          },
+                          "fields": {
+                            "const": "2",
+                            "f32bits": 1073741824,
+                            "f64bits": 4611686018427387904,
+                            "type": 3,
+                            "value": "2"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 21,
+                  "col": 2,
+                  "off": 425,
+                  "len": 11
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "k"
+                  ],
+                  "objs": [
+                    11
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 21,
+                        "col": 7,
+                        "off": 430,
+                        "len": 6
+                      },
+                      "fields": {
+                        "op": "\u003e\u003e",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 21,
+                            "col": 7,
+                            "off": 430,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "j",
+                            "obj": 10,
+                            "type": 2
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 21,
+                            "col": 12,
+                            "off": 435,
+                            "len": 1
+                          },
+                          "fields": {
+                            "const": "1",
+                            "f32bits": 1065353216,
+                            "f64bits": 4607182418800017408,
+                            "type": 3,
+                            "value": "1"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 22,
+                  "col": 2,
+                  "off": 438,
+                  "len": 7
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "m"
+                  ],
+                  "objs": [
+                    12
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "unary",
+                      "pos": {
+                        "file": 0,
+                        "line": 22,
+                        "col": 7,
+                        "off": 443,
+                        "len": 2
+                      },
+                      "fields": {
+                        "op": "^",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 22,
+                            "col": 8,
+                            "off": 444,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "k",
+                            "obj": 11,
+                            "type": 2
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 23,
+                  "col": 2,
+                  "off": 447,
+                  "len": 12
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "n"
+                  ],
+                  "objs": [
+                    13
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 23,
+                        "col": 7,
+                        "off": 452,
+                        "len": 7
+                      },
+                      "fields": {
+                        "op": "\u0026^",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 23,
+                            "col": 7,
+                            "off": 452,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "k",
+                            "obj": 11,
+                            "type": 2
+                          }
+                        },
+                        "y": {
+                          "kind": "basiclit",
+                          "pos": {
+                            "file": 0,
+                            "line": 23,
+                            "col": 12,
+                            "off": 457,
+                            "len": 2
+                          },
+                          "fields": {
+                            "const": "15",
+                            "f32bits": 1097859072,
+                            "f64bits": 4624633867356078080,
+                            "type": 2,
+                            "value": "15"
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 24,
+                  "col": 2,
+                  "off": 461,
+                  "len": 7
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "p"
+                  ],
+                  "objs": [
+                    14
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "unary",
+                      "pos": {
+                        "file": 0,
+                        "line": 24,
+                        "col": 7,
+                        "off": 466,
+                        "len": 2
+                      },
+                      "fields": {
+                        "op": "+",
+                        "type": 2,
+                        "x": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 24,
+                            "col": 8,
+                            "off": 467,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "n",
+                            "obj": 13,
+                            "type": 2
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 25,
+                  "col": 2,
+                  "off": 470,
+                  "len": 6
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "q"
+                  ],
+                  "objs": [
+                    15
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "ident",
+                      "pos": {
+                        "file": 0,
+                        "line": 25,
+                        "col": 7,
+                        "off": 475,
+                        "len": 1
+                      },
+                      "fields": {
+                        "name": "p",
+                        "obj": 14,
+                        "type": 2
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "assign",
+                "pos": {
+                  "file": 0,
+                  "line": 26,
+                  "col": 2,
+                  "off": 478,
+                  "len": 6
+                },
+                "fields": {
+                  "lhs": [
+                    {
+                      "kind": "ident",
+                      "pos": {
+                        "file": 0,
+                        "line": 26,
+                        "col": 2,
+                        "off": 478,
+                        "len": 1
+                      },
+                      "fields": {
+                        "name": "q",
+                        "obj": 15,
+                        "type": 2
+                      }
+                    }
+                  ],
+                  "rhs": [
+                    {
+                      "kind": "basiclit",
+                      "pos": {
+                        "file": 0,
+                        "line": 26,
+                        "col": 7,
+                        "off": 483,
+                        "len": 1
+                      },
+                      "fields": {
+                        "const": "1",
+                        "f32bits": 1065353216,
+                        "f64bits": 4607182418800017408,
+                        "type": 2,
+                        "value": "1"
+                      }
+                    }
+                  ],
+                  "tok": "-="
+                }
+              },
+              {
+                "kind": "vardecl",
+                "pos": {
+                  "file": 0,
+                  "line": 27,
+                  "col": 2,
+                  "off": 486,
+                  "len": 64
+                },
+                "fields": {
+                  "define": true,
+                  "names": [
+                    "sum"
+                  ],
+                  "objs": [
+                    16
+                  ],
+                  "type": null,
+                  "values": [
+                    {
+                      "kind": "binary",
+                      "pos": {
+                        "file": 0,
+                        "line": 27,
+                        "col": 9,
+                        "off": 493,
+                        "len": 57
+                      },
+                      "fields": {
+                        "op": "+",
+                        "type": 2,
+                        "x": {
+                          "kind": "binary",
+                          "pos": {
+                            "file": 0,
+                            "line": 27,
+                            "col": 9,
+                            "off": 493,
+                            "len": 53
+                          },
+                          "fields": {
+                            "op": "+",
+                            "type": 2,
+                            "x": {
+                              "kind": "binary",
+                              "pos": {
+                                "file": 0,
+                                "line": 27,
+                                "col": 9,
+                                "off": 493,
+                                "len": 49
+                              },
+                              "fields": {
+                                "op": "+",
+                                "type": 2,
+                                "x": {
+                                  "kind": "binary",
+                                  "pos": {
+                                    "file": 0,
+                                    "line": 27,
+                                    "col": 9,
+                                    "off": 493,
+                                    "len": 45
+                                  },
+                                  "fields": {
+                                    "op": "+",
+                                    "type": 2,
+                                    "x": {
+                                      "kind": "binary",
+                                      "pos": {
+                                        "file": 0,
+                                        "line": 27,
+                                        "col": 9,
+                                        "off": 493,
+                                        "len": 41
+                                      },
+                                      "fields": {
+                                        "op": "+",
+                                        "type": 2,
+                                        "x": {
+                                          "kind": "binary",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 27,
+                                            "col": 9,
+                                            "off": 493,
+                                            "len": 37
+                                          },
+                                          "fields": {
+                                            "op": "+",
+                                            "type": 2,
+                                            "x": {
+                                              "kind": "binary",
+                                              "pos": {
+                                                "file": 0,
+                                                "line": 27,
+                                                "col": 9,
+                                                "off": 493,
+                                                "len": 33
+                                              },
+                                              "fields": {
+                                                "op": "+",
+                                                "type": 2,
+                                                "x": {
+                                                  "kind": "binary",
+                                                  "pos": {
+                                                    "file": 0,
+                                                    "line": 27,
+                                                    "col": 9,
+                                                    "off": 493,
+                                                    "len": 29
+                                                  },
+                                                  "fields": {
+                                                    "op": "+",
+                                                    "type": 2,
+                                                    "x": {
+                                                      "kind": "binary",
+                                                      "pos": {
+                                                        "file": 0,
+                                                        "line": 27,
+                                                        "col": 9,
+                                                        "off": 493,
+                                                        "len": 25
+                                                      },
+                                                      "fields": {
+                                                        "op": "+",
+                                                        "type": 2,
+                                                        "x": {
+                                                          "kind": "binary",
+                                                          "pos": {
+                                                            "file": 0,
+                                                            "line": 27,
+                                                            "col": 9,
+                                                            "off": 493,
+                                                            "len": 21
+                                                          },
+                                                          "fields": {
+                                                            "op": "+",
+                                                            "type": 2,
+                                                            "x": {
+                                                              "kind": "binary",
+                                                              "pos": {
+                                                                "file": 0,
+                                                                "line": 27,
+                                                                "col": 9,
+                                                                "off": 493,
+                                                                "len": 17
+                                                              },
+                                                              "fields": {
+                                                                "op": "+",
+                                                                "type": 2,
+                                                                "x": {
+                                                                  "kind": "binary",
+                                                                  "pos": {
+                                                                    "file": 0,
+                                                                    "line": 27,
+                                                                    "col": 9,
+                                                                    "off": 493,
+                                                                    "len": 13
+                                                                  },
+                                                                  "fields": {
+                                                                    "op": "+",
+                                                                    "type": 2,
+                                                                    "x": {
+                                                                      "kind": "binary",
+                                                                      "pos": {
+                                                                        "file": 0,
+                                                                        "line": 27,
+                                                                        "col": 9,
+                                                                        "off": 493,
+                                                                        "len": 9
+                                                                      },
+                                                                      "fields": {
+                                                                        "op": "+",
+                                                                        "type": 2,
+                                                                        "x": {
+                                                                          "kind": "binary",
+                                                                          "pos": {
+                                                                            "file": 0,
+                                                                            "line": 27,
+                                                                            "col": 9,
+                                                                            "off": 493,
+                                                                            "len": 5
+                                                                          },
+                                                                          "fields": {
+                                                                            "op": "+",
+                                                                            "type": 2,
+                                                                            "x": {
+                                                                              "kind": "ident",
+                                                                              "pos": {
+                                                                                "file": 0,
+                                                                                "line": 27,
+                                                                                "col": 9,
+                                                                                "off": 493,
+                                                                                "len": 1
+                                                                              },
+                                                                              "fields": {
+                                                                                "name": "a",
+                                                                                "obj": 1,
+                                                                                "type": 2
+                                                                              }
+                                                                            },
+                                                                            "y": {
+                                                                              "kind": "ident",
+                                                                              "pos": {
+                                                                                "file": 0,
+                                                                                "line": 27,
+                                                                                "col": 13,
+                                                                                "off": 497,
+                                                                                "len": 1
+                                                                              },
+                                                                              "fields": {
+                                                                                "name": "b",
+                                                                                "obj": 2,
+                                                                                "type": 2
+                                                                              }
+                                                                            }
+                                                                          }
+                                                                        },
+                                                                        "y": {
+                                                                          "kind": "ident",
+                                                                          "pos": {
+                                                                            "file": 0,
+                                                                            "line": 27,
+                                                                            "col": 17,
+                                                                            "off": 501,
+                                                                            "len": 1
+                                                                          },
+                                                                          "fields": {
+                                                                            "name": "c",
+                                                                            "obj": 3,
+                                                                            "type": 2
+                                                                          }
+                                                                        }
+                                                                      }
+                                                                    },
+                                                                    "y": {
+                                                                      "kind": "ident",
+                                                                      "pos": {
+                                                                        "file": 0,
+                                                                        "line": 27,
+                                                                        "col": 21,
+                                                                        "off": 505,
+                                                                        "len": 1
+                                                                      },
+                                                                      "fields": {
+                                                                        "name": "d",
+                                                                        "obj": 4,
+                                                                        "type": 2
+                                                                      }
+                                                                    }
+                                                                  }
+                                                                },
+                                                                "y": {
+                                                                  "kind": "ident",
+                                                                  "pos": {
+                                                                    "file": 0,
+                                                                    "line": 27,
+                                                                    "col": 25,
+                                                                    "off": 509,
+                                                                    "len": 1
+                                                                  },
+                                                                  "fields": {
+                                                                    "name": "e",
+                                                                    "obj": 5,
+                                                                    "type": 2
+                                                                  }
+                                                                }
+                                                              }
+                                                            },
+                                                            "y": {
+                                                              "kind": "ident",
+                                                              "pos": {
+                                                                "file": 0,
+                                                                "line": 27,
+                                                                "col": 29,
+                                                                "off": 513,
+                                                                "len": 1
+                                                              },
+                                                              "fields": {
+                                                                "name": "f",
+                                                                "obj": 6,
+                                                                "type": 2
+                                                              }
+                                                            }
+                                                          }
+                                                        },
+                                                        "y": {
+                                                          "kind": "ident",
+                                                          "pos": {
+                                                            "file": 0,
+                                                            "line": 27,
+                                                            "col": 33,
+                                                            "off": 517,
+                                                            "len": 1
+                                                          },
+                                                          "fields": {
+                                                            "name": "g",
+                                                            "obj": 7,
+                                                            "type": 2
+                                                          }
+                                                        }
+                                                      }
+                                                    },
+                                                    "y": {
+                                                      "kind": "ident",
+                                                      "pos": {
+                                                        "file": 0,
+                                                        "line": 27,
+                                                        "col": 37,
+                                                        "off": 521,
+                                                        "len": 1
+                                                      },
+                                                      "fields": {
+                                                        "name": "h",
+                                                        "obj": 8,
+                                                        "type": 2
+                                                      }
+                                                    }
+                                                  }
+                                                },
+                                                "y": {
+                                                  "kind": "ident",
+                                                  "pos": {
+                                                    "file": 0,
+                                                    "line": 27,
+                                                    "col": 41,
+                                                    "off": 525,
+                                                    "len": 1
+                                                  },
+                                                  "fields": {
+                                                    "name": "i",
+                                                    "obj": 9,
+                                                    "type": 2
+                                                  }
+                                                }
+                                              }
+                                            },
+                                            "y": {
+                                              "kind": "ident",
+                                              "pos": {
+                                                "file": 0,
+                                                "line": 27,
+                                                "col": 45,
+                                                "off": 529,
+                                                "len": 1
+                                              },
+                                              "fields": {
+                                                "name": "j",
+                                                "obj": 10,
+                                                "type": 2
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "y": {
+                                          "kind": "ident",
+                                          "pos": {
+                                            "file": 0,
+                                            "line": 27,
+                                            "col": 49,
+                                            "off": 533,
+                                            "len": 1
+                                          },
+                                          "fields": {
+                                            "name": "k",
+                                            "obj": 11,
+                                            "type": 2
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "y": {
+                                      "kind": "ident",
+                                      "pos": {
+                                        "file": 0,
+                                        "line": 27,
+                                        "col": 53,
+                                        "off": 537,
+                                        "len": 1
+                                      },
+                                      "fields": {
+                                        "name": "m",
+                                        "obj": 12,
+                                        "type": 2
+                                      }
+                                    }
+                                  }
+                                },
+                                "y": {
+                                  "kind": "ident",
+                                  "pos": {
+                                    "file": 0,
+                                    "line": 27,
+                                    "col": 57,
+                                    "off": 541,
+                                    "len": 1
+                                  },
+                                  "fields": {
+                                    "name": "n",
+                                    "obj": 13,
+                                    "type": 2
+                                  }
+                                }
+                              }
+                            },
+                            "y": {
+                              "kind": "ident",
+                              "pos": {
+                                "file": 0,
+                                "line": 27,
+                                "col": 61,
+                                "off": 545,
+                                "len": 1
+                              },
+                              "fields": {
+                                "name": "p",
+                                "obj": 14,
+                                "type": 2
+                              }
+                            }
+                          }
+                        },
+                        "y": {
+                          "kind": "ident",
+                          "pos": {
+                            "file": 0,
+                            "line": 27,
+                            "col": 65,
+                            "off": 549,
+                            "len": 1
+                          },
+                          "fields": {
+                            "name": "q",
+                            "obj": 15,
+                            "type": 2
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              {
+                "kind": "assign",
+                "pos": {
+                  "file": 0,
+                  "line": 28,
+                  "col": 2,
+                  "off": 552,
+                  "len": 9
+                },
+                "fields": {
+                  "lhs": [
+                    {
+                      "kind": "ident",
+                      "pos": {
+                        "file": 0,
+                        "line": 28,
+                        "col": 2,
+                        "off": 552,
+                        "len": 3
+                      },
+                      "fields": {
+                        "name": "sum",
+                        "obj": 16,
+                        "type": 2
+                      }
+                    }
+                  ],
+                  "rhs": [
+                    {
+                      "kind": "ident",
+                      "pos": {
+                        "file": 0,
+                        "line": 28,
+                        "col": 8,
+                        "off": 558,
+                        "len": 3
+                      },
+                      "fields": {
+                        "name": "sum",
+                        "obj": 16,
+                        "type": 2
+                      }
+                    }
+                  ],
+                  "tok": "="
+                }
+              },
+              {
+                "kind": "return",
+                "pos": {
+                  "file": 0,
+                  "line": 29,
+                  "col": 2,
+                  "off": 619,
+                  "len": 6
+                },
+                "fields": {
+                  "results": []
+                }
+              },
+              {
+                "kind": "assign",
+                "pos": {
+                  "file": 0,
+                  "line": 30,
+                  "col": 2,
+                  "off": 627,
+                  "len": 8
+                },
+                "fields": {
+                  "lhs": [
+                    {
+                      "kind": "ident",
+                      "pos": {
+                        "file": 0,
+                        "line": 30,
+                        "col": 2,
+                        "off": 627,
+                        "len": 3
+                      },
+                      "fields": {
+                        "name": "sum",
+                        "obj": 16,
+                        "type": 2
+                      }
+                    }
+                  ],
+                  "rhs": [
+                    {
+                      "kind": "basiclit",
+                      "pos": {
+                        "file": 0,
+                        "line": 30,
+                        "col": 8,
+                        "off": 633,
+                        "len": 2
+                      },
+                      "fields": {
+                        "const": "-1",
+                        "f32bits": -1082130432,
+                        "f64bits": -4616189618054758400,
+                        "type": 2,
+                        "value": ""
+                      }
+                    }
+                  ],
+                  "tok": "="
+                }
+              }
+            ]
+          }
+        },
+        "name": "main",
+        "obj": 0,
+        "params": [],
+        "sig": 1
+      }
+    }
+  ],
+  "globals": []
+}

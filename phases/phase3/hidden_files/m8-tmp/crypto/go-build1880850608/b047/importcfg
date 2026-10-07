@@ -1,0 +1,5 @@
+# import config
+packagefile bytes=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1880850608/b048/_pkg_.a
+packagefile errors=/home/hatch/workspace/.gocache-m8-crypto/85/85be88377cd933a517aa198cb48396ec27e4dcfd1a854baa31c2ab880f7dfd23-d
+packagefile m8synth/crypto=/home/hatch/workspace/.gocache-m8-crypto/fb/fb0497bbb2b644cdcae40a1d7e0fb73f28ca7c87be157bc002b7ce80e4c31ab4-d
+packagefile m8synth/hash=/home/hatch/workspace/.gocache-m8-crypto/1b/1b4d5a67c03364d17e67f68299ed76d2670f879e7bf28767a50016e874925a71-d

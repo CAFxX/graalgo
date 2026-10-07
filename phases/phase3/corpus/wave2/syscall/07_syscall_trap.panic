@@ -1,0 +1,1 @@
+panic: syscall.Syscall: trap 39 (SYS_GETPID) has no graalgo intrinsic; re-test: Panama FFI (Phase 4)

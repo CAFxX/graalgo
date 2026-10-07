@@ -1,0 +1,2 @@
+reason: 2-target call through an interface value (rd.Read where rd is io.Reader) needs multi-result interface dispatch; ADR-0003 IfaceDispatchNode is single-result only and v1 cannot emit 2-result methods (WS D)
+retest: WS D multi-result interface dispatch; then re-run as a full differential program

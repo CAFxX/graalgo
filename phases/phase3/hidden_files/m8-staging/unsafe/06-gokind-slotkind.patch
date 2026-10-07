@@ -1,0 +1,12 @@
+--- a/phases/phase1/src/main/java/graalgo/values/GoKind.java
++++ b/phases/phase1/src/main/java/graalgo/values/GoKind.java
+@@ -124,7 +124,8 @@ public final class GoKind {
+     public FrameSlotKind slotKind() {
+         return switch (this) {
+             case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> FrameSlotKind.Int;
+-            case INT64, UINT64, UNTYPED_INT -> FrameSlotKind.Long;
++            // P3-M8: unsafe.Pointer values are long handles (D5), not objects.
++            case INT64, UINT64, UNTYPED_INT, UNSAFE_POINTER -> FrameSlotKind.Long;
+             case FLOAT32 -> FrameSlotKind.Float;
+             case FLOAT64, UNTYPED_FLOAT -> FrameSlotKind.Double;
+             case BOOL, UNTYPED_BOOL -> FrameSlotKind.Boolean;

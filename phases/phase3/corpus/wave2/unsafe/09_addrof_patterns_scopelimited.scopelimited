@@ -1,0 +1,2 @@
+reason: explicit & on variables, fields and elements (&s.field, &arr[i]) is WS D in frontend/v1 — only &T{...} composite literals and new(T) produce pointers — so the realistic unsafe.Pointer(&x) idiom cannot reach the exporter.
+retest: WS D (explicit address-of)

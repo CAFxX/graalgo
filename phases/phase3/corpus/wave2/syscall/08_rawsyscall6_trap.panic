@@ -1,0 +1,1 @@
+panic: syscall.RawSyscall6: trap 2 (SYS_OPEN) has no graalgo intrinsic; re-test: Panama FFI (Phase 4)

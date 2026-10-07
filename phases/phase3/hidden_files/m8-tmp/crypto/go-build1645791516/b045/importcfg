@@ -1,0 +1,4 @@
+# import config
+packagefile errors=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b003/_pkg_.a
+packagefile m8synth/crypto=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b040/_pkg_.a
+packagefile m8synth/hash=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b001/_pkg_.a

@@ -1,0 +1,2 @@
+reason: io.Copy/CopyN/CopyBuffer need 2-result interface dispatch — the WriterTo/ReaderFrom assertion arms and the manual copy loop's src.Read/dst.Write calls; v1 cannot emit or call multi-result functions (WS D)
+retest: WS D multi-result calls (exporter + ADR-0003 interface dispatch); then give copyBuffer a real __-helper + Appendix M entry and re-run
