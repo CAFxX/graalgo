@@ -496,6 +496,14 @@ var asmInventoryJSON = []byte(`{
       "reason": "Go toolchain source (compiler/assembler/linker/cgo/vet/dist and their testdata); not part of the stdlib fork -- graalgo never compiles the toolchain"
     },
     {
+      "path": "cmd/cgo/internal/test/stubtest_linux_ppc64x.S",
+      "package": "cmd/cgo/internal/test",
+      "category": "unsupported",
+      "lines": 124,
+      "replacement": "",
+      "reason": "Go toolchain source (compiler/assembler/linker/cgo/vet/dist and their testdata); not part of the stdlib fork -- graalgo never compiles the toolchain"
+    },
+    {
       "path": "cmd/cgo/internal/testsanitizers/testdata/asan_global_asm/asm.s",
       "package": "cmd/cgo/internal/testsanitizers/testdata/asan_global_asm",
       "category": "unsupported",
@@ -3206,6 +3214,94 @@ var asmInventoryJSON = []byte(`{
       "lines": 11,
       "replacement": "evaporates into the graalgo runtime (no Go stacks on Truffle); Go-visible services are provided by graalgo.runtime.Intrinsics / the graalgo.runtime.Linknames registry (ADR-0004 D1), not by this code",
       "reason": "runtime-core asm: manipulates Go stacks/registers and gc ABI internals directly; meaningless on Truffle"
+    },
+    {
+      "path": "runtime/cgo/gcc_386.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 48,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_aix_ppc64.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 144,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_amd64.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 55,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_arm.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 31,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_arm64.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 84,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_linux_ppc64x.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 95,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_loong64.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 68,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_mips64x.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 89,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_mipsx.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 77,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_riscv64.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 82,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
+    },
+    {
+      "path": "runtime/cgo/gcc_s390x.S",
+      "package": "runtime/cgo",
+      "category": "unsupported",
+      "lines": 67,
+      "replacement": "",
+      "reason": "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain via cgo; graalgo has no C-compilation path. runtime/cgo is excluded as CGO in the v1 exclusion list (SPEC \u00a73.8 GG-0023) -- strategy decided with the Panama FFI bring-up (re-test trigger: P3-M8)"
     },
     {
       "path": "runtime/debug/debug.s",
