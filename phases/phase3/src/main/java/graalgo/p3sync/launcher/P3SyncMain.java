@@ -26,6 +26,12 @@ import graalgo.p3link.LinknameIntrinsics;
 import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
+import graalgo.p3math.nodes.MathF32BitsNode;
+import graalgo.p3math.nodes.MathF32FromBitsNode;
+import graalgo.p3math.nodes.MathF64BitsNode;
+import graalgo.p3math.nodes.MathF64FromBitsNode;
+import graalgo.p3math.nodes.MathFmaNode;
+import graalgo.p3math.nodes.MathSqrtNode;
 import graalgo.p3time.P3TimeRuntime;
 import graalgo.p3time.nodes.TimeAfterFuncNode;
 import graalgo.p3time.nodes.TimeAfterNode;
@@ -205,6 +211,21 @@ public final class P3SyncMain {
                     (node, ctx) -> ChanCloseNode.build(node, ctx, factory));
             factory.registerStmtKind("select",
                     (node, ctx) -> SelectNode.build(node, ctx, factory));
+            // P3-M7 (WS G, ADR-0007 D5): the synthetic math wire kinds
+            // (bit conversions, Sqrt, FMA). Public extension hooks — no
+            // Phase-1/Phase-2 change.
+            factory.registerExprKind("mathf64bits",
+                    (node, ctx) -> MathF64BitsNode.build(node, factory, ctx));
+            factory.registerExprKind("mathf64frombits",
+                    (node, ctx) -> MathF64FromBitsNode.build(node, factory, ctx));
+            factory.registerExprKind("mathf32bits",
+                    (node, ctx) -> MathF32BitsNode.build(node, factory, ctx));
+            factory.registerExprKind("mathf32frombits",
+                    (node, ctx) -> MathF32FromBitsNode.build(node, factory, ctx));
+            factory.registerExprKind("mathsqrt",
+                    (node, ctx) -> MathSqrtNode.build(node, factory, ctx));
+            factory.registerExprKind("mathfma",
+                    (node, ctx) -> MathFmaNode.build(node, factory, ctx));
             // P2-M1 (WS A): the go statement, reused from Phase 2 via the
             // same public hook (no Phase-2 change — GoStatementNode is a
             // public class).
