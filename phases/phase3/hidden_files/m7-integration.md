@@ -141,3 +141,29 @@ Order:
    (exporter+mirror+importer+drift+corpus+redgreen).
 3. Bytes corpus + redgreen follow-up; strings drift fix verification.
 4. Full suites + all corpora green → 2 independent reviews → sign-off.
+
+## 2026-10-07 ~05:30 UTC update — integration complete, verification starts
+All 10 packages' sources integrated into master@ef23ef5 (integration worktree):
+- errors, sort (m7-errors-sort merge)
+- bytes (m7-bytes merge; fixed: errors dep auto-pull, methodIndex skip for
+  multi-result synthetics in enumerateInstantiations)
+- math (m7-math merge)
+- strings (cherry-picks + map registration + mirror rune fix)
+- enc-core 8 sources (cherry-pick 2ebe8c4)
+- csv/gob (cherry-picks 1836c8e, 8992dc2; enabled map entries)
+- strconv source (aed88b7), json source (f3c078f) — map registered
+- xml (source+mirror were already in tree; wiring cherry-picks 46e80d8,
+  315f918, 8eb6c66, cdf6821, 0a3d98e)
+
+Removed: broken WIP mrdesugar_m7.go (undefined symbols; follow-up will reimplement).
+
+WIRING FOLLOW-UPS NEEDED (sources in map, exporter/p3frontend wiring incomplete):
+1. enc-core (8 pkgs): exporter wiring, p3frontend mirrors, importer/loader,
+   drift tests, corpora, redgreen, mrdesugar_m7 reimplementation
+2. strconv: exporter wiring, mirror, importer/loader, drift, corpus, redgreen
+3. enc-csv-gob: importer.go 2-case hunk, export.go + mrdesugar_m5.go hunks
+4. enc-json: export.go, mrdesugar_m5.go, mirror, importer/loader, drift, corpus, redgreen
+5. bytes: corpus/wave1/bytes/ programs + redgreen.md
+6. strings: phase suites clean run (corpus already exists)
+
+Phase-1 Java suite running (proc_d872e24581b3).
