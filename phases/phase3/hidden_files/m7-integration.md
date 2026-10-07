@@ -94,3 +94,15 @@ report commit hashes + file lists.
   (SpecialCase ×3, io ×2, iter.Seq ×5).
   NOTE: m7-strings also contains 2c7ea39 "red-green evidence for encoding/xml"
   (enc-xml worker committed to wrong branch) — sort by content at integration.
+
+## 2026-10-07 ~04:10 UTC update
+- enc-json worker DONE (8/10): f3c078f (synth_json.go, 2359 lines, on m7-enc-json)
+  + 8063b3b (synth_machinery wiring, landed on m7-strings by chaos).
+  Honest subset over dynamic any-model; byte-identical for supported subset.
+  CRITICAL FINDING: gc 1.27.1 toolchain uses v2/jsontext-based encoding/json
+  internally while vendored source is v1 — error messages differ (invalid UTF-8,
+  escapes, number errors); worker matches TOOLCHAIN empirically. This affects
+  how corpus expectations are written (vs toolchain, not vendored source).
+  Dev source: hidden_files/m7-tmp/enc-json/dev/json/*.go.
+  WIRING PENDING: export.go, mrdesugar_m5.go, p3frontend mirror, drift, corpus,
+  redgreen — follow-up needed.
