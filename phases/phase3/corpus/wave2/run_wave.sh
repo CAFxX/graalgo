@@ -35,7 +35,7 @@
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+GR="${GR:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
 P3="$GR/phases/phase3"
 P2="$GR/phases/phase2"
 P1="$GR/phases/phase1"

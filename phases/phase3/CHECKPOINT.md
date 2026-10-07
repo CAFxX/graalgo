@@ -987,3 +987,67 @@ BLOCKED: M7 rebase clearance (F12). Zero graalgo legs run. No sign-off.
     infoOrShell for forward refs, tolerant captureDescriptors.
 - `import "errors"` and `import "io"` now work (were panicking).
 - Committed as 8a3f2e1 (integration fixes).
+
+## P3-M8: wave-1 regression running (2026-10-07 ~20:20 CEST)
+
+- Wave-1 differential corpus running in background on integrated tree
+  (regression check for the M8 integration).
+- D1 worker still implementing multi-result interface dispatch.
+
+## P3-M8: wave-1 regression (2026-10-07 ~20:30 CEST)
+
+- Background wave-1 run hit "unknown basic type rune" — stale binary
+  (runner started before ReflectTypes rebuild). Re-ran bytes/10 directly:
+  passes with expected "bytes.Buffer.Grow: negative count" panic.
+- "rune" was already in basicKind; no code change needed.
+
+## P3-M8 D1: integration fixes, reviews dispatched (2026-10-07 ~21:00 CEST)
+
+- D1 worker completed: implementation in 3d46d9e, 5 tests pass, 8 differential
+  runs byte-identical. Completion work committed.
+- Fixed io integration blockers found during verification:
+  - "io" missing from exportSyntheticPkgCall allow-list.
+  - needIo block dropped errors import; moved before strings.
+- Two peer reviewers dispatched (code + methodology).
+- io differential re-running in background with fixes.
+- Pre-existing (not D1): io.Pipe/NewSectionReader "call to unknown function
+  New" — investigated, root cause is errors.New not in funcByObj when io
+  imported without errors; FIXED by the import order fix above.
+
+## P3-M8 D1: REVIEW-1 P1 fixed (2026-10-07 ~21:30 CEST)
+
+- Reviewer 1 (code): REQUEST_CHANGES, 1 P1 + 5 P2s. No silent divergences.
+- P1 fixed: bare r.Read(buf) now dispatches via ifacemethod (moved
+  interface branch above isMultiResultSynthetic fail-fast in exportCall).
+  Added TestD1BareIfaceCall. Committed as 2b22471.
+- P2s: 2 (ReadFrom test case), 3 (field types in wiring test), 4 (D6
+  wording), 5 (ValueSpec limitation docs) — to be addressed.
+- Reviewer 2 (methodology) still running.
+- io differential: 15 passed, 1 scope-limited, 12 failed (duplicate
+  global id — fixed by idempotent importSyntheticPackage, re-running).
+
+## P3-M8 integration continuation (2026-10-07 ~20:20 CEST, coordinator graalgo-phase3-m8-int2)
+
+- Previous coordinator completed without final report; continuation active.
+- Methodology review D1-REVIEW-2.md received: REQUEST_CHANGES (6 P1 + 9 P2s).
+  D1 core proven sound (8/8 differential byte-identical, helpers verbatim gc).
+- R1 P2s (2-5): worker dispatched. R2 P1s/P2s (non-overlapping): worker dispatched.
+  R2 DESIGN.md/test items held until R1-P2 worker finishes (file overlap).
+- io differential (independent): 24 passed, 1 scope-limited, 3 failed.
+  - 07_constructors: variadic packing (WS D) → scope-limited with marker.
+  - 11_pipe_empty_read (+pipe programs): concrete *PipeWriter.Write dispatch missing
+    (D1 was interface-only) → worker dispatched to extend D1 pattern; fallback is
+    honest scope markers.
+- Wave2 runner repo-root bug fixed (was 3-up, needs 4-up).
+
+## P3-M8 integration continuation (2026-10-07 ~20:55 CEST)
+
+- Fixed import overlay integration gaps: `reflect` + `crypto/*` were missing from
+  overlayImporter switch (50254ea), the type-check allow-list (b79e393), AND the
+  import pre-check allow-list (0d0317b). Three gates, all must agree.
+- Synthetic syscall dependency chain: pulls in strconv (0e0d707) + errors (c674a28);
+  blocked on package-level var initializer calling New (worker dispatched).
+- Per R2 P1-6: 3d46d9e also lands the D1 feature (mrdesugar_m5.go +353,
+  synth_io.go +351, DESIGN.md, exportIfaceMethodCall/methodTableEntries branches);
+  commit message describes only incidental fixes. Process rule: commit messages
+  must describe their largest hunk.

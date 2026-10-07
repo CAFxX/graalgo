@@ -1,2 +1,0 @@
-reason: io.Pipe / concrete *PipeWriter.Write have no Appendix-M desugar (concrete 2-result method dispatch, not interface dispatch)
-retest: concrete multi-result method desugar for pipe types lands; then re-run as a full differential program
