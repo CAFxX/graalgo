@@ -30,10 +30,23 @@ var (
 var syntheticSources = map[string]string{
 	"time":    syntheticTimeSource,
 	"context": syntheticContextSource,
+	// P3-M7 (wave 1): encoding/csv + encoding/gob (synth_enc_csv_gob.go).
+	// TEMP-DISABLED for local build (sibling WIP, missing sources):
+	// "encoding/csv": syntheticCsvSource,
+	// "encoding/gob": syntheticGobSource,
+	// P3-M7 (wave 1): synthetic strings package (real-Go source in
+	// synth_strings.go, resolved via getSyntheticPackage so the same
+	// *types.Package instance is shared between user type-check and
+	// synthetic emission).
+	"strings": syntheticStringsSource,
+	// P3-M7 (wave 1): synthetic bytes package (real-Go source in
+	// synth_bytes.go). Depends on the synthetic errors package
+	// (m7-errors-sort branch) for the ErrTooLarge initializer.
+	"bytes": syntheticBytesSource,
 }
 
 // getSyntheticPackage parses and type-checks the embedded source for
-// path ("time" or "context"), caching the result. The type-check uses
+// path ("time", "context" or "strings"), caching the result. The type-check uses
 // the overlay importer, so the context source's `import "time"` resolves
 // to the synthetic package (synthetic→synthetic imports).
 // The same *types.Package instance is returned to every importer, so
