@@ -64,6 +64,8 @@ const (
 	mrWithDeadline // context.WithDeadline / context.WithTimeout
 	mrDeadline     // ctx.Deadline() (method) — retained, unreachable in M5
 	mrParseDur     // time.ParseDuration
+	// P3-M7 (wave 1): xml.Decoder.Token / xml.Decoder.RawToken.
+	mrXmlToken // xml.Decoder.Token() / xml.Decoder.RawToken()
 )
 
 // mrPlan is the desugar plan for one classified call.
@@ -79,6 +81,7 @@ type mrPlan struct {
 	methodName string
 	// For mrDeadline/mrParseDur: the pair field names ([d, ok]/[d, err]).
 	pairFields []string
+	prependRecv bool
 }
 
 // classifyMultiResultCall recognizes the Appendix M operations (the 5
@@ -172,8 +175,54 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				tmpType:    nt, pairFields: []string{"d", "ok"},
 			}
 		}
+		if f, ok := selection.Obj().(*types.Func); ok {
+			if helper, ok := isXmlTokenMethod(f); ok {
+				xmlPkg := getSyntheticPackage("encoding/xml").pkg
+				nt := named(xmlPkg, "tokenPair")
+				if nt == nil {
+					return nil
+				}
+				return &mrPlan{
+					kind: mrXmlToken, helperPkg: "encoding/xml",
+					helperName: helper, prependRecv: true,
+					tmpType:    nt, pairFields: []string{"tok", "err"},
+				}
+			}
+		}
 	}
 	return nil
+}
+
+func isXmlTokenMethod(f *types.Func) (string, bool) {
+	if f == nil || f.Pkg() == nil || f.Pkg().Path() != "encoding/xml" {
+		return "", false
+	}
+	if f.Name() != "Token" && f.Name() != "RawToken" {
+		return "", false
+	}
+	sig, ok := f.Type().(*types.Signature)
+	if !ok || sig.Results().Len() != 2 {
+		return "", false
+	}
+	recv := sig.Recv()
+	if recv == nil {
+		return "", false
+	}
+	pt, ok := recv.Type().(*types.Pointer)
+	if !ok {
+		return "", false
+	}
+	nt, ok := pt.Elem().(*types.Named)
+	if !ok || nt.Obj() == nil || nt.Obj().Name() != "Decoder" {
+		return "", false
+	}
+	if nt.Obj().Pkg() == nil || nt.Obj().Pkg().Path() != "encoding/xml" {
+		return "", false
+	}
+	if f.Name() == "Token" {
+		return "__tokenOf", true
+	}
+	return "__rawTokenOf", true
 }
 
 // isDeadlineMethod reports whether f is the synthetic context package's
@@ -228,6 +277,13 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	} else {
 		argExprs = c.Args
 	}
+	if plan.prependRecv {
+		sel, ok := c.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: prependRecv call has non-selector fun %T", c.Fun)
+		}
+		argExprs = append([]ast.Expr{sel.X}, argExprs...)
+	}
 	args := make([]*Node, 0, len(argExprs))
 	for _, a := range argExprs {
 		x, err := e.exportExpr(a)
@@ -260,7 +316,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur:
+	case mrDeadline, mrParseDur, mrXmlToken:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {
