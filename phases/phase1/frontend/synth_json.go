@@ -2005,6 +2005,16 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 		e.buf = jsonAppendUint(e.buf, v)
 	case uintptr:
 		e.buf = jsonAppendUint(e.buf, uint64(v))
+	case []byte:
+		// gc base64-encodes []byte as a JSON string (no reflect
+		// involved); a nil slice encodes as null.
+		if v == nil {
+			e.buf = append(e.buf, "null"...)
+		} else {
+			e.buf = append(e.buf, '"')
+			e.buf = jsonAppendBase64(e.buf, v)
+			e.buf = append(e.buf, '"')
+		}
 	case []any:
 		e.buf = append(e.buf, '[')
 		for i, elem := range v {
@@ -2108,6 +2118,33 @@ func jsonAppendUint(b []byte, v uint64) []byte {
 		v /= 10
 	}
 	return append(b, tmp[i:]...)
+}
+
+// jsonBase64Alphabet is the RFC 4648 standard base64 alphabet.
+const jsonBase64Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+// jsonAppendBase64 appends the standard base64 encoding of src to dst
+// (with '=' padding), byte-identical to encoding/base64.StdEncoding.
+// Clean-room: the synthetic package is self-contained and cannot import
+// the synthetic base64 package.
+func jsonAppendBase64(dst, src []byte) []byte {
+	for i := 0; i < len(src); i += 3 {
+		var b [3]byte
+		n := copy(b[:], src[i:])
+		v := uint(b[0])<<16 | uint(b[1])<<8 | uint(b[2])
+		dst = append(dst, jsonBase64Alphabet[(v>>18)&0x3f], jsonBase64Alphabet[(v>>12)&0x3f])
+		if n > 1 {
+			dst = append(dst, jsonBase64Alphabet[(v>>6)&0x3f])
+		} else {
+			dst = append(dst, '=')
+		}
+		if n > 2 {
+			dst = append(dst, jsonBase64Alphabet[v&0x3f])
+		} else {
+			dst = append(dst, '=')
+		}
+	}
+	return dst
 }
 
 // jsonSortedKeys returns the sorted keys of m.
