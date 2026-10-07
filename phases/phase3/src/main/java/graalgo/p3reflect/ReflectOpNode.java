@@ -35,8 +35,8 @@ public final class ReflectOpNode extends GoExprNode {
     @Children
     private final GoExprNode[] args;
 
-    private ReflectOpNode(String op, GoExprNode[] args) {
-        super(GoKind.INTERFACE);
+    private ReflectOpNode(String op, GoExprNode[] args, GoKind kind) {
+        super(kind);
         this.op = op;
         this.args = args;
     }
@@ -45,6 +45,11 @@ public final class ReflectOpNode extends GoExprNode {
      * Builds the node from the {@code "reflectop"} wire node. Fields:
      * {@code op}: string, {@code args}: array of expr nodes,
      * {@code type}: result type-table id.
+     *
+     * <p>P3-M8b: the node's kind is computed from the result type id —
+     * different intrinsics return different kinds (typeof → unsafe.Pointer,
+     * valueof → Value struct, etc.). The old hardcoded INTERFACE kind broke
+     * any use in a non-interface context.
      */
     public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx,
             NodeFactory factory) {
@@ -60,16 +65,60 @@ public final class ReflectOpNode extends GoExprNode {
             }
             args[i] = factory.buildExpr(ao, ctx);
         }
-        return new ReflectOpNode(op, args);
+        // P3-M8b: the type field may be null for void intrinsics (the Go
+        // exporter sets it to nil when callType has no result). Default to
+        // INTERFACE for those — the result is discarded.
+        GoKind kind = GoKind.INTERFACE;
+        int typeId = -1;
+        Json.Value t = f.opt("type");
+        if (t instanceof Json.Num n) {
+            typeId = (int) n.longValue();
+            kind = NodeFactory.kindOf(ctx, typeId, path);
+        }
+        GoExprNode n = new ReflectOpNode(op, args, kind);
+        if (typeId >= 0) {
+            n.setTypeId(typeId);
+        }
+        return n;
     }
 
-    @Override
-    public Object executeObject(VirtualFrame frame) {
+    /** Evaluates args and dispatches; the result is boxed (Long for long kinds). */
+    private Object dispatchBoxed(VirtualFrame frame) {
         Object[] argv = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
             argv[i] = args[i].executeObject(frame);
         }
         return dispatch(op, argv);
+    }
+
+    @Override
+    public Object executeObject(VirtualFrame frame) {
+        return dispatchBoxed(frame);
+    }
+
+    @Override
+    public long executeLong(VirtualFrame frame) {
+        return ((Number) dispatchBoxed(frame)).longValue();
+    }
+
+    @Override
+    public int executeInt(VirtualFrame frame) {
+        return ((Number) dispatchBoxed(frame)).intValue();
+    }
+
+    @Override
+    public double executeDouble(VirtualFrame frame) {
+        return ((Number) dispatchBoxed(frame)).doubleValue();
+    }
+
+    @Override
+    public float executeFloat(VirtualFrame frame) {
+        return ((Number) dispatchBoxed(frame)).floatValue();
+    }
+
+    @Override
+    public boolean executeBoolean(VirtualFrame frame) {
+        return (Boolean) dispatchBoxed(frame);
     }
 
     // ------------------------------------------------------------------

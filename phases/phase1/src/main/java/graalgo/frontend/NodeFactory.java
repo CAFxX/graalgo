@@ -726,7 +726,7 @@ public final class NodeFactory {
      * their underlying type and aliases to their right-hand side. Unknown
      * kinds fail naming the WS C/D {@code registerTypeDecoder} hook.
      */
-    static GoKind kindOf(BuildCtx ctx, int typeId, String path) {
+    public static GoKind kindOf(BuildCtx ctx, int typeId, String path) {
         Json.Object entry = ctx.types.entry(typeId, path);
         // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
         for (int steps = 0; ; steps++) {
@@ -1338,6 +1338,9 @@ public final class NodeFactory {
             case "complex128" -> GoKind.COMPLEX128;
             case "string" -> GoKind.STRING;
             case "bool" -> GoKind.BOOL;
+            // P3-M8b: the synthetic unsafe package's Pointer alias may surface
+            // as a basic name; it denotes unsafe.Pointer.
+            case "Pointer", "unsafe.Pointer" -> GoKind.UNSAFE_POINTER;
             default -> throw new FrontendException(
                     "no kind for basic type name " + name + " (WS E)");
         };
@@ -2987,16 +2990,21 @@ public final class NodeFactory {
                 ellipsis, elemSizeBytes);
     }
 
-    /** {@code copy(dst, src)}: slice-to-slice only (string sources are WS D). */
+    /**
+     * {@code copy(dst, src)}: slice-to-slice, or {@code copy(dst []byte, src string)}
+     * (P3-M8b: string sources are supported by converting the string to []byte).
+     */
     private GoExprNode buildCopyBuiltin(GoExprNode[] args, Json.Object f, BuildCtx ctx,
             String path) {
         requireArgs(path, "copy", args, 2);
-        if (args[1].kind() == GoKind.STRING) {
-            throw new FrontendException(path + ": copy from a string source is not supported"
-                    + " in frontend/v1 scope (WS D: string<->[]byte conversions)");
+        GoExprNode src = args[1];
+        // P3-M8b: copy(dst []byte, src string) — convert the string to []byte.
+        // Go spec: the string's bytes are copied; dst must be []byte.
+        if (src.kind() == GoKind.STRING || src.kind() == GoKind.UNTYPED_STRING) {
+            src = new ConvertNode(src.kind(), GoKind.SLICE, src, GoKind.UINT8);
         }
         GoKind elemKind = builtinElemKind(ctx, args[0].typeId(), path, "copy");
-        return new CopyNode(args[0], args[1], elemKind);
+        return new CopyNode(args[0], src, elemKind);
     }
 
     /** Result kind of a call node (from the wire "type"; void → null kind handling). */

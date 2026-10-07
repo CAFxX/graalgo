@@ -2177,6 +2177,14 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 	if b, ok := t.(*types.Basic); ok && b.Kind() == types.Invalid {
 		return 0, fmt.Errorf("gofrontend: types.Invalid reached typeID (would be types[%d]); refusing to serialize", len(e.types))
 	}
+	// P3-M8b: unwrap aliases to unsafe.Pointer (from the synthetic unsafe
+	// package) directly to the basic type. The alias indirection through
+	// the type table confuses kindOf; the basic type is the canonical form.
+	if a, ok := t.(*types.Alias); ok {
+		if b, ok := types.Unalias(a).(*types.Basic); ok && b.Kind() == types.UnsafePointer {
+			t = b
+		}
+	}
 	if e.subst != nil {
 		// M6 (WS H, issue52026): substitute bound type parameters before
 		// the memo lookup, so Some[T] under T=int denotes Some[int].

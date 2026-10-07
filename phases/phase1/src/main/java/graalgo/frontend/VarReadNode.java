@@ -23,7 +23,8 @@ public final class VarReadNode extends GoExprNode {
         return switch (kind()) {
             case INT8, INT16, INT32 -> (long) frame.getInt(slot);
             case UINT8, UINT16, UINT32 -> Integer.toUnsignedLong(frame.getInt(slot));
-            case INT64, UINT64, UNTYPED_INT -> frame.getLong(slot);
+            // P3-M8b: UNSAFE_POINTER values are long handles (D5).
+            case INT64, UINT64, UNTYPED_INT, UNSAFE_POINTER -> frame.getLong(slot);
             case FLOAT32 -> (long) frame.getFloat(slot);
             case FLOAT64, UNTYPED_FLOAT -> (long) frame.getDouble(slot);
             default -> throw new UnsupportedOperationException("cannot read " + kind() + " as long");
