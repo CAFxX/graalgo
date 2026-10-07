@@ -4666,6 +4666,21 @@ func (e *exporter) exportRange(s *ast.RangeStmt) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P3-M8b: default untyped range targets (e.g. `for _, c := range "lit"`
+	// or range over an untyped string const). Go semantics: untyped constants
+	// assume their default type in value context. The Java AST builder only
+	// accepts typed kinds (STRING, not UNTYPED_STRING) for range.
+	if tv, ok := e.info.Types[s.X]; ok && tv.Type != nil {
+		if b, ok := tv.Type.(*types.Basic); ok && b.Info()&types.IsUntyped != 0 {
+			def := types.Default(tv.Type)
+			if def != tv.Type {
+				tid, err := e.typeID(def)
+				if err == nil {
+					x.Fields["type"] = tid
+				}
+			}
+		}
+	}
 	body, err := e.exportBlock(s.Body)
 	if err != nil {
 		return nil, err

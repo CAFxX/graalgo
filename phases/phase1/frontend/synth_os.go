@@ -1058,7 +1058,7 @@ func (f *File) WriteString(s string) (n int, err error) {
 }
 
 func __fileWriteString(f *File, s string) writePair {
-	return __fileWrite(f, []byte(s))
+	panic("os.__fileWriteString: not in M8 scope (string->[]byte WS D; re-test when WS D lands)")
 }
 
 // Seek sets the offset for the next Read or Write on file to offset,
