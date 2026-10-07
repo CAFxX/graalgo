@@ -1,0 +1,34 @@
+diff --git a/phases/phase1/frontend/export.go b/phases/phase1/frontend/export.go
+index dff0624..450a172 100644
+--- a/phases/phase1/frontend/export.go
++++ b/phases/phase1/frontend/export.go
+@@ -637,16 +637,6 @@ func syntheticCompositeScopeError(nt *types.Named, position string) error {
+ 	return scopeErrorf("sync.%s as %s is not in M2 scope", nt.Obj().Name(), position)
+ }
+ 
+-// syntheticUnsafePackage builds the P3-M4 (WS C, ADR-0004) empty synthetic
+-// "unsafe" package: it exists only so `import _ "unsafe"` (required by
+-// //go:linkname directives) type-checks. Any selection on unsafe.* fails
+-// as undefined against the empty scope.
+-func syntheticUnsafePackage() *types.Package {
+-	pkg := types.NewPackage("unsafe", "unsafe")
+-	pkg.MarkComplete()
+-	return pkg
+-}
+-
+ // ExportFile type-checks the single Go source file at path and returns the
+ // frontend/v1 JSON document.
+ func ExportFile(path string) (string, error) {
+@@ -705,12 +695,6 @@ func ExportFile(path string) (string, error) {
+ 			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" {
+ 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
+ 		}
+-		// P3-M4: a non-blank "unsafe" import is a named scope error —
+-		// unsafe.* selections cannot resolve against the empty synthetic
+-		// package, and failing here is clearer than "undefined: unsafe.X".
+-		if path == "unsafe" && (imp.Name == nil || imp.Name.Name != "_") {
+-			return "", scopeErrorf("import \"unsafe\": only the blank form (import _ \"unsafe\") is supported in frontend/v1 scope (P3-M4)")
+-		}
+ 	}
+ 
+ 	info := &types.Info{

@@ -30,9 +30,10 @@
 //     call site fails with the named M7 scope error. Re-test when WS D
 //     lands.
 //   - Buffer.ReadFrom/Buffer.WriteTo/Reader.WriteTo need io.Reader/
-//     io.Writer, which wave 1 cannot import (P3-M8 brings io). They are
-//     declared with the synthetic byteReader/byteWriter stand-ins
-//     (documented divergence) and fail-fast bodies.
+//     io.Writer. P3-M8 brings io: the signatures now use io.Reader/
+//     io.Writer exactly, but the bodies stay fail-fast — the loops need
+//     r.Read/w.Write (2-result interface calls, WS D). Re-test when WS D
+//     lands (then: real bodies, no signature change needed).
 //   - 8 members are omitted outright — their types are unnameable
 //     without out-of-scope imports: Lines/SplitSeq/SplitAfterSeq/
 //     FieldsSeq/FieldsFuncSeq (need iter.Seq) and ToUpperSpecial/
@@ -57,7 +58,10 @@ package main
 // io-bound members; 8 members omitted (see header).
 const syntheticBytesSource = `package bytes
 
-import "errors"
+import (
+	"errors"
+	"io"
+)
 
 // ---------------------------------------------------------------------------
 // UTF-8 codec (clean-room port of unicode/utf8 semantics).
@@ -10019,19 +10023,6 @@ func (b *Buffer) Grow(n int) {
 	b.buf = b.buf[:m]
 }
 
-// byteReader and byteWriter are the synthetic stand-ins for io.Reader and
-// io.Writer. Wave 1 cannot import io (P3-M8 brings it); these interfaces
-// have identical method sets, so values flow structurally, but any genuine
-// io-package interop fails fast (see ReadFrom/WriteTo). Documented
-// divergence — re-test when io lands in P3-M8.
-type byteReader interface {
-	Read(p []byte) (n int, err error)
-}
-
-type byteWriter interface {
-	Write(p []byte) (n int, err error)
-}
-
 // Write appends the contents of p to the buffer, growing the buffer as
 // needed. The return value n is the length of p; err is always nil. If the
 // buffer becomes too large, Write will panic with ErrTooLarge.
@@ -10063,11 +10054,11 @@ const MinRead = 512
 // error except EOF encountered during the read is also returned. If the
 // buffer becomes too large, ReadFrom will panic with ErrTooLarge.
 //
-// M7 scope: the parameter type is the synthetic byteReader stand-in (io
-// is P3-M8); fail-fast body in any case (multi-result calls need WS D).
-// Re-test when io lands in P3-M8.
-func (b *Buffer) ReadFrom(r byteReader) (n int64, err error) {
-	panic("bytes.Buffer.ReadFrom: not in M7 scope (needs io; re-test when io lands in P3-M8)")
+// M8 scope: exact gc signature (io.Reader now nameable); the body stays
+// fail-fast — the loop needs r.Read, a 2-result interface call (WS D).
+// Re-test when WS D lands.
+func (b *Buffer) ReadFrom(r io.Reader) (n int64, err error) {
+	panic("bytes.Buffer.ReadFrom: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
 }
 
 // growSlice grows b by n, preserving the original content of b.
@@ -10102,11 +10093,11 @@ func growSlice(b []byte, n int) []byte {
 // int, but it is int64 to match the io.WriterTo interface. Any error
 // encountered during the write is also returned.
 //
-// M7 scope: the parameter type is the synthetic byteWriter stand-in (io
-// is P3-M8); fail-fast body in any case (multi-result calls need WS D).
-// Re-test when io lands in P3-M8.
-func (b *Buffer) WriteTo(w byteWriter) (n int64, err error) {
-	panic("bytes.Buffer.WriteTo: not in M7 scope (needs io; re-test when io lands in P3-M8)")
+// M8 scope: exact gc signature (io.Writer now nameable); the body stays
+// fail-fast — the loop needs w.Write, a 2-result interface call (WS D).
+// Re-test when WS D lands.
+func (b *Buffer) WriteTo(w io.Writer) (n int64, err error) {
+	panic("bytes.Buffer.WriteTo: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
 }
 
 // WriteByte appends the byte c to the buffer, growing the buffer as needed.
@@ -10360,11 +10351,11 @@ func (r *Reader) Seek(offset int64, whence int) (int64, error) {
 
 // WriteTo implements the io.WriterTo interface.
 //
-// M7 scope: the parameter type is the synthetic byteWriter stand-in (io
-// is P3-M8); fail-fast body in any case (multi-result calls need WS D).
-// Re-test when io lands in P3-M8.
-func (r *Reader) WriteTo(w byteWriter) (n int64, err error) {
-	panic("bytes.Reader.WriteTo: not in M7 scope (needs io; re-test when io lands in P3-M8)")
+// M8 scope: exact gc signature (io.Writer now nameable); the body stays
+// fail-fast — the loop needs w.Write, a 2-result interface call (WS D).
+// Re-test when WS D lands.
+func (r *Reader) WriteTo(w io.Writer) (n int64, err error) {
+	panic("bytes.Reader.WriteTo: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
 }
 
 // Reset resets the Reader to be reading from b.

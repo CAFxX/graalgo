@@ -1,0 +1,2 @@
+reason: calls variadic functions (io.MultiReader/MultiWriter) with multiple args — argument packing without ... spread is not supported in frontend/v1 scope (WS D)
+retest: WS D lands variadic argument packing; then re-run as a full differential program

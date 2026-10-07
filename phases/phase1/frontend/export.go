@@ -46,6 +46,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -268,8 +269,60 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("encoding/asn1").pkg, nil
 	case "encoding":
 		return getSyntheticPackage("encoding").pkg, nil
+	case "io":
+		return getSyntheticPackage("io").pkg, nil
+	// P3-M8 (wave 2): synthetic syscall package (Errno vocabulary +
+	// scalar services; real-Go source in synth_syscall.go).
+	case "syscall":
+		return getSyntheticPackage("syscall").pkg, nil
+	// P3-M8 (wave 2): the synthetic os package (real-Go source in
+	// synth_os.go) and the minimal synthetic io/fs core (synth_iofs.go).
+	case "os":
+		return getSyntheticPackage("os").pkg, nil
+	case "io/fs":
+		return getSyntheticPackage("io/fs").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
+	// P3-M8 (wave 2): synthetic reflect package (real-Go source in
+	// synth_reflect.go). The reflect source imports the synthetic iter
+	// and internal/reflectlite packages, so they need overlay cases too.
+	case "reflect":
+		return getSyntheticPackage("reflect").pkg, nil
+	case "iter":
+		return getSyntheticPackage("iter").pkg, nil
+	case "internal/reflectlite":
+		return getSyntheticPackage("internal/reflectlite").pkg, nil
+	// P3-M8 (wave 2): synthetic crypto packages (real-Go sources in
+	// synth_crypto*.go). The crypto sources import the synthetic hash
+	// package, so it needs an overlay case too.
+	case "hash":
+		return getSyntheticPackage("hash").pkg, nil
+	case "crypto":
+		return getSyntheticPackage("crypto").pkg, nil
+	case "crypto/aes":
+		return getSyntheticPackage("crypto/aes").pkg, nil
+	case "crypto/cipher":
+		return getSyntheticPackage("crypto/cipher").pkg, nil
+	case "crypto/des":
+		return getSyntheticPackage("crypto/des").pkg, nil
+	case "crypto/hmac":
+		return getSyntheticPackage("crypto/hmac").pkg, nil
+	case "crypto/md5":
+		return getSyntheticPackage("crypto/md5").pkg, nil
+	case "crypto/rand":
+		return getSyntheticPackage("crypto/rand").pkg, nil
+	case "crypto/rc4":
+		return getSyntheticPackage("crypto/rc4").pkg, nil
+	case "crypto/sha1":
+		return getSyntheticPackage("crypto/sha1").pkg, nil
+	case "crypto/sha256":
+		return getSyntheticPackage("crypto/sha256").pkg, nil
+	case "crypto/sha3":
+		return getSyntheticPackage("crypto/sha3").pkg, nil
+	case "crypto/sha512":
+		return getSyntheticPackage("crypto/sha512").pkg, nil
+	case "crypto/subtle":
+		return getSyntheticPackage("crypto/subtle").pkg, nil
 	}
 	return failImporter{}.Import(path)
 }
@@ -637,16 +690,6 @@ func syntheticCompositeScopeError(nt *types.Named, position string) error {
 	return scopeErrorf("sync.%s as %s is not in M2 scope", nt.Obj().Name(), position)
 }
 
-// syntheticUnsafePackage builds the P3-M4 (WS C, ADR-0004) empty synthetic
-// "unsafe" package: it exists only so `import _ "unsafe"` (required by
-// //go:linkname directives) type-checks. Any selection on unsafe.* fails
-// as undefined against the empty scope.
-func syntheticUnsafePackage() *types.Package {
-	pkg := types.NewPackage("unsafe", "unsafe")
-	pkg.MarkComplete()
-	return pkg
-}
-
 // ExportFile type-checks the single Go source file at path and returns the
 // frontend/v1 JSON document.
 func ExportFile(path string) (string, error) {
@@ -700,16 +743,16 @@ func ExportFile(path string) (string, error) {
 		// encoding/ascii85, encoding/pem, encoding/asn1, encoding) are
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_base32.go etc.).
+		// P3-M8 (wave 2): the import "io" is allowed — resolved by
+		// overlayImporter to the synthetic package (real-Go source; see
+		// synth_io.go).
 		// Every other import is still a scope error (WS G import overlay).
+		// P3-M8 (wave 2): "syscall", "reflect", and crypto/* likewise.
+		// P3-M8 (wave 2): "hash" and "iter" (synthetic support packages).
 		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
-			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" {
+			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "syscall" && path != "os" && path != "io/fs" && path != "reflect" && path != "hash" && path != "iter" &&
+			path != "crypto" && path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" && path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" && path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
-		}
-		// P3-M4: a non-blank "unsafe" import is a named scope error —
-		// unsafe.* selections cannot resolve against the empty synthetic
-		// package, and failing here is clearer than "undefined: unsafe.X".
-		if path == "unsafe" && (imp.Name == nil || imp.Name.Name != "_") {
-			return "", scopeErrorf("import \"unsafe\": only the blank form (import _ \"unsafe\") is supported in frontend/v1 scope (P3-M4)")
 		}
 	}
 
@@ -738,10 +781,13 @@ func ExportFile(path string) (string, error) {
 	// (m7-wenc-core: "strings" was missing from this list — the allow-list
 	// above admitted it but type-checking still used failImporter. Fixed
 	// here; re-test trigger: a program importing "strings" must export.)
+	// P3-M8 (wave 2): "io", "syscall", "os", "io/fs", "reflect", "hash",
+	// "iter", and the crypto/* packages likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
 		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
-			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" {
+			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "iter" ||
+			p == "crypto" || p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -760,6 +806,8 @@ func ExportFile(path string) (string, error) {
 		namedIDs: make(map[string]int),
 		objIDs:   make(map[types.Object]int),
 		sizes:    types.SizesFor("gc", "amd64"),
+		// P3-M8: track imported synthetic packages for idempotency.
+		importedSynthetic: make(map[string]bool),
 	}
 	doc := Doc{
 		Frontend:  frontendVersion,
@@ -839,6 +887,13 @@ func ExportFile(path string) (string, error) {
 	needStrconv, needJson := false, false
 	needBase32, needBase64, needHex, needBinary := false, false, false, false
 	needAscii85, needPem, needAsn1, needEncoding := false, false, false, false
+	needIo := false
+	needSyscall := false
+	needIoFs := false
+	needReflect := false
+	needCryptoSha256 := false
+	needHash := false
+	needIter := false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -858,6 +913,11 @@ func ExportFile(path string) (string, error) {
 			needMath = true
 		case "strings":
 			needStrings = true
+			// P3-M8: the synthetic strings source imports errors (gc-exact
+			// errors.New in Reader.ReadAt/Seek) — bytes/strconv precedent.
+			needErrors = true
+			// P3-M8: strings also imports io (io.EOF in Reader.Read).
+			needIo = true
 		case "encoding/xml":
 			needXml = true
 		case "strconv":
@@ -892,6 +952,43 @@ func ExportFile(path string) (string, error) {
 			needAsn1 = true
 		case "encoding":
 			needEncoding = true
+		case "io":
+			needIo = true
+		// P3-M8 (wave 2): a user import of "syscall" pulls in the
+		// synthetic package (synth_syscall.go).
+		case "syscall":
+			needSyscall = true
+		// P3-M8 (wave 2): a user import of "io/fs" pulls in the minimal
+		// synthetic io/fs core (synth_iofs.go). Its Err* sentinel
+		// initializers call errors.New; the source also imports time.
+		case "io/fs":
+			needIoFs = true
+			needErrors = true
+			needTime = true
+		// P3-M8 (wave 2): a user import of "reflect" pulls in the
+		// synthetic package (synth_reflect.go). The source imports
+		// errors, iter, strconv (unsafe is a builtin surface, not a
+		// synthetic package).
+		case "reflect":
+			needReflect = true
+			needErrors = true
+			needStrconv = true
+		// P3-M8 (wave 2): a user import of "crypto/sha256" pulls in the
+		// synthetic package (synth_crypto_sha256.go). The source imports
+		// crypto, errors, hash; hash imports io; crypto imports hash, io,
+		// strconv.
+		case "crypto/sha256":
+			needCryptoSha256 = true
+			needErrors = true
+			needStrconv = true
+		// P3-M8 (wave 2): direct user imports of the synthetic hash and
+		// iter support packages.
+		case "hash":
+			needHash = true
+			needErrors = true
+			needIo = true
+		case "iter":
+			needIter = true
 		}
 	}
 	if needTime {
@@ -931,8 +1028,19 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 	}
+	// P3-M8 (wave 2): synthetic io (depends on synthetic errors).
+	// Must come before strings (which imports io for io.EOF).
+	if needIo {
+		// P3-M8: io's error vars use errors.New — import errors first.
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+			return "", err
+		}
+	}
 	// P3-M7 (wave 1): the synthetic strings package (see synth_strings.go).
-	// Self-contained: no synthetic dependencies.
+	// P3-M8: imports synthetic io (io.EOF), so io must be imported first.
 	if needStrings {
 		if err := e.importSyntheticPackage(getSyntheticPackage("strings")); err != nil {
 			return "", err
@@ -1012,6 +1120,112 @@ func ExportFile(path string) (string, error) {
 	}
 	if needEncoding {
 		if err := e.importSyntheticPackage(getSyntheticPackage("encoding")); err != nil {
+			return "", err
+		}
+	}
+	// (needIo handled before strings import above)
+	// P3-M8 (wave 2): synthetic hash package (synth_crypto_hash.go).
+	// Imports io (needIo block above imports errors first, then io).
+	if needHash {
+		if err := e.importSyntheticPackage(getSyntheticPackage("hash")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic iter package (synth_reflect.go).
+	// Self-contained: no synthetic imports.
+	if needIter {
+		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic reflect (synth_reflect.go). The source
+	// imports errors, iter, strconv (unsafe is a builtin surface, not a
+	// synthetic package); iter is self-contained. Dependencies are
+	// imported before reflect itself (package-level initializers may
+	// call synthetic functions).
+	if needReflect {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("reflect")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic io/fs core (synth_iofs.go). Depends on
+	// the synthetic errors package (its Err* sentinel initializers call
+	// errors.New) and imports time (time.Time in the FileInfo/DirEntry
+	// signatures), so errors and time are imported first.
+	if needIoFs {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic syscall (depends on the synthetic io/fs
+	// registration for its Errno.Is sentinels - os worker, R5).
+	if needSyscall {
+		// P3-M8: the synthetic syscall source references strconv.Itoa,
+		// errors.ErrUnsupported, and the io/fs sentinels (fs.ErrPermission
+		// etc. in Errno.Is); import them directly. Ordering matters:
+		// package-level var initializers may call synthetic functions, so
+		// each dependency is imported before its dependents: errors
+		// (strconv's ErrRange/ErrSyntax and io/fs's ErrInvalid/ErrClosed
+		// initializers call errors.New), time (imported by io/fs), io/fs
+		// (syscall's Errno.Is references its Err* sentinels), strconv
+		// (syscall's Errno.Error calls strconv.Itoa), then syscall itself.
+		// (The needStrconv/needErrors blocks above only ran if the user
+		// imported those packages directly — not for a pure
+		// `import "syscall"` program.)
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8 (wave 2): synthetic crypto/sha256 (synth_crypto_sha256.go).
+	// Dependency chain, imported in order: errors (sha256's
+	// package-level code calls errors.New); io (imported by hash);
+	// hash (sha256's New/digest use hash.Hash and the __hash*
+	// helpers); strconv (imported by crypto); crypto (sha256 calls
+	// crypto.RegisterHash); then crypto/sha256 itself.
+	if needCryptoSha256 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("hash")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("crypto")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/sha256")); err != nil {
 			return "", err
 		}
 	}
@@ -1452,6 +1666,10 @@ type exporter struct {
 	// collectPackageVars during the declaration scan; exported in
 	// dependency order by exportPackageVars after the scan).
 	pkgVars []*pkgVarDecl
+	// P3-M8: synthetic packages already imported (importSyntheticPackage
+	// is idempotent; prevents duplicate globals when a dependency like
+	// errors is imported both directly and via io).
+	importedSynthetic map[string]bool
 	// P3-M2remed (P0-3): sequence counter for synthetic temporaries
 	// hoisted by exportSyncGoStmt (__sync_go_arg<seq>_<i>); keeps the
 	// names unique across go statements in one export.
@@ -1909,6 +2127,15 @@ func namedTypeName(nt *types.Named) string {
 }
 
 func (e *exporter) typeID(t types.Type) (int, error) {
+	// P3-M8 (reviewer-2 P1-4): types.Invalid must never reach the wire.
+	// The only known producer was exportIdent's *types.Builtin case
+	// (go/types models every builtin's type as Typ[Invalid]); it no
+	// longer serializes obj.Type(). Any other path reaching here with
+	// Invalid is a genuine failed resolution — fail loud with the wire
+	// id instead of laundering it into a bogus "invalid type" entry.
+	if b, ok := t.(*types.Basic); ok && b.Kind() == types.Invalid {
+		return 0, fmt.Errorf("gofrontend: types.Invalid reached typeID (would be types[%d]); refusing to serialize", len(e.types))
+	}
 	if e.subst != nil {
 		// M6 (WS H, issue52026): substitute bound type parameters before
 		// the memo lookup, so Some[T] under T=int denotes Some[int].
@@ -2041,6 +2268,34 @@ func (e *exporter) tupleList(t *types.Tuple) ([]any, error) {
 	return out, nil
 }
 
+// pkgPathOf returns the package path of a named type.
+//
+// A nil Pkg is legitimate in exactly one case: the universe-scope
+// predeclared named types. go/types builds `error` and `comparable`
+// as NewNamed with a nil package (universe.go); they have no package
+// by definition, and gc's reflect likewise reports PkgPath "" for
+// them. It is NOT a "synthetic bootstrap" case: every synthetic named
+// type (sync primitives, io/os wrappers, …) is created with its
+// synthetic package, so Pkg() is non-nil.
+//
+// Any other named type with nil Pkg (or nil Obj) is an exporter bug —
+// fail loud instead of emitting a silent "". (Reviewer-2 P2-4: the old
+// code laundered every such case into pkgpath "".)
+func pkgPathOf(t *types.Named) (string, error) {
+	obj := t.Obj()
+	if obj == nil {
+		return "", fmt.Errorf("gofrontend: named type with nil type name: %s", t)
+	}
+	if pkg := obj.Pkg(); pkg != nil {
+		return pkg.Path(), nil
+	}
+	// Universe scope: only the predeclared named types are legitimate.
+	if name := obj.Name(); name == "error" || name == "comparable" {
+		return "", nil
+	}
+	return "", fmt.Errorf("gofrontend: named type %q has nil package", obj.Name())
+}
+
 func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 	mk := func(kind string, detail map[string]any) TypeEnt {
 		return TypeEnt{Kind: kind, Detail: detail}
@@ -2048,6 +2303,9 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 	switch t := t.(type) {
 	case *types.Basic:
 		class, untyped := basicClass(t)
+		if t.Kind() == types.Invalid && os.Getenv("GRAALGO_TRACE_INVALID") == "1" {
+			fmt.Fprintf(os.Stderr, "TRACE-INVALID basic Invalid at describeType\n%s\n", debug.Stack())
+		}
 		return mk("basic", map[string]any{
 			"name": t.Name(), "class": class, "untyped": untyped,
 		}), nil
@@ -2074,8 +2332,16 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		if err != nil {
 			return TypeEnt{}, err
 		}
+		pkgPath, err := pkgPathOf(t)
+		if err != nil {
+			return TypeEnt{}, err
+		}
 		detail := map[string]any{
 			"name": namedTypeName(t), "underlying": under, "methods": methods,
+			// P3-M8 (wave 2, reflect): package path for Type.PkgPath.
+			// pkgPathOf fails loud on unexpected nil Pkg (reviewer-2 P2-4);
+			// "" is legitimate only for universe predeclared (error).
+			"pkgpath": pkgPath,
 		}
 		if tmplSkipped {
 			// P3-M3 remediation (R1 P1-2): the frontend fails fast
@@ -2221,9 +2487,16 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 			if err != nil {
 				return TypeEnt{}, err
 			}
+			// P3-M8 (wave 2, reflect): "exported" and "pkgpath" for
+			// unexported-field flagRO parity (StructField.PkgPath).
+			pkgPath := ""
+			if !f.Exported() && f.Pkg() != nil {
+				pkgPath = f.Pkg().Path()
+			}
 			fields = append(fields, map[string]any{
 				"name": f.Name(), "type": ft, "tag": t.Tag(i),
 				"embedded": f.Embedded(), "offset": offsets[i],
+				"exported": f.Exported(), "pkgpath": pkgPath,
 			})
 		}
 		return mk("struct", map[string]any{"fields": fields}), nil
@@ -3035,6 +3308,12 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		return nil, err
 	}
 	if len(results) > 1 {
+		// P3-M8 (WS D; REVIEW-1 P2-5): this is also the fail-fast for the
+		// `return <multi-result interface call>` position — a 2-result
+		// call can only type-check as a return value inside a function
+		// with the same results, which v1 rejects here. Named loud
+		// limitation; re-test trigger: extend exportMultiResultDesugar
+		// to return positions (see DESIGN.md §5).
 		return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
 	}
 	sig, err := e.freshSigID(fi.recv, fi.sig.Params(), fi.sig.Results(), fi.sig.Variadic())
@@ -3340,6 +3619,19 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 		// frozen builtin registry is untouched — interception by ident.
 		if c, ok := isCloseCall(e.info, s.X); ok {
 			return e.exportChanCloseCall(c)
+		}
+		// P3-M8 (WS D): a concrete multi-result call as a bare statement
+		// (w.Write(data) on *io.PipeWriter — legal Go, results
+		// discarded) desugars to the __-helper call with the pair
+		// dropped. Gated on the concrete helper-call plans (mrM7,
+		// mrXmlToken): the M5 kinds keep their pinned statement-position
+		// fail-fast (TestMultiResultFailFastKept), and interface calls
+		// keep the D1 exportIfaceMethodCall path via exportExpr below.
+		if c, ok := unparen(s.X).(*ast.CallExpr); ok {
+			if plan := e.classifyMultiResultCall(c); plan != nil &&
+				(plan.kind == mrM7 || plan.kind == mrXmlToken) {
+				return e.exportBareMultiResultCall(s, c, plan)
+			}
 		}
 		x, err := e.exportExpr(s.X)
 		if err != nil {
@@ -3978,6 +4270,24 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 			objs = append(objs, id)
 		}
 		for _, v := range vs.Values {
+			// P3-M8 (WS D; REVIEW-1 P2-5): a multi-result interface call
+			// in a `var` declaration (ValueSpec) position is a named loud
+			// limitation. exportMultiResultDesugar handles only
+			// *ast.AssignStmt (2-target := and =, incl. if-init) —
+			// consistent with the pre-existing M5/M7 concrete desugar.
+			// The ifacemethod node yields a single pair-typed value which
+			// cannot be split across the declared names, so exporting it
+			// would be a silent wire-shape divergence: fail fast
+			// instead. (The REVIEW-1 P1 fix routed interface calls to
+			// exportIfaceMethodCall before the synthetic fail-fast; this
+			// check restores loudness for the ValueSpec position.)
+			// Re-test trigger: extend exportMultiResultDesugar to
+			// ValueSpec positions (see DESIGN.md §5).
+			if c, ok := unparen(v).(*ast.CallExpr); ok {
+				if plan := e.classifyMultiResultCall(c); plan != nil && plan.kind == mrIfaceMethod {
+					return nil, scopeErrorf("multi-result interface call in var declaration is not supported in frontend/v1 scope (M8 limitation: only 2-target := and = desugar; see DESIGN.md §5)")
+				}
+			}
 			x, err := e.exportExpr(v)
 			if err != nil {
 				return nil, err
@@ -4715,12 +5025,17 @@ func (e *exporter) exportIdent(id *ast.Ident) (*Node, error) {
 		fields["obj"] = oid
 		fields["type"] = t
 	case *types.Builtin:
-		t, err := e.typeID(obj.Type())
-		if err != nil {
-			return nil, err
-		}
+		// P3-M8 (reviewer-2 P1-4): builtins have no go/types signature —
+		// go/types NewBuiltin sets typ: Typ[Invalid] (object.go), so
+		// obj.Type() is ALWAYS types.Typ[types.Invalid] here, not a
+		// failed resolution. Serializing it minted a bogus "invalid type"
+		// wire entry that ReflectTypes.java laundered into a fake
+		// INTERFACE kind. The ident's type is dead on the wire: builtin
+		// calls dispatch via the call node's "builtin" marker
+		// (buildBuiltinCall), and a standalone builtin ident fails in
+		// buildIdent on the missing "obj" field before "type" is read.
+		// So the builtin ident form carries no "type" field.
 		fields["builtin"] = obj.Name()
-		fields["type"] = t
 	case *types.Const:
 		// Constants (universe true/false, package-level and local consts):
 		// emitted as a folded basiclit so the factory's typed-constant
@@ -4879,18 +5194,19 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			if nt := timeTimerTickerNamed(selection.Recv()); nt != nil {
 				return e.exportTimeOp(c, sel, nt)
 			}
+			// P3-M8 (WS D): interface calls route to exportIfaceMethodCall FIRST —
+			// it owns the multi-result decision (pairPlan dispatch for table
+			// methods, fail-fast otherwise). The fail-fast below then applies
+			// only to concrete (non-interface) calls.
+			if recvIface(selection.Recv()) != nil {
+				return e.exportIfaceMethodCall(c, sel, selection)
+			}
 			// P3-M5 (WS E, ADR-0005): multi-result synthetic methods
 			// (Context.Deadline, Time.Date/...) fail fast (WS D; the
 			// P3-M3 F4 precedent) — the shape must not reach dispatch.
+			// (P3-M8: interface methods are handled above.)
 			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
 				return nil, multiResultSyntheticError(f)
-			}
-			// P3-M3 (WS D, ADR-0003): interface method call — the
-			// receiver's static type has an interface underlying (named
-			// or anonymous). Emits the additive "ifacemethod" wire node;
-			// dispatch happens at runtime through the itab.
-			if recvIface(selection.Recv()) != nil {
-				return e.exportIfaceMethodCall(c, sel, selection)
 			}
 		}
 		selection, ok := e.info.Selections[sel]
@@ -4938,6 +5254,31 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// M7: conversion with a composite type target, e.g. []byte("hi").
 		// The target is an *ast.ArrayType/*ast.MapType, not an identifier.
 		if tv, ok := e.info.Types[c.Fun]; ok && tv.Type != nil {
+			// P3-M8 (wave 2, reflect): call to a computed func value,
+			// e.g. reflect.Swapper(s)(0, 2) — c.Fun is a call expression
+			// whose type is a signature, not a composite type target.
+			// Export the fun expression and emit a plain call node
+			// (mirrors the func-valued variable branch below).
+			if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
+				if err := checkVariadicCall(c, sig); err != nil {
+					return nil, err
+				}
+				fun, err := e.exportExpr(c.Fun)
+				if err != nil {
+					return nil, err
+				}
+				args, err := e.exportCallArgs(c)
+				if err != nil {
+					return nil, err
+				}
+				typ, err := e.callType(c)
+				if err != nil {
+					return nil, err
+				}
+				return e.node("call", c, map[string]any{
+					"fun": fun, "args": args, "type": typ,
+				}), nil
+			}
 			if len(c.Args) != 1 {
 				return nil, fmt.Errorf("gofrontend: conversion has %d arguments (want 1)", len(c.Args))
 			}
@@ -4948,6 +5289,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			to, err := e.typeID(tv.Type)
 			if err != nil {
 				return nil, err
+			}
+			// P3-M8: unsafe.Pointer conversions (synth_unsafe.go); see hunk 1.
+			if n, handled, err := e.exportUnsafeConversion(c, tv.Type, x, to); handled {
+				return n, err
 			}
 			// M7: "from" records the source type id.
 			var from any
@@ -5172,6 +5517,12 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// "math*" wire nodes. Intercepted before the funcByObj lookup.
 	if isMathIntrinsicFunc(fn) {
 		return e.exportMathIntrinsic(c, fn.Name())
+	}
+	// P3-M8 (wave 2, reflect): reflect intrinsics called from within the
+	// synthetic reflect package (e.g. __reflect_tKind in rtype.Kind) lower
+	// to the "reflectop" wire node. Intercepted before the funcByObj lookup.
+	if isReflectIntrinsicFunc(fn) {
+		return e.exportReflectIntrinsic(c, fn.Name())
 	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
@@ -5649,15 +6000,43 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			continue
 		}
 		fi, ok := e.funcByObj[mobj]
+		helperMapped := false
 		if !ok {
-			continue
+			// P3-M8 (WS D): multi-result synthetic methods are skipped
+			// from funcByObj (v1 cannot emit multi-result funcdecls),
+			// but their pair-returning __-helpers are emitted. Map the
+			// method to the helper so interface dispatch can target it:
+			// the dispatcher invokes the helper with the receiver data
+			// as params[0] (exactly the helper's prependRecv calling
+			// convention) and the node yields the pair, so r.Read(buf)
+			// through an interface produces the same pair shape as the
+			// concrete Appendix M desugar. Methods with no helper keep
+			// the old skip (dispatch fails fast with "missing method"
+			// — loud, never silent).
+			var hfi *funcDeclInfo
+			hfi, ok = e.multiResultHelperFunc(mobj)
+			if !ok {
+				continue
+			}
+			fi = hfi
+			helperMapped = true
 		}
 		if fi.isTemplate {
 			tmplSkipped = true
 			continue
 		}
 		recv := "value"
-		if fi.recv != nil {
+		if helperMapped {
+			// The helper is a plain package-level function; the
+			// dispatcher's receiver adaptation must mirror the
+			// method's DECLARED receiver so the helper receives the
+			// same shape the concrete desugar passes it.
+			if msig, ok := mobj.Type().(*types.Signature); ok && msig.Recv() != nil {
+				if _, ok := msig.Recv().Type().(*types.Pointer); ok {
+					recv = "pointer"
+				}
+			}
+		} else if fi.recv != nil {
 			if _, ok := fi.recv.Type().(*types.Pointer); ok {
 				recv = "pointer"
 			}
@@ -5876,12 +6255,26 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	if err != nil {
 		return nil, err
 	}
-	// P3-M5 (WS E, ADR-0005): multi-result synthetic interface methods
-	// (Context.Deadline) fail fast (WS D; the P3-M3 F4 precedent) — the
-	// shape must not reach dispatch. User 2-result methods keep the
-	// existing F4 behavior.
-	if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
-		return nil, multiResultSyntheticError(f)
+	// P3-M8 (WS D): multi-result interface methods with a dispatched pair
+	// (io.Reader.Read, io.Writer.Write — see m8IfaceMultiResultMethods)
+	// lower to the ifacemethod dispatch: the itab maps the method to the
+	// concrete type's pair-returning __-helper (wired via
+	// methodTableEntries), so the node yields the pair and field
+	// extraction proceeds exactly like the concrete Appendix M desugar.
+	// The node's "type" is the pair type id — callType scope-errors on
+	// multi-valued calls, so it is bypassed here. Any other multi-result
+	// interface method keeps the fail-fast below (the P3-M5 F4
+	// precedent).
+	var pairPlan *mrPlan
+	if sig.Results().Len() > 1 {
+		pairPlan = e.classifyIfaceMultiResultCall(selection)
+		if pairPlan == nil {
+			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+				return nil, multiResultSyntheticError(f)
+			}
+			return nil, scopeErrorf("interface method %s has %d results; at most one result is supported in frontend/v1 scope (WS D)",
+				mname, sig.Results().Len())
+		}
 	}
 	// Remediation (R1 P1-1, R2 P1-2): same variadic fail-fast as direct
 	// and concrete-method calls; the spread form passes the slice
@@ -5924,9 +6317,20 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	if err != nil {
 		return nil, err
 	}
-	typ, err := e.callType(c)
-	if err != nil {
-		return nil, err
+	var typ any
+	if pairPlan != nil {
+		// P3-M8 (WS D): the dispatch yields the interface pair, not the
+		// multi-valued call result (callType scope-errors on tuples).
+		tid, err := e.typeID(pairPlan.tmpType)
+		if err != nil {
+			return nil, err
+		}
+		typ = tid
+	} else {
+		typ, err = e.callType(c)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return e.node("ifacemethod", c, map[string]any{
 		"recv": recv, "method": mname, "iface": ifaceID,
@@ -5991,6 +6395,11 @@ func (e *exporter) exportTypeConversion(c *ast.CallExpr, tn *types.TypeName) (*N
 	to, err := e.typeID(tn.Type())
 	if err != nil {
 		return nil, err
+	}
+	// P3-M8: unsafe.Pointer conversions (synth_unsafe.go). handled=false
+	// keeps the existing path (notably unsafe.Pointer→uintptr, the D5 trap).
+	if n, handled, err := e.exportUnsafeConversion(c, tn.Type(), x, to); handled {
+		return n, err
 	}
 	// M7: "from" records the source type id (needed for string<->
 	// slice conversions to get the element kind).
@@ -6331,12 +6740,15 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// P3-M7 (wave 1): errors/sort/bytes/math/strings consts/vars likewise,
 	// plus the 8 encoding/* primitives' consts/vars (base64.StdEncoding,
 	// binary.LittleEndian, hex.ErrLength, asn1.TagNull, ...).
+	// P3-M8 (wave 2): syscall/os/io/fs/reflect/hash/crypto/crypto/*
+	// consts/vars likewise (syscall.EINVAL, reflect.Int, ...).
 	// Method expressions (time.Duration.String) have a SelectorExpr X and
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
 			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" ||
-				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" {
+				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "crypto" ||
+				p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

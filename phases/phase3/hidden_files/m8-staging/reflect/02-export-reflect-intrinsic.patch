@@ -1,0 +1,17 @@
+diff --git a/phases/phase1/frontend/export.go b/phases/phase1/frontend/export.go
+index dff0624..da1c059 100644
+--- a/phases/phase1/frontend/export.go
++++ b/phases/phase1/frontend/export.go
+@@ -5173,6 +5173,12 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
+ 	if isMathIntrinsicFunc(fn) {
+ 		return e.exportMathIntrinsic(c, fn.Name())
+ 	}
++	// P3-M8 (wave 2, reflect): reflect intrinsics called from within the
++	// synthetic reflect package (e.g. __reflect_tKind in rtype.Kind) lower
++	// to the "reflectop" wire node. Intercepted before the funcByObj lookup.
++	if isReflectIntrinsicFunc(fn) {
++		return e.exportReflectIntrinsic(c, fn.Name())
++	}
+ 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
+ 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
+ 	// time.ParseDuration.

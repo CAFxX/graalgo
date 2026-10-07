@@ -1,0 +1,1 @@
+graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe.Add: pointer arithmetic on unsafe.Pointer traps (D5: handles admit no byte arithmetic; re-test: byte-addressed value model)

@@ -1,0 +1,7 @@
+panic: syscall.RawSyscall6: trap 2 (SYS_OPEN) has no graalgo intrinsic; re-test: Panama FFI (Phase 4)
+
+goroutine 1 [running]:
+m8synth/syscall.RawSyscall6(...)
+	/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/syscall/gclegs/synthref-08_rawsyscall6_trap/gopath/src/m8synth/syscall/syscall.go:2887
+main.main()
+	/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/syscall/gclegs/synthref-08_rawsyscall6_trap/gopath/src/m8prog/main.go:10 +0x39

@@ -35,18 +35,47 @@ var syntheticSources = map[string]string{
 	// synth_math.go / synth_strings.go, resolved via getSyntheticPackage so
 	// the same *types.Package instance is shared between user type-check
 	// and synthetic emission).
-	"errors": syntheticErrorsSource,
-	"sort":   syntheticSortSource,
-	"bytes":  syntheticBytesSource,
-	"math":   syntheticMathSource,
+	"errors":  syntheticErrorsSource,
+	"sort":    syntheticSortSource,
+	"bytes":   syntheticBytesSource,
+	"math":    syntheticMathSource,
 	"strings": syntheticStringsSource,
 	// P3-M7 (wave 1): encoding/csv + encoding/gob (synth_enc_csv_gob.go).
 	"encoding/csv": syntheticCsvSource,
 	"encoding/gob": syntheticGobSource,
 	// P3-M7 (wave 1): strconv (synth_strconv.go) and encoding/json
 	// (synth_json.go). Pure-Go, self-contained.
-	"strconv":        syntheticStrconvSource,
+	"strconv":       syntheticStrconvSource,
 	"encoding/json": syntheticJsonSource,
+	// P3-M8 (wave 2): synthetic os package (synth_os.go) and the minimal
+	// synthetic io/fs core (synth_iofs.go) it aliases its error/file types
+	// from. os imports io/fs, io, syscall, time, errors (all synthetic).
+	"os":    syntheticOsSource,
+	"io/fs": syntheticIoFsSource,
+	// P3-M8 (wave 2): synthetic reflect package (real-Go source in
+	// synth_reflect.go). The wire type table carries field offsets/tags,
+	// method tables, and signatures; the runtime GoRType table is built
+	// from it (phases/phase3 p3reflect). internal/reflectlite is a pure
+	// adapter; iter is the minimal generic sequence declarations.
+	"reflect":              syntheticReflectSource,
+	"internal/reflectlite": syntheticReflectliteSource,
+	"iter":                 syntheticIterSource,
+	// P3-M8 (wave 2): crypto/* packages (synth_crypto*.go). Software
+	// implementations only; see phases/phase3/hidden_files/m8-analysis/crypto.md.
+	"hash":          syntheticHashSource,
+	"crypto":        syntheticCryptoSource,
+	"crypto/md5":    syntheticMd5Source,
+	"crypto/sha1":   syntheticSha1Source,
+	"crypto/sha256": syntheticSha256Source,
+	"crypto/sha512": syntheticSha512Source,
+	"crypto/sha3":   syntheticSha3Source,
+	"crypto/subtle": syntheticSubtleSource,
+	"crypto/hmac":   syntheticHmacSource,
+	"crypto/cipher": syntheticCipherSource,
+	"crypto/aes":    syntheticAesSource,
+	"crypto/des":    syntheticDesSource,
+	"crypto/rc4":    syntheticRc4Source,
+	"crypto/rand":   syntheticRandSource,
 	// P3-M7 (wave 1): synthetic encoding/xml package (real-Go source in
 	// synth_xml.go). Self-contained (no imports); the token-stream
 	// desugar lives in mrdesugar_m5.go (mrXmlToken).
@@ -65,7 +94,21 @@ var syntheticSources = map[string]string{
 	"encoding/pem":     syntheticPemSource,
 	"encoding/asn1":    syntheticAsn1Source,
 	"encoding":         syntheticEncodingSource,
+	// P3-M8 (wave 2): synthetic io package (real-Go source in
+	// synth_io.go). All of io.go + multi.go + pipe.go; io/fs and
+	// io/ioutil are separate packages and out of scope. Imports the
+	// P3-M7 synthetic errors package and the P3-M2 sync surface
+	// (Mutex/Once only — sync.Pool is NOT in the M2 surface).
+	"io": syntheticIoSource,
+	// P3-M8 (wave 2): synthetic syscall package (linux/amd64), real-Go
+	// source in synth_syscall.go: Errno vocabulary + scalar services via
+	// //go:linkname to the frozen graalgo.os.* table (os.md section 2.4, R1/R4).
+	// Dependency: the synthetic source imports "io/fs" (Errno.Is
+	// sentinels) - the os worker io/fs registration (R5) must land
+	// first or together with this entry.
+	"syscall": syntheticSyscallSource,
 }
+
 // the overlay importer, so the context source's `import "time"` resolves
 // to the synthetic package (synthetic→synthetic imports).
 // The same *types.Package instance is returned to every importer, so
@@ -94,7 +137,10 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		panic("gofrontend: no synthetic source for " + path)
 	}
 	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, path+".go", src, parser.AllErrors)
+	// P3-M8 (wave 2): ParseComments populates doc comments so the
+	// //go:linkname directives in synthetic sources (os) are visible to
+	// the exporter's linkname scan (ADR-0004 D1); matches ExportFile.
+	file, err := parser.ParseFile(fset, path+".go", src, parser.AllErrors|parser.ParseComments)
 	if err != nil {
 		panic("gofrontend: synthetic " + path + " parse error: " + err.Error())
 	}
@@ -134,6 +180,9 @@ func isSyntheticIntrinsic(path, name string) bool {
 	}
 	if path == "math" {
 		return mathIntrinsicNames[name]
+	}
+	if path == "reflect" {
+		return reflectIntrinsicNames[name]
 	}
 	return false
 }
@@ -180,6 +229,12 @@ type synthGroup struct {
 // later by exportSyntheticBodies). Intrinsics are skipped. The exporter's
 // per-file state is swapped for the duration.
 func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
+	// P3-M8: idempotent — skip if already imported (prevents duplicate
+	// globals when e.g. errors is imported both directly and via io).
+	if e.importedSynthetic[sp.path] {
+		return nil
+	}
+	e.importedSynthetic[sp.path] = true
 	savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
 	savedSubst, savedSubstTypeIDs := e.subst, e.substTypeIDs
 	e.fset, e.src, e.info, e.pkg = sp.fset, sp.raw, sp.info, sp.pkg
@@ -499,10 +554,26 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 	// with the named M7 error as the corpus README claims.)
 	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" &&
 		path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" &&
-		path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/xml" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" {
+		path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/xml" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "unsafe" &&
+		// P3-M8 (wave 2): the synthetic os package and io/fs core.
+		path != "os" && path != "io" && path != "io/fs" &&
+		// P3-M8 (wave 2): the synthetic syscall package.
+		path != "syscall" &&
+		// P3-M8 (wave 2): the synthetic hash/cipher/digest packages.
+		path != "hash" && path != "crypto" &&
+		path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" &&
+		path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" &&
+		path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" &&
+		path != "reflect" && path != "internal/reflectlite" && path != "iter" {
 		return nil, false, nil
 	}
 	obj := e.info.Uses[sel.Sel]
+	// P3-M8: the unsafe builtins are *types.Builtin (shared from
+	// types.Unsafe), lowered by exportUnsafeIntrinsic (synth_unsafe.go).
+	if b, ok := obj.(*types.Builtin); ok && isUnsafeIntrinsic(b) {
+		n, err := e.exportUnsafeIntrinsic(c, b)
+		return n, true, err
+	}
 	if tn, ok := obj.(*types.TypeName); ok {
 		// P3-M5 (WS E, ADR-0005): qualified conversion (time.Duration(5),
 		// time.Time(t)): the unwrapSelector block above would reject it
@@ -594,7 +665,15 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 	p := fn.Pkg().Path()
 	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" &&
 		p != "encoding/base32" && p != "encoding/base64" && p != "encoding/hex" && p != "encoding/binary" &&
-		p != "encoding/ascii85" && p != "encoding/pem" && p != "encoding/asn1" && p != "encoding" && p != "encoding/csv" && p != "encoding/gob" && p != "strconv" && p != "encoding/json" {
+		p != "encoding/ascii85" && p != "encoding/pem" && p != "encoding/asn1" && p != "encoding" && p != "encoding/csv" && p != "encoding/gob" && p != "strconv" && p != "encoding/json" && p != "io" &&
+		// P3-M8 (wave 2): os + io/fs + syscall.
+		p != "os" && p != "io/fs" && p != "syscall" &&
+		p != "reflect" && p != "internal/reflectlite" && p != "iter" &&
+		// P3-M8 (wave 2): hash + crypto/*.
+		p != "hash" && p != "crypto" &&
+		p != "crypto/aes" && p != "crypto/cipher" && p != "crypto/des" && p != "crypto/hmac" &&
+		p != "crypto/md5" && p != "crypto/rand" && p != "crypto/rc4" && p != "crypto/sha1" &&
+		p != "crypto/sha256" && p != "crypto/sha3" && p != "crypto/sha512" && p != "crypto/subtle" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -607,12 +686,23 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 func multiResultSyntheticError(fn *types.Func) error {
 	// P3-M7: the milestone tag follows the synthetic package (time/context
 	// are M5, errors/sort/bytes/math/strings/encoding-xml and the 8
-	// encoding/* primitives are wave-1 M7).
+	// encoding/* primitives are wave-1 M7; io is wave-2 M8).
 	milestone := "M5"
 	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
 		p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" ||
 		p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" {
 		milestone = "M7"
+	}
+	if fn.Pkg().Path() == "io" || fn.Pkg().Path() == "os" || fn.Pkg().Path() == "io/fs" ||
+		fn.Pkg().Path() == "syscall" ||
+		fn.Pkg().Path() == "reflect" || fn.Pkg().Path() == "internal/reflectlite" || fn.Pkg().Path() == "iter" ||
+		fn.Pkg().Path() == "hash" || fn.Pkg().Path() == "crypto" ||
+		fn.Pkg().Path() == "crypto/aes" || fn.Pkg().Path() == "crypto/cipher" || fn.Pkg().Path() == "crypto/des" ||
+		fn.Pkg().Path() == "crypto/hmac" || fn.Pkg().Path() == "crypto/md5" || fn.Pkg().Path() == "crypto/rand" ||
+		fn.Pkg().Path() == "crypto/rc4" || fn.Pkg().Path() == "crypto/sha1" || fn.Pkg().Path() == "crypto/sha256" ||
+		fn.Pkg().Path() == "crypto/sha3" || fn.Pkg().Path() == "crypto/sha512" || fn.Pkg().Path() == "crypto/subtle" {
+		// P3-M8 (wave 2).
+		milestone = "M8"
 	}
 	// Qualify method names with the receiver type name
 	// (bytes.Buffer.Read vs bytes.Reader.Read).

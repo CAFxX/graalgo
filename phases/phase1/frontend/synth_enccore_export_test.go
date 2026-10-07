@@ -201,22 +201,16 @@ func TestEnccoreDesugarShapes(t *testing.T) {
 // TestEnccoreFailFast verifies the named M7 scope errors: multi-result
 // members in non-desugar positions, and the members that need
 // reflect/WS D (binary.Append, asn1.Unmarshal, MarshalWithParams).
+// NOTE (P3-M8 D2): bare-statement position is a desugar position for
+// table entries now (see concrete_multiresult_bare_test.go) — the
+// hex.DecodeString / base64.Decode statement cases that used to live
+// here moved there.
 func TestEnccoreFailFast(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
 		want string // required substring of the error
 	}{
-		{
-			"hex.DecodeString statement position",
-			"package main\nimport \"encoding/hex\"\nfunc main() {\nhex.DecodeString(\"6162\")\n}\n",
-			"M7",
-		},
-		{
-			"base64 method statement position",
-			"package main\nimport \"encoding/base64\"\nfunc main() {\nenc := base64.StdEncoding\nenc.Decode(make([]byte, 10), []byte(\"aGk=\"))\n}\n",
-			"M7",
-		},
 		{
 			"binary.Append needs reflect (M7 multi-result fail-fast)",
 			"package main\nimport \"encoding/binary\"\nfunc main() {\nbinary.Append(nil, binary.LittleEndian, uint16(1))\n}\n",

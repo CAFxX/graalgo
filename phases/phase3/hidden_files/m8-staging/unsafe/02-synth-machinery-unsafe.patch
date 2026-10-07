@@ -1,0 +1,22 @@
+diff --git a/phases/phase1/frontend/synth_machinery.go b/phases/phase1/frontend/synth_machinery.go
+index 59c8b91..edd873c 100644
+--- a/phases/phase1/frontend/synth_machinery.go
++++ b/phases/phase1/frontend/synth_machinery.go
+@@ -499,10 +499,16 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
+ 	// with the named M7 error as the corpus README claims.)
+ 	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" &&
+ 		path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" &&
+-		path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/xml" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" {
++		path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/xml" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "unsafe" {
+ 		return nil, false, nil
+ 	}
+ 	obj := e.info.Uses[sel.Sel]
++	// P3-M8: the unsafe builtins are *types.Builtin (shared from
++	// types.Unsafe), lowered by exportUnsafeIntrinsic (synth_unsafe.go).
++	if b, ok := obj.(*types.Builtin); ok && isUnsafeIntrinsic(b) {
++		n, err := e.exportUnsafeIntrinsic(c, b)
++		return n, true, err
++	}
+ 	if tn, ok := obj.(*types.TypeName); ok {
+ 		// P3-M5 (WS E, ADR-0005): qualified conversion (time.Duration(5),
+ 		// time.Time(t)): the unwrapSelector block above would reject it

@@ -25,7 +25,13 @@ public final class NilCheckNode extends GoExprNode {
 
     @Override
     public boolean executeBoolean(VirtualFrame frame) {
-        boolean isNull = child.executeObject(frame) == null;
+        // P3-M8: long/int-kind children (unsafe.Pointer handles) test the
+        // zero carrier, not a null reference.
+        boolean isNull = switch (child.kind().slotKind()) {
+            case Long -> child.executeLong(frame) == 0L;
+            case Int -> child.executeInt(frame) == 0;
+            default -> child.executeObject(frame) == null;
+        };
         return negated != isNull;
     }
 }

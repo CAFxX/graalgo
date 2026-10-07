@@ -1,0 +1,31 @@
+
+// binaryMarshalPair is the single-result form of MarshalBinary's results.
+type binaryMarshalPair struct {
+	b   []byte
+	err error
+}
+
+// binaryAppendPair is the single-result form of AppendBinary's results.
+type binaryAppendPair struct {
+	b   []byte
+	err error
+}
+
+// __binaryMarshal serves m.MarshalBinary() through the mrM8 desugar
+// (table entry pkgPath "encoding", helperPkg "hash"; see
+// m8-staging/crypto/03-mrdesugar.patch). The marshaler is referenced
+// structurally so this package does not import encoding.
+// Re-test trigger: WS D lands.
+func __binaryMarshal(m interface {
+	MarshalSingle() []byte
+}) binaryMarshalPair {
+	return binaryMarshalPair{m.MarshalSingle(), nil}
+}
+
+// __binaryAppend serves m.AppendBinary(b) through the mrM8 desugar
+// (table entry pkgPath "encoding", helperPkg "hash").
+func __binaryAppend(m interface {
+	AppendSingle([]byte) []byte
+}, b []byte) binaryAppendPair {
+	return binaryAppendPair{m.AppendSingle(b), nil}
+}

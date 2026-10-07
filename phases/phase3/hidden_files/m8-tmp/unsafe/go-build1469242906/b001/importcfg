@@ -1,0 +1,7 @@
+# import config
+packagefile os=/home/hatch/workspace/.gocache-m8-unsafe/13/137447676c393ba752cbb4cd2e2dc4be447bd383363b07ba8e2fbe892cc769d2-d
+packagefile reflect=/home/hatch/workspace/.gocache-m8-unsafe/58/58a860243c497f1b66d9622b236677bce451387b96ab6060199133cacd464166-d
+packagefile testing=/home/hatch/workspace/.gocache-m8-unsafe/26/26a47130d14af2cdc8a5d8e598cf8c137bcce2c9fa326179aaaf05c3fb8a056d-d
+packagefile testing/internal/testdeps=/home/hatch/workspace/.gocache-m8-unsafe/b3/b37849530f1470284a0bbf700fef23211901cefcf8ef3b96819626109cac043d-d
+packagefile runtime=/home/hatch/workspace/.gocache-m8-unsafe/c9/c9643b9325d5d65bd399279d95b536843e73b1caeddc839929ccf25e711f8f77-d
+packagefile graalgo-frontend=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/unsafe/go-build1469242906/b132/_pkg_.a

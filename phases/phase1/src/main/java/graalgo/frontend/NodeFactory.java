@@ -894,7 +894,9 @@ public final class NodeFactory {
             // name in a process-wide cache (see basicDescriptorForName).
             String name = entry.object("detail", path).string("name", path);
             name = canonicalBasicName(name);
-            return basicDescriptorForName(name, kindForBasicName(name));
+            graalgo.values.GoTypeDescriptor bd = basicDescriptorForName(name, kindForBasicName(name));
+            recordDescriptorWireId(bd, typeId);
+            return bd;
         }
         // P3-M7: a pointer to a named type is named "*"+qualifiedName
         // (like gc's %T), not structural. Two distinct named types with
@@ -917,6 +919,7 @@ public final class NodeFactory {
                     }
                 }
                 ctx.typeDescs.put(typeId, nd);
+                recordDescriptorWireId(nd, typeId);
                 return nd;
             }
         }
@@ -941,6 +944,7 @@ public final class NodeFactory {
                     d = prev;
                 }
             }
+            recordDescriptorWireId(d, typeId);
             return d;
         }
         graalgo.values.GoTypeDescriptor d = ctx.typeDescs.get(typeId);
@@ -971,6 +975,7 @@ public final class NodeFactory {
                 }
             }
             ctx.typeDescs.put(typeId, nd);
+            recordDescriptorWireId(nd, typeId);
             return nd;
         } else if ("interface".equals(k)) {
             emptyIface = entry.object("detail", path).bool("empty", path);
@@ -980,6 +985,7 @@ public final class NodeFactory {
         }
         d = new graalgo.values.GoTypeDescriptor(name, kindOf(ctx, typeId, path), emptyIface);
         ctx.typeDescs.put(typeId, d);
+        recordDescriptorWireId(d, typeId);
         return d;
     }
 
@@ -1132,6 +1138,36 @@ public final class NodeFactory {
     private static final java.util.concurrent.ConcurrentHashMap<String,
             graalgo.values.GoTypeDescriptor> STRUCTURAL_DESCS =
             new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * P3-M8 (wave 2, reflect): descriptor <-> wire type id registry, and
+     * its inverse. Recorded additively in {@link #typeDescriptorFor}; zero
+     * behavior change. Consumed by the reflect package to map a
+     * GoTypeDescriptor (from a GoInterface) to its canonical reflect token.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<
+            graalgo.values.GoTypeDescriptor, Integer> DESCRIPTOR_WIRE_IDS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+    private static final java.util.concurrent.ConcurrentHashMap<
+            Integer, graalgo.values.GoTypeDescriptor> WIRE_ID_DESCRIPTORS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** Wire type id for a descriptor, or null when unknown. */
+    public static Integer wireIdForDescriptor(graalgo.values.GoTypeDescriptor d) {
+        return DESCRIPTOR_WIRE_IDS.get(d);
+    }
+
+    /** Descriptor for a wire type id, or null when unknown. */
+    public static graalgo.values.GoTypeDescriptor descriptorForWireId(int typeId) {
+        return WIRE_ID_DESCRIPTORS.get(typeId);
+    }
+
+    /** Records a descriptor <-> wire id pair (additive; no behavior change). */
+    private static void recordDescriptorWireId(
+            graalgo.values.GoTypeDescriptor d, int typeId) {
+        DESCRIPTOR_WIRE_IDS.put(d, typeId);
+        WIRE_ID_DESCRIPTORS.put(typeId, d);
+    }
 
     /**
      * Structural identity key for a type-table entry (M6, WS H). Named

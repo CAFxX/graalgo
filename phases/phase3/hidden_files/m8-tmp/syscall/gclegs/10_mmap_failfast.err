@@ -1,0 +1,7 @@
+panic: syscall.Mmap: no graalgo intrinsic; re-test: first real consumer
+
+goroutine 1 [running]:
+m8synth/syscall.Mmap(...)
+	/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/syscall/gclegs/synthref-10_mmap_failfast/gopath/src/m8synth/syscall/syscall.go:3008
+main.main()
+	/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/syscall/gclegs/synthref-10_mmap_failfast/gopath/src/m8prog/main.go:10 +0x25

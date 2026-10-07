@@ -1,0 +1,244 @@
+--- a/phases/phase1/frontend/export.go
++++ b/phases/phase1/frontend/export.go
+@@ -858,6 +858,9 @@ func ExportFile(path string) (string, error) {
+ 			needMath = true
+ 		case "strings":
+ 			needStrings = true
++			// P3-M8: the synthetic strings source imports errors (gc-exact
++			// errors.New in Reader.ReadAt/Seek) — bytes/strconv precedent.
++			needErrors = true
+ 		case "encoding/xml":
+ 			needXml = true
+ 		case "strconv":
+--- a/phases/phase1/frontend/synth_strings.go
++++ b/phases/phase1/frontend/synth_strings.go
+@@ -11,9 +11,10 @@
+ //
+ // Exact gc 1.27.1 public API signatures (verified against
+ // ~/workspace/graalgo-stdlib/go1.27.1/strings/*.go). Implementations are
+-// clean-room ports of gc's algorithms to pure Go with NO imports: the
+-// wave-1 import overlay does not provide io, reflect, unicode, or
+-// unicode/utf8, so:
++// clean-room ports of gc's algorithms to pure Go: the import overlay does
++// not provide reflect, unicode, or unicode/utf8, so:
++// (P3-M8: io IS provided — the source imports it for io.EOF, the
++// io.Seek* consts, and the io.Reader/io.Writer signatures below.)
+ //
+ //   - UTF-8 decoding/encoding (DecodeRuneInString, DecodeLastRuneInString,
+ //     RuneLen, AppendRune equivalents) is implemented inline
+@@ -60,6 +61,11 @@ package main
+ // members.
+ const syntheticStringsSource = `package strings
+ 
++import (
++	"errors"
++	"io"
++)
++
+ // maxInt is the maximum int value, as in the real package.
+ const maxInt = int(^uint(0) >> 1)
+ 
+@@ -2212,19 +2218,84 @@ func stringsAppendRune(b []byte, r rune) []byte {
+ 	// Size returns the original length of the underlying string.
+ 	func (r *Reader) Size() int64 { return int64(len(r.s)) }
+ 
+-	// Read implements io.Reader. Multi-result: not in M7 scope (WS D).
++	// Read implements io.Reader. Multi-result: the real implementation
++	// lives in __stringsReaderRead; 2-target call sites desugar to it
++	// (Appendix M — P3-M8 discharge of the M7 fail-fast; only io.EOF was
++	// missing, and io landed).
+ 	func (r *Reader) Read(b []byte) (n int, err error) {
+-		panic("strings.Reader.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
++		panic("strings.Reader.Read: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
++	}
++
++	// stringsReaderReadPair is the Appendix M carrier for Reader.Read.
++	type stringsReaderReadPair struct {
++		n   int
++		err error
++	}
++
++	// __stringsReaderRead is the real Reader.Read (gc 1.27.1 algorithm,
++	// verbatim): needs only io.EOF — no interface dispatch.
++	func __stringsReaderRead(r *Reader, b []byte) stringsReaderReadPair {
++		if r.i >= int64(len(r.s)) {
++			return stringsReaderReadPair{0, io.EOF}
++		}
++		r.prevRune = -1
++		n := copy(b, r.s[r.i:])
++		r.i += int64(n)
++		return stringsReaderReadPair{n, nil}
+ 	}
+ 
+-	// ReadAt implements io.ReaderAt. Multi-result: not in M7 scope (WS D).
++	// ReadAt implements io.ReaderAt. Multi-result: the real implementation
++	// lives in __stringsReaderReadAt; 2-target call sites desugar to it
++	// (Appendix M — P3-M8 discharge, see Read).
+ 	func (r *Reader) ReadAt(b []byte, off int64) (n int, err error) {
+-		panic("strings.Reader.ReadAt: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
++		panic("strings.Reader.ReadAt: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
++	}
++
++	// stringsReaderReadAtPair is the Appendix M carrier for Reader.ReadAt.
++	type stringsReaderReadAtPair struct {
++		n   int
++		err error
++	}
++
++	// __stringsReaderReadAt is the real Reader.ReadAt (gc 1.27.1,
++	// verbatim): cannot modify state — see io.ReaderAt.
++	func __stringsReaderReadAt(r *Reader, b []byte, off int64) stringsReaderReadAtPair {
++		if off < 0 {
++			return stringsReaderReadAtPair{0, errors.New("strings.Reader.ReadAt: negative offset")}
++		}
++		if off >= int64(len(r.s)) {
++			return stringsReaderReadAtPair{0, io.EOF}
++		}
++		n := copy(b, r.s[off:])
++		if n < len(b) {
++			return stringsReaderReadAtPair{n, io.EOF}
++		}
++		return stringsReaderReadAtPair{n, nil}
+ 	}
+ 
+-	// ReadByte implements io.ByteReader. Multi-result: not in M7 scope (WS D).
++	// ReadByte implements io.ByteReader. Multi-result: the real
++	// implementation lives in __stringsReaderReadByte; 2-target call
++	// sites desugar to it (Appendix M — P3-M8 discharge, see Read).
+ 	func (r *Reader) ReadByte() (byte, error) {
+-		panic("strings.Reader.ReadByte: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
++		panic("strings.Reader.ReadByte: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
++	}
++
++	// stringsReaderReadBytePair is the Appendix M carrier for Reader.ReadByte.
++	type stringsReaderReadBytePair struct {
++		b   byte
++		err error
++	}
++
++	// __stringsReaderReadByte is the real Reader.ReadByte (gc 1.27.1,
++	// verbatim).
++	func __stringsReaderReadByte(r *Reader) stringsReaderReadBytePair {
++		r.prevRune = -1
++		if r.i >= int64(len(r.s)) {
++			return stringsReaderReadBytePair{0, io.EOF}
++		}
++		b := r.s[r.i]
++		r.i++
++		return stringsReaderReadBytePair{b, nil}
+ 	}
+ 
+ 	// UnreadByte unreads the last byte.
+@@ -2237,9 +2308,31 @@ func stringsAppendRune(b []byte, r rune) []byte {
+ 		return nil
+ 	}
+ 
+-	// ReadRune implements io.RuneReader. Multi-result: not in M7 scope (WS D).
++	// ReadRune implements io.RuneReader. Multi-result: the real
++	// implementation lives in __stringsReaderReadRune; 3-target call
++	// sites desugar to it (Appendix M — P3-M8 discharge, see Read).
+ 	func (r *Reader) ReadRune() (ch rune, size int, err error) {
+-		panic("strings.Reader.ReadRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
++		panic("strings.Reader.ReadRune: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
++	}
++
++	// stringsReaderReadRuneTriple is the Appendix M carrier for Reader.ReadRune.
++	type stringsReaderReadRuneTriple struct {
++		ch   rune
++		size int
++		err  error
++	}
++
++	// __stringsReaderReadRune is the real Reader.ReadRune (gc 1.27.1,
++	// verbatim): utf8.DecodeRuneInString is the inlined stringsDecodeRune.
++	func __stringsReaderReadRune(r *Reader) stringsReaderReadRuneTriple {
++		if r.i >= int64(len(r.s)) {
++			r.prevRune = -1
++			return stringsReaderReadRuneTriple{0, 0, io.EOF}
++		}
++		r.prevRune = int(r.i)
++		rs := stringsDecodeRune(r.s[r.i:])
++		r.i += int64(rs.size)
++		return stringsReaderReadRuneTriple{rune(rs.r), rs.size, nil}
+ 	}
+ 
+ 	// UnreadRune unreads the last rune.
+@@ -2255,13 +2348,46 @@ func stringsAppendRune(b []byte, r rune) []byte {
+ 		return nil
+ 	}
+ 
+-	// Seek implements io.Seeker. Multi-result: not in M7 scope (WS D).
++	// Seek implements io.Seeker. Multi-result: the real implementation
++	// lives in __stringsReaderSeek; 2-target call sites desugar to it
++	// (Appendix M — P3-M8 discharge, see Read).
+ 	func (r *Reader) Seek(offset int64, whence int) (int64, error) {
+-		panic("strings.Reader.Seek: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
++		panic("strings.Reader.Seek: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+ 	}
+ 
+-	// WriteTo implements io.WriterTo: omitted (needs io.Writer). Re-test when
+-	// the io wave lands.
++	// stringsReaderSeekPair is the Appendix M carrier for Reader.Seek.
++	type stringsReaderSeekPair struct {
++		n   int64
++		err error
++	}
++
++	// __stringsReaderSeek is the real Reader.Seek (gc 1.27.1, verbatim).
++	func __stringsReaderSeek(r *Reader, offset int64, whence int) stringsReaderSeekPair {
++		r.prevRune = -1
++		var abs int64
++		switch whence {
++		case io.SeekStart:
++			abs = offset
++		case io.SeekCurrent:
++			abs = r.i + offset
++		case io.SeekEnd:
++			abs = int64(len(r.s)) + offset
++		default:
++			return stringsReaderSeekPair{0, errors.New("strings.Reader.Seek: invalid whence")}
++		}
++		if abs < 0 {
++			return stringsReaderSeekPair{0, errors.New("strings.Reader.Seek: negative position")}
++		}
++		r.i = abs
++		return stringsReaderSeekPair{abs, nil}
++	}
++
++	// WriteTo implements io.WriterTo. M8 scope: exact gc signature (now
++	// nameable); the body stays fail-fast — it needs w.Write, a 2-result
++	// interface call (WS D). Re-test when WS D lands.
++	func (r *Reader) WriteTo(w io.Writer) (n int64, err error) {
++		panic("strings.Reader.WriteTo: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
++	}
+ 
+ 	// Reset resets the Reader to read from s.
+ 	func (r *Reader) Reset(s string) {
+@@ -2278,8 +2404,9 @@ func stringsAppendRune(b []byte, r rune) []byte {
+ 	// ---------------------------------------------------------------------------
+ 
+ 	// stringsReplacer is the internal replacement algorithm interface. (The
+-	// gc replacer interface also has WriteString(w io.Writer, ...), which is
+-	// omitted here — io is unavailable in wave 1.)
++	// gc replacer interface also has WriteString(w io.Writer, ...); it is
++	// not needed here — Replacer.WriteString fails fast directly (WS D),
++	// so the internal algorithm interface stays single-method.)
+ 	type stringsReplacer interface {
+ 		Replace(s string) string
+ 	}
+@@ -2308,8 +2435,13 @@ func stringsAppendRune(b []byte, r rune) []byte {
+ 		return r.r.Replace(s)
+ 	}
+ 
+-	// WriteString writes s to w with all replacements performed: omitted
+-	// (needs io.Writer). Re-test when the io wave lands.
++	// WriteString writes s to w with all replacements performed. M8 scope:
++	// exact gc signature (now nameable); the body stays fail-fast — it
++	// needs w.Write, a 2-result interface call (WS D). Re-test when WS D
++	// lands.
++	func (r *Replacer) WriteString(w io.Writer, s string) (n int, err error) {
++		panic("strings.Replacer.WriteString: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
++	}
+ 
+ 	func stringsBuildReplacer(oldnew []string) stringsReplacer {
+ 		if len(oldnew) == 2 && len(oldnew[0]) > 1 {

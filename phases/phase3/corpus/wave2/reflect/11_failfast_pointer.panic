@@ -1,0 +1,1 @@
+reflect: reflect.Value.Pointer: not in M8 scope (uintptr escape traps per D5/GG-0015; no re-test planned)

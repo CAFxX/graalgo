@@ -1,0 +1,2 @@
+reason: unsafe.Sizeof over a type parameter is not a constant expression (go/types reports value mode for types with variable size); the frontend fails fast with a named M8 scope error instead of guessing a size.
+retest: sizes over type parameters (generic instantiation-aware Sizeof/Alignof/Offsetof)

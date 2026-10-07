@@ -1,0 +1,12 @@
+# import config
+packagefile internal/abi=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b005/_pkg_.a
+packagefile internal/asan=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b029/_pkg_.a
+packagefile internal/byteorder=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b012/_pkg_.a
+packagefile internal/cpu=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b011/_pkg_.a
+packagefile internal/goarch=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b006/_pkg_.a
+packagefile internal/goexperiment=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b016/_pkg_.a
+packagefile internal/msan=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b030/_pkg_.a
+packagefile internal/race=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b031/_pkg_.a
+packagefile internal/runtime/math=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b032/_pkg_.a
+packagefile internal/runtime/sys=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b027/_pkg_.a
+packagefile math/bits=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b023/_pkg_.a

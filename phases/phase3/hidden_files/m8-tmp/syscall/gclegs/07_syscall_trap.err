@@ -1,0 +1,7 @@
+panic: syscall.Syscall: trap 39 (SYS_GETPID) has no graalgo intrinsic; re-test: Panama FFI (Phase 4)
+
+goroutine 1 [running]:
+m8synth/syscall.Syscall(...)
+	/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/syscall/gclegs/synthref-07_syscall_trap/gopath/src/m8synth/syscall/syscall.go:2863
+main.main()
+	/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/syscall/gclegs/synthref-07_syscall_trap/gopath/src/m8prog/main.go:10 +0x39

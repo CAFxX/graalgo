@@ -1,0 +1,4 @@
+# import config
+packagefile internal/bytealg=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b010/_pkg_.a
+packagefile internal/runtime/syscall/linux=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b021/_pkg_.a
+packagefile internal/strconv=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b022/_pkg_.a

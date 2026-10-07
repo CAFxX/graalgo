@@ -25,6 +25,10 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);
         TESTS.add(graalgo.p3time.TimeChanLenCapTest.class);
         TESTS.add(graalgo.frontend.ChanBuilderTest.class);
+        // P3-M8 (wave 2): the GoOs errno-mapper + intrinsic unit tests.
+        TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
+        // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
+        TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
     }
 
     private IfaceTestRunner() {}
