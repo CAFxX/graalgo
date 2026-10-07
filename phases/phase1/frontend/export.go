@@ -1085,9 +1085,13 @@ func ExportFile(path string) (string, error) {
 		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
 			return "", err
 		}
-		// P3-M8: the synthetic syscall source references strconv.Itoa;
-		// import it directly (the needStrconv block above already ran).
+		// P3-M8: the synthetic syscall source references strconv.Itoa and
+		// errors.ErrUnsupported; import them directly (the needStrconv/
+		// needErrors blocks above already ran).
 		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
 			return "", err
 		}
 	}
