@@ -526,3 +526,168 @@ P3-M8: package wave 2 (io, reflect, etc.).
   to gc 1.27.1 — via the real import/package machinery, not a hand-wired
   corpus runner. The owner's "first taste of go-get" milestone.
 - Forwarded to the remediation coordinator (graalgo-phase3-m7-remed).
+
+## P3-M7 re-sign-off da18d8c REJECTED (supervisor independent verification, 2026-10-07)
+
+- Phase-3 suite: 55 pass / 3 FAIL (coordinator claimed green without running):
+  DescriptorNamesTest.testNamesMatchFactory (int vs int64 descriptor name),
+  2x LinknameEndToEndTest (interface conversion int64/is-int64 type-identity break).
+- bytes/00_basic REGRESSION (proven by 853fee2 bisect: passed pre-remediation,
+  fails at da18d8c with "no method table installed for *errors.errorString").
+  Round-1 "pre-existing" label was wrong; dbd728c broke the dispatch path.
+- Full wave-1 differential numbers still pending ("run timed out" in addendum).
+- Round-2 remediation coordinator dispatched (graalgo-phase3-m7-remed2):
+  fix all three findings with red-green evidence, complete the wave-1 corpus
+  with exact counts, two reviewers, round-2 addendum, then re-request sign-off.
+- Append-only history from here (M8 pipeline branched from this tree).
+
+## P3-M7 remediation round 2 — coordinator log 2026-10-07 ~16:10 CEST
+
+Registered as graalgo-phase3-m7-remed2. Round-1 re-sign-off da18d8c rejected;
+fixing the 3 phase-3 suite failures + bytes/00_basic regression.
+
+### Root-cause analysis (all three failures share one root: descriptor identity)
+
+1. **DescriptorNamesTest.testNamesMatchFactory** (`expected=int actual=int64`):
+   fa099f2 made basic-type descriptors name-keyed ("int" vs "int64" distinct
+   — CORRECT per Go semantics: distinct types, distinct %T, distinct type
+   switch cases) but the phase-3 `DescriptorNames` replica kept the old
+   kind-based naming. Replica was stale, not the factory. Fix: replica
+   mirrors the factory's Go-name canonicalization.
+2. **LinknameEndToEndTest x2** (`interface {} is int64, not int64`): the
+   kind-keyed `basicDescriptorFor(GoKind)` (BASIC_DESCS) and the name-keyed
+   `typeDescriptorFor` minted DIFFERENT objects for one Go type. `wrapInterface`
+   (linkname result boxing) used the old cache; `.(int64)` assertion used the
+   new cache. Same name, different identity -> panic. Fix: single unification
+   point `basicDescriptorForName`; `basicDescriptorFor(GoKind)` delegates;
+   all boxing paths (boxInterface, switch cases, wrapInterface,
+   IfaceDispatchBuilder.boxArg) resolve the exact Go name.
+3. **bytes/00_basic regression** (`no method table installed for dynamic type
+   "*errors.errorString"`): dbd728c renamed pointer-to-named descriptors in
+   the FACTORY but not in the `DescriptorNames` replica; `IfaceMethodTables`
+   builds tables keyed by the replica's name, runtime looks up by the
+   factory's name -> miss. Fix: replica mirrors "*"+qualifiedName. This was
+   NOT pre-existing (bisect: 853fee2 green, dbd728c red).
+
+### Changes (this round, all in working tree)
+- NodeFactory: `basicDescriptorForName` unification point; removed
+  kind-keyed BASIC_DESCS; `basicDescriptorFor(GoKind)` delegates;
+  `defaultBasicName`/`kindForBasicName`/`untypedDefaultDescriptor` for
+  untyped-constant default types; `buildBasicLit` sets typeId;
+  `displayNameFor`/`goSyntaxName` public, goSyntaxName takes TypeTable.
+- GoFuncRootNode.wrapInterface: name-keyed descriptors.
+- IfaceDispatchBuilder.boxArg: delegates to factory's untypedDefaultDescriptor.
+- DescriptorNames replica: basic->Go name, pointer-to-named->*qname,
+  named->displayNameFor, structural->goSyntaxName (delegated leaves);
+  isStructuralComposite += signature, chan.
+- DescriptorNamesTest: testPointerNameIsStructural -> 
+  testPointerToNamedUsesQualifiedName (pins new correct behavior).
+- GoTypeDescriptor: doc updated (per-name, not per-kind).
+
+### Delegated
+- Bytes-dispatch deep investigator (read-only) -> agent e3d2bed3
+- Round-1 child 2/6 gap check (read-only) -> agent 5ac567e3
+
+### Round-2 additional findings (investigator e3d2bed3, confirmed)
+
+The replica drift had THREE install sides, not one:
+- `IfaceMethodTables.resolve` (fixed via DescriptorNames replica)
+- `NodeFactory.dynamicMethodSets` (FIXED this round: named->displayNameFor,
+  pointer->"*"+qname or structural — was stale qualified/structural keys;
+  broke type assertions to interfaces)
+- `IfaceMethodTables.resolveInterfaces` (FIXED: named interfaces key by
+  display name, was qualified — broke itabForIntrinsic lookup)
+
+Error-class hunt: Class A (pointer-to-named w/ methods: *errors.errorString,
+*strconv.NumError, *bytes.Buffer, ...), Class B (slashed-path named types:
+encoding/json.Number etc.). All fixed at the root (naming alignment), not
+per-program.
+
+Child 2/6 gap check (investigator 5ac567e3): DONE. Worker B (GAP-2..5) landed
+all four: b3cbabd (GAP-2 float32), f0ea852 (GAP-3 base64), 71ef690 (GAP-4
+fail-fast), 53a6698 (GAP-5 asn1). Nothing outstanding.
+
+Supervisor's wider finding: 8 dispatch-regressed programs (bytes/00_basic,
+errors x3, sort x3, strings/04_replacer) — all traced to the single
+replica-drift root cause. All 8 run clean at gmp=1 post-fix; full wave
+running for gmp=1,4 confirmation.
+
+Committed: 71dd3d3 (descriptor identity + method-table key alignment).
+
+### Round-2 COMPLETE (2026-10-07 ~18:30 CEST)
+
+**Final verification (all green):**
+- Phase-1: 214/214 (211 + 3 new WrapInterfaceTest)
+- Phase-2: 194/194
+- Phase-3: 59/59 (58 + 1 new testResolveInterfacesSlashedPathKeysByDisplayName)
+- `make -C phases/phase3 check`: clean
+- Wave-1 corpus (71 programs, gmp=1,4): 95 executions passed, 21 scope-limited, 0 failed
+- wordfreq demo: byte-identical
+
+**Commits (master, append-only):**
+- 71dd3d3: unify basic-type descriptor identity; align method-table keys
+- c13ae1b: defaultKind public; drop IfaceDispatchBuilder replica
+- ce0026b: address code-review findings (10 findings)
+- 10afb5c: methodology-review pins; -Djava.io.tmpdir hardening
+- 3554115: round-2 addendum; scope-limit WS D/E encoding programs
+
+**Reviewers:** 2 independent (code + methodology), all findings addressed.
+**Addendum:** reviews/phase3-m7/remediation-addendum-round2.md
+**Re-sign-off:** requested.
+
+Note: wave restarts during this round were the coordinator's own
+(service restarts killed the wave; a script edit mid-run corrupted it).
+The -Djava.io.tmpdir hardening prevents /tmp-full silent corruption.
+
+## Supervisor adversarial review finds (2026-10-07, during round-2 verification)
+
+1. **BUG (blocker, fix dispatched):** `fmt.Errorf("plain %d", 1).Error()` crashes
+   with CCE (GoString vs GoStruct) — phase-1 Fmt.errorf stand-in boxes GoString
+   directly while M7 dispatch expects GoPointer->GoStruct. Two representations,
+   one crash. Reproducer: /tmp/advreview/t3.go. Fix worker dispatched.
+2. **BUG (filed, M8 queue — not a blocker):** `fmt.Println` never dispatches
+   `String()` — prints `{1}` instead of `T!`. Never in M7 scope (not in plan or
+   corpus), never worked (not a regression), wrong output not a crash.
+   Reproducer: /tmp/advreview/t4.go. Needs printer Stringer support (method
+   tables, WS-D class) — queue for P3-M8+.
+
+## M9 analysis complete — supervisor decisions (2026-10-07)
+
+M9 analysis coordinator done: 5 docs + 15 corpus stubs in m9-prep tree.
+Key findings: 245 remaining packages; net/net/http XL; M8 left 99 packages
+undrafted (crypto/tls, x509, os/exec, etc. — M9 absorbs crypto/tls per
+per-package classification); RISK-M9-4: M8 io fail-fasts Copy/ReadAll/ReadFull
+block everything (gate G-a); gates G-b (netpoller), G-c (math/big).
+
+Decisions:
+- D1 (G-a WS-D multi-result dispatch): lead work item of M8's post-rebase
+  integration phase; blocks M9 implementation kickoff. Not a separate milestone.
+- D2 (loopback-only network policy for corpus + go-test trial): CONFIRMED.
+  Egress grep gate as specified in the trial plan.
+- D3 (simd/, cryptotest/ exclusions): accepted as PROVISIONAL entries pending
+  deeper analysis during M9 implementation. Not final.
+
+## P3-M7 ACCEPTED (supervisor independent verification, 2026-10-07)
+
+**Sign-off tree:** 10b6499 (round-2 + Errorf CCE fix). All six GAPs fixed,
+all three round-1 rejection findings fixed at root cause, supervisor's two
+adversarial finds resolved (Errorf crash fixed; Println-Stringer filed to M8).
+
+**Independent verification (supervisor-run, not coordinator claims):**
+- Phase-1: 214/214 green | Phase-2: 194/194 green | Phase-3: 59/59 green
+- Wave-1 differential (gmp=1,4): 76 passed, 3 scope-limited, 0 failed
+  (scope: strings/03_builder, 07_combined, 09_panic_title — honest WS-D/unicode
+  limits with re-test triggers; validated genuine)
+- Encoding legs: per round-2 addendum 14 passed / 18 scope-limited / 0 failed
+  (10 newly-marked validated as genuine WS-D fail-fasts, never passing before)
+- 8 dispatch-regressed programs: all fixed at root cause (bytes 22/22,
+  errors 14/14, sort 20/20 re-verified on final tree)
+- wordfreq demo: byte-identical to gc 1.27.1 (owner acceptance criterion met)
+- `make -C phases/phase3 check`: clean
+- TEMP DEBUG: purged from history, none in tree
+
+**Review:** 2 independent reviewers per round (round-1) + 2 per round-2,
+all findings remediated; supervisor adversarial review found 2 more bugs
+(1 fixed pre-acceptance, 1 filed to M8 with reproducer).
+
+**M8 rebase:** unblocked. Rebase base = 10b6499.
