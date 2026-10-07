@@ -132,6 +132,30 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// pointer, which v1 cannot express — WS D — so it fails fast at every
 	// call site via isMultiResultSynthetic.)
 	{"encoding/asn1", "Marshal", "", "__asn1Marshal", "asn1MarshalPair", []string{"b", "err"}},
+	// strconv: package-level funcs. The Pub helpers are the public-shape
+	// single-result forms (gc-compatible error mapping via toError);
+	// ParseFloat's helper is __parseFloat (no Pub variant — its error
+	// mapping is internal to __parseFloat).
+	{"strconv", "ParseBool", "", "__parseBoolPub", "parseBoolPair", []string{"v", "err"}},
+	{"strconv", "ParseInt", "", "__parseIntPub", "parseIntPair", []string{"v", "err"}},
+	{"strconv", "ParseUint", "", "__parseUintPub", "parseUintPair", []string{"v", "err"}},
+	{"strconv", "Atoi", "", "__atoiPub", "atoiPair", []string{"v", "err"}},
+	{"strconv", "ParseFloat", "", "__parseFloat", "parseFloatPair", []string{"v", "err"}},
+	{"strconv", "ParseComplex", "", "__parseComplexPub", "parseComplexPair", []string{"v", "err"}},
+	{"strconv", "Unquote", "", "__unquotePub", "unquotePair", []string{"v", "err"}},
+	{"strconv", "QuotedPrefix", "", "__quotedPrefix", "quotedPrefixPair", []string{"v", "err"}},
+	// UnquoteChar is the 4-result entry (value, multibyte, tail, err) —
+	// the desugar supports N-ary via pairFields.
+	{"strconv", "UnquoteChar", "", "__unquoteChar", "unquoteCharPair", []string{"value", "multibyte", "tail", "err"}},
+	// encoding/json: package-level funcs plus methods on *Decoder,
+	// Number, and RawMessage (prependRecv passes the receiver as the
+	// helper's first argument).
+	{"encoding/json", "Marshal", "", "__marshal", "marshalPair", []string{"data", "err"}},
+	{"encoding/json", "MarshalIndent", "", "__marshalIndent", "marshalIndentPair", []string{"data", "err"}},
+	{"encoding/json", "Token", "Decoder", "__decoderToken", "decoderTokenPair", []string{"tok", "err"}},
+	{"encoding/json", "Float64", "Number", "__numberFloat64", "numberFloat64Pair", []string{"f", "err"}},
+	{"encoding/json", "Int64", "Number", "__numberInt64", "numberInt64Pair", []string{"i", "err"}},
+	{"encoding/json", "MarshalJSON", "RawMessage", "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}},
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
