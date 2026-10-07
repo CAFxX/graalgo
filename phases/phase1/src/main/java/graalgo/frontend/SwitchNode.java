@@ -126,9 +126,11 @@ public final class SwitchNode extends GoStmtNode implements LabelTarget {
                              Object tagVal, VirtualFrame frame) {
         GoKind ck = caseNode.kind();
         if (tagKind == GoKind.INTERFACE) {
-            GoInterface gi = (GoInterface) tagVal;
+            // P3-M7: a nil interface tag may flow as Java null — narrow to NIL.
+            GoInterface gi = GoInterface.narrow(tagVal);
             if (ck == GoKind.INTERFACE) {
-                GoInterface ci = (GoInterface) Boxing.box(ck, caseNode, frame);
+                // P3-M7: a nil interface case may flow as Java null — narrow to NIL.
+                GoInterface ci = GoInterface.narrow(Boxing.box(ck, caseNode, frame));
                 if (gi.isNil() || ci.isNil()) {
                     return gi.isNil() && ci.isNil();
                 }
@@ -142,7 +144,8 @@ public final class SwitchNode extends GoStmtNode implements LabelTarget {
                     && GoEquality.equal(gi.data(), Boxing.box(ck, caseNode, frame));
         }
         if (ck == GoKind.INTERFACE) {
-            GoInterface ci = (GoInterface) Boxing.box(ck, caseNode, frame);
+            // P3-M7: a nil interface case may flow as Java null — narrow to NIL.
+            GoInterface ci = GoInterface.narrow(Boxing.box(ck, caseNode, frame));
             if (ci.isNil()) {
                 return false;
             }

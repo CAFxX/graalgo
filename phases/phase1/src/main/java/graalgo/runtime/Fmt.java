@@ -716,7 +716,8 @@ public final class Fmt {
                 case STRUCT -> printStruct(arg, (GoStruct) v, verb, depth);
                 case POINTER -> fmtPointer(arg, verb);
                 case INTERFACE -> {
-                    GoInterface gi = (GoInterface) v;
+                    // P3-M7: a nil interface arg may flow as Java null — narrow to NIL.
+                    GoInterface gi = GoInterface.narrow(v);
                     if (gi.isNil() || gi.data() == null) {
                         if (verb == 'v') {
                             writeUtf8(("<nil>"));

@@ -15,6 +15,19 @@ public final class GoInterface {
     /** The nil interface value: comparisons against nil use identity. */
     public static final GoInterface NIL = new GoInterface(null, null, null);
 
+    /**
+     * P3-M7: normalizes a value of static interface type to a {@code GoInterface}.
+     * A nil Go interface value may flow as Java {@code null} (e.g. a nil
+     * {@code error} parameter or a nil interface switch tag — cf.
+     * {@code TypeSwitchNode}'s explicit null handling); normalize to
+     * {@link #NIL} so callers take the nil-interface paths instead of
+     * NPEing. A typed nil is never Java null (it carries a descriptor),
+     * so the normalization is exact.
+     */
+    public static GoInterface narrow(Object v) {
+        return v == null ? NIL : (GoInterface) v;
+    }
+
     private final Object descriptor;
     private final Object data;
     private final Object itab;

@@ -32,7 +32,8 @@ public final class TypeAssertOkNode extends GoExprNode {
 
     @Override
     public boolean executeBoolean(VirtualFrame frame) {
-        return TypeAssertNode.holds((GoInterface) iface.executeObject(frame), asserted,
+        // P3-M7: a nil interface may flow as Java null — narrow to NIL.
+        return TypeAssertNode.holds(GoInterface.narrow(iface.executeObject(frame)), asserted,
                 assertedIfaceMethods, dynamicMethodSets);
     }
 }
