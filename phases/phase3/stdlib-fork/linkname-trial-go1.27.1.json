@@ -1,8 +1,8 @@
 {
   "tool": "stdlib-linkdiff",
   "version": "1.0.0",
-  "generated": "2026-10-06T23:08:08Z",
-  "goroot": "/home/hatch/tools/go/src",
+  "generated": "2026-10-07T00:38:57Z",
+  "goroot": "/home/hatch/workspace/graalgo-stdlib/go1.27.1",
   "graalgo": "/home/hatch/workspace/graalgo",
   "goos": "linux",
   "goarch": "amd64",
@@ -9870,6 +9870,7 @@
       "Reason": "JVM owns all barriers (P2 ADR-0002 D3); no mutator barrier exists, writeBarrier.enabled ≡ false"
     }
   ],
+  "stale_routes": [],
   "constraint_excluded_sample": [
     "archive/tar/stat_actime2.go",
     "arena/arena.go",

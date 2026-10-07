@@ -1,6 +1,6 @@
-# linkname-diff report — 2026-10-06T23:08:08Z
+# linkname-diff report — 2026-10-07T00:38:57Z
 
-Tree: `/home/hatch/tools/go/src` — target: `linux/amd64` — graalgo: `/home/hatch/workspace/graalgo`
+Tree: `/home/hatch/workspace/graalgo-stdlib/go1.27.1` — target: `linux/amd64` — graalgo: `/home/hatch/workspace/graalgo`
 
 ## Headline
 

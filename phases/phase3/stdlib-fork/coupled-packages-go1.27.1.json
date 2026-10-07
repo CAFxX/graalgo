@@ -1,8 +1,8 @@
 {
   "version": 1,
   "go_version": "go1.27.1",
-  "generated_utc": "2026-10-06T23:01:19Z",
-  "src": "/home/hatch/tools/go/src",
+  "generated_utc": "2026-10-07T00:37:27Z",
+  "src": "/home/hatch/workspace/graalgo-stdlib/go1.27.1",
   "target": "linux/amd64",
   "population_dirs": 399,
   "counts": {
@@ -36,8 +36,8 @@
     {
       "path": "archive/zip",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "arena",
@@ -57,13 +57,13 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "builtin",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "bytes",
@@ -79,14 +79,14 @@
     {
       "path": "cmp",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "compress/bzip2",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "compress/flate",
@@ -101,56 +101,56 @@
     {
       "path": "compress/gzip",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "compress/lzw",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "compress/zlib",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "container/heap",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "container/list",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "container/ring",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "context",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/aes",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/boring",
@@ -168,25 +168,25 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "crypto/des",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/dsa",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/ecdh",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/ecdsa",
@@ -201,14 +201,14 @@
     {
       "path": "crypto/ed25519",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/elliptic",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/fips140",
@@ -223,14 +223,14 @@
     {
       "path": "crypto/hkdf",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/hmac",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/hpke",
@@ -257,8 +257,8 @@
     {
       "path": "crypto/internal/boring/bbig",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/boring/bcache",
@@ -294,8 +294,8 @@
     {
       "path": "crypto/internal/constanttime",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/cryptotest",
@@ -310,38 +310,38 @@
     {
       "path": "crypto/internal/cryptotest/wycheproof",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/cryptotest/wycheproof/_schema",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/cryptotest/x509limbo",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/cryptotest/x509limbo/_schema",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/entropy",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/entropy/v1.0.0",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140",
@@ -370,14 +370,14 @@
     {
       "path": "crypto/internal/fips140/aes/_asm/ctr",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/aes/_asm/standard",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/aes/gcm",
@@ -394,14 +394,14 @@
     {
       "path": "crypto/internal/fips140/aes/gcm/_asm/gcm",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/alias",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/bigmod",
@@ -418,8 +418,8 @@
     {
       "path": "crypto/internal/fips140/bigmod/_asm",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/check",
@@ -458,8 +458,8 @@
     {
       "path": "crypto/internal/fips140/ecdh",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/ecdsa",
@@ -474,14 +474,14 @@
     {
       "path": "crypto/internal/fips140/ed25519",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/edwards25519",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/edwards25519/field",
@@ -498,26 +498,26 @@
     {
       "path": "crypto/internal/fips140/edwards25519/field/_asm",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/hkdf",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/hmac",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/mldsa",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/mlkem",
@@ -544,8 +544,8 @@
     {
       "path": "crypto/internal/fips140/nistec/_asm",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/nistec/fiat",
@@ -560,14 +560,14 @@
     {
       "path": "crypto/internal/fips140/pbkdf2",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/rsa",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/sha256",
@@ -584,8 +584,8 @@
     {
       "path": "crypto/internal/fips140/sha256/_asm",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/sha3",
@@ -602,8 +602,8 @@
     {
       "path": "crypto/internal/fips140/sha3/_asm",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/sha512",
@@ -620,14 +620,14 @@
     {
       "path": "crypto/internal/fips140/sha512/_asm",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/ssh",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/subtle",
@@ -644,44 +644,44 @@
     {
       "path": "crypto/internal/fips140/tls12",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140/tls13",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140cache",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140deps",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140deps/byteorder",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140deps/cpu",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140deps/godebug",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/fips140deps/time",
@@ -716,8 +716,8 @@
     {
       "path": "crypto/internal/impl",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/rand",
@@ -734,8 +734,8 @@
     {
       "path": "crypto/internal/randutil",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/internal/sysrand",
@@ -776,8 +776,8 @@
     {
       "path": "crypto/md5/_asm",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/mldsa",
@@ -792,20 +792,20 @@
     {
       "path": "crypto/mlkem",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/mlkem/mlkemtest",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/pbkdf2",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/rand",
@@ -820,8 +820,8 @@
     {
       "path": "crypto/rc4",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/rsa",
@@ -848,14 +848,14 @@
     {
       "path": "crypto/sha1/_asm",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/sha256",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/sha3",
@@ -870,8 +870,8 @@
     {
       "path": "crypto/sha512",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/subtle",
@@ -908,8 +908,8 @@
     {
       "path": "crypto/tls/internal/fips140tls",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "crypto/x509",
@@ -936,8 +936,8 @@
     {
       "path": "crypto/x509/pkix",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "database/sql",
@@ -952,14 +952,14 @@
     {
       "path": "database/sql/driver",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "database/sql/internal",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "debug/buildinfo",
@@ -974,26 +974,26 @@
     {
       "path": "debug/dwarf",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "debug/elf",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "debug/gosym",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "debug/macho",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "debug/pe",
@@ -1001,49 +1001,49 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "debug/plan9obj",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "embed",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/ascii85",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/asn1",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/base32",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/base64",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/binary",
@@ -1058,8 +1058,8 @@
     {
       "path": "encoding/csv",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/gob",
@@ -1074,8 +1074,8 @@
     {
       "path": "encoding/hex",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/json",
@@ -1090,8 +1090,8 @@
     {
       "path": "encoding/json/internal",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/json/internal/jsonflags",
@@ -1099,7 +1099,7 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "encoding/json/internal/jsonopts",
@@ -1107,13 +1107,13 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "encoding/json/internal/jsontest",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/json/internal/jsonwire",
@@ -1121,7 +1121,7 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "encoding/json/jsontext",
@@ -1129,7 +1129,7 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "encoding/json/v2",
@@ -1137,49 +1137,49 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "encoding/pem",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "encoding/xml",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "errors",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "expvar",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "flag",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "fmt",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/ast",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/build",
@@ -1196,14 +1196,14 @@
     {
       "path": "go/build/constraint",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/constant",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/doc",
@@ -1218,32 +1218,32 @@
     {
       "path": "go/doc/comment",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/format",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/importer",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/internal/gccgoimporter",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/internal/gcimporter",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/internal/srcimporter",
@@ -1258,26 +1258,26 @@
     {
       "path": "go/parser",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/printer",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/scanner",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/token",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "go/types",
@@ -1294,20 +1294,20 @@
     {
       "path": "go/version",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "hash",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "hash/adler32",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "hash/crc32",
@@ -1324,14 +1324,14 @@
     {
       "path": "hash/crc64",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "hash/fnv",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "hash/maphash",
@@ -1347,26 +1347,26 @@
     {
       "path": "html",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "html/template",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "image",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "image/color",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "image/color/palette",
@@ -1381,14 +1381,14 @@
     {
       "path": "image/draw",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "image/gif",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "image/internal/imageutil",
@@ -1403,14 +1403,14 @@
     {
       "path": "image/jpeg",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "image/png",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "index/suffixarray",
@@ -1449,14 +1449,14 @@
     {
       "path": "internal/bisect",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/buildcfg",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/bytealg",
@@ -1475,20 +1475,20 @@
     {
       "path": "internal/byteorder",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/cfg",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/cgrouptest",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/chacha8rand",
@@ -1504,14 +1504,14 @@
     {
       "path": "internal/coverage",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/calloc",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/cfile",
@@ -1527,74 +1527,74 @@
     {
       "path": "internal/coverage/cformat",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/cmerge",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/decodecounter",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/decodemeta",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/encodecounter",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/encodemeta",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/pods",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/rtcov",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/slicereader",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/slicewriter",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/stringtab",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/coverage/uleb128",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/cpu",
@@ -1613,32 +1613,32 @@
     {
       "path": "internal/dag",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/diff",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/exportdata",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/filepathlite",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/fmtsort",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/fuzz",
@@ -1655,8 +1655,8 @@
     {
       "path": "internal/gate",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/goarch",
@@ -1681,8 +1681,8 @@
     {
       "path": "internal/godebugs",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/goexperiment",
@@ -1717,26 +1717,26 @@
     {
       "path": "internal/gover",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/goversion",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/lazyregexp",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/lazytemplate",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/msan",
@@ -1753,38 +1753,38 @@
     {
       "path": "internal/nettest",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/nettrace",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/obscuretestdata",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/oserror",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/pkgbits",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/platform",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/poll",
@@ -1801,14 +1801,14 @@
     {
       "path": "internal/profile",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/profilerecord",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/race",
@@ -1880,20 +1880,20 @@
     {
       "path": "internal/runtime/exithook",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/runtime/gc",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/runtime/gc/internal/gen",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/runtime/gc/scan",
@@ -1924,14 +1924,14 @@
     {
       "path": "internal/runtime/math",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/runtime/pprof/label",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/runtime/startlinetest",
@@ -1970,20 +1970,20 @@
     {
       "path": "internal/runtime/syscall/windows",
       "class": "not-linux-amd64",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/saferio",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/singleflight",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/strconv",
@@ -1998,8 +1998,8 @@
     {
       "path": "internal/stringslite",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/sync",
@@ -2088,8 +2088,8 @@
     {
       "path": "internal/syslist",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/testenv",
@@ -2104,8 +2104,8 @@
     {
       "path": "internal/testhash",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/testlog",
@@ -2132,62 +2132,62 @@
     {
       "path": "internal/trace",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/trace/internal/testgen",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/trace/internal/tracev1",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/trace/raw",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/trace/testtrace",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/trace/tracev2",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/trace/traceviewer",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/trace/traceviewer/format",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/trace/version",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/txtar",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/types/errors",
@@ -2202,80 +2202,80 @@
     {
       "path": "internal/unsafeheader",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/xcoff",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "internal/zstd",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "io",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "io/fs",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "io/ioutil",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "iter",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "log",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "log/internal",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "log/slog",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "log/slog/internal",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "log/slog/internal/benchmarks",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "log/slog/internal/buffer",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "log/syslog",
@@ -2283,7 +2283,7 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "maps",
@@ -2351,7 +2351,7 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "math/rand",
@@ -2381,7 +2381,7 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "mime/multipart",
@@ -2396,8 +2396,8 @@
     {
       "path": "mime/quotedprintable",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net",
@@ -2428,50 +2428,50 @@
     {
       "path": "net/http/cgi",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/cookiejar",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/fcgi",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/httptest",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/httptrace",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/httputil",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/internal",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/internal/ascii",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/internal/http2",
@@ -2479,31 +2479,31 @@
       "reasons": [
         "linkname"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "net/http/internal/httpcommon",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/internal/httpsfv",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/internal/testcert",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/http/pprof",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/internal/cgotest",
@@ -2530,32 +2530,32 @@
     {
       "path": "net/mail",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/netip",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/rpc",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/rpc/jsonrpc",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/smtp",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "net/textproto",
@@ -2637,8 +2637,8 @@
     {
       "path": "path",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "path/filepath",
@@ -2646,7 +2646,7 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "plugin",
@@ -2679,14 +2679,14 @@
     {
       "path": "reflect/internal/example1",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "reflect/internal/example2",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "regexp",
@@ -2694,13 +2694,13 @@
       "reasons": [
         "build-tags"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "regexp/syntax",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "runtime",
@@ -2721,14 +2721,14 @@
     {
       "path": "runtime/_mkmalloc",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "runtime/_mkmalloc/astutil",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "runtime/asan",
@@ -2761,8 +2761,8 @@
     {
       "path": "runtime/coverage",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "runtime/debug",
@@ -2783,7 +2783,7 @@
       "reasons": [
         "linkname"
       ],
-      "non_test_reasons": null
+      "non_test_reasons": []
     },
     {
       "path": "runtime/msan",
@@ -2826,8 +2826,8 @@
     {
       "path": "runtime/race/internal/amd64v1",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "runtime/race/internal/amd64v3",
@@ -2884,50 +2884,50 @@
     {
       "path": "simd/archsimd/_gen",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "simd/archsimd/_gen/midway",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "simd/archsimd/_gen/sgutil",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "simd/archsimd/_gen/simdgen",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "simd/archsimd/_gen/simdgen/arm64",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "simd/archsimd/_gen/tmplgen",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "simd/archsimd/_gen/unify",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "simd/archsimd/_gen/wasmgen",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "simd/archsimd/internal/simd_test",
@@ -2962,8 +2962,8 @@
     {
       "path": "slices",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "sort",
@@ -2988,14 +2988,14 @@
     {
       "path": "strings",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "structs",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "sync",
@@ -3073,32 +3073,32 @@
     {
       "path": "testing/fstest",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "testing/internal/testdeps",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "testing/iotest",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "testing/quick",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "testing/slogtest",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "testing/synctest",
@@ -3113,26 +3113,26 @@
     {
       "path": "text/scanner",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "text/tabwriter",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "text/template",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "text/template/parse",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "time",
@@ -3159,20 +3159,20 @@
     {
       "path": "unicode",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "unicode/utf16",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "unicode/utf8",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "unique",
@@ -3187,14 +3187,14 @@
     {
       "path": "unsafe",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "uuid",
       "class": "pure",
-      "reasons": null,
-      "non_test_reasons": null
+      "reasons": [],
+      "non_test_reasons": []
     },
     {
       "path": "weak",
