@@ -51,6 +51,20 @@ var syntheticSources = map[string]string{
 	// synth_xml.go). Self-contained (no imports); the token-stream
 	// desugar lives in mrdesugar_m5.go (mrXmlToken).
 	"encoding/xml": syntheticXmlSource,
+	// P3-M7 (wave 1): the 8 encoding/* primitive packages (synth_base32.go
+	// ... synth_encoding.go). encoding/pem imports synthetic
+	// encoding/base64 (resolved via getSyntheticPackage, like the
+	// bytes->errors dependency); the rest are self-contained. The
+	// multi-result members desugar at call sites (Appendix M, mrM7 in
+	// mrdesugar_m5.go); every other position fails fast.
+	"encoding/base32":  syntheticBase32Source,
+	"encoding/base64":  syntheticBase64Source,
+	"encoding/hex":     syntheticHexSource,
+	"encoding/binary":  syntheticBinarySource,
+	"encoding/ascii85": syntheticAscii85Source,
+	"encoding/pem":     syntheticPemSource,
+	"encoding/asn1":    syntheticAsn1Source,
+	"encoding":         syntheticEncodingSource,
 }
 // the overlay importer, so the context source's `import "time"` resolves
 // to the synthetic package (synthetic→synthetic imports).
@@ -450,7 +464,20 @@ func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 // (conversions take the normal path) and for non-synthetic packages.
 func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr, pkgName *types.PkgName) (*Node, bool, error) {
 	path := pkgName.Imported().Path()
-	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" {
+	// P3-M7 (wave 1): the 8 encoding/* primitive packages route through
+	// here so package-level calls (hex.Encode, binary.Uvarint, ...) lower
+	// to direct calls of the imported synthetic funcdecls via
+	// exportFuncCall, and multi-result members fail fast with the named
+	// M7 scope error (2-/3-target assignments are desugared earlier, in
+	// exportDefine/exportAssign).
+	// (m7-wenc-core: "strings" was missing here too — with the
+	// importer-selection fix, strings imports type-checked but every
+	// strings.X(...) call then failed "selector call ... is not
+	// supported". Fixed here; multi-result strings members now fail fast
+	// with the named M7 error as the corpus README claims.)
+	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" &&
+		path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" &&
+		path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" {
 		return nil, false, nil
 	}
 	obj := e.info.Uses[sel.Sel]
@@ -543,7 +570,9 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" {
+	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" &&
+		p != "encoding/base32" && p != "encoding/base64" && p != "encoding/hex" && p != "encoding/binary" &&
+		p != "encoding/ascii85" && p != "encoding/pem" && p != "encoding/asn1" && p != "encoding" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -555,9 +584,12 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 
 func multiResultSyntheticError(fn *types.Func) error {
 	// P3-M7: the milestone tag follows the synthetic package (time/context
-	// are M5, errors/sort/bytes/math/strings/encoding-xml are wave-1 M7).
+	// are M5, errors/sort/bytes/math/strings/encoding-xml and the 8
+	// encoding/* primitives are wave-1 M7).
 	milestone := "M5"
-	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" {
+	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
+		p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" ||
+		p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" {
 		milestone = "M7"
 	}
 	// Qualify method names with the receiver type name

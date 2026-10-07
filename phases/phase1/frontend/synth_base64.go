@@ -113,14 +113,27 @@ func (enc Encoding) WithPadding(padding rune) *Encoding {
 		panic("padding contained in alphabet")
 	}
 	enc.padChar = padding
-	return &enc
+	// NB: v1 cannot spell &enc (WS D); new(Encoding) + field copies is
+	// identical semantics (enc is already a copy — value receiver).
+	c := new(Encoding)
+	c.encode = enc.encode
+	c.decodeMap = enc.decodeMap
+	c.padChar = enc.padChar
+	c.strict = enc.strict
+	return c
 }
 
 // Strict creates a new encoding identical to enc except with
 // strict decoding enabled.
 func (enc Encoding) Strict() *Encoding {
-	enc.strict = true
-	return &enc
+	// NB: v1 cannot spell &enc (WS D); new(Encoding) + field copies is
+	// identical semantics (enc is already a copy — value receiver).
+	c := new(Encoding)
+	c.encode = enc.encode
+	c.decodeMap = enc.decodeMap
+	c.padChar = enc.padChar
+	c.strict = true
+	return c
 }
 
 // StdEncoding is the standard base64 encoding, as defined in RFC 4648.
@@ -129,11 +142,26 @@ var StdEncoding = NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvw
 // URLEncoding is the alternate base64 encoding defined in RFC 4648.
 var URLEncoding = NewEncoding("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
 
+// base64NoPadding returns a copy of enc with padding disabled — exactly
+// WithPadding(NoPadding)'s semantics (NoPadding skips both validation
+// branches in WithPadding), spelled with a pointer receiver. The package
+// vars below cannot call the value-receiver WithPadding on *Encoding:
+// v1 has no implicit method-receiver deref (WS D) and *ast.StarExpr is
+// not expressible in v1 scope.
+func (enc *Encoding) base64NoPadding() *Encoding {
+	c := new(Encoding)
+	c.encode = enc.encode
+	c.decodeMap = enc.decodeMap
+	c.padChar = NoPadding
+	c.strict = enc.strict
+	return c
+}
+
 // RawStdEncoding is the standard raw, unpadded base64 encoding.
-var RawStdEncoding = StdEncoding.WithPadding(NoPadding)
+var RawStdEncoding = StdEncoding.base64NoPadding()
 
 // RawURLEncoding is the unpadded alternate base64 encoding defined in RFC 4648.
-var RawURLEncoding = URLEncoding.WithPadding(NoPadding)
+var RawURLEncoding = URLEncoding.base64NoPadding()
 
 // Encode encodes src using the encoding enc,
 // writing EncodedLen(len(src)) bytes to dst.

@@ -116,7 +116,13 @@ func (enc Encoding) WithPadding(padding rune) *Encoding {
 		panic("padding contained in alphabet")
 	}
 	enc.padChar = padding
-	return &enc
+	// NB: v1 cannot spell &enc (WS D); new(Encoding) + field copies is
+	// identical semantics (enc is already a copy — value receiver).
+	c := new(Encoding)
+	c.encode = enc.encode
+	c.decodeMap = enc.decodeMap
+	c.padChar = enc.padChar
+	return c
 }
 
 // Encode encodes src using the encoding enc,

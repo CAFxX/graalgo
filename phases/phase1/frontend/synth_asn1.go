@@ -32,12 +32,14 @@
 // UnmarshalWithParams need reflect for params interpretation and fail
 // fast.
 //
-// Multi-result members (Marshal, Unmarshal) keep exact gc signatures
-// with fail-fast bodies for type-checking; their real implementations
-// live in the single-result __asn1Marshal/__asn1Unmarshal helpers, and
-// the exporter desugars N-target call sites to them (Appendix M
-// pattern, mrdesugar_m7.go). Any other call position fails fast with
-// the named M7 scope error.
+// Multi-result member Marshal keeps its exact gc signature with a
+// fail-fast body for type-checking; its real implementation lives in
+// the single-result __asn1Marshal helper, and the exporter desugars
+// 2-target call sites to it (Appendix M pattern, mrdesugar_m5.go).
+// Unmarshal has no desugar: decoding stores through the recipient
+// pointer, which v1 cannot express (WS D) — every call site fails fast
+// with the named M7 scope error. Any other call position fails fast
+// with the named M7 scope error.
 package main
 
 // syntheticAsn1Source is the P3-M7 synthetic `encoding/asn1` package:
@@ -751,13 +753,6 @@ func __asn1Marshal(val any) asn1MarshalPair {
 	panic("encoding/asn1: Marshal: not in M7 scope (needs reflect for composite types, big.Int and named types; re-test when reflect lands)")
 }
 
-// asn1UnmarshalPair is the Appendix M single-result carrier for
-// Unmarshal.
-type asn1UnmarshalPair struct {
-	rest []byte
-	err  error
-}
-
 // asn1ExpectTag parses one TLV and checks class/tag/compound, returning
 // the inner bytes and the offset past the TLV.
 type asn1TLV struct {
@@ -780,217 +775,6 @@ func asn1ReadTLV(b []byte, class, tag int, compound bool) asn1TLV {
 	return asn1TLV{inner: b[t.offset : t.offset+t.length], offset: t.offset + t.length}
 }
 
-// __asn1Unmarshal is the Appendix M desugar target behind Unmarshal:
-// the DER decoder for the reflect-free subset (gc 1.27.1 semantics for
-// these types).
-func __asn1Unmarshal(b []byte, val any) asn1UnmarshalPair {
-	if val == nil {
-		return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil"}}
-	}
-	// gc's parseField: running out of data at the start is "sequence
-	// truncated" (before tag parsing).
-	if len(b) == 0 {
-		return asn1UnmarshalPair{err: SyntaxError{"sequence truncated"}}
-	}
-	switch p := val.(type) {
-	case *RawValue:
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil asn1.RawValue"}}
-		}
-		t := asn1ParseTagAndLength(b, 0)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		if t.offset+t.length > len(b) {
-			return asn1UnmarshalPair{err: SyntaxError{"data truncated"}}
-		}
-		*p = RawValue{t.class, t.tag, t.isCompound, b[t.offset : t.offset+t.length], b[0 : t.offset+t.length]}
-		return asn1UnmarshalPair{rest: b[t.offset+t.length:]}
-	case *bool:
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil *bool"}}
-		}
-		t := asn1ReadTLV(b, ClassUniversal, TagBoolean, false)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		v, err := asn1ParseBool(t.inner)
-		if err != nil {
-			return asn1UnmarshalPair{err: err}
-		}
-		*p = v
-		return asn1UnmarshalPair{rest: b[t.offset:]}
-	case *int:
-		return asn1UnmarshalInt(b, p, 64)
-	case *int8:
-		// gc's parseField has no Int8/Int16 case: after the tag check
-		// it falls through to StructuralError "unsupported: int8".
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil *int8"}}
-		}
-		t := asn1ReadTLV(b, ClassUniversal, TagInteger, false)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		return asn1UnmarshalPair{err: StructuralError{"unsupported: int8"}}
-	case *int16:
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil *int16"}}
-		}
-		t := asn1ReadTLV(b, ClassUniversal, TagInteger, false)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		return asn1UnmarshalPair{err: StructuralError{"unsupported: int16"}}
-	case *int32:
-		return asn1UnmarshalInt(b, p, 32)
-	case *int64:
-		return asn1UnmarshalInt(b, p, 64)
-	case *[]byte:
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil *[]byte"}}
-		}
-		t := asn1ReadTLV(b, ClassUniversal, TagOctetString, false)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		*p = t.inner
-		return asn1UnmarshalPair{rest: b[t.offset:]}
-	case *string:
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil *string"}}
-		}
-		t := asn1ParseTagAndLength(b, 0)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		if t.class != ClassUniversal || t.isCompound {
-			return asn1UnmarshalPair{err: StructuralError{"tags don't match"}}
-		}
-		if t.offset+t.length > len(b) {
-			return asn1UnmarshalPair{err: SyntaxError{"data truncated"}}
-		}
-		inner := b[t.offset : t.offset+t.length]
-		var s string
-		var err error
-		switch t.tag {
-		case TagPrintableString:
-			s, err = asn1ParsePrintableString(inner)
-		case TagUTF8String:
-			s, err = asn1ParseUTF8String(inner)
-		case TagIA5String:
-			s, err = asn1ParseIA5String(inner)
-		case TagNumericString:
-			s, err = asn1ParseNumericString(inner)
-		case TagT61String:
-			s, err = asn1ParseT61String(inner)
-		case TagBMPString:
-			s, err = asn1ParseBMPString(inner)
-		default:
-			return asn1UnmarshalPair{err: StructuralError{"tags don't match"}}
-		}
-		if err != nil {
-			return asn1UnmarshalPair{err: err}
-		}
-		*p = s
-		return asn1UnmarshalPair{rest: b[t.offset+t.length:]}
-	case *BitString:
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil asn1.BitString"}}
-		}
-		t := asn1ReadTLV(b, ClassUniversal, TagBitString, false)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		v, err := asn1ParseBitString(t.inner)
-		if err != nil {
-			return asn1UnmarshalPair{err: err}
-		}
-		*p = v
-		return asn1UnmarshalPair{rest: b[t.offset:]}
-	case *ObjectIdentifier:
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil asn1.ObjectIdentifier"}}
-		}
-		t := asn1ReadTLV(b, ClassUniversal, TagOID, false)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		v, err := asn1ParseObjectIdentifier(t.inner)
-		if err != nil {
-			return asn1UnmarshalPair{err: err}
-		}
-		*p = v
-		return asn1UnmarshalPair{rest: b[t.offset:]}
-	case *Enumerated:
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil asn1.Enumerated"}}
-		}
-		t := asn1ReadTLV(b, ClassUniversal, TagEnum, false)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		r := asn1ParseInt32(t.inner)
-		if r.err != nil {
-			return asn1UnmarshalPair{err: r.err}
-		}
-		*p = Enumerated(r.v)
-		return asn1UnmarshalPair{rest: b[t.offset:]}
-	case *Flag:
-		if p == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil asn1.Flag"}}
-		}
-		t := asn1ReadTLV(b, ClassUniversal, TagBoolean, false)
-		if t.err != nil {
-			return asn1UnmarshalPair{err: t.err}
-		}
-		*p = true
-		return asn1UnmarshalPair{rest: b[t.offset:]}
-	}
-	panic("encoding/asn1: Unmarshal: not in M7 scope (needs reflect for composite types and named types; re-test when reflect lands)")
-}
-
-// asn1UnmarshalInt decodes a DER INTEGER into *int/*int32/*int64 (gc's
-// parseField integer path: Size()==4 uses parseInt32, else parseInt64;
-// int8/int16 are unsupported by gc and handled at the call site).
-func asn1UnmarshalInt(b []byte, p any, bits int) asn1UnmarshalPair {
-	t := asn1ReadTLV(b, ClassUniversal, TagInteger, false)
-	if t.err != nil {
-		return asn1UnmarshalPair{err: t.err}
-	}
-	switch q := p.(type) {
-	case *int:
-		if q == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil *int"}}
-		}
-		r := asn1ParseInt64(t.inner)
-		if r.err != nil {
-			return asn1UnmarshalPair{err: r.err}
-		}
-		*q = int(r.v)
-	case *int32:
-		if q == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil *int32"}}
-		}
-		r := asn1ParseInt32(t.inner)
-		if r.err != nil {
-			return asn1UnmarshalPair{err: r.err}
-		}
-		*q = int32(r.v)
-	case *int64:
-		if q == nil {
-			return asn1UnmarshalPair{err: &asn1ErrorString{s: "asn1: Unmarshal recipient value is nil *int64"}}
-		}
-		r := asn1ParseInt64(t.inner)
-		if r.err != nil {
-			return asn1UnmarshalPair{err: r.err}
-		}
-		*q = r.v
-	}
-	_ = bits
-	return asn1UnmarshalPair{rest: b[t.offset:]}
-}
-
 // Marshal keeps the exact gc 1.27.1 signature for type-checking; the
 // exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
 // every other position fails fast. Body never runs.
@@ -998,11 +782,15 @@ func Marshal(val any) ([]byte, error) {
 	panic("encoding/asn1: Marshal: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
 }
 
-// Unmarshal keeps the exact gc 1.27.1 signature for type-checking; the
-// exporter desugars 2-target call sites (Appendix M, mrdesugar_m7.go),
-// every other position fails fast. Body never runs.
+// Unmarshal keeps the exact gc 1.27.1 signature for type-checking.
+// M7 scope: fail-fast body. Decoding requires storing through the
+// recipient pointer (*p = v), which v1 cannot express (WS D: no
+// *ast.StarExpr assignment) — so unlike Marshal there is no v1-spellable
+// __-helper and no Appendix M desugar; every call site fails fast with
+// the named M7 scope error. Re-test when WS D lands (the DER parsing
+// core — asn1Parse* helpers — is retained in this source for that day).
 func Unmarshal(b []byte, val any) (rest []byte, err error) {
-	panic("encoding/asn1: Unmarshal: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+	panic("encoding/asn1: Unmarshal: not in M7 scope (pointer store needs WS D; re-test when WS D lands)")
 }
 
 // MarshalWithParams keeps the exact gc 1.27.1 signature for
