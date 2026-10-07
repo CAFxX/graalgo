@@ -244,6 +244,13 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			g.fis = append(g.fis, fi)
 		}
 	}
+	// Package vars, in dependency order (M7): an initializer may read
+	// another package-level var declared LATER in the source (e.g. the
+	// synthetic json package's jsonOverThresh reads jsonPow2str) — the
+	// same topological sort as user package vars (Go spec, Package
+	// initialization). e.info is the synthetic package's info here
+	// (swapped above), so dependency analysis resolves correctly.
+	varInits := []ginit{}
 	for _, file := range sp.files {
 		for _, decl := range file.Decls {
 			d, ok := decl.(*ast.GenDecl)
@@ -274,14 +281,16 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 							return err
 						}
 						var init *Node
+						var initExpr ast.Expr
 						if len(vs.Values) > 0 {
-							x, err := e.exportExpr(vs.Values[i])
+							initExpr = vs.Values[i]
+							x, err := e.exportExpr(initExpr)
 							if err != nil {
 								return err
 							}
 							init = x
 						}
-						e.synthGlobals = append(e.synthGlobals, GlobalEnt{Obj: oid, Init: init, Pos: e.pos(n)})
+						varInits = append(varInits, ginit{oid: oid, init: init, expr: initExpr, pos: e.pos(n)})
 					}
 				}
 			case token.CONST, token.TYPE, token.IMPORT:
@@ -291,6 +300,19 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 				return scopeErrorf("synthetic %s: package-level %v is not supported", sp.path, d.Tok)
 			}
 		}
+	}
+	depFuncs := make(map[*types.Func]*ast.FuncDecl, len(g.fis))
+	for _, fi := range g.fis {
+		depFuncs[fi.obj] = fi.fd
+	}
+	ordered, err := orderVarInits(varInits, e.info, e.objIDs, func(oid int) string {
+		return e.objects[oid].Name
+	}, depFuncs)
+	if err != nil {
+		return err
+	}
+	for _, g := range ordered {
+		e.synthGlobals = append(e.synthGlobals, GlobalEnt{Obj: g.oid, Init: g.init, Pos: g.pos})
 	}
 	e.synthGroups = append(e.synthGroups, g)
 	return nil

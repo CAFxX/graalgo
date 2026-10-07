@@ -1045,14 +1045,15 @@ func ExportFile(path string) (string, error) {
 	// after instantiation enumeration so initializers can call
 	// package-level functions (funcByObj is populated) and generic
 	// instantiations inside initializers are already enqueued.
-	globals, err := e.exportPackageVars()
+	globals, err := e.exportPackageVars(funcs)
 	if err != nil {
 		return "", err
 	}
 	// P3-M5 (WS E, ADR-0005): synthetic package globals first — user
 	// initializers may reference them (e.g. var e error =
 	// context.Canceled); synthetic initializers never reference user
-	// vars, so declaration order within the synthetic set is safe.
+	// vars. Each synthetic package's globals are dependency-ordered at
+	// import time (importSyntheticPackage), like user package vars.
 	// Only prepend when non-empty to preserve the "globals": [] wire
 	// shape for programs that don't import time/context.
 	if len(e.synthGlobals) > 0 {
@@ -1172,13 +1173,161 @@ func (e *exporter) collectPackageVars(gd *ast.GenDecl) error {
 // cycle. Unconstrained variables initialize in declaration order. A
 // dependency cycle is a build error, matching gc's "initialization cycle"
 // rejection.
-func (e *exporter) exportPackageVars() ([]GlobalEnt, error) {
-	type ginit struct {
-		oid  int      // object id, or -1 for blank (`var _ = ...`)
-		init *Node    // exported initializer, nil when absent (zero value)
-		expr ast.Expr // source initializer, nil when absent
-		pos  *Pos     // source position of the declaration
+// ginit is one package-level variable initializer: the object-table id
+// (or -1 for a blank `var _ = ...`), the exported initializer node (nil
+// when absent — zero value), the source expression for dependency
+// analysis (nil when absent), and the declaration position.
+type ginit struct {
+	oid  int
+	init *Node
+	expr ast.Expr
+	pos  *Pos
+}
+
+// varDepAnalyzer finds the package-level variables an initializer
+// depends on: variables referenced directly in the expression, plus
+// variables referenced (transitively) in the bodies of package-level
+// functions the initializer calls. This mirrors gc's initialization
+// dependency analysis (Go spec, Package initialization: "Dependency
+// analysis is performed per package; only references referring to
+// variables, functions, and (non-interface) methods declared in the
+// current package are considered") — e.g. `var a = f()` where f reads
+// package var b makes a depend on b, even when b is declared later.
+type varDepAnalyzer struct {
+	info        *types.Info
+	objIDs      map[types.Object]int
+	pkgVar      map[int]bool
+	depFuncs    map[*types.Func]*ast.FuncDecl
+	seenVar     map[int]bool
+	visitedFunc map[*types.Func]bool
+	out         []int
+}
+
+func (a *varDepAnalyzer) scan(n ast.Node) {
+	ast.Inspect(n, func(m ast.Node) bool {
+		id, ok := m.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		switch obj := a.info.Uses[id].(type) {
+		case *types.Var:
+			if oid, ok := a.objIDs[obj]; ok && a.pkgVar[oid] && !a.seenVar[oid] {
+				a.seenVar[oid] = true
+				a.out = append(a.out, oid)
+			}
+		case *types.Func:
+			a.scanFunc(obj)
+		}
+		return true
+	})
+}
+
+func (a *varDepAnalyzer) scanFunc(fn *types.Func) {
+	if a.visitedFunc[fn] {
+		return
 	}
+	fd, ok := a.depFuncs[fn]
+	if !ok {
+		// Not a package-level function with a body here (builtin,
+		// intrinsic, or another package's function): it cannot
+		// reference this package's variables.
+		return
+	}
+	a.visitedFunc[fn] = true
+	if fd.Body != nil {
+		a.scan(fd.Body)
+	}
+}
+
+// orderVarInits topologically sorts package-level variable initializers
+// so each runs after the package-level variables its source expression
+// refers to (Go spec, Package initialization). The order is stable by
+// declaration order (matching gc's source-order tie-breaking). info must
+// be the type-check info of the package the expressions belong to;
+// objIDs maps *types.Var to object-table ids; objName names an object id
+// for cycle errors; depFuncs maps the package's functions to their
+// bodies for transitive dependency analysis (nil disables it). A
+// dependency cycle fails fast with a named error.
+func orderVarInits(inits []ginit, info *types.Info, objIDs map[types.Object]int, objName func(int) string, depFuncs map[*types.Func]*ast.FuncDecl) ([]ginit, error) {
+	// Dependency analysis: the package-level variables each initializer
+	// refers to, directly or through called package-level functions
+	// (selectors and calls are covered because the referenced variable
+	// appears as an *ast.Ident; method calls via the Sel ident).
+	pkgVar := map[int]bool{}
+	for _, g := range inits {
+		if g.oid >= 0 {
+			pkgVar[g.oid] = true
+		}
+	}
+	deps := make([][]int, len(inits))
+	for i, g := range inits {
+		if g.expr == nil {
+			continue
+		}
+		da := &varDepAnalyzer{
+			info: info, objIDs: objIDs, pkgVar: pkgVar, depFuncs: depFuncs,
+			seenVar: map[int]bool{}, visitedFunc: map[*types.Func]bool{},
+		}
+		da.scan(g.expr)
+		deps[i] = da.out
+	}
+
+	// Topological order, stable by declaration order: at each step the
+	// earliest-declared variable whose dependencies are all initialized
+	// goes next. A self-reference is a cycle, like any other.
+	oidx := map[int]int{}
+	for i, g := range inits {
+		if g.oid >= 0 {
+			oidx[g.oid] = i
+		}
+	}
+	indeg := make([]int, len(inits))
+	dependents := make([][]int, len(inits))
+	for i, ds := range deps {
+		for _, d := range ds {
+			j := oidx[d]
+			dependents[j] = append(dependents[j], i)
+			indeg[i]++
+		}
+	}
+	order := make([]int, 0, len(inits))
+	done := make([]bool, len(inits))
+	for len(order) < len(inits) {
+		next := -1
+		for i := range inits {
+			if !done[i] && indeg[i] == 0 {
+				next = i
+				break
+			}
+		}
+		if next < 0 {
+			break // cycle; reported below
+		}
+		done[next] = true
+		order = append(order, next)
+		for _, k := range dependents[next] {
+			indeg[k]--
+		}
+	}
+	if len(order) < len(inits) {
+		cycle := []string{}
+		for i := range inits {
+			if indeg[i] > 0 && inits[i].oid >= 0 {
+				cycle = append(cycle, objName(inits[i].oid))
+			}
+		}
+		return nil, scopeErrorf("initialization cycle involving package-level var(s): %s",
+			strings.Join(cycle, ", "))
+	}
+
+	out := make([]ginit, 0, len(inits))
+	for _, i := range order {
+		out = append(out, inits[i])
+	}
+	return out, nil
+}
+
+func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error) {
 	inits := []ginit{}
 	for _, pv := range e.pkgVars {
 		vs := pv.spec
@@ -1244,88 +1393,23 @@ func (e *exporter) exportPackageVars() ([]GlobalEnt, error) {
 		}
 	}
 
-	// Dependency analysis: the package-level variables each initializer
-	// refers to (via go/types Uses — selectors and calls are covered
-	// because the referenced variable appears as an *ast.Ident).
-	pkgVar := map[int]bool{}
-	for _, g := range inits {
-		if g.oid >= 0 {
-			pkgVar[g.oid] = true
-		}
+	// M7: dependency-order initialization (Go spec, Package
+	// initialization), stable by declaration order. Dependencies are
+	// followed through called package-level functions (transitive).
+	depFuncs := make(map[*types.Func]*ast.FuncDecl, len(funcs))
+	for _, fi := range funcs {
+		depFuncs[fi.obj] = fi.fd
 	}
-	deps := make([][]int, len(inits))
-	for i, g := range inits {
-		if g.expr == nil {
-			continue
-		}
-		seen := map[int]bool{}
-		ast.Inspect(g.expr, func(n ast.Node) bool {
-			id, ok := n.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			if v, ok := e.info.Uses[id].(*types.Var); ok {
-				if oid, ok := e.objIDs[v]; ok && pkgVar[oid] && !seen[oid] {
-					seen[oid] = true
-					deps[i] = append(deps[i], oid)
-				}
-			}
-			return true
-		})
+	ordered, err := orderVarInits(inits, e.info, e.objIDs, func(oid int) string {
+		return e.objects[oid].Name
+	}, depFuncs)
+	if err != nil {
+		return nil, err
 	}
 
-	// Topological order, stable by declaration order: at each step the
-	// earliest-declared variable whose dependencies are all initialized
-	// goes next (this matches gc's source-order tie-breaking). A
-	// self-reference is a cycle, like any other.
-	oidx := map[int]int{}
-	for i, g := range inits {
-		if g.oid >= 0 {
-			oidx[g.oid] = i
-		}
-	}
-	indeg := make([]int, len(inits))
-	dependents := make([][]int, len(inits))
-	for i, ds := range deps {
-		for _, d := range ds {
-			j := oidx[d]
-			dependents[j] = append(dependents[j], i)
-			indeg[i]++
-		}
-	}
-	order := make([]int, 0, len(inits))
-	done := make([]bool, len(inits))
-	for len(order) < len(inits) {
-		next := -1
-		for i := range inits {
-			if !done[i] && indeg[i] == 0 {
-				next = i
-				break
-			}
-		}
-		if next < 0 {
-			break // cycle; reported below
-		}
-		done[next] = true
-		order = append(order, next)
-		for _, k := range dependents[next] {
-			indeg[k]--
-		}
-	}
-	if len(order) < len(inits) {
-		cycle := []string{}
-		for i := range inits {
-			if indeg[i] > 0 && inits[i].oid >= 0 {
-				cycle = append(cycle, e.objects[inits[i].oid].Name)
-			}
-		}
-		return nil, scopeErrorf("initialization cycle involving package-level var(s): %s",
-			strings.Join(cycle, ", "))
-	}
-
-	out := make([]GlobalEnt, 0, len(inits))
-	for _, i := range order {
-		out = append(out, GlobalEnt{Obj: inits[i].oid, Init: inits[i].init, Pos: inits[i].pos})
+	out := make([]GlobalEnt, 0, len(ordered))
+	for _, g := range ordered {
+		out = append(out, GlobalEnt{Obj: g.oid, Init: g.init, Pos: g.pos})
 	}
 	return out, nil
 }
