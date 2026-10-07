@@ -946,6 +946,10 @@ func ExportFile(path string) (string, error) {
 	// P3-M8 (wave 2): synthetic io (depends on synthetic errors).
 	// Must come before strings (which imports io for io.EOF).
 	if needIo {
+		// P3-M8: io's error vars use errors.New — import errors first.
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
 			return "", err
 		}

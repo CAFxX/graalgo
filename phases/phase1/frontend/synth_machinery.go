@@ -550,7 +550,7 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" &&
 		path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/xml" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "unsafe" &&
 		// P3-M8 (wave 2): the synthetic os package and io/fs core.
-		path != "os" && path != "io/fs" &&
+		path != "os" && path != "io" && path != "io/fs" &&
 		path != "reflect" && path != "internal/reflectlite" && path != "iter" {
 		return nil, false, nil
 	}
