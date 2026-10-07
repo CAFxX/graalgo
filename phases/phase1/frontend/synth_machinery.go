@@ -30,6 +30,7 @@ var (
 var syntheticSources = map[string]string{
 	"time":    syntheticTimeSource,
 	"context": syntheticContextSource,
+	"math":    syntheticMathSource,
 }
 
 // getSyntheticPackage parses and type-checks the embedded source for
@@ -99,6 +100,9 @@ var timeIntrinsicNames = map[string]bool{
 func isSyntheticIntrinsic(path, name string) bool {
 	if path == "time" {
 		return timeIntrinsicNames[name]
+	}
+	if path == "math" {
+		return mathIntrinsicNames[name]
 	}
 	return false
 }
