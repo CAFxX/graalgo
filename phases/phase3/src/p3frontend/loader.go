@@ -397,12 +397,16 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 // against its synthetic time/context packages (ADR-0005), so the p3frontend
 // mirror must not see the real GOROOT sources. "errors" and "sort" resolve
 // to synthetic markers likewise (P3-M7 wave 1: real-Go synthetic packages
-// in phases/phase1/frontend/synth_errors.go / synth_sort.go).
+// in phases/phase1/frontend/synth_errors.go / synth_sort.go). The 8
+// encoding/* primitives (m7-wenc-core) resolve to synthetic markers
+// likewise.
 func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	// Synthetic packages resolve independently of fromDir; keep them out
 	// of the anchored cache.
 	switch path {
-	case "runtime", "fmt", "sync", "time", "context", "errors", "sort", "bytes", "math", "strings":
+	case "runtime", "fmt", "sync", "time", "context", "errors", "sort", "bytes", "math", "strings",
+		"encoding/base32", "encoding/base64", "encoding/hex", "encoding/binary",
+		"encoding/ascii85", "encoding/pem", "encoding/asn1", "encoding":
 		return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
 	}
 	anchor, err := filepath.Abs(fromDir)
