@@ -146,4 +146,31 @@ public final class IfaceMethodTablesTest {
                  "objects": [], "funcs": []}""";
         assertEquals(Map.of(), IfaceMethodTables.resolve(doc, Map.of()), "empty table map");
     }
+
+    /**
+     * P3-M7R2: named interfaces with a slashed package path key by the
+     * display name (e.g. "json.Number"), not the qualified name — the
+     * dispatch lookup side uses iface.name(), the display name. A revert
+     * to qualified-name keying would silently break itabForIntrinsic.
+     * verifies: GG-0014
+     */
+    public void testResolveInterfacesSlashedPathKeysByDisplayName() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "interface", "detail": {"empty": false,
+                     "methods": [{"name": "M", "sig": 2}], "embedded": []}},
+                   {"kind": "named", "detail": {"name": "example.com/foo.Bar",
+                     "underlying": 0, "methods": []}},
+                   {"kind": "signature", "detail": {"params": [], "results": []}}],
+                 "objects": [], "funcs": []}""";
+        Map<String, IfaceMethodTable.IfaceWireEntry> out =
+                IfaceMethodTables.resolveInterfaces(doc);
+        assertTrue(out.containsKey("foo.Bar"),
+                "slashed-path named interface keys by display name; keys=" + out.keySet());
+        assertTrue(!out.containsKey("example.com/foo.Bar"),
+                "must NOT key by qualified name");
+        assertTrue(out.containsKey("interface#0"),
+                "anonymous interface keys by interface#id");
+    }
 }
