@@ -82,15 +82,14 @@ var (
 )
 
 // canonCsvGobSpelling canonicalizes the two alias spellings go/types can
-// produce for the same type: the csv/gob mirror builds byte/rune slices
-// and fields with types.Typ[types.Byte]/types.Typ[types.Rune], which
-// render as "uint8"/"int32", while the type-checked phase-1 source
-// renders the universe "byte"/"rune" objects. (The json/xml/bytes
-// mirrors already use the universe objects; the csv/gob mirror is owned
-// by other workers, so the test normalizes instead of touching it.)
-// Comparison is therefore up to Go alias equivalence: byte == uint8 and
-// rune == int32 are the same type, so no real drift is masked — a change
-// to a genuinely different type still fails.
+// produce for the same type: hand-built mirrors may use
+// types.Typ[types.Byte]/types.Typ[types.Rune] (rendering "uint8"/"int32")
+// while the type-checked phase-1 source renders the universe "byte"/"rune"
+// objects (all mirrors now use the universe objects, but the test stays
+// robust to either spelling). Comparison is therefore up to Go alias
+// equivalence: byte == uint8 and rune == int32 are the same type, so no
+// real drift is masked -- a change to a genuinely different type still
+// fails.
 func canonCsvGobSpelling(s string) string {
 	s = csvGobUint8Re.ReplaceAllString(s, "byte")
 	s = csvGobInt32Re.ReplaceAllString(s, "rune")
