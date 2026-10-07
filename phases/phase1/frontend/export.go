@@ -889,6 +889,7 @@ func ExportFile(path string) (string, error) {
 	needAscii85, needPem, needAsn1, needEncoding := false, false, false, false
 	needIo := false
 	needSyscall := false
+	needOs := false
 	needIoFs := false
 	needReflect := false
 	needCryptoSha256 := false
@@ -958,6 +959,12 @@ func ExportFile(path string) (string, error) {
 		// synthetic package (synth_syscall.go).
 		case "syscall":
 			needSyscall = true
+		// P3-M8b: a user import of "os" pulls in the synthetic package
+		// (synth_os.go). Its source imports errors, io, io/fs, syscall,
+		// time; those are imported by the needOs block below in
+		// dependency order.
+		case "os":
+			needOs = true
 		// P3-M8 (wave 2): a user import of "io/fs" pulls in the minimal
 		// synthetic io/fs core (synth_iofs.go). Its Err* sentinel
 		// initializers call errors.New; the source also imports time.
@@ -1200,6 +1207,35 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M8b: synthetic os (synth_os.go). Dependency chain, imported in
+	// order: errors (os error vars use errors.New), time (os imports time),
+	// io (os imports io), io/fs (os imports io/fs), syscall (os imports
+	// syscall for Errno), strconv (os uses strconv.Itoa), then os itself.
+	// importSyntheticPackage is idempotent, so overlap with other
+	// need-blocks is safe.
+	if needOs {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("os")); err != nil {
 			return "", err
 		}
 	}
@@ -1793,6 +1829,11 @@ func substString(t types.Type, s *typeSubst) string {
 
 func writeSubstString(sb *strings.Builder, t types.Type, s *typeSubst) {
 	switch t := t.(type) {
+	case *types.Alias:
+		// P3-M8b: unwrap aliases so os.FileMode and fs.FileMode produce
+		// identical keys (alias identity is not type identity).
+		writeSubstString(sb, types.Unalias(t), s)
+		return
 	case *types.TypeParam:
 		if s != nil {
 			if c, scope := s.resolve(t); c != nil {
@@ -2613,10 +2654,49 @@ type methodKey struct {
 	name string
 }
 
+// findMethodByName is the P3-M8b fallback for methodIndex misses caused by
+// *types.TypeName object identity mismatches (e.g. alias unwrapping across
+// separately type-checked package instances). It matches by package path +
+// type name + method name strings. Only used on direct-lookup miss.
+func (e *exporter) findMethodByName(recvObj types.Object, mname string) *funcDeclInfo {
+	tn, ok := recvObj.(*types.TypeName)
+	if !ok {
+		return nil
+	}
+	pkg := tn.Pkg()
+	if pkg == nil {
+		return nil
+	}
+	wantPkg, wantName := pkg.Path(), tn.Name()
+	for key, fi := range e.methodIndex {
+		if key.name != mname {
+			continue
+		}
+		ktn, ok := key.recv.(*types.TypeName)
+		if !ok || ktn.Pkg() == nil {
+			continue
+		}
+		if ktn.Pkg().Path() == wantPkg && ktn.Name() == wantName {
+			return fi
+		}
+	}
+	return nil
+}
+
 // derefNamed strips one pointer layer and reports the named type, if any.
 func derefNamed(t types.Type) *types.Named {
 	if p, ok := t.(*types.Pointer); ok {
 		t = p.Elem()
+	}
+	// P3-M8b: unwrap type aliases (e.g. os.FileMode = fs.FileMode).
+	// go/types represents alias uses as *types.Alias; the method set
+	// lives on the aliased named type.
+	for {
+		a, ok := t.(*types.Alias)
+		if !ok {
+			break
+		}
+		t = a.Rhs()
 	}
 	n, _ := t.(*types.Named)
 	return n
@@ -2809,6 +2889,17 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	rn := derefNamed(selection.Recv())
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
+		if !ok {
+			// P3-M8b: pointer-identity fallback. methodIndex keys use
+			// *types.TypeName object identity, but alias unwrapping
+			// (derefNamed) can yield a Named whose Obj differs from the
+			// instance used at import time (e.g. os.FileMode = fs.FileMode
+			// resolving through a separately type-checked package). Fall
+			// back to a name-based search: same package path, same type
+			// name, same method name. This is O(n) but only on miss.
+			fi = e.findMethodByName(rn.Obj(), mname)
+			ok = fi != nil
+		}
 		if !ok {
 			// GAP-6: methodIndex holds only direct methods; the method
 			// may be promoted through one or more embedded fields.
