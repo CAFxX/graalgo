@@ -43,7 +43,7 @@ renumbered. Merges across tracks are noted so traceability survives.
 
 ---
 
-## §1 Ranked candidates (waves 1–69) — 79 active ranked (SURV-001…080 minus struck SURV-077; tiers 7/39/19/14)
+## §1 Ranked candidates (waves 1–69) — 80 active ranked (SURV-001…081 minus struck SURV-077; tiers 7/39/20/14)
 
 ### Tier 1 — build first (highest expected value × feasibility)
 
@@ -1797,6 +1797,49 @@ semantics across the split need care (Go defers run at function exit —
 the outlined region must not disturb defer ordering). Code-size growth if
 many callsites each outline differently (cap: share outlined cold bodies
 across callsites where the region is identical).
+**Tracks:** program-owner proposal, 2026-10-07.
+
+#### SURV-081 — Macro fusion: outline duplicated logic across functions
+**Bucket:** THINKING (precedent: **ABLE** — LLVM's `MergeFunctions` pass
+ships in production; code factoring/outlining is standard in
+size-optimizing compilers. The *profitability-gated* application to hot
+managed code is the open question — merging is usually a -Oz play because
+it can cost speed).
+**Idea.** When the same logic is duplicated across functions — common in
+generated code (protobuf, mocks, serializers) — outline the common part
+(macro) into a separate function and replace the duplicates with a call to
+that macro, when globally profitable (program-owner proposal, 2026-10-07).
+The win is code size and i-cache footprint: N copies of a 200-byte
+sequence become one copy + N calls. The "when profitable" gate is
+load-bearing: merging saves size but adds call overhead and can pessimize
+the inliner/branch predictor — the cost model must weigh bytes saved and
+i-cache effects against call cost on hot paths.
+**Why gc doesn't do it.** gc compiles packages separately; cross-function
+duplicate detection needs whole-program visibility, and gc has no
+code-size-driven outlining pass at all.
+**Architectural fit.** Owner's note: this may be more of a *Graal* opt than
+a graalgo opt — the transform is language-agnostic and could live in the
+shared Graal compiler (benefiting every Truffle language), with graalgo
+supplying the whole-program duplicate signal and the profitability model.
+If built at the graalgo level instead: closed-world whole program makes
+duplicate detection across all functions feasible, and the call graph tells
+us which duplicates are hot (don't merge hot duplicates where call overhead
+dominates — or merge them and rely on SURV-080 partial inlining to keep the
+hot path fast). E5: the JIT can make the merge decision with real profiles;
+AOT uses PGO. Composes with SURV-080 (partial inlining is the dual: split
+one function by hotness; macro fusion merges many functions by sameness).
+Per the 2026-10-07 directive, either placement must name the Graal
+mechanism it builds on.
+**Benchmark sketch.** Generated-code-heavy workloads (protobuf
+marshal/unmarshal, generated mocks/stubs) vs gc+PGO; metrics: text size,
+i-cache miss rate, wall-clock.
+**Open risks.** Merged functions obscure stack traces and profiling
+attribution (same invisibility requirement as SURV-080's outlined cold
+bodies — shared attribution scheme). Type/ABI mismatches between
+"identical" sequences (register allocation, constants) limit the mergeable
+set — canonicalization before hashing. Debug info bloat. If placed in
+Graal itself, the rollout/validation burden is shared-compiler-wide, not
+graalgo-local.
 **Tracks:** program-owner proposal, 2026-10-07.
 
 ### Tier 4 — narrow, prototype-gated, or infrastructure-dependent
@@ -9576,3 +9619,4 @@ Wave-68 synthesis 2026-10-07: 77 active ranked (SURV-001…078 minus struck SURV
 Wave-69 synthesis 2026-10-07: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–69; §6 wave-69 queue ALL COMPLETE (6/6 items executed ~02:37–03:01 CEST), wave-69 re-rank pass (no movements, no prototype-gated promotions), wave-70 queue written; JEP 544 wave-69 curl re-verification: HTTP 200, 33,899 bytes raw, md5 9d7779e791b995f7765a710f08e04f4a ≠ w57 pin 5b074b447092005a265862c8fc935dad — **NOT a pin break**: normalized-body diff is EMPTY; the only delta is the anti-bot `<script src>` token rotation (dormant w46–w68, re-awakened at wave 69 — content-preserving per the diff-before-pin-break rule); Status=Targeted/Release=28 re-verified verbatim (no archive write; w57 pin + delta note cover the content); #157943 0/3 trips — RFC #3943 sixty-first consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z); **#163337's wave-24 equality shortcut HELD** (updated_at = wave-65 re-pin baseline 2026-10-06T20:18:34Z); #163338 open/unmerged (updated_at 2026-09-30T13:03:50Z unchanged → sufficiency rule, no tail re-read); GitHub unauthenticated core quota healthy (39/60 remaining mid-wave, no reset wait needed); T3 0/6 triggers (SE-0474/TruffleRuby/GraalPy md5 pins all match + explicit 0/0/0 keyword hits, GraalPy history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta search = disqualified noise only — LLM Compiler, Meta Zoomer (AI-infra debugging platform, not a runtime JIT), broodlang JIT docs, .NET 11 JIT piece, WebKit JIT-tier report; Swift search = excluded set + NEW triage note: swiftlang/swift commit 0537feff "[SILCombine] Bail load[copy](uteda) if move-only" (2025-07-29) is a correctness bail on an existing transform, NOT a new move-only pass — recorded, non-firing); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5), Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + more press rewrites (itbrief.asia, techcoffeehouse, businessnewsthisweek, financialcontent, cxotoday — same claim, vendor technique color, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC1 (latest dotnet/sdk tag v11.0.100-rc.1.26425.128, GA November 10, 2026); T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps (no empty-body transients this wave), **#81957 QUIET a third wave — timeline 41 events unchanged (last prattmic 2026-10-06T21:28:48Z root-cause comment, try-perf count 0), thread stalled pending maintainer follow-up — not bar-clearing; re-follow at wave 70**, **#81968 QUIET a twenty-fifth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-70 watch stands**; process notes: bare `grep -c` exits 1 on zero matches (caught and guarded this wave, all three keyword counts positively read as 0); tail-newline state verified before appending synthesis (wave-67/68 glued-line incident class); pagination is not absence; SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.
 Owner proposal 2026-10-07 (~03:32 CEST), outside the wave cycle: SURV-079 (lifetime-correlated co-allocation / allocation combining, Tier 3) added per program-owner directive — minimize heap allocation count whenever globally profitable (struct+pointee hidden-field or value+nilness-bit, slice-of-pointers slab, map header+buckets). 78 active ranked (SURV-001…079 minus struck SURV-077): 7 / 39 / 18 / 14. Next SURV-IDs: 080+.
 Owner proposal 2026-10-07 (~03:45 CEST), outside the wave cycle: SURV-080 (partial inlining — inline hot part, outline cold part, Tier 3) added per program-owner directive. 79 active ranked (SURV-001…080 minus struck SURV-077): 7 / 39 / 19 / 14. Next SURV-IDs: 081+.
+Owner proposal 2026-10-07 (~03:46 CEST), outside the wave cycle: SURV-081 (macro fusion — outline duplicated cross-function logic into a shared macro function, Tier 3) added per program-owner directive (owner: may belong at the Graal level rather than graalgo level). 80 active ranked (SURV-001…081 minus struck SURV-077): 7 / 39 / 20 / 14. Next SURV-IDs: 082+.
