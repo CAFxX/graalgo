@@ -517,3 +517,12 @@ v2 cap 13, currently 2 used (runtime/cgo, plugin). No new exclusions in M7.
 
 ### Next
 P3-M8: package wave 2 (io, reflect, etc.).
+
+## P3-M7 acceptance amendment (owner decision, 2026-10-07)
+
+- New acceptance demo for M7 re-sign-off: build and run a REAL Go package
+  (realistic, non-corpus; e.g. a text-processing CLI) depending only on
+  wave-1 stdlib packages, through the graalgo launcher, stdout byte-identical
+  to gc 1.27.1 — via the real import/package machinery, not a hand-wired
+  corpus runner. The owner's "first taste of go-get" milestone.
+- Forwarded to the remediation coordinator (graalgo-phase3-m7-remed).
