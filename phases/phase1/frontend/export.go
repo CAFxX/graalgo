@@ -2603,6 +2603,20 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 		}
 	}
 	if msel == nil {
+		// go/types records Selection.Recv() as the UNADJUSTED receiver
+		// type: a pointer-receiver method promoted via a VALUE-embedded
+		// field is absent from methodset(Recv) — it lives only in
+		// methodset(*Recv), and the call relies on gc's implicit & of
+		// the embedded field. That implicit & is out of WS D scope, so
+		// fail fast with the named scope error (consistent with the
+		// direct-method path in methodRefNode) — never a confusing
+		// "not found" for a method that exists.
+		pms := types.NewMethodSet(types.NewPointer(selection.Recv()))
+		for i := 0; i < pms.Len(); i++ {
+			if s := pms.At(i); s.Obj().Name() == mname {
+				return nil, scopeErrorf("method call %s needs an implicit address-of or deref on the receiver (WS D)", mname)
+			}
+		}
 		return notFound()
 	}
 	index := msel.Index()
