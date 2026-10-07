@@ -138,6 +138,18 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticXmlPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "strconv":
+		// P3-M7 (wave 1): synthetic strconv (see synth_strconv.go).
+		// Self-contained: no synthetic->synthetic imports.
+		pkg := syntheticStrconvPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding/json":
+		// P3-M7 (wave 1): synthetic encoding/json (see synth_json.go).
+		// Self-contained: no synthetic->synthetic imports.
+		pkg := syntheticJsonPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	}
 	ref, err := imp.loader.ResolveImport(imp.mainDir, path)
 	if err != nil {

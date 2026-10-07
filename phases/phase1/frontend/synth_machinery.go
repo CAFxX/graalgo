@@ -445,12 +445,13 @@ func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 }
 
 // exportSyntheticPkgCall handles calls of the form time.X(...) /
-// context.X(...) / errors.X(...) / sort.X(...) where X denotes a
-// synthetic package member. It returns handled=false for type names
-// (conversions take the normal path) and for non-synthetic packages.
+// context.X(...) / errors.X(...) / sort.X(...) / strconv.X(...) /
+// json.X(...) where X denotes a synthetic package member. It returns
+// handled=false for type names (conversions take the normal path) and
+// for non-synthetic packages.
 func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr, pkgName *types.PkgName) (*Node, bool, error) {
 	path := pkgName.Imported().Path()
-	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" {
+	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strconv" && path != "encoding/json" {
 		return nil, false, nil
 	}
 	obj := e.info.Uses[sel.Sel]
@@ -543,7 +544,7 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" {
+	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" && p != "strconv" && p != "encoding/json" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -555,9 +556,10 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 
 func multiResultSyntheticError(fn *types.Func) error {
 	// P3-M7: the milestone tag follows the synthetic package (time/context
-	// are M5, errors/sort/bytes/math/strings/encoding-xml are wave-1 M7).
+	// are M5, errors/sort/bytes/math/strings/encoding-xml/strconv/
+	// encoding-json are wave-1 M7).
 	milestone := "M5"
-	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" {
+	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" || p == "strconv" || p == "encoding/json" {
 		milestone = "M7"
 	}
 	// Qualify method names with the receiver type name

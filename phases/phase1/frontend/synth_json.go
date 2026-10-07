@@ -23,7 +23,14 @@ const syntheticJsonSource = `package json
 // jsonDecompose splits a finite nonzero float64 f into (m, e) with
 // |f| = m * 2^e exactly, m in [2^52, 2^53). Pure arithmetic: scaling
 // by powers of two is exact for finite floats.
-func jsonDecompose(f float64) (m uint64, e int) {
+// jsonDecomposePair is the single-result form of jsonDecompose (WS D:
+// v1 cannot emit multi-result functions).
+type jsonDecomposePair struct {
+	m uint64
+	e int
+}
+
+func jsonDecompose(f float64) jsonDecomposePair {
 	if f < 0 {
 		f = -f
 	}
@@ -38,8 +45,8 @@ func jsonDecompose(f float64) (m uint64, e int) {
 		e2--
 	}
 	// 1 <= f < 2; f * 2^52 is an exact integer in [2^52, 2^53).
-	m = uint64(f * 4503599627370496.0)
-	return m, e2 - 52
+	m := uint64(f * 4503599627370496.0)
+	return jsonDecomposePair{m, e2 - 52}
 }
 
 // jsonIsNegZero reports whether f is negative zero.
@@ -193,7 +200,18 @@ func jsonDecimalRound(d jsonDecimal, k int) jsonDecimal {
 // jsonParseDecimal parses a JSON number literal (already validated) into
 // (neg, digits, exp10) with value = [-]0.digits * 10^exp10. digits has no
 // leading zeros and no trailing zeros (unless the value is zero).
-func jsonParseDecimal(s string) (neg bool, digits []byte, exp10 int) {
+// jsonDecimalPair is the single-result form of jsonParseDecimal (WS D:
+// v1 cannot emit multi-result functions).
+type jsonDecimalPair struct {
+	neg    bool
+	digits []byte
+	exp10  int
+}
+
+func jsonParseDecimal(s string) jsonDecimalPair {
+	var neg bool
+	var digits []byte
+	var exp10 int
 	i := 0
 	if s[0] == '-' {
 		neg = true
@@ -251,7 +269,7 @@ func jsonParseDecimal(s string) (neg bool, digits []byte, exp10 int) {
 		tz++
 	}
 	if all == "" {
-		return neg, []byte{0}, 0
+		return jsonDecimalPair{neg, []byte{0}, 0}
 	}
 	digits = make([]byte, len(all))
 	for idx := range all {
@@ -263,7 +281,7 @@ func jsonParseDecimal(s string) (neg bool, digits []byte, exp10 int) {
 	// 0.digits = stripped_int * 10^(-len(digits)).
 	// So exp10 = expVal - len(fracDigits) + tz + len(digits).
 	exp10 = expVal - len(fracDigits) + tz + len(digits)
-	return neg, digits, exp10
+	return jsonDecimalPair{neg, digits, exp10}
 }
 
 // jsonDecimalFromFloat returns the exact decimal of a float64.
@@ -275,7 +293,8 @@ func jsonDecimalFromFloat(f float64) jsonDecimal {
 	if neg {
 		f = -f
 	}
-	m, e := jsonDecompose(f)
+	jdecomp := jsonDecompose(f)
+	m, e := jdecomp.m, jdecomp.e
 	return jsonDecimalFromParts(m, e, neg)
 }
 
@@ -300,7 +319,8 @@ func jsonNextUp(f float64) float64 {
 		return 5e-324 // min subnormal
 	}
 	// f > 0 here (callers use magnitudes).
-	_, e := jsonDecompose(f)
+	jdecomp := jsonDecompose(f)
+	e := jdecomp.e
 	ue := e
 	if ue < -1074 {
 		ue = -1074
@@ -313,7 +333,8 @@ func jsonNextDown(f float64) float64 {
 	if f == 5e-324 {
 		return 0
 	}
-	m, e := jsonDecompose(f)
+	jdecomp := jsonDecompose(f)
+	m, e := jdecomp.m, jdecomp.e
 	if m == 1<<52 && e >= -1074 {
 		// f is a power of 2 (normal): ulp below is halved.
 		return f - jsonPow2(e-1)
@@ -328,7 +349,8 @@ func jsonNextDown(f float64) float64 {
 // jsonIsEvenFloat reports whether f's significand LSB is 0
 // (for round-half-even tie-breaking).
 func jsonIsEvenFloat(f float64) bool {
-	m, e := jsonDecompose(f)
+	jdecomp := jsonDecompose(f)
+	m, e := jdecomp.m, jdecomp.e
 	if e >= -1074 {
 		return m%2 == 0
 	}
@@ -340,8 +362,10 @@ func jsonIsEvenFloat(f float64) bool {
 // jsonPickNearer picks the nearer of two adjacent floats f_lo < f_hi to
 // the exact decimal trueDec; ties go to the even float.
 func jsonPickNearer(f_lo, f_hi float64, trueDec jsonDecimal) float64 {
-	m1, e1 := jsonDecompose(f_lo)
-	m2, e2 := jsonDecompose(f_hi)
+	jdecompLo := jsonDecompose(f_lo)
+	m1, e1 := jdecompLo.m, jdecompLo.e
+	jdecompHi := jsonDecompose(f_hi)
+	m2, e2 := jdecompHi.m, jdecompHi.e
 	// sum = f_lo + f_hi, exactly, as (sumM, sumE).
 	var sumM uint64
 	var sumE int
@@ -382,7 +406,8 @@ var jsonUnderThresh = jsonDecimalFromParts(1, -1075, false)
 // jsonParseFloat parses a JSON number literal to the nearest float64
 // (correctly rounded, matching strconv.ParseFloat).
 func jsonParseFloat(s string) float64 {
-	neg, digits, exp10 := jsonParseDecimal(s)
+	jdec := jsonParseDecimal(s)
+	neg, digits, exp10 := jdec.neg, jdec.digits, jdec.exp10
 	if len(digits) == 1 && digits[0] == 0 {
 		if neg {
 			z := 0.0
@@ -472,7 +497,14 @@ func jsonParseFloat(s string) float64 {
 // jsonShortest returns the shortest significant-digit string and decimal
 // exponent for f: value = 0.digits * 10^exp, digits has no trailing zeros,
 // and parsing the digits back yields exactly f.
-func jsonShortest(f float64) (digits []byte, exp int) {
+// jsonShortestPair is the single-result form of jsonShortest (WS D:
+// v1 cannot emit multi-result functions).
+type jsonShortestPair struct {
+	digits []byte
+	exp    int
+}
+
+func jsonShortest(f float64) jsonShortestPair {
 	// f is finite and nonzero (callers handle 0/Inf/NaN).
 	neg := f < 0
 	if neg {
@@ -488,12 +520,12 @@ func jsonShortest(f float64) (digits []byte, exp int) {
 			if neg {
 				// digits are magnitude-only; sign handled by caller.
 			}
-			return cand.digits, cand.exp
+			return jsonShortestPair{cand.digits, cand.exp}
 		}
 	}
 	// 17 digits always suffice; unreachable in practice.
 	cand := jsonDecimalRound(exact, 17)
-	return cand.digits, cand.exp
+	return jsonShortestPair{cand.digits, cand.exp}
 }
 
 // jsonDecimalToString renders a jsonDecimal as a plain decimal string
@@ -536,9 +568,16 @@ func jsonDecimalToString(d jsonDecimal) string {
 // 'f' format normally, 'e' format for abs < 1e-6 or abs >= 1e21,
 // with the e-0X -> e-X cleanup. Returns the string (no sign).
 // ok=false for Inf/NaN (caller raises UnsupportedValueError).
-func jsonFormatFloat(f float64) (s string, ok bool) {
+// jsonFormatFloatPair is the single-result form of jsonFormatFloat (WS D:
+// v1 cannot emit multi-result functions).
+type jsonFormatFloatPair struct {
+	s  string
+	ok bool
+}
+
+func jsonFormatFloat(f float64) jsonFormatFloatPair {
 	if jsonIsNaN(f) || jsonIsInf(f) {
-		return "", false
+		return jsonFormatFloatPair{"", false}
 	}
 	neg := f < 0 || jsonIsNegZero(f)
 	if neg {
@@ -551,9 +590,10 @@ func jsonFormatFloat(f float64) (s string, ok bool) {
 	if f == 0 {
 		// -0 handled by caller sign; 0 formats as "0".
 		out = append(out, '0')
-		return string(out), true
+		return jsonFormatFloatPair{string(out), true}
 	}
-	digits, exp := jsonShortest(f)
+	jshort := jsonShortest(f)
+	digits, exp := jshort.digits, jshort.exp
 	// Decide 'e' vs 'f' exactly as gc: 'e' for abs < 1e-6 or abs >= 1e21.
 	useE := f < 1e-6 || f >= 1e21
 	if useE {
@@ -592,7 +632,7 @@ func jsonFormatFloat(f float64) (s string, ok bool) {
 			out = append(out, jsonDigitsToBytes(digits[exp:])...)
 		}
 	}
-	return string(out), true
+	return jsonFormatFloatPair{string(out), true}
 }
 
 func jsonDigitsToBytes(d []byte) []byte {
@@ -756,63 +796,70 @@ const (
 // jsonDecodeRune decodes the UTF-8 sequence starting at s[i], returning
 // the rune value and its size in bytes. Invalid sequences yield
 // (jsonRuneError, 1), exactly like utf8.DecodeRuneInString.
-func jsonDecodeRune(s string, i int) (r int, size int) {
+// jsonDecodeRunePair is the single-result form of jsonDecodeRune (WS D:
+// v1 cannot emit multi-result functions).
+type jsonDecodeRunePair struct {
+	r    int
+	size int
+}
+
+func jsonDecodeRune(s string, i int) jsonDecodeRunePair {
 	b0 := s[i]
 	if b0 < jsonRuneSelf {
-		return int(b0), 1
+		return jsonDecodeRunePair{int(b0), 1}
 	}
 	// Multi-byte.
 	if b0 < 0xC2 {
 		// 0x80-0xC1: continuation or overlong.
-		return jsonRuneError, 1
+		return jsonDecodeRunePair{jsonRuneError, 1}
 	}
 	if b0 < 0xE0 {
 		// 2-byte: C2-DF.
 		if i+1 >= len(s) {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
 		b1 := s[i+1]
 		if b1 < 0x80 || b1 >= 0xC0 {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
-		return int(b0&0x1F)<<6 | int(b1&0x3F), 2
+		return jsonDecodeRunePair{int(b0&0x1F)<<6 | int(b1&0x3F), 2}
 	}
 	if b0 < 0xF0 {
 		// 3-byte: E0-EF.
 		if i+2 >= len(s) {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
 		b1, b2 := s[i+1], s[i+2]
 		if b1 < 0x80 || b1 >= 0xC0 || b2 < 0x80 || b2 >= 0xC0 {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
 		// Overlong / surrogate checks.
 		if b0 == 0xE0 && b1 < 0xA0 {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
 		if b0 == 0xED && b1 >= 0xA0 {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
-		return int(b0&0x0F)<<12 | int(b1&0x3F)<<6 | int(b2&0x3F), 3
+		return jsonDecodeRunePair{int(b0&0x0F)<<12 | int(b1&0x3F)<<6 | int(b2&0x3F), 3}
 	}
 	if b0 < 0xF5 {
 		// 4-byte: F0-F4.
 		if i+3 >= len(s) {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
 		b1, b2, b3 := s[i+1], s[i+2], s[i+3]
 		if b1 < 0x80 || b1 >= 0xC0 || b2 < 0x80 || b2 >= 0xC0 || b3 < 0x80 || b3 >= 0xC0 {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
 		if b0 == 0xF0 && b1 < 0x90 {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
 		if b0 == 0xF4 && b1 >= 0x90 {
-			return jsonRuneError, 1
+			return jsonDecodeRunePair{jsonRuneError, 1}
 		}
-		return int(b0&0x07)<<18 | int(b1&0x3F)<<12 | int(b2&0x3F)<<6 | int(b3&0x3F), 4
+		return jsonDecodeRunePair{int(b0&0x07)<<18 | int(b1&0x3F)<<12 | int(b2&0x3F)<<6 | int(b3&0x3F), 4}
 	}
-	return jsonRuneError, 1
+	return jsonDecodeRunePair{jsonRuneError, 1}
 }
 
 // jsonEncodeRune appends the UTF-8 encoding of r to b.
@@ -885,7 +932,8 @@ func jsonAppendString(dst []byte, s string, escapeHTML bool) []byte {
 			continue
 		}
 		// Multi-byte: decode (up to 4 bytes).
-		r, size := jsonDecodeRune(s, i)
+		jdr := jsonDecodeRune(s, i)
+		r, size := jdr.r, jdr.size
 		if r == jsonRuneError && size == 1 {
 			// Invalid UTF-8: emit the literal U+FFFD (EF BF BD), matching
 			// gc 1.27.1's empirical behavior (the vendored source says
@@ -956,20 +1004,34 @@ type Unmarshaler interface {
 type RawMessage []byte
 
 // MarshalJSON returns m as the JSON encoding of m.
+//
+// (WS D: desugars to __rawMessageMarshalJSON.)
 func (m RawMessage) MarshalJSON() ([]byte, error) {
+	panic("json.RawMessage.MarshalJSON: unreachable (call sites desugar to __rawMessageMarshalJSON)")
+}
+
+// rawMessageMarshalJSONPair is the single-result form of
+// RawMessage.MarshalJSON (WS D).
+type rawMessageMarshalJSONPair struct {
+	data []byte
+	err  error
+}
+
+// __rawMessageMarshalJSON is the single-result RawMessage.MarshalJSON helper.
+func __rawMessageMarshalJSON(m RawMessage) rawMessageMarshalJSONPair {
 	if len(m) == 0 {
-		return []byte("null"), nil
+		return rawMessageMarshalJSONPair{[]byte("null"), nil}
 	}
-	return m, nil
+	return rawMessageMarshalJSONPair{m, nil}
 }
 
 // UnmarshalJSON sets *m to a copy of data.
+//
+// M7 scope: exact gc 1.27.1 signature, fail-fast body. Writing through
+// m needs store-through-pointer (*m = ...), which frontend/v1 cannot
+// emit (WS D). Re-test when WS D lands.
 func (m *RawMessage) UnmarshalJSON(data []byte) error {
-	if m == nil {
-		return &InvalidUnmarshalError{Type: "json.RawMessage"}
-	}
-	*m = append((*m)[:0], data...)
-	return nil
+	panic("json.RawMessage.UnmarshalJSON: not in M7 scope (needs store-through-pointer; re-test when WS D lands)")
 }
 
 // Compact is omitted in wave 1 (needs *bytes.Buffer, inexpressible);
@@ -1169,10 +1231,26 @@ func (p *jsonParser) skipSpace() {
 }
 
 // parseValue parses a JSON value at the current offset.
-func (p *jsonParser) parseValue() (any, error) {
+// jsonValuePair is the single-result form of the jsonParser value
+// methods (WS D: v1 cannot emit multi-result functions). All of
+// parseValue/parseObject/parseArray/parseNumber/parseTrue/parseFalse/
+// parseNull/parseLiteralRest return it, so "return p.parseX()"
+// delegation sites are unchanged.
+type jsonValuePair struct {
+	v   any
+	err error
+}
+
+// jsonStringPair is the single-result form of parseString (WS D).
+type jsonStringPair struct {
+	s   string
+	err error
+}
+
+func (p *jsonParser) parseValue() jsonValuePair {
 	p.skipSpace()
 	if p.off >= len(p.data) {
-		return nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+		return jsonValuePair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 	}
 	c := p.data[p.off]
 	switch c {
@@ -1181,7 +1259,8 @@ func (p *jsonParser) parseValue() (any, error) {
 	case '[':
 		return p.parseArray()
 	case '"':
-		return p.parseString()
+		sp := p.parseString()
+		return jsonValuePair{sp.s, sp.err}
 	case 't':
 		return p.parseTrue()
 	case 'f':
@@ -1191,15 +1270,15 @@ func (p *jsonParser) parseValue() (any, error) {
 	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		return p.parseNumber()
 	}
-	return nil, jsonSyntaxError(p.data, p.off, c, "looking for beginning of value")
+	return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, c, "looking for beginning of value")}
 }
 
-func (p *jsonParser) parseObject() (any, error) {
+func (p *jsonParser) parseObject() jsonValuePair {
 	// Current char is '{'.
 	p.depth++
 	if p.depth > jsonMaxNestingDepth {
 		p.depth--
-		return nil, jsonSyntaxError(p.data, p.off, '{', "exceeded max depth")
+		return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, '{', "exceeded max depth")}
 	}
 	defer func() { p.depth-- }()
 	p.off++ // consume '{'
@@ -1207,36 +1286,38 @@ func (p *jsonParser) parseObject() (any, error) {
 	p.skipSpace()
 	if p.off < len(p.data) && p.data[p.off] == '}' {
 		p.off++
-		return obj, nil
+		return jsonValuePair{obj, nil}
 	}
 	for {
 		p.skipSpace()
 		if p.off >= len(p.data) {
-			return nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+			return jsonValuePair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 		}
 		if p.data[p.off] != '"' {
-			return nil, jsonSyntaxError(p.data, p.off, p.data[p.off], "looking for beginning of object key string")
+			return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, p.data[p.off], "looking for beginning of object key string")}
 		}
-		key, err := p.parseString()
+		ksp := p.parseString()
+		key, err := ksp.s, ksp.err
 		if err != nil {
-			return nil, err
+			return jsonValuePair{nil, err}
 		}
 		p.skipSpace()
 		if p.off >= len(p.data) {
-			return nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+			return jsonValuePair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 		}
 		if p.data[p.off] != ':' {
-			return nil, jsonSyntaxError(p.data, p.off, p.data[p.off], "after object key")
+			return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, p.data[p.off], "after object key")}
 		}
 		p.off++ // consume ':'
-		val, err := p.parseValue()
+		vp := p.parseValue()
+		val, err := vp.v, vp.err
 		if err != nil {
-			return nil, err
+			return jsonValuePair{nil, err}
 		}
 		obj[key] = val
 		p.skipSpace()
 		if p.off >= len(p.data) {
-			return nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+			return jsonValuePair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 		}
 		c := p.data[p.off]
 		if c == ',' {
@@ -1245,18 +1326,18 @@ func (p *jsonParser) parseObject() (any, error) {
 		}
 		if c == '}' {
 			p.off++
-			return obj, nil
+			return jsonValuePair{obj, nil}
 		}
-		return nil, jsonSyntaxError(p.data, p.off, c, "after object key:value pair")
+		return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, c, "after object key:value pair")}
 	}
 }
 
-func (p *jsonParser) parseArray() (any, error) {
+func (p *jsonParser) parseArray() jsonValuePair {
 	// Current char is '['.
 	p.depth++
 	if p.depth > jsonMaxNestingDepth {
 		p.depth--
-		return nil, jsonSyntaxError(p.data, p.off, '[', "exceeded max depth")
+		return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, '[', "exceeded max depth")}
 	}
 	defer func() { p.depth-- }()
 	p.off++ // consume '['
@@ -1264,17 +1345,18 @@ func (p *jsonParser) parseArray() (any, error) {
 	p.skipSpace()
 	if p.off < len(p.data) && p.data[p.off] == ']' {
 		p.off++
-		return arr, nil
+		return jsonValuePair{arr, nil}
 	}
 	for {
-		val, err := p.parseValue()
+		vp := p.parseValue()
+		val, err := vp.v, vp.err
 		if err != nil {
-			return nil, err
+			return jsonValuePair{nil, err}
 		}
 		arr = append(arr, val)
 		p.skipSpace()
 		if p.off >= len(p.data) {
-			return nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+			return jsonValuePair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 		}
 		c := p.data[p.off]
 		if c == ',' {
@@ -1283,48 +1365,50 @@ func (p *jsonParser) parseArray() (any, error) {
 		}
 		if c == ']' {
 			p.off++
-			return arr, nil
+			return jsonValuePair{arr, nil}
 		}
-		return nil, jsonSyntaxError(p.data, p.off, c, "after array element")
+		return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, c, "after array element")}
 	}
 }
 
 // parseString parses a JSON string literal (current char is '"'),
 // returning the decoded Go string.
-func (p *jsonParser) parseString() (string, error) {
+func (p *jsonParser) parseString() jsonStringPair {
 	// Current char is '"'.
 	p.off++ // consume opening quote
 	var out []byte
 	for {
 		if p.off >= len(p.data) {
-			return "", &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+			return jsonStringPair{"", &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 		}
 		c := p.data[p.off]
 		if c == '"' {
 			p.off++
-			return string(out), nil
+			return jsonStringPair{string(out), nil}
 		}
 		if c == '\\' {
 			// Escape sequence. Use v2-style errors.
-			err := p.parseEscape(&out)
-			if err != nil {
-				return "", err
+			ep := p.parseEscape(out)
+			out = ep.out
+			if ep.err != nil {
+				return jsonStringPair{"", ep.err}
 			}
 			continue
 		}
 		if c < 0x20 {
 			// v2: "invalid character '\x01' in string" (not "in string literal").
-			return "", &SyntaxError{
+			return jsonStringPair{"", &SyntaxError{
 				msg:    "invalid character " + jsonQuoteChar(c) + " in string",
 				Offset: int64(p.off + 1),
-			}
+			}}
 		}
 		// Copy the byte (for multi-byte, copy all bytes of the sequence).
 		if c < 0x80 {
 			out = append(out, c)
 			p.off++
 		} else {
-			r, size := jsonDecodeRune(string(p.data), p.off)
+			jdr := jsonDecodeRune(string(p.data), p.off)
+			r, size := jdr.r, jdr.size
 			if r == jsonRuneError && size == 1 {
 				// Invalid: replace with U+FFFD.
 				out = append(out, 0xEF, 0xBF, 0xBD)
@@ -1341,61 +1425,69 @@ func (p *jsonParser) parseString() (string, error) {
 
 // parseEscape parses a JSON escape sequence (current char is '\').
 // Uses v2-style "invalid escape sequence" errors.
-func (p *jsonParser) parseEscape(out *[]byte) error {
+// jsonEscapePair is the single-result form of parseEscape /
+// parseUnicodeEscapeV2 (WS D: v1 cannot emit multi-result functions,
+// and cannot assign through a *[]byte).
+type jsonEscapePair struct {
+	out []byte
+	err error
+}
+
+func (p *jsonParser) parseEscape(out []byte) jsonEscapePair {
 	// p.off points at '\'.
 	start := p.off
 	p.off++ // consume '\'
 	if p.off >= len(p.data) {
 		// Truncated: "\ at end.
 		what := string(p.data[start:])
-		return &SyntaxError{
+		return jsonEscapePair{out, &SyntaxError{
 			msg:    "invalid escape sequence " + jsonBacktick(what) + " in string",
 			Offset: int64(start + 1),
-		}
+		}}
 	}
 	esc := p.data[p.off]
 	p.off++
 	switch esc {
 	case '"', '\\', '/':
-		*out = append(*out, esc)
-		return nil
+		out = append(out, esc)
+		return jsonEscapePair{out, nil}
 	case 'b':
-		*out = append(*out, '\b')
-		return nil
+		out = append(out, '\b')
+		return jsonEscapePair{out, nil}
 	case 'f':
-		*out = append(*out, '\f')
-		return nil
+		out = append(out, '\f')
+		return jsonEscapePair{out, nil}
 	case 'n':
-		*out = append(*out, '\n')
-		return nil
+		out = append(out, '\n')
+		return jsonEscapePair{out, nil}
 	case 'r':
-		*out = append(*out, '\r')
-		return nil
+		out = append(out, '\r')
+		return jsonEscapePair{out, nil}
 	case 't':
-		*out = append(*out, '\t')
-		return nil
+		out = append(out, '\t')
+		return jsonEscapePair{out, nil}
 	case 'u':
 		return p.parseUnicodeEscapeV2(out, start)
 	default:
 		// Invalid escape: what is backslash + char (2 bytes).
 		what := string(p.data[start:p.off])
-		return &SyntaxError{
+		return jsonEscapePair{out, &SyntaxError{
 			msg:    "invalid escape sequence " + jsonBacktick(what) + " in string",
 			Offset: int64(start + 1),
-		}
+		}}
 	}
 }
 
 // parseUnicodeEscapeV2 parses \uXXXX with v2-style errors.
-func (p *jsonParser) parseUnicodeEscapeV2(out *[]byte, start int) error {
+func (p *jsonParser) parseUnicodeEscapeV2(out []byte, start int) jsonEscapePair {
 	// p.off is after the 'u'. Need 4 hex digits.
 	if p.off+4 > len(p.data) {
 		// Truncated: what is from '\' to end of input.
 		what := string(p.data[start:])
-		return &SyntaxError{
+		return jsonEscapePair{out, &SyntaxError{
 			msg:    "invalid escape sequence " + jsonBacktick(what) + " in string",
 			Offset: int64(start + 1),
-		}
+		}}
 	}
 	var r int
 	for i := 0; i < 4; i++ {
@@ -1403,10 +1495,10 @@ func (p *jsonParser) parseUnicodeEscapeV2(out *[]byte, start int) error {
 		if !jsonIsHex(c) {
 			// Invalid hex: what is 6 bytes (backslash-u + 4 chars).
 			what := string(p.data[start : start+6])
-			return &SyntaxError{
+			return jsonEscapePair{out, &SyntaxError{
 				msg:    "invalid escape sequence " + jsonBacktick(what) + " in string",
 				Offset: int64(start + 1),
-			}
+			}}
 		}
 		r = r*16 + jsonHexVal(c)
 	}
@@ -1423,47 +1515,47 @@ func (p *jsonParser) parseUnicodeEscapeV2(out *[]byte, start int) error {
 				// v2: what is from start to end (surrogate pair error if len>6).
 				what := string(p.data[start:])
 				if len(what) > 6 {
-					return &SyntaxError{
+					return jsonEscapePair{out, &SyntaxError{
 						msg:    "invalid surrogate pair " + jsonBacktick(what) + " in string",
 						Offset: int64(start + 1),
-					}
+					}}
 				}
 			}
 			// Lone surrogate: replace with U+FFFD.
-			*out = jsonEncodeRune(*out, jsonRuneError)
-			return nil
+			out = jsonEncodeRune(out, jsonRuneError)
+			return jsonEscapePair{out, nil}
 		}
 		var r2 int
 		for i := 0; i < 4; i++ {
 			c := p.data[p.off+2+i]
 			if !jsonIsHex(c) {
 				what := string(p.data[start : p.off+6])
-				return &SyntaxError{
+				return jsonEscapePair{out, &SyntaxError{
 					msg:    "invalid surrogate pair " + jsonBacktick(what) + " in string",
 					Offset: int64(start + 1),
-				}
+				}}
 			}
 			r2 = r2*16 + jsonHexVal(c)
 		}
 		if r2 < 0xDC00 || r2 > 0xDFFF {
 			what := string(p.data[start : p.off+6])
-			return &SyntaxError{
+			return jsonEscapePair{out, &SyntaxError{
 				msg:    "invalid surrogate pair " + jsonBacktick(what) + " in string",
 				Offset: int64(start + 1),
-			}
+			}}
 		}
 		p.off += 6
 		r = 0x10000 + (r-0xD800)*0x400 + (r2 - 0xDC00)
-		*out = jsonEncodeRune(*out, r)
-		return nil
+		out = jsonEncodeRune(out, r)
+		return jsonEscapePair{out, nil}
 	}
 	if r >= 0xDC00 && r <= 0xDFFF {
 		// Lone low surrogate: replace with U+FFFD.
-		*out = jsonEncodeRune(*out, jsonRuneError)
-		return nil
+		out = jsonEncodeRune(out, jsonRuneError)
+		return jsonEscapePair{out, nil}
 	}
-	*out = jsonEncodeRune(*out, r)
-	return nil
+	out = jsonEncodeRune(out, r)
+	return jsonEscapePair{out, nil}
 }
 
 // jsonBacktick formats s with backticks (v2 style), escaping if needed.
@@ -1521,17 +1613,17 @@ func jsonHexVal(c byte) int {
 
 // parseNumber parses a JSON number literal (current char is '-' or digit),
 // returning the literal text.
-func (p *jsonParser) parseNumber() (any, error) {
+func (p *jsonParser) parseNumber() jsonValuePair {
 	start := p.off
 	c := p.data[p.off]
 	if c == '-' {
 		p.off++
 		if p.off >= len(p.data) {
-			return nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+			return jsonValuePair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 		}
 		c = p.data[p.off]
 		if c < '0' || c > '9' {
-			return nil, jsonSyntaxError(p.data, p.off, c, "in numeric literal")
+			return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, c, "in numeric literal")}
 		}
 	}
 	// Integer part.
@@ -1547,10 +1639,10 @@ func (p *jsonParser) parseNumber() (any, error) {
 	if p.off < len(p.data) && p.data[p.off] == '.' {
 		p.off++
 		if p.off >= len(p.data) {
-			return nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+			return jsonValuePair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 		}
 		if p.data[p.off] < '0' || p.data[p.off] > '9' {
-			return nil, jsonSyntaxError(p.data, p.off, p.data[p.off], "in numeric literal")
+			return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, p.data[p.off], "in numeric literal")}
 		}
 		for p.off < len(p.data) && p.data[p.off] >= '0' && p.data[p.off] <= '9' {
 			p.off++
@@ -1563,10 +1655,10 @@ func (p *jsonParser) parseNumber() (any, error) {
 			p.off++
 		}
 		if p.off >= len(p.data) {
-			return nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+			return jsonValuePair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 		}
 		if p.data[p.off] < '0' || p.data[p.off] > '9' {
-			return nil, jsonSyntaxError(p.data, p.off, p.data[p.off], "in numeric literal")
+			return jsonValuePair{nil, jsonSyntaxError(p.data, p.off, p.data[p.off], "in numeric literal")}
 		}
 		for p.off < len(p.data) && p.data[p.off] >= '0' && p.data[p.off] <= '9' {
 			p.off++
@@ -1574,90 +1666,78 @@ func (p *jsonParser) parseNumber() (any, error) {
 	}
 	lit := string(p.data[start:p.off])
 	if p.useNumber {
-		return Number(lit), nil
+		return jsonValuePair{Number(lit), nil}
 	}
-	return jsonParseFloat(lit), nil
+	return jsonValuePair{jsonParseFloat(lit), nil}
 }
 
-func (p *jsonParser) parseTrue() (any, error) {
+func (p *jsonParser) parseTrue() jsonValuePair {
 	// Current char is 't'. Expect "rue".
 	return p.parseLiteralRest("true", "rue")
 }
 
-func (p *jsonParser) parseFalse() (any, error) {
+func (p *jsonParser) parseFalse() jsonValuePair {
 	// Current char is 'f'. Expect "alse".
-	v, err := p.parseLiteralRest("false", "alse")
+	lrest := p.parseLiteralRest("false", "alse")
+	v, err := lrest.v, lrest.err
 	if err != nil {
-		return nil, err
+		return jsonValuePair{nil, err}
 	}
-	return v, nil
+	return jsonValuePair{v, nil}
 }
 
-func (p *jsonParser) parseNull() (any, error) {
+func (p *jsonParser) parseNull() jsonValuePair {
 	// Current char is 'n'. Expect "ull".
-	v, err := p.parseLiteralRest("null", "ull")
+	lrest := p.parseLiteralRest("null", "ull")
+	v, err := lrest.v, lrest.err
 	if err != nil {
-		return nil, err
+		return jsonValuePair{nil, err}
 	}
-	return v, nil
+	return jsonValuePair{v, nil}
 }
 
 // parseLiteralRest parses the rest of a literal (after the first char).
 // full is the full literal ("true"), rest is the expected suffix ("rue").
 // Returns the value (true/false/nil) or a SyntaxError with the gc message.
-func (p *jsonParser) parseLiteralRest(full, rest string) (any, error) {
+func (p *jsonParser) parseLiteralRest(full, rest string) jsonValuePair {
 	// p.off points at the first char. We'll check rest[i] at p.off+1+i.
 	for i := 0; i < len(rest); i++ {
 		off := p.off + 1 + i
 		if off >= len(p.data) {
-			return nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}
+			return jsonValuePair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: int64(len(p.data))}}
 		}
 		c := p.data[off]
 		if c != rest[i] {
 			// gc message: "in literal true (expecting 'r')" etc.
 			// The "expecting" char is rest[i].
-			return nil, &SyntaxError{
+			return jsonValuePair{nil, &SyntaxError{
 				msg:    "invalid character " + jsonQuoteChar(c) + " in literal " + full + " (expecting '" + string([]byte{rest[i]}) + "')",
 				Offset: int64(off + 1),
-			}
+			}}
 		}
 	}
 	p.off += 1 + len(rest)
 	switch full {
 	case "true":
-		return true, nil
+		return jsonValuePair{true, nil}
 	case "false":
-		return false, nil
+		return jsonValuePair{false, nil}
 	}
-	return nil, nil
+	return jsonValuePair{nil, nil}
 }
 
 // Unmarshal parses JSON-encoded data and stores the result in the value
 // pointed to by v. v must be a non-nil pointer to an any (wave-1
 // dynamic-model subset); other types panic (need reflect, P3-M8).
 //
-// Unmarshal into any produces gc-identical values: float64 for all
-// numbers, map[string]any for objects, []any for arrays.
+// M7 scope: exact gc 1.27.1 signature, fail-fast body. Writing the
+// parsed value through v needs store-through-pointer (*p = val), which
+// frontend/v1 cannot emit (WS D); moreover v1 user code cannot produce
+// a readable *any (no & on variables, no pointer dereference), so
+// Unmarshal has no reachable use in M7 scope. Re-test when WS D lands
+// (store-through-pointer + pointer dereference).
 func Unmarshal(data []byte, v any) error {
-	p, ok := v.(*any)
-	if !ok {
-		panic("not in M7 scope (needs reflect, P3-M8)")
-	}
-	if p == nil {
-		return &InvalidUnmarshalError{Type: "any"}
-	}
-	parser := &jsonParser{data: data}
-	val, err := parser.parseValue()
-	if err != nil {
-		return err
-	}
-	parser.skipSpace()
-	if parser.off < len(parser.data) {
-		c := parser.data[parser.off]
-		return jsonSyntaxError(data, parser.off, c, "after top-level value")
-	}
-	*p = val
-	return nil
+	panic("json.Unmarshal: not in M7 scope (needs store-through-pointer; re-test when WS D lands)")
 }
 
 // Marshal returns the JSON encoding of v. v must be nil, bool, string,
@@ -1730,14 +1810,16 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 	case string:
 		e.buf = jsonAppendString(e.buf, v, e.escapeHTML)
 	case float64:
-		s, ok := jsonFormatFloat(v)
+		jff := jsonFormatFloat(v)
+		s, ok := jff.s, jff.ok
 		if !ok {
 			return &jsonUnsupportedValueError{v: v, str: "cannot encode non-finite float64"}
 		}
 		e.buf = append(e.buf, s...)
 	case float32:
 		// float32 is converted to float64 like gc does.
-		s, ok := jsonFormatFloat(float64(v))
+		jff := jsonFormatFloat(float64(v))
+		s, ok := jff.s, jff.ok
 		if !ok {
 			return &jsonUnsupportedValueError{v: v, str: "cannot encode non-finite float32"}
 		}
@@ -1796,7 +1878,8 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 		} else {
 			// Validate by parsing.
 			parser := &jsonParser{data: []byte(v)}
-			if _, err := parser.parseValue(); err != nil {
+			jvp := parser.parseValue()
+			if _, err := jvp.v, jvp.err; err != nil {
 				return err
 			}
 			parser.skipSpace()
@@ -1812,14 +1895,11 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 		}
 		e.buf = append(e.buf, s...)
 	case Marshaler:
-		// Marshaler (other than RawMessage): call MarshalJSON.
-		// Note: RawMessage is handled above. This catches other
-		// Marshaler implementations in the dynamic model.
-		b, err := v.MarshalJSON()
-		if err != nil {
-			return err
-		}
-		e.buf = append(e.buf, b...)
+		// Marshaler (other than RawMessage): unreachable in M7 scope —
+		// implementing Marshaler needs a 2-result MarshalJSON method,
+		// which v1 cannot emit (WS D). RawMessage is handled in its
+		// own case above.
+		panic("json.Marshaler: not in M7 scope (needs 2-result methods; re-test when WS D lands)")
 	default:
 		panic("not in M7 scope (needs reflect, P3-M8)")
 	}
@@ -2045,46 +2125,15 @@ func (dec *Decoder) UseNumber() {
 
 // Decode reads the next JSON-encoded value from its input and stores
 // it in the value pointed to by v (must be *any in wave-1).
+//
+// M7 scope: exact gc 1.27.1 signature, fail-fast body. Writing the
+// parsed value through v needs store-through-pointer (*p = val), which
+// frontend/v1 cannot emit (WS D); moreover a *Decoder value is not
+// constructible from v1 user code (NewDecoder needs a user-defined
+// 2-result Read method), so Decode has no reachable use in M7 scope.
+// Re-test when WS D lands.
 func (dec *Decoder) Decode(v any) error {
-	p, ok := v.(*any)
-	if !ok {
-		panic("not in M7 scope (needs reflect, P3-M8)")
-	}
-	if p == nil {
-		return &InvalidUnmarshalError{Type: "any"}
-	}
-	// Read all remaining input.
-	data, err := jsonReadAll(dec.r)
-	if err != nil {
-		return err
-	}
-	// Skip leading space.
-	off := 0
-	for off < len(data) && jsonIsSpace(data[off]) {
-		off++
-	}
-	if off >= len(data) {
-		return &SyntaxError{msg: "unexpected end of JSON input", Offset: 0}
-	}
-	parser := &jsonParser{data: data[off:], useNumber: dec.useNumber}
-	val, err := parser.parseValue()
-	if err != nil {
-		if se, ok := err.(*SyntaxError); ok {
-			se.Offset += int64(off)
-		}
-		return err
-	}
-	parser.skipSpace()
-	if parser.off < len(parser.data) {
-		c := parser.data[parser.off]
-		return &SyntaxError{
-			msg:    "invalid character " + jsonQuoteChar(c) + " after top-level value",
-			Offset: int64(off + parser.off + 1),
-		}
-	}
-	*p = val
-	dec.tokOffset = int64(off + parser.off)
-	return nil
+	panic("json.Decoder.Decode: not in M7 scope (needs store-through-pointer; re-test when WS D lands)")
 }
 
 // Token returns the next JSON token in the input stream.
@@ -2105,7 +2154,8 @@ type decoderTokenPair struct {
 func __decoderToken(dec *Decoder) decoderTokenPair {
 	if !dec.treeInit {
 		// Read all and parse.
-		data, err := jsonReadAll(dec.r)
+		jra := jsonReadAll(dec.r)
+		data, err := jra.data, jra.err
 		if err != nil {
 			return decoderTokenPair{nil, err}
 		}
@@ -2117,7 +2167,8 @@ func __decoderToken(dec *Decoder) decoderTokenPair {
 			return decoderTokenPair{nil, &SyntaxError{msg: "unexpected end of JSON input", Offset: 0}}
 		}
 		parser := &jsonParser{data: data[off:], useNumber: dec.useNumber}
-		val, err := parser.parseValue()
+		jvp := parser.parseValue()
+		val, err := jvp.v, jvp.err
 		if err != nil {
 			return decoderTokenPair{nil, err}
 		}
@@ -2128,26 +2179,26 @@ func __decoderToken(dec *Decoder) decoderTokenPair {
 	}
 	// Walk the tree.
 	for len(dec.stack) > 0 {
-		top := &dec.stack[len(dec.stack)-1]
-		switch c := top.container.(type) {
+		si := len(dec.stack) - 1
+		switch c := dec.stack[si].container.(type) {
 		case map[string]any:
-			if top.index == -1 {
+			if dec.stack[si].index == -1 {
 				// First time: emit '{', init keys.
-				top.keys = jsonSortedKeys(c)
-				top.index = 0
-				top.phase = 0
+				dec.stack[si].keys = jsonSortedKeys(c)
+				dec.stack[si].index = 0
+				dec.stack[si].phase = 0
 				return decoderTokenPair{Delim('{'), nil}
 			}
-			if top.index < len(top.keys) {
-				key := top.keys[top.index]
-				if top.phase == 0 {
+			if dec.stack[si].index < len(dec.stack[si].keys) {
+				key := dec.stack[si].keys[dec.stack[si].index]
+				if dec.stack[si].phase == 0 {
 					// Emit key.
-					top.phase = 1
+					dec.stack[si].phase = 1
 					return decoderTokenPair{key, nil}
 				}
 				// Emit value.
-				top.phase = 0
-				top.index++
+				dec.stack[si].phase = 0
+				dec.stack[si].index++
 				elem := c[key]
 				if _, ok := elem.(map[string]any); ok {
 					dec.stack = append(dec.stack, jsonTokenFrame{container: elem, index: -1})
@@ -2163,13 +2214,13 @@ func __decoderToken(dec *Decoder) decoderTokenPair {
 			dec.stack = dec.stack[:len(dec.stack)-1]
 			return decoderTokenPair{Delim('}'), nil}
 		case []any:
-			if top.index == -1 {
-				top.index = 0
+			if dec.stack[si].index == -1 {
+				dec.stack[si].index = 0
 				return decoderTokenPair{Delim('['), nil}
 			}
-			if top.index < len(c) {
-				elem := c[top.index]
-				top.index++
+			if dec.stack[si].index < len(c) {
+				elem := c[dec.stack[si].index]
+				dec.stack[si].index++
 				// If elem is a container, push and emit its delim.
 				if _, ok := elem.(map[string]any); ok {
 					dec.stack = append(dec.stack, jsonTokenFrame{container: elem, index: -1})
@@ -2249,23 +2300,21 @@ type jsonEOSError struct{}
 
 func (e *jsonEOSError) Error() string { return "EOF" }
 
+// jsonReadAllPair is the single-result form of jsonReadAll (WS D:
+// v1 cannot emit multi-result functions).
+type jsonReadAllPair struct {
+	data []byte
+	err  error
+}
+
 // jsonReadAll reads all bytes from r.
-func jsonReadAll(r jsonReader) ([]byte, error) {
-	var buf []byte
-	tmp := make([]byte, 4096)
-	for {
-		n, err := r.Read(tmp)
-		if n > 0 {
-			buf = append(buf, tmp[:n]...)
-		}
-		if err != nil {
-			break
-		}
-		if n == 0 {
-			break
-		}
-	}
-	return buf, nil
+//
+// M7 scope: fail-fast body. Reading through the jsonReader interface
+// needs the 2-result Read method, which v1 cannot emit or dispatch
+// (WS D); moreover no jsonReader implementation is constructible from
+// v1 user code. Re-test when WS D lands.
+func jsonReadAll(r jsonReader) jsonReadAllPair {
+	panic("json.jsonReadAll: not in M7 scope (needs 2-result interface methods; re-test when WS D lands)")
 }
 
 // Encoder writes JSON values to an output stream.
@@ -2296,24 +2345,21 @@ func (enc *Encoder) SetIndent(prefix, indent string) {
 
 // Encode writes the JSON encoding of v to the stream, followed by a
 // newline character.
+//
+// M7 scope: exact gc 1.27.1 signature, fail-fast body. Writing through
+// the jsonWriter interface needs the 2-result Write method, which v1
+// cannot emit or dispatch (WS D); moreover no jsonWriter implementation
+// is constructible from v1 user code (NewEncoder needs a user-defined
+// 2-result Write method). Re-test when WS D lands.
 func (enc *Encoder) Encode(v any) error {
-	e := &jsonEncoderState{escapeHTML: enc.escapeHTML}
-	if err := e.marshalValue(v); err != nil {
-		return err
-	}
-	b := e.buf
-	if enc.indent != "" || enc.prefix != "" {
-		b = jsonIndent(b, enc.prefix, enc.indent)
-	}
-	b = append(b, '\n')
-	_, err := enc.w.Write(b)
-	return err
+	panic("json.Encoder.Encode: not in M7 scope (needs 2-result interface methods; re-test when WS D lands)")
 }
 
 // Valid reports whether data is a valid JSON encoding.
 func Valid(data []byte) bool {
 	parser := &jsonParser{data: data}
-	_, err := parser.parseValue()
+	jvp := parser.parseValue()
+	_, err := jvp.v, jvp.err
 	if err != nil {
 		return false
 	}
@@ -2341,7 +2387,8 @@ func __indent(dst []byte, src []byte, prefix, indent string) indentPair {
 	if !Valid(src) {
 		// Find the error.
 		parser := &jsonParser{data: src}
-		_, err := parser.parseValue()
+		jvp := parser.parseValue()
+		_, err := jvp.v, jvp.err
 		if err != nil {
 			return indentPair{dst, err}
 		}

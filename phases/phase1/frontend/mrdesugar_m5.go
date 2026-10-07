@@ -47,6 +47,27 @@ import (
 // synthetic interface omits Deadline, the concrete types are unexported,
 // and a user interface re-adding Deadline fails isDeadlineMethod.
 //
+// P3-M7 (wave 1) extends the desugar beyond Appendix M:
+//
+//   - mrStrconv: the synthetic strconv package's multi-result functions
+//     (ParseUint/ParseInt/Atoi/ParseBool/ParseFloat/ParseComplex/Unquote/
+//     QuotedPrefix → __parseUintPub/__parseIntPub/__atoiPub/
+//     __parseBoolPub/__parseFloat/__parseComplexPub/__unquotePub/
+//     __quotedPrefix + pair structs with fields [v, err]; UnquoteChar →
+//     __unquoteChar + unquoteCharPair [value, multibyte, tail, err]).
+//     UnquoteChar is the first 4-result desugar: exportMultiResultDesugar
+//     now checks arity against the plan (len(pairFields)) instead of a
+//     hardcoded 2, so N-target assignments of pair-kind calls desugar.
+//   - mrJson: the synthetic encoding/json package-level multi-result
+//     functions (Marshal → __marshal/marshalPair, MarshalIndent →
+//     __marshalIndent/marshalIndentPair, Indent → __indent/indentPair;
+//     fields [data, err]).
+//   - mrJsonMethod: the synthetic encoding/json multi-result methods
+//     ((Number).Float64 → __numberFloat64, (Number).Int64 →
+//     __numberInt64, (*Decoder).Token → __decoderToken,
+//     (RawMessage).MarshalJSON → __rawMessageMarshalJSON; prependRecv
+//     like mrXmlToken).
+//
 // Every other syntactic position keeps the fail-fast scope error. The
 // helpers are real Go (no new Java nodes); the unexported names are
 // resolved by the exporter directly off the synthetic package scope
@@ -55,7 +76,8 @@ import (
 
 // mrKind classifies the Appendix M operations: the 5 reachable ones
 // plus mrDeadline, retained defense-in-depth for WS D (see the package
-// header — currently unreachable from user code).
+// header — currently unreachable from user code), plus the P3-M7 wave-1
+// extensions mrStrconv/mrJson/mrJsonMethod.
 type mrKind int
 
 const (
@@ -66,6 +88,13 @@ const (
 	mrParseDur     // time.ParseDuration
 	// P3-M7 (wave 1): xml.Decoder.Token / xml.Decoder.RawToken.
 	mrXmlToken // xml.Decoder.Token() / xml.Decoder.RawToken()
+	// P3-M7 (wave 1): synthetic strconv multi-result functions.
+	mrStrconv // strconv.ParseUint/ParseInt/Atoi/ParseBool/ParseFloat/ParseComplex/Unquote/QuotedPrefix/UnquoteChar
+	// P3-M7 (wave 1): synthetic encoding/json package-level multi-result
+	// functions.
+	mrJson // json.Marshal/MarshalIndent/Indent
+	// P3-M7 (wave 1): synthetic encoding/json multi-result methods.
+	mrJsonMethod // (json.Number).Float64/Int64, (*json.Decoder).Token, (json.RawMessage).MarshalJSON
 )
 
 // mrPlan is the desugar plan for one classified call.
@@ -86,8 +115,9 @@ type mrPlan struct {
 
 // classifyMultiResultCall recognizes the Appendix M operations (the 5
 // reachable ones; the mrDeadline path is retained defense-in-depth for
-// WS D — see the package header). It returns nil when c is not one of
-// them.
+// WS D — see the package header) plus the P3-M7 wave-1 extensions
+// (mrStrconv, mrJson, mrJsonMethod — see the package header). It returns
+// nil when c is not one of them.
 func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	sel, ok := c.Fun.(*ast.SelectorExpr)
 	if !ok {
@@ -103,6 +133,8 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		nt, _ := obj.Type().(*types.Named)
 		return nt
 	}
+	strconvPkg := getSyntheticPackage("strconv").pkg
+	jsonPkg := getSyntheticPackage("encoding/json").pkg
 	// Package-qualified call: context.WithCancel(...) etc.
 	if id, ok := sel.X.(*ast.Ident); ok {
 		if pn, ok := e.info.Uses[id].(*types.PkgName); ok {
@@ -153,6 +185,18 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 						tmpType:    nt, pairFields: []string{"d", "err"},
 					}
 				}
+			case "strconv":
+				// P3-M7 (wave 1): multi-result strconv functions desugar
+				// to their single-result __-helpers + pair structs.
+				if plan := classifyStrconvFunc(strconvPkg, fn); plan != nil {
+					return plan
+				}
+			case "encoding/json":
+				// P3-M7 (wave 1): multi-result json package functions
+				// desugar to their single-result __-helpers + pairs.
+				if plan := classifyJsonFunc(jsonPkg, fn); plan != nil {
+					return plan
+				}
 			}
 			return nil
 		}
@@ -186,6 +230,21 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					kind: mrXmlToken, helperPkg: "encoding/xml",
 					helperName: helper, prependRecv: true,
 					tmpType:    nt, pairFields: []string{"tok", "err"},
+				}
+			}
+			// P3-M7 (wave 1): multi-result encoding/json methods
+			// ((Number).Float64/Int64, (*Decoder).Token) desugar to
+			// their single-result __-helpers (prependRecv: the
+			// receiver becomes the helper's first argument).
+			if helper, pair, fields, ok := isJsonDesugarMethod(f); ok {
+				nt := named(jsonPkg, pair)
+				if nt == nil {
+					return nil
+				}
+				return &mrPlan{
+					kind: mrJsonMethod, helperPkg: "encoding/json",
+					helperName: helper, prependRecv: true,
+					tmpType:    nt, pairFields: fields,
 				}
 			}
 		}
@@ -225,6 +284,143 @@ func isXmlTokenMethod(f *types.Func) (string, bool) {
 	return "__rawTokenOf", true
 }
 
+// strconvDesugarTarget is one multi-result strconv function's
+// single-result __-helper, pair type, and pair field names.
+type strconvDesugarTarget struct {
+	helper string
+	pair   string
+	fields []string
+}
+
+// classifyStrconvFunc classifies the synthetic strconv package's
+// multi-result functions (P3-M7 wave 1). Each keeps its exact gc 1.27.1
+// signature for type-checking with a fail-fast body; call sites desugar
+// to the single-result __-helper plus pair-field extraction.
+// UnquoteChar is a 4-result call (fields value/multibyte/tail/err) —
+// the arity check in exportMultiResultDesugar handles it.
+func classifyStrconvFunc(strconvPkg *types.Package, fn *types.Func) *mrPlan {
+	targets := map[string]strconvDesugarTarget{
+		"ParseUint":    {"__parseUintPub", "parseUintPair", []string{"v", "err"}},
+		"ParseInt":     {"__parseIntPub", "parseIntPair", []string{"v", "err"}},
+		"Atoi":         {"__atoiPub", "atoiPair", []string{"v", "err"}},
+		"ParseBool":    {"__parseBoolPub", "parseBoolPair", []string{"v", "err"}},
+		"ParseFloat":   {"__parseFloat", "parseFloatPair", []string{"v", "err"}},
+		"ParseComplex": {"__parseComplexPub", "parseComplexPair", []string{"v", "err"}},
+		"Unquote":      {"__unquotePub", "unquotePair", []string{"v", "err"}},
+		"QuotedPrefix": {"__quotedPrefix", "quotedPrefixPair", []string{"v", "err"}},
+		"UnquoteChar":  {"__unquoteChar", "unquoteCharPair", []string{"value", "multibyte", "tail", "err"}},
+	}
+	t, ok := targets[fn.Name()]
+	if !ok {
+		return nil
+	}
+	obj := strconvPkg.Scope().Lookup(t.pair)
+	if obj == nil {
+		return nil
+	}
+	nt, _ := obj.Type().(*types.Named)
+	if nt == nil {
+		return nil
+	}
+	return &mrPlan{
+		kind: mrStrconv, helperPkg: "strconv",
+		helperName: t.helper,
+		tmpType:    nt, pairFields: t.fields,
+	}
+}
+
+// classifyJsonFunc classifies the synthetic encoding/json package's
+// multi-result functions (P3-M7 wave 1): Marshal, MarshalIndent, Indent.
+// Each keeps its exact gc 1.27.1 signature for type-checking with a
+// fail-fast body; call sites desugar to the single-result __-helper
+// plus pair-field extraction ([data, err]).
+func classifyJsonFunc(jsonPkg *types.Package, fn *types.Func) *mrPlan {
+	type target struct {
+		helper string
+		pair   string
+	}
+	targets := map[string]target{
+		"Marshal":       {"__marshal", "marshalPair"},
+		"MarshalIndent": {"__marshalIndent", "marshalIndentPair"},
+		"Indent":        {"__indent", "indentPair"},
+	}
+	t, ok := targets[fn.Name()]
+	if !ok {
+		return nil
+	}
+	obj := jsonPkg.Scope().Lookup(t.pair)
+	if obj == nil {
+		return nil
+	}
+	nt, _ := obj.Type().(*types.Named)
+	if nt == nil {
+		return nil
+	}
+	return &mrPlan{
+		kind: mrJson, helperPkg: "encoding/json",
+		helperName: t.helper,
+		tmpType:    nt, pairFields: []string{"data", "err"},
+	}
+}
+
+// isJsonDesugarMethod classifies the synthetic encoding/json
+// package's multi-result methods that desugar at call sites (P3-M7 wave
+// 1): (Number).Float64, (Number).Int64 (value receivers), and
+// (*Decoder).Token (pointer receiver). Returns the single-result helper
+// name, the pair type name, and the pair field names. A user type's
+// method of the same name is never classified: the receiver's named
+// type must be the synthetic json package's Number/Decoder.
+func isJsonDesugarMethod(f *types.Func) (helper, pair string, fields []string, ok bool) {
+	if f == nil || f.Pkg() == nil || f.Pkg().Path() != "encoding/json" {
+		return "", "", nil, false
+	}
+	sig, ok := f.Type().(*types.Signature)
+	if !ok || sig.Results().Len() != 2 {
+		return "", "", nil, false
+	}
+	recv := sig.Recv()
+	if recv == nil {
+		return "", "", nil, false
+	}
+	rt := recv.Type()
+	switch {
+	case f.Name() == "Float64" || f.Name() == "Int64":
+		// Value receivers: (Number).Float64, (Number).Int64.
+		if _, isPtr := rt.(*types.Pointer); isPtr {
+			return "", "", nil, false
+		}
+	case f.Name() == "MarshalJSON":
+		// Value receiver: (RawMessage).MarshalJSON.
+		if _, isPtr := rt.(*types.Pointer); isPtr {
+			return "", "", nil, false
+		}
+	case f.Name() == "Token":
+		// Pointer receiver: (*Decoder).Token.
+		pt, isPtr := rt.(*types.Pointer)
+		if !isPtr {
+			return "", "", nil, false
+		}
+		rt = pt.Elem()
+	default:
+		return "", "", nil, false
+	}
+	nt, isNamed := rt.(*types.Named)
+	if !isNamed || nt.Obj() == nil || nt.Obj().Pkg() == nil || nt.Obj().Pkg().Path() != "encoding/json" {
+		return "", "", nil, false
+	}
+	switch {
+	case f.Name() == "Float64" && nt.Obj().Name() == "Number":
+		return "__numberFloat64", "numberFloat64Pair", []string{"f", "err"}, true
+	case f.Name() == "Int64" && nt.Obj().Name() == "Number":
+		return "__numberInt64", "numberInt64Pair", []string{"i", "err"}, true
+	case f.Name() == "Token" && nt.Obj().Name() == "Decoder":
+		return "__decoderToken", "decoderTokenPair", []string{"tok", "err"}, true
+	case f.Name() == "MarshalJSON" && nt.Obj().Name() == "RawMessage":
+		return "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}, true
+	}
+	return "", "", nil, false
+}
+
 // isDeadlineMethod reports whether f is the synthetic context package's
 // Deadline method (2 results). The mrDeadline desugar path is retained
 // defense-in-depth for WS D (see the package header); in M5 it is
@@ -239,10 +435,11 @@ func isDeadlineMethod(f *types.Func) bool {
 }
 
 // exportMultiResultDesugar implements the Appendix M desugar for
-// 2-target assignments. It returns handled=false when s is not a
-// 2-target assignment of one of the Appendix M operations.
+// N-target assignments (N=2 for the Appendix M operations; N=4 for
+// strconv.UnquoteChar). It returns handled=false when s is not an
+// N-target assignment of one of the classified operations.
 func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*Node, bool, error) {
-	if len(s.Lhs) != 2 || len(s.Rhs) != 1 {
+	if len(s.Rhs) != 1 {
 		return nil, false, nil
 	}
 	c, ok := unparen(s.Rhs[0]).(*ast.CallExpr)
@@ -251,6 +448,19 @@ func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*No
 	}
 	plan := e.classifyMultiResultCall(c)
 	if plan == nil {
+		return nil, false, nil
+	}
+	// Arity: pair-struct kinds need exactly len(pairFields) targets;
+	// method-extraction kinds (mrWithCancel/mrWithDeadline) need 2.
+	// A classified call in any other arity (e.g. `v := strconv.Atoi(s)`)
+	// is NOT desugared — it falls through to the fail-fast scope error
+	// (isMultiResultSynthetic), never silently half-compiled.
+	want := len(plan.pairFields)
+	switch plan.kind {
+	case mrWithCancel, mrWithDeadline:
+		want = 2
+	}
+	if want == 0 || len(s.Lhs) != want {
 		return nil, false, nil
 	}
 	n, err := e.desugarMultiResult(s, c, plan, define)
@@ -316,7 +526,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken:
+	case mrDeadline, mrParseDur, mrXmlToken, mrStrconv, mrJson, mrJsonMethod:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {

@@ -191,8 +191,12 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // package "errors" (P3-M7: New/Is/Unwrap/Join as real Go; As/AsType
 // fail-fast — they need reflect), the synthetic package "sort" (P3-M7:
 // pdqsort/stable/search as real Go; Find/Slice/SliceStable/SliceIsSorted
-// fail-fast — multi-result/reflect), and the empty synthetic package
-// "unsafe".
+// fail-fast — multi-result/reflect), the synthetic package "strconv"
+// (P3-M7: real-Go port of gc's strconv; multi-result Parse*/Atoi/Unquote*
+// desugar at call sites — see mrdesugar_m5.go), the synthetic package
+// "encoding/json" (P3-M7: real-Go any-model subset; Marshal/MarshalIndent/
+// Indent/Decoder.Token/Number.Float64/Int64 desugar at call sites), and
+// the empty synthetic package "unsafe".
 // Every other import still fails via failImporter. WS G's full
 // import overlay absorbs this carve-out.
 type overlayImporter struct{}
@@ -240,6 +244,10 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("bytes").pkg, nil
 	case "encoding/xml":
 		return getSyntheticPackage("encoding/xml").pkg, nil
+	case "strconv":
+		return getSyntheticPackage("strconv").pkg, nil
+	case "encoding/json":
+		return getSyntheticPackage("encoding/json").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -663,12 +671,14 @@ func ExportFile(path string) (string, error) {
 		// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_time_context.go).
-		// P3-M7 (wave 1): the imports "errors", "sort", "bytes", "math" are
+		// P3-M7 (wave 1): the imports "errors", "sort", "bytes", "math",
+		// "strings", "strconv", "encoding/json", "encoding/xml" are
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_errors.go / synth_sort.go /
-		// synth_bytes.go / synth_math.go).
+		// synth_bytes.go / synth_math.go / synth_strings.go /
+		// synth_strconv.go / synth_json.go / synth_xml.go).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "strconv" && path != "encoding/json" && path != "encoding/xml" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -698,10 +708,11 @@ func ExportFile(path string) (string, error) {
 	// via the synthetic overlay package (four primitives).
 	// P3-M4 (WS C, ADR-0004): "sync/atomic" and "unsafe" likewise.
 	// P3-M5 (WS E, ADR-0005): "time" and "context" likewise.
-	// P3-M7 (wave 1): "errors", "sort", "bytes", "math" likewise.
+	// P3-M7 (wave 1): "errors", "sort", "bytes", "math", "strings",
+	// "strconv", "encoding/json", "encoding/xml" likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "encoding/xml" {
+		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "strconv" || p == "encoding/json" || p == "encoding/xml" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -796,6 +807,7 @@ func ExportFile(path string) (string, error) {
 	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
 	needErrors, needSort, needBytes, needMath, needStrings, needXml := false, false, false, false, false, false
+	needStrconv, needJson := false, false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -815,6 +827,12 @@ func ExportFile(path string) (string, error) {
 			needMath = true
 		case "strings":
 			needStrings = true
+		case "strconv":
+			// strconv's ErrRange/ErrSyntax initializers call errors.New.
+			needStrconv = true
+			needErrors = true
+		case "encoding/json":
+			needJson = true
 		case "encoding/xml":
 			needXml = true
 		}
@@ -867,6 +885,27 @@ func ExportFile(path string) (string, error) {
 	// Self-contained: no synthetic dependencies.
 	if needXml {
 		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/xml")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): the synthetic strconv package (see synth_strconv.go).
+	// Imports the synthetic errors package (ErrSyntax/ErrRange
+	// initializers) — errors is imported first above, so the dependency
+	// is satisfied. Multi-result Parse*/Atoi/Unquote* declarations are
+	// skipped here (WS D); their call sites desugar to the __-helpers
+	// (see mrdesugar_m5.go).
+	if needStrconv {
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): synthetic encoding/json (see synth_json.go).
+	// Self-contained: no synthetic dependencies. Multi-result Marshal/
+	// MarshalIndent/Indent/Decoder.Token/Number.Float64/Int64 are skipped
+	// here (WS D); their call sites desugar to the __-helpers
+	// (see mrdesugar_m5.go).
+	if needJson {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/json")); err != nil {
 			return "", err
 		}
 	}
@@ -5842,11 +5881,12 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	}
 	// P3-M5 (WS E, ADR-0005): qualified identifiers time.X / context.X in
 	// expression position (time.Second consts, context.Canceled vars).
+	// P3-M7: strconv.ErrSyntax/ErrRange (vars), strconv.IntSize (const).
 	// Method expressions (time.Duration.String) have a SelectorExpr X and
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" {
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "strconv" || p == "encoding/json" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}
