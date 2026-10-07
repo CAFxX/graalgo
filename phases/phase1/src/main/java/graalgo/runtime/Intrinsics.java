@@ -431,9 +431,12 @@ public final class Intrinsics {
      * The {@code copy} builtin (REAL): copies {@code min(len(dst), len(src))}
      * elements from {@code src} to {@code dst}, returns the count. Overlap
      * is safe (memmove semantics). Neither slice header is modified.
+     *
+     * <p>P3-M7: a nil dst or src is legal Go (copies 0 elements) — the
+     * GoSlice reference is null for nil slices, so null-check both.
      */
     public static int slicecopy(GoSlice dst, GoSlice src, GoKind elemKind) {
-        int n = Math.min(dst.len(), src.len());
+        int n = Math.min(dst == null ? 0 : dst.len(), src == null ? 0 : src.len());
         if (n > 0) {
             memmove(dst.array(), dst.offset(), src.array(), src.offset(), n, elemKind);
         }
