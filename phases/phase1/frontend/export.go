@@ -1085,6 +1085,11 @@ func ExportFile(path string) (string, error) {
 		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
 			return "", err
 		}
+		// P3-M8: the synthetic syscall source references strconv.Itoa;
+		// import it directly (the needStrconv block above already ran).
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
 	}
 	// P3-M3 (WS D, ADR-0003): the "methods" lists on named/pointer entries
 	// are computed from funcByObj, which is only populated now. Any type
