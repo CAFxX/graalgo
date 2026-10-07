@@ -881,6 +881,30 @@ public final class NodeFactory {
         if ("basic".equals(k)) {
             return basicDescriptorFor(kindOf(ctx, typeId, path));
         }
+        // P3-M7: a pointer to a named type is named "*"+qualifiedName
+        // (like gc's %T), not structural. Two distinct named types with
+        // identical structure must not share a descriptor, and
+        // *errors.errorString must be recognizable by name (Fmt's
+        // errorString stand-in check). Pointers to unnamed types stay
+        // structural.
+        if ("pointer".equals(k)) {
+            int elemId = resolveAlias(ctx, entry.object("detail", path).intValue("elem", path), path);
+            Json.Object elemEntry = ctx.types.entry(elemId, path);
+            if ("named".equals(elemEntry.string("kind", path))) {
+                String name = "*" + elemEntry.object("detail", path).string("name", path);
+                graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(name);
+                if (nd == null) {
+                    nd = new graalgo.values.GoTypeDescriptor(name,
+                            kindOf(ctx, typeId, path), false);
+                    graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(name, nd);
+                    if (prev != null) {
+                        nd = prev;
+                    }
+                }
+                ctx.typeDescs.put(typeId, nd);
+                return nd;
+            }
+        }
         if (isStructuralComposite(k)) {
             String key = structuralKey(ctx, typeId, path);
             graalgo.values.GoTypeDescriptor d = STRUCTURAL_DESCS.get(key);
