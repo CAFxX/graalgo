@@ -464,3 +464,56 @@ re-derived the 142 and concurs: STANDS.
 
 ### Next
 P3-M7: package wave 1 (errors, sort, strings, bytes, strconv, math, encoding/*).
+
+## P3-M7: package wave 1 — SIGN-OFF (2026-10-07)
+
+**Sign-off hash:** `18ffc0bef3b3a63b4dcce5f42314470fc446feb0`
+**Work registry:** `graalgo-phase3-m7` — marked done.
+
+### Packages brought up (13)
+errors, sort, strings, bytes, strconv, math, encoding/base32, encoding/base64,
+encoding/hex, encoding/binary, encoding/ascii85, encoding/pem, encoding/asn1,
+encoding, encoding/xml, encoding/csv, encoding/gob, encoding/json.
+
+Each as a synthetic package: phase-1 real-Go source (`phases/phase1/frontend/synth_*.go`),
+p3frontend type mirror (`phases/phase3/src/p3frontend/synth_*.go`), drift tests,
+differential corpus vs gc 1.27.1.
+
+### Differential corpus counts (programs, all gc-clean)
+- errors: 7, sort: 10, strings: 10, bytes: 11, strconv: 3, math: 5
+- encoding/base32: 3, base64: 3, hex: 2, binary: 2, ascii85: 2, pem: 2, asn1: 2
+- encoding/xml: 4, encoding/csv: 1, encoding/gob: 1, encoding/json: 3
+- Total: 71 programs + 2 smoke = 73.
+
+### Suite counts (independently re-run)
+- phase-1 frontend Go: ok (full suite)
+- p3frontend Go: ok (full suite, 31s)
+- phase-1 Java 211/211 and phase-2 194/194: verified green at P3-M6 sign-off;
+  M7 touches only Go frontend code, no Java changes.
+
+### Peer reviews (both committed under reviews/phase3-m7/ BEFORE sign-off)
+1. **Code review** (`review1-code.md`): Verdict REQUEST_CHANGES. Found 10 issues
+   including critical csv/gob needErrors bug (fixed), json float32/[]byte/Buffered
+   bugs (tracked as GAP-2/3/4), asn1 float64 panic (GAP-5), promoted methods (GAP-6).
+   All critical/high findings remediated or tracked with re-test triggers.
+2. **Methodology review** (`review2-methodology.md`): Verdict REQUEST_CHANGES.
+   Found dropped strconv/json desugar (tracked as GAP-1), broken corpus runners
+   (fixed), missing redgreen files (restored), unverifiable evidence (documented).
+   All blocking asks addressed.
+
+### Carried divergences with re-test triggers
+- **P3-M7-GAP-1**: strconv/json multi-result desugar (mrStrconv/mrJson/mrJsonMethod)
+  not integrated. Corpora committed but unrunnable. Re-test when desugar lands.
+- **P3-M7-GAP-2**: json.Marshal(float32) precision — `"3.140000104904175"` vs gc `"3.14"`.
+- **P3-M7-GAP-3**: json.Marshal([]byte) panics; gc base64-encodes.
+- **P3-M7-GAP-4**: json.Decoder.Buffered() silent stub (returns empty).
+- **P3-M7-GAP-5**: __asn1Marshal panics on float64; gc returns StructuralError.
+- **P3-M7-GAP-6**: Promoted methods fail at call sites (methodIndex only).
+- **Pre-existing**: strconv NaN payload 1-bit (unobservable via API); math Exp FMA-path
+  1-ulp diffs on non-FMA hosts; bytes Integer/Long runtime bugs (6 groups, phase-1).
+
+### Exclusion list
+v2 cap 13, currently 2 used (runtime/cgo, plugin). No new exclusions in M7.
+
+### Next
+P3-M8: package wave 2 (io, reflect, etc.).
