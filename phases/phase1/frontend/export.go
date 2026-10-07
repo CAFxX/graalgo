@@ -236,6 +236,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("math").pkg, nil
 	case "strings":
 		return getSyntheticPackage("strings").pkg, nil
+	case "encoding/xml":
+		return getSyntheticPackage("encoding/xml").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -664,7 +666,7 @@ func ExportFile(path string) (string, error) {
 		// (real-Go sources; see synth_errors.go / synth_sort.go /
 		// synth_bytes.go / synth_math.go).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -697,7 +699,7 @@ func ExportFile(path string) (string, error) {
 	// P3-M7 (wave 1): "errors", "sort", "bytes", "math" likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" {
+		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "encoding/xml" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -791,7 +793,7 @@ func ExportFile(path string) (string, error) {
 	// package vars become document globals. Intrinsics (time.Now etc.)
 	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
-	needErrors, needSort, needBytes, needMath, needStrings := false, false, false, false, false
+	needErrors, needSort, needBytes, needMath, needStrings, needXml := false, false, false, false, false, false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -810,6 +812,8 @@ func ExportFile(path string) (string, error) {
 			needMath = true
 		case "strings":
 			needStrings = true
+		case "encoding/xml":
+			needXml = true
 		}
 	}
 	if needTime {
@@ -853,6 +857,13 @@ func ExportFile(path string) (string, error) {
 	// Self-contained: no synthetic dependencies.
 	if needStrings {
 		if err := e.importSyntheticPackage(getSyntheticPackage("strings")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): synthetic encoding/xml (see synth_xml.go).
+	// Self-contained: no synthetic dependencies.
+	if needXml {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/xml")); err != nil {
 			return "", err
 		}
 	}

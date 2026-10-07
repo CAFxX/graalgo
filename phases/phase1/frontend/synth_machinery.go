@@ -47,6 +47,10 @@ var syntheticSources = map[string]string{
 	// (synth_json.go). Pure-Go, self-contained.
 	"strconv":        syntheticStrconvSource,
 	"encoding/json": syntheticJsonSource,
+	// P3-M7 (wave 1): synthetic encoding/xml package (real-Go source in
+	// synth_xml.go). Self-contained (no imports); the token-stream
+	// desugar lives in mrdesugar_m5.go (mrXmlToken).
+	"encoding/xml": syntheticXmlSource,
 }
 // the overlay importer, so the context source's `import "time"` resolves
 // to the synthetic package (synthetic→synthetic imports).
@@ -539,7 +543,7 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" {
+	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -551,9 +555,9 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 
 func multiResultSyntheticError(fn *types.Func) error {
 	// P3-M7: the milestone tag follows the synthetic package (time/context
-	// are M5, errors/sort/bytes/math are wave-1 M7).
+	// are M5, errors/sort/bytes/math/strings/encoding-xml are wave-1 M7).
 	milestone := "M5"
-	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" {
+	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" {
 		milestone = "M7"
 	}
 	// Qualify method names with the receiver type name
