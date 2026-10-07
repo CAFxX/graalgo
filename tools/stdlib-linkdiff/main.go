@@ -1,8 +1,9 @@
 // Command stdlib-linkdiff is the graalgo Phase-3 linkname-diff tool
 // (P3-M6, GG-0021; SPEC §3.6).
 //
-// It scans a Go source tree (default: the Go toolchain's GOROOT/src,
-// standing in for the vendored stdlib until the vendoring worker lands)
+// It scans a Go source tree (default: the vendored stdlib tree for the
+// pinned version when present, else the live toolchain's GOROOT/src --
+// the choice is announced loudly, never silently)
 // for //go:linkname directives, and classifies each one against the
 // symbol set graalgo provides:
 //
@@ -29,8 +30,10 @@
 package main
 
 import (
+	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -48,8 +51,9 @@ Usage:
                   [--snapshot PATH] [--provided PATH] [--quiet]
 
 Flags:
-  --goroot DIR    Go source tree to scan (default: GOROOT/src of the
-                  toolchain that built this binary)
+  --goroot DIR    Go source tree to scan (default: canonical resolution --
+                  the vendored tree for the pinned version when present,
+                  else live GOROOT/src with a loud warning)
   --graalgo DIR   graalgo repo root the provided set is extracted from
                   (default: $GRAALGO_ROOT, else ~/workspace/graalgo)
   --goos, --goarch
@@ -86,18 +90,62 @@ type options struct {
 	quiet    bool
 }
 
-func defaultGoroot() string {
+func defaultGoroot(stderr io.Writer) (string, error) {
+	// Canonical stdlib-tree resolution (same rule as tools/stdlib-excl's
+	// resolveStdlibTree; the two copies are documented as twins -- keep
+	// in sync): the vendored tree for the pinned version when present,
+	// else the live toolchain -- announced loudly, never silently.
+	if graalgo := defaultGraalgo(); graalgo != "" {
+		pinPath := filepath.Join(graalgo, "phases", "phase3", "stdlib-fork", "pinned-version.txt")
+		if data, err := os.ReadFile(pinPath); err == nil {
+			if ver := strings.TrimSpace(string(data)); ver != "" {
+				if home, herr := os.UserHomeDir(); herr == nil {
+					cand := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
+					if fi, serr := os.Stat(cand); serr == nil && fi.IsDir() {
+						if err := linkdiffCrossCheckPin(graalgo, ver); err != nil {
+							return "", err
+						}
+						fmt.Fprintf(stderr, "stdlib tree: using vendored tree %s (pin %s)\n", cand, ver)
+						return cand, nil
+					}
+					fmt.Fprintf(stderr, "stdlib tree: WARNING: no vendored tree at %s; falling back to live GOROOT (results pin to the live toolchain, not the pinned %s)\n", cand, ver)
+				}
+			}
+		}
+	}
 	if g := os.Getenv("GOROOT"); g != "" {
-		return filepath.Join(g, "src")
+		fmt.Fprintf(stderr, "stdlib tree: WARNING: no vendored tree; scanning $GOROOT/src (%s) -- results pin to the live toolchain\n", g)
+		return filepath.Join(g, "src"), nil
 	}
 	// Fall back to the toolchain that built this binary: <GOROOT>/bin/go
 	// is two levels above the src tree... actually GOROOT/bin/<tool>;
 	// the reliable route is `go env GOROOT`, which needs a go binary.
 	// Last resort: ~/tools/go/src (the program's pinned toolchain).
 	if h, err := os.UserHomeDir(); err == nil {
-		return filepath.Join(h, "tools", "go", "src")
+		fmt.Fprintf(stderr, "stdlib tree: WARNING: no vendored tree and no $GOROOT; scanning pinned toolchain src (%s) -- results pin to the live toolchain\n", filepath.Join(h, "tools", "go", "src"))
+		return filepath.Join(h, "tools", "go", "src"), nil
 	}
-	return ""
+	return "", fmt.Errorf("no --goroot and no stdlib tree resolvable")
+}
+
+// linkdiffCrossCheckPin fails loud when the committed vendor manifest
+// records a different Go version than the pin (twin of
+// tools/stdlib-excl's crossCheckPin -- keep in sync).
+func linkdiffCrossCheckPin(graalgo, ver string) error {
+	data, err := os.ReadFile(filepath.Join(graalgo, "phases", "phase3", "stdlib-fork", "vendor-manifest.json"))
+	if err != nil {
+		return fmt.Errorf("stdlib tree: cannot read vendor manifest: %w", err)
+	}
+	var m struct {
+		GoVersion string `json:"goVersion"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return fmt.Errorf("stdlib tree: cannot parse vendor manifest: %w", err)
+	}
+	if m.GoVersion != ver {
+		return fmt.Errorf("stdlib tree: vendor manifest records goVersion %q but pinned-version.txt says %q -- re-vendor state is inconsistent; refusing to scan the wrong tree", m.GoVersion, ver)
+	}
+	return nil
 }
 
 func defaultGraalgo() string {
@@ -138,7 +186,11 @@ func parseFlags(args []string) (options, error) {
 		}
 	}
 	if o.goroot == "" {
-		o.goroot = defaultGoroot()
+		var err error
+		o.goroot, err = defaultGoroot(os.Stderr)
+		if err != nil {
+			return o, err
+		}
 	}
 	if o.graalgo == "" {
 		o.graalgo = defaultGraalgo()
@@ -193,6 +245,10 @@ func run(args []string) int {
 	}
 
 	rep := Classify(scan, provided, routes, o)
+	if len(rep.StaleRoutes) > 0 {
+		fmt.Fprintf(os.Stderr, "stdlib-linkdiff: WARNING: %d route(s) matched zero linknames (stale or mistyped): %s\n",
+			len(rep.StaleRoutes), strings.Join(rep.StaleRoutes, ", "))
+	}
 	if err := emitReport(rep, o); err != nil {
 		fmt.Fprintln(os.Stderr, "stdlib-linkdiff: report: "+err.Error())
 		return 1
