@@ -49,3 +49,13 @@ report commit hashes + file lists.
   "restores ... was missing from tree")
 - enc-core wiring follow-up: who does it (new worker vs coordinator)?
 - errors-sort nil guards now redundant with runtime NPE fix — harmless, keep.
+
+## 2026-10-07 ~03:35 UTC update
+- strconv worker DONE (4/10): source complete @ aed88b7 (on m7-strconv, supersedes
+  12e5fcd on m7-math-polluted), redgreen @ 5578323. Differential: 20k random
+  float64s bit-exact, all formats/precisions, adversarial quotes, IsPrint sweep.
+  1 carried divergence: 1-bit NaN payload (unobservable via API).
+  WIRING PENDING (exporter, mirror, drift, corpus) — blocked by tree chaos;
+  integration script at work/apply_integration.py (worker's scratch).
+- Pattern emerging: sources land, wiring blocked. Plan: after all package
+  workers finish, spawn per-package WIRING follow-ups (enc-core, strconv, ...).
