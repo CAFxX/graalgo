@@ -383,7 +383,10 @@ public final class ReflectTypes {
             case "complex64" -> GoKind.COMPLEX64;
             case "complex128" -> GoKind.COMPLEX128;
             case "string" -> GoKind.STRING;
-            case "unsafe.Pointer" -> GoKind.UNSAFE_POINTER;
+            // go/types names the unsafe.Pointer basic "Pointer"
+            // (universe.go); the exporter sends t.Name() verbatim, so the
+            // wire name is "Pointer", never "unsafe.Pointer". Accept both.
+            case "Pointer", "unsafe.Pointer" -> GoKind.UNSAFE_POINTER;
             // P3-M8 fix: untyped basics map to their default types.
             case "untyped bool" -> GoKind.BOOL;
             case "untyped int" -> GoKind.INT64;
@@ -922,7 +925,9 @@ public final class ReflectTypes {
                 case "complex64" -> 15;
                 case "complex128" -> 16;
                 case "string" -> 24;
-                case "unsafe.Pointer" -> 26;
+                // Wire name is "Pointer" (see basicKind); accept the
+                // qualified spelling too.
+                case "Pointer", "unsafe.Pointer" -> 26;
                 default -> throw new IllegalStateException("reflect: kind of " + t.basicName);
             };
         }
@@ -946,6 +951,11 @@ public final class ReflectTypes {
             return t.name;
         }
         if (!t.basicName.isEmpty()) {
+            // gc renders unsafe.Pointer qualified even though the wire
+            // (and go/types) name is bare "Pointer".
+            if (t.basicName.equals("Pointer")) {
+                return "unsafe.Pointer";
+            }
             return t.basicName;
         }
         return switch (t.kind) {

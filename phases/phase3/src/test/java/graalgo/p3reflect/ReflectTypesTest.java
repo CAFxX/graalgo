@@ -8,7 +8,8 @@ import java.util.Map;
 /**
  * Regression tests for reviewer-2 P1-4 (an "invalid type" wire entry must
  * fail loud, never become a fabricated kind) and P1-5 (forward references
- * must resolve to complete TypeInfos, not baked shells).
+ * must resolve to complete TypeInfos, not baked shells), plus the unsafe
+ * follow-up (bare "Pointer" wire name for unsafe.Pointer).
  *
  * <p>Registered in {@code graalgo.iface.IfaceTestRunner}.
  */
@@ -92,5 +93,27 @@ public final class ReflectTypesTest {
         assertTrue(named.fields.size() == 1,
                 "named should have 1 field, got " + named.fields.size());
         assertTrue(named.size == 8, "named size should be 8, got " + named.size);
+    }
+
+    /**
+     * Unsafe-differential follow-up: go/types names the unsafe.Pointer
+     * basic "Pointer" (not "unsafe.Pointer"), and the exporter sends
+     * t.Name() verbatim. The table must accept the bare wire name and
+     * still report Kind() == UnsafePointer (ordinal 26) and
+     * Type.String() == "unsafe.Pointer", exactly like gc.
+     */
+    public void testBarePointerWireNameIsUnsafePointer() {
+        String doc = "{\"types\": [{\"kind\": \"basic\", \"detail\": "
+                + "{\"name\": \"Pointer\", \"class\": \"pointer\", \"untyped\": false}}]}";
+        ReflectTypes.install(doc, Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        ReflectTypes.TypeInfo ptr = findByKind(table, GoKind.UNSAFE_POINTER);
+        assertTrue(ptr != null, "no UNSAFE_POINTER TypeInfo built for wire name \"Pointer\"");
+        assertTrue(ReflectTypes.kindOrdinal(ptr) == 26,
+                "Kind ordinal should be 26 (UnsafePointer), got " + ReflectTypes.kindOrdinal(ptr));
+        assertTrue("unsafe.Pointer".equals(ReflectTypes.typeString(ptr.tok)),
+                "Type.String should be \"unsafe.Pointer\", got " + ReflectTypes.typeString(ptr.tok));
+        assertTrue(ptr.size == 8 && ptr.align == 8,
+                "unsafe.Pointer should be size 8 align 8, got " + ptr.size + "/" + ptr.align);
     }
 }
