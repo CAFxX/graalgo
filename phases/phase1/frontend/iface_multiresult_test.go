@@ -1,9 +1,14 @@
 package main
 
 // P3-M8 (WS D): exporter pinning tests for multi-result interface method
-// dispatch (D1). Red-green: these fail on the pre-D1 tree (every
-// multi-result interface call is a scope error; the method tables carry
-// no helper-mapped entries) and pass after.
+// dispatch (D1). Red-green (observed by reviewer probe, not inferred —
+// REVIEW-2 P2-4): on the pre-D1 tree (7e53780) these fail, but NOT all
+// via scope errors. The exporter panics on synthetic import (nil deref
+// in describeType, pre-existing): tests 3/4/5 die on that panic; test 2
+// fails on the assertion (no helper-mapped entries); test 1 fails to
+// compile (ioMultiResultFuncs undefined). With only the import panic
+// fixed (baseline+pkgPathOf-only probe), every multi-result interface
+// call fails with the WS-D scope error. Green: pass with D1.
 //
 //  1. TestD1IoDesugarWiring pins the ioMultiResultFuncs table entries
 //     against synth_io.go (helper/pair/fields, following the
@@ -16,7 +21,9 @@ package main
 //     whose temp holds an ifacemethod node typed as the interface pair.
 //  4. TestD1IfaceMultiResultStillFailFast pins that a multi-result
 //     interface method with no table entry (3-result user method;
-//     io.ReaderFrom.ReadFrom) keeps the fail-fast.
+//     tabled-name/untabled-types 2-result method exercising the
+//     positional types.Identical guard; io.ReaderFrom.ReadFrom) keeps
+//     the fail-fast.
 //  5. TestD1IfaceMultiResultUserInterface pins the structural match: a
 //     user-declared interface with the Read shape dispatches too.
 //  6. TestD1VarDeclMultiResultFailFast pins the named M8 limitation for
@@ -157,24 +164,61 @@ func d1ExportIfaceProg(t *testing.T, src string) map[string]any {
 	return decodeExport(t, out)
 }
 
-// d1MethodTable returns the wire "methods" list of the named/pointer
-// type-table entry whose detail name matches.
-func d1MethodTable(t *testing.T, doc map[string]any, wantName string) []any {
+// d1EntryTypeName resolves a named/pointer type-table entry to its
+// wire type name: detail.name for named entries; for pointer entries
+// (whose detail carries no name, only elem) "*"+ the element type's
+// detail.name. Returns "" when the name cannot be resolved.
+func d1EntryTypeName(t *testing.T, doc map[string]any, em map[string]any) string {
 	t.Helper()
+	d, _ := em["detail"].(map[string]any)
+	if name, _ := d["name"].(string); name != "" {
+		return name
+	}
+	kind, _ := em["kind"].(string)
+	if kind == "pointer" {
+		if elem, ok := d["elem"].(float64); ok {
+			tes := typeEntries(t, doc)
+			if int(elem) < len(tes) {
+				if ee, ok := tes[int(elem)].(map[string]any); ok {
+					ed, _ := ee["detail"].(map[string]any)
+					if en, _ := ed["name"].(string); en != "" {
+						return "*" + en
+					}
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// d1MethodTable returns the wire "methods" lists of EVERY named/pointer
+// type-table entry whose resolved type name matches wantName
+// (e.g. "*strings.Reader", "io.discard"). A type may own several table
+// entries in the wire (one per pointer type id), so callers must check
+// all of them — a mis-wired itab could hide behind the first.
+func d1MethodTable(t *testing.T, doc map[string]any, wantName string) [][]any {
+	t.Helper()
+	var out [][]any
 	for _, e := range typeEntries(t, doc) {
 		em, ok := e.(map[string]any)
 		if !ok {
 			continue
 		}
-		d, _ := em["detail"].(map[string]any)
-		if d["name"] != wantName {
+		kind, _ := em["kind"].(string)
+		if kind != "named" && kind != "pointer" {
 			continue
 		}
+		if d1EntryTypeName(t, doc, em) != wantName {
+			continue
+		}
+		d, _ := em["detail"].(map[string]any)
 		ms, _ := d["methods"].([]any)
-		return ms
+		out = append(out, ms)
 	}
-	t.Fatalf("no type-table entry named %s", wantName)
-	return nil
+	if len(out) == 0 {
+		t.Fatalf("no type-table entry named %s", wantName)
+	}
+	return out
 }
 
 // d1FuncIDByName maps wire funcdecl object ids to names.
@@ -212,57 +256,100 @@ func main() {
 `
 	doc := d1ExportIfaceProg(t, src)
 	funcIDs := d1FuncIDByName(t, doc)
-	// The -*T method tables map the multi-result methods to the
-	// pair-returning __-helpers (obj = helper funcdecl id).
+	// The per-type method tables map the multi-result methods to the
+	// pair-returning __-helpers (obj = helper funcdecl id). Each case
+	// uses d1MethodTable on the type's own table entry, so a mis-wired
+	// itab — the right method attached to the wrong type, or pointing
+	// at the wrong type's helper — fails that type's assertion (P1-2).
+	// The old any-entry scan could not catch a mis-wired itab.
 	cases := []struct {
 		typeName string
 		method   string
 		helper   string
 	}{
-		// Pointer entries carry the full *T method set; named entries
-		// carry the value method set. The test locates the entry holding
-		// the mapped method.
 		{"*strings.Reader", "Read", "__stringsReaderRead"},
 		{"io.discard", "Write", "__discardWrite"},
 		{"io.discard", "WriteString", "__discardWriteString"},
 		{"*io.LimitedReader", "Read", "__limitedReaderRead"},
 	}
-	_ = cases
-	// Scan every named/pointer entry: find the one whose method table
-	// contains the mapped method pointing at the helper.
 	for _, c := range cases {
-		found := false
-		for _, e := range typeEntries(t, doc) {
-			em, ok := e.(map[string]any)
-			if !ok {
-				continue
-			}
-			kind, _ := em["kind"].(string)
-			if kind != "named" && kind != "pointer" {
-				continue
-			}
-			d, _ := em["detail"].(map[string]any)
-			for _, m := range d["methods"].([]any) {
-				mm, _ := m.(map[string]any)
-				if mm["name"] != c.method {
-					continue
+		t.Run(c.typeName+"."+c.method, func(t *testing.T) {
+			// Every table entry owned by this type must map the method
+			// to the expected helper — checking only the first would
+			// let a mis-wired duplicate entry hide.
+			tables := d1MethodTable(t, doc, c.typeName)
+			for ti, ms := range tables {
+				found := false
+				for _, m := range ms {
+					mm, ok := m.(map[string]any)
+					if !ok || mm["name"] != c.method {
+						continue
+					}
+					if found {
+						t.Fatalf("table %d for %s: duplicate %s entry", ti, c.typeName, c.method)
+					}
+					found = true
+					obj, _ := mm["obj"].(float64)
+					if got := funcIDs[obj]; got != c.helper {
+						t.Errorf("table %d for %s: obj = %v (%q), want helper %q",
+							ti, c.typeName, obj, got, c.helper)
+					}
+					// The entry must be for the right method: the
+					// method's implkey must match the multi-result
+					// method's (name + receiver-stripped signature).
+					ik, _ := mm["implkey"].(string)
+					if !strings.Contains(ik, c.method+"\x00") {
+						t.Errorf("table %d for %s: method %q entry has implkey %q",
+							ti, c.typeName, c.method, ik)
+					}
 				}
-				obj, _ := mm["obj"].(float64)
-				if funcIDs[obj] != c.helper {
-					continue
+				if !found {
+					t.Errorf("table %d for %s: no %s entry", ti, c.typeName, c.method)
 				}
-				// The entry must be for the right dynamic type: the
-				// method's implkey must match the multi-result method's
-				// (name + receiver-stripped signature).
-				ik, _ := mm["implkey"].(string)
-				if !strings.Contains(ik, c.method+"\x00") {
-					t.Errorf("%s: method %q entry has implkey %q", c.typeName, c.method, ik)
-				}
-				found = true
 			}
+		})
+	}
+	// Negative scan: no other type's table maps these methods to
+	// helpers they shouldn't have. A mis-wiring that attaches a helper
+	// under the wrong type (e.g. __stringsReaderRead under
+	// *io.LimitedReader's table) fails here even when each type's own
+	// table looks right.
+	allowed := map[string]map[string]bool{}
+	for _, c := range cases {
+		m := allowed[c.typeName]
+		if m == nil {
+			m = map[string]bool{}
+			allowed[c.typeName] = m
 		}
-		if !found {
-			t.Errorf("no method-table entry maps %s.%s to %s", c.typeName, c.method, c.helper)
+		m[c.method] = true
+	}
+	helpers := map[string]bool{
+		"__stringsReaderRead": true, "__discardWrite": true,
+		"__discardWriteString": true, "__limitedReaderRead": true,
+	}
+	for _, e := range typeEntries(t, doc) {
+		em, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		kind, _ := em["kind"].(string)
+		if kind != "named" && kind != "pointer" {
+			continue
+		}
+		name := d1EntryTypeName(t, doc, em)
+		d, _ := em["detail"].(map[string]any)
+		ms, _ := d["methods"].([]any)
+		for _, m := range ms {
+			mm, _ := m.(map[string]any)
+			mn, _ := mm["name"].(string)
+			obj, _ := mm["obj"].(float64)
+			if !helpers[funcIDs[obj]] {
+				continue
+			}
+			if !allowed[name][mn] {
+				t.Errorf("unexpected helper mapping: type %q method %q -> %q (obj %v)",
+					name, mn, funcIDs[obj], obj)
+			}
 		}
 	}
 }
@@ -345,9 +432,12 @@ func main() {
 func TestD1IfaceMultiResultStillFailFast(t *testing.T) {
 	// Multi-result interface methods with no D1 table entry keep the
 	// fail-fast (P2-2): a 3-result method on a user interface (generic
-	// WS-D scope error) and a 2-result *synthetic* method —
-	// io.ReaderFrom.ReadFrom, the exact DESIGN.md §6 example — which
-	// takes the M8 multiResultSyntheticError path. (The review's sketch
+	// WS-D scope error); a 2-result method whose name IS tabled but
+	// whose result types are NOT ((int, string) — exercises the
+	// types.Identical positional guard, not just the arity guard); and
+	// a 2-result *synthetic* method — io.ReaderFrom.ReadFrom, the
+	// exact DESIGN.md §6 example — which takes the M8
+	// multiResultSyntheticError path. (The review's sketch
 	// `var rf io.ReaderFrom = io.Discard` does not type-check: the
 	// synthetic Discard var is statically io.Writer. *bytes.Buffer
 	// implements io.ReaderFrom with a fail-fast body instead.)
@@ -372,6 +462,26 @@ func main() {
 	println(n, err == nil)
 }
 `,
+			wantErr: "WS D",
+		},
+		{
+			name: "2-result tabled name, untabled result types (positional guard)",
+			src: `package main
+
+type R interface {
+	Read(p []byte) (int, string)
+}
+
+func main() {
+	var r R
+	n, s := r.Read(nil)
+	println(n, s)
+}
+`,
+			// Name "Read" IS tabled but (int, string) fails the
+			// types.Identical positional guard in
+			// classifyIfaceMultiResultCall — so this must keep the
+			// generic WS-D fail-fast, not just the arity guard.
 			wantErr: "WS D",
 		},
 		{

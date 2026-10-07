@@ -83,11 +83,18 @@ helpers + new Appendix M table entries (the M7/M8 pattern):
   synthetic tree is a fail-fast or named-trap body (`bytes.Buffer`,
   `discard`, `multiReader`, `nopCloserWriterTo`, `strings.Reader` are
   fail-fast; `os.File`'s `__fileReadFrom`/`__fileWriteTo` are named-trap
-  panics at synth_os.go:2334,2347, P0-2), so the fast-path arms can never
-  execute successfully. Omitting them is load-bearing, not an
-  optimization: with the gc arms, `io.Copy` from an `*os.File` source
-  would route into the os.File P0-2 trap. Re-test trigger: when
-  WriteTo/ReadFrom dispatch lands, restore the arms.
+  panics at synth_os.go:2334,2347, P0-2) — but the earlier phrasing ("the
+  fast-path arms can never execute successfully") was backwards
+  (REVIEW-2 P2-5): the arms aren't dead. `var _ ReaderFrom = discard{}`
+  (synth_io.go:709) means the `dst.(ReaderFrom)` assertion WOULD FIRE on
+  io.Discard and route into `discard.ReadFrom`'s fail-fast panic; the
+  `src.(WriterTo)` arm likewise fires on the named-trap bodies. The arms
+  are deliberately omitted because firing them panics. Omitting them is
+  load-bearing, not an optimization: with the gc arms, `io.Copy` from an
+  `*os.File` source would route into the os.File P0-2 trap. Re-test
+  trigger: restore the arms only when WriteTo/ReadFrom get real bodies —
+  restoring them while the bodies are still fail-fast/named-trap would
+  reintroduce the panic.
 - `__copy(dst, src) copyPair` — via `__copyBuffer(dst, src, nil)`.
 - `__copyN(dst, src, n) copyNPair` — via `__copyBuffer` over
   `LimitReader(src, n)` + gc's `written==n`/EOF adjustment.
@@ -142,8 +149,16 @@ return positions.
   ifacemethod node shape for `r.Read`, method-table helper mapping incl.
   shape-mismatch loudness, desugar block shape, user-interface structural
   match, non-table method still fail-fasts).
-- Red-green: each new behavior has a test failing before the fix
-  (stashed-tree check for the exporter tests; fail-fast bodies for io).
+- Red-green: each new behavior has a test failing before the fix, with
+  the red mechanism recorded as observed (REVIEW-2 P2-4 — never describe
+  a red that wasn't observed). On the pre-D1 tree (7e53780) the exporter
+  panics on synthetic import (nil deref in describeType, pre-existing):
+  the wire-shape tests fail on that panic, not on scope errors; the
+  desugar-wiring test fails to compile (`ioMultiResultFuncs` undefined);
+  the itab-mapping test fails on the assertion (no helper-mapped
+  entries). With only the import panic fixed (baseline+pkgPathOf-only
+  probe), every multi-result interface call fails with the WS-D scope
+  error.
 - Phase-3 `make test` green (no Java change; single-result dispatch must
   not regress).
 - Differential: corpus programs (new + un-scope-limited 12/13/14/15)
