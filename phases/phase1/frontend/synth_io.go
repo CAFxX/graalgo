@@ -23,21 +23,24 @@
 //   - pipePair desugar), PipeReader.Read / PipeWriter.Write (via
 //     __-helpers over channels/select), Close and CloseWithError on both
 //     pipe halves (single-result, real), SectionReader.Seek/Size/Outer
-//     (pure; Outer via the triple desugar), OffsetWriter.Seek (pure).
+//     (pure; Outer via the triple desugar), OffsetWriter.Seek (pure),
+//     and — via the P3-M8 WS-D multi-result interface dispatch —
+//     WriteString, ReadAtLeast, ReadFull, Copy, CopyN, CopyBuffer
+//     (real __-helpers + Appendix M entries; CopyBuffer keeps gc's
+//     empty-buffer panic), LimitedReader.Read (real __-helper, used by
+//     CopyN), ReadAll (real __-helper), discard.Write/WriteString
+//     (trivial real __-helpers, so io.Discard works as a Writer and
+//     as a StringWriter behind interfaces).
 //   - FAIL-FAST (exact gc signatures with panic bodies; deliberately NOT
 //     in the Appendix M table, so every call site fails at EXPORT with
 //     the named M8 scope error via isMultiResultSynthetic — never a
-//     silent stub, never a runtime surprise): Copy, CopyN, CopyBuffer,
-//     WriteString, ReadAtLeast, ReadFull, ReadAll, LimitedReader.Read,
-//     SectionReader.Read, SectionReader.ReadAt, OffsetWriter.Write,
-//     OffsetWriter.WriteAt, teeReader.Read, discard.ReadFrom,
-//     multiReader.Read, multiReader.WriteTo, multiWriter.Write,
-//     multiWriter.WriteString, nopCloserWriterTo.WriteTo. Each of these
-//     needs a 2-result call on an interface value (src.Read, dst.Write,
-//     wt.WriteTo, rf.ReadFrom). v1 interface dispatch (ADR-0003) is
-//     single-result only and no 2-result funcdecl can be emitted at all
-//     (exportFuncDecl scope-errors), so this is a hard WS D boundary,
-//     not a gap in this source.
+//     silent stub, never a runtime surprise): SectionReader.Read,
+//     SectionReader.ReadAt, OffsetWriter.Write, OffsetWriter.WriteAt,
+//     teeReader.Read, discard.ReadFrom, multiReader.Read,
+//     multiReader.WriteTo, multiWriter.Write, multiWriter.WriteString,
+//     nopCloserWriterTo.WriteTo. Each of these needs a 2-result call on
+//     an interface value (wt.WriteTo, rf.ReadFrom, s.r.ReadAt, w.Write)
+//     with no real __-helper behind it yet.
 //
 // Re-test trigger (all fail-fast members): when WS D lands multi-result
 // calls, give each a real __-helper + Appendix M table entry and re-run
@@ -61,12 +64,18 @@
 //	    still need r.Read(*bufp). It fails fast with the rest.
 //	D5. __pipeWrite uses explicit Unlock instead of defer (behavior-
 //	    identical; the critical section cannot panic).
+//	D6. copyBuffer omits gc's WriterTo/ReaderFrom fast paths: no synthetic
+//	    type implements WriteTo/ReadFrom with a real body (multiReader,
+//	    discard, nopCloserWriterTo are all fail-fast), so both assertion
+//	    arms are dead and the manual Read/Write loop is behavior-
+//	    identical on every reachable program. Re-test trigger: when
+//	    WriteTo/ReadFrom interface dispatch lands, restore the arms.
 //
 // Interface-value call sites (n, err := r.Read(p) with r io.Reader):
-// checked against ADR-0003 — IfaceDispatchNode is single-result and no
-// 2-result method can be emitted, so these fail fast at export with the
-// named M8 scope error (isMultiResultSynthetic covers package "io").
-// Loud by design; re-test when WS D lands.
+// P3-M8 (WS D) dispatches these through the itab to the concrete type's
+// pair-returning __-helper (DESIGN.md §3); the ifacemethod node yields
+// the pair and field extraction proceeds exactly like the concrete
+// Appendix M desugar.
 package main
 
 // syntheticIoSource is the P3-M8 synthetic `io` package: exact gc 1.27.1
@@ -241,57 +250,221 @@ type StringWriter interface {
 // If w implements StringWriter, StringWriter.WriteString is invoked directly.
 // Otherwise, Writer.Write is called exactly once.
 //
-// M8 scope: fail-fast — both dispatch arms need a 2-result call on an
-// interface value (WS D). Re-test when WS D lands.
+// Multi-result: the real implementation lives in __writeString;
+// 2-target call sites desugar to it (Appendix M).
 func WriteString(w Writer, s string) (n int, err error) {
-	panic("io.WriteString: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("io.WriteString: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+// ioReadPair is the P3-M8 (WS D) interface-dispatch carrier for
+// Reader.Read: r.Read(buf) through an io.Reader dispatches through the
+// itab to the concrete type's pair-returning __-helper, and the
+// ifacemethod node yields the helper's pair. This type gives the node its
+// static result type for positional field extraction — the same
+// {n int, err error} shape as every concrete Read pair.
+type ioReadPair struct {
+	n   int
+	err error
+}
+
+// ioWritePair is the P3-M8 (WS D) interface-dispatch carrier for
+// Writer.Write and StringWriter.WriteString (see ioReadPair).
+type ioWritePair struct {
+	n   int
+	err error
+}
+
+// __writeString is the real WriteString (gc 1.27.1): the StringWriter
+// fast path via type assertion, else a single Write of the string bytes.
+func __writeString(w Writer, s string) ioWritePair {
+	if sw, ok := w.(StringWriter); ok {
+		n, err := sw.WriteString(s)
+		return ioWritePair{n, err}
+	}
+	n, err := w.Write([]byte(s))
+	return ioWritePair{n, err}
 }
 
 // ReadAtLeast reads from r into buf until it has read at least min bytes.
 //
-// M8 scope: fail-fast — the loop needs r.Read (2-result interface call,
-// WS D). Re-test when WS D lands.
+// Multi-result: the real implementation lives in __readAtLeast;
+// 2-target call sites desugar to it (Appendix M).
 func ReadAtLeast(r Reader, buf []byte, min int) (n int, err error) {
-	panic("io.ReadAtLeast: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("io.ReadAtLeast: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+// readAtLeastPair is the Appendix M carrier for ReadAtLeast.
+type readAtLeastPair struct {
+	n   int
+	err error
+}
+
+// __readAtLeast is the real ReadAtLeast (gc 1.27.1): loop r.Read until
+// min bytes or an error; ErrShortBuffer when len(buf) < min.
+func __readAtLeast(r Reader, buf []byte, min int) readAtLeastPair {
+	if len(buf) < min {
+		return readAtLeastPair{0, ErrShortBuffer}
+	}
+	var n int
+	var err error
+	for n < min && err == nil {
+		var nn int
+		nn, err = r.Read(buf[n:])
+		n += nn
+	}
+	if n >= min {
+		err = nil
+	} else if n > 0 && err == EOF {
+		err = ErrUnexpectedEOF
+	}
+	return readAtLeastPair{n, err}
 }
 
 // ReadFull reads exactly len(buf) bytes from r into buf.
 //
-// M8 scope: fail-fast (see ReadAtLeast). Re-test when WS D lands.
+// Multi-result: the real implementation lives in __readFull;
+// 2-target call sites desugar to it (Appendix M).
 func ReadFull(r Reader, buf []byte) (n int, err error) {
-	panic("io.ReadFull: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("io.ReadFull: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+// readFullPair is the Appendix M carrier for ReadFull.
+type readFullPair struct {
+	n   int
+	err error
+}
+
+// __readFull is the real ReadFull (gc 1.27.1): ReadAtLeast with
+// min == len(buf).
+func __readFull(r Reader, buf []byte) readFullPair {
+	res := __readAtLeast(r, buf, len(buf))
+	return readFullPair{res.n, res.err}
 }
 
 // CopyN copies n bytes (or until an error) from src to dst.
 //
-// M8 scope: fail-fast (see Copy). Re-test when WS D lands.
+// Multi-result: the real implementation lives in __copyN;
+// 2-target call sites desugar to it (Appendix M).
 func CopyN(dst Writer, src Reader, n int64) (written int64, err error) {
-	panic("io.CopyN: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("io.CopyN: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+// copyNPair is the Appendix M carrier for CopyN.
+type copyNPair struct {
+	written int64
+	err     error
+}
+
+// __copyN is the real CopyN (gc 1.27.1): copy through a LimitedReader,
+// then the written==n/EOF adjustment.
+func __copyN(dst Writer, src Reader, n int64) copyNPair {
+	res := __copyBuffer(dst, LimitReader(src, n), nil)
+	written := res.written
+	err := res.err
+	if written == n {
+		return copyNPair{n, nil}
+	}
+	if written < n && err == nil {
+		// src stopped early; must have been EOF.
+		err = EOF
+	}
+	return copyNPair{written, err}
 }
 
 // Copy copies from src to dst until either EOF is reached
 // on src or an error occurs.
 //
-// M8 scope: fail-fast — the WriterTo/ReaderFrom dispatch and the manual
-// loop all need 2-result interface calls (WS D). Re-test when WS D lands.
+// Multi-result: the real implementation lives in __copy;
+// 2-target call sites desugar to it (Appendix M).
 func Copy(dst Writer, src Reader) (written int64, err error) {
-	panic("io.Copy: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("io.Copy: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+// copyPair is the Appendix M carrier for Copy.
+type copyPair struct {
+	written int64
+	err     error
+}
+
+// __copy is the real Copy (gc 1.27.1): copyBuffer with a nil buffer.
+func __copy(dst Writer, src Reader) copyPair {
+	res := __copyBuffer(dst, src, nil)
+	return copyPair{res.written, res.err}
 }
 
 // CopyBuffer is identical to Copy except that it stages through the
 // provided buffer (if one is required) rather than allocating a
 // temporary one.
 //
-// M8 scope: fail-fast (see Copy). Re-test when WS D lands.
+// Multi-result: the real implementation lives in __copyBuffer;
+// 2-target call sites desugar to it (Appendix M).
 func CopyBuffer(dst Writer, src Reader, buf []byte) (written int64, err error) {
-	panic("io.CopyBuffer: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("io.CopyBuffer: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
-// copyBuffer is the actual implementation of Copy and CopyBuffer.
-//
-// M8 scope: fail-fast (see Copy). Re-test when WS D lands.
-func copyBuffer(dst Writer, src Reader, buf []byte) (written int64, err error) {
-	panic("io.copyBuffer: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+// copyBufferPair is the Appendix M carrier for CopyBuffer/copyBuffer.
+type copyBufferPair struct {
+	written int64
+	err     error
+}
+
+// __copyBuffer is the real copyBuffer (gc 1.27.1), minus the
+// WriterTo/ReaderFrom fast paths (deviation D6 below): allocate the 32KB
+// staging buffer when buf is nil (sized down for a *LimitedReader
+// source), then loop src.Read/dst.Write with gc's errInvalidWrite and
+// ErrShortWrite normalization. EOF from src is not reported.
+func __copyBuffer(dst Writer, src Reader, buf []byte) copyBufferPair {
+	if buf == nil {
+		size := 32 * 1024
+		if l, ok := src.(*LimitedReader); ok && int64(size) > l.N {
+			if l.N < 1 {
+				size = 1
+			} else {
+				size = int(l.N)
+			}
+		}
+		buf = make([]byte, size)
+	}
+	var written int64
+	var err error
+	for {
+		nr, er := src.Read(buf)
+		if nr > 0 {
+			nw, ew := dst.Write(buf[0:nr])
+			if nw < 0 || nr < nw {
+				nw = 0
+				if ew == nil {
+					ew = errInvalidWrite
+				}
+			}
+			written += int64(nw)
+			if ew != nil {
+				err = ew
+				break
+			}
+			if nr != nw {
+				err = ErrShortWrite
+				break
+			}
+		}
+		if er != nil {
+			if er != EOF {
+				err = er
+			}
+			break
+		}
+	}
+	return copyBufferPair{written, err}
+}
+
+// CopyBuffer panics when given a zero-length non-nil buffer (gc 1.27.1).
+// The check lives in the __-helper's caller wrapper below so the panic
+// fires before any dispatch.
+func __copyBufferChecked(dst Writer, src Reader, buf []byte) copyBufferPair {
+	if buf != nil && len(buf) == 0 {
+		panic("empty buffer in CopyBuffer")
+	}
+	return __copyBuffer(dst, src, buf)
 }
 
 // LimitReader returns a Reader that reads from r
@@ -310,10 +483,31 @@ type LimitedReader struct {
 
 // Read implements Reader.
 //
-// M8 scope: fail-fast — needs l.R.Read (2-result interface call, WS D).
-// Re-test when WS D lands.
+// Multi-result: the real implementation lives in __limitedReaderRead;
+// 2-target call sites desugar to it (Appendix M).
 func (l *LimitedReader) Read(p []byte) (n int, err error) {
-	panic("io.LimitedReader.Read: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("io.LimitedReader.Read: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+// limitedReaderReadPair is the Appendix M carrier for LimitedReader.Read.
+type limitedReaderReadPair struct {
+	n   int
+	err error
+}
+
+// __limitedReaderRead is the real LimitedReader.Read (gc 1.27.1):
+// clamp p to the remaining budget, read from the underlying Reader,
+// and deduct what was read.
+func __limitedReaderRead(l *LimitedReader, p []byte) limitedReaderReadPair {
+	if l.N <= 0 {
+		return limitedReaderReadPair{0, EOF}
+	}
+	if int64(len(p)) > l.N {
+		p = p[0:l.N]
+	}
+	n, err := l.R.Read(p)
+	l.N -= int64(n)
+	return limitedReaderReadPair{n, err}
 }
 
 // NewSectionReader returns a SectionReader that reads from r
@@ -510,19 +704,33 @@ type discard struct{}
 // io.Discard can avoid doing unnecessary work.
 var _ ReaderFrom = discard{}
 
-// Write implements Writer. Multi-result: fail-fast — discard is
-// unexported, so no user call site can name its static type and no
-// Appendix M entry is reachable; the method exists for signature
-// fidelity only. (io.Discard.Write through the Writer interface fails
-// at export with the named M8 error.)
+// Write implements Writer.
+//
+// Multi-result: the real implementation lives in __discardWrite;
+// 2-target call sites desugar to it (Appendix M). discard is unexported,
+// so the entry is reachable only through interface dispatch (e.g.
+// io.Discard as a Writer) — see DESIGN.md §3.4.
 func (discard) Write(p []byte) (int, error) {
 	panic("io.discard.Write: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
-// WriteString implements StringWriter. Multi-result: fail-fast (see
-// Write).
+// __discardWrite is the real discard.Write (gc 1.27.1): report all
+// bytes consumed.
+func __discardWrite(d discard, p []byte) ioWritePair {
+	return ioWritePair{len(p), nil}
+}
+
+// WriteString implements StringWriter.
+//
+// Multi-result: the real implementation lives in __discardWriteString;
+// 2-target call sites desugar to it (Appendix M).
 func (discard) WriteString(s string) (int, error) {
 	panic("io.discard.WriteString: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+// __discardWriteString is the real discard.WriteString (gc 1.27.1).
+func __discardWriteString(d discard, s string) ioWritePair {
+	return ioWritePair{len(s), nil}
 }
 
 // ReadFrom implements ReaderFrom.
@@ -570,10 +778,55 @@ func (c nopCloserWriterTo) WriteTo(w Writer) (n int64, err error) {
 // defined to read from src until EOF, it does not treat an EOF from Read
 // as an error to be reported.
 //
-// M8 scope: fail-fast — the growth loop needs r.Read (2-result interface
-// call, WS D). Re-test when WS D lands.
+// Multi-result: the real implementation lives in __readAll;
+// 2-target call sites desugar to it (Appendix M).
 func ReadAll(r Reader) ([]byte, error) {
-	panic("io.ReadAll: not in M8 scope (needs 2-result interface dispatch, WS D; re-test when WS D lands)")
+	panic("io.ReadAll: not in M8 scope (multi-result calls need WS D; re-test when it lands)")
+}
+
+// readAllPair is the Appendix M carrier for ReadAll.
+type readAllPair struct {
+	b   []byte
+	err error
+}
+
+// __readAll is the real ReadAll (gc 1.27.1): exponentially growing
+// chunks, copied into a right-sized slice at the end.
+func __readAll(r Reader) readAllPair {
+	b := make([]byte, 0, 512)
+	next := 256
+	chunks := make([][]byte, 0, 4)
+	// Invariant: finalSize = sum(len(c) for c in chunks)
+	var finalSize int
+	for {
+		n, err := r.Read(b[len(b):cap(b)])
+		b = b[:len(b)+n]
+		if err != nil {
+			if err == EOF {
+				err = nil
+			}
+			if len(chunks) == 0 {
+				return readAllPair{b, err}
+			}
+
+			// Build our final right-sized slice.
+			finalSize += len(b)
+			final := append([]byte(nil), make([]byte, finalSize)...)[:0]
+			for _, chunk := range chunks {
+				final = append(final, chunk...)
+			}
+			final = append(final, b...)
+			return readAllPair{final, err}
+		}
+
+		if cap(b)-len(b) < cap(b)/16 {
+			// Move to the next intermediate slice.
+			chunks = append(chunks, b)
+			finalSize += len(b)
+			b = append([]byte(nil), make([]byte, next)...)[:0]
+			next += next / 2
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -2069,6 +2069,15 @@ func (e *exporter) tupleList(t *types.Tuple) ([]any, error) {
 	return out, nil
 }
 
+// pkgPathOf returns the package path of a named type, or "" if the
+// type's package is nil (synthetic bootstrap edge case).
+func pkgPathOf(t *types.Named) string {
+	if t.Obj() == nil || t.Obj().Pkg() == nil {
+		return ""
+	}
+	return t.Obj().Pkg().Path()
+}
+
 func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 	mk := func(kind string, detail map[string]any) TypeEnt {
 		return TypeEnt{Kind: kind, Detail: detail}
@@ -2105,7 +2114,8 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		detail := map[string]any{
 			"name": namedTypeName(t), "underlying": under, "methods": methods,
 			// P3-M8 (wave 2, reflect): package path for Type.PkgPath.
-			"pkgpath": t.Obj().Pkg().Path(),
+			// Nil-safe: synthetic types may have nil Pkg during bootstrap.
+			"pkgpath": pkgPathOf(t),
 		}
 		if tmplSkipped {
 			// P3-M3 remediation (R1 P1-2): the frontend fails fast
@@ -5696,15 +5706,43 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			continue
 		}
 		fi, ok := e.funcByObj[mobj]
+		helperMapped := false
 		if !ok {
-			continue
+			// P3-M8 (WS D): multi-result synthetic methods are skipped
+			// from funcByObj (v1 cannot emit multi-result funcdecls),
+			// but their pair-returning __-helpers are emitted. Map the
+			// method to the helper so interface dispatch can target it:
+			// the dispatcher invokes the helper with the receiver data
+			// as params[0] (exactly the helper's prependRecv calling
+			// convention) and the node yields the pair, so r.Read(buf)
+			// through an interface produces the same pair shape as the
+			// concrete Appendix M desugar. Methods with no helper keep
+			// the old skip (dispatch fails fast with "missing method"
+			// — loud, never silent).
+			var hfi *funcDeclInfo
+			hfi, ok = e.multiResultHelperFunc(mobj)
+			if !ok {
+				continue
+			}
+			fi = hfi
+			helperMapped = true
 		}
 		if fi.isTemplate {
 			tmplSkipped = true
 			continue
 		}
 		recv := "value"
-		if fi.recv != nil {
+		if helperMapped {
+			// The helper is a plain package-level function; the
+			// dispatcher's receiver adaptation must mirror the
+			// method's DECLARED receiver so the helper receives the
+			// same shape the concrete desugar passes it.
+			if msig, ok := mobj.Type().(*types.Signature); ok && msig.Recv() != nil {
+				if _, ok := msig.Recv().Type().(*types.Pointer); ok {
+					recv = "pointer"
+				}
+			}
+		} else if fi.recv != nil {
 			if _, ok := fi.recv.Type().(*types.Pointer); ok {
 				recv = "pointer"
 			}
@@ -5923,12 +5961,26 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	if err != nil {
 		return nil, err
 	}
-	// P3-M5 (WS E, ADR-0005): multi-result synthetic interface methods
-	// (Context.Deadline) fail fast (WS D; the P3-M3 F4 precedent) — the
-	// shape must not reach dispatch. User 2-result methods keep the
-	// existing F4 behavior.
-	if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
-		return nil, multiResultSyntheticError(f)
+	// P3-M8 (WS D): multi-result interface methods with a dispatched pair
+	// (io.Reader.Read, io.Writer.Write — see m8IfaceMultiResultMethods)
+	// lower to the ifacemethod dispatch: the itab maps the method to the
+	// concrete type's pair-returning __-helper (wired via
+	// methodTableEntries), so the node yields the pair and field
+	// extraction proceeds exactly like the concrete Appendix M desugar.
+	// The node's "type" is the pair type id — callType scope-errors on
+	// multi-valued calls, so it is bypassed here. Any other multi-result
+	// interface method keeps the fail-fast below (the P3-M5 F4
+	// precedent).
+	var pairPlan *mrPlan
+	if sig.Results().Len() > 1 {
+		pairPlan = e.classifyIfaceMultiResultCall(selection)
+		if pairPlan == nil {
+			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+				return nil, multiResultSyntheticError(f)
+			}
+			return nil, scopeErrorf("interface method %s has %d results; at most one result is supported in frontend/v1 scope (WS D)",
+				mname, sig.Results().Len())
+		}
 	}
 	// Remediation (R1 P1-1, R2 P1-2): same variadic fail-fast as direct
 	// and concrete-method calls; the spread form passes the slice
@@ -5971,9 +6023,20 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	if err != nil {
 		return nil, err
 	}
-	typ, err := e.callType(c)
-	if err != nil {
-		return nil, err
+	var typ any
+	if pairPlan != nil {
+		// P3-M8 (WS D): the dispatch yields the interface pair, not the
+		// multi-valued call result (callType scope-errors on tuples).
+		tid, err := e.typeID(pairPlan.tmpType)
+		if err != nil {
+			return nil, err
+		}
+		typ = tid
+	} else {
+		typ, err = e.callType(c)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return e.node("ifacemethod", c, map[string]any{
 		"recv": recv, "method": mname, "iface": ifaceID,

@@ -83,6 +83,13 @@ const (
 	// the pair/triple distinction is data (len(pairFields)), selected
 	// from the m7MultiResultFuncs table below.
 	mrM7
+	// P3-M8 (WS D): a multi-result call on an interface value
+	// (r.Read(buf) with r io.Reader). The "helper call" is the
+	// ifacemethod dispatch node itself (built by exportIfaceMethodCall);
+	// the itab maps the method to the concrete type's pair-returning
+	// __-helper (wired via methodTableEntries), so the node yields the
+	// pair and field extraction proceeds exactly like mrM7.
+	mrIfaceMethod
 )
 
 // m7MultiResultFunc describes one desugarable M7 multi-result function:
@@ -321,6 +328,54 @@ var osMultiResultFuncs = []osMultiResultFunc{
 	{"io/fs", "Info", "DirEntry", "__dirEntryInfo", "os", "infoPair", []string{"fi", "err"}},
 }
 
+// ioMultiResultFuncs is the desugar table for the synthetic io package's
+// newly-real multi-result API (P3-M8, WS D): the exact gc 1.27.1
+// signatures are kept with fail-fast bodies for type-checking, and the
+// real implementations live in the single-result __-helpers declared in
+// synth_io.go. Same contract as m7MultiResultFunc; kept as a separate
+// table so the M7 entries (and their positional literals) are untouched.
+// CopyBuffer maps to __copyBufferChecked (which keeps gc's empty-buffer
+// panic); Copy maps to __copy and CopyN to __copyN.
+var ioMultiResultFuncs = []m7MultiResultFunc{
+	{"io", "WriteString", "", "__writeString", "ioWritePair", []string{"n", "err"}},
+	{"io", "ReadAtLeast", "", "__readAtLeast", "readAtLeastPair", []string{"n", "err"}},
+	{"io", "ReadFull", "", "__readFull", "readFullPair", []string{"n", "err"}},
+	{"io", "Copy", "", "__copy", "copyPair", []string{"written", "err"}},
+	{"io", "CopyN", "", "__copyN", "copyNPair", []string{"written", "err"}},
+	{"io", "CopyBuffer", "", "__copyBufferChecked", "copyBufferPair", []string{"written", "err"}},
+	{"io", "ReadAll", "", "__readAll", "readAllPair", []string{"b", "err"}},
+	{"io", "Read", "LimitedReader", "__limitedReaderRead", "limitedReaderReadPair", []string{"n", "err"}},
+	{"io", "Write", "discard", "__discardWrite", "ioWritePair", []string{"n", "err"}},
+	{"io", "WriteString", "discard", "__discardWriteString", "ioWritePair", []string{"n", "err"}},
+}
+
+// m8IfaceMultiResultMethod describes one P3-M8 (WS D) multi-result
+// interface method: an interface-typed call site (r.Read(buf)) dispatches
+// through the itab to the concrete type's pair-returning __-helper, and
+// the ifacemethod node yields the helper's pair. pairType is the static
+// result type of the ifacemethod node (declared in pkgPath); pairFields
+// are extracted positionally, exactly like the concrete Appendix M
+// desugar. Matching is structural on (method name, result count,
+// positional result types) — see classifyIfaceMultiResultCall — so
+// user-declared interfaces with the same method shape dispatch too.
+type m8IfaceMultiResultMethod struct {
+	pkgPath    string   // synthetic package holding the pair type ("io")
+	method     string   // method name ("Read")
+	pairType   string   // pair struct type name in pkgPath
+	pairFields []string // field names in result order
+}
+
+// m8IfaceMultiResultMethods is the interface-dispatch table. Every entry
+// was verified against synth_io.go: the pair struct exists with exactly
+// these fields in this order, and every concrete Read/Write __-helper
+// returns a pair with positionally identical field types (checked loudly
+// at export by multiResultHelperFunc).
+var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
+	{"io", "Read", "ioReadPair", []string{"n", "err"}},
+	{"io", "Write", "ioWritePair", []string{"n", "err"}},
+	{"io", "WriteString", "ioWritePair", []string{"n", "err"}},
+}
+
 // mrPlan is the desugar plan for one classified call.
 type mrPlan struct {
 	kind       mrKind
@@ -378,6 +433,11 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// P3-M8 (wave 2): the crypto/* multi-result API
 			// (m8MultiResultFuncs table above).
 			if plan := classifyM8MultiResultCall(pn.Imported().Path(), fn); plan != nil {
+				return plan
+			}
+			// P3-M8 (WS D): the synthetic io package's multi-result API
+			// (ioMultiResultFuncs table above).
+			if plan := classifyIoMultiResultCall(pn.Imported().Path(), fn); plan != nil {
 				return plan
 			}
 			switch pn.Imported().Path() {
@@ -473,6 +533,24 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// P3-M8 (wave 2): crypto/* multi-result API.
 			if plan := classifyM8MultiResultCall(f.Pkg().Path(), f); plan != nil {
 				return plan
+			}
+			// P3-M8 (WS D): the synthetic io package's multi-result
+			// API (WriteString, ReadAtLeast, ReadFull, Copy, CopyN,
+			// CopyBuffer, ReadAll, LimitedReader.Read,
+			// discard.Write/WriteString).
+			if plan := classifyIoMultiResultCall(f.Pkg().Path(), f); plan != nil {
+				return plan
+			}
+			// P3-M8 (WS D): multi-result calls on interface values
+			// (r.Read(buf) with r of interface type). Concrete
+			// receivers are handled by the table classifiers above —
+			// this arm is interface-only, so a concrete multi-result
+			// method with no helper never reaches the ifacemethod
+			// path.
+			if recvIface(selection.Recv()) != nil {
+				if plan := e.classifyIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
 			}
 		}
 	}
@@ -684,6 +762,229 @@ func classifyM8MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 	return nil
 }
 
+// classifyIoMultiResultCall recognizes the P3-M8 (WS D) synthetic io
+// multi-result API (the ioMultiResultFuncs table above): WriteString,
+// ReadAtLeast, ReadFull, Copy, CopyN, CopyBuffer, ReadAll, plus the
+// LimitedReader.Read and discard.Write/WriteString methods (prependRecv
+// applies — all have receivers). Same contract as
+// classifyM7MultiResultCall.
+func classifyIoMultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	recvName := ""
+	if recv := sig.Recv(); recv != nil {
+		rt := recv.Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			recvName = nt.Obj().Name()
+		}
+	}
+	for _, mf := range ioMultiResultFuncs {
+		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != recvName {
+			continue
+		}
+		// The result count must match the pair arity: a signature change
+		// in the synthetic source fails the desugar loudly instead of
+		// extracting the wrong fields.
+		if sig.Results().Len() != len(mf.pairFields) {
+			return nil
+		}
+		sp := getSyntheticPackage(mf.pkgPath)
+		obj := sp.pkg.Scope().Lookup(mf.pairType)
+		if obj == nil {
+			return nil
+		}
+		nt, _ := obj.Type().(*types.Named)
+		if nt == nil {
+			return nil
+		}
+		return &mrPlan{
+			kind: mrM7, helperPkg: mf.pkgPath,
+			helperName: mf.helper,
+			tmpType:    nt, pairFields: mf.pairFields,
+			prependRecv: mf.recvType != "",
+		}
+	}
+	return nil
+}
+
+// classifyIfaceMultiResultCall recognizes P3-M8 (WS D) multi-result calls
+// on interface values (r.Read(buf) with r of interface type). Matching is
+// structural on (method name, result count, positional result types) so
+// both synthetic interfaces (io.Reader) and user-declared interfaces with
+// the same method shape dispatch; the pair type comes from the
+// m8IfaceMultiResultMethods table. Returns nil when the method is not a
+// dispatched multi-result interface method.
+func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrPlan {
+	if selection.Kind() != types.MethodVal {
+		return nil
+	}
+	f, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil
+	}
+	sig, ok := f.Type().(*types.Signature)
+	if !ok || sig.Results().Len() < 2 {
+		return nil
+	}
+	for _, m := range m8IfaceMultiResultMethods {
+		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
+			continue
+		}
+		sp := getSyntheticPackage(m.pkgPath)
+		if sp == nil {
+			continue
+		}
+		obj := sp.pkg.Scope().Lookup(m.pairType)
+		if obj == nil {
+			continue
+		}
+		nt, _ := obj.Type().(*types.Named)
+		if nt == nil {
+			continue
+		}
+		st, ok := nt.Underlying().(*types.Struct)
+		if !ok || st.NumFields() != sig.Results().Len() {
+			continue
+		}
+		// The pair's field names and types must match the method's
+		// results positionally — otherwise field extraction would read
+		// the wrong values. A synthetic-source change that breaks this
+		// skips the entry (loud: the call site keeps the fail-fast).
+		match := true
+		for i := 0; i < st.NumFields(); i++ {
+			if st.Field(i).Name() != m.pairFields[i] ||
+				!types.Identical(st.Field(i).Type(), sig.Results().At(i).Type()) {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		return &mrPlan{
+			kind: mrIfaceMethod, helperPkg: m.pkgPath,
+			tmpType: nt, pairFields: m.pairFields,
+		}
+	}
+	return nil
+}
+
+// multiResultHelperFor maps a multi-result (package path, method name,
+// receiver type name) to its pair-returning __-helper's package and name,
+// unioned over the m7/os/m8/io desugar tables. It is the exporter's view
+// of "the concrete implementation behind this multi-result method", used
+// by methodTableEntries to wire interface dispatch at the helper.
+func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName string, ok bool) {
+	for _, mf := range m7MultiResultFuncs {
+		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
+			return mf.pkgPath, mf.helper, true
+		}
+	}
+	for _, mf := range ioMultiResultFuncs {
+		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
+			return mf.pkgPath, mf.helper, true
+		}
+	}
+	for _, mf := range osMultiResultFuncs {
+		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
+			hp := mf.helperPkg
+			if hp == "" {
+				hp = mf.pkgPath
+			}
+			return hp, mf.helper, true
+		}
+	}
+	for _, mf := range m8MultiResultFuncs {
+		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
+			hp := mf.helperPkg
+			if hp == "" {
+				hp = mf.pkgPath
+			}
+			return hp, mf.helper, true
+		}
+	}
+	return "", "", false
+}
+
+// multiResultHelperFunc maps a multi-result synthetic method to its
+// pair-returning __-helper's funcDeclInfo (P3-M8, WS D) — the itab target
+// for interface dispatch of that method. It returns ok=false when the
+// method is not a table-known multi-result method. The helper's pair
+// struct field types must be positionally identical to the method's
+// result types, or the dispatch would extract wrong fields: a mismatch
+// fails the export loudly (ok=false → the method stays out of the table
+// → dispatch fails fast with "missing method").
+func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool) {
+	if mobj == nil || mobj.Pkg() == nil {
+		return nil, false
+	}
+	sig, ok := mobj.Type().(*types.Signature)
+	if !ok || sig.Results().Len() < 2 {
+		return nil, false
+	}
+	recv := sig.Recv()
+	if recv == nil {
+		return nil, false
+	}
+	rt := recv.Type()
+	if pt, ok := rt.(*types.Pointer); ok {
+		rt = pt.Elem()
+	}
+	nt, ok := rt.(*types.Named)
+	if !ok || nt.Obj() == nil {
+		return nil, false
+	}
+	helperPkg, helperName, ok := multiResultHelperFor(mobj.Pkg().Path(), mobj.Name(), nt.Obj().Name())
+	if !ok {
+		return nil, false
+	}
+	sp := getSyntheticPackage(helperPkg)
+	if sp == nil {
+		return nil, false
+	}
+	helperObj := sp.pkg.Scope().Lookup(helperName)
+	helperFn, ok := helperObj.(*types.Func)
+	if !ok {
+		return nil, false
+	}
+	fi, ok := e.funcByObj[helperFn]
+	if !ok || fi == nil {
+		return nil, false
+	}
+	// Positional shape check: the helper's single result is the pair
+	// struct; its field types must equal the method's result types.
+	hsig, ok := helperFn.Type().(*types.Signature)
+	if !ok || hsig.Results().Len() != 1 {
+		return nil, false
+	}
+	prt := hsig.Results().At(0).Type()
+	if pt, ok := prt.(*types.Pointer); ok {
+		prt = pt.Elem()
+	}
+	pnt, ok := prt.(*types.Named)
+	if !ok {
+		return nil, false
+	}
+	pst, ok := pnt.Underlying().(*types.Struct)
+	if !ok || pst.NumFields() != sig.Results().Len() {
+		return nil, false
+	}
+	for i := 0; i < pst.NumFields(); i++ {
+		if !types.Identical(pst.Field(i).Type(), sig.Results().At(i).Type()) {
+			return nil, false
+		}
+	}
+	return fi, true
+}
+
 // classifyM7MultiResultCallRtype retries a reflect interface method
 // against the rtype entries (P3-M8 wave 2).
 func classifyM7MultiResultCallRtype(pkgPath string, fn *types.Func) *mrPlan {
@@ -761,6 +1062,14 @@ func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*No
 
 // desugarMultiResult emits the desugared block for a classified call.
 func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	// P3-M8 (WS D): an interface multi-result call (r.Read(buf)) desugars
+	// to the ifacemethod dispatch node itself — the itab maps the method
+	// to the concrete type's pair-returning __-helper, so the node yields
+	// the pair. The temp declaration and field extraction below are
+	// shared with the helper-call path.
+	if plan.kind == mrIfaceMethod {
+		return e.desugarIfaceMultiResult(s, c, plan, define)
+	}
 	sp := getSyntheticPackage(plan.helperPkg)
 	helperObj := sp.pkg.Scope().Lookup(plan.helperName)
 	helperFn, ok := helperObj.(*types.Func)
@@ -798,10 +1107,50 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	if err != nil {
 		return nil, err
 	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, helperCall)
+}
+
+// desugarIfaceMultiResult emits the desugared block for an mrIfaceMethod
+// plan (P3-M8, WS D): the "helper call" is the ifacemethod dispatch node
+// built by exportIfaceMethodCall. The temp declaration mirrors
+// synthHelperCall's tail; field extraction and target assignment are
+// shared via desugarExtract.
+func (e *exporter) desugarIfaceMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	sel, ok := c.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: iface-multi-result call has non-selector fun %T", c.Fun)
+	}
+	selection, ok := e.info.Selections[sel]
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: no selection for iface-multi-result call")
+	}
+	callNode, err := e.exportIfaceMethodCall(c, sel, selection)
+	if err != nil {
+		return nil, err
+	}
+	resTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, resTid, callNode)
+}
+
+// desugarExtract emits the shared desugar tail: the __p5mr_N temp holding
+// callNode's pair, the positional field extractions, and the assignment
+// of the extractions to the N targets.
+func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool,
+	tmpName string, tmpID, tmpTid int, callNode *Node) (*Node, error) {
 	// __p5mr_N := <helper>(args)
 	stmts := []*Node{e.node("vardecl", s, map[string]any{
 		"names": []string{tmpName}, "objs": []int{tmpID},
-		"define": true, "type": nil, "values": []*Node{helperCall},
+		"define": true, "type": nil, "values": []*Node{callNode},
 	})}
 	// The two extractions.
 	var extracts []*Node
@@ -818,7 +1167,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrM7:
+	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {

@@ -2292,12 +2292,12 @@ const syntheticReflectliteSource = `package reflectlite
 
 import "reflect"
 
-type Type = reflect.Type
-type Value = reflect.Value
+// (aliases removed: exporter does not support alias kind)
+// (see above)
 
-func TypeOf(i any) Type { return reflect.TypeOf(i) }
+func TypeOf(i any) reflect.Type { return reflect.TypeOf(i) }
 
-func ValueOf(i any) Value { return reflect.ValueOf(i) }
+func ValueOf(i any) reflect.Value { return reflect.ValueOf(i) }
 
 func Swapper(slice any) func(i, j int) { return reflect.Swapper(slice) }
 `

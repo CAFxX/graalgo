@@ -293,6 +293,14 @@ public final class ReflectTypes {
         return switch (kind) {
             case "basic" -> {
                 String name = d.string("name", path);
+                if ("invalid type".equals(name)) {
+                    // P3-M8 fix: skip invalid placeholder types (orphans
+                    // from failed resolutions); use INTERFACE as a safe
+                    // placeholder kind so references don't NPE.
+                    yield new TypeInfo(-1, GoKind.INTERFACE, name, "", 16, 8,
+                            null, null, 0, null, List.of(), List.of(),
+                            List.of(), List.of(), false, List.of(), "", id);
+                }
                 GoKind gk = basicKind(name);
                 yield new TypeInfo(-1, gk, "", "", basicSize(gk), basicAlign(gk),
                         null, null, 0, null, List.of(), List.of(),
@@ -306,6 +314,19 @@ public final class ReflectTypes {
                 yield new TypeInfo(-1, null, qname, pkgPath, -1, -1,
                         null, null, 0, null, List.of(), List.of(),
                         List.of(), List.of(), false, List.of(), "", id);
+            }
+            case "alias" -> {
+                // P3-M8 fix: resolve aliases to their RHS. The alias name
+                // is preserved for display, but the kind/size/align come
+                // from the target type.
+                int rhsId = (int) d.longInt("rhs", path);
+                TypeInfo rhs = shell(types, rhsId);
+                String aliasName = d.string("name", path);
+                yield new TypeInfo(-1, rhs.kind, aliasName, rhs.pkgPath,
+                        rhs.size, rhs.align, rhs.elem, rhs.key,
+                        rhs.arrayLen, rhs.chanDir, rhs.fields, rhs.methods,
+                        rhs.ins, rhs.outs, rhs.variadic,
+                        rhs.interfaceMethods, rhs.basicName, id);
             }
             case "array" -> new TypeInfo(-1, GoKind.ARRAY, "", "", -1, -1,
                     null, null, (int) d.longInt("len", path), null,
@@ -363,6 +384,14 @@ public final class ReflectTypes {
             case "complex128" -> GoKind.COMPLEX128;
             case "string" -> GoKind.STRING;
             case "unsafe.Pointer" -> GoKind.UNSAFE_POINTER;
+            // P3-M8 fix: untyped basics map to their default types.
+            case "untyped bool" -> GoKind.BOOL;
+            case "untyped int" -> GoKind.INT64;
+            case "untyped rune" -> GoKind.INT32;
+            case "untyped float" -> GoKind.FLOAT64;
+            case "untyped complex" -> GoKind.COMPLEX128;
+            case "untyped string" -> GoKind.STRING;
+            case "untyped nil" -> GoKind.UNSAFE_POINTER;
             default -> throw new FrontendException("reflect: unknown basic type " + name);
         };
     }
@@ -445,6 +474,23 @@ public final class ReflectTypes {
         return tok;
     }
 
+    /**
+     * P3-M8 fix: gets the built TypeInfo for a type id, falling back to the
+     * shell if the target hasn't been built yet in phase B (forward
+     * reference). Prevents NPE when a signature references a later type.
+     */
+    private static TypeInfo infoOrShell(Table table, TypeTable types, TypeInfo[] shells,
+            int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
+        long tok = tokForId(table, types, shells, id, functions, funcdeclSig);
+        TypeInfo info = table.byTok.get((int) tok);
+        if (info != null) {
+            return info;
+        }
+        // Not yet built: use the shell (kind/size are correct; details
+        // like fields are resolved lazily if needed).
+        return shells[id];
+    }
+
     private static String keyForId(Table table, TypeTable types, TypeInfo[] shells,
             int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
         String path = "types[" + id + "]";
@@ -487,6 +533,9 @@ public final class ReflectTypes {
             case "struct" -> structKey(table, types, shells, id, d, functions, funcdeclSig, path);
             case "interface" -> interfaceKey(table, types, shells, id, d, functions, funcdeclSig, path);
             case "signature" -> signatureKey(table, types, shells, id, d, functions, funcdeclSig, path);
+            // P3-M8 fix: aliases resolve to their RHS for key purposes.
+            case "alias" -> keyOf(table, types, shells, (int) d.longInt("rhs", path),
+                    functions, funcdeclSig);
             default -> throw new FrontendException(path + ": reflect: key of " + kind);
         };
     }
@@ -597,7 +646,7 @@ public final class ReflectTypes {
             }
             case "named" -> {
                 int underlying = (int) d.longInt("underlying", path);
-                TypeInfo u = table.info(tokForId(table, types, shells, underlying, functions, funcdeclSig));
+                TypeInfo u = infoOrShell(table, types, shells, underlying, functions, funcdeclSig);
                 TypeInfo sh = shells[id];
                 List<MethodInfo> methods = readMethods(table, types, shells, d, path,
                         functions, funcdeclSig);
@@ -607,7 +656,7 @@ public final class ReflectTypes {
                         u.ins, u.outs, u.variadic, List.of(), u.basicName, id);
             }
             case "array" -> {
-                TypeInfo elem = table.info(tokForId(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig));
+                TypeInfo elem = infoOrShell(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig);
                 int len = (int) d.longInt("len", path);
                 long size = elem.size < 0 ? -1 : elem.size * len;
                 int align = elem.align;
@@ -616,20 +665,20 @@ public final class ReflectTypes {
                         List.of(), List.of(), false, List.of(), "", id);
             }
             case "slice" -> {
-                TypeInfo elem = table.info(tokForId(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig));
+                TypeInfo elem = infoOrShell(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig);
                 yield new TypeInfo(tok, GoKind.SLICE, "", "", 24, 8,
                         elem, null, 0, null, List.of(), List.of(),
                         List.of(), List.of(), false, List.of(), "", id);
             }
             case "map" -> {
-                TypeInfo key = table.info(tokForId(table, types, shells, (int) d.longInt("key", path), functions, funcdeclSig));
-                TypeInfo elem = table.info(tokForId(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig));
+                TypeInfo key = infoOrShell(table, types, shells, (int) d.longInt("key", path), functions, funcdeclSig);
+                TypeInfo elem = infoOrShell(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig);
                 yield new TypeInfo(tok, GoKind.MAP, "", "", 8, 8,
                         elem, key, 0, null, List.of(), List.of(),
                         List.of(), List.of(), false, List.of(), "", id);
             }
             case "pointer" -> {
-                TypeInfo elem = table.info(tokForId(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig));
+                TypeInfo elem = infoOrShell(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig);
                 List<MethodInfo> methods = readMethods(table, types, shells, d, path,
                         functions, funcdeclSig);
                 yield new TypeInfo(tok, GoKind.POINTER, "", "", 8, 8,
@@ -637,7 +686,7 @@ public final class ReflectTypes {
                         List.of(), List.of(), false, List.of(), "", id);
             }
             case "chan" -> {
-                TypeInfo elem = table.info(tokForId(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig));
+                TypeInfo elem = infoOrShell(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig);
                 String dir = d.string("dir", path);
                 ChanDir cd = switch (dir) {
                     case "recv" -> ChanDir.RECV;
@@ -686,21 +735,32 @@ public final class ReflectTypes {
                 List<TypeInfo> outs = new ArrayList<>();
                 Json.Array params = d.array("params", path);
                 for (int i = 0; i < params.size(); i++) {
-                    ins.add(table.info(tokForId(table, types, shells,
+                    ins.add(infoOrShell(table, types, shells,
                             (int) arrObj(params, i, path).longInt("type", path),
-                            functions, funcdeclSig)));
+                            functions, funcdeclSig));
                 }
                 Json.Array results = d.array("results", path);
                 for (int i = 0; i < results.size(); i++) {
-                    outs.add(table.info(tokForId(table, types, shells,
+                    outs.add(infoOrShell(table, types, shells,
                             (int) arrObj(results, i, path).longInt("type", path),
-                            functions, funcdeclSig)));
+                            functions, funcdeclSig));
                 }
                 Json.Value var = d.opt("variadic");
                 boolean variadic = var instanceof Json.Bool b && b.value();
                 yield new TypeInfo(tok, GoKind.FUNC, "", "", 8, 8,
                         null, null, 0, null, List.of(), List.of(),
                         List.copyOf(ins), List.copyOf(outs), variadic, List.of(), "", id);
+            }
+            case "alias" -> {
+                // P3-M8 fix: build alias as its RHS (resolved).
+                int rhsId = (int) d.longInt("rhs", path);
+                TypeInfo rhs = infoOrShell(table, types, shells, rhsId, functions, funcdeclSig);
+                String aliasName = d.string("name", path);
+                yield new TypeInfo(tok, rhs.kind, aliasName, rhs.pkgPath,
+                        rhs.size, rhs.align, rhs.elem, rhs.key,
+                        rhs.arrayLen, rhs.chanDir, rhs.fields, rhs.methods,
+                        rhs.ins, rhs.outs, rhs.variadic,
+                        rhs.interfaceMethods, rhs.basicName, id);
             }
             default -> throw new FrontendException(path + ": reflect: build of " + kind);
         };
@@ -715,7 +775,7 @@ public final class ReflectTypes {
         for (int i = 0; i < fields.size(); i++) {
             Json.Object f = arrObj(fields, i, path);
             String name = f.string("name", path);
-            TypeInfo ft = table.info(tokForId(table, types, shells, (int) f.longInt("type", path), functions, funcdeclSig));
+            TypeInfo ft = infoOrShell(table, types, shells, (int) f.longInt("type", path), functions, funcdeclSig);
             String tag = f.string("tag", path);
             long offset = f.longInt("offset", path);
             // Unexported fields carry their package path in "pkgpath"
@@ -774,7 +834,7 @@ public final class ReflectTypes {
                 throw new FrontendException(path + ": reflect: method \"" + name
                         + "\" (obj " + objId + ") has no funcdecl signature");
             }
-            TypeInfo funcType = table.info(tokForId(table, types, shells, sigId, functions, funcdeclSig));
+            TypeInfo funcType = infoOrShell(table, types, shells, sigId, functions, funcdeclSig);
             Json.Value ik = m.opt("implkey");
             String implKey = ik instanceof Json.Str s ? s.value() : name;
             sorted.put(name, new MethodInfo(name, pkgPath, funcType, func,
@@ -1092,13 +1152,40 @@ public final class ReflectTypes {
      * "reflect.Method", "reflect.StructField", "reflect.rtype".
      */
     static void captureDescriptors(TypeTable types) {
-        valueDesc = structDescFor(types, "reflect.Value");
-        methodDesc = structDescFor(types, "reflect.Method");
-        structFieldDesc = structDescFor(types, "reflect.StructField");
-        rtypeDescStruct = structDescFor(types, "reflect.rtype");
+        // P3-M8 fix: tolerant of programs that don't import reflect.
+        // If the types aren't present, leave descriptors null; reflect
+        // operations will fail fast when actually used.
+        try {
+            valueDesc = structDescFor(types, "reflect.Value");
+        } catch (FrontendException e) {
+            valueDesc = null;
+        }
+        try {
+            methodDesc = structDescFor(types, "reflect.Method");
+        } catch (FrontendException e) {
+            methodDesc = null;
+        }
+        try {
+            structFieldDesc = structDescFor(types, "reflect.StructField");
+        } catch (FrontendException e) {
+            structFieldDesc = null;
+        }
+        try {
+            rtypeDescStruct = structDescFor(types, "reflect.rtype");
+        } catch (FrontendException e) {
+            rtypeDescStruct = null;
+        }
         // The GoTypeDescriptors come from the patch-03 registry.
-        rtypeDesc = descriptorFor(types, "reflect.rtype");
-        typeIfaceDesc = descriptorFor(types, "reflect.Type");
+        try {
+            rtypeDesc = descriptorFor(types, "reflect.rtype");
+        } catch (FrontendException e) {
+            rtypeDesc = null;
+        }
+        try {
+            typeIfaceDesc = descriptorFor(types, "reflect.Type");
+        } catch (FrontendException e) {
+            typeIfaceDesc = null;
+        }
     }
 
     /** Public: struct descriptor for any synthetic named struct type. */

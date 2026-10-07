@@ -2499,9 +2499,6 @@ func FindProcess(pid int) (*Process, error) {
 	panic("os.FindProcess: not in M8 scope (re-test: process-spawning milestone)")
 }
 
-// Pid returns the process id. (Pure field access — no syscall involved.)
-func (p *Process) Pid() int { return p.Pid }
-
 // Signal sends a signal to the Process. M8: fail-fast (§6.1).
 func (p *Process) Signal(sig Signal) error {
 	panic("os.Process.Signal: not in M8 scope (re-test: process-spawning milestone)")

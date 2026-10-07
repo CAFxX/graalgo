@@ -961,3 +961,17 @@ Verified: 31 patches apply clean; 78 gc legs pass; 32/32 Java tests pass
 95 triples / 21 keys / all helpers machine-checked.
 
 BLOCKED: M7 rebase clearance (F12). Zero graalgo legs run. No sign-off.
+
+## P3-M8 integration: Phase 1 rebase complete (2026-10-07 ~19:15 CEST, coordinator graalgo-phase3-m8-int)
+
+- Rebased m8-pipeline onto M7 acceptance 10b6499 (commit 7e53780).
+- All 31 staged patches integrated; C1–C8 resolved (C7 pre-resolved in patch set).
+- Manual merges required where git apply --3way silently no-oped: io/02,
+  syscall/01-03, os/01-02, reflect/01, reflect/03 (regenerated vs remediated
+  NodeFactory), reflect/04-05, crypto/01, crypto/03.
+- Integration fixes beyond the patches: wired m8MultiResultFuncs classifier
+  (draft left the table unwired); fixed crypto struct field order;
+  added io/syscall to importer-selection gates (draft gap); added missing
+  P3SyncMain imports (non-standard @@ header skipped by git apply).
+- phase3 main builds clean (0 javac errors); go vet/gofmt clean.
+- Shared-file freeze LIFTED. Next: Phase 2 (D1 WS-D multi-result dispatch).
