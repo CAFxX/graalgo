@@ -388,7 +388,7 @@ func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 // for non-synthetic packages.
 func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr, pkgName *types.PkgName) (*Node, bool, error) {
 	path := pkgName.Imported().Path()
-	if path != "time" && path != "context" {
+	if path != "time" && path != "context" && path != "bytes" {
 		return nil, false, nil
 	}
 	obj := e.info.Uses[sel.Sel]
@@ -467,7 +467,7 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" {
+	if p != "time" && p != "context" && p != "bytes" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -478,8 +478,26 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 }
 
 func multiResultSyntheticError(fn *types.Func) error {
-	return scopeErrorf("%s.%s is not in M5 scope (multi-result calls need WS D; re-test when it lands)",
-		fn.Pkg().Path(), fn.Name())
+	// P3-M7 (wave 1): the milestone tag follows the synthetic package
+	// (time/context are M5, bytes is wave-1 M7).
+	milestone := "M5"
+	if p := fn.Pkg().Path(); p == "bytes" {
+		milestone = "M7"
+	}
+	// Qualify method names with the receiver type name
+	// (bytes.Buffer.Read vs bytes.Reader.Read).
+	name := fn.Name()
+	if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
+		rt := sig.Recv().Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok {
+			name = nt.Obj().Name() + "." + name
+		}
+	}
+	return scopeErrorf("%s.%s is not in %s scope (multi-result calls need WS D; re-test when it lands)",
+		fn.Pkg().Path(), name, milestone)
 }
 
 // timerScopeErrorf is the fail-fast for zero-value Timer/Ticker

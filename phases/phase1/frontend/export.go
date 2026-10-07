@@ -646,7 +646,7 @@ func ExportFile(path string) (string, error) {
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_time_context.go).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "bytes" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -678,7 +678,7 @@ func ExportFile(path string) (string, error) {
 	// P3-M5 (WS E, ADR-0005): "time" and "context" likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" {
+		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "bytes" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -771,13 +771,17 @@ func ExportFile(path string) (string, error) {
 	// objects via the overlay importer's package cache) and their
 	// package vars become document globals. Intrinsics (time.Now etc.)
 	// are skipped — every call site is intercepted into wire nodes.
-	needTime, needContext := false, false
+	needTime, needContext, needBytes := false, false, false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
 			needTime = true
 		case "context":
 			needTime, needContext = true, true
+		case "bytes":
+			// bytes' ErrTooLarge initializer calls errors.New.
+			// NB: requires m7-errors-sort (integration dependency).
+			needBytes = true
 		}
 	}
 	if needTime {
@@ -787,6 +791,13 @@ func ExportFile(path string) (string, error) {
 	}
 	if needContext {
 		if err := e.importSyntheticPackage(getSyntheticPackage("context")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): synthetic bytes package (synth_bytes.go).
+	// Requires m7-errors-sort for the errors dependency.
+	if needBytes {
+		if err := e.importSyntheticPackage(getSyntheticPackage("bytes")); err != nil {
 			return "", err
 		}
 	}
@@ -5742,7 +5753,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" {
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "bytes" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}
