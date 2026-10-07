@@ -7,8 +7,10 @@ import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.TreeMap;
 
 /**
@@ -163,6 +165,12 @@ public final class ReflectTypes {
         private final Map<GoKind, Long> basicKindToTok = new HashMap<>();
         /** Wire type id → canonical token (for descriptor lookup). */
         private final Map<Integer, Long> wireIdToTok = new HashMap<>();
+        /**
+         * Wire ids currently being built (phase-B recursion stack). Used
+         * to cut reference cycles: a reference to an id in this set
+         * resolves to its shell instead of recursing forever.
+         */
+        final Set<Integer> building = new HashSet<>();
 
         Table() {
             byTok.add(null); // tok 0 = invalid
@@ -293,14 +301,6 @@ public final class ReflectTypes {
         return switch (kind) {
             case "basic" -> {
                 String name = d.string("name", path);
-                if ("invalid type".equals(name)) {
-                    // P3-M8 fix: skip invalid placeholder types (orphans
-                    // from failed resolutions); use INTERFACE as a safe
-                    // placeholder kind so references don't NPE.
-                    yield new TypeInfo(-1, GoKind.INTERFACE, name, "", 16, 8,
-                            null, null, 0, null, List.of(), List.of(),
-                            List.of(), List.of(), false, List.of(), "", id);
-                }
                 GoKind gk = basicKind(name);
                 yield new TypeInfo(-1, gk, "", "", basicSize(gk), basicAlign(gk),
                         null, null, 0, null, List.of(), List.of(),
@@ -422,8 +422,12 @@ public final class ReflectTypes {
     // Phase A: compute every wire id's canonical key (pure string
     // recursion over wire ids — terminates) and mint dense tokens.
     // Phase B: fill each TypeInfo by resolving references to tokens.
-    // Recursive types (struct containing *T) work because phase B only
-    // needs tokens, never completed field lists.
+    // Phase B builds depth-first (see infoOrShell): when a type references
+    // a not-yet-built wire id, that id is built immediately, so forward
+    // references resolve to complete TypeInfos. The only baked shells are
+    // true reference cycles (struct containing *T, type F func(F)), cut at
+    // the back edge exactly as before — recursive types work because a
+    // cycle cut only needs the token, never completed field lists.
     // ------------------------------------------------------------------
 
     private static void resolve(Table table, TypeTable types, TypeInfo[] shells,
@@ -442,24 +446,45 @@ public final class ReflectTypes {
                 table.byTok.add(null); // filled in phase B
             }
         }
-        // Phase B: build each TypeInfo.
+        // Phase B: build each TypeInfo (depth-first via infoOrShell).
         for (int i = 0; i < n; i++) {
-            String key = keyForId(table, types, shells, i, functions, funcdeclSig);
-            long tok = table.keyToTok.get(key);
-            if (table.byTok.get((int) tok) != null) {
-                continue; // already built via canonical sharing
-            }
-            String path = "types[" + i + "]";
-            Json.Object entry = types.entry(i, path);
+            buildOne(table, types, shells, i, functions, funcdeclSig);
+        }
+    }
+
+    /**
+     * Builds the TypeInfo for one wire id (phase B), unless its canonical
+     * token was already built via canonical sharing. Re-entrant: called
+     * from infoOrShell for forward references.
+     */
+    private static void buildOne(Table table, TypeTable types, TypeInfo[] shells,
+            int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
+        String key = keyForId(table, types, shells, id, functions, funcdeclSig);
+        Long tok = table.keyToTok.get(key);
+        if (tok == null) {
+            throw new FrontendException("reflect: no token for type id " + id);
+        }
+        if (table.byTok.get((int) (long) tok) != null) {
+            return; // already built via canonical sharing
+        }
+        if (!table.building.add(id)) {
+            return; // already being built higher on the stack (cycle);
+                    // the caller falls back to the shell
+        }
+        try {
+            String path = "types[" + id + "]";
+            Json.Object entry = types.entry(id, path);
             Json.Object d = entry.object("detail", path);
             String kind = entry.string("kind", path);
-            TypeInfo info = buildInfo(table, types, shells, i, kind, d, tok,
+            TypeInfo info = buildInfo(table, types, shells, id, kind, d, tok,
                     functions, funcdeclSig, path);
-            table.byTok.set((int) tok, info);
-            table.wireIdToTok.put(i, tok);
+            table.byTok.set((int) (long) tok, info);
+            table.wireIdToTok.put(id, tok);
             if (info.kind != null && kind.equals("basic")) {
                 table.basicKindToTok.putIfAbsent(info.kind, tok);
             }
+        } finally {
+            table.building.remove(id);
         }
     }
 
@@ -475,9 +500,20 @@ public final class ReflectTypes {
     }
 
     /**
-     * P3-M8 fix: gets the built TypeInfo for a type id, falling back to the
-     * shell if the target hasn't been built yet in phase B (forward
-     * reference). Prevents NPE when a signature references a later type.
+     * P3-M8 (reviewer-2 P1-5): resolves the built TypeInfo for a wire id.
+     * If the target hasn't been built yet in phase B (a forward reference),
+     * it is built NOW, depth-first — so parents never bake incomplete
+     * shells. The shell is returned only for a true reference cycle (the
+     * id is already being built higher on the stack); that cycle cut is
+     * the pre-existing mechanism for recursive types, and shells never
+     * survive into byTok from acyclic references.
+     *
+     * <p>Shell-safety contract (for the remaining cycle-cut shells, which
+     * carry tok == -1): safe to read are kind (non-null except for named
+     * shells), basic size/align, and basicName. NOT safe: elem/key (null),
+     * fields/methods/ins/outs (empty), named size/align (-1), tok (-1 —
+     * Table.info fails fast on it). Consumers must not assume a child
+     * TypeInfo is complete unless its tok != -1.
      */
     private static TypeInfo infoOrShell(Table table, TypeTable types, TypeInfo[] shells,
             int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
@@ -486,9 +522,17 @@ public final class ReflectTypes {
         if (info != null) {
             return info;
         }
-        // Not yet built: use the shell (kind/size are correct; details
-        // like fields are resolved lazily if needed).
-        return shells[id];
+        if (table.building.contains(id)) {
+            // Reference cycle: cut it with the shell (kind only).
+            return shells[id];
+        }
+        buildOne(table, types, shells, id, functions, funcdeclSig);
+        TypeInfo built = table.byTok.get((int) tok);
+        if (built == null) {
+            throw new FrontendException(
+                    "reflect: build of types[" + id + "] produced no TypeInfo");
+        }
+        return built;
     }
 
     private static String keyForId(Table table, TypeTable types, TypeInfo[] shells,

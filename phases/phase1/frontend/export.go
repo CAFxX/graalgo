@@ -1082,16 +1082,19 @@ func ExportFile(path string) (string, error) {
 	// P3-M8 (wave 2): synthetic syscall (depends on the synthetic io/fs
 	// registration for its Errno.Is sentinels - os worker, R5).
 	if needSyscall {
-		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+		// P3-M8: the synthetic syscall source references strconv.Itoa and
+		// errors.ErrUnsupported; import them directly. Ordering matters:
+		// strconv's package-level var initializers call errors.New, so
+		// errors must be imported before strconv. (The needStrconv/
+		// needErrors blocks above only ran if the user imported those
+		// packages directly — not for a pure `import "syscall"` program.)
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
 			return "", err
 		}
-		// P3-M8: the synthetic syscall source references strconv.Itoa and
-		// errors.ErrUnsupported; import them directly (the needStrconv/
-		// needErrors blocks above already ran).
 		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
 			return "", err
 		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
 			return "", err
 		}
 	}
@@ -1993,6 +1996,15 @@ func namedTypeName(nt *types.Named) string {
 }
 
 func (e *exporter) typeID(t types.Type) (int, error) {
+	// P3-M8 (reviewer-2 P1-4): types.Invalid must never reach the wire.
+	// The only known producer was exportIdent's *types.Builtin case
+	// (go/types models every builtin's type as Typ[Invalid]); it no
+	// longer serializes obj.Type(). Any other path reaching here with
+	// Invalid is a genuine failed resolution — fail loud with the wire
+	// id instead of laundering it into a bogus "invalid type" entry.
+	if b, ok := t.(*types.Basic); ok && b.Kind() == types.Invalid {
+		return 0, fmt.Errorf("gofrontend: types.Invalid reached typeID (would be types[%d]); refusing to serialize", len(e.types))
+	}
 	if e.subst != nil {
 		// M6 (WS H, issue52026): substitute bound type parameters before
 		// the memo lookup, so Some[T] under T=int denotes Some[int].
@@ -4858,12 +4870,17 @@ func (e *exporter) exportIdent(id *ast.Ident) (*Node, error) {
 		fields["obj"] = oid
 		fields["type"] = t
 	case *types.Builtin:
-		t, err := e.typeID(obj.Type())
-		if err != nil {
-			return nil, err
-		}
+		// P3-M8 (reviewer-2 P1-4): builtins have no go/types signature —
+		// go/types NewBuiltin sets typ: Typ[Invalid] (object.go), so
+		// obj.Type() is ALWAYS types.Typ[types.Invalid] here, not a
+		// failed resolution. Serializing it minted a bogus "invalid type"
+		// wire entry that ReflectTypes.java laundered into a fake
+		// INTERFACE kind. The ident's type is dead on the wire: builtin
+		// calls dispatch via the call node's "builtin" marker
+		// (buildBuiltinCall), and a standalone builtin ident fails in
+		// buildIdent on the missing "obj" field before "type" is read.
+		// So the builtin ident form carries no "type" field.
 		fields["builtin"] = obj.Name()
-		fields["type"] = t
 	case *types.Const:
 		// Constants (universe true/false, package-level and local consts):
 		// emitted as a folded basiclit so the factory's typed-constant
