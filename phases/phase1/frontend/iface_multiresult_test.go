@@ -376,3 +376,36 @@ func main() {
 		t.Fatalf("want 2 ifacemethod Read nodes in main (user + io interfaces), got %d", reads)
 	}
 }
+
+// TestD1BareIfaceCall: bare r.Read(buf) as a statement must dispatch via
+// ifacemethod, not fail fast (P1 fix for REVIEW-1).
+func TestD1BareIfaceCall(t *testing.T) {
+	src := `package main
+import "io"
+func main() {
+	var r io.Reader
+	buf := make([]byte, 10)
+	r.Read(buf)
+	r.Read(buf)
+}
+`
+	doc := d1ExportIfaceProg(t, src)
+	// Should export successfully (not fail with M8 scope error).
+	// Count ifacemethod Read nodes in main.
+	reads := 0
+	for _, f := range doc["funcs"].([]any) {
+		fm, _ := f.(map[string]any)
+		fl, _ := fm["fields"].(map[string]any)
+		if fl["name"] != "main" {
+			continue
+		}
+		for _, n := range findAllKind(fm, "ifacemethod") {
+			if n["fields"].(map[string]any)["method"] == "Read" {
+				reads++
+			}
+		}
+	}
+	if reads != 2 {
+		t.Fatalf("want 2 ifacemethod Read nodes (bare statements), got %d", reads)
+	}
+}

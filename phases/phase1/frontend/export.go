@@ -4935,18 +4935,19 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			if nt := timeTimerTickerNamed(selection.Recv()); nt != nil {
 				return e.exportTimeOp(c, sel, nt)
 			}
+			// P3-M8 (WS D): interface calls route to exportIfaceMethodCall FIRST —
+			// it owns the multi-result decision (pairPlan dispatch for table
+			// methods, fail-fast otherwise). The fail-fast below then applies
+			// only to concrete (non-interface) calls.
+			if recvIface(selection.Recv()) != nil {
+				return e.exportIfaceMethodCall(c, sel, selection)
+			}
 			// P3-M5 (WS E, ADR-0005): multi-result synthetic methods
 			// (Context.Deadline, Time.Date/...) fail fast (WS D; the
 			// P3-M3 F4 precedent) — the shape must not reach dispatch.
+			// (P3-M8: interface methods are handled above.)
 			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
 				return nil, multiResultSyntheticError(f)
-			}
-			// P3-M3 (WS D, ADR-0003): interface method call — the
-			// receiver's static type has an interface underlying (named
-			// or anonymous). Emits the additive "ifacemethod" wire node;
-			// dispatch happens at runtime through the itab.
-			if recvIface(selection.Recv()) != nil {
-				return e.exportIfaceMethodCall(c, sel, selection)
 			}
 		}
 		selection, ok := e.info.Selections[sel]
