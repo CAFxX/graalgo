@@ -17,6 +17,9 @@ import "bytes"
 // exponent) via power-of-2 scaling, expand to the exact decimal,
 // select the shortest decimal that round-trips (verified with the
 // exact parser), then render in gc's json 'f'/'e' style.
+// float32 uses the same machinery at 32-bit precision (jsonShortest32:
+// shortest decimal that round-trips through float32, with 32-bit ulps
+// and significand tie-breaking), as gc does (bitSize 32).
 //
 // Parsing (unmarshal): parse the decimal literal exactly, compute a
 // float64 approximation, then fix up via exact decimal comparison
@@ -166,15 +169,28 @@ func jsonDecimalCompareMag(a, b jsonDecimal) int {
 	return 0
 }
 
-// jsonDecimalRound rounds d to k significant digits (round-half-up on
-// the decimal representation; k >= 1). Used for shortest-repr
-// candidate generation.
+// jsonDecimalRound rounds d to k significant digits (k >= 1). Ties on
+// exact halfway round to even, matching gc strconv's shouldRoundUp: the
+// shortest-repr candidate at each length is the correctly rounded one.
+// d's digits carry no trailing zeros, so a '5' in the rounding position
+// with no digits after it is an exact halfway case. Used for
+// shortest-repr candidate generation.
 func jsonDecimalRound(d jsonDecimal, k int) jsonDecimal {
 	if len(d.digits) <= k {
 		return d
 	}
 	// Look at digit k (0-based) to decide rounding.
-	roundUp := d.digits[k] >= 5
+	roundUp := d.digits[k] > 5
+	if d.digits[k] == 5 {
+		if len(d.digits) > k+1 {
+			// '5' followed by more digits: above halfway (no trailing
+			// zeros, so a following digit is nonzero).
+			roundUp = true
+		} else {
+			// Exact halfway: round to even.
+			roundUp = d.digits[k-1]%2 == 1
+		}
+	}
 	// Take first k digits.
 	nd := make([]byte, k)
 	copy(nd, d.digits[:k])
@@ -595,9 +611,40 @@ func jsonFormatFloat(f float64) jsonFormatFloatPair {
 		return jsonFormatFloatPair{string(out), true}
 	}
 	jshort := jsonShortest(f)
-	digits, exp := jshort.digits, jshort.exp
-	// Decide 'e' vs 'f' exactly as gc: 'e' for abs < 1e-6 or abs >= 1e21.
-	useE := f < 1e-6 || f >= 1e21
+	return jsonFormatFloatRender(out, jshort.digits, jshort.exp, f < 1e-6 || f >= 1e21)
+}
+
+// jsonFormatFloat32 formats a float32 exactly as gc's encoding/json does:
+// the shortest decimal that round-trips through float32 (bitSize 32,
+// like strconv.FormatFloat(f, 'g'/'f', -1, 32) but in gc's json 'f'/'e'
+// style), then rendered like jsonFormatFloat. ok=false for Inf/NaN
+// (caller raises UnsupportedValueError).
+func jsonFormatFloat32(f float32) jsonFormatFloatPair {
+	if jsonIsNaN(float64(f)) || jsonIsInf(float64(f)) {
+		return jsonFormatFloatPair{"", false}
+	}
+	neg := f < 0 || jsonIsNegZero(float64(f))
+	if neg {
+		f = -f
+	}
+	var out []byte
+	if neg {
+		out = append(out, '-')
+	}
+	if f == 0 {
+		out = append(out, '0')
+		return jsonFormatFloatPair{string(out), true}
+	}
+	jshort := jsonShortest32(f)
+	// gc decides 'e' vs 'f' with float32-precision comparisons for float32
+	// (the 1e-6/1e21 constants convert to float32 in the comparison).
+	return jsonFormatFloatRender(out, jshort.digits, jshort.exp, f < float32(1e-6) || f >= float32(1e21))
+}
+
+// jsonFormatFloatRender renders the shortest digits/exp of a finite nonzero
+// magnitude (sign already emitted into out) in gc's 'f'/'e' style:
+// 'e' when useE, else 'f', with the e-0X -> e-X cleanup.
+func jsonFormatFloatRender(out []byte, digits []byte, exp int, useE bool) jsonFormatFloatPair {
 	if useE {
 		// 'e' format: d1[.d2...]e±X, X = exp-1, no leading zeros.
 		out = append(out, '0'+digits[0])
@@ -643,6 +690,115 @@ func jsonDigitsToBytes(d []byte) []byte {
 		b[i] = '0' + c
 	}
 	return b
+}
+
+// ============ float32 shortest decimal (for marshal) ============
+
+// jsonDecompose32 splits a finite nonzero float32 f into (m, e) with
+// |f| = m * 2^e exactly, m in [2^23, 2^24) for normals. For float32
+// subnormals m still lands in [2^23, 2^24) with e <= -150 (scaling by
+// powers of two is exact in every case). Mirrors jsonDecompose (which is
+// float64-only: float64 decomposition of a subnormal float32 loses the
+// 32-bit ulp structure).
+func jsonDecompose32(f float32) jsonDecomposePair {
+	if f < 0 {
+		f = -f
+	}
+	// f > 0 here.
+	e2 := 0
+	for f >= 2 {
+		f /= 2
+		e2++
+	}
+	for f < 1 {
+		f *= 2
+		e2--
+	}
+	// 1 <= f < 2; f * 2^23 is an exact integer in [2^23, 2^24).
+	m := uint64(float64(f) * 8388608.0)
+	return jsonDecomposePair{m, e2 - 23}
+}
+
+// jsonUlp32Pair is the single-result form of jsonUlp32 (WS D:
+// v1 cannot emit multi-result functions).
+type jsonUlp32Pair struct {
+	lo float64
+	hi float64
+}
+
+// jsonUlp32 returns the float32 ulps adjacent to the finite nonzero
+// float32 f: (ulp below f, ulp above f), as exact float64 values.
+// Powers of two have a halved ulp below (except 2^-126, the smallest
+// normal, whose lower neighbor is subnormal-spaced); subnormals are
+// spaced 2^-149 on both sides.
+func jsonUlp32(f float32) jsonUlp32Pair {
+	jdecomp := jsonDecompose32(f)
+	m, e := jdecomp.m, jdecomp.e
+	if e <= -150 {
+		// Subnormal float32: spacing 2^-149 on both sides. (Covers
+		// subnormal powers of two like 2^-149, whose lower neighbor
+		// is 0, one ulp below.)
+		u := jsonPow2(-149)
+		return jsonUlp32Pair{u, u}
+	}
+	if m == 1<<23 {
+		// Normal power of two (2^-126..2^128): ulp below is halved.
+		return jsonUlp32Pair{jsonPow2(e - 1), jsonPow2(e)}
+	}
+	return jsonUlp32Pair{jsonPow2(e), jsonPow2(e)}
+}
+
+// jsonIsEvenFloat32 reports whether f's float32 significand LSB is 0
+// (for round-half-even tie-breaking at 32-bit precision). Cannot reuse
+// jsonIsEvenFloat: the float64 decomposition of a subnormal float32
+// always yields an even 52-bit mantissa, hiding the 32-bit LSB.
+func jsonIsEvenFloat32(f float32) bool {
+	jdecomp := jsonDecompose32(f)
+	m, e := jdecomp.m, jdecomp.e
+	if e <= -150 {
+		// Subnormal float32: integer significand M = m >> (-(e+149)).
+		shift := uint(-(e + 149))
+		return (m>>shift)%2 == 0
+	}
+	// Normal: m is the 24-bit significand (hidden bit included).
+	return m%2 == 0
+}
+
+// jsonShortest32 returns the shortest significant-digit string and decimal
+// exponent for a finite nonzero float32 f: value = 0.digits * 10^exp,
+// digits has no trailing zeros, and parsing the digits back at 32-bit
+// precision (correctly rounded, ties to even) yields exactly f.
+// This is what gc's encoding/json uses for float32 (bitSize 32).
+func jsonShortest32(f float32) jsonShortestPair {
+	// f is finite and nonzero (callers handle 0/Inf/NaN).
+	neg := f < 0
+	if neg {
+		f = -f
+	}
+	f64 := float64(f)
+	exact := jsonDecimalFromFloat(f64)
+	// Round-trip interval: the decimals that parse (correctly rounded) to
+	// f are those strictly between the midpoints to f's float32 neighbors;
+	// an exact midpoint also qualifies when f's significand is even.
+	julp := jsonUlp32(f)
+	ulo, uhi := julp.lo, julp.hi
+	midLo := jsonDecimalFromFloat(f64 - ulo/2)
+	midHi := jsonDecimalFromFloat(f64 + uhi/2)
+	fEven := jsonIsEvenFloat32(f)
+	for k := 1; k <= 9; k++ {
+		cand := jsonDecimalRound(exact, k)
+		cmpLo := jsonDecimalCompare(cand, midLo)
+		cmpHi := jsonDecimalCompare(cand, midHi)
+		if cmpLo > 0 && cmpHi < 0 {
+			return jsonShortestPair{cand.digits, cand.exp}
+		}
+		if (cmpLo == 0 || cmpHi == 0) && fEven {
+			return jsonShortestPair{cand.digits, cand.exp}
+		}
+	}
+	// 9 digits always suffice for float32; unreachable in practice.
+	cand := jsonDecimalRound(exact, 9)
+	return jsonShortestPair{cand.digits, cand.exp}
 }
 
 func jsonItoa(v int) []byte {
@@ -1819,8 +1975,9 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 		}
 		e.buf = append(e.buf, s...)
 	case float32:
-		// float32 is converted to float64 like gc does.
-		jff := jsonFormatFloat(float64(v))
+		// gc formats float32 with the shortest repr that round-trips
+		// through float32 (bitSize 32), not the widened float64 value.
+		jff := jsonFormatFloat32(v)
 		s, ok := jff.s, jff.ok
 		if !ok {
 			return &jsonUnsupportedValueError{v: v, str: "cannot encode non-finite float32"}
