@@ -2137,13 +2137,32 @@ func (e *exporter) tupleList(t *types.Tuple) ([]any, error) {
 	return out, nil
 }
 
-// pkgPathOf returns the package path of a named type, or "" if the
-// type's package is nil (synthetic bootstrap edge case).
-func pkgPathOf(t *types.Named) string {
-	if t.Obj() == nil || t.Obj().Pkg() == nil {
-		return ""
+// pkgPathOf returns the package path of a named type.
+//
+// A nil Pkg is legitimate in exactly one case: the universe-scope
+// predeclared named types. go/types builds `error` and `comparable`
+// as NewNamed with a nil package (universe.go); they have no package
+// by definition, and gc's reflect likewise reports PkgPath "" for
+// them. It is NOT a "synthetic bootstrap" case: every synthetic named
+// type (sync primitives, io/os wrappers, …) is created with its
+// synthetic package, so Pkg() is non-nil.
+//
+// Any other named type with nil Pkg (or nil Obj) is an exporter bug —
+// fail loud instead of emitting a silent "". (Reviewer-2 P2-4: the old
+// code laundered every such case into pkgpath "".)
+func pkgPathOf(t *types.Named) (string, error) {
+	obj := t.Obj()
+	if obj == nil {
+		return "", fmt.Errorf("gofrontend: named type with nil type name: %s", t)
 	}
-	return t.Obj().Pkg().Path()
+	if pkg := obj.Pkg(); pkg != nil {
+		return pkg.Path(), nil
+	}
+	// Universe scope: only the predeclared named types are legitimate.
+	if name := obj.Name(); name == "error" || name == "comparable" {
+		return "", nil
+	}
+	return "", fmt.Errorf("gofrontend: named type %q has nil package", obj.Name())
 }
 
 func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
@@ -2182,11 +2201,16 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		if err != nil {
 			return TypeEnt{}, err
 		}
+		pkgPath, err := pkgPathOf(t)
+		if err != nil {
+			return TypeEnt{}, err
+		}
 		detail := map[string]any{
 			"name": namedTypeName(t), "underlying": under, "methods": methods,
 			// P3-M8 (wave 2, reflect): package path for Type.PkgPath.
-			// Nil-safe: synthetic types may have nil Pkg during bootstrap.
-			"pkgpath": pkgPathOf(t),
+			// pkgPathOf fails loud on unexpected nil Pkg (reviewer-2 P2-4);
+			// "" is legitimate only for universe predeclared (error).
+			"pkgpath": pkgPath,
 		}
 		if tmplSkipped {
 			// P3-M3 remediation (R1 P1-2): the frontend fails fast

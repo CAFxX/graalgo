@@ -7,17 +7,27 @@ import (
 )
 
 // io16: WriteString through interfaces: the StringWriter fast path
-// (io.Discard implements StringWriter) and the fallback path
-// (a Writer that is not a StringWriter). D1 (P3-M8 WS D).
+// (io.Discard implements StringWriter). D1 (P3-M8 WS D).
+//
+// NOTE (reviewer-2 P2-1): the "fallback" this program claims below does
+// NOT exercise __writeString's fallback branch (synth_io.go: the
+// `else w.Write([]byte(s))` arm for a Writer that is not a
+// StringWriter). Calling w2.Write directly is a plain interface Write
+// dispatch, not the WriteString fallback path. Every WriteString call
+// in the corpus uses io.Discard (a StringWriter), so the fallback
+// branch has ZERO differential coverage. Re-test trigger: user-type
+// method tables (a user Writer that is not a StringWriter — currently
+// fails with "no method table installed", pre-existing gap) or a
+// synthetic non-StringWriter Writer; then add a corpus program driving
+// io.WriteString through it differentially.
 func main() {
 	// Fast path: io.Discard implements io.StringWriter.
 	var w1 io.Writer = io.Discard
 	n1, err1 := io.WriteString(w1, "hello")
 	fmt.Println(n1, err1 == nil)
 
-	// Fallback: strings.Reader is not a Writer; use a custom check via
-	// PipeWriter? No — use Discard for the fast path and verify the
-	// fallback by writing through the Writer interface directly.
+	// NOT the WriteString fallback: a direct interface Write dispatch
+	// (see NOTE above). Kept as a plain Write sanity check.
 	var w2 io.Writer = io.Discard
 	n2, err2 := w2.Write([]byte("world"))
 	fmt.Println(n2, err2 == nil)

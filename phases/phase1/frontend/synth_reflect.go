@@ -2292,7 +2292,19 @@ const syntheticReflectliteSource = `package reflectlite
 
 import "reflect"
 
-// (aliases removed: exporter does not support alias kind)
+// (Aliases "type Type = reflect.Type" / "type Value = reflect.Value"
+// removed in 3d46d9e. The old comment claimed "exporter does not support
+// alias kind" — false: the exporter has emitted "case *types.Alias"
+// since the initial commit, and NodeFactory resolves aliases. What was
+// actually missing was the *Java* consumer: ReflectTypes.java had no
+// alias case in shell/keyOf/buildInfo and threw
+// "reflect: unsupported type kind alias" while building the type table
+// for any export containing the aliases. 3d46d9e removed the aliases
+// as the expedient fix AND added the Java alias support, so the
+// removal is now belt-and-braces. Re-test trigger: restore the two
+// alias declarations above and run the reflect corpus differentially —
+// the Java alias path now exists, so restoration is expected to work;
+// re-add only with that differential green.)
 // (see above)
 
 func TypeOf(i any) reflect.Type { return reflect.TypeOf(i) }
