@@ -46,6 +46,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -282,6 +283,38 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("io/fs").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
+	// P3-M8 (wave 2): synthetic reflect package (real-Go source in
+	// synth_reflect.go).
+	case "reflect":
+		return getSyntheticPackage("reflect").pkg, nil
+	// P3-M8 (wave 2): synthetic crypto packages (real-Go sources in
+	// synth_crypto*.go).
+	case "crypto":
+		return getSyntheticPackage("crypto").pkg, nil
+	case "crypto/aes":
+		return getSyntheticPackage("crypto/aes").pkg, nil
+	case "crypto/cipher":
+		return getSyntheticPackage("crypto/cipher").pkg, nil
+	case "crypto/des":
+		return getSyntheticPackage("crypto/des").pkg, nil
+	case "crypto/hmac":
+		return getSyntheticPackage("crypto/hmac").pkg, nil
+	case "crypto/md5":
+		return getSyntheticPackage("crypto/md5").pkg, nil
+	case "crypto/rand":
+		return getSyntheticPackage("crypto/rand").pkg, nil
+	case "crypto/rc4":
+		return getSyntheticPackage("crypto/rc4").pkg, nil
+	case "crypto/sha1":
+		return getSyntheticPackage("crypto/sha1").pkg, nil
+	case "crypto/sha256":
+		return getSyntheticPackage("crypto/sha256").pkg, nil
+	case "crypto/sha3":
+		return getSyntheticPackage("crypto/sha3").pkg, nil
+	case "crypto/sha512":
+		return getSyntheticPackage("crypto/sha512").pkg, nil
+	case "crypto/subtle":
+		return getSyntheticPackage("crypto/subtle").pkg, nil
 	}
 	return failImporter{}.Import(path)
 }
@@ -2094,6 +2127,9 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 	switch t := t.(type) {
 	case *types.Basic:
 		class, untyped := basicClass(t)
+		if t.Kind() == types.Invalid && os.Getenv("GRAALGO_TRACE_INVALID") == "1" {
+			fmt.Fprintf(os.Stderr, "TRACE-INVALID basic Invalid at describeType\n%s\n", debug.Stack())
+		}
 		return mk("basic", map[string]any{
 			"name": t.Name(), "class": class, "untyped": untyped,
 		}), nil
@@ -3091,6 +3127,12 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		return nil, err
 	}
 	if len(results) > 1 {
+		// P3-M8 (WS D; REVIEW-1 P2-5): this is also the fail-fast for the
+		// `return <multi-result interface call>` position — a 2-result
+		// call can only type-check as a return value inside a function
+		// with the same results, which v1 rejects here. Named loud
+		// limitation; re-test trigger: extend exportMultiResultDesugar
+		// to return positions (see DESIGN.md §5).
 		return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
 	}
 	sig, err := e.freshSigID(fi.recv, fi.sig.Params(), fi.sig.Results(), fi.sig.Variadic())
@@ -4034,6 +4076,24 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 			objs = append(objs, id)
 		}
 		for _, v := range vs.Values {
+			// P3-M8 (WS D; REVIEW-1 P2-5): a multi-result interface call
+			// in a `var` declaration (ValueSpec) position is a named loud
+			// limitation. exportMultiResultDesugar handles only
+			// *ast.AssignStmt (2-target := and =, incl. if-init) —
+			// consistent with the pre-existing M5/M7 concrete desugar.
+			// The ifacemethod node yields a single pair-typed value which
+			// cannot be split across the declared names, so exporting it
+			// would be a silent wire-shape divergence: fail fast
+			// instead. (The REVIEW-1 P1 fix routed interface calls to
+			// exportIfaceMethodCall before the synthetic fail-fast; this
+			// check restores loudness for the ValueSpec position.)
+			// Re-test trigger: extend exportMultiResultDesugar to
+			// ValueSpec positions (see DESIGN.md §5).
+			if c, ok := unparen(v).(*ast.CallExpr); ok {
+				if plan := e.classifyMultiResultCall(c); plan != nil && plan.kind == mrIfaceMethod {
+					return nil, scopeErrorf("multi-result interface call in var declaration is not supported in frontend/v1 scope (M8 limitation: only 2-target := and = desugar; see DESIGN.md §5)")
+				}
+			}
 			x, err := e.exportExpr(v)
 			if err != nil {
 				return nil, err
