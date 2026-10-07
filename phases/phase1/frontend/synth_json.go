@@ -2284,16 +2284,17 @@ func jsonIndent(b []byte, prefix, indent string) []byte {
 		case '}', ']':
 			// Check if previous was opener (empty).
 			// We need to track; simplify: look back.
-			depth--
 			// Find previous non-space char.
 			j := len(out) - 1
 			for j >= 0 && (out[j] == ' ' || out[j] == '\n') {
 				j--
 			}
 			if j >= 0 && (out[j] == '{' || out[j] == '[') {
-				// Empty object/array: just append closer.
+				// Empty object/array: just append closer (depth was
+				// not incremented for empty, so don't decrement).
 				out = append(out, c)
 			} else {
+				depth--
 				out = append(out, '\n')
 				out = append(out, prefix...)
 				for d := 0; d < depth; d++ {
