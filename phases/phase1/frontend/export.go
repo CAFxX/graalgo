@@ -6244,6 +6244,27 @@ func (e *exporter) exportSlice(x *ast.SliceExpr) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P3-M7: the sliced operand may be an untyped string constant
+	// (e.g. digits[i:i+1] where digits is a const string, as in
+	// strconv's small()). The factory's slice node only accepts typed
+	// containers, so materialize the constant to string first — a
+	// no-op conversion the factory already supports (UNTYPED_STRING
+	// is transparent to STRING).
+	if tv, ok := e.info.Types[x.X]; ok && tv.Type != nil {
+		if b, ok := tv.Type.(*types.Basic); ok && b.Kind() == types.UntypedString {
+			to, err := e.typeID(types.Typ[types.String])
+			if err != nil {
+				return nil, err
+			}
+			from, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			xe = e.node("convert", x.X, map[string]any{
+				"x": xe, "to": to, "type": to, "from": from,
+			})
+		}
+	}
 	var lo, hi, max *Node
 	if x.Low != nil {
 		if lo, err = e.exportExpr(x.Low); err != nil {
