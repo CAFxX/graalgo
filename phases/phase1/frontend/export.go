@@ -6225,6 +6225,13 @@ func (e *exporter) exportIndex(x *ast.IndexExpr, commaOk bool) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P3-M7: an index operand may be an untyped string constant
+	// (e.g. smalls[x0] where smalls is a const string) — materialize
+	// it to string like exportSlice does.
+	xe, err = e.materializeStringConst(x.X, xe)
+	if err != nil {
+		return nil, err
+	}
 	ie, err := e.exportExpr(x.Index)
 	if err != nil {
 		return nil, err
@@ -6232,6 +6239,28 @@ func (e *exporter) exportIndex(x *ast.IndexExpr, commaOk bool) (*Node, error) {
 	return e.node("index", x, map[string]any{
 		"x": xe, "index": ie, "type": t, "commaOk": commaOk,
 	}), nil
+}
+
+// materializeStringConst wraps xe in a no-op string conversion when x
+// has untyped string type (a string constant used as a slice/index
+// operand). The factory only accepts typed containers.
+func (e *exporter) materializeStringConst(x ast.Expr, xe *Node) (*Node, error) {
+	if tv, ok := e.info.Types[x]; ok && tv.Type != nil {
+		if b, ok := tv.Type.(*types.Basic); ok && b.Kind() == types.UntypedString {
+			to, err := e.typeID(types.Typ[types.String])
+			if err != nil {
+				return nil, err
+			}
+			from, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			return e.node("convert", x, map[string]any{
+				"x": xe, "to": to, "type": to, "from": from,
+			}), nil
+		}
+	}
+	return xe, nil
 }
 
 // exportSlice exports x[lo:hi] and x[lo:hi:max] (absent bounds are null).
@@ -6250,20 +6279,9 @@ func (e *exporter) exportSlice(x *ast.SliceExpr) (*Node, error) {
 	// containers, so materialize the constant to string first — a
 	// no-op conversion the factory already supports (UNTYPED_STRING
 	// is transparent to STRING).
-	if tv, ok := e.info.Types[x.X]; ok && tv.Type != nil {
-		if b, ok := tv.Type.(*types.Basic); ok && b.Kind() == types.UntypedString {
-			to, err := e.typeID(types.Typ[types.String])
-			if err != nil {
-				return nil, err
-			}
-			from, err := e.typeID(tv.Type)
-			if err != nil {
-				return nil, err
-			}
-			xe = e.node("convert", x.X, map[string]any{
-				"x": xe, "to": to, "type": to, "from": from,
-			})
-		}
+	xe, err = e.materializeStringConst(x.X, xe)
+	if err != nil {
+		return nil, err
 	}
 	var lo, hi, max *Node
 	if x.Low != nil {
