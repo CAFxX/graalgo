@@ -109,6 +109,12 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticSortPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "bytes":
+		// P3-M7 (wave 1): synthetic bytes package (synth_bytes.go).
+		// Requires m7-errors-sort for the errors dependency.
+		pkg := syntheticBytesPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	case "unsafe":
 		pkg := syntheticUnsafePackage()
 		imp.pkgs[path] = pkg
