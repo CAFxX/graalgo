@@ -328,6 +328,10 @@ var osMultiResultFuncs = []osMultiResultFunc{
 	// helper __dirEntryInfo (helperPkg override — the concrete dirEntry
 	// type lives in the synthetic os package).
 	{"io/fs", "Info", "DirEntry", "__dirEntryInfo", "os", "infoPair", []string{"fi", "err"}},
+	// os: the concrete (*dirEntry).Info method, mapped to the same
+	// helper for itab construction (multiResultHelperFunc keys on the
+	// concrete method's package/receiver).
+	{"os", "Info", "dirEntry", "__dirEntryInfo", "", "infoPair", []string{"fi", "err"}},
 }
 
 // ioMultiResultFuncs is the desugar table for the synthetic io package's
@@ -1080,7 +1084,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	if plan.kind == mrIfaceMethod {
 		return e.desugarIfaceMultiResult(s, c, plan, define)
 	}
-	helperFn, err := multiResultHelper(plan)
+	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, err
 	}
@@ -1097,8 +1101,14 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 
 // multiResultHelper resolves a desugar plan's __-helper to its
 // *types.Func in the synthetic package scope.
-func multiResultHelper(plan *mrPlan) (*types.Func, error) {
+func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 	sp := getSyntheticPackage(plan.helperPkg)
+	// P3-M8b: import the synthetic package so its helpers are registered
+	// in funcByObj (idempotent). Without this, synthHelperCallNode fails
+	// with "synthetic helper not in funcByObj".
+	if err := e.importSyntheticPackage(sp); err != nil {
+		return nil, err
+	}
 	helperObj := sp.pkg.Scope().Lookup(plan.helperName)
 	helperFn, ok := helperObj.(*types.Func)
 	if !ok {
@@ -1152,7 +1162,7 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 // is handled by the D1 path (exportIfaceMethodCall) before this
 // interception.
 func (e *exporter) exportBareMultiResultCall(s *ast.ExprStmt, c *ast.CallExpr, plan *mrPlan) (*Node, error) {
-	helperFn, err := multiResultHelper(plan)
+	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, err
 	}
