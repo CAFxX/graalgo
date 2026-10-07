@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Generate the Plan 9 assembly inventory for the P3-M6 asm strategy.
 
-Enumerates EVERY .s file under $GOROOT/src (default: ~/tools/go-1.27.1/src,
-the pinned toolchain) and assigns each one a SPEC section 2.8 (GG-0009)
-category:
+Enumerates EVERY .s/.S/.sx file under $GOROOT/src (default:
+~/tools/go-1.27.1/src, the pinned toolchain) -- go/build treats the
+three suffixes identically as assembly -- and assigns each one a SPEC
+section 2.8 (GG-0009) category:
 
     evaporate              runtime-core asm: no Go stacks on Truffle, the
                            code has no meaning; Go-visible services are
@@ -22,10 +23,10 @@ Output (next to this script):
     asm-inventory-go1.27.1.json   machine-readable source of truth, embedded
                                  by phases/phase3/src/p3frontend/asm.go
                                  via //go:embed; the loader resolves every
-                                 buildable .s file against it.
+                                 buildable assembly file against it.
     asm-inventory-go1.27.1.md     human-readable summary.
 
-The generator FAILS if any .s file matches no rule, so toolchain drift
+The generator FAILS if any assembly file matches no rule, so toolchain drift
 (new files, moved files) surfaces here, never as a silent gap. Re-run on
 every Go toolchain upgrade and re-verify the category counts.
 
@@ -118,6 +119,18 @@ def classify(rel):
             "runtime-internal atomic primitives (Xchg/Cas/...); same "
             "intrinsic surface as sync/atomic (sync/atomic/asm.s jumps "
             "here)",
+        )
+    # --- cgo gcc-assembly: must precede the runtime/ evaporate rule ------
+    # --- (.S files compiled by the C toolchain, not Plan 9 asm) -----------
+    if rel.startswith("runtime/cgo/") and rel.endswith((".S", ".sx")):
+        return (
+            "unsupported",
+            "",
+            "cgo gcc-assembly (not Plan 9 asm): compiled by the C toolchain "
+            "via cgo; graalgo has no C-compilation path. runtime/cgo is "
+            "excluded as CGO in the v1 exclusion list (SPEC §3.8 GG-0023) -- "
+            "strategy decided with the Panama FFI bring-up "
+            "(re-test trigger: P3-M8)",
         )
     # --- runtime-core: evaporates (no Go stacks on Truffle) -----------------
     if rel.startswith("runtime/"):
@@ -262,10 +275,12 @@ def classify(rel):
 
 
 def enumerate(goroot_src):
+    # go/build treats .s, .S and .sx identically as assembly
+    # (fileListForExt: case ".s", ".S", ".sx"); enumerate all three.
     found = []
     for dirpath, _dirnames, filenames in os.walk(goroot_src):
         for fn in filenames:
-            if fn.endswith(".s"):
+            if fn.endswith((".s", ".S", ".sx")):
                 full = os.path.join(dirpath, fn)
                 rel = os.path.relpath(full, goroot_src)
                 with open(full, "rb") as f:
@@ -281,7 +296,7 @@ def build_inventory(goroot_src):
         cls = classify(rel)
         if cls is None:
             raise SystemExit(
-                f"gen-asm-inventory: UNCATEGORIZED .s file: {rel} -- "
+                f"gen-asm-inventory: UNCATEGORIZED assembly file: {rel} -- "
                 "add a rule (never silently uncategorized)"
             )
         category, replacement, reason = cls
@@ -318,7 +333,7 @@ def render_md(entries, total_lines):
     a("")
     a("## Headline")
     a("")
-    a(f"- **{len(entries)} .s files / {total_lines:,} lines** enumerated "
+    a(f"- **{len(entries)} assembly files (.s/.S/.sx) / {total_lines:,} lines** enumerated "
       f"(SPEC section 2.8 said 485 files / ~127k lines on the older "
       f"toolchain the SPEC was written against -- drift recorded, not "
       f"carried: go1.27.1 grew the tree, notably crypto/internal/fips140).")
@@ -383,7 +398,7 @@ def render_md(entries, total_lines):
     a("## Re-test triggers")
     a("")
     a("- Go toolchain upgrade: re-run the generator; any new/uncategorized "
-      ".s file fails the generator. Re-verify category counts.")
+      "assembly file fails the generator. Re-verify category counts.")
     a("- crypto intrinsify leg lands: re-run emulate-leg differential "
       "corpora; re-verify every emulate-then-intrinsify entry.")
     a("- syscall wave-2 bring-up: decide per-file strategy for the "
