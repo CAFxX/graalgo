@@ -38,7 +38,10 @@ type fileEntry struct {
 
 // manifest is the in-repo provenance record. It is byte-deterministic:
 // no timestamps, sorted entries, fixed JSON encoding — so two vendor
-// runs over identical sources produce byte-identical manifests.
+// runs over identical sources on the SAME MACHINE produce byte-identical
+// manifests. (The manifest embeds absolute machine paths -- sourceGoroot
+// and targetDir -- so cross-machine runs differ in exactly those fields;
+// determinism is a same-machine property.)
 type manifest struct {
 	ManifestVersion int         `json:"manifestVersion"`
 	GoVersion       string      `json:"goVersion"`

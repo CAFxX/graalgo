@@ -7,7 +7,7 @@ case), the corresponding test was run to show it FAILS (red), and the
 mutation was reverted. All mutations were restored; the suite is green
 on the final tree (`go test ./...`, `go vet ./...`).
 
-## (a) Two consecutive vendor runs produce byte-identical manifests
+## (a) Two consecutive vendor runs produce byte-identical manifests (same machine)
 
 - Test: `TestVendorManifestDeterministic` (fake GOROOT, three runs).
 - Red mutation: added a `vendoredAt` nanosecond-timestamp field to the
@@ -15,6 +15,10 @@ on the final tree (`go test ./...`, `go vet ./...`).
 - Red result: FAIL — manifests differ across consecutive runs (the test
   prints both manifests).
 - Restored: green.
+
+Qualifier: "byte-identical" is a same-machine property -- the manifest
+embeds absolute machine paths (`sourceGoroot`, `targetDir`), so two runs
+on different machines differ in exactly those fields.
 
 Full-scale check on the real tree: vendored go1.27.1 twice
 (`--force` on the second run); `cmp` of the two
