@@ -16,3 +16,5 @@ tools/diffharness/diffharness
 
 # fuzzer runtime state (journal, scratch programs, resume state)
 tools/fuzz/work/
+.gocache/
+.tmp/
