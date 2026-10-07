@@ -92,6 +92,10 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticContextPackage(timePkg)
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "strings":
+		pkg := syntheticStringsPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	case "unsafe":
 		pkg := syntheticUnsafePackage()
 		imp.pkgs[path] = pkg

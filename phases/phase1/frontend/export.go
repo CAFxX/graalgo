@@ -222,6 +222,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("time").pkg, nil
 	case "context":
 		return getSyntheticPackage("context").pkg, nil
+	case "strings":
+		return getSyntheticPackage("strings").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -646,7 +648,7 @@ func ExportFile(path string) (string, error) {
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_time_context.go).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "strings" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -771,13 +773,15 @@ func ExportFile(path string) (string, error) {
 	// objects via the overlay importer's package cache) and their
 	// package vars become document globals. Intrinsics (time.Now etc.)
 	// are skipped — every call site is intercepted into wire nodes.
-	needTime, needContext := false, false
+	needTime, needContext, needStrings := false, false, false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
 			needTime = true
 		case "context":
 			needTime, needContext = true, true
+		case "strings":
+			needStrings = true
 		}
 	}
 	if needTime {
@@ -787,6 +791,11 @@ func ExportFile(path string) (string, error) {
 	}
 	if needContext {
 		if err := e.importSyntheticPackage(getSyntheticPackage("context")); err != nil {
+			return "", err
+		}
+	}
+	if needStrings {
+		if err := e.importSyntheticPackage(getSyntheticPackage("strings")); err != nil {
 			return "", err
 		}
 	}
@@ -5742,7 +5751,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" {
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "strings" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

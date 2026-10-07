@@ -471,7 +471,7 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" && p != "encoding/xml" {
+	if p != "time" && p != "context" && p != "strings" && p != "encoding/xml" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)

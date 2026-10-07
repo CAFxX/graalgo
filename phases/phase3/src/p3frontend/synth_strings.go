@@ -1,0 +1,304 @@
+package p3frontend
+
+// P3-M7 (wave 1): p3frontend mirror of the phase-1 synthetic "strings"
+// package. The importer reimplements the frozen exporter's synthetic
+// signatures (it cannot reuse them — unexported); this mirror pins the
+// signatures so drift fails fast.
+//
+// The signatures match phases/phase1/frontend/synth_strings.go exactly
+// (the full gc 1.27.1 in-scope API: ~50 functions plus Builder, Replacer,
+// Reader with all methods). Unexported implementation types
+// (stringsCaseRange, stringsTrieNode, ...) are not visible to user code
+// and are not mirrored.
+//
+// Deliberate omissions (inexpressible in the synthetic source; documented
+// in the phase-1 header): ToUpperSpecial/ToLowerSpecial/ToTitleSpecial
+// (need unicode.SpecialCase), Replacer.WriteString and Reader.WriteTo
+// (need io.Writer), Lines/SplitSeq/SplitAfterSeq/FieldsSeq/FieldsFuncSeq
+// (need iter.Seq). Title is present with exact gc signature and a
+// fail-fast body (deprecated; needs unicode tables).
+
+import (
+	"go/token"
+	"go/types"
+)
+
+// syntheticStringsPackage mirrors the P3-M7 synthetic "strings".
+func syntheticStringsPackage() *types.Package {
+	pkg := types.NewPackage("strings", "strings")
+	intT := types.Typ[types.Int]
+	int64T := types.Typ[types.Int64]
+	stringT := types.Typ[types.String]
+	boolT := types.Typ[types.Bool]
+	byteT := types.Typ[types.Byte]
+	runeT := types.Typ[types.Rune]
+	errorT := types.Universe.Lookup("error").Type()
+
+	newParam := func(name string, t types.Type) *types.Var {
+		return types.NewParam(token.NoPos, pkg, name, t)
+	}
+	insertFunc := func(name string, params, results []*types.Var, variadic bool) {
+		sig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(params...), types.NewTuple(results...), variadic)
+		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, name, sig))
+	}
+
+	str := []*types.Var{newParam("s", stringT)}
+	strRes := []*types.Var{newParam("", stringT)}
+	boolRes := []*types.Var{newParam("", boolT)}
+	intRes := []*types.Var{newParam("", intT)}
+
+	// ---- Functions: (string, string) -> bool ----
+	for _, name := range []string{"Contains", "HasPrefix", "HasSuffix", "EqualFold"} {
+		var p []*types.Var
+		if name == "EqualFold" {
+			p = []*types.Var{newParam("s", stringT), newParam("t", stringT)}
+		} else if name == "Contains" {
+			p = []*types.Var{newParam("s", stringT), newParam("substr", stringT)}
+		} else {
+			p = []*types.Var{newParam("s", stringT), newParam("prefix", stringT)}
+		}
+		if name == "HasSuffix" {
+			p[1].SetName("suffix")
+		}
+		insertFunc(name, p, boolRes, false)
+	}
+
+	// ContainsAny(s, chars string) bool
+	insertFunc("ContainsAny",
+		[]*types.Var{newParam("s", stringT), newParam("chars", stringT)},
+		boolRes, false)
+	// ContainsRune(s string, r rune) bool
+	insertFunc("ContainsRune",
+		[]*types.Var{newParam("s", stringT), newParam("r", runeT)},
+		boolRes, false)
+	// ContainsFunc(s string, f func(rune) bool) bool
+	funcRuneBool := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(newParam("r", runeT)), types.NewTuple(newParam("", boolT)), false)
+	insertFunc("ContainsFunc",
+		[]*types.Var{newParam("s", stringT), newParam("f", funcRuneBool)},
+		boolRes, false)
+
+	// Count(s, substr string) int
+	insertFunc("Count",
+		[]*types.Var{newParam("s", stringT), newParam("substr", stringT)},
+		intRes, false)
+
+	// Cut family (multi-result).
+	insertFunc("Cut",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT)},
+		[]*types.Var{newParam("before", stringT), newParam("after", stringT), newParam("found", boolT)},
+		false)
+	insertFunc("CutPrefix",
+		[]*types.Var{newParam("s", stringT), newParam("prefix", stringT)},
+		[]*types.Var{newParam("after", stringT), newParam("found", boolT)},
+		false)
+	insertFunc("CutSuffix",
+		[]*types.Var{newParam("s", stringT), newParam("suffix", stringT)},
+		[]*types.Var{newParam("before", stringT), newParam("found", boolT)},
+		false)
+	// CutLast(s, sep string) (before, after string, found bool) — gc 1.27.
+	insertFunc("CutLast",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT)},
+		[]*types.Var{newParam("before", stringT), newParam("after", stringT), newParam("found", boolT)},
+		false)
+
+	// Fields(s string) []string
+	strSlice := types.NewSlice(stringT)
+	insertFunc("Fields", str, []*types.Var{newParam("", strSlice)}, false)
+	// FieldsFunc(s string, f func(rune) bool) []string
+	insertFunc("FieldsFunc",
+		[]*types.Var{newParam("s", stringT), newParam("f", funcRuneBool)},
+		[]*types.Var{newParam("", strSlice)}, false)
+
+	// Index family.
+	insertFunc("Index",
+		[]*types.Var{newParam("s", stringT), newParam("substr", stringT)},
+		intRes, false)
+	insertFunc("IndexAny",
+		[]*types.Var{newParam("s", stringT), newParam("chars", stringT)},
+		intRes, false)
+	insertFunc("IndexByte",
+		[]*types.Var{newParam("s", stringT), newParam("c", byteT)},
+		intRes, false)
+	insertFunc("IndexFunc",
+		[]*types.Var{newParam("s", stringT), newParam("f", funcRuneBool)},
+		intRes, false)
+	insertFunc("IndexRune",
+		[]*types.Var{newParam("s", stringT), newParam("r", runeT)},
+		intRes, false)
+	insertFunc("LastIndex",
+		[]*types.Var{newParam("s", stringT), newParam("substr", stringT)},
+		intRes, false)
+	insertFunc("LastIndexAny",
+		[]*types.Var{newParam("s", stringT), newParam("chars", stringT)},
+		intRes, false)
+	insertFunc("LastIndexByte",
+		[]*types.Var{newParam("s", stringT), newParam("c", byteT)},
+		intRes, false)
+	insertFunc("LastIndexFunc",
+		[]*types.Var{newParam("s", stringT), newParam("f", funcRuneBool)},
+		intRes, false)
+
+	// Join(elems []string, sep string) string
+	insertFunc("Join",
+		[]*types.Var{newParam("elems", strSlice), newParam("sep", stringT)},
+		strRes, false)
+
+	// Map(mapping func(rune) rune, s string) string
+	funcRuneRune := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(newParam("r", runeT)), types.NewTuple(newParam("", runeT)), false)
+	insertFunc("Map",
+		[]*types.Var{newParam("mapping", funcRuneRune), newParam("s", stringT)},
+		strRes, false)
+
+	// Repeat(s string, count int) string
+	insertFunc("Repeat",
+		[]*types.Var{newParam("s", stringT), newParam("count", intT)},
+		strRes, false)
+
+	// Replace(s, old, new string, n int) string; ReplaceAll(s, old, new string) string
+	insertFunc("Replace",
+		[]*types.Var{newParam("s", stringT), newParam("old", stringT), newParam("new", stringT), newParam("n", intT)},
+		strRes, false)
+	insertFunc("ReplaceAll",
+		[]*types.Var{newParam("s", stringT), newParam("old", stringT), newParam("new", stringT)},
+		strRes, false)
+
+	// Split family.
+	insertFunc("Split",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT)},
+		[]*types.Var{newParam("", strSlice)}, false)
+	insertFunc("SplitAfter",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT)},
+		[]*types.Var{newParam("", strSlice)}, false)
+	insertFunc("SplitN",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT), newParam("n", intT)},
+		[]*types.Var{newParam("", strSlice)}, false)
+	insertFunc("SplitAfterN",
+		[]*types.Var{newParam("s", stringT), newParam("sep", stringT), newParam("n", intT)},
+		[]*types.Var{newParam("", strSlice)}, false)
+
+	// Case mapping.
+	for _, name := range []string{"ToUpper", "ToLower", "ToTitle", "Title", "TrimSpace", "Clone"} {
+		insertFunc(name, str, strRes, false)
+	}
+	// ToValidUTF8(s, replacement string) string
+	insertFunc("ToValidUTF8",
+		[]*types.Var{newParam("s", stringT), newParam("replacement", stringT)},
+		strRes, false)
+
+	// Compare(a, b string) int
+	insertFunc("Compare",
+		[]*types.Var{newParam("a", stringT), newParam("b", stringT)},
+		intRes, false)
+
+	// Trim family.
+	insertFunc("Trim",
+		[]*types.Var{newParam("s", stringT), newParam("cutset", stringT)},
+		strRes, false)
+	insertFunc("TrimLeft",
+		[]*types.Var{newParam("s", stringT), newParam("cutset", stringT)},
+		strRes, false)
+	insertFunc("TrimRight",
+		[]*types.Var{newParam("s", stringT), newParam("cutset", stringT)},
+		strRes, false)
+	insertFunc("TrimFunc",
+		[]*types.Var{newParam("s", stringT), newParam("f", funcRuneBool)},
+		strRes, false)
+	insertFunc("TrimLeftFunc",
+		[]*types.Var{newParam("s", stringT), newParam("f", funcRuneBool)},
+		strRes, false)
+	insertFunc("TrimRightFunc",
+		[]*types.Var{newParam("s", stringT), newParam("f", funcRuneBool)},
+		strRes, false)
+	insertFunc("TrimPrefix",
+		[]*types.Var{newParam("s", stringT), newParam("prefix", stringT)},
+		strRes, false)
+	insertFunc("TrimSuffix",
+		[]*types.Var{newParam("s", stringT), newParam("suffix", stringT)},
+		strRes, false)
+
+	// ---- Types ----
+
+	// Builder (struct with unexported fields; methods on *Builder).
+	builderName := types.NewTypeName(token.NoPos, pkg, "Builder", nil)
+	builder := types.NewNamed(builderName, types.NewStruct(nil, nil), nil)
+	pkg.Scope().Insert(builderName)
+	builderPtr := types.NewPointer(builder)
+	addMethod := func(name string, params, results []*types.Var) {
+		sig := types.NewSignatureType(builderPtr, nil, nil,
+			types.NewTuple(params...), types.NewTuple(results...), false)
+		builder.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
+	}
+	addMethod("Len", nil, intRes)
+	addMethod("Cap", nil, intRes)
+	addMethod("Grow", []*types.Var{newParam("n", intT)}, nil)
+	addMethod("Reset", nil, nil)
+	addMethod("String", nil, strRes)
+	// Write(p []byte) (int, error)
+	addMethod("Write",
+		[]*types.Var{newParam("p", types.NewSlice(byteT))},
+		[]*types.Var{newParam("", intT), newParam("", errorT)})
+	// WriteByte(c byte) error
+	addMethod("WriteByte",
+		[]*types.Var{newParam("c", byteT)},
+		[]*types.Var{newParam("", errorT)})
+	// WriteRune(r rune) (int, error)
+	addMethod("WriteRune",
+		[]*types.Var{newParam("r", runeT)},
+		[]*types.Var{newParam("", intT), newParam("", errorT)})
+	// WriteString(s string) (int, error)
+	addMethod("WriteString", str,
+		[]*types.Var{newParam("", intT), newParam("", errorT)})
+
+	// Replacer (struct; Replace on *Replacer; NewReplacer variadic).
+	replacerName := types.NewTypeName(token.NoPos, pkg, "Replacer", nil)
+	replacer := types.NewNamed(replacerName, types.NewStruct(nil, nil), nil)
+	pkg.Scope().Insert(replacerName)
+	replacerPtr := types.NewPointer(replacer)
+	replaceSig := types.NewSignatureType(replacerPtr, nil, nil,
+		types.NewTuple(str...), types.NewTuple(strRes...), false)
+	replacer.AddMethod(types.NewFunc(token.NoPos, pkg, "Replace", replaceSig))
+	insertFunc("NewReplacer",
+		[]*types.Var{newParam("oldnew", strSlice)},
+		[]*types.Var{newParam("", replacerPtr)}, true)
+
+	// Reader (struct; methods on *Reader).
+	readerName := types.NewTypeName(token.NoPos, pkg, "Reader", nil)
+	reader := types.NewNamed(readerName, types.NewStruct(nil, nil), nil)
+	pkg.Scope().Insert(readerName)
+	readerPtr := types.NewPointer(reader)
+	addReaderMethod := func(name string, params, results []*types.Var) {
+		sig := types.NewSignatureType(readerPtr, nil, nil,
+			types.NewTuple(params...), types.NewTuple(results...), false)
+		reader.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
+	}
+	addReaderMethod("Len", nil, intRes)
+	addReaderMethod("Size", nil, []*types.Var{newParam("", int64T)})
+	addReaderMethod("Reset", str, nil)
+	// Read(b []byte) (n int, err error)
+	addReaderMethod("Read",
+		[]*types.Var{newParam("b", types.NewSlice(byteT))},
+		[]*types.Var{newParam("n", intT), newParam("err", errorT)})
+	// ReadAt(b []byte, off int64) (n int, err error)
+	addReaderMethod("ReadAt",
+		[]*types.Var{newParam("b", types.NewSlice(byteT)), newParam("off", int64T)},
+		[]*types.Var{newParam("n", intT), newParam("err", errorT)})
+	// ReadByte() (byte, error)
+	addReaderMethod("ReadByte", nil,
+		[]*types.Var{newParam("", byteT), newParam("", errorT)})
+	// ReadRune() (ch rune, size int, err error)
+	addReaderMethod("ReadRune", nil,
+		[]*types.Var{newParam("ch", runeT), newParam("size", intT), newParam("err", errorT)})
+	// Seek(offset int64, whence int) (int64, error)
+	addReaderMethod("Seek",
+		[]*types.Var{newParam("offset", int64T), newParam("whence", intT)},
+		[]*types.Var{newParam("", int64T), newParam("", errorT)})
+	// UnreadByte() error; UnreadRune() error
+	addReaderMethod("UnreadByte", nil, []*types.Var{newParam("", errorT)})
+	addReaderMethod("UnreadRune", nil, []*types.Var{newParam("", errorT)})
+	insertFunc("NewReader", str, []*types.Var{newParam("", readerPtr)}, false)
+
+	return pkg
+}
