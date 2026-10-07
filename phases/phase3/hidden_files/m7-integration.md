@@ -59,3 +59,14 @@ report commit hashes + file lists.
   integration script at work/apply_integration.py (worker's scratch).
 - Pattern emerging: sources land, wiring blocked. Plan: after all package
   workers finish, spawn per-package WIRING follow-ups (enc-core, strconv, ...).
+
+## 2026-10-07 ~03:40 UTC update
+- enc-csv-gob worker DONE (5/10): commits 1836c8e (sources+machinery),
+  8992dc2 (mirrors+drift, PASS), 93a0d61 (corpus README+redgreen; landed on
+  m7-strings by chaos). Differential: csv ~2300 cases, gob 60+ byte-identical,
+  7 real bugs fixed. Reconciliation: m7-enc-core vs m7-strings@08498e6
+  synth_enc_csv_gob.go are IDENTICAL (diff 0) — no conflict.
+  WIRING PENDING: importer.go 2-case hunk, export.go + mrdesugar_m5.go hunks
+  (lost to chaos; designs documented in worker report).
+- Wiring follow-ups needed: enc-core, strconv, enc-csv-gob (+ TBD for
+  strings/bytes/math/enc-json/enc-xml).
