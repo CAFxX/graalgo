@@ -70,3 +70,14 @@ report commit hashes + file lists.
   (lost to chaos; designs documented in worker report).
 - Wiring follow-ups needed: enc-core, strconv, enc-csv-gob (+ TBD for
   strings/bytes/math/enc-json/enc-xml).
+
+## 2026-10-07 ~03:50 UTC update
+- bytes worker DONE (6/10): m7-bytes @ 9019842 (clean, 2 commits, 8 files,
+  11k insertions). Sources (54 funcs + Buffer/Reader + inlined unicode tables
+  verified over all 1,114,112 runes) + mirror + drift + exporter/p3frontend
+  wiring. Differential vs gc ALL PASS. Phase-1 211 green.
+  DEPENDENCY: imports synthetic "errors" → needs m7-errors-sort integrated.
+  8 omissions pinned (iter.Seq ×5, unicode.SpecialCase ×3) with re-test triggers.
+  Linkname: bytes //go:linkname Repeat is self-link, satisfied by provision;
+  M6 linkdiff tool gap flagged (misses free-floating linkname directives).
+  MISSING (post-integration follow-up): corpus/wave1/bytes/ programs, redgreen.md.
