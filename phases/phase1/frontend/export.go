@@ -2430,6 +2430,12 @@ type methodCall struct {
 	// rawTargsForEmit are the actual argument types in bind order, for the
 	// wire "typeargs" field (valid when needsInst).
 	rawTargsForEmit []types.Type
+	// recvPath is the receiver adaptation path for promoted methods
+	// (GAP-6): go/types' Selection.Index minus the method's own index,
+	// e.g. [0] for a method promoted via embedded field 0. Empty for
+	// direct methods. The caller (methodRefNode) rewrites the receiver
+	// expression by walking this path, mirroring methodTableEntries.
+	recvPath []int
 }
 
 // resolveMethodCall resolves a method call (selection kind MethodVal) to its
@@ -2447,7 +2453,9 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
 		if !ok {
-			return nil, fmt.Errorf("gofrontend: method %s not found on %s", mname, rn.Obj().Name())
+			// GAP-6: methodIndex holds only direct methods; the method
+			// may be promoted through one or more embedded fields.
+			return e.resolvePromotedMethodCall(sel, selection, rn, mname, methodTargs, subst)
 		}
 		if !fi.isTemplate {
 			return &methodCall{decl: fi, subst: subst}, nil
@@ -2554,6 +2562,106 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	}
 	return &methodCall{decl: fi, subst: sub, key: key, name: name, needsInst: true,
 		rawTargsForEmit: rawTargs}, nil
+}
+
+// resolvePromotedMethodCall resolves a method call whose method is promoted
+// through one or more embedded fields (GAP-6). methodIndex holds only
+// direct methods, so this path resolves through types.NewMethodSet on the
+// receiver type (which includes promoted methods) and adapts the receiver
+// along the Selection.Index path, mirroring methodTableEntries: the
+// adaptation path is Selection.Index() minus its last entry (the method's
+// own index in the declaring type) — e.g. [0] for a method promoted via
+// embedded field 0, [0 0] for two levels. The returned methodCall carries
+// the path in recvPath; methodRefNode rewrites the receiver expression by
+// walking it (a "selector" wire node with selpath), so the call is exactly
+// o.Inner.M(args) at the factory.
+//
+// Ambiguous selectors never resolve: go/types rejects them at type-check
+// time ("ambiguous selector") and they are absent from the method set, so
+// no candidate is ever silently picked. A nil selection object (defensive:
+// should be unreachable after type-check) fails fast with a named error.
+//
+// Anything unresolvable here reports the historical "method %s not found
+// on %s" error, so genuinely missing methods fail exactly as before.
+func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *types.Selection, rn *types.Named, mname string, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
+	notFound := func() (*methodCall, error) {
+		return nil, fmt.Errorf("gofrontend: method %s not found on %s", mname, rn.Obj().Name())
+	}
+	// Defensive: an ambiguous selector has no denoted method object.
+	// go/types rejects these during type-checking, so this is
+	// unreachable in practice — but resolving one would mean silently
+	// picking a candidate, which must never happen.
+	if selection.Obj() == nil {
+		return nil, fmt.Errorf("gofrontend: ambiguous selector %s on %s: no candidate chosen", mname, rn.Obj().Name())
+	}
+	var msel *types.Selection
+	ms := types.NewMethodSet(selection.Recv())
+	for i := 0; i < ms.Len(); i++ {
+		if s := ms.At(i); s.Obj().Name() == mname {
+			msel = s
+			break
+		}
+	}
+	if msel == nil {
+		return notFound()
+	}
+	index := msel.Index()
+	if len(index) < 2 {
+		// A direct method would have hit methodIndex in the caller;
+		// never silently re-resolve through a different path.
+		return notFound()
+	}
+	path := index[:len(index)-1]
+	// The declaring named type: walk the receiver type along the
+	// adaptation path (embeddedFieldType substitutes type arguments for
+	// instantiated receivers, e.g. GInner[int] under GOuter[int]).
+	dn := derefNamed(embeddedFieldType(selection.Recv(), path))
+	if dn == nil {
+		return notFound()
+	}
+	fi, ok := e.methodIndex[methodKey{dn.Obj(), mname}]
+	if !ok {
+		return notFound()
+	}
+	// The instantiation (if any) is keyed by the DECLARING receiver, not
+	// the outer one: bindRecvParams binds the declaring origin's type
+	// parameters from the walked type's arguments.
+	if !fi.isTemplate {
+		return &methodCall{decl: fi, subst: subst, recvPath: path}, nil
+	}
+	bind := make(map[*types.TypeParam]types.Type)
+	var rawTargs []types.Type
+	if err := bindRecvParams(bind, fi, dn); err != nil {
+		return nil, err
+	}
+	rawTargs = append(rawTargs, typeList(dn.TypeArgs())...)
+	mtps := fi.sig.TypeParams()
+	if mtps.Len() > 0 {
+		if len(methodTargs) != mtps.Len() {
+			return nil, fmt.Errorf("gofrontend: generic method %s called without recorded type args", mname)
+		}
+		for i := 0; i < mtps.Len(); i++ {
+			bind[mtps.At(i)] = methodTargs[i]
+		}
+		rawTargs = append(rawTargs, methodTargs...)
+	}
+	sub := &typeSubst{parent: subst, bind: bind}
+	recvKey := substString(dn, sub)
+	key := "M:" + recvKey + "." + mname
+	name := prettyType(dn, sub) + "." + mname
+	if len(methodTargs) > 0 {
+		key += "|" + joinSubstKeys(methodTargs, sub)
+		pretty := make([]string, len(methodTargs))
+		for i, ta := range methodTargs {
+			pretty[i] = prettyType(ta, sub)
+		}
+		name += "[" + strings.Join(pretty, ", ") + "]"
+	}
+	if !isConcreteKey(key) {
+		return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of method %s", mname)
+	}
+	return &methodCall{decl: fi, subst: sub, key: key, name: name, needsInst: true,
+		rawTargsForEmit: rawTargs, recvPath: path}, nil
 }
 
 // enumerateInstantiations computes the full monomorphization fixpoint: every
@@ -5017,7 +5125,36 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if !ok || xt.Type == nil {
 		return nil, fmt.Errorf("gofrontend: no type info for method receiver")
 	}
-	if substString(declRecv, mc.subst) != substString(xt.Type, e.subst) {
+	// GAP-6: a promoted method's declared receiver is the embedded type,
+	// not sel.X's type. Adapt the receiver expression by walking recvPath
+	// with a "selector" wire node — the factory's SelectorNode walks
+	// selpath with pointer auto-deref at every level, exactly like a
+	// field selection — and check the declared receiver against the
+	// ADAPTED type, not the outer one. A promoted pointer-receiver
+	// method via a value-embedded field (or value receiver via a
+	// pointer-embedded field) still fails fast below with the WS D scope
+	// error: the adaptation never invents an implicit &/*.
+	recvType := xt.Type
+	if len(mc.recvPath) > 0 {
+		adapted := embeddedFieldType(selection.Recv(), mc.recvPath)
+		if adapted == nil {
+			return nil, fmt.Errorf("gofrontend: cannot adapt receiver for promoted method %s (exporter bug)", sel.Sel.Name)
+		}
+		tid, err := e.typeID(adapted)
+		if err != nil {
+			return nil, err
+		}
+		path := make([]any, len(mc.recvPath))
+		for i, v := range mc.recvPath {
+			path[i] = v
+		}
+		recv = e.node("selector", sel, map[string]any{
+			"x": recv, "field": embeddedFieldName(selection.Recv(), mc.recvPath),
+			"selpath": path, "type": tid,
+		})
+		recvType = adapted
+	}
+	if substString(declRecv, mc.subst) != substString(recvType, e.subst) {
 		return nil, scopeErrorf("method call %s needs an implicit address-of or deref on the receiver (WS D)", sel.Sel.Name)
 	}
 	var objID, sigID int
@@ -5132,6 +5269,33 @@ func embeddedFieldType(t types.Type, path []int) types.Type {
 		t = st.Field(idx).Type()
 	}
 	return t
+}
+
+// embeddedFieldName returns the name of the struct field at the end of a
+// field-index path (GAP-6), or "" when the path cannot be resolved. It
+// mirrors embeddedFieldType's walk so the two stay consistent.
+func embeddedFieldName(t types.Type, path []int) string {
+	name := ""
+	for _, idx := range path {
+		for {
+			if p, ok := t.(*types.Pointer); ok {
+				t = p.Elem()
+				continue
+			}
+			if n, ok := t.(*types.Named); ok {
+				t = n.Underlying()
+				continue
+			}
+			break
+		}
+		st, ok := t.(*types.Struct)
+		if !ok || idx < 0 || idx >= st.NumFields() {
+			return ""
+		}
+		name = st.Field(idx).Name()
+		t = st.Field(idx).Type()
+	}
+	return name
 }
 
 // recomputeMethodTables recomputes the wire "methods" list of every
