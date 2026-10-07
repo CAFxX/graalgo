@@ -106,3 +106,17 @@ report commit hashes + file lists.
   Dev source: hidden_files/m7-tmp/enc-json/dev/json/*.go.
   WIRING PENDING: export.go, mrdesugar_m5.go, p3frontend mirror, drift, corpus,
   redgreen — follow-up needed.
+
+## 2026-10-07 ~04:20 UTC update
+- enc-xml worker DONE (9/10): 9 commits on m7-enc-xml (bda1b48 source 3051 lines,
+  bc0ff04 mirror+drift, 46e80d8 exporter wiring, 315f918 mrdesugar, 8eb6c66
+  importer, cdf6821 corpus 4 programs, 0a3d98e redgreen, b1100a7 + c5a0a2b fixes).
+  White-box differential PASS (~70 adversarial inputs, 252 HTML entities).
+  Supported: token stream (Token/RawToken via mrXmlToken desugar), full grammar,
+  EncodeToken, escaping. Fail-fast: Unmarshal/Marshal (reflect/P3-M8),
+  CharsetReader (io/P3-M8). Structural Reader/Writer instead of io (P3-M8
+  re-test). KNOWN ISSUE: drift test still fails on byte/uint8 rendering +
+  CopyToken signature — complete at integration.
+  NOTE: m7-enc-xml also contains non-xml commits (2ebe8c4, 4d08294, 6e5af41) —
+  integrate by content. Worker also left commits 0a77fa7, 92f8bd4, 2c7ea39 on
+  m7-strings (accidental) — content already cherry-picked to m7-enc-xml.
