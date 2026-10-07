@@ -1177,8 +1177,11 @@ type rawMessageMarshalJSONPair struct {
 
 // __rawMessageMarshalJSON is the single-result RawMessage.MarshalJSON helper.
 func __rawMessageMarshalJSON(m RawMessage) rawMessageMarshalJSONPair {
+	// gc: empty RawMessage.MarshalJSON returns empty bytes (not "null")
+	// with nil error. (json.Marshal then fails compacting it, but the
+	// method itself succeeds.)
 	if len(m) == 0 {
-		return rawMessageMarshalJSONPair{[]byte("null"), nil}
+		return rawMessageMarshalJSONPair{[]byte{}, nil}
 	}
 	return rawMessageMarshalJSONPair{m, nil}
 }
