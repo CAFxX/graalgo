@@ -6073,8 +6073,15 @@ func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// M7: the literal's signature type id, so the factory can box the
+	// function value into an interface (boxInterface needs the dynamic
+	// type descriptor).
+	tid, err := e.typeID(tv.Type)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("funclit", l, map[string]any{
-		"params": params, "results": results, "body": body,
+		"params": params, "results": results, "body": body, "type": tid,
 	}), nil
 }
 

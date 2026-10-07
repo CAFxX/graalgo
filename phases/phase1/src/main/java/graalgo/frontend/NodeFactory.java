@@ -2774,6 +2774,14 @@ public final class NodeFactory {
                     ? new FuncLitNode(target, captures)
                     : new FuncLitNode(target, captures, flat, closureSlot);
             n.setSourceSection(sectionFor(node, "funclit"));
+            // M7: the exporter wires the literal's signature type id so the
+            // value can be boxed into an interface (boxInterface needs the
+            // dynamic type descriptor). Desugared funclits omit it; they
+            // are never boxed.
+            Json.Value tid = f.opt("type");
+            if (tid instanceof Json.Num num) {
+                n.setTypeId((int) num.asLong(path));
+            }
             return n;
         }
     }
