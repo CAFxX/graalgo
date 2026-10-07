@@ -1,0 +1,2 @@
+reason: synthetic encoding/hex uses interface conversion needing type ids (WS E)
+retest: WS E lands interface conversion type ids (P3-M8+); then re-run this program differentially

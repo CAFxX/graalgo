@@ -1,0 +1,2 @@
+reason: synthetic encoding/pem uses copy() from string source (WS D: string<->[]byte conversions not supported)
+retest: WS D lands string<->[]byte conversions (P3-M8+); then re-run this program differentially
