@@ -26,9 +26,11 @@ func syntheticCsvPackage() *types.Package {
 	int64T := types.Typ[types.Int64]
 	stringT := types.Typ[types.String]
 	boolT := types.Typ[types.Bool]
-	runeT := types.Typ[types.Rune]
+	runeT := types.Universe.Lookup("rune").Type()
 	errorT := types.Universe.Lookup("error").Type()
-	byteSliceT := types.NewSlice(types.Typ[types.Byte])
+	// NB: types.Typ[types.Byte] renders as "uint8"; the universe "byte"
+	// object renders as the source spells it (cf. synth_bytes.go).
+	byteSliceT := types.NewSlice(types.Universe.Lookup("byte").Type())
 	stringSliceT := types.NewSlice(stringT)
 	stringSliceSliceT := types.NewSlice(stringSliceT)
 
@@ -74,6 +76,7 @@ func syntheticCsvPackage() *types.Package {
 		newField("LazyQuotes", boolT),
 		newField("TrimLeadingSpace", boolT),
 		newField("ReuseRecord", boolT),
+		newField("TrailingComma", boolT),
 	}, nil), nil)
 	rPtr := types.NewPointer(rNamed)
 	rRecv := types.NewParam(token.NoPos, pkg, "r", rPtr)
@@ -136,7 +139,9 @@ func syntheticGobPackage() *types.Package {
 	stringT := types.Typ[types.String]
 	errorT := types.Universe.Lookup("error").Type()
 	anyT := types.Universe.Lookup("any").Type()
-	byteSliceT := types.NewSlice(types.Typ[types.Byte])
+	// NB: types.Typ[types.Byte] renders as "uint8"; the universe "byte"
+	// object renders as the source spells it (cf. synth_bytes.go).
+	byteSliceT := types.NewSlice(types.Universe.Lookup("byte").Type())
 
 	newParam := func(name string, t types.Type) *types.Var {
 		return types.NewParam(token.NoPos, pkg, name, t)
@@ -152,7 +157,7 @@ func syntheticGobPackage() *types.Package {
 	encPtr := types.NewPointer(encNamed)
 	encRecv := types.NewParam(token.NoPos, pkg, "enc", encPtr)
 	encNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "Encode",
-		newSig(encRecv, tuple(newParam("e", anyT)), tuple(newParam("", errorT)))))
+		newSig(encRecv, tuple(newParam("v", anyT)), tuple(newParam("", errorT)))))
 	encNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "Bytes",
 		newSig(encRecv, tuple(), tuple(newParam("", byteSliceT)))))
 
