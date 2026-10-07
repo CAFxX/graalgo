@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -14,7 +15,7 @@ import (
 func runValidate(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("validate")
 	listPath := fs.String("list", "", "path to exclusions.yaml (default: <repo>/phases/phase3/stdlib-fork/exclusions.yaml)")
-	srcRoot := fs.String("src", "", "stdlib source root (default: vendored tree when present, else GOROOT/src)")
+	srcRoot := fs.String("src", "", "stdlib source root (default: canonical resolution -- vendored tree for the pinned version when present, else live GOROOT/src with a loud warning)")
 	maxEntries := fs.Int("max", 25, "hard cap on exclusion entries (review cap)")
 	testBinaries := fs.Int("test-binaries", 0, "stdlib test-binary count for the 5% clause (0 = count from --src)")
 	baselinePath := fs.String("baseline", "", "baseline list for the version-stale check (default: git HEAD version)")
@@ -35,7 +36,7 @@ func runValidate(args []string, stdout, stderr io.Writer) error {
 	}
 	if *srcRoot == "" {
 		var err error
-		*srcRoot, err = defaultSrcRoot()
+		*srcRoot, err = defaultSrcRoot(stderr)
 		if err != nil {
 			return fmt.Errorf("validate: %w", err)
 		}
@@ -201,21 +202,66 @@ func parseGitHead(repoRel string) (*ExclusionFile, error) {
 	return ParseExclusionFile(tmp.Name())
 }
 
-// defaultSrcRoot resolves the stdlib tree: the vendored tree when the
-// vendoring worker has landed (pinned-version.txt + target dir exist),
-// else GOROOT/src of the pinned toolchain.
-func defaultSrcRoot() (string, error) {
-	if root, err := repoRoot(); err == nil {
-		pinPath := filepath.Join(root, "phases", "phase3", "stdlib-fork", "pinned-version.txt")
-		if data, err := os.ReadFile(pinPath); err == nil {
-			ver := strings.TrimSpace(string(data))
-			if ver != "" {
-				cand := filepath.Join(os.Getenv("HOME"), "workspace", "graalgo-stdlib", ver, "src")
-				if fi, err := os.Stat(cand); err == nil && fi.IsDir() {
-					return cand, nil
-				}
+// defaultSrcRoot resolves the stdlib tree per the canonical rule (see
+// resolveStdlibTree): the vendored tree when present, else GOROOT/src,
+// with the choice announced on stderr -- never a silent fallback.
+func defaultSrcRoot(stderr io.Writer) (string, error) {
+	root, _ := repoRoot() // empty when undiscoverable: pin lookup skipped, loud fallback
+	home := os.Getenv("HOME")
+	if home == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			home = h
+		}
+	}
+	return resolveStdlibTree(root, home, stderr)
+}
+
+// resolveStdlibTree implements the canonical stdlib-tree resolution rule
+// shared by validate and measure (tools/stdlib-linkdiff implements the
+// same rule; the two copies are documented as twins -- keep in sync):
+//
+//  1. Vendored tree when present: $HOME/workspace/graalgo-stdlib/<ver>/,
+//     where <ver> is phases/phase3/stdlib-fork/pinned-version.txt. The
+//     vendor tool lays $GOROOT/src contents FLAT at the target dir --
+//     there is no src/ subdir (an earlier probe for <ver>/src could never
+//     fire, so validation always silently fell through to the live
+//     toolchain).
+//     Pin cross-check: the committed vendor-manifest.json must record the
+//     same goVersion as the pin, else fail loud -- a manifest/pin skew
+//     means the tree cannot be trusted.
+//  2. Otherwise `go env GOROOT`/src, announced LOUDLY on stderr: results
+//     then pin to the live toolchain, not the vendored tree.
+//
+// Every resolution announces where the tree came from; there are no
+// silent fallbacks.
+func resolveStdlibTree(repoRoot, home string, stderr io.Writer) (string, error) {
+	useVendored := func(ver, cand string) (string, error) {
+		if err := crossCheckPin(repoRoot, ver); err != nil {
+			return "", err
+		}
+		for _, marker := range []string{"runtime", "fmt", "sync", "net", "os"} {
+			if fi, err := os.Stat(filepath.Join(cand, marker)); err != nil || !fi.IsDir() {
+				return "", fmt.Errorf("stdlib tree: %s lacks %s/ -- not a stdlib src root; refusing to measure the wrong tree", cand, marker)
 			}
 		}
+		fmt.Fprintf(stderr, "stdlib tree: using vendored tree %s (pin %s)\n", cand, ver)
+		return cand, nil
+	}
+	if repoRoot != "" {
+		pinPath := filepath.Join(repoRoot, "phases", "phase3", "stdlib-fork", "pinned-version.txt")
+		if data, err := os.ReadFile(pinPath); err == nil {
+			if ver := strings.TrimSpace(string(data)); ver != "" {
+				cand := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
+				if fi, err := os.Stat(cand); err == nil && fi.IsDir() {
+					return useVendored(ver, cand)
+				}
+				fmt.Fprintf(stderr, "stdlib tree: WARNING: no vendored tree at %s; falling back to live GOROOT (results pin to the live toolchain, not the pinned %s)\n", cand, ver)
+			}
+		} else {
+			fmt.Fprintf(stderr, "stdlib tree: WARNING: cannot read pin %s (%v); falling back to live GOROOT\n", pinPath, err)
+		}
+	} else {
+		fmt.Fprintf(stderr, "stdlib tree: WARNING: repo root undiscoverable; falling back to live GOROOT\n")
 	}
 	out, err := exec.Command(goBinary(), "env", "GOROOT").Output()
 	if err != nil {
@@ -226,6 +272,26 @@ func defaultSrcRoot() (string, error) {
 		return "", fmt.Errorf("no --src and GOROOT/src %s not usable", src)
 	}
 	return src, nil
+}
+
+// crossCheckPin fails loud when the committed vendor manifest records a
+// different Go version than the pin: the tree the pin names would not be
+// the tree the manifest describes, so no measurement may claim the pin.
+func crossCheckPin(repoRoot, ver string) error {
+	data, err := os.ReadFile(filepath.Join(repoRoot, "phases", "phase3", "stdlib-fork", "vendor-manifest.json"))
+	if err != nil {
+		return fmt.Errorf("stdlib tree: cannot read vendor manifest: %w", err)
+	}
+	var m struct {
+		GoVersion string `json:"goVersion"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		return fmt.Errorf("stdlib tree: cannot parse vendor manifest: %w", err)
+	}
+	if m.GoVersion != ver {
+		return fmt.Errorf("stdlib tree: vendor manifest records goVersion %q but pinned-version.txt says %q -- re-vendor state is inconsistent; refusing to measure the wrong tree", m.GoVersion, ver)
+	}
+	return nil
 }
 
 // goBinary returns the pinned Go toolchain binary.

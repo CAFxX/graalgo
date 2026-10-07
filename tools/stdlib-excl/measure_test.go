@@ -217,3 +217,48 @@ func TestDriftPctValues(t *testing.T) {
 		t.Fatalf("DriftPct(78,78) = %v, want 0", p)
 	}
 }
+
+// (P2-3) pure dirs marshal reasons as [] rather than null: the
+// versioned JSON contract must not force consumers to handle null.
+// Checked on the raw JSON bytes (a parsed struct cannot tell null from
+// [] reliably enough for a contract test).
+func TestMeasurePureReasonsMarshalAsEmptyArray(t *testing.T) {
+	src := fixtureTree(t)
+	out := filepath.Join(t.TempDir(), "report.json")
+	var stdout, stderr strings.Builder
+	if err := runMeasure([]string{"--src", src, "--out", out, "--go-version", "go9.99-test"}, &stdout, &stderr); err != nil {
+		t.Fatalf("measure failed: %v\nstderr: %s", err, stderr.String())
+	}
+	data, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every pure dir's reasons/non_test_reasons must be [] (find the
+	// "pure" dir record and inspect its raw fields).
+	var raw struct {
+		Dirs []map[string]json.RawMessage `json:"dirs"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, d := range raw.Dirs {
+		var path string
+		if err := json.Unmarshal(d["path"], &path); err != nil || path != "pure" {
+			continue
+		}
+		found = true
+		for _, field := range []string{"reasons", "non_test_reasons"} {
+			got := strings.TrimSpace(string(d[field]))
+			if got != "[]" {
+				t.Errorf("pure dir %q = %s, want []", field, got)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("pure dir missing from report")
+	}
+	if strings.Contains(string(data), `"reasons": null`) {
+		t.Error("report contains \"reasons\": null")
+	}
+}

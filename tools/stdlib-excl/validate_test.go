@@ -13,6 +13,10 @@ package main
 //   (+) TestValidateRejectsDuplicate      — no duplicate file entries
 //   (+) TestValidateFivePercentClause      — 5%-of-test-binaries binding cap
 //   (+) TestValidateAcceptsValidList       — happy path stays green
+//   (P1-2) TestResolveStdlibTreePrefersVendored — vendored tree is USED when present
+//   (P1-2) TestResolveStdlibTreeFallsBackLoud  — no vendored tree: loud GOROOT fallback
+//   (P1-2) TestResolveStdlibTreePinSkewFailsLoud — manifest/pin skew fails loud
+//   (P1-2) TestResolveStdlibTreeRejectsNonTreeDir — same-named non-tree dir refused
 
 import (
 	"fmt"
@@ -269,4 +273,100 @@ func TestParseVocabularySection(t *testing.T) {
 	if ef.Exclusions[0].File != "runtime/cgo" || ef.Exclusions[0].Reason != "CGO" {
 		t.Fatalf("entry parsed wrong: %+v", ef.Exclusions[0])
 	}
+}
+
+// fakeRepoRoot builds a temp repo root with pinned-version.txt and
+// vendor-manifest.json for the given versions.
+func fakeRepoRoot(t *testing.T, pin, manifestVer string) string {
+	t.Helper()
+	root := t.TempDir()
+	fork := filepath.Join(root, "phases", "phase3", "stdlib-fork")
+	if err := os.MkdirAll(fork, 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeTemp(t, fork, "pinned-version.txt", pin+"\n")
+	writeTemp(t, fork, "vendor-manifest.json",
+		fmt.Sprintf(`{"manifestVersion":1,"goVersion":%q,"sourceGoroot":"/x","targetDir":"/y","versionDrift":false,"files":[]}`, manifestVer))
+	return root
+}
+
+// fakeVendoredTree builds $HOME/workspace/graalgo-stdlib/<ver>/ with the
+// stdlib marker dirs the resolver sanity-checks.
+func fakeVendoredTree(t *testing.T, home, ver string) string {
+	t.Helper()
+	tree := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
+	for _, m := range []string{"runtime", "fmt", "sync", "net", "os"} {
+		if err := os.MkdirAll(filepath.Join(tree, m), 0755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return tree
+}
+
+// (P1-2) the vendored tree is USED when present -- the old <ver>/src
+// probe could never fire, so validation silently fell through to the
+// live toolchain.
+func TestResolveStdlibTreePrefersVendored(t *testing.T) {
+	home := t.TempDir()
+	tree := fakeVendoredTree(t, home, "go1.27.1")
+	root := fakeRepoRoot(t, "go1.27.1", "go1.27.1")
+	var stderr strings.Builder
+	got, err := resolveStdlibTree(root, home, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != tree {
+		t.Fatalf("resolved %q, want vendored tree %q", got, tree)
+	}
+	if strings.Contains(stderr.String(), "WARNING") {
+		t.Fatalf("unexpected fallback warning: %s", stderr.String())
+	}
+	mustContain(t, stderr.String(), "using vendored tree", "vendored announcement")
+}
+
+// (P1-2) with no vendored tree, fall back to GOROOT/src -- LOUDLY.
+// Silence here was the bug: the wrong tree measured without a word.
+func TestResolveStdlibTreeFallsBackLoud(t *testing.T) {
+	home := t.TempDir() // no graalgo-stdlib/ here
+	root := fakeRepoRoot(t, "go1.27.1", "go1.27.1")
+	var stderr strings.Builder
+	got, err := resolveStdlibTree(root, home, &stderr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(got, string(filepath.Separator)+"src") {
+		t.Fatalf("fallback resolved %q, want GOROOT/src", got)
+	}
+	mustContain(t, stderr.String(), "WARNING", "loud fallback")
+	mustContain(t, stderr.String(), "falling back to live GOROOT", "fallback reason")
+}
+
+// (P1-2) manifest/pin skew fails loud -- never measures the wrong tree
+// while claiming the pin.
+func TestResolveStdlibTreePinSkewFailsLoud(t *testing.T) {
+	home := t.TempDir()
+	fakeVendoredTree(t, home, "go1.27.1")
+	root := fakeRepoRoot(t, "go1.27.1", "go1.99.0")
+	var stderr strings.Builder
+	_, err := resolveStdlibTree(root, home, &stderr)
+	if err == nil {
+		t.Fatal("manifest/pin skew: expected loud failure, got a tree")
+	}
+	mustContain(t, err.Error(), "inconsistent", "skew diagnosis")
+}
+
+// (P1-2) a same-named dir that is not a stdlib src root is refused.
+func TestResolveStdlibTreeRejectsNonTreeDir(t *testing.T) {
+	home := t.TempDir()
+	tree := filepath.Join(home, "workspace", "graalgo-stdlib", "go1.27.1")
+	if err := os.MkdirAll(tree, 0755); err != nil {
+		t.Fatal(err)
+	}
+	root := fakeRepoRoot(t, "go1.27.1", "go1.27.1")
+	var stderr strings.Builder
+	_, err := resolveStdlibTree(root, home, &stderr)
+	if err == nil {
+		t.Fatal("non-tree dir: expected refusal, got a tree")
+	}
+	mustContain(t, err.Error(), "not a stdlib src root", "refusal diagnosis")
 }

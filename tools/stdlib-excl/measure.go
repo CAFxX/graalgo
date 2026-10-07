@@ -231,7 +231,9 @@ func classifyDir(ctx *build.Context, abs string, goFiles, testGoFiles []string) 
 			}
 		}
 	}
-	var reasons []string
+	// Reasons are always non-nil: pure dirs marshal as [] rather than
+	// null, keeping the versioned JSON contract clean for consumers.
+	reasons := []string{}
 	if asmSelected {
 		reasons = append(reasons, ReasonASM)
 	}
@@ -245,7 +247,7 @@ func classifyDir(ctx *build.Context, abs string, goFiles, testGoFiles []string) 
 		reasons = append(reasons, ReasonBuildTags)
 	}
 	// Secondary metric: reasons ignoring _test.go files.
-	var ntReasons []string
+	ntReasons := []string{}
 	if asmSelected {
 		ntReasons = append(ntReasons, ReasonASM)
 	}
@@ -287,7 +289,7 @@ func classifyDir(ctx *build.Context, abs string, goFiles, testGoFiles []string) 
 
 func runMeasure(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("measure")
-	srcRoot := fs.String("src", "", "stdlib source root (default: GOROOT/src)")
+	srcRoot := fs.String("src", "", "stdlib source root (default: canonical resolution -- vendored tree for the pinned version when present, else live GOROOT/src with a loud warning)")
 	outPath := fs.String("out", "", "output JSON path (required)")
 	goVersion := fs.String("go-version", "", "Go version label (default: from `go version`)")
 	if err := fs.Parse(args); err != nil {
@@ -297,11 +299,11 @@ func runMeasure(args []string, stdout, stderr io.Writer) error {
 		return &usageError{"measure: --out is required"}
 	}
 	if *srcRoot == "" {
-		out, err := runGoCmd("env", "GOROOT")
+		var err error
+		*srcRoot, err = defaultSrcRoot(stderr)
 		if err != nil {
 			return fmt.Errorf("measure: %w", err)
 		}
-		*srcRoot = filepath.Join(strings.TrimSpace(out), "src")
 	}
 	if *goVersion == "" {
 		out, err := runGoCmd("version")
