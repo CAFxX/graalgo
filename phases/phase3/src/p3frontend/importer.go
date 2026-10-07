@@ -96,6 +96,13 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticUnsafePackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "math":
+		// P3-M7 (wave 1): synthetic math package (real-Go ports +
+		// bit-conversion/Sqrt/FMA intrinsics; see synth_math.go).
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticMathPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	}
 	ref, err := imp.loader.ResolveImport(imp.mainDir, path)
 	if err != nil {
