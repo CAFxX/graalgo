@@ -30,20 +30,20 @@ var (
 var syntheticSources = map[string]string{
 	"time":    syntheticTimeSource,
 	"context": syntheticContextSource,
-	// P3-M7 (wave 1): synthetic errors, sort, bytes, math packages (real-Go
-	// sources in synth_errors.go / synth_sort.go / synth_bytes.go /
-	// synth_math.go, resolved via getSyntheticPackage so the same
-	// *types.Package instance is shared between user type-check and
-	// synthetic emission).
+	// P3-M7 (wave 1): synthetic errors, sort, bytes, math, strings packages
+	// (real-Go sources in synth_errors.go / synth_sort.go / synth_bytes.go /
+	// synth_math.go / synth_strings.go, resolved via getSyntheticPackage so
+	// the same *types.Package instance is shared between user type-check
+	// and synthetic emission).
 	"errors": syntheticErrorsSource,
 	"sort":   syntheticSortSource,
 	"bytes":  syntheticBytesSource,
 	"math":   syntheticMathSource,
 	"strings": syntheticStringsSource,
+	// P3-M7 (wave 1): encoding/csv + encoding/gob (synth_enc_csv_gob.go).
+	"encoding/csv": syntheticCsvSource,
+	"encoding/gob": syntheticGobSource,
 }
-
-// getSyntheticPackage parses and type-checks the embedded source for
-// path ("time", "context", "errors" or "sort"), caching the result. The type-check uses
 // the overlay importer, so the context source's `import "time"` resolves
 // to the synthetic package (synthetic→synthetic imports).
 // The same *types.Package instance is returned to every importer, so
