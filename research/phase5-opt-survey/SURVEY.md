@@ -43,7 +43,7 @@ renumbered. Merges across tracks are noted so traceability survives.
 
 ---
 
-## §1 Ranked candidates (waves 1–69) — 78 active ranked (SURV-001…079 minus struck SURV-077; tiers 7/39/18/14)
+## §1 Ranked candidates (waves 1–69) — 79 active ranked (SURV-001…080 minus struck SURV-077; tiers 7/39/19/14)
 
 ### Tier 1 — build first (highest expected value × feasibility)
 
@@ -1759,6 +1759,44 @@ slab-lifetime extension — the "globally profitable" gate must weigh guard
 cost + waste against saved allocator/GC work; a mispredicted merge can be
 *worse* than two allocations. The GC must treat the slab as one object with
 interior pointers.
+**Tracks:** program-owner proposal, 2026-10-07.
+
+#### SURV-080 — Partial inlining: inline the hot part, outline the cold part
+**Bucket:** THINKING (precedent: **ABLE** for the halves — LLVM/GCC hot-cold
+splitting and function outlining ship in production; the *combined*
+per-callsite partial-inline transform is implemented in research compilers
+but not in any production Go toolchain).
+**Idea.** When profiling shows only part of a callee is hot at a specific
+callsite, inline just the hot region and outline the cold region into a
+dedicated separate function that the inlined hot path calls on the cold
+edge (program-owner proposal, 2026-10-07). Classic shape: a function whose
+fast path is straight-line but whose error handling / rare branches bloat
+it past the inliner budget — today the whole call stays uninlined and the
+hot path pays call overhead; with partial inlining the hot path is inline
+and only the cold edge pays a call. Composes with the owner's always-inline
+directive: single-callsite callees inline wholly; multi-callsite callees
+with hot/cold regions get per-callsite partial inlining.
+**Why gc doesn't do it.** gc compiles packages separately and never sees the
+whole program; it has no per-callsite hot-region profiles and its inliner
+works on whole functions with a fixed budget. Our closed world gives the
+complete call graph *and* per-callsite profiles — the two inputs partial
+inlining needs.
+**Architectural fit.** E3 (speculative: guard on the hot-region stability;
+deopt or re-inline if the hot set shifts), E4 (basic-block/region execution
+profiles per callsite — extend the profiler contract), E5 (JIT can do this
+adaptively; AOT bakes the PGO-derived split). Builds on the Truffle/Graal
+machinery per the 2026-10-07 directive: region splitting + partial
+evaluation do the heavy lifting.
+**Benchmark sketch.** Workloads with large functions whose hot paths are
+small (decoders with extensive error paths, state machines) vs gc+PGO;
+metrics: instruction-cache footprint, call overhead on hot path, wall-clock.
+**Open risks.** Outlining changes the function's identity for
+`reflect`/stack traces — the outlined cold function must be invisible
+(stack-trace rewriting or inlined-frame attribution). Exception/defer
+semantics across the split need care (Go defers run at function exit —
+the outlined region must not disturb defer ordering). Code-size growth if
+many callsites each outline differently (cap: share outlined cold bodies
+across callsites where the region is identical).
 **Tracks:** program-owner proposal, 2026-10-07.
 
 ### Tier 4 — narrow, prototype-gated, or infrastructure-dependent
@@ -9537,3 +9575,4 @@ Wave-67 synthesis 2026-10-07: 77 active ranked (SURV-001…078 minus struck SURV
 Wave-68 synthesis 2026-10-07: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–68; §6 wave-68 queue ALL COMPLETE (6/6 items executed ~01:38–01:56 CEST), wave-68 re-rank pass (no movements, no prototype-gated promotions), wave-69 queue written; JEP 544 wave-68 curl re-verification: HTTP 200, 33,898 bytes raw, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the w57 pin (**sixty consecutive content-identical waves, w9–w68**; anti-bot script-URL rotation dormant a twenty-third wave, w46–w68 — script src URLs byte-identical), Status=Targeted/Release=28 re-verified verbatim; #157943 0/3 trips — RFC #3943 sixtieth consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z); **#163337's wave-24 equality shortcut HELD** (updated_at = wave-65 re-pin baseline 2026-10-06T20:18:34Z); #163338 open/unmerged via full 21-event re-scan (updated_at 2026-09-30T13:03:50Z, zero try-perf mentions); GitHub unauthenticated core quota healthy (all reads HTTP 200, no reset wait needed); T3 0/6 triggers (SE-0474/TruffleRuby/GraalPy md5 pins all match + explicit 0/0/0 keyword hits, GraalPy history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only — Meta LLM Compiler/jemalloc-5.4.0/coding agents/Cinder piece/Druid-Pharo; Swift middas-fork Ownership.md prose/ryo prose/cond_fail #88258/deinit-devirtualizer #69955/swift-institute dossiers/mail-archive 2016 ownership thread); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5; bare master/CHANGELOG.md 404s, pin is the master/compiler/ path), Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + more press rewrites (indiatechnologynews, enterprisetimes.in — same claim, vendor technique color, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC1 (GA November 10, 2026 per dotnet/core releases.md); T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, **#81957 QUIET this wave — timeline 41 events unchanged (last prattmic 2026-10-06T21:28:48Z root-cause comment, try-perf count 0), thread stalled pending maintainer follow-up — not bar-clearing; re-follow at wave 69**, **#81968 QUIET a twenty-fourth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-69 watch stands**; process notes: one transient fetch failure this wave (CL 758141 empty body on first batched fetch) — caught and re-verified on first retry with a positive-evidence individual read; transient, not signal; pagination is not absence; SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.
 Wave-69 synthesis 2026-10-07: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–69; §6 wave-69 queue ALL COMPLETE (6/6 items executed ~02:37–03:01 CEST), wave-69 re-rank pass (no movements, no prototype-gated promotions), wave-70 queue written; JEP 544 wave-69 curl re-verification: HTTP 200, 33,899 bytes raw, md5 9d7779e791b995f7765a710f08e04f4a ≠ w57 pin 5b074b447092005a265862c8fc935dad — **NOT a pin break**: normalized-body diff is EMPTY; the only delta is the anti-bot `<script src>` token rotation (dormant w46–w68, re-awakened at wave 69 — content-preserving per the diff-before-pin-break rule); Status=Targeted/Release=28 re-verified verbatim (no archive write; w57 pin + delta note cover the content); #157943 0/3 trips — RFC #3943 sixty-first consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z); **#163337's wave-24 equality shortcut HELD** (updated_at = wave-65 re-pin baseline 2026-10-06T20:18:34Z); #163338 open/unmerged (updated_at 2026-09-30T13:03:50Z unchanged → sufficiency rule, no tail re-read); GitHub unauthenticated core quota healthy (39/60 remaining mid-wave, no reset wait needed); T3 0/6 triggers (SE-0474/TruffleRuby/GraalPy md5 pins all match + explicit 0/0/0 keyword hits, GraalPy history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta search = disqualified noise only — LLM Compiler, Meta Zoomer (AI-infra debugging platform, not a runtime JIT), broodlang JIT docs, .NET 11 JIT piece, WebKit JIT-tier report; Swift search = excluded set + NEW triage note: swiftlang/swift commit 0537feff "[SILCombine] Bail load[copy](uteda) if move-only" (2025-07-29) is a correctness bail on an existing transform, NOT a new move-only pass — recorded, non-firing); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5), Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + more press rewrites (itbrief.asia, techcoffeehouse, businessnewsthisweek, financialcontent, cxotoday — same claim, vendor technique color, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC1 (latest dotnet/sdk tag v11.0.100-rc.1.26425.128, GA November 10, 2026); T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps (no empty-body transients this wave), **#81957 QUIET a third wave — timeline 41 events unchanged (last prattmic 2026-10-06T21:28:48Z root-cause comment, try-perf count 0), thread stalled pending maintainer follow-up — not bar-clearing; re-follow at wave 70**, **#81968 QUIET a twenty-fifth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-70 watch stands**; process notes: bare `grep -c` exits 1 on zero matches (caught and guarded this wave, all three keyword counts positively read as 0); tail-newline state verified before appending synthesis (wave-67/68 glued-line incident class); pagination is not absence; SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.
 Owner proposal 2026-10-07 (~03:32 CEST), outside the wave cycle: SURV-079 (lifetime-correlated co-allocation / allocation combining, Tier 3) added per program-owner directive — minimize heap allocation count whenever globally profitable (struct+pointee hidden-field or value+nilness-bit, slice-of-pointers slab, map header+buckets). 78 active ranked (SURV-001…079 minus struck SURV-077): 7 / 39 / 18 / 14. Next SURV-IDs: 080+.
+Owner proposal 2026-10-07 (~03:45 CEST), outside the wave cycle: SURV-080 (partial inlining — inline hot part, outline cold part, Tier 3) added per program-owner directive. 79 active ranked (SURV-001…080 minus struck SURV-077): 7 / 39 / 19 / 14. Next SURV-IDs: 081+.
