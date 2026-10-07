@@ -25,6 +25,24 @@ public final class NewNode extends GoExprNode {
 
     @Override
     public Object executeObject(VirtualFrame frame) {
-        return new GoPointer(Boxing.zero(elemKind, structDesc));
+        // P3-M8b: each new() must allocate a FRESH referent object. Boxing.zero
+        // returns cached shared values (e.g. Long.valueOf(0L)) — if two new(int)
+        // calls share the same referent, unsafe.Pointer interning (identity-based)
+        // would give them the same handle, breaking p1 != q1 for distinct allocations.
+        Object referent = freshZero(elemKind, structDesc);
+        return new GoPointer(referent);
+    }
+
+    /** Fresh (unshared) zero value for new() allocations. */
+    private static Object freshZero(GoKind kind, GoStructDescriptor structDesc) {
+        return switch (kind.slotKind()) {
+            case Int -> new int[1];
+            case Long -> new long[1];
+            case Float -> new float[1];
+            case Double -> new double[1];
+            case Boolean -> new boolean[1];
+            case Object -> Boxing.zero(kind, structDesc);
+            default -> throw new FrontendException("no zero for kind " + kind + " (WS E)");
+        };
     }
 }

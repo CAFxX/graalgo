@@ -30,7 +30,14 @@ public final class NilCheckNode extends GoExprNode {
         boolean isNull = switch (child.kind().slotKind()) {
             case Long -> child.executeLong(frame) == 0L;
             case Int -> child.executeInt(frame) == 0;
-            default -> child.executeObject(frame) == null;
+            default -> {
+                Object v = child.executeObject(frame);
+                // P3-M8b: a *T nil is GoPointer(null referent), not Java null.
+                if (v instanceof graalgo.values.GoPointer gp) {
+                    yield gp.referent() == null;
+                }
+                yield v == null;
+            }
         };
         return negated != isNull;
     }

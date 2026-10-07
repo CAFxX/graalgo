@@ -1110,3 +1110,28 @@ ConvertNode) — not Go frontend. Need Java expertise or dedicated workers.
 
 **Commits:** c29507a (os wiring + aliases), 7136954 (untyped range + stubs).
 Branch m8b.
+
+## P3-M8b Java blockers: progress (2026-10-07 ~23:45 CEST, coordinator m8b2)
+
+**Fixed (committed c82920e):**
+1. ReflectOpNode hardcoded INTERFACE kind → now computes kind from the wire
+   `type` field via NodeFactory.kindOf (made public). Also implements
+   executeLong/Int/Double/Float/Boolean for non-Object kinds. The
+   INTERFACE->INT64 error is fixed.
+2. copy(dst, src string) → converts string to []byte via ConvertNode.
+   Tested: copy(a, "hello") works.
+3. UNSAFE_POINTER -> *T conversion already worked via unsafetooptr wire node;
+   fixed VarReadNode/BoxReadNode/CapReadNode/GlobalReadNode to handle
+   UNSAFE_POINTER in executeLong (was "cannot read UNSAFE_POINTER as long").
+4. BinaryOpNode: added UNSAFE_POINTER, POINTER, COMPLEX64/128 to EQ/NE
+   comparisons with runtime implementations.
+
+**Still blocked:**
+- reflect package: Value struct's `typ unsafe.Pointer` field resolves to STRUCT
+  kind instead of UNSAFE_POINTER, breaking structSizeBytes. Worker d178dea6
+  investigating the type-resolution root cause.
+- The synthetic reflect source has `flag` field with no type (invalid Go) —
+  needs investigation.
+
+**Next:** Await worker diagnosis, fix the Value struct issue, then run
+os/syscall/reflect/unsafe corpora.
