@@ -739,8 +739,10 @@ func ExportFile(path string) (string, error) {
 		// overlayImporter to the synthetic package (real-Go source; see
 		// synth_io.go).
 		// Every other import is still a scope error (WS G import overlay).
+		// P3-M8 (wave 2): "syscall", "reflect", and crypto/* likewise.
 		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
-			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "os" && path != "io/fs" {
+			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "syscall" && path != "os" && path != "io/fs" && path != "reflect" &&
+			path != "crypto" && path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" && path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" && path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 	}
