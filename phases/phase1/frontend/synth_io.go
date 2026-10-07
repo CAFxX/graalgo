@@ -64,12 +64,16 @@
 //	    still need r.Read(*bufp). It fails fast with the rest.
 //	D5. __pipeWrite uses explicit Unlock instead of defer (behavior-
 //	    identical; the critical section cannot panic).
-//	D6. copyBuffer omits gc's WriterTo/ReaderFrom fast paths: no synthetic
-//	    type implements WriteTo/ReadFrom with a real body (multiReader,
-//	    discard, nopCloserWriterTo are all fail-fast), so both assertion
-//	    arms are dead and the manual Read/Write loop is behavior-
-//	    identical on every reachable program. Re-test trigger: when
-//	    WriteTo/ReadFrom interface dispatch lands, restore the arms.
+//	D6. copyBuffer omits gc's WriterTo/ReaderFrom fast paths: every
+//	    WriterTo/ReaderFrom implementation in the synthetic tree is a
+//	    fail-fast or named-trap body — bytes.Buffer, discard, multiReader,
+//	    nopCloserWriterTo and strings.Reader are fail-fast; os.File's
+//	    __fileReadFrom/__fileWriteTo are named-trap panics (P0-2,
+//	    synth_os.go:2334,2347) — so the fast-path arms can never execute
+//	    successfully. Omitting them is load-bearing, not an optimization:
+//	    with the arms, io.Copy from an *os.File source would route into
+//	    the P0-2 trap. Re-test trigger: when WriteTo/ReadFrom interface
+//	    dispatch lands, restore the arms.
 //
 // Interface-value call sites (n, err := r.Read(p) with r io.Reader):
 // P3-M8 (WS D) dispatches these through the itab to the concrete type's

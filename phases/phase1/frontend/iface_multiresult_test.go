@@ -15,10 +15,13 @@ package main
 //     `n, err := r.Read(buf)` through an interface: a desugared block
 //     whose temp holds an ifacemethod node typed as the interface pair.
 //  4. TestD1IfaceMultiResultStillFailFast pins that a multi-result
-//     interface method with no table entry (io.ReaderFrom.ReadFrom)
-//     keeps the fail-fast.
+//     interface method with no table entry (3-result user method;
+//     io.ReaderFrom.ReadFrom) keeps the fail-fast.
 //  5. TestD1IfaceMultiResultUserInterface pins the structural match: a
 //     user-declared interface with the Read shape dispatches too.
+//  6. TestD1VarDeclMultiResultFailFast pins the named M8 limitation for
+//     `var n, err = r.Read(buf)` (ValueSpec position): fail fast, never
+//     a 2-name/1-pair-value vardecl.
 
 import (
 	"go/types"
@@ -33,19 +36,39 @@ type d1IoExpect struct {
 	helper     string
 	pairType   string
 	pairFields []string
+	// pairFieldTypes parallels pairFields: the predeclared type of each
+	// pair field (P2-3 — the test pins types as well as names against
+	// synth_io.go). Keys are d1BasicType keys.
+	pairFieldTypes []string
 }
 
 var d1IoTable = []d1IoExpect{
-	{"io", "WriteString", "", "__writeString", "ioWritePair", []string{"n", "err"}},
-	{"io", "ReadAtLeast", "", "__readAtLeast", "readAtLeastPair", []string{"n", "err"}},
-	{"io", "ReadFull", "", "__readFull", "readFullPair", []string{"n", "err"}},
-	{"io", "Copy", "", "__copy", "copyPair", []string{"written", "err"}},
-	{"io", "CopyN", "", "__copyN", "copyNPair", []string{"written", "err"}},
-	{"io", "CopyBuffer", "", "__copyBufferChecked", "copyBufferPair", []string{"written", "err"}},
-	{"io", "ReadAll", "", "__readAll", "readAllPair", []string{"b", "err"}},
-	{"io", "Read", "LimitedReader", "__limitedReaderRead", "limitedReaderReadPair", []string{"n", "err"}},
-	{"io", "Write", "discard", "__discardWrite", "ioWritePair", []string{"n", "err"}},
-	{"io", "WriteString", "discard", "__discardWriteString", "ioWritePair", []string{"n", "err"}},
+	{"io", "WriteString", "", "__writeString", "ioWritePair", []string{"n", "err"}, []string{"int", "error"}},
+	{"io", "ReadAtLeast", "", "__readAtLeast", "readAtLeastPair", []string{"n", "err"}, []string{"int", "error"}},
+	{"io", "ReadFull", "", "__readFull", "readFullPair", []string{"n", "err"}, []string{"int", "error"}},
+	{"io", "Copy", "", "__copy", "copyPair", []string{"written", "err"}, []string{"int64", "error"}},
+	{"io", "CopyN", "", "__copyN", "copyNPair", []string{"written", "err"}, []string{"int64", "error"}},
+	{"io", "CopyBuffer", "", "__copyBufferChecked", "copyBufferPair", []string{"written", "err"}, []string{"int64", "error"}},
+	{"io", "ReadAll", "", "__readAll", "readAllPair", []string{"b", "err"}, []string{"[]byte", "error"}},
+	{"io", "Read", "LimitedReader", "__limitedReaderRead", "limitedReaderReadPair", []string{"n", "err"}, []string{"int", "error"}},
+	{"io", "Write", "discard", "__discardWrite", "ioWritePair", []string{"n", "err"}, []string{"int", "error"}},
+	{"io", "WriteString", "discard", "__discardWriteString", "ioWritePair", []string{"n", "err"}, []string{"int", "error"}},
+}
+
+// d1BasicType maps a d1IoExpect pairFieldTypes key to the universe type
+// for the types.Identical pin. Every pair field is a predeclared type.
+func d1BasicType(key string) (types.Type, bool) {
+	switch key {
+	case "int":
+		return types.Typ[types.Int], true
+	case "int64":
+		return types.Typ[types.Int64], true
+	case "error":
+		return types.Universe.Lookup("error").Type(), true
+	case "[]byte":
+		return types.NewSlice(types.Typ[types.Byte]), true
+	}
+	return nil, false
 }
 
 func TestD1IoDesugarWiring(t *testing.T) {
@@ -103,6 +126,21 @@ func TestD1IoDesugarWiring(t *testing.T) {
 			for i, fn := range want.pairFields {
 				if st.Field(i).Name() != fn {
 					t.Fatalf("pair field %d = %q, want %q", i, st.Field(i).Name(), fn)
+				}
+			}
+			// P2-3: pin the pair field types too — types are half of the
+			// table-against-synth_io.go contract.
+			if len(want.pairFieldTypes) != len(want.pairFields) {
+				t.Fatalf("d1IoTable row %s: pairFieldTypes has %d entries, pairFields has %d",
+					name, len(want.pairFieldTypes), len(want.pairFields))
+			}
+			for i, tn := range want.pairFieldTypes {
+				wantT, ok := d1BasicType(tn)
+				if !ok {
+					t.Fatalf("d1IoTable row %s: unknown pairFieldTypes key %q", name, tn)
+				}
+				if !types.Identical(st.Field(i).Type(), wantT) {
+					t.Fatalf("pair field %d type = %s, want %s", i, st.Field(i).Type(), tn)
 				}
 			}
 		})
@@ -305,9 +343,22 @@ func main() {
 }
 
 func TestD1IfaceMultiResultStillFailFast(t *testing.T) {
-	// A multi-result interface method with no D1 table entry (3 results)
-	// must keep the fail-fast.
-	const src = `package main
+	// Multi-result interface methods with no D1 table entry keep the
+	// fail-fast (P2-2): a 3-result method on a user interface (generic
+	// WS-D scope error) and a 2-result *synthetic* method —
+	// io.ReaderFrom.ReadFrom, the exact DESIGN.md §6 example — which
+	// takes the M8 multiResultSyntheticError path. (The review's sketch
+	// `var rf io.ReaderFrom = io.Discard` does not type-check: the
+	// synthetic Discard var is statically io.Writer. *bytes.Buffer
+	// implements io.ReaderFrom with a fail-fast body instead.)
+	cases := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{
+			name: "3-result user method",
+			src: `package main
 
 type R interface {
 	Read(p []byte) (int, error, int)
@@ -320,13 +371,63 @@ func main() {
 	n, err, _ := r.Read(nil)
 	println(n, err == nil)
 }
+`,
+			wantErr: "WS D",
+		},
+		{
+			name: "2-result synthetic no-table method (io.ReaderFrom.ReadFrom)",
+			src: `package main
+
+import (
+	"bytes"
+	"io"
+	"strings"
+)
+
+func main() {
+	var rf io.ReaderFrom = bytes.NewBuffer(nil)
+	n, err := rf.ReadFrom(strings.NewReader("hi"))
+	println(n, err == nil)
+}
+`,
+			// The M8 multi-result scope error from multiResultSyntheticError.
+			wantErr: "not in M8 scope",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ExportFile(writeIfaceProg(t, tc.src))
+			if err == nil {
+				t.Fatalf("expected scope error for %s, got success", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			}
+		})
+	}
+}
+
+// TestD1VarDeclMultiResultFailFast: `var n, err = r.Read(buf)` (ValueSpec
+// position) keeps the named M8 limitation fail-fast instead of emitting
+// a 2-name/1-pair-value vardecl (REVIEW-1 P2-5).
+func TestD1VarDeclMultiResultFailFast(t *testing.T) {
+	const src = `package main
+
+import "io"
+
+func main() {
+	var r io.Reader
+	buf := make([]byte, 10)
+	var n, err = r.Read(buf)
+	println(n, err == nil)
+}
 `
 	_, err := ExportFile(writeIfaceProg(t, src))
 	if err == nil {
-		t.Fatal("expected scope error for 3-result interface method, got success")
+		t.Fatal("expected M8 limitation error for var-decl multi-result interface call, got success")
 	}
-	if !strings.Contains(err.Error(), "WS D") {
-		t.Fatalf("error %q does not contain the WS D scope error", err.Error())
+	if !strings.Contains(err.Error(), "var declaration") {
+		t.Fatalf("error %q does not contain the var-declaration limitation", err.Error())
 	}
 }
 

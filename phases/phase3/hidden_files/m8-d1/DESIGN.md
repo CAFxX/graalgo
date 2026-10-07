@@ -79,9 +79,15 @@ helpers + new Appendix M table entries (the M7/M8 pattern):
 - `__copyBuffer(dst, src, buf) copyBufferPair` — gc loop over
   `src.Read`/`dst.Write` with `errInvalidWrite`/`ErrShortWrite`
   normalization. **Deviation D6**: the `WriterTo`/`ReaderFrom` fast paths
-  are omitted — no synthetic type implements them with a real body, so the
-  arms are dead; pure optimization, zero behavioral difference. Re-test
-  trigger: when WriteTo/ReadFrom dispatch lands.
+  are omitted — every `WriterTo`/`ReaderFrom` implementation in the
+  synthetic tree is a fail-fast or named-trap body (`bytes.Buffer`,
+  `discard`, `multiReader`, `nopCloserWriterTo`, `strings.Reader` are
+  fail-fast; `os.File`'s `__fileReadFrom`/`__fileWriteTo` are named-trap
+  panics at synth_os.go:2334,2347, P0-2), so the fast-path arms can never
+  execute successfully. Omitting them is load-bearing, not an
+  optimization: with the gc arms, `io.Copy` from an `*os.File` source
+  would route into the os.File P0-2 trap. Re-test trigger: when
+  WriteTo/ReadFrom dispatch lands, restore the arms.
 - `__copy(dst, src) copyPair` — via `__copyBuffer(dst, src, nil)`.
 - `__copyN(dst, src, n) copyNPair` — via `__copyBuffer` over
   `LimitReader(src, n)` + gc's `written==n`/EOF adjustment.
@@ -108,6 +114,27 @@ helpers + new Appendix M table entries (the M7/M8 pattern):
   method"; corpus programs avoid them.
 - Bare `r.Read(buf)` as a statement: works (dispatch evaluates, pair
   discarded). `foo(r.Read(buf))` never type-checks (go/types).
+
+### Non-desugar positions (named loud limitation; REVIEW-1 P2-5)
+
+`exportMultiResultDesugar` handles only 2-target `:=`/`=`
+(`*ast.AssignStmt`, incl. `if`-init via `exportOptStmt`) — consistent with
+the pre-existing M5/M7 concrete desugar, which never covered other
+positions. A multi-result interface call in any other syntactic position
+fails fast loudly, never silently:
+
+- `var n, err = r.Read(buf)` (`var` declaration / ValueSpec):
+  `exportVarGenDecl` rejects it with the named M8 limitation error. The
+  ifacemethod node yields a single pair-typed value which cannot be split
+  across the declared names, so exporting it would be a silent wire-shape
+  divergence (a 2-name/1-value vardecl).
+- `return r.Read(buf)`: only type-checks inside a function whose results
+  match the call's; v1 rejects every function with more than one result
+  at `exportFuncDecl` (the pre-existing WS D scope error), so no
+  multi-result return can reach the exporter.
+
+Re-test trigger: extend `exportMultiResultDesugar` to ValueSpec and
+return positions.
 
 ## 6. Verification plan
 
