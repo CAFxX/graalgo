@@ -879,7 +879,21 @@ public final class NodeFactory {
         Json.Object entry = ctx.types.entry(typeId, path);
         String k = entry.string("kind", path);
         if ("basic".equals(k)) {
-            return basicDescriptorFor(kindOf(ctx, typeId, path));
+            // P3-M7: basic types are named by their Go name ("int" vs
+            // "int64"), not just kind — %T must distinguish them, and
+            // type switches must not conflate them. Canonicalized by
+            // name in a process-wide cache.
+            String name = entry.object("detail", path).string("name", path);
+            GoKind kind = kindOf(ctx, typeId, path);
+            graalgo.values.GoTypeDescriptor d = BASIC_NAMED_DESCS.get(name);
+            if (d == null) {
+                d = new graalgo.values.GoTypeDescriptor(name, kind, false);
+                graalgo.values.GoTypeDescriptor prev = BASIC_NAMED_DESCS.putIfAbsent(name, d);
+                if (prev != null) {
+                    d = prev;
+                }
+            }
+            return d;
         }
         // P3-M7: a pointer to a named type is named "*"+qualifiedName
         // (like gc's %T), not structural. Two distinct named types with
@@ -940,12 +954,17 @@ public final class NodeFactory {
             // BuildCtx (hence a fresh typeDescs), so without this a
             // Some[int] boxed in returnOption[int] could never match a
             // Some[int] asserted in main.
-            name = entry.object("detail", path).string("name", path);
-            graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(name);
+            // P3-M7: the cache key stays the full qualified name (identity),
+            // but the descriptor's display name (for %T) uses the package
+            // NAME ("json.Number", not "encoding/json.Number"), and
+            // encoding/json.RawMessage displays as jsontext.Value (gc 1.27
+            // alias).
+            String qname = entry.object("detail", path).string("name", path);
+            graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(qname);
             if (nd == null) {
-                nd = new graalgo.values.GoTypeDescriptor(name,
+                nd = new graalgo.values.GoTypeDescriptor(displayNameFor(qname),
                         kindOf(ctx, typeId, path), false);
-                graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(name, nd);
+                graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(qname, nd);
                 if (prev != null) {
                     nd = prev;
                 }
@@ -984,6 +1003,28 @@ public final class NodeFactory {
     }
 
     /**
+     * Display name for a qualified named-type name (P3-M7): the form gc's
+     * %T prints. Uses the package NAME, not the full path ("json.Number",
+     * not "encoding/json.Number"). gc 1.27 aliases encoding/json.RawMessage
+     * to encoding/json/jsontext.Value, so it displays as jsontext.Value.
+     */
+    private static String displayNameFor(String qname) {
+        if ("encoding/json.RawMessage".equals(qname)) {
+            return "jsontext.Value";
+        }
+        int slash = qname.lastIndexOf('/');
+        if (slash >= 0) {
+            int dot = qname.indexOf('.', slash);
+            if (dot >= 0) {
+                // "encoding/json.Number" -> "json.Number"
+                return qname.substring(slash + 1, dot + 1) + qname.substring(dot + 1);
+            }
+            return qname.substring(slash + 1);
+        }
+        return qname;
+    }
+
+    /**
      * Go-syntax type name for a type-table entry (P3-M7): used as the
      * display name of structural descriptors (so %T prints "func()",
      * "chan int", etc., like gc). Only the kinds that can appear as
@@ -997,7 +1038,7 @@ public final class NodeFactory {
         Json.Object detail = entry.object("detail", path);
         return switch (k) {
             case "basic" -> detail.string("name", path);
-            case "named" -> detail.string("name", path);
+            case "named" -> displayNameFor(detail.string("name", path));
             case "signature" -> {
                 StringBuilder sb = new StringBuilder("func(");
                 Json.Array params = detail.array("params", path);
@@ -1053,7 +1094,7 @@ public final class NodeFactory {
                 }
                 yield sb.append('}').toString();
             }
-            case "interface" -> detail.bool("empty", path) ? "interface{}" : "interface{...}";
+            case "interface" -> detail.bool("empty", path) ? "interface {}" : "interface{...}";
             default -> throw new FrontendException(path + ": no Go-syntax name for kind " + k);
         };
     }
@@ -1159,6 +1200,15 @@ public final class NodeFactory {
     /** Canonical dynamic-type descriptor per basic kind (M4, WS E). */
     private static final Map<GoKind, graalgo.values.GoTypeDescriptor> BASIC_DESCS = new HashMap<>();
 
+    /**
+     * Canonical dynamic-type descriptors per basic Go type name (P3-M7):
+     * "int" and "int64" are distinct types (different %T, different type
+     * switch cases) even though they share a kind. Process-wide cache.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+            graalgo.values.GoTypeDescriptor> BASIC_NAMED_DESCS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
     public static graalgo.values.GoTypeDescriptor basicDescriptorFor(GoKind kind) {
         return BASIC_DESCS.computeIfAbsent(kind,
                 k -> new graalgo.values.GoTypeDescriptor(k.name().toLowerCase(), k, false));
@@ -1167,10 +1217,11 @@ public final class NodeFactory {
     /**
      * True if the descriptor is one of the canonical predeclared-basic
      * descriptors (M5, WS F): used by panic rendering to distinguish
-     * {@code 5} (bare) from {@code main.MyInt(5)} (named).
+     * {@code 5} (bare) from {@code main.MyInt(5)} (named). P3-M7: also
+     * recognizes the name-based basic descriptors ("int" vs "int64").
      */
     public static boolean isPredeclaredBasic(graalgo.values.GoTypeDescriptor d) {
-        return BASIC_DESCS.containsValue(d);
+        return BASIC_DESCS.containsValue(d) || BASIC_NAMED_DESCS.containsValue(d);
     }
 
     /** Default kind of an untyped constant kind (for interface boxing). */

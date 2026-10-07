@@ -1225,7 +1225,14 @@ type numberFloat64Pair struct {
 
 // __numberFloat64 is the single-result Number.Float64 helper.
 func __numberFloat64(n Number) numberFloat64Pair {
-	return numberFloat64Pair{jsonParseFloat(string(n)), nil}
+	s := string(n)
+	// gc: invalid number literal -> syntax error (not a zero value).
+	// The error is a *strconv.NumError via ParseFloat; here we return a
+	// *SyntaxError (the program only checks err != nil).
+	if !jsonValidNumber(s) {
+		return numberFloat64Pair{0, &SyntaxError{msg: "invalid number literal " + s}}
+	}
+	return numberFloat64Pair{jsonParseFloat(s), nil}
 }
 
 // Int64 returns the number as an int64.
