@@ -81,3 +81,16 @@ report commit hashes + file lists.
   Linkname: bytes //go:linkname Repeat is self-link, satisfied by provision;
   M6 linkdiff tool gap flagged (misses free-floating linkname directives).
   MISSING (post-integration follow-up): corpus/wave1/bytes/ programs, redgreen.md.
+
+## 2026-10-07 ~04:00 UTC update
+- strings worker DONE (7/10): m7-strings @ 77b5c6d (source+wiring, 75KB synth,
+  inlined unicode tables) + 5d7c9c1 (corpus 10 programs + redgreen).
+  gc differential: ~200 fixed + 4000 fuzz ALL MATCH; end-to-end byte-identical.
+  KNOWN ISSUE: TestStringsSyntheticSignatures fails (rune renders int32 in
+  mirror); one-line fix identified but UNCOMMITTED, saved at
+  phases/phase3/hidden_files/m7-tmp/strings/synth_strings.go.final — apply at
+  integration. Suites NOT run (chaos) — must run at integration.
+  v1 runtime limitations documented (5, pre-existing). Omissions pinned
+  (SpecialCase ×3, io ×2, iter.Seq ×5).
+  NOTE: m7-strings also contains 2c7ea39 "red-green evidence for encoding/xml"
+  (enc-xml worker committed to wrong branch) — sort by content at integration.
