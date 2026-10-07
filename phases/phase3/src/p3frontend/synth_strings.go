@@ -30,7 +30,9 @@ func syntheticStringsPackage() *types.Package {
 	int64T := types.Typ[types.Int64]
 	stringT := types.Typ[types.String]
 	boolT := types.Typ[types.Bool]
-	byteT := types.Typ[types.Byte]
+	// NB: types.Typ[types.Byte] renders as "uint8"; the universe "byte"
+	// object renders as the source spells it.
+	byteT := types.Universe.Lookup("byte").Type()
 	runeT := types.Universe.Lookup("rune").Type()
 	errorT := types.Universe.Lookup("error").Type()
 
@@ -51,15 +53,17 @@ func syntheticStringsPackage() *types.Package {
 	// ---- Functions: (string, string) -> bool ----
 	for _, name := range []string{"Contains", "HasPrefix", "HasSuffix", "EqualFold"} {
 		var p []*types.Var
-		if name == "EqualFold" {
+		switch name {
+		case "EqualFold":
 			p = []*types.Var{newParam("s", stringT), newParam("t", stringT)}
-		} else if name == "Contains" {
+		case "Contains":
 			p = []*types.Var{newParam("s", stringT), newParam("substr", stringT)}
-		} else {
+		case "HasSuffix":
+			// NB: types.Var has no SetName in go1.27 (the old
+			// p[1].SetName("suffix") never compiled); name it directly.
+			p = []*types.Var{newParam("s", stringT), newParam("suffix", stringT)}
+		default:
 			p = []*types.Var{newParam("s", stringT), newParam("prefix", stringT)}
-		}
-		if name == "HasSuffix" {
-			p[1].SetName("suffix")
 		}
 		insertFunc(name, p, boolRes, false)
 	}
@@ -73,8 +77,10 @@ func syntheticStringsPackage() *types.Package {
 		[]*types.Var{newParam("s", stringT), newParam("r", runeT)},
 		boolRes, false)
 	// ContainsFunc(s string, f func(rune) bool) bool
+	// NB: the func param is unnamed in the phase-1 source (renders as
+	// "func(rune) bool"); naming it would drift the rendered signature.
 	funcRuneBool := types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(newParam("r", runeT)), types.NewTuple(newParam("", boolT)), false)
+		types.NewTuple(newParam("", runeT)), types.NewTuple(newParam("", boolT)), false)
 	insertFunc("ContainsFunc",
 		[]*types.Var{newParam("s", stringT), newParam("f", funcRuneBool)},
 		boolRes, false)
@@ -146,8 +152,9 @@ func syntheticStringsPackage() *types.Package {
 		strRes, false)
 
 	// Map(mapping func(rune) rune, s string) string
+	// NB: unnamed func param (see ContainsFunc above).
 	funcRuneRune := types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(newParam("r", runeT)), types.NewTuple(newParam("", runeT)), false)
+		types.NewTuple(newParam("", runeT)), types.NewTuple(newParam("", runeT)), false)
 	insertFunc("Map",
 		[]*types.Var{newParam("mapping", funcRuneRune), newParam("s", stringT)},
 		strRes, false)
@@ -227,7 +234,7 @@ func syntheticStringsPackage() *types.Package {
 	pkg.Scope().Insert(builderName)
 	builderPtr := types.NewPointer(builder)
 	addMethod := func(name string, params, results []*types.Var) {
-		sig := types.NewSignatureType(builderPtr, nil, nil,
+		sig := types.NewSignatureType(types.NewParam(token.NoPos, pkg, "", builderPtr), nil, nil,
 			types.NewTuple(params...), types.NewTuple(results...), false)
 		builder.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
 	}
@@ -257,7 +264,7 @@ func syntheticStringsPackage() *types.Package {
 	replacer := types.NewNamed(replacerName, types.NewStruct(nil, nil), nil)
 	pkg.Scope().Insert(replacerName)
 	replacerPtr := types.NewPointer(replacer)
-	replaceSig := types.NewSignatureType(replacerPtr, nil, nil,
+	replaceSig := types.NewSignatureType(types.NewParam(token.NoPos, pkg, "", replacerPtr), nil, nil,
 		types.NewTuple(str...), types.NewTuple(strRes...), false)
 	replacer.AddMethod(types.NewFunc(token.NoPos, pkg, "Replace", replaceSig))
 	insertFunc("NewReplacer",
@@ -270,7 +277,7 @@ func syntheticStringsPackage() *types.Package {
 	pkg.Scope().Insert(readerName)
 	readerPtr := types.NewPointer(reader)
 	addReaderMethod := func(name string, params, results []*types.Var) {
-		sig := types.NewSignatureType(readerPtr, nil, nil,
+		sig := types.NewSignatureType(types.NewParam(token.NoPos, pkg, "", readerPtr), nil, nil,
 			types.NewTuple(params...), types.NewTuple(results...), false)
 		reader.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
 	}

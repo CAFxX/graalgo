@@ -17,7 +17,9 @@ import (
 // syntheticXmlPackage mirrors the frozen P3-M7 synthetic "encoding/xml".
 func syntheticXmlPackage() *types.Package {
 	pkg := types.NewPackage("encoding/xml", "xml")
-	byteT := types.Typ[types.Byte]
+	// NB: types.Typ[types.Byte] renders as "uint8"; the universe "byte"
+	// object renders as the source spells it ("[]byte").
+	byteT := types.Universe.Lookup("byte").Type()
 	intT := types.Typ[types.Int]
 	int64T := types.Typ[types.Int64]
 	stringT := types.Typ[types.String]
@@ -35,8 +37,9 @@ func syntheticXmlPackage() *types.Package {
 
 	// Token = any.
 	tokenObj := types.NewTypeName(token.NoPos, pkg, "Token", nil)
-	tokenNamed := types.NewNamed(tokenObj, anyT, nil)
+	_ = types.NewNamed(tokenObj, anyT, nil)
 	pkg.Scope().Insert(tokenObj)
+	tokenT := tokenObj.Type()
 
 	// ReadResult = struct{ Byte byte; OK bool }.
 	readResultObj := types.NewTypeName(token.NoPos, pkg, "ReadResult", nil)
@@ -67,10 +70,10 @@ func syntheticXmlPackage() *types.Package {
 		}, nil).Complete(), nil)
 	pkg.Scope().Insert(writerObj)
 
-	// SyntaxError = struct{ Msg string }, with Error() string.
+	// SyntaxError = struct{ Msg string; Line int }, with Error() string.
 	syntaxErrorObj := types.NewTypeName(token.NoPos, pkg, "SyntaxError", nil)
 	syntaxErrorNamed := types.NewNamed(syntaxErrorObj,
-		types.NewStruct([]*types.Var{newField("Msg", stringT)}, nil), nil)
+		types.NewStruct([]*types.Var{newField("Msg", stringT), newField("Line", intT)}, nil), nil)
 	syntaxErrorNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "Error",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "e", syntaxErrorNamed),
 			nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
@@ -157,28 +160,33 @@ func syntheticXmlPackage() *types.Package {
 	tokenReaderObj := types.NewTypeName(token.NoPos, pkg, "TokenReader", nil)
 	tokenReaderSig := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(),
-		types.NewTuple(newParam("", anyT), newParam("", errorT)), false)
+		types.NewTuple(newParam("", tokenT), newParam("", errorT)), false)
 	tokenReaderNamed := types.NewNamed(tokenReaderObj,
 		types.NewInterfaceType([]*types.Func{
 			types.NewFunc(token.NoPos, pkg, "Token", tokenReaderSig),
 		}, nil).Complete(), nil)
 	pkg.Scope().Insert(tokenReaderObj)
 
-	// Decoder = struct{ ... } (opaque fields; mirror only needs the type).
-	// We model it as an empty struct — the drift test compares method
-	// signatures, not fields. (The phase-1 type has unexported fields.)
+	// Decoder struct with exported fields (Strict, AutoClose, Entity,
+	// DefaultSpace); unexported fields omitted (the drift test checks
+	// exported fields only).
 	decoderObj := types.NewTypeName(token.NoPos, pkg, "Decoder", nil)
-	decoderNamed := types.NewNamed(decoderObj, types.NewStruct(nil, nil), nil)
+	decoderNamed := types.NewNamed(decoderObj, types.NewStruct([]*types.Var{
+		newField("Strict", boolT),
+		newField("AutoClose", types.NewSlice(stringT)),
+		newField("Entity", types.NewMap(stringT, stringT)),
+		newField("DefaultSpace", stringT),
+	}, nil), nil)
 	decoderPtr := types.NewPointer(decoderNamed)
 	// Methods: Token, RawToken, InputOffset, InputPos, Skip, Decode, DecodeElement.
 	decoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "Token",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "d", decoderPtr),
 			nil, nil, types.NewTuple(),
-			types.NewTuple(newParam("", anyT), newParam("", errorT)), false)))
+			types.NewTuple(newParam("", tokenT), newParam("", errorT)), false)))
 	decoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "RawToken",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "d", decoderPtr),
 			nil, nil, types.NewTuple(),
-			types.NewTuple(newParam("", anyT), newParam("", errorT)), false)))
+			types.NewTuple(newParam("", tokenT), newParam("", errorT)), false)))
 	decoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "InputOffset",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "d", decoderPtr),
 			nil, nil, types.NewTuple(), types.NewTuple(newParam("", int64T)), false)))
@@ -209,7 +217,7 @@ func syntheticXmlPackage() *types.Package {
 			types.NewTuple(), false)))
 	encoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "EncodeToken",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "enc", encoderPtr),
-			nil, nil, types.NewTuple(newParam("t", anyT)),
+			nil, nil, types.NewTuple(newParam("t", tokenT)),
 			types.NewTuple(newParam("", errorT)), false)))
 	encoderNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "Flush",
 		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "enc", encoderPtr),
@@ -232,7 +240,7 @@ func syntheticXmlPackage() *types.Package {
 	marshalerSig := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(newParam("e", encoderPtr), newParam("start", startElementNamed)),
 		types.NewTuple(newParam("", errorT)), false)
-	marshalerNamed := types.NewNamed(marshalerObj,
+	_ = types.NewNamed(marshalerObj,
 		types.NewInterfaceType([]*types.Func{
 			types.NewFunc(token.NoPos, pkg, "MarshalXML", marshalerSig),
 		}, nil).Complete(), nil)
@@ -243,7 +251,7 @@ func syntheticXmlPackage() *types.Package {
 	marshalerAttrSig := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(newParam("name", nameNamed)),
 		types.NewTuple(newParam("", attrNamed), newParam("", errorT)), false)
-	marshalerAttrNamed := types.NewNamed(marshalerAttrObj,
+	_ = types.NewNamed(marshalerAttrObj,
 		types.NewInterfaceType([]*types.Func{
 			types.NewFunc(token.NoPos, pkg, "MarshalXMLAttr", marshalerAttrSig),
 		}, nil).Complete(), nil)
@@ -262,7 +270,7 @@ func syntheticXmlPackage() *types.Package {
 	unmarshalerSig := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(newParam("d", decoderPtr), newParam("start", startElementNamed)),
 		types.NewTuple(newParam("", errorT)), false)
-	unmarshalerNamed := types.NewNamed(unmarshalerObj,
+	_ = types.NewNamed(unmarshalerObj,
 		types.NewInterfaceType([]*types.Func{
 			types.NewFunc(token.NoPos, pkg, "UnmarshalXML", unmarshalerSig),
 		}, nil).Complete(), nil)
@@ -273,7 +281,7 @@ func syntheticXmlPackage() *types.Package {
 	unmarshalerAttrSig := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(newParam("attr", attrNamed)),
 		types.NewTuple(newParam("", errorT)), false)
-	unmarshalerAttrNamed := types.NewNamed(unmarshalerAttrObj,
+	_ = types.NewNamed(unmarshalerAttrObj,
 		types.NewInterfaceType([]*types.Func{
 			types.NewFunc(token.NoPos, pkg, "UnmarshalXMLAttr", unmarshalerAttrSig),
 		}, nil).Complete(), nil)
@@ -290,8 +298,8 @@ func syntheticXmlPackage() *types.Package {
 			types.NewTuple(newParam("", decoderPtr)), false)))
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "CopyToken",
 		types.NewSignatureType(nil, nil, nil,
-			types.NewTuple(newParam("t", anyT)),
-			types.NewTuple(newParam("", anyT)), false)))
+			types.NewTuple(newParam("t", tokenObj.Type())),
+			types.NewTuple(newParam("", tokenObj.Type())), false)))
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "NewEncoder",
 		types.NewSignatureType(nil, nil, nil,
 			types.NewTuple(newParam("w", writerNamed)),

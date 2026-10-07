@@ -43,6 +43,12 @@ func syntheticBytesPackage() *types.Package {
 	runeFunc := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(newParam("r", runeT)),
 		types.NewTuple(newParam("", boolT)), false)
+	// runeFuncUnnamed is func(rune) bool — ContainsFunc and FieldsFunc
+	// spell the func param unnamed in the phase-1 source (renders
+	// without the name); the other func(rune) bool users name it r.
+	runeFuncUnnamed := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(newParam("", runeT)),
+		types.NewTuple(newParam("", boolT)), false)
 	// runeMapFunc is func(r rune) rune.
 	runeMapFunc := types.NewSignatureType(nil, nil, nil,
 		types.NewTuple(newParam("r", runeT)),
@@ -206,7 +212,7 @@ func syntheticBytesPackage() *types.Package {
 		[]*types.Var{newParam("b", bytesSlice), newParam("chars", stringT)},
 		[]*types.Var{newParam("", boolT)})
 	insertFunc("ContainsFunc",
-		[]*types.Var{newParam("b", bytesSlice), newParam("f", runeFunc)},
+		[]*types.Var{newParam("b", bytesSlice), newParam("f", runeFuncUnnamed)},
 		[]*types.Var{newParam("", boolT)})
 	insertFunc("ContainsRune",
 		[]*types.Var{newParam("b", bytesSlice), newParam("r", runeT)},
@@ -235,7 +241,7 @@ func syntheticBytesPackage() *types.Package {
 	insertFunc("Fields", []*types.Var{newParam("s", bytesSlice)},
 		[]*types.Var{newParam("", bytesSliceSlice)})
 	insertFunc("FieldsFunc",
-		[]*types.Var{newParam("s", bytesSlice), newParam("f", runeFunc)},
+		[]*types.Var{newParam("s", bytesSlice), newParam("f", runeFuncUnnamed)},
 		[]*types.Var{newParam("", bytesSliceSlice)})
 	insertFunc("HasPrefix",
 		[]*types.Var{newParam("s", bytesSlice), newParam("prefix", bytesSlice)},
