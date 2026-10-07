@@ -55,7 +55,12 @@ def main():
     with open(prog) as f:
         progsrc = f.read()
 
-    needed = [ip for ip in SYNTH if '"%s"' % ip in progsrc]
+    def imports_ip(progsrc, ip):
+        return re.search(
+            r'(?m)^(\s*(?:[A-Za-z_]\w*\s+)?)"%s"' % re.escape(ip), progsrc
+        ) is not None
+
+    needed = [ip for ip in SYNTH if imports_ip(progsrc, ip)]
     consts = {SYNTH[ip][0] for ip in needed}
     # The synthetic csv/gob sources import the synthetic errors package.
     if consts & {"syntheticCsvSource", "syntheticGobSource"}:
@@ -73,7 +78,13 @@ def main():
             f.write(src)
 
     for ip, (_, _, pkgname) in SYNTH.items():
-        progsrc = progsrc.replace('"%s"' % ip, '"m7synth/%s"' % pkgname)
+        # Rewrite only import paths (start of an import line, optional
+        # import name), never string literals in program output.
+        progsrc = re.sub(
+            r'(?m)^(\s*(?:[A-Za-z_]\w*\s+)?)"%s"' % re.escape(ip),
+            r'\1"m7synth/%s"' % pkgname,
+            progsrc,
+        )
     progdir = os.path.join(gopath, "src", "m7prog")
     os.makedirs(progdir, exist_ok=True)
     with open(os.path.join(progdir, "main.go"), "w") as f:
