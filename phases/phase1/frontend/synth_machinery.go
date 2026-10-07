@@ -450,7 +450,7 @@ func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 // (conversions take the normal path) and for non-synthetic packages.
 func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr, pkgName *types.PkgName) (*Node, bool, error) {
 	path := pkgName.Imported().Path()
-	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" {
+	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" && path != "encoding/csv" && path != "encoding/gob" {
 		return nil, false, nil
 	}
 	obj := e.info.Uses[sel.Sel]
@@ -543,7 +543,7 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" {
+	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" && p != "strings" && p != "encoding/xml" && p != "encoding/csv" && p != "encoding/gob" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -557,7 +557,7 @@ func multiResultSyntheticError(fn *types.Func) error {
 	// P3-M7: the milestone tag follows the synthetic package (time/context
 	// are M5, errors/sort/bytes/math/strings/encoding-xml are wave-1 M7).
 	milestone := "M5"
-	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" {
+	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" {
 		milestone = "M7"
 	}
 	// Qualify method names with the receiver type name

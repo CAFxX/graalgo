@@ -66,6 +66,10 @@ const (
 	mrParseDur     // time.ParseDuration
 	// P3-M7 (wave 1): xml.Decoder.Token / xml.Decoder.RawToken.
 	mrXmlToken // xml.Decoder.Token() / xml.Decoder.RawToken()
+	// P3-M7 (wave 1): csv.Reader.Read / ReadAll / FieldPos.
+	mrCsvRead     // csv.Reader.Read()
+	mrCsvReadAll  // csv.Reader.ReadAll()
+	mrCsvFieldPos // csv.Reader.FieldPos()
 )
 
 // mrPlan is the desugar plan for one classified call.
@@ -176,6 +180,37 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			}
 		}
 		if f, ok := selection.Obj().(*types.Func); ok {
+			if helper, ok := isCsvReadMethod(f); ok {
+				csvPkg := getSyntheticPackage("encoding/csv").pkg
+				var pairName string
+				var fields []string
+				switch helper {
+				case "__csvRead":
+					pairName, fields = "csvReadPair", []string{"rec", "err"}
+				case "__csvReadAll":
+					pairName, fields = "csvReadAllPair", []string{"recs", "err"}
+				case "__csvFieldPos":
+					pairName, fields = "csvFieldPosPair", []string{"line", "column"}
+				}
+				nt := named(csvPkg, pairName)
+				if nt == nil {
+					return nil
+				}
+				var kind mrKind
+				switch helper {
+				case "__csvRead":
+					kind = mrCsvRead
+				case "__csvReadAll":
+					kind = mrCsvReadAll
+				default:
+					kind = mrCsvFieldPos
+				}
+				return &mrPlan{
+					kind: kind, helperPkg: "encoding/csv",
+					helperName: helper, prependRecv: true,
+					tmpType:    nt, pairFields: fields,
+				}
+			}
 			if helper, ok := isXmlTokenMethod(f); ok {
 				xmlPkg := getSyntheticPackage("encoding/xml").pkg
 				nt := named(xmlPkg, "tokenPair")
@@ -191,6 +226,23 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		}
 	}
 	return nil
+}
+
+// isCsvReadMethod reports whether f is csv.Reader.Read, ReadAll, or FieldPos,
+// returning the __-helper name.
+func isCsvReadMethod(f *types.Func) (string, bool) {
+	if f.Pkg() == nil || f.Pkg().Path() != "encoding/csv" {
+		return "", false
+	}
+	switch f.Name() {
+	case "Read":
+		return "__csvRead", true
+	case "ReadAll":
+		return "__csvReadAll", true
+	case "FieldPos":
+		return "__csvFieldPos", true
+	}
+	return "", false
 }
 
 func isXmlTokenMethod(f *types.Func) (string, bool) {
@@ -316,7 +368,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken:
+	case mrDeadline, mrParseDur, mrXmlToken, mrCsvRead, mrCsvReadAll, mrCsvFieldPos:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {

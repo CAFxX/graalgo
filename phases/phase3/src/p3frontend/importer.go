@@ -138,6 +138,16 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticXmlPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "encoding/csv":
+		// P3-M7 (wave 1): synthetic encoding/csv (see synth_enc_csv_gob.go).
+		pkg := syntheticCsvPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding/gob":
+		// P3-M7 (wave 1): synthetic encoding/gob (see synth_enc_csv_gob.go).
+		pkg := syntheticGobPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	}
 	ref, err := imp.loader.ResolveImport(imp.mainDir, path)
 	if err != nil {

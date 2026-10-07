@@ -402,7 +402,7 @@ func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {
 	// Synthetic packages resolve independently of fromDir; keep them out
 	// of the anchored cache.
 	switch path {
-	case "runtime", "fmt", "sync", "time", "context", "errors", "sort", "bytes", "math", "strings":
+	case "runtime", "fmt", "sync", "time", "context", "errors", "sort", "bytes", "math", "strings", "encoding/xml", "encoding/csv", "encoding/gob":
 		return &PackageRef{ImportPath: path, Kind: kindSynthetic}, nil
 	}
 	anchor, err := filepath.Abs(fromDir)
