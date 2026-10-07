@@ -193,3 +193,41 @@ proceeded silently").
 - `gen-asm-inventory.py --check`: green (committed artifacts in sync).
 - Red-green: `hidden_files/m6-asm/redgreen.md`.
 - `verifies: GG-0009` (SPEC §2.8).
+
+## M6 remediation note (2026-10-07; post-acceptance, does not re-open the decision)
+
+Two independent reviews (PASS-with-findings) surfaced gaps in how this
+ADR states the mechanism's boundaries. Recorded here explicitly:
+
+1. **Hook coverage boundary -- M7 extension obligation.** The fail-fast
+   hook lives in `Loader.localRef`/`Loader.mainRef` only (loader.go).
+   The stdlib branch of `ResolveImport` -- the actual population with
+   the inventoried assembly files -- is NOT hooked. That is correct for
+   M1 scope (`kindStdlib` = resolvable, not compilable; the importer
+   rejects stdlib compilation), but it is a boundary, not universal
+   coverage. **Obligation:** when M7+ waves make stdlib packages
+   compilable, the stdlib branch MUST call `CheckAsmFiles` (or its
+   equivalent) and the backend MUST consume the `AsmResolution`
+   replacement payloads. A wave-M7 worker reading only the Context/D1
+   above would otherwise reasonably believe coverage is already
+   universal.
+
+2. **The "replace" half is inert in M1 (why the payload is carried).**
+   Both hook sites currently discard the resolutions
+   (`if _, err := l.CheckAsmFiles(...)`). The
+   evaporate/intrinsify/emulate-then-intrinsify dispositions therefore
+   do nothing beyond *not failing* today -- no downstream consumer acts
+   on the replacement pointers. The payload is carried (not dropped)
+   for two reasons: it is the contract the M7+ backend will consume
+   (see obligation 1), and the tests pin it (per-file category +
+   replacement pointer, `TestAsmCategoriesEndToEnd`). The reject half
+   (fail-fast) is the live M1 contract; the replace half awaits M7.
+
+3. **Inventory 627 -> 639 (supersedes the pinned counts above).** The
+   remediation fixed the `.S`/`.sx` blind spot: the inventory now
+   covers all three suffixes go/build treats identically as assembly.
+   12 `.S` files were added (11 `runtime/cgo` `gcc_*.S`, 1 `cmd/cgo`
+   test fixture), all categorized `unsupported`. The D1/D6 pinned
+   counts are superseded: evaporate 238 / intrinsify 61 /
+   emulate-then-intrinsify 71 / jvm-math 54 / **unsupported 215** of
+   **639**. The D6 re-test triggers apply to the 639-file inventory.
