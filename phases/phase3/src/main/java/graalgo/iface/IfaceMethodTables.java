@@ -17,12 +17,13 @@ import graalgo.values.GoFunc;
  * {@code Program.functions()} into {@link GoFunc}s for
  * {@link IfaceMethodTable#install}.
  *
- * <p>Named entries key by {@code detail.name}; pointer entries (the full
- * {@code *T} method set: value + pointer-receiver methods) key by the
- * factory's structural descriptor name via {@link DescriptorNames} — see
- * its javadoc for the recorded ADR-0003 D5 deviation
- * ({@code "pointer#"+typeId} does not match the factory's actual
- * naming). Method entries are {@code {"name": ..., "obj": ...,
+ * <p>Named entries key by the display name ({@code displayNameFor});
+ * pointer-to-named entries (the full {@code *T} method set: value +
+ * pointer-receiver methods) key by {@code "*"+qualifiedName}; other
+ * pointer entries key by the factory's structural descriptor name — all
+ * via {@link DescriptorNames}, which mirrors the factory's
+ * {@code typeDescriptorFor} naming (see its javadoc for the recorded
+ * ADR-0003 D5 deviation). Method entries are {@code {"name": ..., "obj": ...,
  * "index": [...]}} ({@code "recv"} is informational only;
  * {@code "index"} is the receiver adaptation path, empty for direct
  * methods).

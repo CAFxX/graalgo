@@ -67,13 +67,11 @@ public final class DescriptorNames {
         if ("basic".equals(k)) {
             // Factory (P3-M7, P3-M7R2): basic types canonicalize by Go
             // name via basicDescriptorForName ("int" vs "int64" are
-            // distinct); untyped constants normalize to their default
-            // type name.
+            // distinct); untyped constants normalize to default names
+            // and alias spellings ("rune"/"byte") to canonical names —
+            // single source of truth in NodeFactory.canonicalBasicName.
             String name = entry.object("detail", path).string("name", path);
-            if (name.startsWith("untyped ")) {
-                name = graalgo.frontend.NodeFactory.defaultBasicName(name);
-            }
-            return name;
+            return graalgo.frontend.NodeFactory.canonicalBasicName(name);
         }
         Json.Object detail = entry.object("detail", path);
         if ("pointer".equals(k)) {
@@ -201,8 +199,31 @@ public final class DescriptorNames {
                         + structuralKey(types, detail.intValue("elem", path), path);
             case "pointer":
                 return "ptr(" + structuralKey(types, detail.intValue("elem", path), path) + ")";
+            case "chan":
+                // P3-M7: chan types are structural.
+                return "chan(" + structuralKey(types, detail.intValue("elem", path), path) + ")";
+            case "signature": {
+                // P3-M7: func types are structural.
+                StringBuilder sb = new StringBuilder("func(");
+                Json.Array params = detail.array("params", path);
+                for (int i = 0; i < params.size(); i++) {
+                    Json.Object p = (Json.Object) params.get(i);
+                    sb.append(structuralKey(types, p.intValue("type", path), path)).append(',');
+                }
+                sb.append(")(");
+                Json.Array results = detail.array("results", path);
+                for (int i = 0; i < results.size(); i++) {
+                    Json.Object r = (Json.Object) results.get(i);
+                    sb.append(structuralKey(types, r.intValue("type", path), path)).append(',');
+                }
+                sb.append(')');
+                if (detail.opt("variadic") instanceof Json.Bool b && b.value()) {
+                    sb.append("variadic");
+                }
+                return sb.toString();
+            }
             default:
-                // interface, signature, invalid: program-local identity.
+                // interface, invalid: program-local identity.
                 return k + "#" + typeId;
         }
     }

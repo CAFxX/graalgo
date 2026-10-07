@@ -43,7 +43,13 @@ public final class DescriptorNamesTest {
              {"kind": "array", "detail": {"len": 4, "elem": 0}},
              {"kind": "pointer", "detail": {"elem": 2}},
              {"kind": "pointer", "detail": {"elem": 3}},
-             {"kind": "named", "detail": {"name": "main.U", "underlying": 8, "methods": []}}]""";
+             {"kind": "named", "detail": {"name": "main.U", "underlying": 8, "methods": []}},
+             {"kind": "basic", "detail": {"name": "untyped int", "class": "int"}},
+             {"kind": "basic", "detail": {"name": "rune", "class": "int"}},
+             {"kind": "chan", "detail": {"elem": 0}},
+             {"kind": "named", "detail": {"name": "encoding/json.Number",
+               "underlying": 10, "methods": []}},
+             {"kind": "pointer", "detail": {"elem": 17}}]""";
 
     /**
      * Every entry's replica name equals the factory's descriptor name;

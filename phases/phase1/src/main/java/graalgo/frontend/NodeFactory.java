@@ -892,7 +892,9 @@ public final class NodeFactory {
             // "int64"), not just kind — %T must distinguish them, and
             // type switches must not conflate them. Canonicalized by
             // name in a process-wide cache (see basicDescriptorForName).
-            return basicDescriptorFor(ctx, typeId, path);
+            String name = entry.object("detail", path).string("name", path);
+            name = canonicalBasicName(name);
+            return basicDescriptorForName(name, kindForBasicName(name));
         }
         // P3-M7: a pointer to a named type is named "*"+qualifiedName
         // (like gc's %T), not structural. Two distinct named types with
@@ -1242,21 +1244,23 @@ public final class NodeFactory {
     }
 
     /**
-     * Canonical descriptor for a basic type-table entry (P3-M7R2):
-     * resolves the Go type name and delegates to the name-keyed
-     * unification point ({@link #basicDescriptorForName}). Untyped
-     * constants ("untyped int") normalize to their default Go type
-     * ("int"), so every path mints the same instance.
+     * Canonical Go type name for a basic type-table entry name (P3-M7R2):
+     * untyped constants normalize to their default type ("untyped int" →
+     * "int"); alias spellings normalize to canonical names ("rune" →
+     * "int32", "byte" → "uint8"). Public for the phase-3
+     * {@code DescriptorNames} replica — single source of truth.
      */
-    private static graalgo.values.GoTypeDescriptor basicDescriptorFor(BuildCtx ctx, int typeId,
-            String path) {
-        Json.Object entry = ctx.types.entry(typeId, path);
-        String name = entry.object("detail", path).string("name", path);
+    public static String canonicalBasicName(String name) {
         if (name.startsWith("untyped ")) {
-            String defName = defaultBasicName(name);
-            return basicDescriptorForName(defName, kindForBasicName(defName));
+            return defaultBasicName(name);
         }
-        return basicDescriptorForName(name, kindOf(ctx, typeId, path));
+        if ("rune".equals(name)) {
+            return "int32";
+        }
+        if ("byte".equals(name)) {
+            return "uint8";
+        }
+        return name;
     }
 
     /**
@@ -1310,7 +1314,11 @@ public final class NodeFactory {
      * the actual Go type name (e.g. "int" vs "int64", or an untyped
      * constant's default type) must use {@link #basicDescriptorForName}
      * instead — a kind alone cannot distinguish them.
+     *
+     * @deprecated Use {@link #basicDescriptorForName(String, GoKind)} with
+     * the exact Go type name; a kind alone cannot identify a Go type.
      */
+    @Deprecated
     public static graalgo.values.GoTypeDescriptor basicDescriptorFor(GoKind kind) {
         return basicDescriptorForName(kind.name().toLowerCase(), kind);
     }
@@ -1610,7 +1618,8 @@ public final class NodeFactory {
                 out.put(displayNameFor(detail.string("name", path)), implkeys);
             } else if ("pointer".equals(k)) {
                 // Must equal typeDescriptorFor's naming: "*"+qualifiedName
-                // for pointer-to-named, structural otherwise.
+                // for pointer-to-named; goSyntaxName (e.g. "*[]int") with
+                // "pointer#"+hex fallback for pointer-to-unnamed.
                 int elemId = resolveAlias(ctx,
                         detail.intValue("elem", path), path);
                 Json.Object elemEntry = ctx.types.entry(elemId, path);
@@ -1618,8 +1627,12 @@ public final class NodeFactory {
                 if ("named".equals(elemEntry.string("kind", path))) {
                     key = "*" + elemEntry.object("detail", path).string("name", path);
                 } else {
-                    String skey = structuralKey(ctx, id, path);
-                    key = "pointer#" + Integer.toHexString(skey.hashCode());
+                    try {
+                        key = goSyntaxName(ctx.types, id, path);
+                    } catch (FrontendException e) {
+                        String skey = structuralKey(ctx, id, path);
+                        key = "pointer#" + Integer.toHexString(skey.hashCode());
+                    }
                 }
                 Set<String> implkeys = methodImplKeys(detail, path);
                 if (templateMethodsSkipped(detail)) {
