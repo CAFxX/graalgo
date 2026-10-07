@@ -156,6 +156,33 @@ public final class Fmt {
         return d instanceof GoTypeDescriptor td && "*errors.errorString".equals(td.name());
     }
 
+    /**
+     * Message bytes of an {@code *errors.errorString} interface value.
+     * The phase-1 {@code Errorf} stand-in carries the message {@link GoString}
+     * directly as the interface data; the M7 synthetic {@code errors}
+     * package produces a real pointer to {@code struct{ s string }}, so
+     * dereference and read the {@code s} field.
+     */
+    private static byte[] errorStringBytes(GoInterface gi) {
+        Object data = gi.data();
+        if (data instanceof GoString gs) {
+            return gs.bytes();
+        }
+        if (data instanceof graalgo.values.GoPointer gp
+                && gp.referent() instanceof graalgo.values.GoStruct st) {
+            graalgo.values.GoStructDescriptor desc = st.descriptor();
+            for (int i = 0; i < desc.fields().size(); i++) {
+                graalgo.values.GoStructDescriptor.Field f = desc.field(i);
+                if ("s".equals(f.name()) && !f.inLongs()
+                        && st.getObject(f.index()) instanceof GoString gs) {
+                    return gs.bytes();
+                }
+            }
+        }
+        throw new IllegalStateException(
+                "errorString interface data has unexpected shape: " + data);
+    }
+
     // ------------------------------------------------------------------
     // The printer: a port of fmt's pp + fmt structs.
     // ------------------------------------------------------------------
@@ -653,7 +680,10 @@ public final class Fmt {
                 // every other verb — and every verb while erroring (method
                 // dispatch disabled, Go's p.erroring) — takes the
                 // pointer-to-struct path.
-                byte[] msg = ((GoString) gi.data()).bytes();
+                // P3-M7: the data is either the phase-1 stand-in (the
+                // GoString message directly) or a real *errors.errorString
+                // (M7 synthetic errors): a GoPointer to struct{ s string }.
+                byte[] msg = errorStringBytes(gi);
                 if (sharpV) {
                     writeUtf8(("&errors.errorString{s:"));
                     writeUtf8((GoQuote.quote(msg)));
