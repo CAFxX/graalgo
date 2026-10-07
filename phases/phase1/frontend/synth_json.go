@@ -2481,20 +2481,19 @@ func (dec *Decoder) InputOffset() int64 {
 }
 
 // Buffered returns a reader of the data remaining in the Decoder's buffer.
+//
+// M7 scope: fail-fast body. gc returns the bytes already read from the
+// underlying reader but not yet consumed by the decoder. The synthetic
+// decoder has no unconsumed-buffer state to expose: __decoderToken reads
+// the whole input up front via jsonReadAll and walks a parsed tree, so
+// "data remaining in the buffer" is not a meaningful quantity in this
+// design (the Decoder.buf/off fields are never populated). Implementing
+// Buffered faithfully needs the streaming decode path — incremental
+// reads through the 2-result Read method plus a consumption cursor —
+// which v1 cannot emit (WS D). Re-test when WS D lands.
 func (dec *Decoder) Buffered() jsonReader {
-	// Simplified: return empty.
-	return &jsonEmptyReader{}
+	panic("json.Decoder.Buffered: not in M7 scope (needs streaming decode; re-test when WS D lands)")
 }
-
-type jsonEmptyReader struct{}
-
-func (r *jsonEmptyReader) Read(p []byte) (int, error) {
-	return 0, &jsonEOSError{}
-}
-
-type jsonEOSError struct{}
-
-func (e *jsonEOSError) Error() string { return "EOF" }
 
 // jsonReadAllPair is the single-result form of jsonReadAll (WS D:
 // v1 cannot emit multi-result functions).
