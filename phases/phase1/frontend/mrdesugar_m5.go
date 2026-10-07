@@ -77,9 +77,6 @@ const (
 	mrParseDur     // time.ParseDuration
 	// P3-M7 (wave 1): xml.Decoder.Token / xml.Decoder.RawToken.
 	mrXmlToken // xml.Decoder.Token() / xml.Decoder.RawToken()
-	// P3-M7 (wave 1): csv.Reader.Read / csv.Reader.ReadAll.
-	mrCsvRead // csv.Reader.Read() / csv.Reader.ReadAll()
-	mrCsvFieldPos // csv.Reader.FieldPos
 	// P3-M7 (wave 1): the encoding/* multi-result members (Decode,
 	// DecodeString, AppendDecode, Uvarint, Varint, ascii85.Decode,
 	// pem.Decode, asn1.Marshal/Unmarshal). One kind for all of them —
@@ -264,27 +261,6 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					kind: mrXmlToken, helperPkg: "encoding/xml",
 					helperName: helper, prependRecv: true,
 					tmpType:    nt, pairFields: []string{"tok", "err"},
-				}
-			}
-		}
-		// P3-M7 (wave 1): csv.Reader.Read / csv.Reader.ReadAll.
-		// The receiver's named type must match — a user method with the
-		// same name is never desugared.
-		if f, ok := selection.Obj().(*types.Func); ok && f.Pkg() != nil && f.Pkg().Path() == "encoding/csv" {
-			if sig, ok := f.Type().(*types.Signature); ok && sig.Recv() != nil {
-				if recvNamed, ok := sig.Recv().Type().(*types.Named); ok && recvNamed.Obj().Name() == "Reader" {
-					if sel.Sel.Name == "Read" || sel.Sel.Name == "ReadAll" {
-						csvPkg := getSyntheticPackage("encoding/csv").pkg
-						nt := named(csvPkg, "csvReadPair")
-						if nt == nil {
-							return nil
-						}
-						return &mrPlan{
-							kind: mrCsvRead, helperPkg: "encoding/csv",
-							helperName: "csvReadPair", prependRecv: true,
-							tmpType: nt, pairFields: []string{"rec", "err"},
-						}
-					}
 				}
 			}
 		}
@@ -487,7 +463,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrCsvRead, mrCsvFieldPos, mrM7:
+	case mrDeadline, mrParseDur, mrXmlToken, mrM7:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {
