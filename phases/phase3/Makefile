@@ -95,6 +95,8 @@ check: main $(OUT_TEST)/.built
 			echo "WARNING: $(HOME)/tools/go/bin/go not found; exclusion-list gate skipped"; \
 		fi; \
 	fi
+	@echo "== asm-inventory sync gate (P3-M6) =="
+	@python3 stdlib-fork/gen-asm-inventory.py --check
 
 clean:
 	rm -rf out

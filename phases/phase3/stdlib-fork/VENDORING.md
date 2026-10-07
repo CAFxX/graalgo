@@ -11,7 +11,7 @@ and the build-tag-filtered importer.
 | Artifact | Location | Committed? |
 |---|---|---|
 | Vendoring tool (Go, no external deps) | `tools/stdlib-vendor/` | yes |
-| Vendored stdlib tree (157M for go1.27.1) | `~/workspace/graalgo-stdlib/<goVersion>/` | **no** — external by design |
+| Vendored stdlib tree (157M on disk for go1.27.1; 126 MiB file bytes) | `~/workspace/graalgo-stdlib/<goVersion>/` | **no** — external by design |
 | File manifest (path + SHA-256 + size + mode) | `phases/phase3/stdlib-fork/vendor-manifest.json` | yes (2.2M) |
 | Pinned Go version | `phases/phase3/stdlib-fork/pinned-version.txt` | yes |
 | Pinning decision | `phases/phase3/adr/ADR-0006-stdlib-vendoring.md` | yes |

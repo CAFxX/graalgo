@@ -47,7 +47,8 @@ MD_NAME = f"asm-inventory-{VERSION}.md"
 # The p3frontend Go package cannot //go:embed ../../ (embed patterns forbid
 # ".."), so the generator also emits a Go source file carrying the JSON as
 # a string literal. The JSON next to this script stays the single source of
-# truth; the Go test asserts the generated file is in sync.
+# truth; `make -C phases/phase3 check` runs this script with --check to assert
+# the generated file is in sync.
 GO_NAME = "zz_asm_inventory_gen.go"
 GO_DIR = os.path.join(SCRIPT_DIR, "..", "src", "p3frontend")
 
