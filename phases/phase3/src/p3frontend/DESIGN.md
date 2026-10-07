@@ -109,6 +109,16 @@ over a visited set plus an explicit stack.
   exporter (not p3frontend) lowers the calls to `syncnew`/`syncop` wire
   nodes and raises the named `not in M2 scope` errors
   (`TestSyncScopeErrorParity`).
+- `"errors"` → synthetic package with the exact gc 1.27.1 signatures
+  (P3-M7 wave-1): real-Go `New`/`Is`/`Unwrap`/`Join`; `As`/`AsType`
+  keep exact signatures with fail-fast bodies (need `reflect`). Pinned
+  by `TestErrorsSyntheticSignatures` (drift vs the phase-1 source,
+  including the generic `AsType`).
+- `"sort"` → synthetic package with the exact gc 1.27.1 signatures
+  (P3-M7 wave-1): faithful pdqsort/stable port plus search; `Find`/
+  `Slice`/`SliceStable`/`SliceIsSorted` keep exact signatures with
+  fail-fast bodies (WS D multi-result / `reflect`). Pinned by
+  `TestSortSyntheticSignatures`.
 - Local packages → resolved via the loader and type-checked with
   `go/types` recursively (results cached by import path; the recursion
   carries its own cycle stack as defense in depth behind `LoadClosure`).
