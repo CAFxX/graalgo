@@ -34,6 +34,7 @@ import sys
 SYNTH = {
     "encoding/csv": ("syntheticCsvSource", "synth_enc_csv_gob.go", "csv"),
     "encoding/gob": ("syntheticGobSource", "synth_enc_csv_gob.go", "gob"),
+    "encoding/xml": ("syntheticXmlSource", "synth_xml.go", "xml"),
     "errors": ("syntheticErrorsSource", "synth_errors.go", "errors"),
 }
 

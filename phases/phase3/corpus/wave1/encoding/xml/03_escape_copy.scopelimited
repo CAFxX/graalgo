@@ -1,2 +1,3 @@
-reason: dual-mode Read(p []byte) (int, error) / Write method declarations — the same file must compile under gc (needs Read/Write) but the frontend forbids 2-result method declarations; corpus/harness design limitation
+reason: dual-mode Read(p []byte) (int, error) / Write method declarations -- the same file must compile under gc (needs Read/Write) but the frontend forbids 2-result method declarations; corpus/harness design limitation
 retest: corpus redesign to single-mode programs, or frontend support for 2-result method declarations (P3-M8)
+nogc: dual-mode program references xml.ReadResult (synthetic-only); real-std gc leg cannot build it, and the synthetic-ref gc leg panics in the Token desugar-stub (needs the frontend desugar). No working gc leg exists by design.

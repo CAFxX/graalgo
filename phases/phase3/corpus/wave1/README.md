@@ -48,7 +48,11 @@ gc 1.27.1. Run via the shared runner `run_wave.sh`, not by hand.
    (neither passing nor failing) — but it still builds and runs the gc
    leg, so a program that is not even valid Go surfaces as FAIL, not
    scope-limited. A `.scopelimited` file without a `retest:` line is a
-   harness FAIL. Never mark a program scope-limited to hide a corpus bug
+   harness FAIL. The rare program with no working gc leg at all
+   (dual-mode xml: real std lacks `xml.ReadResult`, synthetic-ref panics
+   in the Token desugar-stub) adds a third line,
+   `nogc: <why no gc leg can run>`, and the runner skips the gc check.
+   Never mark a program scope-limited to hide a corpus bug
    or a frontend bug that has an owner: the reason must name an honest
    scope boundary and the re-test trigger must name the blocker.
 7. **Synthetic-reference programs** get an empty `<nn>_<name>.synthetic`

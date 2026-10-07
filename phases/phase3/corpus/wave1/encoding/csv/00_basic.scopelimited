@@ -1,0 +1,2 @@
+reason: the synthetic encoding/csv package body cannot be exported by the frontend: its internals use 2-result helpers (csvDecodeRune) rejected under WS D -- even a bare import fails (verified with HEAD-built gofrontend). The corpus program itself is correct (in-scope constructors, gc synthetic-ref leg passes).
+retest: synthetic csv source rewritten to WS D-clean bodies (workers A/B/C); then re-run this program differentially

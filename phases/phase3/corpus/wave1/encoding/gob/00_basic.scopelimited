@@ -1,0 +1,2 @@
+reason: the synthetic encoding/gob package body cannot be exported by the frontend: its internals use deref assignments (*b = ...) rejected under WS D. The corpus program itself is correct (in-scope constructors; Decode also needs & on identifiers, WS D). Verified with HEAD-built gofrontend.
+retest: synthetic gob source rewritten to WS D-clean bodies AND WS D lands &/deref (for Decode targets); then re-run this program differentially

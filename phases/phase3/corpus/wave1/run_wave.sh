@@ -96,22 +96,25 @@ build_gc() {
 
 run_scope_limited() { # $1 = go file
     local go="$1" base="${1%.go}"
-    local reason retest
+    local reason retest nogc
     reason="$(sed -n 's/^reason: //p' "$base.scopelimited" | head -1)"
     retest="$(sed -n 's/^retest: //p' "$base.scopelimited" | head -1)"
+    nogc="$(sed -n 's/^nogc: //p' "$base.scopelimited" | head -1)"
     if [ -z "${retest:-}" ]; then
         echo "FAIL $base: .scopelimited marker lacks a retest: trigger"
         fail=$((fail+1)); return
     fi
-    # The program must still be valid runnable Go; otherwise it is a
-    # corpus bug, not a scope limitation.
-    local gcbin="$TMP/$base.gc"
-    build_gc "$go" "$gcbin" || { fail=$((fail+1)); return; }
-    "$gcbin" > /dev/null 2>&1
-    local gc_exit=$?
-    if [ "$gc_exit" != 0 ]; then
-        echo "FAIL $base: scope-limited program exits $gc_exit under gc (corpus bug)"
-        fail=$((fail+1)); return
+    if [ -z "${nogc:-}" ]; then
+        # The program must still be valid runnable Go; otherwise it is a
+        # corpus bug, not a scope limitation.
+        local gcbin="$TMP/$base.gc"
+        build_gc "$go" "$gcbin" || { fail=$((fail+1)); return; }
+        "$gcbin" > /dev/null 2>&1
+        local gc_exit=$?
+        if [ "$gc_exit" != 0 ]; then
+            echo "FAIL $base: scope-limited program exits $gc_exit under gc (corpus bug)"
+            fail=$((fail+1)); return
+        fi
     fi
     scopelimited=$((scopelimited+1))
     echo "SCOPE-LIMITED $base: ${reason:-<no reason given>} [retest: $retest]"
