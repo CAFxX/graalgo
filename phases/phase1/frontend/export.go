@@ -232,6 +232,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("errors").pkg, nil
 	case "sort":
 		return getSyntheticPackage("sort").pkg, nil
+	case "math":
+		return getSyntheticPackage("math").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -655,11 +657,12 @@ func ExportFile(path string) (string, error) {
 		// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_time_context.go).
-		// P3-M7 (wave 1): the imports "errors" and "sort" are allowed —
-		// resolved by overlayImporter to the synthetic packages (real-Go
-		// sources; see synth_errors.go / synth_sort.go).
+		// P3-M7 (wave 1): the imports "errors", "sort", "bytes", "math" are
+		// allowed — resolved by overlayImporter to the synthetic packages
+		// (real-Go sources; see synth_errors.go / synth_sort.go /
+		// synth_bytes.go / synth_math.go).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -689,10 +692,10 @@ func ExportFile(path string) (string, error) {
 	// via the synthetic overlay package (four primitives).
 	// P3-M4 (WS C, ADR-0004): "sync/atomic" and "unsafe" likewise.
 	// P3-M5 (WS E, ADR-0005): "time" and "context" likewise.
-	// P3-M7 (wave 1): "errors" and "sort" likewise.
+	// P3-M7 (wave 1): "errors", "sort", "bytes", "math" likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" {
+		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -786,7 +789,7 @@ func ExportFile(path string) (string, error) {
 	// package vars become document globals. Intrinsics (time.Now etc.)
 	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
-	needErrors, needSort, needBytes := false, false, false
+	needErrors, needSort, needBytes, needMath := false, false, false, false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -801,6 +804,8 @@ func ExportFile(path string) (string, error) {
 			// bytes' ErrTooLarge initializer calls errors.New.
 			// NB: requires m7-errors-sort (integration dependency).
 			needBytes = true
+		case "math":
+			needMath = true
 		}
 	}
 	if needTime {
@@ -829,6 +834,14 @@ func ExportFile(path string) (string, error) {
 	// Requires m7-errors-sort for the errors dependency.
 	if needBytes {
 		if err := e.importSyntheticPackage(getSyntheticPackage("bytes")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): the synthetic math package (see synth_math.go).
+	// Self-contained: no synthetic->synthetic imports, so no ordering
+	// constraints.
+	if needMath {
+		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
 			return "", err
 		}
 	}
@@ -2919,6 +2932,11 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 				}
 			}
 			return nil, nil
+		case token.CONST:
+			// P3-M7 (WS G): function-local const declarations (used by
+			// the synthetic math package, e.g. polynomial coefficients)
+			// are compile-time only; normalized away like EmptyStmt.
+			return nil, nil
 		default:
 			return nil, scopeErrorf("only var/type declarations are supported in frontend/v1 scope (WS G/H)")
 		}
@@ -4727,6 +4745,12 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if isTimeIntrinsicFunc(fn) {
 		return e.exportTimeIntrinsic(c, fn.Name())
 	}
+	// P3-M7 (WS G, ADR-0007 D5): math intrinsics called from within the
+	// synthetic math package (e.g. Float64bits in Abs) lower to the
+	// "math*" wire nodes. Intercepted before the funcByObj lookup.
+	if isMathIntrinsicFunc(fn) {
+		return e.exportMathIntrinsic(c, fn.Name())
+	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
 	// time.ParseDuration.
@@ -5784,7 +5808,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" {
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

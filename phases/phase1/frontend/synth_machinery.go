@@ -30,12 +30,15 @@ var (
 var syntheticSources = map[string]string{
 	"time":    syntheticTimeSource,
 	"context": syntheticContextSource,
-	// P3-M7 (wave 1): synthetic errors and sort packages (real-Go
-	// sources in synth_errors.go / synth_sort.go, resolved via
-	// getSyntheticPackage so the same *types.Package instance is shared
-	// between user type-check and synthetic emission).
+	// P3-M7 (wave 1): synthetic errors, sort, bytes, math packages (real-Go
+	// sources in synth_errors.go / synth_sort.go / synth_bytes.go /
+	// synth_math.go, resolved via getSyntheticPackage so the same
+	// *types.Package instance is shared between user type-check and
+	// synthetic emission).
 	"errors": syntheticErrorsSource,
 	"sort":   syntheticSortSource,
+	"bytes":  syntheticBytesSource,
+	"math":   syntheticMathSource,
 }
 
 // getSyntheticPackage parses and type-checks the embedded source for
@@ -105,6 +108,9 @@ var timeIntrinsicNames = map[string]bool{
 func isSyntheticIntrinsic(path, name string) bool {
 	if path == "time" {
 		return timeIntrinsicNames[name]
+	}
+	if path == "math" {
+		return mathIntrinsicNames[name]
 	}
 	return false
 }
@@ -354,6 +360,47 @@ func (e *exporter) exportTimeIntrinsic(c *ast.CallExpr, name string) (*Node, err
 	return nil, scopeErrorf("time.%s is not a recognized intrinsic", name)
 }
 
+// exportMathIntrinsic lowers a call to a synthetic math intrinsic
+// (P3-M7, ADR-0007 D5) into its wire node. Each intrinsic gets its own
+// wire kind (the time-intrinsic precedent): "mathf64bits",
+// "mathf64frombits", "mathf32bits", "mathf32frombits", "mathsqrt",
+// "mathfma". Fields: the operand expression(s) ("x" / "x","y","z") and
+// "type" (result type-table id, never guessed).
+func (e *exporter) exportMathIntrinsic(c *ast.CallExpr, name string) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	kind, ok := map[string]string{
+		"Float64bits":     "mathf64bits",
+		"Float64frombits": "mathf64frombits",
+		"Float32bits":     "mathf32bits",
+		"Float32frombits": "mathf32frombits",
+		"Sqrt":            "mathsqrt",
+		"FMA":             "mathfma",
+	}[name]
+	if !ok {
+		return nil, scopeErrorf("math.%s is not a recognized intrinsic", name)
+	}
+	want := 1
+	if name == "FMA" {
+		want = 3
+	}
+	if len(args) != want {
+		return nil, scopeErrorf("math.%s takes %d arguments", name, want)
+	}
+	fields := map[string]any{"x": args[0], "type": typ}
+	if name == "FMA" {
+		fields["y"] = args[1]
+		fields["z"] = args[2]
+	}
+	return e.node(kind, c, fields), nil
+}
+
 // exportTimeOp lowers (*time.Timer).Stop/Reset and (*time.Ticker).Stop/
 // Reset method calls (ADR-0005 D1) into the "timeop" wire node.
 func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named) (*Node, error) {
@@ -394,7 +441,7 @@ func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 // (conversions take the normal path) and for non-synthetic packages.
 func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr, pkgName *types.PkgName) (*Node, bool, error) {
 	path := pkgName.Imported().Path()
-	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" {
+	if path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" {
 		return nil, false, nil
 	}
 	obj := e.info.Uses[sel.Sel]
@@ -411,6 +458,12 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 	}
 	if path == "time" && timeIntrinsicNames[fn.Name()] {
 		n, err := e.exportTimeIntrinsic(c, fn.Name())
+		return n, true, err
+	}
+	// P3-M7 (WS G, ADR-0007 D5): math intrinsics (bit conversions, Sqrt,
+	// FMA) lower to the "math*" wire nodes.
+	if path == "math" && mathIntrinsicNames[fn.Name()] {
+		n, err := e.exportMathIntrinsic(c, fn.Name())
 		return n, true, err
 	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions
@@ -448,6 +501,9 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 		if obj.Pkg() != nil && obj.Pkg().Path() == "time" && timeIntrinsicNames[obj.Name()] {
 			return nil, scopeErrorf("time.%s is an intrinsic and cannot be used in value position (M5)", obj.Name())
 		}
+		if obj.Pkg() != nil && obj.Pkg().Path() == "math" && mathIntrinsicNames[obj.Name()] {
+			return nil, scopeErrorf("math.%s is an intrinsic and cannot be used in value position (M7)", obj.Name())
+		}
 		return nil, scopeErrorf("%s.%s in value position is not supported in frontend/v1 scope (M5)",
 			pkgName.Name(), obj.Name())
 	default:
@@ -459,6 +515,11 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 // isTimeIntrinsicFunc reports whether fn is a synthetic time intrinsic.
 func isTimeIntrinsicFunc(fn *types.Func) bool {
 	return fn.Pkg() != nil && fn.Pkg().Path() == "time" && timeIntrinsicNames[fn.Name()]
+}
+
+// isMathIntrinsicFunc reports whether fn is a synthetic math intrinsic.
+func isMathIntrinsicFunc(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == "math" && mathIntrinsicNames[fn.Name()]
 }
 
 // isMultiResultSynthetic reports whether fn is a multi-result function or
@@ -473,7 +534,7 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" {
+	if p != "time" && p != "context" && p != "errors" && p != "sort" && p != "bytes" && p != "math" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -485,9 +546,9 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 
 func multiResultSyntheticError(fn *types.Func) error {
 	// P3-M7: the milestone tag follows the synthetic package (time/context
-	// are M5, errors/sort/bytes are wave-1 M7).
+	// are M5, errors/sort/bytes/math are wave-1 M7).
 	milestone := "M5"
-	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" {
+	if p := fn.Pkg().Path(); p == "errors" || p == "sort" || p == "bytes" || p == "math" {
 		milestone = "M7"
 	}
 	// Qualify method names with the receiver type name
