@@ -3919,7 +3919,7 @@ func bitSizeError(fn, str string, bitSize int) *NumError {
 // It accepts 1, t, T, TRUE, true, True, 0, f, F, FALSE, false, False.
 // Any other value returns an error.
 func ParseBool(str string) (bool, error) {
-	panic("strconv.ParseBool: unreachable (call sites desugar to __parseBool)")
+	panic("strconv.ParseBool: unreachable (call sites desugar to __parseBoolPub)")
 }
 
 // FormatBool returns "true" or "false" according to the value of b.
@@ -3960,7 +3960,7 @@ func AppendBool(dst []byte, b bool) []byte {
 // away from the largest floating point number of the given component's size,
 // ParseComplex returns err.Err = ErrRange and c = ±Inf for the respective component.
 func ParseComplex(s string, bitSize int) (complex128, error) {
-	panic("strconv.ParseComplex: unreachable (call sites desugar to __parseComplex)")
+	panic("strconv.ParseComplex: unreachable (call sites desugar to __parseComplexPub)")
 }
 
 // ParseFloat converts the string s to a floating-point number
