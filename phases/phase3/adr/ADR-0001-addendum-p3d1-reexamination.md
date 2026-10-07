@@ -18,12 +18,16 @@ of 399 package dirs (36%)**, vs SPEC's ~78. Drift = 82% — trigger fires.
 | asm (+build-tags ± linkname) | 32 | real adaptation: asm strategy (ADR-0007) |
 | cgo (±others) | 12 | real adaptation: Panama FFI strategy (P3-M8) |
 
-Substantive adaptation set (asm/cgo): ~44 packages — within the spirit of
-the original ~78. The 47 build-tags-only packages were never "coupled" in
-the adaptation sense; the original ~78 came from an imprecise, undocumented
-check, while the new 142 uses a strict documented one. Part of the drift is
-definitional, part is real (new `arena`, `crypto/boring`, `simd/*` packages;
-linkname in 69 dirs).
+Substantive adaptation set (asm/cgo): ~44 packages. The 47 build-tags-only
+packages were never "coupled" in the adaptation sense; the original ~78
+came from an imprecise, undocumented check, while the new 142 uses a
+strict documented one. Part of the drift is definitional, part is real
+(new `crypto/internal/boring` and `crypto/internal/fips140/*` packages --
+19 dirs, post-SPEC; linkname in 69 dirs). The honest bound is simpler and
+stronger than comparing the strict subset against the loose original:
+the strict real-adaptation subset (44) is smaller than the entire loose
+coupled set (~78), so the fork-adaptation budget is not exceeded even
+under the strictest reading.
 
 ## Verdict: P3-D1 STANDS
 The fork model (real, lightly adapted sources for coupled packages; never
