@@ -770,10 +770,13 @@ func ExportFile(path string) (string, error) {
 	// (m7-wenc-core: "strings" was missing from this list — the allow-list
 	// above admitted it but type-checking still used failImporter. Fixed
 	// here; re-test trigger: a program importing "strings" must export.)
+	// P3-M8 (wave 2): "io", "syscall", "os", "io/fs", "reflect", and the
+	// crypto/* packages likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
 		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
-			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" {
+			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" ||
+			p == "crypto" || p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -3438,6 +3441,19 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 		// frozen builtin registry is untouched — interception by ident.
 		if c, ok := isCloseCall(e.info, s.X); ok {
 			return e.exportChanCloseCall(c)
+		}
+		// P3-M8 (WS D): a concrete multi-result call as a bare statement
+		// (w.Write(data) on *io.PipeWriter — legal Go, results
+		// discarded) desugars to the __-helper call with the pair
+		// dropped. Gated on the concrete helper-call plans (mrM7,
+		// mrXmlToken): the M5 kinds keep their pinned statement-position
+		// fail-fast (TestMultiResultFailFastKept), and interface calls
+		// keep the D1 exportIfaceMethodCall path via exportExpr below.
+		if c, ok := unparen(s.X).(*ast.CallExpr); ok {
+			if plan := e.classifyMultiResultCall(c); plan != nil &&
+				(plan.kind == mrM7 || plan.kind == mrXmlToken) {
+				return e.exportBareMultiResultCall(s, c, plan)
+			}
 		}
 		x, err := e.exportExpr(s.X)
 		if err != nil {
