@@ -19,6 +19,9 @@ import (
 //   - "sync" resolves to the synthetic P3-M2b package (ADR-0002) with the
 //     exact frozen signatures (four primitives + the defined-but-out-of-
 //     scope methods, so the same named scope errors fire);
+//   - "errors" and "sort" resolve to the synthetic P3-M7 wave-1 packages
+//     (real-Go implementations; fail-fast members keep exact gc 1.27.1
+//     signatures);
 //   - module-local packages are type-checked from source with go/types,
 //     recursively, with results cached by import path;
 //   - stdlib packages resolve (proving the GOROOT mapping) but fail with
@@ -90,6 +93,20 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 			imp.pkgs["time"] = timePkg
 		}
 		pkg := syntheticContextPackage(timePkg)
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "errors":
+		// P3-M7 (wave 1): synthetic errors package (real-Go New/Is/Unwrap/
+		// Join; As/AsType fail-fast). Self-contained: no synthetic
+		// dependencies.
+		pkg := syntheticErrorsPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "sort":
+		// P3-M7 (wave 1): synthetic sort package (real-Go pdqsort/stable/
+		// search; Find/Slice/SliceStable/SliceIsSorted fail-fast).
+		// Self-contained: no synthetic dependencies.
+		pkg := syntheticSortPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
 	case "unsafe":
