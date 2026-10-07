@@ -55,8 +55,26 @@ justification and source).
 Top-level `skip_list_size` plus the full `skip_list` (distinct MISSING
 targets, each with ref count, example files, reason), per-linkname
 `entries`, `duplicates` (local names linked more than once),
-`provided_by_source` counts, `routes_applied`, and the
-`constraint_excluded_sample`.
+`provided_by_source` counts, `routes_applied`, `stale_routes` (routes
+that matched zero linknames -- also warned about loudly on stderr),
+and the `constraint_excluded_sample`.
+
+### Tree resolution
+
+`--goroot` default -- canonical stdlib-tree resolution (shared with
+`stdlib-excl`; the two implementations are documented as twins):
+1. the vendored tree for the pinned version,
+   `~/workspace/graalgo-stdlib/<ver>/` (flat layout -- the target dir
+   IS the src root, no `src/` subdir), used only when the committed
+   `vendor-manifest.json` records the same `goVersion` as
+   `phases/phase3/stdlib-fork/pinned-version.txt` (a manifest/pin skew
+   fails loud);
+2. otherwise the live toolchain's `GOROOT/src`, announced loudly on
+   stderr -- results then pin to the live toolchain, not the vendored
+   tree.
+
+An explicit `--goroot` always wins. There are no silent fallbacks:
+every resolution announces where the tree came from.
 
 ### Build-tag semantics
 
@@ -74,8 +92,11 @@ Run this on every Go upgrade, as part of the upgrade's Phase 2
 1. **Snapshot the provided set** (records what graalgo provides at this
    release):
    `stdlib-linkdiff --snapshot phases/phase3/stdlib-fork/provided-<ver>.json`
-2. **Run the diff** against the new tree:
-   `stdlib-linkdiff --goroot <new-tree>/src --json phases/phase3/stdlib-fork/linkname-trial-<ver>.json --md phases/phase3/stdlib-fork/linkname-trial-<ver>.md`
+2. **Run the diff** against the new tree (pass it explicitly -- the
+   default resolution follows the pin, which still names the old
+   version until the cutover; note the flat layout: the target dir IS
+   the src root, no `src/` subdir):
+   `stdlib-linkdiff --goroot <new-tree>/ --json phases/phase3/stdlib-fork/linkname-trial-<ver>.json --md phases/phase3/stdlib-fork/linkname-trial-<ver>.md`
 3. **Read `SKIP_LIST_SIZE`** from the JSON. Compare against the previous
    release's report. SPEC §3.6 kill trigger: growth > 15 twice.
 4. **Triage new MISSING targets**: for each new skip-list entry decide —

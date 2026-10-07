@@ -34,9 +34,20 @@ Enforces the exclusion-list contract; rejects (exit 1) when:
 7. an entry's package path is not a directory in the stdlib tree — a stale
    entry.
 
-`--src` default: the vendored tree when the vendoring worker has landed
-(`phases/phase3/stdlib-fork/pinned-version.txt` + the target dir exist),
-else `GOROOT/src` of the pinned toolchain (`~/tools/go/bin/go`).
+`--src` default -- canonical stdlib-tree resolution (shared with
+`stdlib-linkdiff`; the two implementations are documented as twins):
+1. the vendored tree for the pinned version,
+   `~/workspace/graalgo-stdlib/<ver>/` (flat layout -- the target dir
+   IS the src root, no `src/` subdir), used only when the committed
+   `vendor-manifest.json` records the same `goVersion` as
+   `phases/phase3/stdlib-fork/pinned-version.txt` (a manifest/pin skew
+   fails loud);
+2. otherwise `GOROOT/src` of the pinned toolchain
+   (`~/tools/go/bin/go`), announced loudly on stderr -- results then
+   pin to the live toolchain, not the vendored tree.
+
+An explicit `--src` always wins. There are no silent fallbacks: every
+resolution announces where the tree came from.
 
 Wired into `make -C phases/phase3 check` (stdlib exclusion-list gate).
 

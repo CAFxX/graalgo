@@ -36,7 +36,21 @@ touched (shared machine, restores, disk work).
 ## 3. Re-vendoring on a new Go release
 
 Never edit the vendored tree by hand. A new Go release is a new pin,
-re-vendored atomically. Steps:
+re-vendored atomically.
+
+**Which tree the tools read (resolution rule).** `stdlib-excl`
+(`validate`, `measure`) and `stdlib-linkdiff` resolve their stdlib
+tree the same way: (1) the vendored tree for the pinned version,
+`~/workspace/graalgo-stdlib/<ver>/` -- flat layout, the target dir IS
+the src root, there is no `src/` subdir -- used only when the committed
+`vendor-manifest.json` records the same `goVersion` as
+`pinned-version.txt` (a manifest/pin skew fails loud); (2) otherwise
+the live toolchain's `GOROOT/src`, announced loudly on stderr. An
+explicit `--src`/`--goroot` always wins. During a re-vendor the pin
+still names the OLD version until step 5, so step 4 must pass the new
+tree explicitly.
+
+Steps:
 
 1. **Install the new toolchain** and confirm it is the one you mean:
    `go version` and `<new-goroot>/VERSION` must agree.
@@ -60,10 +74,43 @@ re-vendored atomically. Steps:
    Review the churn for anything touching the ~78 coupled packages or
    the `go/*` packages (SPEC §3.2 requires atomic re-vendor of stdlib
    with go/*).
-4. **Re-run the linkname-diff tooling** (GG-0021) against the new tree
-   and **re-run the coupled-package measurement**. Both are sensitive
-   to stdlib source changes; their outputs must be re-baselined on the
-   new tree before any frontend work consumes it.
+4. **Re-run the per-release tooling** against the new tree -- pass the
+   new target dir explicitly (`--src`/`--goroot <new-target>/`; the
+   default resolution still follows the old pin until step 5):
+   - the linkname-diff tooling (GG-0021):
+     ```sh
+     cd ~/workspace/graalgo/tools/stdlib-linkdiff
+     go run . --goroot ~/workspace/graalgo-stdlib/<new-version>/ \
+         --json ../../phases/phase3/stdlib-fork/linkname-trial-<new-version>.json \
+         --md ../../phases/phase3/stdlib-fork/linkname-trial-<new-version>.md
+     ```
+     Triage per its README (skip-list size vs SPEC §3.6 kill trigger,
+     `routes.txt` diff, provided-snapshot diff).
+   - the coupled-package measurement:
+     ```sh
+     cd ~/workspace/graalgo/tools/stdlib-excl
+     go run . measure --src ~/workspace/graalgo-stdlib/<new-version>/ \
+         --out ../../phases/phase3/stdlib-fork/coupled-packages-<new-version>.json \
+         --go-version <new-version>
+     ```
+     Re-run the P3-D1 drift check against the new report.
+   - the Plan 9 assembly inventory (P3-M6 asm strategy):
+     ```sh
+     cd ~/workspace/graalgo
+     python3 phases/phase3/stdlib-fork/gen-asm-inventory.py --goroot <new-goroot>
+     ```
+     The generator enumerates every `.s`/`.S`/`.sx` file, fails on any
+     uncategorized file, and regenerates the JSON inventory, the
+     Markdown summary, and the embedded `zz_asm_inventory_gen.go` the
+     loader enforces. (Update the generator's pinned `VERSION`
+     constant to the new release first -- it names the output files.)
+     Verify with
+     `python3 phases/phase3/stdlib-fork/gen-asm-inventory.py --check`.
+     Skipping this step leaves the loader enforcing the OLD
+     version-pinned inventory: every new `.s` file fails the build as
+     uncategorized.
+   All three outputs must be re-baselined on the new tree before any
+   frontend work consumes it.
 5. **Update the pin deliberately**: write the new version into
    `phases/phase3/stdlib-fork/pinned-version.txt` and commit it together
    with the new manifest. The tool intentionally does *not* move the pin
@@ -85,11 +132,13 @@ re-vendored atomically. Steps:
    the pinned toolchain, anyone can reproduce the tree byte-for-byte;
    `verify` proves a given tree matches. Provenance lives in git; bulk
    lives on disk.
-3. **Deterministic manifests.** The manifest contains no timestamps and
-   its entries are sorted with fixed JSON encoding, so two runs over
-   identical sources are byte-identical. `git diff` on the manifest is
-   therefore a truthful changelog of upstream churn (step 3 above), not
-   noise.
+3. **Deterministic manifests (same machine).** The manifest contains no
+   timestamps and its entries are sorted with fixed JSON encoding, so two
+   runs over identical sources on the same machine are byte-identical.
+   (Same-machine qualifier: the manifest embeds absolute machine paths
+   -- `sourceGoroot`, `targetDir` -- so cross-machine runs differ in
+   exactly those fields.) `git diff` on the manifest is therefore a
+   truthful changelog of upstream churn (step 3 above), not noise.
 4. **Refusal gates, not conventions.** Version drift and target clobber
    require explicit flags (`--allow-version-drift`, `--force`). The
    common accidents — vendoring the wrong toolchain, or clobbering the
