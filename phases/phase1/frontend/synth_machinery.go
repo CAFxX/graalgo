@@ -30,10 +30,16 @@ var (
 var syntheticSources = map[string]string{
 	"time":    syntheticTimeSource,
 	"context": syntheticContextSource,
+	// P3-M7 (wave 1): synthetic errors and sort packages (real-Go
+	// sources in synth_errors.go / synth_sort.go, resolved via
+	// getSyntheticPackage so the same *types.Package instance is shared
+	// between user type-check and synthetic emission).
+	"errors": syntheticErrorsSource,
+	"sort":   syntheticSortSource,
 }
 
 // getSyntheticPackage parses and type-checks the embedded source for
-// path ("time" or "context"), caching the result. The type-check uses
+// path ("time", "context", "errors" or "sort"), caching the result. The type-check uses
 // the overlay importer, so the context source's `import "time"` resolves
 // to the synthetic package (synthetic→synthetic imports).
 // The same *types.Package instance is returned to every importer, so
@@ -383,12 +389,12 @@ func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 }
 
 // exportSyntheticPkgCall handles calls of the form time.X(...) /
-// context.X(...) where X denotes a synthetic package member. It returns
-// handled=false for type names (conversions take the normal path) and
-// for non-synthetic packages.
+// context.X(...) / errors.X(...) / sort.X(...) where X denotes a
+// synthetic package member. It returns handled=false for type names
+// (conversions take the normal path) and for non-synthetic packages.
 func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr, pkgName *types.PkgName) (*Node, bool, error) {
 	path := pkgName.Imported().Path()
-	if path != "time" && path != "context" {
+	if path != "time" && path != "context" && path != "errors" && path != "sort" {
 		return nil, false, nil
 	}
 	obj := e.info.Uses[sel.Sel]
@@ -456,18 +462,18 @@ func isTimeIntrinsicFunc(fn *types.Func) bool {
 }
 
 // isMultiResultSynthetic reports whether fn is a multi-result function or
-// method declared by a synthetic time/context package (Context.Deadline,
-// time.ParseDuration, Time.Date/Clock/Zone, ...). v1 cannot emit or call
-// multi-result functions (WS D; the P3-M3 F4 fail-fast precedent): the
-// declarations exist with exact gc signatures for type-checking, but
-// every call site fails fast with a named M5 scope error. Re-test when
-// WS D lands multi-result calls.
+// method declared by a synthetic time/context/errors/sort package
+// (Context.Deadline, time.ParseDuration, Time.Date/Clock/Zone,
+// sort.Find, ...). v1 cannot emit or call multi-result functions (WS D;
+// the P3-M3 F4 fail-fast precedent): the declarations exist with exact gc
+// signatures for type-checking, but every call site fails fast with a
+// named scope error. Re-test when WS D lands multi-result calls.
 func isMultiResultSynthetic(fn *types.Func) bool {
 	if fn == nil || fn.Pkg() == nil {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" {
+	if p != "time" && p != "context" && p != "errors" && p != "sort" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -478,8 +484,14 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 }
 
 func multiResultSyntheticError(fn *types.Func) error {
-	return scopeErrorf("%s.%s is not in M5 scope (multi-result calls need WS D; re-test when it lands)",
-		fn.Pkg().Path(), fn.Name())
+	// P3-M7: the milestone tag follows the synthetic package (time/context
+	// are M5, errors/sort are wave-1 M7).
+	milestone := "M5"
+	if p := fn.Pkg().Path(); p == "errors" || p == "sort" {
+		milestone = "M7"
+	}
+	return scopeErrorf("%s.%s is not in %s scope (multi-result calls need WS D; re-test when it lands)",
+		fn.Pkg().Path(), fn.Name(), milestone)
 }
 
 // timerScopeErrorf is the fail-fast for zero-value Timer/Ticker

@@ -173,8 +173,10 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // sync/atomic package and the empty unsafe package (for //go:linkname's
 // blank import), and by P3-M5 (WS E, ADR-0005) with the synthetic time and
 // context packages (real-Go sources in synth_time_context.go, resolved via
-// getSyntheticPackage so synthetic->synthetic imports work): it resolves
-// exactly the synthetic package
+// getSyntheticPackage so synthetic->synthetic imports work), and by P3-M7
+// (wave 1) with the synthetic errors and sort packages (real-Go sources
+// in synth_errors.go / synth_sort.go, likewise via getSyntheticPackage):
+// it resolves exactly the synthetic package
 // "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface),
 // the synthetic package "fmt" exposing the seven D4 symbols (Print,
 // Printf, Println, Sprint, Sprintf, Sprintln, Errorf) with exact variadic
@@ -185,8 +187,12 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // gc method signatures, the synthetic package "time" (ADR-0005 D1:
 // Duration/Time/Month/Weekday as real Go, clock/timer intrinsics), the
 // synthetic package "context" (ADR-0005 D2: real Go on sync.Mutex,
-// channels, synthetic time, and P3-M3 interface dispatch), and the empty
-// synthetic package "unsafe".
+// channels, synthetic time, and P3-M3 interface dispatch), the synthetic
+// package "errors" (P3-M7: New/Is/Unwrap/Join as real Go; As/AsType
+// fail-fast — they need reflect), the synthetic package "sort" (P3-M7:
+// pdqsort/stable/search as real Go; Find/Slice/SliceStable/SliceIsSorted
+// fail-fast — multi-result/reflect), and the empty synthetic package
+// "unsafe".
 // Every other import still fails via failImporter. WS G's full
 // import overlay absorbs this carve-out.
 type overlayImporter struct{}
@@ -222,6 +228,10 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("time").pkg, nil
 	case "context":
 		return getSyntheticPackage("context").pkg, nil
+	case "errors":
+		return getSyntheticPackage("errors").pkg, nil
+	case "sort":
+		return getSyntheticPackage("sort").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -645,8 +655,11 @@ func ExportFile(path string) (string, error) {
 		// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
 		// allowed — resolved by overlayImporter to the synthetic packages
 		// (real-Go sources; see synth_time_context.go).
+		// P3-M7 (wave 1): the imports "errors" and "sort" are allowed —
+		// resolved by overlayImporter to the synthetic packages (real-Go
+		// sources; see synth_errors.go / synth_sort.go).
 		// Every other import is still a scope error (WS G import overlay).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" {
+		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -676,9 +689,10 @@ func ExportFile(path string) (string, error) {
 	// via the synthetic overlay package (four primitives).
 	// P3-M4 (WS C, ADR-0004): "sync/atomic" and "unsafe" likewise.
 	// P3-M5 (WS E, ADR-0005): "time" and "context" likewise.
+	// P3-M7 (wave 1): "errors" and "sort" likewise.
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" {
+		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -772,12 +786,17 @@ func ExportFile(path string) (string, error) {
 	// package vars become document globals. Intrinsics (time.Now etc.)
 	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
+	needErrors, needSort := false, false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
 			needTime = true
 		case "context":
 			needTime, needContext = true, true
+		case "errors":
+			needErrors = true
+		case "sort":
+			needSort = true
 		}
 	}
 	if needTime {
@@ -787,6 +806,18 @@ func ExportFile(path string) (string, error) {
 	}
 	if needContext {
 		if err := e.importSyntheticPackage(getSyntheticPackage("context")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): synthetic errors/sort are self-contained (no
+	// synthetic->synthetic imports), so no ordering constraints.
+	if needErrors {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+	}
+	if needSort {
+		if err := e.importSyntheticPackage(getSyntheticPackage("sort")); err != nil {
 			return "", err
 		}
 	}
@@ -5742,7 +5773,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" {
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}
