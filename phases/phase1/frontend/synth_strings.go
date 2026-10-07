@@ -2232,14 +2232,20 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		err error
 	}
 
-	// __stringsReaderRead is the real Reader.Read (gc 1.27.1 algorithm,
-	// verbatim): needs only io.EOF — no interface dispatch.
+	// __stringsReaderRead is the real Reader.Read (gc 1.27.1 algorithm):
+	// needs only io.EOF — no interface dispatch. The copy from the
+	// string is a manual loop: the frozen factory rejects copy() with a
+	// string source (WS D: string<->[]byte conversions).
 	func __stringsReaderRead(r *Reader, b []byte) stringsReaderReadPair {
 		if r.i >= int64(len(r.s)) {
 			return stringsReaderReadPair{0, io.EOF}
 		}
 		r.prevRune = -1
-		n := copy(b, r.s[r.i:])
+		var n int
+		for n < len(b) && r.i+int64(n) < int64(len(r.s)) {
+			b[n] = r.s[r.i+int64(n)]
+			n++
+		}
 		r.i += int64(n)
 		return stringsReaderReadPair{n, nil}
 	}
@@ -2257,8 +2263,10 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		err error
 	}
 
-	// __stringsReaderReadAt is the real Reader.ReadAt (gc 1.27.1,
-	// verbatim): cannot modify state — see io.ReaderAt.
+	// __stringsReaderReadAt is the real Reader.ReadAt (gc 1.27.1):
+	// cannot modify state — see io.ReaderAt. The copy from the string
+	// is a manual loop (see __stringsReaderRead: the frozen factory
+	// rejects copy() with a string source).
 	func __stringsReaderReadAt(r *Reader, b []byte, off int64) stringsReaderReadAtPair {
 		if off < 0 {
 			return stringsReaderReadAtPair{0, errors.New("strings.Reader.ReadAt: negative offset")}
@@ -2266,7 +2274,11 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		if off >= int64(len(r.s)) {
 			return stringsReaderReadAtPair{0, io.EOF}
 		}
-		n := copy(b, r.s[off:])
+		var n int
+		for n < len(b) && off+int64(n) < int64(len(r.s)) {
+			b[n] = r.s[off+int64(n)]
+			n++
+		}
 		if n < len(b) {
 			return stringsReaderReadAtPair{n, io.EOF}
 		}

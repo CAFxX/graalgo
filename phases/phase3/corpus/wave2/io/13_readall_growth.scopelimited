@@ -1,2 +1,0 @@
-reason: io.ReadAll's growth loop needs r.Read, a 2-result call on an interface value; v1 cannot emit or call multi-result functions (WS D)
-retest: WS D multi-result calls (exporter + ADR-0003 interface dispatch); then give ReadAll a real __-helper + Appendix M entry and re-run

@@ -370,7 +370,7 @@ public final class ReflectTypes {
             case "int" -> GoKind.INT64;
             case "int8" -> GoKind.INT8;
             case "int16" -> GoKind.INT16;
-            case "int32" -> GoKind.INT32;
+            case "int32", "rune" -> GoKind.INT32;
             case "int64" -> GoKind.INT64;
             case "uint" -> GoKind.UINT64;
             case "uint8", "byte" -> GoKind.UINT8;

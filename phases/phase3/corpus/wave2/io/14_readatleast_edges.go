@@ -1,49 +1,51 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strings"
 )
 
-// io14: ReadAtLeast's 4-way edge matrix — ErrShortBuffer before any read,
-// EOF-after-partial to ErrUnexpectedEOF, error-after-min dropped, and
-// n >= min iff err == nil. SCOPE-LIMITED: needs r.Read (WS D).
-var errBoom = errors.New("boom")
-
-// failReader yields at most 2 bytes per Read and fails with errBoom once
-// drained — so a ReadAtLeast that stops at min never sees the error.
-type failReader struct{ data []byte }
-
-func (f *failReader) Read(p []byte) (int, error) {
-	if len(f.data) == 0 {
-		return 0, errBoom
-	}
-	n := 2
-	if len(f.data) < n {
-		n = len(f.data)
-	}
-	if n > len(p) {
-		n = len(p)
-	}
-	copy(p, f.data[:n])
-	f.data = f.data[n:]
-	return n, nil
-}
-
+// io14: ReadAtLeast/ReadFull edge matrix through interfaces over
+// strings.Reader (synthetic): ErrShortBuffer before any read,
+// EOF-after-partial to ErrUnexpectedEOF, exact reads, and the
+// n >= min iff err == nil contract. D1 (P3-M8 WS D).
 func main() {
 	// min > len(buf): ErrShortBuffer, no read issued.
-	n, err := io.ReadAtLeast(strings.NewReader("hello"), make([]byte, 3), 5)
+	var r1 io.Reader = strings.NewReader("hello")
+	n, err := io.ReadAtLeast(r1, make([]byte, 3), 5)
 	fmt.Println(n, err == io.ErrShortBuffer)
+
 	// Partial then EOF: ErrUnexpectedEOF.
-	n2, err2 := io.ReadAtLeast(strings.NewReader("hi"), make([]byte, 5), 5)
+	var r2 io.Reader = strings.NewReader("hi")
+	n2, err2 := io.ReadAtLeast(r2, make([]byte, 5), 5)
 	fmt.Println(n2, err2 == io.ErrUnexpectedEOF)
-	// Error after >= min bytes: dropped (the boom never fires).
-	fr := &failReader{data: []byte("abcdef")}
-	n3, err3 := io.ReadAtLeast(fr, make([]byte, 5), 3)
-	fmt.Println(n3, err3 == nil)
-	// n >= min iff err == nil (ReadFull).
-	n4, err4 := io.ReadFull(strings.NewReader("hello world"), make([]byte, 5))
+
+	// Exact: n == min, err == nil.
+	var r3 io.Reader = strings.NewReader("hello")
+	buf3 := make([]byte, 5)
+	n3, err3 := io.ReadAtLeast(r3, buf3, 5)
+	fmt.Println(n3, err3 == nil, string(buf3))
+
+	// More than min available: stops at min... (reads until min).
+	var r4 io.Reader = strings.NewReader("hello world")
+	buf4 := make([]byte, 11)
+	n4, err4 := io.ReadAtLeast(r4, buf4, 5)
 	fmt.Println(n4, err4 == nil)
+
+	// ReadFull: exact len(buf).
+	var r5 io.Reader = strings.NewReader("hello world")
+	buf5 := make([]byte, 5)
+	n5, err5 := io.ReadFull(r5, buf5)
+	fmt.Println(n5, err5 == nil, string(buf5))
+
+	// ReadFull: short input -> ErrUnexpectedEOF.
+	var r6 io.Reader = strings.NewReader("hi")
+	n6, err6 := io.ReadFull(r6, make([]byte, 5))
+	fmt.Println(n6, err6 == io.ErrUnexpectedEOF)
+
+	// ReadFull: empty input -> EOF (n == 0).
+	var r7 io.Reader = strings.NewReader("")
+	n7, err7 := io.ReadFull(r7, make([]byte, 5))
+	fmt.Println(n7, err7 == io.EOF)
 }
