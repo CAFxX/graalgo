@@ -30,6 +30,10 @@ var (
 var syntheticSources = map[string]string{
 	"time":    syntheticTimeSource,
 	"context": syntheticContextSource,
+	// P3-M7 (wave 1): synthetic encoding/xml package (real-Go source in
+	// synth_xml.go). Self-contained (no imports); the token-stream
+	// desugar lives in mrdesugar_m5.go (mrXmlToken).
+	"encoding/xml": syntheticXmlSource,
 }
 
 // getSyntheticPackage parses and type-checks the embedded source for
@@ -467,7 +471,7 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		return false
 	}
 	p := fn.Pkg().Path()
-	if p != "time" && p != "context" {
+	if p != "time" && p != "context" && p != "encoding/xml" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -478,8 +482,12 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 }
 
 func multiResultSyntheticError(fn *types.Func) error {
-	return scopeErrorf("%s.%s is not in M5 scope (multi-result calls need WS D; re-test when it lands)",
-		fn.Pkg().Path(), fn.Name())
+	milestone := "M5"
+	if fn.Pkg().Path() == "encoding/xml" {
+		milestone = "M7"
+	}
+	return scopeErrorf("%s.%s is not in %s scope (multi-result calls need WS D; re-test when it lands)",
+		fn.Pkg().Path(), fn.Name(), milestone)
 }
 
 // timerScopeErrorf is the fail-fast for zero-value Timer/Ticker
