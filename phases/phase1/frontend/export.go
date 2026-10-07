@@ -868,8 +868,10 @@ func ExportFile(path string) (string, error) {
 			needJson = true
 		case "encoding/csv":
 			needCsv = true
+			needErrors = true
 		case "encoding/gob":
 			needGob = true
+			needErrors = true
 		case "encoding/base32":
 			needBase32 = true
 		case "encoding/base64":

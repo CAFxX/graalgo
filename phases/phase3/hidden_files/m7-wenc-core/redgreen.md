@@ -173,3 +173,13 @@ until then.
   desugar entries, no corpus dir; interface methods fail fast.
 - Corpus graalgo legs are integration-gated (runner hardcodes the
   integration worktree path).
+
+## P3-M7-GAP-5: __asn1Marshal panics on float64 (found by code review 2026-10-07)
+- `__asn1Marshal` panics on float64 input; gc returns a `StructuralError`.
+- Panic vs handled error divergence.
+- Re-test trigger: asn1 corpus with float64.
+
+## P3-M7-GAP-6: Promoted methods fail at call sites (found by code review 2026-10-07)
+- `export.go:2448` only consults `methodIndex`, not promoted methods.
+- Breaks `binary.NativeEndian.PutUint16` and user code with embedded structs.
+- Re-test trigger: corpus with promoted method calls.

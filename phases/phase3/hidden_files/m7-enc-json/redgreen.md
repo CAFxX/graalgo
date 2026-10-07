@@ -64,3 +64,19 @@ Fail-fast (exact gc signatures, panic bodies):
   as an error (like gc). No divergence expected.
 - **Streaming**: `Decoder`/`Encoder` types exist with correct signatures
   but cannot be constructed or used in v1 (WS D). Re-test when WS D lands.
+
+## P3-M7-GAP-2: json.Marshal float32 precision (found by code review 2026-10-07)
+- `json.Marshal(float32(3.14))` produces `"3.140000104904175"`; gc 1.27.1 produces `"3.14"`.
+- Root cause: `synth_json.go:1821-1828` converts float32 to float64 then formats with float64-shortest. gc uses float32-shortest.
+- Fix requires float32-specific shortest formatting (not available in synthetic package's imports).
+- Re-test trigger: differential corpus with float32 values.
+
+## P3-M7-GAP-3: json.Marshal([]byte) panics (found by code review 2026-10-07)
+- `json.Marshal([]byte{1,2,3})` panics; gc base64-encodes to `"AQID"`.
+- Root cause: missing case in `marshalValue` for `[]byte`.
+- Re-test trigger: corpus with []byte values.
+
+## P3-M7-GAP-4: json.Decoder.Buffered() silent stub (found by code review 2026-10-07)
+- `synth_json.go:2291` returns empty instead of buffered data.
+- This is a silent stub (not a fail-fast) — violates M7 "no silent stubs" rule.
+- Re-test trigger: streaming decoder corpus.
