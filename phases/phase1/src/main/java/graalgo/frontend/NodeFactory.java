@@ -2952,6 +2952,15 @@ public final class NodeFactory {
         GoKind elemKind = kindOf(ctx, elemId, path);
         GoStructDescriptor desc =
                 elemKind == GoKind.STRUCT ? structDescriptorFor(ctx, elemId, path) : null;
+        // P3-M8b: new([N]T) needs the array length and element kind.
+        if (elemKind == GoKind.ARRAY) {
+            Json.Object arrayEntry = underlyingEntry(ctx, elemId, path);
+            Json.Object detail = arrayEntry.object("detail", path);
+            int arrayLen = detail.intValue("len", path);
+            int arrayElemId = detail.intValue("elem", path);
+            GoKind arrayElemKind = kindOf(ctx, arrayElemId, path);
+            return new NewNode(elemKind, desc, arrayLen, arrayElemKind);
+        }
         return new NewNode(elemKind, desc);
     }
 

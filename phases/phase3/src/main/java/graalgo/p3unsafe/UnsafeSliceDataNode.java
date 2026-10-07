@@ -5,25 +5,36 @@ import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.values.GoKind;
+import graalgo.values.GoPointer;
 import graalgo.values.GoSlice;
 
 /**
  * {@code unsafe.SliceData(s)} (P3-M8): the {@code "unsafeslicedata"} wire
- * node. A nil slice yields handle {@code 0}; otherwise the slice's
- * backing array is interned as an {@link UnsafeTable.ArrayRef} view.
+ * node. A nil slice yields a nil {@code *T} (Java null); otherwise the
+ * slice's backing array is interned as an {@link UnsafeTable.ArrayRef} view
+ * and wrapped in a {@code GoPointer}.
+ *
+ * <p>P3-M8b: the Go type is {@code *byte} (SliceData is generic since Go
+ * 1.20), so the kind is POINTER, not UNSAFE_POINTER. The handle is resolved
+ * to its referent immediately; consumers (e.g. {@code unsafe.Slice}) expect
+ * a {@code GoPointer}.
  */
 public final class UnsafeSliceDataNode extends GoExprNode {
     @Child private GoExprNode sliceChild;
 
     private UnsafeSliceDataNode(GoExprNode sliceChild) {
-        super(GoKind.UNSAFE_POINTER);
+        super(GoKind.POINTER);
         this.sliceChild = sliceChild;
     }
 
     @Override
-    public long executeLong(VirtualFrame frame) {
+    public Object executeObject(VirtualFrame frame) {
         Object s = sliceChild.executeObject(frame);
-        return UnsafeOps.sliceData((GoSlice) s);
+        long handle = UnsafeOps.sliceData((GoSlice) s);
+        if (handle == 0) {
+            return null; // nil *T: Java null per the POINTER convention.
+        }
+        return new GoPointer(UnsafeTable.current().resolve(handle));
     }
 
     /**
