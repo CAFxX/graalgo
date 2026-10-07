@@ -244,6 +244,10 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("bytes").pkg, nil
 	case "encoding/xml":
 		return getSyntheticPackage("encoding/xml").pkg, nil
+	case "strconv":
+		return getSyntheticPackage("strconv").pkg, nil
+	case "encoding/json":
+		return getSyntheticPackage("encoding/json").pkg, nil
 	case "encoding/csv":
 		return getSyntheticPackage("encoding/csv").pkg, nil
 	case "encoding/gob":
@@ -698,7 +702,7 @@ func ExportFile(path string) (string, error) {
 		// (real-Go sources; see synth_base32.go etc.).
 		// Every other import is still a scope error (WS G import overlay).
 		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
-			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" {
+			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 		// P3-M4: a non-blank "unsafe" import is a named scope error —
@@ -737,7 +741,7 @@ func ExportFile(path string) (string, error) {
 	for _, imp := range file.Imports {
 		p := strings.Trim(imp.Path.Value, "\"`")
 		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
-			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" {
+			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -832,6 +836,7 @@ func ExportFile(path string) (string, error) {
 	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
 	needErrors, needSort, needBytes, needMath, needStrings, needXml, needCsv, needGob := false, false, false, false, false, false, false, false
+	needStrconv, needJson := false, false
 	needBase32, needBase64, needHex, needBinary := false, false, false, false
 	needAscii85, needPem, needAsn1, needEncoding := false, false, false, false
 	for _, imp := range file.Imports {
@@ -855,6 +860,12 @@ func ExportFile(path string) (string, error) {
 			needStrings = true
 		case "encoding/xml":
 			needXml = true
+		case "strconv":
+			// strconv's ErrRange/ErrSyntax initializers call errors.New.
+			needStrconv = true
+			needErrors = true
+		case "encoding/json":
+			needJson = true
 		case "encoding/csv":
 			needCsv = true
 		case "encoding/gob":
@@ -940,6 +951,18 @@ func ExportFile(path string) (string, error) {
 	}
 	if needGob {
 		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/gob")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M7 (wave 1): strconv + encoding/json (see synth_strconv.go,
+	// synth_json.go).
+	if needStrconv {
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
+	}
+	if needJson {
+		if err := e.importSyntheticPackage(getSyntheticPackage("encoding/json")); err != nil {
 			return "", err
 		}
 	}
@@ -5970,7 +5993,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
 			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" ||
-				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" {
+				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

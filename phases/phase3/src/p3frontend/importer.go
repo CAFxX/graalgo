@@ -148,6 +148,16 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticGobPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "strconv":
+		// P3-M7 (wave 1): synthetic strconv (see synth_strconv.go).
+		pkg := syntheticStrconvPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
+	case "encoding/json":
+		// P3-M7 (wave 1): synthetic encoding/json (see synth_json.go).
+		pkg := syntheticJsonPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	case "encoding/base32":
 		// P3-M7 (wave 1): synthetic encoding/base32 (m7-wenc-core).
 		// Self-contained: no synthetic dependencies.
