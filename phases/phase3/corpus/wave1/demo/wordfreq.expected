@@ -1,0 +1,52 @@
+total=25
+unique=8
+skipped=5
+mean_len=7.08
+median_len=8.00
+mean_score=0.7404
+std_score=0.1872
+top=compiler=6
+{
+  "breakdown": {
+    "channel": {
+      "count": 3,
+      "mean_score": "0.8167"
+    },
+    "compiler": {
+      "count": 6,
+      "mean_score": "0.5667"
+    },
+    "concurrency": {
+      "count": 1,
+      "mean_score": "0.9900"
+    },
+    "go": {
+      "count": 6,
+      "mean_score": "0.8000"
+    },
+    "goroutine": {
+      "count": 5,
+      "mean_score": "0.9500"
+    },
+    "runtime": {
+      "count": 2,
+      "mean_score": "0.4000"
+    },
+    "scheduler": {
+      "count": 0,
+      "mean_score": "n/a"
+    },
+    "unicode-hello": {
+      "count": 2,
+      "mean_score": "0.6600"
+    }
+  },
+  "mean_len": "7.08",
+  "mean_score": "0.7404",
+  "median_len": "8.00",
+  "skipped": 5,
+  "std_score": "0.1872",
+  "top": "compiler=6",
+  "total": 25,
+  "unique": 8
+}
