@@ -132,6 +132,12 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		pkg := syntheticMathPackage()
 		imp.pkgs[path] = pkg
 		return pkg, nil
+	case "encoding/xml":
+		// P3-M7 (wave 1): synthetic encoding/xml (see synth_xml.go).
+		// Self-contained: no synthetic->synthetic imports.
+		pkg := syntheticXmlPackage()
+		imp.pkgs[path] = pkg
+		return pkg, nil
 	}
 	ref, err := imp.loader.ResolveImport(imp.mainDir, path)
 	if err != nil {
