@@ -2105,7 +2105,7 @@ func VisibleFields(t Type) []StructField {
 	// embedded field tree, keeping the shallowest path to each name and
 	// discarding ambiguous (multiply-defined) names.
 	type fieldScan struct {
-		typ   rtype
+		tok   unsafe.Pointer
 		index []int
 	}
 	var fields []StructField
@@ -2116,16 +2116,16 @@ func VisibleFields(t Type) []StructField {
 	}
 	seen := map[string]*seenEntry{}
 	// current level and next level.
-	current := []fieldScan{{typ: rt}}
+	current := []fieldScan{{tok: rt.tok}}
 	next := []fieldScan{}
 	// visited anonymously-embedded struct types (cycle guard).
 	visited := map[unsafe.Pointer]bool{rt.tok: true}
 	for len(current) > 0 {
 		next = next[:0]
 		for _, scan := range current {
-			nf := scan.typ.NumField()
+			nf := rtype{tok: scan.tok}.NumField()
 			for i := 0; i < nf; i++ {
-				f := __reflect_tField(scan.typ.tok, i)
+				f := __reflect_tField(scan.tok, i)
 				isUnexported := f.PkgPath != ""
 				// Build the index path.
 				idx := make([]int, len(scan.index)+1)
@@ -2143,7 +2143,7 @@ func VisibleFields(t Type) []StructField {
 					ftok := ft.(rtype).tok
 					if !visited[ftok] {
 						visited[ftok] = true
-						next = append(next, fieldScan{typ: ft.(rtype), index: idx})
+						next = append(next, fieldScan{tok: ft.(rtype).tok, index: idx})
 					}
 				}
 				// Record the field at this depth unless shadowed.
