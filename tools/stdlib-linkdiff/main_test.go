@@ -344,3 +344,41 @@ func TestProvidedExtraction(t *testing.T) {
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
+
+// (P2-1) routes that match zero linknames are flagged as stale --
+// never silently listed under "Routes applied" with no indication.
+func TestStaleRoutesFlagged(t *testing.T) {
+	graalgo := graalgoRoot(t)
+	provided, err := loadProvided(options{graalgo: graalgo})
+	if err != nil {
+		t.Fatalf("loadProvided: %v", err)
+	}
+	routesPath := filepath.Join(t.TempDir(), "routes.txt")
+	content := "runtime.writeBarrier -> const:false # fixture mirror\n" +
+		"bogus.gone -> const:false # no such linkname in the fixture tree\n"
+	if err := os.WriteFile(routesPath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	routes, err := loadRoutes(routesPath)
+	if err != nil {
+		t.Fatalf("loadRoutes: %v", err)
+	}
+	scan, err := ScanTree(fixtureRoot(t), "linux", "amd64", nil)
+	if err != nil {
+		t.Fatalf("ScanTree: %v", err)
+	}
+	rep := Classify(scan, provided, routes, options{graalgo: graalgo})
+	if len(rep.StaleRoutes) != 1 || rep.StaleRoutes[0] != "bogus.gone" {
+		t.Fatalf("StaleRoutes = %v, want [bogus.gone]", rep.StaleRoutes)
+	}
+	for _, s := range rep.StaleRoutes {
+		if s == "runtime.writeBarrier" {
+			t.Fatal("live route runtime.writeBarrier wrongly flagged stale")
+		}
+	}
+	// The stale route is still listed as applied (it was attempted);
+	// the flag is the new signal.
+	if len(rep.RoutesApplied) != 2 {
+		t.Fatalf("RoutesApplied = %d, want 2", len(rep.RoutesApplied))
+	}
+}

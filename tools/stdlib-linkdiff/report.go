@@ -79,6 +79,10 @@ type Report struct {
 	ProvidedCount   int               `json:"provided_symbol_count"`
 	ProvidedSources map[string]int    `json:"provided_by_source"`
 	RoutesApplied   []Route           `json:"routes_applied"`
+	// StaleRoutes lists routes that matched zero linknames in this
+	// scan: a route whose target disappeared from the tree (or was
+	// mistyped) must not sit silently. Always emitted (possibly []).
+	StaleRoutes     []string          `json:"stale_routes"`
 	ParseErrors     []string          `json:"parse_errors_detail,omitempty"`
 	ExcludedSample  []string          `json:"constraint_excluded_sample,omitempty"`
 }
@@ -126,6 +130,7 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
 		routeByTarget[r.Target] = r
 	}
 	rep.RoutesApplied = routes
+	routeHits := map[string]int{}
 
 	skipIdx := map[string]int{}
 	skipCount := map[string]int{}
@@ -160,6 +165,7 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
 				e.Status = StatusRouted
 				e.Route = r.Target + " -> " + r.Replacement
 				e.RouteReason = r.Reason
+				routeHits[r.Target]++
 			} else if prov, ok := provided.Symbols[e.Target]; ok {
 				e.Status = StatusSatisfied
 				e.ProvidedFrom = prov
@@ -207,6 +213,17 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
 	}
 	sort.Slice(rep.SkipList, func(i, j int) bool { return rep.SkipList[i].Target < rep.SkipList[j].Target })
 	rep.SkipListSize = len(rep.SkipList)
+
+	// Stale routes: routes that matched zero linknames in this scan.
+	// A route whose target disappeared from the tree (or was mistyped)
+	// must not sit silently under "Routes applied".
+	rep.StaleRoutes = []string{}
+	for _, r := range routes {
+		if routeHits[r.Target] == 0 {
+			rep.StaleRoutes = append(rep.StaleRoutes, r.Target)
+		}
+	}
+	sort.Strings(rep.StaleRoutes)
 
 	// Duplicates: local names linked more than once.
 	var dupKeys []string
@@ -305,6 +322,13 @@ func markdownSummary(rep *Report) string {
 		b.WriteString("## Routes applied\n\n")
 		for _, r := range rep.RoutesApplied {
 			fmt.Fprintf(&b, "- `%s` → `%s`: %s\n", r.Target, r.Replacement, r.Reason)
+		}
+		b.WriteString("\n")
+	}
+	if len(rep.StaleRoutes) > 0 {
+		b.WriteString("## Stale routes (matched zero linknames)\n\n")
+		for _, t := range rep.StaleRoutes {
+			fmt.Fprintf(&b, "- `%s`\n", t)
 		}
 		b.WriteString("\n")
 	}
