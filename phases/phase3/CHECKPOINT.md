@@ -1051,3 +1051,62 @@ BLOCKED: M7 rebase clearance (F12). Zero graalgo legs run. No sign-off.
   synth_io.go +351, DESIGN.md, exportIfaceMethodCall/methodTableEntries branches);
   commit message describes only incidental fixes. Process rule: commit messages
   must describe their largest hunk.
+
+## P3-M8b coordinator startup (2026-10-07 ~22:36 CEST, coordinator graalgo-phase3-m8b)
+
+Branch m8b from m8-pipeline@b93562d. Packages: os, syscall, reflect/unsafe, crypto.
+Registry graalgo-phase3-m8b active.
+
+**os progress (commit c29507a):**
+- Root-caused 0/30 "methods not found": missing needOs wiring (overlay
+  importer resolved the package but declarations never joined methodIndex).
+- Added alias-aware method resolution (derefNamed, findMethodByName,
+  writeSubstString Unalias) for os.FileMode = fs.FileMode etc.
+- Stubbed Expand/getShellName (multi-result WS D, honest scope panics).
+- Rebuilt gofrontend (was leftover debug wrapper).
+- Remaining: "range over UNTYPED_STRING" WS-E in Java AST builder during
+  os package export. Under investigation.
+
+**Next:** syscall (0/8 WS-E), reflect (Java conversion), unsafe (6/2/8), crypto (not run).
+
+## P3-M8b os update (2026-10-07 ~23:15 CEST)
+
+**Fixed (commits c29507a, 7136954):**
+- needOs wiring (was 0/30 "methods not found")
+- Alias-aware method resolution (derefNamed, findMethodByName, Unalias)
+- Untyped string constants in range (io/fs FileMode.String)
+- Stubbed Expand/getShellName/__fileWriteString (multi-result/string-conv WS D)
+
+**Blocked:** string([]byte) conversions in __readlink/__hostname/__formatUint.
+Java NodeFactory rejects "copy from a string source" (WS D). Needs Java
+runtime support for string<->[]byte conversions. Corpus needs Readlink
+(04_path_ops) and Hostname (06_identity) with real values — cannot stub.
+
+**Pivot:** crypto baseline running; reflect/unsafe next. Will return to
+os WS-D with a dedicated worker or after other packages land.
+
+## P3-M8b status (2026-10-07 ~23:30 CEST)
+
+**DONE: crypto 12/12** (aes 1, cipher 3, hash 4, hmac 2, rand 1, subtle 1;
+all differential byte-identical, gmp=1,4).
+
+**os:** Infrastructure fixed (needOs, aliases, untyped ranges). Blocked on
+WS-D string<->[]byte conversions in __readlink/__hostname/__formatUint.
+Java NodeFactory.buildCopyBuiltin rejects "copy from a string source".
+Needs Java runtime support. Corpus needs real values (cannot stub).
+
+**syscall:** 0/8. Same WS-D blocker as os (shared via io/fs). Plus
+package-level var initializer issue (worker was dispatched by prior
+coordinator; no longer active).
+
+**reflect:** Blocked on Java "illegal conversion: INTERFACE -> INT64"
+in ConvertNode. Synthetic reflect package triggers it on basic TypeOf.
+
+**unsafe:** 6 passed, 2 scope-limited, 8 failed. Failures are Java
+"illegal conversion: UNSAFE_POINTER -> POINTER" in ConvertNode.
+
+**Common thread:** Remaining blockers are Java-side (NodeFactory,
+ConvertNode) — not Go frontend. Need Java expertise or dedicated workers.
+
+**Commits:** c29507a (os wiring + aliases), 7136954 (untyped range + stubs).
+Branch m8b.
