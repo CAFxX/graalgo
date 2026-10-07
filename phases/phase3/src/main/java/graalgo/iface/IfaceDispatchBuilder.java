@@ -213,7 +213,9 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
         GoKind dataKind;
         GoTypeDescriptor descriptor;
         if (from.isUntyped()) {
-            dataKind = defaultKind(from);
+            // P3-M7R2: delegate both the kind and the descriptor to the
+            // factory — single source of truth.
+            dataKind = NodeFactory.defaultKind(from);
             // P3-M7R2: delegate to the factory's default-type descriptor
             // ("int", not "int64") so this replica mints the identical
             // instance the factory's boxInterface mints.
@@ -254,16 +256,5 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
     private static GoTypeDescriptor replicaDescriptor(NodeFactory.BuildCtx ctx, int fromId,
             String path) {
         return NodeFactory.canonicalDescriptorFor(ctx, fromId, path);
-    }
-
-    /** Replica of the factory's private {@code defaultKind}. */
-    private static GoKind defaultKind(GoKind untyped) {
-        return switch (untyped) {
-            case UNTYPED_INT -> GoKind.INT64;
-            case UNTYPED_FLOAT -> GoKind.FLOAT64;
-            case UNTYPED_STRING -> GoKind.STRING;
-            case UNTYPED_BOOL -> GoKind.BOOL;
-            default -> throw new FrontendException("no default type for kind " + untyped + " (WS E)");
-        };
     }
 }

@@ -1324,8 +1324,9 @@ public final class NodeFactory {
         return BASIC_NAMED_DESCS.containsValue(d);
     }
 
-    /** Default kind of an untyped constant kind (for interface boxing). */
-    static GoKind defaultKind(GoKind untyped) {
+    /** Default kind of an untyped constant kind (for interface boxing).
+     * Public for the phase-3 boxing replica. */
+    public static GoKind defaultKind(GoKind untyped) {
         return switch (untyped) {
             case UNTYPED_INT -> GoKind.INT64;
             case UNTYPED_FLOAT -> GoKind.FLOAT64;
