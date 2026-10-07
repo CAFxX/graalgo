@@ -9,7 +9,6 @@ import graalgo.values.GoMap;
 import graalgo.values.GoPointer;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
-import graalgo.values.GoTypeDescriptor;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -180,9 +179,10 @@ public final class FmtVerbMatrixTest {
     }
 
     private static Fmt.Arg errArg(String msg) {
-        GoInterface gi = new GoInterface(
-            new GoTypeDescriptor("*errors.errorString", GoKind.STRING, false),
-            GoString.fromUtf8(msg), null);
+        // Must use Fmt's canonical construction: the *errors.errorString
+        // representation is unique (GoPointer -> struct{ s string }); a
+        // hand-built shape here would drift from the real one.
+        GoInterface gi = Fmt.errorStringInterface(GoString.fromUtf8(msg));
         return new Fmt.Arg(gi, GoKind.INTERFACE, "error");
     }
 

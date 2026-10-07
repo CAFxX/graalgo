@@ -143,11 +143,35 @@ public final class Fmt {
      * in an interface value whose dynamic type name is
      * {@code *errors.errorString} (gc's concrete error type), so
      * {@code %v}/{@code %s}/{@code %q}/{@code %T} all match gc.
+     *
+     * <p>The representation is canonical and unique: a {@link GoPointer} to
+     * a {@link GoStruct} with a single {@code s} field holding the message
+     * {@link GoString} — byte-identical in shape to what the M7 synthetic
+     * {@code errors} package produces for {@code errors.New}. There is
+     * exactly one {@code *errors.errorString} representation in the
+     * runtime; both the {@code Error()} method dispatch and the printer
+     * rely on it.
      */
     public static GoInterface errorf(String format, Arg[] args) {
-        GoString msg = sprintf(format, args);
+        return errorStringInterface(sprintf(format, args));
+    }
+
+    /**
+     * Canonical {@code *errors.errorString} interface value wrapping the
+     * given message. This is the single construction point for the unique
+     * representation (see {@link #errorf}): a {@link GoPointer} to a
+     * {@link GoStruct} with an {@code s} field. Every producer — the
+     * {@code Errorf} intrinsic, tests, anything else — must go through
+     * here so the representation cannot drift again.
+     */
+    static GoInterface errorStringInterface(GoString msg) {
+        GoStructDescriptor desc = GoStructDescriptor.layout(
+                "errors.errorString", List.of("s"), List.of(GoKind.STRING));
+        GoStruct st = new GoStruct(desc, new long[0], new Object[] {msg});
         return new GoInterface(
-                new GoTypeDescriptor("*errors.errorString", GoKind.STRING, false), msg, null);
+                new GoTypeDescriptor("*errors.errorString", GoKind.POINTER, false),
+                new GoPointer(st),
+                null);
     }
 
     /** True when this interface value is the Errorf errorString stand-in. */
@@ -158,21 +182,17 @@ public final class Fmt {
 
     /**
      * Message bytes of an {@code *errors.errorString} interface value.
-     * The phase-1 {@code Errorf} stand-in carries the message {@link GoString}
-     * directly as the interface data; the M7 synthetic {@code errors}
-     * package produces a real pointer to {@code struct{ s string }}, so
-     * dereference and read the {@code s} field.
+     * The representation is canonical (see {@link #errorf}): a
+     * {@link GoPointer} to a struct with an {@code s} field holding the
+     * message {@link GoString}. Exactly one shape exists; anything else
+     * is a bug.
      */
     private static byte[] errorStringBytes(GoInterface gi) {
         Object data = gi.data();
-        if (data instanceof GoString gs) {
-            return gs.bytes();
-        }
-        if (data instanceof graalgo.values.GoPointer gp
-                && gp.referent() instanceof graalgo.values.GoStruct st) {
-            graalgo.values.GoStructDescriptor desc = st.descriptor();
+        if (data instanceof GoPointer gp && gp.referent() instanceof GoStruct st) {
+            GoStructDescriptor desc = st.descriptor();
             for (int i = 0; i < desc.fields().size(); i++) {
-                graalgo.values.GoStructDescriptor.Field f = desc.field(i);
+                GoStructDescriptor.Field f = desc.field(i);
                 if ("s".equals(f.name()) && !f.inLongs()
                         && st.getObject(f.index()) instanceof GoString gs) {
                     return gs.bytes();
@@ -673,16 +693,14 @@ public final class Fmt {
             GoKind k = normalize(arg.kind());
             if (k == GoKind.INTERFACE && v instanceof GoInterface gi
                     && !gi.isNil() && isErrorString(gi)) {
-                // The errorString stand-in models *errors.errorString (a
-                // pointer to struct{ s string }). Verb dispatch mirrors Go:
+                // The errorString value models *errors.errorString (a
+                // pointer to struct{ s string }); see errorf for the
+                // canonical representation. Verb dispatch mirrors Go:
                 // method dispatch (Error()) only for v/s/x/X/q (and w under
                 // wrapErrs); %p is the (erased) address; %#v is Go syntax;
                 // every other verb — and every verb while erroring (method
                 // dispatch disabled, Go's p.erroring) — takes the
                 // pointer-to-struct path.
-                // P3-M7: the data is either the phase-1 stand-in (the
-                // GoString message directly) or a real *errors.errorString
-                // (M7 synthetic errors): a GoPointer to struct{ s string }.
                 byte[] msg = errorStringBytes(gi);
                 if (sharpV) {
                     writeUtf8(("&errors.errorString{s:"));
@@ -1366,7 +1384,7 @@ public final class Fmt {
                     fmt0x64(0, !sharp);
                 }
                 case 'p' -> {
-                    // The errorString stand-in is conceptually *errors.errorString.
+                    // The errorString value is conceptually *errors.errorString.
                     if (arg.kind() == GoKind.INTERFACE && arg.value() instanceof GoInterface gi
                             && !gi.isNil() && isErrorString(gi)) {
                         fmt0x64(0, !sharp);
