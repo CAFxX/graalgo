@@ -2039,7 +2039,11 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 	case map[string]any:
 		e.buf = append(e.buf, '{')
 		keys := jsonSortedKeys(v)
-		for i, k := range keys {
+		// P3-M7 WORKAROUND: range-over-slice drops the last element in
+		// synthetic packages (guest bug; re-test when fixed). Use manual
+		// indexing instead.
+		for i := 0; i < len(keys); i++ {
+			k := keys[i]
 			if i > 0 {
 				e.buf = append(e.buf, ',')
 			}
