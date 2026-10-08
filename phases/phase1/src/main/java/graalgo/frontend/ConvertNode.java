@@ -76,6 +76,11 @@ public final class ConvertNode extends GoExprNode {
             case INT8 -> (long) (byte) bits;
             case INT16 -> (long) (short) bits;
             case INT32 -> (long) (int) bits;
+            // P3-M8b: UINT8/UINT16 must mask in executeLong too (array indices
+            // call executeLong; without masking, uint8(x) returns x unchanged
+            // when x > 255, causing index-out-of-range panics).
+            case UINT8 -> bits & 0xFFL;
+            case UINT16 -> bits & 0xFFFFL;
             default -> bits;
         };
     }

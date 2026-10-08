@@ -1638,3 +1638,21 @@ Runtime failures are graalgo VM bugs, not synthetic code bugs:
   is sound). Retest: graalgo fixes NPE in sha256 path.
 
 Commits: 39d9eee (main fixes), c50b32b (AES pointer).
+
+## m8b4: crypto differential results + VM bugs (2026-10-08 ~14:15 CEST)
+
+Crypto worker completed: synthetic packages COMPLETE (12/12 export OK;
+commits 39d9eee, c50b32b, 1819c91). True differential: 2 passed, 22 failed,
+0 scope-limited. The 22 failures are VM bugs, not synthetic code bugs:
+1. AES: struct array field reads through embedding (index OOR in
+   encryptBlockGeneric) — retest: graalgo fixes embedded struct array reads.
+2. Hash: sha256 NPE + wrong outputs in others — retest: NPE fix + correctness.
+md5 verified correct under graalgo, proving the synthetic approach sound.
+VM-bug-fix worker dispatched for both root causes; scope-limit only if
+architectural. Reflect worker still running.
+
+## m8b4: third restart wave — doing crypto VM bugs directly (2026-10-08 ~14:20 CEST)
+
+Crypto VM-bug worker (9/9) died to daemon restart 4 minutes after spawn.
+Per the plan, no more re-dispatches for this item — coordinator investigating
+directly. Reflect worker (4/9) still alive and active after 9h; leaving it.
