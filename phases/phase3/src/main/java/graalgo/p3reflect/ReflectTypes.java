@@ -282,10 +282,15 @@ public final class ReflectTypes {
         for (int id = 0; id < n; id++) {
             infos[id] = shell(types, id);
         }
-        // Pass 2: resolve references and canonicalize.
-        for (int id = 0; id < n; id++) {
-            resolve(table, types, infos, id, functions, funcdeclSig);
-        }
+        // Pass 2: resolve references and canonicalize. Single call:
+        // resolve() mints tokens for every id (phase A) and builds every
+        // TypeInfo (phase B) itself; the M8 draft's per-id loop re-ran
+        // both phases n times (the id parameter was unused), an O(n^2)
+        // key recomputation that dominated startup on large type tables
+        // (e.g. the synthetic os package: 2297 types, minutes in build()).
+        // Both phases are idempotent (containsKey / byTok guards), so one
+        // call is semantics-preserving.
+        resolve(table, types, infos, functions, funcdeclSig);
         // Pass 3: rebuild every TypeInfo now that all children are built.
         // Pass 2 embeds cycle-cut shells (tok == -1) for types referenced
         // while under construction (e.g. *N's elem while building N);
@@ -477,7 +482,7 @@ public final class ReflectTypes {
     // ------------------------------------------------------------------
 
     private static void resolve(Table table, TypeTable types, TypeInfo[] shells,
-            int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
+            Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
         // Phase A: mint tokens for every id.
         int n = types.size();
         for (int i = 0; i < n; i++) {

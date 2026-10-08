@@ -116,4 +116,36 @@ public final class ReflectTypesTest {
         assertTrue(ptr.size == 8 && ptr.align == 8,
                 "unsafe.Pointer should be size 8 align 8, got " + ptr.size + "/" + ptr.align);
     }
+
+    /**
+     * M8b os-hang follow-up: {@code build()} used to call {@code resolve()}
+     * once per type id, and each call re-ran token minting + TypeInfo
+     * building over all ids (the id parameter was unused) — an O(n^2) key
+     * recomputation. On the synthetic os package (2297 types) build() took
+     * minutes, which a 60s corpus timeout misreported as a directory-
+     * iteration hang. This test pins the linear behavior: 1200 struct
+     * types install in ~1s; the old loop needed ~54s for the same table.
+     * Bound is 20s (13x headroom over the fixed code on a loaded VM).
+     */
+    public void testLargeTypeTableInstallIsLinear() {
+        StringBuilder sb = new StringBuilder("{\"types\": [");
+        sb.append("{\"kind\": \"basic\", \"detail\": "
+                + "{\"name\": \"int\", \"class\": \"int\", \"untyped\": false}}");
+        for (int i = 0; i < 1200; i++) {
+            sb.append(",{\"kind\": \"struct\", \"detail\": {\"fields\": ["
+                    + "{\"name\": \"a\", \"type\": 0, \"tag\": \"\", \"offset\": 0},"
+                    + "{\"name\": \"b\", \"type\": 0, \"tag\": \"\", \"offset\": 8},"
+                    + "{\"name\": \"c\", \"type\": 0, \"tag\": \"\", \"offset\": 16}"
+                    + "]}}");
+        }
+        sb.append("]}");
+        long t0 = System.nanoTime();
+        ReflectTypes.install(sb.toString(), Map.of());
+        double secs = (System.nanoTime() - t0) / 1e9;
+        assertTrue(secs < 20.0,
+                "install of 1201 types took " + secs + "s (O(n^2) resolve loop regressed?)");
+        // The 1200 structs are structurally identical, so canonical sharing
+        // mints one token for all of them; the timing bound above is the
+        // regression pin, not the token count.
+    }
 }
