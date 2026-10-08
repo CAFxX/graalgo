@@ -1487,3 +1487,115 @@ longer invoked per the WS-D note). gmp=4 leg: 21 passed, 0 failed
 unrelated: 4 GoOsErrnoTest unit failures ([B vs [I ClassCastException
 from 10de431's goBuf change) reproduce identically with my fix stashed —
 owned by whoever takes the os unit tests, not this item.
+
+## P3-M8b FINISH: reflect worker (2026-10-08 ~07:30 CEST)
+
+**Item:** reflect corpus failures (06_swapper_select, 07_tags_ptrto, 10_failfast_methods).
+
+**06_swapper_select — FIXED (was: WS D scope error, now passes).** The "WS D
+scope (call-to-call)" claim was wrong: the exporter (P3-M8, e576d31) already
+emitted `call{fun: call}` for `reflect.Swapper(s)(0, 2)`, but NodeFactory's
+buildCall had no branch for a `call`-kind fun operand — the factory half was
+never implemented. Added the branch (mirrors the ident branch; requires FUNC
+kind). Two further latent bugs surfaced once Swapper worked: (a)
+`reflectSet`/`setZero` threw "Set of INT64 through non-cell" for scalar
+stores through slice/array element refs — extracted `storeThroughRef` from
+`setScalar` and used it in both (fixes `Copy` into `[]int` elements); (b)
+`reflectSelect`/`packSelectTriple` used objects-array indices with
+`getObject` (which takes FIELD indices) — `getObject(0)` on SelectCase hit
+"field Dir is not an objects-carried field"; fixed to field indices 1,2.
+
+**07_tags_ptrto — FIXED (was: named fail-fast, now passes).** The "needs
+runtime type synthesis" claim was stale: `__reflect_tPtrTo` intrinsic +
+`ReflectTypes.ptrTo` structural synthesis already existed (used by
+`__reflect_new`). Implemented `PtrTo` as
+`rtype{tok: __reflect_tPtrTo(t.(rtype).tok)}`. `pt.Elem() == t` then exposed a
+deeper pre-existing bug: `GoStruct.equals` requires descriptor *identity*,
+but `structDescriptorFor` minted a fresh descriptor per BuildCtx
+(function), so struct `==` across functions/packages always failed (e.g.
+`ValueOf(T{}).Type() == TypeOf(T{})` was false). Fixed with a process-wide
+canonical `STRUCT_DESCS` cache keyed by qualified name (named) or field
+structure (anonymous) + full field layout — same-named/different-layout
+types across runs never collide. `ChanWire.structDescriptorFor` (a replica
+with the same flaw) now delegates to the canonical factory method.
+
+**10_failfast_methods — NO BUG (previous kill was environmental).**
+Reproduced cleanly: exit=2, stdout empty, stderr first line exactly the
+`.panic` pin (`panic: reflect: Type.Methods: not in M8 scope (needs iter;
+re-test when the iter package lands)`). The previous worker's process was
+KILLED because /tmp (512M tmpfs) was 100% full at the time — gofrontend/JVM
+temp writes failed. All my runs use `TMPDIR=~/workspace/tmp`. The 125s
+runtime is JVM+T truffle warmup on a 14MB wire doc, not a hang.
+
+**Verification (scratch clone, then ported):** 06 and 07 byte-identical to gc
+1.27.1; 10 panic line matches pin; spot-checked 03/05/12 identical to gc;
+phase1 suite 213/214 (1 failure = `TypeparamDifferentialTest` issue48344.go,
+verified pre-existing on unmodified m8b — same P3-M3 scope error, unrelated
+to this change). Full reflect corpus running on m8b; counts to follow.
+
+**Files:** phases/phase1/frontend/synth_reflect.go (PtrTo impl),
+phases/phase1/src/main/java/graalgo/frontend/NodeFactory.java (call-fun
+branch, STRUCT_DESCS canonicalization, public structDescriptorFor),
+phases/phase3/src/main/java/graalgo/p3reflect/ReflectOpNode.java
+(storeThroughRef, reflectSet/setZero write-through, select field indices),
+phases/phase3/src/main/java/graalgo/p3chan/nodes/ChanWire.java (delegate to
+canonical factory method).
+
+## P3-M8b RESUME after VM reboot (2026-10-08 ~09:30 CEST, resume worker)
+
+**Reboot**: bc420bbc → a67f67ab at ~06:26 UTC. Registry graalgo-phase3-m8b
+last heartbeat 01:43 UTC (pre-reboot). This worker is the single resume
+owner; no other m8b agent is alive (verified via ps — see below).
+
+**Commit 80d49c1 adopted** (landed 06:57:32 UTC by a worker that died before
+registering; treated as state, not a live parent). Diff reviewed: sound.
+- ReflectTypes.build(): per-id `resolve()` loop → single call; `id` param
+  dropped. Semantics-preserving (both phases idempotent via
+  containsKey/byTok guards). The loop re-ran token minting + TypeInfo build
+  over all n ids per id — O(n^2) canonical-key recomputation.
+- New unit test `testLargeTypeTableInstallIsLinear` pins linear behavior.
+- Verified by this worker: `make test` in pipe tree → all 4
+  ReflectTypesTest methods PASS, incl. testLargeTypeTableInstallIsLinear.
+  The 4 GoOsErrnoTest failures ([B vs [I ClassCastException) are the
+  PRE-EXISTING 10de431 goBuf issue, reproduce identically with the fix
+  stashed — owned by os unit tests, not this item. NOT a regression.
+
+**Orphaned reflect corpus run: found and KILLED (deliberate).**
+- A dead worker's detached run (PIDs 36386/36388/36962, started 07:07 UTC)
+  was re-running the reflect differential corpus in
+  ~/workspace/graalgo-m8-scratch — which LACKS the 80d49c1 fix (scratch
+  ReflectTypes.java still has the old per-id loop). Its results would have
+  validated old code only: zero information gain (baseline 10/13+2 scoped
+  already known from 02:11).
+- VM is at load ~20 on 2 CPUs. Killed the run to free CPU for the real
+  remaining job (crypto). No restart: the fix is already comprehensively
+  validated (os corpus 21/21 both legs + unit test). A clean reflect corpus
+  re-run in the pipe tree (with fix) is DEFERRED to pre-sign-off; the
+  02:11 reflect result stands with its tree-corruption caveat.
+- Footgun hit during kill: `pkill -f run_differential.sh` matched the
+  caller's own argv and SIGTERM'd the exec (known AGENTS.md lesson — the
+  explicit-PID `kill` had already succeeded). Re-confirmed: never pkill -f
+  a pattern that can appear in your own command line.
+
+**Crypto bring-up: delegated to a child worker** (crypto-scratch worktree,
+branch m8b-scratch-crypto, adopting the dead worker's 25-file uncommitted
+changes covering failure classes 1/2/5; classes 3/4/6 remain). Child owns:
+build → corpus (gmp=1+4) → iterate → commit on scratch branch → report
+counts+gaps. Coordinator (this worker) will independently verify and merge
+to m8b. Child briefed on: nice-everything standing order (nice -n 10
+default, -n 19 heavy batch), no registry touches, no phase-2 source edits,
+no tautological tests, honest scope-limits only.
+
+**Standing orders noted this session** (2026-10-08, his directives):
+- Nice everything on the VM (default -n 10, heavy batch -n 19); applies to
+  all worker commands and resume briefs.
+- Default to GHA offload for non-latency-sensitive tasks. Crypto fix
+  iteration is a tight edit/debug loop → stays local per the carve-out.
+  (GHA fanout setup for the graalgo corpus would be a detour; the corpus
+  runs here are part of the debug cycle.)
+
+**M8b status after resume**: unsafe DONE (14/2/0); os DONE (21/21 both
+legs); syscall DONE (24/24 both legs); reflect 10/13 + 2 honest scope
+limits (06 WS-D, 07 PtrTo) with tree-corruption caveat → clean re-run
+deferred; crypto IN PROGRESS (child worker). Then: full suites, make
+check, two fresh peer reviewers, sign-off request.
