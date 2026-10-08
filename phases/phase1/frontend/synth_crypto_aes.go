@@ -112,7 +112,9 @@ func NewCipher(key []byte) (cipher.Block, error) {
 // A Block is an instance of AES using a particular key.
 // It is safe for concurrent use.
 type Block struct {
-	block
+	// P3-M8b: holds *blockExpanded (not embedded value) to avoid
+	// large struct/array by-value copies (graalgo runtime issue).
+	be *blockExpanded
 }
 
 // blockExpanded is the block type used for all architectures except s390x,
@@ -240,9 +242,12 @@ func EncryptBlockInternal(c *Block, dst, src []byte) {
 // Encrypt one block from src into dst, using the expanded key xk.
 // P3-M8b: the expanded key is passed by value (frontend/v1 has no & on
 // selectors, WS D); the body only reads it, so the copy is exact.
-func encryptBlockGeneric(c blockExpanded, dst, src []byte) {
+func encryptBlockGeneric(c *Block, dst, src []byte) {
 	checkGenericIsExpected()
-	xk := c.enc[:]
+	// P3-M8b: takes *Block directly (not blockExpanded by value) to avoid
+	// large struct by-value passing (WS D workaround; graalgo runtime
+	// issue with 488-byte struct values).
+	xk := c.be.enc[:]
 
 	_ = src[15] // early bounds check
 	s0 := boBEUint32(src[0:4])
@@ -259,7 +264,7 @@ func encryptBlockGeneric(c blockExpanded, dst, src []byte) {
 	// Middle rounds shuffle using tables.
 	k := 4
 	var t0, t1, t2, t3 uint32
-	for r := 0; r < c.rounds-1; r++ {
+	for r := 0; r < c.be.rounds-1; r++ {
 		t0 = xk[k+0] ^ te0[uint8(s0>>24)] ^ te1[uint8(s1>>16)] ^ te2[uint8(s2>>8)] ^ te3[uint8(s3)]
 		t1 = xk[k+1] ^ te0[uint8(s1>>24)] ^ te1[uint8(s2>>16)] ^ te2[uint8(s3>>8)] ^ te3[uint8(s0)]
 		t2 = xk[k+2] ^ te0[uint8(s2>>24)] ^ te1[uint8(s3>>16)] ^ te2[uint8(s0>>8)] ^ te3[uint8(s1)]
@@ -289,9 +294,10 @@ func encryptBlockGeneric(c blockExpanded, dst, src []byte) {
 // Decrypt one block from src into dst, using the expanded key xk.
 // P3-M8b: the expanded key is passed by value (frontend/v1 has no & on
 // selectors, WS D); the body only reads it, so the copy is exact.
-func decryptBlockGeneric(c blockExpanded, dst, src []byte) {
+func decryptBlockGeneric(c *Block, dst, src []byte) {
 	checkGenericIsExpected()
-	xk := c.dec[:]
+	// P3-M8b: takes *Block directly (not blockExpanded by value).
+	xk := c.be.dec[:]
 
 	_ = src[15] // early bounds check
 	s0 := boBEUint32(src[0:4])
@@ -308,7 +314,7 @@ func decryptBlockGeneric(c blockExpanded, dst, src []byte) {
 	// Middle rounds shuffle using tables.
 	k := 4
 	var t0, t1, t2, t3 uint32
-	for r := 0; r < c.rounds-1; r++ {
+	for r := 0; r < c.be.rounds-1; r++ {
 		t0 = xk[k+0] ^ td0[uint8(s0>>24)] ^ td1[uint8(s3>>16)] ^ td2[uint8(s2>>8)] ^ td3[uint8(s1)]
 		t1 = xk[k+1] ^ td0[uint8(s1>>24)] ^ td1[uint8(s0>>16)] ^ td2[uint8(s3>>8)] ^ td3[uint8(s2)]
 		t2 = xk[k+2] ^ td0[uint8(s2>>24)] ^ td1[uint8(s1>>16)] ^ td2[uint8(s0>>8)] ^ td3[uint8(s3)]
@@ -387,29 +393,27 @@ func expandKeyGeneric(c *blockExpanded, key []byte) {
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-type block struct {
-	blockExpanded
-}
+// P3-M8b: the intermediate block struct is removed; Block embeds
+// blockExpanded directly (see above).
 
 func newBlock(c *Block, key []byte) *Block {
-	// P3-M8b: &c.blockExpanded is not expressible in frontend/v1 (WS D),
-	// and neither is *be (no StarExpr in v1). Expand into a fresh value
-	// (&T{} is expressible) and copy it back field by field (arrays
-	// copy by value, so the copy is complete).
+	// P3-M8b: stores the *blockExpanded directly (no struct/array copy).
 	be := &blockExpanded{}
 	newBlockExpanded(be, key)
-	c.blockExpanded.rounds = be.rounds
-	c.blockExpanded.enc = be.enc
-	c.blockExpanded.dec = be.dec
+	c.be = be
 	return c
 }
 
 func encryptBlock(c *Block, dst, src []byte) {
-	encryptBlockGeneric(c.blockExpanded, dst, src)
+	// P3-M8b: passes *Block directly; encryptBlockGeneric reads
+	// c.blockExpanded (no struct by-value copy).
+	encryptBlockGeneric(c, dst, src)
 }
 
 func decryptBlock(c *Block, dst, src []byte) {
-	decryptBlockGeneric(c.blockExpanded, dst, src)
+	// P3-M8b: passes *Block directly; decryptBlockGeneric reads
+	// c.blockExpanded (no struct by-value copy).
+	decryptBlockGeneric(c, dst, src)
 }
 
 func checkGenericIsExpected() {}
