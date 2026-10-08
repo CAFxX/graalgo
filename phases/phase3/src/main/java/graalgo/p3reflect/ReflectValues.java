@@ -46,7 +46,10 @@ public final class ReflectValues {
         Object ptrObj = v.getObject(1);
         long typ = typObj instanceof Long l ? l : 0;
         long ptr = ptrObj instanceof Long l ? l : 0;
-        return new ValueParts(typ, ptr, v.getLong(0));
+        // flag is field index 2 (typ/ptr are unsafe.Pointer, objects-carried
+        // per GoStructDescriptor.layout; only flag is longs-carried).
+        // GoStruct accessors take FIELD indices, not carrier indices.
+        return new ValueParts(typ, ptr, v.getLong(2));
     }
 
     public static boolean isValid(GoStruct v) {
@@ -228,7 +231,10 @@ public final class ReflectValues {
         // use them directly (robust against layout changes).
         GoStructDescriptor.Field f = s.descriptor().field(fieldIndex);
         if (f.inLongs()) {
-            long bits = s.getLong(f.index());
+            // GoStruct accessors take FIELD indices (they translate to
+            // carrier indices internally); passing f.index() here would
+            // double-translate.
+            long bits = s.getLong(fieldIndex);
             return switch (kind) {
                 case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> Integer.valueOf((int) bits);
                 case INT64, UINT64 -> Long.valueOf(bits);
@@ -238,7 +244,7 @@ public final class ReflectValues {
                 default -> throw new IllegalStateException("reflect: field in longs with kind " + kind);
             };
         }
-        return s.getObject(f.index());
+        return s.getObject(fieldIndex);
     }
 
     public static void structFieldSet(GoStruct s, int fieldIndex, GoKind kind, Object boxed) {
@@ -252,9 +258,9 @@ public final class ReflectValues {
                 case BOOL -> ((Boolean) boxed) ? 1L : 0L;
                 default -> throw new IllegalStateException("reflect: field in longs with kind " + kind);
             };
-            s.setLong(f.index(), bits);
+            s.setLong(fieldIndex, bits);
         } else {
-            s.setObject(f.index(), boxed);
+            s.setObject(fieldIndex, boxed);
         }
     }
 }

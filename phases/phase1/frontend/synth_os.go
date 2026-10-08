@@ -502,6 +502,13 @@ type File struct {
 	// returns EISDIR for non-rewind seeks once iteration started
 	// (verified go1.27.1: pre-iteration dir seeks succeed).
 	dirIterStarted bool
+	// dirBuf buffers entries fetched by __dirNextBatch that did not fit
+	// a bounded ReadDir(n)/Readdirnames(n) call. The Java side advances
+	// its directory iterator on every dirNext call, so entries fetched
+	// but not consumed must be served from here on the next call —
+	// otherwise chunked iteration silently drops entries. Cleared on
+	// rewind (Seek(0, SEEK_SET)) together with dirIterStarted.
+	dirBuf []dirRawEntry
 }
 
 // kindUnknown covers NewFile on a foreign-but-nonnegative fd: gc returns
@@ -1058,7 +1065,9 @@ func (f *File) WriteString(s string) (n int, err error) {
 }
 
 func __fileWriteString(f *File, s string) writePair {
-	panic("os.__fileWriteString: not in M8 scope (string->[]byte WS D; re-test when WS D lands)")
+	b := make([]byte, len(s))
+	copy(b, s)
+	return __fileWrite(f, b)
 }
 
 // Seek sets the offset for the next Read or Write on file to offset,
@@ -1086,6 +1095,7 @@ func __fileSeek(f *File, offset int64, whence int) seekPair {
 				return seekPair{0, wrapFileErr(f, "seek", syscall.Errno(-e))}
 			}
 			f.dirIterStarted = false
+			f.dirBuf = nil // rewind discards buffered-but-unconsumed entries
 			return seekPair{0, nil}
 		}
 		// P1-4: gc allows Seek on directories even after iteration has
@@ -1324,13 +1334,12 @@ func (d *dirEntry) Info() (FileInfo, error) {
 
 // __dirEntryInfo is the desugar helper for DirEntry.Info (the interface
 // method is declared in io/fs; the helper lives in os with a helperPkg
-// override in the Appendix-M table).
-func __dirEntryInfo(d DirEntry) infoPair {
-	if de, ok := d.(*dirEntry); ok {
-		p := __lstat(joinPath(de.dir, de.name))
-		return infoPair{p.fi, p.err}
-	}
-	return infoPair{nil, errors.New("os: internal error: unknown DirEntry implementation")}
+// override in the Appendix-M table). It takes the concrete *dirEntry:
+// interface dispatch passes the receiver data (GoPointer) as params[0],
+// exactly like the __fileRead(f *File) helpers.
+func __dirEntryInfo(d *dirEntry) infoPair {
+	p := __lstat(joinPath(d.dir, d.name))
+	return infoPair{p.fi, p.err}
 }
 
 type dirRawEntry struct {
@@ -1390,6 +1399,34 @@ func __dirNextBatch(f *File) dirBatchPair {
 	return dirBatchPair{out, nil}
 }
 
+// __dirNextOne returns the next directory entry for f, serving first
+// from the buffered surplus of a previous __dirNextBatch fetch and only
+// then fetching another batch from the Java side. ok=false at end of
+// directory; err carries an iteration error (EIO sentinel mapping).
+// Single-result triple struct: v1 cannot emit multi-result funcdecls
+// (cf. pipeTriple).
+type dirNextOneTriple struct {
+	e   dirRawEntry
+	ok  bool
+	err error
+}
+
+func __dirNextOne(f *File) dirNextOneTriple {
+	for len(f.dirBuf) == 0 {
+		bp := __dirNextBatch(f)
+		if bp.err != nil {
+			return dirNextOneTriple{dirRawEntry{}, false, bp.err}
+		}
+		if len(bp.entries) == 0 {
+			return dirNextOneTriple{dirRawEntry{}, false, nil}
+		}
+		f.dirBuf = bp.entries
+	}
+	e := f.dirBuf[0]
+	f.dirBuf = f.dirBuf[1:]
+	return dirNextOneTriple{e, true, nil}
+}
+
 // Readdirnames reads directory names, like Readdir, but returns only
 // the names.
 func (f *File) Readdirnames(n int) ([]string, error) {
@@ -1418,19 +1455,14 @@ func __fileReaddirnames(f *File, n int) readdirnamesPair {
 		want = -1 // all
 	}
 	for want == -1 || len(names) < want {
-		bp := __dirNextBatch(f)
-		if bp.err != nil {
-			return readdirnamesPair{names, bp.err}
+		t := __dirNextOne(f)
+		if t.err != nil {
+			return readdirnamesPair{names, t.err}
 		}
-		if len(bp.entries) == 0 {
+		if !t.ok {
 			break
 		}
-		for _, e := range bp.entries {
-			names = append(names, e.name)
-			if want != -1 && len(names) == want {
-				break
-			}
-		}
+		names = append(names, t.e.name)
 	}
 	if n > 0 && len(names) == 0 {
 		return readdirnamesPair{nil, io.EOF}
@@ -1511,19 +1543,14 @@ func __fileReadDir(f *File, n int) readDirPair {
 		want = -1 // all
 	}
 	for want == -1 || len(out) < want {
-		bp := __dirNextBatch(f)
-		if bp.err != nil {
-			return readDirPair{out, bp.err}
+		t := __dirNextOne(f)
+		if t.err != nil {
+			return readDirPair{out, t.err}
 		}
-		if len(bp.entries) == 0 {
+		if !t.ok {
 			break
 		}
-		for _, e := range bp.entries {
-			out = append(out, &dirEntry{dir: f.name, name: e.name, typ: e.typ})
-			if want != -1 && len(out) == want {
-				break
-			}
-		}
+		out = append(out, &dirEntry{dir: f.name, name: t.e.name, typ: t.e.typ})
 	}
 	if n > 0 && len(out) == 0 {
 		return readDirPair{nil, io.EOF}
@@ -2334,6 +2361,21 @@ func (f *File) SyscallConn() (syscall.RawConn, error) {
 	panic("os.File.SyscallConn: not in M8 scope (needs syscall.RawConn + a real fd; re-test: fd-domain unification, Phase 4/Panama)")
 }
 
+// __fileSyscallConn is the single-result Appendix-M helper for the
+// multi-result fail-fast (*File).SyscallConn. v1 cannot export
+// multi-result funcdecls, so call sites desugar to this helper — which
+// panics with the identical message — via the osMultiResultFuncs table
+// (cf. syscall.Syscall → __syscall). The gc reference leg runs the
+// public stub above.
+type syscallConnPair struct {
+	rc  syscall.RawConn
+	err error
+}
+
+func __fileSyscallConn(f *File) syscallConnPair {
+	panic("os.File.SyscallConn: not in M8 scope (needs syscall.RawConn + a real fd; re-test: fd-domain unification, Phase 4/Panama)")
+}
+
 // Root represents a directory that acts as the root of a file tree.
 // M8: fail-fast (§6.6 — confining opens need openat2(2); a Go-level
 // lexical emulation has TOCTOU holes).
@@ -2341,6 +2383,17 @@ type Root struct{}
 
 // OpenRoot opens the named directory as a Root.
 func OpenRoot(name string) (*Root, error) {
+	panic("os.OpenRoot: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
+}
+
+// __openRoot is the single-result Appendix-M helper for the multi-result
+// fail-fast OpenRoot (same pattern as __fileSyscallConn above).
+type openRootPair struct {
+	root *Root
+	err  error
+}
+
+func __openRoot(name string) openRootPair {
 	panic("os.OpenRoot: not in M8 scope (needs openat2(2); re-test: Panama openat2 or a vetted root-emulation design)")
 }
 
@@ -2386,6 +2439,18 @@ func (r *Root) ReadDir(name string) ([]DirEntry, error) {
 // current process. M8: fail-fast (§6.7 — /proc/self/exe is the JVM
 // binary, which is the wrong answer; inventing one is worse).
 func Executable() (string, error) {
+	panic("os.Executable: not in M8 scope (/proc/self/exe is the JVM binary — wrong answer; re-test: launcher defines the executable concept)")
+}
+
+// __executable is the single-result Appendix-M helper for the
+// multi-result fail-fast Executable (same pattern as __fileSyscallConn
+// above).
+type executablePair struct {
+	s   string
+	err error
+}
+
+func __executable() executablePair {
 	panic("os.Executable: not in M8 scope (/proc/self/exe is the JVM binary — wrong answer; re-test: launcher defines the executable concept)")
 }
 
@@ -2448,6 +2513,18 @@ func StartProcess(name string, argv []string, attr *ProcAttr) (*Process, error) 
 	panic("os.StartProcess: not in M8 scope (needs fd extraction for stdio redirect + wait4 rusage; re-test: process-spawning milestone / os/exec bring-up)")
 }
 
+// __startProcess is the single-result Appendix-M helper for the
+// multi-result fail-fast StartProcess (same pattern as __fileSyscallConn
+// above).
+type startProcessPair struct {
+	proc *Process
+	err  error
+}
+
+func __startProcess(name string, argv []string, attr *ProcAttr) startProcessPair {
+	panic("os.StartProcess: not in M8 scope (needs fd extraction for stdio redirect + wait4 rusage; re-test: process-spawning milestone / os/exec bring-up)")
+}
+
 // FindProcess looks for a running process by pid. M8: fail-fast (§6.1).
 func FindProcess(pid int) (*Process, error) {
 	panic("os.FindProcess: not in M8 scope (re-test: process-spawning milestone)")
@@ -2465,6 +2542,18 @@ func (p *Process) Kill() error {
 
 // Wait waits until the Process exits. M8: fail-fast (§6.1).
 func (p *Process) Wait() (*ProcessState, error) {
+	panic("os.Process.Wait: not in M8 scope (re-test: process-spawning milestone)")
+}
+
+// __processWait is the single-result Appendix-M helper for the
+// multi-result fail-fast (*Process).Wait (same pattern as
+// __fileSyscallConn above).
+type processWaitPair struct {
+	ps  *ProcessState
+	err error
+}
+
+func __processWait(p *Process) processWaitPair {
 	panic("os.Process.Wait: not in M8 scope (re-test: process-spawning milestone)")
 }
 

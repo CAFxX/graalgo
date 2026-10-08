@@ -480,8 +480,8 @@ type reflectMethodPair struct {
 	ok bool
 }
 
-func __reflectTMethodByName(t Type, name string) reflectMethodPair {
-	tok := t.(rtype).tok
+func __reflectTMethodByName(t rtype, name string) reflectMethodPair {
+	tok := t.tok
 	n := __reflect_tNumMethod(tok)
 	for i := 0; i < n; i++ {
 		m := __reflect_tMethod(tok, i)
@@ -497,8 +497,8 @@ type reflectStructFieldPair struct {
 	ok bool
 }
 
-func __reflectTFieldByName(t Type, name string) reflectStructFieldPair {
-	tok := t.(rtype).tok
+func __reflectTFieldByName(t rtype, name string) reflectStructFieldPair {
+	tok := t.tok
 	n := __reflect_tNumField(tok)
 	for i := 0; i < n; i++ {
 		f := __reflect_tField(tok, i)
@@ -509,8 +509,8 @@ func __reflectTFieldByName(t Type, name string) reflectStructFieldPair {
 	return reflectStructFieldPair{StructField{}, false}
 }
 
-func __reflectTFieldByNameFunc(t Type, match func(string) bool) reflectStructFieldPair {
-	tok := t.(rtype).tok
+func __reflectTFieldByNameFunc(t rtype, match func(string) bool) reflectStructFieldPair {
+	tok := t.tok
 	n := __reflect_tNumField(tok)
 	for i := 0; i < n; i++ {
 		f := __reflect_tField(tok, i)
@@ -1024,7 +1024,11 @@ func (v Value) Interface() (i any) {
 	if v.typ == nil {
 		panic(&ValueError{"reflect.Value.Interface", Invalid})
 	}
-	v.__mustBeExported("reflect.Value.Interface")
+	// gc-exact (valueInterface, safe=true): Interface has its own
+	// message, distinct from flag.mustBeExported.
+	if v.flag&flagRO != 0 {
+		panic("reflect.Value.Interface: cannot return value obtained from unexported field or method")
+	}
 	return __reflect_interface(v)
 }
 
@@ -1415,7 +1419,10 @@ func (v Value) SetPointer(x unsafe.Pointer) {
 
 // SetMapIndex sets the element of v associated with key to elem.
 func (v Value) SetMapIndex(key, elem Value) {
-	v.__mustBeAssignable("reflect.Value.SetMapIndex")
+	// gc: mustBe(Map) + mustBeExported, NOT mustBeAssignable — maps are
+	// reference types, so entries are settable through a non-addressable
+	// map Value.
+	v.__mustBeExported("reflect.Value.SetMapIndex")
 	if v.Kind() != Map {
 		panic(&ValueError{"reflect.Value.SetMapIndex", v.Kind()})
 	}
@@ -2091,6 +2098,68 @@ func Swapper(slice any) func(i, j int) {
 	}
 }
 
+// __reflect_visibleWalker mirrors gc's visibleFieldsWalker
+// (reflect/visiblefields.go): DFS pre-order walk over the embedded field
+// tree — an anonymous field is recorded immediately followed by its
+// promoted fields — with a recursion-stack cycle guard and byName dedup
+// (same-depth duplicates cancel each other; shallower wins).
+type __reflect_visibleWalker struct {
+	byName   map[string]int
+	visiting map[unsafe.Pointer]bool
+	fields   []StructField
+	index    []int
+}
+
+func __reflect_visibleWalk(w *__reflect_visibleWalker, tok unsafe.Pointer) {
+	if w.visiting[tok] {
+		return
+	}
+	w.visiting[tok] = true
+	nf := rtype{tok: tok}.NumField()
+	for i := 0; i < nf; i++ {
+		f := __reflect_tField(tok, i)
+		w.index = append(w.index, i)
+		add := true
+		if oldIndex, ok := w.byName[f.Name]; ok {
+			if len(w.index) == len(w.fields[oldIndex].Index) {
+				// Fields with the same name at the same depth
+				// cancel one another out.
+				w.fields[oldIndex].Name = ""
+				add = false
+			} else if len(w.index) < len(w.fields[oldIndex].Index) {
+				// The old field loses because it's deeper than the new one.
+				w.fields[oldIndex].Name = ""
+			} else {
+				// The old field wins because it's shallower than the new one.
+				add = false
+			}
+		}
+		if add {
+			// Copy the index so that it's not overwritten
+			// by the other appends.
+			idx := make([]int, len(w.index))
+			copy(idx, w.index)
+			f.Index = idx
+			w.byName[f.Name] = len(w.fields)
+			w.fields = append(w.fields, f)
+		}
+		if f.Anonymous {
+			// P1-2: gc dereferences embedded pointers before the
+			// struct-kind check (visiblefields.go); a struct embedding
+			// *T promotes T's fields.
+			ft := f.Type
+			if ft.Kind() == Pointer {
+				ft = ft.Elem()
+			}
+			if ft.Kind() == Struct {
+				__reflect_visibleWalk(w, ft.(rtype).tok)
+			}
+		}
+		w.index = w.index[:len(w.index)-1]
+	}
+	delete(w.visiting, tok)
+}
+
 // VisibleFields returns all the visible fields in a struct type t,
 // including fields inside anonymous struct members.
 func VisibleFields(t Type) []StructField {
@@ -2098,80 +2167,26 @@ func VisibleFields(t Type) []StructField {
 		panic("reflect: VisibleFields(nil)")
 	}
 	if t.Kind() != Struct {
-		panic("reflect: VisibleFields of non-struct type")
+		panic("reflect.VisibleFields of non-struct type")
 	}
-	rt := t.(rtype)
-	// Adaptation of gc's visiblefields.go: breadth-first walk over the
-	// embedded field tree, keeping the shallowest path to each name and
-	// discarding ambiguous (multiply-defined) names.
-	type fieldScan struct {
-		tok   unsafe.Pointer
-		index []int
+	w := &__reflect_visibleWalker{
+		byName:   map[string]int{},
+		visiting: map[unsafe.Pointer]bool{},
 	}
-	var fields []StructField
-	// seen maps field name -> index into fields, plus ambiguity marks.
-	type seenEntry struct {
-		idx int
-		amb bool
-	}
-	seen := map[string]*seenEntry{}
-	// current level and next level.
-	current := []fieldScan{{tok: rt.tok}}
-	next := []fieldScan{}
-	// visited anonymously-embedded struct types (cycle guard).
-	visited := map[unsafe.Pointer]bool{rt.tok: true}
-	for len(current) > 0 {
-		next = next[:0]
-		for _, scan := range current {
-			nf := rtype{tok: scan.tok}.NumField()
-			for i := 0; i < nf; i++ {
-				f := __reflect_tField(scan.tok, i)
-				isUnexported := f.PkgPath != ""
-				// Build the index path.
-				idx := make([]int, len(scan.index)+1)
-				copy(idx, scan.index)
-				idx[len(scan.index)] = i
-				// Embedded structs queue for the next level.
-				// P1-2: gc dereferences embedded pointers before the
-				// struct-kind check (visiblefields.go:94-101); a struct
-				// embedding *T must promote T's fields.
-				ft := f.Type
-				if f.Anonymous && ft.Kind() == Pointer {
-					ft = ft.Elem()
-				}
-				if f.Anonymous && ft.Kind() == Struct {
-					ftok := ft.(rtype).tok
-					if !visited[ftok] {
-						visited[ftok] = true
-						next = append(next, fieldScan{tok: ft.(rtype).tok, index: idx})
-					}
-				}
-				// Record the field at this depth unless shadowed.
-				if e, ok := seen[f.Name]; ok {
-					if !e.amb {
-						// A field at the same or shallower depth already
-						// recorded: mark ambiguous if same depth.
-						e.amb = true
-						fields[e.idx] = StructField{}
-					}
-					continue
-				}
-				f.Index = idx
-				_ = isUnexported
-				seen[f.Name] = &seenEntry{idx: len(fields)}
-				fields = append(fields, f)
-			}
+	__reflect_visibleWalk(w, t.(rtype).tok)
+	// Remove all the fields that have been hidden (Name == ""),
+	// in place (gc-exact).
+	j := 0
+	for i := range w.fields {
+		if w.fields[i].Name == "" {
+			continue
 		}
-		current, next = next, current
-	}
-	// Drop ambiguous (zeroed) entries.
-	out := fields[:0]
-	for _, f := range fields {
-		if f.Name != "" {
-			out = append(out, f)
+		if i != j {
+			w.fields[j] = w.fields[i]
 		}
+		j++
 	}
-	return out
+	return w.fields[:j]
 }
 
 // ------------------------------------------------------------------

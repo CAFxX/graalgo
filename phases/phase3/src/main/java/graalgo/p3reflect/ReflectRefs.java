@@ -1,6 +1,7 @@
 package graalgo.p3reflect;
 
 import graalgo.p3unsafe.UnsafeTable;
+import graalgo.values.GoKind;
 import graalgo.values.GoSlice;
 import graalgo.values.GoStruct;
 
@@ -77,6 +78,11 @@ public final class ReflectRefs {
             return field;
         }
 
+        /** The base handle (denotes the containing struct). */
+        public long base() {
+            return base;
+        }
+
         @Override
         public boolean equals(Object o) {
             return o instanceof FieldRef other && base == other.base && field == other.field;
@@ -115,6 +121,11 @@ public final class ReflectRefs {
             return index;
         }
 
+        /** The base handle (denotes the containing array). */
+        public long base() {
+            return base;
+        }
+
         @Override
         public boolean equals(Object o) {
             return o instanceof ArrayElemRef other && base == other.base && index == other.index;
@@ -151,6 +162,11 @@ public final class ReflectRefs {
 
         public int index() {
             return index;
+        }
+
+        /** The base handle (denotes the containing slice). */
+        public long base() {
+            return base;
         }
 
         @Override
@@ -214,6 +230,38 @@ public final class ReflectRefs {
     /** deref(resolve(handle)). */
     public static Object load(long handle) {
         return deref(resolve(handle));
+    }
+
+    /**
+     * Resolves a handle to the D5 value it denotes, following derived
+     * references (struct fields, array/slice elements) recursively to the
+     * live referent. {@code kind} is the GoKind of the denoted value
+     * (taken from the Value's type token); it is only consumed when the
+     * leaf itself is primitive-carried, so intermediate containers pass
+     * their fixed kinds ({@code STRUCT}/{@code ARRAY}/{@code SLICE}).
+     *
+     * <p>Unlike {@link #load}, this never surfaces a {@link Ref} key
+     * object: a {@code Value} obtained via {@code Field} or {@code Index}
+     * reads and writes through to the denoted field/element.
+     */
+    public static Object denotedValue(long handle, GoKind kind) {
+        Object ref = resolve(handle);
+        if (ref instanceof Cell c) {
+            return deref(c.value);
+        }
+        if (ref instanceof FieldRef fr) {
+            GoStruct s = (GoStruct) denotedValue(fr.base(), GoKind.STRUCT);
+            return ReflectValues.structFieldGet(s, fr.field(), kind);
+        }
+        if (ref instanceof ArrayElemRef ar) {
+            Object arr = denotedValue(ar.base(), GoKind.ARRAY);
+            return ReflectValues.arrayGet(arr, kind, ar.index());
+        }
+        if (ref instanceof SliceElemRef sr) {
+            GoSlice slice = (GoSlice) denotedValue(sr.base(), GoKind.SLICE);
+            return ReflectValues.arrayGet(slice.array(), kind, slice.offset() + sr.index());
+        }
+        return deref(ref);
     }
 
     /**

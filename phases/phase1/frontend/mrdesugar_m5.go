@@ -324,6 +324,17 @@ var osMultiResultFuncs = []osMultiResultFunc{
 	{"os", "Readdirnames", "File", "__fileReaddirnames", "", "readdirnamesPair", []string{"names", "err"}},
 	{"os", "ReadFrom", "File", "__fileReadFrom", "", "readFromPair", []string{"n", "err"}},
 	{"os", "WriteTo", "File", "__fileWriteTo", "", "writeToPair", []string{"n", "err"}},
+	// os: multi-result fail-fast stubs (§6). The public stubs keep gc's
+	// exact signatures with panic bodies (for the gc reference leg); the
+	// single-result __-helpers panic with the identical message, and call
+	// sites desugar to them — otherwise the call itself would fail at
+	// export with "multi-result calls need WS D" instead of pinning the
+	// runtime fail-fast (cf. syscall.Syscall → __syscall).
+	{"os", "StartProcess", "", "__startProcess", "", "startProcessPair", []string{"proc", "err"}},
+	{"os", "Wait", "Process", "__processWait", "", "processWaitPair", []string{"ps", "err"}},
+	{"os", "SyscallConn", "File", "__fileSyscallConn", "", "syscallConnPair", []string{"rc", "err"}},
+	{"os", "OpenRoot", "", "__openRoot", "", "openRootPair", []string{"root", "err"}},
+	{"os", "Executable", "", "__executable", "", "executablePair", []string{"s", "err"}},
 	// io/fs: DirEntry.Info (interface method) desugared through the os
 	// helper __dirEntryInfo (helperPkg override — the concrete dirEntry
 	// type lives in the synthetic os package).

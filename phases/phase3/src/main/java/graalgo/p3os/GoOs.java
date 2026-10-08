@@ -414,12 +414,40 @@ public final class GoOs {
     }
 
     /** A Go []byte as a ByteBuffer honoring the GoSlice offset/len (§2.1). */
+    /**
+     * Wraps a Go []byte slice as a ByteBuffer for channel I/O. D5 stores
+     * []byte in int[] backing arrays, so the bytes are copied to a fresh
+     * byte[]; for reads the caller must copy back via {@link #goBufBack}.
+     */
     private static ByteBuffer goBuf(Object o) {
         if (o == null) {
             return ByteBuffer.allocate(0);
         }
         GoSlice gs = (GoSlice) o;
-        return ByteBuffer.wrap((byte[]) gs.array(), gs.offset(), gs.len());
+        int[] arr = (int[]) gs.array();
+        int off = gs.offset();
+        int len = gs.len();
+        byte[] bytes = new byte[len];
+        for (int i = 0; i < len; i++) {
+            bytes[i] = (byte) arr[off + i];
+        }
+        return ByteBuffer.wrap(bytes);
+    }
+
+    /**
+     * Copies bytes read into a {@link #goBuf} ByteBuffer back into the Go
+     * []byte's int[] backing array. n is the number of bytes read.
+     */
+    private static void goBufBack(Object o, ByteBuffer bb, int n) {
+        if (o == null || n <= 0) {
+            return;
+        }
+        GoSlice gs = (GoSlice) o;
+        int[] arr = (int[]) gs.array();
+        byte[] bytes = bb.array();
+        for (int i = 0; i < n; i++) {
+            arr[gs.offset() + i] = bytes[i] & 0xFF;
+        }
     }
 
     /**
@@ -583,6 +611,7 @@ public final class GoOs {
             if (n < 0) {
                 return 0; // EOF
             }
+            goBufBack(bArg, bb, n);
             return (long) n + 1;
         } catch (IOException e) {
             return -errno(e);
@@ -661,6 +690,7 @@ public final class GoOs {
             if (n < 0) {
                 return 0; // EOF
             }
+            goBufBack(bArg, bb, n);
             return (long) n + 1;
         } catch (IOException e) {
             return -errno(e);
@@ -777,12 +807,42 @@ public final class GoOs {
             return -EINVAL;
         }
         try {
-            fc.truncate(size);
+            ftruncate(fc, size);
             return 0;
         } catch (IOException e) {
             return -errno(e);
         } catch (IllegalArgumentException e) {
             return -EINVAL;
+        }
+    }
+
+    /**
+     * ftruncate(2) semantics on a FileChannel. FileChannel.truncate()
+     * only shrinks — its contract is "if the given size is greater than
+     * or equal to the file's current size then the file size is
+     * unchanged" — while ftruncate extends sparsely. Extension is done
+     * with a positional single-zero write at size-1, which the
+     * filesystem materializes exactly like ftruncate (the corpus
+     * sparse-extension checks read the gap as zeros). The channel
+     * position is preserved: ftruncate does not move the file offset.
+     */
+    private static void ftruncate(FileChannel fc, long size) throws IOException {
+        long cur = fc.size();
+        if (size == cur) {
+            return;
+        }
+        if (size < cur) {
+            fc.truncate(size);
+            return;
+        }
+        // Extend: size > cur >= 0, so size >= 1 and size-1 is a valid
+        // position. A positional write does not move the channel's own
+        // position, but save/restore anyway for safety.
+        long pos = fc.position();
+        try {
+            fc.write(ByteBuffer.allocate(1), size - 1);
+        } finally {
+            fc.position(pos);
         }
     }
 
@@ -1114,6 +1174,7 @@ public final class GoOs {
             ByteBuffer bb = goBuf(bArg);
             int n = Math.min(bb.remaining(), bytes.length);
             bb.put(bytes, 0, n);
+            goBufBack(bArg, bb, n);
             return (long) n + 1;
         } catch (IOException e) {
             return -errno(e);
@@ -1200,7 +1261,7 @@ public final class GoOs {
             return -EINVAL;
         }
         try (FileChannel ch = FileChannel.open(p, StandardOpenOption.WRITE)) {
-            ch.truncate(size);
+            ftruncate(ch, size);
             return 0;
         } catch (IOException e) {
             return -errno(e);
@@ -1427,6 +1488,7 @@ public final class GoOs {
             ByteBuffer bb = goBuf(bArg);
             int n = Math.min(bb.remaining(), bytes.length);
             bb.put(bytes, 0, n);
+            goBufBack(bArg, bb, n);
             return (long) n + 1;
         } catch (Exception e) {
             return -EIO;
@@ -1468,6 +1530,7 @@ public final class GoOs {
         byte[] tmp = new byte[n];
         SECURE_RANDOM.nextBytes(tmp);
         bb.put(tmp);
+        goBufBack(bArg, bb, n);
         return n;
     }
 }

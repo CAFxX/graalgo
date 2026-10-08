@@ -11,7 +11,7 @@ func main() {
 		fmt.Println("FAIL: stdout:", err)
 		os.Exit(1)
 	}
-	if _, err := fmt.Fprintln(os.Stderr, "STDERR-LINE"); err != nil {
+	if _, err := os.Stderr.WriteString("STDERR-LINE\n"); err != nil {
 		fmt.Println("FAIL: stderr:", err)
 		os.Exit(1)
 	}

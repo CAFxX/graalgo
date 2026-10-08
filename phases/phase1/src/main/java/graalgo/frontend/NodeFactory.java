@@ -2402,6 +2402,27 @@ public final class NodeFactory {
             // Operand kind: both sides agree, or one side is an untyped
             // constant (transparent). The result kind is BOOL.
             GoKind ok = x.kind().isUntyped() ? y.kind() : x.kind();
+            if (ok == GoKind.INTERFACE && x.kind() != y.kind()
+                    && (x.kind() == GoKind.INTERFACE || y.kind() == GoKind.INTERFACE)) {
+                // P3-M8b: interface == concrete (e.g. err == syscall.EINVAL).
+                // The type-id-free maybeConvert below cannot box a concrete
+                // value into an interface (WS E); box the concrete side here
+                // with the type-id-carrying form so BinaryOpNode's M5
+                // interface-equality path compares the boxed dynamic values.
+                GoExprNode iface = x.kind() == GoKind.INTERFACE ? x : y;
+                GoExprNode conc = x.kind() == GoKind.INTERFACE ? y : x;
+                int ifaceId = iface.typeId();
+                if (ifaceId < 0) {
+                    throw new FrontendException(path
+                            + ": cannot box concrete operand to interface without a type-table id (WS E)");
+                }
+                conc = maybeConvert(conc, GoKind.INTERFACE, ifaceId, ctx, path);
+                if (x.kind() == GoKind.INTERFACE) {
+                    y = conc;
+                } else {
+                    x = conc;
+                }
+            }
             return new BinaryOpNode(op, GoKind.BOOL, ok, maybeConvert(x, ok, path), maybeConvert(y, ok, path));
         }
         if (op.isShift()) {
@@ -2988,6 +3009,17 @@ public final class NodeFactory {
         if (e instanceof Json.Bool b) {
             ellipsis = b.value();
         }
+        GoExprNode[] elems = Arrays.copyOfRange(args, 1, args.length);
+        if (elemKind == GoKind.INTERFACE && !ellipsis) {
+            // P3-M8b: appending a concrete value to an interface-element
+            // slice must box it (cf. buildComplit's element maybeConvert).
+            // Without this, e.g. append([]DirEntry{}, &dirEntry{}) stores
+            // the raw GoPointer and interface dispatch fails at runtime.
+            for (int i = 0; i < elems.length; i++) {
+                elems[i] = maybeConvert(elems[i], GoKind.INTERFACE, elemId, ctx,
+                        path + ".args[" + (i + 1) + "]");
+            }
+        }
         // P3-M4 (WS C): struct elements need their ABI size for the
         // growslice math (elemSizeBytes(STRUCT) is 0 by design).
         long elemSizeBytes = 0;
@@ -2995,8 +3027,7 @@ public final class NodeFactory {
             elemSizeBytes = graalgo.runtime.Intrinsics.structSizeBytes(
                     structDescriptorFor(ctx, elemId, path));
         }
-        return new AppendNode(args[0], elemKind, Arrays.copyOfRange(args, 1, args.length),
-                ellipsis, elemSizeBytes);
+        return new AppendNode(args[0], elemKind, elems, ellipsis, elemSizeBytes);
     }
 
     /**
@@ -4419,6 +4450,7 @@ public final class NodeFactory {
         graalgo.values.GoTypeDescriptor ifaceDesc = typeDescriptorFor(ctx, tagTypeId, path);
         Json.Array clauses = f.array("clauses", path);
         List<TypeSwitchNode.TypeCaseClause> out = new ArrayList<>(clauses.size());
+        java.util.Map<String, java.util.Set<String>> dynSets = null;
         for (int i = 0; i < clauses.size(); i++) {
             String cp = path + ".clauses[" + i + "]";
             Json.Object c = asObject(clauses.get(i), cp);
@@ -4426,12 +4458,28 @@ public final class NodeFactory {
             boolean isDefault = cf.bool("default", cp);
             boolean nilCase = cf.bool("nilcase", cp);
             List<graalgo.values.GoTypeDescriptor> types = new ArrayList<>();
+            List<java.util.List<String>> ifaceMethods = new ArrayList<>();
+            boolean hasIface = false;
             Json.Value typesVal = cf.opt("types");
             if (typesVal instanceof Json.Array typeIds) {
                 for (int j = 0; j < typeIds.size(); j++) {
                     int tid = (int) ((Json.Num) typeIds.get(j)).asLong(cp);
                     types.add(typeDescriptorFor(ctx, tid, cp));
+                    // P3-M8b: interface clause types need their method
+                    // implkeys for the implements check (null otherwise).
+                    java.util.List<String> im = null;
+                    if (kindOf(ctx, tid, cp) == GoKind.INTERFACE) {
+                        java.util.Set<String> keys = interfaceMethodImplKeys(ctx, tid, cp);
+                        if (!keys.isEmpty()) {
+                            im = new java.util.ArrayList<>(keys);
+                            hasIface = true;
+                        }
+                    }
+                    ifaceMethods.add(im);
                 }
+            }
+            if (hasIface && dynSets == null) {
+                dynSets = dynamicMethodSets(ctx, path);
             }
             // null types array: `case nil:` (no asserted types).
             int bindSlot = -1;
@@ -4443,10 +4491,10 @@ public final class NodeFactory {
                 bindSlot = declareObj(ctx, boid, cp);
             }
             GoStmtNode body = buildStmt(cf.object("body", cp), ctx);
-            out.add(new TypeSwitchNode.TypeCaseClause(types, nilCase, isDefault,
+            out.add(new TypeSwitchNode.TypeCaseClause(types, ifaceMethods, nilCase, isDefault,
                     bindSlot, bindKind, body));
         }
-        return new TypeSwitchNode(tag, init, out, ifaceDesc);
+        return new TypeSwitchNode(tag, init, out, ifaceDesc, dynSets);
     }
 
     private GoStmtNode buildBranch(Json.Object node, BuildCtx ctx) {
@@ -4590,7 +4638,7 @@ public final class NodeFactory {
                 }
             }
         }
-        return switch (ek) {
+        GoExprNode lit = switch (ek) {
             case "slice" -> {
                 int elemTid = compDetail.intValue("elem", path);
                 GoKind elemKind = kindOf(ctx, elemTid, path);
@@ -4640,6 +4688,10 @@ public final class NodeFactory {
             }
             default -> throw new FrontendException(path + ": composite literal of " + ek + " (WS E)");
         };
+        // P3-M8b: the literal carries its wire type id (needed to box the
+        // value into an interface, e.g. append([]DirEntry{}, &dirEntry{})).
+        lit.setTypeId(typeId);
+        return lit;
     }
 
     private GoExprNode buildIndex(Json.Object node, BuildCtx ctx) {
