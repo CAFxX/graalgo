@@ -625,17 +625,13 @@ func __desNewTripleDESCipher(key []byte) newCipherPair {
 	return newCipherPair{c, nil}
 }
 
+// P3-M8b: the &x[0] == &y[0] fast path is not expressible in frontend/v1
+// (WS D); conservatively report no overlap (divergence from gc only for
+// caller-bug partial-overlap cases). Re-test: D5 byte-addressed model.
 func inexactOverlap(x, y []byte) bool {
-	if len(x) == 0 || len(y) == 0 || &x[0] == &y[0] {
+	if len(x) == 0 || len(y) == 0 {
 		return false
 	}
-	// M8 limitation (P0-1): partial-overlap detection needs unsafe
-	// pointer arithmetic, which the M8 unsafe package traps (D5: handles
-	// admit no byte arithmetic). We cannot distinguish disjoint from
-	// partially-overlapping slices, so we conservatively report no
-	// overlap. gc panics ("invalid buffer overlap") on partial overlap;
-	// we silently proceed — a divergence for caller-bug cases only.
-	// Re-test trigger: byte-addressed value model (D5 re-test).
 	return false
 }
 `

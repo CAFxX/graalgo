@@ -269,6 +269,33 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/cipher", "Write", "StreamWriter", "__streamWriterWrite", "", "streamWriterWritePair", []string{"n", "err"}},
 	// crypto/rand: Read is multi-result (fail-fast).
 	{"crypto/rand", "Read", "", "__randRead", "", "readPair", []string{"n", "err"}},
+	// P3-M8b: hash.Cloner.Clone for every synthetic digest (itab wiring
+	// for the m8IfaceMultiResultMethods "hash"/"Clone" entry above; the
+	// concrete Clone stubs are fail-fast, the real logic is each
+	// type's CloneSinglePair served via hash.__hashClone).
+	{"crypto/md5", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/sha1", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/sha256", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/sha512", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/sha3", "Clone", "SHA3", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/hmac", "Clone", "hmac", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	// P3-M8b: encoding.BinaryMarshaler/BinaryAppender for the synthetic
+	// digests (itab wiring for the "hash"/"MarshalBinary" and
+	// "hash"/"AppendBinary" iface entries; md5 entries pre-exist above).
+	{"crypto/sha1", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"crypto/sha1", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"crypto/sha256", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"crypto/sha256", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"crypto/sha512", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"crypto/sha512", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"crypto/sha3", "MarshalBinary", "SHA3", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	// P3-M8b: hmac.Write through hash.Hash (itab wiring; the call site
+	// desugars via the structural io/Write iface entry).
+	{"crypto/hmac", "Write", "hmac", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	// P3-M8b: SHAKE Write/Read (concrete *SHAKE call sites, e.g.
+	// h.Write(in) / h.Read(got) as bare statements).
+	{"crypto/sha3", "Write", "SHAKE", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"crypto/sha3", "Read", "SHAKE", "__hashRead", "hash", "hashReadPair", []string{"n", "err"}},
 }
 
 // osMultiResultFunc describes one desugarable P3-M8 (wave 2) multi-result
@@ -399,6 +426,16 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"reflect", "MethodByName", "reflectMethodPair", []string{"m", "ok"}},
 	{"reflect", "FieldByName", "reflectStructFieldPair", []string{"f", "ok"}},
 	{"reflect", "FieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}},
+	// P3-M8b (wave 2, crypto): hash.Cloner.Clone and the
+	// encoding.BinaryMarshaler/BinaryAppender methods, dispatched on the
+	// hash.Cloner / encoding.BinaryMarshaler interfaces. The itab maps
+	// each to the concrete digest's pair-returning __-helper (wired via
+	// the m8MultiResultFuncs entries below); pair field names/types are
+	// positionally identical to the methods' results (checked by
+	// classifyIfaceMultiResultCall).
+	{"hash", "Clone", "ClonePair", []string{"C", "Err"}},
+	{"hash", "MarshalBinary", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash", "AppendBinary", "binaryAppendPair", []string{"b", "err"}},
 }
 
 // mrPlan is the desugar plan for one classified call.

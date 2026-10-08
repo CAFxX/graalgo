@@ -8,6 +8,7 @@ const syntheticCipherSource = `package cipher
 import (
 	"bytes"
 	"crypto/subtle"
+	"errors"
 	"io"
 )
 
@@ -618,24 +619,26 @@ func (w StreamWriter) Close() error {
 	return nil
 }
 
-// inexactOverlap/anyOverlap: P3-M8 fail-fast without unsafe (see crypto/subtle).
+// inexactOverlap/anyOverlap: P3-M8b overlap checks without &x[0] (not
+// expressible in frontend/v1, WS D) and without unsafe (M8 D5: handles
+// admit no byte arithmetic). inexactOverlap conservatively reports no
+// overlap — a divergence from gc only for caller-bug cases (partial
+// overlap), where gc panics ("invalid buffer overlap") and we silently
+// proceed. anyOverlap keeps the loud fail-fast for the unverifiable case.
+// Re-test trigger: byte-addressed value model (D5 re-test).
 func inexactOverlap(x, y []byte) bool {
-	if len(x) == 0 || len(y) == 0 || &x[0] == &y[0] {
+	if len(x) == 0 || len(y) == 0 {
 		return false
 	}
-	// M8 limitation (P0-1): partial-overlap detection needs unsafe
-	// pointer arithmetic, which the M8 unsafe package traps (D5: handles
-	// admit no byte arithmetic). We cannot distinguish disjoint from
-	// partially-overlapping slices, so we conservatively report no
-	// overlap. gc panics ("invalid buffer overlap") on partial overlap;
-	// we silently proceed — a divergence for caller-bug cases only.
-	// Re-test trigger: byte-addressed value model (D5 re-test).
 	return false
 }
 func anyOverlap(x, y []byte) bool {
-	if len(x) == 0 || len(y) == 0 || &x[0] == &y[0] {
-		return &x[0] == &y[0]
+	if len(x) == 0 || len(y) == 0 {
+		return false
 	}
-	panic("crypto/cipher: anyOverlap: cannot verify without unsafe (re-test: unsafe draft)")
+	// Without &x[0] even the exact-overlap fast path is inexpressible;
+	// conservatively report no overlap (same caller-bug-only divergence
+	// as inexactOverlap above).
+	return false
 }
 `

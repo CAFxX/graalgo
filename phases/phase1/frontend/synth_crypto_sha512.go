@@ -412,27 +412,29 @@ func (d *digest) UnmarshalBinary(b []byte) error {
 		return errors.New("crypto/sha512: invalid hash state size")
 	}
 	b = b[len(magic512):]
-	b, d.h[0] = consumeUint64(b)
-	b, d.h[1] = consumeUint64(b)
-	b, d.h[2] = consumeUint64(b)
-	b, d.h[3] = consumeUint64(b)
-	b, d.h[4] = consumeUint64(b)
-	b, d.h[5] = consumeUint64(b)
-	b, d.h[6] = consumeUint64(b)
-	b, d.h[7] = consumeUint64(b)
+	// P3-M8b: consumeUint64 inlined — its multi-result form cannot be
+	// assigned to index targets (WS D).
+	d.h[0] = boBEUint64(b[0:8])
+	d.h[1] = boBEUint64(b[8:16])
+	d.h[2] = boBEUint64(b[16:24])
+	d.h[3] = boBEUint64(b[24:32])
+	d.h[4] = boBEUint64(b[32:40])
+	d.h[5] = boBEUint64(b[40:48])
+	d.h[6] = boBEUint64(b[48:56])
+	d.h[7] = boBEUint64(b[56:64])
+	b = b[64:]
 	b = b[copy(d.x[:], b):]
-	b, d.len = consumeUint64(b)
+	d.len = boBEUint64(b[0:8])
+	b = b[8:]
 	d.nx = int(d.len % chunk)
 	return nil
 }
 
-func consumeUint64(b []byte) ([]byte, uint64) {
-	return b[8:], boBEUint64(b)
-}
-
 func (d *digest) CloneSinglePair() hash.ClonePair {
-	r := *d
-	return hash.ClonePair{C: &r}
+	// P3-M8b: (*d) / &r are not expressible in frontend/v1 (WS D);
+	// &digest{...} on a composite literal is. Field-by-field copy
+	// (arrays are values, so the copy is complete).
+	return hash.ClonePair{C: &digest{h: d.h, x: d.x, nx: d.nx, len: d.len, size: d.size}}
 }
 
 // Clone implements hash.Cloner (fail-fast stub; real logic is
@@ -510,8 +512,9 @@ func (d *digest) Write(p []byte) (nn int, err error) {
 
 func (d *digest) Sum(in []byte) []byte {
 	// Make a copy of d so that caller can keep writing and summing.
-	d0 := new(digest)
-	*d0 = *d
+	// P3-M8b: *d is not expressible in frontend/v1 (WS D); copy field
+	// by field (arrays are values, so the copy is complete).
+	d0 := &digest{h: d.h, x: d.x, nx: d.nx, len: d.len, size: d.size}
 	hash := d0.checkSum()
 	return append(in, hash[:d.size]...)
 }

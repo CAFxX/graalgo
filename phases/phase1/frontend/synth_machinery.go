@@ -71,7 +71,9 @@ var syntheticSources = map[string]string{
 	"crypto/sha3":   syntheticSha3Source,
 	"crypto/subtle": syntheticSubtleSource,
 	"crypto/hmac":   syntheticHmacSource,
-	"crypto/cipher": syntheticCipherSource,
+	// The cipher package spans two source files (modes + GCM); the GCM
+	// fragment is concatenated after the main source.
+	"crypto/cipher": syntheticCipherSource + syntheticCipherGcmSource,
 	"crypto/aes":    syntheticAesSource,
 	"crypto/des":    syntheticDesSource,
 	"crypto/rc4":    syntheticRc4Source,
@@ -632,6 +634,18 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 		}
 		if obj.Pkg() != nil && obj.Pkg().Path() == "math" && mathIntrinsicNames[obj.Name()] {
 			return nil, scopeErrorf("math.%s is an intrinsic and cannot be used in value position (M7)", obj.Name())
+		}
+		// P3-M8b: a named synthetic function in value position (e.g.
+		// sha256.New passed to hmac.New) lowers via the M6 func-value
+		// path, exactly like a user-package function reference. The
+		// synthetic package must already be imported (its funcs in
+		// funcByObj); otherwise the M5 scope error is kept.
+		if _, ok := e.funcByObj[obj]; ok {
+			fields := map[string]any{"name": x.Sel.Name}
+			if err := e.exportFuncValue(x.Sel, obj, fields); err != nil {
+				return nil, err
+			}
+			return e.node("ident", x.Sel, fields), nil
 		}
 		return nil, scopeErrorf("%s.%s in value position is not supported in frontend/v1 scope (M5)",
 			pkgName.Name(), obj.Name())

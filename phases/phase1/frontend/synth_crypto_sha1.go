@@ -203,28 +203,26 @@ func (d *digest) UnmarshalBinary(b []byte) error {
 		return errors.New("crypto/sha1: invalid hash state size")
 	}
 	b = b[len(magic):]
-	b, d.h[0] = consumeUint32(b)
-	b, d.h[1] = consumeUint32(b)
-	b, d.h[2] = consumeUint32(b)
-	b, d.h[3] = consumeUint32(b)
-	b, d.h[4] = consumeUint32(b)
+	// P3-M8b: consumeUint32/consumeUint64 inlined — their multi-result
+	// form cannot be assigned to index targets (WS D).
+	d.h[0] = boBEUint32(b[0:4])
+	d.h[1] = boBEUint32(b[4:8])
+	d.h[2] = boBEUint32(b[8:12])
+	d.h[3] = boBEUint32(b[12:16])
+	d.h[4] = boBEUint32(b[16:20])
+	b = b[20:]
 	b = b[copy(d.x[:], b):]
-	b, d.len = consumeUint64(b)
+	d.len = boBEUint64(b[0:8])
+	b = b[8:]
 	d.nx = int(d.len % chunk)
 	return nil
 }
 
-func consumeUint64(b []byte) ([]byte, uint64) {
-	return b[8:], boBEUint64(b)
-}
-
-func consumeUint32(b []byte) ([]byte, uint32) {
-	return b[4:], boBEUint32(b)
-}
-
 func (d *digest) CloneSinglePair() hash.ClonePair {
-	r := *d
-	return hash.ClonePair{C: &r}
+	// P3-M8b: (*d) / &r are not expressible in frontend/v1 (WS D);
+	// &digest{...} on a composite literal is. Field-by-field copy
+	// (arrays are values, so the copy is complete).
+	return hash.ClonePair{C: &digest{h: d.h, x: d.x, nx: d.nx, len: d.len}}
 }
 
 // Clone implements hash.Cloner (fail-fast stub; real logic is
@@ -292,7 +290,9 @@ func (d *digest) Write(p []byte) (nn int, err error) {
 
 func (d *digest) Sum(in []byte) []byte {
 	// Make a copy of d so that caller can keep writing and summing.
-	d0 := *d
+	// P3-M8b: *d is not expressible in frontend/v1 (WS D); copy field
+	// by field (arrays are values, so the copy is complete).
+	d0 := &digest{h: d.h, x: d.x, nx: d.nx, len: d.len}
 	hash := d0.checkSum()
 	return append(in, hash[:]...)
 }
@@ -333,7 +333,9 @@ func (d *digest) checkSum() [Size]byte {
 
 // ConstantTimeSum computes the same result of [Sum] but in constant time
 func (d *digest) ConstantTimeSum(in []byte) []byte {
-	d0 := *d
+	// P3-M8b: *d is not expressible in frontend/v1 (WS D); copy field
+	// by field (arrays are values, so the copy is complete).
+	d0 := &digest{h: d.h, x: d.x, nx: d.nx, len: d.len}
 	hash := d0.constSum()
 	return append(in, hash[:]...)
 }
@@ -402,7 +404,9 @@ func (d *digest) constSum() [Size]byte {
 
 // Sum returns the SHA-1 checksum of the data.
 func Sum(data []byte) [Size]byte {
-	var d digest
+	// P3-M8b: d is a pointer — method calls on a value digest would need
+	// an implicit address-of (WS D).
+	d := &digest{}
 	d.Reset()
 	d.Write(data)
 	return d.checkSum()

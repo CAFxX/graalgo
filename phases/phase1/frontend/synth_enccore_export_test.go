@@ -222,9 +222,17 @@ func TestEnccoreFailFast(t *testing.T) {
 			"M7",
 		},
 		{
+			// P3-M8b: encoding.BinaryMarshaler.MarshalBinary via interface
+			// now desugars through the m8IfaceMultiResultMethods
+			// "hash"/"MarshalBinary" entry (structural match on name +
+			// ([]byte, error) results). Export succeeds; the itab maps the
+			// method to hash.__binaryMarshal for synthetic digests, and
+			// any other dynamic type fails loud at runtime with
+			// "missing method" (never silent). The old M7 export-time
+			// fail-fast pin is superseded by the feature.
 			"encoding.BinaryMarshaler.MarshalBinary via interface",
 			"package main\nimport \"encoding\"\nfunc f(m encoding.BinaryMarshaler) {\nm.MarshalBinary()\n}\nfunc main() {}\n",
-			"M7",
+			"", // must EXPORT cleanly (no M7 error; dispatch is runtime)
 		},
 		{
 			// A user method with the same name as a desugared synthetic

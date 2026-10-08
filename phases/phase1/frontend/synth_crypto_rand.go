@@ -63,7 +63,9 @@ func Text() string {
 	const base32alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 	// ⌈log₃₂ 2¹²⁸⌉ = 26 chars
 	src := make([]byte, 26)
-	Read(src)
+	// P3-M8b: Read(src) as a bare statement is not desugarable (WS D);
+	// call the single-result __-helper directly (same entropy source).
+	__randRead(src)
 	for i := range src {
 		src[i] = base32alphabet[src[i]%32]
 	}

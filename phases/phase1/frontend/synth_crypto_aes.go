@@ -148,24 +148,9 @@ func (b *blockExpanded) roundKeysSize() int {
 	return (b.rounds + 1) * (128 / 32)
 }
 
-// New creates and returns a new [cipher.Block] implementation.
-// The key argument should be the AES key, either 16, 24, or 32 bytes to select
-// AES-128, AES-192, or AES-256.
-func newAesBlock(key []byte) (*Block, error) {
-	// This call is outline to let the allocation happen on the parent stack.
-	return newOutlined(&Block{}, key)
-}
-
-// newOutlined is marked go:noinline to avoid it inlining into New, and making New
-// too complex to inline itself.
-func newOutlined(b *Block, key []byte) (*Block, error) {
-	switch len(key) {
-	case aes128KeySize, aes192KeySize, aes256KeySize:
-	default:
-		return nil, KeySizeError(len(key))
-	}
-	return newBlock(b, key), nil
-}
+// P3-M8b: newAesBlock/newOutlined (the stdlib's multi-result
+// constructors) are inlined into __aesNewCipher below — a __-helper
+// cannot call a multi-result function (WS D).
 
 func newBlockExpanded(c *blockExpanded, key []byte) {
 	switch len(key) {
@@ -253,7 +238,9 @@ func EncryptBlockInternal(c *Block, dst, src []byte) {
 //	https://csrc.nist.gov/archive/aes/rijndael/Rijndael-ammended.pdf
 
 // Encrypt one block from src into dst, using the expanded key xk.
-func encryptBlockGeneric(c *blockExpanded, dst, src []byte) {
+// P3-M8b: the expanded key is passed by value (frontend/v1 has no & on
+// selectors, WS D); the body only reads it, so the copy is exact.
+func encryptBlockGeneric(c blockExpanded, dst, src []byte) {
 	checkGenericIsExpected()
 	xk := c.enc[:]
 
@@ -300,7 +287,9 @@ func encryptBlockGeneric(c *blockExpanded, dst, src []byte) {
 }
 
 // Decrypt one block from src into dst, using the expanded key xk.
-func decryptBlockGeneric(c *blockExpanded, dst, src []byte) {
+// P3-M8b: the expanded key is passed by value (frontend/v1 has no & on
+// selectors, WS D); the body only reads it, so the copy is exact.
+func decryptBlockGeneric(c blockExpanded, dst, src []byte) {
 	checkGenericIsExpected()
 	xk := c.dec[:]
 
@@ -403,16 +392,24 @@ type block struct {
 }
 
 func newBlock(c *Block, key []byte) *Block {
-	newBlockExpanded(&c.blockExpanded, key)
+	// P3-M8b: &c.blockExpanded is not expressible in frontend/v1 (WS D),
+	// and neither is *be (no StarExpr in v1). Expand into a fresh value
+	// (&T{} is expressible) and copy it back field by field (arrays
+	// copy by value, so the copy is complete).
+	be := &blockExpanded{}
+	newBlockExpanded(be, key)
+	c.blockExpanded.rounds = be.rounds
+	c.blockExpanded.enc = be.enc
+	c.blockExpanded.dec = be.dec
 	return c
 }
 
 func encryptBlock(c *Block, dst, src []byte) {
-	encryptBlockGeneric(&c.blockExpanded, dst, src)
+	encryptBlockGeneric(c.blockExpanded, dst, src)
 }
 
 func decryptBlock(c *Block, dst, src []byte) {
-	decryptBlockGeneric(&c.blockExpanded, dst, src)
+	decryptBlockGeneric(c.blockExpanded, dst, src)
 }
 
 func checkGenericIsExpected() {}
@@ -780,18 +777,18 @@ func (k KeySizeError) Error() string {
 }
 
 // inexactOverlap reports whether x and y share memory at a non-zero offset.
-// P3-M8: fail-fast without unsafe (see crypto/subtle).
+// P3-M8b: the &x[0] == &y[0] fast path is not expressible in frontend/v1
+// (WS D: & on index expressions is rejected), and partial-overlap
+// detection needs unsafe pointer arithmetic, which the M8 unsafe package
+// traps (D5: handles admit no byte arithmetic). We cannot distinguish
+// disjoint from partially-overlapping slices, so we conservatively report
+// no overlap. gc panics ("invalid buffer overlap") on partial overlap;
+// we silently proceed — a divergence for caller-bug cases only.
+// Re-test trigger: byte-addressed value model (D5 re-test).
 func inexactOverlap(x, y []byte) bool {
-	if len(x) == 0 || len(y) == 0 || &x[0] == &y[0] {
+	if len(x) == 0 || len(y) == 0 {
 		return false
 	}
-	// M8 limitation (P0-1): partial-overlap detection needs unsafe
-	// pointer arithmetic, which the M8 unsafe package traps (D5: handles
-	// admit no byte arithmetic). We cannot distinguish disjoint from
-	// partially-overlapping slices, so we conservatively report no
-	// overlap. gc panics ("invalid buffer overlap") on partial overlap;
-	// we silently proceed — a divergence for caller-bug cases only.
-	// Re-test trigger: byte-addressed value model (D5 re-test).
 	return false
 }
 
@@ -803,6 +800,10 @@ type newCipherPair struct {
 
 // __aesNewCipher serves aes.NewCipher through the mrM8 desugar (see
 // m8-staging/crypto/03-mrdesugar.patch). Re-test trigger: WS D lands.
+// P3-M8b: newAesBlock/newOutlined are inlined here — a __-helper cannot
+// call a multi-result function (WS D), and routing through the desugar
+// would recurse into __aesNewCipher itself. The key-size check above
+// subsumes newOutlined's.
 func __aesNewCipher(key []byte) newCipherPair {
 	k := len(key)
 	switch k {
@@ -811,10 +812,6 @@ func __aesNewCipher(key []byte) newCipherPair {
 	case 16, 24, 32:
 		break
 	}
-	b, err := newAesBlock(key)
-	if err != nil {
-		return newCipherPair{nil, err}
-	}
-	return newCipherPair{b, nil}
+	return newCipherPair{newBlock(&Block{}, key), nil}
 }
 `

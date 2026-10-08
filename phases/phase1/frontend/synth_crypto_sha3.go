@@ -166,10 +166,10 @@ type digest struct {
 }
 
 // BlockSize returns the rate of sponge underlying this hash function.
-func (d *digest) BlockSize() int { return d.rate }
+func (d digest) BlockSize() int { return d.rate }
 
 // Size returns the output size of the hash function in bytes.
-func (d *digest) Size() int { return d.outputLen }
+func (d digest) Size() int { return d.outputLen }
 
 // Reset resets the digest to its initial state.
 func (d *digest) Reset() {
@@ -182,13 +182,16 @@ func (d *digest) Reset() {
 }
 
 func (d *digest) Clone() *digest {
-	ret := *d
-	return &ret
+	// P3-M8b: *d / &ret are not expressible in frontend/v1 (WS D);
+	// &digest{...} on a composite literal is. Field-by-field copy
+	// (arrays are values, so the copy is complete).
+	return &digest{a: d.a, n: d.n, rate: d.rate, dsbyte: d.dsbyte, outputLen: d.outputLen, state: d.state}
 }
 
 // permute applies the KeccakF-1600 permutation.
 func (d *digest) permute() {
-	keccakF1600(&d.a)
+	// P3-M8b: value semantics (frontend/v1 has no & on selectors, WS D).
+	d.a = keccakF1600(d.a)
 	d.n = 0
 }
 
@@ -285,11 +288,11 @@ const (
 	marshaledSize = len(magicSHA3) + 1 + 200 + 1 + 1
 )
 
-func (d *digest) MarshalSingle() []byte {
+func (d digest) MarshalSingle() []byte {
 	return d.AppendSingle(make([]byte, 0, marshaledSize))
 }
 
-func (d *digest) AppendSingle(b []byte) []byte {
+func (d digest) AppendSingle(b []byte) []byte {
 	switch d.dsbyte {
 	case dsbyteSHA3:
 		b = append(b, magicSHA3...)
@@ -413,6 +416,23 @@ type shake struct {
 	initBlock []byte
 }
 
+// P3-M8b: copyDigest/storeDigest work around frontend/v1 WS D limits (no
+// & on selector, no * deref). Mutating digest methods have pointer
+// receivers; s.d is a value, so call sites copy to a *digest, mutate,
+// and store back field by field (arrays copy by value).
+func copyDigest(d digest) *digest {
+	return &digest{a: d.a, n: d.n, rate: d.rate, dsbyte: d.dsbyte, outputLen: d.outputLen, state: d.state}
+}
+
+func (s *shake) storeDigest(d *digest) {
+	s.d.a = d.a
+	s.d.n = d.n
+	s.d.rate = d.rate
+	s.d.dsbyte = d.dsbyte
+	s.d.outputLen = d.outputLen
+	s.d.state = d.state
+}
+
 func bytepadWrite(c *shake, data []byte, rate int) {
 	rateEnc := leftEncode(uint64(rate))
 	c.WriteSingle(rateEnc)
@@ -455,19 +475,36 @@ func (s *shake) Size() int      { return s.d.Size() }
 // output length is selected to provide full-strength generic security: 32 bytes
 // for SHAKE128 and 64 bytes for SHAKE256. It does not change the underlying
 // state. It panics if any output has already been read.
-func (s *shake) Sum(in []byte) []byte { return s.d.Sum(in) }
+func (s *shake) Sum(in []byte) []byte {
+	// P3-M8b: s.d is a value; Sum has a pointer receiver (WS D).
+	// Sum is read-only (it clones), so a copy is exact.
+	return copyDigest(s.d).Sum(in)
+}
 
 // Write absorbs more data into the hash's state.
 // It panics if any output has already been read.
-func (s *shake) WriteSingle(p []byte) int { return s.d.WriteSingle(p) }
+func (s *shake) WriteSingle(p []byte) int {
+	// P3-M8b: s.d is a value; WriteSingle has a pointer receiver (WS D).
+	d := copyDigest(s.d)
+	n := d.WriteSingle(p)
+	s.storeDigest(d)
+	return n
+}
 
 func (s *shake) ReadSingle(out []byte) int {
-	return s.d.ReadSingle(out)
+	// P3-M8b: s.d is a value; ReadSingle has a pointer receiver (WS D).
+	d := copyDigest(s.d)
+	n := d.ReadSingle(out)
+	s.storeDigest(d)
+	return n
 }
 
 // Reset resets the hash to initial state.
 func (s *shake) Reset() {
-	s.d.Reset()
+	// P3-M8b: s.d is a value; Reset has a pointer receiver (WS D).
+	d := copyDigest(s.d)
+	d.Reset()
+	s.storeDigest(d)
 	if len(s.initBlock) != 0 {
 		bytepadWrite(s, s.initBlock, s.d.rate)
 	}
@@ -475,8 +512,11 @@ func (s *shake) Reset() {
 
 // Clone returns a copy of the shake context in its current state.
 func (s *shake) Clone() *shake {
-	ret := *s
-	return &ret
+	// P3-M8b: *s / &ret are not expressible in frontend/v1 (WS D);
+	// &shake{...} on a composite literal is. The digest field copies
+	// by value (its array copies completely); initBlock shares storage,
+	// exactly as in the stdlib.
+	return &shake{d: s.d, initBlock: s.initBlock}
 }
 
 func (s *shake) MarshalSingle() []byte {
@@ -493,9 +533,12 @@ func (s *shake) UnmarshalBinary(b []byte) error {
 	if len(b) < marshaledSize {
 		return errors.New("sha3: invalid hash state")
 	}
-	if err := s.d.UnmarshalBinary(b[:marshaledSize]); err != nil {
+	// P3-M8b: s.d is a value; UnmarshalBinary has a pointer receiver (WS D).
+	d := copyDigest(s.d)
+	if err := d.UnmarshalBinary(b[:marshaledSize]); err != nil {
 		return err
 	}
+	s.storeDigest(d)
 	s.initBlock = bytes.Clone(b[marshaledSize:])
 	return nil
 }
@@ -523,7 +566,11 @@ func newCShake128(N, S []byte) *shake {
 
 func newCShake128Inner(c *shake, N, S []byte) *shake {
 	if len(N) == 0 && len(S) == 0 {
-		*c = *newShake128()
+		// P3-M8b: *c = *... is not expressible in frontend/v1 (WS D:
+		// no StarExpr); copy the fresh state field by field.
+		tmp := newShake128()
+		c.d = tmp.d
+		c.initBlock = tmp.initBlock
 		return c
 	}
 	return newCShake(c, N, S, rateK256, 32, dsbyteCShake)
@@ -542,7 +589,11 @@ func newCShake256(N, S []byte) *shake {
 
 func newCShake256Inner(c *shake, N, S []byte) *shake {
 	if len(N) == 0 && len(S) == 0 {
-		*c = *newShake256()
+		// P3-M8b: *c = *... is not expressible in frontend/v1 (WS D:
+		// no StarExpr); copy the fresh state field by field.
+		tmp := newShake256()
+		c.d = tmp.d
+		c.initBlock = tmp.initBlock
 		return c
 	}
 	return newCShake(c, N, S, rateK512, 64, dsbyteCShake)
@@ -581,7 +632,10 @@ var rc = [24]uint64{
 }
 
 // keccakF1600Generic applies the Keccak permutation.
-func keccakF1600Generic(da *[200]byte) {
+// P3-M8b: value-semantics form — frontend/v1 rejects & on selectors
+// (WS D), so the state array is taken and returned by value (arrays
+// copy; semantics identical).
+func keccakF1600Generic(da [200]byte) [200]byte {
 	// P3-M8: always-copy rewrite of the stdlib's unsafe fast path. The
 	// stdlib aliases da as *[25]uint64 via unsafe.Pointer on little-endian
 	// hosts (perf-only); the v1 frontend has no unsafe, so we always copy
@@ -591,11 +645,6 @@ func keccakF1600Generic(da *[200]byte) {
 	for i := 0; i < 25; i++ {
 		a[i] = boLEUint64(da[i*8:])
 	}
-	defer func() {
-		for i := 0; i < 25; i++ {
-			boLEPutUint64(da[i*8:], a[i])
-		}
-	}()
 
 	// Implementation translated from Keccak-inplace.c
 	// in the keccak reference code.
@@ -969,14 +1018,19 @@ func keccakF1600Generic(da *[200]byte) {
 		a[23] = bc3 ^ (bc0 &^ bc4)
 		a[24] = bc4 ^ (bc1 &^ bc0)
 	}
+	// Write the state back (replaces the removed defer).
+	for i := 0; i < 25; i++ {
+		boLEPutUint64(da[i*8:], a[i])
+	}
+	return da
 }
 
 // Copyright 2024 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-func keccakF1600(a *[200]byte) {
-	keccakF1600Generic(a)
+func keccakF1600(a [200]byte) [200]byte {
+	return keccakF1600Generic(a)
 }
 
 // Copyright 2024 The Go Authors. All rights reserved.
@@ -1081,36 +1135,66 @@ type SHA3 struct {
 	d digest
 }
 
+// P3-M8b: storeDigest workarounds frontend/v1 WS D limits (no & on
+// selector, no * deref); see copyDigest above.
+func (s *SHA3) storeDigest(d *digest) {
+	s.d.a = d.a
+	s.d.n = d.n
+	s.d.rate = d.rate
+	s.d.dsbyte = d.dsbyte
+	s.d.outputLen = d.outputLen
+	s.d.state = d.state
+}
+
 // New224 creates a new SHA3-224 hash.
 func New224() *SHA3 {
-	return &SHA3{*newDigest224()}
+	// P3-M8b: &SHA3{*...} is not expressible (no StarExpr in v1).
+	d := newDigest224()
+	return &SHA3{d: digest{a: d.a, n: d.n, rate: d.rate, dsbyte: d.dsbyte, outputLen: d.outputLen, state: d.state}}
 }
 
 // New256 creates a new SHA3-256 hash.
 func New256() *SHA3 {
-	return &SHA3{*newDigest256()}
+	// P3-M8b: &SHA3{*...} is not expressible (no StarExpr in v1).
+	d := newDigest256()
+	return &SHA3{d: digest{a: d.a, n: d.n, rate: d.rate, dsbyte: d.dsbyte, outputLen: d.outputLen, state: d.state}}
 }
 
 // New384 creates a new SHA3-384 hash.
 func New384() *SHA3 {
-	return &SHA3{*newDigest384()}
+	// P3-M8b: &SHA3{*...} is not expressible (no StarExpr in v1).
+	d := newDigest384()
+	return &SHA3{d: digest{a: d.a, n: d.n, rate: d.rate, dsbyte: d.dsbyte, outputLen: d.outputLen, state: d.state}}
 }
 
 // New512 creates a new SHA3-512 hash.
 func New512() *SHA3 {
-	return &SHA3{*newDigest512()}
+	// P3-M8b: &SHA3{*...} is not expressible (no StarExpr in v1).
+	d := newDigest512()
+	return &SHA3{d: digest{a: d.a, n: d.n, rate: d.rate, dsbyte: d.dsbyte, outputLen: d.outputLen, state: d.state}}
 }
 
 func (s *SHA3) init() {
 	if s.d.Size() == 0 {
-		*s = *New256()
+		// P3-M8b: *s = *... is not expressible (no StarExpr in v1).
+		d := newDigest256()
+		s.d.a = d.a
+		s.d.n = d.n
+		s.d.rate = d.rate
+		s.d.dsbyte = d.dsbyte
+		s.d.outputLen = d.outputLen
+		s.d.state = d.state
 	}
 }
 
 // Write absorbs more data into the hash's state.
 func (s *SHA3) WriteSingle(p []byte) int {
 	s.init()
-	return s.d.WriteSingle(p)
+	// P3-M8b: s.d is a value; WriteSingle has a pointer receiver (WS D).
+	d := copyDigest(s.d)
+	n := d.WriteSingle(p)
+	s.storeDigest(d)
+	return n
 }
 
 // Write(p []byte) (n int, err error) implements hash.Hash. The v1 frontend cannot emit or call multi-result
@@ -1124,13 +1208,18 @@ func (s *SHA3) Write(p []byte) (n int, err error) {
 // Sum appends the current hash to b and returns the resulting slice.
 func (s *SHA3) Sum(b []byte) []byte {
 	s.init()
-	return s.d.Sum(b)
+	// P3-M8b: s.d is a value; Sum has a pointer receiver (WS D).
+	// Sum is read-only (it clones), so a copy is exact.
+	return copyDigest(s.d).Sum(b)
 }
 
 // Reset resets the hash to its initial state.
 func (s *SHA3) Reset() {
 	s.init()
-	s.d.Reset()
+	// P3-M8b: s.d is a value; Reset has a pointer receiver (WS D).
+	d := copyDigest(s.d)
+	d.Reset()
+	s.storeDigest(d)
 }
 
 // Size returns the number of bytes Sum will produce.
@@ -1176,13 +1265,21 @@ func (s *SHA3) AppendBinary(p []byte) ([]byte, error) {
 // UnmarshalBinary implements [encoding.BinaryUnmarshaler].
 func (s *SHA3) UnmarshalBinary(data []byte) error {
 	s.init()
-	return s.d.UnmarshalBinary(data)
+	// P3-M8b: s.d is a value; UnmarshalBinary has a pointer receiver (WS D).
+	d := copyDigest(s.d)
+	if err := d.UnmarshalBinary(data); err != nil {
+		return err
+	}
+	s.storeDigest(d)
+	return nil
 }
 
 // Clone implements [hash.Cloner].
 func (d *SHA3) CloneSinglePair() hash.ClonePair {
-	r := *d
-	return hash.ClonePair{C: &r}
+	// P3-M8b: (*d) / &r are not expressible in frontend/v1 (WS D);
+	// &SHA3{...} on a composite literal is. Field-by-field copy
+	// (arrays are values, so the copy is complete).
+	return hash.ClonePair{C: &SHA3{digest{a: d.d.a, n: d.d.n, rate: d.d.rate, dsbyte: d.d.dsbyte, outputLen: d.d.outputLen, state: d.d.state}}}
 }
 
 // Clone() (hash.Cloner, error) implements hash.Cloner. The v1 frontend cannot emit or call multi-result
@@ -1196,23 +1293,28 @@ func (d *SHA3) Clone() (hash.Cloner, error) {
 // SHAKE is an instance of a SHAKE extendable output function.
 // The zero value is a usable SHAKE256 hash.
 type SHAKE struct {
-	d shake
+	// P3-M8b: d is a pointer — the shake methods have pointer receivers
+	// (WS D: no implicit & on a value field).
+	d *shake
 }
 
 func (s *SHAKE) init() {
 	if s.d.Size() == 0 {
-		*s = *NewSHAKE256()
+		// P3-M8b: *s = *... is not expressible (no StarExpr in v1).
+		// s.d is *shake; replace it with a fresh one.
+		s.d = newShake256()
 	}
 }
 
 // NewSHAKE128 creates a new SHAKE128 XOF.
 func NewSHAKE128() *SHAKE {
-	return &SHAKE{*newShake128()}
+	// P3-M8b: &SHAKE{*...} is not expressible (no StarExpr in v1).
+	return &SHAKE{d: newShake128()}
 }
 
 // NewSHAKE256 creates a new SHAKE256 XOF.
 func NewSHAKE256() *SHAKE {
-	return &SHAKE{*newShake256()}
+	return &SHAKE{d: newShake256()}
 }
 
 // NewCSHAKE128 creates a new cSHAKE128 XOF.
@@ -1221,7 +1323,8 @@ func NewSHAKE256() *SHAKE {
 // cSHAKE is desired. S is a customization byte string used for domain
 // separation. When N and S are both empty, this is equivalent to NewSHAKE128.
 func NewCSHAKE128(N, S []byte) *SHAKE {
-	return &SHAKE{*newCShake128(N, S)}
+	// P3-M8b: &SHAKE{*...} is not expressible (no StarExpr in v1).
+	return &SHAKE{d: newCShake128(N, S)}
 }
 
 // NewCSHAKE256 creates a new cSHAKE256 XOF.
@@ -1230,7 +1333,8 @@ func NewCSHAKE128(N, S []byte) *SHAKE {
 // cSHAKE is desired. S is a customization byte string used for domain
 // separation. When N and S are both empty, this is equivalent to NewSHAKE256.
 func NewCSHAKE256(N, S []byte) *SHAKE {
-	return &SHAKE{*newCShake256(N, S)}
+	// P3-M8b: &SHAKE{*...} is not expressible (no StarExpr in v1).
+	return &SHAKE{d: newCShake256(N, S)}
 }
 
 // Write absorbs more data into the XOF's state.

@@ -895,6 +895,17 @@ func ExportFile(path string) (string, error) {
 	needCryptoSha256 := false
 	needHash := false
 	needIter := false
+	// P3-M8b: the remaining synthetic crypto packages (the corpus closure).
+	needCrypto := false
+	needCryptoAes := false
+	needCryptoCipher := false
+	needCryptoHmac := false
+	needCryptoMd5 := false
+	needCryptoRand := false
+	needCryptoSha1 := false
+	needCryptoSha3 := false
+	needCryptoSha512 := false
+	needCryptoSubtle := false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -988,6 +999,29 @@ func ExportFile(path string) (string, error) {
 			needCryptoSha256 = true
 			needErrors = true
 			needStrconv = true
+		// P3-M8b: a user import of any other synthetic crypto package
+		// pulls it in (synth_crypto*.go). Dependency chains are imported
+		// in the need-blocks below (importSyntheticPackage is idempotent).
+		case "crypto":
+			needCrypto = true
+		case "crypto/aes":
+			needCryptoAes = true
+		case "crypto/cipher":
+			needCryptoCipher = true
+		case "crypto/hmac":
+			needCryptoHmac = true
+		case "crypto/md5":
+			needCryptoMd5 = true
+		case "crypto/rand":
+			needCryptoRand = true
+		case "crypto/sha1":
+			needCryptoSha1 = true
+		case "crypto/sha3":
+			needCryptoSha3 = true
+		case "crypto/sha512":
+			needCryptoSha512 = true
+		case "crypto/subtle":
+			needCryptoSubtle = true
 		// P3-M8 (wave 2): direct user imports of the synthetic hash and
 		// iter support packages.
 		case "hash":
@@ -1263,6 +1297,82 @@ func ExportFile(path string) (string, error) {
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/sha256")); err != nil {
 			return "", err
+		}
+	}
+	// P3-M8b: the remaining synthetic crypto packages (synth_crypto*.go).
+	// Each block imports its full dependency chain in topological order
+	// (importSyntheticPackage is idempotent, so overlap is safe):
+	// errors <- io <- hash <- strconv <- crypto <- subtle <- cipher <- aes;
+	// md5/sha1/sha512 <- {crypto,errors,hash}; sha3 <- bytes too;
+	// hmac <- {subtle,errors,hash}; rand <- io.
+	if needCrypto {
+		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoSubtle {
+		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/subtle")); err != nil {
+			return "", err
+		}
+	}
+	if needCryptoCipher {
+		// cipher also imports the synthetic bytes package (bytes.Clone).
+		for _, p := range []string{"errors", "io", "bytes", "crypto/subtle", "crypto/cipher"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoAes {
+		for _, p := range []string{"errors", "io", "bytes", "crypto/subtle", "crypto/cipher", "strconv", "crypto/aes"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoMd5 {
+		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto", "crypto/md5"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoSha1 {
+		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto", "crypto/sha1"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoSha3 {
+		// sha3 also imports the synthetic bytes package (bytes.Clone).
+		for _, p := range []string{"errors", "io", "hash", "strconv", "bytes", "crypto", "crypto/sha3"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoSha512 {
+		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto", "crypto/sha512"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoHmac {
+		for _, p := range []string{"errors", "io", "hash", "crypto/subtle", "crypto/hmac"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoRand {
+		for _, p := range []string{"errors", "io", "crypto/rand"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	// P3-M3 (WS D, ADR-0003): the "methods" lists on named/pointer entries

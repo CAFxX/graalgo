@@ -136,16 +136,16 @@ func __hashWrite(h Hash, p []byte) hashWritePair {
 
 // __hashRead serves x.Read(p) for hash.XOF through the mrM8 desugar.
 func __hashRead(x XOF, p []byte) hashReadPair {
-	if r, ok := x.(interface{ readSingle([]byte) int }); ok {
-		return hashReadPair{r.readSingle(p), nil}
+	if r, ok := x.(interface{ ReadSingle([]byte) int }); ok {
+		return hashReadPair{r.ReadSingle(p), nil}
 	}
 	panic("hash: Read on non-synthetic hash.XOF implementation (needs WS D; re-test when it lands)")
 }
 
 // __hashClone serves h.Clone() through the mrM8 desugar.
 func __hashClone(h Hash) ClonePair {
-	if c, ok := h.(interface{ cloneSinglePair() ClonePair }); ok {
-		return c.cloneSinglePair()
+	if c, ok := h.(interface{ CloneSinglePair() ClonePair }); ok {
+		return c.CloneSinglePair()
 	}
 	panic("hash: Clone on non-synthetic hash.Hash implementation (needs WS D; re-test when it lands)")
 }

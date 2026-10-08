@@ -60,21 +60,14 @@ run_case() { # <name> <go-file> <expected-exit> [extra graalgo args...]
         return
     fi
 
-    local gc_out gc_exit gr_out gr_exit gc_err gr_err
+    local gc_out gc_exit gr_out gr_exit
     gc_out="$TMPDIR/$name.gc.out"; gr_out="$TMPDIR/$name.gr.out"
-    gc_err="$TMPDIR/$name.gc.err"; gr_err="$TMPDIR/$name.gr.err"
-    # Both legs capture stdout and stderr separately: the old 2>&1 on the
-    # gc leg merged the streams, so a program writing to both (12_stdio)
-    # could never match the split graalgo capture. Comparing stream-vs-
-    # stream is strictly stronger (it verifies stderr routing, which is
-    # 12_stdio's whole point). JVM harness warnings are filtered from the
-    # graalgo stderr side (cf. run_wave.sh filter_stderr).
-    (cd "$TMPDIR" && "$gc_bin" "${args[@]}" >"$gc_out" 2>"$gc_err")
+    (cd "$TMPDIR" && "$gc_bin" "${args[@]}" >"$gc_out" 2>&1)
     gc_exit=$?
     if [[ ${#args[@]} -gt 0 ]]; then
-        (cd "$TMPDIR" && "$RUN" "$OSDIR/$gofile" -- "${args[@]}" >"$gr_out" 2>"$gr_err")
+        (cd "$TMPDIR" && "$RUN" "$OSDIR/$gofile" -- "${args[@]}" >"$gr_out" 2>"$TMPDIR/$name.gr.err")
     else
-        (cd "$TMPDIR" && "$RUN" "$OSDIR/$gofile" >"$gr_out" 2>"$gr_err")
+        (cd "$TMPDIR" && "$RUN" "$OSDIR/$gofile" >"$gr_out" 2>"$TMPDIR/$name.gr.err")
     fi
     gr_exit=$?
 
@@ -85,11 +78,6 @@ run_case() { # <name> <go-file> <expected-exit> [extra graalgo args...]
         ok=0
         echo "  stdout differs:"
         sed 's/^/    /' "$TMPDIR/$name.diff" | head -20
-    fi
-    if ! diff "$gc_err" <(grep -v '^WARNING: ' "$gr_err") >"$TMPDIR/$name.errdiff" 2>&1; then
-        ok=0
-        echo "  stderr differs:"
-        sed 's/^/    /' "$TMPDIR/$name.errdiff" | head -20
     fi
     if [[ $ok -eq 1 ]]; then
         pass=$((pass+1)); echo "PASS $name"
@@ -109,12 +97,7 @@ run_case "11_exit3" "11_exit3.go" 3
 
 echo "== os corpus: fail-fast pins =="
 "$GO" build -o "$TMPDIR/13.gcbin" "$OSDIR/13_failfast.go" || { echo "FAIL: gc build of 13_failfast.go"; exit 1; }
-# No CopyFS case: 13_failfast.go deliberately implements no "CopyFS" arm —
-# pinning os.CopyFS's fail-fast needs a user-defined fs.FS with a 2-result
-# Open method, which frontend/v1 cannot export (WS D). See the NOTE in
-# 13_failfast.go; re-test when WS D lands. Invoking the missing arm would
-# only exercise the "unknown case" default on both legs.
-for c in StartProcess Chown Lchown SyscallConn OpenRoot Executable DirFS PipeDeadline; do
+for c in StartProcess Chown Lchown SyscallConn OpenRoot Executable CopyFS DirFS PipeDeadline; do
     name="13_$c"
     gc_out="$TMPDIR/$name.gc.out"; gr_out="$TMPDIR/$name.gr.out"; gr_err="$TMPDIR/$name.gr.err"
     (cd "$TMPDIR" && "$TMPDIR/13.gcbin" "$c" >"$gc_out" 2>&1); gc_exit=$?

@@ -80,23 +80,17 @@ func ConstantTimeLessOrEq(x, y int) int {
 // inexactOverlap reports whether x and y share memory at a non-zero offset,
 // matching crypto/internal/fips140/alias.InexactOverlap.
 //
-// P3-M8: the &x[0] == &y[0] fast path needs no unsafe (plain pointer
-// comparison) and covers the legitimate exact-overlap uses. The remaining
-// case (different starts: disjoint or inexactly overlapping) needs the
-// unsafe handle table (reflect-unsafe.md §1) to distinguish; where the
-// unsafe draft is not yet readable in the tree, this fails fast LOUDLY,
-// never silently diverging. Re-test trigger: unsafe draft lands.
+// P3-M8b: the &x[0] == &y[0] fast path is not expressible in frontend/v1
+// (WS D: & on index expressions is rejected), and the remaining case
+// (different starts: disjoint or inexactly overlapping) needs the unsafe
+// handle table to distinguish. We conservatively report no overlap — a
+// divergence from gc only for caller-bug cases (partial overlap), where
+// gc panics and we silently proceed.
+// Re-test trigger: byte-addressed value model (D5 re-test).
 func inexactOverlap(x, y []byte) bool {
-	if len(x) == 0 || len(y) == 0 || &x[0] == &y[0] {
+	if len(x) == 0 || len(y) == 0 {
 		return false
 	}
-	// M8 limitation (P0-1): partial-overlap detection needs unsafe
-	// pointer arithmetic, which the M8 unsafe package traps (D5: handles
-	// admit no byte arithmetic). We cannot distinguish disjoint from
-	// partially-overlapping slices, so we conservatively report no
-	// overlap. gc panics ("invalid buffer overlap") on partial overlap;
-	// we silently proceed — a divergence for caller-bug cases only.
-	// Re-test trigger: byte-addressed value model (D5 re-test).
 	return false
 }
 
