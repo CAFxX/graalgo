@@ -1656,3 +1656,48 @@ architectural. Reflect worker still running.
 Crypto VM-bug worker (9/9) died to daemon restart 4 minutes after spawn.
 Per the plan, no more re-dispatches for this item — coordinator investigating
 directly. Reflect worker (4/9) still alive and active after 9h; leaving it.
+
+## m8b4: crypto status assessment (2026-10-08 ~15:30 CEST)
+
+AES VM bug FIXED (0f711d4): ConvertNode.executeLong now masks UINT8/UINT16.
+Red-green verified: probe8 panicked before, passes after; AES differential
+2/0/0 on both legs.
+
+Remaining crypto VM bugs:
+1. Cipher GCM: "method Open missing for *gcmFallback" interface dispatch
+   failure + timeout. The synthetic GCM fragment was merged but method table
+   incomplete.
+2. sha256: Java NPE (not Go panic), reproduces minimally. Deep runtime issue.
+3. HMAC/Rand: transitive on hash.
+
+These are real VM bugs in new synthetic crypto code. The core M8b packages
+(os 21/0/0, syscall 24/0/0, unsafe 14/2/0, AES 2/0/0, subtle 2/0/0) are done.
+Decision pending reflect worker status: scope-limit cipher/hash/hmac/rand
+with retest conditions, or continue VM bug fixing.
+
+Reflect worker: 11h running, status check sent, awaiting response.
+
+## 2026-10-08 ~16:30 CEST — reflect corpus re-verification (M8b FINISH worker, post-reboot)
+
+Re-ran the FULL reflect corpus (13 programs x 2 legs) on a scratch copy of
+m8b after three VM reboots killed the in-progress runs. Resumable per-leg
+driver (~/workspace/graalgo-m8-scratch/reflect_resume.sh, since removed;
+per-leg results in phases/phase3/hidden_files/m8-tmp/reflect/reverify_20261008.log):
+**26 passed, 0 scope-limited, 0 failed** (latest-line-per-leg accounting).
+
+- 06_swapper_select: both legs PASS (byte-identical to gc 1.27.1).
+- 07_tags_ptrto: both legs PASS (byte-identical to gc 1.27.1).
+- 10_failfast_methods: both legs PASS — genuine fail-fast, exit=2, stdout
+  empty, stderr first line matches the .panic pin
+  ("panic: reflect: Type.Methods: not in M8 scope (needs iter; re-test when
+  the iter package lands)"); .divergent marker skips the exit-code comparison
+  by design. The earlier KILL was environmental (/tmp full), not a hang:
+  with TMPDIR off /tmp the program terminates in ~2 min of JVM warmup.
+- One environmental timeout (00 gmp=1, 900s) under load 30-40 on the 2-CPU VM
+  passed on retry; no code issue.
+
+Caveat on tree state: the scratch was snapshotted at f3ffb86; m8b has since
+advanced to 0f711d4 (crypto worker: 39d9eee, c50b32b; ConvertNode UINT8/UINT16
+masking fix 0f711d4). None of the 13 reflect programs use uint8/uint16, and
+the crypto commits touch only crypto synthetic sources — so the 26/0/0 result
+holds for current m8b HEAD for this corpus. No new fixes needed; f3ffb86 stands.
