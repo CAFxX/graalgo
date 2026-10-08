@@ -20,7 +20,7 @@ import graalgo.values.GoStructDescriptor;
  * so {@link graalgo.values.GoEquality} sees consistent types (e.g. all
  * int/uint map keys box as {@link Long}, never {@link Integer}).
  */
-final class Boxing {
+public final class Boxing {
     private Boxing() {}
 
     /** Reads {@code node} and returns its canonical boxed value. */
@@ -166,7 +166,7 @@ final class Boxing {
      * {@code complex128}→{@code GoComplex64[]}, everything
      * else→{@code Object[]}.
      */
-    static Object newArray(GoKind elemKind, int len) {
+    public static Object newArray(GoKind elemKind, int len) {
         return switch (elemKind) {
             case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> new int[len];
             case INT64, UINT64, UNTYPED_INT -> new long[len];

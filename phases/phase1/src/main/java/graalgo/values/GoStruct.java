@@ -33,6 +33,10 @@ public final class GoStruct {
             GoStructDescriptor.Field f = descriptor.field(i);
             if (!f.inLongs() && f.kind() == GoKind.STRING) {
                 objects[f.index()] = GoString.EMPTY;
+            } else if (!f.inLongs() && f.kind() == GoKind.ARRAY && f.arrayLen() >= 0 && f.arrayElemKind() != null) {
+                // P3-M8b: Go new(T) gives zero-valued arrays, not null.
+                // Pre-allocate so d.h[0]=x doesn't NPE.
+                objects[f.index()] = graalgo.frontend.Boxing.newArray(f.arrayElemKind(), f.arrayLen());
             }
         }
         return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);

@@ -19,8 +19,13 @@ import java.util.List;
  * nodes (WS D) index through it.
  */
 public final class GoStructDescriptor {
-    /** One field's placement. */
-    public record Field(String name, GoKind kind, boolean inLongs, int index) {}
+    /**
+     * One field's placement. arrayLen is the array length for ARRAY-kind
+     * fields (-1 for non-arrays); arrayElemKind is the element kind for
+     * ARRAY-kind fields (null for non-arrays). Used by GoStruct.zero to
+     * pre-allocate array fields (Go: new(T) gives zero-valued arrays, not null).
+     */
+    public record Field(String name, GoKind kind, boolean inLongs, int index, int arrayLen, GoKind arrayElemKind) {}
 
     private final String typeName;
     private final List<Field> fields;
@@ -52,11 +57,15 @@ public final class GoStructDescriptor {
     /**
      * Assigns each field of the given kinds to the longs/objects carriers:
      * int/uint/float/bool kinds → {@code longs}, everything else →
-     * {@code objects}.
+     * {@code objects}. arrayLens[i] is the array length for ARRAY-kind
+     * fields (-1 for non-arrays); arrayElemKinds[i] is the element kind
+     * (null for non-arrays).
      */
-    public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds) {
-        if (names.size() != kinds.size()) {
-            throw new IllegalArgumentException("names/kinds length mismatch");
+    public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
+            List<Integer> arrayLens, List<GoKind> arrayElemKinds) {
+        if (names.size() != kinds.size() || names.size() != arrayLens.size()
+                || names.size() != arrayElemKinds.size()) {
+            throw new IllegalArgumentException("names/kinds/arrayLens/arrayElemKinds length mismatch");
         }
         java.util.ArrayList<Field> fields = new java.util.ArrayList<>(names.size());
         int longs = 0;
@@ -64,9 +73,24 @@ public final class GoStructDescriptor {
         for (int i = 0; i < names.size(); i++) {
             GoKind k = kinds.get(i);
             boolean inLongs = k.isIntKind() || k.isFloatKind() || k == GoKind.BOOL;
-            fields.add(new Field(names.get(i), k, inLongs, inLongs ? longs++ : objects++));
+            fields.add(new Field(names.get(i), k, inLongs, inLongs ? longs++ : objects++,
+                    arrayLens.get(i), arrayElemKinds.get(i)));
         }
         return new GoStructDescriptor(typeName, fields);
+    }
+
+    /**
+     * Legacy layout without array lengths (all -1/null). For call sites that
+     * don't have array length info.
+     */
+    public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds) {
+        java.util.ArrayList<Integer> lens = new java.util.ArrayList<>(names.size());
+        java.util.ArrayList<GoKind> elemKinds = new java.util.ArrayList<>(names.size());
+        for (int i = 0; i < names.size(); i++) {
+            lens.add(-1);
+            elemKinds.add(null);
+        }
+        return layout(typeName, names, kinds, lens, elemKinds);
     }
 
     public String typeName() {

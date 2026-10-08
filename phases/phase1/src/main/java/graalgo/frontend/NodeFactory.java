@@ -769,6 +769,36 @@ public final class NodeFactory {
     }
 
     /**
+     * Returns [arrayLen, elemTypeId] for array types, [-1, -1] otherwise.
+     * Used to pre-allocate array fields in GoStruct.zero (P3-M8b).
+     */
+    private static int[] arrayInfo(BuildCtx ctx, int typeId, String path) {
+        Json.Object entry = ctx.types.entry(typeId, path);
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                return new int[]{-1, -1};
+            }
+            String ek = entry.string("kind", path);
+            if ("named".equals(ek)) {
+                typeId = entry.object("detail", path).intValue("underlying", path);
+                entry = ctx.types.entry(typeId, path);
+            } else if ("alias".equals(ek)) {
+                typeId = entry.object("detail", path).intValue("rhs", path);
+                entry = ctx.types.entry(typeId, path);
+            } else {
+                break;
+            }
+        }
+        if (!"array".equals(entry.string("kind", path))) {
+            return new int[]{-1, -1};
+        }
+        Json.Object detail = entry.object("detail", path);
+        int len = detail.intValue("len", path);
+        int elemId = detail.intValue("elem", path);
+        return new int[]{len, elemId};
+    }
+
+    /**
      * Alias resolution over a bare type table (P3-M7R2): overload for
      * naming helpers that don't have a {@link BuildCtx}. Public for the
      * phase-3 {@code DescriptorNames} replica.
@@ -828,6 +858,8 @@ public final class NodeFactory {
         Json.Array fields = entry.object("detail", path).array("fields", path);
         List<String> names = new ArrayList<>(fields.size());
         List<GoKind> kinds = new ArrayList<>(fields.size());
+        List<Integer> arrayLens = new ArrayList<>(fields.size());
+        List<graalgo.values.GoKind> arrayElemKinds = new ArrayList<>(fields.size());
         int[] fieldTypeIds = new int[fields.size()];
         for (int i = 0; i < fields.size(); i++) {
             Json.Value fv = fields.get(i);
@@ -838,6 +870,10 @@ public final class NodeFactory {
             int ftid = fo.intValue("type", path);
             fieldTypeIds[i] = ftid;
             kinds.add(kindOf(ctx, ftid, path));
+            // P3-M8b: array length + element kind for GoStruct.zero pre-allocation.
+            int[] arrInfo = arrayInfo(ctx, ftid, path);
+            arrayLens.add(arrInfo[0]);
+            arrayElemKinds.add(arrInfo[0] >= 0 ? kindOf(ctx, arrInfo[1], path) : null);
         }
         // P3-M8b: canonicalize process-wide so descriptor identity == type
         // identity across BuildCtxs (functions/packages). The per-BuildCtx
@@ -849,10 +885,10 @@ public final class NodeFactory {
         // layout, so same-named/different-layout types across runs never
         // collide; identical anonymous structs correctly share (Go: identical
         // anonymous struct types are identical).
-        String key = (qname != null ? "N:" + qname : "S:") + "|" + names + "|" + kinds;
+        String key = (qname != null ? "N:" + qname : "S:") + "|" + names + "|" + kinds + "|" + arrayLens;
         GoStructDescriptor cd = STRUCT_DESCS.get(key);
         if (cd == null) {
-            GoStructDescriptor nd = GoStructDescriptor.layout("struct#" + typeId, names, kinds);
+            GoStructDescriptor nd = GoStructDescriptor.layout("struct#" + typeId, names, kinds, arrayLens, arrayElemKinds);
             GoStructDescriptor prev = STRUCT_DESCS.putIfAbsent(key, nd);
             cd = prev != null ? prev : nd;
         }
