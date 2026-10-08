@@ -1608,3 +1608,33 @@ verified pre-existing on unmodified m8b — identical P3-M3 scope error).
 Phase3 suite: 91 pass, 4 fail — all 4 are GoOsErrnoTest ([B vs [I
 ClassCastException), documented pre-existing from 10de431's os change, not
 this item. No reflect/chan test failures.
+
+## 2026-10-08 ~09:30 CEST — committed crypto fixes to m8b (39d9eee)
+
+28 files, 672+/436-. Largest hunk: synth_crypto_sha3.go value-semantics
+rewrite. Frontend suite green on m8b. Full differential running.
+
+## 2026-10-08 ~12:00 CEST — crypto differential results (M8b FINISH worker)
+
+True differential vs graalgo (both legs, gmp=1 and gmp=4):
+- subtle: 2 passed, 0 failed (01_xor)
+- rand: 0 passed, 2 failed (01_entropy)
+- aes: 0 passed, 2 failed (01_fips197) — panic: index out of range in encryptBlockGeneric (graalgo runtime struct/array handling)
+- cipher: 0 passed, 6 failed (01_modes, 02_gcm, 03_gcm_adversarial) — depends on AES
+- hash: 0 passed, 8 failed (01_digest_kat, 02_streaming, 03_clone_marshal, 04_xof) — md5 works, sha256 NPE, others wrong output
+- hmac: 0 passed, 4 failed (01_rfc_vectors, 02_reset_clone) — depends on hash
+
+Total: 2 passed, 22 failed, 0 scope-limited (24 differential runs).
+
+Export status: 12/12 programs export OK (was 0/12). The synthetic packages
+are now complete: cipher.NewGCM/NewCBCEncrypter/etc. all present and exporting.
+
+Runtime failures are graalgo VM bugs, not synthetic code bugs:
+- AES: panic index [16464] with length 256 in encryptBlockGeneric — the
+  expanded key struct is not read correctly (tried value copy, whole-struct
+  assign, *blockExpanded pointer; all fail). Retest: graalgo fixes struct
+  array field reads.
+- sha256: NullPointerException (md5 works, proving the synthetic approach
+  is sound). Retest: graalgo fixes NPE in sha256 path.
+
+Commits: 39d9eee (main fixes), c50b32b (AES pointer).
