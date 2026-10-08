@@ -719,6 +719,16 @@ public final class ReflectOpNode extends GoExprNode {
             c.value = boxed;
             return;
         }
+        storeThroughRef(ref, kind, boxed);
+    }
+
+    /**
+     * Write-through store for element/field references (shared by setScalar
+     * and reflectSet). P3-M8b: extracted from setScalar so whole-value Set
+     * into slice/array elements and struct fields works too (Copy into
+     * []int elements hit "Set of INT64 through non-cell").
+     */
+    private static void storeThroughRef(Object ref, GoKind kind, Object boxed) {
         if (ref instanceof ReflectRefs.FieldRef fr) {
             GoStruct s = (GoStruct) ReflectRefs.denotedValue(fr.base(), GoKind.STRUCT);
             ReflectValues.structFieldSet(s, fr.field(), kind, boxed);
@@ -760,8 +770,14 @@ public final class ReflectOpNode extends GoExprNode {
             c.value = d5src;
             return;
         }
-        // Whole-aggregate store: copy field-wise / element-wise.
         TypeInfo t = ReflectTypes.table().info(dp.typ());
+        if (t.kind != GoKind.STRUCT && t.kind != GoKind.ARRAY) {
+            // Scalar (or other leaf) through an element/field ref: write
+            // through like setScalar (P3-M8b: Copy into slice elements).
+            storeThroughRef(ref, t.kind, d5src);
+            return;
+        }
+        // Whole-aggregate store: copy field-wise / element-wise.
         Object d5dst = ReflectRefs.denotedValue(dp.ptr(), t.kind);
         copyAggregate(t, d5dst, d5src);
     }
@@ -799,6 +815,12 @@ public final class ReflectOpNode extends GoExprNode {
             return;
         }
         TypeInfo t = ReflectTypes.table().info(p.typ());
+        if (t.kind != GoKind.STRUCT && t.kind != GoKind.ARRAY) {
+            // Scalar (or other leaf) through an element/field ref: write
+            // through like setScalar (same P3-M8b class as reflectSet).
+            storeThroughRef(ref, t.kind, zero);
+            return;
+        }
         copyAggregate(t, ReflectRefs.denotedValue(p.ptr(), t.kind), zero);
     }
 
@@ -1397,8 +1419,11 @@ public final class ReflectOpNode extends GoExprNode {
         for (int i = 0; i < n; i++) {
             GoStruct cs = (GoStruct) ((Object[]) arr)[off + i];
             long dir = cs.getLong(0);
-            GoStruct chanVal = (GoStruct) cs.getObject(0);
-            GoStruct sendVal = (GoStruct) cs.getObject(1);
+            // SelectCase{Dir, Chan, Send}: getObject takes FIELD indices
+            // (1=Chan, 2=Send), not objects-array indices (P3-M8b fix —
+            // getObject(0) threw "field Dir is not an objects-carried field").
+            GoStruct chanVal = (GoStruct) cs.getObject(1);
+            GoStruct sendVal = (GoStruct) cs.getObject(2);
             if (dir == 2) { // SelectDefault
                 wire.add(new graalgo.runtime.ChanOps.SelectCase(null, false, null));
                 origIndex.add(i);
@@ -1445,7 +1470,7 @@ public final class ReflectOpNode extends GoExprNode {
         if (recvVal == null) {
             recv = ReflectValues.zero(ReflectTypes.valueDescriptor());
         } else {
-            GoStruct chanVal = (GoStruct) chosenCase.getObject(0);
+            GoStruct chanVal = (GoStruct) chosenCase.getObject(1); // Chan field
             TypeInfo t = ReflectTypes.table().info(ReflectValues.parts(chanVal).typ());
             long h = ReflectRefs.intern(recvVal);
             recv = ReflectValues.pack(ReflectTypes.valueDescriptor(), t.elem.tok, h, 0);

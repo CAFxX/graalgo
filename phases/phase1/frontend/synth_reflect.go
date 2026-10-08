@@ -39,8 +39,9 @@ const syntheticReflectSource = `
 // Fail-fasts (named, with re-test triggers — never silent):
 //   - iter family: Type.Methods/Fields/Ins/Outs/CanSeq/CanSeq2,
 //     Value.Methods/Fields/Seq/Seq2, MapIter.Seq (needs the iter package)
-//   - type constructors: ArrayOf/SliceOf/MapOf/ChanOf/FuncOf/PtrTo/
-//     PointerTo/StructOf (needs runtime type synthesis)
+//   - type constructors: ArrayOf/SliceOf/MapOf/ChanOf/FuncOf/
+//     PointerTo/StructOf (needs runtime type synthesis; PtrTo is
+//     implemented via __reflect_tPtrTo since P3-M8b)
 //   - TypeAssert/TypeFor (needs generics in synthetic scope)
 //   - Value.Pointer/UnsafeAddr/InterfaceData (uintptr escape — D5 traps)
 package reflect
@@ -2293,7 +2294,10 @@ func FuncOf(in, out []Type, variadic bool) Type {
 
 // PtrTo returns the pointer type with element t.
 func PtrTo(t Type) Type {
-	panic("reflect: PtrTo: not in M8 scope (needs runtime type synthesis; re-test when it lands)")
+	if t == nil {
+		panic("reflect: PtrTo(nil)")
+	}
+	return rtype{tok: __reflect_tPtrTo(t.(rtype).tok)}
 }
 
 // PointerTo is the old name for PtrTo.

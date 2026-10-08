@@ -794,14 +794,22 @@ public final class NodeFactory {
      * (M4, WS E). Descriptor identity is type identity: two values of the
      * same struct type always share the instance (map keys and struct
      * equality hash by it).
+     *
+     * <p>P3-M8b: public for phase-3 replicas (ChanWire) — the canonical
+     * instance must be shared, not re-minted.
      */
-    static GoStructDescriptor structDescriptorFor(BuildCtx ctx, int typeId, String path) {
+    public static GoStructDescriptor structDescriptorFor(BuildCtx ctx, int typeId, String path) {
         typeId = resolveAlias(ctx, typeId, path);
         GoStructDescriptor d = ctx.structDescs.get(typeId);
         if (d != null) {
             return d;
         }
         Json.Object entry = ctx.types.entry(typeId, path);
+        // P3-M8b: capture the qualified name before the named→underlying
+        // walk, for the canonical cache key below.
+        String qname = "named".equals(entry.string("kind", path))
+                ? entry.object("detail", path).string("name", path)
+                : null;
         // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
         for (int steps = 0; ; steps++) {
             if (steps > MAX_TYPE_CHAIN_STEPS) {
@@ -831,10 +839,26 @@ public final class NodeFactory {
             fieldTypeIds[i] = ftid;
             kinds.add(kindOf(ctx, ftid, path));
         }
-        d = GoStructDescriptor.layout("struct#" + typeId, names, kinds);
-        ctx.structDescs.put(typeId, d);
+        // P3-M8b: canonicalize process-wide so descriptor identity == type
+        // identity across BuildCtxs (functions/packages). The per-BuildCtx
+        // cache minted a fresh instance per function, so struct ==
+        // (GoStruct.equals is descriptor-identity) failed across functions —
+        // e.g. reflect rtype values built in the synthetic package never
+        // equaled rtype values built in user code (pt.Elem() == t). The key
+        // carries the qualified name (when named) plus the full field
+        // layout, so same-named/different-layout types across runs never
+        // collide; identical anonymous structs correctly share (Go: identical
+        // anonymous struct types are identical).
+        String key = (qname != null ? "N:" + qname : "S:") + "|" + names + "|" + kinds;
+        GoStructDescriptor cd = STRUCT_DESCS.get(key);
+        if (cd == null) {
+            GoStructDescriptor nd = GoStructDescriptor.layout("struct#" + typeId, names, kinds);
+            GoStructDescriptor prev = STRUCT_DESCS.putIfAbsent(key, nd);
+            cd = prev != null ? prev : nd;
+        }
+        ctx.structDescs.put(typeId, cd);
         ctx.structFieldTypeIds.put(typeId, fieldTypeIds);
-        return d;
+        return cd;
     }
 
     /**
@@ -1137,6 +1161,19 @@ public final class NodeFactory {
      */
     private static final java.util.concurrent.ConcurrentHashMap<String,
             graalgo.values.GoTypeDescriptor> STRUCTURAL_DESCS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
+     * Process-wide canonical struct descriptors (P3-M8b): descriptor
+     * identity is type identity, so struct {@code ==} (GoStruct.equals is
+     * descriptor-identity) and struct map keys work across functions and
+     * packages. Keyed by qualified name (named types) or field structure
+     * (anonymous) plus the full field layout — same-named types with
+     * different layouts across runs never share an instance.
+     * ConcurrentHashMap: test suites may build programs on multiple threads.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+            graalgo.values.GoStructDescriptor> STRUCT_DESCS =
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
@@ -2590,6 +2627,24 @@ public final class NodeFactory {
                 throw new FrontendException(path + ": call to non-function value of kind "
                         + fn.kind() + " (WS D)");
             }
+            Json.Value sig = ff.opt("type");
+            List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
+                    : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
+            return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
+                    false, ctx.funcObjId);
+        }
+        if ("call".equals(funKind)) {
+            // P3-M8b: call to a computed func value, e.g.
+            // reflect.Swapper(s)(0, 2). The exporter (P3-M8, export.go)
+            // emits the inner call as the fun operand; build it and
+            // require a func result (mirrors the ident branch above).
+            GoExprNode fn = buildExpr(fun, ctx);
+            if (fn.kind() != GoKind.FUNC) {
+                throw new FrontendException(path + ": call to non-function value of kind "
+                        + fn.kind() + " (WS D)");
+            }
+            Json.Object ff = fun.object("fields", path + ".fun");
             Json.Value sig = ff.opt("type");
             List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);

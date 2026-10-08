@@ -1599,3 +1599,12 @@ legs); syscall DONE (24/24 both legs); reflect 10/13 + 2 honest scope
 limits (06 WS-D, 07 PtrTo) with tree-corruption caveat → clean re-run
 deferred; crypto IN PROGRESS (child worker). Then: full suites, make
 check, two fresh peer reviewers, sign-off request.
+
+**Final verification (m8b, 2026-10-08 ~08:30 CEST):** full reflect corpus
+both legs: **26 passed, 0 scope-limited, 0 failed** (13 programs x 2 legs;
+was 18/0/8). 06 and 07 byte-identical to gc 1.27.1; 10 panic line matches
+its pin. Phase1 suite: 213/214 (1 failure = typeparam issue48344.go,
+verified pre-existing on unmodified m8b — identical P3-M3 scope error).
+Phase3 suite: 91 pass, 4 fail — all 4 are GoOsErrnoTest ([B vs [I
+ClassCastException), documented pre-existing from 10de431's os change, not
+this item. No reflect/chan test failures.
