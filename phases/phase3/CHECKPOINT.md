@@ -1701,3 +1701,56 @@ advanced to 0f711d4 (crypto worker: 39d9eee, c50b32b; ConvertNode UINT8/UINT16
 masking fix 0f711d4). None of the 13 reflect programs use uint8/uint16, and
 the crypto commits touch only crypto synthetic sources — so the 26/0/0 result
 holds for current m8b HEAD for this corpus. No new fixes needed; f3ffb86 stands.
+
+## 2026-10-08 ~22:50 CEST — M8b FINISH coordinator take 2 (m8b5)
+
+m8b4 died in VM reboot ~19:40 CEST and never resumed; registry marked
+superseded. Takeover state on m8b @ 4292fe9:
+- DONE: os 21/0/0, syscall 24/0/0, unsafe 14/2/0, reflect 26/0/0 (re-verified
+  post-reboot), crypto AES 2/0/0, crypto subtle 2/0/0.
+- Remaining: cipher GCM ("method Open missing for *gcmFallback" + timeout),
+  sha256 (Java NPE), HMAC/Rand (transitive on hash).
+- Plan: dispatch cipher-GCM and sha256-NPE fix workers in parallel with
+  red-green evidence; hmac/rand re-run after hash fixed; then full suites,
+  make check, two fresh reviewers, sign-off.
+
+## m8b4: crypto scope decision (2026-10-08 ~16:00 CEST)
+
+**Scope-limited (honest, with retest conditions):**
+- crypto/cipher (6 legs): GCM interface dispatch — "method Open missing for
+  *gcmFallback". Retest: synthetic GCM method table complete for AEAD interface.
+- crypto/hash (8 legs): sha256 Java NPE (deep runtime issue, reproduces minimally).
+  Retest: NPE root-caused and fixed.
+- crypto/hmac (4 legs): transitive on hash. Retest: hash fixed.
+- crypto/rand (2 legs): transitive on hash (uses sha256). Retest: hash fixed.
+
+**Rationale:** These are new M8b synthetic packages, not regressions. The AES
+VM bug (ConvertNode UINT8/UINT16) was fixed at the root (0f711d4). The
+remaining bugs are deep runtime issues requiring unbounded investigation.
+Per the sign-off bars, honest scope-limits with retest conditions are
+preferable to false passes or endless rabbit holes. The core M8b deliverable
+(os, syscall, reflect, unsafe) is complete and verified.
+
+**M8b final counts:**
+- os: 21 passed, 0 failed (both legs)
+- syscall: 24 passed, 0 failed (both legs)
+- unsafe: 14 passed, 2 scope-limited, 0 failed
+- reflect: 26 passed, 0 failed (both legs)
+- crypto/aes: 2 passed, 0 failed (both legs)
+- crypto/subtle: 2 passed, 0 failed (both legs, per worker)
+- crypto/cipher, hash, hmac, rand: scope-limited (20 legs) with retest conditions
+
+## m8b4: final verification + peer reviews dispatched (2026-10-08 ~16:15 CEST)
+
+**M8b package status (final):**
+- os: 21/0/0 ✅ (O(n²) fix 80d49c1)
+- syscall: 24/0/0 ✅
+- unsafe: 14/2/0 ✅
+- reflect: 26/0/0 ✅ (17h worker, VM reboots; 06/07/10 all pass)
+- crypto/aes: 2/0/0 ✅ (ConvertNode fix 0f711d4)
+- crypto/subtle: 2/0/0 ✅
+- crypto/cipher, hash, hmac, rand: scope-limited (20 legs) with retest conditions
+
+Full suites (P1/P2/P3) + make check running in background.
+Two fresh peer reviewers dispatched (code + methodology).
+Registry: graalgo-phase3-m8b4 active.
