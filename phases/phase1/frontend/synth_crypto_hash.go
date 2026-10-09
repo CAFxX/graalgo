@@ -121,6 +121,13 @@ type hashReadPair struct {
 	err error
 }
 
+// singleWriter is the interface for synthetic digest WriteSingle.
+// Named (not anonymous) because anonymous interface dispatch returns
+// wrong values (P3-M8b: runtime bug, anonymous vs named give different results).
+type singleWriter interface {
+	WriteSingle([]byte) int
+}
+
 // __hashWrite serves h.Write(p) through the mrM8 desugar. The digest's
 // public Write has the exact gc signature with a fail-fast body; the
 // real logic is the single-result WriteSingle, which every synthetic
@@ -128,7 +135,7 @@ type hashReadPair struct {
 // fail fast here: there is no v1-expressible way to call their
 // multi-result Write (re-test: WS D).
 func __hashWrite(h Hash, p []byte) hashWritePair {
-	if w, ok := h.(interface{ WriteSingle([]byte) int }); ok {
+	if w, ok := h.(singleWriter); ok {
 		return hashWritePair{w.WriteSingle(p), nil}
 	}
 	panic("hash: Write on non-synthetic hash.Hash implementation (needs WS D; re-test when it lands)")
