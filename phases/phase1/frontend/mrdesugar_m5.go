@@ -397,25 +397,27 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"hash/crc64", "MarshalBinary", "digest", "__crc64Marshal", "hash/crc64", "bytesPair", []string{"b", "err"}},
 	{"hash/crc64", "AppendBinary", "digest", "__crc64Append", "hash/crc64", "bytesPair", []string{"b", "err"}},
 	// P3-M9 (wave 3, tier-1b): hash/fnv sum methods (no Clone; gc's fnv
-	// digests do not implement hash.Cloner).
-	{"hash/fnv", "Write", "sum32", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum32a", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum64", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum64a", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum128", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum128a", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum32", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum32a", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum64", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum64a", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum128", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum128a", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum32", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum32a", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum64", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum64a", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum128", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum128a", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	// digests do not implement hash.Cloner). Each sum type has its own
+	// concrete-type helper (the itab dispatcher passes the raw dynamic
+	// value; interface{} + type assertion fails at runtime).
+	{"hash/fnv", "Write", "sum32", "__fnvWrite32", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum32a", "__fnvWrite32a", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum64", "__fnvWrite64", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum64a", "__fnvWrite64a", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum128", "__fnvWrite128", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum128a", "__fnvWrite128a", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum32", "__fnvMarshal32", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum32a", "__fnvMarshal32a", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum64", "__fnvMarshal64", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum64a", "__fnvMarshal64a", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum128", "__fnvMarshal128", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum128a", "__fnvMarshal128a", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum32", "__fnvAppend32", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum32a", "__fnvAppend32a", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum64", "__fnvAppend64", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum64a", "__fnvAppend64a", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum128", "__fnvAppend128", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum128a", "__fnvAppend128a", "hash/fnv", "bytesPair", []string{"b", "err"}},
 	// P3-M9 (wave 3, tier-1b): hash/maphash Write/WriteString/Clone via
 	// the package-local __maphashWrite/__maphashWriteString/__maphashClone
 	// helpers (same rationale as above). The public methods keep the

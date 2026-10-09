@@ -988,7 +988,14 @@ func ExportFile(path string) (string, error) {
 			p == "math/bits" || p == "math/big" || p == "math/rand" || p == "math/rand/v2" || p == "math/cmplx" || p == "bufio" || p == "path" || p == "text/scanner" || p == "regexp/syntax" ||
 			p == "flag" || p == "testing" || p == "testing/quick" || p == "testing/iotest" ||
 			// P3-M9 (tier-1d): "unique" and "structs" likewise.
-			p == "unique" || p == "structs" {
+			// P3-M9 (wave 3, tier-1b): "container/heap", "container/list",
+			// "container/ring", "hash/adler32", "hash/crc32", "hash/crc64",
+			// "hash/fnv", "hash/maphash" likewise (without this, a program
+			// importing only these packages keeps failImporter and the
+			// import fails at type-check).
+			p == "unique" || p == "structs" ||
+			p == "container/heap" || p == "container/list" || p == "container/ring" ||
+			p == "hash/adler32" || p == "hash/crc32" || p == "hash/crc64" || p == "hash/fnv" || p == "hash/maphash" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -2012,9 +2019,11 @@ func ExportFile(path string) (string, error) {
 		}
 	}
 	// hash/maphash additionally imports synthetic crypto/rand (MakeSeed
-	// entropy) and math, imported by their own need-blocks above.
+	// entropy) and math (Float64bits intrinsics); import them here
+	// explicitly — the needCryptoRand/needMath blocks only run when the
+	// user program imports those packages directly.
 	if needHashMaphash {
-		for _, p := range []string{"errors", "hash", "hash/maphash"} {
+		for _, p := range []string{"errors", "hash", "crypto/rand", "math", "hash/maphash"} {
 			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
 				return "", err
 			}
