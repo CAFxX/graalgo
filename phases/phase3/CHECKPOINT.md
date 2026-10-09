@@ -1967,3 +1967,23 @@ performed direct review (code + methodology) instead.
 
 Process notes: VM instability (reboots, daemon restarts) killed coordinators
 and reviewers repeatedly; universal liveness rule now in AGENTS.md.
+
+## P3-M8-leftovers-2 status (2026-10-09 ~09:40 CEST)
+
+**e6f8dcb fix review (supervisor):** The structural dedup for anonymous
+interfaces (ifaceStructKey) is correct. go/types mints fresh *types.Interface
+per syntactic occurrence; without dedup, type assertion and method dispatch
+get different wire IDs → wrong itab. The fix deduplicates by sorted method
+implkeys, ensuring consistent wire IDs.
+
+**Scope of fix:** __hashWrite uses named singleWriter (workaround, works).
+__hashRead and __hashClone use anonymous interfaces — these need e6f8dcb.
+Hash corpus 03_clone_marshal.go and 04_xof.go exercise these paths.
+
+**Verification status:** BLOCKED by VM load (25, backoff=1 per Carlo's rule).
+Go frontend rebuilds clean with the fix. Full hash differential and P1/P2
+re-runs queued pending load drop below 8.
+
+**P1/P2 environmental:** TypeparamDifferentialTest (12 timeouts) and
+JfrEventsTest (timing) failed under load 40. Need re-run under normal load
+to confirm environmental vs regression.
