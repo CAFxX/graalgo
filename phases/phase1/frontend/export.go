@@ -4575,7 +4575,20 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			if !fi.isTemplate {
 				return true
 			}
-			ni, nerr := newFuncInst(fi, typeList(ii.TypeArgs), subst)
+			// P3-M9 (generics isNaN fix): apply outer substitution to nested
+			// call's type args. When Less[float64] calls isNaN(x) with x: T,
+			// ii.TypeArgs contains T (unbound). Substitute T -> float64 first,
+			// otherwise newFuncInst fails with "unbound type parameter".
+			targs := typeList(ii.TypeArgs)
+			if subst != nil {
+				saved := e.subst
+				e.subst = subst
+				for i, ta := range targs {
+					targs[i] = e.substType(ta)
+				}
+				e.subst = saved
+			}
+			ni, nerr := newFuncInst(fi, targs, subst)
 			if nerr != nil {
 				err = nerr
 				return false
@@ -4628,7 +4641,17 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			if !ok || !fi.isTemplate || fi.recv != nil {
 				return true
 			}
-			ni, nerr := newFuncInst(fi, typeList(ii.TypeArgs), subst)
+			// P3-M9 (generics isNaN fix): apply outer substitution (see above).
+			targs2 := typeList(ii.TypeArgs)
+			if subst != nil {
+				saved2 := e.subst
+				e.subst = subst
+				for i, ta := range targs2 {
+					targs2[i] = e.substType(ta)
+				}
+				e.subst = saved2
+			}
+			ni, nerr := newFuncInst(fi, targs2, subst)
 			if nerr != nil {
 				err = nerr
 				return false
