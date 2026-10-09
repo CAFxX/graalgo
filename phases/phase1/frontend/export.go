@@ -4619,6 +4619,14 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			}
 			fi, ok := e.funcByObj[fn]
 			if !ok {
+				// P3-M9: fallback to (package path, func name) for synthetic
+				// funcs (type-checked in isolation, pointers not shared).
+				if e.synthFuncIDs != nil && fn.Pkg() != nil {
+					key := fn.Pkg().Path() + "." + fn.Name()
+					fi, ok = e.synthFuncIDs[key]
+				}
+			}
+			if !ok {
 				err = fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
 				return false
 			}
@@ -7012,6 +7020,14 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 		return nil, multiResultSyntheticError(fn)
 	}
 	fi, ok := e.funcByObj[fn]
+	if !ok {
+		// P3-M9: fallback to (package path, func name) for synthetic
+		// funcs (type-checked in isolation, pointers not shared).
+		if e.synthFuncIDs != nil && fn.Pkg() != nil {
+			key := fn.Pkg().Path() + "." + fn.Name()
+			fi, ok = e.synthFuncIDs[key]
+		}
+	}
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
 	}
