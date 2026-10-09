@@ -6813,7 +6813,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	// min/max used to slip through and die as "internal error building AST"
 	// in NodeFactory). The surface is freeze-stub.md "Builtin nodes".
 	switch b.Name() {
-	case "len", "cap", "make", "new", "append", "copy", "delete",
+	case "len", "cap", "make", "new", "append", "copy", "delete", "clear",
 		"complex", "real", "imag", "print", "println", "panic", "recover":
 	default:
 		return nil, scopeErrorf("call to builtin %q is not supported in frontend/v1 scope (WS G intrinsic surface)", b.Name())

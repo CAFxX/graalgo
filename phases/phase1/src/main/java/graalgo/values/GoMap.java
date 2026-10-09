@@ -99,6 +99,15 @@ public final class GoMap {
         }
     }
 
+    /** Removes all entries (the {@code clear} builtin). */
+    public void clear() {
+        java.util.Arrays.fill(keys, null);
+        java.util.Arrays.fill(values, null);
+        java.util.Arrays.fill(states, EMPTY);
+        size = 0;
+        tombstones = 0;
+    }
+
     /** True when {@code key} is present (even with a null value). */
     public boolean containsKey(Object key) {
         return findSlot(key) >= 0;

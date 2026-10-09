@@ -2975,6 +2975,10 @@ public final class NodeFactory {
                 requireArgs(path, builtin, args, 2);
                 yield new DeleteNode(args[0], args[1]);
             }
+            case "clear" -> {
+                requireArgs(path, builtin, args, 1);
+                yield new ClearNode(args[0]);
+            }
             case "complex" -> {
                 requireArgs(path, builtin, args, 2);
                 yield new ComplexNode(ComplexNode.Op.COMPLEX, builtinResultKind(f, ctx, path),
