@@ -421,7 +421,8 @@ func (bz2 *reader) readBlock() (err error) {
 			}
 			lengths[j] = uint8(length)
 		}
-		huffmanTrees[i], err = newHuffmanTree(lengths)
+		__mr1 := __bzip2NewHuffmanTree(lengths)
+		huffmanTrees[i], err = __mr1.t, __mr1.err
 		if err != nil {
 			return err
 		}
@@ -982,6 +983,34 @@ func __bzip2Readerread(bz2 *reader, buf []byte) __bzip2ReaderreadPair {
 	}
 }
 
+// __bzip2SortPairs sorts huffmanSymbolLengthPair by (length, value) and
+// __bzip2SortCodes sorts huffmanCode by code, both with a simple insertion
+// sort. They replace slices.SortFunc (generic instantiation is out of M9
+// scope). Both orderings are total (values/codes are unique within the
+// slice), so the result is identical to gc's sort.
+func __bzip2SortPairs(pairs []huffmanSymbolLengthPair) {
+	for i := 1; i < len(pairs); i++ {
+		for j := i; j > 0 && __bzip2PairLess(pairs[j], pairs[j-1]); j-- {
+			pairs[j], pairs[j-1] = pairs[j-1], pairs[j]
+		}
+	}
+}
+
+func __bzip2PairLess(a, b huffmanSymbolLengthPair) bool {
+	if a.length != b.length {
+		return a.length < b.length
+	}
+	return a.value < b.value
+}
+
+func __bzip2SortCodes(codes []huffmanCode) {
+	for i := 1; i < len(codes); i++ {
+		for j := i; j > 0 && codes[j].code < codes[j-1].code; j-- {
+			codes[j], codes[j-1] = codes[j-1], codes[j]
+		}
+	}
+}
+
 type __bzip2NewHuffmanTreePair struct {
 	t huffmanTree
 	err error
@@ -1011,12 +1040,7 @@ func __bzip2NewHuffmanTree(lengths []uint8) __bzip2NewHuffmanTreePair {
 		pairs[i].length = length
 	}
 
-	slices.SortFunc(pairs, func(a, b huffmanSymbolLengthPair) int {
-		if c := cmp.Compare(a.length, b.length); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.value, b.value)
-	})
+	__bzip2SortPairs(pairs)
 
 	// Now we assign codes to the symbols, starting with the longest code.
 	// We keep the codes packed into a uint32, at the most-significant end.
@@ -1040,13 +1064,11 @@ func __bzip2NewHuffmanTree(lengths []uint8) __bzip2NewHuffmanTreePair {
 
 	// Now we can sort by the code so that the left half of each branch are
 	// grouped together, recursively.
-	slices.SortFunc(codes, func(a, b huffmanCode) int {
-		return cmp.Compare(a.code, b.code)
-	})
+	__bzip2SortCodes(codes)
 
 	t.nodes = make([]huffmanNode, len(codes))
-	_, err := buildHuffmanNode(&t, codes, 0)
-	return __bzip2NewHuffmanTreePair{t: t, err: err}
+	__mr1 := __bzip2BuildHuffmanNode(&t, codes, 0)
+	return __bzip2NewHuffmanTreePair{t: t, err: __mr1.err}
 }
 
 type __bzip2BuildHuffmanNodePair struct {
@@ -1117,7 +1139,8 @@ return __bzip2BuildHuffmanNodePair{nodeIndex: __mr2.nodeIndex, err: __mr2.err}
 		node.left = invalidNodeValue
 		node.leftValue = left[0].value
 	} else {
-		node.left, err = buildHuffmanNode(t, left, level+1)
+		__mr1 := __bzip2BuildHuffmanNode(t, left, level+1)
+		node.left, err = __mr1.nodeIndex, __mr1.err
 	}
 
 	if err != nil {
@@ -1129,7 +1152,8 @@ return __bzip2BuildHuffmanNodePair{nodeIndex: __mr2.nodeIndex, err: __mr2.err}
 		node.right = invalidNodeValue
 		node.rightValue = right[0].value
 	} else {
-		node.right, err = buildHuffmanNode(t, right, level+1)
+		__mr2 := __bzip2BuildHuffmanNode(t, right, level+1)
+		node.right, err = __mr2.nodeIndex, __mr2.err
 	}
 
 	return __bzip2BuildHuffmanNodePair{nodeIndex: nodeIndex, err: err}

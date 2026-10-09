@@ -365,7 +365,8 @@ func (d *compressor) fillWindow(b []byte) {
 
 	// Calculate 256 hashes at the time (more L1 cache hits)
 	loops := (n + 256 - minMatchLength) / 256
-	for j := range loops {
+	// WS E: the frontend cannot range over int32; classic loop (identical).
+	for j := int32(0); j < loops; j++ {
 		startindex := j * 256
 		end := __flateMinInt32(startindex+256+minMatchLength-1, n)
 		tocheck := d.window[startindex:end]
@@ -546,7 +547,9 @@ func (d *compressor) tryBetterMatchAtEnd(prevLength, prevOffset, lookahead int32
 
 	for i := int32(checkOff - 1); i >= 0; i-- {
 		if prevLength >= maxMatchLength || d.window[prevIndex+i] != d.window[ch2+i] {
-			for j := range i + 1 {
+			// WS E: the frontend cannot range over int32, so this is a
+			// classic loop (identical iteration: j = 0 .. i).
+			for j := int32(0); j < i+1; j++ {
 				d.tokens.AddLiteral(d.window[prevIndex+j])
 				if d.tokens.n == maxFlateBlockTokens {
 					if d.err = d.writeBlock(d.tokens, s.index, false); d.err != nil {
@@ -579,7 +582,8 @@ func (d *compressor) skipLiterals() bool {
 		return true
 	}
 	n = 1 + n>>6
-	for range n {
+	// WS E: the frontend cannot range over int32; classic loop (identical).
+	for i := int32(0); i < n; i++ {
 		if s.index >= d.windowEnd-1 {
 			break
 		}
@@ -1214,7 +1218,7 @@ func hashLen(u uint64, b, n uint8) uint32 {
 func matchLen(a, b []byte) (n int) {
 	left := len(a)
 	for left >= 8 {
-		diff := loadLE64(a, n) ^ loadLE64(b, n)
+		diff := loadLE64(a, int32(n)) ^ loadLE64(b, int32(n))
 		if diff != 0 {
 			return n + bits.TrailingZeros64(diff)>>3
 		}
@@ -1896,7 +1900,8 @@ func (w *huffmanBitWriter) writeDynamicHeader(numLiterals int, numOffsets int, n
 	w.writeBits(int32(numOffsets-1), 5)
 	w.writeBits(int32(numCodegens-4), 4)
 
-	for i := range numCodegens {
+	// WS E: the frontend cannot range over integers; classic loop (identical).
+	for i := 0; i < numCodegens; i++ {
 		value := uint(w.codegenEncoding.codes[codegenOrder[i]].len())
 		w.writeBits(int32(value), 3)
 	}
@@ -2361,13 +2366,18 @@ func (w *huffmanBitWriter) writeTokens(tokens []token, lenCodes, offCodes []hcod
 
 // huffOffset is a static offset encoder used for Huffman-only encoding.
 // It can be reused since we will not be encoding offset values.
-var huffOffset = (func() *huffmanEncoder {
+//
+// WS D: gc spells the initializer as an IIFE; the frontend cannot call a
+// parenthesized func literal, so it's a named helper (identical value).
+func __flateHuffOffset() *huffmanEncoder {
 	w := newHuffmanBitWriter(nil)
 	w.offsetFreq[0] = 1
 	h := newHuffmanEncoder(offsetCodeCount)
 	h.generate(w.offsetFreq[:offsetCodeCount], 15)
 	return h
-})()
+}
+
+var huffOffset = __flateHuffOffset()
 
 // writeBlockHuff encodes a block of bytes as either
 // Huffman-encoded literals or uncompressed bytes if the
@@ -2626,7 +2636,8 @@ func generateFixedLiteralEncoding() *huffmanEncoder {
 	h := newHuffmanEncoder(literalCount)
 	codes := h.codes
 	var ch uint16
-	for ch = range uint16(literalCount) {
+	// WS E: the frontend cannot range over integers; classic loop (identical).
+	for ch = 0; ch < uint16(literalCount); ch++ {
 		var bits uint16
 		var size uint8
 		switch {
@@ -5144,23 +5155,22 @@ emitRemainder:
 // This file contains functions for loading and storing integers in little endian format.
 // These can be replaced with unsafe versions if deemed necessary.
 
-type indexer interface {
-	int | int8 | int16 | int32 | int64 | uint | uint8 | uint16 | uint32 | uint64
-}
-
-// loadLE8 will load from b at index i.
-func loadLE8[I indexer](b []byte, i I) byte {
+// WS D: the gc originals are generic (loadLE8[I indexer] etc.); the
+// frontend cannot instantiate generics with typeparams leaking into the
+// type table, so these are concrete-int32 (the index type used at 62 of
+// 64 call sites; the 4 int sites convert explicitly). Semantics identical.
+func loadLE8(b []byte, i int32) byte {
 	return b[i]
 }
 
 // loadLE32 will load from b at index i.
-func loadLE32[I indexer](b []byte, i I) uint32 {
+func loadLE32(b []byte, i int32) uint32 {
 	b = b[i : i+4]
 	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
 }
 
 // loadLE64 will load from b at index i.
-func loadLE64[I indexer](b []byte, i I) uint64 {
+func loadLE64(b []byte, i int32) uint64 {
 	b = b[i : i+8]
 	return uint64(b[0]) | uint64(b[1])<<8 | uint64(b[2])<<16 | uint64(b[3])<<24 |
 		uint64(b[4])<<32 | uint64(b[5])<<40 | uint64(b[6])<<48 | uint64(b[7])<<56
@@ -5605,7 +5615,9 @@ func __flateCompressortryBetterMatchAtEnd(d *compressor, prevLength, prevOffset,
 
 	for i := int32(checkOff - 1); i >= 0; i-- {
 		if prevLength >= maxMatchLength || d.window[prevIndex+i] != d.window[ch2+i] {
-			for j := range i + 1 {
+			// WS E: the frontend cannot range over int32, so this is a
+			// classic loop (identical iteration: j = 0 .. i).
+			for j := int32(0); j < i+1; j++ {
 				d.tokens.AddLiteral(d.window[prevIndex+j])
 				if d.tokens.n == maxFlateBlockTokens {
 					if d.err = d.writeBlock(d.tokens, s.index, false); d.err != nil {
@@ -5675,15 +5687,16 @@ type __flateNewWriterDictPair struct {
 
 func __flateNewWriterDict(w io.Writer, level int, dict []byte) __flateNewWriterDictPair {
 
-	zw, err := NewWriter(w, level)
-	if err != nil {
-		return __flateNewWriterDictPair{w: nil, err: err}
+	__mr1 := __flateNewWriter(w, level)
+	if __mr1.err != nil {
+		return __flateNewWriterDictPair{w: nil, err: __mr1.err}
 	}
+	zw := __mr1.w
 	zw.d.fillWindow(dict)
 	// Clone dict so we can Reset without changing the provided slice.
 	zw.dict = make([]byte, len(dict))
 	copy(zw.dict, dict)
-	return __flateNewWriterDictPair{w: zw, err: err}
+	return __flateNewWriterDictPair{w: zw, err: __mr1.err}
 }
 
 type __flateWriterWritePair struct {
@@ -5827,8 +5840,11 @@ func __flateHuffmanBitWriterindexTokens(w *huffmanBitWriter, t *tokens) __flateH
 	var numLiterals int
 	var numOffsets int
 
-	*(*[256]uint16)(w.literalFreq[:]) = t.litHist
-	*(*[32]uint16)(w.literalFreq[256:]) = t.extraHist
+	// WS D: the frontend cannot assign to *ast.StarExpr, so the gc
+	// *(*[256]uint16)(w.literalFreq[:]) = t.litHist idiom is spelled with
+	// copy (identical semantics: bulk copy of the 256+32 histogram lanes).
+	copy(w.literalFreq[:256], t.litHist[:])
+	copy(w.literalFreq[256:288], t.extraHist[:])
 	w.offsetFreq = t.offHist
 
 	if t.n == 0 {

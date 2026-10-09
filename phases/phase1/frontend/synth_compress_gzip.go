@@ -332,8 +332,8 @@ type Writer struct {
 // compatibility promise. Callers, including tests, should not depend on the
 // exact written bytes.
 func NewWriter(w io.Writer) *Writer {
-	z, _ := NewWriterLevel(w, DefaultCompression)
-	return z
+	__mr1 := __gzipNewWriterLevel(w, DefaultCompression)
+	return __mr1.w
 }
 
 // NewWriterLevel is like [NewWriter] but specifies the compression level instead
