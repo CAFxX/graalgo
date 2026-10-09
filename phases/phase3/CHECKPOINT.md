@@ -1967,3 +1967,165 @@ performed direct review (code + methodology) instead.
 
 Process notes: VM instability (reboots, daemon restarts) killed coordinators
 and reviewers repeatedly; universal liveness rule now in AGENTS.md.
+
+## P3-M9 coordinator startup (2026-10-09 ~07:00 CEST, coordinator graalgo-phase3-m9)
+
+Branch m9 from master@671ac3b (M8b accepted). Scope: net, net/http,
+compress, archive, remaining stdlib, full `go test ./...` trial.
+
+M9-prep analysis (branch m9-prep, worktree ~/workspace/graalgo-m9-prep):
+- 00-README through 05-gotest-trial-plan + 15 corpus design stubs
+- 323 M9 packages (per-package convention), 7 implementation tiers
+- G-a (WS-D multi-result dispatch): DONE in M8a
+- G-b (netpoller→GMP): M9 runtime work, gates net
+- G-c (math/big): before asymmetric crypto
+- Supervisor decisions: D1 resolved (G-a in M8a), D2 loopback-only confirmed,
+  D3 simd/+cryptotest/ exclusions provisional pending deeper analysis
+
+Sequencing (dependency-map §9):
+1. Leaf utilities (cmp, slices, maps, iter, unicode, container/*, hash/*,
+   math/bits, bufio, path, regexp/syntax, ...)
+2. math/big + io/fs extension
+3. Runtime: netpoller→GMP, socket traps (RISK-M9-1/2)
+4. net (+netip, url, textproto)
+5. Asymmetric crypto → x509 → tls
+6. net/http + compress/* + archive/* + mime/*
+7. Satellites: testing/* (go-test trial prereq), rest
+
+Registry graalgo-phase3-m9 active.
+
+## P3-M9: netpoller runtime landed (2026-10-09 ~06:55 CEST, commit 51fc673)
+
+RISK-M9-1 + RISK-M9-2 resolved: all 10 runtime_poll* linknames + 13 socket
+traps, park/queue/drainer GMP integration, 107/107 phase-3 tests green.
+Two red-green race fixes (close-vs-wait, stale-timer). Measurements vs
+budgets recorded. Peer review dispatched (depth-2 worker couldn't spawn).
+
+Tier-4 net package worker dispatched (netpoller unblocks it).
+Registry graalgo-phase3-m9 heartbeat 2026-10-09 ~07:00 CEST.
+
+## P3-M9: netpoller peer review — 3 P0s found (2026-10-09 ~07:05 CEST)
+
+Independent review of 51fc673: verdict REQUEST_CHANGES (3 P0, 2 P1, 7 P2).
+All 3 P0s masked by test suite using non-fork call order:
+- P0-1: listen() channel swap orphans pollDesc → accept hangs
+- P0-2: pd.connecting snapshotted at pollOpen → connect never completes
+- P0-3: pollClose throws on woken-but-unresumed waiters
+Fix worker dispatched. Net package worker advised to focus on pipe-leg
++ pure-Go packages until P0s are remediated.
+Review: phases/phase3/hidden_files/m9-tmp/REVIEW-NETPOLLER.md
+
+## P3-M9: load-shedding infrastructure live (2026-10-09, Carlo's standing order)
+
+Automatic SIGSTOP/SIGCONT shedder active: freezes heaviest agent workers
+at loadavg >= 8, thaws when load subsides (max 10 min freeze). T-state is
+NORMAL, not a hang — do not kill/restart frozen workers. 3 freezes →
+ESCALATED (kill or GHA offload). Workers launch via agentwork-launch.sh
+--nice N --tag <project/sub>. All 8 active M9 workers notified.
+
+Correction (2026-10-09): load-shedder freeze threshold is loadavg >= 12
+(not 8), thaw-all at <= 6. Propagated to all 8 active M9 workers.
+
+## P3-M9: backoff gate for new dispatches (2026-10-09, Carlo's order)
+
+Before dispatching new heavy work: `load-shed.sh backoff`.
+Exit 0 = clear; exit 1 = queue and retry later (load >= 8 or frozen procs).
+Graduated: >= 8 coordinators stop adding load; >= 12 shedder freezes.
+Current: BACKOFF (load 28.9). No new heavy dispatches until clear.
+Existing 8 workers continue (already dispatched, not new load).
+
+## P3-M9: io/fs + path/filepath landed (2026-10-09 ~07:45 CEST)
+
+Worker 7/11 complete: io/fs extension (ReadFile, WalkDir, Glob, Sub — G2 gap)
++ synthetic path/filepath. 14/14 corpus programs green, both gmp legs.
+Commits: bf1a620 (io/fs), 9a0667e (path/filepath).
+
+## P3-M9: tier-1a status clarification (2026-10-09 ~07:52 CEST)
+
+Worker 1/11 (tier-1a) reported complete with 7 commits. Status:
+- Synthetic packages: DONE (cmp, slices, maps, iter, unicode, utf8, utf16
+  all export through v1 frontend; 13,471 lines; v1 limitations worked around)
+- Corpus programs: WRITTEN (17 programs) but verified UNDER GC ONLY
+- Differential runs vs graalgo: PENDING (requires GraalVM build)
+- Per-package counts (3/0/0 etc.) are GC-ONLY, not differential — do not
+  treat as sign-off evidence. The M8 "crypto 12/12" lesson applies.
+- "UNRECOVERABLE mathbig file loss": files exist on disk (synth_math_big.go,
+  synth_math_rand.go, synth_byteorder.go all present) — report was stale
+  or mistaken; math/big worker (5/11) still running, no action needed.
+
+Tier-1a packages: SYNTHETIC-DONE, DIFFERENTIAL-PENDING. The differential
+corpus must be run against graalgo (both gmp legs) before sign-off.
+
+## P3-M9: tier-1d complete + netpoller P0s fixed (2026-10-09 ~08:00 CEST)
+
+Tier-1d (worker 4/11): REAL differential work (not gc-only):
+- unique 6/0/0, structs 2/0/0 (genuinely differential vs graalgo)
+- internal/bytealg harness ALL GREEN
+- embed, weak, internal/cpu,godebug,bisect: scope-limited with retest triggers
+- Backend fixes: BinaryOpNode struct ==/!=, GoEquality interface+array keys,
+  defFunc template placeholder (phase-1 exceptions, M8b precedent documented)
+- 8 commits: cbd5d2e, 8cf60d4, 53a574a, 4cb5c8b, ac1fadd, 01e64fc, 1d7aa81, ba38bd9
+
+Netpoller P0 fixes landed (68c0ae1, worker 11/11):
+- P0-1 (listen channel migration), P0-2 (connecting flag), P0-3 (pollClose race)
+- P1-1/P1-2 regression tests, P2 hygiene
+
+## P3-M9: netpoller P0 remediation complete (2026-10-09 ~08:00 CEST)
+
+Worker 11/11 complete: all 3 P0s fixed with red-green evidence, P1-1/P1-2
+regression tests, 6/7 P2s applied. 112/112 phase-3 tests green, check clean.
+Commit 68c0ae1. P2-5 (GoOs CCE escape) applied by coordinator as b9cf7af
+(exact patch from review; in GoOs.java, not netpoller files).
+
+## P3-M9: net synthetic done, differential pending + os.Timeout fix (2026-10-09 ~08:18 CEST)
+
+Worker 10/11 (net): 6 commits (139a681, b102737, f6c482a, 4ec5001, 2b934ea,
+57a56d0). 7 synthetic packages: internal/poll, internal/nettrace,
+internal/singleflight, net/netip, net/url, net/textproto (pure parts), net
+(pipe + socket paths). Corpus written. DIFFERENTIAL PENDING (blocked on VM
+load; phase3 build heavy). Status: SYNTHETIC-DONE, DIFFERENTIAL-PENDING.
+
+Bug fixed (net worker finding): os.ErrDeadlineExceeded now implements
+Timeout() bool (was errors.New, gc-divergent). Commit 292fbbd.
+
+## P3-M9: math/big worker complete but blocked (2026-10-09 ~08:47 CEST)
+
+Worker 5/11 (math/big): infrastructure complete (desugar + 47 entries +
+methodIndex fix + registrations), source adaptation ~90%. NOT COMMITTED.
+Blocked on: (1) WS D scope (StarExpr deref, implicit deref on method calls),
+(2) io/fmt Mutex scope issues in febuild. Differential testing pending.
+DEBUG prints removed by coordinator (mrdesugar_m5.go). Work remains in
+worktree uncommitted pending unblock. Status: INFRA-DONE, BLOCKED.
+
+## P3-M9: tier-1c complete (2026-10-09 ~09:08 CEST)
+
+Worker 3/11: math/bits 16/0/0, math/cmplx 6/0/0, math/rand 4/0/0 —
+all differential (both gmp legs), byte-identical to gc. math/rand/v2,
+bufio, path, text/scanner, regexp/syntax: scope-limited with retest triggers.
+Commit e8f19d6 (68 files). Note: a stale background run showed 6 failures
+from racing concurrent edits; spot-check confirms current tree passes.
+
+Load thresholds updated (2026-10-09, Carlo): backoff >= 12 (was 8),
+freeze >= 16 (was 12), thaw-all <= 14 (was 6). Hysteresis 14-16.
+Propagated to 2 remaining active workers (tier-1b, testing).
+
+## P3-M9: testing package functional — go-test trial unblocked (2026-10-09 ~09:40 CEST)
+
+Worker 8/11 (testing): flag 3/3 green (8438100), testing FUNCTIONAL
+(69b80d8, 00_basic green). testing/quick + testing/iotest: sources ready,
+blocked on exporter reflect/multi-result limitations (documented).
+The hard prerequisite for the go-test trial (05-gotest-trial-plan §1.2)
+is MET. p3test driver work can begin.
+
+## P3-M9: tier-1b complete + uint32 equality bug fixed (2026-10-09 ~10:44 CEST)
+
+Worker 2/11 (tier-1b): 8 packages, 54/56 differential legs passing.
+- container/heap,list,ring: 6/6 each
+- hash/adler32: 8/8, hash/crc64: 8/8, hash/fnv: 8/8, hash/maphash: 6/6
+- hash/crc32: 6/8 (2 failed on runtime uint32 == bug)
+Scope-limits: hash/maphash (value-divergent by design), WS E/D frontend gaps.
+Bugs found: (1) uint32 == cross-boxing, (2) itab dispatcher type assertions.
+
+Bug fixed by coordinator: GoEquality now handles Long==Integer and
+Integer==Long cross-boxed comparison (commit 487f48c). The 2 crc32
+failures should now pass — retest pending.

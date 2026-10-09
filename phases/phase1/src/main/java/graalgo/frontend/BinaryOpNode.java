@@ -129,12 +129,14 @@ public final class BinaryOpNode extends GoExprNode {
                         || operandKind == GoKind.STRING || operandKind == GoKind.BOOL
                         || operandKind == GoKind.UNSAFE_POINTER
                         || operandKind == GoKind.POINTER
-                        || (operandKind == GoKind.INTERFACE && (op == Op.EQ || op == Op.NE)))
+                        || (operandKind == GoKind.INTERFACE && (op == Op.EQ || op == Op.NE))
+                        || (operandKind == GoKind.STRUCT && (op == Op.EQ || op == Op.NE)))
                     && !(operandKind == GoKind.BOOL && (op == Op.LT || op == Op.LE || op == Op.GT || op == Op.GE));
             // P3-M8b: unsafe.Pointer, *T pointers, and complex support ==/!=
             // (but not ordering).
+            // P3-M9 (tier-1d): structs support ==/!= (but not ordering).
             if ((operandKind == GoKind.UNSAFE_POINTER || operandKind == GoKind.POINTER
-                    || operandKind.isComplexKind())
+                    || operandKind.isComplexKind() || operandKind == GoKind.STRUCT)
                     && !(op == Op.EQ || op == Op.NE)) {
                 ok = false;
             }
@@ -348,6 +350,16 @@ public final class BinaryOpNode extends GoExprNode {
             } else {
                 throw new FrontendException("complex comparison of mismatched types");
             }
+            return op == Op.EQ ? eq : !eq;
+        }
+        // P3-M9 (tier-1d): struct equality (Go: ==/!= on comparable structs
+        // compares field-by-field; GoEquality delegates to GoStruct.equals,
+        // which requires identical descriptors and compares longs by value
+        // and objects via GoEquality).
+        if (operandKind == GoKind.STRUCT) {
+            Object l = left.executeObject(frame);
+            Object r = right.executeObject(frame);
+            boolean eq = graalgo.values.GoEquality.equal(l, r);
             return op == Op.EQ ? eq : !eq;
         }
         cmp = switch (operandKind) {

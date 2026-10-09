@@ -161,7 +161,11 @@ var syntheticSources = map[string]string{
 	// synthetic (registered above). math/big is the G-c hard gate for
 	// the asymmetric-crypto tier.
 	"math/big":           syntheticMathBigSource,
-	"math/rand":          syntheticMathRandSource, // P3-M9 math/big: minimal (no sync.Mutex); full port needs M2 Mutex-field scope
+	// P3-M9 (tier1c): FULL math/rand port (synth_mathrand.go). Supersedes
+	// the minimal syntheticMathRandSource stub (kept on disk for reference;
+	// see synth_math_rand.go header). The full port uses mutex-guarded
+	// global (no atomic.Pointer needed) and is a strict superset.
+	"math/rand":          syntheticMathRandFullSource,
 	// P3-M9 (tier1c): synthetic math/rand/v2 (full port; imports the
 	// synthetic math, math/bits and internal/byteorder packages).
 	"math/rand/v2":       syntheticMathRandV2Source,
@@ -368,6 +372,22 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			// Deadline methods. Every call site fails fast with a named M5
 			// scope error (see isMultiResultSynthetic), or is desugared.
 			if sig.Results().Len() > 1 {
+				// P3-M9 (math/big): multi-result METHODS are added to
+				// methodIndex (so the AST walk's resolveMethodCall
+				// succeeds) but never emitted. The Appendix M desugar
+				// intercepts call sites via the table; the stub body is
+				// fail-fast and never emitted. Package-level multi-result
+				// funcs are still skipped (no methodIndex entry needed).
+				if d.Recv != nil {
+					recv := sig.Recv()
+					if recv != nil {
+						if rn := derefNamed(recv.Type()); rn != nil {
+							// Dummy entry: the desugar intercepts all
+							// call sites, so this is never emitted.
+							e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = &funcDeclInfo{fd: d, obj: obj, sig: sig}
+						}
+					}
+				}
 				continue
 			}
 			funcID, err := e.defFunc(obj)
@@ -701,7 +721,7 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		// packages (full port).
 		path != "math/bits" && path != "math/cmplx" && path != "math/rand" && path != "math/rand/v2" && path != "bufio" && path != "path" && path != "text/scanner" && path != "regexp/syntax" &&
 		// P3-M9 (wave 3, math/big): the synthetic math/big package (G-c hard gate).
-		path != "math/big" &&
+		path != "math/big" && path != "internal/byteorder" &&
 		// P3-M9 (tier-1d): leaf utilities unique/structs (+ synthetic-only
 		// internal/bytealg).
 		path != "unique" && path != "structs" && path != "internal/bytealg" &&
