@@ -804,6 +804,7 @@ func ExportFile(path string) (string, error) {
 		pkg:      pkg,
 		typeIDs:  make(map[types.Type]int),
 		namedIDs: make(map[string]int),
+		ifaceIDs: make(map[string]int),
 		objIDs:   make(map[types.Object]int),
 		sizes:    types.SizesFor("gc", "amd64"),
 		// P3-M8: track imported synthetic packages for idempotency.
@@ -1802,6 +1803,12 @@ type exporter struct {
 	// the same type as the Some[int] from non-generic code — they must share
 	// one wire type id, or type assertions on monomorphized values fail.
 	namedIDs map[string]int
+	// P3-M8-leftovers: anonymous *types.Interface deduplication by
+	// structural key (sorted method implkeys). go/types mints a fresh
+	// *types.Interface per syntactic occurrence, so without this the
+	// type assertion and the method dispatch on an anonymous interface
+	// get different wire ids → wrong itab → wrong dispatch results.
+	ifaceIDs map[string]int
 	// M6 (WS H): top-level function/method declarations by object, and
 	// monomorphized instantiations by dedup key (see enumerateInstantiations).
 	funcByObj map[*types.Func]*funcDeclInfo
@@ -2344,6 +2351,29 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 		e.types = append(e.types, TypeEnt{})
 		e.typeList = append(e.typeList, t)
 		e.namedIDs[name] = id
+		ent, err := e.describeType(t)
+		if err != nil {
+			return 0, err
+		}
+		e.types[id] = ent
+		return id, nil
+	}
+	if it, ok := t.(*types.Interface); ok {
+		// P3-M8-leftovers: deduplicate anonymous interfaces by structural
+		// key (sorted method implkeys). go/types mints a fresh *types.Interface
+		// per syntactic occurrence; without this, a type assertion
+		// `x.(interface{ M() })` and the subsequent `y.M()` dispatch mint
+		// different wire ids, the itab lookup misses, and dispatch returns
+		// garbage (observed: 0 instead of 5 for WriteSingle).
+		key := ifaceStructKey(it)
+		if id, ok := e.ifaceIDs[key]; ok {
+			return id, nil
+		}
+		id := len(e.types)
+		e.types = append(e.types, TypeEnt{})
+		e.typeList = append(e.typeList, t)
+		e.ifaceIDs[key] = id
+		e.typeIDs[t] = id
 		ent, err := e.describeType(t)
 		if err != nil {
 			return 0, err
@@ -6040,8 +6070,24 @@ func (e *exporter) recomputeMethodTables() error {
 // interface{ Write([]byte) int } — and parameter names are ignored (gc
 // compares types, not names). The "\x00" separator cannot collide: neither
 // method names nor signature keys contain it.
-func implKeyOf(mobj *types.Func, sig *types.Signature) string {
-	name := mobj.Name()
+// ifaceStructKey renders an interface type structurally for deduplication:
+// "iface{" + sorted method implkeys + "}". Embedded types are expanded via
+// go/types' MethodSet semantics (t.Method includes promoted methods).
+func ifaceStructKey(t *types.Interface) string {
+	keys := make([]string, 0, t.NumMethods())
+	for i := 0; i < t.NumMethods(); i++ {
+		m := t.Method(i)
+		msig, ok := m.Type().(*types.Signature)
+		if !ok {
+			continue
+		}
+		keys = append(keys, implKeyOf(m, msig))
+	}
+	sort.Strings(keys)
+	return "iface{" + strings.Join(keys, ";") + "}"
+}
+
+func implKeyOf(mobj *types.Func, sig *types.Signature) string {	name := mobj.Name()
 	if !mobj.Exported() {
 		if pkg := mobj.Pkg(); pkg != nil {
 			name = pkg.Path() + "." + name
