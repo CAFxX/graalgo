@@ -255,6 +255,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// over 100010 adversarial+random inputs vs gc 1.27.1). Needed by
 	// the synthetic math/cmplx package (Rect/Exp/Pow/Sin/Cos).
 	{"math", "Sincos", "", "__sincos", "__sincosPair", []string{"sin", "cos"}},
+	{"math", "Frexp", "", "__frexp", "__frexpPair", []string{"frac", "exp"}}, // P3-M9 math/big
 	// P3-M9 (tier1c): math/cmplx.Polar desugars to the __cmplxPolar helper
 	// (Appendix M; pair fields match the gc result names in order).
 	{"math/cmplx", "Polar", "", "__cmplxPolar", "cmplxPolarPair", []string{"r", "theta"}},
@@ -317,6 +318,8 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"bufio", "ReadString", "Reader", "__bufioReaderReadString", "__bufioReaderReadStringPair", []string{"s", "err"}},
 	{"bufio", "Write", "Writer", "__bufioWriterWrite", "__bufioWriterWritePair", []string{"n", "err"}},
 	{"bufio", "WriteString", "Writer", "__bufioWriterWriteString", "__bufioWriterWriteStringPair", []string{"n", "err"}},
+	// P3-M9 (tier1c): math/rand.Read (Appendix M).
+	{"math/rand", "Read", "Rand", "__randRead", "__randReadPair", []string{"n", "err"}},
 	// P3-M9 (tier1c): path.Split (Appendix M).
 	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}},
 }
@@ -370,43 +373,57 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/sha3", "Clone", "SHA3", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
 	{"crypto/hmac", "Clone", "hmac", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
 	// P3-M9 (wave 3, tier-1b): hash/adler32, hash/crc32, hash/crc64
-	// digest methods (via hash.__hashWrite/__hashClone/__binaryMarshal/
-	// __binaryAppend). The digests keep the exact gc multi-result
-	// signatures with fail-fast bodies; real logic lives in the
-	// single-result WriteSingle/CloneSinglePair/MarshalSingle/
-	// AppendSingle methods.
-	{"hash/adler32", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
-	{"hash/adler32", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
-	{"hash/adler32", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
-	{"hash/adler32", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
-	{"hash/crc32", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
-	{"hash/crc32", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
-	{"hash/crc32", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
-	{"hash/crc32", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
-	{"hash/crc64", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
-	{"hash/crc64", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
-	{"hash/crc64", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
-	{"hash/crc64", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	// digest methods via package-local __-helpers. The shared
+	// hash.__hashWrite/__hashClone lose the dynamic type's method set
+	// when the itab converts *digest across interfaces (the
+	// h.(singleWriter) assertion panics at runtime); the package-local
+	// helpers take interface{} and assert the concrete type directly.
+	// The digests keep the exact gc multi-result signatures with
+	// fail-fast bodies; real logic lives in the single-result
+	// WriteSingle/CloneSinglePair/MarshalSingle/AppendSingle methods.
+	// Pair structs are positionally identical to the shared
+	// hash.hashWritePair/ClonePair/binaryMarshalPair/binaryAppendPair
+	// (runtime field reads are positional; see SelectorNode).
+	{"hash/adler32", "Write", "digest", "__adler32Write", "hash/adler32", "writePair", []string{"n", "err"}},
+	{"hash/adler32", "Clone", "digest", "__adler32Clone", "hash/adler32", "clonePair", []string{"c", "err"}},
+	{"hash/adler32", "MarshalBinary", "digest", "__adler32Marshal", "hash/adler32", "bytesPair", []string{"b", "err"}},
+	{"hash/adler32", "AppendBinary", "digest", "__adler32Append", "hash/adler32", "bytesPair", []string{"b", "err"}},
+	{"hash/crc32", "Write", "digest", "__crc32Write", "hash/crc32", "writePair", []string{"n", "err"}},
+	{"hash/crc32", "Clone", "digest", "__crc32Clone", "hash/crc32", "clonePair", []string{"c", "err"}},
+	{"hash/crc32", "MarshalBinary", "digest", "__crc32Marshal", "hash/crc32", "bytesPair", []string{"b", "err"}},
+	{"hash/crc32", "AppendBinary", "digest", "__crc32Append", "hash/crc32", "bytesPair", []string{"b", "err"}},
+	{"hash/crc64", "Write", "digest", "__crc64Write", "hash/crc64", "writePair", []string{"n", "err"}},
+	{"hash/crc64", "Clone", "digest", "__crc64Clone", "hash/crc64", "clonePair", []string{"c", "err"}},
+	{"hash/crc64", "MarshalBinary", "digest", "__crc64Marshal", "hash/crc64", "bytesPair", []string{"b", "err"}},
+	{"hash/crc64", "AppendBinary", "digest", "__crc64Append", "hash/crc64", "bytesPair", []string{"b", "err"}},
 	// P3-M9 (wave 3, tier-1b): hash/fnv sum methods (no Clone; gc's fnv
 	// digests do not implement hash.Cloner).
-	{"hash/fnv", "Write", "sum32", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum32a", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum64", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum64a", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum128", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
-	{"hash/fnv", "Write", "sum128a", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum32", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum32a", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum64", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum64a", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum128", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
-	{"hash/fnv", "MarshalBinary", "sum128a", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum32", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum32a", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum64", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum64a", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum128", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
-	{"hash/fnv", "AppendBinary", "sum128a", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"hash/fnv", "Write", "sum32", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum32a", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum64", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum64a", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum128", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum128a", "__fnvWrite", "hash/fnv", "writePair", []string{"n", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum32", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum32a", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum64", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum64a", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum128", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum128a", "__fnvMarshal", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum32", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum32a", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum64", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum64a", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum128", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum128a", "__fnvAppend", "hash/fnv", "bytesPair", []string{"b", "err"}},
+	// P3-M9 (wave 3, tier-1b): hash/maphash Write/WriteString/Clone via
+	// the package-local __maphashWrite/__maphashWriteString/__maphashClone
+	// helpers (same rationale as above). The public methods keep the
+	// exact gc multi-result signatures with fail-fast bodies; real logic
+	// is in WriteSingle/WriteStringSingle/CloneSinglePair.
+	{"hash/maphash", "Write", "Hash", "__maphashWrite", "hash/maphash", "maphashWritePair", []string{"n", "err"}},
+	{"hash/maphash", "WriteString", "Hash", "__maphashWriteString", "hash/maphash", "maphashWritePair", []string{"n", "err"}},
+	{"hash/maphash", "Clone", "Hash", "__maphashClone", "hash/maphash", "maphashClonePair", []string{"c", "err"}},
 	// P3-M8b: encoding.BinaryMarshaler/BinaryAppender for the synthetic
 	// digests (itab wiring for the "hash"/"MarshalBinary" and
 	// "hash"/"AppendBinary" iface entries; md5 entries pre-exist above).
@@ -1369,7 +1386,6 @@ func isDeadlineMethod(f *types.Func) bool {
 // N-target assignments. It returns handled=false when s is not an
 // N-target assignment of one of the Appendix M operations.
 func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*Node, bool, error) {
-	println("DEBUG exportMultiResultDesugar: rhs len=", len(s.Rhs))
 	if len(s.Rhs) != 1 {
 		return nil, false, nil
 	}
