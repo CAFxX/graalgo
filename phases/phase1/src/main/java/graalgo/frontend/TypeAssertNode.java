@@ -138,12 +138,12 @@ public final class TypeAssertNode extends GoExprNode {
 
     @Override
     public long executeLong(VirtualFrame frame) {
-        return ((Long) read(frame)).longValue();
+        return ((Number) read(frame)).longValue();
     }
 
     @Override
     public int executeInt(VirtualFrame frame) {
-        return ((Integer) read(frame)).intValue();
+        return ((Number) read(frame)).intValue();
     }
 
     @Override
