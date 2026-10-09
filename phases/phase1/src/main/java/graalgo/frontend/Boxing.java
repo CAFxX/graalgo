@@ -237,7 +237,12 @@ public final class Boxing {
             case BOOL, UNTYPED_BOOL -> bits != 0 ? Boolean.TRUE : Boolean.FALSE;
             case INT8 -> Integer.valueOf((int) (byte) bits);
             case INT16 -> Integer.valueOf((int) (short) bits);
-            case INT32, UINT32 -> Integer.valueOf((int) bits);
+            case INT32 -> Integer.valueOf((int) bits);
+            // P3-M9: UINT32 values > 2^31-1 don't fit in Integer; use Long
+            // to preserve the unsigned value for correct comparisons.
+            case UINT32 -> (bits & 0xFFFFFFFFL) > Integer.MAX_VALUE
+                    ? Long.valueOf(bits & 0xFFFFFFFFL)
+                    : Integer.valueOf((int) bits);
             case UINT8 -> Integer.valueOf((int) bits & 0xFF);
             case UINT16 -> Integer.valueOf((int) bits & 0xFFFF);
             default -> Long.valueOf(bits);
