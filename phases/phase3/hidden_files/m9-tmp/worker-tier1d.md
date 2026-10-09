@@ -15,3 +15,13 @@
 - Harness ALL GREEN (tier1d-harness6.log): bytealg PASS (self-check vs extracted synthetic source under gc), cpu BUILD+RUN OK, godebug BUILD+RUN OK, bisect BUILD+RUN OK. Fixed along the way: IndexRabinKarp precondition (corpus now guards 0<len(sep)<=len(s), matching gc's bytes wrapper); godebug corpus no longer calls String() (panics by design for unlisted names).
 - 02_adversarial pointer test reworked for WS D (& only on composite literals): uses &struct{v int}{1} evaluated once.
 - 2026-10-09 11:15 CEST: UNIQUE DIFFERENTIAL GREEN — 6 passed, 0 failed (tier1d-unique-diff6.log). Fixes along the way: (1) BinaryOpNode struct ==/!= via GoEquality; (2) defFunc placeholder for template signatures (signatureHasTypeParam); (3) GoEquality interface keys + array fields (unique's any(struct{v T}) map keys). 02_adversarial reworked for WS D (& only on composite literals).
+- 2026-10-09 11:30 CEST: ALL COMMITS DONE.
+  - cbd5d2e unique: synth_unique.go + corpus (6 passed, 0 failed)
+  - 8cf60d4 structs: synth_structs.go + corpus (2 passed, 0 failed)
+  - 53a574a internal/bytealg: synth_bytealg.go + corpus + harness (ALL GREEN)
+  - 4cb5c8b embed: corpus (scope-limited)
+  - ac1fadd weak: corpus (scope-limited)
+  - 01e64fc internal/cpu,godebug,bisect: corpus (scope-limited; harness ALL GREEN)
+  - 1d7aa81 wave3 runner + README + checkpoint
+- Backend fixes (already in HEAD via shared branch): BinaryOpNode struct ==/!=, GoEquality interface+array keys, defFunc template placeholder (signatureHasTypeParam).
+- Scope-limits: embed (needs //go:embed materialization), weak (needs weak-ptr runtime), internal/cpu (cpuid), internal/godebug (godebugs table), internal/bisect (runtime.Callers).
