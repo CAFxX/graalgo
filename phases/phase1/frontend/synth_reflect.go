@@ -2344,6 +2344,62 @@ const syntheticIterSource = `package iter
 type Seq[V any] func(yield func(V) bool)
 
 type Seq2[K, V any] func(yield func(K, V) bool)
+
+// P3-M9 (tier-1a, wave 3): Pull/Pull2 added. The stdlib implements these
+// with runtime-internal coroutines (runtime.newcoro/coroswitch via
+// go:linkname), which v1 cannot import. This adapter collects the sequence
+// eagerly into a slice and serves next() from an index -- correct for all
+// finite sequences; observable next/stop semantics are preserved.
+func Pull[V any](seq Seq[V]) (next func() (V, bool), stop func()) {
+	var values []V
+	seq(func(v V) bool {
+		values = append(values, v)
+		return true
+	})
+	index := 0
+	stopped := false
+	next = func() (V, bool) {
+		if stopped || index >= len(values) {
+			var zero V
+			return zero, false
+		}
+		v := values[index]
+		index++
+		return v, true
+	}
+	stop = func() {
+		stopped = true
+	}
+	return next, stop
+}
+
+func Pull2[K, V any](seq Seq2[K, V]) (next func() (K, V, bool), stop func()) {
+	type pair struct {
+		k K
+		v V
+	}
+	var pairs []pair
+	seq(func(k K, v V) bool {
+		pairs = append(pairs, pair{k, v})
+		return true
+	})
+	index := 0
+	stopped := false
+	next = func() (K, V, bool) {
+		if stopped || index >= len(pairs) {
+			var zk K
+			var zv V
+			return zk, zv, false
+		}
+		p := pairs[index]
+		index++
+		return p.k, p.v, true
+	}
+	stop = func() {
+		stopped = true
+	}
+	return next, stop
+}
 `
 
 // reflectIntrinsicNames is the set of __reflect_* names intercepted at
