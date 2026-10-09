@@ -38,48 +38,55 @@ const (
 	__bufioMaxRune   = '\U0010FFFF'
 )
 
-// P3-M9: __bufioDecodeRune restored (used by ScanWords; 2-result so
-// type-check only — never emitted, v1 cannot emit multi-result funcs).
-func __bufioDecodeRune(p []byte) (r rune, size int) {
+// P3-M9: __bufioDecodeRune restored (used by ScanWords). v1 cannot emit
+// multi-result funcs (WS D), so this uses the pair-struct pattern:
+// single-result function returning __bufioDecodeRunePair, call sites
+// extract fields.
+type __bufioDecodeRunePair struct {
+	r    rune
+	size int
+}
+
+func __bufioDecodeRune(p []byte) __bufioDecodeRunePair {
 	// Simplified from unicode/utf8.DecodeRune (algorithmic, no tables).
 	if len(p) == 0 {
-		return __bufioRuneError, 0
+		return __bufioDecodeRunePair{r: __bufioRuneError, size: 0}
 	}
 	c := p[0]
 	if c < __bufioRuneSelf {
-		return rune(c), 1
+		return __bufioDecodeRunePair{r: rune(c), size: 1}
 	}
 	// Multi-byte sequences (simplified; full validation as in utf8).
 	if c < 0xC2 {
-		return __bufioRuneError, 1
+		return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
 	}
 	if c < 0xE0 {
 		if len(p) < 2 || p[1] < 0x80 || p[1] >= 0xC0 {
-			return __bufioRuneError, 1
+			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
 		}
-		return rune(c&0x1F)<<6 | rune(p[1]&0x3F), 2
+		return __bufioDecodeRunePair{r: rune(c&0x1F)<<6 | rune(p[1]&0x3F), size: 2}
 	}
 	if c < 0xF0 {
 		if len(p) < 3 || p[1] < 0x80 || p[1] >= 0xC0 || p[2] < 0x80 || p[2] >= 0xC0 {
-			return __bufioRuneError, 1
+			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
 		}
 		r := rune(c&0x0F)<<12 | rune(p[1]&0x3F)<<6 | rune(p[2]&0x3F)
 		if r < 0x800 {
-			return __bufioRuneError, 1
+			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
 		}
-		return r, 3
+		return __bufioDecodeRunePair{r: r, size: 3}
 	}
 	if c < 0xF5 {
 		if len(p) < 4 || p[1] < 0x80 || p[1] >= 0xC0 || p[2] < 0x80 || p[2] >= 0xC0 || p[3] < 0x80 || p[3] >= 0xC0 {
-			return __bufioRuneError, 1
+			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
 		}
 		r := rune(c&0x07)<<18 | rune(p[1]&0x3F)<<12 | rune(p[2]&0x3F)<<6 | rune(p[3]&0x3F)
 		if r < 0x10000 || r > __bufioMaxRune {
-			return __bufioRuneError, 1
+			return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
 		}
-		return r, 4
+		return __bufioDecodeRunePair{r: r, size: 4}
 	}
-	return __bufioRuneError, 1
+	return __bufioDecodeRunePair{r: __bufioRuneError, size: 1}
 }
 
 func __bufioEncodeRune(p []byte, r rune) int {
@@ -1302,7 +1309,8 @@ func ScanRunes(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	}
 
 	// Fast path 2: Correct UTF-8 decode without error.
-	_, width := __bufioDecodeRune(data)
+	__drp := __bufioDecodeRune(data)
+	width := __drp.size
 	if width > 1 {
 		// It's a valid encoding. Width cannot be one for a correctly encoded
 		// non-ASCII rune.
@@ -1387,7 +1395,8 @@ func ScanWords(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	start := 0
 	for width := 0; start < len(data); start += width {
 		var r rune
-		r, width = __bufioDecodeRune(data[start:])
+		__drp := __bufioDecodeRune(data[start:])
+		r, width = __drp.r, __drp.size
 		if !isSpace(r) {
 			break
 		}
@@ -1395,7 +1404,8 @@ func ScanWords(data []byte, atEOF bool) (advance int, token []byte, err error) {
 	// Scan until space, marking end of word.
 	for width, i := 0, start; i < len(data); i += width {
 		var r rune
-		r, width = __bufioDecodeRune(data[i:])
+		__drp := __bufioDecodeRune(data[i:])
+		r, width = __drp.r, __drp.size
 		if isSpace(r) {
 			return i + width, data[start:i], nil
 		}
