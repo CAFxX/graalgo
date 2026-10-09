@@ -4434,6 +4434,13 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 		}
 		ni, err := newFuncInst(fi, typeList(inst.TypeArgs), nil)
 		if err != nil {
+			// P3-M9 (generics isNaN fix): if the type args are unbound,
+			// this is not a true root — it's a nested call inside a generic
+			// template that inTemplate missed (pointer mismatch). Skip it;
+			// the fixpoint will find it when the outer generic is instantiated.
+			if strings.Contains(err.Error(), "unbound type parameter") {
+				continue
+			}
 			return err
 		}
 		enqueue(ni)
