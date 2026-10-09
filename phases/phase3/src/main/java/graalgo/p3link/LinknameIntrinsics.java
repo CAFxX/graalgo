@@ -10,6 +10,8 @@ import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
 import graalgo.p3os.GoOs;
+import graalgo.p3net.GoNet;
+import graalgo.p3net.GoNetpoll;
 import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Linknames;
 import graalgo.runtime.Timers;
@@ -78,6 +80,12 @@ public final class LinknameIntrinsics {
         // GoOs target adapts explicitly (see GoOs's javadoc for the
         // calling conventions: -errno, n+1, one channel op per call).
         registerOsIntrinsics();
+        // P3-M9 (RISK-M9-1/RISK-M9-2): the netpoller (internal/poll.*) and
+        // socket-trap (graalgo.net.*) intrinsic tables. D5 argument types:
+        // integers arrive as Long (int/uintptr are 64-bit), []byte as
+        // GoSlice; each GoNet/GoNetpoll target adapts explicitly (see
+        // their javadoc for the calling conventions).
+        registerNetIntrinsics();
         // itabFor → the P3-M3 itab machinery (ADR-0004 D3).
         Intrinsics.setItabProvider(IfaceMethodTable::itabForDescriptors);
         // Interface method-name lists for itabForIntrinsic.
@@ -153,6 +161,69 @@ public final class LinknameIntrinsics {
         Linknames.register("graalgo.os.argv", args -> GoOs.argv(args[0]), 1);
         // P3-M8 (crypto/rand): entropy source.
         Linknames.register("graalgo.os.getrandom", args -> GoOs.getrandom(args[0]), 1);
+    }
+
+    /**
+     * Registers the {@code internal/poll.*} netpoller linknames
+     * (implemented by {@link GoNetpoll}) and the {@code graalgo.net.*}
+     * socket traps (implemented by {@link GoNet}).
+     *
+     * <p>Arity is the single-result __-helper argument count. The poll
+     * linkname Go declarations are single-result by v1-frontend
+     * necessity (the exporter rejects multi-result declarations, even
+     * for linknames): {@code runtime_pollOpen} returns the pollDesc
+     * cookie (0 on failure; errno via
+     * {@code internal/poll.runtime_pollOpenErrno}).
+     */
+    private static void registerNetIntrinsics() {
+        // Netpoller (internal/poll.runtime_poll*).
+        Linknames.register("internal/poll.runtime_pollServerInit",
+                args -> { GoNetpoll.pollServerInit(); return null; }, 0);
+        Linknames.register("internal/poll.runtime_pollOpen",
+                args -> GoNetpoll.pollOpen(args[0]), 1);
+        Linknames.register("internal/poll.runtime_pollOpenErrno",
+                args -> GoNetpoll.pollOpenErrno(), 0);
+        Linknames.register("internal/poll.runtime_pollClose",
+                args -> { GoNetpoll.pollClose(args[0]); return null; }, 1);
+        Linknames.register("internal/poll.runtime_pollWait",
+                args -> GoNetpoll.pollWait(args[0], args[1]), 2);
+        Linknames.register("internal/poll.runtime_pollWaitCanceled",
+                args -> { GoNetpoll.pollWaitCanceled(args[0], args[1]); return null; }, 2);
+        Linknames.register("internal/poll.runtime_pollReset",
+                args -> GoNetpoll.pollReset(args[0], args[1]), 2);
+        Linknames.register("internal/poll.runtime_pollSetDeadline",
+                args -> { GoNetpoll.pollSetDeadline(args[0], args[1], args[2]); return null; }, 3);
+        Linknames.register("internal/poll.runtime_pollUnblock",
+                args -> { GoNetpoll.pollUnblock(args[0]); return null; }, 1);
+        Linknames.register("internal/poll.runtime_isPollServerDescriptor",
+                args -> GoNetpoll.isPollServerDescriptor(args[0]), 1);
+        // Socket traps (graalgo.net.*).
+        Linknames.register("graalgo.net.socket",
+                args -> GoNet.socket(args[0], args[1], args[2]), 3);
+        Linknames.register("graalgo.net.bind",
+                args -> GoNet.bind(args[0], args[1]), 2);
+        Linknames.register("graalgo.net.listen",
+                args -> GoNet.listen(args[0], args[1]), 2);
+        Linknames.register("graalgo.net.accept",
+                args -> GoNet.accept(args[0]), 1);
+        Linknames.register("graalgo.net.connect",
+                args -> GoNet.connect(args[0], args[1]), 2);
+        Linknames.register("graalgo.net.setsockopt",
+                args -> GoNet.setsockopt(args[0], args[1], args[2], args[3]), 4);
+        Linknames.register("graalgo.net.getsockopt",
+                args -> GoNet.getsockopt(args[0], args[1], args[2]), 3);
+        Linknames.register("graalgo.net.getsockname",
+                args -> GoNet.getsockname(args[0], args[1]), 2);
+        Linknames.register("graalgo.net.getpeername",
+                args -> GoNet.getpeername(args[0], args[1]), 2);
+        Linknames.register("graalgo.net.shutdown",
+                args -> GoNet.shutdown(args[0], args[1]), 2);
+        Linknames.register("graalgo.net.setnonblock",
+                args -> GoNet.setnonblock(args[0], args[1]), 2);
+        Linknames.register("graalgo.net.sendto",
+                args -> GoNet.sendto(args[0], args[1], args[2]), 3);
+        Linknames.register("graalgo.net.recvfrom",
+                args -> GoNet.recvfrom(args[0], args[1], args[2]), 3);
     }
 
     /**

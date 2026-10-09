@@ -29,6 +29,8 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3os.GoOsErrnoTest.class);
         // P3-M8 (reviewer-2 P1-4/P1-5): reflect TypeInfo build pins.
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
+        // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
+        TESTS.add(graalgo.p3net.GoNetpollTest.class);
     }
 
     private IfaceTestRunner() {}

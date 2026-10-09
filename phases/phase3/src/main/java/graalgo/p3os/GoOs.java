@@ -135,6 +135,12 @@ public final class GoOs {
     public static final int KIND_DIR = 2;
     public static final int KIND_PIPE = 3;
     public static final int KIND_STDIO = 4;
+    /**
+     * P3-M9 (RISK-M9-2): sockets share the cookie namespace (fd-domain
+     * unification) — allocated from the same NEXT_COOKIE space, closed
+     * through the same close() path.
+     */
+    public static final int KIND_SOCKET = 5;
 
     // Linux open(2) flags used by the open intrinsic.
     private static final int O_RDONLY = 0;
@@ -501,6 +507,53 @@ public final class GoOs {
     }
 
     // ------------------------------------------------------------------
+    // Socket-handle interop (P3-M9, RISK-M9-2): the p3net package owns
+    // socket semantics; the cookies live in this unified table.
+    // ------------------------------------------------------------------
+
+    /**
+     * Registers a socket channel, returning its cookie. Sockets share
+     * the file cookie namespace (fd-domain unification): {@code read},
+     * {@code write} and {@code close} below operate on them, and the
+     * channel must be a {@link java.nio.channels.SelectableChannel}
+     * (the netpoller registers it).
+     */
+    public static long registerSocketChannel(java.nio.channels.Channel ch,
+            boolean readable, boolean writable) {
+        long h = NEXT_COOKIE.getAndIncrement();
+        HANDLES.put(h, new ChannelHandle(ch, readable, writable, null, KIND_SOCKET, true));
+        return h;
+    }
+
+    /**
+     * Resolves a socket cookie to its channel, or null when absent or
+     * not a channel handle. Package-visible to p3net via this public
+     * accessor (GoNet lives in another package).
+     */
+    public static java.nio.channels.Channel socketChannel(long cookie) {
+        ChannelHandle ch = channelHandle(cookie);
+        return (ch != null && ch.kind == KIND_SOCKET) ? ch.ch : null;
+    }
+
+    /**
+     * Swaps a socket handle's channel (the {@code listen()} path swaps
+     * an idle {@code SocketChannel} for a {@code ServerSocketChannel}).
+     * The previous channel is closed; the cookie is unchanged.
+     */
+    public static void replaceSocketChannel(long cookie, java.nio.channels.Channel ch,
+            boolean readable, boolean writable) {
+        Handle prev = HANDLES.replace(cookie,
+                new ChannelHandle(ch, readable, writable, null, KIND_SOCKET, true));
+        if (prev instanceof ChannelHandle oldCh) {
+            try {
+                oldCh.ch.close();
+            } catch (java.io.IOException ignored) {
+                // Best effort; the replacement is what matters.
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Files: open/close/read/write/readAt/writeAt/seek/truncate/sync.
     // ------------------------------------------------------------------
 
@@ -583,9 +636,17 @@ public final class GoOs {
 
     /** graalgo.os.close */
     public static long close(Object hArg) {
-        Handle handle = HANDLES.remove(num(hArg));
+        long cookie = num(hArg);
+        Handle handle = HANDLES.remove(cookie);
         if (handle == null) {
             return -EBADF;
+        }
+        if (handle.kind == KIND_SOCKET) {
+            // P3-M9 (RISK-M9-2): evict netpoller state first — a close
+            // that bypasses runtime_pollClose must still wake parked
+            // waiters (with pollErrClosing) and deregister the channel.
+            // Idempotent: the normal FD.Close path already unblocked.
+            graalgo.p3net.GoNetpoll.evictForClose(cookie);
         }
         try {
             handle.close();
