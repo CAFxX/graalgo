@@ -565,7 +565,6 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "SplitHostPort", "", "__splitHostPort", "", "splitHostPortPair", []string{"host", "port"}},
 	// net: methods on TCPListener / Conn (prependRecv).
 	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "", "acceptPair", []string{"c", "err"}},
-	{"net", "Accept", "UDPConn", "__udpConnAccept", "", "acceptPair", []string{"c", "err"}},
 	{"net", "Read", "TCPConn", "__tcpConnRead", "", "readPair", []string{"n", "err"}},
 	{"net", "Write", "TCPConn", "__tcpConnWrite", "", "writePair", []string{"n", "err"}},
 	{"net", "Read", "UDPConn", "__udpConnRead", "", "readPair", []string{"n", "err"}},
