@@ -667,6 +667,9 @@ public final class GoOs {
             return -EBADF;
         }
         ByteBuffer bb = goBuf(bArg);
+        if (!(ch.ch instanceof ReadableByteChannel)) {
+            return -EBADF;
+        }
         try {
             int n = ((ReadableByteChannel) ch.ch).read(bb);
             if (n < 0) {
@@ -689,6 +692,9 @@ public final class GoOs {
             return -EBADF;
         }
         ByteBuffer bb = goBuf(bArg);
+        if (!(ch.ch instanceof WritableByteChannel)) {
+            return -EBADF;
+        }
         WritableByteChannel wch = (WritableByteChannel) ch.ch;
         try {
             int n = wch.write(bb);
