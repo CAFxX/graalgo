@@ -10285,10 +10285,26 @@ func (r *Reader) Size() int64 { return int64(len(r.s)) }
 
 // Read implements the io.Reader interface.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// P3-M9 (WS D): exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesReaderRead helper
+// (v1 cannot emit 2-result methods). Interface dispatch maps to helper.
+type __bytesReadPair struct {
+	n   int
+	err error
+}
+
+func __bytesReaderRead(r *Reader, b []byte) __bytesReadPair {
+	if r.i >= int64(len(r.s)) {
+		return __bytesReadPair{n: 0, err: io.EOF}
+	}
+	r.prevRune = -1
+	n := copy(b, r.s[r.i:])
+	r.i += int64(n)
+	return __bytesReadPair{n: n, err: nil}
+}
+
 func (r *Reader) Read(b []byte) (n int, err error) {
-	panic("bytes.Reader.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Reader.Read: use __bytesReaderRead helper (WS D)")
 }
 
 // ReadAt implements the io.ReaderAt interface.

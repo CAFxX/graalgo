@@ -115,6 +115,8 @@ type m7MultiResultFunc struct {
 // desugars through base32DecodeStringPair{b, err} — there is no
 // base32AppendPair).
 var m7MultiResultFuncs = []m7MultiResultFunc{
+	// bytes: methods on *Reader (P3-M9 WS D: v1 cannot emit 2-result methods).
+	{"bytes", "Read", "Reader", "__bytesReaderRead", "__bytesReadPair", []string{"n", "err"}},
 	// encoding/base32: methods on *Encoding.
 	{"encoding/base32", "Decode", "Encoding", "__base32Decode", "base32DecodePair", []string{"n", "err"}},
 	{"encoding/base32", "DecodeString", "Encoding", "__base32DecodeString", "base32DecodeStringPair", []string{"b", "err"}},
