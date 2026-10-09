@@ -2872,6 +2872,22 @@ func (s *typeSubst) resolve(tp *types.TypeParam) (types.Type, *typeSubst) {
 	return nil, nil
 }
 
+// resolveByName resolves a type parameter by name through the subst chain.
+// P3-M9 (generics isNaN fix): go/types TypeParam object identity is not
+// stable across the synthetic package's type-checking passes, so the nested
+// call's T (from e.info.Instances) may not pointer-match the T in subst.bind
+// (from fi.sig.TypeParams()). Match by name instead.
+func resolveByName(s *typeSubst, name string) types.Type {
+	for ss := s; ss != nil; ss = ss.parent {
+		for tp, c := range ss.bind {
+			if tp.Obj().Name() == name {
+				return c
+			}
+		}
+	}
+	return nil
+}
+
 // bindParams builds the bind map pairing a type-parameter list with its
 // actual arguments.
 func bindParams(tparams *types.TypeParamList, targs []types.Type) map[*types.TypeParam]types.Type {
@@ -4579,14 +4595,18 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			// call's type args. When Less[float64] calls isNaN(x) with x: T,
 			// ii.TypeArgs contains T (unbound). Substitute T -> float64 first,
 			// otherwise newFuncInst fails with "unbound type parameter".
+			// Note: go/types object identity for TypeParams is not stable
+			// across the synthetic package's type-checking passes, so we
+			// match by name, not by pointer.
 			targs := typeList(ii.TypeArgs)
 			if subst != nil {
-				saved := e.subst
-				e.subst = subst
 				for i, ta := range targs {
-					targs[i] = e.substType(ta)
+					if tp, ok := ta.(*types.TypeParam); ok {
+						if resolved := resolveByName(subst, tp.Obj().Name()); resolved != nil {
+							targs[i] = resolved
+						}
+					}
 				}
-				e.subst = saved
 			}
 			ni, nerr := newFuncInst(fi, targs, subst)
 			if nerr != nil {
@@ -4641,15 +4661,17 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			if !ok || !fi.isTemplate || fi.recv != nil {
 				return true
 			}
-			// P3-M9 (generics isNaN fix): apply outer substitution (see above).
+			// P3-M9 (generics isNaN fix): apply outer substitution by name
+			// (see CallExpr case above).
 			targs2 := typeList(ii.TypeArgs)
 			if subst != nil {
-				saved2 := e.subst
-				e.subst = subst
 				for i, ta := range targs2 {
-					targs2[i] = e.substType(ta)
+					if tp, ok := ta.(*types.TypeParam); ok {
+						if resolved := resolveByName(subst, tp.Obj().Name()); resolved != nil {
+							targs2[i] = resolved
+						}
+					}
 				}
-				e.subst = saved2
 			}
 			ni, nerr := newFuncInst(fi, targs2, subst)
 			if nerr != nil {
