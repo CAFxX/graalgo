@@ -1,0 +1,2 @@
+reason: needs weak-pointer runtime semantics in the GMP backend (Pointer.Value must observe reclamation once the object is unreachable; a strong-reference emulation would be observably wrong)
+retest: weak reference support lands in the backend
