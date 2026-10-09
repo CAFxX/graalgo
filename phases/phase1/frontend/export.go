@@ -4498,14 +4498,6 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 	}
 	sort.Strings(spaths)
 	for _, p := range spaths {
-		// P3-M9 (tier-5b): skip F-bounded packages (Point[P]) — the
-		// frontend does not support interface dispatch on type
-		// parameters (WS H). These are not needed for the 7 task
-		// packages' core functionality.
-		if p == "crypto/internal/fips140/ecdsa" || p == "crypto/internal/fips140/ecdh" ||
-			p == "crypto/ecdsa" || p == "crypto/ecdh" {
-			continue
-		}
 		sp := getSyntheticPackage(p)
 		var sfuncs []*funcDeclInfo
 		for _, fi := range e.funcByObj {
