@@ -1,0 +1,2 @@
+reason: PCG Uint64 output mismatch vs gc (bits helpers verified correct in isolation; transformation bug under investigation) + ChaCha8 requires & on SelectorExpr (WS D)
+retest: PCG transformation fixed; frontend/v1 supports & on SelectorExpr

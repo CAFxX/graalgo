@@ -1,0 +1,2 @@
+reason: regexp/syntax requires unicode tables (Scripts, Categories, SimpleFold) from tier1a's unicode package, which is in progress
+retest: unicode + unicode/utf8 land in the frontend overlay (tier1a)

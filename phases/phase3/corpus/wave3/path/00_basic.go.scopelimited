@@ -1,0 +1,2 @@
+reason: path.Split desugar (Appendix M) not applied; frontend reports undefined: path.Split (desugar table issue for methods)
+retest: mrdesugar_m5.go correctly rewrites path.Split calls, or Split is implemented without desugar

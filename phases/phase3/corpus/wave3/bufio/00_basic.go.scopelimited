@@ -1,0 +1,2 @@
+reason: bufio synthetic requires 2-result utf8 helpers (DecodeRune) which are not emittable in frontend/v1 (WS D); package fails to type-check
+retest: frontend/v1 supports 2-result function definitions, or utf8 helpers are converted to pair-returning

@@ -1,0 +1,2 @@
+reason: text/scanner synthetic not yet verified; likely has similar & or multi-result issues as bufio
+retest: bufio issues resolved; text/scanner corpus passes differential
