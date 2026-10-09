@@ -193,28 +193,7 @@ func (bz2 *reader) setup(needMagic bool) error {
 }
 
 func (bz2 *reader) Read(buf []byte) (n int, err error) {
-	if bz2.eof {
-		return 0, io.EOF
-	}
-
-	if !bz2.setupDone {
-		err = bz2.setup(true)
-		brErr := bz2.br.Err()
-		if brErr != nil {
-			err = brErr
-		}
-		if err != nil {
-			return 0, err
-		}
-		bz2.setupDone = true
-	}
-
-	n, err = bz2.read(buf)
-	brErr := bz2.br.Err()
-	if brErr != nil {
-		err = brErr
-	}
-	return
+	panic("bzip2.reader.Read: use __bzip2ReaderRead helper (WS D)")
 }
 
 func (bz2 *reader) readFromBlock(buf []byte) int {

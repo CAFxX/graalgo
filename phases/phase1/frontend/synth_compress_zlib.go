@@ -120,33 +120,7 @@ func NewReaderDict(r io.Reader, dict []byte) (io.ReadCloser, error) {
 }
 
 func (z *reader) Read(p []byte) (int, error) {
-	if z.err != nil {
-		return 0, z.err
-	}
-
-	var n int
-	n, z.err = z.decompressor.Read(p)
-	z.digest.Write(p[0:n])
-	if z.err != io.EOF {
-		// In the normal case we return here.
-		return n, z.err
-	}
-
-	// Finished file; check checksum.
-	if _, err := io.ReadFull(z.r, z.scratch[0:4]); err != nil {
-		if err == io.EOF {
-			err = io.ErrUnexpectedEOF
-		}
-		z.err = err
-		return n, z.err
-	}
-	// ZLIB (RFC 1950) is big-endian, unlike GZIP (RFC 1952).
-	checksum := binary.BigEndian.Uint32(z.scratch[:4])
-	if checksum != z.digest.Sum32() {
-		z.err = ErrChecksum
-		return n, z.err
-	}
-	return n, io.EOF
+	panic("zlib.reader.Read: use __zlibReaderRead helper (WS D)")
 }
 
 // Calling Close does not close the wrapped [io.Reader] originally passed to [NewReader].

@@ -175,17 +175,7 @@ func (r *Reader) readMSB() (uint16, error) {
 
 // Read implements io.Reader, reading uncompressed bytes from its underlying reader.
 func (r *Reader) Read(b []byte) (int, error) {
-	for {
-		if len(r.toRead) > 0 {
-			n := copy(b, r.toRead)
-			r.toRead = r.toRead[n:]
-			return n, nil
-		}
-		if r.err != nil {
-			return 0, r.err
-		}
-		r.decode()
-	}
+	panic("lzw.Reader.Read: use __lzwReaderRead helper (WS D)")
 }
 
 // decode decompresses bytes from r and leaves them in d.toRead.

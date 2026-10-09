@@ -3259,23 +3259,7 @@ func (f *decompressor) nextBlock() {
 }
 
 func (f *decompressor) Read(b []byte) (int, error) {
-	for {
-		if len(f.toRead) > 0 {
-			n := copy(b, f.toRead)
-			f.toRead = f.toRead[n:]
-			if len(f.toRead) == 0 {
-				return n, f.err
-			}
-			return n, nil
-		}
-		if f.err != nil {
-			return 0, f.err
-		}
-		__flateDecompressorStep(f)
-		if f.err != nil && len(f.toRead) == 0 {
-			f.toRead = f.dict.readFlush() // Flush what's left in case of error
-		}
-	}
+	panic("flate.decompressor.Read: use __flateDecompressorRead helper (WS D)")
 }
 
 func (f *decompressor) Close() error {
