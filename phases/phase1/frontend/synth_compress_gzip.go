@@ -36,6 +36,11 @@ import (
 	"time"
 )
 
+// __gzipLE returns binary.LittleEndian (avoids package-level cross-package var).
+var le = __gzipLE()
+
+func __gzipLE() binary.ByteOrder { return binary.LittleEndian }
+
 
 
 // Copyright 2009 The Go Authors. All rights reserved.
@@ -221,7 +226,7 @@ func (z *Reader) readHeader() (hdr Header, err error) {
 		return hdr, ErrHeader
 	}
 	flg := z.buf[3]
-	if t := int64(binary.LittleEndian.Uint32(z.buf[4:8])); t > 0 {
+	if t := int64(le.Uint32(z.buf[4:8])); t > 0 {
 		// Section 2.3.1, the zero value for MTIME means that the
 		// modified time is not set.
 		hdr.ModTime = time.Unix(t, 0)
@@ -235,7 +240,7 @@ func (z *Reader) readHeader() (hdr Header, err error) {
 			return hdr, noEOF(err)
 		}
 		z.digest = crc32.Update(z.digest, crc32.IEEETable, z.buf[:2])
-		data := make([]byte, binary.LittleEndian.Uint16(z.buf[:2]))
+		data := make([]byte, le.Uint16(z.buf[:2]))
 		if _, err = io.ReadFull(z.r, data); err != nil {
 			return hdr, noEOF(err)
 		}
@@ -262,7 +267,7 @@ func (z *Reader) readHeader() (hdr Header, err error) {
 		if _, err = io.ReadFull(z.r, z.buf[:2]); err != nil {
 			return hdr, noEOF(err)
 		}
-		digest := binary.LittleEndian.Uint16(z.buf[:2])
+		digest := le.Uint16(z.buf[:2])
 		if digest != uint16(z.digest) {
 			return hdr, ErrHeader
 		}
@@ -386,7 +391,7 @@ func (z *Writer) writeBytes(b []byte) error {
 	if len(b) > 0xffff {
 		return errors.New("gzip.Write: Extra data is too large")
 	}
-	binary.LittleEndian.PutUint16(z.buf[:2], uint16(len(b)))
+	le.PutUint16(z.buf[:2], uint16(len(b)))
 	_, err := z.w.Write(z.buf[:2])
 	if err != nil {
 		return err
@@ -449,7 +454,7 @@ func (z *Writer) Write(p []byte) (int, error) {
 		if z.ModTime.After(time.Unix(0, 0)) {
 			// Section 2.3.1, the zero value for MTIME means that the
 			// modified time is not set.
-			binary.LittleEndian.PutUint32(z.buf[4:8], uint32(z.ModTime.Unix()))
+			le.PutUint32(z.buf[4:8], uint32(z.ModTime.Unix()))
 		}
 		if z.level == BestCompression {
 			z.buf[8] = 2
@@ -535,8 +540,8 @@ func (z *Writer) Close() error {
 	if z.err != nil {
 		return z.err
 	}
-	binary.LittleEndian.PutUint32(z.buf[:4], z.digest)
-	binary.LittleEndian.PutUint32(z.buf[4:8], z.size)
+	le.PutUint32(z.buf[:4], z.digest)
+	le.PutUint32(z.buf[4:8], z.size)
 	_, z.err = z.w.Write(z.buf[:8])
 	return z.err
 }
@@ -615,7 +620,7 @@ func __gzipReaderreadHeader(z *Reader) __gzipReaderreadHeaderPair {
 		return __gzipReaderreadHeaderPair{hdr: hdr, err: ErrHeader}
 	}
 	flg := z.buf[3]
-	if t := int64(binary.LittleEndian.Uint32(z.buf[4:8])); t > 0 {
+	if t := int64(le.Uint32(z.buf[4:8])); t > 0 {
 		// Section 2.3.1, the zero value for MTIME means that the
 		// modified time is not set.
 		hdr.ModTime = time.Unix(t, 0)
@@ -629,7 +634,7 @@ func __gzipReaderreadHeader(z *Reader) __gzipReaderreadHeaderPair {
 			return __gzipReaderreadHeaderPair{hdr: hdr, err: noEOF(err)}
 		}
 		z.digest = crc32.Update(z.digest, crc32.IEEETable, z.buf[:2])
-		data := make([]byte, binary.LittleEndian.Uint16(z.buf[:2]))
+		data := make([]byte, le.Uint16(z.buf[:2]))
 		if _, err = io.ReadFull(z.r, data); err != nil {
 			return __gzipReaderreadHeaderPair{hdr: hdr, err: noEOF(err)}
 		}
@@ -656,7 +661,7 @@ func __gzipReaderreadHeader(z *Reader) __gzipReaderreadHeaderPair {
 		if _, err = io.ReadFull(z.r, z.buf[:2]); err != nil {
 			return __gzipReaderreadHeaderPair{hdr: hdr, err: noEOF(err)}
 		}
-		digest := binary.LittleEndian.Uint16(z.buf[:2])
+		digest := le.Uint16(z.buf[:2])
 		if digest != uint16(z.digest) {
 			return __gzipReaderreadHeaderPair{hdr: hdr, err: ErrHeader}
 		}
@@ -697,8 +702,8 @@ func __gzipReaderRead(z *Reader, p []byte) __gzipReaderReadPair {
 			z.err = noEOF(err)
 			return __gzipReaderReadPair{n: n, err: z.err}
 		}
-		digest := binary.LittleEndian.Uint32(z.buf[:4])
-		size := binary.LittleEndian.Uint32(z.buf[4:8])
+		digest := le.Uint32(z.buf[:4])
+		size := le.Uint32(z.buf[4:8])
 		if digest != z.digest || size != z.size {
 			z.err = ErrChecksum
 			return __gzipReaderReadPair{n: n, err: z.err}
@@ -761,7 +766,7 @@ func __gzipWriterWrite(z *Writer, p []byte) __gzipWriterWritePair {
 		if z.ModTime.After(time.Unix(0, 0)) {
 			// Section 2.3.1, the zero value for MTIME means that the
 			// modified time is not set.
-			binary.LittleEndian.PutUint32(z.buf[4:8], uint32(z.ModTime.Unix()))
+			le.PutUint32(z.buf[4:8], uint32(z.ModTime.Unix()))
 		}
 		if z.level == BestCompression {
 			z.buf[8] = 2
