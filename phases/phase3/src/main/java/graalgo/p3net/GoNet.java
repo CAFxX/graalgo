@@ -314,7 +314,11 @@ public final class GoNet {
 
     /** Parses a wire-format address into an InetSocketAddress. */
     private static InetSocketAddress parseAddr(Object addrArg) throws IllegalArgumentException {
-        ByteBuffer bb = goBuf(addrArg);
+        return parseAddrBuf(goBuf(addrArg));
+    }
+
+    /** Parses a wire-format address from an already-copied buffer (P2-6: no double copy). */
+    private static InetSocketAddress parseAddrBuf(ByteBuffer bb) throws IllegalArgumentException {
         if (!bb.hasRemaining()) {
             throw new IllegalArgumentException("empty sockaddr");
         }
@@ -489,6 +493,14 @@ public final class GoNet {
                 ssc.bind(st.boundAddr, backlog <= 0 ? 128 : backlog);
                 // Swap the handle's channel (closes the idle SocketChannel).
                 GoOs.replaceSocketChannel(cookie, ssc, false, false);
+                // The fork ran runtime_pollOpen BEFORE listen (FD.Init
+                // order): migrate the pollDesc's selector registration to
+                // the new ServerSocketChannel, or the accept wait parks
+                // forever on the dead key (P0-1).
+                long mig = GoNetpoll.migrateSocketChannel(cookie);
+                if (mig != 0) {
+                    return mig;
+                }
                 st.kind = SockStateKind.LISTENING;
                 return 0;
             } catch (IOException e) {
@@ -571,9 +583,15 @@ public final class GoNet {
                     // A failed nonblocking connect leaves the channel
                     // unusable; retry on a fresh one (the fork closes on
                     // connect error anyway, so this is a safety net).
+                    // Same staleness class as listen() (P0-1): the fork's
+                    // early pollOpen registered the old channel.
                     conn = SocketChannel.open(protoFamily(st.domain));
                     conn.configureBlocking(false);
                     GoOs.replaceSocketChannel(cookie, conn, true, true);
+                    long mig = GoNetpoll.migrateSocketChannel(cookie);
+                    if (mig != 0) {
+                        return mig;
+                    }
                 }
                 applySockOpts(conn, st);
                 if (st.boundAddr != null
@@ -783,26 +801,38 @@ public final class GoNet {
     public static long shutdown(Object cookieArg, Object howArg) {
         long cookie = num(cookieArg);
         int how = num32(howArg);
-        java.nio.channels.Channel ch = GoOs.socketChannel(cookie);
-        if (ch == null || STATES.get(cookie) == null) {
-            return -GoOs.EBADF;
-        }
-        if (!(ch instanceof SocketChannel sc)) {
-            return -ENOTCONN; // shutdown on listener/datagram (gc: ENOTCONN/EOPNOTSUPP)
-        }
-        try {
-            if (how == SHUT_RD || how == SHUT_RDWR) {
-                sc.shutdownInput();
-            }
-            if (how == SHUT_WR || how == SHUT_RDWR) {
-                sc.shutdownOutput();
-            }
-            return 0;
-        } catch (IOException e) {
-            return -sockErrno(e);
-        } catch (IllegalArgumentException e) {
+        // Validate how first (P2-4): an invalid how is EINVAL regardless
+        // of socket type (gc/kernel parity; previously fell through to 0).
+        if (how != SHUT_RD && how != SHUT_WR && how != SHUT_RDWR) {
             return -GoOs.EINVAL;
         }
+        SockState st = STATES.get(cookie);
+        java.nio.channels.Channel ch = GoOs.socketChannel(cookie);
+        if (st == null || ch == null) {
+            return -GoOs.EBADF;
+        }
+        if (ch instanceof SocketChannel sc) {
+            try {
+                if (how == SHUT_RD || how == SHUT_RDWR) {
+                    sc.shutdownInput();
+                }
+                if (how == SHUT_WR || how == SHUT_RDWR) {
+                    sc.shutdownOutput();
+                }
+                return 0;
+            } catch (IOException e) {
+                return -sockErrno(e);
+            } catch (IllegalArgumentException e) {
+                return -GoOs.EINVAL;
+            }
+        }
+        if (ch instanceof DatagramChannel) {
+            // shutdown(2) is legal on a connected datagram on Linux, but
+            // the JDK exposes no API for it: loud EOPNOTSUPP when
+            // connected instead of the previous wrong ENOTCONN (P2-4).
+            return st.kind == SockStateKind.CONNECTED ? -EOPNOTSUPP : -ENOTCONN;
+        }
+        return -ENOTCONN; // listener (gc: ENOTCONN/EOPNOTSUPP)
     }
 
     /** graalgo.net.setnonblock — records the flag; channels stay nonblocking. 0 or -errno. */
@@ -834,7 +864,7 @@ public final class GoNet {
             if (!ab.hasRemaining()) {
                 n = dc.write(bb); // connected
             } else {
-                n = dc.send(bb, parseAddr(addrArg));
+                n = dc.send(bb, parseAddrBuf(ab)); // P2-6: single addr copy
             }
             // Nonblocking: 0 = would block (fork maps to EAGAIN when want > 0).
             return (long) n + 1;

@@ -139,9 +139,19 @@ public final class GoNetpoll {
     private static final class PollDesc {
         final long id;
         final long sockCookie;
-        final SelectableChannel ch;
-        /** True for ServerSocketChannel (accept readiness = OP_ACCEPT). */
-        final boolean listener;
+        /**
+         * The registered channel. Volatile + non-final: the fork calls
+         * {@code runtime_pollOpen} before {@code listen()}/{@code connect()}
+         * swap the channel, so {@link #migrateSocketChannel} re-points it
+         * (P0-1). Always the channel {@link #key} was registered for.
+         */
+        volatile SelectableChannel ch;
+        /**
+         * True for ServerSocketChannel (accept readiness = OP_ACCEPT).
+         * Volatile: re-read from live state on every wait entry (P0-2),
+         * updated by {@link #migrateSocketChannel}.
+         */
+        volatile boolean listener;
         /** Set while a nonblocking connect is in flight (OP_CONNECT). */
         volatile boolean connecting;
         volatile SelectionKey key;
@@ -160,8 +170,6 @@ public final class GoNetpoll {
          */
         final AtomicLong readTimerId = new AtomicLong(-1);
         final AtomicLong writeTimerId = new AtomicLong(-1);
-        /** Sticky event error (EPOLLERR analog); read waits report NOT_POLLABLE. */
-        volatile int eventErr;
         /** Last completed waiter (test hook for wakeup-latency measurement). */
         volatile Waiter lastDone;
 
@@ -284,6 +292,12 @@ public final class GoNetpoll {
             pd.key = task.get();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            // Cancel the registration task before dropping the desc: it
+            // may otherwise run later on the poller thread and register
+            // the (still-open) channel, stranding it until the handleKey
+            // unknown-desc guard cancels it. Cancelling here keeps the
+            // failure synchronous and local (P2-7).
+            task.cancel(false);
             dropDesc(pd);
             LAST_OPEN_ERRNO.set(GoOs.EINVAL);
             return 0;
@@ -309,10 +323,19 @@ public final class GoNetpoll {
             if (!pd.closing) {
                 throw new IllegalStateException("runtime: close polldesc w/o unblock");
             }
-            if (pd.reader.get() != null) {
+            // gc parity (pdReady): the fork calls runtime_pollUnblock then
+            // runtime_pollClose back-to-back, so a waiter woken by unblock
+            // usually has not been resumed by the drainer yet. Throw only
+            // for a waiter that is genuinely still parked — i.e. whose
+            // result CAS is still unclaimed (P0-3). A woken waiter
+            // (result != null) resumes, observes CLOSING, and clears its
+            // own slot; it holds pd directly and never re-resolves DESCS.
+            Waiter r = pd.reader.get();
+            if (r != null && r.result.get() == null) {
                 throw new IllegalStateException("runtime: blocked read on closing polldesc");
             }
-            if (pd.writer.get() != null) {
+            Waiter w = pd.writer.get();
+            if (w != null && w.result.get() == null) {
                 throw new IllegalStateException("runtime: blocked write on closing polldesc");
             }
             pd.closed = true;
@@ -338,15 +361,13 @@ public final class GoNetpoll {
 
     /** internal/poll.runtime_pollWaitCanceled — like wait, ignoring deadlines. */
     public static void pollWaitCanceled(Object ctxArg, Object modeArg) {
-        long ctx = ((Number) ctxArg).longValue();
-        int mode = ((Number) modeArg).intValue();
-        for (;;) {
-            int r = pollWaitRaw(ctx, mode, true);
-            if (r == POLL_NO_ERROR || r == POLL_ERR_CLOSING) {
-                return;
-            }
-            // TIMEOUT is ignored (gc's waited=true): re-park.
-        }
+        // gc's waitio=true ignores deadlines AND closing, re-parking until
+        // readiness (windows-only in gc; the fork never calls this on
+        // linux). With timeouts ignored the result is always NO_ERROR or
+        // CLOSING — NOT_POLLABLE is unreachable (no eventErr state, P2-1)
+        // — so a re-park loop would hot-spin on CLOSING, which pollWaitRaw
+        // reports immediately without parking. Return the raw result (P2-3).
+        pollWaitRaw(((Number) ctxArg).longValue(), ((Number) modeArg).intValue(), true);
     }
 
     /** internal/poll.runtime_pollReset */
@@ -354,6 +375,7 @@ public final class GoNetpoll {
         PollDesc pd = requireDesc(((Number) ctxArg).longValue());
         int mode = ((Number) modeArg).intValue();
         checkMode(mode);
+        refreshChannelState(pd); // P0-2: live connecting/listener, not the pollOpen snapshot
         int err = checkErr(pd, mode);
         if (err != POLL_NO_ERROR) {
             return err;
@@ -427,6 +449,112 @@ public final class GoNetpoll {
     }
 
     // ------------------------------------------------------------------
+    // Channel migration (P0-1) + live channel-state refresh (P0-2).
+    // ------------------------------------------------------------------
+
+    /**
+     * Re-reads channel-derived pollDesc state from the live socket state.
+     * The fork calls {@code runtime_pollOpen} in {@code FD.Init}, before
+     * {@code connect()}/{@code listen()} run, so the snapshot taken in
+     * {@code pollOpen} is stale by the first wait: {@code connecting} must
+     * be true while a nonblocking connect is in flight (so
+     * {@code setInterest} arms OP_CONNECT, not OP_WRITE), and
+     * {@code listener} must track the current channel. Called on every
+     * wait entry ({@code pollWaitRaw}, {@code pollReset}).
+     *
+     * <p>NOTE: this fixes the <em>flags</em> only. A swapped channel
+     * (listen/connect-retry path) additionally needs selector
+     * re-registration — see {@link #migrateSocketChannel}, which the
+     * swap sites call. Every {@code GoOs.replaceSocketChannel} must be
+     * followed by a {@code migrateSocketChannel}; the wait path stays
+     * non-blocking and a missed migration fails loud (dead key), not
+     * silent.
+     */
+    static void refreshChannelState(PollDesc pd) {
+        GoNet.SockState st = GoNet.sockState(pd.sockCookie);
+        pd.connecting = st != null && st.kind == GoNet.SockStateKind.CONNECTING;
+        SelectableChannel cur = GoNet.selectableChannel(pd.sockCookie);
+        if (cur != null) {
+            pd.listener = cur instanceof ServerSocketChannel;
+        }
+    }
+
+    /**
+     * Moves a pollDesc's selector registration to the socket's current
+     * channel. Called by {@code GoNet.listen()} after it swaps the idle
+     * {@code SocketChannel} for a {@code ServerSocketChannel}, and by
+     * {@code GoNet.connect()}'s CONNECT_ERROR retry path after its swap:
+     * in both cases the fork already ran {@code runtime_pollOpen} on the
+     * old channel (FD.Init order), and the old channel is closed by the
+     * swap — without migration the pollDesc would watch a dead key and
+     * every wait would park forever (P0-1).
+     *
+     * <p>No-op when the cookie has no pollDesc, the desc is closed, or
+     * the channel is unchanged. Returns 0 or -errno (mirroring the trap
+     * conventions); on registration failure the desc is dropped so the
+     * failure is loud (unknown ctx) rather than a silent hang.
+     */
+    public static long migrateSocketChannel(long sockCookie) {
+        PollDesc pd = BY_SOCK.get(sockCookie);
+        if (pd == null) {
+            return 0;
+        }
+        synchronized (pd) {
+            if (pd.closed || !DESCS.containsKey(pd.id)) {
+                return 0;
+            }
+            SelectableChannel cur = GoNet.selectableChannel(sockCookie);
+            if (cur == null || cur == pd.ch) {
+                return 0;
+            }
+            SelectionKey oldKey = pd.key;
+            if (oldKey != null) {
+                oldKey.cancel();
+            }
+            // Registration must happen on the selector thread (same
+            // FutureTask pattern as pollOpen).
+            FutureTask<SelectionKey> task = new FutureTask<>(() -> cur.register(selector, 0, pd));
+            REG_Q.offer(task);
+            Selector sel = selector;
+            if (sel == null) {
+                // resetForTest raced us (test-only; production never resets).
+                dropDesc(pd);
+                return -GoOs.EINVAL;
+            }
+            sel.wakeup();
+            try {
+                pd.key = task.get();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                task.cancel(false); // P2-7: never strand a registration
+                dropDesc(pd);
+                return -GoOs.EINVAL;
+            } catch (Exception e) {
+                dropDesc(pd);
+                return -GoNet.sockErrno(e.getCause() != null ? e.getCause() : e);
+            }
+            pd.ch = cur;
+            pd.listener = cur instanceof ServerSocketChannel;
+            // Re-arm interest for claimed-but-unresolved waiter slots;
+            // level-triggering makes this lossless.
+            rearmClaimed(pd);
+            return 0;
+        }
+    }
+
+    /** Re-applies interest for waiter slots claimed but not yet resolved. */
+    private static void rearmClaimed(PollDesc pd) {
+        Waiter r = pd.reader.get();
+        if (r != null && r.result.get() == null) {
+            setInterest(pd, MODE_READ, true);
+        }
+        Waiter w = pd.writer.get();
+        if (w != null && w.result.get() == null) {
+            setInterest(pd, MODE_WRITE, true);
+        }
+    }
+
+    // ------------------------------------------------------------------
     // Wait mechanics.
     // ------------------------------------------------------------------
 
@@ -467,9 +595,11 @@ public final class GoNetpoll {
         if (mode == MODE_WRITE && isExpired(pd.writeDeadline, now)) {
             return POLL_ERR_TIMEOUT;
         }
-        if (mode == MODE_READ && pd.eventErr != 0) {
-            return POLL_ERR_NOT_POLLABLE;
-        }
+        // No eventErr state (P2-1): real errors surface through the channel
+        // operations themselves; synthesizing NOT_POLLABLE here was a
+        // false-positive risk, so the field and both branches are gone.
+        // POLL_ERR_NOT_POLLABLE stays a defined code (contract parity with
+        // internal/poll/fd_poll_runtime.go) but is never produced.
         return POLL_NO_ERROR;
     }
 
@@ -480,6 +610,12 @@ public final class GoNetpoll {
     private static int pollWaitRaw(long ctx, int mode, boolean ignoreTimeout) {
         PollDesc pd = requireDesc(ctx);
         checkMode(mode);
+        // P0-2: the fork runs runtime_pollOpen in FD.Init, BEFORE
+        // connect()/listen(). The connecting/listener snapshot taken in
+        // pollOpen is stale by the first wait — re-read live state here
+        // (and in pollReset) so setInterest arms OP_CONNECT/OP_ACCEPT
+        // from the truth, not the snapshot.
+        refreshChannelState(pd);
         int err = ignoreTimeout ? checkErrNoTimeout(pd, mode) : checkErr(pd, mode);
         if (err != POLL_NO_ERROR) {
             return err;
@@ -523,9 +659,6 @@ public final class GoNetpoll {
     private static int checkErrNoTimeout(PollDesc pd, int mode) {
         if (pd.closing) {
             return POLL_ERR_CLOSING;
-        }
-        if (mode == MODE_READ && pd.eventErr != 0) {
-            return POLL_ERR_NOT_POLLABLE;
         }
         return POLL_NO_ERROR;
     }
@@ -589,11 +722,22 @@ public final class GoNetpoll {
             setDeadlineState(pd, mode, abs);
             SchedulerCore sched = SchedulerCore.current();
             // The callback validates its own id (stale fired timers are
-            // ignored) — see onDeadline.
-            final long[] idBox = new long[1];
+            // ignored) — see onDeadline. The id hand-off is an AtomicLong
+            // (P2-2): the old plain-array box had no happens-before edge
+            // between the carrier's write (after addCallback returns) and
+            // the timer thread's read. -1 = unpublished: a callback that
+            // (formally) fires before the hand-off is dropped instead of
+            // CAS-claiming -1 and delivering a spurious TIMEOUT (timer
+            // ids start at 1, so -1 never collides).
+            final AtomicLong idBox = new AtomicLong(-1);
             long id = sched.timerHeap().addCallback(abs,
-                    () -> onDeadline(pd, mode, idBox[0]));
-            idBox[0] = id;
+                    () -> {
+                        long myId = idBox.get();
+                        if (myId >= 0) {
+                            onDeadline(pd, mode, myId);
+                        }
+                    });
+            idBox.set(id);
             setTimerId(pd, mode, id);
         } else {
             // d == 0: disarm. d < 0: expire immediately (gc: unblock
@@ -772,6 +916,30 @@ public final class GoNetpoll {
     /** Test hook: the pollDesc for a ctx (to poke deadlines/state). */
     static PollDesc descForTest(long ctx) {
         return DESCS.get(ctx);
+    }
+
+    /** Test hook: the currently armed read timer id (-1 = none). */
+    static long readTimerIdForTest(long ctx) {
+        PollDesc pd = DESCS.get(ctx);
+        return pd == null ? -1 : pd.readTimerId.get();
+    }
+
+    /** Test hook: the currently armed write timer id (-1 = none). */
+    static long writeTimerIdForTest(long ctx) {
+        PollDesc pd = DESCS.get(ctx);
+        return pd == null ? -1 : pd.writeTimerId.get();
+    }
+
+    /**
+     * Test hook: fires a deadline callback exactly as the timer thread
+     * would — simulates a stale timer whose lazy {@code TimerHeap.cancel}
+     * lost the race (P1-1).
+     */
+    static void fireDeadlineForTest(long ctx, int mode, long id) {
+        PollDesc pd = DESCS.get(ctx);
+        if (pd != null) {
+            onDeadline(pd, mode, id);
+        }
     }
 
     /**

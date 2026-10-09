@@ -127,25 +127,53 @@ public final class GoNetpollTest {
         return ((a[1] & 0xFF) << 8) | (a[2] & 0xFF);
     }
 
-    /** Sets up a loopback listener; returns {cookie, ctx, port}. */
+    /** A loopback port with nothing listening (bind ephemeral, read, close). */
+    private static int closedPort() throws Exception {
+        java.net.ServerSocket ss = new java.net.ServerSocket(0);
+        int port = ss.getLocalPort();
+        ss.close();
+        return port;
+    }
+
+    /** Sets up a loopback listener; returns {cookie, ctx, port}.
+     *
+     * <p>P1-2: drives the FORK's call order — {@code pollOpen} BEFORE
+     * {@code bind}/{@code listen} ({@code fd_poll_runtime.go} is
+     * unmodified, so {@code runtime_pollOpen} runs in {@code FD.Init}).
+     * The convenient reverse order ({@code listen} then {@code pollOpen})
+     * masks P0-1 (the listen channel swap orphaning the pollDesc) and
+     * must never be used in test setups. */
     private static long[] listenLoopback() {
         long ls = GoNet.socket(2, 1, 0);
         assertTrue(ls >= 16, "socket cookie: " + ls);
+        long ctx = openPollFirst(ls);
         assertEq(0, GoNet.setsockopt(ls, 1, 2, 1), "SO_REUSEADDR");
         assertEq(0, GoNet.bind(ls, v4(0)), "bind");
         assertEq(0, GoNet.listen(ls, 128), "listen");
-        long ctx = GoNetpoll.pollOpen(ls);
-        assertTrue(ctx != 0, "pollOpen listener");
         return new long[]{ls, ctx, boundPort(ls)};
     }
 
-    /** Dials 127.0.0.1:port; returns {cookie, ctx}. Drives EINPROGRESS via the poller. */
+    /**
+     * P1-2: {@code pollOpen} in the fork's position — immediately after
+     * {@code socket()}, before {@code bind}/{@code listen}/{@code connect}.
+     */
+    private static long openPollFirst(long cookie) {
+        long ctx = GoNetpoll.pollOpen(cookie);
+        assertTrue(ctx != 0, "pollOpen (fork order), errno=" + GoNetpoll.pollOpenErrno());
+        return ctx;
+    }
+
+    /** Dials 127.0.0.1:port; returns {cookie, ctx}. Drives EINPROGRESS via the poller.
+     *
+     * <p>P1-2: fork order — {@code pollOpen} BEFORE {@code connect}
+     * (masks P0-2's stale {@code connecting} snapshot in reverse order).
+     * On this machine loopback connects always take the async path, so
+     * the OP_CONNECT arm is exercised every time. */
     private static long[] dialLoopback(int port) {
         long cs = GoNet.socket(2, 1, 0);
         assertTrue(cs >= 16, "socket cookie: " + cs);
+        long ctx = openPollFirst(cs);
         long rc = GoNet.connect(cs, v4(port));
-        long ctx = GoNetpoll.pollOpen(cs);
-        assertTrue(ctx != 0, "pollOpen client");
         if (rc == -GoNet.EINPROGRESS) {
             long w = GoNetpoll.pollWait(ctx, (long) 'w');
             assertEq(0, w, "connect wait");
@@ -208,6 +236,220 @@ public final class GoNetpollTest {
             closeSock(ss, sctx);
             closeSock(cli[0], cli[1]);
             closeSock(srv[0], srv[1]);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * P0-1 red-green: the fork's order is {@code pollOpen} BEFORE
+     * {@code listen} ({@code FD.Init} runs {@code runtime_pollOpen}).
+     * {@code listen()} swaps the SocketChannel for a ServerSocketChannel
+     * and closes the old one; without pollDesc migration the accept wait
+     * parks forever on the dead key. Watchdogged: a hang fails the test
+     * instead of hanging the suite.
+     */
+    public void testListenForkOrderAcceptWakes() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long ls = GoNet.socket(2, 1, 0);
+            assertTrue(ls >= 16, "socket");
+            long lctx = openPollFirst(ls); // fork order: BEFORE bind/listen
+            assertEq(0, GoNet.setsockopt(ls, 1, 2, 1), "SO_REUSEADDR");
+            assertEq(0, GoNet.bind(ls, v4(0)), "bind");
+            assertEq(0, GoNet.listen(ls, 128), "listen");
+            int port = boundPort(ls);
+            // Park the accept waiter. NOTE: the dial below is spawned
+            // manually, NOT via onGoroutine: onGoroutine awaits quiescence
+            // (liveGoroutines == 0), which a never-waking accept waiter
+            // would block forever — the P0-1 failure must surface at the
+            // watchdog below, not inside the helper.
+            AtomicLong wres = new AtomicLong(-99);
+            sched.spawn(() -> wres.set(GoNetpoll.pollWait(lctx, (long) 'r')));
+            Thread.sleep(150); // let it park
+            AtomicReference<long[]> cliBox = new AtomicReference<>();
+            AtomicReference<Throwable> cliErr = new AtomicReference<>();
+            sched.spawn(() -> {
+                try {
+                    cliBox.set(dialLoopback(port));
+                } catch (Throwable t) {
+                    cliErr.set(t);
+                }
+            });
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (wres.get() == -99 && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+            }
+            assertEq(0, wres.get(), "accept wait wakes (P0-1: channel migration)");
+            long d2 = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (cliBox.get() == null && cliErr.get() == null && System.nanoTime() < d2) {
+                Thread.sleep(20);
+            }
+            if (cliErr.get() != null) {
+                throw new AssertionError("dial failed", cliErr.get());
+            }
+            assertTrue(cliBox.get() != null, "dial completed");
+            long[] cli = cliBox.get();
+            long ss = GoNet.accept(ls);
+            assertTrue(ss >= 16, "accept cookie: " + ss);
+            long sctx = GoNetpoll.pollOpen(ss);
+            assertTrue(sctx != 0, "pollOpen accepted");
+            closeSock(ss, sctx);
+            closeSock(cli[0], cli[1]);
+            closeSock(ls, lctx);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * P0-2 red-green: the fork's order is {@code pollOpen} BEFORE
+     * {@code connect}. A refused connect takes the async path
+     * ({@code -EINPROGRESS}); the waiter must arm OP_CONNECT so
+     * {@code finishConnect()} runs and stashes the error. With the stale
+     * {@code pollOpen} snapshot the poller armed OP_WRITE instead: the
+     * waiter woke with NO_ERROR but SO_ERROR stayed 0 and the state
+     * stayed CONNECTING (and on success the first I/O would throw
+     * NotYetConnectedException).
+     */
+    public void testDialForkOrderRefusedConnectReportsError() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            int port = closedPort();
+            long cs = GoNet.socket(2, 1, 0);
+            assertTrue(cs >= 16, "socket");
+            long cctx = openPollFirst(cs); // fork order: BEFORE connect
+            long rc = GoNet.connect(cs, v4(port));
+            assertEq(-GoNet.EINPROGRESS, rc, "refused connect is async");
+            AtomicLong wres = new AtomicLong(-99);
+            sched.spawn(() -> wres.set(GoNetpoll.pollWait(cctx, (long) 'w')));
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (wres.get() == -99 && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+            }
+            assertEq(0, wres.get(), "connect wait wakes");
+            // finishConnect() must have run: error stashed, state moved.
+            assertEq(GoNet.ECONNREFUSED, GoNet.getsockopt(cs, 1, 4),
+                    "SO_ERROR ECONNREFUSED");
+            assertTrue(GoNet.sockState(cs).kind == GoNet.SockStateKind.CONNECT_ERROR,
+                    "state CONNECT_ERROR, was " + GoNet.sockState(cs).kind);
+            closeSock(cs, cctx);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * P0-3 red-green: the fork calls {@code runtime_pollUnblock} then
+     * {@code runtime_pollClose} back-to-back. A reader woken by unblock
+     * but not yet resumed by the drainer (gc's {@code pdReady}) must not
+     * make {@code pollClose} throw — the waiter later resumes and
+     * observes CLOSING itself.
+     */
+    public void testUnblockThenCloseOverParkedReader() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long[] srv = listenLoopback();
+            long[] cli = onGoroutine(sched, () -> dialLoopback((int) srv[2]));
+            long ss = onGoroutine(sched, () -> acceptOne(srv[0], srv[1]));
+            long sctx = GoNetpoll.pollOpen(ss);
+            AtomicLong res = new AtomicLong(-99);
+            sched.spawn(() -> res.set(GoNetpoll.pollWait(sctx, (long) 'r')));
+            Thread.sleep(200); // let it park; NO awaitQuiescence (slot must stay claimed)
+            GoNetpoll.pollUnblock(sctx);
+            GoNetpoll.pollClose(sctx); // pre-fix: throws IllegalStateException
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (res.get() == -99 && System.nanoTime() < deadline) {
+                Thread.sleep(20);
+            }
+            assertEq(GoNetpoll.POLL_ERR_CLOSING, res.get(), "woken reader sees CLOSING");
+            assertEq(0, GoOs.close(ss), "os.close");
+            assertEq(0, GoOs.close(cli[0]), "close client");
+            closeSock(srv[0], srv[1]);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * P1-1 red-green for the R1 stale-timer fix: a stale deadline
+     * callback (id A) firing after the deadline was re-armed (id B) must
+     * neither clobber B's id nor wake a parked waiter; the live callback
+     * (id B) must deliver exactly one TIMEOUT and clear the id.
+     *
+     * <p>The waiter parks on a connected (but data-less) socket: an
+     * unconnected socket is poll-readable by kernel semantics, so it
+     * would wake immediately with NO_ERROR and prove nothing.
+     */
+    public void testStaleTimerCallbackIgnored() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            SchedulerCore sched = SchedulerCore.current();
+            long[] srv = listenLoopback();
+            long[] cli = onGoroutine(sched, () -> dialLoopback((int) srv[2]));
+            long ss = onGoroutine(sched, () -> acceptOne(srv[0], srv[1]));
+            long ctx = GoNetpoll.pollOpen(ss);
+            assertTrue(ctx != 0, "pollOpen accepted");
+            // Arm a far-future read deadline (timer id A), then re-arm
+            // (timer id B; A is cancelled lazily).
+            GoNetpoll.pollSetDeadline(ctx, 60_000_000_000L, (long) 'r');
+            long idA = GoNetpoll.readTimerIdForTest(ctx);
+            assertTrue(idA >= 0, "timer A armed, id=" + idA);
+            GoNetpoll.pollSetDeadline(ctx, 60_000_000_000L, (long) 'r');
+            long idB = GoNetpoll.readTimerIdForTest(ctx);
+            assertTrue(idB >= 0 && idB != idA, "timer B rearmed, id=" + idB);
+            // Park a reader under deadline B (connected, no data: stays parked).
+            AtomicLong res = new AtomicLong(-99);
+            CountDownLatch done = new CountDownLatch(1);
+            sched.spawn(() -> {
+                res.set(GoNetpoll.pollWait(ctx, (long) 'r'));
+                done.countDown();
+            });
+            Thread.sleep(200); // let it park
+            // Stale callback A fires late (its TimerHeap.cancel lost the race).
+            GoNetpoll.fireDeadlineForTest(ctx, 'r', idA);
+            assertEq(idB, GoNetpoll.readTimerIdForTest(ctx),
+                    "stale callback must not clobber rearmed id");
+            assertTrue(!done.await(150, TimeUnit.MILLISECONDS),
+                    "stale callback must not wake the waiter");
+            // Live callback B fires: exactly one TIMEOUT, id cleared.
+            GoNetpoll.fireDeadlineForTest(ctx, 'r', idB);
+            assertTrue(done.await(10, TimeUnit.SECONDS), "live deadline wakes the waiter");
+            assertEq(GoNetpoll.POLL_ERR_TIMEOUT, res.get(), "waiter sees TIMEOUT");
+            assertEq(-1, GoNetpoll.readTimerIdForTest(ctx), "id cleared after live fire");
+            closeSock(ss, ctx);
+            closeSock(cli[0], cli[1]);
+            closeSock(srv[0], srv[1]);
+        } finally {
+            teardown(prev);
+        }
+    }
+
+    /**
+     * P2-4: {@code shutdown} with an invalid {@code how} must return
+     * {@code -EINVAL} (previously fell through to 0); shutdown on a
+     * connected datagram is {@code -EOPNOTSUPP} (legal on Linux, no JDK
+     * API), not the previous wrong {@code -ENOTCONN}.
+     */
+    public void testShutdownValidatesHow() throws Exception {
+        SchedulerCore prev = setup();
+        try {
+            long s = GoNet.socket(2, 1, 0);
+            assertTrue(s >= 16, "socket");
+            assertEq(-GoOs.EINVAL, GoNet.shutdown(s, 99), "how=99 -> EINVAL");
+            assertEq(-GoOs.EINVAL, GoNet.shutdown(s, -1), "how=-1 -> EINVAL");
+            assertEq(0, GoOs.close(s), "close");
+            long d = GoNet.socket(2, 2, 0);
+            assertTrue(d >= 16, "dgram socket");
+            assertEq(-GoOs.EINVAL, GoNet.shutdown(d, 7), "how=7 on dgram -> EINVAL");
+            assertEq(-GoNet.ENOTCONN, GoNet.shutdown(d, 0), "unconnected dgram -> ENOTCONN");
+            assertEq(0, GoNet.connect(d, v4(closedPort())), "dgram connect instant");
+            assertEq(-GoNet.EOPNOTSUPP, GoNet.shutdown(d, 0),
+                    "connected dgram -> EOPNOTSUPP");
+            assertEq(0, GoOs.close(d), "close dgram");
         } finally {
             teardown(prev);
         }
