@@ -564,6 +564,24 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 					return err
 				}
 				init = x
+			} else {
+				// P3-M9: synthetic package `var x sync.Once` (no init)
+				// normalizes to an implicit syncnew — mirrors the user
+				// package path (export.go). Without it the frozen
+				// factory's struct zero (GoStruct) would be installed
+				// and method calls would CCE (GoStruct cannot be cast
+				// to GoOnce).
+				if v, ok := e.info.Defs[n].(*types.Var); ok {
+					if nt := syntheticPrimitiveNamed(v.Type()); nt != nil {
+						tid, err := e.typeID(v.Type())
+						if err != nil {
+							return err
+						}
+						init = e.node("syncnew", sv.vs, map[string]any{
+							"synctyp": syntheticOpTypeName(nt), "type": tid,
+						})
+					}
+				}
 			}
 			varInits = append(varInits, ginit{oid: sv.oids[i], init: init, expr: initExpr, pos: e.pos(n)})
 		}
