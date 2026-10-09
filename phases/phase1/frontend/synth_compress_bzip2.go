@@ -1039,7 +1039,12 @@ func __bzip2NewHuffmanTree(lengths []uint8) __bzip2NewHuffmanTreePair {
 		pairs[i].length = length
 	}
 
-	__bzip2SortPairs(pairs)
+	__bzip2SortPairs(pairs, func(a, b huffmanSymbolLengthPair) int {
+		if a.length != b.length {
+			return int(a.length) - int(b.length)
+		}
+		return int(a.value) - int(b.value)
+	})
 
 	// Now we assign codes to the symbols, starting with the longest code.
 	// We keep the codes packed into a uint32, at the most-significant end.
@@ -1063,7 +1068,9 @@ func __bzip2NewHuffmanTree(lengths []uint8) __bzip2NewHuffmanTreePair {
 
 	// Now we can sort by the code so that the left half of each branch are
 	// grouped together, recursively.
-	__bzip2SortCodes(codes)
+	__bzip2SortCodes(codes, func(a, b huffmanCode) int {
+		return int(a.code) - int(b.code)
+	})
 
 	t.nodes = make([]huffmanNode, len(codes))
 	__mr1 := __bzip2BuildHuffmanNode(&t, codes, 0)
