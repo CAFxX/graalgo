@@ -27,7 +27,6 @@ import (
 	"bufio"
 	"cmp"
 	"io"
-	"slices"
 )
 
 
@@ -689,7 +688,7 @@ func newHuffmanTree(lengths []uint8) (huffmanTree, error) {
 		pairs[i].length = length
 	}
 
-	slices.SortFunc(pairs, func(a, b huffmanSymbolLengthPair) int {
+	__bzip2SortPairs(pairs, func(a, b huffmanSymbolLengthPair) int {
 		if c := cmp.Compare(a.length, b.length); c != 0 {
 			return c
 		}
@@ -718,7 +717,7 @@ func newHuffmanTree(lengths []uint8) (huffmanTree, error) {
 
 	// Now we can sort by the code so that the left half of each branch are
 	// grouped together, recursively.
-	slices.SortFunc(codes, func(a, b huffmanCode) int {
+	__bzip2SortCodes(codes, func(a, b huffmanCode) int {
 		return cmp.Compare(a.code, b.code)
 	})
 
