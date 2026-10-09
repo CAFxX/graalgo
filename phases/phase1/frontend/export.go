@@ -6400,16 +6400,32 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 		}
 		if x.Op == token.AND {
 			// &T{...}: normalize to a pointer-typed composite literal
-			// (M4, WS E). & on anything else stays a WS D scope error.
-			cl, ok := x.X.(*ast.CompositeLit)
-			if !ok {
-				return nil, scopeErrorf("& on %T is not supported in frontend/v1 scope (WS D)", x.X)
+			// (M4, WS E).
+			if cl, ok := x.X.(*ast.CompositeLit); ok {
+				t, err := e.exprType(x)
+				if err != nil {
+					return nil, err
+				}
+				return e.exportCompositeLitAs(cl, t)
 			}
-			t, err := e.exprType(x)
-			if err != nil {
-				return nil, err
+			// P3-M9: & on an addressable expression (ident, selector,
+			// index, deref) lowers to the "addrof" wire node (same as
+			// the implicit address-of for method calls). & on anything
+			// else stays a WS D scope error.
+			if isAddressable(x.X, e.info) {
+				xn, err := e.exportExpr(x.X)
+				if err != nil {
+					return nil, err
+				}
+				tid, err := e.exprType(x)
+				if err != nil {
+					return nil, err
+				}
+				return e.node("addrof", x, map[string]any{
+					"x": xn, "type": tid,
+				}), nil
 			}
-			return e.exportCompositeLitAs(cl, t)
+			return nil, scopeErrorf("& on %T is not supported in frontend/v1 scope (WS D)", x.X)
 		}
 		// M8 closeout: constant-fold like BinaryExpr/ParenExpr. go/types
 		// evaluates -0.0 to +0.0 (and all constant arithmetic exactly);
