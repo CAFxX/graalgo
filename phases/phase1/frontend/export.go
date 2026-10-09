@@ -1125,6 +1125,9 @@ func ExportFile(path string) (string, error) {
 		typeparamIDs: make(map[*types.TypeName]int),
 		namedIDs: make(map[string]int),
 		objIDs:   make(map[types.Object]int),
+		// P3-M9: synthetic package vars by (path, name) for cross-package
+		// var references (type-checked in isolation, pointers not shared).
+		synthVarIDs: make(map[string]int),
 		sizes:    types.SizesFor("gc", "amd64"),
 		// P3-M8: track imported synthetic packages for idempotency.
 		importedSynthetic: make(map[string]bool),
@@ -2745,6 +2748,12 @@ type exporter struct {
 	typeparamIDs map[*types.TypeName]int
 	objects  []ObjectEnt
 	objIDs   map[types.Object]int
+	// P3-M9: synthetic package vars by (package path, var name). Synthetic
+	// packages are type-checked in isolation, so *types.Var pointers aren't
+	// shared across packages. When resolving a cross-package var reference
+	// (e.g., binary.LittleEndian from gzip), fall back to this map if the
+	// pointer lookup misses.
+	synthVarIDs map[string]int
 	sizes    types.Sizes
 	// M6 (WS H): active type-parameter substitution while exporting a
 	// monomorphized instantiation body (nil outside instantiations). See

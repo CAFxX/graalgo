@@ -523,6 +523,13 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 						if err != nil {
 							return err
 						}
+						// P3-M9: record in synthVarIDs for cross-package var
+						// references (type-checked in isolation, pointers not
+						// shared). Key: package path + "." + var name.
+						if e.synthVarIDs == nil {
+							e.synthVarIDs = make(map[string]int)
+						}
+						e.synthVarIDs[sp.path+"."+n.Name] = oid
 						sv.oids = append(sv.oids, oid)
 					}
 					sspecs = append(sspecs, sv)
@@ -886,6 +893,16 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 		return e.foldedConst(x.Sel, obj.Val())
 	case *types.Var:
 		oid, ok := e.objIDs[obj]
+		if !ok {
+			// P3-M9: fallback to (package path, var name) lookup.
+			// Synthetic packages are type-checked in isolation, so the
+			// *types.Var pointer from the importing package's type-check
+			// differs from the one registered at import time.
+			if e.synthVarIDs != nil {
+				key := pkgName.Imported().Path() + "." + obj.Name()
+				oid, ok = e.synthVarIDs[key]
+			}
+		}
 		if !ok {
 			return nil, scopeErrorf("gofrontend: synthetic package var %s.%s missing from object table",
 				pkgName.Name(), obj.Name())
