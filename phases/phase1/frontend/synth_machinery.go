@@ -474,6 +474,13 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			// package's fset/src/info, not the user's.
 			fi.synthPkg = sp
 			e.funcByObj[obj] = fi
+			// P3-M9: record in synthFuncIDs for cross-package generic
+			// instantiations (type-checked in isolation, pointers not
+			// shared). Key: package path + "." + func name.
+			if e.synthFuncIDs == nil {
+				e.synthFuncIDs = make(map[string]*funcDeclInfo)
+			}
+			e.synthFuncIDs[sp.path+"."+obj.Name()] = fi
 			g.fis = append(g.fis, fi)
 		}
 	}

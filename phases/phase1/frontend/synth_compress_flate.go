@@ -40,7 +40,7 @@ import (
 	"io"
 	"math"
 	"math/bits"
-	"slices"
+	"sort"
 	"strconv"
 	"sync"
 )
@@ -991,7 +991,8 @@ func NewWriterDict(w io.Writer, level int, dict []byte) (*Writer, error) {
 	}
 	zw.d.fillWindow(dict)
 	// Clone dict so we can Reset without changing the provided slice.
-	zw.dict = slices.Clone(dict)
+	zw.dict = make([]byte, len(dict))
+	copy(zw.dict, dict)
 	return zw, err
 }
 
@@ -2850,8 +2851,8 @@ func (h *huffmanEncoder) assignEncodingAndSize(bitCount []int32, list []literalN
 		// assigned in literal order (not frequency order).
 		chunk := list[len(list)-int(bits):]
 
-		slices.SortFunc(chunk, func(a, b literalNode) int {
-			return int(a.literal) - int(b.literal)
+		sort.Slice(chunk, func(i, j int) bool {
+			return chunk[i].literal < chunk[j].literal
 		})
 		for _, node := range chunk {
 			h.codes[node.literal] = newhcode(reverseBits(code, uint8(n)), uint8(n))
@@ -2890,9 +2891,9 @@ func (h *huffmanEncoder) generate(freq []uint16, maxBits int32) {
 		}
 		return
 	}
-	slices.SortFunc(list, func(a, b literalNode) int {
+	sort.Slice(list, func(i, j int) bool {
 		// Literals can be contained in 9 bits, so we shift freq to be branchless.
-		return (int(a.freq)<<10 + int(a.literal)) - (int(b.freq)<<10 + int(b.literal))
+		return (int(list[i].freq)<<10+int(list[i].literal)) < (int(list[j].freq)<<10+int(list[j].literal))
 	})
 
 	// Get the number of literals for each bit count
@@ -5668,7 +5669,8 @@ func __flateNewWriterDict(w io.Writer, level int, dict []byte) __flateNewWriterD
 	}
 	zw.d.fillWindow(dict)
 	// Clone dict so we can Reset without changing the provided slice.
-	zw.dict = slices.Clone(dict)
+	zw.dict = make([]byte, len(dict))
+	copy(zw.dict, dict)
 	return __flateNewWriterDictPair{w: zw, err: err}
 }
 

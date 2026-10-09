@@ -1128,6 +1128,9 @@ func ExportFile(path string) (string, error) {
 		// P3-M9: synthetic package vars by (path, name) for cross-package
 		// var references (type-checked in isolation, pointers not shared).
 		synthVarIDs: make(map[string]int),
+		// P3-M9: synthetic package funcs by (path, name) for cross-package
+		// generic instantiations.
+		synthFuncIDs: make(map[string]*funcDeclInfo),
 		sizes:    types.SizesFor("gc", "amd64"),
 		// P3-M8: track imported synthetic packages for idempotency.
 		importedSynthetic: make(map[string]bool),
@@ -2754,6 +2757,10 @@ type exporter struct {
 	// (e.g., binary.LittleEndian from gzip), fall back to this map if the
 	// pointer lookup misses.
 	synthVarIDs map[string]int
+	// P3-M9: synthetic package funcs by (package path, func name). Same
+	// isolation issue as vars; used when resolving generic instantiations
+	// from importing packages (e.g., slices.SortFunc from flate).
+	synthFuncIDs map[string]*funcDeclInfo
 	sizes    types.Sizes
 	// M6 (WS H): active type-parameter substitution while exporting a
 	// monomorphized instantiation body (nil outside instantiations). See
@@ -4431,6 +4438,17 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 			continue
 		}
 		fi, ok := e.funcByObj[fn]
+		if !ok {
+			// P3-M9: fallback to (package path, func name) lookup for
+			// synthetic generic functions. Synthetic packages are
+			// type-checked in isolation, so the *types.Func pointer from
+			// the importing package differs from the one registered at
+			// import time.
+			if e.synthFuncIDs != nil && fn.Pkg() != nil {
+				key := fn.Pkg().Path() + "." + fn.Name()
+				fi, ok = e.synthFuncIDs[key]
+			}
+		}
 		if !ok {
 			pkgPath := ""
 			if fn.Pkg() != nil {
