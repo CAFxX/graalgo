@@ -1,0 +1,48 @@
+package main
+
+// P3-M9 (tier-4: net): synthetic `internal/nettrace` package.
+//
+// Real-Go source: verbatim from gc go1.27.1
+// ($GOROOT/src/internal/nettrace/nettrace.go). No imports, no
+// multi-result functions. Imported (later) by net/http/httptrace;
+// the synthetic net package does not trace (no dial-trace hooks in
+// the M9 socket path — the trace points are omitted, not faked).
+const syntheticNettraceSource = `package nettrace
+
+// TraceKey is a context.Context Value key. Its associated value should
+// be a *Trace struct.
+type TraceKey struct{}
+
+// LookupIPAltResolverKey is a context.Context Value key used by tests to
+// specify an alternate resolver func.
+// It is not exposed to outsider users. (But see issue 12503)
+// The value should be the same type as lookupIP:
+//
+//	func lookupIP(ctx context.Context, host string) ([]IPAddr, error)
+type LookupIPAltResolverKey struct{}
+
+// Trace contains a set of hooks for tracing events within
+// the net package. Any specific hook may be nil.
+type Trace struct {
+	// DNSStart is called with the hostname of a DNS lookup
+	// before it begins.
+	DNSStart func(name string)
+
+	// DNSDone is called after a DNS lookup completes (or fails).
+	// The coalesced parameter is whether singleflight de-duped
+	// the call. The addrs are of type net.IPAddr but can't
+	// actually be for circular dependency reasons.
+	DNSDone func(netIPs []any, coalesced bool, err error)
+
+	// ConnectStart is called before a Dial, excluding Dials made
+	// during DNS lookups. In the case of DualStack (Happy Eyeballs)
+	// dialing, this may be called multiple times, from multiple
+	// goroutines.
+	ConnectStart func(network, addr string)
+
+	// ConnectDone is called after a Dial with the results, excluding
+	// Dials made during DNS lookups. It may also be called multiple
+	// times, like ConnectStart.
+	ConnectDone func(network, addr string, err error)
+}
+`

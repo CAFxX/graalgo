@@ -258,6 +258,67 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// P3-M9 (tier1c): math/cmplx.Polar desugars to the __cmplxPolar helper
 	// (Appendix M; pair fields match the gc result names in order).
 	{"math/cmplx", "Polar", "", "__cmplxPolar", "cmplxPolarPair", []string{"r", "theta"}},
+	// P3-M9 (wave 3, math/big): 47 multi-result funcs/methods. Each has a
+	{"math/big", "AppendText", "Float", "__mrFloat_AppendText", "__mrFloat_AppendTextPair", []string{"v0", "v1"}},
+	{"math/big", "AppendText", "Int", "__mrInt_AppendText", "__mrInt_AppendTextPair", []string{"text", "err"}},
+	{"math/big", "AppendText", "Rat", "__mrRat_AppendText", "__mrRat_AppendTextPair", []string{"v0", "v1"}},
+	{"math/big", "DivMod", "Int", "__mrInt_DivMod", "__mrInt_DivModPair", []string{"v0", "v1"}},
+	{"math/big", "Divide", "Int", "__mrInt_Divide", "__mrInt_DividePair", []string{"v0", "v1"}},
+	{"math/big", "Float32", "Float", "__mrFloat_Float32", "__mrFloat_Float32Pair", []string{"v0", "v1"}},
+	{"math/big", "Float32", "Rat", "__mrRat_Float32", "__mrRat_Float32Pair", []string{"f", "exact"}},
+	{"math/big", "Float64", "Float", "__mrFloat_Float64", "__mrFloat_Float64Pair", []string{"v0", "v1"}},
+	{"math/big", "Float64", "Int", "__mrInt_Float64", "__mrInt_Float64Pair", []string{"v0", "v1"}},
+	{"math/big", "Float64", "Rat", "__mrRat_Float64", "__mrRat_Float64Pair", []string{"f", "exact"}},
+	{"math/big", "FloatPrec", "Rat", "__mrRat_FloatPrec", "__mrRat_FloatPrecPair", []string{"n", "exact"}},
+	{"math/big", "GobEncode", "Float", "__mrFloat_GobEncode", "__mrFloat_GobEncodePair", []string{"v0", "v1"}},
+	{"math/big", "GobEncode", "Int", "__mrInt_GobEncode", "__mrInt_GobEncodePair", []string{"v0", "v1"}},
+	{"math/big", "GobEncode", "Rat", "__mrRat_GobEncode", "__mrRat_GobEncodePair", []string{"v0", "v1"}},
+	{"math/big", "Int", "Float", "__mrFloat_Int", "__mrFloat_IntPair", []string{"v0", "v1"}},
+	{"math/big", "Int64", "Float", "__mrFloat_Int64", "__mrFloat_Int64Pair", []string{"v0", "v1"}},
+	{"math/big", "MarshalJSON", "Int", "__mrInt_MarshalJSON", "__mrInt_MarshalJSONPair", []string{"v0", "v1"}},
+	{"math/big", "MarshalText", "Float", "__mrFloat_MarshalText", "__mrFloat_MarshalTextPair", []string{"text", "err"}},
+	{"math/big", "MarshalText", "Int", "__mrInt_MarshalText", "__mrInt_MarshalTextPair", []string{"text", "err"}},
+	{"math/big", "MarshalText", "Rat", "__mrRat_MarshalText", "__mrRat_MarshalTextPair", []string{"text", "err"}},
+	{"math/big", "Parse", "Float", "__mrFloat_Parse", "__mrFloat_ParsePair", []string{"f", "b", "err"}},
+	{"math/big", "ParseFloat", "", "__mrParseFloat", "__mrParseFloatPair", []string{"f", "b", "err"}},
+	{"math/big", "QuoRem", "Int", "__mrInt_QuoRem", "__mrInt_QuoRemPair", []string{"v0", "v1"}},
+	{"math/big", "Rat", "Float", "__mrFloat_Rat", "__mrFloat_RatPair", []string{"v0", "v1"}},
+	{"math/big", "ReadByte", "byteReader", "__mrbyteReader_ReadByte", "__mrbyteReader_ReadBytePair", []string{"v0", "v1"}},
+	{"math/big", "SetString", "Float", "__mrFloat_SetString", "__mrFloat_SetStringPair", []string{"v0", "v1"}},
+	{"math/big", "SetString", "Int", "__mrInt_SetString", "__mrInt_SetStringPair", []string{"v0", "v1"}},
+	{"math/big", "SetString", "Rat", "__mrRat_SetString", "__mrRat_SetStringPair", []string{"v0", "v1"}},
+	{"math/big", "Uint64", "Float", "__mrFloat_Uint64", "__mrFloat_Uint64Pair", []string{"v0", "v1"}},
+	{"math/big", "div", "nat", "__mrnat_div", "__mrnat_divPair", []string{"q", "r"}},
+	{"math/big", "divLarge", "nat", "__mrnat_divLarge", "__mrnat_divLargePair", []string{"q", "r"}},
+	{"math/big", "divW", "nat", "__mrnat_divW", "__mrnat_divWPair", []string{"q", "r"}},
+	{"math/big", "divWW", "", "__mrdivWW", "__mrdivWWPair", []string{"q", "r"}},
+	{"math/big", "euclidUpdate", "", "__mreuclidUpdate", "__mreuclidUpdatePair", []string{"nA", "nB", "nr", "nUa", "nUb"}},
+	{"math/big", "isPow2", "nat", "__mrnat_isPow2", "__mrnat_isPow2Pair", []string{"v0", "v1"}},
+	{"math/big", "lehmerSimulate", "", "__mrlehmerSimulate", "__mrlehmerSimulatePair", []string{"u0", "u1", "v0", "v1", "even"}},
+	{"math/big", "maxPow", "", "__mrmaxPow", "__mrmaxPowPair", []string{"p", "n"}},
+	{"math/big", "mulAddWWW_g", "", "__mrmulAddWWW_g", "__mrmulAddWWW_gPair", []string{"z1", "z0"}},
+	{"math/big", "mulWW", "", "__mrmulWW", "__mrmulWWPair", []string{"z1", "z0"}},
+	{"math/big", "quotToFloat32", "", "__mrquotToFloat32", "__mrquotToFloat32Pair", []string{"f", "exact"}},
+	{"math/big", "quotToFloat64", "", "__mrquotToFloat64", "__mrquotToFloat64Pair", []string{"f", "exact"}},
+	{"math/big", "scan", "Float", "__mrFloat_scan", "__mrFloat_scanPair", []string{"f", "b", "err"}},
+	{"math/big", "scan", "Int", "__mrInt_scan", "__mrInt_scanPair", []string{"v0", "v1", "v2"}},
+	{"math/big", "scan", "nat", "__mrnat_scan", "__mrnat_scanPair", []string{"res", "b", "count", "err"}},
+	{"math/big", "scanExponent", "", "__mrscanExponent", "__mrscanExponentPair", []string{"exp", "base", "err"}},
+	{"math/big", "scanSign", "", "__mrscanSign", "__mrscanSignPair", []string{"neg", "err"}},
+	{"math/big", "setFromScanner", "Int", "__mrInt_setFromScanner", "__mrInt_setFromScannerPair", []string{"v0", "v1"}},
+	// P3-M9 (tier1c): bufio multi-result methods (Appendix M; pair fields
+	// match the gc result names in order; see synth_bufio.go).
+	{"bufio", "Read", "Reader", "__bufioReaderRead", "__bufioReaderReadPair", []string{"n", "err"}},
+	{"bufio", "Peek", "Reader", "__bufioReaderPeek", "__bufioReaderPeekPair", []string{"b", "err"}},
+	{"bufio", "Discard", "Reader", "__bufioReaderDiscard", "__bufioReaderDiscardPair", []string{"discarded", "err"}},
+	{"bufio", "ReadByte", "Reader", "__bufioReaderReadByte", "__bufioReaderReadBytePair", []string{"c", "err"}},
+	{"bufio", "ReadSlice", "Reader", "__bufioReaderReadSlice", "__bufioReaderReadSlicePair", []string{"line", "err"}},
+	{"bufio", "ReadBytes", "Reader", "__bufioReaderReadBytes", "__bufioReaderReadBytesPair", []string{"b", "err"}},
+	{"bufio", "ReadString", "Reader", "__bufioReaderReadString", "__bufioReaderReadStringPair", []string{"s", "err"}},
+	{"bufio", "Write", "Writer", "__bufioWriterWrite", "__bufioWriterWritePair", []string{"n", "err"}},
+	{"bufio", "WriteString", "Writer", "__bufioWriterWriteString", "__bufioWriterWriteStringPair", []string{"n", "err"}},
+	// P3-M9 (tier1c): path.Split (Appendix M).
+	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}},
 }
 
 // m8MultiResultFuncs is the desugar table for the crypto/* packages (P3-M8).
@@ -363,56 +424,6 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	// h.Write(in) / h.Read(got) as bare statements).
 	{"crypto/sha3", "Write", "SHAKE", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
 	{"crypto/sha3", "Read", "SHAKE", "__hashRead", "hash", "hashReadPair", []string{"n", "err"}},
-	// P3-M9 (wave 3, math/big): 47 multi-result funcs/methods. Each has a
-	// fail-fast stub with the exact gc 1.27.1 signature; the real logic is
-	// in the single-result __mr* helper returning the pair struct.
-	{"math/big", "AppendText", "Float", "__mrFloat_AppendText", "__mrFloat_AppendTextPair", []string{"v0", "v1"}},
-	{"math/big", "AppendText", "Int", "__mrInt_AppendText", "__mrInt_AppendTextPair", []string{"text", "err"}},
-	{"math/big", "AppendText", "Rat", "__mrRat_AppendText", "__mrRat_AppendTextPair", []string{"v0", "v1"}},
-	{"math/big", "DivMod", "Int", "__mrInt_DivMod", "__mrInt_DivModPair", []string{"v0", "v1"}},
-	{"math/big", "Divide", "Int", "__mrInt_Divide", "__mrInt_DividePair", []string{"v0", "v1"}},
-	{"math/big", "Float32", "Float", "__mrFloat_Float32", "__mrFloat_Float32Pair", []string{"v0", "v1"}},
-	{"math/big", "Float32", "Rat", "__mrRat_Float32", "__mrRat_Float32Pair", []string{"f", "exact"}},
-	{"math/big", "Float64", "Float", "__mrFloat_Float64", "__mrFloat_Float64Pair", []string{"v0", "v1"}},
-	{"math/big", "Float64", "Int", "__mrInt_Float64", "__mrInt_Float64Pair", []string{"v0", "v1"}},
-	{"math/big", "Float64", "Rat", "__mrRat_Float64", "__mrRat_Float64Pair", []string{"f", "exact"}},
-	{"math/big", "FloatPrec", "Rat", "__mrRat_FloatPrec", "__mrRat_FloatPrecPair", []string{"n", "exact"}},
-	{"math/big", "GobEncode", "Float", "__mrFloat_GobEncode", "__mrFloat_GobEncodePair", []string{"v0", "v1"}},
-	{"math/big", "GobEncode", "Int", "__mrInt_GobEncode", "__mrInt_GobEncodePair", []string{"v0", "v1"}},
-	{"math/big", "GobEncode", "Rat", "__mrRat_GobEncode", "__mrRat_GobEncodePair", []string{"v0", "v1"}},
-	{"math/big", "Int", "Float", "__mrFloat_Int", "__mrFloat_IntPair", []string{"v0", "v1"}},
-	{"math/big", "Int64", "Float", "__mrFloat_Int64", "__mrFloat_Int64Pair", []string{"v0", "v1"}},
-	{"math/big", "MarshalJSON", "Int", "__mrInt_MarshalJSON", "__mrInt_MarshalJSONPair", []string{"v0", "v1"}},
-	{"math/big", "MarshalText", "Float", "__mrFloat_MarshalText", "__mrFloat_MarshalTextPair", []string{"text", "err"}},
-	{"math/big", "MarshalText", "Int", "__mrInt_MarshalText", "__mrInt_MarshalTextPair", []string{"text", "err"}},
-	{"math/big", "MarshalText", "Rat", "__mrRat_MarshalText", "__mrRat_MarshalTextPair", []string{"text", "err"}},
-	{"math/big", "Parse", "Float", "__mrFloat_Parse", "__mrFloat_ParsePair", []string{"f", "b", "err"}},
-	{"math/big", "ParseFloat", "", "__mrParseFloat", "__mrParseFloatPair", []string{"f", "b", "err"}},
-	{"math/big", "QuoRem", "Int", "__mrInt_QuoRem", "__mrInt_QuoRemPair", []string{"v0", "v1"}},
-	{"math/big", "Rat", "Float", "__mrFloat_Rat", "__mrFloat_RatPair", []string{"v0", "v1"}},
-	{"math/big", "ReadByte", "byteReader", "__mrbyteReader_ReadByte", "__mrbyteReader_ReadBytePair", []string{"v0", "v1"}},
-	{"math/big", "SetString", "Float", "__mrFloat_SetString", "__mrFloat_SetStringPair", []string{"v0", "v1"}},
-	{"math/big", "SetString", "Int", "__mrInt_SetString", "__mrInt_SetStringPair", []string{"v0", "v1"}},
-	{"math/big", "SetString", "Rat", "__mrRat_SetString", "__mrRat_SetStringPair", []string{"v0", "v1"}},
-	{"math/big", "Uint64", "Float", "__mrFloat_Uint64", "__mrFloat_Uint64Pair", []string{"v0", "v1"}},
-	{"math/big", "div", "nat", "__mrnat_div", "__mrnat_divPair", []string{"q", "r"}},
-	{"math/big", "divLarge", "nat", "__mrnat_divLarge", "__mrnat_divLargePair", []string{"q", "r"}},
-	{"math/big", "divW", "nat", "__mrnat_divW", "__mrnat_divWPair", []string{"q", "r"}},
-	{"math/big", "divWW", "", "__mrdivWW", "__mrdivWWPair", []string{"q", "r"}},
-	{"math/big", "euclidUpdate", "", "__mreuclidUpdate", "__mreuclidUpdatePair", []string{"nA", "nB", "nr", "nUa", "nUb"}},
-	{"math/big", "isPow2", "nat", "__mrnat_isPow2", "__mrnat_isPow2Pair", []string{"v0", "v1"}},
-	{"math/big", "lehmerSimulate", "", "__mrlehmerSimulate", "__mrlehmerSimulatePair", []string{"u0", "u1", "v0", "v1", "even"}},
-	{"math/big", "maxPow", "", "__mrmaxPow", "__mrmaxPowPair", []string{"p", "n"}},
-	{"math/big", "mulAddWWW_g", "", "__mrmulAddWWW_g", "__mrmulAddWWW_gPair", []string{"z1", "z0"}},
-	{"math/big", "mulWW", "", "__mrmulWW", "__mrmulWWPair", []string{"z1", "z0"}},
-	{"math/big", "quotToFloat32", "", "__mrquotToFloat32", "__mrquotToFloat32Pair", []string{"f", "exact"}},
-	{"math/big", "quotToFloat64", "", "__mrquotToFloat64", "__mrquotToFloat64Pair", []string{"f", "exact"}},
-	{"math/big", "scan", "Float", "__mrFloat_scan", "__mrFloat_scanPair", []string{"f", "b", "err"}},
-	{"math/big", "scan", "Int", "__mrInt_scan", "__mrInt_scanPair", []string{"v0", "v1", "v2"}},
-	{"math/big", "scan", "nat", "__mrnat_scan", "__mrnat_scanPair", []string{"res", "b", "count", "err"}},
-	{"math/big", "scanExponent", "", "__mrscanExponent", "__mrscanExponentPair", []string{"exp", "base", "err"}},
-	{"math/big", "scanSign", "", "__mrscanSign", "__mrscanSignPair", []string{"neg", "err"}},
-	{"math/big", "setFromScanner", "Int", "__mrInt_setFromScanner", "__mrInt_setFromScannerPair", []string{"v0", "v1"}},
 }
 
 // osMultiResultFunc describes one desugarable P3-M8 (wave 2) multi-result
@@ -489,6 +500,80 @@ var osMultiResultFuncs = []osMultiResultFunc{
 	{"os", "Info", "dirEntry", "__dirEntryInfo", "", "infoPair", []string{"fi", "err"}},
 }
 
+// m9MultiResultFunc describes one desugarable P3-M9 (tier-4: net)
+// multi-result function: the synthetic net/netip/net/url/net/textproto
+// packages' multi-result API (exact gc 1.27.1 signatures, fail-fast
+// bodies). Same contract as osMultiResultFunc; kept as a separate table
+// so the earlier entries (and their positional literals) are untouched.
+type m9MultiResultFunc struct {
+	pkgPath    string   // declaring package ("net/netip", "net/url", "net", "net/textproto")
+	name       string   // function/method name
+	recvType   string   // receiver named type ("" for package-level funcs)
+	helper     string   // __-helper name
+	helperPkg  string   // package holding the helper+pair ("" = pkgPath)
+	pairType   string   // pair/triple/quad struct type name
+	pairFields []string // field names in result order (must match the
+	// multi-result signature's result order positionally)
+}
+
+// m9MultiResultFuncs is the desugar table for the synthetic net packages
+// (P3-M9 tier-4). Every entry was verified against the synth_*.go sources:
+// helper name, pair struct name, and field names/order match exactly.
+var m9MultiResultFuncs = []m9MultiResultFunc{
+	// net/netip: package-level funcs.
+	{"net/netip", "ParseAddr", "", "__parseAddr", "", "parseAddrPair", []string{"addr", "err"}},
+	{"net/netip", "ParsePrefix", "", "__parsePrefix", "", "parsePrefixPair", []string{"prefix", "err"}},
+	{"net/netip", "ParseAddrPort", "", "__parseAddrPort", "", "parseAddrPortPair", []string{"ap", "err"}},
+	{"net/netip", "AddrFromSlice", "", "__addrFromSlice", "", "addrFromSlicePair", []string{"ip", "ok"}},
+	// net/netip: methods on Addr (prependRecv).
+	{"net/netip", "Prefix", "Addr", "__addrPrefix", "", "prefixPair", []string{"prefix", "err"}},
+	{"net/netip", "AppendText", "Addr", "__addrAppendText", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/netip", "MarshalText", "Addr", "__addrMarshalText", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/netip", "AppendBinary", "Addr", "__addrAppendBinary", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/netip", "MarshalBinary", "Addr", "__addrMarshalBinary", "", "bytesErrPair", []string{"b", "err"}},
+	// net/netip: methods on AddrPort (prependRecv).
+	{"net/netip", "AppendText", "AddrPort", "__addrPortAppendText", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/netip", "MarshalText", "AddrPort", "__addrPortMarshalText", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/netip", "AppendBinary", "AddrPort", "__addrPortAppendBinary", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/netip", "MarshalBinary", "AddrPort", "__addrPortMarshalBinary", "", "bytesErrPair", []string{"b", "err"}},
+	// net/netip: methods on Prefix (prependRecv).
+	{"net/netip", "AppendText", "Prefix", "__prefixAppendText", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/netip", "MarshalText", "Prefix", "__prefixMarshalText", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/netip", "AppendBinary", "Prefix", "__prefixAppendBinary", "", "bytesErrPair", []string{"b", "err"}},
+	{"net/netip", "MarshalBinary", "Prefix", "__prefixMarshalBinary", "", "bytesErrPair", []string{"b", "err"}},
+	// net/url: package-level funcs.
+	{"net/url", "QueryUnescape", "", "__queryUnescape", "", "stringErrPair", []string{"s", "err"}},
+	{"net/url", "PathUnescape", "", "__pathUnescape", "", "stringErrPair", []string{"s", "err"}},
+	{"net/url", "Parse", "", "__parseURLPub", "", "parseURLPair", []string{"u", "err"}},
+	{"net/url", "ParseRequestURI", "", "__parseRequestURIPub", "", "parseURLPair", []string{"u", "err"}},
+	{"net/url", "ParseQuery", "", "__parseQueryPub", "", "parseQueryPair", []string{"v", "err"}},
+	{"net/url", "JoinPath", "", "__joinPathPub", "", "stringErrPair", []string{"s", "err"}},
+	// net/url: methods (prependRecv).
+	{"net/url", "Password", "Userinfo", "__userinfoPassword", "", "passwordPair", []string{"s", "ok"}},
+	{"net/url", "Parse", "URL", "__urlParsePub", "", "parseURLPair", []string{"u", "err"}},
+	// net: package-level funcs (socket path; __-helpers in synth_net.go).
+	{"net", "Pipe", "", "__pipe", "", "pipePair", []string{"c1", "c2"}},
+	{"net", "Dial", "", "__dial", "", "dialPair", []string{"c", "err"}},
+	{"net", "DialTimeout", "", "__dialTimeout", "", "dialPair", []string{"c", "err"}},
+	{"net", "Listen", "", "__listen", "", "listenPair", []string{"l", "err"}},
+	{"net", "ListenPacket", "", "__listenPacket", "", "listenPacketPair", []string{"c", "err"}},
+	{"net", "ResolveIPAddr", "", "__resolveIPAddr", "", "resolveIPAddrPair", []string{"ip", "err"}},
+	{"net", "ResolveTCPAddr", "", "__resolveTCPAddr", "", "resolveTCPAddrPair", []string{"addr", "err"}},
+	{"net", "ResolveUDPAddr", "", "__resolveUDPAddr", "", "resolveUDPAddrPair", []string{"addr", "err"}},
+	{"net", "ParseCIDR", "", "__parseCIDR", "", "parseCIDRPair", []string{"ip", "ipnet", "err"}},
+	{"net", "ParseMAC", "", "__parseMAC", "", "parseMACPair", []string{"hw", "err"}},
+	{"net", "SplitHostPort", "", "__splitHostPort", "", "splitHostPortPair", []string{"host", "port"}},
+	// net: methods on TCPListener / Conn (prependRecv).
+	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "", "acceptPair", []string{"c", "err"}},
+	{"net", "Accept", "UDPConn", "__udpConnAccept", "", "acceptPair", []string{"c", "err"}},
+	{"net", "Read", "TCPConn", "__tcpConnRead", "", "readPair", []string{"n", "err"}},
+	{"net", "Write", "TCPConn", "__tcpConnWrite", "", "writePair", []string{"n", "err"}},
+	{"net", "Read", "UDPConn", "__udpConnRead", "", "readPair", []string{"n", "err"}},
+	{"net", "Write", "UDPConn", "__udpConnWrite", "", "writePair", []string{"n", "err"}},
+	{"net", "ReadFrom", "UDPConn", "__udpConnReadFrom", "", "readFromPair", []string{"n", "addr", "err"}},
+	{"net", "WriteTo", "UDPConn", "__udpConnWriteTo", "", "writePair", []string{"n", "err"}},
+}
+
 // ioMultiResultFuncs is the desugar table for the synthetic io package's
 // newly-real multi-result API (P3-M8, WS D): the exact gc 1.27.1
 // signatures are kept with fail-fast bodies for type-checking, and the
@@ -508,6 +593,21 @@ var ioMultiResultFuncs = []m7MultiResultFunc{
 	{"io", "Read", "LimitedReader", "__limitedReaderRead", "limitedReaderReadPair", []string{"n", "err"}},
 	{"io", "Write", "discard", "__discardWrite", "ioWritePair", []string{"n", "err"}},
 	{"io", "WriteString", "discard", "__discardWriteString", "ioWritePair", []string{"n", "err"}},
+	// P3-M9: synthetic testing/iotest readers/writers. Each Read/Write
+	// desugars to its pair-returning __-helper (see synth_iotest.go);
+	// the pair field names/types match the method results positionally.
+	{"testing/iotest", "Read", "oneByteReader", "__oneByteReaderRead", "oneByteReaderReadPair", []string{"n", "err"}},
+	{"testing/iotest", "Read", "halfReader", "__halfReaderRead", "halfReaderReadPair", []string{"n", "err"}},
+	{"testing/iotest", "Read", "dataErrReader", "__dataErrReaderRead", "dataErrReaderReadPair", []string{"n", "err"}},
+	{"testing/iotest", "Read", "timeoutReader", "__timeoutReaderRead", "timeoutReaderReadPair", []string{"n", "err"}},
+	{"testing/iotest", "Read", "errReader", "__errReaderRead", "errReaderReadPair", []string{"n", "err"}},
+	{"testing/iotest", "Write", "truncateWriter", "__truncateWriterWrite", "truncateWriterWritePair", []string{"n", "err"}},
+	// P3-M9: synthetic testing internal writers. outputWriter.Write and
+	// indenter.Write desugar to their pair-returning __-helpers (see
+	// synth_testing.go); the pair field names/types match the method
+	// results positionally.
+	{"testing", "Write", "outputWriter", "__outputWriterWrite", "outputWriterWritePair", []string{"n", "err"}},
+	{"testing", "Write", "indenter", "__indenterWrite", "indenterWritePair", []string{"n", "err"}},
 }
 
 // m8IfaceMultiResultMethod describes one P3-M8 (WS D) multi-result
@@ -617,6 +717,11 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// P3-M8 (WS D): the synthetic io package's multi-result API
 			// (ioMultiResultFuncs table above).
 			if plan := classifyIoMultiResultCall(pn.Imported().Path(), fn); plan != nil {
+				return plan
+			}
+			// P3-M9 (tier-4: net): the synthetic net packages' multi-result
+			// API (m9MultiResultFuncs table above).
+			if plan := classifyM9MultiResultCall(pn.Imported().Path(), fn); plan != nil {
 				return plan
 			}
 			switch pn.Imported().Path() {
@@ -838,6 +943,57 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 // pair struct are looked up in (used for io/fs DirEntry.Info, whose
 // helper lives in the synthetic os package). Returns nil when the call
 // is not one of the table's operations.
+// classifyM9MultiResultCall desugars the P3-M9 (tier-4: net)
+// multi-result API (m9MultiResultFuncs table above). Same contract as
+// classifyOsMultiResultCall.
+func classifyM9MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	recvName := ""
+	if recv := sig.Recv(); recv != nil {
+		rt := recv.Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			recvName = nt.Obj().Name()
+		}
+	}
+	for _, mf := range m9MultiResultFuncs {
+		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != recvName {
+			continue
+		}
+		if sig.Results().Len() != len(mf.pairFields) {
+			return nil
+		}
+		helperPkg := mf.helperPkg
+		if helperPkg == "" {
+			helperPkg = mf.pkgPath
+		}
+		sp := getSyntheticPackage(helperPkg)
+		obj := sp.pkg.Scope().Lookup(mf.pairType)
+		if obj == nil {
+			return nil
+		}
+		nt, _ := obj.Type().(*types.Named)
+		if nt == nil {
+			return nil
+		}
+		return &mrPlan{
+			kind: mrM7, helperPkg: helperPkg,
+			helperName: mf.helper,
+			tmpType:    nt, pairFields: mf.pairFields,
+			prependRecv: mf.recvType != "",
+		}
+	}
+	return nil
+}
+
 func classifyOsMultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil

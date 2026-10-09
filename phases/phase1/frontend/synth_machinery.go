@@ -161,7 +161,22 @@ var syntheticSources = map[string]string{
 	// synthetic (registered above). math/big is the G-c hard gate for
 	// the asymmetric-crypto tier.
 	"math/big":           syntheticMathBigSource,
-	"math/rand":          syntheticMathRandFullSource,
+	"math/rand":          syntheticMathRandSource, // P3-M9 math/big: minimal (no sync.Mutex); full port needs M2 Mutex-field scope
+	// P3-M9 (tier1c): synthetic math/rand/v2 (full port; imports the
+	// synthetic math, math/bits and internal/byteorder packages).
+	"math/rand/v2":       syntheticMathRandV2Source,
+	// P3-M9 (tier1c): synthetic bufio (full port; imports bytes, errors,
+	// io, strings; utf8 inlined as __bufio* helpers).
+	"bufio": syntheticBufioSource,
+	// P3-M9 (tier1c): synthetic path (port; imports strings; Match is
+	// scope-limited).
+	"path": syntheticPathSource,
+	// P3-M9 (tier1c): synthetic text/scanner (port; utf8/unicode inlined
+	// as __ts* helpers; ASCII-only IsLetter/IsDigit).
+	"text/scanner": syntheticTextScannerSource,
+	// P3-M9 (tier1c): synthetic regexp/syntax (SCOPE-LIMITED: requires
+	// tier1a's unicode; see header).
+	"regexp/syntax": syntheticRegexpSyntaxSource,
 	"internal/byteorder": syntheticByteorderSource,
 	// P3-M9: synthetic flag, testing, testing/quick, testing/iotest
 	// packages (real-Go sources in synth_flag.go / synth_testing.go /
@@ -172,6 +187,18 @@ var syntheticSources = map[string]string{
 	"testing":        syntheticTestingSource,
 	"testing/quick":  syntheticTestingQuickSource,
 	"testing/iotest": syntheticTestingIotestSource,
+	// P3-M9 (tier-4: net): synthetic net packages (real-Go sources in
+	// synth_net.go / synth_netip.go / synth_neturl.go / synth_textproto.go /
+	// synth_poll.go / synth_nettrace.go / synth_singleflight.go). net
+	// imports net/netip, internal/poll; url imports net/netip. The
+	// internal/* packages are synthetic-only (not in the user allow-list).
+	"net":                 syntheticNetSource,
+	"net/netip":           syntheticNetipSource,
+	"net/url":             syntheticNeturlSource,
+	"net/textproto":       syntheticTextprotoSource,
+	"internal/poll":       syntheticPollSource,
+	"internal/nettrace":   syntheticNettraceSource,
+	"internal/singleflight": syntheticSingleflightSource,
 }
 
 // the overlay importer, so the context source's `import "time"` resolves
@@ -672,7 +699,9 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		path != "reflect" && path != "internal/reflectlite" && path != "iter" &&
 		// P3-M9 (tier1c): the synthetic math/bits, math/cmplx and math/rand
 		// packages (full port).
-		path != "math/bits" && path != "math/cmplx" && path != "math/rand" &&
+		path != "math/bits" && path != "math/cmplx" && path != "math/rand" && path != "math/rand/v2" && path != "bufio" && path != "path" && path != "text/scanner" && path != "regexp/syntax" &&
+		// P3-M9 (wave 3, math/big): the synthetic math/big package (G-c hard gate).
+		path != "math/big" &&
 		// P3-M9 (tier-1d): leaf utilities unique/structs (+ synthetic-only
 		// internal/bytealg).
 		path != "unique" && path != "structs" && path != "internal/bytealg" &&
@@ -816,7 +845,10 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		p != "hash" && p != "crypto" &&
 		p != "crypto/aes" && p != "crypto/cipher" && p != "crypto/des" && p != "crypto/hmac" &&
 		p != "crypto/md5" && p != "crypto/rand" && p != "crypto/rc4" && p != "crypto/sha1" &&
-		p != "crypto/sha256" && p != "crypto/sha3" && p != "crypto/sha512" && p != "crypto/subtle" {
+		p != "crypto/sha256" && p != "crypto/sha3" && p != "crypto/sha512" && p != "crypto/subtle" &&
+		// P3-M9 (tier-4: net).
+		p != "net" && p != "net/netip" && p != "net/url" && p != "net/textproto" &&
+		p != "internal/poll" && p != "internal/nettrace" && p != "internal/singleflight" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -847,8 +879,10 @@ func multiResultSyntheticError(fn *types.Func) error {
 		// P3-M8 (wave 2).
 		milestone = "M8"
 	}
-	if p := fn.Pkg().Path(); p == "unique" || p == "structs" || p == "internal/bytealg" {
-		// P3-M9 (tier-1d).
+	if p := fn.Pkg().Path(); p == "unique" || p == "structs" || p == "internal/bytealg" ||
+		p == "net" || p == "net/netip" || p == "net/url" || p == "net/textproto" ||
+		p == "internal/poll" || p == "internal/nettrace" || p == "internal/singleflight" {
+		// P3-M9 (tier-1d, tier-4: net).
 		milestone = "M9"
 	}
 	// Qualify method names with the receiver type name

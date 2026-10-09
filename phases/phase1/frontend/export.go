@@ -256,6 +256,14 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("math/rand").pkg, nil
 	case "math/rand/v2":
 		return getSyntheticPackage("math/rand/v2").pkg, nil
+	case "bufio":
+		return getSyntheticPackage("bufio").pkg, nil
+	case "path":
+		return getSyntheticPackage("path").pkg, nil
+	case "text/scanner":
+		return getSyntheticPackage("text/scanner").pkg, nil
+	case "regexp/syntax":
+		return getSyntheticPackage("regexp/syntax").pkg, nil
 	case "internal/byteorder":
 		return getSyntheticPackage("internal/byteorder").pkg, nil
 	case "strings":
@@ -404,6 +412,24 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("hash/fnv").pkg, nil
 	case "hash/maphash":
 		return getSyntheticPackage("hash/maphash").pkg, nil
+	// P3-M9 (tier-4: net): synthetic net packages (real-Go sources in
+	// synth_net.go / synth_netip.go / synth_neturl.go / synth_textproto.go /
+	// synth_poll.go / synth_nettrace.go / synth_singleflight.go). The
+	// internal/* packages are synthetic-only (not in the user allow-list).
+	case "net":
+		return getSyntheticPackage("net").pkg, nil
+	case "net/netip":
+		return getSyntheticPackage("net/netip").pkg, nil
+	case "net/url":
+		return getSyntheticPackage("net/url").pkg, nil
+	case "net/textproto":
+		return getSyntheticPackage("net/textproto").pkg, nil
+	case "internal/poll":
+		return getSyntheticPackage("internal/poll").pkg, nil
+	case "internal/nettrace":
+		return getSyntheticPackage("internal/nettrace").pkg, nil
+	case "internal/singleflight":
+		return getSyntheticPackage("internal/singleflight").pkg, nil
 	}
 	return failImporter{}.Import(path)
 }
@@ -905,7 +931,7 @@ func ExportFile(path string) (string, error) {
 			// (imported by math/big's sources, never by user programs).
 			// P3-M9: "flag", "testing", "testing/quick", "testing/iotest"
 			// likewise (the go-test trial prerequisite packages).
-			path != "math/bits" && path != "math/big" && path != "math/rand" && path != "math/rand/v2" && path != "math/cmplx" &&
+			path != "math/bits" && path != "math/big" && path != "math/rand" && path != "math/rand/v2" && path != "math/cmplx" && path != "bufio" && path != "path" && path != "text/scanner" && path != "regexp/syntax" &&
 			path != "flag" && path != "testing" && path != "testing/quick" && path != "testing/iotest" &&
 			// P3-M9 (wave 3, tier-1b): "container/heap", "container/list",
 			// "container/ring", "hash/adler32", "hash/crc32", "hash/crc64",
@@ -914,7 +940,11 @@ func ExportFile(path string) (string, error) {
 			path != "hash/adler32" && path != "hash/crc32" && path != "hash/crc64" && path != "hash/fnv" && path != "hash/maphash" &&
 			// P3-M9 (tier-1d): "unique" and "structs" likewise (internal/*
 			// stay synthetic-only: user imports are not admitted).
-			path != "unique" && path != "structs" {
+			// P3-M9 (tier-4: net): "net", "net/netip", "net/url",
+			// "net/textproto" likewise (internal/poll, internal/nettrace,
+			// internal/singleflight stay synthetic-only).
+			path != "unique" && path != "structs" &&
+			path != "net" && path != "net/netip" && path != "net/url" && path != "net/textproto" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 	}
@@ -955,7 +985,7 @@ func ExportFile(path string) (string, error) {
 			// P3-M9 (tier1c): "math/bits" likewise.
 			// P3-M9 (wave 3): "math/big" + "math/rand" likewise.
 			// P3-M9: "flag", "testing", "testing/quick", "testing/iotest" likewise.
-			p == "math/bits" || p == "math/big" || p == "math/rand" || p == "math/rand/v2" || p == "math/cmplx" ||
+			p == "math/bits" || p == "math/big" || p == "math/rand" || p == "math/rand/v2" || p == "math/cmplx" || p == "bufio" || p == "path" || p == "text/scanner" || p == "regexp/syntax" ||
 			p == "flag" || p == "testing" || p == "testing/quick" || p == "testing/iotest" ||
 			// P3-M9 (tier-1d): "unique" and "structs" likewise.
 			p == "unique" || p == "structs" {
@@ -1068,6 +1098,10 @@ func ExportFile(path string) (string, error) {
 	needMathBig := false
 	needMathRand := false
 	needMathRandV2 := false
+	needBufio := false
+	needPath := false
+	needTextScanner := false
+	needRegexpSyntax := false
 	needByteorder := false
 	needSyscall := false
 	needOs := false
@@ -1325,6 +1359,19 @@ func ExportFile(path string) (string, error) {
 			needMath = true
 			needMathBits = true
 			needByteorder = true
+		case "bufio":
+			needBufio = true
+			// P3-M9 (tier1c): bufio imports bytes, errors, io, strings
+			// (all in overlay or synthetic).
+			needBytes = true
+		case "path":
+			needPath = true
+			// P3-M9 (tier1c): path imports strings (synthetic).
+			needStrings = true
+		case "text/scanner":
+			needTextScanner = true
+		case "regexp/syntax":
+			needRegexpSyntax = true
 		// P3-M9 (wave 3, tier-1b): direct user imports of the synthetic
 		// container/* and hash/* packages. container/heap pulls in sort;
 		// hash/* pull in hash (+errors/io via the needHash chain);
@@ -1452,6 +1499,31 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("math/rand/v2")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (tier1c): synthetic bufio (full port; imports bytes which is
+	// emitted via needBytes).
+	if needBufio {
+		if err := e.importSyntheticPackage(getSyntheticPackage("bufio")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (tier1c): synthetic path.
+	if needPath {
+		if err := e.importSyntheticPackage(getSyntheticPackage("path")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (tier1c): synthetic text/scanner.
+	if needTextScanner {
+		if err := e.importSyntheticPackage(getSyntheticPackage("text/scanner")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (tier1c): synthetic regexp/syntax (scope-limited).
+	if needRegexpSyntax {
+		if err := e.importSyntheticPackage(getSyntheticPackage("regexp/syntax")); err != nil {
 			return "", err
 		}
 	}
@@ -1912,30 +1984,40 @@ func ExportFile(path string) (string, error) {
 	// (synth_hash_*.go). They import the synthetic hash, errors and io
 	// packages, imported by their own need-blocks above.
 	if needHashAdler32 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("hash/adler32")); err != nil {
-			return "", err
+		for _, p := range []string{"errors", "hash", "hash/adler32"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	if needHashCrc32 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("hash/crc32")); err != nil {
-			return "", err
+		for _, p := range []string{"errors", "hash", "hash/crc32"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	if needHashCrc64 {
-		if err := e.importSyntheticPackage(getSyntheticPackage("hash/crc64")); err != nil {
-			return "", err
+		for _, p := range []string{"errors", "hash", "hash/crc64"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	if needHashFnv {
-		if err := e.importSyntheticPackage(getSyntheticPackage("hash/fnv")); err != nil {
-			return "", err
+		for _, p := range []string{"errors", "hash", "hash/fnv"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	// hash/maphash additionally imports synthetic crypto/rand (MakeSeed
 	// entropy) and math, imported by their own need-blocks above.
 	if needHashMaphash {
-		if err := e.importSyntheticPackage(getSyntheticPackage("hash/maphash")); err != nil {
-			return "", err
+		for _, p := range []string{"errors", "hash", "hash/maphash"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	// P3-M3 (WS D, ADR-0003): the "methods" lists on named/pointer entries
@@ -7674,7 +7756,7 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "math/bits" || p == "math/big" || p == "math/cmplx" || p == "math/rand" || p == "math/rand/v2" || p == "strings" ||
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "math/bits" || p == "math/big" || p == "math/cmplx" || p == "math/rand" || p == "math/rand/v2" || p == "bufio" || p == "path" || p == "text/scanner" || p == "regexp/syntax" || p == "strings" ||
 				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "crypto" ||
 				p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" ||
 				p == "cmp" || p == "slices" || p == "maps" || p == "unicode" || p == "unicode/utf8" || p == "unicode/utf16" ||
