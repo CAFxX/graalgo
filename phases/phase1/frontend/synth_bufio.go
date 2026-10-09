@@ -29,7 +29,6 @@ const syntheticBufioSource = `package bufio
 import "bytes"
 import "errors"
 import "io"
-import "strings"
 
 // ---- Deviation 1: inlined utf8 (see header) ----
 const (
@@ -39,7 +38,49 @@ const (
 	__bufioMaxRune   = '\U0010FFFF'
 )
 
-// P3-M9: __bufioDecodeRune removed (unused).
+// P3-M9: __bufioDecodeRune restored (used by ScanWords; 2-result so
+// type-check only — never emitted, v1 cannot emit multi-result funcs).
+func __bufioDecodeRune(p []byte) (r rune, size int) {
+	// Simplified from unicode/utf8.DecodeRune (algorithmic, no tables).
+	if len(p) == 0 {
+		return __bufioRuneError, 0
+	}
+	c := p[0]
+	if c < __bufioRuneSelf {
+		return rune(c), 1
+	}
+	// Multi-byte sequences (simplified; full validation as in utf8).
+	if c < 0xC2 {
+		return __bufioRuneError, 1
+	}
+	if c < 0xE0 {
+		if len(p) < 2 || p[1] < 0x80 || p[1] >= 0xC0 {
+			return __bufioRuneError, 1
+		}
+		return rune(c&0x1F)<<6 | rune(p[1]&0x3F), 2
+	}
+	if c < 0xF0 {
+		if len(p) < 3 || p[1] < 0x80 || p[1] >= 0xC0 || p[2] < 0x80 || p[2] >= 0xC0 {
+			return __bufioRuneError, 1
+		}
+		r := rune(c&0x0F)<<12 | rune(p[1]&0x3F)<<6 | rune(p[2]&0x3F)
+		if r < 0x800 {
+			return __bufioRuneError, 1
+		}
+		return r, 3
+	}
+	if c < 0xF5 {
+		if len(p) < 4 || p[1] < 0x80 || p[1] >= 0xC0 || p[2] < 0x80 || p[2] >= 0xC0 || p[3] < 0x80 || p[3] >= 0xC0 {
+			return __bufioRuneError, 1
+		}
+		r := rune(c&0x07)<<18 | rune(p[1]&0x3F)<<12 | rune(p[2]&0x3F)<<6 | rune(p[3]&0x3F)
+		if r < 0x10000 || r > __bufioMaxRune {
+			return __bufioRuneError, 1
+		}
+		return r, 4
+	}
+	return __bufioRuneError, 1
+}
 
 func __bufioEncodeRune(p []byte, r rune) int {
 	// Simplified from unicode/utf8.EncodeRune.
@@ -139,7 +180,12 @@ func NewReaderSize(rd io.Reader, size int) *Reader {
 		return b
 	}
 	r := new(Reader)
-	r.reset(make([]byte, max(size, minReadBufferSize)), rd)
+	// WS G: frontend has no max builtin; use explicit comparison.
+	sz := size
+	if sz < minReadBufferSize {
+		sz = minReadBufferSize
+	}
+	r.reset(make([]byte, sz), rd)
 	return r
 }
 
@@ -170,12 +216,15 @@ func (b *Reader) Reset(r io.Reader) {
 }
 
 func (b *Reader) reset(buf []byte, r io.Reader) {
-	*b = Reader{
-		buf:          buf,
-		rd:           r,
-		lastByte:     -1,
-		lastRuneSize: -1,
-	}
+	// WS D: v1 has no StarExpr assignment; fields assigned individually
+	// (same observable state as *b = Reader{buf, rd, -1, -1}).
+	b.buf = buf
+	b.rd = r
+	b.r = 0
+	b.w = 0
+	b.err = nil
+	b.lastByte = -1
+	b.lastRuneSize = -1
 }
 
 var errNegativeRead = errors.New("bufio: reader returned negative count from Read")
@@ -313,7 +362,10 @@ func (b *Reader) Read(p []byte) (n int, err error) {
 		if len(p) >= len(b.buf) {
 			// Large read, empty buffer.
 			// Read directly into p to avoid copy.
-			n, b.err = b.rd.Read(p)
+			// WS D: desugar needs identifier LHS; use temps.
+			__n, __e := b.rd.Read(p)
+			n = __n
+			b.err = __e
 			if n < 0 {
 				panic(errNegativeRead)
 			}
@@ -327,7 +379,10 @@ func (b *Reader) Read(p []byte) (n int, err error) {
 		// Do not use b.fill, which will loop.
 		b.r = 0
 		b.w = 0
-		n, b.err = b.rd.Read(b.buf)
+		// WS D: desugar needs identifier LHS; use temps.
+		__n, __e := b.rd.Read(b.buf)
+		n = __n
+		b.err = __e
 		if n < 0 {
 			panic(errNegativeRead)
 		}
@@ -570,14 +625,15 @@ func (b *Reader) ReadBytes(delim byte) ([]byte, error) {
 func (b *Reader) ReadString(delim byte) (string, error) {
 	full, frag, n, err := b.collectFragments(delim)
 	// Allocate new buffer to hold the full pieces and the fragment.
-	var buf strings.Builder
-	buf.Grow(n)
+	// WS D: strings.Builder methods are not emittable (M7 scope); the
+	// Grow hint is just a preallocation, so concatenate directly.
+	s := make([]byte, 0, n)
 	// Copy full pieces and fragment in.
 	for _, fb := range full {
-		buf.Write(fb)
+		s = append(s, fb...)
 	}
-	buf.Write(frag)
-	return buf.String(), err
+	s = append(s, frag...)
+	return string(s), err
 }
 
 // WriteTo implements io.WriterTo.
@@ -751,7 +807,10 @@ func (b *Writer) Write(p []byte) (nn int, err error) {
 		if b.Buffered() == 0 {
 			// Large write, empty buffer.
 			// Write directly from p to avoid copy.
-			n, b.err = b.wr.Write(p)
+			// WS D: desugar needs identifier LHS; use temps.
+			__n, __e := b.wr.Write(p)
+			n = __n
+			b.err = __e
 		} else {
 			n = copy(b.buf[b.n:], p)
 			b.n += n
@@ -831,7 +890,10 @@ func (b *Writer) WriteString(s string) (int, error) {
 			// Large write, empty buffer, and the underlying writer supports
 			// WriteString: forward the write to the underlying StringWriter.
 			// This avoids an extra copy.
-			n, b.err = sw.WriteString(s)
+			// WS D: desugar needs identifier LHS; use temps.
+			__n, __e := sw.WriteString(s)
+			n = __n
+			b.err = __e
 		} else {
 			n = copy(b.buf[b.n:], s)
 			b.n += n
@@ -997,7 +1059,8 @@ const (
 func NewScanner(r io.Reader) *Scanner {
 	return &Scanner{
 		r:            r,
-		split:        ScanLines,
+		// WS D: nil split means the default (ScanLines); v1 cannot
+		// take a function value of a 3-result function.
 		maxTokenSize: MaxScanTokenSize,
 	}
 }
@@ -1055,7 +1118,15 @@ func (s *Scanner) Scan() bool {
 		// If we've run out of data but have an error, give the split function
 		// a chance to recover any remaining, possibly empty token.
 		if s.end > s.start || s.err != nil {
-			advance, token, err := s.split(s.buf[s.start:s.end], s.err != nil)
+			// WS D: v1 cannot call through a 3-result SplitFunc value.
+			// The default split (ScanLines) is dispatched directly via
+			// its __-helper; a custom SplitFunc fails fast (re-test
+			// when WS D lands multi-result calls).
+			if s.split != nil {
+				panic("bufio.Scanner: custom SplitFunc is not supported in frontend/v1 scope (WS D)")
+			}
+			__sp := __bufioScanLines(s.buf[s.start:s.end], s.err != nil)
+			advance, token, err := __sp.advance, __sp.token, __sp.err
 			if err != nil {
 				if err == ErrFinalToken {
 					s.token = token
@@ -1113,7 +1184,10 @@ func (s *Scanner) Scan() bool {
 			if newSize == 0 {
 				newSize = startBufSize
 			}
-			newSize = min(newSize, s.maxTokenSize)
+			// WS G: frontend has no min builtin; use explicit comparison.
+			if newSize > s.maxTokenSize {
+				newSize = s.maxTokenSize
+			}
 			newBuf := make([]byte, newSize)
 			copy(newBuf, s.buf[s.start:s.end])
 			s.buf = newBuf
@@ -1355,7 +1429,10 @@ func __bufioReaderRead(b *Reader, p []byte) __bufioReaderReadPair {
 		if len(p) >= len(b.buf) {
 			// Large read, empty buffer.
 			// Read directly into p to avoid copy.
-			n, b.err = b.rd.Read(p)
+			// WS D: desugar needs identifier LHS; use temps.
+			__n, __e := b.rd.Read(p)
+			n = __n
+			b.err = __e
 			if n < 0 {
 				panic(errNegativeRead)
 			}
@@ -1369,7 +1446,10 @@ func __bufioReaderRead(b *Reader, p []byte) __bufioReaderReadPair {
 		// Do not use b.fill, which will loop.
 		b.r = 0
 		b.w = 0
-		n, b.err = b.rd.Read(b.buf)
+		// WS D: desugar needs identifier LHS; use temps.
+		__n, __e := b.rd.Read(b.buf)
+		n = __n
+		b.err = __e
 		if n < 0 {
 			panic(errNegativeRead)
 		}
@@ -1557,14 +1637,15 @@ func __bufioReaderReadString(b *Reader, delim byte) __bufioReaderReadStringPair 
 	__cf := __bufioReadercollectFragments(b, delim)
 	full, frag, n, err := __cf.fullBuffers, __cf.finalFragment, __cf.totalLen, __cf.err
 	// Allocate new buffer to hold the full pieces and the fragment.
-	var buf strings.Builder
-	buf.Grow(n)
+	// WS D: strings.Builder methods are not emittable (M7 scope); the
+	// Grow hint is just a preallocation, so concatenate directly.
+	s := make([]byte, 0, n)
 	// Copy full pieces and fragment in.
 	for _, fb := range full {
-		buf.Write(fb)
+		s = append(s, fb...)
 	}
-	buf.Write(frag)
-	return __bufioReaderReadStringPair{s: buf.String(), err: err}
+	s = append(s, frag...)
+	return __bufioReaderReadStringPair{s: string(s), err: err}
 }
 
 type __bufioWriterWritePair struct {
@@ -1579,7 +1660,10 @@ func __bufioWriterWrite(b *Writer, p []byte) __bufioWriterWritePair {
 		if b.Buffered() == 0 {
 			// Large write, empty buffer.
 			// Write directly from p to avoid copy.
-			n, b.err = b.wr.Write(p)
+			// WS D: desugar needs identifier LHS; use temps.
+			__n, __e := b.wr.Write(p)
+			n = __n
+			b.err = __e
 		} else {
 			n = copy(b.buf[b.n:], p)
 			b.n += n
@@ -1617,7 +1701,10 @@ func __bufioWriterWriteString(b *Writer, s string) __bufioWriterWriteStringPair 
 			// Large write, empty buffer, and the underlying writer supports
 			// WriteString: forward the write to the underlying StringWriter.
 			// This avoids an extra copy.
-			n, b.err = sw.WriteString(s)
+			// WS D: desugar needs identifier LHS; use temps.
+			__n, __e := sw.WriteString(s)
+			n = __n
+			b.err = __e
 		} else {
 			n = copy(b.buf[b.n:], s)
 			b.n += n
@@ -1669,4 +1756,29 @@ func __bufioReadercollectFragments(b *Reader, delim byte) __bufioReadercollectFr
 	totalLen += len(frag)
 	return __bufioReadercollectFragmentsPair{fullBuffers: fullBuffers, finalFragment: frag, totalLen: totalLen, err: err}
 }
+
+// __bufioScanLinesPair is the Appendix-M pair for the 3-result split
+// function ScanLines (WS D; see DEVIATION 4 in gen_synth_bufio.py).
+type __bufioScanLinesPair struct {
+	advance int
+	token   []byte
+	err     error
+}
+
+func __bufioScanLines(data []byte, atEOF bool) __bufioScanLinesPair {
+	if atEOF && len(data) == 0 {
+		return __bufioScanLinesPair{advance: 0, token: nil, err: nil}
+	}
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		// We have a full newline-terminated line.
+		return __bufioScanLinesPair{advance: i + 1, token: dropCR(data[0:i]), err: nil}
+	}
+	// If we're at EOF, we have a final, non-terminated line. Return it.
+	if atEOF {
+		return __bufioScanLinesPair{advance: len(data), token: dropCR(data), err: nil}
+	}
+	// Request more data.
+	return __bufioScanLinesPair{advance: 0, token: nil, err: nil}
+}
+
 `

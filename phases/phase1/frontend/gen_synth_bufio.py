@@ -49,7 +49,6 @@ const syntheticBufioSource = `package bufio
 import "bytes"
 import "errors"
 import "io"
-import "strings"
 
 // ---- Deviation 1: inlined utf8 (see header) ----
 const (
