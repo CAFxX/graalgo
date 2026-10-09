@@ -1082,4 +1082,24 @@ func (z *Zipf) Uint64() uint64 {
 	}
 	return uint64(k)
 }
+
+// P3-M9 (tier-5b): minimal ChaCha8 for crypto/ecdsa signLegacy.
+// The full ChaCha8 was dropped (see Deviation 2 header). signLegacy is
+// only used for non-standard curves; standard curves (P-256/384/521)
+// use signFIPS. This fail-fasts honestly if called.
+
+// ChaCha8 is a ChaCha8-based random number generator (stub).
+type ChaCha8 struct {
+	seed [32]byte
+}
+
+// NewChaCha8 returns a new ChaCha8 (stub: fail-fast on use).
+func NewChaCha8(seed [32]byte) *ChaCha8 {
+	return &ChaCha8{seed: seed}
+}
+
+// Read fail-fasts: ChaCha8 not vendored.
+func (c *ChaCha8) Read(p []byte) (n int, err error) {
+	panic("math/rand/v2: ChaCha8.Read not implemented (P3-M9 tier-5b scope-limit: non-standard ECDSA curves); re-test when ChaCha8 lands")
+}
 `

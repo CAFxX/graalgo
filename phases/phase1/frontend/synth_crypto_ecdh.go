@@ -389,16 +389,20 @@ func P256() Curve { return p256 }
 var p256 = &nistCurve{
 	name: "P-256",
 	generate: func(r io.Reader) (*ecdh.PrivateKey, error) {
-		return ecdh.GenerateKey(ecdh.P256(), r)
+		k, err := ecdh.GenerateKey(ecdh.P256(), r)
+		return k, err
 	},
 	newPrivateKey: func(b []byte) (*ecdh.PrivateKey, error) {
-		return ecdh.NewPrivateKey(ecdh.P256(), b)
+		k, err := ecdh.NewPrivateKey(ecdh.P256(), b)
+		return k, err
 	},
 	newPublicKey: func(publicKey []byte) (*ecdh.PublicKey, error) {
-		return ecdh.NewPublicKey(ecdh.P256(), publicKey)
+		k, err := ecdh.NewPublicKey(ecdh.P256(), publicKey)
+		return k, err
 	},
 	sharedSecret: func(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) (sharedSecret []byte, err error) {
-		return ecdh.ECDH(ecdh.P256(), priv, pub)
+		ss, err := ecdh.ECDH(ecdh.P256(), priv, pub)
+		return ss, err
 	},
 }
 
@@ -412,16 +416,20 @@ func P384() Curve { return p384 }
 var p384 = &nistCurve{
 	name: "P-384",
 	generate: func(r io.Reader) (*ecdh.PrivateKey, error) {
-		return ecdh.GenerateKey(ecdh.P384(), r)
+		k, err := ecdh.GenerateKey(ecdh.P384(), r)
+		return k, err
 	},
 	newPrivateKey: func(b []byte) (*ecdh.PrivateKey, error) {
-		return ecdh.NewPrivateKey(ecdh.P384(), b)
+		k, err := ecdh.NewPrivateKey(ecdh.P384(), b)
+		return k, err
 	},
 	newPublicKey: func(publicKey []byte) (*ecdh.PublicKey, error) {
-		return ecdh.NewPublicKey(ecdh.P384(), publicKey)
+		k, err := ecdh.NewPublicKey(ecdh.P384(), publicKey)
+		return k, err
 	},
 	sharedSecret: func(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) (sharedSecret []byte, err error) {
-		return ecdh.ECDH(ecdh.P384(), priv, pub)
+		ss, err := ecdh.ECDH(ecdh.P384(), priv, pub)
+		return ss, err
 	},
 }
 
@@ -435,16 +443,20 @@ func P521() Curve { return p521 }
 var p521 = &nistCurve{
 	name: "P-521",
 	generate: func(r io.Reader) (*ecdh.PrivateKey, error) {
-		return ecdh.GenerateKey(ecdh.P521(), r)
+		k, err := ecdh.GenerateKey(ecdh.P521(), r)
+		return k, err
 	},
 	newPrivateKey: func(b []byte) (*ecdh.PrivateKey, error) {
-		return ecdh.NewPrivateKey(ecdh.P521(), b)
+		k, err := ecdh.NewPrivateKey(ecdh.P521(), b)
+		return k, err
 	},
 	newPublicKey: func(publicKey []byte) (*ecdh.PublicKey, error) {
-		return ecdh.NewPublicKey(ecdh.P521(), publicKey)
+		k, err := ecdh.NewPublicKey(ecdh.P521(), publicKey)
+		return k, err
 	},
 	sharedSecret: func(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) (sharedSecret []byte, err error) {
-		return ecdh.ECDH(ecdh.P521(), priv, pub)
+		ss, err := ecdh.ECDH(ecdh.P521(), priv, pub)
+		return ss, err
 	},
 }
 

@@ -9,6 +9,9 @@ package cryptobyte
 import (
 	"errors"
 	"fmt"
+	"math/big"
+
+	"golang.org/x/crypto/cryptobyte/asn1"
 )
 // Copyright 2017 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
@@ -546,6 +549,157 @@ func (b *Builder) AddValue(v MarshalingValue) {
 	if err != nil {
 		b.err = err
 	}
+}
+
+
+// P3-M9 (tier-5b): ASN.1 Builder/String methods, vendored from
+// go1.27.1 src/vendor/golang.org/x/crypto/cryptobyte/asn1.go.
+// The v0.41.0 module source used for the base package lacks them, but
+// std crypto/ecdsa (and the synthetic ecdsa source) needs AddASN1,
+// ReadASN1, ReadASN1Integer. ReadASN1Integer is simplified: only the
+// *big.Int case is implemented (the only one used by the tier-5
+// sources); other types panic (fail-fast, honest).
+
+// AddASN1 appends a DER-encoded ASN.1 object to the Builder.
+func (b *Builder) AddASN1(tag asn1.Tag, f BuilderContinuation) {
+	if b.err != nil {
+		return
+	}
+	if tag&0x1f == 0x1f {
+		b.err = asne("cryptobyte: high-tag number identifier octets not supported")
+		return
+	}
+	b.AddUint8(uint8(tag))
+	b.addLengthPrefixed(1, true, f)
+}
+
+func asne(s string) error {
+	return &asn1Error{s}
+}
+
+type asn1Error struct{ s string }
+
+func (e *asn1Error) Error() string { return e.s }
+
+// ReadASN1 reads the contents of a DER-encoded ASN.1 element (not
+// including tag and length bytes) into out, and advances. The element
+// must match the given tag. It reports whether the read was successful.
+func (s *String) ReadASN1(out *String, tag asn1.Tag) bool {
+	var t asn1.Tag
+	if !s.ReadAnyASN1(out, &t) || t != tag {
+		return false
+	}
+	return true
+}
+
+// ReadASN1Integer decodes an ASN.1 INTEGER and converts it to out.
+// Simplified from go1.27.1: only *big.Int and *[]byte are implemented
+// (the cases used by the tier-5 sources); other types panic.
+func (s *String) ReadASN1Integer(out interface{}) bool {
+	switch out := out.(type) {
+	case *big.Int:
+		return s.readASN1BigInt(out)
+	case *[]byte:
+		return s.readASN1Bytes(out)
+	default:
+		panic("cryptobyte: ReadASN1Integer: unsupported type")
+	}
+}
+
+func (s *String) readASN1Bytes(out *[]byte) bool {
+	var bytes String
+	if !s.ReadASN1(&bytes, asn1.INTEGER) || !checkASN1Integer(bytes) {
+		return false
+	}
+	*out = bytes
+	return true
+}
+
+var bigOne = big.NewInt(1)
+
+func (s *String) readASN1BigInt(out *big.Int) bool {
+	var bytes String
+	if !s.ReadASN1(&bytes, asn1.INTEGER) || !checkASN1Integer(bytes) {
+		return false
+	}
+	if bytes[0]&0x80 == 0x80 {
+		neg := make([]byte, len(bytes))
+		for i, b := range bytes {
+			neg[i] = ^b
+		}
+		out.SetBytes(neg)
+		out.Add(out, bigOne)
+		out.Neg(out)
+	} else {
+		out.SetBytes(bytes)
+	}
+	return true
+}
+
+func checkASN1Integer(bytes []byte) bool {
+	if len(bytes) == 0 {
+		return false
+	}
+	if len(bytes) == 1 {
+		return true
+	}
+	if bytes[0] == 0x00 && bytes[1]&0x80 == 0x00 {
+		return false
+	}
+	if bytes[0] == 0xff && bytes[1]&0x80 == 0x80 {
+		return false
+	}
+	return true
+}
+
+// ReadAnyASN1 reads a DER-encoded ASN.1 element (including tag and
+// length bytes) into out, and advances. It reports whether the read was
+// successful, and sets outTag to the tag of the element.
+func (s *String) ReadAnyASN1(out *String, outTag *asn1.Tag) bool {
+	return s.readASN1(out, outTag, false)
+}
+
+func (s *String) readASN1(out *String, outTag *asn1.Tag, skipHeader bool) bool {
+	if len(*s) < 2 {
+		return false
+	}
+	tag, lenByte := (*s)[0], (*s)[1]
+	if tag&0x1f == 0x1f {
+		return false
+	}
+	if outTag != nil {
+		*outTag = asn1.Tag(tag)
+	}
+	var length, headerLen uint32
+	if lenByte&0x80 == 0 {
+		length = uint32(lenByte) + 2
+		headerLen = 2
+	} else {
+		lenLen := lenByte & 0x7f
+		var len32 uint32
+		if lenLen == 0 || lenLen > 4 || len(*s) < int(2+lenLen) {
+			return false
+		}
+		lenBytes := String((*s)[2 : 2+lenLen])
+		if !lenBytes.readUnsigned(&len32, int(lenLen)) {
+			return false
+		}
+		if len32 < 128 {
+			return false
+		}
+		length = len32 + 2 + uint32(lenLen)
+		headerLen = 2 + uint32(lenLen)
+	}
+	if uint32(len(*s)) < length {
+		return false
+	}
+	if skipHeader {
+		*out = (*s)[headerLen:length]
+	} else {
+		*out = (*s)[:length]
+	}
+	*s = (*s)[length:]
+	return true
 }
 
 `

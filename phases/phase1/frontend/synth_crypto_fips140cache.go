@@ -15,7 +15,7 @@ package fips140cache
 type Cache[K, V any] struct{}
 
 // Get returns new() without memoizing. The check function is ignored.
-func (c *Cache[K, V]) Get(k K, new func() (*V, error), check func(*V) bool) (*V, error) {
+func (c *Cache[K, V]) Get(k *K, new func() (*V, error), check func(*V) bool) (*V, error) {
 	return new()
 }
 

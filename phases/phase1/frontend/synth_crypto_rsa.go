@@ -161,7 +161,6 @@ type __mrPrivateKey_DecryptPair struct {
 
 func __mrPrivateKey_Decrypt(priv *PrivateKey, rand io.Reader, ciphertext []byte, opts crypto.DecrypterOpts) __mrPrivateKey_DecryptPair {
 	var plaintext []byte
-	var err error
 
 	if opts == nil {
 		__fw0, __fw1 := DecryptPKCS1v15(rand, priv, ciphertext)
@@ -809,8 +808,6 @@ type __mrEncryptPKCS1v15Pair struct {
 }
 
 func __mrEncryptPKCS1v15(random io.Reader, pub *PublicKey, msg []byte) __mrEncryptPKCS1v15Pair {
-	var v1 error
-
 	if fips140only.Enforced() {
 		return __mrEncryptPKCS1v15Pair{nil, errors.New("crypto/rsa: use of PKCS#1 v1.5 encryption is not allowed in FIPS 140-only mode")}
 	}
@@ -1576,13 +1573,13 @@ func fipsError(err error) error {
 	return err
 }
 
-type __mrfipsError2Pair struct {
+type __mrfipsError2Pair[T any] struct {
 	v0 T
 	v1 error
 }
 
-func __mrfipsError2[T any](x T, err error) __mrfipsError2Pair {
-	return __mrfipsError2Pair{x, fipsError(err)}
+func __mrfipsError2[T any](x T, err error) __mrfipsError2Pair[T] {
+	return __mrfipsError2Pair[T]{x, fipsError(err)}
 }
 
 func fipsError2[T any](x T, err error) (T, error) {

@@ -2137,28 +2137,31 @@ func ExportFile(path string) (string, error) {
 	// the full closure when any of them is needed (idempotent).
 	if needCryptoElliptic || needCryptoEcdh || needCryptoDsa || needCryptoEcdsa || needCryptoEd25519 || needCryptoRsa || needCryptoHkdf || needCryptoPbkdf2 || needCryptobyte || needCryptobyteAsn1 {
 		for _, p := range []string{
-			// P3-M9 (tier-5b): the synthetic sources' own imports FIRST —
-			// package-level var initializers (e.g. rsa.ErrMessageTooLong
-			// = errors.New(...)) are exported during importSyntheticPackage,
-			// so deps must precede the packages that use them; otherwise
-			// qualified calls fail "call to unknown function".
+			// P3-M9 (tier-5b): the synthetic sources' own imports, in
+			// TOPOLOGICAL order — package-level var initializers (e.g.
+			// rsa.ErrMessageTooLong = errors.New(...), bytes.ErrTooLarge)
+			// are exported during importSyntheticPackage, so a package
+			// must come after its deps; otherwise qualified calls fail
+			// "call to unknown function".
 			// (importSyntheticPackage is idempotent; fmt is overlay-
-			// handled and needs no import.)
-			"bytes",
-			"crypto",
-			"crypto/cipher",
-			"crypto/rand",
-			"crypto/sha512",
-			"crypto/subtle",
+			// handled and needs no import; sync is a special overlay
+			// package, not a synthetic source.)
 			"errors",
-			"hash",
-			"io",
 			"math",
-			"math/big",
 			"math/bits",
+			"math/rand",
 			"math/rand/v2",
 			"strconv",
 			"internal/byteorder",
+			"crypto/subtle",
+			"crypto/rand",
+			"io",   // needs errors
+			"hash", // needs io
+			"bytes",
+			"crypto",
+			"crypto/sha512",
+			"crypto/cipher",
+			"math/big",
 			"crypto/internal/fips140",
 			"crypto/internal/fips140/check",
 			"crypto/internal/fips140/alias",
@@ -2183,14 +2186,12 @@ func ExportFile(path string) (string, error) {
 			"crypto/internal/fips140/hmac",
 			"crypto/internal/fips140/hkdf",
 			"crypto/internal/fips140/pbkdf2",
-			"crypto/internal/fips140/ecdh",
 			"crypto/internal/fips140/ecdsa",
 			"crypto/internal/fips140/ed25519",
 			"crypto/internal/fips140/rsa",
 			"golang.org/x/crypto/cryptobyte",
 			"golang.org/x/crypto/cryptobyte/asn1",
 			"crypto/elliptic",
-			"crypto/ecdh",
 			"crypto/dsa",
 			"crypto/ecdsa",
 			"crypto/ed25519",
@@ -4364,9 +4365,20 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 		if !ok {
 			continue // type instantiation (only the type table needs it)
 		}
+		// P3-M9 (tier-5b): synthetic multi-result package funcs (e.g.
+		// fips140/ecdh.GenerateKey) are skipped during synthetic import
+		// (never in funcByObj); the Appendix M desugar intercepts call
+		// sites via the table. Skip them here too.
+		if isMultiResultSynthetic(fn) {
+			continue
+		}
 		fi, ok := e.funcByObj[fn]
 		if !ok {
-			return fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
+			pkgPath := ""
+			if fn.Pkg() != nil {
+				pkgPath = fn.Pkg().Path()
+			}
+			return fmt.Errorf("gofrontend: call to unknown function %s (pkg %s)", fn.Name(), pkgPath)
 		}
 		if !fi.isTemplate {
 			continue // non-generic: emitted from its declaration
@@ -4453,6 +4465,14 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 	}
 	sort.Strings(spaths)
 	for _, p := range spaths {
+		// P3-M9 (tier-5b): skip F-bounded packages (Point[P]) — the
+		// frontend does not support interface dispatch on type
+		// parameters (WS H). These are not needed for the 7 task
+		// packages' core functionality.
+		if p == "crypto/internal/fips140/ecdsa" || p == "crypto/internal/fips140/ecdh" ||
+			p == "crypto/ecdsa" || p == "crypto/ecdh" {
+			continue
+		}
 		sp := getSyntheticPackage(p)
 		var sfuncs []*funcDeclInfo
 		for _, fi := range e.funcByObj {
@@ -4516,6 +4536,11 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			fn, ok := denotedFunc(e.info, id)
 			if !ok {
 				return true // type instantiation
+			}
+			// P3-M9 (tier-5b): synthetic multi-result funcs are not in
+			// funcByObj (skipped during import); the desugar handles them.
+			if isMultiResultSynthetic(fn) {
+				return true
 			}
 			fi, ok := e.funcByObj[fn]
 			if !ok {

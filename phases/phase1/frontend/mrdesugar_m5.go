@@ -402,6 +402,7 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/cipher", "Write", "StreamWriter", "__streamWriterWrite", "", "streamWriterWritePair", []string{"n", "err"}},
 	// crypto/rand: Read is multi-result (fail-fast).
 	{"crypto/rand", "Read", "", "__randRead", "", "readPair", []string{"n", "err"}},
+	{"crypto/rand", "Prime", "", "__mrPrime", "", "__mrPrimePair", []string{"v0", "v1"}},
 	// P3-M8b: hash.Cloner.Clone for every synthetic digest (itab wiring
 	// for the m8IfaceMultiResultMethods "hash"/"Clone" entry above; the
 	// concrete Clone stubs are fail-fast, the real logic is each

@@ -25,7 +25,7 @@ import (
 	"math/big"
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/cryptobyte/asn1"
-	"math/rand/v2"
+	randv2 "math/rand/v2"
 )
 
 
@@ -855,7 +855,8 @@ func __mrprivateKeyToFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], priv *PrivateKey)
 	D := priv.D.FillBytes(make([]byte, size, maxScalarSize))
 
 	__fw0, __fw1 := privateKeyCache.Get(priv, func() (*ecdsa.PrivateKey, error) {
-			return ecdsa.NewPrivateKey(c, D, Q)
+			k, err := ecdsa.NewPrivateKey(c, D, Q)
+		return k, err
 		}, func(k *ecdsa.PrivateKey) bool {
 			return subtle.ConstantTimeCompare(k.PublicKey().Bytes(), Q) == 1 &&
 				subtle.ConstantTimeCompare(k.Bytes(), D) == 1
@@ -1043,7 +1044,7 @@ func __mrsignLegacy(priv *PrivateKey, csprng io.Reader, hash []byte) __mrsignLeg
 	for i, b := range hash {
 		seed[i%32] ^= b
 	}
-	csprng = rand.NewChaCha8(seed)
+	csprng = randv2.NewChaCha8(seed)
 
 	// SEC 1, Version 2.0, Section 4.1.3
 	N := c.Params().N

@@ -5432,6 +5432,30 @@ const syntheticMathBigSource = (
 "	panic(\"math/big: ReadByte: multi-result desugar\")\n" +
 "}\n" +
 "\n" +
+"func (r byteReader) ReadRune() (rune, int, error) {\n" +
+"\treturn r.ScanState.ReadRune()\n" +
+"}\n" +
+"\n" +
+"func (r byteReader) UnreadRune() error {\n" +
+"\treturn r.ScanState.UnreadRune()\n" +
+"}\n" +
+"\n" +
+"func (r byteReader) SkipSpace() {\n" +
+"\tr.ScanState.SkipSpace()\n" +
+"}\n" +
+"\n" +
+"func (r byteReader) Token(skipSpace bool, f func(rune) bool) ([]byte, error) {\n" +
+"\treturn r.ScanState.Token(skipSpace, f)\n" +
+"}\n" +
+"\n" +
+"func (r byteReader) Width() (int, bool) {\n" +
+"\treturn r.ScanState.Width()\n" +
+"}\n" +
+"\n" +
+"func (r byteReader) Read(buf []byte) (int, error) {\n" +
+"\treturn r.ScanState.Read(buf)\n" +
+"}\n" +
+"\n" +
 "func (r byteReader) UnreadByte() error {\n" +
 "	return r.UnreadRune()\n" +
 "}\n" +

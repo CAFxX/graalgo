@@ -17,7 +17,11 @@ const syntheticRandSource = `package rand
 // Int/Prime are omitted (signatures require math/big, deferred to M9+).
 // Re-test trigger: math/big lands (Int/Prime).
 
-import "io"
+import (
+	"errors"
+	"io"
+	"math/big"
+)
 
 //go:linkname graalgoOsGetrandom graalgo.os.getrandom
 func graalgoOsGetrandom(b []byte) int64
@@ -77,4 +81,45 @@ func Text() string {
 // (re-test: math/big lands). They are not stubbed because a stub with the
 // wrong signature would be worse than absence; callers get a clean
 // "undefined" at type-check time.
+
+// P3-M9 (tier-5b): Prime for RSA key generation (multi-result desugar).
+type __mrPrimePair struct {
+	v0 *big.Int
+	v1 error
+}
+
+func __mrPrime(r io.Reader, bits int) __mrPrimePair {
+	if bits < 2 {
+		return __mrPrimePair{nil, errors.New("crypto/rand: prime size must be at least 2-bit")}
+	}
+	b := uint(bits % 8)
+	if b == 0 {
+		b = 8
+	}
+	bytes := make([]byte, (bits+7)/8)
+	p := new(big.Int)
+	for {
+		if _, err := io.ReadFull(r, bytes); err != nil {
+			return __mrPrimePair{nil, err}
+		}
+		bytes[0] &= uint8(int(1<<b) - 1)
+		if b >= 2 {
+			bytes[0] |= 3 << (b - 2)
+		} else {
+			bytes[0] |= 1
+			if len(bytes) > 1 {
+				bytes[1] |= 0x80
+			}
+		}
+		bytes[len(bytes)-1] |= 1
+		p.SetBytes(bytes)
+		if p.ProbablyPrime(20) {
+			return __mrPrimePair{p, nil}
+		}
+	}
+}
+
+func Prime(r io.Reader, bits int) (*big.Int, error) {
+	panic("crypto/rand: Prime: multi-result desugar")
+}
 `

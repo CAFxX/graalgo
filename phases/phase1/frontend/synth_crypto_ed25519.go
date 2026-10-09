@@ -101,8 +101,9 @@ type __mrPrivateKey_SignPair struct {
 func __mrPrivateKey_Sign(priv PrivateKey, rand io.Reader, message []byte, opts crypto.SignerOpts) __mrPrivateKey_SignPair {
 	var err error
 
-	k, err := privateKeyCache.Get(priv[0], func() (*ed25519.PrivateKey, error) {
-		return ed25519.NewPrivateKey(priv)
+	k, err := privateKeyCache.Get(&priv[0], func() (*ed25519.PrivateKey, error) {
+		k, err := ed25519.NewPrivateKey(priv)
+	return k, err
 	}, func(k *ed25519.PrivateKey) bool {
 		return subtle.ConstantTimeCompare(priv, k.Bytes()) == 1
 	})
@@ -239,8 +240,9 @@ func Sign(privateKey PrivateKey, message []byte) []byte {
 }
 
 func sign(signature []byte, privateKey PrivateKey, message []byte) {
-	k, err := privateKeyCache.Get(privateKey[0], func() (*ed25519.PrivateKey, error) {
-		return ed25519.NewPrivateKey(privateKey)
+	k, err := privateKeyCache.Get(&privateKey[0], func() (*ed25519.PrivateKey, error) {
+		k, err := ed25519.NewPrivateKey(privateKey)
+	return k, err
 	}, func(k *ed25519.PrivateKey) bool {
 		return subtle.ConstantTimeCompare(privateKey, k.Bytes()) == 1
 	})
