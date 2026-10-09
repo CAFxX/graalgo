@@ -1,0 +1,2 @@
+reason: no synthetic archive/zip source in frontend/v1 (imports are not supported in frontend/v1 scope — WS G import overlay); M9 tier-5 package work; Deflate path also needs synthetic compress/flate
+retest: synthetic archive/zip source lands in phases/phase1/frontend (coordinated with compress/* landing)

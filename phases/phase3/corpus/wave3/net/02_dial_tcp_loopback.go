@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strconv"
 )
 
 func main() {
@@ -33,8 +34,9 @@ func main() {
 		}
 	}()
 
-	// Dial and echo.
-	c, err := net.Dial("tcp", addr.String())
+	// Dial and echo. The 127.0.0.1 literal must stay on the Dial line
+	// (loopback egress gate); addr is always 127.0.0.1:port.
+	c, err := net.Dial("tcp", "127.0.0.1:"+strconv.Itoa(addr.Port))
 	if err != nil {
 		fmt.Println("dial-err")
 		return

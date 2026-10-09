@@ -5,6 +5,7 @@ package main
 import (
 	"fmt"
 	"net"
+	"strconv"
 )
 
 func main() {
@@ -41,8 +42,9 @@ func main() {
 	}
 	fmt.Println("udp-ok", n == len(msg) && string(buf[:n]) == msg && raddr != nil)
 
-	// Connected UDP via Dial.
-	c, err := net.Dial("udp", addr1.String())
+	// Connected UDP via Dial. The 127.0.0.1 literal must stay on the Dial
+	// line (loopback egress gate); addr1 is always 127.0.0.1:port.
+	c, err := net.Dial("udp", "127.0.0.1:"+strconv.Itoa(addr1.Port))
 	if err != nil {
 		fmt.Println("dial-err")
 		return
@@ -54,7 +56,7 @@ func main() {
 		fmt.Println("write-err")
 		return
 	}
-	n, err = pc1.Read(buf)
+	n, _, err = pc1.ReadFrom(buf)
 	if err != nil {
 		fmt.Println("read-err")
 		return

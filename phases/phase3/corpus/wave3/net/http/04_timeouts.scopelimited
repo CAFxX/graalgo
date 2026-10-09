@@ -1,0 +1,2 @@
+reason: needs synthetic net/http AND TCP socket syscalls + netpoller (no socket intrinsics in frontend/v1)
+retest: synthetic net/http lands AND socket/netpoll intrinsics land (P3-M9 WS G or later)

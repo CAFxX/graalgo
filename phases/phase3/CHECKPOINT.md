@@ -2129,3 +2129,160 @@ Bugs found: (1) uint32 == cross-boxing, (2) itab dispatcher type assertions.
 Bug fixed by coordinator: GoEquality now handles Long==Integer and
 Integer==Long cross-boxed comparison (commit 487f48c). The 2 crc32
 failures should now pass — retest pending.
+
+## P3-M9 tier-5 fan-out (2026-10-09 ~16:10 CEST, coordinator graalgo-phase3-m9-tier5)
+
+Tier-1 complete (tip 9783337). Tier-5 scope dispatched to 3 workers on branch m9:
+1. **compress** (flate, gzip, zlib, lzw, bzip2) — independent, corpus design §§5-8
+2. **asymmetric crypto** (elliptic→ecdh→dsa→ecdsa→ed25519→rsa→hkdf→pbkdf2) — needs math/big (done); RISK-M9-3
+3. **net/http + archive** (http loopback-only, tar, zip, mime/*) — tar/zip wait on compress; http needs tls to compile (parallel track); RISK-M9-5
+
+Gates verified: WS-D dispatch (M8a), netpoller (tier-1d), math/big (tier-1).
+Egress grep gate enforced for http (loopback-only).
+Registry: graalgo-phase3-m9-tier5 active.
+
+## P3-M9 tier-5 http/archive worker start (2026-10-09 ~16:10 CEST)
+
+Worker 3/11 (graalgo-phase3-m9-tier5-http): scope net/http (loopback-only),
+archive/tar, archive/zip, mime, mime/multipart, mime/quotedprintable on
+branch m9. Registered in work-registry.
+Smoke test: graalgo frontend rejects `import "net/http"` cleanly —
+`imports are not supported in frontend/v1 scope (WS G import overlay)`.
+No synthetic sources exist yet for any of the 6 packages (checked
+phases/phase1/frontend/synth_*.go), so all corpus programs will be
+`.scopelimited` with retest triggers (gc leg validates each is real,
+deterministic Go). tar/zip coordination: compress worker has not landed
+yet — corpus will pin via std compress/* (gc leg), retest names synthetic
+archive/tar|zip + compress landing.
+
+## P3-M9 tier-5 http/archive worker: mime/* corpus green under gc (2026-10-09 ~16:35 CEST)
+
+- mime/00_mediatype.go, mime/multipart/01_multipart.go,
+  mime/quotedprintable/02_qp.go: all exit 0 under gc 1.27.1, all pins
+  true. Real gc behaviors discovered and pinned (not guessed):
+  RFC2231 mixed encoded/plain continuations take later sections
+  literally ("fooutf-8'' bar.txt"); malformed encoded-words pass
+  through with no error; ParseMediaType("bogus") returns no error;
+  duplicate params -> "mime: duplicate parameter name" error;
+  quotedprintable reader is fully lenient (=ZZ/=E2-truncated/lone-=
+  all pass through, no errors); qp writer CRLF-normalizes bare \n.
+- All three marked .scopelimited (no synthetic mime* sources in
+  frontend/v1; retest: synthetic source lands).
+- Next: net/http (7 programs), archive/tar (4), archive/zip (4).
+
+## P3-M9 tier-5 compress worker start (2026-10-09 ~16:45 CEST)
+
+Worker (graalgo-phase3-m9-tier5-compress): scope compress/flate, compress/gzip,
+compress/zlib, compress/lzw, compress/bzip2 on branch m9. Registered in
+work-registry.
+
+Frontend recon (all verified against tree, not inferred):
+- Synthetic compress sources do NOT exist yet; will vendor gc 1.27.1 sources
+  into phases/phase1/frontend/synth_compress_{flate,gzip,zlib,lzw,bzip2}.go
+  via a generator (gen_synth_compress.py), following the gen_synth_bufio.py
+  Appendix-M pattern (pair structs + __-helpers + m7MultiResultFuncs entries).
+- Touch points: synth_machinery.go (syntheticSources map + isMultiResultSynthetic
+  pkg list + multiResultSyntheticError M9 milestone), export.go (overlayImporter
+  cases + 2 allow-list spots), mrdesugar_m5.go (m7MultiResultFuncs entries —
+  the table consulted by concrete-call, method-call AND interface-dispatch
+  paths; m9 table is package-call-only so NOT used).
+- Deps all synthetic-available: bufio, errors, io, math/bits, slices (Clone,
+  SortFunc), strconv (Atoi/FormatInt/Itoa), fmt (Errorf only — the Fprintf hits
+  were test files), hash, hash/adler32, hash/crc32, encoding/binary, time, cmp.
+- Adaptations needed: sync.OnceValue -> local generic __flateOnceValue (M2 sync
+  surface lacks OnceValue); load_store.go generics kept (template machinery);
+  regmask: amd64 variant (63).
+- Multi-result inventory: flate 12 (NewWriterLevel, NewWriterDict, Writer.Write,
+  decompressor.Read, compressor.findMatch[3]/tryBetterMatchAtEnd/write,
+  huffmanBitWriter.headerSize/dynamicSize/storedSize/indexTokens,
+  decompressor.huffSym); gzip 5 (NewReader, Reader.readString/readHeader/Read,
+  NewWriterLevel, Writer.Write); zlib 5 (NewReader, NewReaderDict, reader.Read,
+  NewWriterLevel, NewWriterLevelDict, Writer.Write); lzw 4 (Reader.readLSB/
+  readMSB/Read, Writer.Write); bzip2 4 (reader.Read/read,
+  newHuffmanTree/buildHuffmanNode).
+- Corpus: 5+4+3+3+bzip2 programs per 03-corpus-design.md sections 5-8
+  (bzip2 not in design doc — will design: decompress pinned blobs).
+- Sibling worker tier-5-http/archive waits on compress landing for tar/zip.
+
+## P3-M9 tier-5 asymmetric-crypto worker (2026-10-09 ~16:10 CEST)
+
+Worker: graalgo-phase3-m9-tier5-asymcrypto (registered). Worktree ~/workspace/graalgo-m9, branch m9.
+Scope: crypto/elliptic → crypto/ecdh → crypto/dsa → crypto/ecdsa → crypto/ed25519 → crypto/rsa → crypto/hkdf → crypto/pbkdf2.
+
+Design (from go1.27.1 source analysis):
+- crypto/elliptic: clean (io, math/big, sync) — vendor as-is.
+- All other public packages delegate to crypto/internal/fips140/* (pure-Go legs selectable, no asm).
+- Strategy: vendor fips140 subpackages (ecdh, ecdsa, ed25519, rsa, hkdf, pbkdf2, hmac, sha256, sha512, sha3, bigmod, nistec+fiat, edwards25519+field, subtle, drbg→adapted) + stubs for fips140 root (Enabled=false), check, fips140only, fips140cache (no-memoize), boring (notboring), bbig (no-unsafe), crypto/internal/rand (adapted), constanttime, fips140deps/byteorder, fips140hash (no linkname), cryptobyte+cryptobyte/asn1 (external fetch).
+- Excluded: cast.go files (FIPS self-tests, no-op in default mode); fipsSelfTest stubbed as no-op var in fips140/rsa.
+- Corpus: fixed RFC/wycheproof vectors for deterministic APIs; sign→verify round-trip booleans for randomized APIs (Go 1.26+ ignores custom rand readers by default — CustomReader returns global DRBG reader).
+- Multi-result members via Appendix M __-helpers + table entries (net/url precedent; native WS-D for synthetic pkgs not landed).
+
+## P3-M9 tier-5 http/archive worker: net/http corpus green under gc (2026-10-09 ~17:00 CEST)
+
+- net/http/: 7 programs, all exit 0 under gc 1.27.1, all pins true.
+  Real gc behaviors discovered and pinned (red-green: pins failed first,
+  then corrected to observed truth):
+  (1) http.Server.Serve closes the listener on return, so a one-shot
+  pipe listener's 2nd Accept must block until Close (fixed a deadlock +
+  a Serve-returns-early tear-down);
+  (2) oversized headers -> "431 Request Header Fields Too Large" (not
+  400), threshold not a strict byte count (4K line passes, 8K line 431s
+  with MaxHeaderBytes=1024);
+  (3) 100-continue interim is two lines (status + blank);
+  (4) url.String preserves a raw query with literal space verbatim.
+- Markers: 00/01/02/05 .scopelimited (need synthetic net/http);
+  03/04/06 .scopelimited (need synthetic net/http + socket/netpoll);
+  04 also .timing. README.md + run_differential.sh written.
+- Next: archive/tar (4), archive/zip (4).
+
+## P3-M9 tier-5 http/archive worker: archive/tar corpus green under gc (2026-10-09 ~17:30 CEST)
+
+- archive/tar/: 4 programs, all exit 0 under gc 1.27.1, all pins true.
+  Real gc behaviors discovered and pinned (red-green):
+  (1) USTAR 9GB Size -> "cannot encode header" error (NOT
+  tar.ErrFieldTooLong); (2) FormatUnknown auto-selects, never errors;
+  (3) write-before-header -> ErrWriteTooLong; Close idempotent;
+  (4) tar.Writer OWNS PAX time keys: user "atime" value overridden by
+  the record derived from hdr.AccessTime, consumed back on read;
+  (5) GNU.sparse.* PAX records carried as plain records, not
+  interpreted by the reader (documented non-behavior).
+- All .scopelimited (retest: synthetic archive/tar lands, coordinated
+  with compress/*). README.md + run_differential.sh written.
+- Next: archive/zip (4 programs).
+
+## P3-M9 tier-5 http/archive worker: COMPLETE (2026-10-09 ~18:00 CEST)
+
+All 18 corpus programs green under gc 1.27.1 (exit 0, byte-deterministic
+across runs, all pins true), 0 failed via run_wave3.sh:
+- mime/00_mediatype, mime/multipart/01_multipart,
+  mime/quotedprintable/02_qp (3)
+- net/http/00..06 (7: pipe roundtrip/chunked/adversarial, loopback
+  client/server, timeouts(+.timing), query/form recorder, loopback
+  adversarial)
+- archive/tar/00..03 (4), archive/zip/00..03 (4)
+All 18 are .scopelimited (no synthetic sources for any of the 6 packages
+in frontend/v1; loopback http legs also need socket/netpoll); each names
+reason + retest trigger. Per-package README.md + run_differential.sh.
+Egress gate passes over the whole wave3 tree.
+
+Red-green highlights (pins failed first, corrected to observed gc truth):
+http one-shot pipe listener (Serve closes listener on return — 2nd Accept
+must block until Close); oversized headers -> 431 not 400, wire limit is
+MaxHeaderBytes+4096, 431-over-pipe needs async writer (sync write is
+documented "undefined behavior" in server.go); 100-continue interim is two
+lines; tar USTAR-9GB is "cannot encode" (not ErrFieldTooLong), writer owns
+PAX time keys, GNU.sparse PAX records not interpreted; zip writer keeps
+CreatorVersion creator byte but stamps version 20, appends 0x5455 extra
+when Modified set, rejects 64KB comments; qp reader fully lenient.
+
+Harness fixes (other workers' files, mechanical, behavior-preserving):
+- Renamed 34 `*.go.scopelimited` -> `*.scopelimited` across wave3
+  (authoritative wave-1 convention; run_wave3.sh never matched the
+  .go-infix names, so NO scope limit was ever honored) + my
+  `04_timeouts.go.timing` -> `04_timeouts.timing`.
+- net/: fixed 3 loopback-egress-gate violations (127.0.0.1 literal now on
+  each Dial/DialTimeout line; addrs were always loopback) and 1 build bug
+  (`pc1.Read` -> `pc1.ReadFrom` on net.PacketConn — 04_udp_loopback.go
+  never compiled). Note: 04_udp_loopback's WriteTo path hits the VM
+  sandbox EPERM on unconnected sendto (documented in net/README);
+  connected UDP works. Coordinator: re-run the net/ differential suite.

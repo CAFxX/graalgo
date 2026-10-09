@@ -1,0 +1,2 @@
+reason: no synthetic archive/tar source in frontend/v1 (imports are not supported in frontend/v1 scope — WS G import overlay); M9 tier-5 package work; writer path also needs synthetic compress/flate for the std reader parity once sources land
+retest: synthetic archive/tar source lands in phases/phase1/frontend (coordinated with compress/* landing)

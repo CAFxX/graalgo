@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -16,10 +17,11 @@ func main() {
 		fmt.Println("listen-err")
 		return
 	}
-	addr := ln.Addr().String()
+	addr := ln.Addr().(*net.TCPAddr)
 	ln.Close()
 
-	_, err = net.DialTimeout("tcp", addr, 5*time.Second)
+	// The 127.0.0.1 literal must stay on the Dial line (loopback egress gate).
+	_, err = net.DialTimeout("tcp", "127.0.0.1:"+strconv.Itoa(addr.Port), 5*time.Second)
 	if err == nil {
 		fmt.Println("refused-err")
 		return
