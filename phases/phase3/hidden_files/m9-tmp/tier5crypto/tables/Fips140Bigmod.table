@@ -1,0 +1,8 @@
+{"crypto/internal/fips140/bigmod", "GCDVarTime", "Nat", "__mrNat_GCDVarTime", "", "__mrNat_GCDVarTimePair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/bigmod", "InverseVarTime", "Nat", "__mrNat_InverseVarTime", "", "__mrNat_InverseVarTimePair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/bigmod", "NewModulus", "", "__mrNewModulus", "", "__mrNewModulusPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/bigmod", "NewModulusProduct", "", "__mrNewModulusProduct", "", "__mrNewModulusProductPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/bigmod", "SetBytes", "Nat", "__mrNat_SetBytes", "", "__mrNat_SetBytesPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/bigmod", "SetOverflowingBytes", "Nat", "__mrNat_SetOverflowingBytes", "", "__mrNat_SetOverflowingBytesPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/bigmod", "extendedGCD", "", "__mrextendedGCD", "", "__mrextendedGCDPair", []string{"u", "A", "err"}},
+{"crypto/internal/fips140/bigmod", "newModulus", "", "__mrnewModulus", "", "__mrnewModulusPair", []string{"v0", "v1"}},

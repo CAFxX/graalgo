@@ -1,0 +1,5 @@
+{"crypto/internal/fips140/sha512", "AppendBinary", "Digest", "__mrDigest_AppendBinary", "", "__mrDigest_AppendBinaryPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/sha512", "Clone", "Digest", "__mrDigest_Clone", "", "__mrDigest_ClonePair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/sha512", "MarshalBinary", "Digest", "__mrDigest_MarshalBinary", "", "__mrDigest_MarshalBinaryPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/sha512", "Write", "Digest", "__mrDigest_Write", "", "__mrDigest_WritePair", []string{"nn", "err"}},
+{"crypto/internal/fips140/sha512", "consumeUint64", "", "__mrconsumeUint64", "", "__mrconsumeUint64Pair", []string{"v0", "v1"}},

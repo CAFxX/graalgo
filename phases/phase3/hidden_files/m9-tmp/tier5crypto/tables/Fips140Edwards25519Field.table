@@ -1,0 +1,3 @@
+{"crypto/internal/fips140/edwards25519/field", "SetBytes", "Element", "__mrElement_SetBytes", "", "__mrElement_SetBytesPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/edwards25519/field", "SqrtRatio", "Element", "__mrElement_SqrtRatio", "", "__mrElement_SqrtRatioPair", []string{"R", "wasSquare"}},
+{"crypto/internal/fips140/edwards25519/field", "mul51", "", "__mrmul51", "", "__mrmul51Pair", []string{"lo", "hi"}},

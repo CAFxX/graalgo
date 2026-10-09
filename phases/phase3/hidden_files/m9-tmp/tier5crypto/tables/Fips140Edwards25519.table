@@ -1,0 +1,4 @@
+{"crypto/internal/fips140/edwards25519", "SetBytes", "Point", "__mrPoint_SetBytes", "", "__mrPoint_SetBytesPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/edwards25519", "SetBytesWithClamping", "Scalar", "__mrScalar_SetBytesWithClamping", "", "__mrScalar_SetBytesWithClampingPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/edwards25519", "SetCanonicalBytes", "Scalar", "__mrScalar_SetCanonicalBytes", "", "__mrScalar_SetCanonicalBytesPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/edwards25519", "SetUniformBytes", "Scalar", "__mrScalar_SetUniformBytes", "", "__mrScalar_SetUniformBytesPair", []string{"v0", "v1"}},

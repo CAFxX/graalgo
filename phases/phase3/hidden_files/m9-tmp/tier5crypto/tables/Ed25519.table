@@ -1,0 +1,2 @@
+{"crypto/ed25519", "GenerateKey", "", "__mrGenerateKey", "", "__mrGenerateKeyPair", []string{"v0", "v1", "v2"}},
+{"crypto/ed25519", "Sign", "PrivateKey", "__mrPrivateKey_Sign", "", "__mrPrivateKey_SignPair", []string{"signature", "err"}},

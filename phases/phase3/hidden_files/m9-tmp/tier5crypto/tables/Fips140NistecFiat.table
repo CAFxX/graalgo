@@ -1,0 +1,4 @@
+{"crypto/internal/fips140/nistec/fiat", "SetBytes", "P224Element", "__mrP224Element_SetBytes", "", "__mrP224Element_SetBytesPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/nistec/fiat", "SetBytes", "P256Element", "__mrP256Element_SetBytes", "", "__mrP256Element_SetBytesPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/nistec/fiat", "SetBytes", "P384Element", "__mrP384Element_SetBytes", "", "__mrP384Element_SetBytesPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/nistec/fiat", "SetBytes", "P521Element", "__mrP521Element_SetBytes", "", "__mrP521Element_SetBytesPair", []string{"v0", "v1"}},

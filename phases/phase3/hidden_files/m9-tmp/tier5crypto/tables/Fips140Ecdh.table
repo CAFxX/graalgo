@@ -1,0 +1,5 @@
+{"crypto/internal/fips140/ecdh", "ECDH", "", "__mrECDH", "", "__mrECDHPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/ecdh", "GenerateKey", "", "__mrGenerateKey", "", "__mrGenerateKeyPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/ecdh", "NewPrivateKey", "", "__mrNewPrivateKey", "", "__mrNewPrivateKeyPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/ecdh", "NewPublicKey", "", "__mrNewPublicKey", "", "__mrNewPublicKeyPair", []string{"v0", "v1"}},
+{"crypto/internal/fips140/ecdh", "ecdh", "", "__mrecdh", "", "__mrecdhPair", []string{"v0", "v1"}},
