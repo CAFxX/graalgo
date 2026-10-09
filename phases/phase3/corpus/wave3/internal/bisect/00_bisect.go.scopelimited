@@ -1,0 +1,3 @@
+reason: external programs cannot import internal/* (go tool restriction); no synthetic adapter — the matcher's stack-pattern core needs runtime.Callers/CallersFrames, and there is no in-tree consumer
+retest: internal/bisect runtime integration lands (stack-capture intrinsics)
+nogc: import "internal/bisect" is rejected by the go tool outside the parent tree of an internal/ directory

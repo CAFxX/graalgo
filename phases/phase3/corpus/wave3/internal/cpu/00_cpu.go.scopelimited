@@ -1,0 +1,3 @@
+reason: external programs cannot import internal/* (go tool restriction); no synthetic adapter — CPU feature detection needs cpuid/hwcap intrinsics with no honest synthetic values, and there is no in-tree consumer
+retest: internal/cpu backend support lands (feature-detection intrinsics)
+nogc: import "internal/cpu" is rejected by the go tool outside the parent tree of an internal/ directory

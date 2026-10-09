@@ -1,0 +1,3 @@
+reason: external programs cannot import internal/* (go tool restriction); no synthetic adapter — needs the generated internal/godebugs table plus runtime linknamed hooks (setUpdate/registerMetric), and there is no in-tree consumer
+retest: internal/godebug runtime integration lands (godebugs table + update/metric hooks)
+nogc: import "internal/godebug" is rejected by the go tool outside the parent tree of an internal/ directory
