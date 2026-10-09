@@ -67,118 +67,130 @@ func TestM7StrconvJsonDesugarWiring(t *testing.T) {
 			name = want.pkgPath + "." + want.recvType + "." + want.name
 		}
 		t.Run(name, func(t *testing.T) {
-			// 1. Exactly one table entry for (pkgPath, name, recvType)
-			//    carrying the expected helper/pair/fields.
-			var got *m7MultiResultFunc
-			for i := range m7MultiResultFuncs {
-				mf := &m7MultiResultFuncs[i]
-				if mf.pkgPath == want.pkgPath && mf.name == want.name && mf.recvType == want.recvType {
-					if got != nil {
-						t.Fatalf("duplicate m7MultiResultFuncs entry for %s (recv %q)", name, want.recvType)
-					}
-					got = mf
-				}
-			}
-			if got == nil {
-				t.Fatalf("no m7MultiResultFuncs entry for %s (recv %q)", name, want.recvType)
-			}
-			if got.helper != want.helper {
-				t.Fatalf("table helper = %q, want %q", got.helper, want.helper)
-			}
-			if got.pairType != want.pairType {
-				t.Fatalf("table pairType = %q, want %q", got.pairType, want.pairType)
-			}
-			if len(got.pairFields) != len(want.pairFields) {
-				t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
-			}
-			for i, f := range want.pairFields {
-				if got.pairFields[i] != f {
-					t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
-				}
-			}
-
-			sp := getSyntheticPackage(want.pkgPath)
-			if sp == nil || sp.pkg == nil {
-				t.Fatalf("synthetic package %q not loaded", want.pkgPath)
-			}
-
-			// 2. The multi-result function/method exists in the synthetic
-			//    package.
-			mrFn := lookupM7MultiResultFunc(t, sp, want)
-			sig, ok := mrFn.Type().(*types.Signature)
-			if !ok {
-				t.Fatalf("synthetic %s is not a function signature", name)
-			}
-			if sig.Results().Len() != len(want.pairFields) {
-				t.Fatalf("synthetic %s has %d results, want %d (pairFields)", name, sig.Results().Len(), len(want.pairFields))
-			}
-
-			// 3. The __-helper exists in the synthetic package scope and
-			//    is a *types.Func.
-			hobj := sp.pkg.Scope().Lookup(want.helper)
-			if hobj == nil {
-				t.Fatalf("synthetic helper %s.%s missing from package scope", want.pkgPath, want.helper)
-			}
-			helper, ok := hobj.(*types.Func)
-			if !ok {
-				t.Fatalf("synthetic %s.%s is %T, want *types.Func", want.pkgPath, want.helper, hobj)
-			}
-			hsig, ok := helper.Type().(*types.Signature)
-			if !ok {
-				t.Fatalf("synthetic helper %s has non-signature type %v", want.helper, helper.Type())
-			}
-
-			// 4. The helper's params accept the multi-result call's args
-			//    positionally: [receiver,] params — the desugar passes the
-			//    original args straight through, receiver prepended.
-			var wantParams []types.Type
-			if sig.Recv() != nil {
-				wantParams = append(wantParams, sig.Recv().Type())
-			}
-			for i := 0; i < sig.Params().Len(); i++ {
-				wantParams = append(wantParams, sig.Params().At(i).Type())
-			}
-			if hsig.Params().Len() != len(wantParams) {
-				t.Fatalf("helper %s takes %d params, multi-result %s has %d ([recv,] params)",
-					want.helper, hsig.Params().Len(), name, len(wantParams))
-			}
-			for i, wp := range wantParams {
-				if !types.Identical(hsig.Params().At(i).Type(), wp) {
-					t.Fatalf("helper %s param %d type %v != multi-result %s arg type %v",
-						want.helper, i, hsig.Params().At(i).Type(), name, wp)
-				}
-			}
-
-			// 5. The pair struct exists with exactly the listed fields in
-			//    order, each field type identical to the corresponding
-			//    multi-result result type.
-			pobj := sp.pkg.Scope().Lookup(want.pairType)
-			if pobj == nil {
-				t.Fatalf("synthetic pair type %s.%s missing from package scope", want.pkgPath, want.pairType)
-			}
-			nt, ok := pobj.Type().(*types.Named)
-			if !ok {
-				t.Fatalf("synthetic %s has type %T, want named struct", want.pairType, pobj.Type())
-			}
-			st, ok := nt.Underlying().(*types.Struct)
-			if !ok {
-				t.Fatalf("synthetic %s underlying is %T, want struct", want.pairType, nt.Underlying())
-			}
-			if st.NumFields() != len(want.pairFields) {
-				t.Fatalf("pair %s has %d fields, want %d", want.pairType, st.NumFields(), len(want.pairFields))
-			}
-			for i, fname := range want.pairFields {
-				f := st.Field(i)
-				if f.Name() != fname {
-					t.Fatalf("pair %s field %d is %q, want %q", want.pairType, i, f.Name(), fname)
-				}
-				rt := sig.Results().At(i).Type()
-				if !types.Identical(f.Type(), rt) {
-					t.Fatalf("pair %s field %q type %v != result %d type %v",
-						want.pairType, fname, f.Type(), i, rt)
-				}
-			}
+			checkM7DesugarWiring(t, want)
 		})
+	}
+}
+
+// checkM7DesugarWiring verifies a single m7MultiResultFuncs table entry
+// against its synthetic package. Shared by TestM7StrconvJsonDesugarWiring
+// and TestM7CompressDesugarWiring.
+func checkM7DesugarWiring(t *testing.T, want m7StrconvJsonExpect) {
+	t.Helper()
+	name := want.pkgPath + "." + want.name
+	if want.recvType != "" {
+		name = want.pkgPath + "." + want.recvType + "." + want.name
+	}
+	// 1. Exactly one table entry for (pkgPath, name, recvType)
+	//    carrying the expected helper/pair/fields.
+	var got *m7MultiResultFunc
+	for i := range m7MultiResultFuncs {
+		mf := &m7MultiResultFuncs[i]
+		if mf.pkgPath == want.pkgPath && mf.name == want.name && mf.recvType == want.recvType {
+			if got != nil {
+				t.Fatalf("duplicate m7MultiResultFuncs entry for %s (recv %q)", name, want.recvType)
+			}
+			got = mf
+		}
+	}
+	if got == nil {
+		t.Fatalf("no m7MultiResultFuncs entry for %s (recv %q)", name, want.recvType)
+	}
+	if got.helper != want.helper {
+		t.Fatalf("table helper = %q, want %q", got.helper, want.helper)
+	}
+	if got.pairType != want.pairType {
+		t.Fatalf("table pairType = %q, want %q", got.pairType, want.pairType)
+	}
+	if len(got.pairFields) != len(want.pairFields) {
+		t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
+	}
+	for i, f := range want.pairFields {
+		if got.pairFields[i] != f {
+			t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
+		}
+	}
+
+	sp := getSyntheticPackage(want.pkgPath)
+	if sp == nil || sp.pkg == nil {
+		t.Fatalf("synthetic package %q not loaded", want.pkgPath)
+	}
+
+	// 2. The multi-result function/method exists in the synthetic
+	//    package.
+	mrFn := lookupM7MultiResultFunc(t, sp, want)
+	sig, ok := mrFn.Type().(*types.Signature)
+	if !ok {
+		t.Fatalf("synthetic %s is not a function signature", name)
+	}
+	if sig.Results().Len() != len(want.pairFields) {
+		t.Fatalf("synthetic %s has %d results, want %d (pairFields)", name, sig.Results().Len(), len(want.pairFields))
+	}
+
+	// 3. The __-helper exists in the synthetic package scope and
+	//    is a *types.Func.
+	hobj := sp.pkg.Scope().Lookup(want.helper)
+	if hobj == nil {
+		t.Fatalf("synthetic helper %s.%s missing from package scope", want.pkgPath, want.helper)
+	}
+	helper, ok := hobj.(*types.Func)
+	if !ok {
+		t.Fatalf("synthetic %s.%s is %T, want *types.Func", want.pkgPath, want.helper, hobj)
+	}
+	hsig, ok := helper.Type().(*types.Signature)
+	if !ok {
+		t.Fatalf("synthetic helper %s has non-signature type %v", want.helper, helper.Type())
+	}
+
+	// 4. The helper's params accept the multi-result call's args
+	//    positionally: [receiver,] params — the desugar passes the
+	//    original args straight through, receiver prepended.
+	var wantParams []types.Type
+	if sig.Recv() != nil {
+		wantParams = append(wantParams, sig.Recv().Type())
+	}
+	for i := 0; i < sig.Params().Len(); i++ {
+		wantParams = append(wantParams, sig.Params().At(i).Type())
+	}
+	if hsig.Params().Len() != len(wantParams) {
+		t.Fatalf("helper %s takes %d params, multi-result %s has %d ([recv,] params)",
+			want.helper, hsig.Params().Len(), name, len(wantParams))
+	}
+	for i, wp := range wantParams {
+		if !types.Identical(hsig.Params().At(i).Type(), wp) {
+			t.Fatalf("helper %s param %d type %v != multi-result %s arg type %v",
+				want.helper, i, hsig.Params().At(i).Type(), name, wp)
+		}
+	}
+
+	// 5. The pair struct exists with exactly the listed fields in
+	//    order, each field type identical to the corresponding
+	//    multi-result result type.
+	pobj := sp.pkg.Scope().Lookup(want.pairType)
+	if pobj == nil {
+		t.Fatalf("synthetic pair type %s.%s missing from package scope", want.pkgPath, want.pairType)
+	}
+	nt, ok := pobj.Type().(*types.Named)
+	if !ok {
+		t.Fatalf("synthetic %s has type %T, want named struct", want.pairType, pobj.Type())
+	}
+	st, ok := nt.Underlying().(*types.Struct)
+	if !ok {
+		t.Fatalf("synthetic %s underlying is %T, want struct", want.pairType, nt.Underlying())
+	}
+	if st.NumFields() != len(want.pairFields) {
+		t.Fatalf("pair %s has %d fields, want %d", want.pairType, st.NumFields(), len(want.pairFields))
+	}
+	for i, fname := range want.pairFields {
+		f := st.Field(i)
+		if f.Name() != fname {
+			t.Fatalf("pair %s field %d is %q, want %q", want.pairType, i, f.Name(), fname)
+		}
+		rt := sig.Results().At(i).Type()
+		if !types.Identical(f.Type(), rt) {
+			t.Fatalf("pair %s field %q type %v != result %d type %v",
+				want.pairType, fname, f.Type(), i, rt)
+		}
 	}
 }
 

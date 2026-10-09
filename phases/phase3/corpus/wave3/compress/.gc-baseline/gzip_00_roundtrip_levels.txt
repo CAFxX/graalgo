@@ -1,0 +1,14 @@
+level=-2 clen=27709 crc=0f7fbad4 rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=-1 clen=206 crc=d316b67d rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=0 clen=65585 crc=0375c95c rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=1 clen=206 crc=869a07d6 rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=2 clen=206 crc=d316b67d rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=3 clen=206 crc=d316b67d rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=4 clen=206 crc=d316b67d rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=5 clen=206 crc=d316b67d rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=6 clen=206 crc=d316b67d rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=7 clen=200 crc=902e38c0 rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=8 clen=200 crc=902e38c0 rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+level=9 clen=200 crc=22f723c2 rt=true rerr=true name="test.txt" comment="a comment" modtime=1234567890 os=255
+multistream-rt true saw-multistream 0x4c04c0
+empty-rt true

@@ -1,0 +1,5 @@
+level=-1 dict-rt=true err=true
+level=-1 wrong-dict err=false diverges=true outlen=88000
+level=9 dict-rt=true err=true
+level=9 wrong-dict err=false diverges=true outlen=88000
+nil-dict-rt true true

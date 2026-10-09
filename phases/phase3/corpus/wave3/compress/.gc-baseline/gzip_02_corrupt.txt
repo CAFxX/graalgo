@@ -1,0 +1,10 @@
+badmagic0 newreader-err="gzip: invalid header"
+badmagic1 newreader-err="gzip: invalid header"
+badmagic2 newreader-err="gzip: invalid header"
+trunc@5 newreader-err="unexpected EOF"
+trunc@10 uneof=true err="unexpected EOF"
+trunc@18 uneof=true err="unexpected EOF"
+trunc@38 uneof=true err="unexpected EOF"
+trunc@69 uneof=true err="unexpected EOF"
+bitflip err="flate: corrupt input before offset 20"
+empty-newreader-eof true

@@ -1,0 +1,9 @@
+trunc@1 uneof=true errstr="unexpected EOF"
+trunc@10 uneof=true errstr="unexpected EOF"
+trunc@23 uneof=true errstr="unexpected EOF"
+trunc@46 uneof=true errstr="unexpected EOF"
+garbage0 errstr="flate: corrupt input before offset 1"
+garbage1 errstr="flate: corrupt input before offset 8"
+garbage2 errstr="unexpected EOF"
+empty-read-uneof true
+bitflip rt=false errstr="flate: corrupt input before offset 24"

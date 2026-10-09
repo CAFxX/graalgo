@@ -1,0 +1,19 @@
+level=-3 err=true
+level=99 err=true
+level=-100 err=true
+level=10 err=true
+huffmanonly-1MB clen=131086 crc=fbee70bd rt=true
+level=-2 all256 rt=true clen=263
+level=-1 all256 rt=true clen=263
+level=0 all256 rt=true clen=263
+level=1 all256 rt=true clen=263
+level=2 all256 rt=true clen=263
+level=3 all256 rt=true clen=263
+level=4 all256 rt=true clen=263
+level=5 all256 rt=true clen=263
+level=6 all256 rt=true clen=263
+level=7 all256 rt=true clen=263
+level=8 all256 rt=true clen=263
+level=9 all256 rt=true clen=263
+write-after-close-err true
+double-close-err false <nil>

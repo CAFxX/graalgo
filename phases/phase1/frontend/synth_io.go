@@ -271,6 +271,13 @@ type ioReadPair struct {
 	err error
 }
 
+// ioByteReaderPair is the P3-M9 (tier-5: compress) interface-dispatch
+// carrier for io.ByteReader.ReadByte (see ioReadPair).
+type ioByteReaderPair struct {
+	c   byte
+	err error
+}
+
 // ioWritePair is the P3-M8 (WS D) interface-dispatch carrier for
 // Writer.Write and StringWriter.WriteString (see ioReadPair).
 type ioWritePair struct {

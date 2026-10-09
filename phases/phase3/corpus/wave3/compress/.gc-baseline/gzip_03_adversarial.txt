@@ -1,0 +1,9 @@
+bigcomment-newreader-err gzip: invalid header
+latin1name-rt true name true
+nonlatin1name-write-err gzip.Write: non-Latin-1 header string
+pre-epoch-modtime -62135596800
+close1 <nil>
+close2-err false
+reset0 name="first" data="first-data"
+reset1 name="second" data="second-data"
+read1-rt true

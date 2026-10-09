@@ -1,0 +1,6 @@
+trunc10 uneof=true err="unexpected EOF" outlen=0
+trunc100 uneof=true err="unexpected EOF" outlen=0
+badmagic uneof=false err="bzip2 data invalid: bad magic value" outlen=0
+notbz2 uneof=false err="bzip2 data invalid: bad magic value" outlen=0
+bitflip uneof=false err="bzip2 data invalid: block checksum mismatch" outlen=8175
+empty err unexpected EOF

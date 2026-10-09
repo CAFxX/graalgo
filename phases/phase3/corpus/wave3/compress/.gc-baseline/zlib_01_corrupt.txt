@@ -1,0 +1,7 @@
+badadler err zlib: invalid checksum
+badheader err zlib: invalid header
+badmethod err zlib: invalid header
+trunc@1 newreader-err="unexpected EOF"
+trunc@3 uneof=true err="unexpected EOF"
+trunc@33 uneof=true err="unexpected EOF"
+trunc@61 uneof=true err="unexpected EOF"

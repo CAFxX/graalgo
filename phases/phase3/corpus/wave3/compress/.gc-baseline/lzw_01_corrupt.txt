@@ -1,0 +1,14 @@
+order=0 trunc@1 uneof=true err="unexpected EOF"
+order=0 trunc@5 uneof=true err="unexpected EOF"
+order=0 trunc@194 uneof=true err="unexpected EOF"
+order=0 trunc@387 uneof=true err="unexpected EOF"
+order=1 trunc@1 uneof=true err="unexpected EOF"
+order=1 trunc@5 uneof=true err="unexpected EOF"
+order=1 trunc@194 uneof=true err="unexpected EOF"
+order=1 trunc@387 uneof=true err="unexpected EOF"
+litWidth=0 err="lzw: litWidth 0 out of range"
+litWidth=1 err="lzw: litWidth 1 out of range"
+litWidth=9 err="lzw: litWidth 9 out of range"
+litWidth=100 err="lzw: litWidth 100 out of range"
+badorder err lzw: unknown order
+writer-badlitwidth write-err lzw: litWidth 0 out of range close-err lzw: litWidth 0 out of range

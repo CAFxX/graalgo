@@ -1,0 +1,10 @@
+xfl-best 2
+xfl-fastest 4
+xfl-default 0
+xfl-huffman 0
+hdr name="hello.txt" comment="comment here" modtime=1600000000 os=3
+empty-name-flags 0
+os=0 back=0
+os=3 back=3
+os=7 back=7
+os=255 back=255

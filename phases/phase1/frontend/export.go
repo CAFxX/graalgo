@@ -1516,6 +1516,9 @@ func ExportFile(path string) (string, error) {
 			// P3-M9 (tier1c): bufio imports bytes, errors, io, strings
 			// (all in overlay or synthetic).
 			needBytes = true
+			needErrors = true
+			needIo = true
+			needStrings = true
 		case "path":
 			needPath = true
 			// P3-M9 (tier1c): path imports strings (synthetic).
@@ -2134,6 +2137,28 @@ func ExportFile(path string) (string, error) {
 	// the full closure when any of them is needed (idempotent).
 	if needCryptoElliptic || needCryptoEcdh || needCryptoDsa || needCryptoEcdsa || needCryptoEd25519 || needCryptoRsa || needCryptoHkdf || needCryptoPbkdf2 || needCryptobyte || needCryptobyteAsn1 {
 		for _, p := range []string{
+			// P3-M9 (tier-5b): the synthetic sources' own imports FIRST —
+			// package-level var initializers (e.g. rsa.ErrMessageTooLong
+			// = errors.New(...)) are exported during importSyntheticPackage,
+			// so deps must precede the packages that use them; otherwise
+			// qualified calls fail "call to unknown function".
+			// (importSyntheticPackage is idempotent; fmt is overlay-
+			// handled and needs no import.)
+			"bytes",
+			"crypto",
+			"crypto/cipher",
+			"crypto/rand",
+			"crypto/sha512",
+			"crypto/subtle",
+			"errors",
+			"hash",
+			"io",
+			"math",
+			"math/big",
+			"math/bits",
+			"math/rand/v2",
+			"strconv",
+			"internal/byteorder",
 			"crypto/internal/fips140",
 			"crypto/internal/fips140/check",
 			"crypto/internal/fips140/alias",
@@ -6859,11 +6884,7 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	}
 	fi, ok := e.funcByObj[fn]
 	if !ok {
-		pp := "<nil>"
-		if fn.Pkg() != nil {
-			pp = fn.Pkg().Path()
-		}
-		return nil, fmt.Errorf("gofrontend: call to unknown function %s (pkg %s)", fn.Name(), pp)
+		return nil, fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
 	}
 	if sig, ok := fn.Type().(*types.Signature); ok {
 		if err := checkVariadicCall(c, sig); err != nil {

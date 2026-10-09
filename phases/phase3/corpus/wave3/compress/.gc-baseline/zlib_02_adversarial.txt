@@ -1,0 +1,12 @@
+level=-3 err=true "zlib: invalid compression level: -3"
+dictlevel=-3 err=true
+level=99 err=true "zlib: invalid compression level: 99"
+dictlevel=99 err=true
+dict0 rt=true err=true
+dict1 rt=true err=true
+reset-err <nil>
+reset-newdict-rt true true
+bigdict-newreader-err <nil>
+bigdict-same64k-rt true true
+bigdict-diffdict-err zlib: invalid dictionary
+read1-rt true

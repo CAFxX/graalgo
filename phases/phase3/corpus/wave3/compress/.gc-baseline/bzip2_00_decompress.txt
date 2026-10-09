@@ -1,0 +1,5 @@
+empty rt=true err=true outlen=0
+hello rt=true err=true outlen=1900
+zeros rt=true err=true outlen=65536
+text rt=true err=true outlen=65475
+random rt=true err=true outlen=32768

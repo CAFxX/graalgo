@@ -1,0 +1,6 @@
+order=0 read1-rt=true
+order=1 read1-rt=true
+reset-orderchange rt1 true rt2 true true
+empty-rt true true
+close1 <nil> close2 <nil>
+write-0xff-litwidth7-err lzw: input byte too large for the litWidth
