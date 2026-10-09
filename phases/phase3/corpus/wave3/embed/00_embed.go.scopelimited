@@ -1,0 +1,2 @@
+reason: needs //go:embed directive materialization in exporter/P3SyncMain (read sibling files at export time, synthesize string/[]byte/embed.FS vars)
+retest: go:embed directive support lands in the frontend
