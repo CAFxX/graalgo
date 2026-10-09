@@ -2475,26 +2475,31 @@ public final class NodeFactory {
             // Operand kind: both sides agree, or one side is an untyped
             // constant (transparent). The result kind is BOOL.
             GoKind ok = x.kind().isUntyped() ? y.kind() : x.kind();
-            if (ok == GoKind.INTERFACE && x.kind() != y.kind()
-                    && (x.kind() == GoKind.INTERFACE || y.kind() == GoKind.INTERFACE)) {
-                // P3-M8b: interface == concrete (e.g. err == syscall.EINVAL).
-                // The type-id-free maybeConvert below cannot box a concrete
-                // value into an interface (WS E); box the concrete side here
-                // with the type-id-carrying form so BinaryOpNode's M5
-                // interface-equality path compares the boxed dynamic values.
-                GoExprNode iface = x.kind() == GoKind.INTERFACE ? x : y;
-                GoExprNode conc = x.kind() == GoKind.INTERFACE ? y : x;
-                int ifaceId = iface.typeId();
-                if (ifaceId < 0) {
-                    throw new FrontendException(path
-                            + ": cannot box concrete operand to interface without a type-table id (WS E)");
+            // WS E: if either operand is an interface, use interface equality.
+            // Box the concrete side (if any) with the type-id-carrying form
+            // so BinaryOpNode's M5 interface-equality path compares the
+            // boxed dynamic values. The P3-M8b fix only handled interface on
+            // the left (ok == INTERFACE); concrete on the left (e.g.
+            // myErr == errIface) left ok as the concrete kind, and the
+            // type-id-free maybeConvert below threw "interface conversion
+            // needs type ids" on the interface operand.
+            if (x.kind() == GoKind.INTERFACE || y.kind() == GoKind.INTERFACE) {
+                if (x.kind() != y.kind()) {
+                    GoExprNode iface = x.kind() == GoKind.INTERFACE ? x : y;
+                    GoExprNode conc = x.kind() == GoKind.INTERFACE ? y : x;
+                    int ifaceId = iface.typeId();
+                    if (ifaceId < 0) {
+                        throw new FrontendException(path
+                                + ": cannot box concrete operand to interface without a type-table id (WS E)");
+                    }
+                    conc = maybeConvert(conc, GoKind.INTERFACE, ifaceId, ctx, path);
+                    if (x.kind() == GoKind.INTERFACE) {
+                        y = conc;
+                    } else {
+                        x = conc;
+                    }
                 }
-                conc = maybeConvert(conc, GoKind.INTERFACE, ifaceId, ctx, path);
-                if (x.kind() == GoKind.INTERFACE) {
-                    y = conc;
-                } else {
-                    x = conc;
-                }
+                ok = GoKind.INTERFACE;
             }
             return new BinaryOpNode(op, GoKind.BOOL, ok, maybeConvert(x, ok, path), maybeConvert(y, ok, path));
         }
