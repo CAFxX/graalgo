@@ -322,6 +322,43 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"math/rand", "Read", "Rand", "__randRead", "__randReadPair", []string{"n", "err"}},
 	// P3-M9 (tier1c): path.Split (Appendix M).
 	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}},
+	// P3-M9 (tier-5: compress): synthetic compress/compress/flate (Appendix M).
+{"compress/flate", "findMatch", "compressor", "__flateCompressorfindMatch", "__flateCompressorfindMatchPair", []string{"length", "offset", "ok"}},
+	{"compress/flate", "tryBetterMatchAtEnd", "compressor", "__flateCompressortryBetterMatchAtEnd", "__flateCompressortryBetterMatchAtEndPair", []string{"newLen", "newOff"}},
+	{"compress/flate", "write", "compressor", "__flateCompressorwrite", "__flateCompressorwritePair", []string{"n", "err"}},
+	{"compress/flate", "NewWriter", "", "__flateNewWriter", "__flateNewWriterPair", []string{"w", "err"}},
+	{"compress/flate", "NewWriterDict", "", "__flateNewWriterDict", "__flateNewWriterDictPair", []string{"w", "err"}},
+	{"compress/flate", "Write", "Writer", "__flateWriterWrite", "__flateWriterWritePair", []string{"n", "err"}},
+	{"compress/flate", "Read", "decompressor", "__flateDecompressorRead", "__flateDecompressorReadPair", []string{"n", "err"}},
+	{"compress/flate", "huffSym", "decompressor", "__flateDecompressorhuffSym", "__flateDecompressorhuffSymPair", []string{"sym", "err"}},
+	{"compress/flate", "headerSize", "huffmanBitWriter", "__flateHuffmanBitWriterheaderSize", "__flateHuffmanBitWriterheaderSizePair", []string{"size", "numCodegens"}},
+	{"compress/flate", "dynamicSize", "huffmanBitWriter", "__flateHuffmanBitWriterdynamicSize", "__flateHuffmanBitWriterdynamicSizePair", []string{"size", "numCodegens"}},
+	{"compress/flate", "storedSize", "huffmanBitWriter", "__flateHuffmanBitWriterstoredSize", "__flateHuffmanBitWriterstoredSizePair", []string{"size", "ok"}},
+	{"compress/flate", "indexTokens", "huffmanBitWriter", "__flateHuffmanBitWriterindexTokens", "__flateHuffmanBitWriterindexTokensPair", []string{"numLiterals", "numOffsets"}},
+	// P3-M9 (tier-5: compress): synthetic compress/compress/gzip (Appendix M).
+	{"compress/gzip", "NewReader", "", "__gzipNewReader", "__gzipNewReaderPair", []string{"r", "err"}},
+	{"compress/gzip", "readString", "Reader", "__gzipReaderreadString", "__gzipReaderreadStringPair", []string{"s", "err"}},
+	{"compress/gzip", "readHeader", "Reader", "__gzipReaderreadHeader", "__gzipReaderreadHeaderPair", []string{"hdr", "err"}},
+	{"compress/gzip", "Read", "Reader", "__gzipReaderRead", "__gzipReaderReadPair", []string{"n", "err"}},
+	{"compress/gzip", "NewWriterLevel", "", "__gzipNewWriterLevel", "__gzipNewWriterLevelPair", []string{"w", "err"}},
+	{"compress/gzip", "Write", "Writer", "__gzipWriterWrite", "__gzipWriterWritePair", []string{"n", "err"}},
+	// P3-M9 (tier-5: compress): synthetic compress/compress/zlib (Appendix M).
+	{"compress/zlib", "NewReader", "", "__zlibNewReader", "__zlibNewReaderPair", []string{"r", "err"}},
+	{"compress/zlib", "NewReaderDict", "", "__zlibNewReaderDict", "__zlibNewReaderDictPair", []string{"r", "err"}},
+	{"compress/zlib", "Read", "reader", "__zlibReaderRead", "__zlibReaderReadPair", []string{"n", "err"}},
+	{"compress/zlib", "NewWriterLevel", "", "__zlibNewWriterLevel", "__zlibNewWriterLevelPair", []string{"w", "err"}},
+	{"compress/zlib", "NewWriterLevelDict", "", "__zlibNewWriterLevelDict", "__zlibNewWriterLevelDictPair", []string{"w", "err"}},
+	{"compress/zlib", "Write", "Writer", "__zlibWriterWrite", "__zlibWriterWritePair", []string{"n", "err"}},
+	// P3-M9 (tier-5: compress): synthetic compress/compress/lzw (Appendix M).
+	{"compress/lzw", "readLSB", "Reader", "__lzwReaderreadLSB", "__lzwReaderreadLSBPair", []string{"code", "err"}},
+	{"compress/lzw", "readMSB", "Reader", "__lzwReaderreadMSB", "__lzwReaderreadMSBPair", []string{"code", "err"}},
+	{"compress/lzw", "Read", "Reader", "__lzwReaderRead", "__lzwReaderReadPair", []string{"n", "err"}},
+	{"compress/lzw", "Write", "Writer", "__lzwWriterWrite", "__lzwWriterWritePair", []string{"n", "err"}},
+	// P3-M9 (tier-5: compress): synthetic compress/compress/bzip2 (Appendix M).
+	{"compress/bzip2", "Read", "reader", "__bzip2ReaderRead", "__bzip2ReaderReadPair", []string{"n", "err"}},
+	{"compress/bzip2", "read", "reader", "__bzip2Readerread", "__bzip2ReaderreadPair", []string{"n", "err"}},
+	{"compress/bzip2", "newHuffmanTree", "", "__bzip2NewHuffmanTree", "__bzip2NewHuffmanTreePair", []string{"t", "err"}},
+	{"compress/bzip2", "buildHuffmanNode", "", "__bzip2BuildHuffmanNode", "__bzip2BuildHuffmanNodePair", []string{"nodeIndex", "err"}},
 }
 
 // m8MultiResultFuncs is the desugar table for the crypto/* packages (P3-M8).
@@ -653,6 +690,11 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"io", "Read", "ioReadPair", []string{"n", "err"}},
 	{"io", "Write", "ioWritePair", []string{"n", "err"}},
 	{"io", "WriteString", "ioWritePair", []string{"n", "err"}},
+	// P3-M9 (tier-5: compress): io.ByteReader.ReadByte (flate.Reader,
+	// bzip2's bitReader, lzw's reader all read through ByteReader
+	// interfaces). Concrete *bufio.Reader has the m7 entry; the pair
+	// lives in synth_io.go.
+	{"io", "ReadByte", "ioByteReaderPair", []string{"c", "err"}},
 	// P3-M8 (wave 2, reflect): the Type interface's multi-result methods.
 	// The itab maps each to the concrete rtype's pair-returning
 	// __-helper (wired via multiResultHelperFor/methodTableEntries); the
@@ -671,6 +713,17 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"hash", "Clone", "ClonePair", []string{"C", "Err"}},
 	{"hash", "MarshalBinary", "binaryMarshalPair", []string{"b", "err"}},
 	{"hash", "AppendBinary", "binaryAppendPair", []string{"b", "err"}},
+	// P3-M9 (tier-5): elliptic.Curve and ecdh.Curve interface methods.
+	// The concrete helpers are wired via m8MultiResultFuncs +
+	// methodTableEntries; the pair types are positionally identical
+	// across implementations (checked by classifyIfaceMultiResultCall).
+	{"crypto/elliptic", "Add", "__mrnistCurve_AddPair", []string{"v0", "v1"}}, // elliptic.Curve.Add
+	{"crypto/elliptic", "Double", "__mrnistCurve_DoublePair", []string{"v0", "v1"}}, // elliptic.Curve.Double
+	{"crypto/elliptic", "ScalarMult", "__mrnistCurve_ScalarMultPair", []string{"v0", "v1"}}, // elliptic.Curve.ScalarMult
+	{"crypto/elliptic", "ScalarBaseMult", "__mrnistCurve_ScalarBaseMultPair", []string{"v0", "v1"}}, // elliptic.Curve.ScalarBaseMult
+	{"crypto/ecdh", "GenerateKey", "__mrnistCurve_GenerateKeyPair", []string{"v0", "v1"}}, // ecdh.Curve.GenerateKey
+	{"crypto/ecdh", "NewPrivateKey", "__mrnistCurve_NewPrivateKeyPair", []string{"v0", "v1"}}, // ecdh.Curve.NewPrivateKey
+	{"crypto/ecdh", "NewPublicKey", "__mrnistCurve_NewPublicKeyPair", []string{"v0", "v1"}}, // ecdh.Curve.NewPublicKey
 }
 
 // mrPlan is the desugar plan for one classified call.

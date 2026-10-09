@@ -350,6 +350,83 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("crypto/sha512").pkg, nil
 	case "crypto/subtle":
 		return getSyntheticPackage("crypto/subtle").pkg, nil
+	// P3-M9 (tier-5): asymmetric crypto (synth_crypto_*.go) + internal
+	// fips140/* deps (synthetic-only; the user allow-list below only
+	// opens the 8 public packages + cryptobyte).
+	case "crypto/elliptic":
+		return getSyntheticPackage("crypto/elliptic").pkg, nil
+	case "crypto/ecdh":
+		return getSyntheticPackage("crypto/ecdh").pkg, nil
+	case "crypto/dsa":
+		return getSyntheticPackage("crypto/dsa").pkg, nil
+	case "crypto/ecdsa":
+		return getSyntheticPackage("crypto/ecdsa").pkg, nil
+	case "crypto/ed25519":
+		return getSyntheticPackage("crypto/ed25519").pkg, nil
+	case "crypto/rsa":
+		return getSyntheticPackage("crypto/rsa").pkg, nil
+	case "crypto/hkdf":
+		return getSyntheticPackage("crypto/hkdf").pkg, nil
+	case "crypto/pbkdf2":
+		return getSyntheticPackage("crypto/pbkdf2").pkg, nil
+	case "crypto/internal/fips140":
+		return getSyntheticPackage("crypto/internal/fips140").pkg, nil
+	case "crypto/internal/fips140/check":
+		return getSyntheticPackage("crypto/internal/fips140/check").pkg, nil
+	case "crypto/internal/fips140only":
+		return getSyntheticPackage("crypto/internal/fips140only").pkg, nil
+	case "crypto/internal/fips140cache":
+		return getSyntheticPackage("crypto/internal/fips140cache").pkg, nil
+	case "crypto/internal/fips140hash":
+		return getSyntheticPackage("crypto/internal/fips140hash").pkg, nil
+	case "crypto/internal/fips140/drbg":
+		return getSyntheticPackage("crypto/internal/fips140/drbg").pkg, nil
+	case "crypto/internal/rand":
+		return getSyntheticPackage("crypto/internal/rand").pkg, nil
+	case "crypto/internal/boring/bbig":
+		return getSyntheticPackage("crypto/internal/boring/bbig").pkg, nil
+	case "crypto/internal/boring":
+		return getSyntheticPackage("crypto/internal/boring").pkg, nil
+	case "crypto/internal/constanttime":
+		return getSyntheticPackage("crypto/internal/constanttime").pkg, nil
+	case "crypto/internal/fips140deps/byteorder":
+		return getSyntheticPackage("crypto/internal/fips140deps/byteorder").pkg, nil
+	case "crypto/internal/fips140/nistec/fiat":
+		return getSyntheticPackage("crypto/internal/fips140/nistec/fiat").pkg, nil
+	case "crypto/internal/fips140/nistec":
+		return getSyntheticPackage("crypto/internal/fips140/nistec").pkg, nil
+	case "crypto/internal/fips140/edwards25519/field":
+		return getSyntheticPackage("crypto/internal/fips140/edwards25519/field").pkg, nil
+	case "crypto/internal/fips140/edwards25519":
+		return getSyntheticPackage("crypto/internal/fips140/edwards25519").pkg, nil
+	case "crypto/internal/fips140/bigmod":
+		return getSyntheticPackage("crypto/internal/fips140/bigmod").pkg, nil
+	case "crypto/internal/fips140/subtle":
+		return getSyntheticPackage("crypto/internal/fips140/subtle").pkg, nil
+	case "crypto/internal/fips140/sha256":
+		return getSyntheticPackage("crypto/internal/fips140/sha256").pkg, nil
+	case "crypto/internal/fips140/sha512":
+		return getSyntheticPackage("crypto/internal/fips140/sha512").pkg, nil
+	case "crypto/internal/fips140/sha3":
+		return getSyntheticPackage("crypto/internal/fips140/sha3").pkg, nil
+	case "crypto/internal/fips140/hmac":
+		return getSyntheticPackage("crypto/internal/fips140/hmac").pkg, nil
+	case "crypto/internal/fips140/hkdf":
+		return getSyntheticPackage("crypto/internal/fips140/hkdf").pkg, nil
+	case "crypto/internal/fips140/pbkdf2":
+		return getSyntheticPackage("crypto/internal/fips140/pbkdf2").pkg, nil
+	case "crypto/internal/fips140/ecdh":
+		return getSyntheticPackage("crypto/internal/fips140/ecdh").pkg, nil
+	case "crypto/internal/fips140/ecdsa":
+		return getSyntheticPackage("crypto/internal/fips140/ecdsa").pkg, nil
+	case "crypto/internal/fips140/ed25519":
+		return getSyntheticPackage("crypto/internal/fips140/ed25519").pkg, nil
+	case "crypto/internal/fips140/rsa":
+		return getSyntheticPackage("crypto/internal/fips140/rsa").pkg, nil
+	case "golang.org/x/crypto/cryptobyte":
+		return getSyntheticPackage("golang.org/x/crypto/cryptobyte").pkg, nil
+	case "golang.org/x/crypto/cryptobyte/asn1":
+		return getSyntheticPackage("golang.org/x/crypto/cryptobyte/asn1").pkg, nil
 	// P3-M9 (tier-1d): synthetic unique/structs packages (real-Go sources
 	// in synth_unique.go / synth_structs.go).
 	case "unique":
@@ -430,6 +507,18 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("internal/nettrace").pkg, nil
 	case "internal/singleflight":
 		return getSyntheticPackage("internal/singleflight").pkg, nil
+	// P3-M9 (tier-5: compress): synthetic compress/* packages (real-Go
+	// sources in synth_compress_{flate,gzip,zlib,lzw,bzip2}.go).
+	case "compress/flate":
+		return getSyntheticPackage("compress/flate").pkg, nil
+	case "compress/gzip":
+		return getSyntheticPackage("compress/gzip").pkg, nil
+	case "compress/zlib":
+		return getSyntheticPackage("compress/zlib").pkg, nil
+	case "compress/lzw":
+		return getSyntheticPackage("compress/lzw").pkg, nil
+	case "compress/bzip2":
+		return getSyntheticPackage("compress/bzip2").pkg, nil
 	}
 	return failImporter{}.Import(path)
 }
@@ -924,6 +1013,10 @@ func ExportFile(path string) (string, error) {
 		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
 			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "syscall" && path != "os" && path != "io/fs" && path != "reflect" && path != "hash" && path != "iter" &&
 			path != "crypto" && path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" && path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" && path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" &&
+			// P3-M9 (tier-5): asymmetric crypto public packages +
+			// cryptobyte (internal fips140/* stay synthetic-only).
+			path != "crypto/elliptic" && path != "crypto/ecdh" && path != "crypto/dsa" && path != "crypto/ecdsa" && path != "crypto/ed25519" && path != "crypto/rsa" && path != "crypto/hkdf" && path != "crypto/pbkdf2" &&
+			path != "golang.org/x/crypto/cryptobyte" && path != "golang.org/x/crypto/cryptobyte/asn1" &&
 			path != "cmp" && path != "slices" && path != "maps" && path != "unicode" && path != "unicode/utf8" && path != "unicode/utf16" &&
 			// P3-M9 (tier1c): "math/bits" likewise.
 			// P3-M9 (wave 3): "math/big" + "math/rand" likewise (the G-c
@@ -944,7 +1037,11 @@ func ExportFile(path string) (string, error) {
 			// "net/textproto" likewise (internal/poll, internal/nettrace,
 			// internal/singleflight stay synthetic-only).
 			path != "unique" && path != "structs" &&
-			path != "net" && path != "net/netip" && path != "net/url" && path != "net/textproto" {
+			path != "net" && path != "net/netip" && path != "net/url" && path != "net/textproto" &&
+			// P3-M9 (tier-5: compress): "compress/flate", "compress/gzip",
+			// "compress/zlib", "compress/lzw", "compress/bzip2" likewise.
+			path != "compress/flate" && path != "compress/gzip" && path != "compress/zlib" &&
+			path != "compress/lzw" && path != "compress/bzip2" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 	}
@@ -981,6 +1078,10 @@ func ExportFile(path string) (string, error) {
 		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
 			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "iter" ||
 			p == "crypto" || p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" ||
+			// P3-M9 (tier-5): asymmetric crypto public packages +
+			// cryptobyte (internal fips140/* stay synthetic-only).
+			p == "crypto/elliptic" || p == "crypto/ecdh" || p == "crypto/dsa" || p == "crypto/ecdsa" || p == "crypto/ed25519" || p == "crypto/rsa" || p == "crypto/hkdf" || p == "crypto/pbkdf2" ||
+			p == "golang.org/x/crypto/cryptobyte" || p == "golang.org/x/crypto/cryptobyte/asn1" ||
 			p == "cmp" || p == "slices" || p == "maps" || p == "unicode" || p == "unicode/utf8" || p == "unicode/utf16" ||
 			// P3-M9 (tier1c): "math/bits" likewise.
 			// P3-M9 (wave 3): "math/big" + "math/rand" likewise.
@@ -995,7 +1096,11 @@ func ExportFile(path string) (string, error) {
 			// import fails at type-check).
 			p == "unique" || p == "structs" ||
 			p == "container/heap" || p == "container/list" || p == "container/ring" ||
-			p == "hash/adler32" || p == "hash/crc32" || p == "hash/crc64" || p == "hash/fnv" || p == "hash/maphash" {
+			p == "hash/adler32" || p == "hash/crc32" || p == "hash/crc64" || p == "hash/fnv" || p == "hash/maphash" ||
+			// P3-M9 (tier-5: compress): "compress/flate", "compress/gzip",
+			// "compress/zlib", "compress/lzw", "compress/bzip2" likewise.
+			p == "compress/flate" || p == "compress/gzip" || p == "compress/zlib" ||
+			p == "compress/lzw" || p == "compress/bzip2" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -1128,6 +1233,17 @@ func ExportFile(path string) (string, error) {
 	needCryptoSha3 := false
 	needCryptoSha512 := false
 	needCryptoSubtle := false
+	// P3-M9 (tier-5): asymmetric crypto public packages.
+	needCryptoElliptic := false
+	needCryptoEcdh := false
+	needCryptoDsa := false
+	needCryptoEcdsa := false
+	needCryptoEd25519 := false
+	needCryptoRsa := false
+	needCryptoHkdf := false
+	needCryptoPbkdf2 := false
+	needCryptobyte := false
+	needCryptobyteAsn1 := false
 	// P3-M9 (wave 3, tier-1a worker): the synthetic cmp/slices/maps/unicode
 	// packages (the corpus closure).
 	needCmp := false
@@ -1283,6 +1399,27 @@ func ExportFile(path string) (string, error) {
 			needCryptoSha512 = true
 		case "crypto/subtle":
 			needCryptoSubtle = true
+		// P3-M9 (tier-5): asymmetric crypto public packages.
+		case "crypto/elliptic":
+			needCryptoElliptic = true
+		case "crypto/ecdh":
+			needCryptoEcdh = true
+		case "crypto/dsa":
+			needCryptoDsa = true
+		case "crypto/ecdsa":
+			needCryptoEcdsa = true
+		case "crypto/ed25519":
+			needCryptoEd25519 = true
+		case "crypto/rsa":
+			needCryptoRsa = true
+		case "crypto/hkdf":
+			needCryptoHkdf = true
+		case "crypto/pbkdf2":
+			needCryptoPbkdf2 = true
+		case "golang.org/x/crypto/cryptobyte":
+			needCryptobyte = true
+		case "golang.org/x/crypto/cryptobyte/asn1":
+			needCryptobyteAsn1 = true
 		// P3-M8 (wave 2): direct user imports of the synthetic hash and
 		// iter support packages.
 		case "hash":
@@ -1908,6 +2045,54 @@ func ExportFile(path string) (string, error) {
 	if needCryptoSubtle {
 		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/subtle")); err != nil {
 			return "", err
+		}
+	}
+	// P3-M9 (tier-5): asymmetric crypto. The public packages form a
+	// dependency closure over the internal fips140/* packages; import
+	// the full closure when any of them is needed (idempotent).
+	if needCryptoElliptic || needCryptoEcdh || needCryptoDsa || needCryptoEcdsa || needCryptoEd25519 || needCryptoRsa || needCryptoHkdf || needCryptoPbkdf2 || needCryptobyte || needCryptobyteAsn1 {
+		for _, p := range []string{
+			"crypto/internal/fips140",
+			"crypto/internal/fips140/check",
+			"crypto/internal/fips140only",
+			"crypto/internal/fips140cache",
+			"crypto/internal/fips140hash",
+			"crypto/internal/fips140/drbg",
+			"crypto/internal/rand",
+			"crypto/internal/boring/bbig",
+			"crypto/internal/boring",
+			"crypto/internal/constanttime",
+			"crypto/internal/fips140deps/byteorder",
+			"crypto/internal/fips140/nistec/fiat",
+			"crypto/internal/fips140/nistec",
+			"crypto/internal/fips140/edwards25519/field",
+			"crypto/internal/fips140/edwards25519",
+			"crypto/internal/fips140/bigmod",
+			"crypto/internal/fips140/subtle",
+			"crypto/internal/fips140/sha256",
+			"crypto/internal/fips140/sha512",
+			"crypto/internal/fips140/sha3",
+			"crypto/internal/fips140/hmac",
+			"crypto/internal/fips140/hkdf",
+			"crypto/internal/fips140/pbkdf2",
+			"crypto/internal/fips140/ecdh",
+			"crypto/internal/fips140/ecdsa",
+			"crypto/internal/fips140/ed25519",
+			"crypto/internal/fips140/rsa",
+			"golang.org/x/crypto/cryptobyte",
+			"golang.org/x/crypto/cryptobyte/asn1",
+			"crypto/elliptic",
+			"crypto/ecdh",
+			"crypto/dsa",
+			"crypto/ecdsa",
+			"crypto/ed25519",
+			"crypto/rsa",
+			"crypto/hkdf",
+			"crypto/pbkdf2",
+		} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	if needCryptoCipher {

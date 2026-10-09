@@ -203,6 +203,16 @@ var syntheticSources = map[string]string{
 	"internal/poll":       syntheticPollSource,
 	"internal/nettrace":   syntheticNettraceSource,
 	"internal/singleflight": syntheticSingleflightSource,
+	// P3-M9 (tier-5: compress): synthetic compress/* packages (real-Go
+	// sources in synth_compress_{flate,gzip,zlib,lzw,bzip2}.go, generated
+	// by gen_synth_compress.py from gc 1.27.1). gzip/zlib import the
+	// synthetic compress/flate; gzip imports hash/crc32 + time; zlib
+	// imports hash + hash/adler32; bzip2 imports cmp + slices.
+	"compress/flate": syntheticCompressFlateSource,
+	"compress/gzip":  syntheticCompressGzipSource,
+	"compress/zlib":  syntheticCompressZlibSource,
+	"compress/lzw":   syntheticCompressLzwSource,
+	"compress/bzip2": syntheticCompressBzip2Source,
 }
 
 // the overlay importer, so the context source's `import "time"` resolves
@@ -868,7 +878,10 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		p != "crypto/sha256" && p != "crypto/sha3" && p != "crypto/sha512" && p != "crypto/subtle" &&
 		// P3-M9 (tier-4: net).
 		p != "net" && p != "net/netip" && p != "net/url" && p != "net/textproto" &&
-		p != "internal/poll" && p != "internal/nettrace" && p != "internal/singleflight" {
+		p != "internal/poll" && p != "internal/nettrace" && p != "internal/singleflight" &&
+		// P3-M9 (tier-5: compress).
+		p != "compress/flate" && p != "compress/gzip" && p != "compress/zlib" &&
+		p != "compress/lzw" && p != "compress/bzip2" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)
@@ -901,8 +914,10 @@ func multiResultSyntheticError(fn *types.Func) error {
 	}
 	if p := fn.Pkg().Path(); p == "unique" || p == "structs" || p == "internal/bytealg" ||
 		p == "net" || p == "net/netip" || p == "net/url" || p == "net/textproto" ||
-		p == "internal/poll" || p == "internal/nettrace" || p == "internal/singleflight" {
-		// P3-M9 (tier-1d, tier-4: net).
+		p == "internal/poll" || p == "internal/nettrace" || p == "internal/singleflight" ||
+		p == "compress/flate" || p == "compress/gzip" || p == "compress/zlib" ||
+		p == "compress/lzw" || p == "compress/bzip2" {
+		// P3-M9 (tier-1d, tier-4: net, tier-5: compress).
 		milestone = "M9"
 	}
 	// Qualify method names with the receiver type name
