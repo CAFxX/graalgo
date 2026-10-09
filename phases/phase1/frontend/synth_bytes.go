@@ -10027,10 +10027,25 @@ func (b *Buffer) Grow(n int) {
 // needed. The return value n is the length of p; err is always nil. If the
 // buffer becomes too large, Write will panic with ErrTooLarge.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// P3-M9 (WS D): exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferWrite helper
+// (v1 cannot emit 2-result methods). Interface dispatch maps to helper.
+type __bytesWritePair struct {
+	n   int
+	err error
+}
+
+func __bytesBufferWrite(b *Buffer, p []byte) __bytesWritePair {
+	b.lastRead = opInvalid
+	m := b.tryGrowByReslice(len(p))
+	if m < 0 {
+		m = b.grow(len(p))
+	}
+	return __bytesWritePair{n: copy(b.buf[m:], p), err: nil}
+}
+
 func (b *Buffer) Write(p []byte) (n int, err error) {
-	panic("bytes.Buffer.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.Write: use __bytesBufferWrite helper (WS D)")
 }
 
 // WriteString appends the contents of s to the buffer, growing the buffer as
