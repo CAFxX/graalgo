@@ -1895,12 +1895,21 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 	for i, lhs := range s.Lhs {
 		id, ok := lhs.(*ast.Ident)
 		if !ok {
-			return nil, scopeErrorf("multi-result desugar with non-identifier lhs %T is not supported in frontend/v1 scope (WS D)", lhs)
+			// P3-M9: allow selector LHS (e.g., w.prevHeader, _ = w.headerSize())
+			// in the assignment case via exportAssignable. Define (:=) with
+			// selector is invalid Go, so it still fails below.
+			if _, isSel := lhs.(*ast.SelectorExpr); !isSel {
+				return nil, scopeErrorf("multi-result desugar with non-identifier lhs %T is not supported in frontend/v1 scope (WS D)", lhs)
+			}
+			// Blank selector doesn't make sense; treat as error.
 		}
-		if id.Name == "_" {
+		if ok && id.Name == "_" {
 			continue
 		}
 		if define {
+			if !ok {
+				return nil, scopeErrorf("multi-result desugar := with selector lhs is not valid Go (WS D)")
+			}
 			v, ok := e.info.ObjectOf(id).(*types.Var)
 			if !ok {
 				return nil, fmt.Errorf("gofrontend: := name %q does not denote a variable", id.Name)
