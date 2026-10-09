@@ -1118,6 +1118,11 @@ func ExportFile(path string) (string, error) {
 		info:     info,
 		pkg:      pkg,
 		typeIDs:  make(map[types.Type]int),
+		// P3-M9 (WS H): type parameters canonicalized by TypeName object.
+		// go/types mints fresh *types.TypeParam per occurrence; without
+		// this, F-bounded constraints (P Point[P]) recurse infinitely
+		// because the P in the constraint is a different object.
+		typeparamIDs: make(map[*types.TypeName]int),
 		namedIDs: make(map[string]int),
 		objIDs:   make(map[types.Object]int),
 		sizes:    types.SizesFor("gc", "amd64"),
@@ -2734,6 +2739,10 @@ type exporter struct {
 	types    []TypeEnt
 	typeList []types.Type // parallel to types: the go/types type per id (P3-M3)
 	typeIDs  map[types.Type]int
+	// P3-M9 (WS H): canonical IDs for type parameters by TypeName.
+	// Different *types.TypeParam objects denoting the same parameter
+	// must share one wire ID, or F-bounded constraints recurse forever.
+	typeparamIDs map[*types.TypeName]int
 	objects  []ObjectEnt
 	objIDs   map[types.Object]int
 	sizes    types.Sizes
@@ -3316,6 +3325,30 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 		if b, ok := types.Unalias(a).(*types.Basic); ok && b.Kind() == types.UnsafePointer {
 			t = b
 		}
+	}
+	// P3-M9 (WS H): canonicalize type parameters by TypeName object.
+	// go/types mints a fresh *types.TypeParam per syntactic occurrence;
+	// without canonicalization, F-bounded constraints (P Point[P]) cause
+	// infinite recursion because each occurrence gets a different ID.
+	if tp, ok := t.(*types.TypeParam); ok {
+		if id, ok := e.typeparamIDs[tp.Obj()]; ok {
+			return id, nil
+		}
+		// Allocate ID and memoize BEFORE describing, so recursive
+		// references (constraint mentions the parameter) hit the memo.
+		id := len(e.types)
+		e.types = append(e.types, TypeEnt{})
+		e.typeList = append(e.typeList, t)
+		e.typeparamIDs[tp.Obj()] = id
+		// Also record in typeIDs for the specific object, in case
+		// the same object is seen again.
+		e.typeIDs[t] = id
+		ent, err := e.describeType(t)
+		if err != nil {
+			return 0, err
+		}
+		e.types[id] = ent
+		return id, nil
 	}
 	if e.subst != nil {
 		// M6 (WS H, issue52026): substitute bound type parameters before
