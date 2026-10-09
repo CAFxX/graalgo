@@ -195,8 +195,8 @@ public final class AppendNode extends GoExprNode {
             case UINT8 -> ((int[]) arr)[idx] = ((Number) v).intValue() & 0xFF;
             case UINT16 -> ((int[]) arr)[idx] = ((Number) v).intValue() & 0xFFFF;
             case UINT32 -> ((int[]) arr)[idx] = ((Number) v).intValue();
-            case INT64 -> ((long[]) arr)[idx] = (Long) v;
-            case UINT64 -> ((long[]) arr)[idx] = (Long) v;
+            case INT64 -> ((long[]) arr)[idx] = ((Number) v).longValue();
+            case UINT64 -> ((long[]) arr)[idx] = ((Number) v).longValue();
             case FLOAT32 -> ((float[]) arr)[idx] = (Float) v;
             case FLOAT64 -> ((double[]) arr)[idx] = (Double) v;
             case BOOL -> ((boolean[]) arr)[idx] = (Boolean) v;
