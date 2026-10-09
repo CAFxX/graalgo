@@ -318,6 +318,9 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"bufio", "ReadString", "Reader", "__bufioReaderReadString", "__bufioReaderReadStringPair", []string{"s", "err"}},
 	{"bufio", "Write", "Writer", "__bufioWriterWrite", "__bufioWriterWritePair", []string{"n", "err"}},
 	{"bufio", "WriteString", "Writer", "__bufioWriterWriteString", "__bufioWriterWriteStringPair", []string{"n", "err"}},
+	// P3-M9 (tier-5b): bufio.ScanLines (Appendix M; the 3-result split
+	// function — package-level, so recvType is ""; see synth_bufio.go).
+	{"bufio", "ScanLines", "", "__bufioScanLines", "__bufioScanLinesPair", []string{"advance", "token", "err"}},
 	// P3-M9 (tier1c): math/rand.Read (Appendix M).
 	{"math/rand", "Read", "Rand", "__randRead", "__randReadPair", []string{"n", "err"}},
 	// P3-M9 (tier1c): path.Split (Appendix M).

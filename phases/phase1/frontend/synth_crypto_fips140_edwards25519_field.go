@@ -757,4 +757,14 @@ func (v *Element) carryPropagate() *Element {
 
 func feMul(v, x, y *Element) { feMulGeneric(v, x, y) }
 
+// P3-M9: exported wrapper for edwards25519 package init (the __-helper
+// is unexported and cannot be called across packages).
+func SetBytesOrPanic(v *Element, x []byte) *Element {
+	r := __mrElement_SetBytes(v, x)
+	if r.v1 != nil {
+		panic("edwards25519/field: invalid constant")
+	}
+	return r.v0
+}
+
 `

@@ -9,6 +9,7 @@ import (
 	"crypto/internal/constanttime"
 	"crypto/internal/fips140deps/byteorder"
 	"math/bits"
+	"crypto/internal/fips140/alias"
 )
 
 
@@ -79,6 +80,37 @@ func ConstantTimeCopy(v int, x, y []byte) {
 	for i := 0; i < len(x); i++ {
 		x[i] = x[i]&xmask | y[i]&ymask
 	}
+}
+
+
+// ---- vendored from crypto/internal/fips140/subtle/xor.go ----
+
+
+
+// XORBytes sets dst[i] = x[i] ^ y[i] for all i < n = min(len(x), len(y)),
+// returning n, the number of bytes written to dst.
+//
+// If dst does not have length at least n,
+// XORBytes panics without writing anything to dst.
+//
+// dst and x or y may overlap exactly or not at all,
+// otherwise XORBytes may panic.
+func XORBytes(dst, x, y []byte) int {
+	n := min(len(x), len(y))
+	if n == 0 {
+		return 0
+	}
+	if n > len(dst) {
+		panic("subtle.XORBytes: dst too short")
+	}
+	if alias.InexactOverlap(dst[:n], x[:n]) || alias.InexactOverlap(dst[:n], y[:n]) {
+		panic("subtle.XORBytes: invalid overlap")
+	}
+	// P3-M9: pure-Go loop (no unsafe/& on index exprs in frontend/v1).
+	for i := 0; i < n; i++ {
+		dst[i] = x[i] ^ y[i]
+	}
+	return n
 }
 
 `

@@ -119,6 +119,7 @@ var syntheticSources = map[string]string{
 	"crypto/pbkdf2":    syntheticCryptoPbkdf2Source,
 	"crypto/internal/fips140":                 syntheticCryptoFips140Source,
 	"crypto/internal/fips140/check":           syntheticCryptoFips140CheckSource,
+	"crypto/internal/fips140/alias":           syntheticCryptoFips140AliasSource,
 	"crypto/internal/fips140only":             syntheticCryptoFips140onlySource,
 	"crypto/internal/fips140cache":            syntheticCryptoFips140cacheSource,
 	"crypto/internal/fips140hash":             syntheticCryptoFips140hashSource,
@@ -782,6 +783,13 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		path != "container/heap" && path != "container/list" && path != "container/ring" &&
 		path != "hash/adler32" && path != "hash/crc32" && path != "hash/crc64" &&
 		path != "hash/fnv" && path != "hash/maphash" &&
+		// P3-M9 (wave 3, tier-5b): synthetic compress/* packages
+		// (package-level calls — flate.NewReader, gzip.NewWriter,
+		// lzw.NewWriter, zlib.NewWriter, bzip2.NewReader — lower to
+		// direct calls of the imported synthetic funcdecls; multi-result
+		// members are desugared earlier via the Appendix-M table).
+		path != "compress/flate" && path != "compress/gzip" && path != "compress/zlib" &&
+		path != "compress/lzw" && path != "compress/bzip2" &&
 		// P3-M9 (wave 3, tier-1a worker): synthetic cmp/slices/maps/unicode
 		// packages (package-level calls lower to direct calls of the
 		// imported synthetic funcdecls; generic members monomorphize via
@@ -792,7 +800,40 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		// (package-level calls — flag.NewFlagSet, testing.Main,
 		// quick.Check, iotest.OneByteReader — lower to direct calls of
 		// the imported synthetic funcdecls).
-		path != "flag" && path != "testing" && path != "testing/quick" && path != "testing/iotest" {
+		path != "flag" && path != "testing" && path != "testing/quick" && path != "testing/iotest" &&
+		// P3-M9 (tier-5): synthetic asymmetric-crypto packages
+		// (package-level calls — elliptic.P256, rsa.GenerateKey,
+		// nistec.NewP256Point, ... — lower to direct calls of the
+		// imported synthetic funcdecls; multi-result members are
+		// desugared earlier via the Appendix-M table).
+		path != "crypto/elliptic" && path != "crypto/ecdh" && path != "crypto/dsa" &&
+		path != "crypto/ecdsa" && path != "crypto/ed25519" && path != "crypto/rsa" &&
+		path != "crypto/hkdf" && path != "crypto/pbkdf2" &&
+		path != "golang.org/x/crypto/cryptobyte" &&
+		path != "golang.org/x/crypto/cryptobyte/asn1" &&
+		path != "crypto/internal/fips140" && path != "crypto/internal/fips140/check" &&
+		path != "crypto/internal/fips140/alias" && path != "crypto/internal/fips140only" &&
+		path != "crypto/internal/fips140cache" && path != "crypto/internal/fips140hash" &&
+		path != "crypto/internal/fips140/drbg" && path != "crypto/internal/rand" &&
+		path != "crypto/internal/boring/bbig" && path != "crypto/internal/boring" &&
+		path != "crypto/internal/constanttime" &&
+		path != "crypto/internal/fips140deps/byteorder" &&
+		path != "crypto/internal/fips140/nistec/fiat" &&
+		path != "crypto/internal/fips140/nistec" &&
+		path != "crypto/internal/fips140/edwards25519/field" &&
+		path != "crypto/internal/fips140/edwards25519" &&
+		path != "crypto/internal/fips140/bigmod" &&
+		path != "crypto/internal/fips140/subtle" &&
+		path != "crypto/internal/fips140/sha256" &&
+		path != "crypto/internal/fips140/sha512" &&
+		path != "crypto/internal/fips140/sha3" &&
+		path != "crypto/internal/fips140/hmac" &&
+		path != "crypto/internal/fips140/hkdf" &&
+		path != "crypto/internal/fips140/pbkdf2" &&
+		path != "crypto/internal/fips140/ecdh" &&
+		path != "crypto/internal/fips140/ecdsa" &&
+		path != "crypto/internal/fips140/ed25519" &&
+		path != "crypto/internal/fips140/rsa" {
 		return nil, false, nil
 	}
 	obj := e.info.Uses[sel.Sel]
@@ -922,7 +963,39 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		p != "internal/poll" && p != "internal/nettrace" && p != "internal/singleflight" &&
 		// P3-M9 (tier-5: compress).
 		p != "compress/flate" && p != "compress/gzip" && p != "compress/zlib" &&
-		p != "compress/lzw" && p != "compress/bzip2" {
+		p != "compress/lzw" && p != "compress/bzip2" &&
+		// P3-M9 (tier-5): asymmetric crypto. Multi-result members the
+		// Appendix-M desugar table knows are rewritten before this is
+		// consulted; anything left fails fast here with the named M7
+		// error instead of a confusing backend failure.
+		p != "crypto/elliptic" && p != "crypto/ecdh" && p != "crypto/dsa" &&
+		p != "crypto/ecdsa" && p != "crypto/ed25519" && p != "crypto/rsa" &&
+		p != "crypto/hkdf" && p != "crypto/pbkdf2" &&
+		p != "golang.org/x/crypto/cryptobyte" &&
+		p != "golang.org/x/crypto/cryptobyte/asn1" &&
+		p != "crypto/internal/fips140" && p != "crypto/internal/fips140/check" &&
+		p != "crypto/internal/fips140/alias" && p != "crypto/internal/fips140only" &&
+		p != "crypto/internal/fips140cache" && p != "crypto/internal/fips140hash" &&
+		p != "crypto/internal/fips140/drbg" && p != "crypto/internal/rand" &&
+		p != "crypto/internal/boring/bbig" && p != "crypto/internal/boring" &&
+		p != "crypto/internal/constanttime" &&
+		p != "crypto/internal/fips140deps/byteorder" &&
+		p != "crypto/internal/fips140/nistec/fiat" &&
+		p != "crypto/internal/fips140/nistec" &&
+		p != "crypto/internal/fips140/edwards25519/field" &&
+		p != "crypto/internal/fips140/edwards25519" &&
+		p != "crypto/internal/fips140/bigmod" &&
+		p != "crypto/internal/fips140/subtle" &&
+		p != "crypto/internal/fips140/sha256" &&
+		p != "crypto/internal/fips140/sha512" &&
+		p != "crypto/internal/fips140/sha3" &&
+		p != "crypto/internal/fips140/hmac" &&
+		p != "crypto/internal/fips140/hkdf" &&
+		p != "crypto/internal/fips140/pbkdf2" &&
+		p != "crypto/internal/fips140/ecdh" &&
+		p != "crypto/internal/fips140/ecdsa" &&
+		p != "crypto/internal/fips140/ed25519" &&
+		p != "crypto/internal/fips140/rsa" {
 		return false
 	}
 	sig, ok := fn.Type().(*types.Signature)

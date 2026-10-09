@@ -14,10 +14,10 @@ package fips140
 var Enabled = false
 
 // RecordApproved is a no-op (FIPS mode disabled).
-func RecordApproved(any) {}
+func RecordApproved() {}
 
 // RecordNonApproved is a no-op (FIPS mode disabled).
-func RecordNonApproved(any) {}
+func RecordNonApproved() {}
 
 // CAST performs the FIPS power-on self-test hook. No-op here.
 func CAST(name string, f func() error) {}

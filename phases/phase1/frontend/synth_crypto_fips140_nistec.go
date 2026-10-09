@@ -18,7 +18,6 @@ import (
 	"crypto/internal/constanttime"
 	"crypto/internal/fips140/nistec/fiat"
 	"errors"
-	"sync"
 	"crypto/internal/fips140deps/byteorder"
 	"math/bits"
 )
@@ -140,12 +139,14 @@ func (p *P224Point) SetBytes(b []byte) (*P224Point, error) {
 }
 
 var _p224B *fiat.P224Element
-var _p224BOnce sync.Once
+var _p224BOnce bool
 
 func p224B() *fiat.P224Element {
-	_p224BOnce.Do(func() {
+	if !_p224BOnce {
 		_p224B, _ = new(fiat.P224Element).SetBytes([]byte{0xb4, 0x5, 0xa, 0x85, 0xc, 0x4, 0xb3, 0xab, 0xf5, 0x41, 0x32, 0x56, 0x50, 0x44, 0xb0, 0xb7, 0xd7, 0xbf, 0xd8, 0xba, 0x27, 0xb, 0x39, 0x43, 0x23, 0x55, 0xff, 0xb4})
-	})
+	
+	_p224BOnce = true
+}
 	return _p224B
 }
 
@@ -444,13 +445,13 @@ func (p *P224Point) ScalarMult(q *P224Point, scalar []byte) (*P224Point, error) 
 }
 
 var p224GeneratorTable *[p224ElementLength * 2]p224Table
-var p224GeneratorTableOnce sync.Once
+var p224GeneratorTableOnce bool
 
 // generatorTable returns a sequence of p224Tables. The first table contains
 // multiples of G. Each successive table is the previous table doubled four
 // times.
 func (p *P224Point) generatorTable() *[p224ElementLength * 2]p224Table {
-	p224GeneratorTableOnce.Do(func() {
+	if !p224GeneratorTableOnce {
 		p224GeneratorTable = new([p224ElementLength * 2]p224Table)
 		base := NewP224Point().SetGenerator()
 		for i := 0; i < p224ElementLength*2; i++ {
@@ -463,7 +464,9 @@ func (p *P224Point) generatorTable() *[p224ElementLength * 2]p224Table {
 			base.Double(base)
 			base.Double(base)
 		}
-	})
+	
+	p224GeneratorTableOnce = true
+}
 	return p224GeneratorTable
 }
 
@@ -528,7 +531,7 @@ func p224Sqrt(e, x *fiat.P224Element) (isSquare bool) {
 
 
 var p224GG *[96]fiat.P224Element
-var p224GGOnce sync.Once
+var p224GGOnce bool
 
 // p224SqrtCandidate sets r to a square root candidate for x. r and x must not overlap.
 func p224SqrtCandidate(r, x *fiat.P224Element) {
@@ -542,7 +545,7 @@ func p224SqrtCandidate(r, x *fiat.P224Element) {
 	// g^(2^n) = 1 -> g = 11 ^ q (where 11 is the smallest non-square)
 	// GG[j] = g^(2^j) for j = 0 to n-1
 
-	p224GGOnce.Do(func() {
+	if !p224GGOnce {
 		p224GG = new([96]fiat.P224Element)
 		for i := range p224GG {
 			if i == 0 {
@@ -554,7 +557,9 @@ func p224SqrtCandidate(r, x *fiat.P224Element) {
 				p224GG[i].Square(&p224GG[i-1])
 			}
 		}
-	})
+	
+	p224GGOnce = true
+}
 
 	// r <- x^((q+1)/2) = x^(2^127)
 	// v <- x^q = x^(2^128-1)
@@ -761,12 +766,14 @@ func (p *P256Point) SetBytes(b []byte) (*P256Point, error) {
 }
 
 var _p256B *fiat.P256Element
-var _p256BOnce sync.Once
+var _p256BOnce bool
 
 func p256B() *fiat.P256Element {
-	_p256BOnce.Do(func() {
+	if !_p256BOnce {
 		_p256B, _ = new(fiat.P256Element).SetBytes([]byte{0x5a, 0xc6, 0x35, 0xd8, 0xaa, 0x3a, 0x93, 0xe7, 0xb3, 0xeb, 0xbd, 0x55, 0x76, 0x98, 0x86, 0xbc, 0x65, 0x1d, 0x6, 0xb0, 0xcc, 0x53, 0xb0, 0xf6, 0x3b, 0xce, 0x3c, 0x3e, 0x27, 0xd2, 0x60, 0x4b})
-	})
+	
+	_p256BOnce = true
+}
 	return _p256B
 }
 
@@ -1271,8 +1278,8 @@ func init() {
 		acc.Set(base)
 		for j := range t[i] {
 			zi.Invert(&acc.z)
-			t[i][j].x.Multiply(&acc.x, zi)
-			t[i][j].y.Multiply(&acc.y, zi)
+			t[i][j].x.Mul(&acc.x, zi)
+			t[i][j].y.Mul(&acc.y, zi)
 			acc.Add(acc, base)
 		}
 		for k := 0; k < 6; k++ {
@@ -2107,12 +2114,14 @@ func (p *P384Point) SetBytes(b []byte) (*P384Point, error) {
 }
 
 var _p384B *fiat.P384Element
-var _p384BOnce sync.Once
+var _p384BOnce bool
 
 func p384B() *fiat.P384Element {
-	_p384BOnce.Do(func() {
+	if !_p384BOnce {
 		_p384B, _ = new(fiat.P384Element).SetBytes([]byte{0xb3, 0x31, 0x2f, 0xa7, 0xe2, 0x3e, 0xe7, 0xe4, 0x98, 0x8e, 0x5, 0x6b, 0xe3, 0xf8, 0x2d, 0x19, 0x18, 0x1d, 0x9c, 0x6e, 0xfe, 0x81, 0x41, 0x12, 0x3, 0x14, 0x8, 0x8f, 0x50, 0x13, 0x87, 0x5a, 0xc6, 0x56, 0x39, 0x8d, 0x8a, 0x2e, 0xd1, 0x9d, 0x2a, 0x85, 0xc8, 0xed, 0xd3, 0xec, 0x2a, 0xef})
-	})
+	
+	_p384BOnce = true
+}
 	return _p384B
 }
 
@@ -2411,13 +2420,13 @@ func (p *P384Point) ScalarMult(q *P384Point, scalar []byte) (*P384Point, error) 
 }
 
 var p384GeneratorTable *[p384ElementLength * 2]p384Table
-var p384GeneratorTableOnce sync.Once
+var p384GeneratorTableOnce bool
 
 // generatorTable returns a sequence of p384Tables. The first table contains
 // multiples of G. Each successive table is the previous table doubled four
 // times.
 func (p *P384Point) generatorTable() *[p384ElementLength * 2]p384Table {
-	p384GeneratorTableOnce.Do(func() {
+	if !p384GeneratorTableOnce {
 		p384GeneratorTable = new([p384ElementLength * 2]p384Table)
 		base := NewP384Point().SetGenerator()
 		for i := 0; i < p384ElementLength*2; i++ {
@@ -2430,7 +2439,9 @@ func (p *P384Point) generatorTable() *[p384ElementLength * 2]p384Table {
 			base.Double(base)
 			base.Double(base)
 		}
-	})
+	
+	p384GeneratorTableOnce = true
+}
 	return p384GeneratorTable
 }
 
@@ -2685,12 +2696,14 @@ func (p *P521Point) SetBytes(b []byte) (*P521Point, error) {
 }
 
 var _p521B *fiat.P521Element
-var _p521BOnce sync.Once
+var _p521BOnce bool
 
 func p521B() *fiat.P521Element {
-	_p521BOnce.Do(func() {
+	if !_p521BOnce {
 		_p521B, _ = new(fiat.P521Element).SetBytes([]byte{0x0, 0x51, 0x95, 0x3e, 0xb9, 0x61, 0x8e, 0x1c, 0x9a, 0x1f, 0x92, 0x9a, 0x21, 0xa0, 0xb6, 0x85, 0x40, 0xee, 0xa2, 0xda, 0x72, 0x5b, 0x99, 0xb3, 0x15, 0xf3, 0xb8, 0xb4, 0x89, 0x91, 0x8e, 0xf1, 0x9, 0xe1, 0x56, 0x19, 0x39, 0x51, 0xec, 0x7e, 0x93, 0x7b, 0x16, 0x52, 0xc0, 0xbd, 0x3b, 0xb1, 0xbf, 0x7, 0x35, 0x73, 0xdf, 0x88, 0x3d, 0x2c, 0x34, 0xf1, 0xef, 0x45, 0x1f, 0xd4, 0x6b, 0x50, 0x3f, 0x0})
-	})
+	
+	_p521BOnce = true
+}
 	return _p521B
 }
 
@@ -2989,13 +3002,13 @@ func (p *P521Point) ScalarMult(q *P521Point, scalar []byte) (*P521Point, error) 
 }
 
 var p521GeneratorTable *[p521ElementLength * 2]p521Table
-var p521GeneratorTableOnce sync.Once
+var p521GeneratorTableOnce bool
 
 // generatorTable returns a sequence of p521Tables. The first table contains
 // multiples of G. Each successive table is the previous table doubled four
 // times.
 func (p *P521Point) generatorTable() *[p521ElementLength * 2]p521Table {
-	p521GeneratorTableOnce.Do(func() {
+	if !p521GeneratorTableOnce {
 		p521GeneratorTable = new([p521ElementLength * 2]p521Table)
 		base := NewP521Point().SetGenerator()
 		for i := 0; i < p521ElementLength*2; i++ {
@@ -3008,7 +3021,9 @@ func (p *P521Point) generatorTable() *[p521ElementLength * 2]p521Table {
 			base.Double(base)
 			base.Double(base)
 		}
-	})
+	
+	p521GeneratorTableOnce = true
+}
 	return p521GeneratorTable
 }
 

@@ -9,7 +9,6 @@ package elliptic
 import (
 	"io"
 	"math/big"
-	"sync"
 	"crypto/internal/fips140/nistec"
 	"errors"
 )
@@ -266,7 +265,7 @@ func panicIfNotOnCurve(curve Curve, x, y *big.Int) {
 	}
 }
 
-var initonce sync.Once
+var initonce bool
 
 func initAll() {
 	initP224()
@@ -283,7 +282,7 @@ func initAll() {
 //
 // The cryptographic operations are implemented using constant-time algorithms.
 func P224() Curve {
-	initonce.Do(initAll)
+	if !initonce { initAll(); initonce = true }
 	return p224
 }
 
@@ -296,7 +295,7 @@ func P224() Curve {
 //
 // The cryptographic operations are implemented using constant-time algorithms.
 func P256() Curve {
-	initonce.Do(initAll)
+	if !initonce { initAll(); initonce = true }
 	return p256
 }
 
@@ -308,7 +307,7 @@ func P256() Curve {
 //
 // The cryptographic operations are implemented using constant-time algorithms.
 func P384() Curve {
-	initonce.Do(initAll)
+	if !initonce { initAll(); initonce = true }
 	return p384
 }
 
@@ -320,7 +319,7 @@ func P384() Curve {
 //
 // The cryptographic operations are implemented using constant-time algorithms.
 func P521() Curve {
-	initonce.Do(initAll)
+	if !initonce { initAll(); initonce = true }
 	return p521
 }
 
@@ -330,8 +329,24 @@ func P521() Curve {
 
 
 
-var p224 = &nistCurve[*nistec.P224Point]{
-	newPoint: nistec.NewP224Point,
+
+
+// P3-M9: local aliases for nistec point types (frontend/v1 type exporter
+// limitation with package-qualified types in generic instantiations).
+type p224Point = nistec.P224Point
+type p256Point = nistec.P256Point
+type p384Point = nistec.P384Point
+type p521Point = nistec.P521Point
+
+// P3-M9: local wrappers for nistec constructors (frontend/v1 does not
+// support package-qualified function values).
+func newP224Point() *p224Point { return nistec.NewP224Point() }
+func newP256Point() *p256Point { return nistec.NewP256Point() }
+func newP384Point() *p384Point { return nistec.NewP384Point() }
+func newP521Point() *p521Point { return nistec.NewP521Point() }
+
+var p224 = &nistCurve[*p224Point]{
+	newPoint: newP224Point,
 }
 
 func initP224() {
@@ -347,8 +362,8 @@ func initP224() {
 	}
 }
 
-var p256 = &nistCurve[*nistec.P256Point]{
-	newPoint: nistec.NewP256Point,
+var p256 = &nistCurve[*p256Point]{
+	newPoint: newP256Point,
 }
 
 func initP256() {
@@ -364,8 +379,8 @@ func initP256() {
 	}
 }
 
-var p384 = &nistCurve[*nistec.P384Point]{
-	newPoint: nistec.NewP384Point,
+var p384 = &nistCurve[*p384Point]{
+	newPoint: newP384Point,
 }
 
 func initP384() {
@@ -386,8 +401,8 @@ func initP384() {
 	}
 }
 
-var p521 = &nistCurve[*nistec.P521Point]{
-	newPoint: nistec.NewP521Point,
+var p521 = &nistCurve[*p521Point]{
+	newPoint: newP521Point,
 }
 
 func initP521() {
@@ -452,25 +467,25 @@ func (curve *nistCurve[Point]) IsOnCurve(x, y *big.Int) bool {
 	return err == nil
 }
 
-type __mrnistCurve_pointFromAffinePair struct {
+type __mrnistCurve_pointFromAffinePair[Point nistPoint[Point]] struct {
 	p Point
 	err error
 }
 
-func __mrnistCurve_pointFromAffine(curve *nistCurve[Point], x, y *big.Int) __mrnistCurve_pointFromAffinePair {
+func __mrnistCurve_pointFromAffine[Point nistPoint[Point]](curve *nistCurve[Point], x, y *big.Int) __mrnistCurve_pointFromAffinePair[Point] {
 	var p Point
 
 	// (0, 0) is by convention the point at infinity, which can't be represented
 	// in affine coordinates. See Issue 37294.
 	if x.Sign() == 0 && y.Sign() == 0 {
-		return __mrnistCurve_pointFromAffinePair{curve.newPoint(), nil}
+		return __mrnistCurve_pointFromAffinePair[Point]{curve.newPoint(), nil}
 	}
 	// Reject values that would not get correctly encoded.
 	if x.Sign() < 0 || y.Sign() < 0 {
-		return __mrnistCurve_pointFromAffinePair{p, errors.New("negative coordinate")}
+		return __mrnistCurve_pointFromAffinePair[Point]{p, errors.New("negative coordinate")}
 	}
 	if x.BitLen() > curve.params.BitSize || y.BitLen() > curve.params.BitSize {
-		return __mrnistCurve_pointFromAffinePair{p, errors.New("overflowing coordinate")}
+		return __mrnistCurve_pointFromAffinePair[Point]{p, errors.New("overflowing coordinate")}
 	}
 	// Encode the coordinates and let SetBytes reject invalid points.
 	byteLen := (curve.params.BitSize + 7) / 8
@@ -479,7 +494,7 @@ func __mrnistCurve_pointFromAffine(curve *nistCurve[Point], x, y *big.Int) __mrn
 	x.FillBytes(buf[1 : 1+byteLen])
 	y.FillBytes(buf[1+byteLen : 1+2*byteLen])
 	__fw0, __fw1 := curve.newPoint().SetBytes(buf)
-	return __mrnistCurve_pointFromAffinePair{__fw0, __fw1}
+	return __mrnistCurve_pointFromAffinePair[Point]{__fw0, __fw1}
 }
 
 func (curve *nistCurve[Point]) pointFromAffine(x, y *big.Int) (p Point, err error) {
@@ -491,7 +506,7 @@ type __mrnistCurve_pointToAffinePair struct {
 	y *big.Int
 }
 
-func __mrnistCurve_pointToAffine(curve *nistCurve[Point], p Point) __mrnistCurve_pointToAffinePair {
+func __mrnistCurve_pointToAffine[Point nistPoint[Point]](curve *nistCurve[Point], p Point) __mrnistCurve_pointToAffinePair {
 	var x *big.Int
 	var y *big.Int
 
@@ -516,7 +531,7 @@ type __mrnistCurve_AddPair struct {
 	v1 *big.Int
 }
 
-func __mrnistCurve_Add(curve *nistCurve[Point], x1, y1, x2, y2 *big.Int) __mrnistCurve_AddPair {
+func __mrnistCurve_Add[Point nistPoint[Point]](curve *nistCurve[Point], x1, y1, x2, y2 *big.Int) __mrnistCurve_AddPair {
 	p1, err := curve.pointFromAffine(x1, y1)
 	if err != nil {
 		panic("crypto/elliptic: Add was called on an invalid point")
@@ -538,7 +553,7 @@ type __mrnistCurve_DoublePair struct {
 	v1 *big.Int
 }
 
-func __mrnistCurve_Double(curve *nistCurve[Point], x1, y1 *big.Int) __mrnistCurve_DoublePair {
+func __mrnistCurve_Double[Point nistPoint[Point]](curve *nistCurve[Point], x1, y1 *big.Int) __mrnistCurve_DoublePair {
 	p, err := curve.pointFromAffine(x1, y1)
 	if err != nil {
 		panic("crypto/elliptic: Double was called on an invalid point")
@@ -571,7 +586,7 @@ type __mrnistCurve_ScalarMultPair struct {
 	v1 *big.Int
 }
 
-func __mrnistCurve_ScalarMult(curve *nistCurve[Point], Bx, By *big.Int, scalar []byte) __mrnistCurve_ScalarMultPair {
+func __mrnistCurve_ScalarMult[Point nistPoint[Point]](curve *nistCurve[Point], Bx, By *big.Int, scalar []byte) __mrnistCurve_ScalarMultPair {
 	p, err := curve.pointFromAffine(Bx, By)
 	if err != nil {
 		panic("crypto/elliptic: ScalarMult was called on an invalid point")
@@ -594,7 +609,7 @@ type __mrnistCurve_ScalarBaseMultPair struct {
 	v1 *big.Int
 }
 
-func __mrnistCurve_ScalarBaseMult(curve *nistCurve[Point], scalar []byte) __mrnistCurve_ScalarBaseMultPair {
+func __mrnistCurve_ScalarBaseMult[Point nistPoint[Point]](curve *nistCurve[Point], scalar []byte) __mrnistCurve_ScalarBaseMultPair {
 	scalar = curve.normalizeScalar(scalar)
 	p, err := curve.newPoint().ScalarBaseMult(scalar)
 	if err != nil {
@@ -613,7 +628,7 @@ type __mrnistCurve_UnmarshalPair struct {
 	y *big.Int
 }
 
-func __mrnistCurve_Unmarshal(curve *nistCurve[Point], data []byte) __mrnistCurve_UnmarshalPair {
+func __mrnistCurve_Unmarshal[Point nistPoint[Point]](curve *nistCurve[Point], data []byte) __mrnistCurve_UnmarshalPair {
 	var x *big.Int
 	var y *big.Int
 
@@ -643,7 +658,7 @@ type __mrnistCurve_UnmarshalCompressedPair struct {
 	y *big.Int
 }
 
-func __mrnistCurve_UnmarshalCompressed(curve *nistCurve[Point], data []byte) __mrnistCurve_UnmarshalCompressedPair {
+func __mrnistCurve_UnmarshalCompressed[Point nistPoint[Point]](curve *nistCurve[Point], data []byte) __mrnistCurve_UnmarshalCompressedPair {
 	if len(data) == 0 || (data[0] != 2 && data[0] != 3) {
 		return __mrnistCurve_UnmarshalCompressedPair{nil, nil}
 	}

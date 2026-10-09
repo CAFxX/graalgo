@@ -373,6 +373,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("crypto/internal/fips140").pkg, nil
 	case "crypto/internal/fips140/check":
 		return getSyntheticPackage("crypto/internal/fips140/check").pkg, nil
+	case "crypto/internal/fips140/alias":
+		return getSyntheticPackage("crypto/internal/fips140/alias").pkg, nil
 	case "crypto/internal/fips140only":
 		return getSyntheticPackage("crypto/internal/fips140only").pkg, nil
 	case "crypto/internal/fips140cache":
@@ -1214,6 +1216,12 @@ func ExportFile(path string) (string, error) {
 	needPath := false
 	needTextScanner := false
 	needRegexpSyntax := false
+	// P3-M9 (tier-5: compress): synthetic compress/* packages.
+	needFlate := false
+	needGzip := false
+	needZlib := false
+	needLzw := false
+	needBzip2 := false
 	needByteorder := false
 	needSyscall := false
 	needOs := false
@@ -1552,6 +1560,50 @@ func ExportFile(path string) (string, error) {
 			needHash = true
 			needCryptoRand = true
 			needMath = true
+		// P3-M9 (tier-5: compress): synthetic compress/* packages.
+		// flate imports bufio/errors/fmt/io/math/math/bits/slices/
+		// strconv/sync; gzip adds compress/flate/hash/crc32/time;
+		// zlib adds compress/flate/hash/hash/adler32; lzw needs
+		// bufio/errors/fmt/io; bzip2 needs bufio/cmp/io/slices.
+		case "compress/flate":
+			needFlate = true
+			needBufio = true
+			needErrors = true
+			needIo = true
+			needMath = true
+			needMathBits = true
+			needSlices = true
+			needStrconv = true
+			// sync is a builtin stub (syntheticSyncPackage), always
+			// available via the overlay importer.
+		case "compress/gzip":
+			needGzip = true
+			needFlate = true
+			needBufio = true
+			needErrors = true
+			needIo = true
+			needTime = true
+			needHashCrc32 = true
+			needHash = true
+		case "compress/zlib":
+			needZlib = true
+			needFlate = true
+			needBufio = true
+			needErrors = true
+			needIo = true
+			needHashAdler32 = true
+			needHash = true
+		case "compress/lzw":
+			needLzw = true
+			needBufio = true
+			needErrors = true
+			needIo = true
+		case "compress/bzip2":
+			needBzip2 = true
+			needBufio = true
+			needCmp = true
+			needIo = true
+			needSlices = true
 		}
 	}
 	if needTime {
@@ -1650,6 +1702,36 @@ func ExportFile(path string) (string, error) {
 	// emitted via needBytes).
 	if needBufio {
 		if err := e.importSyntheticPackage(getSyntheticPackage("bufio")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (tier-5: compress): synthetic compress/* packages (see
+	// synth_compress_{flate,gzip,zlib,lzw,bzip2}.go). flate first (gzip
+	// and zlib import it); the other deps (bufio/errors/io/math/
+	// math/bits/slices/strconv/hash/hash/adler32/hash/crc32/time) are
+	// imported by their own need-flags above.
+	if needFlate {
+		if err := e.importSyntheticPackage(getSyntheticPackage("compress/flate")); err != nil {
+			return "", err
+		}
+	}
+	if needGzip {
+		if err := e.importSyntheticPackage(getSyntheticPackage("compress/gzip")); err != nil {
+			return "", err
+		}
+	}
+	if needZlib {
+		if err := e.importSyntheticPackage(getSyntheticPackage("compress/zlib")); err != nil {
+			return "", err
+		}
+	}
+	if needLzw {
+		if err := e.importSyntheticPackage(getSyntheticPackage("compress/lzw")); err != nil {
+			return "", err
+		}
+	}
+	if needBzip2 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("compress/bzip2")); err != nil {
 			return "", err
 		}
 	}
@@ -2054,6 +2136,7 @@ func ExportFile(path string) (string, error) {
 		for _, p := range []string{
 			"crypto/internal/fips140",
 			"crypto/internal/fips140/check",
+			"crypto/internal/fips140/alias",
 			"crypto/internal/fips140only",
 			"crypto/internal/fips140cache",
 			"crypto/internal/fips140hash",
@@ -4170,11 +4253,23 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 // Termination is guaranteed by go/types: instantiation cycles are type
 // errors, so the graph is finite for every accepted program. A defensive cap
 // guards against enumerator bugs (internal error, never silent).
-func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo) ([]*instantiation, error) {
+// scanRoots collects generic-instantiation roots from one package's type
+// info and files: generic-function calls and generic-method calls in
+// non-generic code. The user file is scanned with its own info; imported
+// synthetic packages are scanned with theirs (P3-M9 tier-5: vendored stdlib
+// sources call generic helpers from non-generic code — package-level var
+// initializers, __mr wrappers — which the user-file-only scan never sees,
+// failing export with "not enumerated (internal error)"). Idents inside
+// generic templates are skipped (found via the fixpoint, not as roots).
+func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*funcDeclInfo, enqueue func(*instantiation), newFuncInst func(*funcDeclInfo, []types.Type, *typeSubst) (*instantiation, error)) error {
+	saved := e.info
+	e.info = info
+	defer func() { e.info = saved }()
+
 	// idents inside generic templates: instantiations recorded there are
 	// nested (found in the fixpoint), not roots.
 	inTemplate := make(map[*ast.Ident]bool)
-	for _, fi := range funcs {
+	for _, fi := range tmplFuncs {
 		if !fi.isTemplate {
 			continue
 		}
@@ -4187,32 +4282,13 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 	}
 	// Sel ident -> SelectorExpr (method instantiations via info.Instances).
 	selOf := make(map[*ast.Ident]*ast.SelectorExpr)
-	ast.Inspect(file, func(n ast.Node) bool {
-		if sel, ok := n.(*ast.SelectorExpr); ok {
-			selOf[sel.Sel] = sel
-		}
-		return true
-	})
-
-	seen := make(map[string]*instantiation)
-	var order []*instantiation
-	enqueue := func(inst *instantiation) {
-		if _, ok := seen[inst.key]; ok {
-			return
-		}
-		seen[inst.key] = inst
-		order = append(order, inst)
-	}
-	newFuncInst := func(fi *funcDeclInfo, targs []types.Type, subst *typeSubst) (*instantiation, error) {
-		key := instKeyForFunc(fi, targs, subst)
-		if !isConcreteKey(key) {
-			return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of %s", fi.obj.Name())
-		}
-		sub2 := &typeSubst{parent: subst, bind: bindParams(fi.sig.TypeParams(), targs)}
-		return &instantiation{
-			decl: fi, subst: sub2, rawTargs: targs,
-			key: key, name: instNameForFunc(fi, targs, subst),
-		}, nil
+	for _, file := range files {
+		ast.Inspect(file, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				selOf[sel.Sel] = sel
+			}
+			return true
+		})
 	}
 
 	// Roots: generic-function instantiations in non-generic code.
@@ -4237,7 +4313,7 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 				// Generic method via its Sel ident.
 				selection, ok := e.info.Selections[sel]
 				if !ok {
-					return nil, fmt.Errorf("gofrontend: no selection for %s", sel.Sel.Name)
+					return fmt.Errorf("gofrontend: no selection for %s", sel.Sel.Name)
 				}
 				// P3-M7: synthetic multi-result methods (bytes.Buffer.Read, etc.)
 				// fail fast at the call site (WS D) — they are not in methodIndex
@@ -4248,7 +4324,7 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 				}
 				mc, err := e.resolveMethodCall(sel, selection, typeList(inst.TypeArgs), nil)
 				if err != nil {
-					return nil, err
+					return err
 				}
 				if mc.needsInst {
 					enqueue(&instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name})
@@ -4265,14 +4341,14 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 		}
 		fi, ok := e.funcByObj[fn]
 		if !ok {
-			return nil, fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
+			return fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
 		}
 		if !fi.isTemplate {
 			continue // non-generic: emitted from its declaration
 		}
 		ni, err := newFuncInst(fi, typeList(inst.TypeArgs), nil)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		enqueue(ni)
 	}
@@ -4308,10 +4384,59 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 		}
 		mc, err := e.resolveMethodCall(sel, selection, mtargs, nil)
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if mc.needsInst {
 			enqueue(&instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name})
+		}
+	}
+	return nil
+}
+
+func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo) ([]*instantiation, error) {
+	// Roots are collected from the user file and from every imported
+	// synthetic package's own body (see scanRoots).
+	seen := make(map[string]*instantiation)
+	var order []*instantiation
+	enqueue := func(inst *instantiation) {
+		if _, ok := seen[inst.key]; ok {
+			return
+		}
+		seen[inst.key] = inst
+		order = append(order, inst)
+	}
+	newFuncInst := func(fi *funcDeclInfo, targs []types.Type, subst *typeSubst) (*instantiation, error) {
+		key := instKeyForFunc(fi, targs, subst)
+		if !isConcreteKey(key) {
+			return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of %s", fi.obj.Name())
+		}
+		sub2 := &typeSubst{parent: subst, bind: bindParams(fi.sig.TypeParams(), targs)}
+		return &instantiation{
+			decl: fi, subst: sub2, rawTargs: targs,
+			key: key, name: instNameForFunc(fi, targs, subst),
+		}, nil
+	}
+
+	if err := e.scanRoots(e.info, []*ast.File{file}, funcs, enqueue, newFuncInst); err != nil {
+		return nil, err
+	}
+	// P3-M9 (tier-5): synthetic packages root their own generic
+	// instantiations (see scanRoots). Deterministic order.
+	spaths := make([]string, 0, len(e.importedSynthetic))
+	for p := range e.importedSynthetic {
+		spaths = append(spaths, p)
+	}
+	sort.Strings(spaths)
+	for _, p := range spaths {
+		sp := getSyntheticPackage(p)
+		var sfuncs []*funcDeclInfo
+		for _, fi := range e.funcByObj {
+			if fi.synthPkg == sp {
+				sfuncs = append(sfuncs, fi)
+			}
+		}
+		if err := e.scanRoots(sp.info, sp.files, sfuncs, enqueue, newFuncInst); err != nil {
+			return nil, err
 		}
 	}
 	// Fixpoint: nested instantiations inside generic bodies.
@@ -6734,7 +6859,11 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	}
 	fi, ok := e.funcByObj[fn]
 	if !ok {
-		return nil, fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
+		pp := "<nil>"
+		if fn.Pkg() != nil {
+			pp = fn.Pkg().Path()
+		}
+		return nil, fmt.Errorf("gofrontend: call to unknown function %s (pkg %s)", fn.Name(), pp)
 	}
 	if sig, ok := fn.Type().(*types.Signature); ok {
 		if err := checkVariadicCall(c, sig); err != nil {
@@ -7961,9 +8090,48 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 				p == "unique" || p == "structs" || p == "internal/bytealg" ||
 				// P3-M9 (wave 3, tier-1b): container/* + hash/* consts/vars
 				// (crc32.IEEE, crc64.ECMA, fnv offsets, ...).
+				// P3-M9 (wave 3, tier-5b): compress/* consts/vars
+				// (lzw.LSB/MSB, flate/gzip/zlib level consts).
+				// P3-M9 (tier-5): asymmetric-crypto consts/vars/funcs
+				// (elliptic, ecdh, dsa, ecdsa, ed25519, rsa, hkdf, pbkdf2
+				// plus the internal fips140/* deps and cryptobyte that the
+				// synthetic sources reference as qualified idents —
+				// without this, e.g. nistec.NewP256Point falls through to
+				// exportExpr(x.X) and fails `identifier "nistec" denotes
+				// *types.PkgName`).
 				p == "container/heap" || p == "container/list" || p == "container/ring" ||
 				p == "hash/adler32" || p == "hash/crc32" || p == "hash/crc64" ||
-				p == "hash/fnv" || p == "hash/maphash" {
+				p == "hash/fnv" || p == "hash/maphash" ||
+				p == "compress/flate" || p == "compress/gzip" || p == "compress/zlib" ||
+				p == "compress/lzw" || p == "compress/bzip2" ||
+				p == "crypto/elliptic" || p == "crypto/ecdh" || p == "crypto/dsa" ||
+				p == "crypto/ecdsa" || p == "crypto/ed25519" || p == "crypto/rsa" ||
+				p == "crypto/hkdf" || p == "crypto/pbkdf2" ||
+				p == "golang.org/x/crypto/cryptobyte" ||
+				p == "golang.org/x/crypto/cryptobyte/asn1" ||
+				p == "crypto/internal/fips140" || p == "crypto/internal/fips140/check" ||
+				p == "crypto/internal/fips140/alias" || p == "crypto/internal/fips140only" ||
+				p == "crypto/internal/fips140cache" || p == "crypto/internal/fips140hash" ||
+				p == "crypto/internal/fips140/drbg" || p == "crypto/internal/rand" ||
+				p == "crypto/internal/boring/bbig" || p == "crypto/internal/boring" ||
+				p == "crypto/internal/constanttime" ||
+				p == "crypto/internal/fips140deps/byteorder" ||
+				p == "crypto/internal/fips140/nistec/fiat" ||
+				p == "crypto/internal/fips140/nistec" ||
+				p == "crypto/internal/fips140/edwards25519/field" ||
+				p == "crypto/internal/fips140/edwards25519" ||
+				p == "crypto/internal/fips140/bigmod" ||
+				p == "crypto/internal/fips140/subtle" ||
+				p == "crypto/internal/fips140/sha256" ||
+				p == "crypto/internal/fips140/sha512" ||
+				p == "crypto/internal/fips140/sha3" ||
+				p == "crypto/internal/fips140/hmac" ||
+				p == "crypto/internal/fips140/hkdf" ||
+				p == "crypto/internal/fips140/pbkdf2" ||
+				p == "crypto/internal/fips140/ecdh" ||
+				p == "crypto/internal/fips140/ecdsa" ||
+				p == "crypto/internal/fips140/ed25519" ||
+				p == "crypto/internal/fips140/rsa" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

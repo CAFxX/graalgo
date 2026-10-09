@@ -16,7 +16,6 @@ import (
 	"hash"
 	"io"
 	"math/bits"
-	"sync"
 	"crypto/internal/fips140/hmac"
 )
 
@@ -80,26 +79,23 @@ type Point[P any] interface {
 	Add(p1, p2 P) P
 }
 
-func precomputeParams[P Point[P]](c *Curve[P], order []byte) {
-	var err error
-	c.N, err = bigmod.NewModulus(order)
-	if err != nil {
-		panic(err)
-	}
-	two, _ := bigmod.NewNat().SetBytes([]byte{2}, c.N)
-	c.nMinus2 = bigmod.NewNat().ExpandFor(c.N).Sub(two, c.N).Bytes(c.N)
-}
+func P224() *Curve[*nistec.P224Point] { return _P224 }
 
-func P224() *Curve[*nistec.P224Point] { return _P224() }
-
-var _P224 = sync.OnceValue(func() *Curve[*nistec.P224Point] {
+var _P224 = func() *Curve[*nistec.P224Point] {
 	c := &Curve[*nistec.P224Point]{
 		curve:    p224,
 		newPoint: nistec.NewP224Point,
 	}
-	precomputeParams(c, p224Order)
+	{
+	__n, __err := bigmod.NewModulus(p224Order)
+	if __err != nil {
+		panic(__err)
+	}
+	c.N = __n
+	two, _ := bigmod.NewNat().SetBytes([]byte{2}, c.N)
+	c.nMinus2 = bigmod.NewNat().ExpandFor(c.N).Sub(two, c.N).Bytes(c.N)}
 	return c
-})
+}()
 
 var p224Order = []byte{
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -108,17 +104,24 @@ var p224Order = []byte{
 	0x5c, 0x5c, 0x2a, 0x3d,
 }
 
-func P256() *Curve[*nistec.P256Point] { return _P256() }
+func P256() *Curve[*nistec.P256Point] { return _P256 }
 
-var _P256 = sync.OnceValue(func() *Curve[*nistec.P256Point] {
+var _P256 = func() *Curve[*nistec.P256Point] {
 	c := &Curve[*nistec.P256Point]{
 		curve:      p256,
 		newPoint:   nistec.NewP256Point,
 		ordInverse: nistec.P256OrdInverse,
 	}
-	precomputeParams(c, p256Order)
+	{
+	__n, __err := bigmod.NewModulus(p256Order)
+	if __err != nil {
+		panic(__err)
+	}
+	c.N = __n
+	two, _ := bigmod.NewNat().SetBytes([]byte{2}, c.N)
+	c.nMinus2 = bigmod.NewNat().ExpandFor(c.N).Sub(two, c.N).Bytes(c.N)}
 	return c
-})
+}()
 
 var p256Order = []byte{
 	0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00,
@@ -126,16 +129,23 @@ var p256Order = []byte{
 	0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84,
 	0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51}
 
-func P384() *Curve[*nistec.P384Point] { return _P384() }
+func P384() *Curve[*nistec.P384Point] { return _P384 }
 
-var _P384 = sync.OnceValue(func() *Curve[*nistec.P384Point] {
+var _P384 = func() *Curve[*nistec.P384Point] {
 	c := &Curve[*nistec.P384Point]{
 		curve:    p384,
 		newPoint: nistec.NewP384Point,
 	}
-	precomputeParams(c, p384Order)
+	{
+	__n, __err := bigmod.NewModulus(p384Order)
+	if __err != nil {
+		panic(__err)
+	}
+	c.N = __n
+	two, _ := bigmod.NewNat().SetBytes([]byte{2}, c.N)
+	c.nMinus2 = bigmod.NewNat().ExpandFor(c.N).Sub(two, c.N).Bytes(c.N)}
 	return c
-})
+}()
 
 var p384Order = []byte{
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -145,16 +155,23 @@ var p384Order = []byte{
 	0x58, 0x1a, 0x0d, 0xb2, 0x48, 0xb0, 0xa7, 0x7a,
 	0xec, 0xec, 0x19, 0x6a, 0xcc, 0xc5, 0x29, 0x73}
 
-func P521() *Curve[*nistec.P521Point] { return _P521() }
+func P521() *Curve[*nistec.P521Point] { return _P521 }
 
-var _P521 = sync.OnceValue(func() *Curve[*nistec.P521Point] {
+var _P521 = func() *Curve[*nistec.P521Point] {
 	c := &Curve[*nistec.P521Point]{
 		curve:    p521,
 		newPoint: nistec.NewP521Point,
 	}
-	precomputeParams(c, p521Order)
+	{
+	__n, __err := bigmod.NewModulus(p521Order)
+	if __err != nil {
+		panic(__err)
+	}
+	c.N = __n
+	two, _ := bigmod.NewNat().SetBytes([]byte{2}, c.N)
+	c.nMinus2 = bigmod.NewNat().ExpandFor(c.N).Sub(two, c.N).Bytes(c.N)}
 	return c
-})
+}()
 
 var p521Order = []byte{0x01, 0xff,
 	0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
@@ -260,21 +277,17 @@ func GenerateKey[P Point[P]](c *Curve[P], rand io.Reader) (*PrivateKey, error) {
 // Generation of Private Keys by Rejection Sampling) or Appendix A.3.3
 // (Per-Message Secret Number Generation for Deterministic ECDSA) followed by
 // Step 5 of Section 6.4.1.
-type __mrrandomPointPair struct {
+type __mrrandomPointPair[P Point[P]] struct {
 	k *bigmod.Nat
 	p P
 	err error
 }
 
-func __mrrandomPoint[P Point[P]](c *Curve[P], generate func([]byte) error) __mrrandomPointPair {
-	var k *bigmod.Nat
-	var p P
-	var err error
-
+func __mrrandomPoint[P Point[P]](c *Curve[P], generate func([]byte) error) __mrrandomPointPair[P] {
 	for {
 		b := make([]byte, c.N.Size())
 		if err := generate(b); err != nil {
-			return __mrrandomPointPair{nil, nil, err}
+			return __mrrandomPointPair[P]{nil, nil, err}
 		}
 
 		// Take only the leftmost bits of the generated random value. This is
@@ -302,7 +315,7 @@ func __mrrandomPoint[P Point[P]](c *Curve[P], generate func([]byte) error) __mrr
 		// because the chance of selecting zero is cryptographically negligible.
 		if k, err := bigmod.NewNat().SetBytes(b, c.N); err == nil && k.IsZero() == 0 {
 			p, err := c.newPoint().ScalarBaseMult(k.Bytes(c.N))
-			return __mrrandomPointPair{k, p, err}
+			return __mrrandomPointPair[P]{k, p, err}
 		}
 
 		if testingOnlyRejectionSamplingLooped != nil {
@@ -765,10 +778,35 @@ func (d *hmacDRBG) Generate(out []byte) {
 }
 
 
+// ---- vendored from crypto/internal/fips140/ecdsa/ecdsa_noasm.go ----
+
+
+type __mrsignPair struct {
+	v0 *Signature
+	v1 error
+}
+
+func __mrsign[P Point[P]](c *Curve[P], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignPair {
+	__fw0, __fw1 := signGeneric(c, priv, drbg, hash)
+	return __mrsignPair{__fw0, __fw1}
+}
+
+func sign[P Point[P]](c *Curve[P], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
+	panic("crypto/internal/fips140/ecdsa: sign: multi-result desugar")
+}
+
+func verify[P Point[P]](c *Curve[P], pub *PublicKey, hash []byte, sig *Signature) error {
+	return verifyGeneric(c, pub, hash, sig)
+}
+
+
 // ---- synthetic additions ----
 
 // P3-M9: FIPS self-tests are no-ops in default (non-FIPS) mode.
 var fipsSelfTest = func() {}
 var fipsSelfTestDeterministic = func() {}
+
+// P3-M9: fipsPCT is a no-op (FIPS mode disabled).
+func fipsPCT[P Point[P]](c *Curve[P], _ *PrivateKey) { _ = c }
 
 `

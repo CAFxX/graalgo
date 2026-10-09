@@ -105,20 +105,19 @@ var rc = [24]uint64{
 
 // keccakF1600Generic applies the Keccak permutation.
 func keccakF1600Generic(da *[200]byte) {
+	// P3-M9: always use the copy-in/copy-out path (unsafe.Pointer
+	// aliasing is not in frontend/v1 scope); behavior-identical on
+	// little-endian.
 	var a *[25]uint64
-	if true { // P3-M9: always copy (see header deviation).
-		a = new([25]uint64)
-		for i := range a {
-			a[i] = byteorder.LEUint64(da[i*8:])
-		}
-		defer func() {
-			for i := range a {
-				byteorder.LEPutUint64(da[i*8:], a[i])
-			}
-		}()
-	} else {
-		a = (*[25]uint64)(unsafe.Pointer(da))
+	a = new([25]uint64)
+	for i := range a {
+		a[i] = byteorder.LEUint64(da[i*8:])
 	}
+	defer func() {
+		for i := range a {
+			byteorder.LEPutUint64(da[i*8:], a[i])
+		}
+	}()
 
 	// Implementation translated from Keccak-inplace.c
 	// in the keccak reference code.

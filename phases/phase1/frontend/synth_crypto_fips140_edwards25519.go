@@ -11,7 +11,6 @@ import (
 	"errors"
 	"crypto/internal/fips140deps/byteorder"
 	"math/bits"
-	"sync"
 	"crypto/internal/constanttime"
 )
 
@@ -75,9 +74,15 @@ func (v *projP2) Zero() *projP2 {
 }
 
 // identity is the point at infinity.
-var identity, _ = new(Point).SetBytes([]byte{
+var identity = func() *Point {
+	r := __mrPoint_SetBytes(new(Point), []byte{
 	1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+	if r.v1 != nil {
+		panic("edwards25519: invalid constant")
+	}
+	return r.v0
+}()
 
 // NewIdentityPoint returns a new Point set to the identity.
 func NewIdentityPoint() *Point {
@@ -86,11 +91,17 @@ func NewIdentityPoint() *Point {
 
 // generator is the canonical curve basepoint. See TestGenerator for the
 // correspondence of this encoding with the values in RFC 8032.
-var generator, _ = new(Point).SetBytes([]byte{
+var generator = func() *Point {
+	r := __mrPoint_SetBytes(new(Point), []byte{
 	0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
 	0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
 	0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
 	0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66})
+	if r.v1 != nil {
+		panic("edwards25519: invalid constant")
+	}
+	return r.v0
+}()
 
 // NewGeneratorPoint returns a new Point set to the canonical generator.
 func NewGeneratorPoint() *Point {
@@ -244,11 +255,15 @@ func (v *Point) fromP2(p *projP2) *Point {
 }
 
 // d is a constant in the curve equation.
-var d, _ = new(field.Element).SetBytes([]byte{
-	0xa3, 0x78, 0x59, 0x13, 0xca, 0x4d, 0xeb, 0x75,
-	0xab, 0xd8, 0x41, 0x41, 0x4d, 0x0a, 0x70, 0x00,
-	0x98, 0xe8, 0x79, 0x77, 0x79, 0x40, 0xc7, 0x8c,
-	0x73, 0xfe, 0x6f, 0x2b, 0xee, 0x6c, 0x03, 0x52})
+var d *field.Element
+
+func init() {
+	d = field.SetBytesOrPanic(new(field.Element), []byte{
+		0xa3, 0x78, 0x59, 0x13, 0xca, 0x4d, 0xeb, 0x75,
+		0xab, 0xd8, 0x41, 0x41, 0x4d, 0x0a, 0x70, 0x00,
+		0x98, 0xe8, 0x79, 0x77, 0x79, 0x40, 0xc7, 0x8c,
+		0x73, 0xfe, 0x6f, 0x2b, 0xee, 0x6c, 0x03, 0x52})
+}
 var d2 = new(field.Element).Add(d, d)
 
 func (v *projCached) FromP3(p *Point) *projCached {
@@ -1940,7 +1955,7 @@ func fiatScalarFromBytes(out1 *[4]uint64, arg1 *[32]uint8) {
 // basepointTable is a set of 32 affineLookupTables, where table i is generated
 // from 256i * basepoint. It is precomputed the first time it's used.
 func basepointTable() *[32]affineLookupTable {
-	basepointTablePrecomp.initOnce.Do(func() {
+	if !basepointTablePrecomp.initOnce {
 		p := NewGeneratorPoint()
 		for i := 0; i < 32; i++ {
 			basepointTablePrecomp.table[i].FromP3(p)
@@ -1948,13 +1963,15 @@ func basepointTable() *[32]affineLookupTable {
 				p.Add(p, p)
 			}
 		}
-	})
+	
+	basepointTablePrecomp.initOnce = true
+}
 	return &basepointTablePrecomp.table
 }
 
 var basepointTablePrecomp struct {
 	table    [32]affineLookupTable
-	initOnce sync.Once
+	initOnce bool
 }
 
 // ScalarBaseMult sets v = x * B, where B is the canonical generator, and
@@ -2056,15 +2073,17 @@ func (v *Point) ScalarMult(x *Scalar, q *Point) *Point {
 // basepointNafTable is the nafLookupTable8 for the basepoint.
 // It is precomputed the first time it's used.
 func basepointNafTable() *nafLookupTable8 {
-	basepointNafTablePrecomp.initOnce.Do(func() {
+	if !basepointNafTablePrecomp.initOnce {
 		basepointNafTablePrecomp.table.FromP3(NewGeneratorPoint())
-	})
+	
+	basepointNafTablePrecomp.initOnce = true
+}
 	return &basepointNafTablePrecomp.table
 }
 
 var basepointNafTablePrecomp struct {
 	table    nafLookupTable8
-	initOnce sync.Once
+	initOnce bool
 }
 
 // VarTimeDoubleScalarBaseMult sets v = a * A + b * B, where B is the canonical
@@ -2269,5 +2288,6 @@ func (v *nafLookupTable5) SelectInto(dest *projCached, x int8) {
 func (v *nafLookupTable8) SelectInto(dest *affineCached, x int8) {
 	*dest = v.points[x/2]
 }
+
 
 `

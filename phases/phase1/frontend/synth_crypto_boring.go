@@ -22,6 +22,9 @@ import (
 
 const available = false
 
+// Enabled reports whether BoringCrypto is available.
+const Enabled = available
+
 // Unreachable marks code that should be unreachable
 // when BoringCrypto is in use. It is a no-op without BoringCrypto.
 func Unreachable() {

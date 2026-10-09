@@ -1020,21 +1020,21 @@ func (x *Nat) Mul(y *Nat, m *Modulus) *Nat {
 		const n = 1024 / _W // compiler hint
 		T := make([]uint, n*2)
 		for i := 0; i < n; i++ {
-			T[n+i] = addMulVVW1024(&T[i], &xLimbs[0], yLimbs[i])
+			T[n+i] = addMulVVW1024(T[i:], xLimbs, yLimbs[i])
 		}
 		return x.Mod(&Nat{limbs: T}, m)
 	case 1536 / _W:
 		const n = 1536 / _W // compiler hint
 		T := make([]uint, n*2)
 		for i := 0; i < n; i++ {
-			T[n+i] = addMulVVW1536(&T[i], &xLimbs[0], yLimbs[i])
+			T[n+i] = addMulVVW1536(T[i:], xLimbs, yLimbs[i])
 		}
 		return x.Mod(&Nat{limbs: T}, m)
 	case 2048 / _W:
 		const n = 2048 / _W // compiler hint
 		T := make([]uint, n*2)
 		for i := 0; i < n; i++ {
-			T[n+i] = addMulVVW2048(&T[i], &xLimbs[0], yLimbs[i])
+			T[n+i] = addMulVVW2048(T[i:], xLimbs, yLimbs[i])
 		}
 		return x.Mod(&Nat{limbs: T}, m)
 	}

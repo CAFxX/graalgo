@@ -454,4 +454,7 @@ func verifyWithDom(pub *PublicKey, message, sig []byte, domPrefix, context strin
 // P3-M9: FIPS self-tests are no-ops in default (non-FIPS) mode.
 var fipsSelfTest = func() {}
 
+// P3-M9: fipsPCT is a no-op (FIPS mode disabled).
+func fipsPCT(_ *PrivateKey) {}
+
 `
