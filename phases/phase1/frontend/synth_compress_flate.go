@@ -40,7 +40,6 @@ import (
 	"io"
 	"math"
 	"math/bits"
-	"sort"
 	"strconv"
 	"sync"
 )
@@ -2838,6 +2837,19 @@ func (h *huffmanEncoder) bitCounts(list []literalNode, maxBits int32) []int32 {
 
 // assignEncodingAndSize assigns bit counts and encodings to the leaves
 // as specified in RFC 1951 3.2.2.
+// sortLiteralNodes is a small insertion sort over []literalNode, used in
+// place of sort.Slice (the synthetic sort package's Slice is reflect-based
+// and fail-fast in M7 scope). Both call sites sort under a total order
+// (literal values are unique within the slice), so the result is identical
+// to gc's unstable sort.Slice, and the compressed output matches gc
+// byte-for-byte.
+func sortLiteralNodes(x []literalNode, less func(a, b literalNode) bool) {
+	for i := 1; i < len(x); i++ {
+		for j := i; j > 0 && less(x[j], x[j-1]); j-- {
+			x[j], x[j-1] = x[j-1], x[j]
+		}
+	}
+}
 func (h *huffmanEncoder) assignEncodingAndSize(bitCount []int32, list []literalNode) {
 	code := uint16(0)
 	for n, bits := range bitCount {
@@ -2851,8 +2863,8 @@ func (h *huffmanEncoder) assignEncodingAndSize(bitCount []int32, list []literalN
 		// assigned in literal order (not frequency order).
 		chunk := list[len(list)-int(bits):]
 
-		sort.Slice(chunk, func(i, j int) bool {
-			return chunk[i].literal < chunk[j].literal
+		sortLiteralNodes(chunk, func(a, b literalNode) bool {
+			return a.literal < b.literal
 		})
 		for _, node := range chunk {
 			h.codes[node.literal] = newhcode(reverseBits(code, uint8(n)), uint8(n))
@@ -2891,9 +2903,9 @@ func (h *huffmanEncoder) generate(freq []uint16, maxBits int32) {
 		}
 		return
 	}
-	sort.Slice(list, func(i, j int) bool {
+	sortLiteralNodes(list, func(a, b literalNode) bool {
 		// Literals can be contained in 9 bits, so we shift freq to be branchless.
-		return (int(list[i].freq)<<10+int(list[i].literal)) < (int(list[j].freq)<<10+int(list[j].literal))
+		return (int(a.freq)<<10+int(a.literal)) < (int(b.freq)<<10+int(b.literal))
 	})
 
 	// Get the number of literals for each bit count
