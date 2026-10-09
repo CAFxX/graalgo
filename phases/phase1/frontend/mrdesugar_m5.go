@@ -106,7 +106,9 @@ type m7MultiResultFunc struct {
 	// multi-result signature's result order positionally)
 }
 
-// m7MultiResultFuncs is the desugar table for the encoding/* packages.
+// m7MultiResultFuncs is the desugar table for the encoding/* packages
+// (extended P3-M8 to reflect, P3-M9 to math/bits — the mechanism is
+// package-path-keyed, so entries for any synthetic package work).
 // Every entry was verified against the synthetic source it names:
 // helper name, pair struct name, and field names/order match the
 // source's __-helper and pair struct exactly (e.g. base32's AppendDecode
@@ -232,6 +234,30 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
+	// P3-M9 (tier1c): math/bits multi-result functions (Add/Sub/Mul/Div
+	// + 32/64 variants). Pair field names match the gc result names in
+	// order (see synth_mathbits.go).
+	{"math/bits", "Add", "", "__bitsAdd", "bitsAddPair", []string{"sum", "carryOut"}},
+	{"math/bits", "Add32", "", "__bitsAdd32", "bitsAdd32Pair", []string{"sum", "carryOut"}},
+	{"math/bits", "Add64", "", "__bitsAdd64", "bitsAdd64Pair", []string{"sum", "carryOut"}},
+	{"math/bits", "Sub", "", "__bitsSub", "bitsSubPair", []string{"diff", "borrowOut"}},
+	{"math/bits", "Sub32", "", "__bitsSub32", "bitsSub32Pair", []string{"diff", "borrowOut"}},
+	{"math/bits", "Sub64", "", "__bitsSub64", "bitsSub64Pair", []string{"diff", "borrowOut"}},
+	{"math/bits", "Mul", "", "__bitsMul", "bitsMulPair", []string{"hi", "lo"}},
+	{"math/bits", "Mul32", "", "__bitsMul32", "bitsMul32Pair", []string{"hi", "lo"}},
+	{"math/bits", "Mul64", "", "__bitsMul64", "bitsMul64Pair", []string{"hi", "lo"}},
+	{"math/bits", "Div", "", "__bitsDiv", "bitsDivPair", []string{"quo", "rem"}},
+	{"math/bits", "Div32", "", "__bitsDiv32", "bitsDiv32Pair", []string{"quo", "rem"}},
+	{"math/bits", "Div64", "", "__bitsDiv64", "bitsDiv64Pair", []string{"quo", "rem"}},
+	// P3-M9 (tier1c): math.Sincos desugars to the existing __sincos
+	// helper (used internally by the Bessel functions; Sin(x)/Cos(x)
+	// each bit-exact, and Sincos == (Sin, Cos) bit-wise: 0 mismatches
+	// over 100010 adversarial+random inputs vs gc 1.27.1). Needed by
+	// the synthetic math/cmplx package (Rect/Exp/Pow/Sin/Cos).
+	{"math", "Sincos", "", "__sincos", "__sincosPair", []string{"sin", "cos"}},
+	// P3-M9 (tier1c): math/cmplx.Polar desugars to the __cmplxPolar helper
+	// (Appendix M; pair fields match the gc result names in order).
+	{"math/cmplx", "Polar", "", "__cmplxPolar", "cmplxPolarPair", []string{"r", "theta"}},
 }
 
 // m8MultiResultFuncs is the desugar table for the crypto/* packages (P3-M8).
@@ -282,6 +308,44 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/sha512", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
 	{"crypto/sha3", "Clone", "SHA3", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
 	{"crypto/hmac", "Clone", "hmac", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	// P3-M9 (wave 3, tier-1b): hash/adler32, hash/crc32, hash/crc64
+	// digest methods (via hash.__hashWrite/__hashClone/__binaryMarshal/
+	// __binaryAppend). The digests keep the exact gc multi-result
+	// signatures with fail-fast bodies; real logic lives in the
+	// single-result WriteSingle/CloneSinglePair/MarshalSingle/
+	// AppendSingle methods.
+	{"hash/adler32", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"hash/adler32", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"hash/adler32", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash/adler32", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"hash/crc32", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"hash/crc32", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"hash/crc32", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash/crc32", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"hash/crc64", "Write", "digest", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"hash/crc64", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"hash/crc64", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash/crc64", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	// P3-M9 (wave 3, tier-1b): hash/fnv sum methods (no Clone; gc's fnv
+	// digests do not implement hash.Cloner).
+	{"hash/fnv", "Write", "sum32", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum32a", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum64", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum64a", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum128", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"hash/fnv", "Write", "sum128a", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum32", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum32a", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum64", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum64a", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum128", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash/fnv", "MarshalBinary", "sum128a", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum32", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum32a", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum64", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum64a", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum128", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"hash/fnv", "AppendBinary", "sum128a", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
 	// P3-M8b: encoding.BinaryMarshaler/BinaryAppender for the synthetic
 	// digests (itab wiring for the "hash"/"MarshalBinary" and
 	// "hash"/"AppendBinary" iface entries; md5 entries pre-exist above).
@@ -299,6 +363,56 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	// h.Write(in) / h.Read(got) as bare statements).
 	{"crypto/sha3", "Write", "SHAKE", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
 	{"crypto/sha3", "Read", "SHAKE", "__hashRead", "hash", "hashReadPair", []string{"n", "err"}},
+	// P3-M9 (wave 3, math/big): 47 multi-result funcs/methods. Each has a
+	// fail-fast stub with the exact gc 1.27.1 signature; the real logic is
+	// in the single-result __mr* helper returning the pair struct.
+	{"math/big", "AppendText", "Float", "__mrFloat_AppendText", "__mrFloat_AppendTextPair", []string{"v0", "v1"}},
+	{"math/big", "AppendText", "Int", "__mrInt_AppendText", "__mrInt_AppendTextPair", []string{"text", "err"}},
+	{"math/big", "AppendText", "Rat", "__mrRat_AppendText", "__mrRat_AppendTextPair", []string{"v0", "v1"}},
+	{"math/big", "DivMod", "Int", "__mrInt_DivMod", "__mrInt_DivModPair", []string{"v0", "v1"}},
+	{"math/big", "Divide", "Int", "__mrInt_Divide", "__mrInt_DividePair", []string{"v0", "v1"}},
+	{"math/big", "Float32", "Float", "__mrFloat_Float32", "__mrFloat_Float32Pair", []string{"v0", "v1"}},
+	{"math/big", "Float32", "Rat", "__mrRat_Float32", "__mrRat_Float32Pair", []string{"f", "exact"}},
+	{"math/big", "Float64", "Float", "__mrFloat_Float64", "__mrFloat_Float64Pair", []string{"v0", "v1"}},
+	{"math/big", "Float64", "Int", "__mrInt_Float64", "__mrInt_Float64Pair", []string{"v0", "v1"}},
+	{"math/big", "Float64", "Rat", "__mrRat_Float64", "__mrRat_Float64Pair", []string{"f", "exact"}},
+	{"math/big", "FloatPrec", "Rat", "__mrRat_FloatPrec", "__mrRat_FloatPrecPair", []string{"n", "exact"}},
+	{"math/big", "GobEncode", "Float", "__mrFloat_GobEncode", "__mrFloat_GobEncodePair", []string{"v0", "v1"}},
+	{"math/big", "GobEncode", "Int", "__mrInt_GobEncode", "__mrInt_GobEncodePair", []string{"v0", "v1"}},
+	{"math/big", "GobEncode", "Rat", "__mrRat_GobEncode", "__mrRat_GobEncodePair", []string{"v0", "v1"}},
+	{"math/big", "Int", "Float", "__mrFloat_Int", "__mrFloat_IntPair", []string{"v0", "v1"}},
+	{"math/big", "Int64", "Float", "__mrFloat_Int64", "__mrFloat_Int64Pair", []string{"v0", "v1"}},
+	{"math/big", "MarshalJSON", "Int", "__mrInt_MarshalJSON", "__mrInt_MarshalJSONPair", []string{"v0", "v1"}},
+	{"math/big", "MarshalText", "Float", "__mrFloat_MarshalText", "__mrFloat_MarshalTextPair", []string{"text", "err"}},
+	{"math/big", "MarshalText", "Int", "__mrInt_MarshalText", "__mrInt_MarshalTextPair", []string{"text", "err"}},
+	{"math/big", "MarshalText", "Rat", "__mrRat_MarshalText", "__mrRat_MarshalTextPair", []string{"text", "err"}},
+	{"math/big", "Parse", "Float", "__mrFloat_Parse", "__mrFloat_ParsePair", []string{"f", "b", "err"}},
+	{"math/big", "ParseFloat", "", "__mrParseFloat", "__mrParseFloatPair", []string{"f", "b", "err"}},
+	{"math/big", "QuoRem", "Int", "__mrInt_QuoRem", "__mrInt_QuoRemPair", []string{"v0", "v1"}},
+	{"math/big", "Rat", "Float", "__mrFloat_Rat", "__mrFloat_RatPair", []string{"v0", "v1"}},
+	{"math/big", "ReadByte", "byteReader", "__mrbyteReader_ReadByte", "__mrbyteReader_ReadBytePair", []string{"v0", "v1"}},
+	{"math/big", "SetString", "Float", "__mrFloat_SetString", "__mrFloat_SetStringPair", []string{"v0", "v1"}},
+	{"math/big", "SetString", "Int", "__mrInt_SetString", "__mrInt_SetStringPair", []string{"v0", "v1"}},
+	{"math/big", "SetString", "Rat", "__mrRat_SetString", "__mrRat_SetStringPair", []string{"v0", "v1"}},
+	{"math/big", "Uint64", "Float", "__mrFloat_Uint64", "__mrFloat_Uint64Pair", []string{"v0", "v1"}},
+	{"math/big", "div", "nat", "__mrnat_div", "__mrnat_divPair", []string{"q", "r"}},
+	{"math/big", "divLarge", "nat", "__mrnat_divLarge", "__mrnat_divLargePair", []string{"q", "r"}},
+	{"math/big", "divW", "nat", "__mrnat_divW", "__mrnat_divWPair", []string{"q", "r"}},
+	{"math/big", "divWW", "", "__mrdivWW", "__mrdivWWPair", []string{"q", "r"}},
+	{"math/big", "euclidUpdate", "", "__mreuclidUpdate", "__mreuclidUpdatePair", []string{"nA", "nB", "nr", "nUa", "nUb"}},
+	{"math/big", "isPow2", "nat", "__mrnat_isPow2", "__mrnat_isPow2Pair", []string{"v0", "v1"}},
+	{"math/big", "lehmerSimulate", "", "__mrlehmerSimulate", "__mrlehmerSimulatePair", []string{"u0", "u1", "v0", "v1", "even"}},
+	{"math/big", "maxPow", "", "__mrmaxPow", "__mrmaxPowPair", []string{"p", "n"}},
+	{"math/big", "mulAddWWW_g", "", "__mrmulAddWWW_g", "__mrmulAddWWW_gPair", []string{"z1", "z0"}},
+	{"math/big", "mulWW", "", "__mrmulWW", "__mrmulWWPair", []string{"z1", "z0"}},
+	{"math/big", "quotToFloat32", "", "__mrquotToFloat32", "__mrquotToFloat32Pair", []string{"f", "exact"}},
+	{"math/big", "quotToFloat64", "", "__mrquotToFloat64", "__mrquotToFloat64Pair", []string{"f", "exact"}},
+	{"math/big", "scan", "Float", "__mrFloat_scan", "__mrFloat_scanPair", []string{"f", "b", "err"}},
+	{"math/big", "scan", "Int", "__mrInt_scan", "__mrInt_scanPair", []string{"v0", "v1", "v2"}},
+	{"math/big", "scan", "nat", "__mrnat_scan", "__mrnat_scanPair", []string{"res", "b", "count", "err"}},
+	{"math/big", "scanExponent", "", "__mrscanExponent", "__mrscanExponentPair", []string{"exp", "base", "err"}},
+	{"math/big", "scanSign", "", "__mrscanSign", "__mrscanSignPair", []string{"neg", "err"}},
+	{"math/big", "setFromScanner", "Int", "__mrInt_setFromScanner", "__mrInt_setFromScannerPair", []string{"v0", "v1"}},
 }
 
 // osMultiResultFunc describes one desugarable P3-M8 (wave 2) multi-result
@@ -1100,6 +1214,7 @@ func isDeadlineMethod(f *types.Func) bool {
 // N-target assignments. It returns handled=false when s is not an
 // N-target assignment of one of the Appendix M operations.
 func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*Node, bool, error) {
+	println("DEBUG exportMultiResultDesugar: rhs len=", len(s.Rhs))
 	if len(s.Rhs) != 1 {
 		return nil, false, nil
 	}

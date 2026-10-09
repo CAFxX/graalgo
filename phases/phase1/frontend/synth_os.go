@@ -2352,7 +2352,9 @@ func __fileReadAll(f *File) readFilePair {
 }
 
 // ---------------------------------------------------------------------------
-// Fail-fast: SyscallConn, Root, Executable, CopyFS/DirFS (§6.4, §6.6–§6.8).
+// Fail-fast: SyscallConn, Root, Executable, CopyFS (§6.4, §6.6–§6.8).
+// (DirFS left this section in P3-M9: the io/fs FS surface landed, so the
+// re-test trigger fired and DirFS is real now, above.)
 // ---------------------------------------------------------------------------
 
 // SyscallConn returns a raw file. This function is not implemented in M8
@@ -2454,10 +2456,132 @@ func __executable() executablePair {
 	panic("os.Executable: not in M8 scope (/proc/self/exe is the JVM binary — wrong answer; re-test: launcher defines the executable concept)")
 }
 
-// DirFS returns a file system rooted at dir. M8: fail-fast (§6.8 —
-// needs the io/fs FS machinery).
+// DirFS returns a file system (an fs.FS) for the tree of files rooted at
+// the directory dir.
+//
+// P3-M9 (wave 3, tier-2): real implementation; the M8 fail-fast (§6.8 —
+// "needs the io/fs FS surface") is discharged now that the surface has
+// landed. gc's os.DirFS, over the existing os/file abstractions
+// (__openFile, __readFile, __readDir, __stat). Through the methods below,
+// dirFS implements fs.StatFS, fs.ReadFileFS, and fs.ReadDirFS (gc's
+// optimized paths, including the PathError path rewrite: errors report
+// the fs-relative name, never the joined path). The *File returned by
+// Open already implements fs.File and fs.ReadDirFile, so the generic
+// io/fs machinery (ReadFile, ReadDir, WalkDir, Glob, Sub) works over a
+// dirFS through interface dispatch.
 func DirFS(dir string) fs.FS {
-	panic("os.DirFS: not in M8 scope (needs io/fs FS machinery; re-test: synthetic io/fs FS surface)")
+	return dirFS(dir)
+}
+
+type dirFS string
+
+type dirFSJoinPair struct {
+	s   string
+	err error
+}
+
+// __dirFSJoin validates name and joins it to the root (gc os.dirFS.join:
+// empty root is an error; the name must be a valid fs path with no NUL
+// bytes — the filepathlite.Localize contract on unix).
+func __dirFSJoin(d dirFS, name string) dirFSJoinPair {
+	if d == "" {
+		return dirFSJoinPair{"", errors.New("os: DirFS with empty root")}
+	}
+	if !fs.ValidPath(name) {
+		return dirFSJoinPair{"", fs.ErrInvalid}
+	}
+	for i := 0; i < len(name); i++ {
+		if name[i] == 0 {
+			return dirFSJoinPair{"", fs.ErrInvalid}
+		}
+	}
+	if IsPathSeparator(string(d)[len(d)-1]) {
+		return dirFSJoinPair{string(d) + name, nil}
+	}
+	return dirFSJoinPair{string(d) + "/" + name, nil}
+}
+
+// __dirFSFixPath rewrites a *fs.PathError's Path to the fs-relative name
+// (gc: "DirFS takes a string appropriate for GOOS, while the name argument
+// here is always slash separated. dir.join will have mixed the two; undo
+// that for error reporting.").
+func __dirFSFixPath(err error, name string) error {
+	if pe, ok := err.(*fs.PathError); ok {
+		pe.Path = name
+	}
+	return err
+}
+
+func (d dirFS) Open(name string) (fs.File, error) {
+	panic("os.dirFS.Open: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+}
+
+type dirFSOpenPair struct {
+	f   fs.File
+	err error
+}
+
+func __dirFSOpen(d dirFS, name string) dirFSOpenPair {
+	jp := __dirFSJoin(d, name)
+	if jp.err != nil {
+		return dirFSOpenPair{nil, &fs.PathError{Op: "open", Path: name, Err: jp.err}}
+	}
+	p := __openFile(jp.s, O_RDONLY, 0)
+	if p.err != nil {
+		return dirFSOpenPair{nil, __dirFSFixPath(p.err, name)}
+	}
+	return dirFSOpenPair{p.f, nil}
+}
+
+// Through this method, dirFS implements fs.ReadFileFS.
+func (d dirFS) ReadFile(name string) ([]byte, error) {
+	panic("os.dirFS.ReadFile: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+}
+
+func __dirFSReadFile(d dirFS, name string) readFilePair {
+	jp := __dirFSJoin(d, name)
+	if jp.err != nil {
+		return readFilePair{nil, &fs.PathError{Op: "readfile", Path: name, Err: jp.err}}
+	}
+	rfp := __readFile(jp.s)
+	if rfp.err != nil {
+		return readFilePair{nil, __dirFSFixPath(rfp.err, name)}
+	}
+	return rfp
+}
+
+// Through this method, dirFS implements fs.ReadDirFS.
+func (d dirFS) ReadDir(name string) ([]DirEntry, error) {
+	panic("os.dirFS.ReadDir: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+}
+
+func __dirFSReadDir(d dirFS, name string) readDirPair {
+	jp := __dirFSJoin(d, name)
+	if jp.err != nil {
+		return readDirPair{nil, &fs.PathError{Op: "readdir", Path: name, Err: jp.err}}
+	}
+	rdp := __readDir(jp.s)
+	if rdp.err != nil {
+		return readDirPair{nil, __dirFSFixPath(rdp.err, name)}
+	}
+	return rdp
+}
+
+// Through this method, dirFS implements fs.StatFS.
+func (d dirFS) Stat(name string) (FileInfo, error) {
+	panic("os.dirFS.Stat: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+}
+
+func __dirFSStat(d dirFS, name string) statPair {
+	jp := __dirFSJoin(d, name)
+	if jp.err != nil {
+		return statPair{nil, &fs.PathError{Op: "stat", Path: name, Err: jp.err}}
+	}
+	sp := __stat(jp.s)
+	if sp.err != nil {
+		return statPair{nil, __dirFSFixPath(sp.err, name)}
+	}
+	return sp
 }
 
 // CopyFS copies the file system rooted at fsys to dir. M8: fail-fast (§6.8).

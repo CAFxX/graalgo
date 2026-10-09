@@ -239,6 +239,25 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("sort").pkg, nil
 	case "math":
 		return getSyntheticPackage("math").pkg, nil
+	// P3-M9 (tier1c): synthetic math/bits package (real-Go source in
+	// synth_mathbits.go).
+	case "math/bits":
+		return getSyntheticPackage("math/bits").pkg, nil
+	// P3-M9 (tier1c): synthetic math/cmplx package (real-Go source in
+	// synth_mathcmplx.go).
+	case "math/cmplx":
+		return getSyntheticPackage("math/cmplx").pkg, nil
+	// P3-M9 (wave 3): synthetic math/big + its synthetic dependencies
+	// math/rand (minimal port) and internal/byteorder (vendored).
+	// math/big is the G-c hard gate for the asymmetric-crypto tier.
+	case "math/big":
+		return getSyntheticPackage("math/big").pkg, nil
+	case "math/rand":
+		return getSyntheticPackage("math/rand").pkg, nil
+	case "math/rand/v2":
+		return getSyntheticPackage("math/rand/v2").pkg, nil
+	case "internal/byteorder":
+		return getSyntheticPackage("internal/byteorder").pkg, nil
 	case "strings":
 		return getSyntheticPackage("strings").pkg, nil
 	case "bytes":
@@ -323,6 +342,68 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("crypto/sha512").pkg, nil
 	case "crypto/subtle":
 		return getSyntheticPackage("crypto/subtle").pkg, nil
+	// P3-M9 (tier-1d): synthetic unique/structs packages (real-Go sources
+	// in synth_unique.go / synth_structs.go).
+	case "unique":
+		return getSyntheticPackage("unique").pkg, nil
+	case "structs":
+		return getSyntheticPackage("structs").pkg, nil
+	// P3-M9 (tier-1d): synthetic internal/bytealg (synthetic-only, like
+	// internal/reflectlite — user imports of internal/* are not admitted
+	// by the import allow-list below).
+	case "internal/bytealg":
+		return getSyntheticPackage("internal/bytealg").pkg, nil
+	// P3-M9: synthetic flag, testing, testing/quick, testing/iotest
+	// packages (real-Go sources in synth_flag.go / synth_testing.go /
+	// synth_testing_quick.go / synth_testing_iotest.go).
+	case "flag":
+		return getSyntheticPackage("flag").pkg, nil
+	case "testing":
+		return getSyntheticPackage("testing").pkg, nil
+	case "testing/quick":
+		return getSyntheticPackage("testing/quick").pkg, nil
+	case "testing/iotest":
+		return getSyntheticPackage("testing/iotest").pkg, nil
+	// P3-M9 (wave 3, tier-1a worker): synthetic cmp/slices/maps/unicode
+	// packages (real-Go sources in synth_cmp.go, synth_slices.go,
+	// synth_maps.go, synth_unicode*.go). slices imports synthetic cmp
+	// and iter; maps imports synthetic iter; the unicode packages are
+	// self-contained.
+	case "cmp":
+		return getSyntheticPackage("cmp").pkg, nil
+	case "slices":
+		return getSyntheticPackage("slices").pkg, nil
+	case "maps":
+		return getSyntheticPackage("maps").pkg, nil
+	case "unicode":
+		return getSyntheticPackage("unicode").pkg, nil
+	case "unicode/utf8":
+		return getSyntheticPackage("unicode/utf8").pkg, nil
+	case "unicode/utf16":
+		return getSyntheticPackage("unicode/utf16").pkg, nil
+	// P3-M9 (wave 3, tier-1b worker): synthetic container/* and hash/*
+	// packages (real-Go sources in synth_container_*.go /
+	// synth_hash_*.go). container/heap imports the synthetic sort
+	// package; hash/* import the synthetic hash and errors packages;
+	// hash/maphash additionally imports synthetic crypto/rand (MakeSeed
+	// entropy) and math (Float64bits intrinsics for the generic
+	// WriteComparable float cases).
+	case "container/heap":
+		return getSyntheticPackage("container/heap").pkg, nil
+	case "container/list":
+		return getSyntheticPackage("container/list").pkg, nil
+	case "container/ring":
+		return getSyntheticPackage("container/ring").pkg, nil
+	case "hash/adler32":
+		return getSyntheticPackage("hash/adler32").pkg, nil
+	case "hash/crc32":
+		return getSyntheticPackage("hash/crc32").pkg, nil
+	case "hash/crc64":
+		return getSyntheticPackage("hash/crc64").pkg, nil
+	case "hash/fnv":
+		return getSyntheticPackage("hash/fnv").pkg, nil
+	case "hash/maphash":
+		return getSyntheticPackage("hash/maphash").pkg, nil
 	}
 	return failImporter{}.Import(path)
 }
@@ -358,6 +439,71 @@ func syntheticFmtPackage() *types.Package {
 	insert("Sprintf", types.NewTuple(format, a), types.NewTuple(strRes))
 	insert("Sprintln", types.NewTuple(a), types.NewTuple(strRes))
 	insert("Errorf", types.NewTuple(format, a), types.NewTuple(errResOnly))
+	// P3-M9 (wave 3): the State/Scanner/Formatter interfaces (gc 1.27.1
+	// exact signatures). math/big's Int/Float Format/Scan methods are
+	// declared against them. Types only — the stub keeps just the seven
+	// pure functions above.
+	boolT := types.Typ[types.Bool]
+	runeT := types.Typ[types.Rune]
+	ifaceMethod := func(name string, params, results *types.Tuple) *types.Func {
+		return types.NewFunc(token.NoPos, pkg, name,
+			types.NewSignatureType(nil, nil, nil, params, results, false))
+	}
+	stateNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "State", nil), nil, nil)
+	// gc 1.27.1: State embeds io.Writer (Write method) alongside
+	// Width/Precision/Flag.
+	byteSliceT := types.NewSlice(types.Typ[types.Byte])
+	stateNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
+		ifaceMethod("Write", types.NewTuple(param("b", byteSliceT)),
+			types.NewTuple(param("n", intT), param("err", errorT))),
+		ifaceMethod("Width", types.NewTuple(),
+			types.NewTuple(param("wid", intT), param("ok", boolT))),
+		ifaceMethod("Precision", types.NewTuple(),
+			types.NewTuple(param("prec", intT), param("ok", boolT))),
+		ifaceMethod("Flag", types.NewTuple(param("c", intT)),
+			types.NewTuple(param("", boolT))),
+	}, nil).Complete())
+	pkg.Scope().Insert(stateNamed.Obj())
+	// NOTE: declared after ScanState (below) would be cleaner, but the
+	// Named is created first and the underlying is set after ScanState
+	// exists; see the deferred SetUnderlying below.
+	scannerNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Scanner", nil), nil, nil)
+	pkg.Scope().Insert(scannerNamed.Obj())
+	formatterNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Formatter", nil), nil, nil)
+	formatterNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
+		ifaceMethod("Format",
+			types.NewTuple(param("f", stateNamed), param("verb", runeT)),
+			types.NewTuple()),
+	}, nil).Complete())
+	pkg.Scope().Insert(formatterNamed.Obj())
+	// P3-M9 (wave 3): fmt.ScanState (gc 1.27.1 exact signature). math/big's
+	// Int/Rat/Float Scan methods and intconv's byteReader embed it.
+	scanStateNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "ScanState", nil), nil, nil)
+	runePred := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(param("r", runeT)),
+		types.NewTuple(param("", boolT)), false)
+	scanStateNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
+		ifaceMethod("ReadRune", types.NewTuple(),
+			types.NewTuple(param("r", runeT), param("size", intT), param("err", errorT))),
+		ifaceMethod("UnreadRune", types.NewTuple(),
+			types.NewTuple(param("", errorT))),
+		ifaceMethod("SkipSpace", types.NewTuple(), types.NewTuple()),
+		ifaceMethod("Token",
+			types.NewTuple(param("skipSpace", boolT), param("f", runePred)),
+			types.NewTuple(param("token", byteSliceT), param("err", errorT))),
+		ifaceMethod("Width", types.NewTuple(),
+			types.NewTuple(param("wid", intT), param("ok", boolT))),
+		ifaceMethod("Read", types.NewTuple(param("buf", byteSliceT)),
+			types.NewTuple(param("n", intT), param("err", errorT))),
+	}, nil).Complete())
+	pkg.Scope().Insert(scanStateNamed.Obj())
+	// Scanner's method takes a ScanState (not State) — set now that
+	// scanStateNamed exists.
+	scannerNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
+		ifaceMethod("Scan",
+			types.NewTuple(param("state", scanStateNamed), param("verb", runeT)),
+			types.NewTuple(param("", errorT))),
+	}, nil).Complete())
 	pkg.MarkComplete()
 	return pkg
 }
@@ -751,7 +897,24 @@ func ExportFile(path string) (string, error) {
 		// P3-M8 (wave 2): "hash" and "iter" (synthetic support packages).
 		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
 			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "syscall" && path != "os" && path != "io/fs" && path != "reflect" && path != "hash" && path != "iter" &&
-			path != "crypto" && path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" && path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" && path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" {
+			path != "crypto" && path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" && path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" && path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" &&
+			path != "cmp" && path != "slices" && path != "maps" && path != "unicode" && path != "unicode/utf8" && path != "unicode/utf16" &&
+			// P3-M9 (tier1c): "math/bits" likewise.
+			// P3-M9 (wave 3): "math/big" + "math/rand" likewise (the G-c
+			// hard gate). "internal/byteorder" is synthetic-internal only
+			// (imported by math/big's sources, never by user programs).
+			// P3-M9: "flag", "testing", "testing/quick", "testing/iotest"
+			// likewise (the go-test trial prerequisite packages).
+			path != "math/bits" && path != "math/big" && path != "math/rand" && path != "math/rand/v2" && path != "math/cmplx" &&
+			path != "flag" && path != "testing" && path != "testing/quick" && path != "testing/iotest" &&
+			// P3-M9 (wave 3, tier-1b): "container/heap", "container/list",
+			// "container/ring", "hash/adler32", "hash/crc32", "hash/crc64",
+			// "hash/fnv", "hash/maphash" likewise.
+			path != "container/heap" && path != "container/list" && path != "container/ring" &&
+			path != "hash/adler32" && path != "hash/crc32" && path != "hash/crc64" && path != "hash/fnv" && path != "hash/maphash" &&
+			// P3-M9 (tier-1d): "unique" and "structs" likewise (internal/*
+			// stay synthetic-only: user imports are not admitted).
+			path != "unique" && path != "structs" {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 	}
@@ -787,7 +950,15 @@ func ExportFile(path string) (string, error) {
 		p := strings.Trim(imp.Path.Value, "\"`")
 		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
 			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "iter" ||
-			p == "crypto" || p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" {
+			p == "crypto" || p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" ||
+			p == "cmp" || p == "slices" || p == "maps" || p == "unicode" || p == "unicode/utf8" || p == "unicode/utf16" ||
+			// P3-M9 (tier1c): "math/bits" likewise.
+			// P3-M9 (wave 3): "math/big" + "math/rand" likewise.
+			// P3-M9: "flag", "testing", "testing/quick", "testing/iotest" likewise.
+			p == "math/bits" || p == "math/big" || p == "math/rand" || p == "math/rand/v2" || p == "math/cmplx" ||
+			p == "flag" || p == "testing" || p == "testing/quick" || p == "testing/iotest" ||
+			// P3-M9 (tier-1d): "unique" and "structs" likewise.
+			p == "unique" || p == "structs" {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -888,6 +1059,16 @@ func ExportFile(path string) (string, error) {
 	needBase32, needBase64, needHex, needBinary := false, false, false, false
 	needAscii85, needPem, needAsn1, needEncoding := false, false, false, false
 	needIo := false
+	// P3-M9 (tier1c): synthetic math/bits.
+	needMathBits := false
+	// P3-M9 (tier1c): synthetic math/cmplx.
+	needMathCmplx := false
+	// P3-M9 (wave 3): synthetic math/big (G-c hard gate) + math/rand
+	// (minimal port) + internal/byteorder (vendored).
+	needMathBig := false
+	needMathRand := false
+	needMathRandV2 := false
+	needByteorder := false
 	needSyscall := false
 	needOs := false
 	needIoFs := false
@@ -906,6 +1087,33 @@ func ExportFile(path string) (string, error) {
 	needCryptoSha3 := false
 	needCryptoSha512 := false
 	needCryptoSubtle := false
+	// P3-M9 (wave 3, tier-1a worker): the synthetic cmp/slices/maps/unicode
+	// packages (the corpus closure).
+	needCmp := false
+	needSlices := false
+	needMaps := false
+	needUnicode := false
+	needUnicodeUtf8 := false
+	needUnicodeUtf16 := false
+	// P3-M9 (wave 3, tier-1b worker): the synthetic container/* and
+	// hash/* packages (the corpus closure).
+	needContainerHeap := false
+	needContainerList := false
+	needContainerRing := false
+	needHashAdler32 := false
+	needHashCrc32 := false
+	needHashCrc64 := false
+	needHashFnv := false
+	needHashMaphash := false
+	// P3-M9: synthetic flag, testing, testing/quick, testing/iotest
+	// (the go-test trial prerequisite packages).
+	needFlag := false
+	needTesting := false
+	needTestingQuick := false
+	needTestingIotest := false
+	// P3-M9 (tier-1d): leaf utilities unique/structs.
+	needUnique := false
+	needStructs := false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -923,6 +1131,18 @@ func ExportFile(path string) (string, error) {
 			needErrors = true
 		case "math":
 			needMath = true
+		// P3-M9 (tier1c): synthetic math/bits (imports synthetic errors
+		// for the reconstructed overflow/divide sentinels).
+		case "math/bits":
+			needMathBits = true
+			needErrors = true
+		// P3-M9 (tier1c): synthetic math/cmplx (imports synthetic math
+		// and math/bits).
+		case "math/cmplx":
+			needMathCmplx = true
+			needMath = true
+			needMathBits = true
+			needErrors = true
 		case "strings":
 			needStrings = true
 			// P3-M8: the synthetic strings source imports errors (gc-exact
@@ -1030,6 +1250,117 @@ func ExportFile(path string) (string, error) {
 			needIo = true
 		case "iter":
 			needIter = true
+		// P3-M9 (wave 3, tier-1a worker): direct user imports of the
+		// synthetic cmp/slices/maps/unicode packages. slices pulls in
+		// cmp and iter (its source imports both); maps pulls in iter.
+		case "cmp":
+			needCmp = true
+		case "slices":
+			needSlices = true
+			needCmp = true
+			needIter = true
+		case "maps":
+			needMaps = true
+			needIter = true
+		case "unicode":
+			needUnicode = true
+		case "unicode/utf8":
+			needUnicodeUtf8 = true
+		case "unicode/utf16":
+			needUnicodeUtf16 = true
+		// P3-M9: a user import of "flag" pulls in the synthetic package
+		// (synth_flag.go). The source imports encoding, errors, io, os,
+		// reflect, sort, strconv, strings, time; the os chain (errors,
+		// time, io, io/fs, syscall, strconv) is imported by the needFlag
+		// block below in dependency order (importSyntheticPackage is
+		// idempotent, so overlap with other need-blocks is safe).
+		case "flag":
+			needFlag = true
+		// P3-M9: a user import of "testing" pulls in the synthetic package
+		// (synth_testing.go). The source imports flag plus bytes, context,
+		// errors, io, os, runtime (frozen), strconv, strings, sync,
+		// sync/atomic, time.
+		case "testing":
+			needTesting = true
+			needFlag = true
+		// P3-M9: a user import of "testing/quick" pulls in the synthetic
+		// package (synth_testing_quick.go). The source imports flag
+		// (-quickchecks), fmt, math, reflect, strings.
+		case "testing/quick":
+			needTestingQuick = true
+			needFlag = true
+		// P3-M9: a user import of "testing/iotest" pulls in the synthetic
+		// package (synth_testing_iotest.go). The source imports bytes,
+		// errors, fmt, io, os.
+		case "testing/iotest":
+			needTestingIotest = true
+		// P3-M9 (tier-1d): leaf utilities unique/structs.
+		case "unique":
+			needUnique = true
+		case "structs":
+			needStructs = true
+		// P3-M9 (wave 3): direct user imports of synthetic math/big /
+		// math/rand. math/big pulls its full synthetic dependency
+		// closure (bits/rand/byteorder + the M7/M8 packages it uses).
+		case "math/big":
+			needMathBig = true
+			needMathBits = true
+			needMathRand = true
+			needByteorder = true
+			needBytes = true
+			needErrors = true
+			needIo = true
+			needMath = true
+			needStrconv = true
+			needStrings = true
+		case "math/rand":
+			needMathRand = true
+			// P3-M9 (tier1c): the full math/rand port imports the
+			// synthetic math package (exp.go/normal.go/zipf.go).
+			needMath = true
+		case "math/rand/v2":
+			needMathRandV2 = true
+			// P3-M9 (tier1c): v2 imports synthetic math, math/bits and
+			// internal/byteorder.
+			needMath = true
+			needMathBits = true
+			needByteorder = true
+		// P3-M9 (wave 3, tier-1b): direct user imports of the synthetic
+		// container/* and hash/* packages. container/heap pulls in sort;
+		// hash/* pull in hash (+errors/io via the needHash chain);
+		// maphash additionally pulls in crypto/rand and math.
+		case "container/heap":
+			needContainerHeap = true
+			needSort = true
+		case "container/list":
+			needContainerList = true
+		case "container/ring":
+			needContainerRing = true
+		case "hash/adler32":
+			needHashAdler32 = true
+			needHash = true
+			needErrors = true
+			needIo = true
+		case "hash/crc32":
+			needHashCrc32 = true
+			needHash = true
+			needErrors = true
+			needIo = true
+		case "hash/crc64":
+			needHashCrc64 = true
+			needHash = true
+			needErrors = true
+			needIo = true
+		case "hash/fnv":
+			needHashFnv = true
+			needHash = true
+			needErrors = true
+			needIo = true
+		case "hash/maphash":
+			needHashMaphash = true
+			needHash = true
+			needCryptoRand = true
+			needMath = true
 		}
 	}
 	if needTime {
@@ -1067,6 +1398,78 @@ func ExportFile(path string) (string, error) {
 	if needMath {
 		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
 			return "", err
+		}
+	}
+	// P3-M9 (tier1c): the synthetic math/bits package (see
+	// synth_mathbits.go). Imports the synthetic errors package (for the
+	// reconstructed overflow/divide sentinels), so errors must be
+	// imported first.
+	if needMathBits {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (tier1c): the synthetic math/cmplx package (see
+	// synth_mathcmplx.go). Imports the synthetic math and math/bits
+	// packages, so those (and their deps) must be imported first.
+	if needMathCmplx {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("math/cmplx")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9: synthetic math/rand (full port, tier1c; imports the synthetic
+	// math package) and internal/byteorder (vendored; no deps).
+	if needMathRand {
+		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("math/rand")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (tier1c): synthetic math/rand/v2 (full port; imports synthetic
+	// math, math/bits and internal/byteorder).
+	if needMathRandV2 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("math")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("math/bits")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("internal/byteorder")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("math/rand/v2")); err != nil {
+			return "", err
+		}
+	}
+	if needByteorder {
+		if err := e.importSyntheticPackage(getSyntheticPackage("internal/byteorder")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (wave 3): synthetic math/big (G-c hard gate). Deps: errors,
+	// io, bytes, math, strconv, strings (M7/M8 synthetics), math/bits,
+	// math/rand, internal/byteorder (above). fmt/sync resolve via the
+	// overlayImporter to the programmatic M5/M2b synthetics (no
+	// importSyntheticPackage needed).
+	if needMathBig {
+		for _, p := range []string{"errors", "io", "bytes", "math", "strconv", "strings", "math/bits", "math/rand", "internal/byteorder", "math/big"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	// P3-M8 (wave 2): synthetic io (depends on synthetic errors).
@@ -1179,6 +1582,62 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 	}
+	// P3-M9 (wave 3, tier-1a worker): synthetic cmp package (synth_cmp.go).
+	// Self-contained: no synthetic imports.
+	if needCmp {
+		if err := e.importSyntheticPackage(getSyntheticPackage("cmp")); err != nil {
+			return "", err
+		}
+	}
+	if needIter {
+		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (wave 3, tier-1a worker): synthetic slices package
+	// (synth_slices.go). The source imports cmp and iter; both are
+	// imported before slices itself (package-level initializers may call
+	// synthetic functions).
+	if needSlices {
+		if err := e.importSyntheticPackage(getSyntheticPackage("cmp")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("slices")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (wave 3, tier-1a worker): synthetic maps package
+	// (synth_maps.go). The source imports iter.
+	if needMaps {
+		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("maps")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (wave 3, tier-1a worker): synthetic unicode packages
+	// (synth_unicode*.go). Self-contained: no synthetic imports
+	// (utf16 deliberately duplicates the surrogate constants to avoid
+	// depending on package unicode, mirroring gc).
+	if needUnicode {
+		if err := e.importSyntheticPackage(getSyntheticPackage("unicode")); err != nil {
+			return "", err
+		}
+	}
+	if needUnicodeUtf8 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("unicode/utf8")); err != nil {
+			return "", err
+		}
+	}
+	if needUnicodeUtf16 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("unicode/utf16")); err != nil {
+			return "", err
+		}
+	}
 	// P3-M8 (wave 2): synthetic reflect (synth_reflect.go). The source
 	// imports errors, iter, strconv (unsafe is a builtin surface, not a
 	// synthetic package); iter is self-contained. Dependencies are
@@ -1270,6 +1729,61 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("os")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9: synthetic flag (synth_flag.go). Dependency chain, imported
+	// in order: errors, time, io, io/fs, syscall, strconv, os (the os
+	// chain: os imports errors, time, io, io/fs, syscall, strconv),
+	// reflect (imports errors, iter, strconv), sort, encoding, then
+	// flag itself. importSyntheticPackage is idempotent, so overlap
+	// with other need-blocks is safe.
+	if needFlag {
+		for _, p := range []string{"errors", "time", "io", "io/fs", "syscall", "strconv", "os", "iter", "reflect", "sort", "encoding", "flag"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	// P3-M9: synthetic testing (synth_testing.go). Dependency chain:
+	// the full flag chain above, plus bytes (indenter), context
+	// (T.Context), then testing itself. sync/sync/atomic/runtime/fmt/
+	// strings are frozen or M2/M4 primitives, always available.
+	if needTesting {
+		for _, p := range []string{"errors", "time", "io", "io/fs", "syscall", "strconv", "os", "iter", "reflect", "sort", "encoding", "flag", "bytes", "context", "testing"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	// P3-M9: synthetic testing/quick (synth_testing_quick.go).
+	// Dependency chain: the flag chain (quick registers -quickchecks),
+	// reflect (value generation), then testing/quick itself.
+	if needTestingQuick {
+		for _, p := range []string{"errors", "time", "io", "io/fs", "syscall", "strconv", "os", "iter", "reflect", "sort", "encoding", "flag", "testing/quick"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	// P3-M9: synthetic testing/iotest (synth_testing_iotest.go).
+	// Dependency chain: errors, io, bytes, the os chain, then
+	// testing/iotest itself.
+	if needTestingIotest {
+		for _, p := range []string{"errors", "time", "io", "io/fs", "syscall", "strconv", "os", "bytes", "testing/iotest"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	// P3-M9 (tier-1d): leaf utilities unique/structs.
+	if needUnique {
+		if err := e.importSyntheticPackage(getSyntheticPackage("unique")); err != nil {
+			return "", err
+		}
+	}
+	if needStructs {
+		if err := e.importSyntheticPackage(getSyntheticPackage("structs")); err != nil {
 			return "", err
 		}
 	}
@@ -1373,6 +1887,55 @@ func ExportFile(path string) (string, error) {
 			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
 				return "", err
 			}
+		}
+	}
+	// P3-M9 (wave 3, tier-1b): synthetic container/* packages
+	// (synth_container_*.go). heap imports the synthetic sort package,
+	// imported by its own need-block above (importSyntheticPackage is
+	// idempotent); list and ring are self-contained.
+	if needContainerHeap {
+		if err := e.importSyntheticPackage(getSyntheticPackage("container/heap")); err != nil {
+			return "", err
+		}
+	}
+	if needContainerList {
+		if err := e.importSyntheticPackage(getSyntheticPackage("container/list")); err != nil {
+			return "", err
+		}
+	}
+	if needContainerRing {
+		if err := e.importSyntheticPackage(getSyntheticPackage("container/ring")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (wave 3, tier-1b): synthetic hash/* packages
+	// (synth_hash_*.go). They import the synthetic hash, errors and io
+	// packages, imported by their own need-blocks above.
+	if needHashAdler32 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("hash/adler32")); err != nil {
+			return "", err
+		}
+	}
+	if needHashCrc32 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("hash/crc32")); err != nil {
+			return "", err
+		}
+	}
+	if needHashCrc64 {
+		if err := e.importSyntheticPackage(getSyntheticPackage("hash/crc64")); err != nil {
+			return "", err
+		}
+	}
+	if needHashFnv {
+		if err := e.importSyntheticPackage(getSyntheticPackage("hash/fnv")); err != nil {
+			return "", err
+		}
+	}
+	// hash/maphash additionally imports synthetic crypto/rand (MakeSeed
+	// entropy) and math, imported by their own need-blocks above.
+	if needHashMaphash {
+		if err := e.importSyntheticPackage(getSyntheticPackage("hash/maphash")); err != nil {
+			return "", err
 		}
 	}
 	// P3-M3 (WS D, ADR-0003): the "methods" lists on named/pointer entries
@@ -2074,7 +2637,20 @@ func (e *exporter) defFunc(obj *types.Func) (int, error) {
 	if id, ok := e.objIDs[obj]; ok {
 		return id, nil
 	}
-	t, err := e.typeID(obj.Type())
+	var t int
+	var err error
+	if sig, ok := obj.Type().(*types.Signature); ok && signatureHasTypeParam(sig) {
+		// P3-M9 (tier-1d): generic template (function or method on a generic
+		// type — the backend never uses the template's type (instantiations
+		// get fresh substituted sigIDs via prepareInstantiation; the template
+		// funcdecl itself is skipped). Emitting the generic signature would
+		// put unsubstituted typeparams in the type table, which the backend's
+		// ReflectTypes rejects ("unsupported type kind typeparam"). Use an
+		// empty signature as an unreferenced placeholder.
+		t, err = e.typeID(types.NewSignatureType(nil, nil, nil, nil, nil, false))
+	} else {
+		t, err = e.typeID(obj.Type())
+	}
 	if err != nil {
 		return 0, err
 	}
@@ -2082,6 +2658,67 @@ func (e *exporter) defFunc(obj *types.Func) (int, error) {
 	e.objects = append(e.objects, ObjectEnt{Kind: "func", Name: obj.Name(), Type: t})
 	e.objIDs[obj] = id
 	return id, nil
+}
+
+// signatureHasTypeParam reports whether a signature (including its receiver)
+// mentions any type parameter. Used to keep template types out of the type
+// table (see defFunc).
+func signatureHasTypeParam(sig *types.Signature) bool {
+	if sig.TypeParams().Len() > 0 || sig.RecvTypeParams().Len() > 0 {
+		return true
+	}
+	var walk func(t types.Type) bool
+	seen := make(map[types.Type]bool)
+	walk = func(t types.Type) bool {
+		if t == nil || seen[t] {
+			return false
+		}
+		seen[t] = true
+		if _, ok := t.(*types.TypeParam); ok {
+			return true
+		}
+		switch u := t.(type) {
+		case *types.Named:
+			for i := 0; i < u.TypeArgs().Len(); i++ {
+				if walk(u.TypeArgs().At(i)) {
+					return true
+				}
+			}
+			return walk(u.Underlying())
+		case *types.Pointer:
+			return walk(u.Elem())
+		case *types.Slice:
+			return walk(u.Elem())
+		case *types.Array:
+			return walk(u.Elem())
+		case *types.Map:
+			return walk(u.Key()) || walk(u.Elem())
+		case *types.Chan:
+			return walk(u.Elem())
+		case *types.Struct:
+			for i := 0; i < u.NumFields(); i++ {
+				if walk(u.Field(i).Type()) {
+					return true
+				}
+			}
+		case *types.Signature:
+			if u.Recv() != nil && walk(u.Recv().Type()) {
+				return true
+			}
+			for i := 0; i < u.Params().Len(); i++ {
+				if walk(u.Params().At(i).Type()) {
+					return true
+				}
+			}
+			for i := 0; i < u.Results().Len(); i++ {
+				if walk(u.Results().At(i).Type()) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(sig)
 }
 
 // ---------------------------------------------------------------------------
@@ -2746,6 +3383,10 @@ type funcDeclInfo struct {
 	// method — emitted only via monomorphized instantiations, never
 	// directly.
 	isTemplate bool
+	// synthPkg: non-nil for declarations imported from a synthetic
+	// package (P3-M9 tier-1d): exportInstantiation swaps to the synthetic
+	// package's fset/src/info when emitting the body.
+	synthPkg *syntheticPackage
 }
 
 // instantiation is one monomorphized function/method body to emit
@@ -3303,26 +3944,43 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 		if inTemplate[id] {
 			continue
 		}
+		handled := false
 		if sel, ok := selOf[id]; ok {
-			// Generic method via its Sel ident.
-			selection, ok := e.info.Selections[sel]
-			if !ok {
-				return nil, fmt.Errorf("gofrontend: no selection for %s", sel.Sel.Name)
+			// P3-M9: distinguish method selections from package-qualified
+			// generic functions (slices.Sort, maps.Keys, ...). go/types
+			// records Selections only for method/field selections; a
+			// package qualifier (sel.X is an Ident denoting the package)
+			// resolves via the denoted func object, like a plain ident.
+			isMethodSel := true
+			if x, ok := sel.X.(*ast.Ident); ok {
+				if _, isPkg := e.info.Uses[x].(*types.PkgName); isPkg {
+					isMethodSel = false
+				}
 			}
-			// P3-M7: synthetic multi-result methods (bytes.Buffer.Read, etc.)
-			// fail fast at the call site (WS D) — they are not in methodIndex
-			// (skipped during synthetic import) and must not be resolved here.
-			// The named M7 scope error is reported during main export.
-			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
-				continue
+			if isMethodSel {
+				// Generic method via its Sel ident.
+				selection, ok := e.info.Selections[sel]
+				if !ok {
+					return nil, fmt.Errorf("gofrontend: no selection for %s", sel.Sel.Name)
+				}
+				// P3-M7: synthetic multi-result methods (bytes.Buffer.Read, etc.)
+				// fail fast at the call site (WS D) — they are not in methodIndex
+				// (skipped during synthetic import) and must not be resolved here.
+				// The named M7 scope error is reported during main export.
+				if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+					continue
+				}
+				mc, err := e.resolveMethodCall(sel, selection, typeList(inst.TypeArgs), nil)
+				if err != nil {
+					return nil, err
+				}
+				if mc.needsInst {
+					enqueue(&instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name})
+				}
+				handled = true
 			}
-			mc, err := e.resolveMethodCall(sel, selection, typeList(inst.TypeArgs), nil)
-			if err != nil {
-				return nil, err
-			}
-			if mc.needsInst {
-				enqueue(&instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name})
-			}
+		}
+		if handled {
 			continue
 		}
 		fn, ok := denotedFunc(e.info, id)
@@ -3397,6 +4055,22 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 // findNested walks one instantiation's template body for nested generic
 // calls and method calls, enqueueing their (substituted) instantiations.
 func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation), newFuncInst func(*funcDeclInfo, []types.Type, *typeSubst) (*instantiation, error)) error {
+	// P3-M9 (tier-1a): a synthetic template's body lives in the synthetic
+	// package's AST — swap to its fset/src/info/pkg (like
+	// exportInstantiation), not the user's, so nested generic calls
+	// resolve against the right type info.
+	sp := inst.decl.synthPkg
+	var savedFset *token.FileSet
+	var savedSrc []byte
+	var savedInfo *types.Info
+	var savedPkg *types.Package
+	if sp != nil {
+		savedFset, savedSrc, savedInfo, savedPkg = e.fset, e.src, e.info, e.pkg
+		e.fset, e.src, e.info, e.pkg = sp.fset, sp.raw, sp.info, sp.pkg
+		defer func() {
+			e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
+		}()
+	}
 	subst := inst.subst
 	var err error
 	ast.Inspect(inst.decl.fd, func(n ast.Node) bool {
@@ -3663,9 +4337,34 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	if fd.Body == nil {
 		return nil, scopeErrorf("func %s without body", fd.Name.Name)
 	}
+	// P3-M9 (tier-1d): a synthetic template's body lives in the synthetic
+	// package's AST — swap to its fset/src/info/pkg (the
+	// exportSyntheticBodies swap), not the user's, so positions and type
+	// info resolve against the right file.
+	sp := inst.decl.synthPkg
+	var savedFset *token.FileSet
+	var savedSrc []byte
+	var savedInfo *types.Info
+	var savedPkg *types.Package
+	if sp != nil {
+		savedFset, savedSrc, savedInfo, savedPkg = e.fset, e.src, e.info, e.pkg
+		e.fset, e.src, e.info, e.pkg = sp.fset, sp.raw, sp.info, sp.pkg
+	}
 	// Scope object ids and substitution to this instantiation.
 	savedObjs := e.objIDs
-	e.objIDs = make(map[types.Object]int)
+	if sp != nil {
+		// Synthetic template bodies may reference synthetic package
+		// globals (unique.uniqueMu): seed from the ambient table
+		// (populated at importSyntheticPackage time) instead of starting
+		// empty, or "used before declaration" fires.
+		seeded := make(map[types.Object]int, len(savedObjs))
+		for k, v := range savedObjs {
+			seeded[k] = v
+		}
+		e.objIDs = seeded
+	} else {
+		e.objIDs = make(map[types.Object]int)
+	}
 	savedSubst := e.subst
 	e.subst = inst.subst
 	savedSubstTypes := e.substTypeIDs
@@ -3674,6 +4373,9 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 		e.objIDs = savedObjs
 		e.subst = savedSubst
 		e.substTypeIDs = savedSubstTypes
+		if sp != nil {
+			e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
+		}
 	}()
 
 	params := []*Node{}
@@ -6966,13 +7668,26 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// binary.LittleEndian, hex.ErrLength, asn1.TagNull, ...).
 	// P3-M8 (wave 2): syscall/os/io/fs/reflect/hash/crypto/crypto/*
 	// consts/vars likewise (syscall.EINVAL, reflect.Int, ...).
+	// P3-M9 (wave 3, tier-1a worker): cmp/slices/maps/unicode consts/vars
+	// likewise (utf8.RuneError, unicode.Categories, ...).
 	// Method expressions (time.Duration.String) have a SelectorExpr X and
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" ||
+			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "math/bits" || p == "math/big" || p == "math/cmplx" || p == "math/rand" || p == "math/rand/v2" || p == "strings" ||
 				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "crypto" ||
-				p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" {
+				p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" ||
+				p == "cmp" || p == "slices" || p == "maps" || p == "unicode" || p == "unicode/utf8" || p == "unicode/utf16" ||
+				p == "flag" || p == "testing" || p == "testing/quick" || p == "testing/iotest" ||
+				// P3-M9 (tier-1d): unique/structs consts/vars (none today;
+				// future-proof) and synthetic-only internal/bytealg
+				// (MaxBruteForce/MaxLen, referenced from synthetic sources).
+				p == "unique" || p == "structs" || p == "internal/bytealg" ||
+				// P3-M9 (wave 3, tier-1b): container/* + hash/* consts/vars
+				// (crc32.IEEE, crc64.ECMA, fnv offsets, ...).
+				p == "container/heap" || p == "container/list" || p == "container/ring" ||
+				p == "hash/adler32" || p == "hash/crc32" || p == "hash/crc64" ||
+				p == "hash/fnv" || p == "hash/maphash" {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}
