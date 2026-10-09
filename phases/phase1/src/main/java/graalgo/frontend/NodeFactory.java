@@ -3,6 +3,7 @@ package graalgo.frontend;
 import com.oracle.truffle.api.frame.FrameDescriptor;
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.MaterializedFrame;
+import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.Truffle;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.RootCallTarget;
@@ -10,6 +11,7 @@ import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.source.Source;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
+import graalgo.values.GoPointer;
 import graalgo.values.GoString;
 import graalgo.values.GoStruct;
 import graalgo.values.GoStructDescriptor;
@@ -306,6 +308,10 @@ public final class NodeFactory {
         registerExprKind("funclit", this::buildFuncLit);
         // M6 (WS H): the D4 fmt stub via the Phase-1 import overlay.
         registerExprKind("fmtcall", this::buildFmtCall);
+        // P3-M9 (WS D): implicit address-of for method receivers. When a
+        // pointer-receiver method is called on an addressable value, the
+        // exporter wraps the receiver in an "addrof" node (x.M() → (&x).M()).
+        registerExprKind("addrof", this::buildAddrOf);
         // Default type decoder: the D5 value-model mapping (M3, WS C). Named
         // types are resolved to their underlying type before decoders run
         // (see allocSlot/kindOf); a decoder that returns null abstains and
@@ -2531,6 +2537,26 @@ public final class NodeFactory {
 
     private GoExprNode buildParen(Json.Object node, BuildCtx ctx) {
         return buildExpr(fieldsOf(node, "paren").object("x", "paren.fields"), ctx);
+    }
+
+    /**
+     * Builds an implicit address-of {@code &x} for method receivers
+     * (P3-M9, WS D). When a pointer-receiver method is called on an
+     * addressable value, the exporter wraps the receiver in an "addrof"
+     * node. The factory evaluates the inner expression and wraps the
+     * result in a GoPointer.
+     */
+    private GoExprNode buildAddrOf(Json.Object node, BuildCtx ctx) {
+        Json.Object f = fieldsOf(node, "addrof");
+        String path = "addrof.fields";
+        GoExprNode x = buildExpr(f.object("x", path), ctx);
+        return new GoExprNode(GoKind.POINTER) {
+            @Override
+            public Object executeObject(VirtualFrame frame) {
+                Object val = x.executeObject(frame);
+                return new GoPointer(val);
+            }
+        };
     }
 
     /** Builds a Go conversion {@code T(x)} (frontend {@code convert} node). */

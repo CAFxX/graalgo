@@ -7038,6 +7038,73 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 // evaluates the receiver first and passes it as params[0].
 // Used by exportGoWithArgs to hoist the receiver to go-statement time
 // (P3-M5 remediation, reviewer1 P2-3).
+
+// implicitAddrOf implements Go's implicit address-of for method calls
+// (P3-M9, WS D). If the method's declared receiver is *T but the receiver
+// expression has type T and is addressable, wrap the receiver node in an
+// "addrof" wire node (x.M() → (&x).M()). Returns true if the adaptation
+// was applied, false if the types don't match the implicit-& pattern.
+func (e *exporter) implicitAddrOf(sel *ast.SelectorExpr, recv **Node, recvType *types.Type, declRecv types.Type, subst *typeSubst) bool {
+	// declRecv is the method's declared receiver type (after subst).
+	// Check if it's a pointer type.
+	declPtr, ok := declRecv.(*types.Pointer)
+	if !ok {
+		return false
+	}
+	// Check if recvType matches the pointer's element type.
+	declElemStr := substString(declPtr.Elem(), subst)
+	recvStr := substString(*recvType, e.subst)
+	if declElemStr != recvStr {
+		return false
+	}
+	// Check if sel.X is addressable.
+	if !isAddressable(sel.X, e.info) {
+		return false
+	}
+	// Wrap in addrof node.
+	tid, err := e.typeID(declRecv)
+	if err != nil {
+		return false
+	}
+	*recv = e.node("addrof", sel.X, map[string]any{
+		"x":    *recv,
+		"type": tid,
+	})
+	*recvType = declRecv
+	return true
+}
+
+// isAddressable reports whether an expression is addressable per Go spec.
+// Addressable expressions: variables, pointer indirections, slice indexing,
+// field selectors of addressable values, and composite literals (via &T{}).
+func isAddressable(x ast.Expr, info *types.Info) bool {
+	switch x := x.(type) {
+	case *ast.Ident:
+		// Variables are addressable; constants, builtins, and nil are not.
+		if obj := info.ObjectOf(x); obj != nil {
+			_, isVar := obj.(*types.Var)
+			return isVar
+		}
+		return false
+	case *ast.SelectorExpr:
+		// x.f is addressable if x is addressable.
+		return isAddressable(x.X, info)
+	case *ast.IndexExpr:
+		// s[i] is addressable if s is a slice (not a map or string).
+		if tv, ok := info.Types[x.X]; ok && tv.Type != nil {
+			if _, isSlice := tv.Type.Underlying().(*types.Slice); isSlice {
+				return true
+			}
+		}
+		return false
+	case *ast.StarExpr:
+		// *p is addressable (it's a dereference of a pointer).
+		return true
+	default:
+		return false
+	}
+}
+
 func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, recv *Node) (*Node, error) {
 	if selection.Kind() != types.MethodVal {
 		return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
@@ -7091,7 +7158,13 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 		recvType = adapted
 	}
 	if substString(declRecv, mc.subst) != substString(recvType, e.subst) {
-		return nil, scopeErrorf("method call %s needs an implicit address-of or deref on the receiver (WS D)", sel.Sel.Name)
+		// P3-M9: implicit address-of for method receivers (WS D).
+		// If the method has a pointer receiver (*T) but the receiver
+		// expression has type T and is addressable, take the address
+		// implicitly per Go spec (x.M() → (&x).M()).
+		if !e.implicitAddrOf(sel, &recv, &recvType, declRecv, mc.subst) {
+			return nil, scopeErrorf("method call %s needs an implicit address-of or deref on the receiver (WS D)", sel.Sel.Name)
+		}
 	}
 	var objID, sigID int
 	if mc.needsInst {
