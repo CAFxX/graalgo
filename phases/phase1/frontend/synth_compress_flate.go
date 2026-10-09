@@ -3208,7 +3208,7 @@ type decompressor struct {
 	codebits *[numCodes]int
 
 	// Output history, buffer.
-	dict dictDecoder
+	dict *dictDecoder
 
 	// Temporary buffer (avoids repeated allocation).
 	buf [4]byte
@@ -3411,7 +3411,7 @@ readLiteral:
 		var length int
 		switch {
 		case v < 256:
-			{ f.dict.hist[f.dict.wrPos] = byte(v); f.dict.wrPos++ }
+			f.dict.writeByte(byte(v))
 			if f.dict.availWrite() == 0 {
 				f.toRead = f.dict.readFlush()
 				f.step = __flateDStepHuffmanBlock
@@ -3698,7 +3698,7 @@ func fixedHuffmanDecoderInit() {
 func (f *decompressor) Reset(r io.Reader, dict []byte) error {
 	__flateResetDecompressor(f)
 	f.makeReader(r)
-	f.dict.init(maxMatchOffset, dict)
+	f.dict = new(dictDecoder); f.dict.init(maxMatchOffset, dict)
 	return nil
 }
 
@@ -3718,7 +3718,7 @@ func NewReader(r io.Reader) io.ReadCloser {
 	f.bits = new([maxNumLit + maxNumDist]int)
 	f.codebits = new([numCodes]int)
 	f.step = __flateDStepNextBlock
-	f.dict.init(maxMatchOffset, nil)
+	f.dict = new(dictDecoder); f.dict.init(maxMatchOffset, nil)
 	return f
 }
 
@@ -3737,7 +3737,7 @@ func NewReaderDict(r io.Reader, dict []byte) io.ReadCloser {
 	f.bits = new([maxNumLit + maxNumDist]int)
 	f.codebits = new([numCodes]int)
 	f.step = __flateDStepNextBlock
-	f.dict.init(maxMatchOffset, dict)
+	f.dict = new(dictDecoder); f.dict.init(maxMatchOffset, dict)
 	return f
 }
 
