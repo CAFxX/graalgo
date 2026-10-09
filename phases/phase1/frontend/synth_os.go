@@ -349,7 +349,14 @@ var (
 )
 
 func errNoDeadline() error       { return errors.New("file type does not support deadline") }
-func errDeadlineExceeded() error { return errors.New("i/o timeout") }
+func errDeadlineExceeded() error { return &deadlineExceededError{} }
+
+// deadlineExceededError implements net.Error with Timeout() == true,
+// matching gc's os.ErrDeadlineExceeded (*poll.DeadlineExceededError).
+type deadlineExceededError struct{}
+func (e *deadlineExceededError) Error() string   { return "i/o timeout" }
+func (e *deadlineExceededError) Timeout() bool   { return true }
+func (e *deadlineExceededError) Temporary() bool { return true }
 
 type timeout interface {
 	Timeout() bool
