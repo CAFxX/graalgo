@@ -264,11 +264,41 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/cipher", "NewGCMWithNonceSize", "", "__newGCMWithNonceSize", "", "newGCMAEADPair", []string{"aead", "err"}},
 	{"crypto/cipher", "NewGCMWithTagSize", "", "__newGCMWithTagSize", "", "newGCMAEADPair", []string{"aead", "err"}},
 	{"crypto/cipher", "Open", "AEAD", "__aeadOpen", "", "aeadOpenPair", []string{"out", "err"}},
+	// P3-M8b: gcmFallback.Open concrete form (method-table lookup uses the
+	// concrete receiver type name; the helper takes AEAD and asserts OpenSingle).
+	{"crypto/cipher", "Open", "gcmFallback", "__aeadOpen", "", "aeadOpenPair", []string{"out", "err"}},
 	// crypto/cipher: StreamReader.Read, StreamWriter.Write (need io desugar).
 	{"crypto/cipher", "Read", "StreamReader", "__streamReaderRead", "", "streamReaderReadPair", []string{"n", "err"}},
 	{"crypto/cipher", "Write", "StreamWriter", "__streamWriterWrite", "", "streamWriterWritePair", []string{"n", "err"}},
 	// crypto/rand: Read is multi-result (fail-fast).
 	{"crypto/rand", "Read", "", "__randRead", "", "readPair", []string{"n", "err"}},
+	// P3-M8b: hash.Cloner.Clone for every synthetic digest (itab wiring
+	// for the m8IfaceMultiResultMethods "hash"/"Clone" entry above; the
+	// concrete Clone stubs are fail-fast, the real logic is each
+	// type's CloneSinglePair served via hash.__hashClone).
+	{"crypto/md5", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/sha1", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/sha256", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/sha512", "Clone", "digest", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/sha3", "Clone", "SHA3", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	{"crypto/hmac", "Clone", "hmac", "__hashClone", "hash", "ClonePair", []string{"C", "Err"}},
+	// P3-M8b: encoding.BinaryMarshaler/BinaryAppender for the synthetic
+	// digests (itab wiring for the "hash"/"MarshalBinary" and
+	// "hash"/"AppendBinary" iface entries; md5 entries pre-exist above).
+	{"crypto/sha1", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"crypto/sha1", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"crypto/sha256", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"crypto/sha256", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"crypto/sha512", "MarshalBinary", "digest", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	{"crypto/sha512", "AppendBinary", "digest", "__binaryAppend", "hash", "binaryAppendPair", []string{"b", "err"}},
+	{"crypto/sha3", "MarshalBinary", "SHA3", "__binaryMarshal", "hash", "binaryMarshalPair", []string{"b", "err"}},
+	// P3-M8b: hmac.Write through hash.Hash (itab wiring; the call site
+	// desugars via the structural io/Write iface entry).
+	{"crypto/hmac", "Write", "hmac", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	// P3-M8b: SHAKE Write/Read (concrete *SHAKE call sites, e.g.
+	// h.Write(in) / h.Read(got) as bare statements).
+	{"crypto/sha3", "Write", "SHAKE", "__hashWrite", "hash", "hashWritePair", []string{"n", "err"}},
+	{"crypto/sha3", "Read", "SHAKE", "__hashRead", "hash", "hashReadPair", []string{"n", "err"}},
 }
 
 // osMultiResultFunc describes one desugarable P3-M8 (wave 2) multi-result
@@ -324,10 +354,25 @@ var osMultiResultFuncs = []osMultiResultFunc{
 	{"os", "Readdirnames", "File", "__fileReaddirnames", "", "readdirnamesPair", []string{"names", "err"}},
 	{"os", "ReadFrom", "File", "__fileReadFrom", "", "readFromPair", []string{"n", "err"}},
 	{"os", "WriteTo", "File", "__fileWriteTo", "", "writeToPair", []string{"n", "err"}},
+	// os: multi-result fail-fast stubs (§6). The public stubs keep gc's
+	// exact signatures with panic bodies (for the gc reference leg); the
+	// single-result __-helpers panic with the identical message, and call
+	// sites desugar to them — otherwise the call itself would fail at
+	// export with "multi-result calls need WS D" instead of pinning the
+	// runtime fail-fast (cf. syscall.Syscall → __syscall).
+	{"os", "StartProcess", "", "__startProcess", "", "startProcessPair", []string{"proc", "err"}},
+	{"os", "Wait", "Process", "__processWait", "", "processWaitPair", []string{"ps", "err"}},
+	{"os", "SyscallConn", "File", "__fileSyscallConn", "", "syscallConnPair", []string{"rc", "err"}},
+	{"os", "OpenRoot", "", "__openRoot", "", "openRootPair", []string{"root", "err"}},
+	{"os", "Executable", "", "__executable", "", "executablePair", []string{"s", "err"}},
 	// io/fs: DirEntry.Info (interface method) desugared through the os
 	// helper __dirEntryInfo (helperPkg override — the concrete dirEntry
 	// type lives in the synthetic os package).
 	{"io/fs", "Info", "DirEntry", "__dirEntryInfo", "os", "infoPair", []string{"fi", "err"}},
+	// os: the concrete (*dirEntry).Info method, mapped to the same
+	// helper for itab construction (multiResultHelperFunc keys on the
+	// concrete method's package/receiver).
+	{"os", "Info", "dirEntry", "__dirEntryInfo", "", "infoPair", []string{"fi", "err"}},
 }
 
 // ioMultiResultFuncs is the desugar table for the synthetic io package's
@@ -384,6 +429,16 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"reflect", "MethodByName", "reflectMethodPair", []string{"m", "ok"}},
 	{"reflect", "FieldByName", "reflectStructFieldPair", []string{"f", "ok"}},
 	{"reflect", "FieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}},
+	// P3-M8b (wave 2, crypto): hash.Cloner.Clone and the
+	// encoding.BinaryMarshaler/BinaryAppender methods, dispatched on the
+	// hash.Cloner / encoding.BinaryMarshaler interfaces. The itab maps
+	// each to the concrete digest's pair-returning __-helper (wired via
+	// the m8MultiResultFuncs entries below); pair field names/types are
+	// positionally identical to the methods' results (checked by
+	// classifyIfaceMultiResultCall).
+	{"hash", "Clone", "ClonePair", []string{"C", "Err"}},
+	{"hash", "MarshalBinary", "binaryMarshalPair", []string{"b", "err"}},
+	{"hash", "AppendBinary", "binaryAppendPair", []string{"b", "err"}},
 }
 
 // mrPlan is the desugar plan for one classified call.
@@ -1080,7 +1135,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	if plan.kind == mrIfaceMethod {
 		return e.desugarIfaceMultiResult(s, c, plan, define)
 	}
-	helperFn, err := multiResultHelper(plan)
+	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, err
 	}
@@ -1097,8 +1152,14 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 
 // multiResultHelper resolves a desugar plan's __-helper to its
 // *types.Func in the synthetic package scope.
-func multiResultHelper(plan *mrPlan) (*types.Func, error) {
+func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 	sp := getSyntheticPackage(plan.helperPkg)
+	// P3-M8b: import the synthetic package so its helpers are registered
+	// in funcByObj (idempotent). Without this, synthHelperCallNode fails
+	// with "synthetic helper not in funcByObj".
+	if err := e.importSyntheticPackage(sp); err != nil {
+		return nil, err
+	}
 	helperObj := sp.pkg.Scope().Lookup(plan.helperName)
 	helperFn, ok := helperObj.(*types.Func)
 	if !ok {
@@ -1152,7 +1213,7 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 // is handled by the D1 path (exportIfaceMethodCall) before this
 // interception.
 func (e *exporter) exportBareMultiResultCall(s *ast.ExprStmt, c *ast.CallExpr, plan *mrPlan) (*Node, error) {
-	helperFn, err := multiResultHelper(plan)
+	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, err
 	}

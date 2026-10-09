@@ -27,15 +27,26 @@ public final class TypeSwitchNode extends GoStmtNode {
     public static final class TypeCaseClause extends Node {
         /** Asserted type descriptors; empty for default/nil-only clauses. */
         public final List<GoTypeDescriptor> types;
+        /**
+         * For interface clause types: the interface's method implkeys for
+         * the implements check (parallel to {@link #types}; null entry for
+         * non-interface types). P3-M8b: type switches on interfaces must
+         * match by implementation, not descriptor identity.
+         */
+        public final List<java.util.List<String>> ifaceMethods;
         public final boolean nilCase;
         public final boolean isDefault;
         public final int bindSlot; // -1 = no binding
         public final GoKind bindKind; // null = no binding
         @Child private GoStmtNode body;
 
-        public TypeCaseClause(List<GoTypeDescriptor> types, boolean nilCase, boolean isDefault,
+        public TypeCaseClause(List<GoTypeDescriptor> types, List<java.util.List<String>> ifaceMethods,
+                              boolean nilCase, boolean isDefault,
                               int bindSlot, GoKind bindKind, GoStmtNode body) {
             this.types = List.copyOf(types);
+            // Null entries allowed (non-interface types); copy manually.
+            this.ifaceMethods = ifaceMethods == null ? null
+                    : java.util.Collections.unmodifiableList(new java.util.ArrayList<>(ifaceMethods));
             this.nilCase = nilCase;
             this.isDefault = isDefault;
             this.bindSlot = bindSlot;
@@ -48,14 +59,22 @@ public final class TypeSwitchNode extends GoStmtNode {
     @Child private GoStmtNode init; // nullable
     /** Descriptor of the switch's static interface type (for default/nil bindings). */
     private final GoTypeDescriptor ifaceDesc;
+    /**
+     * Per-document dynamic-type method implkey sets (descriptor name →
+     * implkeys), for interface-clause implements checks. Null when no
+     * clause has an interface type.
+     */
+    private final java.util.Map<String, java.util.Set<String>> dynamicMethodSets;
 
     @Children private final TypeCaseClause[] clauseArray;
 
     public TypeSwitchNode(GoExprNode tag, GoStmtNode init,
-                          List<TypeCaseClause> clauses, GoTypeDescriptor ifaceDesc) {
+                          List<TypeCaseClause> clauses, GoTypeDescriptor ifaceDesc,
+                          java.util.Map<String, java.util.Set<String>> dynamicMethodSets) {
         this.tag = tag;
         this.init = init;
         this.ifaceDesc = ifaceDesc;
+        this.dynamicMethodSets = dynamicMethodSets;
         this.clauseArray = clauses.toArray(new TypeCaseClause[0]);
     }
 
@@ -75,8 +94,18 @@ public final class TypeSwitchNode extends GoStmtNode {
             if (c.nilCase && data == null) {
                 hit = true;
             } else if (data != null) {
-                for (GoTypeDescriptor t : c.types) {
+                for (int i = 0; i < c.types.size(); i++) {
+                    GoTypeDescriptor t = c.types.get(i);
                     if (t == dyn) {
+                        hit = true;
+                        break;
+                    }
+                    // P3-M8b: interface clause — match by implementation,
+                    // not descriptor identity (e.g. case unwrapper: with
+                    // dynamic type *os.PathError).
+                    java.util.List<String> im = c.ifaceMethods == null ? null
+                            : c.ifaceMethods.get(i);
+                    if (im != null && dynamicMethodSets != null && implementsDyn(dyn, im)) {
                         hit = true;
                         break;
                     }
@@ -117,5 +146,24 @@ public final class TypeSwitchNode extends GoStmtNode {
             }
         }
         c.body.executeVoid(frame);
+    }
+
+    /**
+     * Implements check for interface type-switch clauses (P3-M8b): the
+     * dynamic type's method implkey set must cover the interface's.
+     * Mirrors {@link TypeAssertNode#holds}.
+     */
+    private boolean implementsDyn(GoTypeDescriptor dyn, java.util.List<String> ifaceMethods) {
+        if (dyn == null) {
+            return false;
+        }
+        java.util.Set<String> dynMethods =
+                dynamicMethodSets.getOrDefault(dyn.name(), java.util.Set.of());
+        if (dynMethods.contains(NodeFactory.TEMPLATE_METHODS_SKIPPED)) {
+            throw new FrontendException("cannot switch generic instantiation "
+                    + dyn.name() + " on interface: method tables for instantiated methods"
+                    + " are not supported (P3-M3 scope)");
+        }
+        return dynMethods.containsAll(ifaceMethods);
     }
 }

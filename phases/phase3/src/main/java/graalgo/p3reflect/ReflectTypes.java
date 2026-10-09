@@ -165,6 +165,8 @@ public final class ReflectTypes {
         private final Map<GoKind, Long> basicKindToTok = new HashMap<>();
         /** Wire type id → canonical token (for descriptor lookup). */
         private final Map<Integer, Long> wireIdToTok = new HashMap<>();
+        /** Token → canonical GoTypeDescriptor (for `any` boxing; memoized). */
+        private final Map<Long, graalgo.values.GoTypeDescriptor> tokToDesc = new HashMap<>();
         /**
          * Wire ids currently being built (phase-B recursion stack). Used
          * to cut reference cycles: a reference to an id in this set
@@ -235,6 +237,38 @@ public final class ReflectTypes {
         return tok;
     }
 
+    /**
+     * Canonical GoTypeDescriptor for a token, for boxing D5 values as
+     * {@code any} (the {@code interface}/{@code rawinterface} intrinsics).
+     * Tries the representative wire id first, then any wire id sharing the
+     * token (canonical sharing records the descriptor under whichever id
+     * the frontend happened to build).
+     */
+    public static graalgo.values.GoTypeDescriptor descriptorForTok(long tok) {
+        Table table = table();
+        graalgo.values.GoTypeDescriptor d = table.tokToDesc.get(tok);
+        if (d == null) {
+            TypeInfo t = table.info(tok);
+            d = graalgo.frontend.NodeFactory.descriptorForWireId(t.wireId);
+            if (d == null) {
+                for (Map.Entry<Integer, Long> e : table.wireIdToTok.entrySet()) {
+                    if (e.getValue() == tok) {
+                        d = graalgo.frontend.NodeFactory.descriptorForWireId(e.getKey());
+                        if (d != null) {
+                            break;
+                        }
+                    }
+                }
+            }
+            if (d == null) {
+                throw new IllegalStateException(
+                        "reflect: no descriptor for token " + tok);
+            }
+            table.tokToDesc.put(tok, d);
+        }
+        return d;
+    }
+
     // ------------------------------------------------------------------
     // Construction.
     // ------------------------------------------------------------------
@@ -248,9 +282,23 @@ public final class ReflectTypes {
         for (int id = 0; id < n; id++) {
             infos[id] = shell(types, id);
         }
-        // Pass 2: resolve references and canonicalize.
+        // Pass 2: resolve references and canonicalize. Single call:
+        // resolve() mints tokens for every id (phase A) and builds every
+        // TypeInfo (phase B) itself; the M8 draft's per-id loop re-ran
+        // both phases n times (the id parameter was unused), an O(n^2)
+        // key recomputation that dominated startup on large type tables
+        // (e.g. the synthetic os package: 2297 types, minutes in build()).
+        // Both phases are idempotent (containsKey / byTok guards), so one
+        // call is semantics-preserving.
+        resolve(table, types, infos, functions, funcdeclSig);
+        // Pass 3: rebuild every TypeInfo now that all children are built.
+        // Pass 2 embeds cycle-cut shells (tok == -1) for types referenced
+        // while under construction (e.g. *N's elem while building N);
+        // with the full table built, infoOrShell always hits byTok, so one
+        // rebuild pass yields shell-free infos. buildInfo is side-effect
+        // free, so rebuilding is idempotent for acyclic types.
         for (int id = 0; id < n; id++) {
-            resolve(table, types, infos, id, functions, funcdeclSig);
+            buildOne(table, types, infos, id, functions, funcdeclSig, true);
         }
         return table;
     }
@@ -434,7 +482,7 @@ public final class ReflectTypes {
     // ------------------------------------------------------------------
 
     private static void resolve(Table table, TypeTable types, TypeInfo[] shells,
-            int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
+            Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
         // Phase A: mint tokens for every id.
         int n = types.size();
         for (int i = 0; i < n; i++) {
@@ -451,7 +499,7 @@ public final class ReflectTypes {
         }
         // Phase B: build each TypeInfo (depth-first via infoOrShell).
         for (int i = 0; i < n; i++) {
-            buildOne(table, types, shells, i, functions, funcdeclSig);
+            buildOne(table, types, shells, i, functions, funcdeclSig, false);
         }
     }
 
@@ -461,13 +509,19 @@ public final class ReflectTypes {
      * from infoOrShell for forward references.
      */
     private static void buildOne(Table table, TypeTable types, TypeInfo[] shells,
-            int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
+            int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig,
+            boolean force) {
         String key = keyForId(table, types, shells, id, functions, funcdeclSig);
         Long tok = table.keyToTok.get(key);
         if (tok == null) {
             throw new FrontendException("reflect: no token for type id " + id);
         }
-        if (table.byTok.get((int) (long) tok) != null) {
+        // Always record the wire-id -> token mapping, even when the token
+        // was already built via canonical sharing: tokForDescriptor looks
+        // up by the descriptor's recorded wire id, which may be any of the
+        // ids sharing this token (last writer wins in the registry).
+        table.wireIdToTok.put(id, tok);
+        if (!force && table.byTok.get((int) (long) tok) != null) {
             return; // already built via canonical sharing
         }
         if (!table.building.add(id)) {
@@ -482,7 +536,6 @@ public final class ReflectTypes {
             TypeInfo info = buildInfo(table, types, shells, id, kind, d, tok,
                     functions, funcdeclSig, path);
             table.byTok.set((int) (long) tok, info);
-            table.wireIdToTok.put(id, tok);
             if (info.kind != null && kind.equals("basic")) {
                 table.basicKindToTok.putIfAbsent(info.kind, tok);
             }
@@ -529,7 +582,7 @@ public final class ReflectTypes {
             // Reference cycle: cut it with the shell (kind only).
             return shells[id];
         }
-        buildOne(table, types, shells, id, functions, funcdeclSig);
+        buildOne(table, types, shells, id, functions, funcdeclSig, false);
         TypeInfo built = table.byTok.get((int) tok);
         if (built == null) {
             throw new FrontendException(
@@ -1197,7 +1250,6 @@ public final class ReflectTypes {
     private static volatile graalgo.values.GoStructDescriptor structFieldDesc;
     private static volatile graalgo.values.GoStructDescriptor rtypeDescStruct;
     private static volatile graalgo.values.GoTypeDescriptor rtypeDesc;
-    private static volatile graalgo.values.GoTypeDescriptor typeIfaceDesc;
 
     /**
      * Captures the struct descriptors for the synthetic reflect structs.
@@ -1234,11 +1286,6 @@ public final class ReflectTypes {
             rtypeDesc = descriptorFor(types, "reflect.rtype");
         } catch (FrontendException e) {
             rtypeDesc = null;
-        }
-        try {
-            typeIfaceDesc = descriptorFor(types, "reflect.Type");
-        } catch (FrontendException e) {
-            typeIfaceDesc = null;
         }
     }
 
@@ -1368,12 +1415,17 @@ public final class ReflectTypes {
 
     /**
      * Boxes a type token as a {@code reflect.Type} interface value
-     * (GoInterface over an rtype struct, with itab).
+     * (GoInterface over an rtype struct). The itab is left null and built
+     * lazily by the dispatch path from the descriptor name — exactly like
+     * {@code InterfaceBoxNode}; the dispatch path never reads a stored
+     * itab. (An earlier version eagerly called itabFor with a captured
+     * {@code reflect.Type} interface descriptor, but that descriptor is
+     * only built when the frontend references the named interface id, so
+     * the capture was null and every boxType crashed.)
      */
     public static graalgo.values.GoInterface boxType(long tok) {
         graalgo.values.GoStruct rt = new graalgo.values.GoStruct(
                 rtypeDescStruct, new long[0], new Object[]{tok});
-        Object itab = graalgo.runtime.Intrinsics.itabFor(rtypeDesc, typeIfaceDesc);
-        return new graalgo.values.GoInterface(rtypeDesc, rt, itab);
+        return new graalgo.values.GoInterface(rtypeDesc, rt, null);
     }
 }

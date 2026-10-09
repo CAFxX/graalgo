@@ -554,7 +554,74 @@ func Parse(layout, value string) (Time, error) {
 }
 
 func Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time {
-	panic("time.Date: not in M5 scope")
+	if loc == nil {
+		panic("time: missing Location in call to Date")
+	}
+	if loc.name != "" && loc.name != "UTC" {
+		panic("time.Date: non-UTC locations not in scope (re-test: synthetic zoneinfo)")
+	}
+	// Normalize nsec→sec→min→hour→day with floored division, like gc.
+	sec64 := int64(sec) + timeFloorDiv(int64(nsec), 1e9)
+	nsec64 := timeFloorMod(int64(nsec), 1e9)
+	min64 := int64(min) + timeFloorDiv(sec64, 60)
+	sec64 = timeFloorMod(sec64, 60)
+	hour64 := int64(hour) + timeFloorDiv(min64, 60)
+	min64 = timeFloorMod(min64, 60)
+	day64 := int64(day) + timeFloorDiv(hour64, 24)
+	hour64 = timeFloorMod(hour64, 24)
+	// Normalize month (1-based) into the year.
+	m0 := int64(month) - 1
+	y64 := int64(year) + timeFloorDiv(m0, 12)
+	m0 = timeFloorMod(m0, 12)
+	// days_from_civil (Howard Hinnant's algorithm), proleptic Gregorian;
+	// day64 may lie outside the month — the formula absorbs the offset.
+	yy := y64
+	mo := m0 + 1 // 1-based, in [1,12]
+	if mo <= 2 {
+		yy--
+	}
+	era := yy / 400
+	if yy < 0 && yy%400 != 0 {
+		era--
+	}
+	yoe := yy - era*400
+	mp := mo - 3
+	if mp < 0 {
+		mp += 12
+	}
+	doy := (153*mp+2)/5 + day64 - 1
+	doe := yoe*365 + yoe/4 - yoe/100 + doy
+	days := era*146097 + doe - 719468 // days since 1970-01-01
+	unixSec := days*86400 + hour64*3600 + min64*60 + sec64
+	return Time{unixSec*1e9 + nsec64}
+}
+
+// Unix returns the Time corresponding to the given Unix time, sec seconds
+// and nsec nanoseconds since January 1, 1970 UTC. nsec outside
+// [0, 999999999] is normalized, like gc.
+func Unix(sec int64, nsec int64) Time {
+	sec += timeFloorDiv(nsec, 1e9)
+	nsec = timeFloorMod(nsec, 1e9)
+	return Time{sec*1e9 + nsec}
+}
+
+// timeFloorDiv/timeFloorMod are Euclidean division/modulo (Go's / and %
+// truncate toward zero; Date/Unix normalization needs floored semantics
+// for negative operands).
+func timeFloorDiv(a, b int64) int64 {
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return q
+}
+
+func timeFloorMod(a, b int64) int64 {
+	r := a % b
+	if r != 0 && (r < 0) != (b < 0) {
+		r += b
+	}
+	return r
 }
 
 // Month is a 1-based month number with gc's String rendering.

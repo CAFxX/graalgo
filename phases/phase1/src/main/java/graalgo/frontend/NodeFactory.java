@@ -726,7 +726,7 @@ public final class NodeFactory {
      * their underlying type and aliases to their right-hand side. Unknown
      * kinds fail naming the WS C/D {@code registerTypeDecoder} hook.
      */
-    static GoKind kindOf(BuildCtx ctx, int typeId, String path) {
+    public static GoKind kindOf(BuildCtx ctx, int typeId, String path) {
         Json.Object entry = ctx.types.entry(typeId, path);
         // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
         for (int steps = 0; ; steps++) {
@@ -769,6 +769,36 @@ public final class NodeFactory {
     }
 
     /**
+     * Returns [arrayLen, elemTypeId] for array types, [-1, -1] otherwise.
+     * Used to pre-allocate array fields in GoStruct.zero (P3-M8b).
+     */
+    private static int[] arrayInfo(BuildCtx ctx, int typeId, String path) {
+        Json.Object entry = ctx.types.entry(typeId, path);
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                return new int[]{-1, -1};
+            }
+            String ek = entry.string("kind", path);
+            if ("named".equals(ek)) {
+                typeId = entry.object("detail", path).intValue("underlying", path);
+                entry = ctx.types.entry(typeId, path);
+            } else if ("alias".equals(ek)) {
+                typeId = entry.object("detail", path).intValue("rhs", path);
+                entry = ctx.types.entry(typeId, path);
+            } else {
+                break;
+            }
+        }
+        if (!"array".equals(entry.string("kind", path))) {
+            return new int[]{-1, -1};
+        }
+        Json.Object detail = entry.object("detail", path);
+        int len = detail.intValue("len", path);
+        int elemId = detail.intValue("elem", path);
+        return new int[]{len, elemId};
+    }
+
+    /**
      * Alias resolution over a bare type table (P3-M7R2): overload for
      * naming helpers that don't have a {@link BuildCtx}. Public for the
      * phase-3 {@code DescriptorNames} replica.
@@ -794,14 +824,22 @@ public final class NodeFactory {
      * (M4, WS E). Descriptor identity is type identity: two values of the
      * same struct type always share the instance (map keys and struct
      * equality hash by it).
+     *
+     * <p>P3-M8b: public for phase-3 replicas (ChanWire) — the canonical
+     * instance must be shared, not re-minted.
      */
-    static GoStructDescriptor structDescriptorFor(BuildCtx ctx, int typeId, String path) {
+    public static GoStructDescriptor structDescriptorFor(BuildCtx ctx, int typeId, String path) {
         typeId = resolveAlias(ctx, typeId, path);
         GoStructDescriptor d = ctx.structDescs.get(typeId);
         if (d != null) {
             return d;
         }
         Json.Object entry = ctx.types.entry(typeId, path);
+        // P3-M8b: capture the qualified name before the named→underlying
+        // walk, for the canonical cache key below.
+        String qname = "named".equals(entry.string("kind", path))
+                ? entry.object("detail", path).string("name", path)
+                : null;
         // M10 (P1-3): bounded chain walk; a cycle fails fast, never hangs.
         for (int steps = 0; ; steps++) {
             if (steps > MAX_TYPE_CHAIN_STEPS) {
@@ -820,6 +858,8 @@ public final class NodeFactory {
         Json.Array fields = entry.object("detail", path).array("fields", path);
         List<String> names = new ArrayList<>(fields.size());
         List<GoKind> kinds = new ArrayList<>(fields.size());
+        List<Integer> arrayLens = new ArrayList<>(fields.size());
+        List<graalgo.values.GoKind> arrayElemKinds = new ArrayList<>(fields.size());
         int[] fieldTypeIds = new int[fields.size()];
         for (int i = 0; i < fields.size(); i++) {
             Json.Value fv = fields.get(i);
@@ -830,11 +870,31 @@ public final class NodeFactory {
             int ftid = fo.intValue("type", path);
             fieldTypeIds[i] = ftid;
             kinds.add(kindOf(ctx, ftid, path));
+            // P3-M8b: array length + element kind for GoStruct.zero pre-allocation.
+            int[] arrInfo = arrayInfo(ctx, ftid, path);
+            arrayLens.add(arrInfo[0]);
+            arrayElemKinds.add(arrInfo[0] >= 0 ? kindOf(ctx, arrInfo[1], path) : null);
         }
-        d = GoStructDescriptor.layout("struct#" + typeId, names, kinds);
-        ctx.structDescs.put(typeId, d);
+        // P3-M8b: canonicalize process-wide so descriptor identity == type
+        // identity across BuildCtxs (functions/packages). The per-BuildCtx
+        // cache minted a fresh instance per function, so struct ==
+        // (GoStruct.equals is descriptor-identity) failed across functions —
+        // e.g. reflect rtype values built in the synthetic package never
+        // equaled rtype values built in user code (pt.Elem() == t). The key
+        // carries the qualified name (when named) plus the full field
+        // layout, so same-named/different-layout types across runs never
+        // collide; identical anonymous structs correctly share (Go: identical
+        // anonymous struct types are identical).
+        String key = (qname != null ? "N:" + qname : "S:") + "|" + names + "|" + kinds + "|" + arrayLens;
+        GoStructDescriptor cd = STRUCT_DESCS.get(key);
+        if (cd == null) {
+            GoStructDescriptor nd = GoStructDescriptor.layout("struct#" + typeId, names, kinds, arrayLens, arrayElemKinds);
+            GoStructDescriptor prev = STRUCT_DESCS.putIfAbsent(key, nd);
+            cd = prev != null ? prev : nd;
+        }
+        ctx.structDescs.put(typeId, cd);
         ctx.structFieldTypeIds.put(typeId, fieldTypeIds);
-        return d;
+        return cd;
     }
 
     /**
@@ -1140,6 +1200,19 @@ public final class NodeFactory {
             new java.util.concurrent.ConcurrentHashMap<>();
 
     /**
+     * Process-wide canonical struct descriptors (P3-M8b): descriptor
+     * identity is type identity, so struct {@code ==} (GoStruct.equals is
+     * descriptor-identity) and struct map keys work across functions and
+     * packages. Keyed by qualified name (named types) or field structure
+     * (anonymous) plus the full field layout — same-named types with
+     * different layouts across runs never share an instance.
+     * ConcurrentHashMap: test suites may build programs on multiple threads.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+            graalgo.values.GoStructDescriptor> STRUCT_DESCS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    /**
      * P3-M8 (wave 2, reflect): descriptor <-> wire type id registry, and
      * its inverse. Recorded additively in {@link #typeDescriptorFor}; zero
      * behavior change. Consumed by the reflect package to map a
@@ -1338,6 +1411,9 @@ public final class NodeFactory {
             case "complex128" -> GoKind.COMPLEX128;
             case "string" -> GoKind.STRING;
             case "bool" -> GoKind.BOOL;
+            // P3-M8b: the synthetic unsafe package's Pointer alias may surface
+            // as a basic name; it denotes unsafe.Pointer.
+            case "Pointer", "unsafe.Pointer" -> GoKind.UNSAFE_POINTER;
             default -> throw new FrontendException(
                     "no kind for basic type name " + name + " (WS E)");
         };
@@ -2399,6 +2475,27 @@ public final class NodeFactory {
             // Operand kind: both sides agree, or one side is an untyped
             // constant (transparent). The result kind is BOOL.
             GoKind ok = x.kind().isUntyped() ? y.kind() : x.kind();
+            if (ok == GoKind.INTERFACE && x.kind() != y.kind()
+                    && (x.kind() == GoKind.INTERFACE || y.kind() == GoKind.INTERFACE)) {
+                // P3-M8b: interface == concrete (e.g. err == syscall.EINVAL).
+                // The type-id-free maybeConvert below cannot box a concrete
+                // value into an interface (WS E); box the concrete side here
+                // with the type-id-carrying form so BinaryOpNode's M5
+                // interface-equality path compares the boxed dynamic values.
+                GoExprNode iface = x.kind() == GoKind.INTERFACE ? x : y;
+                GoExprNode conc = x.kind() == GoKind.INTERFACE ? y : x;
+                int ifaceId = iface.typeId();
+                if (ifaceId < 0) {
+                    throw new FrontendException(path
+                            + ": cannot box concrete operand to interface without a type-table id (WS E)");
+                }
+                conc = maybeConvert(conc, GoKind.INTERFACE, ifaceId, ctx, path);
+                if (x.kind() == GoKind.INTERFACE) {
+                    y = conc;
+                } else {
+                    x = conc;
+                }
+            }
             return new BinaryOpNode(op, GoKind.BOOL, ok, maybeConvert(x, ok, path), maybeConvert(y, ok, path));
         }
         if (op.isShift()) {
@@ -2566,6 +2663,24 @@ public final class NodeFactory {
                 throw new FrontendException(path + ": call to non-function value of kind "
                         + fn.kind() + " (WS D)");
             }
+            Json.Value sig = ff.opt("type");
+            List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
+                    : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
+            return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
+                    false, ctx.funcObjId);
+        }
+        if ("call".equals(funKind)) {
+            // P3-M8b: call to a computed func value, e.g.
+            // reflect.Swapper(s)(0, 2). The exporter (P3-M8, export.go)
+            // emits the inner call as the fun operand; build it and
+            // require a func result (mirrors the ident branch above).
+            GoExprNode fn = buildExpr(fun, ctx);
+            if (fn.kind() != GoKind.FUNC) {
+                throw new FrontendException(path + ": call to non-function value of kind "
+                        + fn.kind() + " (WS D)");
+            }
+            Json.Object ff = fun.object("fields", path + ".fun");
             Json.Value sig = ff.opt("type");
             List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
                     : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
@@ -2949,6 +3064,15 @@ public final class NodeFactory {
         GoKind elemKind = kindOf(ctx, elemId, path);
         GoStructDescriptor desc =
                 elemKind == GoKind.STRUCT ? structDescriptorFor(ctx, elemId, path) : null;
+        // P3-M8b: new([N]T) needs the array length and element kind.
+        if (elemKind == GoKind.ARRAY) {
+            Json.Object arrayEntry = underlyingEntry(ctx, elemId, path);
+            Json.Object detail = arrayEntry.object("detail", path);
+            int arrayLen = detail.intValue("len", path);
+            int arrayElemId = detail.intValue("elem", path);
+            GoKind arrayElemKind = kindOf(ctx, arrayElemId, path);
+            return new NewNode(elemKind, desc, arrayLen, arrayElemKind);
+        }
         return new NewNode(elemKind, desc);
     }
 
@@ -2976,6 +3100,17 @@ public final class NodeFactory {
         if (e instanceof Json.Bool b) {
             ellipsis = b.value();
         }
+        GoExprNode[] elems = Arrays.copyOfRange(args, 1, args.length);
+        if (elemKind == GoKind.INTERFACE && !ellipsis) {
+            // P3-M8b: appending a concrete value to an interface-element
+            // slice must box it (cf. buildComplit's element maybeConvert).
+            // Without this, e.g. append([]DirEntry{}, &dirEntry{}) stores
+            // the raw GoPointer and interface dispatch fails at runtime.
+            for (int i = 0; i < elems.length; i++) {
+                elems[i] = maybeConvert(elems[i], GoKind.INTERFACE, elemId, ctx,
+                        path + ".args[" + (i + 1) + "]");
+            }
+        }
         // P3-M4 (WS C): struct elements need their ABI size for the
         // growslice math (elemSizeBytes(STRUCT) is 0 by design).
         long elemSizeBytes = 0;
@@ -2983,20 +3118,24 @@ public final class NodeFactory {
             elemSizeBytes = graalgo.runtime.Intrinsics.structSizeBytes(
                     structDescriptorFor(ctx, elemId, path));
         }
-        return new AppendNode(args[0], elemKind, Arrays.copyOfRange(args, 1, args.length),
-                ellipsis, elemSizeBytes);
+        return new AppendNode(args[0], elemKind, elems, ellipsis, elemSizeBytes);
     }
 
-    /** {@code copy(dst, src)}: slice-to-slice only (string sources are WS D). */
+    /**
+     * {@code copy(dst, src)}: slice-to-slice, or {@code copy(dst []byte, src string)}
+     * (P3-M8b: string sources are supported by converting the string to []byte).
+     */
     private GoExprNode buildCopyBuiltin(GoExprNode[] args, Json.Object f, BuildCtx ctx,
             String path) {
         requireArgs(path, "copy", args, 2);
-        if (args[1].kind() == GoKind.STRING) {
-            throw new FrontendException(path + ": copy from a string source is not supported"
-                    + " in frontend/v1 scope (WS D: string<->[]byte conversions)");
+        GoExprNode src = args[1];
+        // P3-M8b: copy(dst []byte, src string) — convert the string to []byte.
+        // Go spec: the string's bytes are copied; dst must be []byte.
+        if (src.kind() == GoKind.STRING || src.kind() == GoKind.UNTYPED_STRING) {
+            src = new ConvertNode(src.kind(), GoKind.SLICE, src, GoKind.UINT8);
         }
         GoKind elemKind = builtinElemKind(ctx, args[0].typeId(), path, "copy");
-        return new CopyNode(args[0], args[1], elemKind);
+        return new CopyNode(args[0], src, elemKind);
     }
 
     /** Result kind of a call node (from the wire "type"; void → null kind handling). */
@@ -4402,6 +4541,7 @@ public final class NodeFactory {
         graalgo.values.GoTypeDescriptor ifaceDesc = typeDescriptorFor(ctx, tagTypeId, path);
         Json.Array clauses = f.array("clauses", path);
         List<TypeSwitchNode.TypeCaseClause> out = new ArrayList<>(clauses.size());
+        java.util.Map<String, java.util.Set<String>> dynSets = null;
         for (int i = 0; i < clauses.size(); i++) {
             String cp = path + ".clauses[" + i + "]";
             Json.Object c = asObject(clauses.get(i), cp);
@@ -4409,12 +4549,28 @@ public final class NodeFactory {
             boolean isDefault = cf.bool("default", cp);
             boolean nilCase = cf.bool("nilcase", cp);
             List<graalgo.values.GoTypeDescriptor> types = new ArrayList<>();
+            List<java.util.List<String>> ifaceMethods = new ArrayList<>();
+            boolean hasIface = false;
             Json.Value typesVal = cf.opt("types");
             if (typesVal instanceof Json.Array typeIds) {
                 for (int j = 0; j < typeIds.size(); j++) {
                     int tid = (int) ((Json.Num) typeIds.get(j)).asLong(cp);
                     types.add(typeDescriptorFor(ctx, tid, cp));
+                    // P3-M8b: interface clause types need their method
+                    // implkeys for the implements check (null otherwise).
+                    java.util.List<String> im = null;
+                    if (kindOf(ctx, tid, cp) == GoKind.INTERFACE) {
+                        java.util.Set<String> keys = interfaceMethodImplKeys(ctx, tid, cp);
+                        if (!keys.isEmpty()) {
+                            im = new java.util.ArrayList<>(keys);
+                            hasIface = true;
+                        }
+                    }
+                    ifaceMethods.add(im);
                 }
+            }
+            if (hasIface && dynSets == null) {
+                dynSets = dynamicMethodSets(ctx, path);
             }
             // null types array: `case nil:` (no asserted types).
             int bindSlot = -1;
@@ -4426,10 +4582,10 @@ public final class NodeFactory {
                 bindSlot = declareObj(ctx, boid, cp);
             }
             GoStmtNode body = buildStmt(cf.object("body", cp), ctx);
-            out.add(new TypeSwitchNode.TypeCaseClause(types, nilCase, isDefault,
+            out.add(new TypeSwitchNode.TypeCaseClause(types, ifaceMethods, nilCase, isDefault,
                     bindSlot, bindKind, body));
         }
-        return new TypeSwitchNode(tag, init, out, ifaceDesc);
+        return new TypeSwitchNode(tag, init, out, ifaceDesc, dynSets);
     }
 
     private GoStmtNode buildBranch(Json.Object node, BuildCtx ctx) {
@@ -4573,7 +4729,7 @@ public final class NodeFactory {
                 }
             }
         }
-        return switch (ek) {
+        GoExprNode lit = switch (ek) {
             case "slice" -> {
                 int elemTid = compDetail.intValue("elem", path);
                 GoKind elemKind = kindOf(ctx, elemTid, path);
@@ -4623,6 +4779,10 @@ public final class NodeFactory {
             }
             default -> throw new FrontendException(path + ": composite literal of " + ek + " (WS E)");
         };
+        // P3-M8b: the literal carries its wire type id (needed to box the
+        // value into an interface, e.g. append([]DirEntry{}, &dirEntry{})).
+        lit.setTypeId(typeId);
+        return lit;
     }
 
     private GoExprNode buildIndex(Json.Object node, BuildCtx ctx) {

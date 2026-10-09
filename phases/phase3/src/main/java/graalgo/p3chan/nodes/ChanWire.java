@@ -149,38 +149,16 @@ final class ChanWire {
 
     /**
      * The canonical {@link GoStructDescriptor} for a struct type id.
-     * Replicates {@code NodeFactory.structDescriptorFor} (package-private)
-     * against the public {@link NodeFactory.BuildCtx} caches, populating
-     * {@code structDescs}/{@code structFieldTypeIds} with the
-     * {@code "struct#"+id} instance the factory would mint — so a channel
-     * zero value and later factory-built values share descriptor identity
-     * (descriptor identity <em>is</em> Go struct type identity).
+     *
+     * <p>P3-M8b: delegates to the now-public
+     * {@code NodeFactory.structDescriptorFor} (process-wide canonical
+     * instances) instead of minting a per-BuildCtx replica — the replica
+     * broke the "descriptor identity is type identity" contract across
+     * functions, so channel zero values never equaled factory-built
+     * values of the same struct type.
      */
     static GoStructDescriptor structDescriptorFor(NodeFactory.BuildCtx ctx, int typeId, String path) {
-        int sid = structEntryId(ctx, typeId, path);
-        GoStructDescriptor d = ctx.structDescs.get(sid);
-        if (d != null) {
-            return d;
-        }
-        Json.Object entry = ctx.types.entry(sid, path);
-        Json.Array fields = entry.object("detail", path).array("fields", path);
-        List<String> names = new ArrayList<>(fields.size());
-        List<GoKind> kinds = new ArrayList<>(fields.size());
-        int[] fieldTypeIds = new int[fields.size()];
-        for (int i = 0; i < fields.size(); i++) {
-            Json.Value fv = fields.get(i);
-            if (!(fv instanceof Json.Object fo)) {
-                throw new FrontendException(path + ": struct field " + i + " is not an object");
-            }
-            names.add(fo.string("name", path));
-            int ftid = fo.intValue("type", path);
-            fieldTypeIds[i] = ftid;
-            kinds.add(kindOf(ctx, ftid, path));
-        }
-        d = GoStructDescriptor.layout("struct#" + sid, names, kinds);
-        ctx.structDescs.put(sid, d);
-        ctx.structFieldTypeIds.put(sid, fieldTypeIds);
-        return d;
+        return NodeFactory.structDescriptorFor(ctx, typeId, path);
     }
 
     /** One {@code "alias"}-only resolution step chain (aliases are their rhs). */

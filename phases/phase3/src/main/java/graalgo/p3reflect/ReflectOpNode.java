@@ -1,5 +1,6 @@
 package graalgo.p3reflect;
 
+import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
@@ -35,8 +36,8 @@ public final class ReflectOpNode extends GoExprNode {
     @Children
     private final GoExprNode[] args;
 
-    private ReflectOpNode(String op, GoExprNode[] args) {
-        super(GoKind.INTERFACE);
+    private ReflectOpNode(String op, GoExprNode[] args, GoKind kind) {
+        super(kind);
         this.op = op;
         this.args = args;
     }
@@ -45,6 +46,11 @@ public final class ReflectOpNode extends GoExprNode {
      * Builds the node from the {@code "reflectop"} wire node. Fields:
      * {@code op}: string, {@code args}: array of expr nodes,
      * {@code type}: result type-table id.
+     *
+     * <p>P3-M8b: the node's kind is computed from the result type id —
+     * different intrinsics return different kinds (typeof → unsafe.Pointer,
+     * valueof → Value struct, etc.). The old hardcoded INTERFACE kind broke
+     * any use in a non-interface context.
      */
     public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx,
             NodeFactory factory) {
@@ -60,16 +66,95 @@ public final class ReflectOpNode extends GoExprNode {
             }
             args[i] = factory.buildExpr(ao, ctx);
         }
-        return new ReflectOpNode(op, args);
+        // P3-M8b: the type field may be null for void intrinsics (the Go
+        // exporter sets it to nil when callType has no result). Default to
+        // INTERFACE for those — the result is discarded.
+        GoKind kind = GoKind.INTERFACE;
+        int typeId = -1;
+        Json.Value t = f.opt("type");
+        if (t instanceof Json.Num n) {
+            typeId = (int) n.longValue();
+            kind = NodeFactory.kindOf(ctx, typeId, path);
+        }
+        GoExprNode n = new ReflectOpNode(op, args, kind);
+        if (typeId >= 0) {
+            n.setTypeId(typeId);
+        }
+        return n;
+    }
+
+    /**
+     * Evaluates args and dispatches. Each argument is read at its own
+     * kind's slot kind and boxed (Long for long kinds, etc.) — args of
+     * primitive kind (e.g. {@code unsafe.Pointer} tokens are Long) live
+     * in primitive frame slots, so a blind {@code executeObject} throws
+     * {@code FrameSlotTypeException}.
+     */
+    private Object dispatchBoxed(VirtualFrame frame) {
+        Object[] argv = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            argv[i] = boxArg(args[i], frame);
+        }
+        return dispatch(op, argv);
+    }
+
+    /**
+     * Reads an argument at its kind's slot kind (replica of the
+     * package-private {@code Boxing.box}, same shape as
+     * {@code IfaceDispatchNode.boxArg}: canonical boxed values, e.g.
+     * long slot kinds as {@link Long}).
+     */
+    private static Object boxArg(GoExprNode arg, VirtualFrame frame) {
+        FrameSlotKind slot = arg.kind().slotKind();
+        if (slot == FrameSlotKind.Int) {
+            return Integer.valueOf(arg.executeInt(frame));
+        }
+        if (slot == FrameSlotKind.Long) {
+            return Long.valueOf(arg.executeLong(frame));
+        }
+        if (slot == FrameSlotKind.Float) {
+            return Float.valueOf(arg.executeFloat(frame));
+        }
+        if (slot == FrameSlotKind.Double) {
+            return Double.valueOf(arg.executeDouble(frame));
+        }
+        if (slot == FrameSlotKind.Boolean) {
+            return Boolean.valueOf(arg.executeBoolean(frame));
+        }
+        if (slot == FrameSlotKind.Object) {
+            return arg.executeObject(frame);
+        }
+        throw new FrontendException("cannot box kind " + arg.kind() + " (WS E)");
     }
 
     @Override
     public Object executeObject(VirtualFrame frame) {
-        Object[] argv = new Object[args.length];
-        for (int i = 0; i < args.length; i++) {
-            argv[i] = args[i].executeObject(frame);
-        }
-        return dispatch(op, argv);
+        return dispatchBoxed(frame);
+    }
+
+    @Override
+    public long executeLong(VirtualFrame frame) {
+        return ((Number) dispatchBoxed(frame)).longValue();
+    }
+
+    @Override
+    public int executeInt(VirtualFrame frame) {
+        return ((Number) dispatchBoxed(frame)).intValue();
+    }
+
+    @Override
+    public double executeDouble(VirtualFrame frame) {
+        return ((Number) dispatchBoxed(frame)).doubleValue();
+    }
+
+    @Override
+    public float executeFloat(VirtualFrame frame) {
+        return ((Number) dispatchBoxed(frame)).floatValue();
+    }
+
+    @Override
+    public boolean executeBoolean(VirtualFrame frame) {
+        return (Boolean) dispatchBoxed(frame);
     }
 
     // ------------------------------------------------------------------
@@ -257,8 +342,8 @@ public final class ReflectOpNode extends GoExprNode {
                 yield null;
             }
             case "mapindex" -> mapIndex(asValue(argv[0]), asValue(argv[1]));
-            case "interface" -> unboxValue(asValue(argv[0]));
-            case "rawinterface" -> unboxValue(asValue(argv[0]));
+            case "interface" -> reflectInterface(asValue(argv[0]));
+            case "rawinterface" -> reflectInterface(asValue(argv[0]));
             case "convert" -> reflectConvert(asValue(argv[0]), asTok(argv[1]));
             case "slice" -> reflectSlice(asValue(argv[0]), asInt(argv[1]), asInt(argv[2]));
             case "slice3" -> reflectSlice3(asValue(argv[0]), asInt(argv[1]), asInt(argv[2]), asInt(argv[3]));
@@ -394,10 +479,37 @@ public final class ReflectOpNode extends GoExprNode {
     // Navigation.
     // ------------------------------------------------------------------
 
-    /** Unboxes a Value to its D5 value (resolving the handle). */
+    /** Unboxes a Value to its D5 value (resolving derived references). */
     private static Object unboxValue(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
-        return ReflectRefs.load(p.ptr());
+        if (p.typ() == 0) {
+            // Invalid (zero) Value: old load path (resolve(0) is null).
+            return ReflectRefs.load(p.ptr());
+        }
+        GoKind kind = ReflectTypes.table().info(p.typ()).kind;
+        return ReflectRefs.denotedValue(p.ptr(), kind);
+    }
+
+    /**
+     * __reflect_interface / __reflect_rawinterface: boxes the Value's D5
+     * value as a proper {@code any} (GoInterface). The safe/raw distinction
+     * (flagRO check) is handled by the synthetic callers; both intrinsics
+     * return a real interface value, like gc's valueInterface.
+     */
+    private static Object reflectInterface(GoStruct v) {
+        ReflectValues.ValueParts p = ReflectValues.parts(v);
+        TypeInfo t = ReflectTypes.table().info(p.typ());
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
+        if (d5 == null) {
+            return null;
+        }
+        if (d5 instanceof graalgo.values.GoInterface gi) {
+            // Already an interface value: gc unwraps one level into the
+            // empty interface (the dynamic type travels with the value).
+            return gi;
+        }
+        graalgo.values.GoTypeDescriptor d = ReflectTypes.descriptorForTok(p.typ());
+        return new graalgo.values.GoInterface(d, d5, null);
     }
 
     /** __reflect_field: struct field with flagRO propagation. */
@@ -405,10 +517,7 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         ReflectTypes.FieldInfo f = t.fields.get(i);
-        Object base = ReflectRefs.load(p.ptr());
-        if (base instanceof Cell c) {
-            base = c.value;
-        }
+        Object base = ReflectRefs.denotedValue(p.ptr(), GoKind.STRUCT);
         if (!(base instanceof GoStruct s)) {
             throw new IllegalStateException("reflect: field base is not a struct");
         }
@@ -435,10 +544,7 @@ public final class ReflectOpNode extends GoExprNode {
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
         switch (t.kind) {
             case ARRAY -> {
-                Object arr = ReflectRefs.load(p.ptr());
-                if (arr instanceof Cell c) {
-                    arr = c.value;
-                }
+                Object arr = ReflectRefs.denotedValue(p.ptr(), GoKind.ARRAY);
                 long elemTok = t.elem.tok;
                 long flag = 0;
                 if ((p.flag() & ReflectValues.FLAG_ADDR) != 0) {
@@ -461,7 +567,7 @@ public final class ReflectOpNode extends GoExprNode {
                 return ReflectValues.pack(desc, elemTok, h, flag);
             }
             case STRING -> {
-                GoString gs = (GoString) ReflectRefs.load(p.ptr());
+                GoString gs = (GoString) ReflectRefs.denotedValue(p.ptr(), GoKind.STRING);
                 byte b = gs.bytes()[i];
                 long h = ReflectRefs.intern(b);
                 long uint8Tok = ReflectTypes.table().tokForKind(GoKind.UINT8);
@@ -476,7 +582,7 @@ public final class ReflectOpNode extends GoExprNode {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
-        Object d5 = ReflectRefs.load(p.ptr());
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         switch (t.kind) {
             case INTERFACE -> {
                 if (d5 == null) {
@@ -506,7 +612,7 @@ public final class ReflectOpNode extends GoExprNode {
     private static int reflectLen(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object d5 = ReflectRefs.load(p.ptr());
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         return switch (t.kind) {
             case ARRAY -> t.arrayLen;
             case SLICE -> ((GoSlice) d5).len();
@@ -528,7 +634,7 @@ public final class ReflectOpNode extends GoExprNode {
     private static int reflectCap(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object d5 = ReflectRefs.load(p.ptr());
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         return switch (t.kind) {
             case ARRAY -> t.arrayLen;
             case SLICE -> ((GoSlice) d5).cap();
@@ -546,14 +652,15 @@ public final class ReflectOpNode extends GoExprNode {
 
     private static boolean reflectIsNil(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
-        Object d5 = ReflectRefs.load(p.ptr());
+        TypeInfo t = ReflectTypes.table().info(p.typ());
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         return d5 == null;
     }
 
     private static boolean reflectIsZero(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object d5 = ReflectRefs.load(p.ptr());
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         return isZeroValue(t, d5);
     }
 
@@ -612,18 +719,28 @@ public final class ReflectOpNode extends GoExprNode {
             c.value = boxed;
             return;
         }
+        storeThroughRef(ref, kind, boxed);
+    }
+
+    /**
+     * Write-through store for element/field references (shared by setScalar
+     * and reflectSet). P3-M8b: extracted from setScalar so whole-value Set
+     * into slice/array elements and struct fields works too (Copy into
+     * []int elements hit "Set of INT64 through non-cell").
+     */
+    private static void storeThroughRef(Object ref, GoKind kind, Object boxed) {
         if (ref instanceof ReflectRefs.FieldRef fr) {
-            GoStruct s = (GoStruct) fr.referent();
+            GoStruct s = (GoStruct) ReflectRefs.denotedValue(fr.base(), GoKind.STRUCT);
             ReflectValues.structFieldSet(s, fr.field(), kind, boxed);
             return;
         }
         if (ref instanceof ReflectRefs.ArrayElemRef ar) {
-            Object arr = ar.referent();
+            Object arr = ReflectRefs.denotedValue(ar.base(), GoKind.ARRAY);
             ReflectValues.arraySet(arr, kind, ar.index(), boxed);
             return;
         }
         if (ref instanceof ReflectRefs.SliceElemRef sr) {
-            GoSlice slice = (GoSlice) sr.referent();
+            GoSlice slice = (GoSlice) ReflectRefs.denotedValue(sr.base(), GoKind.SLICE);
             Object arr = slice.array();
             ReflectValues.arraySet(arr, kind, slice.offset() + sr.index(), boxed);
             return;
@@ -653,9 +770,15 @@ public final class ReflectOpNode extends GoExprNode {
             c.value = d5src;
             return;
         }
-        // Whole-aggregate store: copy field-wise / element-wise.
         TypeInfo t = ReflectTypes.table().info(dp.typ());
-        Object d5dst = ReflectRefs.load(dp.ptr());
+        if (t.kind != GoKind.STRUCT && t.kind != GoKind.ARRAY) {
+            // Scalar (or other leaf) through an element/field ref: write
+            // through like setScalar (P3-M8b: Copy into slice elements).
+            storeThroughRef(ref, t.kind, d5src);
+            return;
+        }
+        // Whole-aggregate store: copy field-wise / element-wise.
+        Object d5dst = ReflectRefs.denotedValue(dp.ptr(), t.kind);
         copyAggregate(t, d5dst, d5src);
     }
 
@@ -692,12 +815,18 @@ public final class ReflectOpNode extends GoExprNode {
             return;
         }
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        copyAggregate(t, ReflectRefs.load(p.ptr()), zero);
+        if (t.kind != GoKind.STRUCT && t.kind != GoKind.ARRAY) {
+            // Scalar (or other leaf) through an element/field ref: write
+            // through like setScalar (same P3-M8b class as reflectSet).
+            storeThroughRef(ref, t.kind, zero);
+            return;
+        }
+        copyAggregate(t, ReflectRefs.denotedValue(p.ptr(), t.kind), zero);
     }
 
     private static void setMapIndex(GoStruct v, GoStruct key, GoStruct elem) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
-        GoMap m = (GoMap) ReflectRefs.load(p.ptr());
+        GoMap m = (GoMap) ReflectRefs.denotedValue(p.ptr(), GoKind.MAP);
         Object d5key = unboxValue(key);
         if (!ReflectValues.isValid(elem)) {
             graalgo.runtime.Intrinsics.mapDelete(m, d5key);
@@ -710,7 +839,7 @@ public final class ReflectOpNode extends GoExprNode {
     private static GoStruct mapIndex(GoStruct v, GoStruct key) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        GoMap m = (GoMap) ReflectRefs.load(p.ptr());
+        GoMap m = (GoMap) ReflectRefs.denotedValue(p.ptr(), t.kind);
         Object d5key = unboxValue(key);
         Object d5val = graalgo.runtime.Intrinsics.mapAccess(m, d5key);
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
@@ -865,19 +994,19 @@ public final class ReflectOpNode extends GoExprNode {
     private static GoStruct reflectSlice(GoStruct v, int i, int j) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object d5 = ReflectRefs.load(p.ptr());
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
         long flag = p.flag() & ReflectValues.FLAG_RO;
         switch (t.kind) {
             case ARRAY -> {
-                Object arr = d5 instanceof Cell c ? c.value : d5;
+                Object arr = d5;
                 GoSlice sl = new GoSlice(arr, i, j - i, t.arrayLen - i);
                 long h = ReflectRefs.intern(sl);
                 long sliceTok = sliceTokFor(t.elem.tok);
                 return ReflectValues.pack(desc, sliceTok, h, flag);
             }
             case SLICE -> {
-                GoSlice s = (GoSlice) (d5 instanceof Cell c ? c.value : d5);
+                GoSlice s = (GoSlice) d5;
                 GoSlice sl = s.slice(i, j);
                 long h = ReflectRefs.intern(sl);
                 return ReflectValues.pack(desc, p.typ(), h, flag);
@@ -897,17 +1026,17 @@ public final class ReflectOpNode extends GoExprNode {
     private static GoStruct reflectSlice3(GoStruct v, int i, int j, int k) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object d5 = ReflectRefs.load(p.ptr());
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
         long flag = p.flag() & ReflectValues.FLAG_RO;
         if (t.kind == GoKind.ARRAY) {
-            Object arr = d5 instanceof Cell c ? c.value : d5;
+            Object arr = d5;
             GoSlice sl = new GoSlice(arr, i, j - i, k - i);
             long h = ReflectRefs.intern(sl);
             long sliceTok = sliceTokFor(t.elem.tok);
             return ReflectValues.pack(desc, sliceTok, h, flag);
         }
-        GoSlice s = (GoSlice) (d5 instanceof Cell c ? c.value : d5);
+        GoSlice s = (GoSlice) d5;
         GoSlice sl = s.slice3(i, j, k);
         long h = ReflectRefs.intern(sl);
         return ReflectValues.pack(desc, p.typ(), h, flag);
@@ -943,28 +1072,30 @@ public final class ReflectOpNode extends GoExprNode {
     // ------------------------------------------------------------------
 
     /** __reflect_call / __reflect_callslice. */
-    private static GoStruct reflectCall(GoStruct fn, GoSlice args, boolean sliceCall) {
+    private static GoSlice reflectCall(GoStruct fn, GoSlice args, boolean sliceCall) {
         ReflectValues.ValueParts p = ReflectValues.parts(fn);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object callable = ReflectRefs.load(p.ptr());
-        if (callable instanceof Cell c) {
-            callable = c.value;
-        }
+        Object callable = ReflectRefs.denotedValue(p.ptr(), t.kind);
         // Unbox the []Value args to D5.
         Object[] d5Args = unboxArgs(args, t, sliceCall);
         Object result = ReflectCalls.invokeCallable(callable, d5Args);
-        // Box the single result as a Value.
+        // Box the results as a []Value (the synthetic __reflect_call
+        // declares []Value; v1 has no multi-result funcs).
         GoStructDescriptor desc = ReflectTypes.valueDescriptor();
         if (t.outs.isEmpty()) {
-            // Void call: return zero Value (synthetic Call discards it).
-            return ReflectValues.zero(desc);
+            return new GoSlice(new GoStruct[0], 0, 0, 0);
         }
         long resultTok = t.outs.get(0).tok;
         long h = ReflectRefs.intern(result);
-        return ReflectValues.pack(desc, resultTok, h, 0);
+        GoStruct v = ReflectValues.pack(desc, resultTok, h, 0);
+        return new GoSlice(new GoStruct[]{v}, 0, 1, 1);
     }
 
     private static Object[] unboxArgs(GoSlice args, TypeInfo funcType, boolean sliceCall) {
+        // A nil []Value (e.g. Call(nil)) has length 0 — GoSlice is Java null.
+        if (args == null) {
+            return new Object[0];
+        }
         int n = args.len();
         Object arr = args.array();
         int off = args.offset();
@@ -1076,7 +1207,7 @@ public final class ReflectOpNode extends GoExprNode {
     private static GoStruct reflectAppend(GoStruct v, GoSlice xs) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        GoSlice s = (GoSlice) ReflectRefs.load(p.ptr());
+        GoSlice s = (GoSlice) ReflectRefs.denotedValue(p.ptr(), t.kind);
         int n = xs.len();
         Object arr = xs.array();
         int off = xs.offset();
@@ -1161,9 +1292,9 @@ public final class ReflectOpNode extends GoExprNode {
     private static void reflectClear(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object d5 = ReflectRefs.load(p.ptr());
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         if (t.kind == GoKind.MAP) {
-            GoMap m = (GoMap) (d5 instanceof Cell c ? c.value : d5);
+            GoMap m = (GoMap) d5;
             // Clear by deleting all keys.
             Object[] snapshot = graalgo.runtime.Intrinsics.mapIterInit(m);
             for (int i = 0; i < snapshot.length; i++) {
@@ -1175,7 +1306,7 @@ public final class ReflectOpNode extends GoExprNode {
             return;
         }
         // Slice: zero the elements.
-        GoSlice s = (GoSlice) (d5 instanceof Cell c ? c.value : d5);
+        GoSlice s = (GoSlice) d5;
         Object arr = s.array();
         Object zero = zeroFor(t.elem.tok);
         for (int i = 0; i < s.len(); i++) {
@@ -1187,7 +1318,7 @@ public final class ReflectOpNode extends GoExprNode {
         // Raw swap (bypasses flagRO like gc's typedmemmove).
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        GoSlice s = (GoSlice) ReflectRefs.load(p.ptr());
+        GoSlice s = (GoSlice) ReflectRefs.denotedValue(p.ptr(), t.kind);
         Object arr = s.array();
         int oi = s.offset() + i;
         int oj = s.offset() + j;
@@ -1202,10 +1333,7 @@ public final class ReflectOpNode extends GoExprNode {
     // ------------------------------------------------------------------
 
     private static graalgo.runtime.ChanOps.Chan asChan(GoStruct v) {
-        Object d5 = ReflectRefs.load(ReflectValues.parts(v).ptr());
-        if (d5 instanceof Cell c) {
-            d5 = c.value;
-        }
+        Object d5 = ReflectRefs.denotedValue(ReflectValues.parts(v).ptr(), GoKind.CHAN);
         return (graalgo.runtime.ChanOps.Chan) d5;
     }
 
@@ -1291,8 +1419,11 @@ public final class ReflectOpNode extends GoExprNode {
         for (int i = 0; i < n; i++) {
             GoStruct cs = (GoStruct) ((Object[]) arr)[off + i];
             long dir = cs.getLong(0);
-            GoStruct chanVal = (GoStruct) cs.getObject(0);
-            GoStruct sendVal = (GoStruct) cs.getObject(1);
+            // SelectCase{Dir, Chan, Send}: getObject takes FIELD indices
+            // (1=Chan, 2=Send), not objects-array indices (P3-M8b fix —
+            // getObject(0) threw "field Dir is not an objects-carried field").
+            GoStruct chanVal = (GoStruct) cs.getObject(1);
+            GoStruct sendVal = (GoStruct) cs.getObject(2);
             if (dir == 2) { // SelectDefault
                 wire.add(new graalgo.runtime.ChanOps.SelectCase(null, false, null));
                 origIndex.add(i);
@@ -1339,7 +1470,7 @@ public final class ReflectOpNode extends GoExprNode {
         if (recvVal == null) {
             recv = ReflectValues.zero(ReflectTypes.valueDescriptor());
         } else {
-            GoStruct chanVal = (GoStruct) chosenCase.getObject(0);
+            GoStruct chanVal = (GoStruct) chosenCase.getObject(1); // Chan field
             TypeInfo t = ReflectTypes.table().info(ReflectValues.parts(chanVal).typ());
             long h = ReflectRefs.intern(recvVal);
             recv = ReflectValues.pack(ReflectTypes.valueDescriptor(), t.elem.tok, h, 0);
@@ -1379,10 +1510,7 @@ public final class ReflectOpNode extends GoExprNode {
     private static long mapIterInit(GoStruct v) {
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object d5 = ReflectRefs.load(p.ptr());
-        if (d5 instanceof Cell c) {
-            d5 = c.value;
-        }
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         GoMap m = (GoMap) d5;
         return ReflectRefs.intern(new MapIterState(m, t.key.tok, t.elem.tok));
     }
@@ -1392,10 +1520,11 @@ public final class ReflectOpNode extends GoExprNode {
         if (st.index >= st.snapshot.length) {
             return false;
         }
-        Object entry = graalgo.runtime.Intrinsics.mapIterNext(st.snapshot, st.index++);
-        Object[] kv = (Object[]) entry;
-        st.key = kv[0];
-        st.val = kv[1];
+        // The snapshot holds keys (Intrinsics.mapIterInit returns
+        // m.keysSnapshot()); the value is looked up from the live map.
+        Object key = st.snapshot[st.index++];
+        st.key = key;
+        st.val = st.map.get(key);
         return true;
     }
 
@@ -1415,10 +1544,7 @@ public final class ReflectOpNode extends GoExprNode {
         MapIterState st = (MapIterState) ReflectRefs.resolve(h);
         ReflectValues.ValueParts p = ReflectValues.parts(v);
         TypeInfo t = ReflectTypes.table().info(p.typ());
-        Object d5 = ReflectRefs.load(p.ptr());
-        if (d5 instanceof Cell c) {
-            d5 = c.value;
-        }
+        Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         st.reset((GoMap) d5, t.key.tok, t.elem.tok);
     }
 

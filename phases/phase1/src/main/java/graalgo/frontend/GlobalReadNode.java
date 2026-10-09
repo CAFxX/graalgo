@@ -28,7 +28,8 @@ public final class GlobalReadNode extends GoExprNode {
         return switch (kind()) {
             case INT8, INT16, INT32 -> (long) globals.getInt(slot);
             case UINT8, UINT16, UINT32 -> Integer.toUnsignedLong(globals.getInt(slot));
-            case INT64, UINT64, UNTYPED_INT -> globals.getLong(slot);
+            // P3-M8b: UNSAFE_POINTER values are long handles (D5).
+            case INT64, UINT64, UNTYPED_INT, UNSAFE_POINTER -> globals.getLong(slot);
             case FLOAT32 -> (long) globals.getFloat(slot);
             case FLOAT64, UNTYPED_FLOAT -> (long) globals.getDouble(slot);
             default -> throw new UnsupportedOperationException("cannot read " + kind() + " as long");

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"syscall"
+	"unsafe"
 )
 
 // sc06: ByteSliceFromString / BytePtrFromString validation rules and
@@ -13,7 +14,10 @@ func main() {
 	_, err = syscall.ByteSliceFromString("a\x00b")
 	fmt.Println(err == syscall.EINVAL)
 	p, err := syscall.BytePtrFromString("xy")
-	fmt.Println(err == nil, *p == 'x')
+	// *p is not expressible in frontend/v1 (WS D: StarExpr in expression
+	// position is a scope error); read back through unsafe.Slice instead —
+	// same data-integrity check on the returned pointer.
+	fmt.Println(err == nil, unsafe.Slice(p, 2)[0] == 'x')
 	_, err = syscall.BytePtrFromString("\x00")
 	fmt.Println(err == syscall.EINVAL)
 	s := syscall.StringByteSlice("zz")

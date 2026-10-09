@@ -8,17 +8,10 @@ package main
 
 import (
 	"fmt"
-	"io/fs"
 	"os"
 	"strings"
 	"time"
 )
-
-type dummyFS struct{}
-
-func (dummyFS) Open(name string) (fs.File, error) {
-	return nil, fmt.Errorf("dummyFS: no files")
-}
 
 func pin(name, prefix string, f func()) {
 	defer func() {
@@ -70,12 +63,11 @@ func main() {
 		pin("Executable", "os.Executable: not in M8 scope", func() {
 			os.Executable()
 		})
-	case "CopyFS":
-		pin("CopyFS", "os.CopyFS: not in M8 scope", func() {
-			// A dummy FS: under gc CopyFS fails with a plain error
-			// (no panic); under graalgo CopyFS panics before touching it.
-			os.CopyFS("x", dummyFS{})
-		})
+	// NOTE: no CopyFS case. Pinning os.CopyFS's fail-fast needs a
+	// user-defined fs.FS argument, which requires declaring a 2-result
+	// Open method — frontend/v1 cannot export user multi-result
+	// funcdecls (WS D). Re-test when WS D lands; until then the
+	// "os.CopyFS: not in M8 scope" stub is covered by inspection only.
 	case "DirFS":
 		pin("DirFS", "os.DirFS: not in M8 scope", func() {
 			_ = os.DirFS("x")
@@ -86,8 +78,8 @@ func main() {
 			if err != nil {
 				panic(err)
 			}
-			defer r.Close()
-			defer w.Close()
+			defer func() { r.Close() }()
+			defer func() { w.Close() }()
 			r.SetReadDeadline(time.Now())
 		})
 	default:

@@ -125,9 +125,19 @@ public final class BinaryOpNode extends GoExprNode {
         if (op.isComparison()) {
             ok = kind == GoKind.BOOL
                     && (operandKind.isIntKind() || operandKind.isFloatKind()
+                        || operandKind.isComplexKind()
                         || operandKind == GoKind.STRING || operandKind == GoKind.BOOL
+                        || operandKind == GoKind.UNSAFE_POINTER
+                        || operandKind == GoKind.POINTER
                         || (operandKind == GoKind.INTERFACE && (op == Op.EQ || op == Op.NE)))
                     && !(operandKind == GoKind.BOOL && (op == Op.LT || op == Op.LE || op == Op.GT || op == Op.GE));
+            // P3-M8b: unsafe.Pointer, *T pointers, and complex support ==/!=
+            // (but not ordering).
+            if ((operandKind == GoKind.UNSAFE_POINTER || operandKind == GoKind.POINTER
+                    || operandKind.isComplexKind())
+                    && !(op == Op.EQ || op == Op.NE)) {
+                ok = false;
+            }
         } else if (op.isLogical()) {
             ok = kind == GoKind.BOOL && operandKind == GoKind.BOOL;
         } else if (operandKind == GoKind.STRING) {
@@ -313,6 +323,32 @@ public final class BinaryOpNode extends GoExprNode {
                 case GE -> l >= r;
                 default -> throw new AssertionError("unreachable");
             };
+        }
+        // P3-M8b: *T pointer equality (Go: ==/!= on pointers compares referents).
+        if (operandKind == GoKind.POINTER) {
+            Object l = left.executeObject(frame);
+            Object r = right.executeObject(frame);
+            // Nil pointers are Java null; non-nil are GoPointer.
+            Object lr = l instanceof graalgo.values.GoPointer gp ? gp.referent() : null;
+            Object rr = r instanceof graalgo.values.GoPointer gp ? gp.referent() : null;
+            // Referent identity: same object or both nil.
+            boolean eq = lr == rr;
+            return op == Op.EQ ? eq : !eq;
+        }
+        // P3-M8b: complex equality (Go: ==/!= on complex compares both parts).
+        if (operandKind.isComplexKind()) {
+            Object l = left.executeObject(frame);
+            Object r = right.executeObject(frame);
+            boolean eq;
+            if (l instanceof graalgo.values.GoComplex64 lc && r instanceof graalgo.values.GoComplex64 rc) {
+                eq = lc.re() == rc.re() && lc.im() == rc.im();
+            } else if (l instanceof graalgo.values.GoComplex32 lc32
+                    && r instanceof graalgo.values.GoComplex32 rc32) {
+                eq = lc32.re() == rc32.re() && lc32.im() == rc32.im();
+            } else {
+                throw new FrontendException("complex comparison of mismatched types");
+            }
+            return op == Op.EQ ? eq : !eq;
         }
         cmp = switch (operandKind) {
             case STRING -> ((GoString) left.executeObject(frame))

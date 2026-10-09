@@ -73,7 +73,24 @@ public final class GoOsErrnoTest {
     }
 
     private static GoSlice buf(int n) {
-        return new GoSlice(new byte[n], 0, n, n);
+        return new GoSlice(new int[n], 0, n, n);
+    }
+
+    private static GoSlice bytesBuf(byte[] data) {
+        int[] arr = new int[data.length];
+        for (int i = 0; i < data.length; i++) {
+            arr[i] = data[i] & 0xFF;
+        }
+        return new GoSlice(arr, 0, arr.length, arr.length);
+    }
+
+    private static byte[] sliceBytes(GoSlice gs) {
+        int[] arr = (int[]) gs.array();
+        byte[] out = new byte[gs.len()];
+        for (int i = 0; i < gs.len(); i++) {
+            out[i] = (byte) arr[gs.offset() + i];
+        }
+        return out;
     }
 
     private static String str(Object o) {
@@ -202,7 +219,7 @@ public final class GoOsErrnoTest {
             check(h >= 16, "open cookie, got " + h);
             checkEq(GoOs.KIND_REGULAR, GoOs.handleKind(h), "kind");
             byte[] data = "hello".getBytes(StandardCharsets.UTF_8);
-            checkEq(6, GoOs.write(h, new GoSlice(data, 0, data.length, data.length)),
+            checkEq(6, GoOs.write(h, bytesBuf(data)),
                     "write n+1");
             checkEq(0, GoOs.close(h), "close");
             checkEq(-GoOs.EBADF, GoOs.close(h), "double close");
@@ -211,7 +228,8 @@ public final class GoOsErrnoTest {
             GoSlice b = buf(16);
             checkEq(6, GoOs.read(r, b), "read n+1");
             byte[] got = new byte[5];
-            System.arraycopy(b.array(), b.offset(), got, 0, 5);
+            byte[] read = sliceBytes(b);
+            System.arraycopy(read, 0, got, 0, 5);
             checkEq(0, "hello".compareTo(new String(got, StandardCharsets.UTF_8)),
                     "read content");
             checkEq(0, GoOs.read(r, buf(16)), "EOF is 0");
@@ -259,13 +277,13 @@ public final class GoOsErrnoTest {
             String name = scratch.resolve("s").toString();
             long h = GoOs.open(gs(name), O_RDWR | O_CREAT | O_TRUNC, 0644);
             byte[] data = "0123456789".getBytes(StandardCharsets.UTF_8);
-            GoOs.write(h, new GoSlice(data, 0, data.length, data.length));
+            GoOs.write(h, bytesBuf(data));
 
             checkEq(4, GoOs.seek(h, 4, 0), "seek set");
             GoSlice b = buf(4);
             checkEq(5, GoOs.read(h, b), "read after seek");
             checkEq(0, "4567".compareTo(
-                    new String((byte[]) b.array(), b.offset(), 4, StandardCharsets.UTF_8)),
+                    new String(sliceBytes(b), 0, 4, StandardCharsets.UTF_8)),
                     "seek content");
 
             checkEq(6, GoOs.seek(h, -2, 1), "seek cur negative"); // pos was 8 after the read
@@ -276,17 +294,17 @@ public final class GoOsErrnoTest {
             GoSlice rb = buf(3);
             checkEq(4, GoOs.readAt(h, rb, 2L), "readAt n+1");
             checkEq(0, "234".compareTo(
-                    new String((byte[]) rb.array(), rb.offset(), 3, StandardCharsets.UTF_8)),
+                    new String(sliceBytes(rb), 0, 3, StandardCharsets.UTF_8)),
                     "readAt content");
             checkEq(0, GoOs.readAt(h, buf(3), 100L), "readAt EOF");
 
             byte[] zz = "ZZ".getBytes(StandardCharsets.UTF_8);
-            checkEq(3, GoOs.writeAt(h, new GoSlice(zz, 0, 2, 2), 0L), "writeAt n+1");
+            checkEq(3, GoOs.writeAt(h, bytesBuf(zz), 0L), "writeAt n+1");
             checkEq(0, GoOs.seek(h, 0, 0), "rewind");
             GoSlice all = buf(10);
             GoOs.read(h, all);
             checkEq(0, "ZZ23456789".compareTo(
-                    new String((byte[]) all.array(), all.offset(), 10, StandardCharsets.UTF_8)),
+                    new String(sliceBytes(all), 0, 10, StandardCharsets.UTF_8)),
                     "writeAt content");
 
             checkEq(0, GoOs.truncate(h, 4L), "truncate");
@@ -356,7 +374,7 @@ public final class GoOsErrnoTest {
             GoSlice b = buf(256);
             long r = GoOs.readlink(gs(link), b);
             check(r > 1, "readlink n+1, got " + r);
-            String got = new String((byte[]) b.array(), b.offset(), (int) (r - 1),
+            String got = new String(sliceBytes(b), 0, (int) (r - 1),
                     StandardCharsets.UTF_8);
             checkEq(0, target.compareTo(got), "readlink content");
             // Stat with follow=0 sees the link itself (S_IFLNK).
@@ -477,12 +495,12 @@ public final class GoOsErrnoTest {
         checkEq(GoOs.KIND_PIPE, GoOs.handleKind(r), "pipe read kind");
         checkEq(GoOs.KIND_PIPE, GoOs.handleKind(r + 1), "pipe write kind");
         byte[] data = "pipedata".getBytes(StandardCharsets.UTF_8);
-        checkEq(9, GoOs.write(r + 1, new GoSlice(data, 0, data.length, data.length)),
+        checkEq(9, GoOs.write(r + 1, bytesBuf(data)),
                 "pipe write n+1");
         GoSlice b = buf(16);
         checkEq(9, GoOs.read(r, b), "pipe read n+1");
         checkEq(0, "pipedata".compareTo(
-                new String((byte[]) b.array(), b.offset(), 8, StandardCharsets.UTF_8)),
+                new String(sliceBytes(b), 0, 8, StandardCharsets.UTF_8)),
                 "pipe content");
         checkEq(-GoOs.EBADF, GoOs.read(r + 1, buf(4)), "read on pipe write end");
         checkEq(-GoOs.EBADF, GoOs.write(r, buf(4)), "write on pipe read end");
@@ -533,7 +551,7 @@ public final class GoOsErrnoTest {
         // to /proc/sys/kernel/hostname); otherwise n+1.
         if (r != -GoOs.EIO) {
             check(r > 1, "hostname n+1, got " + r);
-            String hn = new String((byte[]) b.array(), b.offset(), (int) (r - 1),
+            String hn = new String(sliceBytes(b), 0, (int) (r - 1),
                     StandardCharsets.UTF_8);
             check(!hn.isEmpty(), "hostname non-empty");
         }

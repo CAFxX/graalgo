@@ -37,7 +37,8 @@ public final class BoxReadNode extends GoExprNode {
         return switch (kind()) {
             case INT8, INT16, INT32 -> (long) ((Integer) v).intValue();
             case UINT8, UINT16, UINT32 -> Integer.toUnsignedLong((Integer) v);
-            case INT64, UINT64, UNTYPED_INT -> ((Long) v).longValue();
+            // P3-M8b: UNSAFE_POINTER values are long handles (D5).
+            case INT64, UINT64, UNTYPED_INT, UNSAFE_POINTER -> ((Long) v).longValue();
             case FLOAT32 -> (long) ((Float) v).floatValue();
             case FLOAT64, UNTYPED_FLOAT -> (long) ((Double) v).doubleValue();
             default -> throw new UnsupportedOperationException("cannot read " + kind() + " as long");

@@ -65,7 +65,10 @@ echo "== building phase-3 java module =="
 make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
 
 CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
+# P3-M8b: point java.io.tmpdir at $TMPDIR (never /tmp): the JVM's shared-
+# memory files warn "Insufficient space" on the 512M /tmp tmpfs, which is
+# harness noise in every corpus run's stderr.
+GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m "-Djava.io.tmpdir=$TMPDIR" -cp "$CP"
     graalgo.p3sync.launcher.P3SyncMain )
 
 TMP="$(mktemp -d)"

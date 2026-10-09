@@ -149,7 +149,10 @@ func (h *hmac) Reset() {
 }
 
 func (h *hmac) CloneSinglePair() hash.ClonePair {
-	r := *h
+	// P3-M8b: &r is not expressible in frontend/v1 (WS D); &hmac{...}
+	// on a composite literal is. inner/outer are cloned below; the
+	// remaining fields copy by value (slices share storage with the
+	// original, exactly as in the stdlib).
 	ic, ok := h.inner.(interface{ CloneSinglePair() hash.ClonePair })
 	if !ok {
 		return hash.ClonePair{Err: errors.New("crypto/hmac: hash does not support hash.Cloner")}
@@ -166,10 +169,10 @@ func (h *hmac) CloneSinglePair() hash.ClonePair {
 	if op.Err != nil {
 		return hash.ClonePair{Err: op.Err}
 	}
-	r.inner = ip.C.(hash.Hash)
-	r.outer = op.C.(hash.Hash)
+	rinner := ip.C.(hash.Hash)
+	router := op.C.(hash.Hash)
 	// opad/ipad may share storage with the original (as in the stdlib).
-	return hash.ClonePair{C: &r}
+	return hash.ClonePair{C: &hmac{opad: h.opad, ipad: h.ipad, outer: router, inner: rinner, marshaled: h.marshaled}}
 }
 
 // Clone implements hash.Cloner (fail-fast stub; real logic is CloneSinglePair,

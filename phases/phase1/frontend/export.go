@@ -889,11 +889,23 @@ func ExportFile(path string) (string, error) {
 	needAscii85, needPem, needAsn1, needEncoding := false, false, false, false
 	needIo := false
 	needSyscall := false
+	needOs := false
 	needIoFs := false
 	needReflect := false
 	needCryptoSha256 := false
 	needHash := false
 	needIter := false
+	// P3-M8b: the remaining synthetic crypto packages (the corpus closure).
+	needCrypto := false
+	needCryptoAes := false
+	needCryptoCipher := false
+	needCryptoHmac := false
+	needCryptoMd5 := false
+	needCryptoRand := false
+	needCryptoSha1 := false
+	needCryptoSha3 := false
+	needCryptoSha512 := false
+	needCryptoSubtle := false
 	for _, imp := range file.Imports {
 		switch strings.Trim(imp.Path.Value, "\"`") {
 		case "time":
@@ -958,6 +970,12 @@ func ExportFile(path string) (string, error) {
 		// synthetic package (synth_syscall.go).
 		case "syscall":
 			needSyscall = true
+		// P3-M8b: a user import of "os" pulls in the synthetic package
+		// (synth_os.go). Its source imports errors, io, io/fs, syscall,
+		// time; those are imported by the needOs block below in
+		// dependency order.
+		case "os":
+			needOs = true
 		// P3-M8 (wave 2): a user import of "io/fs" pulls in the minimal
 		// synthetic io/fs core (synth_iofs.go). Its Err* sentinel
 		// initializers call errors.New; the source also imports time.
@@ -981,6 +999,29 @@ func ExportFile(path string) (string, error) {
 			needCryptoSha256 = true
 			needErrors = true
 			needStrconv = true
+		// P3-M8b: a user import of any other synthetic crypto package
+		// pulls it in (synth_crypto*.go). Dependency chains are imported
+		// in the need-blocks below (importSyntheticPackage is idempotent).
+		case "crypto":
+			needCrypto = true
+		case "crypto/aes":
+			needCryptoAes = true
+		case "crypto/cipher":
+			needCryptoCipher = true
+		case "crypto/hmac":
+			needCryptoHmac = true
+		case "crypto/md5":
+			needCryptoMd5 = true
+		case "crypto/rand":
+			needCryptoRand = true
+		case "crypto/sha1":
+			needCryptoSha1 = true
+		case "crypto/sha3":
+			needCryptoSha3 = true
+		case "crypto/sha512":
+			needCryptoSha512 = true
+		case "crypto/subtle":
+			needCryptoSubtle = true
 		// P3-M8 (wave 2): direct user imports of the synthetic hash and
 		// iter support packages.
 		case "hash":
@@ -1203,6 +1244,35 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 	}
+	// P3-M8b: synthetic os (synth_os.go). Dependency chain, imported in
+	// order: errors (os error vars use errors.New), time (os imports time),
+	// io (os imports io), io/fs (os imports io/fs), syscall (os imports
+	// syscall for Errno), strconv (os uses strconv.Itoa), then os itself.
+	// importSyntheticPackage is idempotent, so overlap with other
+	// need-blocks is safe.
+	if needOs {
+		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("time")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("io/fs")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("syscall")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
+			return "", err
+		}
+		if err := e.importSyntheticPackage(getSyntheticPackage("os")); err != nil {
+			return "", err
+		}
+	}
 	// P3-M8 (wave 2): synthetic crypto/sha256 (synth_crypto_sha256.go).
 	// Dependency chain, imported in order: errors (sha256's
 	// package-level code calls errors.New); io (imported by hash);
@@ -1227,6 +1297,82 @@ func ExportFile(path string) (string, error) {
 		}
 		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/sha256")); err != nil {
 			return "", err
+		}
+	}
+	// P3-M8b: the remaining synthetic crypto packages (synth_crypto*.go).
+	// Each block imports its full dependency chain in topological order
+	// (importSyntheticPackage is idempotent, so overlap is safe):
+	// errors <- io <- hash <- strconv <- crypto <- subtle <- cipher <- aes;
+	// md5/sha1/sha512 <- {crypto,errors,hash}; sha3 <- bytes too;
+	// hmac <- {subtle,errors,hash}; rand <- io.
+	if needCrypto {
+		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoSubtle {
+		if err := e.importSyntheticPackage(getSyntheticPackage("crypto/subtle")); err != nil {
+			return "", err
+		}
+	}
+	if needCryptoCipher {
+		// cipher also imports the synthetic bytes package (bytes.Clone).
+		for _, p := range []string{"errors", "io", "bytes", "crypto/subtle", "crypto/cipher"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoAes {
+		for _, p := range []string{"errors", "io", "bytes", "crypto/subtle", "crypto/cipher", "strconv", "crypto/aes"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoMd5 {
+		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto", "crypto/md5"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoSha1 {
+		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto", "crypto/sha1"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoSha3 {
+		// sha3 also imports the synthetic bytes package (bytes.Clone).
+		for _, p := range []string{"errors", "io", "hash", "strconv", "bytes", "crypto", "crypto/sha3"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoSha512 {
+		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto", "crypto/sha512"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoHmac {
+		for _, p := range []string{"errors", "io", "hash", "crypto/subtle", "crypto/hmac"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
+		}
+	}
+	if needCryptoRand {
+		for _, p := range []string{"errors", "io", "crypto/rand"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	// P3-M3 (WS D, ADR-0003): the "methods" lists on named/pointer entries
@@ -1793,6 +1939,11 @@ func substString(t types.Type, s *typeSubst) string {
 
 func writeSubstString(sb *strings.Builder, t types.Type, s *typeSubst) {
 	switch t := t.(type) {
+	case *types.Alias:
+		// P3-M8b: unwrap aliases so os.FileMode and fs.FileMode produce
+		// identical keys (alias identity is not type identity).
+		writeSubstString(sb, types.Unalias(t), s)
+		return
 	case *types.TypeParam:
 		if s != nil {
 			if c, scope := s.resolve(t); c != nil {
@@ -2135,6 +2286,14 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 	// id instead of laundering it into a bogus "invalid type" entry.
 	if b, ok := t.(*types.Basic); ok && b.Kind() == types.Invalid {
 		return 0, fmt.Errorf("gofrontend: types.Invalid reached typeID (would be types[%d]); refusing to serialize", len(e.types))
+	}
+	// P3-M8b: unwrap aliases to unsafe.Pointer (from the synthetic unsafe
+	// package) directly to the basic type. The alias indirection through
+	// the type table confuses kindOf; the basic type is the canonical form.
+	if a, ok := t.(*types.Alias); ok {
+		if b, ok := types.Unalias(a).(*types.Basic); ok && b.Kind() == types.UnsafePointer {
+			t = b
+		}
 	}
 	if e.subst != nil {
 		// M6 (WS H, issue52026): substitute bound type parameters before
@@ -2613,10 +2772,49 @@ type methodKey struct {
 	name string
 }
 
+// findMethodByName is the P3-M8b fallback for methodIndex misses caused by
+// *types.TypeName object identity mismatches (e.g. alias unwrapping across
+// separately type-checked package instances). It matches by package path +
+// type name + method name strings. Only used on direct-lookup miss.
+func (e *exporter) findMethodByName(recvObj types.Object, mname string) *funcDeclInfo {
+	tn, ok := recvObj.(*types.TypeName)
+	if !ok {
+		return nil
+	}
+	pkg := tn.Pkg()
+	if pkg == nil {
+		return nil
+	}
+	wantPkg, wantName := pkg.Path(), tn.Name()
+	for key, fi := range e.methodIndex {
+		if key.name != mname {
+			continue
+		}
+		ktn, ok := key.recv.(*types.TypeName)
+		if !ok || ktn.Pkg() == nil {
+			continue
+		}
+		if ktn.Pkg().Path() == wantPkg && ktn.Name() == wantName {
+			return fi
+		}
+	}
+	return nil
+}
+
 // derefNamed strips one pointer layer and reports the named type, if any.
 func derefNamed(t types.Type) *types.Named {
 	if p, ok := t.(*types.Pointer); ok {
 		t = p.Elem()
+	}
+	// P3-M8b: unwrap type aliases (e.g. os.FileMode = fs.FileMode).
+	// go/types represents alias uses as *types.Alias; the method set
+	// lives on the aliased named type.
+	for {
+		a, ok := t.(*types.Alias)
+		if !ok {
+			break
+		}
+		t = a.Rhs()
 	}
 	n, _ := t.(*types.Named)
 	return n
@@ -2809,6 +3007,17 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	rn := derefNamed(selection.Recv())
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
+		if !ok {
+			// P3-M8b: pointer-identity fallback. methodIndex keys use
+			// *types.TypeName object identity, but alias unwrapping
+			// (derefNamed) can yield a Named whose Obj differs from the
+			// instance used at import time (e.g. os.FileMode = fs.FileMode
+			// resolving through a separately type-checked package). Fall
+			// back to a name-based search: same package path, same type
+			// name, same method name. This is O(n) but only on miss.
+			fi = e.findMethodByName(rn.Obj(), mname)
+			ok = fi != nil
+		}
 		if !ok {
 			// GAP-6: methodIndex holds only direct methods; the method
 			// may be promoted through one or more embedded fields.
@@ -4574,6 +4783,21 @@ func (e *exporter) exportRange(s *ast.RangeStmt) (*Node, error) {
 	x, err := e.exportExpr(s.X)
 	if err != nil {
 		return nil, err
+	}
+	// P3-M8b: default untyped range targets (e.g. `for _, c := range "lit"`
+	// or range over an untyped string const). Go semantics: untyped constants
+	// assume their default type in value context. The Java AST builder only
+	// accepts typed kinds (STRING, not UNTYPED_STRING) for range.
+	if tv, ok := e.info.Types[s.X]; ok && tv.Type != nil {
+		if b, ok := tv.Type.(*types.Basic); ok && b.Info()&types.IsUntyped != 0 {
+			def := types.Default(tv.Type)
+			if def != tv.Type {
+				tid, err := e.typeID(def)
+				if err == nil {
+					x.Fields["type"] = tid
+				}
+			}
+		}
 	}
 	body, err := e.exportBlock(s.Body)
 	if err != nil {
