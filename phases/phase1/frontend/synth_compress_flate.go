@@ -3411,7 +3411,7 @@ readLiteral:
 		var length int
 		switch {
 		case v < 256:
-			(&f.dict).writeByte(byte(v))
+			{ f.dict.hist[f.dict.wrPos] = byte(v); f.dict.wrPos++ }
 			if f.dict.availWrite() == 0 {
 				f.toRead = f.dict.readFlush()
 				f.step = __flateDStepHuffmanBlock
