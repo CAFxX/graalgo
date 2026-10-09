@@ -987,9 +987,9 @@ func __bzip2Readerread(bz2 *reader, buf []byte) __bzip2ReaderreadPair {
 // sort. They replace slices.SortFunc (generic instantiation is out of M9
 // scope). Both orderings are total (values/codes are unique within the
 // slice), so the result is identical to gc's sort.
-func __bzip2SortPairs(pairs []huffmanSymbolLengthPair) {
+func __bzip2SortPairs(pairs []huffmanSymbolLengthPair, less func(a, b huffmanSymbolLengthPair) int) {
 	for i := 1; i < len(pairs); i++ {
-		for j := i; j > 0 && __bzip2PairLess(pairs[j], pairs[j-1]); j-- {
+		for j := i; j > 0 && less(pairs[j], pairs[j-1]) < 0; j-- {
 			pairs[j], pairs[j-1] = pairs[j-1], pairs[j]
 		}
 	}
@@ -1002,9 +1002,9 @@ func __bzip2PairLess(a, b huffmanSymbolLengthPair) bool {
 	return a.value < b.value
 }
 
-func __bzip2SortCodes(codes []huffmanCode) {
+func __bzip2SortCodes(codes []huffmanCode, less func(a, b huffmanCode) int) {
 	for i := 1; i < len(codes); i++ {
-		for j := i; j > 0 && codes[j].code < codes[j-1].code; j-- {
+		for j := i; j > 0 && less(codes[j], codes[j-1]) < 0; j-- {
 			codes[j], codes[j-1] = codes[j-1], codes[j]
 		}
 	}
