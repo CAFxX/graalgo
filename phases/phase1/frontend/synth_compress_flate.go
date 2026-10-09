@@ -243,7 +243,13 @@ type advancedState struct {
 }
 
 type compressor struct {
-	compressionLevel
+	// WS D: compressionLevel unembedded (was embedded); the frontend
+	// cannot access embedded struct fields. These are the 5 fields.
+	good  int32 // "good enough" match length
+	lazy  int32 // don't try to find a later, better match above this length
+	nice  int32 // stop looking for a better match above this length
+	chain int32 // maximum number of hash chain entries to search
+	level int
 
 	h *huffmanEncoder   // huffman encoder, with state
 	w *huffmanBitWriter // writer for blocks
@@ -885,7 +891,12 @@ func (d *compressor) init(w io.Writer, level int) (err error) {
 	case 7 <= level && level <= 9:
 		d.w.logNewTablePenalty = 8
 		d.state = &advancedState{}
-		d.compressionLevel = levels[level]
+		// WS D: was d.compressionLevel = levels[level]; unembedded now.
+		d.good = levels[level].good
+		d.lazy = levels[level].lazy
+		d.nice = levels[level].nice
+		d.chain = levels[level].chain
+		d.level = levels[level].level
 		d.initDeflate()
 		d.fill = __flateFillDeflate
 		d.step = __flateStepDeflateLazy
@@ -908,7 +919,7 @@ func (d *compressor) reset(w io.Writer) {
 		d.tokens.Reset()
 		return
 	}
-	if d.compressionLevel.chain == 0 {
+	if d.chain == 0 {
 		return
 	}
 	s := d.state
