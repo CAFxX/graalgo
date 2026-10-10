@@ -825,6 +825,10 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/rsa", "fipsPublicKey", "", "__mrfipsPublicKey", "", "__mrfipsPublicKeyPair", []string{"v0", "v1"}},
 	{"crypto/rsa", "precompute", "PrivateKey", "__mrPrivateKey_precompute", "", "__mrPrivateKey_precomputePair", []string{"v0", "v1"}},
 	{"crypto/rsa", "precomputeLegacy", "PrivateKey", "__mrPrivateKey_precomputeLegacy", "", "__mrPrivateKey_precomputeLegacyPair", []string{"v0", "v1"}},
+	// P3-M9: crypto/x509 multi-result functions (Java delegation via graalgo.x509.* intrinsics).
+	{"crypto/x509", "ParseCertificate", "", "__mrParseCertificate", "", "__mrParseCertificatePair", []string{"v0", "v1"}},
+	{"crypto/x509", "ParsePKIXPublicKey", "", "__mrParsePKIXPublicKey", "", "__mrParsePKIXPublicKeyPair", []string{"v0", "v1"}},
+	{"crypto/x509", "ParsePKCS1PublicKey", "", "__mrParsePKCS1PublicKey", "", "__mrParsePKCS1PublicKeyPair", []string{"v0", "v1"}},
 	{"golang.org/x/crypto/cryptobyte", "Bytes", "Builder", "__mrBuilder_Bytes", "", "__mrBuilder_BytesPair", []string{"v0", "v1"}},
 }
 
