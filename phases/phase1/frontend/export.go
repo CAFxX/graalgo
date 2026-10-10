@@ -6065,9 +6065,9 @@ func (e *exporter) exportAssign(s *ast.AssignStmt) (*Node, error) {
 	}), nil
 }
 
-// exportAssignable exports an assignment lhs: identifier, index, or
-// selector expression. The blank identifier becomes a "blank" node (the
-// value is evaluated and discarded).
+// exportAssignable exports an assignment lhs: identifier, index,
+// selector, or dereference expression. The blank identifier becomes a
+// "blank" node (the value is evaluated and discarded).
 func (e *exporter) exportAssignable(l ast.Expr) (*Node, error) {
 	if id, ok := l.(*ast.Ident); ok && id.Name == "_" {
 		return e.node("blank", id, map[string]any{}), nil
@@ -6079,9 +6079,33 @@ func (e *exporter) exportAssignable(l ast.Expr) (*Node, error) {
 		return e.exportIndex(l, false)
 	case *ast.SelectorExpr:
 		return e.exportSelector(l)
+	case *ast.StarExpr:
+		return e.exportDerefAssignable(l)
 	default:
 		return nil, scopeErrorf("assignment to %T is not supported in frontend/v1 scope (WS D)", l)
 	}
+}
+
+// exportDerefAssignable exports a pointer-dereference assignment lhs
+// (*p). Emits a "deref" wire node carrying the pointer expression and
+// the element type (the type of *p).
+func (e *exporter) exportDerefAssignable(s *ast.StarExpr) (*Node, error) {
+	pn, err := e.exportExpr(s.X)
+	if err != nil {
+		return nil, err
+	}
+	tid, err := e.exprType(s)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("deref", s, map[string]any{"x": pn, "type": tid}), nil
+}
+
+// exportDeref exports a pointer-dereference read (*p). Emits the same
+// "deref" wire node as the assignment lhs; the factory builds a read
+// node from it in expression position.
+func (e *exporter) exportDeref(s *ast.StarExpr) (*Node, error) {
+	return e.exportDerefAssignable(s)
 }
 
 // exportCommaOk exports a two-valued map-index or type-assertion rhs
@@ -6645,6 +6669,8 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 		return e.exportSlice(x)
 	case *ast.SelectorExpr:
 		return e.exportSelector(x)
+	case *ast.StarExpr:
+		return e.exportDeref(x)
 	case *ast.TypeAssertExpr:
 		return e.exportTypeAssert(x, false)
 	case *ast.ParenExpr:

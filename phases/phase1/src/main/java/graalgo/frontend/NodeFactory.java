@@ -281,6 +281,7 @@ public final class NodeFactory {
         registerExprKind("binary", this::buildBinary);
         registerExprKind("unary", this::buildUnary);
         registerExprKind("paren", this::buildParen);
+        registerExprKind("deref", this::buildDeref); // P3-M9 (WS D): *p read
         registerExprKind("call", this::buildCall);
         registerExprKind("convert", this::buildConvert); // M3 (WS D): Go conversions T(x)
         registerStmtKind("block", this::buildBlock);
@@ -2543,6 +2544,19 @@ public final class NodeFactory {
     }
 
     /**
+     * Pointer dereference read {@code *p} (P3-M9, WS D). The wire node
+     * carries the pointer expression ("x") and the element type ("type",
+     * i.e. the type of {@code *p}).
+     */
+    private GoExprNode buildDeref(Json.Object node, BuildCtx ctx) {
+        Json.Object f = fieldsOf(node, "deref");
+        String path = "deref.fields";
+        GoExprNode ptr = buildExpr(f.object("x", path), ctx);
+        GoKind elemKind = kindOf(ctx, f.intValue("type", path), path);
+        return new DerefNode(elemKind, ptr);
+    }
+
+    /**
      * Builds an implicit address-of {@code &x} for method receivers
      * (P3-M9, WS D). When a pointer-receiver method is called on an
      * addressable value, the exporter wraps the receiver in an "addrof"
@@ -3784,6 +3798,12 @@ public final class NodeFactory {
                 l.tmpO = newTmp(l.obj.kind(), ctx);
                 prog.add(new AssignNode(l.tmpO, l.obj.kind(), l.obj, false));
                 l.obj = new VarReadNode(l.obj.kind(), l.tmpO);
+            } else if (l.isDeref) {
+                // P3-M9 (WS D): evaluate the pointer once into a temporary
+                // (Go's two-phase rule: *p is evaluated before the rhs).
+                l.tmpP = newTmp(l.ptr.kind(), ctx);
+                prog.add(new AssignNode(l.tmpP, l.ptr.kind(), l.ptr, false));
+                l.ptr = new VarReadNode(l.ptr.kind(), l.tmpP);
             }
         }
         if (op != null) {
@@ -3797,6 +3817,10 @@ public final class NodeFactory {
             } else if (l.isSelector) {
                 tk = l.fieldKind;
                 tid = l.fieldTypeId;
+            } else if (l.isDeref) {
+                // P3-M9 (WS D): *p op= v.
+                tk = l.elemKind;
+                tid = l.elemTypeId;
             } else {
                 // Ident (possibly captured): use the variable's kind/type.
                 tk = l.kind;
@@ -3865,6 +3889,10 @@ public final class NodeFactory {
         GoKind fieldKind;
         int fieldTypeId;
         int tmpO = -1;
+        /** Dereference lvalue (P3-M9, WS D): *p = v. */
+        boolean isDeref;
+        GoExprNode ptr;
+        int tmpP = -1;
         /** Capture depth for ident lvalues (M5, WS F): 0 = local, >0 = ancestor. */
         int captureDepth;
         /** Package-level variable (M7): the write goes to the globals frame. */
@@ -3878,6 +3906,9 @@ public final class NodeFactory {
         if (l.isSelector) {
             return l.fieldKind;
         }
+        if (l.isDeref) {
+            return l.elemKind;
+        }
         return l.kind;
     }
 
@@ -3887,6 +3918,9 @@ public final class NodeFactory {
         }
         if (l.isSelector) {
             return l.fieldTypeId;
+        }
+        if (l.isDeref) {
+            return l.elemTypeId;
         }
         return l.typeId;
     }
@@ -3959,6 +3993,14 @@ public final class NodeFactory {
                 lhs.fieldTypeId = lf.intValue("type", path);
                 lhs.fieldKind = kindOf(ctx, lhs.fieldTypeId, path);
             }
+            case "deref" -> {
+                // P3-M9 (WS D): *p = v. The pointer expression is built
+                // here; the element kind/type come from the wire "type".
+                lhs.isDeref = true;
+                lhs.ptr = buildExpr(lf.object("x", path), ctx);
+                lhs.elemTypeId = lf.intValue("type", path);
+                lhs.elemKind = kindOf(ctx, lhs.elemTypeId, path);
+            }
             default -> throw new FrontendException(path + ": bad assignment lhs kind \"" + k + "\" (WS E)");
         }
         return lhs;
@@ -4017,6 +4059,10 @@ public final class NodeFactory {
                     ? structDescriptorFor(ctx, l.elemTypeId, path) : null;
             return new IndexNode(l.container, l.key, l.containerKind, l.elemKind, ed);
         }
+        if (l.isDeref) {
+            // P3-M9 (WS D): *p read.
+            return new DerefNode(l.elemKind, l.ptr);
+        }
         return new SelectorNode(l.obj, l.selpath, l.fieldKind);
     }
 
@@ -4028,6 +4074,10 @@ public final class NodeFactory {
         }
         if (l.isIndex) {
             return new IndexWriteNode(l.container, l.key, value, l.containerKind, l.elemKind);
+        }
+        if (l.isDeref) {
+            // P3-M9 (WS D): *p = v.
+            return new DerefWriteNode(l.ptr, value, l.elemKind);
         }
         return new SelectorWriteNode(l.obj, value, l.selpath, l.fieldKind);
     }

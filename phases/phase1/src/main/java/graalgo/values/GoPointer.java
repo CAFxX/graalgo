@@ -12,7 +12,7 @@ package graalgo.values;
  * panic, M5 WS F).
  */
 public final class GoPointer {
-    private final Object referent;
+    private Object referent;
 
     public GoPointer(Object referent) {
         this.referent = referent;
@@ -21,6 +21,15 @@ public final class GoPointer {
     /** The pointed-to object, or {@code null} for the nil pointer. */
     public Object referent() {
         return referent;
+    }
+
+    /**
+     * Sets the pointed-to object (P3-M9, WS D: {@code *p = v} assignment).
+     * The pointer itself is the mutable cell; this is what makes
+     * dereference writes observable through the pointer.
+     */
+    public void setReferent(Object referent) {
+        this.referent = referent;
     }
 
     public boolean isNil() {

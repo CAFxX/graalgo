@@ -1,0 +1,38 @@
+package graalgo.frontend;
+
+import com.oracle.truffle.api.frame.VirtualFrame;
+import graalgo.values.GoKind;
+import graalgo.values.GoPointer;
+
+/**
+ * Assignment through a pointer dereference: {@code *p = v} (P3-M9, WS D).
+ *
+ * <p>Evaluates the pointer expression; a nil pointer raises gc's
+ * nil-dereference panic. Otherwise sets the pointer's referent to the
+ * boxed value (via Boxing.box + copyForAssign, matching the value-copy
+ * rule used by SelectorWriteNode).
+ */
+public final class DerefWriteNode extends GoStmtNode {
+    @Child private GoExprNode ptr;
+    @Child private GoExprNode value;
+    private final GoKind elemKind;
+
+    public DerefWriteNode(GoExprNode ptr, GoExprNode value, GoKind elemKind) {
+        this.ptr = ptr;
+        this.value = value;
+        this.elemKind = elemKind;
+    }
+
+    @Override
+    public void executeVoid(VirtualFrame frame) {
+        Object o = ptr.executeObject(frame);
+        if (!(o instanceof GoPointer p)) {
+            throw new FrontendException("deref write: not a pointer: " + o);
+        }
+        if (p.isNil()) {
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+        }
+        Object b = Boxing.copyForAssign(elemKind, Boxing.box(elemKind, value, frame));
+        p.setReferent(b);
+    }
+}
