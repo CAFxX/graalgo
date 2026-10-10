@@ -703,4 +703,8 @@ func __mrParsePKCS1PublicKey(der []byte) __mrParsePKCS1PublicKeyPair {
 func ParsePKCS1PublicKey(der []byte) (*rsa.PublicKey, error) {
 	panic("crypto/x509: ParsePKCS1PublicKey: multi-result desugar")
 }
+
+func ParsePKIXPublicKey(derBytes []byte) (any, error) {
+	panic("crypto/x509: ParsePKIXPublicKey: multi-result desugar")
+}
 `
