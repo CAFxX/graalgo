@@ -4102,16 +4102,14 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 			"methods": methods, "embedded": embedded,
 		}), nil
 	case *types.Union:
-		terms := make([]any, 0, t.Len())
-		for i := 0; i < t.Len(); i++ {
-			term := t.Term(i)
-			id, err := e.typeID(term.Type())
-			if err != nil {
-				return TypeEnt{}, err
-			}
-			terms = append(terms, map[string]any{"tilde": term.Tilde(), "type": id})
-		}
-		return mk("union", map[string]any{"terms": terms}), nil
+		// P3-M9 (generics): union types appear only in generic constraints
+		// (e.g., *P224Point | *P256Point in nistPoint[Point]). Constraints
+		// are compile-time only; the runtime never creates or dispatches
+		// on a union-typed value. The Java backend has no union kind.
+		// Emit an empty interface placeholder.
+		return mk("interface", map[string]any{
+			"embedded": []any{}, "empty": true, "methods": []any{},
+		}), nil
 	case *types.TypeParam:
 		c, err := e.typeID(t.Constraint())
 		if err != nil {
