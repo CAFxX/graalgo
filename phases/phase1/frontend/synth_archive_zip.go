@@ -1025,7 +1025,7 @@ func (d *openDir) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 	d.offset += n
 	return __zipFileOpenPair{f0: list, f1: nil}
-}}
+}
 
 func (f *File) Open() (io.ReadCloser, error) {
 	panic("archive/zip.Open: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
@@ -1799,7 +1799,7 @@ func (d *openDir) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 	d.offset += n
 	return __zipchecksumReaderReadPair{n: list, err: nil}
-}}
+}
 
 func (r *checksumReader) Read(b []byte) (n int, err error) {
 	panic("archive/zip.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
@@ -2602,7 +2602,7 @@ func (d *openDir) ReadDir(count int) ([]fs.DirEntry, error) {
 	}
 	d.offset += n
 	return list, nil
-}}
+}
 
 func readDirectoryEnd(r io.ReaderAt, size int64) (dir *directoryEnd, baseOffset int64, err error) {
 	panic("archive/zip.readDirectoryEnd: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
@@ -3853,7 +3853,7 @@ func (b *writeBuf) uint32(v uint32) {
 func (b *writeBuf) uint64(v uint64) {
 	binary.LittleEndian.PutUint64(*b, v)
 	*b = (*b)[8:]
-}}
+}
 
 func detectUTF8(s string) (valid, require bool) {
 	panic("archive/zip.detectUTF8: not in M7 scope (multi-result calls need WS D; re-test when it lands)")

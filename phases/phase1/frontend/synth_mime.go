@@ -469,7 +469,7 @@ func unhex(c byte) byte {
 		return c - 'A' + 10
 	}
 	return 0
-}}
+}
 
 func percentHexUnescape(s string) (string, bool) {
 	panic("mime.percentHexUnescape: not in M7 scope (multi-result calls need WS D; re-test when it lands)")

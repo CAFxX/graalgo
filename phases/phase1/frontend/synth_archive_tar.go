@@ -814,7 +814,7 @@ func isHeaderOnlyType(flag byte) bool {
 	default:
 		return false
 	}
-}}
+}
 
 func FileInfoHeader(fi fs.FileInfo, link string) (*Header, error) {
 	panic("archive/tar.FileInfoHeader: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
@@ -2129,7 +2129,7 @@ func discard(r io.Reader, n int64) error {
 		err = io.ErrUnexpectedEOF
 	}
 	return err
-}}
+}
 
 func (tr *Reader) readOldGNUSparseMap(hdr *Header, blk *block) (sparseDatas, error) {
 	panic("archive/tar.readOldGNUSparseMap: not in M7 scope (multi-result calls need WS D; re-test when it lands)")

@@ -68,7 +68,9 @@ def extract_functions(src):
             i += 1
         decl = src[m.start():i]
         body_start = decl.index('{') + 1
-        body = decl[body_start:-1]  # inside braces, excluding final }
+        # Find the last '}' which closes the function (decl may have trailing whitespace)
+        body_end = decl.rindex('}')
+        body = decl[body_start:body_end]  # inside braces, excluding final }
         funcs.append({
             'decl': decl,
             'recv_var': recv_var,

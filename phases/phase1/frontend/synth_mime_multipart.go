@@ -582,7 +582,7 @@ func skipLWSPChar(b []byte) []byte {
 		b = b[1:]
 	}
 	return b
-}}
+}
 
 func (r *Reader) nextPart(rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) (*Part, error) {
 	panic("mime/multipart.nextPart: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
