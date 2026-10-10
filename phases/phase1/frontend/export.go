@@ -1601,6 +1601,12 @@ func ExportFile(path string) (string, error) {
 			needTime = true
 			needHashCrc32 = true
 			needHash = true
+			// P3-M9: flate (via needFlate) needs math, math/bits, strconv.
+			needMath = true
+			needMathBits = true
+			needStrconv = true
+			// P3-M9: gzip imports encoding/binary (binary.LittleEndian).
+			needBinary = true
 		case "compress/zlib":
 			needZlib = true
 			needFlate = true
@@ -1609,6 +1615,12 @@ func ExportFile(path string) (string, error) {
 			needIo = true
 			needHashAdler32 = true
 			needHash = true
+			// P3-M9: flate (via needFlate) needs math, math/bits, strconv.
+			needMath = true
+			needMathBits = true
+			needStrconv = true
+			// P3-M9: zlib imports encoding/binary (binary.LittleEndian).
+			needBinary = true
 		case "compress/lzw":
 			needLzw = true
 			needBufio = true
@@ -4095,6 +4107,13 @@ type methodCall struct {
 	// direct methods. The caller (methodRefNode) rewrites the receiver
 	// expression by walking this path, mirroring methodTableEntries.
 	recvPath []int
+	// ifaceFallback is set when devirtualization fails (the type
+	// parameter's concrete type is not a named type) but the method can
+	// be dispatched via the constraint interface (WS H F-bounded
+	// fallback). When non-nil, the caller (methodRefNode) emits an
+	// "ifacemethod" node instead of a static methodref. The interface is
+	// the type parameter's constraint (must have an interface underlying).
+	ifaceFallback types.Type
 }
 
 // resolveMethodCall resolves a method call (selection kind MethodVal) to its
@@ -4181,7 +4200,34 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	}
 	cn := derefNamed(c)
 	if cn == nil {
-		return nil, scopeErrorf("method %s on type parameter with non-named argument type: interface dispatch on type parameters is not supported (WS H)", mname)
+		// P3-M9 (WS H, graalgo-wsh-fallback): F-bounded fallback. The
+		// type parameter's concrete type is not a named type (e.g.,
+		// bound to another type parameter, or an interface), so
+		// devirtualization is impossible. Fall back to interface
+		// dispatch via the constraint interface: the method is looked
+		// up in the constraint's method set, and the caller emits an
+		// "ifacemethod" node.
+		//
+		// The constraint comes from the type parameter's declaration
+		// (tp.Constraint()), not from the substituted type c, because
+		// c may itself be an unresolved type parameter.
+		constraint := tp.Constraint()
+		if constraint == nil {
+			return nil, scopeErrorf("method %s on type parameter with non-named argument type and no constraint (WS H)", mname)
+		}
+		// The constraint must have an interface underlying for
+		// ifacemethod dispatch. For F-bounded constraints like
+		// nistPoint[Point], the constraint is a generic interface
+		// instantiation — its underlying is the interface.
+		if _, ok := constraint.Underlying().(*types.Interface); !ok {
+			return nil, scopeErrorf("method %s on type parameter with non-interface constraint %s (WS H)", mname, types.TypeString(constraint, nil))
+		}
+		// Verify the method exists in the constraint's method set.
+		if msel := types.NewMethodSet(constraint).Lookup(e.pkg, mname); msel == nil {
+			return nil, fmt.Errorf("gofrontend: method %s not in constraint %s of type parameter %s",
+				mname, types.TypeString(constraint, nil), tp.Obj().Name())
+		}
+		return &methodCall{ifaceFallback: constraint, subst: subst}, nil
 	}
 	// M6: look the method up in the declaration index by (origin type
 	// name, method name). We do NOT use types.NewMethodSet here: for an
@@ -7190,6 +7236,15 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if err != nil {
 		return nil, err
 	}
+	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
+	// devirtualization fails (type parameter's concrete type is not a
+	// named type), dispatch via the constraint interface. The ifacemethod
+	// node is a complete call (not a function reference), so return it
+	// directly; the caller (exportMethodCall) detects the kind and skips
+	// the "call" wrapper.
+	if mc.ifaceFallback != nil {
+		return e.exportIfaceFallbackCall(c, sel, selection, recv, mc.ifaceFallback)
+	}
 	// Remediation (R1 P1-1, R2 P1-2): same variadic fail-fast as direct
 	// calls; the spread form passes the slice directly and works.
 	if err := checkVariadicCall(c, mc.decl.sig); err != nil {
@@ -7281,6 +7336,12 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	fun, err := e.methodRefNode(c, sel, selection, recv)
 	if err != nil {
 		return nil, err
+	}
+	// P3-M9 (WS H, graalgo-wsh-fallback): the ifacemethod fallback node
+	// is a complete call — return it directly instead of wrapping in a
+	// "call" node.
+	if fun.Kind == "ifacemethod" {
+		return fun, nil
 	}
 	args, err := e.exportCallArgs(c)
 	if err != nil {
@@ -7941,6 +8002,67 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 		if err != nil {
 			return nil, err
 		}
+	}
+	return e.node("ifacemethod", c, map[string]any{
+		"recv": recv, "method": mname, "iface": ifaceID,
+		"args": args, "sig": sigID, "type": typ,
+	}), nil
+}
+
+// exportIfaceFallbackCall exports a WS H F-bounded fallback method call:
+// a method called on a type parameter whose concrete type is not a named
+// type (devirtualization impossible). Dispatch goes through the constraint
+// interface's itab, like a regular interface method call.
+//
+// Unlike exportIfaceMethodCall, the receiver's static type is a type
+// parameter (not an interface), and the interface is the constraint
+// (already validated by resolveMethodCall). The recv node is already
+// exported by the caller.
+func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, recv *Node, constraint types.Type) (*Node, error) {
+	mname := sel.Sel.Name
+	sig, err := e.resolveIfaceMethod(constraint, mname)
+	if err != nil {
+		return nil, err
+	}
+	// Multi-result methods via the fallback are not supported (WS D):
+	// the pair-plan machinery is keyed on interface method sets, and the
+	// constraint interface path hasn't been wired for it. Fail fast.
+	if sig.Results().Len() > 1 {
+		return nil, scopeErrorf("method %s via type-parameter constraint has %d results; at most one result is supported in frontend/v1 scope (WS D)",
+			mname, sig.Results().Len())
+	}
+	if err := checkVariadicCall(c, sig); err != nil {
+		return nil, err
+	}
+	// The constraint must have an interface underlying (validated by
+	// resolveMethodCall, but re-check here for safety).
+	ifaceType := types.Unalias(constraint)
+	if nt, ok := ifaceType.(*types.Named); ok {
+		ui, ok := nt.Underlying().(*types.Interface)
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: constraint %s is named with non-interface underlying (exporter bug)",
+				types.TypeString(ifaceType, nil))
+		}
+		ifaceType = ui
+	} else if _, ok := ifaceType.(*types.Interface); !ok {
+		return nil, fmt.Errorf("gofrontend: constraint %s is not an interface (exporter bug)",
+			types.TypeString(ifaceType, nil))
+	}
+	ifaceID, err := e.typeID(ifaceType)
+	if err != nil {
+		return nil, err
+	}
+	sigID, err := e.typeID(sig)
+	if err != nil {
+		return nil, err
+	}
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
 	}
 	return e.node("ifacemethod", c, map[string]any{
 		"recv": recv, "method": mname, "iface": ifaceID,
