@@ -6,6 +6,7 @@ import java.util.Map;
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
 
+import graalgo.frontend.Boxing;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.runtime.GoCalls;
@@ -308,7 +309,10 @@ public final class IfaceDispatchNode extends GoExprNode {
     @Override
     public long executeLong(VirtualFrame frame) {
         Object r = dispatch(frame);
-        return r == null ? 0L : ((Number) r).longValue();
+        // P3-M9: use Boxing.toLong for correct zero-extension of unsigned
+        // kinds (uint32(0xFFFFFFFF) -> 4294967295L, not -1L). A bare
+        // ((Number) r).longValue() sign-extends Integer-held uint32 values.
+        return r == null ? 0L : Boxing.toLong(r, kind());
     }
 
     @Override

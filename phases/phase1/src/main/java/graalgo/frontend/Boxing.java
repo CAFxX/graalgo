@@ -261,7 +261,7 @@ public final class Boxing {
      * fields, locals, constants, array elements), which the
      * {@link BinaryOpNode} unsigned comparisons rely on.
      */
-    static long toLong(Object boxed, graalgo.values.GoKind kind) {
+    public static long toLong(Object boxed, graalgo.values.GoKind kind) {
         if (boxed instanceof Long l) {
             return l.longValue();
         }

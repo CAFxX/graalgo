@@ -2719,7 +2719,7 @@ public final class NodeFactory {
         String path = "sliceoverlap.fields";
         GoExprNode x = buildExpr(f.object("x", path), ctx);
         GoExprNode y = buildExpr(f.object("y", path), ctx);
-        boolean inexact = f.boolValue("inexact", path);
+        boolean inexact = f.bool("inexact", path);
         return new SliceOverlapNode(x, y, inexact);
     }
 

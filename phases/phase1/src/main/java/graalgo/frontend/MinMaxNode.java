@@ -98,7 +98,9 @@ public final class MinMaxNode extends GoExprNode {
 
     @Override
     public long executeLong(VirtualFrame frame) {
-        return ((Number) computeBest(frame)).longValue();
+        // P3-M9: use Boxing.toLong for correct zero-extension of unsigned
+        // kinds (uint32(0xFFFFFFFF) -> 4294967295L, not -1L).
+        return Boxing.toLong(computeBest(frame), kind());
     }
 
     @Override
