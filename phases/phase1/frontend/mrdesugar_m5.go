@@ -101,6 +101,12 @@ const (
 	// desugar calls the function value directly and packs the 2
 	// results into the pair struct from the nistCurveFuncFields table.
 	mrFuncField
+	// P3-M9 (WS D): fips140cache.Cache.Get(k, new, check) — the
+	// synthetic cache is a no-memoization stub (Get just returns
+	// new()), so the desugar inlines the new function call directly:
+	// v, err := cache.Get(k, newFn, checkFn) becomes v, err := newFn().
+	// This avoids generic helper instantiation complexity.
+	mrCacheGet
 )
 
 // m7MultiResultFunc describes one desugarable M7 multi-result function:
@@ -1242,6 +1248,23 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					prependRecv: false,
 				}
 			}
+			// P3-M9 (WS D): fips140cache.Cache.Get — the synthetic cache
+			// is a no-memoization stub, so inline the new() call directly.
+			// This avoids generic helper instantiation complexity.
+			if f.Pkg().Path() == "crypto/internal/fips140cache" && f.Name() == "Get" {
+				sig, _ := f.Type().(*types.Signature)
+				if sig != nil && sig.Recv() != nil {
+					rt := sig.Recv().Type()
+					if pt, ok := rt.(*types.Pointer); ok {
+						rt = pt.Elem()
+					}
+					if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil && nt.Obj().Name() == "Cache" {
+						// pairFields is a placeholder for the arity check;
+						// the desugar inlines new() directly, no pair used.
+						return &mrPlan{kind: mrCacheGet, pairFields: []string{"v", "err"}}
+					}
+				}
+			}
 			if plan := classifyM7MultiResultCall(f.Pkg().Path(), f); plan != nil {
 				return plan
 			}
@@ -1991,6 +2014,36 @@ func (e *exporter) exportMultiResultDesugar(s *ast.AssignStmt, define bool) (*No
 
 // desugarMultiResult emits the desugared block for a classified call.
 func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	// P3-M9 (WS D): fips140cache.Cache.Get(k, new, check) inlines the
+	// new() call directly: v, err := cache.Get(k, newFn, checkFn)
+	// becomes v, err := newFn(). The synthetic cache is a
+	// no-memoization stub, so this is semantically equivalent.
+	if plan.kind == mrCacheGet {
+		if len(c.Args) < 2 {
+			return nil, fmt.Errorf("gofrontend: Cache.Get requires at least 2 args (k, new)")
+		}
+		// Build newFn() call: Fun is Args[1], no args.
+		newCall := &ast.CallExpr{
+			Fun:    c.Args[1],
+			Lparen: c.Lparen,
+			Args:   []ast.Expr{},
+			Rparen: c.Rparen,
+		}
+		// Build the assignment: v, err := newFn()
+		// Use the standard assignment export with the call as RHS.
+		newAssign := &ast.AssignStmt{
+			Lhs:    s.Lhs,
+			TokPos: s.TokPos,
+			Tok:    s.Tok,
+			Rhs:    []ast.Expr{newCall},
+		}
+		// Export as a normal multi-value assignment (bypasses desugar
+		// recursion since newCall is not a classified multi-result).
+		if newAssign.Tok == token.DEFINE {
+			return e.exportDefine(newAssign)
+		}
+		return e.exportAssign(newAssign)
+	}
 	// P3-M8 (WS D): an interface multi-result call (r.Read(buf)) desugars
 	// to the ifacemethod dispatch node itself — the itab maps the method
 	// to the concrete type's pair-returning __-helper, so the node yields
