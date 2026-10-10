@@ -1914,13 +1914,13 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 		if err != nil {
 			return nil, err
 		}
-		return e.desugarExtract(s, c, plan, define, tmpName, tmpID, resTid, call)
+		return e.desugarExtract(s, c, plan, define, tmpName, tmpID, resTid, call, nil)
 	}
 	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, err
 	}
-	args, err := e.multiResultHelperArgs(c, plan)
+	args, preStmts, err := e.multiResultHelperArgs(c, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -1928,7 +1928,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	if err != nil {
 		return nil, err
 	}
-	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, helperCall)
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, helperCall, preStmts)
 }
 
 // multiResultHelper resolves a desugar plan's __-helper to its
@@ -1953,14 +1953,14 @@ func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 // expressions: the original call's args, except for the Deadline method
 // where the receiver becomes the argument; the receiver is prepended
 // when the plan sets prependRecv.
-func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node, error) {
+func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node, []*Node, error) {
 	// Helper call args: the original call's args, except for the
 	// Deadline method where the receiver becomes the argument.
 	var argExprs []ast.Expr
 	if plan.kind == mrDeadline {
 		sel, ok := c.Fun.(*ast.SelectorExpr)
 		if !ok {
-			return nil, fmt.Errorf("gofrontend: Deadline call has non-selector fun %T", c.Fun)
+			return nil, nil, fmt.Errorf("gofrontend: Deadline call has non-selector fun %T", c.Fun)
 		}
 		argExprs = []ast.Expr{sel.X}
 	} else {
@@ -1969,19 +1969,86 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 	if plan.prependRecv {
 		sel, ok := c.Fun.(*ast.SelectorExpr)
 		if !ok {
-			return nil, fmt.Errorf("gofrontend: prependRecv call has non-selector fun %T", c.Fun)
+			return nil, nil, fmt.Errorf("gofrontend: prependRecv call has non-selector fun %T", c.Fun)
 		}
 		argExprs = append([]ast.Expr{sel.X}, argExprs...)
 	}
 	args := make([]*Node, 0, len(argExprs))
+	var preStmts []*Node
 	for _, a := range argExprs {
+		// P3-M9 (WS D): a multi-valued call in argument position, e.g.
+		// curve.affineFromJacobian(curve.addJacobian(...)). Per Go spec,
+		// f(g()) spreads g's results as f's arguments. Desugar the inner
+		// call to its __-helper, emit the temp vardecl as a pre-statement,
+		// and spread the pair fields as separate arguments.
+		if inner, ok := unparen(a).(*ast.CallExpr); ok {
+			if innerPlan := e.classifyMultiResultCall(inner); innerPlan != nil {
+				// Per Go spec, a multi-valued call as an argument must be
+				// the sole argument (besides the prepended receiver).
+				// The type checker guarantees this for valid Go.
+				innerArgs, innerPre, err := e.multiResultHelperArgs(inner, innerPlan)
+				if err != nil {
+					return nil, nil, err
+				}
+				preStmts = append(preStmts, innerPre...)
+				var innerCallNode *Node
+				var innerTmpName string
+				var innerTmpID, innerTmpTid int
+				if innerPlan.kind == mrUser {
+					innerCallNode, err = e.exportCall(inner)
+					if err != nil {
+						return nil, nil, err
+					}
+					resTid, err := e.typeID(innerPlan.tmpType)
+					if err != nil {
+						return nil, nil, err
+					}
+					e.chanSeq++
+					innerTmpName = fmt.Sprintf("__p5mr_%d", e.chanSeq)
+					v := types.NewVar(token.NoPos, nil, innerTmpName, innerPlan.tmpType)
+					innerTmpID, err = e.defVar(v, false)
+					if err != nil {
+						return nil, nil, err
+					}
+					innerTmpTid = resTid
+				} else if innerPlan.kind == mrIfaceMethod {
+					// Interface method: use the ifacemethod dispatch.
+					// For now, fail with a clear error — nested interface
+					// multi-result calls are not yet supported.
+					return nil, nil, scopeErrorf("nested interface multi-result call in argument position is not supported in frontend/v1 scope (WS D)")
+				} else {
+					helperFn, err := e.multiResultHelper(innerPlan)
+					if err != nil {
+						return nil, nil, err
+					}
+					innerCallNode, innerTmpName, innerTmpID, innerTmpTid, err = e.synthHelperCall(inner, helperFn, innerPlan.tmpType, innerArgs)
+					if err != nil {
+						return nil, nil, err
+					}
+				}
+				// Emit the inner temp vardecl as a pre-statement.
+				preStmts = append(preStmts, e.node("vardecl", inner, map[string]any{
+					"names": []string{innerTmpName}, "objs": []int{innerTmpID},
+					"define": true, "type": nil, "values": []*Node{innerCallNode},
+				}))
+				// Spread the pair fields as separate arguments.
+				for i, field := range innerPlan.pairFields {
+					sel, err := e.synthPairField(inner, innerTmpName, innerTmpID, innerTmpTid, innerPlan.tmpType, field, i)
+					if err != nil {
+						return nil, nil, err
+					}
+					args = append(args, sel)
+				}
+				continue
+			}
+		}
 		x, err := e.exportExpr(a)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		args = append(args, x)
 	}
-	return args, nil
+	return args, preStmts, nil
 }
 
 // exportBareMultiResultCall desugars a concrete multi-result call in
@@ -1998,7 +2065,7 @@ func (e *exporter) exportBareMultiResultCall(s *ast.ExprStmt, c *ast.CallExpr, p
 	if err != nil {
 		return nil, err
 	}
-	args, err := e.multiResultHelperArgs(c, plan)
+	args, preStmts, err := e.multiResultHelperArgs(c, plan)
 	if err != nil {
 		return nil, err
 	}
@@ -2006,7 +2073,13 @@ func (e *exporter) exportBareMultiResultCall(s *ast.ExprStmt, c *ast.CallExpr, p
 	if err != nil {
 		return nil, err
 	}
-	return e.node("exprstmt", s, map[string]any{"x": call}), nil
+	exprStmt := e.node("exprstmt", s, map[string]any{"x": call})
+	if len(preStmts) > 0 {
+		// Nested desugars need their temps declared before the call.
+		stmts := append(append([]*Node{}, preStmts...), exprStmt)
+		return e.node("block", s, map[string]any{"stmts": stmts}), nil
+	}
+	return exprStmt, nil
 }
 
 // desugarIfaceMultiResult emits the desugared block for an mrIfaceMethod
@@ -2038,19 +2111,22 @@ func (e *exporter) desugarIfaceMultiResult(s *ast.AssignStmt, c *ast.CallExpr, p
 	if err != nil {
 		return nil, err
 	}
-	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, resTid, callNode)
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, resTid, callNode, nil)
 }
 
 // desugarExtract emits the shared desugar tail: the __p5mr_N temp holding
 // callNode's pair, the positional field extractions, and the assignment
-// of the extractions to the N targets.
+// of the extractions to the N targets. preStmts (from nested multi-valued
+// calls in argument position) are emitted first.
 func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool,
-	tmpName string, tmpID, tmpTid int, callNode *Node) (*Node, error) {
+	tmpName string, tmpID, tmpTid int, callNode *Node, preStmts []*Node) (*Node, error) {
+	// Pre-statements from nested desugars (inner temps) come first.
+	stmts := append([]*Node{}, preStmts...)
 	// __p5mr_N := <helper>(args)
-	stmts := []*Node{e.node("vardecl", s, map[string]any{
+	stmts = append(stmts, e.node("vardecl", s, map[string]any{
 		"names": []string{tmpName}, "objs": []int{tmpID},
 		"define": true, "type": nil, "values": []*Node{callNode},
-	})}
+	}))
 	// The two extractions.
 	var extracts []*Node
 	switch plan.kind {
