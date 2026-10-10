@@ -1931,7 +1931,7 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod:
+	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {

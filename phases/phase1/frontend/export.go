@@ -4900,8 +4900,12 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 			// New signature: same params, single pair result.
 			pairVar := types.NewParam(token.NoPos, e.pkg, "", pairType)
 			sigResults = types.NewTuple(pairVar)
-			// Export a single result var for the pair.
-			results = results[:1]
+			// Export a single result var for the pair type.
+			pairResult, err := e.exportParamVar(fd.Type, pairVar)
+			if err != nil {
+				return nil, err
+			}
+			results = []*Node{pairResult}
 		} else {
 			// P3-M8 (WS D; REVIEW-1 P2-5): this is also the fail-fast for the
 			// `return <multi-result interface call>` position — a 2-result
