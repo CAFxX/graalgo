@@ -79,8 +79,13 @@ public final class ConvertNode extends GoExprNode {
             // P3-M8b: UINT8/UINT16 must mask in executeLong too (array indices
             // call executeLong; without masking, uint8(x) returns x unchanged
             // when x > 255, causing index-out-of-range panics).
+            // P3-M9 (flate-encoder-fix): UINT32 was missing — uint32(x) in
+            // executeLong returned x unchanged, breaking inline comparisons
+            // like uint32(cv) == loadLE32(...) (BinaryOpNode compares via
+            // executeLong). Zero-extend to 32 bits.
             case UINT8 -> bits & 0xFFL;
             case UINT16 -> bits & 0xFFFFL;
+            case UINT32 -> bits & 0xFFFFFFFFL;
             default -> bits;
         };
     }
