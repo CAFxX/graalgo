@@ -27,6 +27,8 @@ public final class LenNode extends GoExprNode {
         switch (argKind) {
             // M7: UNTYPED_STRING (e.g. len("héllo")) folds to a string.
             case STRING, UNTYPED_STRING, ARRAY, SLICE, MAP -> {}
+            // P3-M9: len(p) where p is *[N]T returns N (Go spec).
+            case POINTER -> {}
             default -> throw new FrontendException(
                     "len of " + argKind + " is not implemented (WS G); channels are Phase 2");
         }
@@ -37,6 +39,14 @@ public final class LenNode extends GoExprNode {
         return switch (argKind) {
             case STRING, UNTYPED_STRING -> ((GoString) child.executeObject(frame)).bytes().length;
             case ARRAY -> java.lang.reflect.Array.getLength(child.executeObject(frame));
+            // P3-M9: len of *[N]T — dereference the pointer, get array length.
+            case POINTER -> {
+                Object o = child.executeObject(frame);
+                if (o instanceof graalgo.values.GoPointer p) {
+                    o = p.referent();
+                }
+                yield java.lang.reflect.Array.getLength(o);
+            }
             // M7: len of a nil slice/map is 0 (Go spec, Length and capacity).
             case SLICE -> {
                 GoSlice s = (GoSlice) child.executeObject(frame);
