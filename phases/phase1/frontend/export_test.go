@@ -85,7 +85,9 @@ func TestDeterministic(t *testing.T) {
 func TestScopeErrors(t *testing.T) {
 	cases := map[string]string{
 		"testdata/bad_import.go": "WS G",
-		"testdata/bad_call.go":   "WS D",
+		// P3-M9 (WS D, graalgo-ordinverse-generic): function-field calls
+		// (t.f() where f is func-typed) are now supported; testdata/bad_call.go
+		// retired (was WS D scope error, now exports successfully).
 		// P3-M5 (WS E, ADR-0005 App C): select/send/close are now lowered;
 		// testdata/bad_select.go (select-with-default scope error) retired.
 	}
