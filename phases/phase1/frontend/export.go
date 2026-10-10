@@ -371,6 +371,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("crypto/pbkdf2").pkg, nil
 	case "crypto/x509":
 		return getSyntheticPackage("crypto/x509").pkg, nil
+	case "crypto/x509/pkix":
+		return getSyntheticPackage("crypto/x509/pkix").pkg, nil
 	case "crypto/tls":
 		return getSyntheticPackage("crypto/tls").pkg, nil
 	case "crypto/internal/fips140":

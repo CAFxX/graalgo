@@ -92,6 +92,9 @@ public final class LinknameIntrinsics {
         // P3-M9 (user directive 2026-10-10): JDK-delegating crypto
         // intrinsics (java.security.MessageDigest, javax.crypto.Mac).
         registerCryptoIntrinsics();
+        // P3-M9 (user directive 2026-10-10): JDK-delegating TLS
+        // intrinsics (javax.net.ssl.SSLEngine).
+        registerTlsIntrinsics();
         // itabFor → the P3-M3 itab machinery (ADR-0004 D3).
         Intrinsics.setItabProvider(IfaceMethodTable::itabForDescriptors);
         // Interface method-name lists for itabForIntrinsic.

@@ -328,7 +328,7 @@ func parseIPv4Fields(in string, off, end int, fields []uint8) error {
 // parseIPv4 parses s as an IPv4 address (in form "192.168.0.1").
 func __parseIPv4(s string) parseAddrPair {
 	var fields [4]uint8
-	err = parseIPv4Fields(s, 0, len(s), fields[:])
+	err := parseIPv4Fields(s, 0, len(s), fields[:])
 	if err != nil {
 		return parseAddrPair{Addr{}, err}
 	}
@@ -1216,13 +1216,14 @@ func __splitAddrPort(s string) splitAddrPortQuad {
 		return splitAddrPortQuad{"", "", false, errors.New("not an ip:port")}
 	}
 
-	ip, port = s[:i], s[i+1:]
+	ip, port := s[:i], s[i+1:]
 	if len(ip) == 0 {
 		return splitAddrPortQuad{"", "", false, errors.New("no IP")}
 	}
 	if len(port) == 0 {
 		return splitAddrPortQuad{"", "", false, errors.New("no port")}
 	}
+	v6 := false
 	if ip[0] == '[' {
 		if len(ip) < 2 || ip[len(ip)-1] != ']' {
 			return splitAddrPortQuad{"", "", false, errors.New("missing ]")}
