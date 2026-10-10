@@ -224,8 +224,16 @@ def is_multi_result(results):
 def extract_type_names(src):
     """Extract defined type names from source."""
     names = set()
+    # Single: type Name ...
     for m in re.finditer(r'\btype\s+([a-zA-Z_][a-zA-Z0-9_]*)\b', src):
-        names.add(m.group(1))
+        # Avoid matching "type (" 
+        if m.group(1) != '(':
+            names.add(m.group(1))
+    # Block: type ( Name ...; Name ... )
+    for m in re.finditer(r'\btype\s*\((.*?)\)', src, re.DOTALL):
+        block = m.group(1)
+        for tm in re.finditer(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\b', block, re.MULTILINE):
+            names.add(tm.group(1))
     return names
 
 
