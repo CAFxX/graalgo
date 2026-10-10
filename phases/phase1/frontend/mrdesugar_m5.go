@@ -972,6 +972,7 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"crypto/ecdh", "GenerateKey", "__mrnistCurve_GenerateKeyPair", []string{"v0", "v1"}},           // ecdh.Curve.GenerateKey
 	{"crypto/ecdh", "NewPrivateKey", "__mrnistCurve_NewPrivateKeyPair", []string{"v0", "v1"}},       // ecdh.Curve.NewPrivateKey
 	{"crypto/ecdh", "NewPublicKey", "__mrnistCurve_NewPublicKeyPair", []string{"v0", "v1"}},         // ecdh.Curve.NewPublicKey
+	{"crypto/ecdh", "ecdh", "__mrnistCurve_ecdhPair", []string{"v0", "v1"}},                         // ecdh.Curve.ecdh (interface method)
 	// P3-M9 (tier-5): elliptic.Curve and ecdh.Curve interface methods.
 	// The concrete helpers are wired via m8MultiResultFuncs +
 	// methodTableEntries; the pair types are positionally identical
