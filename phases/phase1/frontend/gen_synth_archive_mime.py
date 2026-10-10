@@ -908,6 +908,7 @@ var multipartmaxheaders = &__mpGodebugSetting{name: "multipartmaxheaders"}'''
 type __mpMIMEHeader map[string][]string
 func (__mpMIMEHeader) Get(key string) string { return "" }
 func (__mpMIMEHeader) Del(key string) {}
+func (h __mpMIMEHeader) Set(key, value string) { h[key] = []string{value} }
 type __mpTextprotoReader struct{}
 func __mpNewTextprotoReader(r any) *__mpTextprotoReader { return &__mpTextprotoReader{} }
 func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMIMEHeader, error) {
@@ -1046,14 +1047,11 @@ def process_package(pkg_path, cfg):
                 for (rname, rtype), fname in zip(results, field_names):
                     if rname and rname.strip():
                         rn = re.escape(rname.strip())
-                        # If shadowed via :=, assignments likely refer to shadow, not this var
-                        shadowed = bool(re.search(rf'\b{rn}\b\s*:=', fn['body']))
                         assigned = bool(re.search(rf'\b{rn}\b\s*=\s*[^=]', fn['body']))
                         compound = bool(re.search(rf'\b{rn}\b\s*[+\-*/%&|^]=', fn['body']))
                         incdec = bool(re.search(rf'\b{rn}\b\s*(\+\+|--)', fn['body']))
                         multi_assign = bool(re.search(rf'\b{rn}\b\s*,', fn['body']))
-                        # Only declare if not shadowed, or if bare return
-                        if has_bare or ((assigned or compound or incdec or multi_assign) and not shadowed):
+                        if has_bare or assigned or compound or incdec or multi_assign:
                             decls += f"\tvar {rname} {rtype}\n"
                 helper_decl = helper_sig + decls + rewritten_body + "}\n\n"
                 new_src_parts.append(helper_decl)
