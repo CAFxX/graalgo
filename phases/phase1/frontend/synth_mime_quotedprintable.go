@@ -11,6 +11,13 @@ package main
 // syntheticMimeQuotedprintableSource is the P3-M9 synthetic `mime/quotedprintable` package.
 const syntheticMimeQuotedprintableSource = `package quotedprintable
 
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"io"
+)
+
 // Copyright 2012 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -41,6 +48,7 @@ type __qpfromHexPair struct {
 }
 
 func __qpfromHex(b byte) __qpfromHexPair {
+
 	switch {
 	case b >= '0' && b <= '9':
 		return __qpfromHexPair{f0: b - '0', f1: nil}
@@ -65,14 +73,16 @@ type __qpreadHexBytePair struct {
 }
 
 func __qpreadHexByte(v []byte) __qpreadHexBytePair {
+	var err error
+
 	if len(v) < 2 {
 		return __qpreadHexBytePair{b: 0, err: io.ErrUnexpectedEOF}
 	}
 	var hb, lb byte
-	if hb, err = fromHex(v[0]); err != nil {
+__mrtmp2 := __qpfromHex(v[0]); if hb, err = __mrtmp2.f0, __mrtmp2.f1; err != nil {
 		return __qpreadHexBytePair{b: 0, err: err}
 	}
-	if lb, err = fromHex(v[1]); err != nil {
+__mrtmp3 := __qpfromHex(v[1]); if lb, err = __mrtmp3.f0, __mrtmp3.f1; err != nil {
 		return __qpreadHexBytePair{b: 0, err: err}
 	}
 	return __qpreadHexBytePair{b: hb<<4 | lb, err: nil}
@@ -108,6 +118,9 @@ type __qpReaderReadPair struct {
 }
 
 func __qpReaderRead(r *Reader, p []byte) __qpReaderReadPair {
+	var n int
+	var err error
+
 	// Deviations from RFC 2045:
 	// 1. in addition to "=\r\n", "=\n" is also treated as soft line break.
 	// 2. it will pass through a '\r' or '\n' not preceded by '=', consistent
@@ -149,7 +162,7 @@ func __qpReaderRead(r *Reader, p []byte) __qpReaderReadPair {
 
 		switch {
 		case b == '=':
-			b, err = readHexByte(r.line[1:])
+__mrtmp1 := __qpreadHexByte(r.line[1:]); b, err = __mrtmp1.b, __mrtmp1.err
 			if err != nil {
 				if len(r.line) >= 2 && r.line[1] != '\r' && r.line[1] != '\n' {
 					// Take the = as a literal =.
@@ -218,6 +231,8 @@ type __qpWriterWritePair struct {
 }
 
 func __qpWriterWrite(w *Writer, p []byte) __qpWriterWritePair {
+	var n int
+
 	for i, b := range p {
 		switch {
 		// Simple writes are done in batch.
@@ -366,7 +381,7 @@ func (w *Writer) insertCRLF() error {
 
 
 func (w *Writer) flush() error {
-	if _, err := w.w.Write(w.line[:w.i]); err != nil {
+__mrtmp4 := __qpWriterWrite(w.line[:w.i]); if _, err := __mrtmp4.n, __mrtmp4.err; err != nil {
 		return err
 	}
 

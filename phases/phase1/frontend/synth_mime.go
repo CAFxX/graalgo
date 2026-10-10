@@ -298,7 +298,7 @@ func __mimedecode2231Enc(v string) __mimedecode2231EncPair {
 		// Empty or unsupported encoding.
 		return __mimedecode2231EncPair{f0: "", f1: false}
 	}
-	__pairtmp1 := __mimepercentHexUnescape(extOtherVals); return __mimedecode2231EncPair{f0: __pairtmp1.f0, f1: __pairtmp1.f1}
+	return __mimedecode2231EncPair{__mimepercentHexUnescape(extOtherVals)}
 }
 
 func decode2231Enc(v string) (string, bool) {
@@ -350,7 +350,7 @@ func __mimeconsumeValue(v string) __mimeconsumeValuePair {
 		return __mimeconsumeValuePair{value, rest}
 	}
 	if v[0] != '"' {
-		__pairtmp2 := __mimeconsumeToken(v); return __mimeconsumeValuePair{value: __pairtmp2.token, rest: __pairtmp2.rest}
+		return __mimeconsumeValuePair{__mimeconsumeToken(v)}
 	}
 
 	// parse a quoted-string
@@ -853,9 +853,9 @@ func __mimedecode(encoding byte, text string) __mimedecodePair {
 
 	switch encoding {
 	case 'B', 'b':
-		__dectmp0, __dectmp1 := base64.StdEncoding.DecodeString(text); return __mimedecodePair{f0: __dectmp0, f1: __dectmp1}
+		return __mimedecodePair{base64.StdEncoding.DecodeString(text)}
 	case 'Q', 'q':
-		__qtmp := __mimeqDecode(text); return __mimedecodePair{f0: __qtmp.f0, f1: __qtmp.f1}
+		return __mimedecodePair{__mimeqDecode(text)}
 	default:
 		return __mimedecodePair{f0: nil, f1: errInvalidWord}
 	}
