@@ -11,6 +11,19 @@ package main
 // syntheticMimeSource is the P3-M9 synthetic `mime` package.
 const syntheticMimeSource = `package mime
 
+import (
+	"bytes"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"slices"
+	"strings"
+	"unicode"
+	"unicode/utf8"
+)
+
 // Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -102,7 +115,7 @@ func FormatMediaType(t string, param map[string]string) string {
 
 
 func checkMediaTypeDisposition(s string) error {
-	typ, rest := consumeToken(s)
+__mrtmp5 := __mimeconsumeToken(s); typ, rest := __mrtmp5.token, __mrtmp5.rest
 	if typ == "" {
 		return errNoMediaType
 	}
@@ -113,7 +126,7 @@ func checkMediaTypeDisposition(s string) error {
 	if rest, ok = strings.CutPrefix(rest, "/"); !ok {
 		return errNoSlashAfterFirstToken
 	}
-	subtype, rest := consumeToken(rest)
+__mrtmp6 := __mimeconsumeToken(rest); subtype, rest := __mrtmp6.token, __mrtmp6.rest
 	if subtype == "" {
 		return errNoTokenAfterSlash
 	}
@@ -154,6 +167,10 @@ type __mimeParseMediaTypePair struct {
 }
 
 func __mimeParseMediaType(v string) __mimeParseMediaTypePair {
+	var mediatype string
+	var params map[string]string
+	var err error
+
 	base, _, _ := strings.Cut(v, ";")
 	mediatype = strings.TrimSpace(strings.ToLower(base))
 
@@ -175,7 +192,7 @@ func __mimeParseMediaType(v string) __mimeParseMediaTypePair {
 		if len(v) == 0 {
 			break
 		}
-		key, value, rest := consumeMediaParam(v)
+__mrtmp2 := __mimeconsumeMediaParam(v); key, value, rest := __mrtmp2.param, __mrtmp2.value, __mrtmp2.rest
 		if key == "" {
 			if strings.TrimSpace(rest) == ";" {
 				// Ignore trailing semicolons.
@@ -210,7 +227,7 @@ func __mimeParseMediaType(v string) __mimeParseMediaTypePair {
 	for key, pieceMap := range continuation {
 		singlePartKey := key + "*"
 		if v, ok := pieceMap[singlePartKey]; ok {
-			if decv, ok := decode2231Enc(v); ok {
+__mrtmp3 := __mimedecode2231Enc(v); if decv, ok := __mrtmp3.f0, __mrtmp3.f1; ok {
 				params[key] = decv
 			}
 			continue
@@ -232,11 +249,11 @@ func __mimeParseMediaType(v string) __mimeParseMediaTypePair {
 			}
 			valid = true
 			if n == 0 {
-				if decv, ok := decode2231Enc(v); ok {
+__mrtmp4 := __mimedecode2231Enc(v); if decv, ok := __mrtmp4.f0, __mrtmp4.f1; ok {
 					buf.WriteString(decv)
 				}
 			} else {
-				decv, _ := percentHexUnescape(v)
+__mrtmp1 := __mimepercentHexUnescape(v); decv, _ := __mrtmp1.f0, __mrtmp1.f1
 				buf.WriteString(decv)
 			}
 		}
@@ -262,6 +279,7 @@ type __mimedecode2231EncPair struct {
 }
 
 func __mimedecode2231Enc(v string) __mimedecode2231EncPair {
+
 	charset, v, ok := strings.Cut(v, "'")
 	if !ok {
 		return __mimedecode2231EncPair{f0: "", f1: false}
@@ -280,7 +298,7 @@ func __mimedecode2231Enc(v string) __mimedecode2231EncPair {
 		// Empty or unsupported encoding.
 		return __mimedecode2231EncPair{f0: "", f1: false}
 	}
-	return __mimedecode2231EncPair{percentHexUnescape(extOtherVals)}
+	__pairtmp1 := __mimepercentHexUnescape(extOtherVals); return __mimedecode2231EncPair{f0: __pairtmp1.f0, f1: __pairtmp1.f1}
 }
 
 func decode2231Enc(v string) (string, bool) {
@@ -294,17 +312,18 @@ func decode2231Enc(v string) (string, bool) {
 // the token consumed and the rest of the string. Returns ("", v) on
 // failure to consume at least one character.
 type __mimeconsumeTokenPair struct {
-	f0 token
+	token string
 	rest string
 }
 
 func __mimeconsumeToken(v string) __mimeconsumeTokenPair {
+
 	for i := range len(v) {
 		if !isTokenChar(v[i]) {
-			return __mimeconsumeTokenPair{f0: v[:i], rest: v[i:]}
+			return __mimeconsumeTokenPair{token: v[:i], rest: v[i:]}
 		}
 	}
-	return __mimeconsumeTokenPair{f0: v, rest: ""}
+	return __mimeconsumeTokenPair{token: v, rest: ""}
 }
 
 func consumeToken(v string) (token, rest string) {
@@ -319,16 +338,19 @@ func consumeToken(v string) (token, rest string) {
 // quoted-string) and the rest of the string. On failure, returns
 // ("", v).
 type __mimeconsumeValuePair struct {
-	f0 value
+	value string
 	rest string
 }
 
 func __mimeconsumeValue(v string) __mimeconsumeValuePair {
+	var value string
+	var rest string
+
 	if v == "" {
-		return __mimeconsumeValuePair{f0, rest}
+		return __mimeconsumeValuePair{value, rest}
 	}
 	if v[0] != '"' {
-		return __mimeconsumeValuePair{consumeToken(v)}
+		__pairtmp2 := __mimeconsumeToken(v); return __mimeconsumeValuePair{value: __pairtmp2.token, rest: __pairtmp2.rest}
 	}
 
 	// parse a quoted-string
@@ -336,7 +358,7 @@ func __mimeconsumeValue(v string) __mimeconsumeValuePair {
 	for i := 1; i < len(v); i++ {
 		r := v[i]
 		if r == '"' {
-			return __mimeconsumeValuePair{f0: buffer.String(), rest: v[i+1:]}
+			return __mimeconsumeValuePair{value: buffer.String(), rest: v[i+1:]}
 		}
 		// When MSIE sends a full file path (in "intranet mode"), it does not
 		// escape backslashes: "C:\dev\go\foo.txt", not "C:\\dev\\go\\foo.txt".
@@ -354,12 +376,12 @@ func __mimeconsumeValue(v string) __mimeconsumeValuePair {
 			continue
 		}
 		if r == '\r' || r == '\n' {
-			return __mimeconsumeValuePair{f0: "", rest: v}
+			return __mimeconsumeValuePair{value: "", rest: v}
 		}
 		buffer.WriteByte(v[i])
 	}
 	// Did not find end quote.
-	return __mimeconsumeValuePair{f0: "", rest: v}
+	return __mimeconsumeValuePair{value: "", rest: v}
 }
 
 func consumeValue(v string) (value, rest string) {
@@ -369,36 +391,39 @@ func consumeValue(v string) (value, rest string) {
 
 
 type __mimeconsumeMediaParamPair struct {
-	f0 param
-	f1 value
+	param string
+	value string
 	rest string
 }
 
 func __mimeconsumeMediaParam(v string) __mimeconsumeMediaParamPair {
+	var param string
+	var rest string
+
 	rest = strings.TrimLeftFunc(v, unicode.IsSpace)
 	var ok bool
 	if rest, ok = strings.CutPrefix(rest, ";"); !ok {
-		return __mimeconsumeMediaParamPair{f0: "", f1: "", rest: v}
+		return __mimeconsumeMediaParamPair{param: "", value: "", rest: v}
 	}
 
 	rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
-	param, rest = consumeToken(rest)
+__mrtmp7 := __mimeconsumeToken(rest); param, rest = __mrtmp7.token, __mrtmp7.rest
 	param = strings.ToLower(param)
 	if param == "" {
-		return __mimeconsumeMediaParamPair{f0: "", f1: "", rest: v}
+		return __mimeconsumeMediaParamPair{param: "", value: "", rest: v}
 	}
 
 	rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
 	if rest, ok = strings.CutPrefix(rest, "="); !ok {
-		return __mimeconsumeMediaParamPair{f0: "", f1: "", rest: v}
+		return __mimeconsumeMediaParamPair{param: "", value: "", rest: v}
 	}
 	rest = strings.TrimLeftFunc(rest, unicode.IsSpace)
-	value, rest2 := consumeValue(rest)
+__mrtmp8 := __mimeconsumeValue(rest); value, rest2 := __mrtmp8.value, __mrtmp8.rest
 	if value == "" && rest2 == rest {
-		return __mimeconsumeMediaParamPair{f0: "", f1: "", rest: v}
+		return __mimeconsumeMediaParamPair{param: "", value: "", rest: v}
 	}
 	rest = rest2
-	return __mimeconsumeMediaParamPair{f0: param, f1: value, rest: rest}
+	return __mimeconsumeMediaParamPair{param: param, value: value, rest: rest}
 }
 
 func consumeMediaParam(v string) (param, value, rest string) {
@@ -413,6 +438,7 @@ type __mimepercentHexUnescapePair struct {
 }
 
 func __mimepercentHexUnescape(s string) __mimepercentHexUnescapePair {
+
 	// Count %, check that they're well-formed.
 	percents := 0
 	for i := 0; i < len(s); {
@@ -422,12 +448,12 @@ func __mimepercentHexUnescape(s string) __mimepercentHexUnescapePair {
 		}
 		percents++
 		if i+2 >= len(s) || !ishex(s[i+1]) || !ishex(s[i+2]) {
-			return "", false
+			return __mimepercentHexUnescapePair{f0: "", f1: false}
 		}
 		i += 3
 	}
 	if percents == 0 {
-		return s, true
+		return __mimepercentHexUnescapePair{f0: s, f1: true}
 	}
 
 	t := make([]byte, len(s)-2*percents)
@@ -444,36 +470,14 @@ func __mimepercentHexUnescape(s string) __mimepercentHexUnescapePair {
 			i++
 		}
 	}
-	return string(t), true
-}
-
-func ishex(c byte) bool {
-	switch {
-	case '0' <= c && c <= '9':
-		return true
-	case 'a' <= c && c <= 'f':
-		return true
-	case 'A' <= c && c <= 'F':
-		return true
-	}
-	return false
-}
-
-func unhex(c byte) byte {
-	switch {
-	case '0' <= c && c <= '9':
-		return c - '0'
-	case 'a' <= c && c <= 'f':
-		return c - 'a' + 10
-	case 'A' <= c && c <= 'F':
-		return c - 'A' + 10
-	}
-	return 0
+	return __mimepercentHexUnescapePair{f0: string(t), f1: true}
 }
 
 func percentHexUnescape(s string) (string, bool) {
 	panic("mime.percentHexUnescape: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
 }
+
+
 
 func ishex(c byte) bool {
 	switch {
@@ -565,6 +569,8 @@ func (e WordEncoder) encodeWord(charset, s string) string {
 	return buf.String()
 }
 
+
+
 const (
 	// The maximum length of an encoded-word is 75 characters.
 	// See RFC 2047, section 2.
@@ -577,121 +583,6 @@ const (
 var maxBase64Len = base64.StdEncoding.DecodedLen(maxContentLen)
 
 // bEncode encodes s using base64 encoding and writes it to buf.
-func (e WordEncoder) bEncode(buf *strings.Builder, charset, s string) {
-	w := base64.NewEncoder(base64.StdEncoding, buf)
-	// If the charset is not UTF-8 or if the content is short, do not bother
-	// splitting the encoded-word.
-	if !isUTF8(charset) || base64.StdEncoding.EncodedLen(len(s)) <= maxContentLen {
-		io.WriteString(w, s)
-		w.Close()
-		return
-	}
-
-	var currentLen, last, runeLen int
-	for i := 0; i < len(s); i += runeLen {
-		// Multi-byte characters must not be split across encoded-words.
-		// See RFC 2047, section 5.3.
-		_, runeLen = utf8.DecodeRuneInString(s[i:])
-
-		if currentLen+runeLen <= maxBase64Len {
-			currentLen += runeLen
-		} else {
-			io.WriteString(w, s[last:i])
-			w.Close()
-			e.splitWord(buf, charset)
-			last = i
-			currentLen = runeLen
-		}
-	}
-	io.WriteString(w, s[last:])
-	w.Close()
-}
-
-// qEncode encodes s using Q encoding and writes it to buf. It splits the
-// encoded-words when necessary.
-func (e WordEncoder) qEncode(buf *strings.Builder, charset, s string) {
-	// We only split encoded-words when the charset is UTF-8.
-	if !isUTF8(charset) {
-		writeQString(buf, s)
-		return
-	}
-
-	var currentLen, runeLen int
-	for i := 0; i < len(s); i += runeLen {
-		b := s[i]
-		// Multi-byte characters must not be split across encoded-words.
-		// See RFC 2047, section 5.3.
-		var encLen int
-		if b >= ' ' && b <= '~' && b != '=' && b != '?' && b != '_' {
-			runeLen, encLen = 1, 1
-		} else {
-			_, runeLen = utf8.DecodeRuneInString(s[i:])
-			encLen = 3 * runeLen
-		}
-
-		if currentLen+encLen > maxContentLen {
-			e.splitWord(buf, charset)
-			currentLen = 0
-		}
-		writeQString(buf, s[i:i+runeLen])
-		currentLen += encLen
-	}
-}
-
-// writeQString encodes s using Q encoding and writes it to buf.
-func writeQString(buf *strings.Builder, s string) {
-	for i := 0; i < len(s); i++ {
-		switch b := s[i]; {
-		case b == ' ':
-			buf.WriteByte('_')
-		case b >= '!' && b <= '~' && b != '=' && b != '?' && b != '_':
-			buf.WriteByte(b)
-		default:
-			buf.WriteByte('=')
-			buf.WriteByte(upperhex[b>>4])
-			buf.WriteByte(upperhex[b&0x0f])
-		}
-	}
-}
-
-// openWord writes the beginning of an encoded-word into buf.
-func (e WordEncoder) openWord(buf *strings.Builder, charset string) {
-	buf.WriteString("=?")
-	buf.WriteString(charset)
-	buf.WriteByte('?')
-	buf.WriteByte(byte(e))
-	buf.WriteByte('?')
-}
-
-// closeWord writes the end of an encoded-word into buf.
-func closeWord(buf *strings.Builder) {
-	buf.WriteString("?=")
-}
-
-// splitWord closes the current encoded-word and opens a new one.
-func (e WordEncoder) splitWord(buf *strings.Builder, charset string) {
-	closeWord(buf)
-	buf.WriteByte(' ')
-	e.openWord(buf, charset)
-}
-
-func isUTF8(charset string) bool {
-	return strings.EqualFold(charset, "UTF-8")
-}
-
-const upperhex = "0123456789ABCDEF"
-
-// A WordDecoder decodes MIME headers containing RFC 2047 encoded-words.
-type WordDecoder struct {
-	// CharsetReader, if non-nil, defines a function to generate
-	// charset-conversion readers, converting from the provided
-	// charset into UTF-8.
-	// Charsets are always lower-case. utf-8, iso-8859-1 and us-ascii charsets
-	// are handled by default.
-	// One of the CharsetReader's result values must be non-nil.
-	CharsetReader func(charset string, input io.Reader) (io.Reader, error)
-}
-
 func (e WordEncoder) bEncode(buf *strings.Builder, charset, s string) {
 	w := base64.NewEncoder(base64.StdEncoding, buf)
 	// If the charset is not UTF-8 or if the content is short, do not bother
@@ -828,6 +719,7 @@ type __mimeWordDecoderDecodePair struct {
 }
 
 func __mimeWordDecoderDecode(d *WordDecoder, word string) __mimeWordDecoderDecodePair {
+
 	// See https://tools.ietf.org/html/rfc2047#section-2 for details.
 	// Our decoder is permissive, we accept empty encoded-text.
 	if len(word) < 8 || !strings.HasPrefix(word, "=?") || !strings.HasSuffix(word, "?=") || strings.Count(word, "?") != 4 {
@@ -845,7 +737,7 @@ func __mimeWordDecoderDecode(d *WordDecoder, word string) __mimeWordDecoderDecod
 		return __mimeWordDecoderDecodePair{f0: "", f1: errInvalidWord}
 	}
 
-	content, err := decode(encoding[0], text)
+__mrtmp12 := __mimedecode(encoding[0], text); content, err := __mrtmp12.f0, __mrtmp12.f1
 	if err != nil {
 		return __mimeWordDecoderDecodePair{f0: "", f1: err}
 	}
@@ -871,6 +763,7 @@ type __mimeWordDecoderDecodeHeaderPair struct {
 }
 
 func __mimeWordDecoderDecodeHeader(d *WordDecoder, header string) __mimeWordDecoderDecodeHeaderPair {
+
 	// If there is no encoded-word, returns before creating a buffer.
 	i := strings.Index(header, "=?")
 	if i == -1 {
@@ -915,7 +808,7 @@ func __mimeWordDecoderDecodeHeader(d *WordDecoder, header string) __mimeWordDeco
 		text := header[cur : cur+j]
 		end := cur + j + len("?=")
 
-		content, err := decode(encoding, text)
+__mrtmp13 := __mimedecode(encoding, text); content, err := __mrtmp13.f0, __mrtmp13.f1
 		if err != nil {
 			betweenWords = false
 			buf.WriteString(header[:end])
@@ -956,11 +849,12 @@ type __mimedecodePair struct {
 }
 
 func __mimedecode(encoding byte, text string) __mimedecodePair {
+
 	switch encoding {
 	case 'B', 'b':
-		return __mimedecodePair{base64.StdEncoding.DecodeString(text)}
+		__dectmp0, __dectmp1 := base64.StdEncoding.DecodeString(text); return __mimedecodePair{f0: __dectmp0, f1: __dectmp1}
 	case 'Q', 'q':
-		return __mimedecodePair{qDecode(text)}
+		__qtmp := __mimeqDecode(text); return __mimedecodePair{f0: __qtmp.f0, f1: __qtmp.f1}
 	default:
 		return __mimedecodePair{f0: nil, f1: errInvalidWord}
 	}
@@ -1029,6 +923,7 @@ type __mimeqDecodePair struct {
 }
 
 func __mimeqDecode(s string) __mimeqDecodePair {
+
 	dec := make([]byte, len(s))
 	n := 0
 	for i := 0; i < len(s); i++ {
@@ -1039,7 +934,7 @@ func __mimeqDecode(s string) __mimeqDecodePair {
 			if i+2 >= len(s) {
 				return __mimeqDecodePair{f0: nil, f1: errInvalidWord}
 			}
-			b, err := readHexByte(s[i+1], s[i+2])
+__mrtmp9 := __mimereadHexByte(s[i+1], s[i+2]); b, err := __mrtmp9.f0, __mrtmp9.f1
 			if err != nil {
 				return __mimeqDecodePair{f0: nil, f1: err}
 			}
@@ -1069,12 +964,13 @@ type __mimereadHexBytePair struct {
 }
 
 func __mimereadHexByte(a, b byte) __mimereadHexBytePair {
+
 	var hb, lb byte
 	var err error
-	if hb, err = fromHex(a); err != nil {
+__mrtmp10 := __mimefromHex(a); if hb, err = __mrtmp10.f0, __mrtmp10.f1; err != nil {
 		return __mimereadHexBytePair{f0: 0, f1: err}
 	}
-	if lb, err = fromHex(b); err != nil {
+__mrtmp11 := __mimefromHex(b); if lb, err = __mrtmp11.f0, __mrtmp11.f1; err != nil {
 		return __mimereadHexBytePair{f0: 0, f1: err}
 	}
 	return __mimereadHexBytePair{f0: hb<<4 | lb, f1: nil}
@@ -1092,6 +988,7 @@ type __mimefromHexPair struct {
 }
 
 func __mimefromHex(b byte) __mimefromHexPair {
+
 	switch {
 	case b >= '0' && b <= '9':
 		return __mimefromHexPair{f0: b - '0', f1: nil}
