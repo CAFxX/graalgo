@@ -1204,6 +1204,23 @@ func ExportFile(path string) (string, error) {
 					if !ok {
 						return "", scopeErrorf("package-level type spec %T is not supported (WS D)", spec)
 					}
+					tn, ok := e.info.Defs[ts.Name].(*types.TypeName)
+					if !ok {
+						return "", fmt.Errorf("gofrontend: type name %q has no *types.TypeName object", ts.Name.Name)
+					}
+					// P3-M9 (generics, Gap 2): skip generic template definitions.
+					// tn.Type() is the *types.Named (e.g., nistPoint[T]); the
+					// underlying interface/struct is e.info.Types[ts.Type].Type.
+					// Only the Named tells us if it's a generic template.
+					if named, ok := tn.Type().(*types.Named); ok {
+						if origin := named.Origin(); origin == named {
+							if tparams := origin.TypeParams(); tparams != nil && tparams.Len() > 0 {
+								if named.TypeArgs() == nil || named.TypeArgs().Len() == 0 {
+									continue
+								}
+							}
+						}
+					}
 					if _, err := e.typeID(e.info.Types[ts.Type].Type); err != nil {
 						return "", err
 					}
@@ -3789,7 +3806,35 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		// P2-3: single renderer (namedTypeName) — a second copy here would
 		// silently mint two wire ids for one type if they ever drifted,
 		// breaking the t == dyn identity B2a/B4 rest on.
-		under, err := e.typeID(t.Underlying())
+		//
+		// P3-M9 (generics, Gap 2): monomorphize generic type definitions.
+		// If this Named is an instantiation (has type arguments), bind the
+		// origin's type parameters to the type arguments and describe the
+		// underlying type with substitution active. This yields concrete
+		// field types (e.g., newPoint func() *nistec.P256Point instead of
+		// func() Point), so no "typeparam" kinds leak into the type table
+		// — the Java backend rejects them ("unknown composite type kind").
+		// Generic template definitions themselves are skipped at type
+		// declaration processing (see exportStmt GenDecl TYPE case).
+		underlying := t.Underlying()
+		savedSubst := e.subst
+		savedSubstTypeIDs := e.substTypeIDs
+		if targs := t.TypeArgs(); targs != nil && targs.Len() > 0 {
+			if origin := t.Origin(); origin != t {
+				if tparams := origin.TypeParams(); tparams != nil && tparams.Len() > 0 {
+					targsList := make([]types.Type, targs.Len())
+					for i := range targsList {
+						targsList[i] = targs.At(i)
+					}
+					bind := bindParams(tparams, targsList)
+					e.subst = &typeSubst{parent: savedSubst, bind: bind}
+					e.substTypeIDs = make(map[types.Type]int)
+				}
+			}
+		}
+		under, err := e.typeID(underlying)
+		e.subst = savedSubst
+		e.substTypeIDs = savedSubstTypeIDs
 		if err != nil {
 			return TypeEnt{}, err
 		}
@@ -5416,6 +5461,23 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 				tn, ok := e.info.Defs[ts.Name].(*types.TypeName)
 				if !ok {
 					return nil, fmt.Errorf("gofrontend: type name %q has no *types.TypeName object", ts.Name.Name)
+				}
+				// P3-M9 (generics, Gap 2): skip generic template definitions.
+				// A generic Named (e.g., nistCurve[Point]) is never used
+				// directly in valid Go code — only its instantiations
+				// (e.g., nistCurve[MyPoint]) appear. Describing the template
+				// would leak "typeparam" kinds into the type table, which
+				// the Java backend rejects. Instantiations are described
+				// on demand via typeID with monomorphization (see
+				// describeType).
+				if named, ok := tn.Type().(*types.Named); ok {
+					if origin := named.Origin(); origin == named {
+						if tparams := origin.TypeParams(); tparams != nil && tparams.Len() > 0 {
+							if named.TypeArgs() == nil || named.TypeArgs().Len() == 0 {
+								continue
+							}
+						}
+					}
 				}
 				if _, err := e.typeID(tn.Type()); err != nil {
 					return nil, err
