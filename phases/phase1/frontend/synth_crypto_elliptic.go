@@ -345,8 +345,24 @@ func newP256Point() *p256Point { return nistec.NewP256Point() }
 func newP384Point() *p384Point { return nistec.NewP384Point() }
 func newP521Point() *p521Point { return nistec.NewP521Point() }
 
-var p224 = &nistCurve[*p224Point]{
-	newPoint: newP224Point,
+// P3-M9: concrete wrapper to avoid generic instantiation as Curve
+// interface (P3-M3 scope: method tables for instantiated methods not
+// supported). Delegates to the embedded generic nistCurve.
+type p224Curve struct {
+	*nistCurve[*p224Point]
+}
+
+func (c *p224Curve) Params() *CurveParams { return c.nistCurve.Params() }
+func (c *p224Curve) IsOnCurve(x, y *big.Int) bool { return c.nistCurve.IsOnCurve(x, y) }
+func (c *p224Curve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) { return c.nistCurve.Add(x1, y1, x2, y2) }
+func (c *p224Curve) Double(x1, y1 *big.Int) (x, y *big.Int) { return c.nistCurve.Double(x1, y1) }
+func (c *p224Curve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) { return c.nistCurve.ScalarMult(x1, y1, k) }
+func (c *p224Curve) ScalarBaseMult(k []byte) (x, y *big.Int) { return c.nistCurve.ScalarBaseMult(k) }
+
+var p224 = &p224Curve{
+	nistCurve: &nistCurve[*p224Point]{
+		newPoint: newP224Point,
+	},
 }
 
 func initP224() {
@@ -362,8 +378,21 @@ func initP224() {
 	}
 }
 
-var p256 = &nistCurve[*p256Point]{
-	newPoint: newP256Point,
+type p256Curve struct {
+	*nistCurve[*p256Point]
+}
+
+func (c *p256Curve) Params() *CurveParams { return c.nistCurve.Params() }
+func (c *p256Curve) IsOnCurve(x, y *big.Int) bool { return c.nistCurve.IsOnCurve(x, y) }
+func (c *p256Curve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) { return c.nistCurve.Add(x1, y1, x2, y2) }
+func (c *p256Curve) Double(x1, y1 *big.Int) (x, y *big.Int) { return c.nistCurve.Double(x1, y1) }
+func (c *p256Curve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) { return c.nistCurve.ScalarMult(x1, y1, k) }
+func (c *p256Curve) ScalarBaseMult(k []byte) (x, y *big.Int) { return c.nistCurve.ScalarBaseMult(k) }
+
+var p256 = &p256Curve{
+	nistCurve: &nistCurve[*p256Point]{
+		newPoint: newP256Point,
+	},
 }
 
 func initP256() {
@@ -379,8 +408,21 @@ func initP256() {
 	}
 }
 
-var p384 = &nistCurve[*p384Point]{
-	newPoint: newP384Point,
+type p384Curve struct {
+	*nistCurve[*p384Point]
+}
+
+func (c *p384Curve) Params() *CurveParams { return c.nistCurve.Params() }
+func (c *p384Curve) IsOnCurve(x, y *big.Int) bool { return c.nistCurve.IsOnCurve(x, y) }
+func (c *p384Curve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) { return c.nistCurve.Add(x1, y1, x2, y2) }
+func (c *p384Curve) Double(x1, y1 *big.Int) (x, y *big.Int) { return c.nistCurve.Double(x1, y1) }
+func (c *p384Curve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) { return c.nistCurve.ScalarMult(x1, y1, k) }
+func (c *p384Curve) ScalarBaseMult(k []byte) (x, y *big.Int) { return c.nistCurve.ScalarBaseMult(k) }
+
+var p384 = &p384Curve{
+	nistCurve: &nistCurve[*p384Point]{
+		newPoint: newP384Point,
+	},
 }
 
 func initP384() {
@@ -401,8 +443,21 @@ func initP384() {
 	}
 }
 
-var p521 = &nistCurve[*p521Point]{
-	newPoint: newP521Point,
+type p521Curve struct {
+	*nistCurve[*p521Point]
+}
+
+func (c *p521Curve) Params() *CurveParams { return c.nistCurve.Params() }
+func (c *p521Curve) IsOnCurve(x, y *big.Int) bool { return c.nistCurve.IsOnCurve(x, y) }
+func (c *p521Curve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) { return c.nistCurve.Add(x1, y1, x2, y2) }
+func (c *p521Curve) Double(x1, y1 *big.Int) (x, y *big.Int) { return c.nistCurve.Double(x1, y1) }
+func (c *p521Curve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) { return c.nistCurve.ScalarMult(x1, y1, k) }
+func (c *p521Curve) ScalarBaseMult(k []byte) (x, y *big.Int) { return c.nistCurve.ScalarBaseMult(k) }
+
+var p521 = &p521Curve{
+	nistCurve: &nistCurve[*p521Point]{
+		newPoint: newP521Point,
+	},
 }
 
 func initP521() {
