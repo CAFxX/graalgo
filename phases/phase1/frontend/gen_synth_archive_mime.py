@@ -54,7 +54,7 @@ def extract_functions(src):
                 depth += 1
             elif c == '}':
                 depth -= 1
-            elif c in '"\'`':
+            elif c in ('"', "'", '`'):
                 # Skip strings/chars/raw strings
                 q = c
                 i += 1
@@ -188,7 +188,7 @@ def rewrite_body_returns(body, pair_name, fields):
         depth = 0
         while j < n:
             c = body[j]
-            if c in '"\'`':
+            if c in ('"', "'", '`'):
                 j = skip_string(j, c)
                 continue
             if body.startswith('//', j):
@@ -214,7 +214,7 @@ def rewrite_body_returns(body, pair_name, fields):
         if not m:
             # Copy char, handling strings
             c = body[i]
-            if c in '"\'`':
+            if c in ('"', "'", '`'):
                 j = skip_string(i, c)
                 out.append(body[i:j])
                 i = j
@@ -241,7 +241,7 @@ def rewrite_body_returns(body, pair_name, fields):
         depth = 0
         while k < n:
             c = body[k]
-            if c in '"\'`':
+            if c in ('"', "'", '`'):
                 k = skip_string(k, c)
                 continue
             if body.startswith('//', k):
