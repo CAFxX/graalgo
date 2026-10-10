@@ -999,6 +999,11 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// entries exist so the frontend can classify the calls.
 	{"math/big", "Precision", "fmtPrecisionPair", []string{"prec", "ok"}},
 	{"math/big", "Width", "fmtWidthPair", []string{"wid", "ok"}},
+	// P3-M9 (WS D): crypto/elliptic.unmarshaler interface (2-result).
+	// The Unmarshal/UnmarshalCompressed methods dispatch via itab to the
+	// concrete nistCurve helpers. Pair types live in synthetic elliptic.
+	{"crypto/elliptic", "Unmarshal", "__mrUnmarshalPair", []string{"x", "y"}},
+	{"crypto/elliptic", "UnmarshalCompressed", "__mrUnmarshalCompressedPair", []string{"x", "y"}},
 }
 
 // mrPlan is the desugar plan for one classified call.

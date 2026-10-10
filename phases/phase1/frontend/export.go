@@ -7496,13 +7496,21 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 		// x.f is addressable if x is addressable.
 		return isAddressable(x.X, info)
 	case *ast.IndexExpr:
-		// s[i] is addressable if s is a slice or array (not a map or
-		// string). P3-M9: arrays were missing — &powers[i] on [1<<n]nat
-		// failed (math/big karatsuba).
+		// s[i] is addressable if s is a slice, array, or pointer to array
+		// (not a map or string). P3-M9: arrays were missing — &powers[i]
+		// on [1<<n]nat failed (math/big karatsuba). P3-M9: pointer-to-array
+		// was missing — tables[i].Select where tables is *[N]p224Table
+		// failed (nistec).
 		if tv, ok := info.Types[x.X]; ok && tv.Type != nil {
-			switch tv.Type.Underlying().(type) {
+			ut := tv.Type.Underlying()
+			switch ut.(type) {
 			case *types.Slice, *types.Array:
 				return true
+			case *types.Pointer:
+				// Pointer to array: (*tables)[i] is addressable.
+				if _, isArr := ut.(*types.Pointer).Elem().Underlying().(*types.Array); isArr {
+					return true
+				}
 			}
 		}
 		return false
