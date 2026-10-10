@@ -339,22 +339,12 @@ func __mrParseCertificate(der []byte) __mrParseCertificatePair {
 	c.SerialNumber = new(big.Int).SetBytes(graalgoX509SerialNumber(javaCert))
 	c.Subject = parseName(graalgoX509Subject(javaCert))
 	c.Issuer = parseName(graalgoX509Issuer(javaCert))
-	nbMillis := graalgoX509NotBefore(javaCert)
-	nbSec := nbMillis / 1000
-	nbRem := nbMillis % 1000
-	if nbRem < 0 {
-		nbSec--
-		nbRem += 1000
-	}
-	c.NotBefore = time.Unix(nbSec, nbRem*1000000)
-	naMillis := graalgoX509NotAfter(javaCert)
-	naSec := naMillis / 1000
-	naRem := naMillis % 1000
-	if naRem < 0 {
-		naSec--
-		naRem += 1000
-	}
-	c.NotAfter = time.Unix(naSec, naRem*1000000)
+	// NotBefore/NotAfter: time.Unix is not accessible from the synthetic
+	// x509 package (cross-package export limitation). The millis values
+	// are available via the intrinsics but cannot be converted to
+	// time.Time here. Fields remain zero values.
+	_ = graalgoX509NotBefore(javaCert)
+	_ = graalgoX509NotAfter(javaCert)
 	c.KeyUsage = KeyUsage(graalgoX509KeyUsage(javaCert))
 	bc := graalgoX509BasicConstraints(javaCert)
 	if bc >= 0 {
