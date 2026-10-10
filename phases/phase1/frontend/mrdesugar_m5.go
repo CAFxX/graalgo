@@ -95,6 +95,12 @@ const (
 	// separate __-helper in a synthetic package), the call is to the
 	// transformed function itself, which already returns the pair.
 	mrUser
+	// P3-M9 (WS D): a multi-result function field call (e.g.,
+	// c.generate(r) where generate is a field of function type on
+	// nistCurve). The selection is FieldVal (not MethodVal). The
+	// desugar calls the function value directly and packs the 2
+	// results into the pair struct from the nistCurveFuncFields table.
+	mrFuncField
 )
 
 // m7MultiResultFunc describes one desugarable M7 multi-result function:
@@ -730,6 +736,32 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"golang.org/x/crypto/cryptobyte", "Bytes", "Builder", "__mrBuilder_Bytes", "", "__mrBuilder_BytesPair", []string{"v0", "v1"}},
 }
 
+// nistCurveFuncField describes one desugarable function field on the
+// synthetic crypto/ecdh nistCurve struct (P3-M9 WS D). The fields
+// (generate, newPrivateKey, newPublicKey, sharedSecret) are of function
+// type with 2 results. Calls like c.generate(r) are FieldVal selections
+// (not MethodVal), so they need a separate table and classifier arm.
+// The pairType is the struct used to pack the 2 results; pairFields are
+// the field names in result order.
+type nistCurveFuncField struct {
+	pkgPath    string   // synthetic package path ("crypto/ecdh")
+	structName string   // struct containing the field ("nistCurve")
+	fieldName  string   // function field name ("generate", etc.)
+	pairType   string   // pair struct type name
+	pairFields []string // field names in result order
+}
+
+// nistCurveFuncFields is the desugar table for the nistCurve function
+// fields. Each entry was verified against the synthetic source:
+// the field exists on nistCurve with a 2-result function type, and the
+// pair struct exists with the named fields.
+var nistCurveFuncFields = []nistCurveFuncField{
+	{"crypto/ecdh", "nistCurve", "generate", "__mrnistCurve_generatePair", []string{"v0", "v1"}},
+	{"crypto/ecdh", "nistCurve", "newPrivateKey", "__mrnistCurve_newPrivateKeyPair", []string{"v0", "v1"}},
+	{"crypto/ecdh", "nistCurve", "newPublicKey", "__mrnistCurve_newPublicKeyPair", []string{"v0", "v1"}},
+	{"crypto/ecdh", "nistCurve", "sharedSecret", "__mrnistCurve_sharedSecretPair", []string{"v0", "v1"}},
+}
+
 // osMultiResultFunc describes one desugarable P3-M8 (wave 2) multi-result
 // function: the synthetic os package's multi-result API (exact gc 1.27.1
 // signatures, fail-fast bodies) plus io/fs's DirEntry.Info (desugared
@@ -1250,6 +1282,77 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					return plan
 				}
 			}
+		}
+	}
+	// P3-M9 (WS D): function field call (e.g., c.generate(r) where
+	// generate is a field of function type on nistCurve). The selection
+	// is FieldVal (not MethodVal), and the field type is *types.Signature
+	// with 2 results. Look up the field in the nistCurveFuncFields table.
+	if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.FieldVal {
+		if v, ok := selection.Obj().(*types.Var); ok {
+			if sig, ok := v.Type().(*types.Signature); ok && sig.Results().Len() == 2 {
+				if plan := classifyNistCurveFuncField(selection, v); plan != nil {
+					return plan
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// classifyNistCurveFuncField recognizes function field calls on the
+// synthetic crypto/ecdh nistCurve struct (P3-M9 WS D). The selection must
+// be a FieldVal on nistCurve, and the field name must be in the
+// nistCurveFuncFields table. Returns nil when the call is not one of
+// the table's fields.
+func classifyNistCurveFuncField(selection *types.Selection, v *types.Var) *mrPlan {
+	// Get the struct type from the receiver.
+	recv := selection.Recv()
+	if recv == nil {
+		return nil
+	}
+	// Unwrap pointer if needed.
+	rt := recv
+	if pt, ok := rt.(*types.Pointer); ok {
+		rt = pt.Elem()
+	}
+	nt, ok := rt.(*types.Named)
+	if !ok || nt.Obj() == nil {
+		return nil
+	}
+	// Check package path and struct name.
+	if nt.Obj().Pkg() == nil || nt.Obj().Pkg().Path() != "crypto/ecdh" {
+		return nil
+	}
+	if nt.Obj().Name() != "nistCurve" {
+		return nil
+	}
+	// Look up the field in the table.
+	fieldName := v.Name()
+	for _, ff := range nistCurveFuncFields {
+		if ff.pkgPath != "crypto/ecdh" || ff.structName != "nistCurve" || ff.fieldName != fieldName {
+			continue
+		}
+		// Verify the signature has 2 results (already checked by caller,
+		// but verify arity matches pairFields).
+		sig, ok := v.Type().(*types.Signature)
+		if !ok || sig.Results().Len() != len(ff.pairFields) {
+			return nil
+		}
+		// Look up the pair type in the synthetic package.
+		sp := getSyntheticPackage(ff.pkgPath)
+		obj := sp.pkg.Scope().Lookup(ff.pairType)
+		if obj == nil {
+			return nil
+		}
+		pairNt, _ := obj.Type().(*types.Named)
+		if pairNt == nil {
+			return nil
+		}
+		return &mrPlan{
+			kind:       mrFuncField,
+			tmpType:    pairNt,
+			pairFields: ff.pairFields,
 		}
 	}
 	return nil
@@ -1917,6 +2020,12 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 		}
 		return e.desugarExtract(s, c, plan, define, tmpName, tmpID, resTid, call, nil)
 	}
+	// P3-M9 (WS D): function field call (e.g., c.generate(r)). The
+	// function value is a field access; call it and pack the 2 results
+	// into the pair struct. Generate a funcfieldcall node.
+	if plan.kind == mrFuncField {
+		return e.desugarFuncFieldCall(s, c, plan, define)
+	}
 	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, err
@@ -1930,6 +2039,51 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 		return nil, err
 	}
 	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, helperCall, preStmts)
+}
+
+// desugarFuncFieldCall desugars a function field call (e.g.,
+// c.generate(r)) where the field is of function type with 2 results.
+// Generates a funcfieldcall node that calls the field's function value
+// and packs the 2 results into the pair struct.
+func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	sel, ok := c.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: funcfieldcall expects SelectorExpr, got %T", c.Fun)
+	}
+	// Export the receiver (e.g., c).
+	recvNode, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	// Export the call args.
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	// Get the pair type ID.
+	pairTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	// Create the funcfieldcall node.
+	// Fields: recv (receiver node), field (field name), args (arg nodes),
+	// pairType (pair struct type ID), pairFields (field names).
+	callNode := e.node("funcfieldcall", c, map[string]any{
+		"recv":       recvNode,
+		"field":      sel.Sel.Name,
+		"args":       args,
+		"pairType":   pairTid,
+		"pairFields": plan.pairFields,
+	})
+	// Create temp var for the pair.
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, pairTid, callNode, nil)
 }
 
 // multiResultHelper resolves a desugar plan's __-helper to its
@@ -2143,7 +2297,7 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser:
+	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {

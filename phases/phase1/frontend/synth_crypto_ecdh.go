@@ -199,11 +199,35 @@ func (k *PrivateKey) Public() crypto.PublicKey {
 
 
 type nistCurve struct {
-	name          string
-	generate      func(io.Reader) (*ecdh.PrivateKey, error)
-	newPrivateKey func([]byte) (*ecdh.PrivateKey, error)
-	newPublicKey  func(publicKey []byte) (*ecdh.PublicKey, error)
-	sharedSecret  func(*ecdh.PrivateKey, *ecdh.PublicKey) (sharedSecret []byte, err error)
+	name string
+	// P3-M9 (WS D): function fields return pair structs (not 2 values)
+	// so that calls like c.generate(r) can be desugared. The pairs use
+	// fips140 types (matching the original 2-result signatures).
+	generate      func(io.Reader) __mrnistCurve_generatePair
+	newPrivateKey func([]byte) __mrnistCurve_newPrivateKeyPair
+	newPublicKey  func(publicKey []byte) __mrnistCurve_newPublicKeyPair
+	sharedSecret  func(*ecdh.PrivateKey, *ecdh.PublicKey) __mrnistCurve_sharedSecretPair
+}
+
+// Pair types for nistCurve function fields (fips140 types).
+type __mrnistCurve_generatePair struct {
+	v0 *ecdh.PrivateKey
+	v1 error
+}
+
+type __mrnistCurve_newPrivateKeyPair struct {
+	v0 *ecdh.PrivateKey
+	v1 error
+}
+
+type __mrnistCurve_newPublicKeyPair struct {
+	v0 *ecdh.PublicKey
+	v1 error
+}
+
+type __mrnistCurve_sharedSecretPair struct {
+	v0 []byte
+	v1 error
 }
 
 func (c *nistCurve) String() string {
@@ -240,7 +264,8 @@ func __mrnistCurve_GenerateKey(c *nistCurve, r io.Reader) __mrnistCurve_Generate
 		return __mrnistCurve_GenerateKeyPair{nil, errors.New("crypto/ecdh: only crypto/rand.Reader is allowed in FIPS 140-only mode")}
 	}
 
-	privateKey, err := c.generate(r)
+	__genPair := c.generate(r)
+	privateKey, err := __genPair.v0, __genPair.v1
 	if err != nil {
 		return __mrnistCurve_GenerateKeyPair{nil, err}
 	}
@@ -298,7 +323,8 @@ func __mrnistCurve_NewPrivateKey(c *nistCurve, key []byte) __mrnistCurve_NewPriv
 		return __mrnistCurve_NewPrivateKeyPair{k, nil}
 	}
 
-	fk, err := c.newPrivateKey(key)
+	__npkPair := c.newPrivateKey(key)
+	fk, err := __npkPair.v0, __npkPair.v1
 	if err != nil {
 		return __mrnistCurve_NewPrivateKeyPair{nil, err}
 	}
@@ -341,7 +367,8 @@ func __mrnistCurve_NewPublicKey(c *nistCurve, key []byte) __mrnistCurve_NewPubli
 		}
 		k.boring = bk
 	} else {
-		fk, err := c.newPublicKey(key)
+		__npubPair := c.newPublicKey(key)
+		fk, err := __npubPair.v0, __npubPair.v1
 		if err != nil {
 			return __mrnistCurve_NewPublicKeyPair{nil, err}
 		}
@@ -371,7 +398,8 @@ func __mrnistCurve_ecdh(c *nistCurve, local *PrivateKey, remote *PublicKey) __mr
 		__fw0, __fw1 := boring.ECDH(local.boring, remote.boring)
 		return __mrnistCurve_ecdhPair{__fw0, __fw1}
 	}
-	__fw0, __fw1 := c.sharedSecret(local.fips, remote.fips)
+	__ssPair := c.sharedSecret(local.fips, remote.fips)
+	__fw0, __fw1 := __ssPair.v0, __ssPair.v1
 	return __mrnistCurve_ecdhPair{__fw0, __fw1}
 }
 
@@ -388,21 +416,21 @@ func P256() Curve { return p256 }
 
 var p256 = &nistCurve{
 	name: "P-256",
-	generate: func(r io.Reader) (*ecdh.PrivateKey, error) {
+	generate: func(r io.Reader) __mrnistCurve_generatePair {
 		k, err := ecdh.GenerateKey(ecdh.P256(), r)
-		return k, err
+		return __mrnistCurve_generatePair{k, err}
 	},
-	newPrivateKey: func(b []byte) (*ecdh.PrivateKey, error) {
+	newPrivateKey: func(b []byte) __mrnistCurve_newPrivateKeyPair {
 		k, err := ecdh.NewPrivateKey(ecdh.P256(), b)
-		return k, err
+		return __mrnistCurve_newPrivateKeyPair{k, err}
 	},
-	newPublicKey: func(publicKey []byte) (*ecdh.PublicKey, error) {
+	newPublicKey: func(publicKey []byte) __mrnistCurve_newPublicKeyPair {
 		k, err := ecdh.NewPublicKey(ecdh.P256(), publicKey)
-		return k, err
+		return __mrnistCurve_newPublicKeyPair{k, err}
 	},
-	sharedSecret: func(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) (sharedSecret []byte, err error) {
+	sharedSecret: func(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) __mrnistCurve_sharedSecretPair {
 		ss, err := ecdh.ECDH(ecdh.P256(), priv, pub)
-		return ss, err
+		return __mrnistCurve_sharedSecretPair{ss, err}
 	},
 }
 
@@ -415,21 +443,21 @@ func P384() Curve { return p384 }
 
 var p384 = &nistCurve{
 	name: "P-384",
-	generate: func(r io.Reader) (*ecdh.PrivateKey, error) {
+	generate: func(r io.Reader) __mrnistCurve_generatePair {
 		k, err := ecdh.GenerateKey(ecdh.P384(), r)
-		return k, err
+		return __mrnistCurve_generatePair{k, err}
 	},
-	newPrivateKey: func(b []byte) (*ecdh.PrivateKey, error) {
+	newPrivateKey: func(b []byte) __mrnistCurve_newPrivateKeyPair {
 		k, err := ecdh.NewPrivateKey(ecdh.P384(), b)
-		return k, err
+		return __mrnistCurve_newPrivateKeyPair{k, err}
 	},
-	newPublicKey: func(publicKey []byte) (*ecdh.PublicKey, error) {
+	newPublicKey: func(publicKey []byte) __mrnistCurve_newPublicKeyPair {
 		k, err := ecdh.NewPublicKey(ecdh.P384(), publicKey)
-		return k, err
+		return __mrnistCurve_newPublicKeyPair{k, err}
 	},
-	sharedSecret: func(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) (sharedSecret []byte, err error) {
+	sharedSecret: func(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) __mrnistCurve_sharedSecretPair {
 		ss, err := ecdh.ECDH(ecdh.P384(), priv, pub)
-		return ss, err
+		return __mrnistCurve_sharedSecretPair{ss, err}
 	},
 }
 
@@ -442,21 +470,21 @@ func P521() Curve { return p521 }
 
 var p521 = &nistCurve{
 	name: "P-521",
-	generate: func(r io.Reader) (*ecdh.PrivateKey, error) {
+	generate: func(r io.Reader) __mrnistCurve_generatePair {
 		k, err := ecdh.GenerateKey(ecdh.P521(), r)
-		return k, err
+		return __mrnistCurve_generatePair{k, err}
 	},
-	newPrivateKey: func(b []byte) (*ecdh.PrivateKey, error) {
+	newPrivateKey: func(b []byte) __mrnistCurve_newPrivateKeyPair {
 		k, err := ecdh.NewPrivateKey(ecdh.P521(), b)
-		return k, err
+		return __mrnistCurve_newPrivateKeyPair{k, err}
 	},
-	newPublicKey: func(publicKey []byte) (*ecdh.PublicKey, error) {
+	newPublicKey: func(publicKey []byte) __mrnistCurve_newPublicKeyPair {
 		k, err := ecdh.NewPublicKey(ecdh.P521(), publicKey)
-		return k, err
+		return __mrnistCurve_newPublicKeyPair{k, err}
 	},
-	sharedSecret: func(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) (sharedSecret []byte, err error) {
+	sharedSecret: func(priv *ecdh.PrivateKey, pub *ecdh.PublicKey) __mrnistCurve_sharedSecretPair {
 		ss, err := ecdh.ECDH(ecdh.P521(), priv, pub)
-		return ss, err
+		return __mrnistCurve_sharedSecretPair{ss, err}
 	},
 }
 
