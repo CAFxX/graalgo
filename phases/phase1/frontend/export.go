@@ -4430,6 +4430,21 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	// funcByObj lookup by object identity fails. The index is keyed by the
 	// origin's TypeName, so partial-instantiation receivers (e.g.
 	// Ledger[T, _]) resolve correctly.
+	//
+	// P3-M9 (graalgo-hash-iface-fix): If the resolved type is a named
+	// interface (e.g., a type parameter H constrained by hash.Hash,
+	// instantiated with H = hash.Hash itself), methodIndex has no entry:
+	// it holds only concrete method declarations (func (d *digest)
+	// Size()), not interface method specs (Size() int inside type Hash
+	// interface). Fall back to interface dispatch on the resolved
+	// interface type, verifying the method exists in its method set.
+	if _, ok := cn.Underlying().(*types.Interface); ok {
+		if msel := types.NewMethodSet(c).Lookup(e.pkg, mname); msel == nil {
+			return nil, fmt.Errorf("gofrontend: method %s not in interface %s",
+				mname, types.TypeString(c, nil))
+		}
+		return &methodCall{ifaceFallback: c, subst: subst}, nil
+	}
 	fi, ok := e.methodIndex[methodKey{cn.Obj(), mname}]
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: type %s has no method %s", substString(c, scope), mname)
