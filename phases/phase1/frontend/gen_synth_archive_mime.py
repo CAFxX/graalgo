@@ -116,8 +116,22 @@ def extract_functions(src, src_path=None):
     finally:
         os.unlink(temp_path)
 
-def parse_results(results):
-    """Parse result clause into list of (name, type). Handles '(a int, b string)', '(int, error)', 'int', '(token, rest string)'."""
+def extract_type_names(src):
+    """Extract defined type names from source (for parse_results heuristic)."""
+    # Match: type Name struct, type Name interface, type Name ..., type Name = ...
+    names = set()
+    for m in re.finditer(r'\btype\s+([a-zA-Z_][a-zA-Z0-9_]*)\b', src):
+        names.add(m.group(1))
+    return names
+
+
+def parse_results(results, known_types=None):
+    """Parse result clause into list of (name, type). Handles '(a int, b string)', '(int, error)', 'int', '(token, rest string)'.
+
+    known_types: set of package-defined type names (heuristic for `(MyType, error)`).
+    """
+    if known_types is None:
+        known_types = set()
     results = results.strip()
     if not results:
         return []
@@ -175,7 +189,8 @@ def parse_results(results):
             tok = tokens[0]
             if tok in ('int', 'int8', 'int16', 'int32', 'int64', 'uint', 'uint8', 'uint16', 'uint32', 'uint64',
                       'float32', 'float64', 'string', 'bool', 'byte', 'rune', 'error', 'any') or \
-               tok.startswith('*') or tok.startswith('[') or tok.startswith('map['):
+               tok.startswith('*') or tok.startswith('[') or tok.startswith('map[') or \
+               '.' in tok or tok in known_types:
                 parsed_parts.append(([], tok))
             else:
                 # Name without type - shares with next part
