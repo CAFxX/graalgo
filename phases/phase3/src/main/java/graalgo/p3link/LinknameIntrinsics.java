@@ -12,6 +12,7 @@ import graalgo.iface.IfaceMethodTables;
 import graalgo.p3os.GoOs;
 import graalgo.p3net.GoNet;
 import graalgo.p3net.GoNetpoll;
+import graalgo.p3crypto.GoCrypto;
 import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Linknames;
 import graalgo.runtime.Timers;
@@ -86,6 +87,9 @@ public final class LinknameIntrinsics {
         // GoSlice; each GoNet/GoNetpoll target adapts explicitly (see
         // their javadoc for the calling conventions).
         registerNetIntrinsics();
+        // P3-M9 (user directive 2026-10-10): JDK-delegating crypto
+        // intrinsics (java.security.MessageDigest, javax.crypto.Mac).
+        registerCryptoIntrinsics();
         // itabFor → the P3-M3 itab machinery (ADR-0004 D3).
         Intrinsics.setItabProvider(IfaceMethodTable::itabForDescriptors);
         // Interface method-name lists for itabForIntrinsic.
@@ -224,6 +228,43 @@ public final class LinknameIntrinsics {
                 args -> GoNet.sendto(args[0], args[1], args[2]), 3);
         Linknames.register("graalgo.net.recvfrom",
                 args -> GoNet.recvfrom(args[0], args[1], args[2]), 3);
+    }
+
+    /**
+     * Registers the {@code graalgo.crypto.*} JDK-delegating intrinsics
+     * (implemented by {@link GoCrypto}, P3-M9).
+     *
+     * <p>D5: algorithm names arrive as {@link GoString}; handles as
+     * {@link Long}; []byte as {@link graalgo.values.GoSlice}.
+     */
+    private static void registerCryptoIntrinsics() {
+        Linknames.register("graalgo.crypto.digest.new",
+                args -> GoCrypto.digestNew(goString(args[0])), 1);
+        Linknames.register("graalgo.crypto.digest.write",
+                args -> GoCrypto.digestWrite(((Number) args[0]).longValue(), args[1]), 2);
+        Linknames.register("graalgo.crypto.digest.sum",
+                args -> GoCrypto.digestSum(((Number) args[0]).longValue()), 1);
+        Linknames.register("graalgo.crypto.digest.reset",
+                args -> { GoCrypto.digestReset(((Number) args[0]).longValue()); return null; }, 1);
+        Linknames.register("graalgo.crypto.digest.free",
+                args -> { GoCrypto.digestFree(((Number) args[0]).longValue()); return null; }, 1);
+        Linknames.register("graalgo.crypto.digest.sumOneShot",
+                args -> GoCrypto.sum(goString(args[0]), args[1]), 2);
+        Linknames.register("graalgo.crypto.mac.new",
+                args -> GoCrypto.macNew(goString(args[0]), args[1]), 2);
+        Linknames.register("graalgo.crypto.mac.write",
+                args -> GoCrypto.macWrite(((Number) args[0]).longValue(), args[1]), 2);
+        Linknames.register("graalgo.crypto.mac.sum",
+                args -> GoCrypto.macSum(((Number) args[0]).longValue()), 1);
+        Linknames.register("graalgo.crypto.mac.reset",
+                args -> { GoCrypto.macReset(((Number) args[0]).longValue()); return null; }, 1);
+        Linknames.register("graalgo.crypto.mac.free",
+                args -> { GoCrypto.macFree(((Number) args[0]).longValue()); return null; }, 1);
+    }
+
+    /** Converts a D5 GoString argument to a Java String (UTF-8). */
+    private static String goString(Object o) {
+        return new String(((GoString) o).bytes(), java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /**
