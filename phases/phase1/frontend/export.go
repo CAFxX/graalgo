@@ -3816,6 +3816,26 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		// — the Java backend rejects them ("unknown composite type kind").
 		// Generic template definitions themselves are skipped at type
 		// declaration processing (see exportStmt GenDecl TYPE case).
+		//
+		// P3-M9 (generics, funcs): if this is a generic template definition
+		// (origin == t, has type params, no type args), do NOT describe its
+		// underlying type — that would leak typeparams. Return an empty
+		// struct placeholder. Templates are never used directly; only
+		// instantiations should be described. This handles synthetic generic
+		// pair structs (e.g., __mrnistCurve_pointFromAffinePair[Point])
+		// that are referenced during on-demand type description.
+		if origin := t.Origin(); origin == t {
+			if tparams := origin.TypeParams(); tparams != nil && tparams.Len() > 0 {
+				if targs := t.TypeArgs(); targs == nil || targs.Len() == 0 {
+					// Generic template: return empty struct placeholder.
+					// The template itself is never emitted; only
+					// instantiations (which have type args) are described.
+					return mk("struct", map[string]any{
+						"fields": []any{},
+					}), nil
+				}
+			}
+		}
 		underlying := t.Underlying()
 		savedSubst := e.subst
 		savedSubstTypeIDs := e.substTypeIDs
@@ -3824,7 +3844,20 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 				if tparams := origin.TypeParams(); tparams != nil && tparams.Len() > 0 {
 					targsList := make([]types.Type, targs.Len())
 					for i := range targsList {
-						targsList[i] = targs.At(i)
+						ta := targs.At(i)
+						// P3-M9 (generics, funcs): resolve type args through
+						// the current substitution. If the type arg is a
+						// typeparam (e.g., Point from an enclosing generic
+						// function), resolve it to the concrete type via
+						// the active subst chain. Otherwise the binding
+						// would be Point->Point (still a typeparam), leaking
+						// "typeparam" kinds into the type table.
+						if tp, ok := ta.(*types.TypeParam); ok {
+							if resolved := resolveByName(e.subst, tp.Obj().Name()); resolved != nil {
+								ta = resolved
+							}
+						}
+						targsList[i] = ta
 					}
 					bind := bindParams(tparams, targsList)
 					e.subst = &typeSubst{parent: savedSubst, bind: bind}
@@ -4011,6 +4044,20 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		}
 		return mk("struct", map[string]any{"fields": fields}), nil
 	case *types.Signature:
+		// P3-M9 (generics, funcs): skip generic function template signatures.
+		// A signature with type params (e.g., func Sign[P Point[P]]) is a
+		// template, never used directly — only monomorphized instantiations
+		// appear in valid code. Describing the template would leak
+		// "typeparam" kinds into the type table, which the Java backend
+		// rejects ("unknown composite type kind"). Return an empty
+		// signature placeholder (mirrors defFunc's handling); the template
+		// itself is never emitted (see exportFuncDecl/exportSyntheticBodies
+		// isTemplate skips).
+		if t.TypeParams() != nil && t.TypeParams().Len() > 0 {
+			return mk("signature", map[string]any{
+				"params": []any{}, "results": []any{}, "variadic": false,
+			}), nil
+		}
 		params, err := e.tupleList(t.Params())
 		if err != nil {
 			return TypeEnt{}, err
@@ -5046,6 +5093,14 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 // function to avoid collisions.
 func (e *exporter) synthesizeUserPairType(fi *funcDeclInfo) (*types.Named, []string, error) {
 	sig := fi.sig
+	// P3-M9 (generics, funcs): fail fast if called for a generic template.
+	// Pair structs for templates would have typeparam field types, leaking
+	// "typeparam" kinds into the type table. Templates are skipped in
+	// exportFuncDecl/exportSyntheticBodies (isTemplate check), so this
+	// should never happen — but guard here for safety.
+	if sig.TypeParams() != nil && sig.TypeParams().Len() > 0 {
+		return nil, nil, fmt.Errorf("gofrontend: synthesizeUserPairType called for generic template %s (should be skipped)", fi.obj.Name())
+	}
 	n := sig.Results().Len()
 	fields := make([]*types.Var, n)
 	fieldNames := make([]string, n)

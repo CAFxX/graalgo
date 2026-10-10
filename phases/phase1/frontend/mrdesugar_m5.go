@@ -1463,6 +1463,15 @@ func classifyNistCurveFuncField(selection *types.Selection, v *types.Var) *mrPla
 		if pairNt == nil {
 			return nil
 		}
+		// P3-M9 (generics, funcs): bail out if the pair type is a generic
+		// template. The template's field types contain typeparams, which
+		// would leak into the type table. This optimization is for
+		// concrete types only; generic cases fall through to other plans.
+		if origin := pairNt.Origin(); origin == pairNt {
+			if tparams := origin.TypeParams(); tparams != nil && tparams.Len() > 0 {
+				return nil
+			}
+		}
 		return &mrPlan{
 			kind:       mrFuncField,
 			tmpType:    pairNt,
@@ -2582,7 +2591,12 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 	if st.Field(i).Name() != field {
 		return nil, fmt.Errorf("gofrontend: pair field %d is %q, want %q", i, st.Field(i).Name(), field)
 	}
-	ftid, err := e.typeID(st.Field(i).Type())
+	// P3-M9 (generics, funcs): substitute the field type before describing.
+	// If pairType is a generic instantiation (e.g., __mrnistCurve_pair[Point]
+	// with Point bound via e.subst), the field type may contain typeparams
+	// that need resolution. substType applies the active substitution.
+	ft := e.substType(st.Field(i).Type())
+	ftid, err := e.typeID(ft)
 	if err != nil {
 		return nil, err
 	}
