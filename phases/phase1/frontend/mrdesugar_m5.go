@@ -1896,12 +1896,16 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 		id, ok := lhs.(*ast.Ident)
 		if !ok {
 			// P3-M9: allow selector LHS (e.g., w.prevHeader, _ = w.headerSize())
-			// in the assignment case via exportAssignable. Define (:=) with
-			// selector is invalid Go, so it still fails below.
-			if _, isSel := lhs.(*ast.SelectorExpr); !isSel {
+			// and index LHS (e.g., a[i], err = strconv.Atoi(s)) in the
+			// assignment case via exportAssignable. Define (:=) with a
+			// non-identifier lhs is invalid Go, so it still fails below.
+			switch lhs.(type) {
+			case *ast.SelectorExpr, *ast.IndexExpr:
+				// OK: handled by exportAssignable in the assignment branch.
+			default:
 				return nil, scopeErrorf("multi-result desugar with non-identifier lhs %T is not supported in frontend/v1 scope (WS D)", lhs)
 			}
-			// Blank selector doesn't make sense; treat as error.
+			// Blank selector/index doesn't make sense; treat as error.
 		}
 		if ok && id.Name == "_" {
 			continue
