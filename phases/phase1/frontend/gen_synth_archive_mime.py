@@ -527,8 +527,8 @@ def process_package(pkg_path, cfg):
     full_src = adapt_fn(full_src, pkg_prefix)
     
     # Handle backticks: they cannot appear in Go raw string literals.
-    # 1. Replace rune literal '`' with '\x60' (hex escape for backtick)
-    full_src = full_src.replace("'\\`'", "'\\x60'")
+    # 1. Replace rune literal '`' (quote-backtick-quote) with '\x60' (hex escape)
+    full_src = full_src.replace("'`'", "'\\x60'")
     # 2. Replace remaining backticks (in comments only) with single quotes
     if '`' in full_src:
         full_src = full_src.replace('`', "'")
