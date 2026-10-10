@@ -21,6 +21,15 @@ final class MapKeys {
             default -> {
             }
         }
-        return Boxing.copyForAssign(kind, Boxing.box(kind, node, frame));
+        Object boxed = Boxing.box(kind, node, frame);
+        // Canonicalize int/uint keys to Long: Boxing.box may return Integer
+        // for sub-64-bit kinds, but map lookups must agree on the boxing.
+        // Using Long for all int/uint kinds ensures Integer(-1) (uint32
+        // 0xFFFFFFFF) and Long(4294967295L) are the same key.
+        if (kind.isIntKind() || kind.isUintKind()) {
+            long v = Boxing.toLong(boxed, kind);
+            boxed = Long.valueOf(v);
+        }
+        return Boxing.copyForAssign(kind, boxed);
     }
 }
