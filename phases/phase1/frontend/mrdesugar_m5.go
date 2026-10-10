@@ -992,6 +992,13 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"crypto/internal/fips140/ecdsa", "BytesX", "__mrPointIfaceBytesXPair", []string{"v0", "v1"}},
 	{"crypto/internal/fips140/ecdsa", "ScalarMult", "__mrPointIfaceScalarMultPair", []string{"v0", "v1"}},
 	{"crypto/internal/fips140/ecdsa", "ScalarBaseMult", "__mrPointIfaceScalarBaseMultPair", []string{"v0", "v1"}},
+	// P3-M9 (ecdsa-blockers): fmt.State.Precision/Width interface methods.
+	// The synthetic math/big Format methods call s.Precision()/s.Width();
+	// the pair types live in math/big (see synth_math_big.go). These are
+	// never dispatched at runtime (FmtCallNode formats directly); the
+	// entries exist so the frontend can classify the calls.
+	{"math/big", "Precision", "fmtPrecisionPair", []string{"prec", "ok"}},
+	{"math/big", "Width", "fmtWidthPair", []string{"wid", "ok"}},
 }
 
 // mrPlan is the desugar plan for one classified call.

@@ -3,6 +3,22 @@ package main
 const syntheticMathBigSource = (
 "package big\n" +
 "\n" +
+"// P3-M9 (ecdsa-blockers): pair types for fmt.State.Precision/Width\n" +
+"// interface dispatch (WS D). The synthetic math/big Format methods call\n" +
+"// s.Precision()/s.Width() on fmt.State; the itab dispatches via the\n" +
+"// m8IfaceMultiResultMethods table. These types are never instantiated\n" +
+"// at runtime (FmtCallNode formats directly); they exist so the frontend\n" +
+"// can classify the interface method calls.\n" +
+"type fmtPrecisionPair struct {\n" +
+"\tprec int\n" +
+"\tok   bool\n" +
+"}\n" +
+"\n" +
+"type fmtWidthPair struct {\n" +
+"\twid int\n" +
+"\tok  bool\n" +
+"}\n" +
+"\n" +
 "// P3-M9 (wave 3): synthetic `math/big` package.\n" +
 "//\n" +
 "// SOURCE: go1.27.1 GOROOT/src/math/big, adapted for the graalgo P3 frontend.\n" +
