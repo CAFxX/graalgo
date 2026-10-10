@@ -718,15 +718,14 @@ def process_package(pkg_path, cfg):
                 helper_sig = f"func {helper_name}({all_params}) {pair_name} {{\n"
                 # Rewrite body returns
                 rewritten_body = rewrite_body_returns(fn['body'], pair_name, list(zip(field_names, [r[1] for r in results])), pkg_prefix=pkg_prefix)
-                # For named results, declare local variables IF they're needed:
-                # - Assigned in the body (e.g., "rname = ..."), OR
-                # - Body has a bare "return" (which uses them via pair construction)
+                # For named results, declare local variables IF they're needed.
+                # Needed if: referenced in body, OR body has a bare return (which uses them).
                 decls = ""
-                has_bare_return = bool(re.search(r'\breturn\b\s*(\n|;|})', fn['body']))
+                has_bare = bool(re.search(r'\breturn\b\s*(\n|;|})', fn['body']))
                 for (rname, rtype), fname in zip(results, field_names):
                     if rname and rname.strip():
-                        assigned = bool(re.search(rf'\b{re.escape(rname)}\b\s*:?=\s*[^=]', fn['body']))
-                        if assigned or has_bare_return:
+                        referenced = bool(re.search(rf'\b{re.escape(rname)}\b', fn['body']))
+                        if referenced or has_bare:
                             decls += f"\tvar {rname} {rtype}\n"
                 helper_decl = helper_sig + decls + rewritten_body + "}\n\n"
                 new_src_parts.append(helper_decl)
@@ -789,9 +788,10 @@ def process_package(pkg_path, cfg):
             print(f"DEBUG: consumeToken fields = {mr_map['consumeToken'][1]}", file=sys.stderr)
         full_src = rewrite_call_sites(full_src, mr_map)
     
-    # Prepend collected imports
-    if all_imports:
-        import_block = 'import (\n' + '\n'.join(f'\t"{imp}"' for imp in sorted(all_imports)) + '\n)\n\n'
+    # Prepend collected imports (exclude internal/ which we stub)
+    filtered_imports = [imp for imp in sorted(all_imports) if not imp.startswith('internal/')]
+    if filtered_imports:
+        import_block = 'import (\n' + '\n'.join(f'\t"{imp}"' for imp in filtered_imports) + '\n)\n\n'
         full_src = import_block + full_src
     
     # Handle backticks: they cannot appear in Go raw string literals.

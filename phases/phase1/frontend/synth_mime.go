@@ -398,6 +398,7 @@ type __mimeconsumeMediaParamPair struct {
 
 func __mimeconsumeMediaParam(v string) __mimeconsumeMediaParamPair {
 	var param string
+	var value string
 	var rest string
 
 	rest = strings.TrimLeftFunc(v, unicode.IsSpace)
