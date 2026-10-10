@@ -4645,6 +4645,19 @@ public final class NodeFactory {
         GoKind keyKind;
         GoKind valKind;
         boolean isIntRange = xk.isIntKind();
+        // P3-M9 (WS E): range over *[N]T (pointer to array) — dereference
+        // the pointer, then range over the array.
+        GoExprNode rangeX = x;
+        if (xk == GoKind.POINTER) {
+            int elemTid = detail.intValue("elem", path);
+            GoKind elemKind = kindOf(ctx, elemTid, path);
+            if (elemKind == GoKind.ARRAY) {
+                rangeX = new DerefNode(GoKind.ARRAY, x);
+                // Update xk and detail for the array case below.
+                xk = GoKind.ARRAY;
+                detail = underlyingEntry(ctx, elemTid, path).object("detail", path);
+            }
+        }
         switch (xk) {
             case SLICE, ARRAY -> {
                 int elemTid = detail.intValue("elem", path);
@@ -4692,16 +4705,16 @@ public final class NodeFactory {
         com.oracle.truffle.api.nodes.RepeatingNode repeating;
         if (isIntRange) {
             // P3-M9 (WS E): Go 1.22+ integer range: for i := range n.
-            repeating = new RangeIntNode(x, body, keySlot, keyKind, keyBoxed, define);
+            repeating = new RangeIntNode(rangeX, body, keySlot, keyKind, keyBoxed, define);
         } else {
             repeating = switch (xk) {
-                case SLICE -> new RangeSliceNode(x, body, keySlot, keyKind, keyBoxed, define,
+                case SLICE -> new RangeSliceNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
                         valSlot, valKind, valBoxed, define);
-                case ARRAY -> new RangeArrayNode(x, body, keySlot, keyKind, keyBoxed, define,
+                case ARRAY -> new RangeArrayNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
                         valSlot, valKind, valBoxed, define);
-                case STRING -> new RangeStringNode(x, body, keySlot, keyKind, keyBoxed, define,
+                case STRING -> new RangeStringNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
                         valSlot, valBoxed, define);
-                case MAP -> new RangeMapNode(x, body, keySlot, keyKind, keyBoxed, define,
+                case MAP -> new RangeMapNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
                         valSlot, valKind, valBoxed, define);
                 default -> throw new FrontendException(path + ": cannot range over " + xk + " (WS E)");
             };
