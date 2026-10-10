@@ -4644,6 +4644,7 @@ public final class NodeFactory {
         Json.Object detail = underlyingEntry(ctx, xtid, path).object("detail", path);
         GoKind keyKind;
         GoKind valKind;
+        boolean isIntRange = xk.isIntKind();
         switch (xk) {
             case SLICE, ARRAY -> {
                 int elemTid = detail.intValue("elem", path);
@@ -4658,7 +4659,15 @@ public final class NodeFactory {
                 keyKind = kindOf(ctx, detail.intValue("key", path), path);
                 valKind = kindOf(ctx, detail.intValue("elem", path), path);
             }
-            default -> throw new FrontendException(path + ": cannot range over " + xk + " (WS E)");
+            default -> {
+                // P3-M9 (WS E): Go 1.22+ integer ranges: for i := range n.
+                if (isIntRange) {
+                    keyKind = GoKind.INT64;
+                    valKind = GoKind.INT64; // unused
+                } else {
+                    throw new FrontendException(path + ": cannot range over " + xk + " (WS E)");
+                }
+            }
         }
         boolean define = f.bool("define", path);
         // M6: pre-scan for per-iteration (boxed) range/body variables.
@@ -4680,17 +4689,23 @@ public final class NodeFactory {
         boolean keyBoxed = keyOid >= 0 && ctx.boxed.contains(keyOid);
         boolean valBoxed = valOid >= 0 && ctx.boxed.contains(valOid);
         GoStmtNode body = buildStmt(f.object("body", path), ctx);
-        com.oracle.truffle.api.nodes.RepeatingNode repeating = switch (xk) {
-            case SLICE -> new RangeSliceNode(x, body, keySlot, keyKind, keyBoxed, define,
-                    valSlot, valKind, valBoxed, define);
-            case ARRAY -> new RangeArrayNode(x, body, keySlot, keyKind, keyBoxed, define,
-                    valSlot, valKind, valBoxed, define);
-            case STRING -> new RangeStringNode(x, body, keySlot, keyKind, keyBoxed, define,
-                    valSlot, valBoxed, define);
-            case MAP -> new RangeMapNode(x, body, keySlot, keyKind, keyBoxed, define,
-                    valSlot, valKind, valBoxed, define);
-            default -> throw new FrontendException(path + ": cannot range over " + xk + " (WS E)");
-        };
+        com.oracle.truffle.api.nodes.RepeatingNode repeating;
+        if (isIntRange) {
+            // P3-M9 (WS E): Go 1.22+ integer range: for i := range n.
+            repeating = new RangeIntNode(x, body, keySlot, keyKind, keyBoxed, define);
+        } else {
+            repeating = switch (xk) {
+                case SLICE -> new RangeSliceNode(x, body, keySlot, keyKind, keyBoxed, define,
+                        valSlot, valKind, valBoxed, define);
+                case ARRAY -> new RangeArrayNode(x, body, keySlot, keyKind, keyBoxed, define,
+                        valSlot, valKind, valBoxed, define);
+                case STRING -> new RangeStringNode(x, body, keySlot, keyKind, keyBoxed, define,
+                        valSlot, valBoxed, define);
+                case MAP -> new RangeMapNode(x, body, keySlot, keyKind, keyBoxed, define,
+                        valSlot, valKind, valBoxed, define);
+                default -> throw new FrontendException(path + ": cannot range over " + xk + " (WS E)");
+            };
+        }
         RangeStmtNode stmt = new RangeStmtNode(null, new GoLoopNode(repeating));
         if (label != null) {
             stmt.setLabel(label);
