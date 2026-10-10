@@ -90,6 +90,11 @@ const (
 	// __-helper (wired via methodTableEntries), so the node yields the
 	// pair and field extraction proceeds exactly like mrM7.
 	mrIfaceMethod
+	// P3-M9 (WS D): a user-defined multi-result function/method
+	// transformed to pair-returning form. Unlike mrM7 (which calls a
+	// separate __-helper in a synthetic package), the call is to the
+	// transformed function itself, which already returns the pair.
+	mrUser
 )
 
 // m7MultiResultFunc describes one desugarable M7 multi-result function:
@@ -330,7 +335,7 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// P3-M9 (tier1c): path.Split (Appendix M).
 	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/flate (Appendix M).
-{"compress/flate", "findMatch", "compressor", "__flateCompressorfindMatch", "__flateCompressorfindMatchPair", []string{"length", "offset", "ok"}},
+	{"compress/flate", "findMatch", "compressor", "__flateCompressorfindMatch", "__flateCompressorfindMatchPair", []string{"length", "offset", "ok"}},
 	{"compress/flate", "tryBetterMatchAtEnd", "compressor", "__flateCompressortryBetterMatchAtEnd", "__flateCompressortryBetterMatchAtEndPair", []string{"newLen", "newOff"}},
 	{"compress/flate", "write", "compressor", "__flateCompressorwrite", "__flateCompressorwritePair", []string{"n", "err"}},
 	{"compress/flate", "NewWriter", "", "__flateNewWriter", "__flateNewWriterPair", []string{"w", "err"}},
@@ -960,24 +965,24 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// The concrete helpers are wired via m8MultiResultFuncs +
 	// methodTableEntries; the pair types are positionally identical
 	// across implementations (checked by classifyIfaceMultiResultCall).
-	{"crypto/elliptic", "Add", "__mrnistCurve_AddPair", []string{"v0", "v1"}}, // elliptic.Curve.Add
-	{"crypto/elliptic", "Double", "__mrnistCurve_DoublePair", []string{"v0", "v1"}}, // elliptic.Curve.Double
-	{"crypto/elliptic", "ScalarMult", "__mrnistCurve_ScalarMultPair", []string{"v0", "v1"}}, // elliptic.Curve.ScalarMult
+	{"crypto/elliptic", "Add", "__mrnistCurve_AddPair", []string{"v0", "v1"}},                       // elliptic.Curve.Add
+	{"crypto/elliptic", "Double", "__mrnistCurve_DoublePair", []string{"v0", "v1"}},                 // elliptic.Curve.Double
+	{"crypto/elliptic", "ScalarMult", "__mrnistCurve_ScalarMultPair", []string{"v0", "v1"}},         // elliptic.Curve.ScalarMult
 	{"crypto/elliptic", "ScalarBaseMult", "__mrnistCurve_ScalarBaseMultPair", []string{"v0", "v1"}}, // elliptic.Curve.ScalarBaseMult
-	{"crypto/ecdh", "GenerateKey", "__mrnistCurve_GenerateKeyPair", []string{"v0", "v1"}}, // ecdh.Curve.GenerateKey
-	{"crypto/ecdh", "NewPrivateKey", "__mrnistCurve_NewPrivateKeyPair", []string{"v0", "v1"}}, // ecdh.Curve.NewPrivateKey
-	{"crypto/ecdh", "NewPublicKey", "__mrnistCurve_NewPublicKeyPair", []string{"v0", "v1"}}, // ecdh.Curve.NewPublicKey
+	{"crypto/ecdh", "GenerateKey", "__mrnistCurve_GenerateKeyPair", []string{"v0", "v1"}},           // ecdh.Curve.GenerateKey
+	{"crypto/ecdh", "NewPrivateKey", "__mrnistCurve_NewPrivateKeyPair", []string{"v0", "v1"}},       // ecdh.Curve.NewPrivateKey
+	{"crypto/ecdh", "NewPublicKey", "__mrnistCurve_NewPublicKeyPair", []string{"v0", "v1"}},         // ecdh.Curve.NewPublicKey
 	// P3-M9 (tier-5): elliptic.Curve and ecdh.Curve interface methods.
 	// The concrete helpers are wired via m8MultiResultFuncs +
 	// methodTableEntries; the pair types are positionally identical
 	// across implementations (checked by classifyIfaceMultiResultCall).
-	{"crypto/elliptic", "Add", "__mrnistCurve_AddPair", []string{"v0", "v1"}}, // elliptic.Curve.Add
-	{"crypto/elliptic", "Double", "__mrnistCurve_DoublePair", []string{"v0", "v1"}}, // elliptic.Curve.Double
-	{"crypto/elliptic", "ScalarMult", "__mrnistCurve_ScalarMultPair", []string{"v0", "v1"}}, // elliptic.Curve.ScalarMult
+	{"crypto/elliptic", "Add", "__mrnistCurve_AddPair", []string{"v0", "v1"}},                       // elliptic.Curve.Add
+	{"crypto/elliptic", "Double", "__mrnistCurve_DoublePair", []string{"v0", "v1"}},                 // elliptic.Curve.Double
+	{"crypto/elliptic", "ScalarMult", "__mrnistCurve_ScalarMultPair", []string{"v0", "v1"}},         // elliptic.Curve.ScalarMult
 	{"crypto/elliptic", "ScalarBaseMult", "__mrnistCurve_ScalarBaseMultPair", []string{"v0", "v1"}}, // elliptic.Curve.ScalarBaseMult
-	{"crypto/ecdh", "GenerateKey", "__mrnistCurve_GenerateKeyPair", []string{"v0", "v1"}}, // ecdh.Curve.GenerateKey
-	{"crypto/ecdh", "NewPrivateKey", "__mrnistCurve_NewPrivateKeyPair", []string{"v0", "v1"}}, // ecdh.Curve.NewPrivateKey
-	{"crypto/ecdh", "NewPublicKey", "__mrnistCurve_NewPublicKeyPair", []string{"v0", "v1"}}, // ecdh.Curve.NewPublicKey
+	{"crypto/ecdh", "GenerateKey", "__mrnistCurve_GenerateKeyPair", []string{"v0", "v1"}},           // ecdh.Curve.GenerateKey
+	{"crypto/ecdh", "NewPrivateKey", "__mrnistCurve_NewPrivateKeyPair", []string{"v0", "v1"}},       // ecdh.Curve.NewPrivateKey
+	{"crypto/ecdh", "NewPublicKey", "__mrnistCurve_NewPublicKeyPair", []string{"v0", "v1"}},         // ecdh.Curve.NewPublicKey
 }
 
 // mrPlan is the desugar plan for one classified call.
@@ -1001,6 +1006,20 @@ type mrPlan struct {
 // WS D — see the package header). It returns nil when c is not one of
 // them.
 func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
+	// P3-M9 (WS D): user-defined package-level multi-result functions
+	// called as `foo()` (Ident, not SelectorExpr).
+	if id, ok := c.Fun.(*ast.Ident); ok {
+		if obj, ok := e.info.Uses[id].(*types.Func); ok {
+			if mrInfo, ok := e.userMRFuncs[obj]; ok {
+				return &mrPlan{
+					kind:       mrUser,
+					tmpType:    mrInfo.pairType,
+					pairFields: mrInfo.pairFields,
+				}
+			}
+		}
+		return nil
+	}
 	sel, ok := c.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return nil
@@ -1132,6 +1151,17 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		// The receiver's named type must match the table — a user method
 		// with the same name is never desugared.
 		if f, ok := selection.Obj().(*types.Func); ok && f.Pkg() != nil {
+			// P3-M9 (WS D): user-defined multi-result methods transformed
+			// to pair-returning form. Check the userMRFuncs map before
+			// the synthetic tables.
+			if mrInfo, ok := e.userMRFuncs[f]; ok {
+				return &mrPlan{
+					kind:        mrUser,
+					tmpType:     mrInfo.pairType,
+					pairFields:  mrInfo.pairFields,
+					prependRecv: false,
+				}
+			}
 			if plan := classifyM7MultiResultCall(f.Pkg().Path(), f); plan != nil {
 				return plan
 			}
@@ -1729,6 +1759,27 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	// shared with the helper-call path.
 	if plan.kind == mrIfaceMethod {
 		return e.desugarIfaceMultiResult(s, c, plan, define)
+	}
+	// P3-M9 (WS D): user-defined multi-result functions are called
+	// directly (they were transformed to pair-returning at definition).
+	// Export the call normally, then extract fields from the pair.
+	if plan.kind == mrUser {
+		call, err := e.exportCall(c)
+		if err != nil {
+			return nil, err
+		}
+		resTid, err := e.typeID(plan.tmpType)
+		if err != nil {
+			return nil, err
+		}
+		e.chanSeq++
+		tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+		v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+		tmpID, err := e.defVar(v, false)
+		if err != nil {
+			return nil, err
+		}
+		return e.desugarExtract(s, c, plan, define, tmpName, tmpID, resTid, call)
 	}
 	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {

@@ -1113,27 +1113,30 @@ func ExportFile(path string) (string, error) {
 	}
 
 	e := &exporter{
-		fset:     fset,
-		src:      src,
-		info:     info,
-		pkg:      pkg,
-		typeIDs:  make(map[types.Type]int),
+		fset:    fset,
+		src:     src,
+		info:    info,
+		pkg:     pkg,
+		typeIDs: make(map[types.Type]int),
 		// P3-M9 (WS H): type parameters canonicalized by TypeName object.
 		// go/types mints fresh *types.TypeParam per occurrence; without
 		// this, F-bounded constraints (P Point[P]) recurse infinitely
 		// because the P in the constraint is a different object.
 		typeparamIDs: make(map[*types.TypeName]int),
-		namedIDs: make(map[string]int),
-		objIDs:   make(map[types.Object]int),
+		namedIDs:     make(map[string]int),
+		objIDs:       make(map[types.Object]int),
 		// P3-M9: synthetic package vars by (path, name) for cross-package
 		// var references (type-checked in isolation, pointers not shared).
 		synthVarIDs: make(map[string]int),
 		// P3-M9: synthetic package funcs by (path, name) for cross-package
 		// generic instantiations.
 		synthFuncIDs: make(map[string]*funcDeclInfo),
-		sizes:    types.SizesFor("gc", "amd64"),
+		sizes:        types.SizesFor("gc", "amd64"),
 		// P3-M8: track imported synthetic packages for idempotency.
 		importedSynthetic: make(map[string]bool),
+		// P3-M9 (WS D): user-defined multi-result functions transformed
+		// to pair-returning form.
+		userMRFuncs: make(map[*types.Func]*userMRInfo),
 	}
 	doc := Doc{
 		Frontend:  frontendVersion,
@@ -2763,8 +2766,8 @@ type exporter struct {
 	// Different *types.TypeParam objects denoting the same parameter
 	// must share one wire ID, or F-bounded constraints recurse forever.
 	typeparamIDs map[*types.TypeName]int
-	objects  []ObjectEnt
-	objIDs   map[types.Object]int
+	objects      []ObjectEnt
+	objIDs       map[types.Object]int
 	// P3-M9: synthetic package vars by (package path, var name). Synthetic
 	// packages are type-checked in isolation, so *types.Var pointers aren't
 	// shared across packages. When resolving a cross-package var reference
@@ -2775,7 +2778,7 @@ type exporter struct {
 	// isolation issue as vars; used when resolving generic instantiations
 	// from importing packages (e.g., slices.SortFunc from flate).
 	synthFuncIDs map[string]*funcDeclInfo
-	sizes    types.Sizes
+	sizes        types.Sizes
 	// M6 (WS H): active type-parameter substitution while exporting a
 	// monomorphized instantiation body (nil outside instantiations). See
 	// typeSubst below.
@@ -2821,6 +2824,24 @@ type exporter struct {
 	// by exportSyntheticBodies after the user's.
 	synthGlobals []GlobalEnt
 	synthGroups  []synthGroup
+	// P3-M9 (WS D): user-defined multi-result functions transformed to
+	// pair-returning form. Maps *types.Func -> pair info for call-site
+	// desugar. Unlike the synthetic table-driven mechanism, this is
+	// automatic: any user-defined 2+ result function gets a synthesized
+	// pair struct.
+	userMRFuncs map[*types.Func]*userMRInfo
+	// P3-M9 (WS D): the userMRInfo for the function whose body is
+	// currently being exported (nil outside such functions). Used to
+	// transform `return a, b` into a pair composite literal.
+	currentMR *userMRInfo
+}
+
+// userMRInfo describes a user-defined multi-result function transformed
+// to pair-returning form (P3-M9 WS D).
+type userMRInfo struct {
+	pairType   *types.Named     // synthesized pair struct (fields f0, f1, ...)
+	pairFields []string         // field names in result order
+	origSig    *types.Signature // original multi-result signature
 }
 
 // M10 (P1-4): struct-nesting depth cap for offset computation.
@@ -4786,6 +4807,48 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 	return err
 }
 
+// synthesizeUserPairType creates a named struct type for a user-defined
+// multi-result function's results (P3-M9 WS D). The struct has fields
+// f0, f1, ... with the result types in order. The name is unique per
+// function to avoid collisions.
+func (e *exporter) synthesizeUserPairType(fi *funcDeclInfo) (*types.Named, []string, error) {
+	sig := fi.sig
+	n := sig.Results().Len()
+	fields := make([]*types.Var, n)
+	fieldNames := make([]string, n)
+	for i := 0; i < n; i++ {
+		fname := fmt.Sprintf("f%d", i)
+		fieldNames[i] = fname
+		// Use the result variable's type; fall back to the tuple type.
+		rt := sig.Results().At(i).Type()
+		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
+	}
+	st := types.NewStruct(fields, nil)
+	// Unique name: __wsd_pair_<pkg>_<func> (methods include receiver).
+	name := fmt.Sprintf("__wsd_pair_%s", fi.obj.Name())
+	if fi.recv != nil {
+		rt := fi.recv.Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			name = fmt.Sprintf("__wsd_pair_%s_%s", nt.Obj().Name(), fi.obj.Name())
+		}
+	}
+	// Ensure uniqueness in case of collisions (e.g., generic instantiations).
+	base := name
+	for i := 1; ; i++ {
+		if e.pkg.Scope().Lookup(name) == nil {
+			break
+		}
+		name = fmt.Sprintf("%s_%d", base, i)
+	}
+	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
+	named := types.NewNamed(tname, st, nil)
+	e.pkg.Scope().Insert(tname)
+	return named, fieldNames, nil
+}
+
 // exportFuncDecl emits a non-generic top-level function or method. Methods
 // export their receiver as params[0] (the wire "signature" matches).
 func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
@@ -4812,20 +4875,54 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P3-M9 (WS D): user-defined multi-result functions are automatically
+	// transformed to pair-returning form. Synthesize a pair struct type,
+	// change the signature to return it, and transform `return a, b` in
+	// the body. This extends the WS D pair-desugar (previously synthetic
+	// only) to user code.
+	var mrInfo *userMRInfo
+	sigParams := fi.sig.Params()
+	sigResults := fi.sig.Results()
 	if len(results) > 1 {
-		// P3-M8 (WS D; REVIEW-1 P2-5): this is also the fail-fast for the
-		// `return <multi-result interface call>` position — a 2-result
-		// call can only type-check as a return value inside a function
-		// with the same results, which v1 rejects here. Named loud
-		// limitation; re-test trigger: extend exportMultiResultDesugar
-		// to return positions (see DESIGN.md §5).
-		return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
+		// Only transform user-defined functions (not synthetic — those
+		// use the table-driven mechanism with __-helpers).
+		if fi.synthPkg == nil {
+			pairType, fieldNames, serr := e.synthesizeUserPairType(fi)
+			if serr != nil {
+				return nil, serr
+			}
+			mrInfo = &userMRInfo{
+				pairType:   pairType,
+				pairFields: fieldNames,
+				origSig:    fi.sig,
+			}
+			e.userMRFuncs[fi.obj] = mrInfo
+			// New signature: same params, single pair result.
+			pairVar := types.NewParam(token.NoPos, e.pkg, "", pairType)
+			sigResults = types.NewTuple(pairVar)
+			// Export a single result var for the pair.
+			results = results[:1]
+		} else {
+			// P3-M8 (WS D; REVIEW-1 P2-5): this is also the fail-fast for the
+			// `return <multi-result interface call>` position — a 2-result
+			// call can only type-check as a return value inside a function
+			// with the same results, which v1 rejects here. Named loud
+			// limitation; re-test trigger: extend exportMultiResultDesugar
+			// to return positions (see DESIGN.md §5).
+			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
+		}
 	}
-	sig, err := e.freshSigID(fi.recv, fi.sig.Params(), fi.sig.Results(), fi.sig.Variadic())
+	sig, err := e.freshSigID(fi.recv, sigParams, sigResults, fi.sig.Variadic())
 	if err != nil {
 		return nil, err
 	}
+	// Set the current transform so return statements are rewritten.
+	prevMR := e.currentMR
+	if mrInfo != nil {
+		e.currentMR = mrInfo
+	}
 	body, err := e.exportBlock(fd.Body)
+	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
 	}
@@ -5179,6 +5276,22 @@ func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
 				return nil, err
 			}
 			results = append(results, x)
+		}
+		// P3-M9 (WS D): in a transformed user multi-result function,
+		// `return a, b` becomes `return Pair{f0: a, f1: b}`.
+		if e.currentMR != nil && len(results) > 1 {
+			mr := e.currentMR
+			pairTypeID, err := e.typeID(mr.pairType)
+			if err != nil {
+				return nil, err
+			}
+			pairNode := e.node("complit", s, map[string]any{
+				"type":      pairTypeID,
+				"keyed":     true,
+				"values":    results,
+				"fieldkeys": mr.pairFields,
+			})
+			return e.node("return", s, map[string]any{"results": []*Node{pairNode}}), nil
 		}
 		return e.node("return", s, map[string]any{"results": results}), nil
 	case *ast.IncDecStmt:
@@ -8175,6 +8288,18 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 			if t.Len() == 0 {
 				return nil, nil
 			}
+			// P3-M9 (WS D): user-defined multi-result functions transformed
+			// to pair-returning form. The go/types type is still the
+			// original tuple, but the emitted function returns the pair.
+			if fn := e.calledFunc(c); fn != nil {
+				if mrInfo, ok := e.userMRFuncs[fn]; ok {
+					tid, err := e.typeID(mrInfo.pairType)
+					if err != nil {
+						return nil, err
+					}
+					return tid, nil
+				}
+			}
 			return nil, scopeErrorf("multi-valued call result is not supported in frontend/v1 scope (WS D)")
 		}
 		tid, err := e.typeID(tv.Type)
@@ -8184,6 +8309,35 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 		typ = tid
 	}
 	return typ, nil
+}
+
+// calledFunc returns the *types.Func denoted by a call expression's Fun,
+// or nil if it doesn't denote a function.
+func (e *exporter) calledFunc(c *ast.CallExpr) *types.Func {
+	// Ident: package-level function foo().
+	if id, ok := c.Fun.(*ast.Ident); ok {
+		if fn, ok := e.info.Uses[id].(*types.Func); ok {
+			return fn
+		}
+		return nil
+	}
+	// SelectorExpr: pkg.Func() or recv.Method().
+	if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
+		if selection, ok := e.info.Selections[sel]; ok {
+			if fn, ok := selection.Obj().(*types.Func); ok {
+				return fn
+			}
+		}
+		// Package-qualified: pkg.Func().
+		if id, ok := sel.X.(*ast.Ident); ok {
+			if _, ok := e.info.Uses[id].(*types.PkgName); ok {
+				if fn, ok := e.info.Uses[sel.Sel].(*types.Func); ok {
+					return fn
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // exportFuncLit exports a function literal (M5, WS F). Params and results
