@@ -1303,8 +1303,10 @@ func ExportFile(path string) (string, error) {
 		case "bytes":
 			// bytes' ErrTooLarge initializer calls errors.New.
 			// NB: requires m7-errors-sort (integration dependency).
+			// P3-M9: synthetic bytes imports io (Reader/Writer, io.EOF).
 			needBytes = true
 			needErrors = true
+			needIo = true
 		case "math":
 			needMath = true
 		// P3-M9 (tier1c): synthetic math/bits (imports synthetic errors
@@ -3357,6 +3359,17 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 		if b, ok := types.Unalias(a).(*types.Basic); ok && b.Kind() == types.UnsafePointer {
 			t = b
 		}
+	}
+	// P3-M9 (WS H, graalgo-wsh-fallback): apply substitution BEFORE the
+	// TypeParam check. When in an instantiation (e.subst != nil), a type
+	// parameter like P must resolve to its binding (e.g., *IntPtr) before
+	// we decide whether to emit a "typeparam" entry. Otherwise,
+	// monomorphized bodies leak "typeparam" kinds into the type table,
+	// which the Java backend rejects ("unknown composite type kind").
+	// Unbound type params (subst returns them unchanged) still fall
+	// through to the canonicalization below.
+	if e.subst != nil {
+		t = e.substType(t)
 	}
 	// P3-M9 (WS H): canonicalize type parameters by TypeName object.
 	// go/types mints a fresh *types.TypeParam per syntactic occurrence;
@@ -7549,17 +7562,21 @@ func typeKeyOf(t types.Type) string {
 }
 
 // methodTableEntries computes the wire "methods" list for a named type or
-// a pointer type (P3-M3, WS D, ADR-0003): one {"name","obj","recv","index","implkey"}
-// entry per method in types.NewMethodSet(t), resolved to declarations via
-// funcByObj (this covers promoted/embedded methods, which methodIndex
-// lacks). "obj" is the funcdecl object id; "recv" is the declared receiver
-// kind ("value" or "pointer"); "index" is the receiver adaptation path:
-// Selection.Index() minus its last entry (the method's own index in the
-// declaring type) — empty for direct methods, e.g. [0] for a method
-// promoted via embedded field 0. The Java dispatcher walks "index" to
-// adapt the receiver (P3-M3). Interface-declared methods (no funcdecl
-// exists to point at) and template methods are skipped — the latter are
-// out of P3-M3 scope. Sorted by method name for determinism.
+// a pointer type (P3-M3, WS D, ADR-0003): one
+// {"name","obj","recv","index","implkey","addrOf"} entry per method in
+// types.NewMethodSet(t), resolved to declarations via funcByObj (this
+// covers promoted/embedded methods, which methodIndex lacks). "obj" is the
+// funcdecl object id; "recv" is the declared receiver kind ("value" or
+// "pointer"); "index" is the receiver adaptation path: Selection.Index()
+// minus its last entry (the method's own index in the declaring type) —
+// empty for direct methods, e.g. [0] for a method promoted via embedded
+// field 0, null for unsupported promotions. "addrOf" is true when the
+// dispatcher must take the address of the promoted field value: a
+// pointer-receiver method promoted via a value-embedded struct field
+// (P3-M9). The Java dispatcher walks "index" to adapt the receiver
+// (P3-M3). Interface-declared methods (no funcdecl exists to point at)
+// and template methods are skipped — the latter are out of P3-M3 scope.
+// Sorted by method name for determinism.
 //
 // The second return value reports whether any template method was skipped
 // for this type (P3-M3 remediation, R1 P1-2): the caller records it as
@@ -7576,6 +7593,7 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 		index       []int
 		implkey     string
 		unsupported bool
+		addrOf      bool
 	}
 	entries := make([]entry, 0, ms.Len())
 	tmplSkipped := false
@@ -7641,17 +7659,19 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			path = []int{}
 		}
 		// P3-M3: promoted method with a pointer receiver via a
-		// value-embedded field cannot be dispatched: the dispatcher passes
-		// the field value as-is, and a value where a pointer is expected
-		// would be silently type-unsound (addressable-field lowering is out
-		// of P3-M3 scope). Mark it unsupported ("index": null) rather than
-		// failing the export: the method table is computed for every type,
-		// but the failure must only fire if the method is actually
-		// dispatched through an interface (fail fast at dispatch, named
-		// P3-M3 scope error — R2 P2-7 narrowed the old whole-itab
-		// fail-fast to per-method) — never for programs that merely
-		// declare the type.
+		// value-embedded field: the dispatcher must take the address of
+		// the promoted field value (gc's implicit &). P3-M9: this is
+		// sound for struct-typed fields (read by reference — the live
+		// field object), so mark supported with "addrOf": true. For
+		// non-struct fields (primitives etc.) address-taking would need
+		// writeback (out of scope): mark unsupported ("index": null)
+		// rather than failing the export — the failure fires only if the
+		// method is actually dispatched through an interface (fail fast
+		// at dispatch, named P3-M3 scope error — R2 P2-7 narrowed the
+		// old whole-itab fail-fast to per-method) — never for programs
+		// that merely declare the type.
 		unsupported := false
+		addrOf := false
 		if len(path) > 0 && recv == "pointer" {
 			if ft := embeddedFieldType(t, path); ft != nil {
 				for {
@@ -7662,7 +7682,11 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 					break
 				}
 				if _, ok := ft.(*types.Pointer); !ok {
-					unsupported = true
+					if _, ok := ft.(*types.Struct); ok {
+						addrOf = true
+					} else {
+						unsupported = true
+					}
 				}
 			}
 		}
@@ -7675,7 +7699,7 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 				mobj.Name(), mobj.Type())
 		}
 		entries = append(entries, entry{name: mobj.Name(), obj: fi.funcID, recv: recv, index: path,
-			implkey: implKeyOf(mobj, msig), unsupported: unsupported})
+			implkey: implKeyOf(mobj, msig), unsupported: unsupported, addrOf: addrOf})
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 	out := make([]any, 0, len(entries))
@@ -7691,7 +7715,7 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			idx = arr
 		}
 		out = append(out, map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv,
-			"index": idx, "implkey": en.implkey})
+			"index": idx, "implkey": en.implkey, "addrOf": en.addrOf})
 	}
 	if !tmplSkipped && ms.Len() > 0 && isGenericInstantiation(t) {
 		// The method-set objects of an instantiation (e.g. Box[int])
