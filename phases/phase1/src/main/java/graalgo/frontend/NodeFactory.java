@@ -3418,6 +3418,22 @@ public final class NodeFactory {
             if (fn.kind() != GoKind.FUNC) {
                 throw new FrontendException(cpath + ": cannot defer non-function of kind " + fn.kind());
             }
+        } else if ("methodref".equals(funKind)) {
+            // P3-M9: deferred method call, e.g. defer p.Close(). The
+            // receiver is in the fun's fields; prepend it to args (the
+            // method's params[0]), mirroring buildCall's methodref branch.
+            Json.Object ff = fun.object("fields", cpath + ".fun");
+            int oid = ff.intValue("obj", cpath + ".fun.fields");
+            GoExprNode recv = buildExpr(ff.object("recv", cpath + ".fun.fields"), ctx);
+            GoExprNode[] allArgs = new GoExprNode[args.length + 1];
+            allArgs[0] = recv;
+            System.arraycopy(args, 0, allArgs, 1, args.length);
+            GoKind[] allKinds = new GoKind[kinds.length + 1];
+            allKinds[0] = recv.kind();
+            System.arraycopy(kinds, 0, allKinds, 1, kinds.length);
+            fn = new FuncConstNode(funcTable, oid);
+            args = allArgs;
+            kinds = allKinds;
         } else {
             throw new FrontendException(cpath + ": cannot defer call to " + funKind + " (WS D)");
         }
