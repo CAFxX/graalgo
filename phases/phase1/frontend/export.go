@@ -1700,12 +1700,11 @@ func ExportFile(path string) (string, error) {
 		case "net":
 			needNet = true
 			needErrors = true
-			needIo = true
 			needStrconv = true
 			needStrings = true
-			needSyscall = true
 			needTime = true
-			// internal/poll resolves via the overlay importer.
+			// syscall NOT imported: pre-existing io/fs export issue.
+			// Errno constants are defined locally in the net source.
 		// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
 		// net/http imports bufio, bytes, errors, io, net, net/textproto,
 		// net/url, strconv, strings, sync, time. The client delegates to

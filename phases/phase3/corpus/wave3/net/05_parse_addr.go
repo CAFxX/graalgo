@@ -28,9 +28,9 @@ func main() {
 	// JoinHostPort / SplitHostPort.
 	fmt.Println("join4", net.JoinHostPort("192.0.2.1", "80") == "192.0.2.1:80")
 	fmt.Println("join6", net.JoinHostPort("2001:db8::1", "80") == "[2001:db8::1]:80")
-	host, port := net.SplitHostPort("192.0.2.1:80")
+	host, port, _ := net.SplitHostPort("192.0.2.1:80")
 	fmt.Println("split", host == "192.0.2.1" && port == "80")
-	host, port = net.SplitHostPort("[2001:db8::1]:80")
+	host, port, _ = net.SplitHostPort("[2001:db8::1]:80")
 	fmt.Println("split6", host == "2001:db8::1" && port == "80")
 
 	// ResolveTCPAddr / ResolveUDPAddr (IP literals, no DNS).

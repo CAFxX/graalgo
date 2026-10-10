@@ -789,14 +789,14 @@ func __parseAuthority(scheme, authority string) parseAuthorityTriple {
 		user = User(userinfo)
 	} else {
 		__tmpCut3 := __cut(userinfo, ":")
-		username, password, _ := __tmpCut3.before, __tmpCut3.after, __tmpCut3.found
+		username, password, _ = __tmpCut3.before, __tmpCut3.after, __tmpCut3.found
 		__tmpUE := __unescape(username, encodeUserPassword)
 		username, err = __tmpUE.s, __tmpUE.err
 		if err != nil {
 			return parseAuthorityTriple{nil, "", err}
 		}
-		__tmpUE := __unescape(password, encodeUserPassword)
-		password, err = __tmpUE.s, __tmpUE.err
+		__tmpUE2 := __unescape(password, encodeUserPassword)
+		password, err = __tmpUE2.s, __tmpUE2.err
 		if err != nil {
 			return parseAuthorityTriple{nil, "", err}
 		}
@@ -1481,7 +1481,8 @@ func (u *URL) Port() string {
 // the entire input as host, and it doesn't check the validity of the host.
 // Unlike net.SplitHostPort, but per RFC 3986, it requires ports to be numeric.
 func __splitHostPort(hostPort string) splitHostPortPair {
-	host = hostPort
+	host := hostPort
+	var port string
 
 	colon := strings.LastIndexByte(host, ':')
 	if colon != -1 && validOptionalPort(host[colon:]) {
@@ -1492,7 +1493,7 @@ func __splitHostPort(hostPort string) splitHostPortPair {
 		host = host[1 : len(host)-1]
 	}
 
-	return
+	return splitHostPortPair{host, port}
 }
 
 // Marshaling interface implementations.
@@ -1516,8 +1517,8 @@ func (u *URL) UnmarshalBinary(text []byte) error {
 // Any sequences of multiple / characters will be reduced to a single /.
 // Path elements must already be in escaped form, as produced by [PathEscape].
 func (u *URL) JoinPath(elem ...string) *URL {
-	url, _ := u.joinPath(elem...)
-	return url
+	__tmpJP2 := __joinPath(u, elem...)
+	return __tmpJP2.url
 }
 
 func __joinPath(u *URL, elem ...string) joinPathPair {

@@ -35,8 +35,28 @@ const syntheticNetSource = `// Copyright 2009 The Go Authors. All rights reserve
 
 package net
 
-import (
+import _ "unsafe" // for go:linkname
+import "errors"
+import "strconv"
+import "strings"
+import "time"
+
+// Linux errno numbers (net-fork-contract.md). Defined locally: the
+// synthetic syscall package has a pre-existing io/fs export issue
+// (P3-M9) that blocks its use from net.
+const (
+	errnoEAGAIN      = 11
+	errnoEINPROGRESS = 115
+	errnoECONNREFUSED = 111
+	errnoEADDRINUSE  = 98
+	errnoEINVAL      = 22
+	errnoEBADF       = 9
 )
+
+// errno is a Linux error number.
+type errno int64
+
+func (e errno) Error() string { return "errno " + itoa(int(e)) }
 
 // Addr represents a network end point address.
 type Addr interface {
@@ -190,20 +210,104 @@ func parseIPv4(s string) IP {
 	return IP{byte(parts[0]), byte(parts[1]), byte(parts[2]), byte(parts[3])}
 }
 
-// parseIPv6 parses an IPv6 address (simplified; handles :: compression).
-// M9: minimal implementation; returns nil for complex forms.
+// parseIPv6 parses an IPv6 address, handling :: compression (gc parity for
+// the forms the corpus exercises: full, compressed, IPv4-mapped).
 func parseIPv6(s string) IP {
-	// For M9 scope, only support ::1 (loopback) and :: (unspecified)
-	// Full IPv6 parsing is deferred.
-	if s == "::1" {
-		ip := make(IP, 16)
-		ip[15] = 1
-		return ip
+	// Strip a zone (%eth0); M9 keeps the zone out of the IP itself.
+	if i := strings.LastIndexByte(s, '%'); i != -1 {
+		s = s[:i]
 	}
-	if s == "::" {
-		return make(IP, 16)
+	// Split around :: (at most one).
+	var head, tail string
+	hasDouble := false
+	if i := strings.Index(s, "::"); i != -1 {
+		if strings.Index(s[i+2:], "::") != -1 {
+			return nil // multiple ::
+		}
+		head, tail = s[:i], s[i+2:]
+		hasDouble = true
+	} else {
+		head = s
 	}
-	return nil
+	__tmpHG := __parseIPv6Groups(head)
+	if !__tmpHG.ok {
+		return nil
+	}
+	hg := __tmpHG.groups
+	__tmpTG := __parseIPv6Groups(tail)
+	if !__tmpTG.ok {
+		return nil
+	}
+	tg := __tmpTG.groups
+	if hasDouble {
+		// Total groups must be <= 8; pad zeros in the middle.
+		if len(hg)+len(tg) > 8 {
+			return nil
+		}
+		full := make([]uint16, 0, 8)
+		full = append(full, hg...)
+		for len(full) < 8-len(tg) {
+			full = append(full, 0)
+		}
+		full = append(full, tg...)
+		hg = full
+	} else if len(hg) != 8 {
+		return nil
+	}
+	ip := make(IP, 16)
+	for i, g := range hg {
+		ip[2*i] = byte(g >> 8)
+		ip[2*i+1] = byte(g)
+	}
+	return ip
+}
+
+type parseIPv6GroupsPair struct {
+	groups []uint16
+	ok     bool
+}
+
+func __parseIPv6Groups(part string) parseIPv6GroupsPair {
+	if part == "" {
+		return parseIPv6GroupsPair{nil, true}
+	}
+	segs := strings.Split(part, ":")
+	out := make([]uint16, 0, len(segs))
+	for _, g := range segs {
+		if g == "" {
+			return parseIPv6GroupsPair{nil, false}
+		}
+		// Embedded IPv4 (e.g. ::ffff:192.0.2.1).
+		if strings.Contains(g, ".") {
+			ip4 := parseIPv4(g)
+			if ip4 == nil {
+				return parseIPv6GroupsPair{nil, false}
+			}
+			out = append(out, uint16(ip4[0])<<8|uint16(ip4[1]), uint16(ip4[2])<<8|uint16(ip4[3]))
+			continue
+		}
+		if len(g) > 4 {
+			return parseIPv6GroupsPair{nil, false}
+		}
+		var v uint16
+		for i := 0; i < len(g); i++ {
+			c := g[i]
+			var d uint16
+			switch {
+			case c >= '0' && c <= '9':
+				d = uint16(c - '0')
+			case c >= 'a' && c <= 'f':
+				d = uint16(c-'a') + 10
+			case c >= 'A' && c <= 'F':
+				d = uint16(c-'A') + 10
+			default:
+				return parseIPv6GroupsPair{nil, false}
+			}
+			v = v*16 + d
+		}
+		out = append(out, v)
+	}
+	return parseIPv6GroupsPair{out, true}
 }
 
 // String returns the string form of the ip address ip.
@@ -392,12 +496,6 @@ func ParseCIDR(s string) (IP, *IPNet, error) {
 	panic("net.ParseCIDR: not supported in frontend/v1 scope (M9)")
 }
 
-// __parseCIDR is the desugar target for ParseCIDR (3-result).
-func __parseCIDR(s string) parseCIDRPair {
-	panic("net.__parseCIDR: not supported in frontend/v1 scope (M9)")
-}
-
-
 type parseCIDRPair struct {
 	ip    IP
 	ipnet *IPNet
@@ -499,4 +597,1199 @@ type pipeAddr struct{}
 
 func (p *pipeAddr) Network() string { return "pipe" }
 func (p *pipeAddr) String() string { return "pipe" }
+
+
+// ---------------------------------------------------------------------------
+// Socket address types + Dial/Listen (P3-M9 tier-4: loopback TCP/UDP).
+// Wired to the graalgo.net.* traps + internal/poll per
+// phases/phase3/hidden_files/m9-tmp/net-fork-contract.md.
+// ---------------------------------------------------------------------------
+
+// Listener is a generic network listener for stream-oriented protocols.
+type Listener interface {
+	Accept() (Conn, error)
+	Close() error
+	Addr() Addr
+}
+
+// PacketConn is a generic packet-oriented network connection.
+type PacketConn interface {
+	ReadFrom(b []byte) (n int, addr Addr, err error)
+	WriteTo(b []byte, addr Addr) (n int, err error)
+	Close() error
+	LocalAddr() Addr
+	SetDeadline(t interface{}) error
+	SetReadDeadline(t interface{}) error
+	SetWriteDeadline(t interface{}) error
+}
+
+// IPAddr represents the address of an IP end point.
+type IPAddr struct {
+	IP   IP
+	Zone string // IPv6 scoped addressing zone
+}
+
+func (a *IPAddr) Network() string { return "ip" }
+
+func (a *IPAddr) String() string {
+	if a == nil {
+		return "<nil>"
+	}
+	ip := ipEmptyString(a.IP)
+	if ip == "" {
+		return ""
+	}
+	return ip
+}
+
+// TCPAddr represents the address of a TCP end point.
+type TCPAddr struct {
+	IP   IP
+	Port int
+	Zone string // IPv6 scoped addressing zone
+}
+
+func (a *TCPAddr) Network() string { return "tcp" }
+
+func (a *TCPAddr) String() string {
+	if a == nil {
+		return "<nil>"
+	}
+	ip := ipEmptyString(a.IP)
+	if a.Zone != "" {
+		return JoinHostPort(ip+"%"+a.Zone, itoa(a.Port))
+	}
+	return JoinHostPort(ip, itoa(a.Port))
+}
+
+// UDPAddr represents the address of a UDP end point.
+type UDPAddr struct {
+	IP   IP
+	Port int
+	Zone string // IPv6 scoped addressing zone
+}
+
+func (a *UDPAddr) Network() string { return "udp" }
+
+func (a *UDPAddr) String() string {
+	if a == nil {
+		return "<nil>"
+	}
+	ip := ipEmptyString(a.IP)
+	if a.Zone != "" {
+		return JoinHostPort(ip+"%"+a.Zone, itoa(a.Port))
+	}
+	return JoinHostPort(ip, itoa(a.Port))
+}
+
+func ipEmptyString(ip IP) string {
+	if len(ip) == 0 {
+		return ""
+	}
+	return ip.String()
+}
+
+// JoinHostPort combines host and port into a network address string.
+func JoinHostPort(host, port string) string {
+	// If host contains a colon, it is an IPv6 literal and needs brackets
+	// (unless already bracketed).
+	if strings.Contains(host, ":") {
+		if strings.HasPrefix(host, "[") {
+			return host + ":" + port
+		}
+		return "[" + host + "]:" + port
+	}
+	return host + ":" + port
+}
+
+// SplitHostPort splits a network address of the form "host:port",
+// "host%zone:port", "[host]:port" or "[host%zone]:port" into host and port.
+func SplitHostPort(hostport string) (host, port string, err error) {
+	panic("net.SplitHostPort: unreachable (Appendix-M desugar did not fire)")
+}
+
+type splitHostPortPair struct {
+	host string
+	port string
+	err  error
+}
+
+func __splitHostPort(hostport string) splitHostPortPair {
+	// gc's SplitHostPort (net/ipsock.go), adapted: no multi-result.
+	const errMissingPort = "missing port in address"
+	const errTooManyColons = "too many colons in address"
+	addrErr := func(addr string, why string) splitHostPortPair {
+		return splitHostPortPair{"", "", &AddrError{Err: why, Addr: addr}}
+	}
+	host := hostport
+	var port string
+
+	colon := strings.LastIndexByte(host, ':')
+	if colon == -1 {
+		return addrErr(hostport, errMissingPort)
+	}
+	if i := strings.LastIndexByte(host, ']'); i != -1 {
+		// Bracketed IPv6: [host]:port or [host%zone]:port.
+		if i != colon-1 {
+			// Colon after ']' but not immediately: malformed.
+			if strings.Contains(host[i+1:], ":") {
+				return addrErr(hostport, errTooManyColons)
+			}
+			return addrErr(hostport, errMissingPort)
+		}
+		host = host[1:i]
+		port := hostport[colon+1:]
+		if port == "" {
+			return addrErr(hostport, errMissingPort)
+		}
+		return splitHostPortPair{host, port, nil}
+	}
+	// Unbracketed: host:port. If host contains a colon, it is an
+	// unbracketed IPv6 literal without port (or too many colons).
+	if strings.Contains(host[:colon], ":") {
+		return addrErr(hostport, errTooManyColons)
+	}
+	port = host[colon+1:]
+	if port == "" {
+		return addrErr(hostport, errMissingPort)
+	}
+	host = host[:colon]
+	return splitHostPortPair{host, port, nil}
+}
+
+// AddrError records an address parse error.
+type AddrError struct {
+	Err  string
+	Addr string
+}
+
+func (e *AddrError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	s := e.Err
+	if e.Addr != "" {
+		s += " (" + e.Addr + ")"
+	}
+	return s
+}
+
+func (e *AddrError) Timeout() bool   { return false }
+func (e *AddrError) Temporary() bool { return false }
+
+// ---------------------------------------------------------------------------
+// Socket trap bindings.
+// ---------------------------------------------------------------------------
+
+//go:linkname netSocket graalgo.net.socket
+func netSocket(domain, typ, proto int64) int64 // cookie or -errno
+
+//go:linkname netBind graalgo.net.bind
+func netBind(cookie int64, addr []byte) int64 // 0 or -errno
+
+//go:linkname netListenSock graalgo.net.listen
+func netListenSock(cookie int64, backlog int64) int64 // 0 or -errno
+
+//go:linkname netAccept graalgo.net.accept
+func netAccept(cookie int64) int64 // new cookie or -errno (incl. -EAGAIN)
+
+//go:linkname netConnect graalgo.net.connect
+func netConnect(cookie int64, addr []byte) int64 // 0, -EINPROGRESS, or -errno
+
+//go:linkname netSetsockopt graalgo.net.setsockopt
+func netSetsockopt(cookie, level, opt, val int64) int64
+
+//go:linkname netGetsockopt graalgo.net.getsockopt
+func netGetsockopt(cookie, level, opt int64) int64 // value or -errno
+
+//go:linkname netGetsockname graalgo.net.getsockname
+func netGetsockname(cookie int64, buf []byte) int64 // n+1 or -errno
+
+//go:linkname netGetpeername graalgo.net.getpeername
+func netGetpeername(cookie int64, buf []byte) int64 // n+1 or -errno
+
+//go:linkname netSendto graalgo.net.sendto
+func netSendto(cookie int64, buf []byte, addr []byte) int64 // n+1 or -errno
+
+//go:linkname netRecvfrom graalgo.net.recvfrom
+func netRecvfrom(cookie int64, buf []byte, addr []byte) int64 // n+1 or -errno
+
+//go:linkname netSockRead graalgo.os.read
+func netSockRead(h int64, b []byte) int64 // n+1 (0=EOF) or -errno
+
+//go:linkname netSockWrite graalgo.os.write
+func netSockWrite(h int64, b []byte) int64 // n+1 or -errno
+
+//go:linkname netSockClose graalgo.os.close
+func netSockClose(h int64) int64 // 0 or -errno
+
+// ---------------------------------------------------------------------------
+// Netpoller linknames (internal/poll.*). The net package drives the
+// poller directly by cookie via linknames, avoiding a synthetic->synthetic
+// import of internal/poll (whose FD struct contains sync.Mutex, rejected
+// by the frontend M2 scope as a struct field).
+// ---------------------------------------------------------------------------
+
+//go:linkname netPollOpen internal/poll.runtime_pollOpen
+func netPollOpen(fd uintptr) uintptr // pollDesc cookie; 0 = failure
+
+//go:linkname netPollClose internal/poll.runtime_pollClose
+func netPollClose(ctx uintptr)
+
+//go:linkname netPollWait internal/poll.runtime_pollWait
+func netPollWait(ctx uintptr, mode int) int // 0=no error, 1=closing, 2=timeout, 3=not pollable
+
+//go:linkname netPollUnblock internal/poll.runtime_pollUnblock
+func netPollUnblock(ctx uintptr)
+
+//go:linkname netPollSetDeadline internal/poll.runtime_pollSetDeadline
+func netPollSetDeadline(ctx uintptr, d int64, mode int)
+
+// netPollCtxs maps socket cookies to pollDesc cookies.
+var netPollCtxs = make(map[int64]uintptr)
+
+func netPollInit(cookie int64) error {
+	ctx := netPollOpen(uintptr(cookie))
+	if ctx == 0 {
+		return errors.New("net: poll open failed")
+	}
+	netPollCtxs[cookie] = ctx
+	return nil
+}
+
+func netPollCloseCookie(cookie int64) {
+	if ctx, ok := netPollCtxs[cookie]; ok {
+		netPollUnblock(ctx)
+		delete(netPollCtxs, cookie)
+		netPollClose(ctx)
+	}
+}
+
+func netPollWaitRead(cookie int64) error {
+	ctx, ok := netPollCtxs[cookie]
+	if !ok {
+		return errors.New("net: invalid poll cookie")
+	}
+	switch netPollWait(ctx, 'r') {
+	case 0:
+		return nil
+	case 1:
+		return errors.New("use of closed network connection")
+	case 2:
+		return errDeadlineExceeded
+	default:
+		return errors.New("net: not pollable")
+	}
+}
+
+func netPollWaitWrite(cookie int64) error {
+	ctx, ok := netPollCtxs[cookie]
+	if !ok {
+		return errors.New("net: invalid poll cookie")
+	}
+	switch netPollWait(ctx, 'w') {
+	case 0:
+		return nil
+	case 1:
+		return errors.New("use of closed network connection")
+	case 2:
+		return errDeadlineExceeded
+	default:
+		return errors.New("net: not pollable")
+	}
+}
+
+func netPollSetDeadlineCookie(cookie int64, d int64, mode int) {
+	if ctx, ok := netPollCtxs[cookie]; ok {
+		netPollSetDeadline(ctx, d, mode)
+	}
+}
+
+// errEOF is the EOF error for socket reads (matches io.EOF's message;
+// the net package avoids importing io to sidestep an io/fs export issue).
+var errEOF = errors.New("EOF")
+
+// Sockaddr wire format (net-fork-contract.md): byte 0 = family;
+// AF_INET (2): [2, portHi, portLo, a0..a3]; AF_INET6 (10):
+// [10, portHi, portLo, a0..a15, scopeHi..scopeLo] (23 bytes).
+func encodeSockaddr(ip IP, port int) []byte {
+	if ip4 := ip.To4(); ip4 != nil {
+		b := make([]byte, 7)
+		b[0] = 2
+		b[1] = byte(port >> 8)
+		b[2] = byte(port)
+		copy(b[3:], ip4)
+		return b
+	}
+	ip16 := ip.To16()
+	if ip16 == nil {
+		ip16 = make([]byte, 16)
+	}
+	b := make([]byte, 23)
+	b[0] = 10
+	b[1] = byte(port >> 8)
+	b[2] = byte(port)
+	copy(b[3:], ip16)
+	return b
+}
+
+type decodeSockaddrPair struct {
+	ip   IP
+	port int
+}
+
+func decodeSockaddr(b []byte) decodeSockaddrPair {
+	if len(b) < 7 {
+		return decodeSockaddrPair{nil, 0}
+	}
+	port := int(b[1])<<8 | int(b[2])
+	switch b[0] {
+	case 2:
+		return decodeSockaddrPair{IP{b[3], b[4], b[5], b[6]}, port}
+	case 10:
+		if len(b) < 23 {
+			return decodeSockaddrPair{nil, 0}
+		}
+		ip := make(IP, 16)
+		copy(ip, b[3:19])
+		return decodeSockaddrPair{ip, port}
+	}
+	return decodeSockaddrPair{nil, 0}
+}
+
+// netFD is a socket cookie registered with the netpoller.
+// The pollDesc cookie lives in netPollCtxs (keyed by socket cookie);
+// net drives the poller via linknames (no synthetic->synthetic import
+// of internal/poll, whose FD struct the frontend M2 scope rejects).
+type netFD struct {
+	cookie int64
+	net    string
+	laddr  Addr
+	raddr  Addr
+}
+
+type newNetFDPair struct {
+	fd  *netFD
+	err error
+}
+
+func newNetFD(cookie int64, net string) newNetFDPair {
+	if err := netPollInit(cookie); err != nil {
+		netSockClose(cookie)
+		return newNetFDPair{nil, &OpError{Op: "socket", Net: net, Err: err}}
+	}
+	return newNetFDPair{&netFD{cookie: cookie, net: net}, nil}
+}
+
+func (fd *netFD) close() error {
+	netPollCloseCookie(fd.cookie)
+	if r := netSockClose(fd.cookie); r < 0 {
+		return &OpError{Op: "close", Net: fd.net, Err: errno(-r)}
+	}
+	return nil
+}
+
+// mapPollErr converts a poll wait error to a net error.
+func (fd *netFD) mapPollErr(op string, err error) error {
+	if te, ok := err.(interface{ Timeout() bool }); ok && te.Timeout() {
+		return &OpError{Op: op, Net: fd.net, Addr: fd.raddr, Err: errDeadlineExceeded}
+	}
+	return &OpError{Op: op, Net: fd.net, Addr: fd.raddr, Err: err}
+}
+
+func (fd *netFD) read(b []byte) readPair {
+	for {
+		r := netSockRead(fd.cookie, b)
+		if r == 0 {
+			return readPair{0, errEOF}
+		}
+		if r < 0 {
+			errnoVal := errno(-r)
+			if errnoVal == errnoEAGAIN {
+				if werr := netPollWaitRead(fd.cookie); werr != nil {
+					return readPair{0, fd.mapPollErr("read", werr)}
+				}
+				continue
+			}
+			return readPair{0, &OpError{Op: "read", Net: fd.net, Addr: fd.raddr, Err: errnoVal}}
+		}
+		n := int(r - 1)
+		if n == 0 && len(b) > 0 {
+			// 0-byte read on a nonblocking socket: EAGAIN (contract).
+			if werr := netPollWaitRead(fd.cookie); werr != nil {
+				return readPair{0, fd.mapPollErr("read", werr)}
+			}
+			continue
+		}
+		return readPair{n, nil}
+	}
+}
+
+func (fd *netFD) write(b []byte) writePair {
+	if len(b) == 0 {
+		return writePair{0, nil}
+	}
+	for {
+		r := netSockWrite(fd.cookie, b)
+		if r < 0 {
+			errnoVal := errno(-r)
+			if errnoVal == errnoEAGAIN {
+				if werr := netPollWaitWrite(fd.cookie); werr != nil {
+					return writePair{0, fd.mapPollErr("write", werr)}
+				}
+				continue
+			}
+			return writePair{0, &OpError{Op: "write", Net: fd.net, Addr: fd.raddr, Err: errnoVal}}
+		}
+		n := int(r - 1)
+		if n == 0 {
+			// 0-byte write on a nonblocking socket: EAGAIN (contract).
+			if werr := netPollWaitWrite(fd.cookie); werr != nil {
+				return writePair{0, fd.mapPollErr("write", werr)}
+			}
+			continue
+		}
+		return writePair{n, nil}
+	}
+}
+
+// getSockAddr queries getsockname/getpeername and decodes the result.
+func (fd *netFD) getSockAddr(peer bool) Addr {
+	buf := make([]byte, 32)
+	var r int64
+	if peer {
+		r = netGetpeername(int64(fd.cookie), buf)
+	} else {
+		r = netGetsockname(int64(fd.cookie), buf)
+	}
+	if r <= 0 {
+		return nil
+	}
+	__tmpSA := decodeSockaddr(buf[:r-1])
+	ip, port := __tmpSA.ip, __tmpSA.port
+	if strings.HasPrefix(fd.net, "tcp") {
+		return &TCPAddr{IP: ip, Port: port}
+	}
+	return &UDPAddr{IP: ip, Port: port}
+}
+
+// ---------------------------------------------------------------------------
+// TCP.
+// ---------------------------------------------------------------------------
+
+// TCPConn is a TCP network connection.
+type TCPConn struct {
+	fd *netFD
+}
+
+func (c *TCPConn) Read(b []byte) (int, error) {
+	panic("net.TCPConn.Read: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (c *TCPConn) Write(b []byte) (int, error) {
+	panic("net.TCPConn.Write: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (c *TCPConn) Close() error                       { return c.fd.close() }
+func (c *TCPConn) LocalAddr() Addr                    { return c.fd.laddr }
+func (c *TCPConn) RemoteAddr() Addr                   { return c.fd.raddr }
+func (c *TCPConn) SetDeadline(t interface{}) error    { return c.fd.setDeadline(t, 'r'+'w') }
+func (c *TCPConn) SetReadDeadline(t interface{}) error  { return c.fd.setDeadline(t, 'r') }
+func (c *TCPConn) SetWriteDeadline(t interface{}) error { return c.fd.setDeadline(t, 'w') }
+
+func (fd *netFD) setDeadline(t interface{}, mode int) error {
+	tt, ok := t.(time.Time)
+	if !ok {
+		return &OpError{Op: "setdeadline", Net: fd.net, Err: errors.New("net: deadline must be time.Time")}
+	}
+	var d int64
+	if !tt.IsZero() {
+		d = int64(time.Until(tt))
+		if d == 0 {
+			d = -1
+		}
+	}
+	if ctx, ok := netPollCtxs[fd.cookie]; ok {
+		netPollSetDeadline(ctx, d, mode)
+	}
+	return nil
+}
+
+type readPair struct {
+	n   int
+	err error
+}
+
+type writePair struct {
+	n   int
+	err error
+}
+
+func __tcpConnRead(c *TCPConn, b []byte) readPair {
+	return c.fd.read(b)
+}
+
+func __tcpConnWrite(c *TCPConn, b []byte) writePair {
+	// gc's TCPConn.Write loops until all bytes are written.
+	var nn int
+	for nn < len(b) {
+		__tmpW := c.fd.write(b[nn:])
+		nn += __tmpW.n
+		if __tmpW.err != nil {
+			return writePair{nn, __tmpW.err}
+		}
+		if __tmpW.n == 0 {
+			break
+		}
+	}
+	return writePair{nn, nil}
+}
+
+// TCPListener is a TCP network listener.
+type TCPListener struct {
+	fd *netFD
+}
+
+func (l *TCPListener) Accept() (Conn, error) {
+	panic("net.TCPListener.Accept: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (l *TCPListener) Close() error { return l.fd.close() }
+func (l *TCPListener) Addr() Addr   { return l.fd.laddr }
+
+type acceptPair struct {
+	c   Conn
+	err error
+}
+
+func __tcpListenerAccept(l *TCPListener) acceptPair {
+	for {
+		nc := netAccept(int64(l.fd.cookie))
+		if nc < 0 {
+			errnoVal := errno(-nc)
+			if errnoVal == errnoEAGAIN {
+				if werr := netPollWaitRead(l.fd.cookie); werr != nil {
+					return acceptPair{nil, l.fd.mapPollErr("accept", werr)}
+				}
+				continue
+			}
+			return acceptPair{nil, &OpError{Op: "accept", Net: l.fd.net, Addr: l.fd.laddr, Err: errnoVal}}
+		}
+		__tmpNFD := newNetFD(nc, l.fd.net)
+		if __tmpNFD.err != nil {
+			return acceptPair{nil, __tmpNFD.err}
+		}
+		fd := __tmpNFD.fd
+		fd.laddr = l.fd.laddr
+		fd.raddr = fd.getSockAddr(true)
+		return acceptPair{&TCPConn{fd: fd}, nil}
+	}
+}
+
+// Dial connects to the address on the named network.
+func Dial(network, address string) (Conn, error) {
+	panic("net.Dial: unreachable (Appendix-M desugar did not fire)")
+}
+
+// DialTimeout acts like Dial but takes a timeout.
+func DialTimeout(network, address string, timeout time.Duration) (Conn, error) {
+	panic("net.DialTimeout: unreachable (Appendix-M desugar did not fire)")
+}
+
+// Listen announces on the local network address.
+func Listen(network, address string) (Listener, error) {
+	panic("net.Listen: unreachable (Appendix-M desugar did not fire)")
+}
+
+type dialPair struct {
+	c   Conn
+	err error
+}
+
+type listenPair struct {
+	l   Listener
+	err error
+}
+
+func __dial(network, address string) dialPair {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		__tmp := __resolveTCPAddr(network, address)
+		if __tmp.err != nil {
+			return dialPair{nil, __tmp.err}
+		}
+		return __dialTCPAddr(network, __tmp.addr)
+	default:
+		return dialPair{nil, &OpError{Op: "dial", Net: network, Err: errors.New("unknown network " + network)}}
+	}
+}
+
+func __dialTimeout(network, address string, timeout time.Duration) dialPair {
+	// M9: implement via deadline on the connect wait. For loopback the
+	// connect completes immediately; the deadline path is exercised by
+	// the refused/timeout corpus legs.
+	deadline := time.Now().Add(timeout)
+	__tmp := __dialWithDeadline(network, address, deadline)
+	return __tmp
+}
+
+func __dialWithDeadline(network, address string, deadline time.Time) dialPair {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		__tmp := __resolveTCPAddr(network, address)
+		if __tmp.err != nil {
+			return dialPair{nil, __tmp.err}
+		}
+		return __dialTCPAddrDeadline(network, __tmp.addr, deadline)
+	default:
+		return dialPair{nil, &OpError{Op: "dial", Net: network, Err: errors.New("unknown network " + network)}}
+	}
+}
+
+func __dialTCPAddr(network string, raddr *TCPAddr) dialPair {
+	return __dialTCPAddrDeadline(network, raddr, time.Time{})
+}
+
+func __dialTCPAddrDeadline(network string, raddr *TCPAddr, deadline time.Time) dialPair {
+	family := int64(2) // AF_INET
+	if raddr.IP.To4() == nil {
+		family = int64(10) // AF_INET6
+	}
+	cookie := netSocket(family, 1, 0) // SOCK_STREAM
+	if cookie < 0 {
+		return dialPair{nil, &OpError{Op: "dial", Net: network, Addr: raddr, Err: errno(-cookie)}}
+	}
+	__tmpNFD2 := newNetFD(cookie, network)
+	if __tmpNFD2.err != nil {
+		return dialPair{nil, __tmpNFD2.err}
+	}
+	fd := __tmpNFD2.fd
+	fail := func(opErr error) dialPair {
+		fd.close()
+		return dialPair{nil, opErr}
+	}
+	// Arm the connect deadline if set.
+	if !deadline.IsZero() {
+		d := int64(time.Until(deadline))
+		if d == 0 {
+			d = -1
+		}
+		if ctx, ok := netPollCtxs[fd.cookie]; ok {
+			netPollSetDeadline(ctx, d, 'r'+'w')
+			defer netPollSetDeadline(ctx, 0, 'r'+'w')
+		}
+	}
+	sa := encodeSockaddr(raddr.IP, raddr.Port)
+	r := netConnect(cookie, sa)
+	if r < 0 {
+		errnoVal := errno(-r)
+		if errnoVal != errnoEINPROGRESS {
+			return fail(&OpError{Op: "dial", Net: network, Addr: raddr, Err: errnoVal})
+		}
+		// EINPROGRESS: wait for writability, then check SO_ERROR.
+		if werr := netPollWaitWrite(fd.cookie); werr != nil {
+			return fail(fd.mapPollErr("dial", werr))
+		}
+		soerr := netGetsockopt(cookie, 1, 4) // SOL_SOCKET, SO_ERROR
+		if soerr < 0 {
+			return fail(&OpError{Op: "dial", Net: network, Addr: raddr, Err: errno(-soerr)})
+		}
+		if soerr != 0 {
+			return fail(&OpError{Op: "dial", Net: network, Addr: raddr, Err: errno(soerr)})
+		}
+	}
+	fd.laddr = fd.getSockAddr(false)
+	fd.raddr = raddr
+	return dialPair{&TCPConn{fd: fd}, nil}
+}
+
+func __listen(network, address string) listenPair {
+	switch network {
+	case "tcp", "tcp4", "tcp6":
+		__tmp := __resolveTCPAddr(network, address)
+		if __tmp.err != nil {
+			return listenPair{nil, __tmp.err}
+		}
+		return __listenTCP(network, __tmp.addr)
+	default:
+		return listenPair{nil, &OpError{Op: "listen", Net: network, Err: errors.New("unknown network " + network)}}
+	}
+}
+
+func __listenTCP(network string, laddr *TCPAddr) listenPair {
+	family := int64(2)
+	if laddr.IP.To4() == nil {
+		family = int64(10)
+	}
+	cookie := netSocket(family, 1, 0)
+	if cookie < 0 {
+		return listenPair{nil, &OpError{Op: "listen", Net: network, Addr: laddr, Err: errno(-cookie)}}
+	}
+	__tmpNFD3 := newNetFD(cookie, network)
+	if __tmpNFD3.err != nil {
+		return listenPair{nil, __tmpNFD3.err}
+	}
+	fd := __tmpNFD3.fd
+	fail := func(opErr error) listenPair {
+		fd.close()
+		return listenPair{nil, opErr}
+	}
+	// SO_REUSEADDR for rapid rebind in tests.
+	netSetsockopt(cookie, 1, 2, 1)
+	sa := encodeSockaddr(laddr.IP, laddr.Port)
+	if r := netBind(cookie, sa); r < 0 {
+		return fail(&OpError{Op: "listen", Net: network, Addr: laddr, Err: errno(-r)})
+	}
+	if r := netListenSock(cookie, 128); r < 0 {
+		return fail(&OpError{Op: "listen", Net: network, Addr: laddr, Err: errno(-r)})
+	}
+	fd.laddr = fd.getSockAddr(false)
+	if fd.laddr == nil {
+		fd.laddr = laddr
+	}
+	return listenPair{&TCPListener{fd: fd}, nil}
+}
+
+// ---------------------------------------------------------------------------
+// UDP.
+// ---------------------------------------------------------------------------
+
+// UDPConn is a UDP network connection.
+type UDPConn struct {
+	fd *netFD
+}
+
+func (c *UDPConn) Read(b []byte) (int, error) {
+	panic("net.UDPConn.Read: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (c *UDPConn) Write(b []byte) (int, error) {
+	panic("net.UDPConn.Write: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (c *UDPConn) ReadFrom(b []byte) (int, Addr, error) {
+	panic("net.UDPConn.ReadFrom: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (c *UDPConn) WriteTo(b []byte, addr Addr) (int, error) {
+	panic("net.UDPConn.WriteTo: unreachable (Appendix-M desugar did not fire)")
+}
+
+func (c *UDPConn) Close() error                     { return c.fd.close() }
+func (c *UDPConn) LocalAddr() Addr                  { return c.fd.laddr }
+func (c *UDPConn) SetDeadline(t interface{}) error   { return c.fd.setDeadline(t, 'r'+'w') }
+func (c *UDPConn) SetReadDeadline(t interface{}) error  { return c.fd.setDeadline(t, 'r') }
+func (c *UDPConn) SetWriteDeadline(t interface{}) error { return c.fd.setDeadline(t, 'w') }
+
+type readFromPair struct {
+	n    int
+	addr Addr
+	err  error
+}
+
+func __udpConnRead(c *UDPConn, b []byte) readPair {
+	// Connected UDP read: recvfrom with nil addr.
+	for {
+		r := netRecvfrom(int64(c.fd.cookie), b, nil)
+		if r < 0 {
+			errnoVal := errno(-r)
+			if errnoVal == errnoEAGAIN {
+				if werr := netPollWaitRead(c.fd.cookie); werr != nil {
+					return readPair{0, c.fd.mapPollErr("read", werr)}
+				}
+				continue
+			}
+			return readPair{0, &OpError{Op: "read", Net: c.fd.net, Err: errnoVal}}
+		}
+		n := int(r - 1)
+		if n == 0 && len(b) > 0 {
+			if werr := netPollWaitRead(c.fd.cookie); werr != nil {
+				return readPair{0, c.fd.mapPollErr("read", werr)}
+			}
+			continue
+		}
+		return readPair{n, nil}
+	}
+}
+
+func __udpConnWrite(c *UDPConn, b []byte) writePair {
+	// Connected UDP write goes through the stream write path.
+	return c.fd.write(b)
+}
+
+func __udpConnReadFrom(c *UDPConn, b []byte) readFromPair {
+	addrBuf := make([]byte, 32)
+	for {
+		r := netRecvfrom(int64(c.fd.cookie), b, addrBuf)
+		if r < 0 {
+			errnoVal := errno(-r)
+			if errnoVal == errnoEAGAIN {
+				if werr := netPollWaitRead(c.fd.cookie); werr != nil {
+					return readFromPair{0, nil, c.fd.mapPollErr("read", werr)}
+				}
+				continue
+			}
+			return readFromPair{0, nil, &OpError{Op: "read", Net: c.fd.net, Err: errnoVal}}
+		}
+		// The addr buffer is separate; r-1 is the datagram length.
+		// Re-query the peer address length via a second call is not
+		// possible; decode from addrBuf directly. The trap writes the
+		// wire format; decode the family to know the length.
+		n := int(r - 1)
+		if n == 0 && len(b) > 0 {
+			if werr := netPollWaitRead(c.fd.cookie); werr != nil {
+				return readFromPair{0, nil, c.fd.mapPollErr("read", werr)}
+			}
+			continue
+		}
+		var raddr Addr
+		if len(addrBuf) >= 7 {
+			__tmpSA2 := decodeSockaddr(addrBuf)
+			raddr = &UDPAddr{IP: __tmpSA2.ip, Port: __tmpSA2.port}
+		}
+		return readFromPair{n, raddr, nil}
+	}
+}
+
+func __udpConnWriteTo(c *UDPConn, b []byte, addr Addr) writePair {
+	uaddr, ok := addr.(*UDPAddr)
+	if !ok {
+		return writePair{0, &OpError{Op: "write", Net: c.fd.net, Err: errors.New("net: WriteTo with non-UDPAddr")}}
+	}
+	sa := encodeSockaddr(uaddr.IP, uaddr.Port)
+	r := netSendto(int64(c.fd.cookie), b, sa)
+	if r < 0 {
+		return writePair{0, &OpError{Op: "write", Net: c.fd.net, Addr: addr, Err: errno(-r)}}
+	}
+	return writePair{int(r - 1), nil}
+}
+
+// ListenPacket announces on the local network address.
+func ListenPacket(network, address string) (PacketConn, error) {
+	panic("net.ListenPacket: unreachable (Appendix-M desugar did not fire)")
+}
+
+type listenPacketPair struct {
+	c   PacketConn
+	err error
+}
+
+func __listenPacket(network, address string) listenPacketPair {
+	switch network {
+	case "udp", "udp4", "udp6":
+		__tmp := __resolveUDPAddr(network, address)
+		if __tmp.err != nil {
+			return listenPacketPair{nil, __tmp.err}
+		}
+		return __listenUDP(network, __tmp.addr)
+	default:
+		return listenPacketPair{nil, &OpError{Op: "listen", Net: network, Err: errors.New("unknown network " + network)}}
+	}
+}
+
+func __listenUDP(network string, laddr *UDPAddr) listenPacketPair {
+	family := int64(2)
+	if laddr.IP.To4() == nil {
+		family = int64(10)
+	}
+	cookie := netSocket(family, 2, 0) // SOCK_DGRAM
+	if cookie < 0 {
+		return listenPacketPair{nil, &OpError{Op: "listen", Net: network, Addr: laddr, Err: errno(-cookie)}}
+	}
+	__tmpNFD4 := newNetFD(cookie, network)
+	if __tmpNFD4.err != nil {
+		return listenPacketPair{nil, __tmpNFD4.err}
+	}
+	fd := __tmpNFD4.fd
+	sa := encodeSockaddr(laddr.IP, laddr.Port)
+	if r := netBind(cookie, sa); r < 0 {
+		fd.close()
+		return listenPacketPair{nil, &OpError{Op: "listen", Net: network, Addr: laddr, Err: errno(-r)}}
+	}
+	fd.laddr = fd.getSockAddr(false)
+	if fd.laddr == nil {
+		fd.laddr = laddr
+	}
+	return listenPacketPair{&UDPConn{fd: fd}, nil}
+}
+
+// ---------------------------------------------------------------------------
+// Address resolution (IP literals only; DNS is fail-fast in M9).
+// ---------------------------------------------------------------------------
+
+// ResolveIPAddr returns an IP address for the given network and address.
+func ResolveIPAddr(network, address string) (*IPAddr, error) {
+	panic("net.ResolveIPAddr: unreachable (Appendix-M desugar did not fire)")
+}
+
+// ResolveTCPAddr returns a TCP address for the given network and address.
+func ResolveTCPAddr(network, address string) (*TCPAddr, error) {
+	panic("net.ResolveTCPAddr: unreachable (Appendix-M desugar did not fire)")
+}
+
+// ResolveUDPAddr returns a UDP address for the given network and address.
+func ResolveUDPAddr(network, address string) (*UDPAddr, error) {
+	panic("net.ResolveUDPAddr: unreachable (Appendix-M desugar did not fire)")
+}
+
+type resolveIPAddrPair struct {
+	ip  *IPAddr
+	err error
+}
+
+type resolveTCPAddrPair struct {
+	addr *TCPAddr
+	err  error
+}
+
+type resolveUDPAddrPair struct {
+	addr *UDPAddr
+	err  error
+}
+
+func __resolveIPAddr(network, address string) resolveIPAddrPair {
+	ip := ParseIP(address)
+	if ip == nil {
+		return resolveIPAddrPair{nil, &DNSError{Err: "no such host", Name: address}}
+	}
+	return resolveIPAddrPair{&IPAddr{IP: ip}, nil}
+}
+
+func __resolveTCPAddr(network, address string) resolveTCPAddrPair {
+	__tmp := __splitHostPort(address)
+	if __tmp.err != nil {
+		return resolveTCPAddrPair{nil, __tmp.err}
+	}
+	host, port := __tmp.host, __tmp.port
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		return resolveTCPAddrPair{nil, &AddrError{Err: "unknown port", Addr: "tcp/" + port}}
+	}
+	var ip IP
+	if host != "" {
+		ip = ParseIP(host)
+		if ip == nil {
+			return resolveTCPAddrPair{nil, &DNSError{Err: "no such host", Name: host}}
+		}
+	}
+	return resolveTCPAddrPair{&TCPAddr{IP: ip, Port: p}, nil}
+}
+
+func __resolveUDPAddr(network, address string) resolveUDPAddrPair {
+	__tmp := __splitHostPort(address)
+	if __tmp.err != nil {
+		return resolveUDPAddrPair{nil, __tmp.err}
+	}
+	host, port := __tmp.host, __tmp.port
+	p, err := strconv.Atoi(port)
+	if err != nil {
+		return resolveUDPAddrPair{nil, &AddrError{Err: "unknown port", Addr: "udp/" + port}}
+	}
+	var ip IP
+	if host != "" {
+		ip = ParseIP(host)
+		if ip == nil {
+			return resolveUDPAddrPair{nil, &DNSError{Err: "no such host", Name: host}}
+		}
+	}
+	return resolveUDPAddrPair{&UDPAddr{IP: ip, Port: p}, nil}
+}
+
+// ---------------------------------------------------------------------------
+// ParseMAC and real ParseCIDR.
+// ---------------------------------------------------------------------------
+
+// HardwareAddr represents a physical hardware address.
+type HardwareAddr []byte
+
+func (a HardwareAddr) String() string {
+	if len(a) == 0 {
+		return ""
+	}
+	const hextable = "0123456789abcdef"
+	buf := make([]byte, 0, len(a)*3-1)
+	for i, b := range a {
+		if i > 0 {
+			buf = append(buf, ':')
+		}
+		buf = append(buf, hextable[b>>4], hextable[b&0xf])
+	}
+	return string(buf)
+}
+
+// ParseMAC parses s as an IEEE 802 MAC-48, EUI-48, EUI-64, or a 20-octet
+// IP over InfiniBand link-layer address.
+func ParseMAC(s string) (HardwareAddr, error) {
+	panic("net.ParseMAC: unreachable (Appendix-M desugar did not fire)")
+}
+
+type parseMACPair struct {
+	hw  HardwareAddr
+	err error
+}
+
+func __parseMAC(s string) parseMACPair {
+	bad := func() parseMACPair {
+		return parseMACPair{nil, &AddrError{Err: "invalid MAC address", Addr: s}}
+	}
+	if len(s) < 14 {
+		return bad()
+	}
+	// Only the common xx:xx:xx:xx:xx:xx and xx-xx-xx-xx-xx-xx forms in M9.
+	sep := ""
+	if strings.Contains(s, ":") {
+		sep = ":"
+	} else if strings.Contains(s, "-") {
+		sep = "-"
+	} else {
+		return bad()
+	}
+	parts := strings.Split(s, sep)
+	if len(parts) != 6 && len(parts) != 8 && len(parts) != 20 {
+		return bad()
+	}
+	hw := make(HardwareAddr, len(parts))
+	for i, p := range parts {
+		if len(p) != 2 {
+			return bad()
+		}
+		__tmpHB := parseHexByte(p)
+		if !__tmpHB.ok {
+			return bad()
+		}
+		hw[i] = __tmpHB.v
+	}
+	return parseMACPair{hw, nil}
+}
+
+type parseHexBytePair struct {
+	v  byte
+	ok bool
+}
+
+func parseHexByte(s string) parseHexBytePair {
+	if len(s) != 2 {
+		return parseHexBytePair{0, false}
+	}
+	__tmpH1 := hexVal(s[0])
+	__tmpH2 := hexVal(s[1])
+	if !__tmpH1.ok || !__tmpH2.ok {
+		return parseHexBytePair{0, false}
+	}
+	return parseHexBytePair{__tmpH1.v<<4 | __tmpH2.v, true}
+}
+
+func hexVal(c byte) parseHexBytePair {
+	switch {
+	case c >= '0' && c <= '9':
+		return parseHexBytePair{c - '0', true}
+	case c >= 'a' && c <= 'f':
+		return parseHexBytePair{c - 'a' + 10, true}
+	case c >= 'A' && c <= 'F':
+		return parseHexBytePair{c - 'A' + 10, true}
+	}
+	return parseHexBytePair{0, false}
+}
+
+// __parseCIDR is the real desugar target for ParseCIDR (replaces the M9
+// fail-fast): parses "192.0.2.0/24" or "2001:db8::/32".
+func __parseCIDR(s string) parseCIDRPair {
+	i := strings.LastIndexByte(s, '/')
+	if i < 0 {
+		return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
+	}
+	addr, mask := s[:i], s[i+1:]
+	ip := ParseIP(addr)
+	if ip == nil {
+		return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
+	}
+	n, err := strconv.Atoi(mask)
+	if err != nil {
+		return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
+	}
+	var m IPMask
+	if ip4 := ip.To4(); ip4 != nil {
+		if n < 0 || n > 32 {
+			return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
+		}
+		m = CIDRMask(n, 32)
+		ip = ip4
+	} else {
+		if n < 0 || n > 128 {
+			return parseCIDRPair{nil, nil, &AddrError{Err: "invalid CIDR address", Addr: s}}
+		}
+		m = CIDRMask(n, 128)
+		ip = ip.To16()
+	}
+	// Mask the IP to get the network address.
+	masked := make(IP, len(ip))
+	for i := range ip {
+		masked[i] = ip[i] & m[i]
+	}
+	ipnet := &IPNet{IP: masked, Mask: m}
+	return parseCIDRPair{ip, ipnet, nil}
+}
+
+// CIDRMask returns an IPMask consisting of 'ones' 1 bits
+// followed by 0s up to a total length of 'bits' bits.
+func CIDRMask(ones, bits int) IPMask {
+	if bits != 8*netIPv4len && bits != 8*netIPv6len {
+		return nil
+	}
+	if ones < 0 || ones > bits {
+		return nil
+	}
+	l := bits / 8
+	mask := make(IPMask, l)
+	n := uint(ones)
+	for i := 0; i < l; i++ {
+		if n >= 8 {
+			mask[i] = 0xff
+			n -= 8
+			continue
+		}
+		mask[i] = ^byte(0xff >> n)
+		n = 0
+	}
+	return mask
+}
+
+const (
+	netIPv4len = 4
+	netIPv6len = 16
+)
+
+func (n *IPNet) String() string {
+	if n == nil {
+		return "<nil>"
+	}
+	__tmpMS := __ipMaskSize(n.Mask)
+	return n.IP.String() + "/" + itoa(__tmpMS.ones)
+}
+
+type maskSizePair struct {
+	ones int
+	bits int
+}
+
+// Size returns the number of leading one bits and total bits in the mask.
+func (m IPMask) Size() (ones, bits int) {
+	panic("net.IPMask.Size: unreachable (Appendix-M desugar did not fire)")
+}
+
+func __ipMaskSize(m IPMask) maskSizePair {
+	var ones int
+	for i := 0; i < len(m); i++ {
+		if m[i] == 0xff {
+			ones += 8
+			continue
+		}
+		for m[i]&0x80 != 0 {
+			ones++
+			m[i] <<= 1
+		}
+		break
+	}
+	return maskSizePair{ones, len(m) * 8}
+}
 `
