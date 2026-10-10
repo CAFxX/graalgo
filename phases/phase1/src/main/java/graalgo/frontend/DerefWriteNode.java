@@ -1,6 +1,8 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import graalgo.runtime.GoErrors;
+import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 
@@ -26,7 +28,14 @@ public final class DerefWriteNode extends GoStmtNode {
     @Override
     public void executeVoid(VirtualFrame frame) {
         Object o = ptr.executeObject(frame);
-        if (!(o instanceof GoPointer p)) {
+        GoPointer p;
+        if (o == null) {
+            // Java null is the nil *T (e.g., var p *int).
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+            return; // unreachable
+        } else if (o instanceof GoPointer gp) {
+            p = gp;
+        } else {
             throw new FrontendException("deref write: not a pointer: " + o);
         }
         if (p.isNil()) {

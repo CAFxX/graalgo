@@ -2567,10 +2567,13 @@ public final class NodeFactory {
         Json.Object f = fieldsOf(node, "addrof");
         String path = "addrof.fields";
         GoExprNode x = buildExpr(f.object("x", path), ctx);
+        GoKind xKind = x.kind();
         return new GoExprNode(GoKind.POINTER) {
             @Override
             public Object executeObject(VirtualFrame frame) {
-                Object val = x.executeObject(frame);
+                // P3-M9: box the value per its kind (x may be Int/Long/etc.,
+                // not just Object). Boxing.box handles the kind correctly.
+                Object val = Boxing.box(xKind, x, frame);
                 return new GoPointer(val);
             }
         };

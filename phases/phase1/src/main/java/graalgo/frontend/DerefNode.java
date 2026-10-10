@@ -1,6 +1,8 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
+import graalgo.runtime.GoErrors;
+import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 
@@ -23,6 +25,10 @@ public final class DerefNode extends GoExprNode {
 
     private Object read(VirtualFrame frame) {
         Object o = ptr.executeObject(frame);
+        if (o == null) {
+            // Java null is the nil *T (e.g., var p *int).
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+        }
         if (o instanceof GoPointer p) {
             if (p.isNil()) {
                 Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
