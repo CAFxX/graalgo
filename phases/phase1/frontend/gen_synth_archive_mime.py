@@ -818,6 +818,7 @@ def tar_adapt(src, pkg_prefix):
         'var tarinsecurepath = godebug.New("tarinsecurepath")',
         '''type __tarGodebugSetting struct{ name string }
 func (s *__tarGodebugSetting) Value() string { return "" }
+func (s *__tarGodebugSetting) IncNonDefault() {}
 var tarinsecurepath = &__tarGodebugSetting{name: "tarinsecurepath"}'''
     )
     # Inline filepath.IsLocal (from internal/filepathlite, unix)
@@ -867,7 +868,14 @@ func __tarSplitPath(path string) []string {
     return src
 
 def zip_adapt(src, pkg_prefix):
-    """Adapt zip source: no special handling needed (deps available)."""
+    """Adapt zip source: stub godebug."""
+    src = src.replace(
+        'var zipinsecurepath = godebug.New("zipinsecurepath")',
+        '''type __zipGodebugSetting struct{ name string }
+func (s *__zipGodebugSetting) Value() string { return "" }
+func (s *__zipGodebugSetting) IncNonDefault() {}
+var zipinsecurepath = &__zipGodebugSetting{name: "zipinsecurepath"}'''
+    )
     return src
 
 def mime_adapt(src, pkg_prefix):
@@ -875,8 +883,25 @@ def mime_adapt(src, pkg_prefix):
     return src
 
 def multipart_adapt(src, pkg_prefix):
-    """Adapt multipart source."""
-    # Check readmimeheader.go - might need it
+    """Adapt multipart source: stub godebug and textproto."""
+    src = src.replace(
+        'var multipartmaxheaders = godebug.New("multipartmaxheaders")',
+        '''type __mpGodebugSetting struct{ name string }
+func (s *__mpGodebugSetting) Value() string { return "" }
+func (s *__mpGodebugSetting) IncNonDefault() {}
+var multipartmaxheaders = &__mpGodebugSetting{name: "multipartmaxheaders"}'''
+    )
+    src = src.replace('textproto.MIMEHeader', '__mpMIMEHeader')
+    src += '''
+type __mpMIMEHeader = map[string][]string
+func (__mpMIMEHeader) Get(key string) string { return "" }
+type __mpTextprotoReader struct{}
+func __mpNewTextprotoReader(r any) *__mpTextprotoReader { return &__mpTextprotoReader{} }
+func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMIMEHeader, error) {
+    panic("multipart.readMIMEHeader: not in M9 scope")
+}
+'''
+    src = src.replace('textproto.NewReader(', '__mpNewTextprotoReader(')
     return src
 
 def qp_adapt(src, pkg_prefix):
@@ -893,7 +918,33 @@ def process_package(pkg_path, cfg):
     table_entries = []
     seen_funcs = set()  # Deduplicate function names across files
     all_imports = set()
-    
+
+    # Pre-pass: collect type names and build mr_map
+    known_types = set()
+    for rel_file in cfg['files']:
+        full_path = os.path.join(GOROOT, 'src', rel_file)
+        with open(full_path, 'r') as f:
+            tsrc = f.read()
+        known_types.update(extract_type_names(tsrc))
+    mr_map = {}
+    pre_seen = set()
+    for rel_file in cfg['files']:
+        full_path = os.path.join(GOROOT, 'src', rel_file)
+        with open(full_path, 'r') as f:
+            tsrc = f.read()
+        tsrc = strip_build_tags(tsrc)
+        tsrc = strip_package(tsrc)
+        tsrc = strip_imports(tsrc)
+        for fn in extract_functions(tsrc):
+            fk = (fn['recv_type'], fn['name'])
+            if fk in pre_seen:
+                continue
+            pre_seen.add(fk)
+            if is_multi_result(fn['results']):
+                pr = parse_results(fn['results'], known_types)
+                hn = make_helper_name(pkg_prefix, fn['recv_type'], fn['name'])
+                mr_map[fn['name']] = (hn, compute_field_names(pr))
+
     for rel_file in cfg['files']:
         full_path = os.path.join(GOROOT, 'src', rel_file)
         with open(full_path, 'r') as f:
@@ -925,50 +976,44 @@ def process_package(pkg_path, cfg):
             
             if is_multi_result(fn['results']):
                 # Generate Appendix M pattern
-                results = parse_results(fn['results'])
+                results = parse_results(fn['results'], known_types)
                 pair_name = make_pair_name(pkg_prefix, fn['recv_type'], fn['name'])
                 helper_name = make_helper_name(pkg_prefix, fn['recv_type'], fn['name'])
-                
+
                 # Generate pair struct
-                field_defs = []
-                field_names = []
-                for idx, (rname, rtype) in enumerate(results):
-                    # Generate field name if not present
-                    if not rname:
-                        rname = f'f{idx}'
-                    # Ensure valid Go identifier (handle cases like "b byte")
-                    rname = rname.strip()
-                    if not rname or not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', rname):
-                        rname = f'f{idx}'
-                    field_names.append(rname)
-                    field_defs.append(f'\t{rname} {rtype}')
+                field_names = compute_field_names(results)
+                field_defs = [f'\t{rname} {rtype}' for rname, (_, rtype) in zip(field_names, results)]
                 
                 pair_struct = f"type {pair_name} struct {{\n" + "\n".join(field_defs) + "\n}\n\n"
                 new_src_parts.append(pair_struct)
                 
                 # Generate helper with real body (rewritten returns)
                 # Build helper signature: receiver becomes first param (not a method)
+                helper_params = name_unnamed_params(fn['params'])
                 if fn['recv_type']:
                     ptr = "*" if fn['recv_ptr'] else ""
                     recv_param = f"{fn['recv_var']} {ptr}{fn['recv_type']}"
-                    if fn['params'].strip():
-                        all_params = f"{recv_param}, {fn['params']}"
+                    if helper_params.strip():
+                        all_params = f"{recv_param}, {helper_params}"
                     else:
                         all_params = recv_param
                 else:
-                    all_params = fn['params']
+                    all_params = helper_params
                 
                 helper_sig = f"func {helper_name}({all_params}) {pair_name} {{\n"
                 # Rewrite body returns
-                rewritten_body = rewrite_body_returns(fn['body'], pair_name, list(zip(field_names, [r[1] for r in results])), pkg_prefix=pkg_prefix)
+                rewritten_body = rewrite_body_returns(fn['body'], pair_name, list(zip(field_names, [r[1] for r in results])), mr_map=mr_map, pkg_prefix=pkg_prefix)
                 # For named results, declare local variables IF they're needed.
-                # Needed if: referenced in body, OR body has a bare return (which uses them).
                 decls = ""
                 has_bare = bool(re.search(r'\breturn\b\s*(\n|;|})', fn['body']))
                 for (rname, rtype), fname in zip(results, field_names):
                     if rname and rname.strip():
-                        referenced = bool(re.search(rf'\b{re.escape(rname)}\b', fn['body']))
-                        if referenced or has_bare:
+                        rn = re.escape(rname.strip())
+                        assigned = bool(re.search(rf'\b{rn}\b\s*=\s*[^=]', fn['body']))
+                        compound = bool(re.search(rf'\b{rn}\b\s*[+\-*/%&|^]=', fn['body']))
+                        incdec = bool(re.search(rf'\b{rn}\b\s*(\+\+|--)', fn['body']))
+                        multi_assign = bool(re.search(rf'\b{rn}\b\s*,', fn['body']))
+                        if has_bare or assigned or compound or incdec or multi_assign:
                             decls += f"\tvar {rname} {rtype}\n"
                 helper_decl = helper_sig + decls + rewritten_body + "}\n\n"
                 new_src_parts.append(helper_decl)
@@ -1011,24 +1056,8 @@ def process_package(pkg_path, cfg):
     full_src = '\n'.join(combined_src)
     full_src = adapt_fn(full_src, pkg_prefix)
     
-    # Build mr_map from table_entries and rewrite call sites
-    # table_entries: (pkg_path, method_path, helper_name, pair_name, field_names)
-    # method_path is like "mime.ParseMediaType" or "(*tar.Reader).Read"
-    mr_map = {}
-    for pkg_p, method_p, helper_n, pair_n, field_ns in table_entries:
-        # method_p is the function name (e.g., "consumeToken") or method path
-        # For functions, use it directly; for methods, extract the name
-        if '.' in method_p:
-            orig_full = method_p.split('.')[-1].strip('()*')
-        else:
-            orig_full = method_p
-        mr_map[orig_full] = (helper_n, field_ns)
-    
+    # Rewrite call sites using pre-pass mr_map
     if mr_map:
-        # DEBUG
-        import sys
-        if 'consumeToken' in mr_map:
-            print(f"DEBUG: consumeToken fields = {mr_map['consumeToken'][1]}", file=sys.stderr)
         full_src = rewrite_call_sites(full_src, mr_map)
     
     # Prepend collected imports (exclude internal/ which we stub)
