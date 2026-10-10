@@ -907,6 +907,7 @@ var multipartmaxheaders = &__mpGodebugSetting{name: "multipartmaxheaders"}'''
     src += '''
 type __mpMIMEHeader map[string][]string
 func (__mpMIMEHeader) Get(key string) string { return "" }
+func (__mpMIMEHeader) Del(key string) {}
 type __mpTextprotoReader struct{}
 func __mpNewTextprotoReader(r any) *__mpTextprotoReader { return &__mpTextprotoReader{} }
 func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMIMEHeader, error) {
@@ -1091,14 +1092,16 @@ def process_package(pkg_path, cfg):
         full_src = rewrite_call_sites(full_src, mr_map)
     
     # Prepend collected imports (exclude internal/ which we stub).
-    # Only include imports actually referenced in the code (pkg.Name).
+    # Only include imports actually referenced in code (not comments).
+    # Strip comments first to avoid false positives.
+    src_no_comments = re.sub(r'//.*', '', full_src)
+    src_no_comments = re.sub(r'/\*.*?\*/', '', src_no_comments, flags=re.DOTALL)
     filtered_imports = []
     for imp in sorted(all_imports):
         if imp.startswith('internal/'):
             continue
         pkg = imp.split('/')[-1]
-        # Check if pkg. appears in the source (avoid false positives in strings/comments is best-effort)
-        if re.search(rf'\b{re.escape(pkg)}\.', full_src):
+        if re.search(rf'\b{re.escape(pkg)}\.', src_no_comments):
             filtered_imports.append(imp)
     if filtered_imports:
         import_block = 'import (\n' + '\n'.join(f'\t"{imp}"' for imp in filtered_imports) + '\n)\n\n'
