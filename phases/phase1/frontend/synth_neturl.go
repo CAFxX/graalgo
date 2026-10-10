@@ -299,6 +299,15 @@ func (e *Error) Temporary() bool {
 
 const upperhex = "0123456789ABCDEF"
 
+const hexChar = 1
+
+var table = [256]encoding{
+	'0': hexChar, '1': hexChar, '2': hexChar, '3': hexChar, '4': hexChar,
+	'5': hexChar, '6': hexChar, '7': hexChar, '8': hexChar, '9': hexChar,
+	'a': hexChar, 'b': hexChar, 'c': hexChar, 'd': hexChar, 'e': hexChar, 'f': hexChar,
+	'A': hexChar, 'B': hexChar, 'C': hexChar, 'D': hexChar, 'E': hexChar, 'F': hexChar,
+}
+
 func ishex(c byte) bool {
 	return table[c]&hexChar != 0
 }
@@ -321,6 +330,18 @@ func (e InvalidHostError) Error() string {
 }
 
 // See the reference implementation in gen_encoding_table.go.
+type encoding int
+
+const (
+	encodePath encoding = 1 + iota
+	encodePathSegment
+	encodeHost
+	encodeZone
+	encodeUserPassword
+	encodeQueryComponent
+	encodeFragment
+)
+
 func shouldEscape(c byte, mode encoding) bool {
 	return table[c]&mode == 0
 }
@@ -738,6 +759,10 @@ func __parse(rawURL string, viaRequest bool) parseURLPair {
 
 func __parseAuthority(scheme, authority string) parseAuthorityTriple {
 	i := strings.LastIndex(authority, "@")
+	var host string
+	var err error
+	var user *Userinfo
+	var username, password string
 	if i < 0 {
 		__tmpPH := __parseHost(scheme, authority)
 		host, err = __tmpPH.s, __tmpPH.err
