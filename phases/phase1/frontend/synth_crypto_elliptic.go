@@ -349,7 +349,7 @@ func newP521Point() *p521Point { return nistec.NewP521Point() }
 // interface (P3-M3 scope: method tables for instantiated methods not
 // supported). Delegates to the embedded generic nistCurve.
 type p224Curve struct {
-	*nistCurve[*p224Point]
+	nistCurve *nistCurve[*p224Point]
 }
 
 func (c *p224Curve) Params() *CurveParams { return c.nistCurve.Params() }
@@ -379,7 +379,7 @@ func initP224() {
 }
 
 type p256Curve struct {
-	*nistCurve[*p256Point]
+	nistCurve *nistCurve[*p256Point]
 }
 
 func (c *p256Curve) Params() *CurveParams { return c.nistCurve.Params() }
@@ -409,7 +409,7 @@ func initP256() {
 }
 
 type p384Curve struct {
-	*nistCurve[*p384Point]
+	nistCurve *nistCurve[*p384Point]
 }
 
 func (c *p384Curve) Params() *CurveParams { return c.nistCurve.Params() }
@@ -444,7 +444,7 @@ func initP384() {
 }
 
 type p521Curve struct {
-	*nistCurve[*p521Point]
+	nistCurve *nistCurve[*p521Point]
 }
 
 func (c *p521Curve) Params() *CurveParams { return c.nistCurve.Params() }
