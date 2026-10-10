@@ -12,10 +12,6 @@ import graalgo.iface.IfaceMethodTables;
 import graalgo.p3os.GoOs;
 import graalgo.p3net.GoNet;
 import graalgo.p3net.GoNetpoll;
-import graalgo.p3net.GoHttp;
-import graalgo.p3crypto.GoCrypto;
-import graalgo.p3tls.TlsRuntime;
-import graalgo.p3x509.GoX509;
 import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Linknames;
 import graalgo.runtime.Timers;
@@ -90,12 +86,6 @@ public final class LinknameIntrinsics {
         // GoSlice; each GoNet/GoNetpoll target adapts explicitly (see
         // their javadoc for the calling conventions).
         registerNetIntrinsics();
-        // P3-M9 (user directive 2026-10-10): JDK-delegating crypto
-        // intrinsics (java.security.MessageDigest, javax.crypto.Mac).
-        registerCryptoIntrinsics();
-        // P3-M9 (user directive 2026-10-10): JDK-delegating TLS
-        // intrinsics (javax.net.ssl.SSLEngine).
-        registerTlsIntrinsics();
         // itabFor → the P3-M3 itab machinery (ADR-0004 D3).
         Intrinsics.setItabProvider(IfaceMethodTable::itabForDescriptors);
         // Interface method-name lists for itabForIntrinsic.
@@ -171,26 +161,6 @@ public final class LinknameIntrinsics {
         Linknames.register("graalgo.os.argv", args -> GoOs.argv(args[0]), 1);
         // P3-M8 (crypto/rand): entropy source.
         Linknames.register("graalgo.os.getrandom", args -> GoOs.getrandom(args[0]), 1);
-        // P3-M9 (crypto/x509): Java delegation for certificate parsing.
-        // D5 types: []byte arrives as GoSlice; X509Certificate passes through as Object.
-        Linknames.register("graalgo.x509.parse", args -> GoX509.parse(args[0]), 1);
-        Linknames.register("graalgo.x509.serialNumber", args -> GoX509.serialNumber(args[0]), 1);
-        Linknames.register("graalgo.x509.subject", args -> GoX509.subject(args[0]), 1);
-        Linknames.register("graalgo.x509.issuer", args -> GoX509.issuer(args[0]), 1);
-        Linknames.register("graalgo.x509.notBefore", args -> GoX509.notBefore(args[0]), 1);
-        Linknames.register("graalgo.x509.notAfter", args -> GoX509.notAfter(args[0]), 1);
-        Linknames.register("graalgo.x509.version", args -> GoX509.version(args[0]), 1);
-        Linknames.register("graalgo.x509.sigAlgOid", args -> GoX509.sigAlgOid(args[0]), 1);
-        Linknames.register("graalgo.x509.signature", args -> GoX509.signature(args[0]), 1);
-        Linknames.register("graalgo.x509.tbsCertificate", args -> GoX509.tbsCertificate(args[0]), 1);
-        Linknames.register("graalgo.x509.keyUsage", args -> GoX509.keyUsage(args[0]), 1);
-        Linknames.register("graalgo.x509.basicConstraints", args -> GoX509.basicConstraints(args[0]), 1);
-        Linknames.register("graalgo.x509.subjectKeyId", args -> GoX509.subjectKeyId(args[0]), 1);
-        Linknames.register("graalgo.x509.authorityKeyId", args -> GoX509.authorityKeyId(args[0]), 1);
-        Linknames.register("graalgo.x509.publicKeyAlg", args -> GoX509.publicKeyAlgOid(args[0]), 1);
-        Linknames.register("graalgo.x509.publicKeyEncoded", args -> GoX509.publicKeyEncoded(args[0]), 1);
-        Linknames.register("graalgo.x509.rawIssuer", args -> GoX509.rawIssuer(args[0]), 1);
-        Linknames.register("graalgo.x509.rawSubject", args -> GoX509.rawSubject(args[0]), 1);
     }
 
     /**
@@ -248,81 +218,12 @@ public final class LinknameIntrinsics {
                 args -> GoNet.getpeername(args[0], args[1]), 2);
         Linknames.register("graalgo.net.shutdown",
                 args -> GoNet.shutdown(args[0], args[1]), 2);
-        // P3-M9 (tier-5: net/http): Java-delegated HTTP client via
-        // java.net.http.HttpClient (see GoHttp.java).
-        Linknames.register("graalgo.http.client.do",
-                args -> GoHttp.clientDo(args[0], args[1], args[2], args[3]), 4);
         Linknames.register("graalgo.net.setnonblock",
                 args -> GoNet.setnonblock(args[0], args[1]), 2);
         Linknames.register("graalgo.net.sendto",
                 args -> GoNet.sendto(args[0], args[1], args[2]), 3);
         Linknames.register("graalgo.net.recvfrom",
                 args -> GoNet.recvfrom(args[0], args[1], args[2]), 3);
-    }
-
-    /**
-     * Registers the {@code graalgo.crypto.*} JDK-delegating intrinsics
-     * (implemented by {@link GoCrypto}, P3-M9).
-     *
-     * <p>D5: algorithm names arrive as {@link GoString}; handles as
-     * {@link Long}; []byte as {@link graalgo.values.GoSlice}.
-     */
-    private static void registerCryptoIntrinsics() {
-        Linknames.register("graalgo.crypto.digest.new",
-                args -> GoCrypto.digestNew(goString(args[0])), 1);
-        Linknames.register("graalgo.crypto.digest.write",
-                args -> GoCrypto.digestWrite(((Number) args[0]).longValue(), args[1]), 2);
-        Linknames.register("graalgo.crypto.digest.sum",
-                args -> GoCrypto.digestSum(((Number) args[0]).longValue()), 1);
-        Linknames.register("graalgo.crypto.digest.reset",
-                args -> { GoCrypto.digestReset(((Number) args[0]).longValue()); return null; }, 1);
-        Linknames.register("graalgo.crypto.digest.free",
-                args -> { GoCrypto.digestFree(((Number) args[0]).longValue()); return null; }, 1);
-        Linknames.register("graalgo.crypto.digest.sumOneShot",
-                args -> GoCrypto.sum(goString(args[0]), args[1]), 2);
-        Linknames.register("graalgo.crypto.mac.new",
-                args -> GoCrypto.macNew(goString(args[0]), args[1]), 2);
-        Linknames.register("graalgo.crypto.mac.write",
-                args -> GoCrypto.macWrite(((Number) args[0]).longValue(), args[1]), 2);
-        Linknames.register("graalgo.crypto.mac.sum",
-                args -> GoCrypto.macSum(((Number) args[0]).longValue()), 1);
-        Linknames.register("graalgo.crypto.mac.reset",
-                args -> { GoCrypto.macReset(((Number) args[0]).longValue()); return null; }, 1);
-        Linknames.register("graalgo.crypto.mac.free",
-                args -> { GoCrypto.macFree(((Number) args[0]).longValue()); return null; }, 1);
-    }
-
-    /**
-     * Registers the {@code graalgo.tls.*} JDK-delegating intrinsics
-     * (implemented by {@link TlsRuntime}, P3-M9).
-     *
-     * <p>Per user directive 2026-10-10: TLS delegates to
-     * {@link javax.net.ssl.SSLEngine} where semantically compatible.
-     */
-    private static void registerTlsIntrinsics() {
-        Linknames.register("graalgo.tls.newClientEngine",
-                args -> TlsRuntime.newClientEngine(args[0]), 1);
-        Linknames.register("graalgo.tls.newServerEngine",
-                args -> TlsRuntime.newServerEngine(args[0]), 1);
-        Linknames.register("graalgo.tls.handshake",
-                args -> TlsRuntime.handshake(args[0], args[1]), 2);
-        Linknames.register("graalgo.tls.connectionState",
-                args -> TlsRuntime.connectionState(args[0]), 1);
-        Linknames.register("graalgo.tls.read",
-                args -> TlsRuntime.read(args[0], args[1]), 2);
-        Linknames.register("graalgo.tls.write",
-                args -> TlsRuntime.write(args[0], args[1]), 2);
-        Linknames.register("graalgo.tls.close",
-                args -> { TlsRuntime.close(args[0]); return null; }, 1);
-        Linknames.register("graalgo.tls.verifyHostname",
-                args -> TlsRuntime.verifyHostname(args[0], args[1]), 2);
-        Linknames.register("graalgo.tls.loadX509KeyPair",
-                args -> TlsRuntime.loadX509KeyPair(args[0], args[1]), 2);
-    }
-
-    /** Converts a D5 GoString argument to a Java String (UTF-8). */
-    private static String goString(Object o) {
-        return new String(((GoString) o).bytes(), java.nio.charset.StandardCharsets.UTF_8);
     }
 
     /**

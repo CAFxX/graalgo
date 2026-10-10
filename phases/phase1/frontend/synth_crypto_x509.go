@@ -82,6 +82,30 @@ func graalgoX509RawIssuer(cert any) []byte
 //go:linkname graalgoX509RawSubject graalgo.x509.rawSubject
 func graalgoX509RawSubject(cert any) []byte
 
+//go:linkname graalgoX509RsaModulus graalgo.x509.rsaModulus
+func graalgoX509RsaModulus(cert any) []byte
+
+//go:linkname graalgoX509RsaExponent graalgo.x509.rsaExponent
+func graalgoX509RsaExponent(cert any) int64
+
+//go:linkname graalgoX509EcX graalgo.x509.ecX
+func graalgoX509EcX(cert any) []byte
+
+//go:linkname graalgoX509EcY graalgo.x509.ecY
+func graalgoX509EcY(cert any) []byte
+
+//go:linkname graalgoX509EcFieldSize graalgo.x509.ecFieldSize
+func graalgoX509EcFieldSize(cert any) int64
+
+//go:linkname graalgoX509Ed25519Raw graalgo.x509.ed25519Raw
+func graalgoX509Ed25519Raw(cert any) []byte
+
+//go:linkname graalgoX509ParseSpki graalgo.x509.parseSpki
+func graalgoX509ParseSpki(spki []byte) string
+
+//go:linkname graalgoX509ParsePkcs1 graalgo.x509.parsePkcs1
+func graalgoX509ParsePkcs1(der []byte) string
+
 // SignatureAlgorithm identifies the signature algorithm.
 type SignatureAlgorithm int
 
@@ -315,8 +339,22 @@ func __mrParseCertificate(der []byte) __mrParseCertificatePair {
 	c.SerialNumber = new(big.Int).SetBytes(graalgoX509SerialNumber(javaCert))
 	c.Subject = parseName(graalgoX509Subject(javaCert))
 	c.Issuer = parseName(graalgoX509Issuer(javaCert))
-	_ = graalgoX509NotBefore(javaCert)
-	_ = graalgoX509NotAfter(javaCert)
+	nbMillis := graalgoX509NotBefore(javaCert)
+	nbSec := nbMillis / 1000
+	nbRem := nbMillis % 1000
+	if nbRem < 0 {
+		nbSec--
+		nbRem += 1000
+	}
+	c.NotBefore = time.Unix(nbSec, nbRem*1000000)
+	naMillis := graalgoX509NotAfter(javaCert)
+	naSec := naMillis / 1000
+	naRem := naMillis % 1000
+	if naRem < 0 {
+		naSec--
+		naRem += 1000
+	}
+	c.NotAfter = time.Unix(naSec, naRem*1000000)
 	c.KeyUsage = KeyUsage(graalgoX509KeyUsage(javaCert))
 	bc := graalgoX509BasicConstraints(javaCert)
 	if bc >= 0 {
@@ -334,7 +372,7 @@ func __mrParseCertificate(der []byte) __mrParseCertificatePair {
 	c.PublicKeyAlgorithm = pubKeyAlgFromName(pubAlg)
 	pubDER := graalgoX509PublicKeyEncoded(javaCert)
 	c.RawSubjectPublicKeyInfo = pubDER
-	__tmpPK := __mrParsePKIXPublicKey(pubDER)
+	__tmpPK := __mrParsePKIXPublicKeyFromCert(javaCert, pubAlg)
 	if __tmpPK.v1 == nil {
 		c.PublicKey = __tmpPK.v0
 	}
@@ -419,53 +457,190 @@ type __mrParsePKIXPublicKeyPair struct {
 	v1 error
 }
 
-func __mrParsePKIXPublicKey(derBytes []byte) __mrParsePKIXPublicKeyPair {
-	// TODO: asn1.Unmarshal not in desugar table; stub for now
-	return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: ParsePKIXPublicKey stub")}
-	oid := pki.Algorithm.Algorithm
-	switch {
-	case oidEqual(oid, asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 1}):
-		__tmpK := __mrParsePKCS1PublicKey(pki.PublicKey.Bytes)
-		if __tmpK.v1 != nil {
-			return __mrParsePKIXPublicKeyPair{nil, __tmpK.v1}
+func __mrParsePKIXPublicKeyFromCert(javaCert any, pubAlg string) __mrParsePKIXPublicKeyPair {
+	// Parses the public key from a certificate using JDK delegation.
+	// (asn1.Unmarshal cannot be used: pointer-store WS D limitation.)
+	switch pubAlg {
+	case "RSA":
+		n := graalgoX509RsaModulus(javaCert)
+		e := graalgoX509RsaExponent(javaCert)
+		if n == nil || e < 0 {
+			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid RSA public key")}
 		}
-		return __mrParsePKIXPublicKeyPair{__tmpK.v0, nil}
-	case oidEqual(oid, asn1.ObjectIdentifier{1, 2, 840, 10045, 2, 1}):
-		keyBytes := pki.PublicKey.Bytes
-		if len(keyBytes) == 0 || keyBytes[0] != 4 {
+		return __mrParsePKIXPublicKeyPair{&rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(e)}, nil}
+	case "EC", "ECDSA":
+		x := graalgoX509EcX(javaCert)
+		y := graalgoX509EcY(javaCert)
+		fs := graalgoX509EcFieldSize(javaCert)
+		if x == nil || y == nil || fs < 0 {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid ECDSA public key")}
 		}
-		var params asn1.ObjectIdentifier
-		if _, err := asn1.Unmarshal(pki.Algorithm.Parameters.FullBytes, &params); err != nil {
-			return __mrParsePKIXPublicKeyPair{nil, err}
-		}
-		curve := namedCurveFromOID(params)
-		if curve == nil {
+		var curve elliptic.Curve
+		switch fs {
+		case 224:
+			curve = elliptic.P224()
+		case 256:
+			curve = elliptic.P256()
+		case 384:
+			curve = elliptic.P384()
+		case 521:
+			curve = elliptic.P521()
+		default:
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: unknown curve")}
 		}
-		byteLen := (curve.Params().BitSize + 7) / 8
-		if len(keyBytes) != 1+2*byteLen {
-			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid ECDSA public key length")}
-		}
-		x := new(big.Int).SetBytes(keyBytes[1 : 1+byteLen])
-		y := new(big.Int).SetBytes(keyBytes[1+byteLen:])
-		return __mrParsePKIXPublicKeyPair{&ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil}
-	case oidEqual(oid, asn1.ObjectIdentifier{1, 3, 101, 112}):
-		keyBytes := pki.PublicKey.Bytes
-		if len(keyBytes) != ed25519.PublicKeySize {
+		return __mrParsePKIXPublicKeyPair{&ecdsa.PublicKey{Curve: curve, X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}, nil}
+	case "Ed25519", "EdDSA":
+		raw := graalgoX509Ed25519Raw(javaCert)
+		if raw == nil || len(raw) != ed25519.PublicKeySize {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid Ed25519 public key")}
 		}
 		pub := make(ed25519.PublicKey, ed25519.PublicKeySize)
-		copy(pub, keyBytes)
+		copy(pub, raw)
 		return __mrParsePKIXPublicKeyPair{pub, nil}
 	}
-	return __mrParsePKIXPublicKeyPair{nil, fmt.Errorf("x509: unknown public key algorithm OID %s", oid)}
+	return __mrParsePKIXPublicKeyPair{nil, fmt.Errorf("x509: unknown public key algorithm %s", pubAlg)}
 }
 
-func ParsePKIXPublicKey(derBytes []byte) (pub any, err error) {
-	panic("crypto/x509: ParsePKIXPublicKey: multi-result desugar")
+// __hexToBytes decodes a hex string (used for parseSpki/parsePkcs1 results).
+func __hexToBytes(s string) []byte {
+	if len(s)%2 != 0 {
+		return nil
+	}
+	b := make([]byte, len(s)/2)
+	for i := 0; i < len(b); i++ {
+		hi := __hexVal(s[2*i])
+		lo := __hexVal(s[2*i+1])
+		if hi < 0 || lo < 0 {
+			return nil
+		}
+		b[i] = byte(hi<<4 | lo)
+	}
+	return b
 }
 
+func __hexVal(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return -1
+}
+
+// __parseSpkiComponents parses the "ALG:..." string from graalgoX509ParseSpki.
+func __parseSpkiComponents(s string) __mrParsePKIXPublicKeyPair {
+	if s == "" {
+		return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse SPKI")}
+	}
+	// Find first colon
+	colon1 := -1
+	for i := 0; i < len(s); i++ {
+		if s[i] == ':' {
+			colon1 = i
+			break
+		}
+	}
+	if colon1 < 0 {
+		return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse SPKI")}
+	}
+	alg := s[:colon1]
+	rest := s[colon1+1:]
+	switch alg {
+	case "RSA":
+		// "n_hex:e"
+		colon2 := -1
+		for i := 0; i < len(rest); i++ {
+			if rest[i] == ':' {
+				colon2 = i
+				break
+			}
+		}
+		if colon2 < 0 {
+			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse RSA SPKI")}
+		}
+		n := __hexToBytes(rest[:colon2])
+		eStr := rest[colon2+1:]
+		e := 0
+		for i := 0; i < len(eStr); i++ {
+			if eStr[i] < '0' || eStr[i] > '9' {
+				return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse RSA exponent")}
+			}
+			e = e*10 + int(eStr[i]-'0')
+		}
+		if n == nil || e <= 0 {
+			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid RSA public key")}
+		}
+		return __mrParsePKIXPublicKeyPair{&rsa.PublicKey{N: new(big.Int).SetBytes(n), E: e}, nil}
+	case "EC":
+		// "x_hex:y_hex:fieldSize"
+		parts := __splitColon(rest)
+		if len(parts) != 3 {
+			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse EC SPKI")}
+		}
+		x := __hexToBytes(parts[0])
+		y := __hexToBytes(parts[1])
+		fs := 0
+		for i := 0; i < len(parts[2]); i++ {
+			if parts[2][i] < '0' || parts[2][i] > '9' {
+				return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse EC field size")}
+			}
+			fs = fs*10 + int(parts[2][i]-'0')
+		}
+		if x == nil || y == nil {
+			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid ECDSA public key")}
+		}
+		var curve elliptic.Curve
+		switch fs {
+		case 224:
+			curve = elliptic.P224()
+		case 256:
+			curve = elliptic.P256()
+		case 384:
+			curve = elliptic.P384()
+		case 521:
+			curve = elliptic.P521()
+		default:
+			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: unknown curve")}
+		}
+		return __mrParsePKIXPublicKeyPair{&ecdsa.PublicKey{Curve: curve, X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}, nil}
+	case "Ed25519":
+		raw := __hexToBytes(rest)
+		if raw == nil || len(raw) != ed25519.PublicKeySize {
+			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid Ed25519 public key")}
+		}
+		pub := make(ed25519.PublicKey, ed25519.PublicKeySize)
+		copy(pub, raw)
+		return __mrParsePKIXPublicKeyPair{pub, nil}
+	}
+	return __mrParsePKIXPublicKeyPair{nil, fmt.Errorf("x509: unknown public key algorithm %s", alg)}
+}
+
+// __splitColon splits s on ':' (simple, no empty handling needed here).
+func __splitColon(s string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == ':' {
+			parts = append(parts, s[start:i])
+			start = i + 1
+		}
+	}
+	parts = append(parts, s[start:])
+	return parts
+}
+
+func __mrParsePKIXPublicKey(derBytes []byte) __mrParsePKIXPublicKeyPair {
+	// Standalone ParsePKIXPublicKey: delegates SPKI parsing to the JDK.
+	// (asn1.Unmarshal cannot be used: pointer-store WS D limitation.)
+	s := graalgoX509ParseSpki(derBytes)
+	if s == "" {
+		return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: failed to parse public key")}
+	}
+	return __parseSpkiComponents(s)
+}
 func oidEqual(a, b asn1.ObjectIdentifier) bool {
 	if len(a) != len(b) {
 		return false
@@ -494,25 +669,45 @@ func namedCurveFromOID(oid asn1.ObjectIdentifier) elliptic.Curve {
 	return nil
 }
 
-type pkcs1PublicKey struct {
-	N *big.Int
-	E int
-}
-
 type __mrParsePKCS1PublicKeyPair struct {
 	v0 *rsa.PublicKey
 	v1 error
 }
 
 func __mrParsePKCS1PublicKey(der []byte) __mrParsePKCS1PublicKeyPair {
-	var pub pkcs1PublicKey
-	if _, err := asn1.Unmarshal(der, &pub); err != nil {
-		return __mrParsePKCS1PublicKeyPair{nil, err}
+	// Delegates PKCS1 parsing to the JDK (asn1.Unmarshal cannot be used:
+	// pointer-store WS D limitation). Returns "n_hex:e".
+	s := graalgoX509ParsePkcs1(der)
+	if s == "" {
+		return __mrParsePKCS1PublicKeyPair{nil, errors.New("x509: failed to parse PKCS#1 public key")}
 	}
-	if pub.N.Sign() <= 0 || pub.E <= 0 {
+	colon := -1
+	for i := 0; i < len(s); i++ {
+		if s[i] == ':' {
+			colon = i
+			break
+		}
+	}
+	if colon < 0 {
+		return __mrParsePKCS1PublicKeyPair{nil, errors.New("x509: failed to parse PKCS#1 public key")}
+	}
+	n := __hexToBytes(s[:colon])
+	eStr := s[colon+1:]
+	e := 0
+	for i := 0; i < len(eStr); i++ {
+		if eStr[i] < '0' || eStr[i] > '9' {
+			return __mrParsePKCS1PublicKeyPair{nil, errors.New("x509: failed to parse PKCS#1 exponent")}
+		}
+		e = e*10 + int(eStr[i]-'0')
+	}
+	if n == nil || e <= 0 {
 		return __mrParsePKCS1PublicKeyPair{nil, errors.New("x509: invalid PKCS#1 public key")}
 	}
-	return __mrParsePKCS1PublicKeyPair{&rsa.PublicKey{N: pub.N, E: pub.E}, nil}
+	bn := new(big.Int).SetBytes(n)
+	if bn.Sign() <= 0 {
+		return __mrParsePKCS1PublicKeyPair{nil, errors.New("x509: invalid PKCS#1 public key")}
+	}
+	return __mrParsePKCS1PublicKeyPair{&rsa.PublicKey{N: bn, E: e}, nil}
 }
 
 func ParsePKCS1PublicKey(der []byte) (*rsa.PublicKey, error) {

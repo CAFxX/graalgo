@@ -177,6 +177,295 @@ public final class GoX509 {
         return toGoBytes(cert.getSubjectX500Principal().getEncoded());
     }
 
+    // ---- Public key components (for ParsePKIXPublicKey) ----
+    //
+    // The synthetic crypto/x509 cannot use asn1.Unmarshal (pointer-store
+    // WS D limitation), so public key parsing delegates to the JDK.
+    // The Go side switches on publicKeyAlg and calls the matching
+    // intrinsics below.
+
+    /** RSA modulus N as big-endian bytes, or null if not RSA. */
+    public static Object rsaModulus(Object certArg) {
+        X509Certificate cert = (X509Certificate) certArg;
+        java.security.PublicKey key = cert.getPublicKey();
+        if (!(key instanceof java.security.interfaces.RSAPublicKey)) {
+            return null;
+        }
+        java.security.interfaces.RSAPublicKey rsa =
+                (java.security.interfaces.RSAPublicKey) key;
+        return toGoBytes(stripLeadingZero(rsa.getModulus().toByteArray()));
+    }
+
+    /** RSA public exponent E, or -1 if not RSA. */
+    public static Object rsaExponent(Object certArg) {
+        X509Certificate cert = (X509Certificate) certArg;
+        java.security.PublicKey key = cert.getPublicKey();
+        if (!(key instanceof java.security.interfaces.RSAPublicKey)) {
+            return -1L;
+        }
+        java.security.interfaces.RSAPublicKey rsa =
+                (java.security.interfaces.RSAPublicKey) key;
+        return rsa.getPublicExponent().longValue();
+    }
+
+    /** EC affine X as big-endian bytes, or null if not EC. */
+    public static Object ecX(Object certArg) {
+        X509Certificate cert = (X509Certificate) certArg;
+        java.security.PublicKey key = cert.getPublicKey();
+        if (!(key instanceof java.security.interfaces.ECPublicKey)) {
+            return null;
+        }
+        java.security.interfaces.ECPublicKey ec =
+                (java.security.interfaces.ECPublicKey) key;
+        return toGoBytes(stripLeadingZero(ec.getW().getAffineX().toByteArray()));
+    }
+
+    /** EC affine Y as big-endian bytes, or null if not EC. */
+    public static Object ecY(Object certArg) {
+        X509Certificate cert = (X509Certificate) certArg;
+        java.security.PublicKey key = cert.getPublicKey();
+        if (!(key instanceof java.security.interfaces.ECPublicKey)) {
+            return null;
+        }
+        java.security.interfaces.ECPublicKey ec =
+                (java.security.interfaces.ECPublicKey) key;
+        return toGoBytes(stripLeadingZero(ec.getW().getAffineY().toByteArray()));
+    }
+
+    /**
+     * EC field size in bits (224, 256, 384, 521), or -1 if not EC.
+     * The Go side maps this to the elliptic.Curve (P-224, P-256, P-384,
+     * P-521) — the JDK does not expose the curve OID directly.
+     */
+    public static Object ecFieldSize(Object certArg) {
+        X509Certificate cert = (X509Certificate) certArg;
+        java.security.PublicKey key = cert.getPublicKey();
+        if (!(key instanceof java.security.interfaces.ECPublicKey)) {
+            return -1L;
+        }
+        java.security.interfaces.ECPublicKey ec =
+                (java.security.interfaces.ECPublicKey) key;
+        return (long) ec.getParams().getCurve().getField().getFieldSize();
+    }
+
+    /**
+     * Ed25519 raw 32-byte public key, or null if not Ed25519.
+     * Extracted from the SPKI BIT STRING (the JDK EdECPublicKey API
+     * does not expose raw bytes directly).
+     */
+    public static Object ed25519Raw(Object certArg) {
+        X509Certificate cert = (X509Certificate) certArg;
+        java.security.PublicKey key = cert.getPublicKey();
+        if (!"Ed25519".equalsIgnoreCase(key.getAlgorithm())
+                && !"EdDSA".equalsIgnoreCase(key.getAlgorithm())) {
+            return null;
+        }
+        byte[] spki = key.getEncoded();
+        byte[] raw = extractBitString(spki);
+        if (raw == null || raw.length != 32) {
+            return null;
+        }
+        return toGoBytes(raw);
+    }
+
+    /** Strips a single leading zero byte (BigInteger sign byte). */
+    private static byte[] stripLeadingZero(byte[] b) {
+        if (b.length > 1 && b[0] == 0) {
+            byte[] out = new byte[b.length - 1];
+            System.arraycopy(b, 1, out, 0, out.length);
+            return out;
+        }
+        return b;
+    }
+
+    /**
+     * Extracts the BIT STRING content from SPKI DER (skipping the
+     * unused-bits byte). Returns null if the structure is unexpected.
+     */
+    private static byte[] extractBitString(byte[] spki) {
+        int pos = 0;
+        if (spki.length < 2 || spki[pos++] != 0x30) {
+            return null;
+        }
+        pos = skipLength(spki, pos);
+        if (pos < 0 || pos >= spki.length || spki[pos] != 0x30) {
+            return null;
+        }
+        pos++;
+        int algLenPos = skipLength(spki, pos);
+        if (algLenPos < 0) {
+            return null;
+        }
+        int algLen = derLength(spki, pos);
+        pos = algLenPos + algLen;
+        if (pos >= spki.length || spki[pos] != 0x03) {
+            return null;
+        }
+        pos++;
+        int bitStrLenPos = skipLength(spki, pos);
+        if (bitStrLenPos < 0) {
+            return null;
+        }
+        int bitStrLen = derLength(spki, pos);
+        pos = bitStrLenPos;
+        if (pos >= spki.length || spki[pos] != 0x00) {
+            return null;
+        }
+        pos++;
+        int contentLen = bitStrLen - 1;
+        if (contentLen < 0 || pos + contentLen > spki.length) {
+            return null;
+        }
+        byte[] out = new byte[contentLen];
+        System.arraycopy(spki, pos, out, 0, contentLen);
+        return out;
+    }
+
+    /** Returns the position after the DER length bytes at pos, or -1. */
+    private static int skipLength(byte[] der, int pos) {
+        if (pos >= der.length) {
+            return -1;
+        }
+        int b = der[pos] & 0xFF;
+        if ((b & 0x80) == 0) {
+            return pos + 1;
+        }
+        int num = b & 0x7F;
+        if (num > 4 || pos + 1 + num > der.length) {
+            return -1;
+        }
+        return pos + 1 + num;
+    }
+
+    /** Returns the DER length value at pos (assumes valid). */
+    private static int derLength(byte[] der, int pos) {
+        int b = der[pos] & 0xFF;
+        if ((b & 0x80) == 0) {
+            return b;
+        }
+        int num = b & 0x7F;
+        int len = 0;
+        for (int i = 0; i < num; i++) {
+            len = (len << 8) | (der[pos + 1 + i] & 0xFF);
+        }
+        return len;
+    }
+
+    // ---- Standalone DER parsers (for ParsePKIXPublicKey/ParsePKCS1PublicKey) ----
+
+    /** Parses SPKI DER into string-encoded public key components. */
+    public static Object parseSpki(Object spkiArg) {
+        byte[] spki = toBytes(spkiArg);
+        java.security.PublicKey key = null;
+        String[] algs = {"RSA", "EC", "Ed25519", "EdDSA", "ECDSA"};
+        for (String a : algs) {
+            try {
+                java.security.KeyFactory kf =
+                        java.security.KeyFactory.getInstance(a);
+                key = kf.generatePublic(
+                        new java.security.spec.X509EncodedKeySpec(spki));
+                break;
+            } catch (Exception e) {
+                // try next algorithm
+            }
+        }
+        if (key == null) {
+            return null;
+        }
+        String encoded = encodePublicKey(key);
+        return encoded == null ? null : toGoString(encoded);
+    }
+
+    /** Parses PKCS1 DER into "n_hex:e". */
+    public static Object parsePkcs1(Object derArg) {
+        byte[] der = toBytes(derArg);
+        try {
+            int pos = 0;
+            if (der.length < 2 || der[pos++] != 0x30) {
+                return null;
+            }
+            pos = skipLength(der, pos);
+            if (pos < 0) {
+                return null;
+            }
+            if (pos >= der.length || der[pos++] != 0x02) {
+                return null;
+            }
+            int nLenPos = skipLength(der, pos);
+            if (nLenPos < 0) {
+                return null;
+            }
+            int nLen = derLength(der, pos);
+            pos = nLenPos;
+            if (pos + nLen > der.length) {
+                return null;
+            }
+            byte[] nBytes = new byte[nLen];
+            System.arraycopy(der, pos, nBytes, 0, nLen);
+            pos += nLen;
+            nBytes = stripLeadingZero(nBytes);
+            if (pos >= der.length || der[pos++] != 0x02) {
+                return null;
+            }
+            int eLenPos = skipLength(der, pos);
+            if (eLenPos < 0) {
+                return null;
+            }
+            int eLen = derLength(der, pos);
+            pos = eLenPos;
+            if (pos + eLen > der.length) {
+                return null;
+            }
+            long e = 0;
+            for (int i = 0; i < eLen; i++) {
+                e = (e << 8) | (der[pos + i] & 0xFF);
+            }
+            if (e <= 0) {
+                return null;
+            }
+            return toGoString(toHex(nBytes) + ":" + e);
+        } catch (Exception ex) {
+            return null;
+        }
+    }
+
+    /** Encodes a PublicKey into the string format parseSpki returns. */
+    private static String encodePublicKey(java.security.PublicKey key) {
+        if (key instanceof java.security.interfaces.RSAPublicKey) {
+            java.security.interfaces.RSAPublicKey rsa =
+                    (java.security.interfaces.RSAPublicKey) key;
+            byte[] n = stripLeadingZero(rsa.getModulus().toByteArray());
+            long e = rsa.getPublicExponent().longValue();
+            return "RSA:" + toHex(n) + ":" + e;
+        }
+        if (key instanceof java.security.interfaces.ECPublicKey) {
+            java.security.interfaces.ECPublicKey ec =
+                    (java.security.interfaces.ECPublicKey) key;
+            byte[] x = stripLeadingZero(ec.getW().getAffineX().toByteArray());
+            byte[] y = stripLeadingZero(ec.getW().getAffineY().toByteArray());
+            long fs = ec.getParams().getCurve().getField().getFieldSize();
+            return "EC:" + toHex(x) + ":" + toHex(y) + ":" + fs;
+        }
+        String alg = key.getAlgorithm();
+        if ("Ed25519".equalsIgnoreCase(alg) || "EdDSA".equalsIgnoreCase(alg)) {
+            byte[] raw = extractBitString(key.getEncoded());
+            if (raw != null && raw.length == 32) {
+                return "Ed25519:" + toHex(raw);
+            }
+        }
+        return null;
+    }
+
+    /** Hex-encodes bytes (lowercase). */
+    private static String toHex(byte[] b) {
+        StringBuilder sb = new StringBuilder(b.length * 2);
+        for (byte v : b) {
+            sb.append(Character.forDigit((v >> 4) & 0xF, 16));
+            sb.append(Character.forDigit(v & 0xF, 16));
+        }
+        return sb.toString();
+    }
+
     // ---- D5 boxing helpers ----
 
     /** Converts Java byte[] to Go []byte (GoSlice with int[] backing). */
