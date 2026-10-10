@@ -328,6 +328,11 @@ public final class NodeFactory {
         // P3-M9 (WS H): method values x.M in value position — a GoFunc
         // with the receiver bound (see MethodValueNode).
         registerExprKind("methodvalue", this::buildMethodValue);
+        // P3-M9 (unsafe patterns): crypto/internal/fips140/alias.AnyOverlap
+        // and InexactOverlap lower to the "sliceoverlap" wire node (see
+        // SliceOverlapNode). The real stdlib uses uintptr(unsafe.Pointer(...))
+        // which traps under D5; this implements overlap detection directly.
+        registerExprKind("sliceoverlap", this::buildSliceOverlap);
         // Default type decoder: the D5 value-model mapping (M3, WS C). Named
         // types are resolved to their underlying type before decoders run
         // (see allocSlot/kindOf); a decoder that returns null abstains and
@@ -2701,6 +2706,21 @@ public final class NodeFactory {
         int objId = f.intValue("obj", path);
         GoExprNode recv = buildExpr(f.object("recv", path), ctx);
         return new MethodValueNode(recv, funcTable, objId);
+    }
+
+    /**
+     * Builds the {@code sliceoverlap} wire node for
+     * crypto/internal/fips140/alias.AnyOverlap and InexactOverlap
+     * (P3-M9, unsafe patterns). Fields: "x", "y" (the two []byte slices),
+     * "inexact" (bool).
+     */
+    private GoExprNode buildSliceOverlap(Json.Object node, BuildCtx ctx) {
+        Json.Object f = fieldsOf(node, "sliceoverlap");
+        String path = "sliceoverlap.fields";
+        GoExprNode x = buildExpr(f.object("x", path), ctx);
+        GoExprNode y = buildExpr(f.object("y", path), ctx);
+        boolean inexact = f.boolValue("inexact", path);
+        return new SliceOverlapNode(x, y, inexact);
     }
 
     /** Builds a Go conversion {@code T(x)} (frontend {@code convert} node). */

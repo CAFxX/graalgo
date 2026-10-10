@@ -959,6 +959,13 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		n, err := e.exportMathIntrinsic(c, fn.Name())
 		return n, true, err
 	}
+	// P3-M9 (unsafe patterns): crypto/internal/fips140/alias.AnyOverlap and
+	// InexactOverlap use uintptr(unsafe.Pointer(...)) which traps under D5.
+	// Lower to the "sliceoverlap" wire node.
+	if path == "crypto/internal/fips140/alias" && aliasIntrinsicNames[fn.Name()] {
+		n, err := e.exportAliasIntrinsic(c, fn.Name())
+		return n, true, err
+	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions
 	// (time.ParseDuration) fail fast (WS D; F4 precedent).
 	if isMultiResultSynthetic(fn) {
