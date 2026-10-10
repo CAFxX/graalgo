@@ -220,6 +220,178 @@ def is_multi_result(results):
     parsed = parse_results(results)
     return len(parsed) > 1
 
+
+def extract_type_names(src):
+    """Extract defined type names from source."""
+    names = set()
+    for m in re.finditer(r'\btype\s+([a-zA-Z_][a-zA-Z0-9_]*)\b', src):
+        names.add(m.group(1))
+    return names
+
+
+def compute_field_names(results):
+    """Compute pair struct field names from parsed results [(name, type)]."""
+    field_names = []
+    for idx, (rname, rtype) in enumerate(results):
+        if not rname:
+            rname = f'f{idx}'
+        rname = rname.strip()
+        if not rname or rname == '_' or not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', rname):
+            rname = f'f{idx}'
+        field_names.append(rname)
+    return field_names
+
+
+def name_unnamed_params(params):
+    """Give names to unnamed params, handling shared types."""
+    params = params.strip()
+    if not params:
+        return params
+    parts = []
+    depth = 0
+    cur = ''
+    for ch in params:
+        if ch in '([{':
+            depth += 1
+        elif ch in ')]}':
+            depth -= 1
+        if ch == ',' and depth == 0:
+            parts.append(cur.strip())
+            cur = ''
+        else:
+            cur += ch
+    parts.append(cur.strip())
+    parsed = []
+    for p in parts:
+        p = p.strip()
+        if not p:
+            continue
+        tokens = p.split()
+        if len(tokens) >= 2:
+            first = tokens[0]
+            if '.' in first or first.startswith(('*', '[', 'map[', 'func(', 'chan ')) or \
+               first in ('int','int8','int16','int32','int64','uint','uint8','uint16','uint32','uint64',
+                        'float32','float64','string','bool','byte','rune','error','any'):
+                parsed.append(([], p))
+            else:
+                parsed.append(([tokens[0]], ' '.join(tokens[1:])))
+        else:
+            tok = tokens[0]
+            if '.' in tok or tok.startswith(('*', '[', 'map[')) or \
+               tok in ('int','int8','int16','int32','int64','uint','uint8','uint16','uint32','uint64',
+                      'float32','float64','string','bool','byte','rune','error','any'):
+                parsed.append(([], tok))
+            else:
+                parsed.append(([tok], None))
+    resolved = []
+    for i, (names, typ) in enumerate(parsed):
+        if typ is None:
+            for j in range(i+1, len(parsed)):
+                if parsed[j][1] is not None:
+                    typ = parsed[j][1]
+                    break
+        resolved.append((names, typ))
+    named = []
+    ui = 0
+    for names, typ in resolved:
+        if not names:
+            named.append(f'__p{ui} {typ}')
+            ui += 1
+        else:
+            for nm in names:
+                named.append(f'{nm} {typ}')
+    return ', '.join(named)
+
+
+def convert_raw_strings(src):
+    """Convert Go raw strings to interpreted strings."""
+    out = []
+    i, n = 0, len(src)
+    while i < n:
+        if src.startswith('//', i):
+            j = src.find('\n', i)
+            if j == -1: j = n
+            out.append(src[i:j].replace('`', "'"))
+            i = j
+            continue
+        if src.startswith('/*', i):
+            j = src.find('*/', i)
+            j = n if j == -1 else j + 2
+            out.append(src[i:j].replace('`', "'"))
+            i = j
+            continue
+        if src[i] == '"' or src[i] == "'":
+            q = src[i]
+            if q == "'" and src.startswith("'`'", i):
+                out.append("'\\x60'")
+                i += 3
+                continue
+            j = i + 1
+            while j < n:
+                if src[j] == '\\':
+                    j += 2
+                    continue
+                if src[j] == q:
+                    j += 1
+                    break
+                j += 1
+            out.append(src[i:j])
+            i = j
+            continue
+        if src[i] == '`':
+            j = src.find('`', i+1)
+            if j == -1:
+                out.append("'")
+                i += 1
+                continue
+            content = src[i+1:j]
+            esc = []
+            for ch in content:
+                if ch == '\\': esc.append('\\\\')
+                elif ch == '"': esc.append('\\"')
+                elif ch == '\n': esc.append('\\n')
+                elif ch == '\r': esc.append('\\r')
+                elif ch == '\t': esc.append('\\t')
+                elif ord(ch) < 0x20 or ord(ch) == 0x7f:
+                    esc.append('\\x%02x' % ord(ch))
+                else: esc.append(ch)
+            out.append('"' + ''.join(esc) + '"')
+            i = j + 1
+            continue
+        out.append(src[i])
+        i += 1
+    return ''.join(out)
+
+
+def extract_receiver(body, dot_pos):
+    """Extract receiver before '.' at dot_pos."""
+    j = dot_pos - 1
+    while j >= 0 and body[j] in ' \t':
+        j -= 1
+    dp = db = dbr = 0
+    end = j + 1
+    while j >= 0:
+        ch = body[j]
+        if ch == ')': dp += 1
+        elif ch == ']': db += 1
+        elif ch == '}': dbr += 1
+        elif ch == '(':
+            if dp > 0: dp -= 1
+            else: break
+        elif ch == '[':
+            if db > 0: db -= 1
+            else: break
+        elif ch == '{':
+            if dbr > 0: dbr -= 1
+            else: break
+        elif dp == 0 and db == 0 and dbr == 0:
+            if not (ch.isalnum() or ch == '_' or ch == '.'):
+                break
+        j -= 1
+    start = j + 1
+    return body[start:end].strip(), start
+
+
 def rewrite_call_sites(body, mr_map):
     """
     Rewrite calls to multi-result functions in a helper body.
@@ -809,13 +981,10 @@ def process_package(pkg_path, cfg):
         import_block = 'import (\n' + '\n'.join(f'\t"{imp}"' for imp in filtered_imports) + '\n)\n\n'
         full_src = import_block + full_src
     
-    # Handle backticks: they cannot appear in Go raw string literals.
-    # 1. Replace rune literal '`' (quote-backtick-quote) with '\x60' (hex escape)
-    full_src = full_src.replace("'`'", "'\\x60'")
-    # 2. Replace remaining backticks (in comments only) with single quotes
+    # Handle backticks: convert raw strings to interpreted strings
+    full_src = convert_raw_strings(full_src)
     if '`' in full_src:
-        full_src = full_src.replace('`', "'")
-        print(f"  Note: replaced backticks in {pkg_path} (comments only)", file=sys.stderr)
+        print(f"  WARNING: leftover backticks in {pkg_path}", file=sys.stderr)
     
     go_code = f'''// P3-M9 (tier-5): synthetic `{pkg_path}` package.
 //
