@@ -5668,6 +5668,23 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P3-M9: deferred interface method calls (e.g. `defer hash.Reset()`)
+	// export as ifacemethod nodes, which the Java buildDefer does not
+	// understand (it requires call.fun). Wrap in a funclit so the defer
+	// gets a standard call node; the receiver is captured from the
+	// enclosing scope (evaluated at defer time per Go semantics, since
+	// the funclit call itself is what gets deferred).
+	if call.Kind == "ifacemethod" {
+		body := e.node("block", s.Call, map[string]any{
+			"stmts": []*Node{e.node("exprstmt", s.Call, map[string]any{"x": call})},
+		})
+		funclit := e.node("funclit", s.Call, map[string]any{
+			"params": []*Node{}, "results": []*Node{}, "body": body,
+		})
+		call = e.node("call", s.Call, map[string]any{
+			"fun": funclit, "args": []*Node{}, "type": nil,
+		})
+	}
 	return e.node("defer", s, map[string]any{"call": call}), nil
 }
 
