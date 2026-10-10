@@ -11,6 +11,22 @@ package main
 // syntheticMimeMultipartSource is the P3-M9 synthetic `mime/multipart` package.
 const syntheticMimeMultipartSource = `package multipart
 
+import (
+	"bufio"
+	"bytes"
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"mime"
+	"mime/quotedprintable"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+)
+
 // Copyright 2010 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -52,7 +68,7 @@ type Part struct {
 	// The headers of the body, if any, with the keys canonicalized
 	// in the same fashion that the Go http.Request headers are.
 	// For example, "foo-bar" changes case to "Foo-Bar"
-	Header textproto.MIMEHeader
+	Header __mpMIMEHeader
 
 	mr *Reader
 
@@ -146,15 +162,17 @@ type stickyErrorReader struct {
 
 type __mpstickyErrorReaderReadPair struct {
 	n int
-	_ error
+	f1 error
 }
 
 func __mpstickyErrorReaderRead(r *stickyErrorReader, p []byte) __mpstickyErrorReaderReadPair {
+	var n int
+
 	if r.err != nil {
-		return __mpstickyErrorReaderReadPair{n: 0, _: r.err}
+		return __mpstickyErrorReaderReadPair{n: 0, f1: r.err}
 	}
 	n, r.err = r.r.Read(p)
-	return __mpstickyErrorReaderReadPair{n: n, _: r.err}
+	return __mpstickyErrorReaderReadPair{n: n, f1: r.err}
 }
 
 func (r *stickyErrorReader) Read(p []byte) (n int, _ error) {
@@ -168,7 +186,8 @@ type __mpnewPartPair struct {
 	f1 error
 }
 
-func __mpnewPart(mr *Reader, rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) __mpnewPartPair {
+func __mpnewPart(mr *Reader, rawPart bool, maxMIMEHeaderSize int64, maxMIMEHeaders int64) __mpnewPartPair {
+
 	bp := &Part{
 		Header: make(map[string][]string),
 		mr:     mr,
@@ -196,7 +215,7 @@ func newPart(mr *Reader, rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) 
 
 
 func (p *Part) populateHeaders(maxMIMEHeaderSize, maxMIMEHeaders int64) error {
-	r := textproto.NewReader(p.mr.bufReader)
+	r := __mpNewTextprotoReader(p.mr.bufReader)
 	header, err := readMIMEHeader(r, maxMIMEHeaderSize, maxMIMEHeaders)
 	if err == nil {
 		p.Header = header
@@ -218,7 +237,8 @@ type __mpPartReadPair struct {
 }
 
 func __mpPartRead(p *Part, d []byte) __mpPartReadPair {
-	return __mpPartReadPair{p.r.Read(d)}
+
+	__mrtmp1_n, __mrtmp1_err := p.r.Read(d); return __mpPartReadPair{n: __mrtmp1_n, err: __mrtmp1_err}
 }
 
 func (p *Part) Read(d []byte) (n int, err error) {
@@ -239,14 +259,15 @@ type __mppartReaderReadPair struct {
 }
 
 func __mppartReaderRead(pr partReader, d []byte) __mppartReaderReadPair {
+
 	p := pr.p
 	br := p.mr.bufReader
 
-	// Read into buffer until we identify some data to return __mppartReaderReadPair{f0: , f1: }
+	// Read into buffer until we identify some data to return,
 	// or we find a reason to stop (boundary or read error).
 	for p.n == 0 && p.err == nil {
 		peek, _ := br.Peek(br.Buffered())
-		p.n, p.err = scanUntilBoundary(peek, p.mr.dashBoundary, p.mr.nlDashBoundary, p.total, p.readErr)
+__mrtmp1 := __mpscanUntilBoundary(peek, p.mr.dashBoundary, p.mr.nlDashBoundary, p.total, p.readErr); p.n, p.err = __mrtmp1.f0, __mrtmp1.f1
 		if p.n == 0 && p.err == nil {
 			// Force buffered I/O to read more into buffer.
 			_, p.readErr = br.Peek(len(peek) + 1)
@@ -294,7 +315,8 @@ type __mpscanUntilBoundaryPair struct {
 	f1 error
 }
 
-func __mpscanUntilBoundary(buf, dashBoundary, nlDashBoundary []byte, total int64, readErr error) __mpscanUntilBoundaryPair {
+func __mpscanUntilBoundary(buf []byte, dashBoundary []byte, nlDashBoundary []byte, total int64, readErr error) __mpscanUntilBoundaryPair {
+
 	if total == 0 {
 		// At beginning of body, allow dashBoundary.
 		if bytes.HasPrefix(buf, dashBoundary) {
@@ -418,7 +440,10 @@ const maxMIMEHeaderSize = 10 << 20
 // multipartmaxheaders is the maximum number of header entries NextPart will return,
 // as well as the maximum combined total of header entries Reader.ReadForm will return
 // in FileHeaders.
-var multipartmaxheaders = godebug.New("multipartmaxheaders")
+type __mpGodebugSetting struct{ name string }
+func (s *__mpGodebugSetting) Value() string { return "" }
+func (s *__mpGodebugSetting) IncNonDefault() {}
+var multipartmaxheaders = &__mpGodebugSetting{name: "multipartmaxheaders"}
 
 func maxMIMEHeaders() int64 {
 	if s := multipartmaxheaders.Value(); s != "" {
@@ -444,7 +469,8 @@ type __mpReaderNextPartPair struct {
 }
 
 func __mpReaderNextPart(r *Reader) __mpReaderNextPartPair {
-	return __mpReaderNextPartPair{r.nextPart(false, maxMIMEHeaderSize, maxMIMEHeaders())}
+
+	__mrtmp1 := __mpReadernextPart(r, false, maxMIMEHeaderSize, maxMIMEHeaders()); return __mpReaderNextPartPair{__mrtmp1.f0, __mrtmp1.f1}
 }
 
 func (r *Reader) NextPart() (*Part, error) {
@@ -464,7 +490,8 @@ type __mpReaderNextRawPartPair struct {
 }
 
 func __mpReaderNextRawPart(r *Reader) __mpReaderNextRawPartPair {
-	return __mpReaderNextRawPartPair{r.nextPart(true, maxMIMEHeaderSize, maxMIMEHeaders())}
+
+	__mrtmp1 := __mpReadernextPart(r, true, maxMIMEHeaderSize, maxMIMEHeaders()); return __mpReaderNextRawPartPair{__mrtmp1.f0, __mrtmp1.f1}
 }
 
 func (r *Reader) NextRawPart() (*Part, error) {
@@ -478,7 +505,8 @@ type __mpReadernextPartPair struct {
 	f1 error
 }
 
-func __mpReadernextPart(r *Reader, rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) __mpReadernextPartPair {
+func __mpReadernextPart(r *Reader, rawPart bool, maxMIMEHeaderSize int64, maxMIMEHeaders int64) __mpReadernextPartPair {
+
 	if r.currentPart != nil {
 		r.currentPart.Close()
 	}
@@ -491,33 +519,33 @@ func __mpReadernextPart(r *Reader, rawPart bool, maxMIMEHeaderSize, maxMIMEHeade
 
 		if err == io.EOF && r.isFinalBoundary(line) {
 			// If the buffer ends in "--boundary--" without the
-			// trailing "\r\n", ReadSlice will return __mpReadernextPartPair{an error}
+			// trailing "\r\n", ReadSlice will return an error
 			// (since it's missing the '\n'), but this is a valid
 			// multipart EOF so we need to return io.EOF instead of
 			// a fmt-wrapped one.
-			return nil, io.EOF
+			return __mpReadernextPartPair{f0: nil, f1: io.EOF}
 		}
 		if err != nil {
-			return nil, fmt.Errorf("multipart: NextPart: %w", err)
+			return __mpReadernextPartPair{f0: nil, f1: fmt.Errorf("multipart: NextPart: %w", err)}
 		}
 
 		if r.isBoundaryDelimiterLine(line) {
 			r.partsRead++
-			bp, err := newPart(r, rawPart, maxMIMEHeaderSize, maxMIMEHeaders)
+__mrtmp3 := __mpnewPart(r, rawPart, maxMIMEHeaderSize, maxMIMEHeaders); bp, err := __mrtmp3.f0, __mrtmp3.f1
 			if err != nil {
-				return nil, err
+				return __mpReadernextPartPair{f0: nil, f1: err}
 			}
 			r.currentPart = bp
-			return bp, nil
+			return __mpReadernextPartPair{f0: bp, f1: nil}
 		}
 
 		if r.isFinalBoundary(line) {
 			// Expected EOF
-			return nil, io.EOF
+			return __mpReadernextPartPair{f0: nil, f1: io.EOF}
 		}
 
 		if expectNewPart {
-			return nil, fmt.Errorf("multipart: expecting a new Part; got line %q", string(line))
+			return __mpReadernextPartPair{f0: nil, f1: fmt.Errorf("multipart: expecting a new Part; got line %q", string(line))}
 		}
 
 		if r.partsRead == 0 {
@@ -534,60 +562,19 @@ func __mpReadernextPart(r *Reader, rawPart bool, maxMIMEHeaderSize, maxMIMEHeade
 			continue
 		}
 
-		return nil, fmt.Errorf("multipart: unexpected line in Next(): %q", line)
+		return __mpReadernextPartPair{f0: nil, f1: fmt.Errorf("multipart: unexpected line in Next(): %q", line)}
 	}
-}
-
-// isFinalBoundary reports whether line is the final boundary line
-// indicating that all parts are over.
-// It matches '^--boundary--[ \t]*(\r\n)?$'
-func (r *Reader) isFinalBoundary(line []byte) bool {
-	if !bytes.HasPrefix(line, r.dashBoundaryDash) {
-		return false
-	}
-	rest := line[len(r.dashBoundaryDash):]
-	rest = skipLWSPChar(rest)
-	return len(rest) == 0 || bytes.Equal(rest, r.nl)
-}
-
-func (r *Reader) isBoundaryDelimiterLine(line []byte) (ret bool) {
-	// https://tools.ietf.org/html/rfc2046#section-5.1
-	//   The boundary delimiter line is then defined as a line
-	//   consisting entirely of two hyphen characters ("-",
-	//   decimal value 45) followed by the boundary parameter
-	//   value from the Content-Type header field, optional linear
-	//   whitespace, and a terminating CRLF.
-	if !bytes.HasPrefix(line, r.dashBoundary) {
-		return false
-	}
-	rest := line[len(r.dashBoundary):]
-	rest = skipLWSPChar(rest)
-
-	// On the first part, see our lines are ending in \n instead of \r\n
-	// and switch into that mode if so. This is a violation of the spec,
-	// but occurs in practice.
-	if r.partsRead == 0 && len(rest) == 1 && rest[0] == '\n' {
-		r.nl = r.nl[1:]
-		r.nlDashBoundary = r.nlDashBoundary[1:]
-	}
-	return bytes.Equal(rest, r.nl)
-}
-
-// skipLWSPChar returns b with leading spaces and tabs removed.
-// RFC 822 defines:
-//
-//	LWSP-char = SPACE / HTAB
-func skipLWSPChar(b []byte) []byte {
-	for len(b) > 0 && (b[0] == ' ' || b[0] == '\t') {
-		b = b[1:]
-	}
-	return b
 }
 
 func (r *Reader) nextPart(rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) (*Part, error) {
 	panic("mime/multipart.nextPart: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
+
+
+// isFinalBoundary reports whether line is the final boundary line
+// indicating that all parts are over.
+// It matches '^--boundary--[ \t]*(\r\n)?$'
 func (r *Reader) isFinalBoundary(line []byte) bool {
 	if !bytes.HasPrefix(line, r.dashBoundaryDash) {
 		return false
@@ -709,8 +696,8 @@ func (w *Writer) FormDataContentType() string {
 	b := w.boundary
 	// We must quote the boundary if it contains any of the
 	// tspecials characters defined by RFC 2045, or space.
-	if strings.ContainsAny(b, '()<>@,;:\"/[]?= ') {
-		b = '"' + b + '"'
+	if strings.ContainsAny(b, "()<>@,;:\\\"/[]?= ") {
+		b = "\"" + b + "\""
 	}
 	return "multipart/form-data; boundary=" + b
 }
@@ -737,7 +724,8 @@ type __mpWriterCreatePartPair struct {
 	f1 error
 }
 
-func __mpWriterCreatePart(w *Writer, header textproto.MIMEHeader) __mpWriterCreatePartPair {
+func __mpWriterCreatePart(w *Writer, header __mpMIMEHeader) __mpWriterCreatePartPair {
+
 	if w.lastpart != nil {
 		if err := w.lastpart.close(); err != nil {
 			return __mpWriterCreatePartPair{f0: nil, f1: err}
@@ -767,13 +755,13 @@ func __mpWriterCreatePart(w *Writer, header textproto.MIMEHeader) __mpWriterCrea
 	return __mpWriterCreatePartPair{f0: p, f1: nil}
 }
 
-func (w *Writer) CreatePart(header textproto.MIMEHeader) (io.Writer, error) {
+func (w *Writer) CreatePart(header __mpMIMEHeader) (io.Writer, error) {
 	panic("mime/multipart.CreatePart: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
 
 
-var quoteEscaper = strings.NewReplacer("\\", "\\\\", '"', "\\\"", "\r", "%0D", "\n", "%0A")
+var quoteEscaper = strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\r", "%0D", "\n", "%0A")
 
 // escapeQuotes escapes special characters in field parameter values.
 //
@@ -800,11 +788,12 @@ type __mpWriterCreateFormFilePair struct {
 	f1 error
 }
 
-func __mpWriterCreateFormFile(w *Writer, fieldname, filename string) __mpWriterCreateFormFilePair {
-	h := make(textproto.MIMEHeader)
+func __mpWriterCreateFormFile(w *Writer, fieldname string, filename string) __mpWriterCreateFormFilePair {
+
+	h := make(__mpMIMEHeader)
 	h.Set("Content-Disposition", FileContentDisposition(fieldname, filename))
 	h.Set("Content-Type", "application/octet-stream")
-	return __mpWriterCreateFormFilePair{w.CreatePart(h)}
+	__mrtmp1 := __mpWriterCreatePart(w, h); return __mpWriterCreateFormFilePair{__mrtmp1.f0, __mrtmp1.f1}
 }
 
 func (w *Writer) CreateFormFile(fieldname, filename string) (io.Writer, error) {
@@ -821,10 +810,11 @@ type __mpWriterCreateFormFieldPair struct {
 }
 
 func __mpWriterCreateFormField(w *Writer, fieldname string) __mpWriterCreateFormFieldPair {
-	h := make(textproto.MIMEHeader)
+
+	h := make(__mpMIMEHeader)
 	h.Set("Content-Disposition",
-		fmt.Sprintf('form-data; name="%s"', escapeQuotes(fieldname)))
-	return __mpWriterCreateFormFieldPair{w.CreatePart(h)}
+		fmt.Sprintf("form-data; name=\"%s\"", escapeQuotes(fieldname)))
+	__mrtmp1 := __mpWriterCreatePart(w, h); return __mpWriterCreateFormFieldPair{__mrtmp1.f0, __mrtmp1.f1}
 }
 
 func (w *Writer) CreateFormField(fieldname string) (io.Writer, error) {
@@ -836,7 +826,7 @@ func (w *Writer) CreateFormField(fieldname string) (io.Writer, error) {
 // FileContentDisposition returns the value of a Content-Disposition header
 // with the provided field name and file name.
 func FileContentDisposition(fieldname, filename string) string {
-	return fmt.Sprintf('form-data; name="%s"; filename="%s"',
+	return fmt.Sprintf("form-data; name=\"%s\"; filename=\"%s\"",
 		escapeQuotes(fieldname), escapeQuotes(filename))
 }
 
@@ -844,7 +834,7 @@ func FileContentDisposition(fieldname, filename string) string {
 
 // WriteField calls [Writer.CreateFormField] and then writes the given value.
 func (w *Writer) WriteField(fieldname, value string) error {
-	p, err := w.CreateFormField(fieldname)
+__mrtmp2 := __mpWriterCreateFormField(w, fieldname); p, err := __mrtmp2.f0, __mrtmp2.f1
 	if err != nil {
 		return err
 	}
@@ -888,6 +878,9 @@ type __mppartWritePair struct {
 }
 
 func __mppartWrite(p *part, d []byte) __mppartWritePair {
+	var n int
+	var err error
+
 	if p.closed {
 		return __mppartWritePair{n: 0, err: errors.New("multipart: can't write to finished part")}
 	}
@@ -903,5 +896,18 @@ func (p *part) Write(d []byte) (n int, err error) {
 }
 
 
+
+type __mpMIMEHeader map[string][]string
+func (__mpMIMEHeader) Get(key string) string { return "" }
+func (__mpMIMEHeader) Del(key string) {}
+func (h __mpMIMEHeader) Set(key, value string) { h[key] = []string{value} }
+type __mpTextprotoReader struct{}
+func __mpNewTextprotoReader(r any) *__mpTextprotoReader { return &__mpTextprotoReader{} }
+func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMIMEHeader, error) {
+    panic("multipart.readMIMEHeader: not in M9 scope")
+}
+
+// ErrMessageTooLarge is returned by ReadForm if the message is too large.
+var ErrMessageTooLarge = errors.New("multipart: message too large")
 
 `

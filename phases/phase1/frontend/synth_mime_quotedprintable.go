@@ -381,7 +381,7 @@ func (w *Writer) insertCRLF() error {
 
 
 func (w *Writer) flush() error {
-__mrtmp4 := __qpWriterWrite(w.line[:w.i]); if _, err := __mrtmp4.n, __mrtmp4.err; err != nil {
+	if _, err := w.w.Write(w.line[:w.i]); err != nil {
 		return err
 	}
 
