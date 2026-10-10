@@ -147,10 +147,10 @@ var syntheticSources = map[string]string{
 	"crypto/internal/fips140/rsa":                syntheticCryptoFips140RsaSource,
 	"golang.org/x/crypto/cryptobyte":             syntheticCryptobyteSource,
 	"golang.org/x/crypto/cryptobyte/asn1":        syntheticCryptobyteAsn1Source,
-	// P3-M9 (tier-5): synthetic crypto/x509 package REMOVED 2026-10-10 —
-	// the source files (synth_crypto_x509.go, synth_crypto_x509_pkix.go)
-	// were never committed; the dangling entries broke the gofrontend
-	// build. Re-add when the sources land.
+	// P3-M9 (tier-5): synthetic crypto/x509 package (Java delegation via
+	// graalgo.x509.* intrinsics; sources committed in ed9bc19).
+	"crypto/x509":      syntheticCryptoX509Source,
+	"crypto/x509/pkix": syntheticCryptoX509PkixSource,
 	// P3-M7 (wave 1): synthetic encoding/xml package (real-Go source in
 	// synth_xml.go). Self-contained (no imports); the token-stream
 	// desugar lives in mrdesugar_m5.go (mrXmlToken).

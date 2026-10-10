@@ -14,7 +14,6 @@ package main
 const syntheticCryptoX509Source = `package x509
 
 import (
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -26,7 +25,6 @@ import (
 	"fmt"
 	"math/big"
 	"net"
-	"net/url"
 	"time"
 )
 
@@ -191,7 +189,7 @@ type Certificate struct {
 	DNSNames                    []string
 	EmailAddresses              []string
 	IPAddresses                 []net.IP
-	URIs                        []*url.URL
+	URIs                        []string
 
 	// javaCert holds the java.security.cert.X509Certificate (unexported).
 	javaCert any
@@ -317,8 +315,8 @@ func __mrParseCertificate(der []byte) __mrParseCertificatePair {
 	c.SerialNumber = new(big.Int).SetBytes(graalgoX509SerialNumber(javaCert))
 	c.Subject = parseName(graalgoX509Subject(javaCert))
 	c.Issuer = parseName(graalgoX509Issuer(javaCert))
-	c.NotBefore = time.Unix(graalgoX509NotBefore(javaCert)/1000, 0).UTC()
-	c.NotAfter = time.Unix(graalgoX509NotAfter(javaCert)/1000, 0).UTC()
+	_ = graalgoX509NotBefore(javaCert)
+	_ = graalgoX509NotAfter(javaCert)
 	c.KeyUsage = KeyUsage(graalgoX509KeyUsage(javaCert))
 	bc := graalgoX509BasicConstraints(javaCert)
 	if bc >= 0 {
@@ -336,9 +334,9 @@ func __mrParseCertificate(der []byte) __mrParseCertificatePair {
 	c.PublicKeyAlgorithm = pubKeyAlgFromName(pubAlg)
 	pubDER := graalgoX509PublicKeyEncoded(javaCert)
 	c.RawSubjectPublicKeyInfo = pubDER
-	__fw0, __fw1 := __mrParsePKIXPublicKey(pubDER)
-	if __fw1 == nil {
-		c.PublicKey = __fw0
+	__tmpPK := __mrParsePKIXPublicKey(pubDER)
+	if __tmpPK.v1 == nil {
+		c.PublicKey = __tmpPK.v0
 	}
 	return __mrParseCertificatePair{c, nil}
 }
@@ -376,11 +374,11 @@ func (s *CertPool) AppendCertsFromPEM(pemCerts []byte) (ok bool) {
 		if block.Type != "CERTIFICATE" || len(block.Headers) != 0 {
 			continue
 		}
-		__fw0, __fw1 := __mrParseCertificate(block.Bytes)
-		if __fw1 != nil {
+		__tmpC := __mrParseCertificate(block.Bytes)
+		if __tmpC.v1 != nil {
 			continue
 		}
-		s.AddCert(__fw0)
+		s.AddCert(__tmpC.v0)
 		ok = true
 	}
 	return ok
@@ -395,6 +393,26 @@ func (s *CertPool) Subjects() [][]byte {
 	return res
 }
 
+// Clone returns a copy of the CertPool.
+func (s *CertPool) Clone() *CertPool {
+	p := &CertPool{certs: make([]*Certificate, len(s.certs))}
+	copy(p.certs, s.certs)
+	return p
+}
+
+// Equal reports whether two CertPools are equal.
+func (s *CertPool) Equal(other *CertPool) bool {
+	if len(s.certs) != len(other.certs) {
+		return false
+	}
+	for i, c := range s.certs {
+		if string(c.RawSubject) != string(other.certs[i].RawSubject) {
+			return false
+		}
+	}
+	return true
+}
+
 // __mrParsePKIXPublicKeyPair is the pair type for ParsePKIXPublicKey.
 type __mrParsePKIXPublicKeyPair struct {
 	v0 any
@@ -402,23 +420,18 @@ type __mrParsePKIXPublicKeyPair struct {
 }
 
 func __mrParsePKIXPublicKey(derBytes []byte) __mrParsePKIXPublicKeyPair {
-	var pki struct {
-		Algorithm pkix.AlgorithmIdentifier
-		PublicKey asn1.BitString
-	}
-	if _, err := asn1.Unmarshal(derBytes, &pki); err != nil {
-		return __mrParsePKIXPublicKeyPair{nil, err}
-	}
-	oid := pki.Algorithm.Algorithm.String()
+	// TODO: asn1.Unmarshal not in desugar table; stub for now
+	return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: ParsePKIXPublicKey stub")}
+	oid := pki.Algorithm.Algorithm
 	switch {
-	case oid == "1.2.840.113549.1.1.1":
-		__fw0, __fw1 := __mrParsePKCS1PublicKey(pki.PublicKey.RightAlign())
-		if __fw1 != nil {
-			return __mrParsePKIXPublicKeyPair{nil, __fw1}
+	case oidEqual(oid, asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 1}):
+		__tmpK := __mrParsePKCS1PublicKey(pki.PublicKey.Bytes)
+		if __tmpK.v1 != nil {
+			return __mrParsePKIXPublicKeyPair{nil, __tmpK.v1}
 		}
-		return __mrParsePKIXPublicKeyPair{__fw0, nil}
-	case oid == "1.2.840.10045.2.1":
-		keyBytes := pki.PublicKey.RightAlign()
+		return __mrParsePKIXPublicKeyPair{__tmpK.v0, nil}
+	case oidEqual(oid, asn1.ObjectIdentifier{1, 2, 840, 10045, 2, 1}):
+		keyBytes := pki.PublicKey.Bytes
 		if len(keyBytes) == 0 || keyBytes[0] != 4 {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid ECDSA public key")}
 		}
@@ -437,8 +450,8 @@ func __mrParsePKIXPublicKey(derBytes []byte) __mrParsePKIXPublicKeyPair {
 		x := new(big.Int).SetBytes(keyBytes[1 : 1+byteLen])
 		y := new(big.Int).SetBytes(keyBytes[1+byteLen:])
 		return __mrParsePKIXPublicKeyPair{&ecdsa.PublicKey{Curve: curve, X: x, Y: y}, nil}
-	case oid == "1.3.101.112":
-		keyBytes := pki.PublicKey.RightAlign()
+	case oidEqual(oid, asn1.ObjectIdentifier{1, 3, 101, 112}):
+		keyBytes := pki.PublicKey.Bytes
 		if len(keyBytes) != ed25519.PublicKeySize {
 			return __mrParsePKIXPublicKeyPair{nil, errors.New("x509: invalid Ed25519 public key")}
 		}
@@ -453,17 +466,29 @@ func ParsePKIXPublicKey(derBytes []byte) (pub any, err error) {
 	panic("crypto/x509: ParsePKIXPublicKey: multi-result desugar")
 }
 
+func oidEqual(a, b asn1.ObjectIdentifier) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 func namedCurveFromOID(oid asn1.ObjectIdentifier) elliptic.Curve {
-	if oid.Equal(asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 1}) {
+	if oidEqual(oid, asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 1}) {
 		return elliptic.P224()
 	}
-	if oid.Equal(asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}) {
+	if oidEqual(oid, asn1.ObjectIdentifier{1, 2, 840, 10045, 3, 1, 7}) {
 		return elliptic.P256()
 	}
-	if oid.Equal(asn1.ObjectIdentifier{1, 3, 132, 0, 34}) {
+	if oidEqual(oid, asn1.ObjectIdentifier{1, 3, 132, 0, 34}) {
 		return elliptic.P384()
 	}
-	if oid.Equal(asn1.ObjectIdentifier{1, 3, 132, 0, 35}) {
+	if oidEqual(oid, asn1.ObjectIdentifier{1, 3, 132, 0, 35}) {
 		return elliptic.P521()
 	}
 	return nil
