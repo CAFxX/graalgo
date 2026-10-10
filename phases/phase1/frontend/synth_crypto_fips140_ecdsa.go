@@ -60,7 +60,7 @@ const (
 	p521 curveID = "P-521"
 )
 
-type Curve[P any] struct {
+type Curve[P Point[P]] struct {
 	curve      curveID
 	newPoint   func() P
 	ordInverse func(*[4]uint64)
@@ -68,6 +68,16 @@ type Curve[P any] struct {
 	nMinus2    []byte
 }
 
+// Point is a generic constraint for the [nistec] Point types.
+type Point[P any] interface {
+	*nistec.P224Point | *nistec.P256Point | *nistec.P384Point | *nistec.P521Point
+	Bytes() []byte
+	BytesX() ([]byte, error)
+	SetBytes([]byte) (P, error)
+	ScalarMult(P, []byte) (P, error)
+	ScalarBaseMult([]byte) (P, error)
+	Add(p1, p2 P) P
+}
 
 // P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): pair types for
 // Point[P] interface multi-result methods dispatched via the WS H
@@ -204,66 +214,9 @@ type __mrNewPrivateKeyPair struct {
 	v1 error
 }
 
-func __mrNewPrivateKeyP224(c *Curve[*nistec.P224Point], D, Q []byte) __mrNewPrivateKeyPair {
+func __mrNewPrivateKey[P Point[P]](c *Curve[P], D, Q []byte) __mrNewPrivateKeyPair {
 	fips140.RecordApproved()
-	pub, err := NewPublicKeyP224(c, Q)
-	if err != nil {
-		return __mrNewPrivateKeyPair{nil, err}
-	}
-	if len(D) != c.N.Size() {
-		return __mrNewPrivateKeyPair{nil, errors.New("ecdsa: invalid private key length")}
-	}
-	d, err := bigmod.NewNat().SetBytes(D, c.N)
-	if err != nil {
-		return __mrNewPrivateKeyPair{nil, err}
-	}
-	if d.IsZero() == 1 {
-		return __mrNewPrivateKeyPair{nil, errors.New("ecdsa: private key is zero")}
-	}
-	priv := &PrivateKey{pub: *pub, d: d.Bytes(c.N)}
-	return __mrNewPrivateKeyPair{priv, nil}
-}
-func __mrNewPrivateKeyP256(c *Curve[*nistec.P256Point], D, Q []byte) __mrNewPrivateKeyPair {
-	fips140.RecordApproved()
-	pub, err := NewPublicKeyP256(c, Q)
-	if err != nil {
-		return __mrNewPrivateKeyPair{nil, err}
-	}
-	if len(D) != c.N.Size() {
-		return __mrNewPrivateKeyPair{nil, errors.New("ecdsa: invalid private key length")}
-	}
-	d, err := bigmod.NewNat().SetBytes(D, c.N)
-	if err != nil {
-		return __mrNewPrivateKeyPair{nil, err}
-	}
-	if d.IsZero() == 1 {
-		return __mrNewPrivateKeyPair{nil, errors.New("ecdsa: private key is zero")}
-	}
-	priv := &PrivateKey{pub: *pub, d: d.Bytes(c.N)}
-	return __mrNewPrivateKeyPair{priv, nil}
-}
-func __mrNewPrivateKeyP384(c *Curve[*nistec.P384Point], D, Q []byte) __mrNewPrivateKeyPair {
-	fips140.RecordApproved()
-	pub, err := NewPublicKeyP384(c, Q)
-	if err != nil {
-		return __mrNewPrivateKeyPair{nil, err}
-	}
-	if len(D) != c.N.Size() {
-		return __mrNewPrivateKeyPair{nil, errors.New("ecdsa: invalid private key length")}
-	}
-	d, err := bigmod.NewNat().SetBytes(D, c.N)
-	if err != nil {
-		return __mrNewPrivateKeyPair{nil, err}
-	}
-	if d.IsZero() == 1 {
-		return __mrNewPrivateKeyPair{nil, errors.New("ecdsa: private key is zero")}
-	}
-	priv := &PrivateKey{pub: *pub, d: d.Bytes(c.N)}
-	return __mrNewPrivateKeyPair{priv, nil}
-}
-func __mrNewPrivateKeyP521(c *Curve[*nistec.P521Point], D, Q []byte) __mrNewPrivateKeyPair {
-	fips140.RecordApproved()
-	pub, err := NewPublicKeyP521(c, Q)
+	pub, err := NewPublicKey(c, Q)
 	if err != nil {
 		return __mrNewPrivateKeyPair{nil, err}
 	}
@@ -281,16 +234,7 @@ func __mrNewPrivateKeyP521(c *Curve[*nistec.P521Point], D, Q []byte) __mrNewPriv
 	return __mrNewPrivateKeyPair{priv, nil}
 }
 
-func NewPrivateKeyP224(c *Curve[*nistec.P224Point], D, Q []byte) (*PrivateKey, error) {
-	panic("crypto/internal/fips140/ecdsa: NewPrivateKey: multi-result desugar")
-}
-func NewPrivateKeyP256(c *Curve[*nistec.P256Point], D, Q []byte) (*PrivateKey, error) {
-	panic("crypto/internal/fips140/ecdsa: NewPrivateKey: multi-result desugar")
-}
-func NewPrivateKeyP384(c *Curve[*nistec.P384Point], D, Q []byte) (*PrivateKey, error) {
-	panic("crypto/internal/fips140/ecdsa: NewPrivateKey: multi-result desugar")
-}
-func NewPrivateKeyP521(c *Curve[*nistec.P521Point], D, Q []byte) (*PrivateKey, error) {
+func NewPrivateKey[P Point[P]](c *Curve[P], D, Q []byte) (*PrivateKey, error) {
 	panic("crypto/internal/fips140/ecdsa: NewPrivateKey: multi-result desugar")
 }
 
@@ -301,46 +245,7 @@ type __mrNewPublicKeyPair struct {
 	v1 error
 }
 
-func __mrNewPublicKeyP224(c *Curve[*nistec.P224Point], Q []byte) __mrNewPublicKeyPair {
-	// SetBytes checks that Q is a valid point on the curve, and that its
-	// coordinates are reduced modulo p, fulfilling the requirements of SP
-	// 800-89, Section 5.3.2.
-	if len(Q) < 1 || Q[0] == 0 {
-		return __mrNewPublicKeyPair{nil, errors.New("ecdsa: invalid public key encoding")}
-	}
-	_, err := c.newPoint().SetBytes(Q)
-	if err != nil {
-		return __mrNewPublicKeyPair{nil, err}
-	}
-	return __mrNewPublicKeyPair{&PublicKey{curve: c.curve, q: Q}, nil}
-}
-func __mrNewPublicKeyP256(c *Curve[*nistec.P256Point], Q []byte) __mrNewPublicKeyPair {
-	// SetBytes checks that Q is a valid point on the curve, and that its
-	// coordinates are reduced modulo p, fulfilling the requirements of SP
-	// 800-89, Section 5.3.2.
-	if len(Q) < 1 || Q[0] == 0 {
-		return __mrNewPublicKeyPair{nil, errors.New("ecdsa: invalid public key encoding")}
-	}
-	_, err := c.newPoint().SetBytes(Q)
-	if err != nil {
-		return __mrNewPublicKeyPair{nil, err}
-	}
-	return __mrNewPublicKeyPair{&PublicKey{curve: c.curve, q: Q}, nil}
-}
-func __mrNewPublicKeyP384(c *Curve[*nistec.P384Point], Q []byte) __mrNewPublicKeyPair {
-	// SetBytes checks that Q is a valid point on the curve, and that its
-	// coordinates are reduced modulo p, fulfilling the requirements of SP
-	// 800-89, Section 5.3.2.
-	if len(Q) < 1 || Q[0] == 0 {
-		return __mrNewPublicKeyPair{nil, errors.New("ecdsa: invalid public key encoding")}
-	}
-	_, err := c.newPoint().SetBytes(Q)
-	if err != nil {
-		return __mrNewPublicKeyPair{nil, err}
-	}
-	return __mrNewPublicKeyPair{&PublicKey{curve: c.curve, q: Q}, nil}
-}
-func __mrNewPublicKeyP521(c *Curve[*nistec.P521Point], Q []byte) __mrNewPublicKeyPair {
+func __mrNewPublicKey[P Point[P]](c *Curve[P], Q []byte) __mrNewPublicKeyPair {
 	// SetBytes checks that Q is a valid point on the curve, and that its
 	// coordinates are reduced modulo p, fulfilling the requirements of SP
 	// 800-89, Section 5.3.2.
@@ -354,16 +259,7 @@ func __mrNewPublicKeyP521(c *Curve[*nistec.P521Point], Q []byte) __mrNewPublicKe
 	return __mrNewPublicKeyPair{&PublicKey{curve: c.curve, q: Q}, nil}
 }
 
-func NewPublicKeyP224(c *Curve[*nistec.P224Point], Q []byte) (*PublicKey, error) {
-	panic("crypto/internal/fips140/ecdsa: NewPublicKey: multi-result desugar")
-}
-func NewPublicKeyP256(c *Curve[*nistec.P256Point], Q []byte) (*PublicKey, error) {
-	panic("crypto/internal/fips140/ecdsa: NewPublicKey: multi-result desugar")
-}
-func NewPublicKeyP384(c *Curve[*nistec.P384Point], Q []byte) (*PublicKey, error) {
-	panic("crypto/internal/fips140/ecdsa: NewPublicKey: multi-result desugar")
-}
-func NewPublicKeyP521(c *Curve[*nistec.P521Point], Q []byte) (*PublicKey, error) {
+func NewPublicKey[P Point[P]](c *Curve[P], Q []byte) (*PublicKey, error) {
 	panic("crypto/internal/fips140/ecdsa: NewPublicKey: multi-result desugar")
 }
 
@@ -373,10 +269,10 @@ type __mrGenerateKeyPair struct {
 	v1 error
 }
 
-func __mrGenerateKeyP224(c *Curve[*nistec.P224Point], rand io.Reader) __mrGenerateKeyPair {
+func __mrGenerateKey[P Point[P]](c *Curve[P], rand io.Reader) __mrGenerateKeyPair {
 	fips140.RecordApproved()
 
-	k, Q, err := randomPointP224(c, func(b []byte) error {
+	k, Q, err := randomPoint(c, func(b []byte) error {
 		return drbg.ReadWithReader(rand, b)
 	})
 	if err != nil {
@@ -390,80 +286,11 @@ func __mrGenerateKeyP224(c *Curve[*nistec.P224Point], rand io.Reader) __mrGenera
 		},
 		d: k.Bytes(c.N),
 	}
-	fipsPCTP224(c, priv)
-	return __mrGenerateKeyPair{priv, nil}
-}
-func __mrGenerateKeyP256(c *Curve[*nistec.P256Point], rand io.Reader) __mrGenerateKeyPair {
-	fips140.RecordApproved()
-
-	k, Q, err := randomPointP256(c, func(b []byte) error {
-		return drbg.ReadWithReader(rand, b)
-	})
-	if err != nil {
-		return __mrGenerateKeyPair{nil, err}
-	}
-
-	priv := &PrivateKey{
-		pub: PublicKey{
-			curve: c.curve,
-			q:     Q.Bytes(),
-		},
-		d: k.Bytes(c.N),
-	}
-	fipsPCTP256(c, priv)
-	return __mrGenerateKeyPair{priv, nil}
-}
-func __mrGenerateKeyP384(c *Curve[*nistec.P384Point], rand io.Reader) __mrGenerateKeyPair {
-	fips140.RecordApproved()
-
-	k, Q, err := randomPointP384(c, func(b []byte) error {
-		return drbg.ReadWithReader(rand, b)
-	})
-	if err != nil {
-		return __mrGenerateKeyPair{nil, err}
-	}
-
-	priv := &PrivateKey{
-		pub: PublicKey{
-			curve: c.curve,
-			q:     Q.Bytes(),
-		},
-		d: k.Bytes(c.N),
-	}
-	fipsPCTP384(c, priv)
-	return __mrGenerateKeyPair{priv, nil}
-}
-func __mrGenerateKeyP521(c *Curve[*nistec.P521Point], rand io.Reader) __mrGenerateKeyPair {
-	fips140.RecordApproved()
-
-	k, Q, err := randomPointP521(c, func(b []byte) error {
-		return drbg.ReadWithReader(rand, b)
-	})
-	if err != nil {
-		return __mrGenerateKeyPair{nil, err}
-	}
-
-	priv := &PrivateKey{
-		pub: PublicKey{
-			curve: c.curve,
-			q:     Q.Bytes(),
-		},
-		d: k.Bytes(c.N),
-	}
-	fipsPCTP521(c, priv)
+	fipsPCT(c, priv)
 	return __mrGenerateKeyPair{priv, nil}
 }
 
-func GenerateKeyP224(c *Curve[*nistec.P224Point], rand io.Reader) (*PrivateKey, error) {
-	panic("crypto/internal/fips140/ecdsa: GenerateKey: multi-result desugar")
-}
-func GenerateKeyP256(c *Curve[*nistec.P256Point], rand io.Reader) (*PrivateKey, error) {
-	panic("crypto/internal/fips140/ecdsa: GenerateKey: multi-result desugar")
-}
-func GenerateKeyP384(c *Curve[*nistec.P384Point], rand io.Reader) (*PrivateKey, error) {
-	panic("crypto/internal/fips140/ecdsa: GenerateKey: multi-result desugar")
-}
-func GenerateKeyP521(c *Curve[*nistec.P521Point], rand io.Reader) (*PrivateKey, error) {
+func GenerateKey[P Point[P]](c *Curve[P], rand io.Reader) (*PrivateKey, error) {
 	panic("crypto/internal/fips140/ecdsa: GenerateKey: multi-result desugar")
 }
 
@@ -473,17 +300,17 @@ func GenerateKeyP521(c *Curve[*nistec.P521Point], rand io.Reader) (*PrivateKey, 
 // Generation of Private Keys by Rejection Sampling) or Appendix A.3.3
 // (Per-Message Secret Number Generation for Deterministic ECDSA) followed by
 // Step 5 of Section 6.4.1.
-type __mrrandomPointPair struct {
+type __mrrandomPointPair[P Point[P]] struct {
 	k *bigmod.Nat
-	p interface{}
+	p P
 	err error
 }
 
-func __mrrandomPointP224(c *Curve[*nistec.P224Point], generate func([]byte) error) __mrrandomPointPair {
+func __mrrandomPoint[P Point[P]](c *Curve[P], generate func([]byte) error) __mrrandomPointPair[P] {
 	for {
 		b := make([]byte, c.N.Size())
 		if err := generate(b); err != nil {
-			return __mrrandomPointPair{nil, nil, err}
+			return __mrrandomPointPair[P]{nil, nil, err}
 		}
 
 		// Take only the leftmost bits of the generated random value. This is
@@ -511,127 +338,7 @@ func __mrrandomPointP224(c *Curve[*nistec.P224Point], generate func([]byte) erro
 		// because the chance of selecting zero is cryptographically negligible.
 		if k, err := bigmod.NewNat().SetBytes(b, c.N); err == nil && k.IsZero() == 0 {
 			p, err := c.newPoint().ScalarBaseMult(k.Bytes(c.N))
-			return __mrrandomPointPair{k, p, err}
-		}
-
-		if testingOnlyRejectionSamplingLooped != nil {
-			testingOnlyRejectionSamplingLooped()
-		}
-	}
-}
-func __mrrandomPointP256(c *Curve[*nistec.P256Point], generate func([]byte) error) __mrrandomPointPair {
-	for {
-		b := make([]byte, c.N.Size())
-		if err := generate(b); err != nil {
-			return __mrrandomPointPair{nil, nil, err}
-		}
-
-		// Take only the leftmost bits of the generated random value. This is
-		// both necessary to increase the chance of the random value being in
-		// the correct range and to match the specification. It's unfortunate
-		// that we need to do a shift instead of a mask, but see the comment on
-		// rightShift.
-		//
-		// These are the most dangerous lines in the package and maybe in the
-		// library: a single bit of bias in the selection of nonces would likely
-		// lead to key recovery, but no tests would fail. Look but DO NOT TOUCH.
-		if excess := len(b)*8 - c.N.BitLen(); excess > 0 {
-			// Just to be safe, assert that this only happens for the one curve that
-			// doesn't have a round number of bits.
-			if c.curve != p521 {
-				panic("ecdsa: internal error: unexpectedly masking off bits")
-			}
-			b = rightShift(b, excess)
-		}
-
-		// FIPS 186-5, Appendix A.4.2 makes us check x <= N - 2 and then return
-		// x + 1. Note that it follows that 0 < x + 1 < N. Instead, SetBytes
-		// checks that k < N, and we explicitly check 0 != k. Since k can't be
-		// negative, this is strictly equivalent. None of this matters anyway
-		// because the chance of selecting zero is cryptographically negligible.
-		if k, err := bigmod.NewNat().SetBytes(b, c.N); err == nil && k.IsZero() == 0 {
-			p, err := c.newPoint().ScalarBaseMult(k.Bytes(c.N))
-			return __mrrandomPointPair{k, p, err}
-		}
-
-		if testingOnlyRejectionSamplingLooped != nil {
-			testingOnlyRejectionSamplingLooped()
-		}
-	}
-}
-func __mrrandomPointP384(c *Curve[*nistec.P384Point], generate func([]byte) error) __mrrandomPointPair {
-	for {
-		b := make([]byte, c.N.Size())
-		if err := generate(b); err != nil {
-			return __mrrandomPointPair{nil, nil, err}
-		}
-
-		// Take only the leftmost bits of the generated random value. This is
-		// both necessary to increase the chance of the random value being in
-		// the correct range and to match the specification. It's unfortunate
-		// that we need to do a shift instead of a mask, but see the comment on
-		// rightShift.
-		//
-		// These are the most dangerous lines in the package and maybe in the
-		// library: a single bit of bias in the selection of nonces would likely
-		// lead to key recovery, but no tests would fail. Look but DO NOT TOUCH.
-		if excess := len(b)*8 - c.N.BitLen(); excess > 0 {
-			// Just to be safe, assert that this only happens for the one curve that
-			// doesn't have a round number of bits.
-			if c.curve != p521 {
-				panic("ecdsa: internal error: unexpectedly masking off bits")
-			}
-			b = rightShift(b, excess)
-		}
-
-		// FIPS 186-5, Appendix A.4.2 makes us check x <= N - 2 and then return
-		// x + 1. Note that it follows that 0 < x + 1 < N. Instead, SetBytes
-		// checks that k < N, and we explicitly check 0 != k. Since k can't be
-		// negative, this is strictly equivalent. None of this matters anyway
-		// because the chance of selecting zero is cryptographically negligible.
-		if k, err := bigmod.NewNat().SetBytes(b, c.N); err == nil && k.IsZero() == 0 {
-			p, err := c.newPoint().ScalarBaseMult(k.Bytes(c.N))
-			return __mrrandomPointPair{k, p, err}
-		}
-
-		if testingOnlyRejectionSamplingLooped != nil {
-			testingOnlyRejectionSamplingLooped()
-		}
-	}
-}
-func __mrrandomPointP521(c *Curve[*nistec.P521Point], generate func([]byte) error) __mrrandomPointPair {
-	for {
-		b := make([]byte, c.N.Size())
-		if err := generate(b); err != nil {
-			return __mrrandomPointPair{nil, nil, err}
-		}
-
-		// Take only the leftmost bits of the generated random value. This is
-		// both necessary to increase the chance of the random value being in
-		// the correct range and to match the specification. It's unfortunate
-		// that we need to do a shift instead of a mask, but see the comment on
-		// rightShift.
-		//
-		// These are the most dangerous lines in the package and maybe in the
-		// library: a single bit of bias in the selection of nonces would likely
-		// lead to key recovery, but no tests would fail. Look but DO NOT TOUCH.
-		if excess := len(b)*8 - c.N.BitLen(); excess > 0 {
-			// Just to be safe, assert that this only happens for the one curve that
-			// doesn't have a round number of bits.
-			if c.curve != p521 {
-				panic("ecdsa: internal error: unexpectedly masking off bits")
-			}
-			b = rightShift(b, excess)
-		}
-
-		// FIPS 186-5, Appendix A.4.2 makes us check x <= N - 2 and then return
-		// x + 1. Note that it follows that 0 < x + 1 < N. Instead, SetBytes
-		// checks that k < N, and we explicitly check 0 != k. Since k can't be
-		// negative, this is strictly equivalent. None of this matters anyway
-		// because the chance of selecting zero is cryptographically negligible.
-		if k, err := bigmod.NewNat().SetBytes(b, c.N); err == nil && k.IsZero() == 0 {
-			p, err := c.newPoint().ScalarBaseMult(k.Bytes(c.N))
-			return __mrrandomPointPair{k, p, err}
+			return __mrrandomPointPair[P]{k, p, err}
 		}
 
 		if testingOnlyRejectionSamplingLooped != nil {
@@ -640,16 +347,7 @@ func __mrrandomPointP521(c *Curve[*nistec.P521Point], generate func([]byte) erro
 	}
 }
 
-func randomPointP224(c *Curve[*nistec.P224Point], generate func([]byte) error) (k *bigmod.Nat, p *nistec.P224Point, err error) {
-	panic("crypto/internal/fips140/ecdsa: randomPoint: multi-result desugar")
-}
-func randomPointP256(c *Curve[*nistec.P256Point], generate func([]byte) error) (k *bigmod.Nat, p *nistec.P256Point, err error) {
-	panic("crypto/internal/fips140/ecdsa: randomPoint: multi-result desugar")
-}
-func randomPointP384(c *Curve[*nistec.P384Point], generate func([]byte) error) (k *bigmod.Nat, p *nistec.P384Point, err error) {
-	panic("crypto/internal/fips140/ecdsa: randomPoint: multi-result desugar")
-}
-func randomPointP521(c *Curve[*nistec.P521Point], generate func([]byte) error) (k *bigmod.Nat, p *nistec.P521Point, err error) {
+func randomPoint[P Point[P]](c *Curve[P], generate func([]byte) error) (k *bigmod.Nat, p P, err error) {
 	panic("crypto/internal/fips140/ecdsa: randomPoint: multi-result desugar")
 }
 
@@ -672,7 +370,7 @@ type __mrSignPair struct {
 	v1 error
 }
 
-func __mrSignP224(c *Curve[*nistec.P224Point], h func() hash.Hash, priv *PrivateKey, rand io.Reader, hash []byte) __mrSignPair {
+func __mrSign[P Point[P], H hash.Hash](c *Curve[P], h func() H, priv *PrivateKey, rand io.Reader, hash []byte) __mrSignPair {
 	if priv.pub.curve != c.curve {
 		return __mrSignPair{nil, errors.New("ecdsa: private key does not match curve")}
 	}
@@ -698,115 +396,13 @@ func __mrSignP224(c *Curve[*nistec.P224Point], h func() hash.Hash, priv *Private
 	// per SP 800-90Ar1, Section 8.6.7, and the rest is a personalization
 	// string, which per SP 800-90Ar1, Section 8.7.1 may contain secret
 	// information.
-	drbg := newDRBG(h, Z, nil, blockAlignedPersonalizationString{priv.d, bits2octetsP224(c, hash)})
+	drbg := newDRBG(h, Z, nil, blockAlignedPersonalizationString{priv.d, bits2octets(c, hash)})
 
-	__fw0, __fw1 := signP224(c, priv, drbg, hash)
-	return __mrSignPair{__fw0, __fw1}
-}
-func __mrSignP256(c *Curve[*nistec.P256Point], h func() hash.Hash, priv *PrivateKey, rand io.Reader, hash []byte) __mrSignPair {
-	if priv.pub.curve != c.curve {
-		return __mrSignPair{nil, errors.New("ecdsa: private key does not match curve")}
-	}
-	if len(hash) == 0 {
-		return __mrSignPair{nil, errors.New("ecdsa: hash cannot be empty")}
-	}
-	fips140.RecordApproved()
-	fipsSelfTest()
-
-	// Random ECDSA is dangerous, because a failure of the RNG would immediately
-	// leak the private key. Instead, we use a "hedged" approach, as specified
-	// in draft-irtf-cfrg-det-sigs-with-noise-04, Section 4. This has also the
-	// advantage of closely resembling Deterministic ECDSA.
-
-	Z := make([]byte, len(priv.d))
-	if err := drbg.ReadWithReader(rand, Z); err != nil {
-		return __mrSignPair{nil, err}
-	}
-
-	// See https://github.com/cfrg/draft-irtf-cfrg-det-sigs-with-noise/issues/6
-	// for the FIPS compliance of this method. In short Z is entropy from the
-	// main DRBG, of length 3/2 of security_strength, so the nonce is optional
-	// per SP 800-90Ar1, Section 8.6.7, and the rest is a personalization
-	// string, which per SP 800-90Ar1, Section 8.7.1 may contain secret
-	// information.
-	drbg := newDRBG(h, Z, nil, blockAlignedPersonalizationString{priv.d, bits2octetsP256(c, hash)})
-
-	__fw0, __fw1 := signP256(c, priv, drbg, hash)
-	return __mrSignPair{__fw0, __fw1}
-}
-func __mrSignP384(c *Curve[*nistec.P384Point], h func() hash.Hash, priv *PrivateKey, rand io.Reader, hash []byte) __mrSignPair {
-	if priv.pub.curve != c.curve {
-		return __mrSignPair{nil, errors.New("ecdsa: private key does not match curve")}
-	}
-	if len(hash) == 0 {
-		return __mrSignPair{nil, errors.New("ecdsa: hash cannot be empty")}
-	}
-	fips140.RecordApproved()
-	fipsSelfTest()
-
-	// Random ECDSA is dangerous, because a failure of the RNG would immediately
-	// leak the private key. Instead, we use a "hedged" approach, as specified
-	// in draft-irtf-cfrg-det-sigs-with-noise-04, Section 4. This has also the
-	// advantage of closely resembling Deterministic ECDSA.
-
-	Z := make([]byte, len(priv.d))
-	if err := drbg.ReadWithReader(rand, Z); err != nil {
-		return __mrSignPair{nil, err}
-	}
-
-	// See https://github.com/cfrg/draft-irtf-cfrg-det-sigs-with-noise/issues/6
-	// for the FIPS compliance of this method. In short Z is entropy from the
-	// main DRBG, of length 3/2 of security_strength, so the nonce is optional
-	// per SP 800-90Ar1, Section 8.6.7, and the rest is a personalization
-	// string, which per SP 800-90Ar1, Section 8.7.1 may contain secret
-	// information.
-	drbg := newDRBG(h, Z, nil, blockAlignedPersonalizationString{priv.d, bits2octetsP384(c, hash)})
-
-	__fw0, __fw1 := signP384(c, priv, drbg, hash)
-	return __mrSignPair{__fw0, __fw1}
-}
-func __mrSignP521(c *Curve[*nistec.P521Point], h func() hash.Hash, priv *PrivateKey, rand io.Reader, hash []byte) __mrSignPair {
-	if priv.pub.curve != c.curve {
-		return __mrSignPair{nil, errors.New("ecdsa: private key does not match curve")}
-	}
-	if len(hash) == 0 {
-		return __mrSignPair{nil, errors.New("ecdsa: hash cannot be empty")}
-	}
-	fips140.RecordApproved()
-	fipsSelfTest()
-
-	// Random ECDSA is dangerous, because a failure of the RNG would immediately
-	// leak the private key. Instead, we use a "hedged" approach, as specified
-	// in draft-irtf-cfrg-det-sigs-with-noise-04, Section 4. This has also the
-	// advantage of closely resembling Deterministic ECDSA.
-
-	Z := make([]byte, len(priv.d))
-	if err := drbg.ReadWithReader(rand, Z); err != nil {
-		return __mrSignPair{nil, err}
-	}
-
-	// See https://github.com/cfrg/draft-irtf-cfrg-det-sigs-with-noise/issues/6
-	// for the FIPS compliance of this method. In short Z is entropy from the
-	// main DRBG, of length 3/2 of security_strength, so the nonce is optional
-	// per SP 800-90Ar1, Section 8.6.7, and the rest is a personalization
-	// string, which per SP 800-90Ar1, Section 8.7.1 may contain secret
-	// information.
-	drbg := newDRBG(h, Z, nil, blockAlignedPersonalizationString{priv.d, bits2octetsP521(c, hash)})
-
-	__fw0, __fw1 := signP521(c, priv, drbg, hash)
+	__fw0, __fw1 := sign(c, priv, drbg, hash)
 	return __mrSignPair{__fw0, __fw1}
 }
 
-func SignP224(c *Curve[*nistec.P224Point], h func() hash.Hash, priv *PrivateKey, rand io.Reader, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: Sign: multi-result desugar")
-}
-func SignP256(c *Curve[*nistec.P256Point], h func() hash.Hash, priv *PrivateKey, rand io.Reader, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: Sign: multi-result desugar")
-}
-func SignP384(c *Curve[*nistec.P384Point], h func() hash.Hash, priv *PrivateKey, rand io.Reader, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: Sign: multi-result desugar")
-}
-func SignP521(c *Curve[*nistec.P521Point], h func() hash.Hash, priv *PrivateKey, rand io.Reader, hash []byte) (*Signature, error) {
+func Sign[P Point[P], H hash.Hash](c *Curve[P], h func() H, priv *PrivateKey, rand io.Reader, hash []byte) (*Signature, error) {
 	panic("crypto/internal/fips140/ecdsa: Sign: multi-result desugar")
 }
 
@@ -820,7 +416,7 @@ type __mrSignDeterministicPair struct {
 	v1 error
 }
 
-func __mrSignDeterministicP224(c *Curve[*nistec.P224Point], h func() hash.Hash, priv *PrivateKey, hash []byte) __mrSignDeterministicPair {
+func __mrSignDeterministic[P Point[P], H hash.Hash](c *Curve[P], h func() H, priv *PrivateKey, hash []byte) __mrSignDeterministicPair {
 	if priv.pub.curve != c.curve {
 		return __mrSignDeterministicPair{nil, errors.New("ecdsa: private key does not match curve")}
 	}
@@ -829,83 +425,20 @@ func __mrSignDeterministicP224(c *Curve[*nistec.P224Point], h func() hash.Hash, 
 	}
 	fips140.RecordApproved()
 	fipsSelfTestDeterministic()
-	drbg := newDRBG(h, priv.d, bits2octetsP224(c, hash), nil) // RFC 6979, Section 3.3
-	__fw0, __fw1 := signP224(c, priv, drbg, hash)
-	return __mrSignDeterministicPair{__fw0, __fw1}
-}
-func __mrSignDeterministicP256(c *Curve[*nistec.P256Point], h func() hash.Hash, priv *PrivateKey, hash []byte) __mrSignDeterministicPair {
-	if priv.pub.curve != c.curve {
-		return __mrSignDeterministicPair{nil, errors.New("ecdsa: private key does not match curve")}
-	}
-	if len(hash) == 0 {
-		return __mrSignDeterministicPair{nil, errors.New("ecdsa: hash cannot be empty")}
-	}
-	fips140.RecordApproved()
-	fipsSelfTestDeterministic()
-	drbg := newDRBG(h, priv.d, bits2octetsP256(c, hash), nil) // RFC 6979, Section 3.3
-	__fw0, __fw1 := signP256(c, priv, drbg, hash)
-	return __mrSignDeterministicPair{__fw0, __fw1}
-}
-func __mrSignDeterministicP384(c *Curve[*nistec.P384Point], h func() hash.Hash, priv *PrivateKey, hash []byte) __mrSignDeterministicPair {
-	if priv.pub.curve != c.curve {
-		return __mrSignDeterministicPair{nil, errors.New("ecdsa: private key does not match curve")}
-	}
-	if len(hash) == 0 {
-		return __mrSignDeterministicPair{nil, errors.New("ecdsa: hash cannot be empty")}
-	}
-	fips140.RecordApproved()
-	fipsSelfTestDeterministic()
-	drbg := newDRBG(h, priv.d, bits2octetsP384(c, hash), nil) // RFC 6979, Section 3.3
-	__fw0, __fw1 := signP384(c, priv, drbg, hash)
-	return __mrSignDeterministicPair{__fw0, __fw1}
-}
-func __mrSignDeterministicP521(c *Curve[*nistec.P521Point], h func() hash.Hash, priv *PrivateKey, hash []byte) __mrSignDeterministicPair {
-	if priv.pub.curve != c.curve {
-		return __mrSignDeterministicPair{nil, errors.New("ecdsa: private key does not match curve")}
-	}
-	if len(hash) == 0 {
-		return __mrSignDeterministicPair{nil, errors.New("ecdsa: hash cannot be empty")}
-	}
-	fips140.RecordApproved()
-	fipsSelfTestDeterministic()
-	drbg := newDRBG(h, priv.d, bits2octetsP521(c, hash), nil) // RFC 6979, Section 3.3
-	__fw0, __fw1 := signP521(c, priv, drbg, hash)
+	drbg := newDRBG(h, priv.d, bits2octets(c, hash), nil) // RFC 6979, Section 3.3
+	__fw0, __fw1 := sign(c, priv, drbg, hash)
 	return __mrSignDeterministicPair{__fw0, __fw1}
 }
 
-func SignDeterministicP224(c *Curve[*nistec.P224Point], h func() hash.Hash, priv *PrivateKey, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: SignDeterministic: multi-result desugar")
-}
-func SignDeterministicP256(c *Curve[*nistec.P256Point], h func() hash.Hash, priv *PrivateKey, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: SignDeterministic: multi-result desugar")
-}
-func SignDeterministicP384(c *Curve[*nistec.P384Point], h func() hash.Hash, priv *PrivateKey, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: SignDeterministic: multi-result desugar")
-}
-func SignDeterministicP521(c *Curve[*nistec.P521Point], h func() hash.Hash, priv *PrivateKey, hash []byte) (*Signature, error) {
+func SignDeterministic[P Point[P], H hash.Hash](c *Curve[P], h func() H, priv *PrivateKey, hash []byte) (*Signature, error) {
 	panic("crypto/internal/fips140/ecdsa: SignDeterministic: multi-result desugar")
 }
 
 // bits2octets as specified in FIPS 186-5, Appendix B.2.4 or RFC 6979,
 // Section 2.3.4. See RFC 6979, Section 3.5 for the rationale.
-func bits2octetsP224(c *Curve[*nistec.P224Point], hash []byte) []byte {
+func bits2octets[P Point[P]](c *Curve[P], hash []byte) []byte {
 	e := bigmod.NewNat()
-	hashToNatP224(c, e, hash)
-	return e.Bytes(c.N)
-}
-func bits2octetsP256(c *Curve[*nistec.P256Point], hash []byte) []byte {
-	e := bigmod.NewNat()
-	hashToNatP256(c, e, hash)
-	return e.Bytes(c.N)
-}
-func bits2octetsP384(c *Curve[*nistec.P384Point], hash []byte) []byte {
-	e := bigmod.NewNat()
-	hashToNatP384(c, e, hash)
-	return e.Bytes(c.N)
-}
-func bits2octetsP521(c *Curve[*nistec.P521Point], hash []byte) []byte {
-	e := bigmod.NewNat()
-	hashToNatP521(c, e, hash)
+	hashToNat(c, e, hash)
 	return e.Bytes(c.N)
 }
 
@@ -914,10 +447,10 @@ type __mrsignGenericPair struct {
 	v1 error
 }
 
-func __mrsignGenericP224(c *Curve[*nistec.P224Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignGenericPair {
+func __mrsignGeneric[P Point[P]](c *Curve[P], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignGenericPair {
 	// FIPS 186-5, Section 6.4.1
 
-	k, R, err := randomPointP224(c, func(b []byte) error {
+	k, R, err := randomPoint(c, func(b []byte) error {
 		drbg.Generate(b)
 		return nil
 	})
@@ -927,7 +460,7 @@ func __mrsignGenericP224(c *Curve[*nistec.P224Point], priv *PrivateKey, drbg *hm
 
 	// kInv = k⁻¹
 	kInv := bigmod.NewNat()
-	inverseP224(c, kInv, k)
+	inverse(c, kInv, k)
 
 	Rx, err := R.BytesX()
 	if err != nil {
@@ -946,154 +479,7 @@ func __mrsignGenericP224(c *Curve[*nistec.P224Point], priv *PrivateKey, drbg *hm
 	}
 
 	e := bigmod.NewNat()
-	hashToNatP224(c, e, hash)
-
-	s, err := bigmod.NewNat().SetBytes(priv.d, c.N)
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-	s.Mul(r, c.N)
-	s.Add(e, c.N)
-	s.Mul(kInv, c.N)
-
-	// Again, the chance of this happening is cryptographically negligible.
-	if s.IsZero() == 1 {
-		return __mrsignGenericPair{nil, errors.New("ecdsa: internal error: s is zero")}
-	}
-
-	return __mrsignGenericPair{&Signature{r.Bytes(c.N), s.Bytes(c.N)}, nil}
-}
-func __mrsignGenericP256(c *Curve[*nistec.P256Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignGenericPair {
-	// FIPS 186-5, Section 6.4.1
-
-	k, R, err := randomPointP256(c, func(b []byte) error {
-		drbg.Generate(b)
-		return nil
-	})
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-
-	// kInv = k⁻¹
-	kInv := bigmod.NewNat()
-	inverseP256(c, kInv, k)
-
-	Rx, err := R.BytesX()
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-	r, err := bigmod.NewNat().SetOverflowingBytes(Rx, c.N)
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-
-	// The spec wants us to retry here, but the chance of hitting this condition
-	// on a large prime-order group like the NIST curves we support is
-	// cryptographically negligible. If we hit it, something is awfully wrong.
-	if r.IsZero() == 1 {
-		return __mrsignGenericPair{nil, errors.New("ecdsa: internal error: r is zero")}
-	}
-
-	e := bigmod.NewNat()
-	hashToNatP256(c, e, hash)
-
-	s, err := bigmod.NewNat().SetBytes(priv.d, c.N)
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-	s.Mul(r, c.N)
-	s.Add(e, c.N)
-	s.Mul(kInv, c.N)
-
-	// Again, the chance of this happening is cryptographically negligible.
-	if s.IsZero() == 1 {
-		return __mrsignGenericPair{nil, errors.New("ecdsa: internal error: s is zero")}
-	}
-
-	return __mrsignGenericPair{&Signature{r.Bytes(c.N), s.Bytes(c.N)}, nil}
-}
-func __mrsignGenericP384(c *Curve[*nistec.P384Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignGenericPair {
-	// FIPS 186-5, Section 6.4.1
-
-	k, R, err := randomPointP384(c, func(b []byte) error {
-		drbg.Generate(b)
-		return nil
-	})
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-
-	// kInv = k⁻¹
-	kInv := bigmod.NewNat()
-	inverseP384(c, kInv, k)
-
-	Rx, err := R.BytesX()
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-	r, err := bigmod.NewNat().SetOverflowingBytes(Rx, c.N)
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-
-	// The spec wants us to retry here, but the chance of hitting this condition
-	// on a large prime-order group like the NIST curves we support is
-	// cryptographically negligible. If we hit it, something is awfully wrong.
-	if r.IsZero() == 1 {
-		return __mrsignGenericPair{nil, errors.New("ecdsa: internal error: r is zero")}
-	}
-
-	e := bigmod.NewNat()
-	hashToNatP384(c, e, hash)
-
-	s, err := bigmod.NewNat().SetBytes(priv.d, c.N)
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-	s.Mul(r, c.N)
-	s.Add(e, c.N)
-	s.Mul(kInv, c.N)
-
-	// Again, the chance of this happening is cryptographically negligible.
-	if s.IsZero() == 1 {
-		return __mrsignGenericPair{nil, errors.New("ecdsa: internal error: s is zero")}
-	}
-
-	return __mrsignGenericPair{&Signature{r.Bytes(c.N), s.Bytes(c.N)}, nil}
-}
-func __mrsignGenericP521(c *Curve[*nistec.P521Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignGenericPair {
-	// FIPS 186-5, Section 6.4.1
-
-	k, R, err := randomPointP521(c, func(b []byte) error {
-		drbg.Generate(b)
-		return nil
-	})
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-
-	// kInv = k⁻¹
-	kInv := bigmod.NewNat()
-	inverseP521(c, kInv, k)
-
-	Rx, err := R.BytesX()
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-	r, err := bigmod.NewNat().SetOverflowingBytes(Rx, c.N)
-	if err != nil {
-		return __mrsignGenericPair{nil, err}
-	}
-
-	// The spec wants us to retry here, but the chance of hitting this condition
-	// on a large prime-order group like the NIST curves we support is
-	// cryptographically negligible. If we hit it, something is awfully wrong.
-	if r.IsZero() == 1 {
-		return __mrsignGenericPair{nil, errors.New("ecdsa: internal error: r is zero")}
-	}
-
-	e := bigmod.NewNat()
-	hashToNatP521(c, e, hash)
+	hashToNat(c, e, hash)
 
 	s, err := bigmod.NewNat().SetBytes(priv.d, c.N)
 	if err != nil {
@@ -1111,21 +497,12 @@ func __mrsignGenericP521(c *Curve[*nistec.P521Point], priv *PrivateKey, drbg *hm
 	return __mrsignGenericPair{&Signature{r.Bytes(c.N), s.Bytes(c.N)}, nil}
 }
 
-func signGenericP224(c *Curve[*nistec.P224Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: signGeneric: multi-result desugar")
-}
-func signGenericP256(c *Curve[*nistec.P256Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: signGeneric: multi-result desugar")
-}
-func signGenericP384(c *Curve[*nistec.P384Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: signGeneric: multi-result desugar")
-}
-func signGenericP521(c *Curve[*nistec.P521Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
+func signGeneric[P Point[P]](c *Curve[P], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
 	panic("crypto/internal/fips140/ecdsa: signGeneric: multi-result desugar")
 }
 
 // inverse sets kInv to the inverse of k modulo the order of the curve.
-func inverseP224(c *Curve[*nistec.P224Point], kInv, k *bigmod.Nat) {
+func inverse[P Point[P]](c *Curve[P], kInv, k *bigmod.Nat) {
 	if c.ordInverse != nil && bits.UintSize == 64 {
 		if kb := k.Bits(); len(kb) == 4 {
 			k64 := [4]uint64{uint64(kb[0]), uint64(kb[1]), uint64(kb[2]), uint64(kb[3])}
@@ -1136,107 +513,17 @@ func inverseP224(c *Curve[*nistec.P224Point], kInv, k *bigmod.Nat) {
 	}
 
 	// Calculate the inverse of s in GF(N) using Fermat's method
-	// (exponentiation modulo *nistec.P224Point - 2, per Euler's theorem)
-	kInv.Exp(k, c.nMinus2, c.N)
-}
-func inverseP256(c *Curve[*nistec.P256Point], kInv, k *bigmod.Nat) {
-	if c.ordInverse != nil && bits.UintSize == 64 {
-		if kb := k.Bits(); len(kb) == 4 {
-			k64 := [4]uint64{uint64(kb[0]), uint64(kb[1]), uint64(kb[2]), uint64(kb[3])}
-			c.ordInverse(&k64)
-			kInv.SetBits([]uint{uint(k64[0]), uint(k64[1]), uint(k64[2]), uint(k64[3])})
-			return
-		}
-	}
-
-	// Calculate the inverse of s in GF(N) using Fermat's method
-	// (exponentiation modulo *nistec.P256Point - 2, per Euler's theorem)
-	kInv.Exp(k, c.nMinus2, c.N)
-}
-func inverseP384(c *Curve[*nistec.P384Point], kInv, k *bigmod.Nat) {
-	if c.ordInverse != nil && bits.UintSize == 64 {
-		if kb := k.Bits(); len(kb) == 4 {
-			k64 := [4]uint64{uint64(kb[0]), uint64(kb[1]), uint64(kb[2]), uint64(kb[3])}
-			c.ordInverse(&k64)
-			kInv.SetBits([]uint{uint(k64[0]), uint(k64[1]), uint(k64[2]), uint(k64[3])})
-			return
-		}
-	}
-
-	// Calculate the inverse of s in GF(N) using Fermat's method
-	// (exponentiation modulo *nistec.P384Point - 2, per Euler's theorem)
-	kInv.Exp(k, c.nMinus2, c.N)
-}
-func inverseP521(c *Curve[*nistec.P521Point], kInv, k *bigmod.Nat) {
-	if c.ordInverse != nil && bits.UintSize == 64 {
-		if kb := k.Bits(); len(kb) == 4 {
-			k64 := [4]uint64{uint64(kb[0]), uint64(kb[1]), uint64(kb[2]), uint64(kb[3])}
-			c.ordInverse(&k64)
-			kInv.SetBits([]uint{uint(k64[0]), uint(k64[1]), uint(k64[2]), uint(k64[3])})
-			return
-		}
-	}
-
-	// Calculate the inverse of s in GF(N) using Fermat's method
-	// (exponentiation modulo *nistec.P521Point - 2, per Euler's theorem)
+	// (exponentiation modulo P - 2, per Euler's theorem)
 	kInv.Exp(k, c.nMinus2, c.N)
 }
 
 // hashToNat sets e to the left-most bits of hash, according to
 // FIPS 186-5, Section 6.4.1, point 2 and Section 6.4.2, point 3.
-func hashToNatP224(c *Curve[*nistec.P224Point], e *bigmod.Nat, hash []byte) {
+func hashToNat[P Point[P]](c *Curve[P], e *bigmod.Nat, hash []byte) {
 	// ECDSA asks us to take the left-most log2(N) bits of hash, and use them as
 	// an integer modulo N. This is the absolute worst of all worlds: we still
 	// have to reduce, because the result might still overflow N, but to take
-	// the left-most bits for *nistec.P224Point-521 we have to do a right shift.
-	if size := c.N.Size(); len(hash) >= size {
-		hash = hash[:size]
-		if excess := len(hash)*8 - c.N.BitLen(); excess > 0 {
-			hash = rightShift(hash, excess)
-		}
-	}
-	_, err := e.SetOverflowingBytes(hash, c.N)
-	if err != nil {
-		panic("ecdsa: internal error: truncated hash is too long")
-	}
-}
-func hashToNatP256(c *Curve[*nistec.P256Point], e *bigmod.Nat, hash []byte) {
-	// ECDSA asks us to take the left-most log2(N) bits of hash, and use them as
-	// an integer modulo N. This is the absolute worst of all worlds: we still
-	// have to reduce, because the result might still overflow N, but to take
-	// the left-most bits for *nistec.P256Point-521 we have to do a right shift.
-	if size := c.N.Size(); len(hash) >= size {
-		hash = hash[:size]
-		if excess := len(hash)*8 - c.N.BitLen(); excess > 0 {
-			hash = rightShift(hash, excess)
-		}
-	}
-	_, err := e.SetOverflowingBytes(hash, c.N)
-	if err != nil {
-		panic("ecdsa: internal error: truncated hash is too long")
-	}
-}
-func hashToNatP384(c *Curve[*nistec.P384Point], e *bigmod.Nat, hash []byte) {
-	// ECDSA asks us to take the left-most log2(N) bits of hash, and use them as
-	// an integer modulo N. This is the absolute worst of all worlds: we still
-	// have to reduce, because the result might still overflow N, but to take
-	// the left-most bits for *nistec.P384Point-521 we have to do a right shift.
-	if size := c.N.Size(); len(hash) >= size {
-		hash = hash[:size]
-		if excess := len(hash)*8 - c.N.BitLen(); excess > 0 {
-			hash = rightShift(hash, excess)
-		}
-	}
-	_, err := e.SetOverflowingBytes(hash, c.N)
-	if err != nil {
-		panic("ecdsa: internal error: truncated hash is too long")
-	}
-}
-func hashToNatP521(c *Curve[*nistec.P521Point], e *bigmod.Nat, hash []byte) {
-	// ECDSA asks us to take the left-most log2(N) bits of hash, and use them as
-	// an integer modulo N. This is the absolute worst of all worlds: we still
-	// have to reduce, because the result might still overflow N, but to take
-	// the left-most bits for *nistec.P521Point-521 we have to do a right shift.
+	// the left-most bits for P-521 we have to do a right shift.
 	if size := c.N.Size(); len(hash) >= size {
 		hash = hash[:size]
 		if excess := len(hash)*8 - c.N.BitLen(); excess > 0 {
@@ -1275,7 +562,7 @@ func rightShift(b []byte, shift int) []byte {
 //
 // The inputs are not considered confidential, and may leak through timing side
 // channels, or if an attacker has control of part of the inputs.
-func VerifyP224(c *Curve[*nistec.P224Point], pub *PublicKey, hash []byte, sig *Signature) error {
+func Verify[P Point[P]](c *Curve[P], pub *PublicKey, hash []byte, sig *Signature) error {
 	if pub.curve != c.curve {
 		return errors.New("ecdsa: public key does not match curve")
 	}
@@ -1284,43 +571,10 @@ func VerifyP224(c *Curve[*nistec.P224Point], pub *PublicKey, hash []byte, sig *S
 	}
 	fips140.RecordApproved()
 	fipsSelfTest()
-	return verifyP224(c, pub, hash, sig)
-}
-func VerifyP256(c *Curve[*nistec.P256Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	if pub.curve != c.curve {
-		return errors.New("ecdsa: public key does not match curve")
-	}
-	if len(hash) == 0 {
-		return errors.New("ecdsa: hash cannot be empty")
-	}
-	fips140.RecordApproved()
-	fipsSelfTest()
-	return verifyP256(c, pub, hash, sig)
-}
-func VerifyP384(c *Curve[*nistec.P384Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	if pub.curve != c.curve {
-		return errors.New("ecdsa: public key does not match curve")
-	}
-	if len(hash) == 0 {
-		return errors.New("ecdsa: hash cannot be empty")
-	}
-	fips140.RecordApproved()
-	fipsSelfTest()
-	return verifyP384(c, pub, hash, sig)
-}
-func VerifyP521(c *Curve[*nistec.P521Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	if pub.curve != c.curve {
-		return errors.New("ecdsa: public key does not match curve")
-	}
-	if len(hash) == 0 {
-		return errors.New("ecdsa: hash cannot be empty")
-	}
-	fips140.RecordApproved()
-	fipsSelfTest()
-	return verifyP521(c, pub, hash, sig)
+	return verify(c, pub, hash, sig)
 }
 
-func verifyGenericP224(c *Curve[*nistec.P224Point], pub *PublicKey, hash []byte, sig *Signature) error {
+func verifyGeneric[P Point[P]](c *Curve[P], pub *PublicKey, hash []byte, sig *Signature) error {
 	// FIPS 186-5, Section 6.4.2
 
 	Q, err := c.newPoint().SetBytes(pub.q)
@@ -1344,179 +598,11 @@ func verifyGenericP224(c *Curve[*nistec.P224Point], pub *PublicKey, hash []byte,
 	}
 
 	e := bigmod.NewNat()
-	hashToNatP224(c, e, hash)
+	hashToNat(c, e, hash)
 
 	// w = s⁻¹
 	w := bigmod.NewNat()
-	inverseP224(c, w, s)
-
-	// p₁ = [e * s⁻¹]G
-	p1, err := c.newPoint().ScalarBaseMult(e.Mul(w, c.N).Bytes(c.N))
-	if err != nil {
-		return err
-	}
-	// p₂ = [r * s⁻¹]Q
-	p2, err := Q.ScalarMult(Q, w.Mul(r, c.N).Bytes(c.N))
-	if err != nil {
-		return err
-	}
-	// BytesX returns an error for the point at infinity.
-	Rx, err := p1.Add(p1, p2).BytesX()
-	if err != nil {
-		return err
-	}
-
-	v, err := bigmod.NewNat().SetOverflowingBytes(Rx, c.N)
-	if err != nil {
-		return err
-	}
-
-	if v.Equal(r) != 1 {
-		return errors.New("ecdsa: signature did not verify")
-	}
-	return nil
-}
-func verifyGenericP256(c *Curve[*nistec.P256Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	// FIPS 186-5, Section 6.4.2
-
-	Q, err := c.newPoint().SetBytes(pub.q)
-	if err != nil {
-		return err
-	}
-
-	r, err := bigmod.NewNat().SetBytes(sig.R, c.N)
-	if err != nil {
-		return err
-	}
-	if r.IsZero() == 1 {
-		return errors.New("ecdsa: invalid signature: r is zero")
-	}
-	s, err := bigmod.NewNat().SetBytes(sig.S, c.N)
-	if err != nil {
-		return err
-	}
-	if s.IsZero() == 1 {
-		return errors.New("ecdsa: invalid signature: s is zero")
-	}
-
-	e := bigmod.NewNat()
-	hashToNatP256(c, e, hash)
-
-	// w = s⁻¹
-	w := bigmod.NewNat()
-	inverseP256(c, w, s)
-
-	// p₁ = [e * s⁻¹]G
-	p1, err := c.newPoint().ScalarBaseMult(e.Mul(w, c.N).Bytes(c.N))
-	if err != nil {
-		return err
-	}
-	// p₂ = [r * s⁻¹]Q
-	p2, err := Q.ScalarMult(Q, w.Mul(r, c.N).Bytes(c.N))
-	if err != nil {
-		return err
-	}
-	// BytesX returns an error for the point at infinity.
-	Rx, err := p1.Add(p1, p2).BytesX()
-	if err != nil {
-		return err
-	}
-
-	v, err := bigmod.NewNat().SetOverflowingBytes(Rx, c.N)
-	if err != nil {
-		return err
-	}
-
-	if v.Equal(r) != 1 {
-		return errors.New("ecdsa: signature did not verify")
-	}
-	return nil
-}
-func verifyGenericP384(c *Curve[*nistec.P384Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	// FIPS 186-5, Section 6.4.2
-
-	Q, err := c.newPoint().SetBytes(pub.q)
-	if err != nil {
-		return err
-	}
-
-	r, err := bigmod.NewNat().SetBytes(sig.R, c.N)
-	if err != nil {
-		return err
-	}
-	if r.IsZero() == 1 {
-		return errors.New("ecdsa: invalid signature: r is zero")
-	}
-	s, err := bigmod.NewNat().SetBytes(sig.S, c.N)
-	if err != nil {
-		return err
-	}
-	if s.IsZero() == 1 {
-		return errors.New("ecdsa: invalid signature: s is zero")
-	}
-
-	e := bigmod.NewNat()
-	hashToNatP384(c, e, hash)
-
-	// w = s⁻¹
-	w := bigmod.NewNat()
-	inverseP384(c, w, s)
-
-	// p₁ = [e * s⁻¹]G
-	p1, err := c.newPoint().ScalarBaseMult(e.Mul(w, c.N).Bytes(c.N))
-	if err != nil {
-		return err
-	}
-	// p₂ = [r * s⁻¹]Q
-	p2, err := Q.ScalarMult(Q, w.Mul(r, c.N).Bytes(c.N))
-	if err != nil {
-		return err
-	}
-	// BytesX returns an error for the point at infinity.
-	Rx, err := p1.Add(p1, p2).BytesX()
-	if err != nil {
-		return err
-	}
-
-	v, err := bigmod.NewNat().SetOverflowingBytes(Rx, c.N)
-	if err != nil {
-		return err
-	}
-
-	if v.Equal(r) != 1 {
-		return errors.New("ecdsa: signature did not verify")
-	}
-	return nil
-}
-func verifyGenericP521(c *Curve[*nistec.P521Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	// FIPS 186-5, Section 6.4.2
-
-	Q, err := c.newPoint().SetBytes(pub.q)
-	if err != nil {
-		return err
-	}
-
-	r, err := bigmod.NewNat().SetBytes(sig.R, c.N)
-	if err != nil {
-		return err
-	}
-	if r.IsZero() == 1 {
-		return errors.New("ecdsa: invalid signature: r is zero")
-	}
-	s, err := bigmod.NewNat().SetBytes(sig.S, c.N)
-	if err != nil {
-		return err
-	}
-	if s.IsZero() == 1 {
-		return errors.New("ecdsa: invalid signature: s is zero")
-	}
-
-	e := bigmod.NewNat()
-	hashToNatP521(c, e, hash)
-
-	// w = s⁻¹
-	w := bigmod.NewNat()
-	inverseP521(c, w, s)
+	inverse(c, w, s)
 
 	// p₁ = [e * s⁻¹]G
 	p1, err := c.newPoint().ScalarBaseMult(e.Mul(w, c.N).Bytes(c.N))
@@ -1589,7 +675,7 @@ type personalizationString interface {
 	isPersonalizationString()
 }
 
-func newDRBG(hash func() hash.Hash, entropy, nonce []byte, s personalizationString) *hmacDRBG {
+func newDRBG[H hash.Hash](hash func() H, entropy, nonce []byte, s personalizationString) *hmacDRBG {
 	// HMAC_DRBG_Instantiate_algorithm, per Section 10.1.2.3.
 	fips140.RecordApproved()
 
@@ -1662,7 +748,7 @@ func newDRBG(hash func() hash.Hash, entropy, nonce []byte, s personalizationStri
 //
 // This should only be used for ACVP testing. hmacDRBG is not intended to be
 // used directly.
-func TestingOnlyNewDRBG(hash func() hash.Hash, entropy, nonce []byte, s []byte) *hmacDRBG {
+func TestingOnlyNewDRBG[H hash.Hash](hash func() H, entropy, nonce []byte, s []byte) *hmacDRBG {
 	return newDRBG(hash, entropy, nonce, plainPersonalizationString(s))
 }
 
@@ -1723,47 +809,17 @@ type __mrsignPair struct {
 	v1 error
 }
 
-func __mrsignP224(c *Curve[*nistec.P224Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignPair {
-	__fw0, __fw1 := signGenericP224(c, priv, drbg, hash)
-	return __mrsignPair{__fw0, __fw1}
-}
-func __mrsignP256(c *Curve[*nistec.P256Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignPair {
-	__fw0, __fw1 := signGenericP256(c, priv, drbg, hash)
-	return __mrsignPair{__fw0, __fw1}
-}
-func __mrsignP384(c *Curve[*nistec.P384Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignPair {
-	__fw0, __fw1 := signGenericP384(c, priv, drbg, hash)
-	return __mrsignPair{__fw0, __fw1}
-}
-func __mrsignP521(c *Curve[*nistec.P521Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignPair {
-	__fw0, __fw1 := signGenericP521(c, priv, drbg, hash)
+func __mrsign[P Point[P]](c *Curve[P], priv *PrivateKey, drbg *hmacDRBG, hash []byte) __mrsignPair {
+	__fw0, __fw1 := signGeneric(c, priv, drbg, hash)
 	return __mrsignPair{__fw0, __fw1}
 }
 
-func signP224(c *Curve[*nistec.P224Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: sign: multi-result desugar")
-}
-func signP256(c *Curve[*nistec.P256Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: sign: multi-result desugar")
-}
-func signP384(c *Curve[*nistec.P384Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
-	panic("crypto/internal/fips140/ecdsa: sign: multi-result desugar")
-}
-func signP521(c *Curve[*nistec.P521Point], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
+func sign[P Point[P]](c *Curve[P], priv *PrivateKey, drbg *hmacDRBG, hash []byte) (*Signature, error) {
 	panic("crypto/internal/fips140/ecdsa: sign: multi-result desugar")
 }
 
-func verifyP224(c *Curve[*nistec.P224Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	return verifyGenericP224(c, pub, hash, sig)
-}
-func verifyP256(c *Curve[*nistec.P256Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	return verifyGenericP256(c, pub, hash, sig)
-}
-func verifyP384(c *Curve[*nistec.P384Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	return verifyGenericP384(c, pub, hash, sig)
-}
-func verifyP521(c *Curve[*nistec.P521Point], pub *PublicKey, hash []byte, sig *Signature) error {
-	return verifyGenericP521(c, pub, hash, sig)
+func verify[P Point[P]](c *Curve[P], pub *PublicKey, hash []byte, sig *Signature) error {
+	return verifyGeneric(c, pub, hash, sig)
 }
 
 
@@ -1774,9 +830,6 @@ var fipsSelfTest = func() {}
 var fipsSelfTestDeterministic = func() {}
 
 // P3-M9: fipsPCT is a no-op (FIPS mode disabled).
-func fipsPCTP224(c *Curve[*nistec.P224Point], _ *PrivateKey) { _ = c }
-func fipsPCTP256(c *Curve[*nistec.P256Point], _ *PrivateKey) { _ = c }
-func fipsPCTP384(c *Curve[*nistec.P384Point], _ *PrivateKey) { _ = c }
-func fipsPCTP521(c *Curve[*nistec.P521Point], _ *PrivateKey) { _ = c }
+func fipsPCT[P Point[P]](c *Curve[P], _ *PrivateKey) { _ = c }
 
 `

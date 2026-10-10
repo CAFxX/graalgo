@@ -121,16 +121,16 @@ func __mrParseUncompressedPublicKey(curve elliptic.Curve, data []byte) __mrParse
 	}
 	switch curve {
 	case elliptic.P224():
-		__fw0, __fw1 := parseUncompressedPublicKeyP224(ecdsa.P224(), curve, data)
+		__fw0, __fw1 := parseUncompressedPublicKey(ecdsa.P224(), curve, data)
 		return __mrParseUncompressedPublicKeyPair{__fw0, __fw1}
 	case elliptic.P256():
-		__fw0, __fw1 := parseUncompressedPublicKeyP256(ecdsa.P256(), curve, data)
+		__fw0, __fw1 := parseUncompressedPublicKey(ecdsa.P256(), curve, data)
 		return __mrParseUncompressedPublicKeyPair{__fw0, __fw1}
 	case elliptic.P384():
-		__fw0, __fw1 := parseUncompressedPublicKeyP384(ecdsa.P384(), curve, data)
+		__fw0, __fw1 := parseUncompressedPublicKey(ecdsa.P384(), curve, data)
 		return __mrParseUncompressedPublicKeyPair{__fw0, __fw1}
 	case elliptic.P521():
-		__fw0, __fw1 := parseUncompressedPublicKeyP521(ecdsa.P521(), curve, data)
+		__fw0, __fw1 := parseUncompressedPublicKey(ecdsa.P521(), curve, data)
 		return __mrParseUncompressedPublicKeyPair{__fw0, __fw1}
 	default:
 		return __mrParseUncompressedPublicKeyPair{nil, errors.New("ecdsa: curve not supported by ParseUncompressedPublicKey")}
@@ -146,32 +146,8 @@ type __mrparseUncompressedPublicKeyPair struct {
 	v1 error
 }
 
-func __mrparseUncompressedPublicKeyP224(c *ecdsa.Curve[*nistec.P224Point], curve elliptic.Curve, data []byte) __mrparseUncompressedPublicKeyPair {
-	k, err := ecdsa.NewPublicKeyP224(c, data)
-	if err != nil {
-		return __mrparseUncompressedPublicKeyPair{nil, err}
-	}
-	__fw0, __fw1 := publicKeyFromFIPS(curve, k)
-	return __mrparseUncompressedPublicKeyPair{__fw0, __fw1}
-}
-func __mrparseUncompressedPublicKeyP256(c *ecdsa.Curve[*nistec.P256Point], curve elliptic.Curve, data []byte) __mrparseUncompressedPublicKeyPair {
-	k, err := ecdsa.NewPublicKeyP256(c, data)
-	if err != nil {
-		return __mrparseUncompressedPublicKeyPair{nil, err}
-	}
-	__fw0, __fw1 := publicKeyFromFIPS(curve, k)
-	return __mrparseUncompressedPublicKeyPair{__fw0, __fw1}
-}
-func __mrparseUncompressedPublicKeyP384(c *ecdsa.Curve[*nistec.P384Point], curve elliptic.Curve, data []byte) __mrparseUncompressedPublicKeyPair {
-	k, err := ecdsa.NewPublicKeyP384(c, data)
-	if err != nil {
-		return __mrparseUncompressedPublicKeyPair{nil, err}
-	}
-	__fw0, __fw1 := publicKeyFromFIPS(curve, k)
-	return __mrparseUncompressedPublicKeyPair{__fw0, __fw1}
-}
-func __mrparseUncompressedPublicKeyP521(c *ecdsa.Curve[*nistec.P521Point], curve elliptic.Curve, data []byte) __mrparseUncompressedPublicKeyPair {
-	k, err := ecdsa.NewPublicKeyP521(c, data)
+func __mrparseUncompressedPublicKey[P ecdsa.Point[P]](c *ecdsa.Curve[P], curve elliptic.Curve, data []byte) __mrparseUncompressedPublicKeyPair {
+	k, err := ecdsa.NewPublicKey(c, data)
 	if err != nil {
 		return __mrparseUncompressedPublicKeyPair{nil, err}
 	}
@@ -179,16 +155,7 @@ func __mrparseUncompressedPublicKeyP521(c *ecdsa.Curve[*nistec.P521Point], curve
 	return __mrparseUncompressedPublicKeyPair{__fw0, __fw1}
 }
 
-func parseUncompressedPublicKeyP224(c *ecdsa.Curve[*nistec.P224Point], curve elliptic.Curve, data []byte) (*PublicKey, error) {
-	panic("crypto/ecdsa: parseUncompressedPublicKey: multi-result desugar")
-}
-func parseUncompressedPublicKeyP256(c *ecdsa.Curve[*nistec.P256Point], curve elliptic.Curve, data []byte) (*PublicKey, error) {
-	panic("crypto/ecdsa: parseUncompressedPublicKey: multi-result desugar")
-}
-func parseUncompressedPublicKeyP384(c *ecdsa.Curve[*nistec.P384Point], curve elliptic.Curve, data []byte) (*PublicKey, error) {
-	panic("crypto/ecdsa: parseUncompressedPublicKey: multi-result desugar")
-}
-func parseUncompressedPublicKeyP521(c *ecdsa.Curve[*nistec.P521Point], curve elliptic.Curve, data []byte) (*PublicKey, error) {
+func parseUncompressedPublicKey[P ecdsa.Point[P]](c *ecdsa.Curve[P], curve elliptic.Curve, data []byte) (*PublicKey, error) {
 	panic("crypto/ecdsa: parseUncompressedPublicKey: multi-result desugar")
 }
 
@@ -211,16 +178,16 @@ type __mrPublicKey_BytesPair struct {
 func __mrPublicKey_Bytes(pub *PublicKey) __mrPublicKey_BytesPair {
 	switch pub.Curve {
 	case elliptic.P224():
-		__fw0, __fw1 := publicKeyBytesP224(ecdsa.P224(), pub)
+		__fw0, __fw1 := publicKeyBytes(ecdsa.P224(), pub)
 		return __mrPublicKey_BytesPair{__fw0, __fw1}
 	case elliptic.P256():
-		__fw0, __fw1 := publicKeyBytesP256(ecdsa.P256(), pub)
+		__fw0, __fw1 := publicKeyBytes(ecdsa.P256(), pub)
 		return __mrPublicKey_BytesPair{__fw0, __fw1}
 	case elliptic.P384():
-		__fw0, __fw1 := publicKeyBytesP384(ecdsa.P384(), pub)
+		__fw0, __fw1 := publicKeyBytes(ecdsa.P384(), pub)
 		return __mrPublicKey_BytesPair{__fw0, __fw1}
 	case elliptic.P521():
-		__fw0, __fw1 := publicKeyBytesP521(ecdsa.P521(), pub)
+		__fw0, __fw1 := publicKeyBytes(ecdsa.P521(), pub)
 		return __mrPublicKey_BytesPair{__fw0, __fw1}
 	default:
 		return __mrPublicKey_BytesPair{nil, errors.New("ecdsa: curve not supported by PublicKey.Bytes")}
@@ -236,45 +203,15 @@ type __mrpublicKeyBytesPair struct {
 	v1 error
 }
 
-func __mrpublicKeyBytesP224(c *ecdsa.Curve[*nistec.P224Point], pub *PublicKey) __mrpublicKeyBytesPair {
-	k, err := publicKeyToFIPSP224(c, pub)
-	if err != nil {
-		return __mrpublicKeyBytesPair{nil, err}
-	}
-	return __mrpublicKeyBytesPair{k.Bytes(), nil}
-}
-func __mrpublicKeyBytesP256(c *ecdsa.Curve[*nistec.P256Point], pub *PublicKey) __mrpublicKeyBytesPair {
-	k, err := publicKeyToFIPSP256(c, pub)
-	if err != nil {
-		return __mrpublicKeyBytesPair{nil, err}
-	}
-	return __mrpublicKeyBytesPair{k.Bytes(), nil}
-}
-func __mrpublicKeyBytesP384(c *ecdsa.Curve[*nistec.P384Point], pub *PublicKey) __mrpublicKeyBytesPair {
-	k, err := publicKeyToFIPSP384(c, pub)
-	if err != nil {
-		return __mrpublicKeyBytesPair{nil, err}
-	}
-	return __mrpublicKeyBytesPair{k.Bytes(), nil}
-}
-func __mrpublicKeyBytesP521(c *ecdsa.Curve[*nistec.P521Point], pub *PublicKey) __mrpublicKeyBytesPair {
-	k, err := publicKeyToFIPSP521(c, pub)
+func __mrpublicKeyBytes[P ecdsa.Point[P]](c *ecdsa.Curve[P], pub *PublicKey) __mrpublicKeyBytesPair {
+	k, err := publicKeyToFIPS(c, pub)
 	if err != nil {
 		return __mrpublicKeyBytesPair{nil, err}
 	}
 	return __mrpublicKeyBytesPair{k.Bytes(), nil}
 }
 
-func publicKeyBytesP224(c *ecdsa.Curve[*nistec.P224Point], pub *PublicKey) ([]byte, error) {
-	panic("crypto/ecdsa: publicKeyBytes: multi-result desugar")
-}
-func publicKeyBytesP256(c *ecdsa.Curve[*nistec.P256Point], pub *PublicKey) ([]byte, error) {
-	panic("crypto/ecdsa: publicKeyBytes: multi-result desugar")
-}
-func publicKeyBytesP384(c *ecdsa.Curve[*nistec.P384Point], pub *PublicKey) ([]byte, error) {
-	panic("crypto/ecdsa: publicKeyBytes: multi-result desugar")
-}
-func publicKeyBytesP521(c *ecdsa.Curve[*nistec.P521Point], pub *PublicKey) ([]byte, error) {
+func publicKeyBytes[P ecdsa.Point[P]](c *ecdsa.Curve[P], pub *PublicKey) ([]byte, error) {
 	panic("crypto/ecdsa: publicKeyBytes: multi-result desugar")
 }
 
@@ -375,16 +312,16 @@ type __mrParseRawPrivateKeyPair struct {
 func __mrParseRawPrivateKey(curve elliptic.Curve, data []byte) __mrParseRawPrivateKeyPair {
 	switch curve {
 	case elliptic.P224():
-		__fw0, __fw1 := parseRawPrivateKeyP224(ecdsa.P224(), nistec.NewP224Point, curve, data)
+		__fw0, __fw1 := parseRawPrivateKey(ecdsa.P224(), nistec.NewP224Point, curve, data)
 		return __mrParseRawPrivateKeyPair{__fw0, __fw1}
 	case elliptic.P256():
-		__fw0, __fw1 := parseRawPrivateKeyP256(ecdsa.P256(), nistec.NewP256Point, curve, data)
+		__fw0, __fw1 := parseRawPrivateKey(ecdsa.P256(), nistec.NewP256Point, curve, data)
 		return __mrParseRawPrivateKeyPair{__fw0, __fw1}
 	case elliptic.P384():
-		__fw0, __fw1 := parseRawPrivateKeyP384(ecdsa.P384(), nistec.NewP384Point, curve, data)
+		__fw0, __fw1 := parseRawPrivateKey(ecdsa.P384(), nistec.NewP384Point, curve, data)
 		return __mrParseRawPrivateKeyPair{__fw0, __fw1}
 	case elliptic.P521():
-		__fw0, __fw1 := parseRawPrivateKeyP521(ecdsa.P521(), nistec.NewP521Point, curve, data)
+		__fw0, __fw1 := parseRawPrivateKey(ecdsa.P521(), nistec.NewP521Point, curve, data)
 		return __mrParseRawPrivateKeyPair{__fw0, __fw1}
 	default:
 		return __mrParseRawPrivateKeyPair{nil, errors.New("ecdsa: curve not supported by ParseRawPrivateKey")}
@@ -400,48 +337,12 @@ type __mrparseRawPrivateKeyPair struct {
 	v1 error
 }
 
-func __mrparseRawPrivateKeyP224(c *ecdsa.Curve[*nistec.P224Point], newPoint func() *nistec.P224Point, curve elliptic.Curve, data []byte) __mrparseRawPrivateKeyPair {
+func __mrparseRawPrivateKey[P ecdsa.Point[P]](c *ecdsa.Curve[P], newPoint func() P, curve elliptic.Curve, data []byte) __mrparseRawPrivateKeyPair {
 	q, err := newPoint().ScalarBaseMult(data)
 	if err != nil {
 		return __mrparseRawPrivateKeyPair{nil, err}
 	}
-	k, err := ecdsa.NewPrivateKeyP224(c, data, q.Bytes())
-	if err != nil {
-		return __mrparseRawPrivateKeyPair{nil, err}
-	}
-	__fw0, __fw1 := privateKeyFromFIPS(curve, k)
-	return __mrparseRawPrivateKeyPair{__fw0, __fw1}
-}
-func __mrparseRawPrivateKeyP256(c *ecdsa.Curve[*nistec.P256Point], newPoint func() *nistec.P256Point, curve elliptic.Curve, data []byte) __mrparseRawPrivateKeyPair {
-	q, err := newPoint().ScalarBaseMult(data)
-	if err != nil {
-		return __mrparseRawPrivateKeyPair{nil, err}
-	}
-	k, err := ecdsa.NewPrivateKeyP256(c, data, q.Bytes())
-	if err != nil {
-		return __mrparseRawPrivateKeyPair{nil, err}
-	}
-	__fw0, __fw1 := privateKeyFromFIPS(curve, k)
-	return __mrparseRawPrivateKeyPair{__fw0, __fw1}
-}
-func __mrparseRawPrivateKeyP384(c *ecdsa.Curve[*nistec.P384Point], newPoint func() *nistec.P384Point, curve elliptic.Curve, data []byte) __mrparseRawPrivateKeyPair {
-	q, err := newPoint().ScalarBaseMult(data)
-	if err != nil {
-		return __mrparseRawPrivateKeyPair{nil, err}
-	}
-	k, err := ecdsa.NewPrivateKeyP384(c, data, q.Bytes())
-	if err != nil {
-		return __mrparseRawPrivateKeyPair{nil, err}
-	}
-	__fw0, __fw1 := privateKeyFromFIPS(curve, k)
-	return __mrparseRawPrivateKeyPair{__fw0, __fw1}
-}
-func __mrparseRawPrivateKeyP521(c *ecdsa.Curve[*nistec.P521Point], newPoint func() *nistec.P521Point, curve elliptic.Curve, data []byte) __mrparseRawPrivateKeyPair {
-	q, err := newPoint().ScalarBaseMult(data)
-	if err != nil {
-		return __mrparseRawPrivateKeyPair{nil, err}
-	}
-	k, err := ecdsa.NewPrivateKeyP521(c, data, q.Bytes())
+	k, err := ecdsa.NewPrivateKey(c, data, q.Bytes())
 	if err != nil {
 		return __mrparseRawPrivateKeyPair{nil, err}
 	}
@@ -449,16 +350,7 @@ func __mrparseRawPrivateKeyP521(c *ecdsa.Curve[*nistec.P521Point], newPoint func
 	return __mrparseRawPrivateKeyPair{__fw0, __fw1}
 }
 
-func parseRawPrivateKeyP224(c *ecdsa.Curve[*nistec.P224Point], newPoint func() *nistec.P224Point, curve elliptic.Curve, data []byte) (*PrivateKey, error) {
-	panic("crypto/ecdsa: parseRawPrivateKey: multi-result desugar")
-}
-func parseRawPrivateKeyP256(c *ecdsa.Curve[*nistec.P256Point], newPoint func() *nistec.P256Point, curve elliptic.Curve, data []byte) (*PrivateKey, error) {
-	panic("crypto/ecdsa: parseRawPrivateKey: multi-result desugar")
-}
-func parseRawPrivateKeyP384(c *ecdsa.Curve[*nistec.P384Point], newPoint func() *nistec.P384Point, curve elliptic.Curve, data []byte) (*PrivateKey, error) {
-	panic("crypto/ecdsa: parseRawPrivateKey: multi-result desugar")
-}
-func parseRawPrivateKeyP521(c *ecdsa.Curve[*nistec.P521Point], newPoint func() *nistec.P521Point, curve elliptic.Curve, data []byte) (*PrivateKey, error) {
+func parseRawPrivateKey[P ecdsa.Point[P]](c *ecdsa.Curve[P], newPoint func() P, curve elliptic.Curve, data []byte) (*PrivateKey, error) {
 	panic("crypto/ecdsa: parseRawPrivateKey: multi-result desugar")
 }
 
@@ -482,16 +374,16 @@ type __mrPrivateKey_BytesPair struct {
 func __mrPrivateKey_Bytes(priv *PrivateKey) __mrPrivateKey_BytesPair {
 	switch priv.Curve {
 	case elliptic.P224():
-		__fw0, __fw1 := privateKeyBytesP224(ecdsa.P224(), priv)
+		__fw0, __fw1 := privateKeyBytes(ecdsa.P224(), priv)
 		return __mrPrivateKey_BytesPair{__fw0, __fw1}
 	case elliptic.P256():
-		__fw0, __fw1 := privateKeyBytesP256(ecdsa.P256(), priv)
+		__fw0, __fw1 := privateKeyBytes(ecdsa.P256(), priv)
 		return __mrPrivateKey_BytesPair{__fw0, __fw1}
 	case elliptic.P384():
-		__fw0, __fw1 := privateKeyBytesP384(ecdsa.P384(), priv)
+		__fw0, __fw1 := privateKeyBytes(ecdsa.P384(), priv)
 		return __mrPrivateKey_BytesPair{__fw0, __fw1}
 	case elliptic.P521():
-		__fw0, __fw1 := privateKeyBytesP521(ecdsa.P521(), priv)
+		__fw0, __fw1 := privateKeyBytes(ecdsa.P521(), priv)
 		return __mrPrivateKey_BytesPair{__fw0, __fw1}
 	default:
 		return __mrPrivateKey_BytesPair{nil, errors.New("ecdsa: curve not supported by PrivateKey.Bytes")}
@@ -507,45 +399,15 @@ type __mrprivateKeyBytesPair struct {
 	v1 error
 }
 
-func __mrprivateKeyBytesP224(c *ecdsa.Curve[*nistec.P224Point], priv *PrivateKey) __mrprivateKeyBytesPair {
-	k, err := privateKeyToFIPSP224(c, priv)
-	if err != nil {
-		return __mrprivateKeyBytesPair{nil, err}
-	}
-	return __mrprivateKeyBytesPair{k.Bytes(), nil}
-}
-func __mrprivateKeyBytesP256(c *ecdsa.Curve[*nistec.P256Point], priv *PrivateKey) __mrprivateKeyBytesPair {
-	k, err := privateKeyToFIPSP256(c, priv)
-	if err != nil {
-		return __mrprivateKeyBytesPair{nil, err}
-	}
-	return __mrprivateKeyBytesPair{k.Bytes(), nil}
-}
-func __mrprivateKeyBytesP384(c *ecdsa.Curve[*nistec.P384Point], priv *PrivateKey) __mrprivateKeyBytesPair {
-	k, err := privateKeyToFIPSP384(c, priv)
-	if err != nil {
-		return __mrprivateKeyBytesPair{nil, err}
-	}
-	return __mrprivateKeyBytesPair{k.Bytes(), nil}
-}
-func __mrprivateKeyBytesP521(c *ecdsa.Curve[*nistec.P521Point], priv *PrivateKey) __mrprivateKeyBytesPair {
-	k, err := privateKeyToFIPSP521(c, priv)
+func __mrprivateKeyBytes[P ecdsa.Point[P]](c *ecdsa.Curve[P], priv *PrivateKey) __mrprivateKeyBytesPair {
+	k, err := privateKeyToFIPS(c, priv)
 	if err != nil {
 		return __mrprivateKeyBytesPair{nil, err}
 	}
 	return __mrprivateKeyBytesPair{k.Bytes(), nil}
 }
 
-func privateKeyBytesP224(c *ecdsa.Curve[*nistec.P224Point], priv *PrivateKey) ([]byte, error) {
-	panic("crypto/ecdsa: privateKeyBytes: multi-result desugar")
-}
-func privateKeyBytesP256(c *ecdsa.Curve[*nistec.P256Point], priv *PrivateKey) ([]byte, error) {
-	panic("crypto/ecdsa: privateKeyBytes: multi-result desugar")
-}
-func privateKeyBytesP384(c *ecdsa.Curve[*nistec.P384Point], priv *PrivateKey) ([]byte, error) {
-	panic("crypto/ecdsa: privateKeyBytes: multi-result desugar")
-}
-func privateKeyBytesP521(c *ecdsa.Curve[*nistec.P521Point], priv *PrivateKey) ([]byte, error) {
+func privateKeyBytes[P ecdsa.Point[P]](c *ecdsa.Curve[P], priv *PrivateKey) ([]byte, error) {
 	panic("crypto/ecdsa: privateKeyBytes: multi-result desugar")
 }
 
@@ -616,16 +478,16 @@ func __mrGenerateKey(c elliptic.Curve, r io.Reader) __mrGenerateKeyPair {
 
 	switch c.Params() {
 	case elliptic.P224().Params():
-		__fw0, __fw1 := generateFIPSP224(c, ecdsa.P224(), r)
+		__fw0, __fw1 := generateFIPS(c, ecdsa.P224(), r)
 		return __mrGenerateKeyPair{__fw0, __fw1}
 	case elliptic.P256().Params():
-		__fw0, __fw1 := generateFIPSP256(c, ecdsa.P256(), r)
+		__fw0, __fw1 := generateFIPS(c, ecdsa.P256(), r)
 		return __mrGenerateKeyPair{__fw0, __fw1}
 	case elliptic.P384().Params():
-		__fw0, __fw1 := generateFIPSP384(c, ecdsa.P384(), r)
+		__fw0, __fw1 := generateFIPS(c, ecdsa.P384(), r)
 		return __mrGenerateKeyPair{__fw0, __fw1}
 	case elliptic.P521().Params():
-		__fw0, __fw1 := generateFIPSP521(c, ecdsa.P521(), r)
+		__fw0, __fw1 := generateFIPS(c, ecdsa.P521(), r)
 		return __mrGenerateKeyPair{__fw0, __fw1}
 	default:
 		__fw0, __fw1 := generateLegacy(c, r)
@@ -642,44 +504,11 @@ type __mrgenerateFIPSPair struct {
 	v1 error
 }
 
-func __mrgenerateFIPSP224(curve elliptic.Curve, c *ecdsa.Curve[*nistec.P224Point], rand io.Reader) __mrgenerateFIPSPair {
+func __mrgenerateFIPS[P ecdsa.Point[P]](curve elliptic.Curve, c *ecdsa.Curve[P], rand io.Reader) __mrgenerateFIPSPair {
 	if fips140only.Enforced() && !fips140only.ApprovedRandomReader(rand) {
 		return __mrgenerateFIPSPair{nil, errors.New("crypto/ecdsa: only crypto/rand.Reader is allowed in FIPS 140-only mode")}
 	}
-	privateKey, err := ecdsa.GenerateKeyP224(c, rand)
-	if err != nil {
-		return __mrgenerateFIPSPair{nil, err}
-	}
-	__fw0, __fw1 := privateKeyFromFIPS(curve, privateKey)
-	return __mrgenerateFIPSPair{__fw0, __fw1}
-}
-func __mrgenerateFIPSP256(curve elliptic.Curve, c *ecdsa.Curve[*nistec.P256Point], rand io.Reader) __mrgenerateFIPSPair {
-	if fips140only.Enforced() && !fips140only.ApprovedRandomReader(rand) {
-		return __mrgenerateFIPSPair{nil, errors.New("crypto/ecdsa: only crypto/rand.Reader is allowed in FIPS 140-only mode")}
-	}
-	privateKey, err := ecdsa.GenerateKeyP256(c, rand)
-	if err != nil {
-		return __mrgenerateFIPSPair{nil, err}
-	}
-	__fw0, __fw1 := privateKeyFromFIPS(curve, privateKey)
-	return __mrgenerateFIPSPair{__fw0, __fw1}
-}
-func __mrgenerateFIPSP384(curve elliptic.Curve, c *ecdsa.Curve[*nistec.P384Point], rand io.Reader) __mrgenerateFIPSPair {
-	if fips140only.Enforced() && !fips140only.ApprovedRandomReader(rand) {
-		return __mrgenerateFIPSPair{nil, errors.New("crypto/ecdsa: only crypto/rand.Reader is allowed in FIPS 140-only mode")}
-	}
-	privateKey, err := ecdsa.GenerateKeyP384(c, rand)
-	if err != nil {
-		return __mrgenerateFIPSPair{nil, err}
-	}
-	__fw0, __fw1 := privateKeyFromFIPS(curve, privateKey)
-	return __mrgenerateFIPSPair{__fw0, __fw1}
-}
-func __mrgenerateFIPSP521(curve elliptic.Curve, c *ecdsa.Curve[*nistec.P521Point], rand io.Reader) __mrgenerateFIPSPair {
-	if fips140only.Enforced() && !fips140only.ApprovedRandomReader(rand) {
-		return __mrgenerateFIPSPair{nil, errors.New("crypto/ecdsa: only crypto/rand.Reader is allowed in FIPS 140-only mode")}
-	}
-	privateKey, err := ecdsa.GenerateKeyP521(c, rand)
+	privateKey, err := ecdsa.GenerateKey(c, rand)
 	if err != nil {
 		return __mrgenerateFIPSPair{nil, err}
 	}
@@ -687,16 +516,7 @@ func __mrgenerateFIPSP521(curve elliptic.Curve, c *ecdsa.Curve[*nistec.P521Point
 	return __mrgenerateFIPSPair{__fw0, __fw1}
 }
 
-func generateFIPSP224(curve elliptic.Curve, c *ecdsa.Curve[*nistec.P224Point], rand io.Reader) (*PrivateKey, error) {
-	panic("crypto/ecdsa: generateFIPS: multi-result desugar")
-}
-func generateFIPSP256(curve elliptic.Curve, c *ecdsa.Curve[*nistec.P256Point], rand io.Reader) (*PrivateKey, error) {
-	panic("crypto/ecdsa: generateFIPS: multi-result desugar")
-}
-func generateFIPSP384(curve elliptic.Curve, c *ecdsa.Curve[*nistec.P384Point], rand io.Reader) (*PrivateKey, error) {
-	panic("crypto/ecdsa: generateFIPS: multi-result desugar")
-}
-func generateFIPSP521(curve elliptic.Curve, c *ecdsa.Curve[*nistec.P521Point], rand io.Reader) (*PrivateKey, error) {
+func generateFIPS[P ecdsa.Point[P]](curve elliptic.Curve, c *ecdsa.Curve[P], rand io.Reader) (*PrivateKey, error) {
 	panic("crypto/ecdsa: generateFIPS: multi-result desugar")
 }
 
@@ -733,16 +553,16 @@ func __mrSignASN1(r io.Reader, priv *PrivateKey, hash []byte) __mrSignASN1Pair {
 
 	switch priv.Curve.Params() {
 	case elliptic.P224().Params():
-		__fw0, __fw1 := signFIPSP224(ecdsa.P224(), priv, r, hash)
+		__fw0, __fw1 := signFIPS(ecdsa.P224(), priv, r, hash)
 		return __mrSignASN1Pair{__fw0, __fw1}
 	case elliptic.P256().Params():
-		__fw0, __fw1 := signFIPSP256(ecdsa.P256(), priv, r, hash)
+		__fw0, __fw1 := signFIPS(ecdsa.P256(), priv, r, hash)
 		return __mrSignASN1Pair{__fw0, __fw1}
 	case elliptic.P384().Params():
-		__fw0, __fw1 := signFIPSP384(ecdsa.P384(), priv, r, hash)
+		__fw0, __fw1 := signFIPS(ecdsa.P384(), priv, r, hash)
 		return __mrSignASN1Pair{__fw0, __fw1}
 	case elliptic.P521().Params():
-		__fw0, __fw1 := signFIPSP521(ecdsa.P521(), priv, r, hash)
+		__fw0, __fw1 := signFIPS(ecdsa.P521(), priv, r, hash)
 		return __mrSignASN1Pair{__fw0, __fw1}
 	default:
 		__fw0, __fw1 := signLegacy(priv, r, hash)
@@ -759,72 +579,18 @@ type __mrsignFIPSPair struct {
 	v1 error
 }
 
-func __mrsignFIPSP224(c *ecdsa.Curve[*nistec.P224Point], priv *PrivateKey, rand io.Reader, hash []byte) __mrsignFIPSPair {
+func __mrsignFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], priv *PrivateKey, rand io.Reader, hash []byte) __mrsignFIPSPair {
 	if fips140only.Enforced() && !fips140only.ApprovedRandomReader(rand) {
 		return __mrsignFIPSPair{nil, errors.New("crypto/ecdsa: only crypto/rand.Reader is allowed in FIPS 140-only mode")}
 	}
-	k, err := privateKeyToFIPSP224(c, priv)
+	k, err := privateKeyToFIPS(c, priv)
 	if err != nil {
 		return __mrsignFIPSPair{nil, err}
 	}
 	// Always using SHA-512 instead of the hash that computed hash is
 	// technically a violation of draft-irtf-cfrg-det-sigs-with-noise-04 but in
 	// our API we don't get to know what it was, and this has no security impact.
-	sig, err := ecdsa.SignP224(c, sha512.New, k, rand, hash)
-	if err != nil {
-		return __mrsignFIPSPair{nil, err}
-	}
-	__fw0, __fw1 := encodeSignature(sig.R, sig.S)
-	return __mrsignFIPSPair{__fw0, __fw1}
-}
-func __mrsignFIPSP256(c *ecdsa.Curve[*nistec.P256Point], priv *PrivateKey, rand io.Reader, hash []byte) __mrsignFIPSPair {
-	if fips140only.Enforced() && !fips140only.ApprovedRandomReader(rand) {
-		return __mrsignFIPSPair{nil, errors.New("crypto/ecdsa: only crypto/rand.Reader is allowed in FIPS 140-only mode")}
-	}
-	k, err := privateKeyToFIPSP256(c, priv)
-	if err != nil {
-		return __mrsignFIPSPair{nil, err}
-	}
-	// Always using SHA-512 instead of the hash that computed hash is
-	// technically a violation of draft-irtf-cfrg-det-sigs-with-noise-04 but in
-	// our API we don't get to know what it was, and this has no security impact.
-	sig, err := ecdsa.SignP256(c, sha512.New, k, rand, hash)
-	if err != nil {
-		return __mrsignFIPSPair{nil, err}
-	}
-	__fw0, __fw1 := encodeSignature(sig.R, sig.S)
-	return __mrsignFIPSPair{__fw0, __fw1}
-}
-func __mrsignFIPSP384(c *ecdsa.Curve[*nistec.P384Point], priv *PrivateKey, rand io.Reader, hash []byte) __mrsignFIPSPair {
-	if fips140only.Enforced() && !fips140only.ApprovedRandomReader(rand) {
-		return __mrsignFIPSPair{nil, errors.New("crypto/ecdsa: only crypto/rand.Reader is allowed in FIPS 140-only mode")}
-	}
-	k, err := privateKeyToFIPSP384(c, priv)
-	if err != nil {
-		return __mrsignFIPSPair{nil, err}
-	}
-	// Always using SHA-512 instead of the hash that computed hash is
-	// technically a violation of draft-irtf-cfrg-det-sigs-with-noise-04 but in
-	// our API we don't get to know what it was, and this has no security impact.
-	sig, err := ecdsa.SignP384(c, sha512.New, k, rand, hash)
-	if err != nil {
-		return __mrsignFIPSPair{nil, err}
-	}
-	__fw0, __fw1 := encodeSignature(sig.R, sig.S)
-	return __mrsignFIPSPair{__fw0, __fw1}
-}
-func __mrsignFIPSP521(c *ecdsa.Curve[*nistec.P521Point], priv *PrivateKey, rand io.Reader, hash []byte) __mrsignFIPSPair {
-	if fips140only.Enforced() && !fips140only.ApprovedRandomReader(rand) {
-		return __mrsignFIPSPair{nil, errors.New("crypto/ecdsa: only crypto/rand.Reader is allowed in FIPS 140-only mode")}
-	}
-	k, err := privateKeyToFIPSP521(c, priv)
-	if err != nil {
-		return __mrsignFIPSPair{nil, err}
-	}
-	// Always using SHA-512 instead of the hash that computed hash is
-	// technically a violation of draft-irtf-cfrg-det-sigs-with-noise-04 but in
-	// our API we don't get to know what it was, and this has no security impact.
-	sig, err := ecdsa.SignP521(c, sha512.New, k, rand, hash)
+	sig, err := ecdsa.Sign(c, sha512.New, k, rand, hash)
 	if err != nil {
 		return __mrsignFIPSPair{nil, err}
 	}
@@ -832,16 +598,7 @@ func __mrsignFIPSP521(c *ecdsa.Curve[*nistec.P521Point], priv *PrivateKey, rand 
 	return __mrsignFIPSPair{__fw0, __fw1}
 }
 
-func signFIPSP224(c *ecdsa.Curve[*nistec.P224Point], priv *PrivateKey, rand io.Reader, hash []byte) ([]byte, error) {
-	panic("crypto/ecdsa: signFIPS: multi-result desugar")
-}
-func signFIPSP256(c *ecdsa.Curve[*nistec.P256Point], priv *PrivateKey, rand io.Reader, hash []byte) ([]byte, error) {
-	panic("crypto/ecdsa: signFIPS: multi-result desugar")
-}
-func signFIPSP384(c *ecdsa.Curve[*nistec.P384Point], priv *PrivateKey, rand io.Reader, hash []byte) ([]byte, error) {
-	panic("crypto/ecdsa: signFIPS: multi-result desugar")
-}
-func signFIPSP521(c *ecdsa.Curve[*nistec.P521Point], priv *PrivateKey, rand io.Reader, hash []byte) ([]byte, error) {
+func signFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], priv *PrivateKey, rand io.Reader, hash []byte) ([]byte, error) {
 	panic("crypto/ecdsa: signFIPS: multi-result desugar")
 }
 
@@ -857,16 +614,16 @@ func __mrsignRFC6979(priv *PrivateKey, hash []byte, opts crypto.SignerOpts) __mr
 	h := opts.HashFunc()
 	switch priv.Curve.Params() {
 	case elliptic.P224().Params():
-		__fw0, __fw1 := signFIPSDeterministicP224(ecdsa.P224(), h, priv, hash)
+		__fw0, __fw1 := signFIPSDeterministic(ecdsa.P224(), h, priv, hash)
 		return __mrsignRFC6979Pair{__fw0, __fw1}
 	case elliptic.P256().Params():
-		__fw0, __fw1 := signFIPSDeterministicP256(ecdsa.P256(), h, priv, hash)
+		__fw0, __fw1 := signFIPSDeterministic(ecdsa.P256(), h, priv, hash)
 		return __mrsignRFC6979Pair{__fw0, __fw1}
 	case elliptic.P384().Params():
-		__fw0, __fw1 := signFIPSDeterministicP384(ecdsa.P384(), h, priv, hash)
+		__fw0, __fw1 := signFIPSDeterministic(ecdsa.P384(), h, priv, hash)
 		return __mrsignRFC6979Pair{__fw0, __fw1}
 	case elliptic.P521().Params():
-		__fw0, __fw1 := signFIPSDeterministicP521(ecdsa.P521(), h, priv, hash)
+		__fw0, __fw1 := signFIPSDeterministic(ecdsa.P521(), h, priv, hash)
 		return __mrsignRFC6979Pair{__fw0, __fw1}
 	default:
 		return __mrsignRFC6979Pair{nil, errors.New("ecdsa: curve not supported by deterministic signatures")}
@@ -882,8 +639,8 @@ type __mrsignFIPSDeterministicPair struct {
 	v1 error
 }
 
-func __mrsignFIPSDeterministicP224(c *ecdsa.Curve[*nistec.P224Point], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) __mrsignFIPSDeterministicPair {
-	k, err := privateKeyToFIPSP224(c, priv)
+func __mrsignFIPSDeterministic[P ecdsa.Point[P]](c *ecdsa.Curve[P], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) __mrsignFIPSDeterministicPair {
+	k, err := privateKeyToFIPS(c, priv)
 	if err != nil {
 		return __mrsignFIPSDeterministicPair{nil, err}
 	}
@@ -894,64 +651,7 @@ func __mrsignFIPSDeterministicP224(c *ecdsa.Curve[*nistec.P224Point], hashFunc c
 	if fips140only.Enforced() && !fips140only.ApprovedHash(h()) {
 		return __mrsignFIPSDeterministicPair{nil, errors.New("crypto/ecdsa: use of hash functions other than SHA-2 or SHA-3 is not allowed in FIPS 140-only mode")}
 	}
-	sig, err := ecdsa.SignDeterministicP224(c, h, k, hash)
-	if err != nil {
-		return __mrsignFIPSDeterministicPair{nil, err}
-	}
-	__fw0, __fw1 := encodeSignature(sig.R, sig.S)
-	return __mrsignFIPSDeterministicPair{__fw0, __fw1}
-}
-func __mrsignFIPSDeterministicP256(c *ecdsa.Curve[*nistec.P256Point], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) __mrsignFIPSDeterministicPair {
-	k, err := privateKeyToFIPSP256(c, priv)
-	if err != nil {
-		return __mrsignFIPSDeterministicPair{nil, err}
-	}
-	if !hashFunc.Available() {
-		return __mrsignFIPSDeterministicPair{nil, errors.New("ecdsa: requested hash function unavailable: " + hashFunc.String())}
-	}
-	h := fips140hash.UnwrapNew(hashFunc.New)
-	if fips140only.Enforced() && !fips140only.ApprovedHash(h()) {
-		return __mrsignFIPSDeterministicPair{nil, errors.New("crypto/ecdsa: use of hash functions other than SHA-2 or SHA-3 is not allowed in FIPS 140-only mode")}
-	}
-	sig, err := ecdsa.SignDeterministicP256(c, h, k, hash)
-	if err != nil {
-		return __mrsignFIPSDeterministicPair{nil, err}
-	}
-	__fw0, __fw1 := encodeSignature(sig.R, sig.S)
-	return __mrsignFIPSDeterministicPair{__fw0, __fw1}
-}
-func __mrsignFIPSDeterministicP384(c *ecdsa.Curve[*nistec.P384Point], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) __mrsignFIPSDeterministicPair {
-	k, err := privateKeyToFIPSP384(c, priv)
-	if err != nil {
-		return __mrsignFIPSDeterministicPair{nil, err}
-	}
-	if !hashFunc.Available() {
-		return __mrsignFIPSDeterministicPair{nil, errors.New("ecdsa: requested hash function unavailable: " + hashFunc.String())}
-	}
-	h := fips140hash.UnwrapNew(hashFunc.New)
-	if fips140only.Enforced() && !fips140only.ApprovedHash(h()) {
-		return __mrsignFIPSDeterministicPair{nil, errors.New("crypto/ecdsa: use of hash functions other than SHA-2 or SHA-3 is not allowed in FIPS 140-only mode")}
-	}
-	sig, err := ecdsa.SignDeterministicP384(c, h, k, hash)
-	if err != nil {
-		return __mrsignFIPSDeterministicPair{nil, err}
-	}
-	__fw0, __fw1 := encodeSignature(sig.R, sig.S)
-	return __mrsignFIPSDeterministicPair{__fw0, __fw1}
-}
-func __mrsignFIPSDeterministicP521(c *ecdsa.Curve[*nistec.P521Point], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) __mrsignFIPSDeterministicPair {
-	k, err := privateKeyToFIPSP521(c, priv)
-	if err != nil {
-		return __mrsignFIPSDeterministicPair{nil, err}
-	}
-	if !hashFunc.Available() {
-		return __mrsignFIPSDeterministicPair{nil, errors.New("ecdsa: requested hash function unavailable: " + hashFunc.String())}
-	}
-	h := fips140hash.UnwrapNew(hashFunc.New)
-	if fips140only.Enforced() && !fips140only.ApprovedHash(h()) {
-		return __mrsignFIPSDeterministicPair{nil, errors.New("crypto/ecdsa: use of hash functions other than SHA-2 or SHA-3 is not allowed in FIPS 140-only mode")}
-	}
-	sig, err := ecdsa.SignDeterministicP521(c, h, k, hash)
+	sig, err := ecdsa.SignDeterministic(c, h, k, hash)
 	if err != nil {
 		return __mrsignFIPSDeterministicPair{nil, err}
 	}
@@ -959,16 +659,7 @@ func __mrsignFIPSDeterministicP521(c *ecdsa.Curve[*nistec.P521Point], hashFunc c
 	return __mrsignFIPSDeterministicPair{__fw0, __fw1}
 }
 
-func signFIPSDeterministicP224(c *ecdsa.Curve[*nistec.P224Point], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) ([]byte, error) {
-	panic("crypto/ecdsa: signFIPSDeterministic: multi-result desugar")
-}
-func signFIPSDeterministicP256(c *ecdsa.Curve[*nistec.P256Point], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) ([]byte, error) {
-	panic("crypto/ecdsa: signFIPSDeterministic: multi-result desugar")
-}
-func signFIPSDeterministicP384(c *ecdsa.Curve[*nistec.P384Point], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) ([]byte, error) {
-	panic("crypto/ecdsa: signFIPSDeterministic: multi-result desugar")
-}
-func signFIPSDeterministicP521(c *ecdsa.Curve[*nistec.P521Point], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) ([]byte, error) {
+func signFIPSDeterministic[P ecdsa.Point[P]](c *ecdsa.Curve[P], hashFunc crypto.Hash, priv *PrivateKey, hash []byte) ([]byte, error) {
 	panic("crypto/ecdsa: signFIPSDeterministic: multi-result desugar")
 }
 
@@ -1030,70 +721,28 @@ func VerifyASN1(pub *PublicKey, hash, sig []byte) bool {
 
 	switch pub.Curve.Params() {
 	case elliptic.P224().Params():
-		return verifyFIPSP224(ecdsa.P224(), pub, hash, sig)
+		return verifyFIPS(ecdsa.P224(), pub, hash, sig)
 	case elliptic.P256().Params():
-		return verifyFIPSP256(ecdsa.P256(), pub, hash, sig)
+		return verifyFIPS(ecdsa.P256(), pub, hash, sig)
 	case elliptic.P384().Params():
-		return verifyFIPSP384(ecdsa.P384(), pub, hash, sig)
+		return verifyFIPS(ecdsa.P384(), pub, hash, sig)
 	case elliptic.P521().Params():
-		return verifyFIPSP521(ecdsa.P521(), pub, hash, sig)
+		return verifyFIPS(ecdsa.P521(), pub, hash, sig)
 	default:
 		return verifyLegacy(pub, hash, sig)
 	}
 }
 
-func verifyFIPSP224(c *ecdsa.Curve[*nistec.P224Point], pub *PublicKey, hash, sig []byte) bool {
+func verifyFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], pub *PublicKey, hash, sig []byte) bool {
 	r, s, err := parseSignature(sig)
 	if err != nil {
 		return false
 	}
-	k, err := publicKeyToFIPSP224(c, pub)
+	k, err := publicKeyToFIPS(c, pub)
 	if err != nil {
 		return false
 	}
-	if err := ecdsa.VerifyP224(c, k, hash, &ecdsa.Signature{R: r, S: s}); err != nil {
-		return false
-	}
-	return true
-}
-func verifyFIPSP256(c *ecdsa.Curve[*nistec.P256Point], pub *PublicKey, hash, sig []byte) bool {
-	r, s, err := parseSignature(sig)
-	if err != nil {
-		return false
-	}
-	k, err := publicKeyToFIPSP256(c, pub)
-	if err != nil {
-		return false
-	}
-	if err := ecdsa.VerifyP256(c, k, hash, &ecdsa.Signature{R: r, S: s}); err != nil {
-		return false
-	}
-	return true
-}
-func verifyFIPSP384(c *ecdsa.Curve[*nistec.P384Point], pub *PublicKey, hash, sig []byte) bool {
-	r, s, err := parseSignature(sig)
-	if err != nil {
-		return false
-	}
-	k, err := publicKeyToFIPSP384(c, pub)
-	if err != nil {
-		return false
-	}
-	if err := ecdsa.VerifyP384(c, k, hash, &ecdsa.Signature{R: r, S: s}); err != nil {
-		return false
-	}
-	return true
-}
-func verifyFIPSP521(c *ecdsa.Curve[*nistec.P521Point], pub *PublicKey, hash, sig []byte) bool {
-	r, s, err := parseSignature(sig)
-	if err != nil {
-		return false
-	}
-	k, err := publicKeyToFIPSP521(c, pub)
-	if err != nil {
-		return false
-	}
-	if err := ecdsa.VerifyP521(c, k, hash, &ecdsa.Signature{R: r, S: s}); err != nil {
+	if err := ecdsa.Verify(c, k, hash, &ecdsa.Signature{R: r, S: s}); err != nil {
 		return false
 	}
 	return true
@@ -1164,49 +813,16 @@ type __mrpublicKeyToFIPSPair struct {
 	v1 error
 }
 
-func __mrpublicKeyToFIPSP224(c *ecdsa.Curve[*nistec.P224Point], pub *PublicKey) __mrpublicKeyToFIPSPair {
+func __mrpublicKeyToFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], pub *PublicKey) __mrpublicKeyToFIPSPair {
 	Q, err := pointFromAffine(pub.Curve, pub.X, pub.Y)
 	if err != nil {
 		return __mrpublicKeyToFIPSPair{nil, err}
 	}
-	__fw0, __fw1 := ecdsa.NewPublicKeyP224(c, Q)
-	return __mrpublicKeyToFIPSPair{__fw0, __fw1}
-}
-func __mrpublicKeyToFIPSP256(c *ecdsa.Curve[*nistec.P256Point], pub *PublicKey) __mrpublicKeyToFIPSPair {
-	Q, err := pointFromAffine(pub.Curve, pub.X, pub.Y)
-	if err != nil {
-		return __mrpublicKeyToFIPSPair{nil, err}
-	}
-	__fw0, __fw1 := ecdsa.NewPublicKeyP256(c, Q)
-	return __mrpublicKeyToFIPSPair{__fw0, __fw1}
-}
-func __mrpublicKeyToFIPSP384(c *ecdsa.Curve[*nistec.P384Point], pub *PublicKey) __mrpublicKeyToFIPSPair {
-	Q, err := pointFromAffine(pub.Curve, pub.X, pub.Y)
-	if err != nil {
-		return __mrpublicKeyToFIPSPair{nil, err}
-	}
-	__fw0, __fw1 := ecdsa.NewPublicKeyP384(c, Q)
-	return __mrpublicKeyToFIPSPair{__fw0, __fw1}
-}
-func __mrpublicKeyToFIPSP521(c *ecdsa.Curve[*nistec.P521Point], pub *PublicKey) __mrpublicKeyToFIPSPair {
-	Q, err := pointFromAffine(pub.Curve, pub.X, pub.Y)
-	if err != nil {
-		return __mrpublicKeyToFIPSPair{nil, err}
-	}
-	__fw0, __fw1 := ecdsa.NewPublicKeyP521(c, Q)
+	__fw0, __fw1 := ecdsa.NewPublicKey(c, Q)
 	return __mrpublicKeyToFIPSPair{__fw0, __fw1}
 }
 
-func publicKeyToFIPSP224(c *ecdsa.Curve[*nistec.P224Point], pub *PublicKey) (*ecdsa.PublicKey, error) {
-	panic("crypto/ecdsa: publicKeyToFIPS: multi-result desugar")
-}
-func publicKeyToFIPSP256(c *ecdsa.Curve[*nistec.P256Point], pub *PublicKey) (*ecdsa.PublicKey, error) {
-	panic("crypto/ecdsa: publicKeyToFIPS: multi-result desugar")
-}
-func publicKeyToFIPSP384(c *ecdsa.Curve[*nistec.P384Point], pub *PublicKey) (*ecdsa.PublicKey, error) {
-	panic("crypto/ecdsa: publicKeyToFIPS: multi-result desugar")
-}
-func publicKeyToFIPSP521(c *ecdsa.Curve[*nistec.P521Point], pub *PublicKey) (*ecdsa.PublicKey, error) {
+func publicKeyToFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], pub *PublicKey) (*ecdsa.PublicKey, error) {
 	panic("crypto/ecdsa: publicKeyToFIPS: multi-result desugar")
 }
 
@@ -1217,7 +833,7 @@ type __mrprivateKeyToFIPSPair struct {
 	v1 error
 }
 
-func __mrprivateKeyToFIPSP224(c *ecdsa.Curve[*nistec.P224Point], priv *PrivateKey) __mrprivateKeyToFIPSPair {
+func __mrprivateKeyToFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], priv *PrivateKey) __mrprivateKeyToFIPSPair {
 	Q, err := pointFromAffine(priv.Curve, priv.X, priv.Y)
 	if err != nil {
 		return __mrprivateKeyToFIPSPair{nil, err}
@@ -1232,98 +848,17 @@ func __mrprivateKeyToFIPSP224(c *ecdsa.Curve[*nistec.P224Point], priv *PrivateKe
 	}
 
 	size := (priv.Curve.Params().N.BitLen() + 7) / 8
-	const maxScalarSize = 66 // enough for a *nistec.P224Point-521 private key
+	const maxScalarSize = 66 // enough for a P-521 private key
 	if size > maxScalarSize {
 		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: internal error: curve size too large")}
 	}
 	D := priv.D.FillBytes(make([]byte, size, maxScalarSize))
 
-	k, err := ecdsa.NewPrivateKeyP224(c, D, Q)
-	return __mrprivateKeyToFIPSPair{k, err}
-}
-func __mrprivateKeyToFIPSP256(c *ecdsa.Curve[*nistec.P256Point], priv *PrivateKey) __mrprivateKeyToFIPSPair {
-	Q, err := pointFromAffine(priv.Curve, priv.X, priv.Y)
-	if err != nil {
-		return __mrprivateKeyToFIPSPair{nil, err}
-	}
-
-	// Reject values that would not get correctly encoded.
-	if priv.D.BitLen() > priv.Curve.Params().N.BitLen() {
-		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: private key scalar too large")}
-	}
-	if priv.D.Sign() <= 0 {
-		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: private key scalar is zero or negative")}
-	}
-
-	size := (priv.Curve.Params().N.BitLen() + 7) / 8
-	const maxScalarSize = 66 // enough for a *nistec.P256Point-521 private key
-	if size > maxScalarSize {
-		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: internal error: curve size too large")}
-	}
-	D := priv.D.FillBytes(make([]byte, size, maxScalarSize))
-
-	k, err := ecdsa.NewPrivateKeyP256(c, D, Q)
-	return __mrprivateKeyToFIPSPair{k, err}
-}
-func __mrprivateKeyToFIPSP384(c *ecdsa.Curve[*nistec.P384Point], priv *PrivateKey) __mrprivateKeyToFIPSPair {
-	Q, err := pointFromAffine(priv.Curve, priv.X, priv.Y)
-	if err != nil {
-		return __mrprivateKeyToFIPSPair{nil, err}
-	}
-
-	// Reject values that would not get correctly encoded.
-	if priv.D.BitLen() > priv.Curve.Params().N.BitLen() {
-		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: private key scalar too large")}
-	}
-	if priv.D.Sign() <= 0 {
-		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: private key scalar is zero or negative")}
-	}
-
-	size := (priv.Curve.Params().N.BitLen() + 7) / 8
-	const maxScalarSize = 66 // enough for a *nistec.P384Point-521 private key
-	if size > maxScalarSize {
-		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: internal error: curve size too large")}
-	}
-	D := priv.D.FillBytes(make([]byte, size, maxScalarSize))
-
-	k, err := ecdsa.NewPrivateKeyP384(c, D, Q)
-	return __mrprivateKeyToFIPSPair{k, err}
-}
-func __mrprivateKeyToFIPSP521(c *ecdsa.Curve[*nistec.P521Point], priv *PrivateKey) __mrprivateKeyToFIPSPair {
-	Q, err := pointFromAffine(priv.Curve, priv.X, priv.Y)
-	if err != nil {
-		return __mrprivateKeyToFIPSPair{nil, err}
-	}
-
-	// Reject values that would not get correctly encoded.
-	if priv.D.BitLen() > priv.Curve.Params().N.BitLen() {
-		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: private key scalar too large")}
-	}
-	if priv.D.Sign() <= 0 {
-		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: private key scalar is zero or negative")}
-	}
-
-	size := (priv.Curve.Params().N.BitLen() + 7) / 8
-	const maxScalarSize = 66 // enough for a *nistec.P521Point-521 private key
-	if size > maxScalarSize {
-		return __mrprivateKeyToFIPSPair{nil, errors.New("ecdsa: internal error: curve size too large")}
-	}
-	D := priv.D.FillBytes(make([]byte, size, maxScalarSize))
-
-	k, err := ecdsa.NewPrivateKeyP521(c, D, Q)
+	k, err := ecdsa.NewPrivateKey(c, D, Q)
 	return __mrprivateKeyToFIPSPair{k, err}
 }
 
-func privateKeyToFIPSP224(c *ecdsa.Curve[*nistec.P224Point], priv *PrivateKey) (*ecdsa.PrivateKey, error) {
-	panic("crypto/ecdsa: privateKeyToFIPS: multi-result desugar")
-}
-func privateKeyToFIPSP256(c *ecdsa.Curve[*nistec.P256Point], priv *PrivateKey) (*ecdsa.PrivateKey, error) {
-	panic("crypto/ecdsa: privateKeyToFIPS: multi-result desugar")
-}
-func privateKeyToFIPSP384(c *ecdsa.Curve[*nistec.P384Point], priv *PrivateKey) (*ecdsa.PrivateKey, error) {
-	panic("crypto/ecdsa: privateKeyToFIPS: multi-result desugar")
-}
-func privateKeyToFIPSP521(c *ecdsa.Curve[*nistec.P521Point], priv *PrivateKey) (*ecdsa.PrivateKey, error) {
+func privateKeyToFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], priv *PrivateKey) (*ecdsa.PrivateKey, error) {
 	panic("crypto/ecdsa: privateKeyToFIPS: multi-result desugar")
 }
 
