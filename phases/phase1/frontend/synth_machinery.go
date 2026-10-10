@@ -147,8 +147,11 @@ var syntheticSources = map[string]string{
 	"crypto/internal/fips140/rsa":                syntheticCryptoFips140RsaSource,
 	"golang.org/x/crypto/cryptobyte":             syntheticCryptobyteSource,
 	"golang.org/x/crypto/cryptobyte/asn1":        syntheticCryptobyteAsn1Source,
-	// P3-M9 (tier-5): synthetic crypto/x509 and crypto/tls packages
-	// REMOVED: source files were never committed; entries broke the build.
+	// P3-M9 (tier-5): synthetic crypto/x509 package (Java delegation via
+	// graalgo.x509.* intrinsics; see synth_crypto_x509.go). crypto/tls
+	// deferred (source file not yet committed).
+	"crypto/x509":      syntheticCryptoX509Source,
+	"crypto/x509/pkix": syntheticCryptoX509PkixSource,
 	// P3-M7 (wave 1): synthetic encoding/xml package (real-Go source in
 	// synth_xml.go). Self-contained (no imports); the token-stream
 	// desugar lives in mrdesugar_m5.go (mrXmlToken).
@@ -898,6 +901,7 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		path != "crypto/elliptic" && path != "crypto/ecdh" && path != "crypto/dsa" &&
 		path != "crypto/ecdsa" && path != "crypto/ed25519" && path != "crypto/rsa" &&
 		path != "crypto/hkdf" && path != "crypto/pbkdf2" &&
+		path != "crypto/x509" && path != "crypto/x509/pkix" &&
 		path != "golang.org/x/crypto/cryptobyte" &&
 		path != "golang.org/x/crypto/cryptobyte/asn1" &&
 		path != "crypto/internal/fips140" && path != "crypto/internal/fips140/check" &&

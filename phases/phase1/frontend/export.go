@@ -2317,7 +2317,7 @@ func ExportFile(path string) (string, error) {
 			"crypto/pbkdf2",
 			"crypto/x509/pkix",
 			"crypto/x509",
-			"crypto/tls",
+			// "crypto/tls", // P3-M9: deferred (source not yet committed)
 		} {
 			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
 				return "", err

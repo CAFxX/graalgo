@@ -12,6 +12,7 @@ import graalgo.iface.IfaceMethodTables;
 import graalgo.p3os.GoOs;
 import graalgo.p3net.GoNet;
 import graalgo.p3net.GoNetpoll;
+import graalgo.p3net.GoHttp;
 import graalgo.p3crypto.GoCrypto;
 import graalgo.p3tls.TlsRuntime;
 import graalgo.p3x509.GoX509;
@@ -247,6 +248,10 @@ public final class LinknameIntrinsics {
                 args -> GoNet.getpeername(args[0], args[1]), 2);
         Linknames.register("graalgo.net.shutdown",
                 args -> GoNet.shutdown(args[0], args[1]), 2);
+        // P3-M9 (tier-5: net/http): Java-delegated HTTP client via
+        // java.net.http.HttpClient (see GoHttp.java).
+        Linknames.register("graalgo.http.client.do",
+                args -> GoHttp.clientDo(args[0], args[1], args[2], args[3]), 4);
         Linknames.register("graalgo.net.setnonblock",
                 args -> GoNet.setnonblock(args[0], args[1]), 2);
         Linknames.register("graalgo.net.sendto",
