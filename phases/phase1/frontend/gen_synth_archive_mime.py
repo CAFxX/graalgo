@@ -915,6 +915,12 @@ func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMI
 }
 '''
     src = src.replace('textproto.NewReader(', '__mpNewTextprotoReader(')
+    # Add ErrMessageTooLarge (from skipped formdata.go)
+    if 'ErrMessageTooLarge' in src and 'var ErrMessageTooLarge' not in src:
+        src += '''
+// ErrMessageTooLarge is returned by ReadForm if the message is too large.
+var ErrMessageTooLarge = errors.New("multipart: message too large")
+'''
     return src
 
 def qp_adapt(src, pkg_prefix):
@@ -1040,11 +1046,14 @@ def process_package(pkg_path, cfg):
                 for (rname, rtype), fname in zip(results, field_names):
                     if rname and rname.strip():
                         rn = re.escape(rname.strip())
+                        # If shadowed via :=, assignments likely refer to shadow, not this var
+                        shadowed = bool(re.search(rf'\b{rn}\b\s*:=', fn['body']))
                         assigned = bool(re.search(rf'\b{rn}\b\s*=\s*[^=]', fn['body']))
                         compound = bool(re.search(rf'\b{rn}\b\s*[+\-*/%&|^]=', fn['body']))
                         incdec = bool(re.search(rf'\b{rn}\b\s*(\+\+|--)', fn['body']))
                         multi_assign = bool(re.search(rf'\b{rn}\b\s*,', fn['body']))
-                        if has_bare or assigned or compound or incdec or multi_assign:
+                        # Only declare if not shadowed, or if bare return
+                        if has_bare or ((assigned or compound or incdec or multi_assign) and not shadowed):
                             decls += f"\tvar {rname} {rtype}\n"
                 helper_decl = helper_sig + decls + rewritten_body + "}\n\n"
                 new_src_parts.append(helper_decl)
