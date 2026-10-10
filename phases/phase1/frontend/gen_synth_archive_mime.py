@@ -224,13 +224,12 @@ def is_multi_result(results):
 def extract_type_names(src):
     """Extract defined type names from source."""
     names = set()
-    # Single: type Name ...
-    for m in re.finditer(r'\btype\s+([a-zA-Z_][a-zA-Z0-9_]*)\b', src):
-        # Avoid matching "type (" 
+    # Single: type Name ... (at line start, to avoid comments)
+    for m in re.finditer(r'^\s*type\s+([a-zA-Z_][a-zA-Z0-9_]*)\b', src, re.MULTILINE):
         if m.group(1) != '(':
             names.add(m.group(1))
     # Block: type ( Name ...; Name ... )
-    for m in re.finditer(r'\btype\s*\((.*?)\)', src, re.DOTALL):
+    for m in re.finditer(r'^\s*type\s*\((.*?)\)', src, re.MULTILINE | re.DOTALL):
         block = m.group(1)
         for tm in re.finditer(r'^\s*([a-zA-Z_][a-zA-Z0-9_]*)\b', block, re.MULTILINE):
             names.add(tm.group(1))
@@ -455,7 +454,8 @@ def rewrite_call_sites(body, mr_map):
                 k += 1
             call_end = k
             args = body[j+1:k-1]
-            # Receiver handling (conservative: simple identifiers only)
+            # Receiver handling (conservative: simple identifiers only,
+            # not packages, not selectors)
             recv = None
             recv_start = None
             skip_rewrite = False
@@ -464,7 +464,11 @@ def rewrite_call_sites(body, mr_map):
                 rd -= 1
             if rd >= 0 and body[rd] == '.':
                 rc, rs = extract_receiver(body, rd)
-                if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', rc):
+                # Skip if not a simple identifier, or if it's a package name
+                pkg_names = {'os', 'io', 'bytes', 'strings', 'fmt', 'errors', 'sort',
+                           'strconv', 'unicode', 'path', 'filepath', 'math', 'time',
+                           'sync', 'bufio', 'hash', 'crypto', 'encoding'}
+                if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', rc) and rc not in pkg_names:
                     recv, recv_start = rc, rs
                 else:
                     skip_rewrite = True
@@ -936,6 +940,18 @@ def process_package(pkg_path, cfg):
         known_types.update(extract_type_names(tsrc))
     mr_map = {}
     pre_seen = set()
+    name_counts = {}
+    # First count method names to detect ambiguity
+    for rel_file in cfg['files']:
+        full_path = os.path.join(GOROOT, 'src', rel_file)
+        with open(full_path, 'r') as f:
+            tsrc = f.read()
+        tsrc = strip_build_tags(tsrc)
+        tsrc = strip_package(tsrc)
+        tsrc = strip_imports(tsrc)
+        for fn in extract_functions(tsrc):
+            if is_multi_result(fn['results']):
+                name_counts[fn['name']] = name_counts.get(fn['name'], 0) + 1
     for rel_file in cfg['files']:
         full_path = os.path.join(GOROOT, 'src', rel_file)
         with open(full_path, 'r') as f:
@@ -949,6 +965,9 @@ def process_package(pkg_path, cfg):
                 continue
             pre_seen.add(fk)
             if is_multi_result(fn['results']):
+                # Skip ambiguous names (multiple types define same method)
+                if name_counts.get(fn['name'], 0) > 1:
+                    continue
                 pr = parse_results(fn['results'], known_types)
                 hn = make_helper_name(pkg_prefix, fn['recv_type'], fn['name'])
                 mr_map[fn['name']] = (hn, compute_field_names(pr))
