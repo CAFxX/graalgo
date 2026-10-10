@@ -6892,6 +6892,34 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		selection, ok := e.info.Selections[sel]
 		if !ok {
+			// P3-M9 (WS D): the selector may denote a struct field of
+			// function type (e.g., c.ordInverse where ordInverse is
+			// func(*[4]uint64)). This is not a method selection, so
+			// info.Selections has no entry. Export as field access
+			// followed by a call.
+			if _, ok := e.info.Uses[sel.Sel].(*types.Var); ok {
+				// It's a field. Use exportSelector for the field access,
+				// then call the resulting function value.
+				fieldNode, err := e.exportSelector(sel)
+				if err != nil {
+					return nil, err
+				}
+				args, err := e.exportCallArgs(c)
+				if err != nil {
+					return nil, err
+				}
+				resType, err := e.callType(c)
+				if err != nil {
+					return nil, err
+				}
+				fields := map[string]any{
+					"fun": fieldNode, "args": args,
+				}
+				if resType != nil {
+					fields["type"] = resType
+				}
+				return e.node("call", c, fields), nil
+			}
 			return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
 				sel.X, sel.Sel.Name)
 		}
@@ -7436,6 +7464,79 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 		}
 	}
 	return e.node("methodref", sel, map[string]any{"obj": objID, "recv": recv, "type": sigID}), nil
+}
+
+// methodValueNode exports a method value x.M in value position (selection
+// kind MethodVal) as a "methodvalue" wire node (P3-M9, WS H follow-up).
+// It mirrors methodRefNode's resolution exactly — resolveMethodCall,
+// promoted-method receiver adaptation (GAP-6), implicit address-of (WS D),
+// generic instantiation — but instead of a "methodref" call target it
+// produces an expression node evaluating to a GoFunc with the receiver
+// bound: the factory evaluates recv once at creation time and every
+// invocation of the resulting function value prepends the bound receiver
+// to the call arguments (see GoCalls.invoke and MethodValueNode).
+// The "type" field is the method value's static func type (no receiver),
+// from the selector expression's type.
+func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selection, recv *Node, t int) (*Node, error) {
+	var mtargs []types.Type
+	if ii, ok := e.info.Instances[sel.Sel]; ok {
+		mtargs = typeList(ii.TypeArgs)
+	}
+	mc, err := e.resolveMethodCall(sel, selection, mtargs, e.subst)
+	if err != nil {
+		return nil, err
+	}
+	// The ifacemethod fallback is call-only: a method value on a type
+	// parameter would need itab dispatch deferred to call time, which is
+	// out of scope. Fail fast with a named error.
+	if mc.ifaceFallback != nil {
+		return nil, scopeErrorf("method value %s via type parameter is not supported (WS H: iface fallback is call-only)", sel.Sel.Name)
+	}
+	declRecv := mc.decl.sig.Recv().Type()
+	xt, ok := e.info.Types[sel.X]
+	if !ok || xt.Type == nil {
+		return nil, fmt.Errorf("gofrontend: no type info for method receiver")
+	}
+	// GAP-6: same promoted-method receiver adaptation as methodRefNode.
+	recvType := xt.Type
+	if len(mc.recvPath) > 0 {
+		adapted := embeddedFieldType(selection.Recv(), mc.recvPath)
+		if adapted == nil {
+			return nil, fmt.Errorf("gofrontend: cannot adapt receiver for promoted method %s (exporter bug)", sel.Sel.Name)
+		}
+		tid, err := e.typeID(adapted)
+		if err != nil {
+			return nil, err
+		}
+		path := make([]any, len(mc.recvPath))
+		for i, v := range mc.recvPath {
+			path[i] = v
+		}
+		recv = e.node("selector", sel, map[string]any{
+			"x": recv, "field": embeddedFieldName(selection.Recv(), mc.recvPath),
+			"selpath": path, "type": tid,
+		})
+		recvType = adapted
+	}
+	if substString(declRecv, mc.subst) != substString(recvType, e.subst) {
+		// P3-M9: implicit address-of for method receivers (WS D), same as
+		// method calls: x.M → (&x).M when M has a pointer receiver and x
+		// is addressable.
+		if !e.implicitAddrOf(sel, &recv, &recvType, declRecv, mc.subst) {
+			return nil, scopeErrorf("method value %s needs an implicit address-of or deref on the receiver (WS D)", sel.Sel.Name)
+		}
+	}
+	var objID int
+	if mc.needsInst {
+		inst, ok := e.instByKey[mc.key]
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: method instantiation %s not enumerated (internal error)", mc.key)
+		}
+		objID = inst.instID
+	} else {
+		objID = mc.decl.funcID
+	}
+	return e.node("methodvalue", sel, map[string]any{"obj": objID, "recv": recv, "type": t}), nil
 }
 
 // exportMethodCall exports a method call x.M(args) (M6, WS H). The receiver
@@ -8716,11 +8817,13 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 		return nil, scopeErrorf("selector %q is not a field selection (WS D)", x.Sel.Name)
 	}
 	// M6 (WS H): a selector denoting a method in value position is a
-	// method value (bound receiver) — not supported (WS H follow-up).
-	// Method CALLS are handled by exportMethodCall.
+	// method value (bound receiver) — exported as a "methodvalue" node
+	// (P3-M9, WS H follow-up). Method CALLS are handled by
+	// exportMethodCall.
 	// P3-M3 (WS D, ADR-0003): method values and method expressions on
-	// interface receivers keep failing, but with a named P3-M3 scope
-	// error (greppable re-test trigger) instead of the WS H one.
+	// interface receivers keep failing with a named P3-M3 scope error
+	// (greppable re-test trigger): dynamic dispatch deferred to call
+	// time is out of scope.
 	if _, ok := sel.Obj().(*types.Func); ok {
 		var rt types.Type
 		if sel.Kind() == types.MethodExpr {
@@ -8736,7 +8839,10 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 			return nil, scopeErrorf("%s %s is not supported: %s via interface (P3-M3 scope)",
 				what, x.Sel.Name, what)
 		}
-		return nil, scopeErrorf("method value %s (bound receiver) is not supported in frontend/v1 scope (WS H)", x.Sel.Name)
+		if sel.Kind() == types.MethodExpr {
+			return nil, scopeErrorf("method expression %s is not supported: method expression on concrete type (P3-M3 scope)", x.Sel.Name)
+		}
+		return e.methodValueNode(x, sel, xe, t)
 	}
 	idx := sel.Index()
 	path := make([]any, len(idx))
