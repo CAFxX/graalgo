@@ -6666,11 +6666,28 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 			// the implicit address-of for method calls). & on anything
 			// else stays a WS D scope error.
 			if isAddressable(x.X, e.info) {
-				xn, err := e.exportExpr(x.X)
+				tid, err := e.exprType(x)
 				if err != nil {
 					return nil, err
 				}
-				tid, err := e.exprType(x)
+				// P3-M9: &arr[i] needs an element pointer (writes through
+				// *p must update arr[i], not a copy). Emit array/index
+				// separately; NodeFactory builds a GoPointer that
+				// reads/writes the array slot.
+				if idx, ok := x.X.(*ast.IndexExpr); ok {
+					arrN, err := e.exportExpr(idx.X)
+					if err != nil {
+						return nil, err
+					}
+					idxN, err := e.exportExpr(idx.Index)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("addrof", x, map[string]any{
+						"array": arrN, "index": idxN, "type": tid,
+					}), nil
+				}
+				xn, err := e.exportExpr(x.X)
 				if err != nil {
 					return nil, err
 				}
@@ -7405,7 +7422,11 @@ func (e *exporter) implicitAddrOf(sel *ast.SelectorExpr, recv **Node, recvType *
 	// Check if it's a pointer type.
 	declPtr, ok := declRecv.(*types.Pointer)
 	if !ok {
-		return false
+		// P3-M9: implicit deref for method calls (WS D). If the method's
+		// declared receiver is T (value) but the receiver expression has
+		// type *T (pointer), dereference implicitly per Go spec
+		// (p.M() → (*p).M()).
+		return e.implicitDeref(sel, recv, recvType, declRecv, subst)
 	}
 	// Check if recvType matches the pointer's element type.
 	declElemStr := substString(declPtr.Elem(), subst)
@@ -7430,6 +7451,35 @@ func (e *exporter) implicitAddrOf(sel *ast.SelectorExpr, recv **Node, recvType *
 	return true
 }
 
+// implicitDeref implements Go's implicit dereference for method calls
+// (P3-M9, WS D). If the method's declared receiver is T (value type) but
+// the receiver expression has type *T (pointer), wrap in a "deref" wire
+// node (p.M() → (*p).M()). Returns true if applied.
+func (e *exporter) implicitDeref(sel *ast.SelectorExpr, recv **Node, recvType *types.Type, declRecv types.Type, subst *typeSubst) bool {
+	// recvType must be a pointer type.
+	recvPtr, ok := (*recvType).(*types.Pointer)
+	if !ok {
+		return false
+	}
+	// Check if declRecv matches the pointer's element type.
+	recvElemStr := substString(recvPtr.Elem(), e.subst)
+	declStr := substString(declRecv, subst)
+	if recvElemStr != declStr {
+		return false
+	}
+	// Wrap in deref node.
+	tid, err := e.typeID(declRecv)
+	if err != nil {
+		return false
+	}
+	*recv = e.node("deref", sel.X, map[string]any{
+		"x":    *recv,
+		"type": tid,
+	})
+	*recvType = declRecv
+	return true
+}
+
 // isAddressable reports whether an expression is addressable per Go spec.
 // Addressable expressions: variables, pointer indirections, slice indexing,
 // field selectors of addressable values, and composite literals (via &T{}).
@@ -7446,9 +7496,12 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 		// x.f is addressable if x is addressable.
 		return isAddressable(x.X, info)
 	case *ast.IndexExpr:
-		// s[i] is addressable if s is a slice (not a map or string).
+		// s[i] is addressable if s is a slice or array (not a map or
+		// string). P3-M9: arrays were missing — &powers[i] on [1<<n]nat
+		// failed (math/big karatsuba).
 		if tv, ok := info.Types[x.X]; ok && tv.Type != nil {
-			if _, isSlice := tv.Type.Underlying().(*types.Slice); isSlice {
+			switch tv.Type.Underlying().(type) {
+			case *types.Slice, *types.Array:
 				return true
 			}
 		}

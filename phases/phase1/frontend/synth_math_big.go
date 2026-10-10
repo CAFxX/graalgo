@@ -3009,7 +3009,8 @@ const syntheticMathBigSource = (
 "// [fmt.Scan] for floating point values, which are:\n" +
 "// 'b' (binary), 'e', 'E', 'f', 'F', 'g' and 'G'.\n" +
 "// Scan doesn't handle ±Inf.\n" +
-"func (z *Float) Scan(s fmt.ScanState, ch rune) error {\n" +
+"func (z *Float) Scan(s fmt.ScanState, ch rune) error {\n" +"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
+
 "	s.SkipSpace()\n" +
 "	_, _, err := z.scan(byteReader{s}, 0)\n" +
 "	return err\n" +
@@ -5437,11 +5438,7 @@ const syntheticMathBigSource = (
 "}\n" +
 "\n" +
 "func __mrbyteReader_ReadByte(r byteReader, ) __mrbyteReader_ReadBytePair {\n" +
-"	ch, size, err := r.ReadRune()\n" +
-"	if size != 1 && err == nil {\n" +
-"		err = fmt.Errorf(\"invalid rune %#U\", ch)\n" +
-"	}\n" +
-"	return __mrbyteReader_ReadBytePair{byte(ch),  err}\n" +
+"	panic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
 "}\n" +
 "\n" +
 "func (r byteReader) ReadByte() (byte, error) {\n" +
@@ -5449,7 +5446,7 @@ const syntheticMathBigSource = (
 "}\n" +
 "\n" +
 "func (r byteReader) ReadRune() (rune, int, error) {\n" +
-"\treturn r.ScanState.ReadRune()\n" +
+"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
 "}\n" +
 "\n" +
 "func (r byteReader) UnreadRune() error {\n" +
@@ -5461,7 +5458,7 @@ const syntheticMathBigSource = (
 "}\n" +
 "\n" +
 "func (r byteReader) Token(skipSpace bool, f func(rune) bool) ([]byte, error) {\n" +
-"\treturn r.ScanState.Token(skipSpace, f)\n" +
+"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
 "}\n" +
 "\n" +
 "func (r byteReader) Width() (int, bool) {\n" +
@@ -5481,7 +5478,8 @@ const syntheticMathBigSource = (
 "// Scan is a support routine for [fmt.Scanner]; it sets z to the value of\n" +
 "// the scanned number. It accepts the formats 'b' (binary), 'o' (octal),\n" +
 "// 'd' (decimal), 'x' (lowercase hexadecimal), and 'X' (uppercase hexadecimal).\n" +
-"func (z *Int) Scan(s fmt.ScanState, ch rune) error {\n" +
+"func (z *Int) Scan(s fmt.ScanState, ch rune) error {\n" +"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
+
 "	s.SkipSpace() // skip leading space characters\n" +
 "	base := 0\n" +
 "	switch ch {\n" +
@@ -9572,8 +9570,13 @@ const syntheticMathBigSource = (
 "\n" +
 "// Scan is a support routine for fmt.Scanner. It accepts the formats\n" +
 "// 'e', 'E', 'f', 'F', 'g', 'G', and 'v'. All formats are equivalent.\n" +
-"func (z *Rat) Scan(s fmt.ScanState, ch rune) error {\n" +
-"	tok, err := s.Token(true, ratTok)\n" +
+"func (z *Rat) Scan(s fmt.ScanState, ch rune) error {\n" +"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
+
+"\tvar tok []byte\n" +
+"\tvar err error\n" +
+"\t_ = tok\n" +
+"\t_ = err\n" +
+"\tpanic(\"math/big: Scan not supported in frontend/v1 scope (WS D)\")\n" +
 "	if err != nil {\n" +
 "		return err\n" +
 "	}\n" +

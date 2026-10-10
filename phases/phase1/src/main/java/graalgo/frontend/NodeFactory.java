@@ -2657,6 +2657,26 @@ public final class NodeFactory {
     private GoExprNode buildAddrOf(Json.Object node, BuildCtx ctx) {
         Json.Object f = fieldsOf(node, "addrof");
         String path = "addrof.fields";
+        // P3-M9 (WS D): &arr[i] emits array/index fields (element pointer).
+        // The array may be a GoSlice (for slices) or a Java array (for arrays).
+        if (f.opt("array") != null) {
+            GoExprNode arrNode = buildExpr(f.object("array", path), ctx);
+            GoExprNode idxNode = buildExpr(f.object("index", path), ctx);
+            return new GoExprNode(GoKind.POINTER) {
+                @Override
+                public Object executeObject(VirtualFrame frame) {
+                    Object arr = arrNode.executeObject(frame);
+                    int idx = (int) Boxing.toLong(GoKind.INT, idxNode, frame);
+                    // Unwrap GoSlice to the underlying Java array.
+                    Object javaArray = arr;
+                    if (arr instanceof graalgo.values.GoSlice gs) {
+                        javaArray = gs.array();
+                        idx += gs.offset();
+                    }
+                    return new GoPointer(javaArray, idx);
+                }
+            };
+        }
         GoExprNode x = buildExpr(f.object("x", path), ctx);
         GoKind xKind = x.kind();
         return new GoExprNode(GoKind.POINTER) {
