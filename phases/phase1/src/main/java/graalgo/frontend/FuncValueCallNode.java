@@ -133,6 +133,11 @@ public final class FuncValueCallNode extends GoExprNode {
     }
 
     @Override
+    public float executeFloat(VirtualFrame frame) {
+        return ((Number) invoke(frame)).floatValue();
+    }
+
+    @Override
     public double executeDouble(VirtualFrame frame) {
         return ((Number) invoke(frame)).doubleValue();
     }
