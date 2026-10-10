@@ -31,7 +31,8 @@ func (r revInts) Swap(i, j int)      { r.xs[i], r.xs[j] = r.xs[j], r.xs[i] }
 func main() {
 	err1 := errors.New("boom")
 	err2 := errors.New("bang")
-	// NB: v1 has no variadic argument packing (WS D) — spread explicitly.
+	// P3-M9: variadic argument packing is now implemented; the spread
+	// form is used here to also cover that path.
 	errs := []error{err1, nil, err2}
 	joined := errors.Join(errs...)
 	println(joined.Error())

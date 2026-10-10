@@ -2444,20 +2444,72 @@ func scopeErrorf(format string, args ...any) error {
 	return fmt.Errorf("gofrontend: "+format, args...)
 }
 
-// checkVariadicCall rejects non-spread calls to variadic signatures.
-// Remediation (R1 P1-1, R2 P1-2): the spread form f(s...) passes the slice
-// directly and is implemented; zero/single/multi-arg calls need argument
-// packing adaptation that v1 does not implement. Letting them through
-// produced internal ArrayIndexOutOfBoundsException/ClassCastException at
-// runtime instead of the clean scope error frontend-v1.md §7 requires.
-// (The fmt overlay handles its own variadic builtins and is not routed
-// through this check.)
+// checkVariadicCall is deprecated: non-spread variadic calls are now
+// handled via packVariadicArgs (P3-M9). Kept for backward compatibility
+// with tests that assert the old scope error; new code should use
+// exportCallArgsPacked instead.
 func checkVariadicCall(c *ast.CallExpr, sig *types.Signature) error {
 	if sig != nil && sig.Variadic() && !c.Ellipsis.IsValid() {
 		return scopeErrorf("call to variadic function without ... spread" +
 			" (argument packing) is not supported in frontend/v1 scope (WS D)")
 	}
 	return nil
+}
+
+// packVariadicArgs packs trailing arguments into a slice literal for a
+// non-spread variadic call (P3-M9, WS D).
+//
+// For func f(a int, b ...string) called as f(1, "x", "y"):
+// - sig.Params() = [a int, b []string] (variadic param is []string in go/types)
+// - args = [1, "x", "y"] (already-exported nodes)
+// - Returns [1, []string{"x", "y"}] where the slice is a complit node.
+//
+// The spread form f(s...) passes the slice directly and needs no packing.
+// (The fmt overlay handles its own variadic builtins and is not routed
+// through this function.)
+func (e *exporter) packVariadicArgs(c *ast.CallExpr, sig *types.Signature, args []*Node) ([]*Node, error) {
+	if sig == nil || !sig.Variadic() || c.Ellipsis.IsValid() {
+		return args, nil
+	}
+	n := sig.Params().Len()
+	if n == 0 {
+		return nil, fmt.Errorf("gofrontend: variadic signature with no params (exporter bug)")
+	}
+	// The last param is the []T slice type in go/types.
+	sliceType := sig.Params().At(n - 1).Type()
+	sliceTypeID, err := e.typeID(sliceType)
+	if err != nil {
+		return nil, err
+	}
+	// Fixed args are the first n-1; the rest are variadic and get packed.
+	numFixed := n - 1
+	if len(args) < numFixed {
+		return nil, fmt.Errorf("gofrontend: not enough arguments for variadic call (exporter bug)")
+	}
+	variadicNodes := args[numFixed:]
+	// Create a composite literal []T{...} with the variadic args as values.
+	// The "values" field holds []*Node which serializes to JSON array.
+	packNode := e.node("complit", c, map[string]any{
+		"type":   sliceTypeID,
+		"keyed":  false,
+		"values": variadicNodes,
+	})
+	packed := make([]*Node, 0, numFixed+1)
+	packed = append(packed, args[:numFixed]...)
+	packed = append(packed, packNode)
+	return packed, nil
+}
+
+// exportCallArgsPacked exports call arguments, packing trailing args into
+// a slice literal for non-spread variadic calls (P3-M9, WS D).
+// If sig is nil or not variadic (or the call uses ... spread), this is
+// equivalent to exportCallArgs.
+func (e *exporter) exportCallArgsPacked(c *ast.CallExpr, sig *types.Signature) ([]*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.packVariadicArgs(c, sig, args)
 }
 
 // ---------------------------------------------------------------------------
@@ -6986,14 +7038,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
+		var litSig *types.Signature
 		if tv, ok := e.info.Types[lit]; ok && tv.Type != nil {
 			if sig, ok := tv.Type.(*types.Signature); ok {
-				if err := checkVariadicCall(c, sig); err != nil {
-					return nil, err
-				}
+				litSig = sig
 			}
 		}
-		args, err := e.exportCallArgs(c)
+		args, err := e.exportCallArgsPacked(c, litSig)
 		if err != nil {
 			return nil, err
 		}
@@ -7016,14 +7067,11 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// Export the fun expression and emit a plain call node
 			// (mirrors the func-valued variable branch below).
 			if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
-				if err := checkVariadicCall(c, sig); err != nil {
-					return nil, err
-				}
 				fun, err := e.exportExpr(c.Fun)
 				if err != nil {
 					return nil, err
 				}
-				args, err := e.exportCallArgs(c)
+				args, err := e.exportCallArgsPacked(c, sig)
 				if err != nil {
 					return nil, err
 				}
@@ -7082,14 +7130,11 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			return nil, scopeErrorf("call of non-function variable %s is not supported in frontend/v1 scope (WS D)",
 				funIdent.Name)
 		}
-		if err := checkVariadicCall(c, sig); err != nil {
-			return nil, err
-		}
 		fun, err := e.exportIdent(funIdent)
 		if err != nil {
 			return nil, err
 		}
-		args, err := e.exportCallArgs(c)
+		args, err := e.exportCallArgsPacked(c, sig)
 		if err != nil {
 			return nil, err
 		}
@@ -7299,10 +7344,9 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
 	}
+	var fnSig *types.Signature
 	if sig, ok := fn.Type().(*types.Signature); ok {
-		if err := checkVariadicCall(c, sig); err != nil {
-			return nil, err
-		}
+		fnSig = sig
 	}
 	var objID, sigID int
 	if fi.isTemplate {
@@ -7329,7 +7373,7 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	fun := e.node("ident", funIdent, map[string]any{
 		"name": fn.Name(), "obj": objID, "type": sigID,
 	})
-	args, err := e.exportCallArgs(c)
+	args, err := e.exportCallArgsPacked(c, fnSig)
 	if err != nil {
 		return nil, err
 	}
@@ -7438,11 +7482,10 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if mc.ifaceFallback != nil {
 		return e.exportIfaceFallbackCall(c, sel, selection, recv, mc.ifaceFallback)
 	}
-	// Remediation (R1 P1-1, R2 P1-2): same variadic fail-fast as direct
-	// calls; the spread form passes the slice directly and works.
-	if err := checkVariadicCall(c, mc.decl.sig); err != nil {
-		return nil, err
-	}
+	// P3-M9: variadic method calls pack trailing args into a slice literal
+	// (the spread form passes the slice directly and needs no packing).
+	// The packing is applied at the exportCallArgs site below via
+	// exportCallArgsPacked.
 	declRecv := mc.decl.sig.Recv().Type()
 	xt, ok := e.info.Types[sel.X]
 	if !ok || xt.Type == nil {
@@ -7609,7 +7652,16 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	if fun.Kind == "ifacemethod" {
 		return fun, nil
 	}
-	args, err := e.exportCallArgs(c)
+	// P3-M9: pack variadic method args. The signature's Params() excludes
+	// the receiver (it's in Recv()), matching c.Args which excludes the
+	// receiver expression (sel.X is exported separately above).
+	var methodSig *types.Signature
+	if fn, ok := selection.Obj().(*types.Func); ok {
+		if sig, ok := fn.Type().(*types.Signature); ok {
+			methodSig = sig
+		}
+	}
+	args, err := e.exportCallArgsPacked(c, methodSig)
 	if err != nil {
 		return nil, err
 	}
@@ -8220,12 +8272,10 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 				mname, sig.Results().Len())
 		}
 	}
-	// Remediation (R1 P1-1, R2 P1-2): same variadic fail-fast as direct
-	// and concrete-method calls; the spread form passes the slice
-	// directly and works.
-	if err := checkVariadicCall(c, sig); err != nil {
-		return nil, err
-	}
+	// P3-M9: variadic interface method calls pack trailing args into a
+	// slice literal (the spread form passes the slice directly).
+	// The packing is applied at the exportCallArgs site below via
+	// exportCallArgsPacked.
 	// ADR-0003 wire: "iface" is the interface type-table id, not the id
 	// of a named type whose underlying is the interface. The dispatch
 	// site's caller has already established an interface underlying;
@@ -8269,7 +8319,8 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	if err != nil {
 		return nil, err
 	}
-	args, err := e.exportCallArgs(c)
+	// P3-M9: pack variadic interface method args.
+	args, err := e.exportCallArgsPacked(c, sig)
 	if err != nil {
 		return nil, err
 	}
@@ -8324,9 +8375,8 @@ func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExp
 				mname, sig.Results().Len())
 		}
 	}
-	if err := checkVariadicCall(c, sig); err != nil {
-		return nil, err
-	}
+	// P3-M9: variadic type-param method calls pack trailing args.
+	// The packing is applied at the exportCallArgs site below.
 	// The constraint must have an interface underlying (validated by
 	// resolveMethodCall, but re-check here for safety).
 	ifaceType := types.Unalias(constraint)
@@ -8349,7 +8399,8 @@ func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExp
 	if err != nil {
 		return nil, err
 	}
-	args, err := e.exportCallArgs(c)
+	// P3-M9: pack variadic type-param method args.
+	args, err := e.exportCallArgsPacked(c, sig)
 	if err != nil {
 		return nil, err
 	}
