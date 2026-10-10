@@ -107,7 +107,7 @@ type __qpReaderReadPair struct {
 	err error
 }
 
-func __qpReaderRead(r *Reader) (p []byte) __qpReaderReadPair {
+func __qpReaderRead(r *Reader, p []byte) __qpReaderReadPair {
 	// Deviations from RFC 2045:
 	// 1. in addition to "=\r\n", "=\n" is also treated as soft line break.
 	// 2. it will pass through a '\r' or '\n' not preceded by '=', consistent
@@ -217,7 +217,7 @@ type __qpWriterWritePair struct {
 	err error
 }
 
-func __qpWriterWrite(w *Writer) (p []byte) __qpWriterWritePair {
+func __qpWriterWrite(w *Writer, p []byte) __qpWriterWritePair {
 	for i, b := range p {
 		switch {
 		// Simple writes are done in batch.

@@ -149,7 +149,7 @@ type __mpstickyErrorReaderReadPair struct {
 	_ error
 }
 
-func __mpstickyErrorReaderRead(r *stickyErrorReader) (p []byte) __mpstickyErrorReaderReadPair {
+func __mpstickyErrorReaderRead(r *stickyErrorReader, p []byte) __mpstickyErrorReaderReadPair {
 	if r.err != nil {
 		return __mpstickyErrorReaderReadPair{n: 0, _: r.err}
 	}
@@ -217,7 +217,7 @@ type __mpPartReadPair struct {
 	err error
 }
 
-func __mpPartRead(p *Part) (d []byte) __mpPartReadPair {
+func __mpPartRead(p *Part, d []byte) __mpPartReadPair {
 	return __mpPartReadPair{p.r.Read(d)}
 }
 
@@ -238,7 +238,7 @@ type __mppartReaderReadPair struct {
 	f1 error
 }
 
-func __mppartReaderRead(pr partReader) (d []byte) __mppartReaderReadPair {
+func __mppartReaderRead(pr partReader, d []byte) __mppartReaderReadPair {
 	p := pr.p
 	br := p.mr.bufReader
 
@@ -443,7 +443,7 @@ type __mpReaderNextPartPair struct {
 	f1 error
 }
 
-func __mpReaderNextPart(r *Reader) () __mpReaderNextPartPair {
+func __mpReaderNextPart(r *Reader) __mpReaderNextPartPair {
 	return __mpReaderNextPartPair{r.nextPart(false, maxMIMEHeaderSize, maxMIMEHeaders())}
 }
 
@@ -463,7 +463,7 @@ type __mpReaderNextRawPartPair struct {
 	f1 error
 }
 
-func __mpReaderNextRawPart(r *Reader) () __mpReaderNextRawPartPair {
+func __mpReaderNextRawPart(r *Reader) __mpReaderNextRawPartPair {
 	return __mpReaderNextRawPartPair{r.nextPart(true, maxMIMEHeaderSize, maxMIMEHeaders())}
 }
 
@@ -478,7 +478,7 @@ type __mpReadernextPartPair struct {
 	f1 error
 }
 
-func __mpReadernextPart(r *Reader) (rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) __mpReadernextPartPair {
+func __mpReadernextPart(r *Reader, rawPart bool, maxMIMEHeaderSize, maxMIMEHeaders int64) __mpReadernextPartPair {
 	if r.currentPart != nil {
 		r.currentPart.Close()
 	}
@@ -737,7 +737,7 @@ type __mpWriterCreatePartPair struct {
 	f1 error
 }
 
-func __mpWriterCreatePart(w *Writer) (header textproto.MIMEHeader) __mpWriterCreatePartPair {
+func __mpWriterCreatePart(w *Writer, header textproto.MIMEHeader) __mpWriterCreatePartPair {
 	if w.lastpart != nil {
 		if err := w.lastpart.close(); err != nil {
 			return __mpWriterCreatePartPair{f0: nil, f1: err}
@@ -800,7 +800,7 @@ type __mpWriterCreateFormFilePair struct {
 	f1 error
 }
 
-func __mpWriterCreateFormFile(w *Writer) (fieldname, filename string) __mpWriterCreateFormFilePair {
+func __mpWriterCreateFormFile(w *Writer, fieldname, filename string) __mpWriterCreateFormFilePair {
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition", FileContentDisposition(fieldname, filename))
 	h.Set("Content-Type", "application/octet-stream")
@@ -820,7 +820,7 @@ type __mpWriterCreateFormFieldPair struct {
 	f1 error
 }
 
-func __mpWriterCreateFormField(w *Writer) (fieldname string) __mpWriterCreateFormFieldPair {
+func __mpWriterCreateFormField(w *Writer, fieldname string) __mpWriterCreateFormFieldPair {
 	h := make(textproto.MIMEHeader)
 	h.Set("Content-Disposition",
 		fmt.Sprintf('form-data; name="%s"', escapeQuotes(fieldname)))
@@ -887,7 +887,7 @@ type __mppartWritePair struct {
 	err error
 }
 
-func __mppartWrite(p *part) (d []byte) __mppartWritePair {
+func __mppartWrite(p *part, d []byte) __mppartWritePair {
 	if p.closed {
 		return __mppartWritePair{n: 0, err: errors.New("multipart: can't write to finished part")}
 	}

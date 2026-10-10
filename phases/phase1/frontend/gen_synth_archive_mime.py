@@ -471,12 +471,18 @@ def process_package(pkg_path, cfg):
                 new_src_parts.append(pair_struct)
                 
                 # Generate helper with real body (rewritten returns)
-                # Build helper signature
-                recv_str = f"({fn['recv_var']} *{fn['recv_type']}) " if fn['recv_type'] else ""
-                if fn['recv_type'] and not fn['recv_ptr']:
-                    recv_str = f"({fn['recv_var']} {fn['recv_type']}) "
+                # Build helper signature: receiver becomes first param (not a method)
+                if fn['recv_type']:
+                    ptr = "*" if fn['recv_ptr'] else ""
+                    recv_param = f"{fn['recv_var']} {ptr}{fn['recv_type']}"
+                    if fn['params'].strip():
+                        all_params = f"{recv_param}, {fn['params']}"
+                    else:
+                        all_params = recv_param
+                else:
+                    all_params = fn['params']
                 
-                helper_sig = f"func {helper_name}{recv_str}({fn['params']}) {pair_name} {{"
+                helper_sig = f"func {helper_name}({all_params}) {pair_name} {{"
                 # Rewrite body returns
                 rewritten_body = rewrite_body_returns(fn['body'], pair_name, list(zip(field_names, [r[1] for r in results])))
                 helper_decl = helper_sig + rewritten_body + "}\n\n"

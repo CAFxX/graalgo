@@ -233,7 +233,7 @@ type __zipFileDataOffsetPair struct {
 	err error
 }
 
-func __zipFileDataOffset(f *File) () __zipFileDataOffsetPair {
+func __zipFileDataOffset(f *File) __zipFileDataOffsetPair {
 	bodyOffset, err := f.findBodyOffset()
 	if err != nil {
 		return __zipFileDataOffsetPair{offset, err}
@@ -254,7 +254,7 @@ type __zipFileOpenPair struct {
 	f1 error
 }
 
-func __zipFileOpen(f *File) () __zipFileOpenPair {
+func __zipFileOpen(f *File) __zipFileOpenPair {
 	bodyOffset, err := f.findBodyOffset()
 	if err != nil {
 		return __zipFileOpenPair{f0: nil, f1: err}
@@ -1036,7 +1036,7 @@ type __zipFileOpenRawPair struct {
 	f1 error
 }
 
-func __zipFileOpenRaw(f *File) () __zipFileOpenRawPair {
+func __zipFileOpenRaw(f *File) __zipFileOpenRawPair {
 	bodyOffset, err := f.findBodyOffset()
 	if err != nil {
 		return __zipFileOpenRawPair{f0: nil, f1: err}
@@ -1060,7 +1060,7 @@ type __zipdirReaderReadPair struct {
 	f1 error
 }
 
-func __zipdirReaderRead(r *dirReader) ([]byte) __zipdirReaderReadPair {
+func __zipdirReaderRead(r *dirReader, []byte) __zipdirReaderReadPair {
 	return __zipdirReaderReadPair{f0: 0, f1: r.err}
 }
 
@@ -1090,7 +1090,7 @@ type __zipchecksumReaderStatPair struct {
 	f1 error
 }
 
-func __zipchecksumReaderStat(r *checksumReader) () __zipchecksumReaderStatPair {
+func __zipchecksumReaderStat(r *checksumReader) __zipchecksumReaderStatPair {
 	return __zipchecksumReaderStatPair{f0: headerFileInfo{&r.f.FileHeader}, f1: nil}
 }
 
@@ -1105,7 +1105,7 @@ type __zipchecksumReaderReadPair struct {
 	err error
 }
 
-func __zipchecksumReaderRead(r *checksumReader) (b []byte) __zipchecksumReaderReadPair {
+func __zipchecksumReaderRead(r *checksumReader, b []byte) __zipchecksumReaderReadPair {
 	if r.err != nil {
 		return __zipchecksumReaderReadPair{n: 0, err: r.err}
 	}
@@ -1810,7 +1810,7 @@ type __zipchecksumReaderClosePair struct {
 	f1 error
 }
 
-func __zipchecksumReaderClose(r *checksumReader) () error { return r.rc.Close() }
+func __zipchecksumReaderClose(r *checksumReader, ) error { return r.rc.Close() }
 
 // findBodyOffset does the minimum work to verify the file has a header
 // and returns the file body offset.
@@ -2749,7 +2749,7 @@ type __zipfileListEntrystatPair struct {
 	f1 error
 }
 
-func __zipfileListEntrystat(f *fileListEntry) () __zipfileListEntrystatPair {
+func __zipfileListEntrystat(f *fileListEntry) __zipfileListEntrystatPair {
 	if f.isDup {
 		return __zipfileListEntrystatPair{f0: nil, f1: errors.New(f.name + ": duplicate entries in zip file")}
 	}
@@ -2906,7 +2906,7 @@ type __zipReaderOpenPair struct {
 	f1 error
 }
 
-func __zipReaderOpen(r *Reader) (name string) __zipReaderOpenPair {
+func __zipReaderOpen(r *Reader, name string) __zipReaderOpenPair {
 	r.initFileList()
 
 	if !fs.ValidPath(name) {
@@ -3014,7 +3014,7 @@ type __zipopenDirClosePair struct {
 	f1 error
 }
 
-func __zipopenDirClose(d *openDir) () error               { return nil }
+func __zipopenDirClose(d *openDir, ) error               { return nil }
 func (d *openDir) Stat() (fs.FileInfo, error) { return d.e.stat() }
 
 func (d *openDir) Read([]byte) __zipopenDirClosePair { return __zipopenDirClosePair{nil }
@@ -3038,7 +3038,7 @@ type __zipopenDirReadDirPair struct {
 	f1 error
 }
 
-func __zipopenDirReadDir(d *openDir) (count int) __zipopenDirReadDirPair {
+func __zipopenDirReadDir(d *openDir, count int) __zipopenDirReadDirPair {
 	n := len(d.files) - d.offset
 	if count > 0 && n > count {
 		n = count
@@ -3341,7 +3341,7 @@ type __zipWriterCreatePair struct {
 	f1 error
 }
 
-func __zipWriterCreate(w *Writer) (name string) __zipWriterCreatePair {
+func __zipWriterCreate(w *Writer, name string) __zipWriterCreatePair {
 	header := &FileHeader{
 		Name:   name,
 		Method: Deflate,
@@ -3886,7 +3886,7 @@ type __zipWriterCreateHeaderPair struct {
 	f1 error
 }
 
-func __zipWriterCreateHeader(w *Writer) (fh *FileHeader) __zipWriterCreateHeaderPair {
+func __zipWriterCreateHeader(w *Writer, fh *FileHeader) __zipWriterCreateHeaderPair {
 	if err := w.prepare(fh); err != nil {
 		return __zipWriterCreateHeaderPair{f0: nil, f1: err}
 	}
@@ -4400,7 +4400,7 @@ type __zipWriterCreateRawPair struct {
 	f1 error
 }
 
-func __zipWriterCreateRaw(w *Writer) (fh *FileHeader) __zipWriterCreateRawPair {
+func __zipWriterCreateRaw(w *Writer, fh *FileHeader) __zipWriterCreateRawPair {
 	if err := w.prepare(fh); err != nil {
 		return __zipWriterCreateRawPair{f0: nil, f1: err}
 	}
@@ -4549,7 +4549,7 @@ type __zipfileWriterWritePair struct {
 	f1 error
 }
 
-func __zipfileWriterWrite(w *fileWriter) (p []byte) __zipfileWriterWritePair {
+func __zipfileWriterWrite(w *fileWriter, p []byte) __zipfileWriterWritePair {
 	if w.closed {
 		return __zipfileWriterWritePair{f0: 0, f1: errors.New("zip: write to closed file")}
 	}
@@ -4674,7 +4674,7 @@ type __zipcountWriterWritePair struct {
 	f1 error
 }
 
-func __zipcountWriterWrite(w *countWriter) (p []byte) __zipcountWriterWritePair {
+func __zipcountWriterWrite(w *countWriter, p []byte) __zipcountWriterWritePair {
 	n, err := w.w.Write(p)
 	w.count += int64(n)
 	return __zipcountWriterWritePair{f0: n, f1: err}
@@ -5233,7 +5233,7 @@ type __zippooledFlateWriterWritePair struct {
 	err error
 }
 
-func __zippooledFlateWriterWrite(w *pooledFlateWriter) (p []byte) __zippooledFlateWriterWritePair {
+func __zippooledFlateWriterWrite(w *pooledFlateWriter, p []byte) __zippooledFlateWriterWritePair {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.fw == nil {
@@ -5286,7 +5286,7 @@ type __zippooledFlateReaderReadPair struct {
 	err error
 }
 
-func __zippooledFlateReaderRead(r *pooledFlateReader) (p []byte) __zippooledFlateReaderReadPair {
+func __zippooledFlateReaderRead(r *pooledFlateReader, p []byte) __zippooledFlateReaderReadPair {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.fr == nil {

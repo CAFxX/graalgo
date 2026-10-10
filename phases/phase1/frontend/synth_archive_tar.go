@@ -390,7 +390,7 @@ type __tarHeaderallowedFormatsPair struct {
 	err error
 }
 
-func __tarHeaderallowedFormats(h Header) () __tarHeaderallowedFormatsPair {
+func __tarHeaderallowedFormats(h Header) __tarHeaderallowedFormatsPair {
 	format = FormatUSTAR | FormatPAX | FormatGNU
 	paxHdrs = make(map[string]string)
 
@@ -1078,7 +1078,7 @@ type __tarblockcomputeChecksumPair struct {
 	signed int64
 }
 
-func __tarblockcomputeChecksum(b *block) () __tarblockcomputeChecksumPair {
+func __tarblockcomputeChecksum(b *block) __tarblockcomputeChecksumPair {
 	for i, c := range b {
 		if 148 <= i && i < 156 {
 			c = ' ' // Treat the checksum field itself as all spaces.
@@ -1216,7 +1216,7 @@ type __tarReaderNextPair struct {
 	f1 error
 }
 
-func __tarReaderNext(tr *Reader) () __tarReaderNextPair {
+func __tarReaderNext(tr *Reader) __tarReaderNextPair {
 	if tr.err != nil {
 		return __tarReaderNextPair{f0: nil, f1: tr.err}
 	}
@@ -1242,7 +1242,7 @@ type __tarReadernextPair struct {
 	f1 error
 }
 
-func __tarReadernext(tr *Reader) () __tarReadernextPair {
+func __tarReadernext(tr *Reader) __tarReadernextPair {
 	var paxHdrs map[string]string
 	var gnuLongName, gnuLongLink string
 
@@ -1407,7 +1407,7 @@ type __tarReaderreadGNUSparsePAXHeadersPair struct {
 	f1 error
 }
 
-func __tarReaderreadGNUSparsePAXHeaders(tr *Reader) (hdr *Header) __tarReaderreadGNUSparsePAXHeadersPair {
+func __tarReaderreadGNUSparsePAXHeaders(tr *Reader, hdr *Header) __tarReaderreadGNUSparsePAXHeadersPair {
 	// Identify the version of GNU headers.
 	var is1x0 bool
 	major, minor := hdr.PAXRecords[paxGNUSparseMajor], hdr.PAXRecords[paxGNUSparseMinor]
@@ -1568,7 +1568,7 @@ type __tarReaderreadHeaderPair struct {
 	f2 error
 }
 
-func __tarReaderreadHeader(tr *Reader) () __tarReaderreadHeaderPair {
+func __tarReaderreadHeader(tr *Reader) __tarReaderreadHeaderPair {
 	// Two blocks of zero bytes marks the end of the archive.
 	if _, err := io.ReadFull(tr.r, tr.blk[:]); err != nil {
 		return __tarReaderreadHeaderPair{f0: nil, f1: nil, f2: err}// EOF is okay here; exactly 0 bytes read
@@ -1701,7 +1701,7 @@ type __tarReaderreadOldGNUSparseMapPair struct {
 	f1 error
 }
 
-func __tarReaderreadOldGNUSparseMap(tr *Reader) (hdr *Header, blk *block) __tarReaderreadOldGNUSparseMapPair {
+func __tarReaderreadOldGNUSparseMap(tr *Reader, hdr *Header, blk *block) __tarReaderreadOldGNUSparseMapPair {
 	// Make sure that the input format is GNU.
 	// Unfortunately, the STAR format also has a sparse header format that uses
 	// the same type flag but has a completely different layout.
@@ -2296,7 +2296,7 @@ type __tarReaderReadPair struct {
 	f1 error
 }
 
-func __tarReaderRead(tr *Reader) (b []byte) __tarReaderReadPair {
+func __tarReaderRead(tr *Reader, b []byte) __tarReaderReadPair {
 	if tr.err != nil {
 		return __tarReaderReadPair{f0: 0, f1: tr.err}
 	}
@@ -2328,7 +2328,7 @@ type __tarReaderwriteToPair struct {
 	f1 error
 }
 
-func __tarReaderwriteTo(tr *Reader) (w io.Writer) __tarReaderwriteToPair {
+func __tarReaderwriteTo(tr *Reader, w io.Writer) __tarReaderwriteToPair {
 	if tr.err != nil {
 		return __tarReaderwriteToPair{f0: 0, f1: tr.err}
 	}
@@ -2356,7 +2356,7 @@ type __tarregFileReaderReadPair struct {
 	err error
 }
 
-func __tarregFileReaderRead(fr *regFileReader) (b []byte) __tarregFileReaderReadPair {
+func __tarregFileReaderRead(fr *regFileReader, b []byte) __tarregFileReaderReadPair {
 	if int64(len(b)) > fr.nb {
 		b = b[:fr.nb]
 	}
@@ -2385,7 +2385,7 @@ type __tarregFileReaderWriteToPair struct {
 	f1 error
 }
 
-func __tarregFileReaderWriteTo(fr *regFileReader) (w io.Writer) __tarregFileReaderWriteToPair {
+func __tarregFileReaderWriteTo(fr *regFileReader, w io.Writer) __tarregFileReaderWriteToPair {
 	return __tarregFileReaderWriteToPair{io.Copy(w, struct{ io.Reader }{fr})}
 }
 
@@ -2421,7 +2421,7 @@ type __tarsparseFileReaderReadPair struct {
 	err error
 }
 
-func __tarsparseFileReaderRead(sr *sparseFileReader) (b []byte) __tarsparseFileReaderReadPair {
+func __tarsparseFileReaderRead(sr *sparseFileReader, b []byte) __tarsparseFileReaderReadPair {
 	finished := int64(len(b)) >= sr.logicalRemaining()
 	if finished {
 		b = b[:sr.logicalRemaining()]
@@ -2472,7 +2472,7 @@ type __tarsparseFileReaderWriteToPair struct {
 	err error
 }
 
-func __tarsparseFileReaderWriteTo(sr *sparseFileReader) (w io.Writer) __tarsparseFileReaderWriteToPair {
+func __tarsparseFileReaderWriteTo(sr *sparseFileReader, w io.Writer) __tarsparseFileReaderWriteToPair {
 	ws, ok := w.(io.WriteSeeker)
 	if ok {
 		if _, err := ws.Seek(0, io.SeekCurrent); err != nil {
@@ -3152,7 +3152,7 @@ type __tarWriterWritePair struct {
 	f1 error
 }
 
-func __tarWriterWrite(tw *Writer) (b []byte) __tarWriterWritePair {
+func __tarWriterWrite(tw *Writer, b []byte) __tarWriterWritePair {
 	if tw.err != nil {
 		return __tarWriterWritePair{f0: 0, f1: tw.err}
 	}
@@ -3184,7 +3184,7 @@ type __tarWriterreadFromPair struct {
 	f1 error
 }
 
-func __tarWriterreadFrom(tw *Writer) (r io.Reader) __tarWriterreadFromPair {
+func __tarWriterreadFrom(tw *Writer, r io.Reader) __tarWriterreadFromPair {
 	if tw.err != nil {
 		return __tarWriterreadFromPair{f0: 0, f1: tw.err}
 	}
@@ -3236,7 +3236,7 @@ type __tarregFileWriterWritePair struct {
 	err error
 }
 
-func __tarregFileWriterWrite(fw *regFileWriter) (b []byte) __tarregFileWriterWritePair {
+func __tarregFileWriterWrite(fw *regFileWriter, b []byte) __tarregFileWriterWritePair {
 	overwrite := int64(len(b)) > fw.nb
 	if overwrite {
 		b = b[:fw.nb]
@@ -3266,7 +3266,7 @@ type __tarregFileWriterReadFromPair struct {
 	f1 error
 }
 
-func __tarregFileWriterReadFrom(fw *regFileWriter) (r io.Reader) __tarregFileWriterReadFromPair {
+func __tarregFileWriterReadFrom(fw *regFileWriter, r io.Reader) __tarregFileWriterReadFromPair {
 	return __tarregFileWriterReadFromPair{io.Copy(struct{ io.Writer }{fw}, r)}
 }
 
@@ -3302,7 +3302,7 @@ type __tarsparseFileWriterWritePair struct {
 	err error
 }
 
-func __tarsparseFileWriterWrite(sw *sparseFileWriter) (b []byte) __tarsparseFileWriterWritePair {
+func __tarsparseFileWriterWrite(sw *sparseFileWriter, b []byte) __tarsparseFileWriterWritePair {
 	overwrite := int64(len(b)) > sw.logicalRemaining()
 	if overwrite {
 		b = b[:sw.logicalRemaining()]
@@ -3353,7 +3353,7 @@ type __tarsparseFileWriterReadFromPair struct {
 	err error
 }
 
-func __tarsparseFileWriterReadFrom(sw *sparseFileWriter) (r io.Reader) __tarsparseFileWriterReadFromPair {
+func __tarsparseFileWriterReadFrom(sw *sparseFileWriter, r io.Reader) __tarsparseFileWriterReadFromPair {
 	rs, ok := r.(io.ReadSeeker)
 	if ok {
 		if _, err := rs.Seek(0, io.SeekCurrent); err != nil {

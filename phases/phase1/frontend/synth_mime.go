@@ -827,7 +827,7 @@ type __mimeWordDecoderDecodePair struct {
 	f1 error
 }
 
-func __mimeWordDecoderDecode(d *WordDecoder) (word string) __mimeWordDecoderDecodePair {
+func __mimeWordDecoderDecode(d *WordDecoder, word string) __mimeWordDecoderDecodePair {
 	// See https://tools.ietf.org/html/rfc2047#section-2 for details.
 	// Our decoder is permissive, we accept empty encoded-text.
 	if len(word) < 8 || !strings.HasPrefix(word, "=?") || !strings.HasSuffix(word, "?=") || strings.Count(word, "?") != 4 {
@@ -870,7 +870,7 @@ type __mimeWordDecoderDecodeHeaderPair struct {
 	f1 error
 }
 
-func __mimeWordDecoderDecodeHeader(d *WordDecoder) (header string) __mimeWordDecoderDecodeHeaderPair {
+func __mimeWordDecoderDecodeHeader(d *WordDecoder, header string) __mimeWordDecoderDecodeHeaderPair {
 	// If there is no encoded-word, returns before creating a buffer.
 	i := strings.Index(header, "=?")
 	if i == -1 {
