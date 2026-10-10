@@ -1156,6 +1156,65 @@ type mrPlan struct {
 // reachable ones; the mrDeadline path is retained defense-in-depth for
 // WS D — see the package header). It returns nil when c is not one of
 // them.
+// instantiatePairType returns the concrete pair type for a desugar-table
+// entry. Synthetic pair structs may be generic (e.g.
+// __mrnistCurve_pointFromAffinePair[Point nistPoint[Point]]); the table
+// lookup yields the template, whose type params would leak "typeparam"
+// nodes into the export. When call-site type args are available, instantiate
+// the template so tmpType is fully concrete.
+func instantiatePairType(nt *types.Named, targs []types.Type) *types.Named {
+	if nt == nil || len(targs) == 0 {
+		return nt
+	}
+	tp := nt.TypeParams()
+	if tp == nil || tp.Len() == 0 {
+		return nt
+	}
+	if tp.Len() != len(targs) {
+		return nt
+	}
+	inst, err := types.Instantiate(nil, nt, targs, true)
+	if err != nil {
+		return nt
+	}
+	if nit, ok := inst.(*types.Named); ok {
+		return nit
+	}
+	return nt
+}
+
+// targsFromInstances extracts call-site type arguments for a generic function
+// call from go/types instance info.
+func targsFromInstances(e *exporter, id *ast.Ident) []types.Type {
+	if ii, ok := e.info.Instances[id]; ok {
+		return typeList(ii.TypeArgs)
+	}
+	return nil
+}
+
+// targsFromRecv extracts type arguments from a generic receiver type
+// (e.g. *nistCurve[MyPoint] yields [MyPoint]).
+func targsFromRecv(recv types.Type) []types.Type {
+	rt := recv
+	if pt, ok := rt.(*types.Pointer); ok {
+		rt = pt.Elem()
+	}
+	nt, ok := rt.(*types.Named)
+	if !ok {
+		return nil
+	}
+	ta := nt.TypeArgs()
+	if ta == nil || ta.Len() == 0 {
+		return nil
+	}
+	out := make([]types.Type, ta.Len())
+	for i := range out {
+		out[i] = ta.At(i)
+	}
+	return out
+}
+
+
 func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	// P3-M9 (WS D): user-defined package-level multi-result functions
 	// called as `foo()` (Ident, not SelectorExpr).
@@ -1178,19 +1237,20 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// arity-generic (want := len(plan.pairFields)).
 			if obj.Pkg() != nil {
 				pkgPath := obj.Pkg().Path()
-				if plan := classifyM7MultiResultCall(pkgPath, obj); plan != nil {
+				targs := targsFromInstances(e, id)
+				if plan := classifyM7MultiResultCall(pkgPath, obj, targs); plan != nil {
 					return plan
 				}
-				if plan := classifyOsMultiResultCall(pkgPath, obj); plan != nil {
+				if plan := classifyOsMultiResultCall(pkgPath, obj, targs); plan != nil {
 					return plan
 				}
-				if plan := classifyM8MultiResultCall(pkgPath, obj); plan != nil {
+				if plan := classifyM8MultiResultCall(pkgPath, obj, targs); plan != nil {
 					return plan
 				}
-				if plan := classifyIoMultiResultCall(pkgPath, obj); plan != nil {
+				if plan := classifyIoMultiResultCall(pkgPath, obj, targs); plan != nil {
 					return plan
 				}
-				if plan := classifyM9MultiResultCall(pkgPath, obj); plan != nil {
+				if plan := classifyM9MultiResultCall(pkgPath, obj, targs); plan != nil {
 					return plan
 				}
 			}
@@ -1222,27 +1282,28 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// P3-M7 (wave 1): encoding/* package-level multi-result
 			// members (hex.Decode, binary.Uvarint, ascii85.Decode,
 			// pem.Decode, asn1.Marshal/Unmarshal).
-			if plan := classifyM7MultiResultCall(pn.Imported().Path(), fn); plan != nil {
+			targs := targsFromInstances(e, sel.Sel)
+			if plan := classifyM7MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
 			// P3-M8 (wave 2): the synthetic os package's multi-result
 			// API (osMultiResultFuncs table above).
-			if plan := classifyOsMultiResultCall(pn.Imported().Path(), fn); plan != nil {
+			if plan := classifyOsMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
 			// P3-M8 (wave 2): the crypto/* multi-result API
 			// (m8MultiResultFuncs table above).
-			if plan := classifyM8MultiResultCall(pn.Imported().Path(), fn); plan != nil {
+			if plan := classifyM8MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
 			// P3-M8 (WS D): the synthetic io package's multi-result API
 			// (ioMultiResultFuncs table above).
-			if plan := classifyIoMultiResultCall(pn.Imported().Path(), fn); plan != nil {
+			if plan := classifyIoMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
 			// P3-M9 (tier-4: net): the synthetic net packages' multi-result
 			// API (m9MultiResultFuncs table above).
-			if plan := classifyM9MultiResultCall(pn.Imported().Path(), fn); plan != nil {
+			if plan := classifyM9MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
 			switch pn.Imported().Path() {
@@ -1356,22 +1417,23 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					}
 				}
 			}
-			if plan := classifyM7MultiResultCall(f.Pkg().Path(), f); plan != nil {
+			mtargs := targsFromRecv(selection.Recv())
+			if plan := classifyM7MultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
 				return plan
 			}
 			// P3-M8 (wave 2): os methods + io/fs DirEntry.Info.
-			if plan := classifyOsMultiResultCall(f.Pkg().Path(), f); plan != nil {
+			if plan := classifyOsMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
 				return plan
 			}
 			// P3-M8 (wave 2): crypto/* multi-result API.
-			if plan := classifyM8MultiResultCall(f.Pkg().Path(), f); plan != nil {
+			if plan := classifyM8MultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
 				return plan
 			}
 			// P3-M8 (WS D): the synthetic io package's multi-result
 			// API (WriteString, ReadAtLeast, ReadFull, Copy, CopyN,
 			// CopyBuffer, ReadAll, LimitedReader.Read,
 			// discard.Write/WriteString).
-			if plan := classifyIoMultiResultCall(f.Pkg().Path(), f); plan != nil {
+			if plan := classifyIoMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
 				return plan
 			}
 			// P3-M8 (WS D): multi-result calls on interface values
@@ -1519,7 +1581,7 @@ func isXmlTokenMethod(f *types.Func) (string, bool) {
 // must match the table entry — a user type with the same method name
 // (e.g. a local Encoding.Decode) is never desugared. Returns nil when
 // the call is not one of the table's operations.
-func classifyM7MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil
 	}
@@ -1542,7 +1604,7 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 	// the Type interface, where the selected method has no receiver. Retry
 	// such reflect interface methods against the rtype entries.
 	if recvName == "" && pkgPath == "reflect" {
-		if plan := classifyM7MultiResultCallRtype(pkgPath, fn); plan != nil {
+		if plan := classifyM7MultiResultCallRtype(pkgPath, fn, targs); plan != nil {
 			return plan
 		}
 	}
@@ -1565,6 +1627,7 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 		if nt == nil {
 			return nil
 		}
+		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
 			kind: mrM7, helperPkg: mf.pkgPath,
 			helperName: mf.helper,
@@ -1586,7 +1649,7 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 // classifyM9MultiResultCall desugars the P3-M9 (tier-4: net)
 // multi-result API (m9MultiResultFuncs table above). Same contract as
 // classifyOsMultiResultCall.
-func classifyM9MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil
 	}
@@ -1624,6 +1687,7 @@ func classifyM9MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 		if nt == nil {
 			return nil
 		}
+		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
 			kind: mrM7, helperPkg: helperPkg,
 			helperName: mf.helper,
@@ -1634,7 +1698,7 @@ func classifyM9MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 	return nil
 }
 
-func classifyOsMultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+func classifyOsMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil
 	}
@@ -1675,6 +1739,7 @@ func classifyOsMultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 		if nt == nil {
 			return nil
 		}
+		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
 			kind: mrM7, helperPkg: helperPkg,
 			helperName: mf.helper,
@@ -1689,7 +1754,7 @@ func classifyOsMultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 // multi-result API (m8MultiResultFuncs table above). Same contract as
 // classifyOsMultiResultCall: helperPkg overrides the package the __-helper
 // and pair struct are looked up in.
-func classifyM8MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+func classifyM8MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil
 	}
@@ -1727,6 +1792,7 @@ func classifyM8MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 		if nt == nil {
 			return nil
 		}
+		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
 			kind: mrM7, helperPkg: helperPkg,
 			helperName: mf.helper,
@@ -1743,7 +1809,7 @@ func classifyM8MultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 // LimitedReader.Read and discard.Write/WriteString methods (prependRecv
 // applies — all have receivers). Same contract as
 // classifyM7MultiResultCall.
-func classifyIoMultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
+func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil
 	}
@@ -1780,6 +1846,7 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func) *mrPlan {
 		if nt == nil {
 			return nil
 		}
+		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
 			kind: mrM7, helperPkg: mf.pkgPath,
 			helperName: mf.helper,
@@ -2039,7 +2106,7 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 
 // classifyM7MultiResultCallRtype retries a reflect interface method
 // against the rtype entries (P3-M8 wave 2).
-func classifyM7MultiResultCallRtype(pkgPath string, fn *types.Func) *mrPlan {
+func classifyM7MultiResultCallRtype(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
 		return nil
@@ -2060,6 +2127,7 @@ func classifyM7MultiResultCallRtype(pkgPath string, fn *types.Func) *mrPlan {
 		if nt == nil {
 			return nil
 		}
+		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
 			kind: mrM7, helperPkg: mf.pkgPath,
 			helperName: mf.helper,
