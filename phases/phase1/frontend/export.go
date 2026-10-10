@@ -1693,6 +1693,7 @@ func ExportFile(path string) (string, error) {
 		case "net":
 			needNet = true
 			needErrors = true
+			needIo = true
 			needStrconv = true
 			needStrings = true
 			needTime = true
