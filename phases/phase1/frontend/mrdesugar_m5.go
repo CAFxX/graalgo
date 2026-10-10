@@ -747,6 +747,11 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/internal/fips140/ecdsa", "signGenericP256", "", "__mrsignGenericP256", "", "__mrsignGenericPair", []string{"v0", "v1"}},
 	{"crypto/internal/fips140/ecdsa", "signGenericP384", "", "__mrsignGenericP384", "", "__mrsignGenericPair", []string{"v0", "v1"}},
 	{"crypto/internal/fips140/ecdsa", "signGenericP521", "", "__mrsignGenericP521", "", "__mrsignGenericPair", []string{"v0", "v1"}},
+	// P3-M9: lowercase helpers (called from __mr* implementations)
+	{"crypto/internal/fips140/ecdsa", "signP224", "", "__mrsignP224", "", "__mrsignPair", []string{"v0", "v1"}},
+	{"crypto/internal/fips140/ecdsa", "signP256", "", "__mrsignP256", "", "__mrsignPair", []string{"v0", "v1"}},
+	{"crypto/internal/fips140/ecdsa", "signP384", "", "__mrsignP384", "", "__mrsignPair", []string{"v0", "v1"}},
+	{"crypto/internal/fips140/ecdsa", "signP521", "", "__mrsignP521", "", "__mrsignPair", []string{"v0", "v1"}},
 	// P3-M9: de-genericized P224/P256/P384/P521 concrete versions
 	{"crypto/internal/fips140/ecdsa", "GenerateKeyP224", "", "__mrGenerateKeyP224", "", "__mrGenerateKeyPair", []string{"v0", "v1"}},
 	{"crypto/internal/fips140/ecdsa", "GenerateKeyP256", "", "__mrGenerateKeyP256", "", "__mrGenerateKeyPair", []string{"v0", "v1"}},
