@@ -2666,7 +2666,7 @@ public final class NodeFactory {
                 @Override
                 public Object executeObject(VirtualFrame frame) {
                     Object arr = arrNode.executeObject(frame);
-                    int idx = (int) Boxing.toLong(GoKind.INT, idxNode, frame);
+                    int idx = (int) Boxing.toLong(idxNode.executeObject(frame), idxNode.kind());
                     // Unwrap GoSlice to the underlying Java array.
                     Object javaArray = arr;
                     if (arr instanceof graalgo.values.GoSlice gs) {
@@ -2850,6 +2850,25 @@ public final class NodeFactory {
             // reflect.Swapper(s)(0, 2). The exporter (P3-M8, export.go)
             // emits the inner call as the fun operand; build it and
             // require a func result (mirrors the ident branch above).
+            GoExprNode fn = buildExpr(fun, ctx);
+            if (fn.kind() != GoKind.FUNC) {
+                throw new FrontendException(path + ": call to non-function value of kind "
+                        + fn.kind() + " (WS D)");
+            }
+            Json.Object ff = fun.object("fields", path + ".fun");
+            Json.Value sig = ff.opt("type");
+            List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
+                    : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
+            return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
+                    false, ctx.funcObjId);
+        }
+        if ("selector".equals(funKind)) {
+            // Function-typed field call, e.g. c.generate(r) where generate
+            // is a func-typed struct field (P3-M9: nistCurve function
+            // fields). The exporter emits the field access as a selector
+            // node; build it and require a func result (mirrors the ident
+            // branch above).
             GoExprNode fn = buildExpr(fun, ctx);
             if (fn.kind() != GoKind.FUNC) {
                 throw new FrontendException(path + ": call to non-function value of kind "
