@@ -369,12 +369,6 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("crypto/hkdf").pkg, nil
 	case "crypto/pbkdf2":
 		return getSyntheticPackage("crypto/pbkdf2").pkg, nil
-	case "crypto/x509":
-		return getSyntheticPackage("crypto/x509").pkg, nil
-	case "crypto/x509/pkix":
-		return getSyntheticPackage("crypto/x509/pkix").pkg, nil
-	case "crypto/tls":
-		return getSyntheticPackage("crypto/tls").pkg, nil
 	case "crypto/internal/fips140":
 		return getSyntheticPackage("crypto/internal/fips140").pkg, nil
 	case "crypto/internal/fips140/check":
@@ -1279,6 +1273,8 @@ func ExportFile(path string) (string, error) {
 	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
 	needNetHttp := false
 	needNetHttpHttptest := false
+	// P3-M9 (tier-4: net): synthetic net package (Dial/Listen/TCP/UDP).
+	needNet := false
 	needByteorder := false
 	needSyscall := false
 	needOs := false
@@ -1684,6 +1680,18 @@ func ExportFile(path string) (string, error) {
 			needCmp = true
 			needIo = true
 			needSlices = true
+		// P3-M9 (tier-4: net): synthetic net (Dial/Listen/TCP/UDP).
+		// net imports errors, internal/poll, io, strconv, strings,
+		// syscall, time.
+		case "net":
+			needNet = true
+			needErrors = true
+			needIo = true
+			needStrconv = true
+			needStrings = true
+			needSyscall = true
+			needTime = true
+			// internal/poll resolves via the overlay importer.
 		// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
 		// net/http imports bufio, bytes, errors, io, net, net/textproto,
 		// net/url, strconv, strings, sync, time. The client delegates to
@@ -1691,6 +1699,7 @@ func ExportFile(path string) (string, error) {
 		// httptest imports bytes, io, net, net/http, net/url, strings, sync.
 		case "net/http":
 			needNetHttp = true
+			needNet = true
 			needBufio = true
 			needBytes = true
 			needErrors = true
@@ -1850,6 +1859,14 @@ func ExportFile(path string) (string, error) {
 	}
 	if needNetHttpHttptest {
 		if err := e.importSyntheticPackage(getSyntheticPackage("net/http/httptest")); err != nil {
+			return "", err
+		}
+	}
+	// P3-M9 (tier-4: net): synthetic net package. Import after its
+	// dependencies (errors, io, strconv, strings, syscall, time are
+	// handled by their own needX blocks; internal/poll via overlay).
+	if needNet {
+		if err := e.importSyntheticPackage(getSyntheticPackage("net")); err != nil {
 			return "", err
 		}
 	}
@@ -2315,8 +2332,6 @@ func ExportFile(path string) (string, error) {
 			"crypto/rsa",
 			"crypto/hkdf",
 			"crypto/pbkdf2",
-			"crypto/x509/pkix",
-			"crypto/x509",
 			// "crypto/tls", // P3-M9: deferred (source not yet committed)
 		} {
 			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
@@ -8704,6 +8719,10 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 		if t, ok := tv.Type.(*types.Tuple); ok {
 			if t.Len() == 0 {
 				return nil, nil
+			}
+			// DEBUG
+			if fn := e.calledFunc(c); fn != nil {
+				println("DEBUG callType tuple for", fn.Pkg().Path()+"."+fn.Name(), "len", t.Len())
 			}
 			// P3-M9 (WS D): user-defined multi-result functions transformed
 			// to pair-returning form. The go/types type is still the
