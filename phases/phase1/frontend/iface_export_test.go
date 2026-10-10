@@ -554,14 +554,12 @@ func main() {
 	}
 }
 
-// TestIfaceMethodTableValueEmbedUnsupported: a pointer-receiver method
-// promoted via a VALUE-embedded field is marked unsupported in the wire
-// ("index": null) — the dispatcher would receive a value where a pointer
-// is expected (silently type-unsound; addressable-field lowering is out
-// of P3-M3 scope). The mark is lazy: the export succeeds (the method
-// table is computed for every type), and dispatch fails fast with a named
-// P3-M3 scope error only if the method is actually dispatched.
-func TestIfaceMethodTableValueEmbedUnsupported(t *testing.T) {
+// TestIfaceMethodTableValueEmbedAddrOf (P3-M9): a pointer-receiver method
+// promoted via a VALUE-embedded struct field is marked supported in the
+// wire ("index": [0], "addrOf": true) — the dispatcher takes the address
+// of the promoted field value (gc's implicit &). Struct fields are read
+// by reference, so this is sound.
+func TestIfaceMethodTableValueEmbedAddrOf(t *testing.T) {
 	const src = `package main
 
 type Writer interface{ Write(p []byte) int }
@@ -602,8 +600,12 @@ func main() {
 				continue
 			}
 			found = true
-			if idx, ok := mm["index"]; !ok || idx != nil {
-				t.Fatalf("*V.Write index = %v (%T), want JSON null (unsupported)", mm["index"], mm["index"])
+			idx, ok := mm["index"].([]any)
+			if !ok || len(idx) != 1 {
+				t.Fatalf("*V.Write index = %v (%T), want [0] (supported with addrOf)", mm["index"], mm["index"])
+			}
+			if ao, ok := mm["addrOf"].(bool); !ok || !ao {
+				t.Fatalf("*V.Write addrOf = %v (%T), want true", mm["addrOf"], mm["addrOf"])
 			}
 		}
 	}
@@ -853,5 +855,64 @@ func TestMentionsTypeParamAliasUnion(t *testing.T) {
 	ui := types.NewUnion([]*types.Term{types.NewTerm(false, types.Typ[types.Int])})
 	if mentionsTypeParam(ui) {
 		t.Fatal("mentionsTypeParam(union of int) = true, want false")
+	}
+}
+
+// TestIfaceMethodTableValueEmbedPrimitiveUnsupported (P3-M9): a
+// pointer-receiver method promoted via a VALUE-embedded non-struct field
+// (e.g. a defined int type) is still marked unsupported in the wire
+// ("index": null) — taking the address would need writeback for the
+// primitive field value (out of scope). The mark is lazy: the export
+// succeeds, and dispatch fails fast with a named P3-M3 scope error only
+// if the method is actually dispatched.
+func TestIfaceMethodTableValueEmbedPrimitiveUnsupported(t *testing.T) {
+	const src = `package main
+
+type Counter int
+
+func (c *Counter) Inc() { println(1) }
+
+type V struct{ Counter }
+
+func main() {
+	v := &V{Counter: 41}
+	var i interface{ Inc() } = v
+	i.Inc()
+}
+`
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: export must succeed (unsupported is lazy), got %v", err)
+	}
+	doc := decodeExport(t, out)
+	entries := typeEntries(t, doc)
+	id, _ := findNamedEntry(t, entries, "main.V")
+	found := false
+	for _, e := range entries {
+		em, _ := e.(map[string]any)
+		if em["kind"] != "pointer" {
+			continue
+		}
+		d, _ := em["detail"].(map[string]any)
+		if elem, _ := d["elem"].(float64); int(elem) != id {
+			continue
+		}
+		methods, _ := d["methods"].([]any)
+		for _, m := range methods {
+			mm, _ := m.(map[string]any)
+			if mm["name"] != "Inc" {
+				continue
+			}
+			found = true
+			if idx, ok := mm["index"]; !ok || idx != nil {
+				t.Fatalf("*V.Inc index = %v (%T), want JSON null (unsupported)", mm["index"], mm["index"])
+			}
+			if ao, ok := mm["addrOf"].(bool); !ok || ao {
+				t.Fatalf("*V.Inc addrOf = %v (%T), want false", mm["addrOf"], mm["addrOf"])
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no *V pointer entry carries Inc")
 	}
 }

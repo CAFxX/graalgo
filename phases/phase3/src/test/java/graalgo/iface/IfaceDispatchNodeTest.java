@@ -98,17 +98,17 @@ public final class IfaceDispatchNodeTest {
 
     /** Direct (non-promoted) method target. */
     private static IfaceMethodTarget target(CaptureRoot root) {
-        return new IfaceMethodTarget(goFunc(root), new int[0], true);
+        return new IfaceMethodTarget(goFunc(root), new int[0], true, false);
     }
 
     /** Promoted method target: receiver adapted via the field path. */
     private static IfaceMethodTarget promotedTarget(CaptureRoot root, int... recvPath) {
-        return new IfaceMethodTarget(goFunc(root), recvPath, true);
+        return new IfaceMethodTarget(goFunc(root), recvPath, true, false);
     }
 
     /** Promoted value-receiver target: trailing dereference applies. */
     private static IfaceMethodTarget promotedValueTarget(CaptureRoot root, int... recvPath) {
-        return new IfaceMethodTarget(goFunc(root), recvPath, false);
+        return new IfaceMethodTarget(goFunc(root), recvPath, false, false);
     }
 
     private static VirtualFrame frame() {
@@ -432,7 +432,7 @@ public final class IfaceDispatchNodeTest {
 
     /** Unsupported-promotion target (wire "index" null): fails fast only if dispatched. */
     private static IfaceMethodTarget unsupportedTarget(CaptureRoot root) {
-        return new IfaceMethodTarget(goFunc(root), null, true);
+        return new IfaceMethodTarget(goFunc(root), null, true, false);
     }
 
     /**

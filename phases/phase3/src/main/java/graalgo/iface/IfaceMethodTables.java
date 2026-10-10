@@ -84,7 +84,7 @@ public final class IfaceMethodTables {
                             + " (WS D)");
                 }
                 funcs.put(m.getKey(), new IfaceMethodTarget(f, m.getValue().recvPath,
-                        m.getValue().pointerReceiver));
+                        m.getValue().pointerReceiver, m.getValue().addrOf));
             }
             out.put(e.getKey(), funcs);
         }
@@ -92,7 +92,7 @@ public final class IfaceMethodTables {
     }
 
     /** Wire method entry: object id + receiver adaptation data. */
-    private record MethodRef(int objId, int[] recvPath, boolean pointerReceiver) {}
+    private record MethodRef(int objId, int[] recvPath, boolean pointerReceiver, boolean addrOf) {}
 
     /**
      * Parses {@code jsonText}'s type table and returns the interface
@@ -178,8 +178,17 @@ public final class IfaceMethodTables {
             }
             int[] recvPath = readIndex(eo, mp);
             boolean pointerReceiver = "pointer".equals(eo.string("recv", mp));
+            // P3-M9: "addrOf" marks a pointer-receiver method promoted via a
+            // value-embedded struct field — the dispatcher takes the address
+            // of the promoted field value. Absent (pre-P3-M9 documents)
+            // means false.
+            boolean addrOf = false;
+            Json.Value av = eo.opt("addrOf");
+            if (av instanceof Json.Bool b) {
+                addrOf = b.value();
+            }
             out.put(eo.string("name", mp),
-                    new MethodRef(eo.intValue("obj", mp), recvPath, pointerReceiver));
+                    new MethodRef(eo.intValue("obj", mp), recvPath, pointerReceiver, addrOf));
         }
         return out;
     }

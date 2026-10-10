@@ -16,13 +16,16 @@ import graalgo.values.GoFunc;
  * <p>{@code pointerReceiver} is the wire {@code "recv"} field: true for
  * pointer-receiver methods. A value-receiver method promoted via a
  * pointer-embedded field gets one trailing dereference (gc's implicit
- * {@code (*p)}); the reverse combination (pointer receiver via a
- * value-embedded field) is marked unsupported (wire {@code "index"} null)
- * and fails fast with a named P3-M3 scope error at dispatch — only when
- * that method is actually dispatched (R2 P2-7: narrowing; the itab build
- * carries the unsupported target so supported methods keep working).
+ * {@code (*p)}); a pointer-receiver method promoted via a value-embedded
+ * struct field takes the address of the promoted field value (wire
+ * {@code "addrOf"} true, P3-M9 — gc's implicit {@code &}). The remaining
+ * combination (pointer receiver via a value-embedded non-struct field)
+ * is marked unsupported (wire {@code "index"} null) and fails fast with
+ * a named P3-M3 scope error at dispatch — only when that method is
+ * actually dispatched (R2 P2-7: narrowing; the itab build carries the
+ * unsupported target so supported methods keep working).
  */
-public record IfaceMethodTarget(GoFunc func, int[] recvPath, boolean pointerReceiver) {
+public record IfaceMethodTarget(GoFunc func, int[] recvPath, boolean pointerReceiver, boolean addrOf) {
     public IfaceMethodTarget {
         // A null path marks an unsupported promotion (wire "index": null);
         // it must survive (not normalize to empty) so the itab build can

@@ -14,6 +14,7 @@ import graalgo.runtime.GoroutineState;
 import graalgo.runtime.Panic;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
+import graalgo.values.GoPointer;
 import graalgo.values.GoTypeDescriptor;
 import graalgo.values.InterfaceDispatchProbes;
 
@@ -135,6 +136,14 @@ public final class IfaceDispatchNode extends GoExprNode {
                 ? data
                 : graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath(),
                         !target.pointerReceiver(), this);
+        // P3-M9: pointer-receiver method promoted via a value-embedded
+        // struct field — take the address of the promoted field value
+        // (gc's implicit &). Struct fields are read by reference, so the
+        // pointer targets the live field object and mutations through it
+        // are visible to the outer struct, exactly like gc.
+        if (target.addrOf() && !(callArgs[0] instanceof GoPointer)) {
+            callArgs[0] = new GoPointer(callArgs[0]);
+        }
         System.arraycopy(argVals, 0, callArgs, 1, argVals.length);
         // FuncValueCallNode's recoverAllowed dance: recover() is only
         // non-nil when called directly by a deferred function — clear the

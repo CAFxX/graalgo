@@ -48,8 +48,8 @@ public final class ItabForIntrinsicTest {
                 "main.Writer",
                 new IfaceMethodTable.IfaceWireEntry(43, List.of("Write"))));
         IfaceMethodTable.install(Map.of("main.T", Map.of(
-                "String", new IfaceMethodTarget(goFunc(), new int[0], false),
-                "Write", new IfaceMethodTarget(goFunc(), new int[0], false))));
+                "String", new IfaceMethodTarget(goFunc(), new int[0], false, false),
+                "Write", new IfaceMethodTarget(goFunc(), new int[0], false, false))));
     }
 
     /**
