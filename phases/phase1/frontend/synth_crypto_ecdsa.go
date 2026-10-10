@@ -854,14 +854,8 @@ func __mrprivateKeyToFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], priv *PrivateKey)
 	}
 	D := priv.D.FillBytes(make([]byte, size, maxScalarSize))
 
-	__fw0, __fw1 := privateKeyCache.Get(priv, func() (*ecdsa.PrivateKey, error) {
-			k, err := ecdsa.NewPrivateKey(c, D, Q)
-		return k, err
-		}, func(k *ecdsa.PrivateKey) bool {
-			return subtle.ConstantTimeCompare(k.PublicKey().Bytes(), Q) == 1 &&
-				subtle.ConstantTimeCompare(k.Bytes(), D) == 1
-		})
-	return __mrprivateKeyToFIPSPair{__fw0, __fw1}
+	k, err := ecdsa.NewPrivateKey(c, D, Q)
+	return __mrprivateKeyToFIPSPair{k, err}
 }
 
 func privateKeyToFIPS[P ecdsa.Point[P]](c *ecdsa.Curve[P], priv *PrivateKey) (*ecdsa.PrivateKey, error) {
