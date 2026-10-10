@@ -59,12 +59,15 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
         Json.Object f = node.object("fields", "ifacemethod");
         String path = "ifacemethod.fields";
         GoExprNode recv = factory.buildExpr(f.object("recv", path), ctx);
-        if (recv.kind() != GoKind.INTERFACE) {
-            throw new FrontendException(path + ": ifacemethod receiver must have interface kind,"
-                    + " found " + recv.kind() + " (exporter bug)");
-        }
         String method = f.string("method", path);
         int ifaceId = f.intValue("iface", path);
+        if (recv.kind() != GoKind.INTERFACE) {
+            // P3-M9 (WS H + WS D): type-parameter receivers from
+            // exportIfaceFallbackCall build to the concrete kind (e.g.
+            // POINTER for *nistec.P256Point), not INTERFACE. Box the
+            // concrete value as the constraint interface for itab dispatch.
+            recv = boxArg(recv, ifaceId, ctx, path);
+        }
         Json.Array arr = f.array("args", path);
         GoExprNode[] args = new GoExprNode[arr.size()];
         for (int i = 0; i < args.length; i++) {
