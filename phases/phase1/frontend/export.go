@@ -6892,34 +6892,48 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		selection, ok := e.info.Selections[sel]
 		if !ok {
-			// P3-M9 (WS D): the selector may denote a struct field of
-			// function type (e.g., c.ordInverse where ordInverse is
-			// func(*[4]uint64)). This is not a method selection, so
-			// info.Selections has no entry. Export as field access
-			// followed by a call.
-			if _, ok := e.info.Uses[sel.Sel].(*types.Var); ok {
-				// It's a field. Use exportSelector for the field access,
-				// then call the resulting function value.
-				fieldNode, err := e.exportSelector(sel)
-				if err != nil {
-					return nil, err
+			return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
+				sel.X, sel.Sel.Name)
+		}
+		// P3-M9 (WS D, graalgo-ordinverse-generic): the selector may denote
+		// a struct field of function type (e.g., c.ordInverse where
+		// ordInverse is func(*[4]uint64)). go/types records field
+		// selections in info.Selections with Kind() == FieldVal (not
+		// MethodVal), so methodRefNode would reject them. Export as field
+		// access followed by a call instead.
+		// (The 13b0beb fix placed this logic inside the !ok branch, but
+		// that branch is dead for fields — go/types always records a
+		// Selections entry for field selections. This is the correct
+		// placement.)
+		if selection.Kind() == types.FieldVal {
+			if _, ok := selection.Obj().(*types.Var); ok {
+				if _, ok := selection.Type().(*types.Signature); ok {
+					// It's a function-typed field. Use exportSelector for
+					// the field access, then call the resulting function
+					// value.
+					fieldNode, err := e.exportSelector(sel)
+					if err != nil {
+						return nil, err
+					}
+					args, err := e.exportCallArgs(c)
+					if err != nil {
+						return nil, err
+					}
+					resType, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					fields := map[string]any{
+						"fun": fieldNode, "args": args,
+					}
+					if resType != nil {
+						fields["type"] = resType
+					}
+					return e.node("call", c, fields), nil
 				}
-				args, err := e.exportCallArgs(c)
-				if err != nil {
-					return nil, err
-				}
-				resType, err := e.callType(c)
-				if err != nil {
-					return nil, err
-				}
-				fields := map[string]any{
-					"fun": fieldNode, "args": args,
-				}
-				if resType != nil {
-					fields["type"] = resType
-				}
-				return e.node("call", c, fields), nil
 			}
+			// Non-function field in call position: fall through to the
+			// scope error below (invalid Go, but give a named error).
 			return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
 				sel.X, sel.Sel.Name)
 		}
