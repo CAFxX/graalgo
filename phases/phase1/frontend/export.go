@@ -2186,6 +2186,7 @@ func ExportFile(path string) (string, error) {
 			"io",   // needs errors
 			"hash", // needs io
 			"bytes",
+			"strings", // needs errors, io; math/big needs strings (NewReader)
 			"crypto",
 			"crypto/sha512",
 			"crypto/cipher",
