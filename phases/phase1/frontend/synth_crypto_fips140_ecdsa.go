@@ -60,7 +60,7 @@ const (
 	p521 curveID = "P-521"
 )
 
-type Curve[P Point[P]] struct {
+type Curve[P any] struct {
 	curve      curveID
 	newPoint   func() P
 	ordInverse func(*[4]uint64)
@@ -68,16 +68,6 @@ type Curve[P Point[P]] struct {
 	nMinus2    []byte
 }
 
-// Point is a generic constraint for the [nistec] Point types.
-type Point[P any] interface {
-	*nistec.P224Point | *nistec.P256Point | *nistec.P384Point | *nistec.P521Point
-	Bytes() []byte
-	BytesX() ([]byte, error)
-	SetBytes([]byte) (P, error)
-	ScalarMult(P, []byte) (P, error)
-	ScalarBaseMult([]byte) (P, error)
-	Add(p1, p2 P) P
-}
 
 // P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): pair types for
 // Point[P] interface multi-result methods dispatched via the WS H
