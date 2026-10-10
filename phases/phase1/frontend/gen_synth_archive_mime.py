@@ -905,7 +905,7 @@ var multipartmaxheaders = &__mpGodebugSetting{name: "multipartmaxheaders"}'''
     )
     src = src.replace('textproto.MIMEHeader', '__mpMIMEHeader')
     src += '''
-type __mpMIMEHeader = map[string][]string
+type __mpMIMEHeader map[string][]string
 func (__mpMIMEHeader) Get(key string) string { return "" }
 type __mpTextprotoReader struct{}
 func __mpNewTextprotoReader(r any) *__mpTextprotoReader { return &__mpTextprotoReader{} }
@@ -1030,17 +1030,14 @@ def process_package(pkg_path, cfg):
                 helper_sig = f"func {helper_name}({all_params}) {pair_name} {{\n"
                 # Rewrite body returns
                 rewritten_body = rewrite_body_returns(fn['body'], pair_name, list(zip(field_names, [r[1] for r in results])), mr_map=mr_map, pkg_prefix=pkg_prefix)
-                # For named results, declare local variables IF they're needed.
+                # For named results, declare local variables ONLY if there's a bare return.
+                # (Shadowing via := makes assignment-based detection unreliable;
+                # explicit returns are rewritten to Pair literals.)
                 decls = ""
                 has_bare = bool(re.search(r'\breturn\b\s*(\n|;|})', fn['body']))
-                for (rname, rtype), fname in zip(results, field_names):
-                    if rname and rname.strip():
-                        rn = re.escape(rname.strip())
-                        assigned = bool(re.search(rf'\b{rn}\b\s*=\s*[^=]', fn['body']))
-                        compound = bool(re.search(rf'\b{rn}\b\s*[+\-*/%&|^]=', fn['body']))
-                        incdec = bool(re.search(rf'\b{rn}\b\s*(\+\+|--)', fn['body']))
-                        multi_assign = bool(re.search(rf'\b{rn}\b\s*,', fn['body']))
-                        if has_bare or assigned or compound or incdec or multi_assign:
+                if has_bare:
+                    for (rname, rtype), fname in zip(results, field_names):
+                        if rname and rname.strip():
                             decls += f"\tvar {rname} {rtype}\n"
                 helper_decl = helper_sig + decls + rewritten_body + "}\n\n"
                 new_src_parts.append(helper_decl)
@@ -1087,8 +1084,16 @@ def process_package(pkg_path, cfg):
     if mr_map:
         full_src = rewrite_call_sites(full_src, mr_map)
     
-    # Prepend collected imports (exclude internal/ which we stub)
-    filtered_imports = [imp for imp in sorted(all_imports) if not imp.startswith('internal/')]
+    # Prepend collected imports (exclude internal/ which we stub).
+    # Only include imports actually referenced in the code (pkg.Name).
+    filtered_imports = []
+    for imp in sorted(all_imports):
+        if imp.startswith('internal/'):
+            continue
+        pkg = imp.split('/')[-1]
+        # Check if pkg. appears in the source (avoid false positives in strings/comments is best-effort)
+        if re.search(rf'\b{re.escape(pkg)}\.', full_src):
+            filtered_imports.append(imp)
     if filtered_imports:
         import_block = 'import (\n' + '\n'.join(f'\t"{imp}"' for imp in filtered_imports) + '\n)\n\n'
         full_src = import_block + full_src
