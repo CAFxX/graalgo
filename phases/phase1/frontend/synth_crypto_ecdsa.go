@@ -616,16 +616,16 @@ func __mrGenerateKey(c elliptic.Curve, r io.Reader) __mrGenerateKeyPair {
 
 	switch c.Params() {
 	case elliptic.P224().Params():
-		__fw0, __fw1 := generateFIPS(c, ecdsa.P224(), r)
+		__fw0, __fw1 := generateFIPSP224(c, ecdsa.P224(), r)
 		return __mrGenerateKeyPair{__fw0, __fw1}
 	case elliptic.P256().Params():
-		__fw0, __fw1 := generateFIPS(c, ecdsa.P256(), r)
+		__fw0, __fw1 := generateFIPSP256(c, ecdsa.P256(), r)
 		return __mrGenerateKeyPair{__fw0, __fw1}
 	case elliptic.P384().Params():
-		__fw0, __fw1 := generateFIPS(c, ecdsa.P384(), r)
+		__fw0, __fw1 := generateFIPSP384(c, ecdsa.P384(), r)
 		return __mrGenerateKeyPair{__fw0, __fw1}
 	case elliptic.P521().Params():
-		__fw0, __fw1 := generateFIPS(c, ecdsa.P521(), r)
+		__fw0, __fw1 := generateFIPSP521(c, ecdsa.P521(), r)
 		return __mrGenerateKeyPair{__fw0, __fw1}
 	default:
 		__fw0, __fw1 := generateLegacy(c, r)
