@@ -1017,6 +1017,32 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					pairFields: mrInfo.pairFields,
 				}
 			}
+			// P3-M9 (WS D): same-package Ident calls to synthetic
+			// multi-result functions (e.g. parseSignature in the
+			// synthetic crypto/ecdsa package, 3 results) desugar via
+			// the tables, like package-qualified calls. The
+			// multi-result stub is skipped at synthetic import; the
+			// __-helper carries the real implementation. N-result
+			// generally: the tables and desugarExtract are already
+			// arity-generic (want := len(plan.pairFields)).
+			if obj.Pkg() != nil {
+				pkgPath := obj.Pkg().Path()
+				if plan := classifyM7MultiResultCall(pkgPath, obj); plan != nil {
+					return plan
+				}
+				if plan := classifyOsMultiResultCall(pkgPath, obj); plan != nil {
+					return plan
+				}
+				if plan := classifyM8MultiResultCall(pkgPath, obj); plan != nil {
+					return plan
+				}
+				if plan := classifyIoMultiResultCall(pkgPath, obj); plan != nil {
+					return plan
+				}
+				if plan := classifyM9MultiResultCall(pkgPath, obj); plan != nil {
+					return plan
+				}
+			}
 		}
 		return nil
 	}
