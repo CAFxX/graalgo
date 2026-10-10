@@ -6,6 +6,7 @@ import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
+import graalgo.values.GoPointer;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 import graalgo.values.GoStructDescriptor;
@@ -65,6 +66,17 @@ public final class IndexNode extends GoExprNode {
             case ARRAY -> {
                 long idx = key.executeLong(frame);
                 Object arr = container.executeObject(frame);
+                int i = checkedIndex(idx, java.lang.reflect.Array.getLength(arr));
+                yield Boxing.arrayGet(arr, elemKind, i);
+            }
+            case POINTER -> {
+                // Go: p[i] where p is *[N]T — dereference to the array.
+                long idx = key.executeLong(frame);
+                GoPointer p = (GoPointer) container.executeObject(frame);
+                if (p == null || p.isNil()) {
+                    Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+                }
+                Object arr = p.referent();
                 int i = checkedIndex(idx, java.lang.reflect.Array.getLength(arr));
                 yield Boxing.arrayGet(arr, elemKind, i);
             }

@@ -5,6 +5,7 @@ import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
+import graalgo.values.GoPointer;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 
@@ -98,6 +99,29 @@ public final class SliceExprNode extends GoExprNode {
             }
             case ARRAY -> {
                 Object arr = x.executeObject(frame);
+                long n = java.lang.reflect.Array.getLength(arr);
+                if (max == null) {
+                    Bound h = hi == null ? new Bound(n, true) : readBound(hi, frame);
+                    if (hi != null) {
+                        checkBound(GoErrors.BoundsCode.SLICE_ALEN, h, n);
+                    }
+                    checkBound(GoErrors.BoundsCode.SLICE_B, l, h.v);
+                    return new GoSlice(arr, (int) l.v, (int) (h.v - l.v), (int) (n - l.v));
+                }
+                Bound m = readBound(max, frame);
+                checkBound(GoErrors.BoundsCode.SLICE3_ALEN, m, n);
+                Bound h = readBound(hi, frame);
+                checkBound(GoErrors.BoundsCode.SLICE3_B, h, m.v);
+                checkBound(GoErrors.BoundsCode.SLICE3_C, l, h.v);
+                return new GoSlice(arr, (int) l.v, (int) (h.v - l.v), (int) (m.v - l.v));
+            }
+            case POINTER -> {
+                // Go: p[lo:hi] where p is *[N]T — dereference to the array.
+                GoPointer p = (GoPointer) x.executeObject(frame);
+                if (p == null || p.isNil()) {
+                    Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+                }
+                Object arr = p.referent();
                 long n = java.lang.reflect.Array.getLength(arr);
                 if (max == null) {
                     Bound h = hi == null ? new Bound(n, true) : readBound(hi, frame);

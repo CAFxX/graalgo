@@ -6,6 +6,7 @@ import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
+import graalgo.values.GoPointer;
 import graalgo.values.GoSlice;
 
 /**
@@ -58,6 +59,20 @@ public final class IndexWriteNode extends GoStmtNode {
             case ARRAY -> {
                 long idx = key.executeLong(frame);
                 Object arr = container.executeObject(frame);
+                int n = java.lang.reflect.Array.getLength(arr);
+                if (badIndex(idx, n)) {
+                    Panic.throwPanic(GoErrors.indexOutOfRange(idx, n, key.kind().isSigned()), null, null, this);
+                }
+                Boxing.arraySet(arr, elemKind, (int) idx, boxed);
+            }
+            case POINTER -> {
+                // Go: p[i] = v where p is *[N]T — dereference to the array.
+                long idx = key.executeLong(frame);
+                GoPointer p = (GoPointer) container.executeObject(frame);
+                if (p == null || p.isNil()) {
+                    Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+                }
+                Object arr = p.referent();
                 int n = java.lang.reflect.Array.getLength(arr);
                 if (badIndex(idx, n)) {
                     Panic.throwPanic(GoErrors.indexOutOfRange(idx, n, key.kind().isSigned()), null, null, this);
