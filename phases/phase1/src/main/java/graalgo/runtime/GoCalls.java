@@ -24,9 +24,17 @@ public final class GoCalls {
      * @return the call's single result, or null for void calls.
      */
     public static Object invoke(GoFunc fn, Object[] args) {
-        Object[] callArgs = new Object[args.length + 1];
+        // P3-M9 (WS H): a method value binds its receiver in boundArgs;
+        // prepend it so the callee sees [fn, receiver, ...args], exactly
+        // as for a direct methodref call.
+        Object[] bound = fn.boundArgs();
+        int prefix = bound == null ? 0 : bound.length;
+        Object[] callArgs = new Object[args.length + prefix + 1];
         callArgs[0] = fn;
-        System.arraycopy(args, 0, callArgs, 1, args.length);
+        if (bound != null) {
+            System.arraycopy(bound, 0, callArgs, 1, bound.length);
+        }
+        System.arraycopy(args, 0, callArgs, 1 + prefix, args.length);
         return fn.target().call(callArgs);
     }
 

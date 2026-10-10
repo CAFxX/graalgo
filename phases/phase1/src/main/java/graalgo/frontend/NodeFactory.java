@@ -312,6 +312,9 @@ public final class NodeFactory {
         // pointer-receiver method is called on an addressable value, the
         // exporter wraps the receiver in an "addrof" node (x.M() → (&x).M()).
         registerExprKind("addrof", this::buildAddrOf);
+        // P3-M9 (WS H): method values x.M in value position — a GoFunc
+        // with the receiver bound (see MethodValueNode).
+        registerExprKind("methodvalue", this::buildMethodValue);
         // Default type decoder: the D5 value-model mapping (M3, WS C). Named
         // types are resolved to their underlying type before decoders run
         // (see allocSlot/kindOf); a decoder that returns null abstains and
@@ -2557,6 +2560,19 @@ public final class NodeFactory {
                 return new GoPointer(val);
             }
         };
+    }
+
+    /**
+     * Builds a method value {@code x.M} (frontend {@code methodvalue} node,
+     * P3-M9 WS H): evaluates the receiver once and wraps the resolved
+     * method in a GoFunc with the receiver bound.
+     */
+    private GoExprNode buildMethodValue(Json.Object node, BuildCtx ctx) {
+        Json.Object f = fieldsOf(node, "methodvalue");
+        String path = "methodvalue.fields";
+        int objId = f.intValue("obj", path);
+        GoExprNode recv = buildExpr(f.object("recv", path), ctx);
+        return new MethodValueNode(recv, funcTable, objId);
     }
 
     /** Builds a Go conversion {@code T(x)} (frontend {@code convert} node). */

@@ -24,18 +24,30 @@ public final class GoFunc {
     private final RootCallTarget target;
     private final MaterializedFrame closureFrame;
     private final GoBox[] boxCells;
+    /**
+     * Prefix arguments prepended to the call arguments at invocation
+     * (P3-M9, WS H): for a method value, the bound receiver. Null for
+     * ordinary function values. See {@link graalgo.runtime.GoCalls#invoke}.
+     */
+    private final Object[] boundArgs;
 
     public GoFunc(RootCallTarget target, MaterializedFrame closureFrame) {
-        this(target, closureFrame, null);
+        this(target, closureFrame, null, null);
     }
 
     public GoFunc(RootCallTarget target, MaterializedFrame closureFrame, GoBox[] boxCells) {
+        this(target, closureFrame, boxCells, null);
+    }
+
+    public GoFunc(RootCallTarget target, MaterializedFrame closureFrame, GoBox[] boxCells,
+            Object[] boundArgs) {
         if (target == null) {
             throw new IllegalArgumentException("call target must not be null (nil funcs are null references)");
         }
         this.target = target;
         this.closureFrame = closureFrame;
         this.boxCells = boxCells;
+        this.boundArgs = boundArgs;
     }
 
     public RootCallTarget target() {
@@ -50,6 +62,11 @@ public final class GoFunc {
     /** Snapshot cells for captured boxed variables; null when none. */
     public GoBox[] boxCells() {
         return boxCells;
+    }
+
+    /** Prefix arguments prepended at invocation; null for ordinary function values. */
+    public Object[] boundArgs() {
+        return boundArgs;
     }
 
     @Override
