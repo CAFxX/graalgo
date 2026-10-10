@@ -109,52 +109,46 @@ var syntheticSources = map[string]string{
 	// go1.27.1 pure-Go sources with Appendix-M multi-result transforms;
 	// internal fips140/* packages are synthetic-only (not in the user
 	// import allow-list).
-	"crypto/elliptic": syntheticCryptoEllipticSource,
-	"crypto/ecdh":     syntheticCryptoEcdhSource,
-	"crypto/dsa":      syntheticCryptoDsaSource,
-	"crypto/ecdsa":     syntheticCryptoEcdsaSource,
-	"crypto/ed25519":   syntheticCryptoEd25519Source,
-	"crypto/rsa":       syntheticCryptoRsaSource,
-	"crypto/hkdf":      syntheticCryptoHkdfSource,
-	"crypto/pbkdf2":    syntheticCryptoPbkdf2Source,
-	"crypto/internal/fips140":                 syntheticCryptoFips140Source,
-	"crypto/internal/fips140/check":           syntheticCryptoFips140CheckSource,
-	"crypto/internal/fips140/alias":           syntheticCryptoFips140AliasSource,
-	"crypto/internal/fips140only":             syntheticCryptoFips140onlySource,
-	"crypto/internal/fips140cache":            syntheticCryptoFips140cacheSource,
-	"crypto/internal/fips140hash":             syntheticCryptoFips140hashSource,
-	"crypto/internal/fips140/drbg":            syntheticCryptoFips140DrbgSource,
-	"crypto/internal/rand":                    syntheticCryptoInternalRandSource,
-	"crypto/internal/boring/bbig":             syntheticCryptoBbigSource,
-	"crypto/internal/boring":                  syntheticCryptoBoringSource,
-	"crypto/internal/constanttime":            syntheticCryptoConstanttimeSource,
-	"crypto/internal/fips140deps/byteorder":   syntheticCryptoFips140depsByteorderSource,
-	"crypto/internal/fips140/nistec/fiat":     syntheticCryptoFips140NistecFiatSource,
-	"crypto/internal/fips140/nistec":          syntheticCryptoFips140NistecSource,
+	"crypto/elliptic":                            syntheticCryptoEllipticSource,
+	"crypto/ecdh":                                syntheticCryptoEcdhSource,
+	"crypto/dsa":                                 syntheticCryptoDsaSource,
+	"crypto/ecdsa":                               syntheticCryptoEcdsaSource,
+	"crypto/ed25519":                             syntheticCryptoEd25519Source,
+	"crypto/rsa":                                 syntheticCryptoRsaSource,
+	"crypto/hkdf":                                syntheticCryptoHkdfSource,
+	"crypto/pbkdf2":                              syntheticCryptoPbkdf2Source,
+	"crypto/internal/fips140":                    syntheticCryptoFips140Source,
+	"crypto/internal/fips140/check":              syntheticCryptoFips140CheckSource,
+	"crypto/internal/fips140/alias":              syntheticCryptoFips140AliasSource,
+	"crypto/internal/fips140only":                syntheticCryptoFips140onlySource,
+	"crypto/internal/fips140cache":               syntheticCryptoFips140cacheSource,
+	"crypto/internal/fips140hash":                syntheticCryptoFips140hashSource,
+	"crypto/internal/fips140/drbg":               syntheticCryptoFips140DrbgSource,
+	"crypto/internal/rand":                       syntheticCryptoInternalRandSource,
+	"crypto/internal/boring/bbig":                syntheticCryptoBbigSource,
+	"crypto/internal/boring":                     syntheticCryptoBoringSource,
+	"crypto/internal/constanttime":               syntheticCryptoConstanttimeSource,
+	"crypto/internal/fips140deps/byteorder":      syntheticCryptoFips140depsByteorderSource,
+	"crypto/internal/fips140/nistec/fiat":        syntheticCryptoFips140NistecFiatSource,
+	"crypto/internal/fips140/nistec":             syntheticCryptoFips140NistecSource,
 	"crypto/internal/fips140/edwards25519/field": syntheticCryptoFips140Edwards25519FieldSource,
-	"crypto/internal/fips140/edwards25519":    syntheticCryptoFips140Edwards25519Source,
-	"crypto/internal/fips140/bigmod":          syntheticCryptoFips140BigmodSource,
-	"crypto/internal/fips140/subtle":          syntheticCryptoFips140SubtleSource,
-	"crypto/internal/fips140/sha256":          syntheticCryptoFips140Sha256Source,
-	"crypto/internal/fips140/sha512":          syntheticCryptoFips140Sha512Source,
-	"crypto/internal/fips140/sha3":            syntheticCryptoFips140Sha3Source,
-	"crypto/internal/fips140/hmac":            syntheticCryptoFips140HmacSource,
-	"crypto/internal/fips140/hkdf":            syntheticCryptoFips140HkdfSource,
-	"crypto/internal/fips140/pbkdf2":          syntheticCryptoFips140Pbkdf2Source,
-	"crypto/internal/fips140/ecdh":            syntheticCryptoFips140EcdhSource,
-	"crypto/internal/fips140/ecdsa":           syntheticCryptoFips140EcdsaSource,
-	"crypto/internal/fips140/ed25519":         syntheticCryptoFips140Ed25519Source,
-	"crypto/internal/fips140/rsa":             syntheticCryptoFips140RsaSource,
-	"golang.org/x/crypto/cryptobyte":          syntheticCryptobyteSource,
-	"golang.org/x/crypto/cryptobyte/asn1":     syntheticCryptobyteAsn1Source,
+	"crypto/internal/fips140/edwards25519":       syntheticCryptoFips140Edwards25519Source,
+	"crypto/internal/fips140/bigmod":             syntheticCryptoFips140BigmodSource,
+	"crypto/internal/fips140/subtle":             syntheticCryptoFips140SubtleSource,
+	"crypto/internal/fips140/sha256":             syntheticCryptoFips140Sha256Source,
+	"crypto/internal/fips140/sha512":             syntheticCryptoFips140Sha512Source,
+	"crypto/internal/fips140/sha3":               syntheticCryptoFips140Sha3Source,
+	"crypto/internal/fips140/hmac":               syntheticCryptoFips140HmacSource,
+	"crypto/internal/fips140/hkdf":               syntheticCryptoFips140HkdfSource,
+	"crypto/internal/fips140/pbkdf2":             syntheticCryptoFips140Pbkdf2Source,
+	"crypto/internal/fips140/ecdh":               syntheticCryptoFips140EcdhSource,
+	"crypto/internal/fips140/ecdsa":              syntheticCryptoFips140EcdsaSource,
+	"crypto/internal/fips140/ed25519":            syntheticCryptoFips140Ed25519Source,
+	"crypto/internal/fips140/rsa":                syntheticCryptoFips140RsaSource,
+	"golang.org/x/crypto/cryptobyte":             syntheticCryptobyteSource,
+	"golang.org/x/crypto/cryptobyte/asn1":        syntheticCryptobyteAsn1Source,
 	// P3-M9 (tier-5): synthetic crypto/x509 and crypto/tls packages
-	// (synth_crypto_x509.go, synth_crypto_x509_pkix.go, synth_crypto_tls.go).
-	// x509 provides certificate parsing and CertPool; tls provides Config,
-	// X509KeyPair, Dial/Listen/Client/Server for loopback testing.
-	// x509/pkix is synthetic-only (not in the user allow-list).
-	"crypto/x509":       syntheticCryptoX509Source,
-	"crypto/x509/pkix":  syntheticCryptoX509PkixSource,
-	"crypto/tls":        syntheticCryptoTlsSource,
+	// REMOVED: source files were never committed; entries broke the build.
 	// P3-M7 (wave 1): synthetic encoding/xml package (real-Go source in
 	// synth_xml.go). Self-contained (no imports); the token-stream
 	// desugar lives in mrdesugar_m5.go (mrXmlToken).
@@ -210,15 +204,15 @@ var syntheticSources = map[string]string{
 	// internal/byteorder (vendored, pure Go). math/bits is tier-1c's
 	// synthetic (registered above). math/big is the G-c hard gate for
 	// the asymmetric-crypto tier.
-	"math/big":           syntheticMathBigSource,
+	"math/big": syntheticMathBigSource,
 	// P3-M9 (tier1c): FULL math/rand port (synth_mathrand.go). Supersedes
 	// the minimal syntheticMathRandSource stub (kept on disk for reference;
 	// see synth_math_rand.go header). The full port uses mutex-guarded
 	// global (no atomic.Pointer needed) and is a strict superset.
-	"math/rand":          syntheticMathRandFullSource,
+	"math/rand": syntheticMathRandFullSource,
 	// P3-M9 (tier1c): synthetic math/rand/v2 (full port; imports the
 	// synthetic math, math/bits and internal/byteorder packages).
-	"math/rand/v2":       syntheticMathRandV2Source,
+	"math/rand/v2": syntheticMathRandV2Source,
 	// P3-M9 (tier1c): synthetic bufio (full port; imports bytes, errors,
 	// io, strings; utf8 inlined as __bufio* helpers).
 	"bufio": syntheticBufioSource,
@@ -230,7 +224,7 @@ var syntheticSources = map[string]string{
 	"text/scanner": syntheticTextScannerSource,
 	// P3-M9 (tier1c): synthetic regexp/syntax (SCOPE-LIMITED: requires
 	// tier1a's unicode; see header).
-	"regexp/syntax": syntheticRegexpSyntaxSource,
+	"regexp/syntax":      syntheticRegexpSyntaxSource,
 	"internal/byteorder": syntheticByteorderSource,
 	// P3-M9: synthetic flag, testing, testing/quick, testing/iotest
 	// packages (real-Go sources in synth_flag.go / synth_testing.go /
@@ -246,12 +240,12 @@ var syntheticSources = map[string]string{
 	// synth_poll.go / synth_nettrace.go / synth_singleflight.go). net
 	// imports net/netip, internal/poll; url imports net/netip. The
 	// internal/* packages are synthetic-only (not in the user allow-list).
-	"net":                 syntheticNetSource,
-	"net/netip":           syntheticNetipSource,
-	"net/url":             syntheticNeturlSource,
-	"net/textproto":       syntheticTextprotoSource,
-	"internal/poll":       syntheticPollSource,
-	"internal/nettrace":   syntheticNettraceSource,
+	"net":                   syntheticNetSource,
+	"net/netip":             syntheticNetipSource,
+	"net/url":               syntheticNeturlSource,
+	"net/textproto":         syntheticTextprotoSource,
+	"internal/poll":         syntheticPollSource,
+	"internal/nettrace":     syntheticNettraceSource,
 	"internal/singleflight": syntheticSingleflightSource,
 	// P3-M9 (tier-5: compress): synthetic compress/* packages (real-Go
 	// sources in synth_compress_{flate,gzip,zlib,lzw,bzip2}.go, generated
@@ -272,11 +266,11 @@ var syntheticSources = map[string]string{
 	// hash/crc32, io, io/fs, time. mime imports: encoding/base64, strings,
 	// unicode/utf8. multipart imports: bytes, crypto/rand, mime,
 	// net/textproto. quotedprintable imports: bufio, bytes, io.
-	"archive/tar":            syntheticArchiveTarSource,
-	"archive/zip":            syntheticArchiveZipSource,
-	"mime":                   syntheticMimeSource,
-	"mime/multipart":         syntheticMimeMultipartSource,
-	"mime/quotedprintable":   syntheticMimeQuotedprintableSource,
+	"archive/tar":          syntheticArchiveTarSource,
+	"archive/zip":          syntheticArchiveZipSource,
+	"mime":                 syntheticMimeSource,
+	"mime/multipart":       syntheticMimeMultipartSource,
+	"mime/quotedprintable": syntheticMimeQuotedprintableSource,
 	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest
 	// (real-Go sources in synth_net_http.go / synth_net_http_httptest.go,
 	// curated from gc 1.27.1). net/http imports bufio, bytes, errors, io,
