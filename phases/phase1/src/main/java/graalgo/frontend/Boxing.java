@@ -25,14 +25,20 @@ public final class Boxing {
 
     /** Reads {@code node} and returns its canonical boxed value. */
     static Object box(GoKind kind, GoExprNode node, VirtualFrame frame) {
-        return switch (kind.slotKind()) {
+        // Use the node's own kind to determine how to read it, not the target
+        // kind. The node may be an untyped constant (e.g., UNTYPED_INT with
+        // Long slot kind) being boxed to a different target kind (e.g.,
+        // UINT16 with Int slot kind). Reading via the node's kind is correct;
+        // the boxed value is then narrowed/widened by the caller if needed.
+        GoKind readKind = node.kind() != null ? node.kind() : kind;
+        return switch (readKind.slotKind()) {
             case Int -> Integer.valueOf(node.executeInt(frame));
             case Long -> Long.valueOf(node.executeLong(frame));
             case Float -> Float.valueOf(node.executeFloat(frame));
             case Double -> Double.valueOf(node.executeDouble(frame));
             case Boolean -> Boolean.valueOf(node.executeBoolean(frame));
             case Object -> node.executeObject(frame);
-            default -> throw new FrontendException("cannot box kind " + kind + " (WS E)");
+            default -> throw new FrontendException("cannot box kind " + readKind + " (WS E)");
         };
     }
 
