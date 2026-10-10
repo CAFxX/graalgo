@@ -542,6 +542,13 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("mime/multipart").pkg, nil
 	case "mime/quotedprintable":
 		return getSyntheticPackage("mime/quotedprintable").pkg, nil
+	// P3-M9 (tier-5): synthetic crypto/x509 packages (real-Go sources in
+	// synth_crypto_x509.go / synth_crypto_x509_pkix.go, Java delegation
+	// via graalgo.x509.* intrinsics).
+	case "crypto/x509":
+		return getSyntheticPackage("crypto/x509").pkg, nil
+	case "crypto/x509/pkix":
+		return getSyntheticPackage("crypto/x509/pkix").pkg, nil
 	}
 	return failImporter{}.Import(path)
 }
@@ -1483,6 +1490,13 @@ func ExportFile(path string) (string, error) {
 			needCryptoPbkdf2 = true
 		case "crypto/x509":
 			needCryptoX509 = true
+			// P3-M9 (tier-5): x509's synthetic source imports time (Unix),
+			// encoding/pem (Decode), net (ParseIP), plus the asymmetric
+			// crypto packages (already in the crypto dep chain below).
+			needTime = true
+			needPem = true
+			needBase64 = true
+			needNet = true
 		case "crypto/tls":
 			needCryptoTls = true
 		case "golang.org/x/crypto/cryptobyte":
@@ -1862,14 +1876,6 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 	}
-	// P3-M9 (tier-4: net): synthetic net package. Import after its
-	// dependencies (errors, io, strconv, strings, syscall, time are
-	// handled by their own needX blocks; internal/poll via overlay).
-	if needNet {
-		if err := e.importSyntheticPackage(getSyntheticPackage("net")); err != nil {
-			return "", err
-		}
-	}
 	// P3-M9 (tier1c): synthetic path.
 	if needPath {
 		if err := e.importSyntheticPackage(getSyntheticPackage("path")); err != nil {
@@ -2136,6 +2142,16 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 	}
+	// P3-M9 (tier-4: net): synthetic net package (Dial/Listen/TCP/UDP).
+	// Import after its dependencies: errors, io, strconv, strings,
+	// syscall, time (all handled by needX blocks above). The net package
+	// drives the netpoller via linknames (no internal/poll import: its
+	// FD struct contains sync.Mutex, rejected by the frontend M2 scope).
+	if needNet {
+		if err := e.importSyntheticPackage(getSyntheticPackage("net")); err != nil {
+			return "", err
+		}
+	}
 	// P3-M8b: synthetic os (synth_os.go). Dependency chain, imported in
 	// order: errors (os error vars use errors.New), time (os imports time),
 	// io (os imports io), io/fs (os imports io/fs), syscall (os imports
@@ -2332,6 +2348,10 @@ func ExportFile(path string) (string, error) {
 			"crypto/rsa",
 			"crypto/hkdf",
 			"crypto/pbkdf2",
+			// P3-M9 (tier-5): synthetic crypto/x509 (Java delegation via
+			// graalgo.x509.* intrinsics). pkix first (x509 imports it).
+			"crypto/x509/pkix",
+			"crypto/x509",
 			// "crypto/tls", // P3-M9: deferred (source not yet committed)
 		} {
 			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
@@ -8719,10 +8739,6 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 		if t, ok := tv.Type.(*types.Tuple); ok {
 			if t.Len() == 0 {
 				return nil, nil
-			}
-			// DEBUG
-			if fn := e.calledFunc(c); fn != nil {
-				println("DEBUG callType tuple for", fn.Pkg().Path()+"."+fn.Name(), "len", t.Len())
 			}
 			// P3-M9 (WS D): user-defined multi-result functions transformed
 			// to pair-returning form. The go/types type is still the
