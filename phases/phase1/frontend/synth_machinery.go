@@ -1153,6 +1153,16 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 			}
 		}
 	}
+	// Methods (functions with receivers) are not package-level synthetic
+	// functions. Interface methods like io/fs.ReadFileFS.ReadFile are
+	// handled via the interface dispatch mechanism (exportIfaceMethodCall),
+	// not via the synthetic function desugar table. Returning true here
+	// would incorrectly trigger the M8 scope error for interface methods
+	// that simply aren't supported, instead of letting the interface
+	// dispatch logic handle them.
+	if sig.Recv() != nil {
+		return false
+	}
 	return sig.Results().Len() > 1
 }
 

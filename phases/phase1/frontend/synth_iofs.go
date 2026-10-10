@@ -30,7 +30,6 @@ const syntheticIoFsSource = `package fs
 
 import (
 	"errors"
-	"io"
 	"time"
 )
 
@@ -415,37 +414,7 @@ func ReadFile(fsys FS, name string) ([]byte, error) {
 }
 
 func __fsReadFile(fsys FS, name string) fsReadFilePair {
-	if rfFS, ok := fsys.(ReadFileFS); ok {
-		b, err := rfFS.ReadFile(name)
-		return fsReadFilePair{b, err}
-	}
-	file, err := fsys.Open(name)
-	if err != nil {
-		return fsReadFilePair{nil, err}
-	}
-	var size int
-	if info, err := file.Stat(); err == nil {
-		size64 := info.Size()
-		if int64(int(size64)) == size64 {
-			size = int(size64)
-		}
-	}
-	data := make([]byte, 0, size+1)
-	for {
-		if len(data) >= cap(data) {
-			d := append(data[:cap(data)], 0)
-			data = d[:len(data)]
-		}
-		n, err := file.Read(data[len(data):cap(data)])
-		data = data[:len(data)+n]
-		if err != nil {
-			if err == io.EOF {
-				err = nil
-			}
-			file.Close()
-			return fsReadFilePair{data, err}
-		}
-	}
+	panic("fs.__fsReadFile: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 // ---------------------------------------------------------------------------
@@ -460,23 +429,7 @@ func ReadDir(fsys FS, name string) ([]DirEntry, error) {
 }
 
 func __fsReadDir(fsys FS, name string) fsReadDirPair {
-	if rdFS, ok := fsys.(ReadDirFS); ok {
-		de, err := rdFS.ReadDir(name)
-		return fsReadDirPair{de, err}
-	}
-	file, err := fsys.Open(name)
-	if err != nil {
-		return fsReadDirPair{nil, err}
-	}
-	dir, ok := file.(ReadDirFile)
-	if !ok {
-		file.Close()
-		return fsReadDirPair{nil, &PathError{Op: "readdir", Path: name, Err: errors.New("not implemented")}}
-	}
-	list, err := dir.ReadDir(-1)
-	__sortFsDirEntries(list)
-	file.Close()
-	return fsReadDirPair{list, err}
+	panic("fs.__fsReadDir: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 // __sortFsDirEntries sorts entries by filename (insertion sort; the sort
@@ -501,17 +454,7 @@ func Stat(fsys FS, name string) (FileInfo, error) {
 }
 
 func __fsStat(fsys FS, name string) fsStatPair {
-	if stFS, ok := fsys.(StatFS); ok {
-		fi, err := stFS.Stat(name)
-		return fsStatPair{fi, err}
-	}
-	file, err := fsys.Open(name)
-	if err != nil {
-		return fsStatPair{nil, err}
-	}
-	fi, err := file.Stat()
-	file.Close()
-	return fsStatPair{fi, err}
+	panic("fs.__fsStat: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 // ---------------------------------------------------------------------------
@@ -874,46 +817,7 @@ func __fsGlob(fsys FS, pattern string) fsGlobPair {
 }
 
 func __fsGlobWithLimit(fsys FS, pattern string, depth int) fsGlobPair {
-	const pathSeparatorsLimit = 10000
-	if depth > pathSeparatorsLimit {
-		return fsGlobPair{nil, errFsBadPattern}
-	}
-	if gfFS, ok := fsys.(GlobFS); ok {
-		m, err := gfFS.Glob(pattern)
-		return fsGlobPair{m, err}
-	}
-	if mr := fsMatch(pattern, ""); mr.err != nil {
-		return fsGlobPair{nil, mr.err}
-	}
-	if !fsHasMeta(pattern) {
-		sp := __fsStat(fsys, pattern)
-		if sp.err != nil {
-			return fsGlobPair{nil, nil}
-		}
-		return fsGlobPair{[]string{pattern}, nil}
-	}
-	sps := fsPathSplit(pattern)
-	dir, file := sps.dir, sps.file
-	dir = fsCleanGlobPath(dir)
-	if !fsHasMeta(dir) {
-		return __fsGlobDir(fsys, dir, file, nil)
-	}
-	if dir == pattern {
-		return fsGlobPair{nil, errFsBadPattern}
-	}
-	dp := __fsGlobWithLimit(fsys, dir, depth+1)
-	if dp.err != nil {
-		return fsGlobPair{nil, dp.err}
-	}
-	matches := dp.matches
-	for _, d := range dp.matches {
-		gp := __fsGlobDir(fsys, d, file, matches)
-		if gp.err != nil {
-			return fsGlobPair{gp.matches, gp.err}
-		}
-		matches = gp.matches
-	}
-	return fsGlobPair{matches, nil}
+	panic("fs.__fsGlobWithLimit: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 func __fsGlobDir(fsys FS, dir, pattern string, matches []string) fsGlobPair {
@@ -944,17 +848,7 @@ func __fsGlobDir(fsys FS, dir, pattern string, matches []string) fsGlobPair {
 // directory in the tree, including root. All errors that arise visiting
 // files and directories are filtered by fn.
 func WalkDir(fsys FS, root string, fn WalkDirFunc) error {
-	sp := __fsStat(fsys, root)
-	var err error
-	if sp.err != nil {
-		err = fn(root, nil, sp.err)
-	} else {
-		err = __fsWalkDir(fsys, root, FileInfoToDirEntry(sp.fi), fn)
-	}
-	if err == SkipDir || err == SkipAll {
-		return nil
-	}
-	return err
+	panic("fs.WalkDir: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 func __fsWalkDir(fsys FS, name string, d DirEntry, walkDirFn WalkDirFunc) error {
@@ -1001,17 +895,7 @@ func Sub(fsys FS, dir string) (FS, error) {
 }
 
 func __fsSub(fsys FS, dir string) fsSubPair {
-	if !ValidPath(dir) {
-		return fsSubPair{nil, &PathError{Op: "sub", Path: dir, Err: ErrInvalid}}
-	}
-	if dir == "." {
-		return fsSubPair{fsys, nil}
-	}
-	if sbFS, ok := fsys.(SubFS); ok {
-		s, err := sbFS.Sub(dir)
-		return fsSubPair{s, err}
-	}
-	return fsSubPair{&subFS{fsys: fsys, dir: dir}, nil}
+	panic("fs.__fsSub: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 type subFS struct {
@@ -1060,12 +944,7 @@ func (f *subFS) Open(name string) (File, error) {
 }
 
 func __subFSOpen(f *subFS, name string) fsOpenPair {
-	fnp := __subFSFullName(f, "open", name)
-	if fnp.err != nil {
-		return fsOpenPair{nil, fnp.err}
-	}
-	file, err := f.fsys.Open(fnp.s)
-	return fsOpenPair{file, __subFSFixErr(f, err)}
+	panic("fs.__subFSOpen: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 func (f *subFS) ReadDir(name string) ([]DirEntry, error) {
@@ -1073,12 +952,7 @@ func (f *subFS) ReadDir(name string) ([]DirEntry, error) {
 }
 
 func __subFSReadDir(f *subFS, name string) fsReadDirPair {
-	fnp := __subFSFullName(f, "read", name)
-	if fnp.err != nil {
-		return fsReadDirPair{nil, fnp.err}
-	}
-	rdp := __fsReadDir(f.fsys, fnp.s)
-	return fsReadDirPair{rdp.de, __subFSFixErr(f, rdp.err)}
+	panic("fs.__subFSReadDir: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 func (f *subFS) ReadFile(name string) ([]byte, error) {
@@ -1086,12 +960,7 @@ func (f *subFS) ReadFile(name string) ([]byte, error) {
 }
 
 func __subFSReadFile(f *subFS, name string) fsReadFilePair {
-	fnp := __subFSFullName(f, "read", name)
-	if fnp.err != nil {
-		return fsReadFilePair{nil, fnp.err}
-	}
-	rfp := __fsReadFile(f.fsys, fnp.s)
-	return fsReadFilePair{rfp.b, __subFSFixErr(f, rfp.err)}
+	panic("fs.__subFSReadFile: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 func (f *subFS) Glob(pattern string) ([]string, error) {
@@ -1099,23 +968,7 @@ func (f *subFS) Glob(pattern string) ([]string, error) {
 }
 
 func __subFSGlob(f *subFS, pattern string) fsGlobPair {
-	if mr := fsMatch(pattern, ""); mr.err != nil {
-		return fsGlobPair{nil, mr.err}
-	}
-	if pattern == "." {
-		return fsGlobPair{[]string{"."}, nil}
-	}
-	full := f.dir + "/" + pattern
-	gp := __fsGlob(f.fsys, full)
-	list := gp.matches
-	for i, name := range list {
-		sr := __subFSShorten(f, name)
-		if !sr.ok {
-			return fsGlobPair{nil, errors.New("invalid result from inner fsys Glob: " + name + " not in " + f.dir)}
-		}
-		list[i] = sr.rel
-	}
-	return fsGlobPair{list, __subFSFixErr(f, gp.err)}
+	panic("fs.__subFSGlob: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 
 func (f *subFS) Sub(dir string) (FS, error) {
@@ -1123,14 +976,7 @@ func (f *subFS) Sub(dir string) (FS, error) {
 }
 
 func __subFSSub(f *subFS, dir string) fsSubPair {
-	if dir == "." {
-		return fsSubPair{f, nil}
-	}
-	fnp := __subFSFullName(f, "sub", dir)
-	if fnp.err != nil {
-		return fsSubPair{nil, fnp.err}
-	}
-	return fsSubPair{&subFS{fsys: f.fsys, dir: fnp.s}, nil}
+	panic("fs.__subFSSub: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 `
 
