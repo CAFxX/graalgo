@@ -358,6 +358,8 @@ func (c *p224Curve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) { return c.nist
 func (c *p224Curve) Double(x1, y1 *big.Int) (x, y *big.Int) { return c.nistCurve.Double(x1, y1) }
 func (c *p224Curve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) { return c.nistCurve.ScalarMult(x1, y1, k) }
 func (c *p224Curve) ScalarBaseMult(k []byte) (x, y *big.Int) { return c.nistCurve.ScalarBaseMult(k) }
+func (c *p224Curve) Unmarshal(data []byte) (x, y *big.Int) { return c.nistCurve.Unmarshal(data) }
+func (c *p224Curve) UnmarshalCompressed(data []byte) (x, y *big.Int) { return c.nistCurve.UnmarshalCompressed(data) }
 
 var p224 = &p224Curve{
 	nistCurve: &nistCurve[*p224Point]{
@@ -388,6 +390,8 @@ func (c *p256Curve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) { return c.nist
 func (c *p256Curve) Double(x1, y1 *big.Int) (x, y *big.Int) { return c.nistCurve.Double(x1, y1) }
 func (c *p256Curve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) { return c.nistCurve.ScalarMult(x1, y1, k) }
 func (c *p256Curve) ScalarBaseMult(k []byte) (x, y *big.Int) { return c.nistCurve.ScalarBaseMult(k) }
+func (c *p256Curve) Unmarshal(data []byte) (x, y *big.Int) { return c.nistCurve.Unmarshal(data) }
+func (c *p256Curve) UnmarshalCompressed(data []byte) (x, y *big.Int) { return c.nistCurve.UnmarshalCompressed(data) }
 
 var p256 = &p256Curve{
 	nistCurve: &nistCurve[*p256Point]{
@@ -418,6 +422,8 @@ func (c *p384Curve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) { return c.nist
 func (c *p384Curve) Double(x1, y1 *big.Int) (x, y *big.Int) { return c.nistCurve.Double(x1, y1) }
 func (c *p384Curve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) { return c.nistCurve.ScalarMult(x1, y1, k) }
 func (c *p384Curve) ScalarBaseMult(k []byte) (x, y *big.Int) { return c.nistCurve.ScalarBaseMult(k) }
+func (c *p384Curve) Unmarshal(data []byte) (x, y *big.Int) { return c.nistCurve.Unmarshal(data) }
+func (c *p384Curve) UnmarshalCompressed(data []byte) (x, y *big.Int) { return c.nistCurve.UnmarshalCompressed(data) }
 
 var p384 = &p384Curve{
 	nistCurve: &nistCurve[*p384Point]{
@@ -453,6 +459,8 @@ func (c *p521Curve) Add(x1, y1, x2, y2 *big.Int) (x, y *big.Int) { return c.nist
 func (c *p521Curve) Double(x1, y1 *big.Int) (x, y *big.Int) { return c.nistCurve.Double(x1, y1) }
 func (c *p521Curve) ScalarMult(x1, y1 *big.Int, k []byte) (x, y *big.Int) { return c.nistCurve.ScalarMult(x1, y1, k) }
 func (c *p521Curve) ScalarBaseMult(k []byte) (x, y *big.Int) { return c.nistCurve.ScalarBaseMult(k) }
+func (c *p521Curve) Unmarshal(data []byte) (x, y *big.Int) { return c.nistCurve.Unmarshal(data) }
+func (c *p521Curve) UnmarshalCompressed(data []byte) (x, y *big.Int) { return c.nistCurve.UnmarshalCompressed(data) }
 
 var p521 = &p521Curve{
 	nistCurve: &nistCurve[*p521Point]{
