@@ -497,6 +497,42 @@ func initP521() {
 // support method calls on type parameters; the generic nistCurve[Point]
 // is replaced by 4 concrete instantiations).
 
+// Non-generic pair types (reused by all 4 concrete curve instantiations).
+type __mrnistCurve_pointToAffinePair struct {
+	x *big.Int
+	y *big.Int
+}
+
+type __mrnistCurve_AddPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+type __mrnistCurve_DoublePair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+type __mrnistCurve_ScalarMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+type __mrnistCurve_ScalarBaseMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+type __mrnistCurve_UnmarshalPair struct {
+	x *big.Int
+	y *big.Int
+}
+
+type __mrnistCurve_UnmarshalCompressedPair struct {
+	x *big.Int
+	y *big.Int
+}
+
 type __mrnistCurve_224_pointFromAffinePair struct {
 	p *p224Point
 	err error
@@ -527,7 +563,12 @@ func __mrnistCurve_224_pointFromAffine(params *CurveParams, x, y *big.Int) __mrn
 	return __mrnistCurve_224_pointFromAffinePair{__fw0, __fw1}
 }
 
-func __mrnistCurve_224_pointToAffine(params *CurveParams, pt *p224Point) __mrnistCurve_pointToAffinePair {
+type __mrnistCurve_224_pointToAffinePair struct {
+	x *big.Int
+	y *big.Int
+}
+
+func __mrnistCurve_224_pointToAffine(params *CurveParams, pt *p224Point) __mrnistCurve_224_pointToAffinePair {
 	var x *big.Int
 	var y *big.Int
 
@@ -535,12 +576,12 @@ func __mrnistCurve_224_pointToAffine(params *CurveParams, pt *p224Point) __mrnis
 	if len(out) == 1 && out[0] == 0 {
 		// This is the encoding of the point at infinity, which the affine
 		// coordinates API represents as (0, 0) by convention.
-		return __mrnistCurve_pointToAffinePair{new(big.Int), new(big.Int)}
+		return __mrnistCurve_224_pointToAffinePair{new(big.Int), new(big.Int)}
 	}
 	byteLen := (params.BitSize + 7) / 8
 	x = new(big.Int).SetBytes(out[1 : 1+byteLen])
 	y = new(big.Int).SetBytes(out[1+byteLen:])
-	return __mrnistCurve_pointToAffinePair{x, y}
+	return __mrnistCurve_224_pointToAffinePair{x, y}
 }
 
 func __mrnistCurve_224_IsOnCurve(params *CurveParams, x, y *big.Int) bool {
@@ -677,7 +718,12 @@ func __mrnistCurve_256_pointFromAffine(params *CurveParams, x, y *big.Int) __mrn
 	return __mrnistCurve_256_pointFromAffinePair{__fw0, __fw1}
 }
 
-func __mrnistCurve_256_pointToAffine(params *CurveParams, pt *p256Point) __mrnistCurve_pointToAffinePair {
+type __mrnistCurve_256_pointToAffinePair struct {
+	x *big.Int
+	y *big.Int
+}
+
+func __mrnistCurve_256_pointToAffine(params *CurveParams, pt *p256Point) __mrnistCurve_256_pointToAffinePair {
 	var x *big.Int
 	var y *big.Int
 
@@ -685,12 +731,12 @@ func __mrnistCurve_256_pointToAffine(params *CurveParams, pt *p256Point) __mrnis
 	if len(out) == 1 && out[0] == 0 {
 		// This is the encoding of the point at infinity, which the affine
 		// coordinates API represents as (0, 0) by convention.
-		return __mrnistCurve_pointToAffinePair{new(big.Int), new(big.Int)}
+		return __mrnistCurve_256_pointToAffinePair{new(big.Int), new(big.Int)}
 	}
 	byteLen := (params.BitSize + 7) / 8
 	x = new(big.Int).SetBytes(out[1 : 1+byteLen])
 	y = new(big.Int).SetBytes(out[1+byteLen:])
-	return __mrnistCurve_pointToAffinePair{x, y}
+	return __mrnistCurve_256_pointToAffinePair{x, y}
 }
 
 func __mrnistCurve_256_IsOnCurve(params *CurveParams, x, y *big.Int) bool {
@@ -827,7 +873,12 @@ func __mrnistCurve_384_pointFromAffine(params *CurveParams, x, y *big.Int) __mrn
 	return __mrnistCurve_384_pointFromAffinePair{__fw0, __fw1}
 }
 
-func __mrnistCurve_384_pointToAffine(params *CurveParams, pt *p384Point) __mrnistCurve_pointToAffinePair {
+type __mrnistCurve_384_pointToAffinePair struct {
+	x *big.Int
+	y *big.Int
+}
+
+func __mrnistCurve_384_pointToAffine(params *CurveParams, pt *p384Point) __mrnistCurve_384_pointToAffinePair {
 	var x *big.Int
 	var y *big.Int
 
@@ -835,12 +886,12 @@ func __mrnistCurve_384_pointToAffine(params *CurveParams, pt *p384Point) __mrnis
 	if len(out) == 1 && out[0] == 0 {
 		// This is the encoding of the point at infinity, which the affine
 		// coordinates API represents as (0, 0) by convention.
-		return __mrnistCurve_pointToAffinePair{new(big.Int), new(big.Int)}
+		return __mrnistCurve_384_pointToAffinePair{new(big.Int), new(big.Int)}
 	}
 	byteLen := (params.BitSize + 7) / 8
 	x = new(big.Int).SetBytes(out[1 : 1+byteLen])
 	y = new(big.Int).SetBytes(out[1+byteLen:])
-	return __mrnistCurve_pointToAffinePair{x, y}
+	return __mrnistCurve_384_pointToAffinePair{x, y}
 }
 
 func __mrnistCurve_384_IsOnCurve(params *CurveParams, x, y *big.Int) bool {
@@ -977,7 +1028,12 @@ func __mrnistCurve_521_pointFromAffine(params *CurveParams, x, y *big.Int) __mrn
 	return __mrnistCurve_521_pointFromAffinePair{__fw0, __fw1}
 }
 
-func __mrnistCurve_521_pointToAffine(params *CurveParams, pt *p521Point) __mrnistCurve_pointToAffinePair {
+type __mrnistCurve_521_pointToAffinePair struct {
+	x *big.Int
+	y *big.Int
+}
+
+func __mrnistCurve_521_pointToAffine(params *CurveParams, pt *p521Point) __mrnistCurve_521_pointToAffinePair {
 	var x *big.Int
 	var y *big.Int
 
@@ -985,12 +1041,12 @@ func __mrnistCurve_521_pointToAffine(params *CurveParams, pt *p521Point) __mrnis
 	if len(out) == 1 && out[0] == 0 {
 		// This is the encoding of the point at infinity, which the affine
 		// coordinates API represents as (0, 0) by convention.
-		return __mrnistCurve_pointToAffinePair{new(big.Int), new(big.Int)}
+		return __mrnistCurve_521_pointToAffinePair{new(big.Int), new(big.Int)}
 	}
 	byteLen := (params.BitSize + 7) / 8
 	x = new(big.Int).SetBytes(out[1 : 1+byteLen])
 	y = new(big.Int).SetBytes(out[1+byteLen:])
-	return __mrnistCurve_pointToAffinePair{x, y}
+	return __mrnistCurve_521_pointToAffinePair{x, y}
 }
 
 func __mrnistCurve_521_IsOnCurve(params *CurveParams, x, y *big.Int) bool {
