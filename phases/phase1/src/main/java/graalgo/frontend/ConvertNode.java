@@ -58,8 +58,11 @@ public final class ConvertNode extends GoExprNode {
         // uses a type parameter P, and the exporter emits a convert).
         // At runtime the interface holds the pointer; extract its data.
         boolean ifaceToPointer = from == GoKind.INTERFACE && to == GoKind.POINTER;
+        // P3-M9: []T -> *T (e.g., &s[0] desugared as convert in generic
+        // contexts). At runtime, create a pointer to the first element.
+        boolean sliceToPointer = from == GoKind.SLICE && to == GoKind.POINTER;
         if (!(numeric || intToString || stringToString || boolToBool || unsafeEscape
-                || stringToSlice || sliceToString || ifaceToPointer)) {
+                || stringToSlice || sliceToString || ifaceToPointer || sliceToPointer)) {
             throw new IllegalArgumentException(
                     "illegal conversion: " + from + " -> " + to);
         }
@@ -188,6 +191,17 @@ public final class ConvertNode extends GoExprNode {
                 return gi.data();
             }
             return v;
+        }
+        // P3-M9: []T -> *T (pointer to first element, e.g., &s[0]).
+        if (to == GoKind.POINTER && from == GoKind.SLICE) {
+            Object v = child.executeObject(frame);
+            if (v instanceof graalgo.values.GoSlice gs) {
+                Object arr = gs.array();
+                int idx = gs.offset();
+                return new graalgo.values.GoPointer(arr, idx);
+            }
+            // Java array (should not happen for SLICE kind, but be safe).
+            return new graalgo.values.GoPointer(v, 0);
         }
         throw new UnsupportedOperationException("conversion " + from + " -> " + to + " has no object value");
     }
