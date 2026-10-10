@@ -407,7 +407,11 @@ def rewrite_call_sites(body, mr_map):
     def get_tmp():
         tmp_counter[0] += 1
         return f"__mrtmp{tmp_counter[0]}"
+    # Denylist: common interface methods - receiver type uncertain
+    iface_methods = {'Write', 'Read', 'Close', 'Flush', 'Seek', 'ReadAt', 'WriteAt'}
     for orig_name in sorted(mr_map.keys(), key=len, reverse=True):
+        if orig_name in iface_methods:
+            continue
         helper_name, field_names = mr_map[orig_name]
         nfields = len(field_names)
         out = []
@@ -887,6 +891,12 @@ def zip_adapt(src, pkg_prefix):
 func (s *__zipGodebugSetting) Value() string { return "" }
 func (s *__zipGodebugSetting) IncNonDefault() {}
 var zipinsecurepath = &__zipGodebugSetting{name: "zipinsecurepath"}'''
+    )
+    # Remove unused var err from __zipreadDirectoryEnd (shadowed by :=)
+    src = re.sub(
+        r'(func __zipreadDirectoryEnd\([^)]*\) __zipreadDirectoryEndPair \{\n\tvar baseOffset int64\n)\tvar err error\n',
+        r'\1',
+        src
     )
     return src
 
