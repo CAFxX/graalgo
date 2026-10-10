@@ -393,73 +393,39 @@ def extract_receiver(body, dot_pos):
 
 
 def rewrite_call_sites(body, mr_map):
-    """
-    Rewrite calls to multi-result functions in a helper body.
-    mr_map: dict {orig_name: (helper_name, [field_names])}
-    
-    Handles:
-    - `a, b := f(args)` -> `__tmpN := __f(args); a, b := __tmpN.f0, __tmpN.f1`
-    - `a, b = f(args)` -> `__tmpN := __f(args); a, b = __tmpN.f0, __tmpN.f1`
-    - `return f(args)` -> `return __f(args)` (handled by rewrite_body_returns, but also here for safety)
-    """
+    """Rewrite calls to multi-result functions in a helper body."""
     if not mr_map:
         return body
-    
     tmp_counter = [0]
-    
     def get_tmp():
         tmp_counter[0] += 1
         return f"__mrtmp{tmp_counter[0]}"
-    
-    # For each multi-result function, rewrite its call sites
-    # We need to be careful about order: longer names first to avoid partial matches
     for orig_name in sorted(mr_map.keys(), key=len, reverse=True):
         helper_name, field_names = mr_map[orig_name]
         nfields = len(field_names)
-        
-        # Pattern 1: `a, b, ... := f(args)` or `a, b, ... = f(args)`
-        # Match: (lhs) (:=|=) f( (args) )
-        # LHS can be: `a, b`, `a, b, c`, `_`, etc.
-        # This is tricky with regex because args can contain parens.
-        # Simplified: match `f(` then find matching `)` via counting.
-        
-        # We'll do a manual scan
         out = []
         i = 0
+        emit_i = 0
         n = len(body)
         while i < n:
-            # Look for orig_name followed by '('
-            # Ensure it's not part of a longer identifier
             idx = body.find(orig_name, i)
             if idx == -1:
-                out.append(body[i:])
+                out.append(body[emit_i:])
                 break
-            
-            # Check boundaries: skip if part of longer identifier or function definition
             if idx > 0 and (body[idx-1].isalnum() or body[idx-1] == '_'):
-                out.append(body[i:idx+1])
                 i = idx + 1
                 continue
-            # Skip function definitions: "func Name(" or "func (recv) Name("
-            # Look back for "func " on the same line
             line_start = body.rfind('\n', 0, idx) + 1
             line_prefix = body[line_start:idx]
             if re.search(r'\bfunc\s+(\([^)]*\)\s+)?$', line_prefix):
-                out.append(body[i:idx+len(orig_name)+1])
                 i = idx + len(orig_name) + 1
                 continue
-            
             j = idx + len(orig_name)
-            # Skip whitespace
             while j < n and body[j] in ' \t':
                 j += 1
             if j >= n or body[j] != '(':
-                out.append(body[i:j])
                 i = j
                 continue
-            
-            # Found a call: orig_name(
-            # Find the matching )
             depth = 1
             k = j + 1
             in_str = None
@@ -479,60 +445,91 @@ def rewrite_call_sites(body, mr_map):
                     elif c == ')':
                         depth -= 1
                 k += 1
-            # k is after the ')'
             call_end = k
             args = body[j+1:k-1]
-            
-            # Look backwards to see if this is `lhs :=` or `lhs =` or `return`
-            # Find the start of the line
+            # Receiver handling (conservative: simple identifiers only)
+            recv = None
+            recv_start = None
+            skip_rewrite = False
+            rd = idx - 1
+            while rd >= 0 and body[rd] in ' \t':
+                rd -= 1
+            if rd >= 0 and body[rd] == '.':
+                rc, rs = extract_receiver(body, rd)
+                if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', rc):
+                    recv, recv_start = rc, rs
+                else:
+                    skip_rewrite = True
+            if skip_rewrite:
+                out.append(body[emit_i:call_end])
+                emit_i = call_end
+                i = call_end
+                continue
+            def helper_call():
+                if recv:
+                    return f"{helper_name}({recv}, {args})" if args.strip() else f"{helper_name}({recv})"
+                return f"{helper_name}({args})"
             line_start = body.rfind('\n', 0, idx) + 1
             prefix = body[line_start:idx].strip()
-            
             if prefix.startswith('return'):
-                # `return f(args)` -> `return __f(args)`
-                out.append(body[i:idx])
-                out.append(helper_name)
-                out.append(body[j:call_end])
+                out.append(body[emit_i:recv_start if recv else idx])
+                out.append(helper_call())
+                emit_i = call_end
                 i = call_end
             elif ':=' in prefix or '=' in prefix:
-                # `a, b := f(args)` -> `__tmp := __f(args); a, b := __tmp.f0, __tmp.f1`
-                # Extract LHS
                 if ':=' in prefix:
                     lhs, _ = prefix.rsplit(':=', 1)
                     op = ':='
                 else:
                     lhs, _ = prefix.rsplit('=', 1)
                     op = '='
-                    # Avoid `==`, `!=`, `<=`, `>=`
                     if lhs.endswith(('=', '!', '<', '>')):
-                        out.append(body[i:call_end])
+                        out.append(body[emit_i:call_end])
+                        emit_i = call_end
                         i = call_end
                         continue
                 lhs = lhs.strip()
-                # Count LHS vars (split by comma, but careful with blank `_`)
                 lhs_vars = [v.strip() for v in lhs.split(',')]
                 if len(lhs_vars) != nfields:
-                    # Mismatch, don't rewrite
-                    out.append(body[i:call_end])
+                    out.append(body[emit_i:call_end])
+                    emit_i = call_end
                     i = call_end
                     continue
-                
                 tmp = get_tmp()
-                # Replace the whole `lhs := f(args)` with `tmp := __f(args); lhs := tmp.f0, tmp.f1`
-                # We need to replace from line_start to call_end
-                out.append(body[i:line_start])
                 fields_access = ', '.join(f"{tmp}.{fn}" for fn in field_names)
-                out.append(f"{tmp} := {helper_name}({args}); {lhs} {op} {fields_access}")
-                i = call_end
+                line_text = body[line_start:idx]
+                if 'func ' in line_text and '{' in line_text:
+                    brace_rel = line_text.rfind('{')
+                    brace_abs = line_start + brace_rel
+                    eff_prefix = body[brace_abs+1:idx].strip()
+                    if ':=' in eff_prefix:
+                        eff_lhs, _ = eff_prefix.rsplit(':=', 1)
+                        eff_op = ':='
+                    else:
+                        eff_lhs, _ = eff_prefix.rsplit('=', 1)
+                        eff_op = '='
+                    eff_lhs = eff_lhs.strip()
+                    out.append(body[emit_i:brace_abs+1])
+                    out.append(f" {tmp} := {helper_call()}; {eff_lhs} {eff_op} {fields_access}")
+                    emit_i = call_end
+                    i = call_end
+                else:
+                    out.append(body[emit_i:line_start])
+                    out.append(f"{tmp} := {helper_call()}; {lhs} {op} {fields_access}")
+                    emit_i = call_end
+                    i = call_end
             else:
-                # Standalone call (should not happen for multi-result, but just in case)
-                out.append(body[i:idx])
-                out.append(helper_name)
-                out.append(body[j:call_end])
-                i = call_end
-        
+                line_prefix_stripped = body[line_start:idx].strip()
+                if not line_prefix_stripped:
+                    out.append(body[emit_i:call_end])
+                    emit_i = call_end
+                    i = call_end
+                else:
+                    out.append(body[emit_i:recv_start if recv else idx])
+                    out.append(helper_call())
+                    emit_i = call_end
+                    i = call_end
         body = ''.join(out)
-    
     return body
 
 def make_pair_name(pkg_prefix, recv_type, name):
@@ -547,23 +544,20 @@ def make_helper_name(pkg_prefix, recv_type, name):
     return f"__{pkg_prefix}{recv_part}{name}"
 
 def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
+    """Rewrite return statements to return pair struct.
+
+    - Skips function literals (their returns belong to the literal).
+    - Decomposes `return f(args)` for multi-result f.
     """
-    Rewrite return statements in a function body to return pair struct.
-    fields: list of (name, type) for the pair struct.
-    
-    Handles:
-    - `return a, b` -> `return Pair{a, b}` (positional)
-    - `return` (bare, with named results) -> `return Pair{n1, n2}`
-    
-    This is a simplified version - handles common cases.
-    """
-    fnames = [f[0] for f in fields]  # field names
-    # For bare returns, we need the result variable names
-    # For now, assume fields have names (from named results or generated)
-    
+    fnames = [f[0] for f in fields]
+    tmp_counter = [0]
+    def get_tmp():
+        tmp_counter[0] += 1
+        return f"__mrtmp{tmp_counter[0]}"
+
     out = []
     i, n = 0, len(body)
-    
+
     def skip_string(j, q):
         j += 1
         while j < n:
@@ -574,7 +568,7 @@ def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
                 return j + 1
             j += 1
         return j
-    
+
     def skip_balanced(j, op, cl):
         depth = 0
         while j < n:
@@ -598,9 +592,8 @@ def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
                     return j + 1
             j += 1
         return j
-    
+
     while i < n:
-        # Skip // comments
         if body.startswith('//', i):
             k = body.find('\n', i)
             if k == -1:
@@ -609,7 +602,6 @@ def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
             out.append(body[i:k+1])
             i = k + 1
             continue
-        # Skip /* */ comments
         if body.startswith('/*', i):
             k = body.find('*/', i)
             if k == -1:
@@ -618,10 +610,36 @@ def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
             out.append(body[i:k+2])
             i = k + 2
             continue
-        # Look for 'return' keyword
+        # Skip function literals
+        fm = re.match(r'\bfunc\b', body[i:])
+        if fm:
+            j = i + 4
+            while j < n:
+                c = body[j]
+                if c in ('"', "'", '`'):
+                    j = skip_string(j, c)
+                    continue
+                if body.startswith('//', j):
+                    k = body.find('\n', j)
+                    j = n if k < 0 else k + 1
+                    continue
+                if body.startswith('/*', j):
+                    k = body.find('*/', j)
+                    j = n if k < 0 else k + 2
+                    continue
+                if c == '(' or c == '[':
+                    j = skip_balanced(j, c, ')' if c == '(' else ']')
+                    continue
+                if c == '{':
+                    break
+                j += 1
+            if j < n and body[j] == '{':
+                j = skip_balanced(j, '{', '}')
+                out.append(body[i:j])
+                i = j
+                continue
         m = re.match(r'\breturn\b', body[i:])
         if not m:
-            # Copy char, handling strings
             c = body[i]
             if c in ('"', "'", '`'):
                 j = skip_string(i, c)
@@ -631,21 +649,13 @@ def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
                 out.append(c)
                 i += 1
             continue
-        
-        # Found 'return'
-        j = i + 6  # len('return')
-        # Skip whitespace
+        j = i + 6
         while j < n and body[j] in ' \t':
             j += 1
-        
-        # Check if it's a bare return (followed by newline, semicolon, or })
         if j >= n or body[j] in '\n;}':
-            # Bare return: use field names
             out.append(f'return {pair_name}{{{", ".join(fnames)}}}')
             i = j
             continue
-        
-        # Has return values: parse until semicolon or newline (at depth 0)
         k = j
         depth = 0
         while k < n:
@@ -654,18 +664,17 @@ def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
                 k = skip_string(k, c)
                 continue
             if body.startswith('//', k):
-                # Line comment: return ends at newline
                 break
             if c in '([{':
                 depth += 1
             elif c in ')]}':
+                if depth == 0:
+                    break
                 depth -= 1
             elif c in '\n;' and depth == 0:
                 break
             k += 1
-        
         ret_vals = body[j:k].strip()
-        # Split by top-level commas
         vals = []
         d = 0
         cur = ''
@@ -680,18 +689,65 @@ def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
             else:
                 cur += c
         vals.append(cur.strip())
-        
-        # Generate pair literal
-        # If we have field names, use them; otherwise positional
+        # Decompose multi-result calls
+        decomposed = False
+        if len(vals) == 1:
+            v = vals[0]
+            cm = re.match(r'^([\w.]+)\s*\(', v)
+            if cm:
+                dotted = cm.group(1)
+                fname = dotted.split('.')[-1]
+                pstart = v.find('(')
+                paren_depth = 0
+                pend = -1
+                qpos = pstart
+                in_q = None
+                while qpos < len(v):
+                    qc = v[qpos]
+                    if in_q:
+                        if qc == '\\':
+                            qpos += 2
+                            continue
+                        if qc == in_q:
+                            in_q = None
+                    elif qc in ('"', "'"):
+                        in_q = qc
+                    elif qc == '(':
+                        paren_depth += 1
+                    elif qc == ')':
+                        paren_depth -= 1
+                        if paren_depth == 0:
+                            pend = qpos
+                            break
+                    qpos += 1
+                if pend != -1 and v[pend+1:].strip() == '':
+                    args = v[pstart+1:pend]
+                    call_text = v[:pend+1]
+                    if mr_map and fname in mr_map:
+                        helper_name, callee_fields = mr_map[fname]
+                        recv_prefix = ''
+                        if '.' in dotted:
+                            recv_expr = dotted[:dotted.rfind('.')]
+                            recv_prefix = recv_expr + ', ' if args.strip() else recv_expr
+                        tmp = get_tmp()
+                        fields_access = ', '.join(f"{tmp}.{fn}" for fn in callee_fields)
+                        out.append(f'{tmp} := {helper_name}({recv_prefix}{args}); return {pair_name}{{{fields_access}}}')
+                        decomposed = True
+                    elif len(fnames) > 1:
+                        tmp = get_tmp()
+                        var_names = [f"{tmp}_{fn}" for fn in fnames]
+                        assigns = ', '.join(f"{fn}: {vn}" for fn, vn in zip(fnames, var_names))
+                        out.append(f'{", ".join(var_names)} := {call_text}; return {pair_name}{{{assigns}}}')
+                        decomposed = True
+        if decomposed:
+            i = k
+            continue
         if len(vals) == len(fnames):
             assigns = [f"{fn}: {v}" for fn, v in zip(fnames, vals)]
             out.append(f'return {pair_name}{{{", ".join(assigns)}}}')
         else:
-            # Fallback: positional
             out.append(f'return {pair_name}{{{ret_vals}}}')
-        
         i = k
-    
     return ''.join(out)
 
 # ---------------------------------------------------------------------------
