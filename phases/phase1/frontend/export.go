@@ -6599,11 +6599,9 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 			return e.exportRecv(x)
 		}
 		if x.Op == token.AND {
-			// P3-M9: parentheses are pure grouping — &(*p) is &*p.
-			ax := unparen(x.X)
 			// &T{...}: normalize to a pointer-typed composite literal
 			// (M4, WS E).
-			if cl, ok := ax.(*ast.CompositeLit); ok {
+			if cl, ok := x.X.(*ast.CompositeLit); ok {
 				t, err := e.exprType(x)
 				if err != nil {
 					return nil, err
@@ -6614,8 +6612,8 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 			// index, deref) lowers to the "addrof" wire node (same as
 			// the implicit address-of for method calls). & on anything
 			// else stays a WS D scope error.
-			if isAddressable(ax, e.info) {
-				xn, err := e.exportExpr(ax)
+			if isAddressable(x.X, e.info) {
+				xn, err := e.exportExpr(x.X)
 				if err != nil {
 					return nil, err
 				}
@@ -6627,7 +6625,7 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 					"x": xn, "type": tid,
 				}), nil
 			}
-			return nil, scopeErrorf("& on %T is not supported in frontend/v1 scope (WS D)", ax)
+			return nil, scopeErrorf("& on %T is not supported in frontend/v1 scope (WS D)", x.X)
 		}
 		// M8 closeout: constant-fold like BinaryExpr/ParenExpr. go/types
 		// evaluates -0.0 to +0.0 (and all constant arithmetic exactly);
@@ -6927,35 +6925,6 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		}
 		selection, ok := e.info.Selections[sel]
 		if !ok {
-			// P3-M9 (WS D, graalgo-ordinverse-ecdsa): fallback for function-typed
-			// fields when go/types did not record a Selections entry (can occur
-			// for selectors in generic synthetic instantiations where the
-			// instantiation path uses a different type-checking context).
-			// If the selector expression itself has function type, treat it as
-			// a function-valued field: export field access + call.
-			if tv, ok := e.info.Types[sel]; ok && tv.Type != nil {
-				if _, ok := tv.Type.(*types.Signature); ok {
-					fieldNode, err := e.exportSelector(sel)
-					if err != nil {
-						return nil, err
-					}
-					args, err := e.exportCallArgs(c)
-					if err != nil {
-						return nil, err
-					}
-					resType, err := e.callType(c)
-					if err != nil {
-						return nil, err
-					}
-					fields := map[string]any{
-						"fun": fieldNode, "args": args,
-					}
-					if resType != nil {
-						fields["type"] = resType
-					}
-					return e.node("call", c, fields), nil
-				}
-			}
 			return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
 				sel.X, sel.Sel.Name)
 		}
@@ -7420,8 +7389,6 @@ func (e *exporter) implicitAddrOf(sel *ast.SelectorExpr, recv **Node, recvType *
 // Addressable expressions: variables, pointer indirections, slice indexing,
 // field selectors of addressable values, and composite literals (via &T{}).
 func isAddressable(x ast.Expr, info *types.Info) bool {
-	// P3-M9: parentheses are pure grouping.
-	x = unparen(x)
 	switch x := x.(type) {
 	case *ast.Ident:
 		// Variables are addressable; constants, builtins, and nil are not.
@@ -7434,12 +7401,9 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 		// x.f is addressable if x is addressable.
 		return isAddressable(x.X, info)
 	case *ast.IndexExpr:
-		// s[i] is addressable if s is a slice or array (not a map or
-		// string). P3-M9: arrays join slices — &arr[i] lowers to an
-		// element cell on the array object, like &s[i] on a slice.
+		// s[i] is addressable if s is a slice (not a map or string).
 		if tv, ok := info.Types[x.X]; ok && tv.Type != nil {
-			switch tv.Type.Underlying().(type) {
-			case *types.Slice, *types.Array:
+			if _, isSlice := tv.Type.Underlying().(*types.Slice); isSlice {
 				return true
 			}
 		}
