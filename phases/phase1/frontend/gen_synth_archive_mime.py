@@ -1030,14 +1030,20 @@ def process_package(pkg_path, cfg):
                 helper_sig = f"func {helper_name}({all_params}) {pair_name} {{\n"
                 # Rewrite body returns
                 rewritten_body = rewrite_body_returns(fn['body'], pair_name, list(zip(field_names, [r[1] for r in results])), mr_map=mr_map, pkg_prefix=pkg_prefix)
-                # For named results, declare local variables ONLY if there's a bare return.
-                # (Shadowing via := makes assignment-based detection unreliable;
-                # explicit returns are rewritten to Pair literals.)
+                # For named results, declare local variables if needed.
+                # Heuristic: bare return, or assigned (with =), compound assign,
+                # inc/dec, or multi-assign. Over-declaring causes "declared and
+                # not used" which is easier to spot than "undefined".
                 decls = ""
                 has_bare = bool(re.search(r'\breturn\b\s*(\n|;|})', fn['body']))
-                if has_bare:
-                    for (rname, rtype), fname in zip(results, field_names):
-                        if rname and rname.strip():
+                for (rname, rtype), fname in zip(results, field_names):
+                    if rname and rname.strip():
+                        rn = re.escape(rname.strip())
+                        assigned = bool(re.search(rf'\b{rn}\b\s*=\s*[^=]', fn['body']))
+                        compound = bool(re.search(rf'\b{rn}\b\s*[+\-*/%&|^]=', fn['body']))
+                        incdec = bool(re.search(rf'\b{rn}\b\s*(\+\+|--)', fn['body']))
+                        multi_assign = bool(re.search(rf'\b{rn}\b\s*,', fn['body']))
+                        if has_bare or assigned or compound or incdec or multi_assign:
                             decls += f"\tvar {rname} {rtype}\n"
                 helper_decl = helper_sig + decls + rewritten_body + "}\n\n"
                 new_src_parts.append(helper_decl)
