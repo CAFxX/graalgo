@@ -468,6 +468,252 @@ var p521 = &p521Curve{
 	},
 }
 
+// P3-M9: multi-result __-helpers for the pXXXCurve wrapper types.
+// These enable interface dispatch of the Curve methods (e.g.,
+// elliptic.P256().Add(...) through the Curve interface). Each helper
+// delegates to the inner nistCurve, which is desugared via the
+// existing ("crypto/elliptic", <method>, "nistCurve") table entries.
+
+type __mrp224Curve_AddPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp224Curve_Add(c *p224Curve, x1, y1, x2, y2 *big.Int) __mrp224Curve_AddPair {
+	x, y := c.nistCurve.Add(x1, y1, x2, y2)
+	return __mrp224Curve_AddPair{x, y}
+}
+
+type __mrp224Curve_DoublePair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp224Curve_Double(c *p224Curve, x1, y1 *big.Int) __mrp224Curve_DoublePair {
+	x, y := c.nistCurve.Double(x1, y1)
+	return __mrp224Curve_DoublePair{x, y}
+}
+
+type __mrp224Curve_ScalarMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp224Curve_ScalarMult(c *p224Curve, x1, y1 *big.Int, k []byte) __mrp224Curve_ScalarMultPair {
+	x, y := c.nistCurve.ScalarMult(x1, y1, k)
+	return __mrp224Curve_ScalarMultPair{x, y}
+}
+
+type __mrp224Curve_ScalarBaseMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp224Curve_ScalarBaseMult(c *p224Curve, k []byte) __mrp224Curve_ScalarBaseMultPair {
+	x, y := c.nistCurve.ScalarBaseMult(k)
+	return __mrp224Curve_ScalarBaseMultPair{x, y}
+}
+
+type __mrp224Curve_UnmarshalPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp224Curve_Unmarshal(c *p224Curve, data []byte) __mrp224Curve_UnmarshalPair {
+	x, y := c.nistCurve.Unmarshal(data)
+	return __mrp224Curve_UnmarshalPair{x, y}
+}
+
+type __mrp224Curve_UnmarshalCompressedPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp224Curve_UnmarshalCompressed(c *p224Curve, data []byte) __mrp224Curve_UnmarshalCompressedPair {
+	x, y := c.nistCurve.UnmarshalCompressed(data)
+	return __mrp224Curve_UnmarshalCompressedPair{x, y}
+}
+
+type __mrp256Curve_AddPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp256Curve_Add(c *p256Curve, x1, y1, x2, y2 *big.Int) __mrp256Curve_AddPair {
+	x, y := c.nistCurve.Add(x1, y1, x2, y2)
+	return __mrp256Curve_AddPair{x, y}
+}
+
+type __mrp256Curve_DoublePair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp256Curve_Double(c *p256Curve, x1, y1 *big.Int) __mrp256Curve_DoublePair {
+	x, y := c.nistCurve.Double(x1, y1)
+	return __mrp256Curve_DoublePair{x, y}
+}
+
+type __mrp256Curve_ScalarMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp256Curve_ScalarMult(c *p256Curve, x1, y1 *big.Int, k []byte) __mrp256Curve_ScalarMultPair {
+	x, y := c.nistCurve.ScalarMult(x1, y1, k)
+	return __mrp256Curve_ScalarMultPair{x, y}
+}
+
+type __mrp256Curve_ScalarBaseMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp256Curve_ScalarBaseMult(c *p256Curve, k []byte) __mrp256Curve_ScalarBaseMultPair {
+	x, y := c.nistCurve.ScalarBaseMult(k)
+	return __mrp256Curve_ScalarBaseMultPair{x, y}
+}
+
+type __mrp256Curve_UnmarshalPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp256Curve_Unmarshal(c *p256Curve, data []byte) __mrp256Curve_UnmarshalPair {
+	x, y := c.nistCurve.Unmarshal(data)
+	return __mrp256Curve_UnmarshalPair{x, y}
+}
+
+type __mrp256Curve_UnmarshalCompressedPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp256Curve_UnmarshalCompressed(c *p256Curve, data []byte) __mrp256Curve_UnmarshalCompressedPair {
+	x, y := c.nistCurve.UnmarshalCompressed(data)
+	return __mrp256Curve_UnmarshalCompressedPair{x, y}
+}
+
+type __mrp384Curve_AddPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp384Curve_Add(c *p384Curve, x1, y1, x2, y2 *big.Int) __mrp384Curve_AddPair {
+	x, y := c.nistCurve.Add(x1, y1, x2, y2)
+	return __mrp384Curve_AddPair{x, y}
+}
+
+type __mrp384Curve_DoublePair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp384Curve_Double(c *p384Curve, x1, y1 *big.Int) __mrp384Curve_DoublePair {
+	x, y := c.nistCurve.Double(x1, y1)
+	return __mrp384Curve_DoublePair{x, y}
+}
+
+type __mrp384Curve_ScalarMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp384Curve_ScalarMult(c *p384Curve, x1, y1 *big.Int, k []byte) __mrp384Curve_ScalarMultPair {
+	x, y := c.nistCurve.ScalarMult(x1, y1, k)
+	return __mrp384Curve_ScalarMultPair{x, y}
+}
+
+type __mrp384Curve_ScalarBaseMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp384Curve_ScalarBaseMult(c *p384Curve, k []byte) __mrp384Curve_ScalarBaseMultPair {
+	x, y := c.nistCurve.ScalarBaseMult(k)
+	return __mrp384Curve_ScalarBaseMultPair{x, y}
+}
+
+type __mrp384Curve_UnmarshalPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp384Curve_Unmarshal(c *p384Curve, data []byte) __mrp384Curve_UnmarshalPair {
+	x, y := c.nistCurve.Unmarshal(data)
+	return __mrp384Curve_UnmarshalPair{x, y}
+}
+
+type __mrp384Curve_UnmarshalCompressedPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp384Curve_UnmarshalCompressed(c *p384Curve, data []byte) __mrp384Curve_UnmarshalCompressedPair {
+	x, y := c.nistCurve.UnmarshalCompressed(data)
+	return __mrp384Curve_UnmarshalCompressedPair{x, y}
+}
+
+type __mrp521Curve_AddPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp521Curve_Add(c *p521Curve, x1, y1, x2, y2 *big.Int) __mrp521Curve_AddPair {
+	x, y := c.nistCurve.Add(x1, y1, x2, y2)
+	return __mrp521Curve_AddPair{x, y}
+}
+
+type __mrp521Curve_DoublePair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp521Curve_Double(c *p521Curve, x1, y1 *big.Int) __mrp521Curve_DoublePair {
+	x, y := c.nistCurve.Double(x1, y1)
+	return __mrp521Curve_DoublePair{x, y}
+}
+
+type __mrp521Curve_ScalarMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp521Curve_ScalarMult(c *p521Curve, x1, y1 *big.Int, k []byte) __mrp521Curve_ScalarMultPair {
+	x, y := c.nistCurve.ScalarMult(x1, y1, k)
+	return __mrp521Curve_ScalarMultPair{x, y}
+}
+
+type __mrp521Curve_ScalarBaseMultPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp521Curve_ScalarBaseMult(c *p521Curve, k []byte) __mrp521Curve_ScalarBaseMultPair {
+	x, y := c.nistCurve.ScalarBaseMult(k)
+	return __mrp521Curve_ScalarBaseMultPair{x, y}
+}
+
+type __mrp521Curve_UnmarshalPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp521Curve_Unmarshal(c *p521Curve, data []byte) __mrp521Curve_UnmarshalPair {
+	x, y := c.nistCurve.Unmarshal(data)
+	return __mrp521Curve_UnmarshalPair{x, y}
+}
+
+type __mrp521Curve_UnmarshalCompressedPair struct {
+	v0 *big.Int
+	v1 *big.Int
+}
+
+func __mrp521Curve_UnmarshalCompressed(c *p521Curve, data []byte) __mrp521Curve_UnmarshalCompressedPair {
+	x, y := c.nistCurve.UnmarshalCompressed(data)
+	return __mrp521Curve_UnmarshalCompressedPair{x, y}
+}
+
 func initP521() {
 	p521.nistCurve.params = &CurveParams{
 		Name:    "P-521",

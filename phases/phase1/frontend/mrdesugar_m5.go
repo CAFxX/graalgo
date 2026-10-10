@@ -650,6 +650,31 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/elliptic", "Unmarshal", "nistCurve", "__mrnistCurve_Unmarshal", "", "__mrnistCurve_UnmarshalPair", []string{"x", "y"}},
 	{"crypto/elliptic", "UnmarshalCompressed", "", "__mrUnmarshalCompressed", "", "__mrUnmarshalCompressedPair", []string{"x", "y"}},
 	{"crypto/elliptic", "UnmarshalCompressed", "nistCurve", "__mrnistCurve_UnmarshalCompressed", "", "__mrnistCurve_UnmarshalCompressedPair", []string{"x", "y"}},
+	// P3-M9: pXXXCurve wrapper helpers for interface dispatch (Curve.Add etc.).
+	{"crypto/elliptic", "Add", "p224Curve", "__mrp224Curve_Add", "", "__mrp224Curve_AddPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Double", "p224Curve", "__mrp224Curve_Double", "", "__mrp224Curve_DoublePair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "ScalarMult", "p224Curve", "__mrp224Curve_ScalarMult", "", "__mrp224Curve_ScalarMultPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "ScalarBaseMult", "p224Curve", "__mrp224Curve_ScalarBaseMult", "", "__mrp224Curve_ScalarBaseMultPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Unmarshal", "p224Curve", "__mrp224Curve_Unmarshal", "", "__mrp224Curve_UnmarshalPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "UnmarshalCompressed", "p224Curve", "__mrp224Curve_UnmarshalCompressed", "", "__mrp224Curve_UnmarshalCompressedPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Add", "p256Curve", "__mrp256Curve_Add", "", "__mrp256Curve_AddPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Double", "p256Curve", "__mrp256Curve_Double", "", "__mrp256Curve_DoublePair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "ScalarMult", "p256Curve", "__mrp256Curve_ScalarMult", "", "__mrp256Curve_ScalarMultPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "ScalarBaseMult", "p256Curve", "__mrp256Curve_ScalarBaseMult", "", "__mrp256Curve_ScalarBaseMultPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Unmarshal", "p256Curve", "__mrp256Curve_Unmarshal", "", "__mrp256Curve_UnmarshalPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "UnmarshalCompressed", "p256Curve", "__mrp256Curve_UnmarshalCompressed", "", "__mrp256Curve_UnmarshalCompressedPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Add", "p384Curve", "__mrp384Curve_Add", "", "__mrp384Curve_AddPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Double", "p384Curve", "__mrp384Curve_Double", "", "__mrp384Curve_DoublePair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "ScalarMult", "p384Curve", "__mrp384Curve_ScalarMult", "", "__mrp384Curve_ScalarMultPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "ScalarBaseMult", "p384Curve", "__mrp384Curve_ScalarBaseMult", "", "__mrp384Curve_ScalarBaseMultPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Unmarshal", "p384Curve", "__mrp384Curve_Unmarshal", "", "__mrp384Curve_UnmarshalPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "UnmarshalCompressed", "p384Curve", "__mrp384Curve_UnmarshalCompressed", "", "__mrp384Curve_UnmarshalCompressedPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Add", "p521Curve", "__mrp521Curve_Add", "", "__mrp521Curve_AddPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Double", "p521Curve", "__mrp521Curve_Double", "", "__mrp521Curve_DoublePair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "ScalarMult", "p521Curve", "__mrp521Curve_ScalarMult", "", "__mrp521Curve_ScalarMultPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "ScalarBaseMult", "p521Curve", "__mrp521Curve_ScalarBaseMult", "", "__mrp521Curve_ScalarBaseMultPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "Unmarshal", "p521Curve", "__mrp521Curve_Unmarshal", "", "__mrp521Curve_UnmarshalPair", []string{"v0", "v1"}},
+	{"crypto/elliptic", "UnmarshalCompressed", "p521Curve", "__mrp521Curve_UnmarshalCompressed", "", "__mrp521Curve_UnmarshalCompressedPair", []string{"v0", "v1"}},
 	{"crypto/elliptic", "addJacobian", "CurveParams", "__mrCurveParams_addJacobian", "", "__mrCurveParams_addJacobianPair", []string{"v0", "v1", "v2"}},
 	{"crypto/elliptic", "affineFromJacobian", "CurveParams", "__mrCurveParams_affineFromJacobian", "", "__mrCurveParams_affineFromJacobianPair", []string{"xOut", "yOut"}},
 	{"crypto/elliptic", "doubleJacobian", "CurveParams", "__mrCurveParams_doubleJacobian", "", "__mrCurveParams_doubleJacobianPair", []string{"v0", "v1", "v2"}},
@@ -2065,23 +2090,31 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	if !ok {
 		return nil, false
 	}
-	sp := getSyntheticPackage(helperPkg)
-	if sp == nil {
-		return nil, false
-	}
-	helperObj := sp.pkg.Scope().Lookup(helperName)
-	helperFn, ok := helperObj.(*types.Func)
-	if !ok {
-		return nil, false
-	}
-	fi, ok := e.funcByObj[helperFn]
-	if !ok || fi == nil {
-		return nil, false
+	var fi *funcDeclInfo
+	// P3-M9: try synthFuncIDs first (string-keyed). The *types.Func from
+	// Scope().Lookup may differ from the one in funcByObj when the
+	// synthetic package is type-checked in isolation.
+	if sfi, sok := e.synthFuncIDs[helperPkg+"."+helperName]; sok && sfi != nil {
+		fi = sfi
+	} else {
+		sp := getSyntheticPackage(helperPkg)
+		if sp == nil {
+			return nil, false
+		}
+		helperObj := sp.pkg.Scope().Lookup(helperName)
+		helperFn, ok := helperObj.(*types.Func)
+		if !ok {
+			return nil, false
+		}
+		fi, ok = e.funcByObj[helperFn]
+		if !ok || fi == nil {
+			return nil, false
+		}
 	}
 	// Positional shape check: the helper's single result is the pair
 	// struct; its field types must equal the method's result types.
-	hsig, ok := helperFn.Type().(*types.Signature)
-	if !ok || hsig.Results().Len() != 1 {
+	hsig := fi.sig
+	if hsig == nil || hsig.Results().Len() != 1 {
 		return nil, false
 	}
 	prt := hsig.Results().At(0).Type()
