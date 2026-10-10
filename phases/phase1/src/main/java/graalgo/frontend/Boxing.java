@@ -237,16 +237,30 @@ public final class Boxing {
             case BOOL, UNTYPED_BOOL -> bits != 0 ? Boolean.TRUE : Boolean.FALSE;
             case INT8 -> Integer.valueOf((int) (byte) bits);
             case INT16 -> Integer.valueOf((int) (short) bits);
-            case INT32 -> Integer.valueOf((int) bits);
-            // P3-M9: UINT32 values > 2^31-1 don't fit in Integer; use Long
-            // to preserve the unsigned value for correct comparisons.
-            case UINT32 -> (bits & 0xFFFFFFFFL) > Integer.MAX_VALUE
-                    ? Long.valueOf(bits & 0xFFFFFFFFL)
-                    : Integer.valueOf((int) bits);
+            case INT32, UINT32 -> Integer.valueOf((int) bits);
             case UINT8 -> Integer.valueOf((int) bits & 0xFF);
             case UINT16 -> Integer.valueOf((int) bits & 0xFFFF);
             default -> Long.valueOf(bits);
         };
+    }
+
+    /**
+     * Converts a canonically-boxed integer to {@code long} with the correct
+     * extension for the kind (P3-M9 uint32 fix).
+     *
+     * <p>Sub-64-bit kinds box as {@link Integer}; for unsigned kinds the
+     * {@code int} bits must be <em>zero</em>-extended (not sign-extended) so
+     * that e.g. uint32(0xFFFFFFFF) becomes 4294967295L, not -1L. This keeps
+     * {@code executeLong()} consistent across all producer paths (struct
+     * fields, locals, constants, array elements), which the
+     * {@link BinaryOpNode} unsigned comparisons rely on.
+     */
+    static long toLong(Object boxed, graalgo.values.GoKind kind) {
+        if (boxed instanceof Long l) {
+            return l.longValue();
+        }
+        int i = ((Number) boxed).intValue();
+        return kind.isUintKind() ? (i & 0xFFFFFFFFL) : (long) i;
     }
 
     /**

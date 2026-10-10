@@ -123,7 +123,8 @@ public final class FuncValueCallNode extends GoExprNode {
     @Override
     public long executeLong(VirtualFrame frame) {
         Object r = invoke(frame);
-        return r == null ? 0L : ((Number) r).longValue();
+        // P3-M9: use Boxing.toLong for correct zero-extension of unsigned kinds.
+        return r == null ? 0L : Boxing.toLong(r, kind());
     }
 
     @Override

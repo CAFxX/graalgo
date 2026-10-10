@@ -95,7 +95,9 @@ public final class SelectorNode extends GoExprNode {
 
     @Override
     public long executeLong(VirtualFrame frame) {
-        return ((Number) read(frame)).longValue();
+        // P3-M9: use Boxing.toLong for correct zero-extension of unsigned
+        // kinds (uint32(0xFFFFFFFF) -> 4294967295L, not -1L).
+        return Boxing.toLong(read(frame), kind());
     }
 
     @Override

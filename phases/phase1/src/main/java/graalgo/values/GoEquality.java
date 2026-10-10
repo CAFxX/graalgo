@@ -36,15 +36,6 @@ public final class GoEquality {
         if (a instanceof Integer ia && b instanceof Integer ib) {
             return ia.intValue() == ib.intValue();
         }
-        // P3-M9 (tier-1b): cross-boxed integer equality. uint32 values >
-        // 2^31-1 may box as Long on one side and Integer on the other;
-        // compare by long value to avoid false negatives.
-        if (a instanceof Long la && b instanceof Integer ib) {
-            return la.longValue() == ib.longValue();
-        }
-        if (a instanceof Integer ia && b instanceof Long lb) {
-            return ia.longValue() == lb.longValue();
-        }
         if (a instanceof Double da && b instanceof Double db) {
             double x = da, y = db;
             return x == y && !Double.isNaN(x);
