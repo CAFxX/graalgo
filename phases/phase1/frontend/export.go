@@ -1490,13 +1490,6 @@ func ExportFile(path string) (string, error) {
 			needCryptoPbkdf2 = true
 		case "crypto/x509":
 			needCryptoX509 = true
-			// P3-M9 (tier-5): x509's synthetic source imports time (Unix),
-			// encoding/pem (Decode), net (ParseIP), plus the asymmetric
-			// crypto packages (already in the crypto dep chain below).
-			needTime = true
-			needPem = true
-			needBase64 = true
-			needNet = true
 		case "crypto/tls":
 			needCryptoTls = true
 		case "golang.org/x/crypto/cryptobyte":
@@ -2347,10 +2340,6 @@ func ExportFile(path string) (string, error) {
 			"crypto/rsa",
 			"crypto/hkdf",
 			"crypto/pbkdf2",
-			// P3-M9 (tier-5): synthetic crypto/x509 (Java delegation via
-			// graalgo.x509.* intrinsics). pkix first (x509 imports it).
-			"crypto/x509/pkix",
-			"crypto/x509",
 			// "crypto/tls", // P3-M9: deferred (source not yet committed)
 		} {
 			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
