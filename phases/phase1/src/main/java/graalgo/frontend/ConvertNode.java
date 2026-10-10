@@ -53,8 +53,13 @@ public final class ConvertNode extends GoExprNode {
                 && to == GoKind.SLICE && (sliceElemKind == GoKind.UINT8 || sliceElemKind == GoKind.INT32);
         boolean sliceToString = from == GoKind.SLICE && to == GoKind.STRING
                 && (sliceElemKind == GoKind.UINT8 || sliceElemKind == GoKind.INT32);
+        // P3-M9: interface{} -> *T assertion (desugared pair fields where
+        // v0 is interface{} but holds a concrete pointer; the Go source
+        // uses a type parameter P, and the exporter emits a convert).
+        // At runtime the interface holds the pointer; extract its data.
+        boolean ifaceToPointer = from == GoKind.INTERFACE && to == GoKind.POINTER;
         if (!(numeric || intToString || stringToString || boolToBool || unsafeEscape
-                || stringToSlice || sliceToString)) {
+                || stringToSlice || sliceToString || ifaceToPointer)) {
             throw new IllegalArgumentException(
                     "illegal conversion: " + from + " -> " + to);
         }
@@ -174,6 +179,15 @@ public final class ConvertNode extends GoExprNode {
         // M7: string -> []byte/[]rune.
         if (to == GoKind.SLICE && (from == GoKind.STRING || from == GoKind.UNTYPED_STRING)) {
             return stringToSlice((graalgo.values.GoString) child.executeObject(frame));
+        }
+        // P3-M9: interface{} -> *T (desugared pair field assertion).
+        // The interface holds the concrete pointer; extract its data.
+        if (to == GoKind.POINTER && from == GoKind.INTERFACE) {
+            Object v = child.executeObject(frame);
+            if (v instanceof graalgo.values.GoInterface gi) {
+                return gi.data();
+            }
+            return v;
         }
         throw new UnsupportedOperationException("conversion " + from + " -> " + to + " has no object value");
     }
