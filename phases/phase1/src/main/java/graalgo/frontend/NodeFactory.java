@@ -262,6 +262,18 @@ public final class NodeFactory {
      * order. Null when the program declares no globals.
      */
     private MaterializedFrame globalsFrame;
+    /**
+     * Object ids of variables whose address is taken anywhere in the
+     * program (P3-M9, WS D): every {@code addrof} wire node whose operand
+     * is an {@code ident}. Computed once per {@link #buildProgram} by
+     * {@link #collectAddrTaken}, before any slot is allocated. Local
+     * variables and parameters with an id in this set are boxed (their
+     * frame slot holds a {@link graalgo.values.GoBox} cell shared with
+     * every {@code &x} pointer); package-level variables get a boxed
+     * globals-frame slot. Object ids are program-global, so one set
+     * serves every function.
+     */
+    private final Set<Integer> addrTaken = new HashSet<>();
     /** Loop phases (loopcap). */
     private static final int LP_INIT = 0, LP_COND = 1, LP_POST = 2, LP_BODY = 3;
     /** One entry of {@link #loopStack}. */
@@ -396,7 +408,16 @@ public final class NodeFactory {
             }
             String varName = objEnt.string("name", "objects[" + oid + "]");
             int typeId = objEnt.intValue("type", "objects[" + oid + "]");
-            int slot = allocGlobalSlot(gctx, typeId, varName, gpath);
+            // P3-M9 (WS D): an address-taken global lives in a GoBox cell
+            // (FrameSlotKind.Object), like a boxed local — every &x shares
+            // the cell, so *p writes are visible through the variable and
+            // vice versa.
+            int slot;
+            if (addrTaken.contains(oid)) {
+                slot = gb.addSlot(FrameSlotKind.Object, varName, null);
+            } else {
+                slot = allocGlobalSlot(gctx, typeId, varName, gpath);
+            }
             if (globalSlots.put(oid, slot) != null) {
                 throw new FrontendException(gpath + ": duplicate global object id " + oid);
             }
@@ -469,7 +490,11 @@ public final class NodeFactory {
             } else {
                 init = zeroNode(kind, typeId, ctx, gpath);
             }
-            GlobalWriteNode w = new GlobalWriteNode(kind, globalsFrame, slot, init);
+            // P3-M9 (WS D): an address-taken global installs a GoBox cell
+            // once, at initialization; every later access shares the cell.
+            GoStmtNode w = addrTaken.contains(oid)
+                    ? new GlobalBoxInitNode(kind, globalsFrame, slot, init)
+                    : new GlobalWriteNode(kind, globalsFrame, slot, init);
             w.setSourceSection(sectionFor(e, gpath));
             out.add(w);
         }
@@ -494,6 +519,23 @@ public final class NodeFactory {
         // M7: allocate the globals frame before any function body is built
         // (bodies may reference globals; initializers run at the top of
         // func main in dependency order).
+        // P3-M9 (WS D): collect address-taken variables first — an
+        // address-taken global gets a boxed (GoBox) globals-frame slot.
+        addrTaken.clear();
+        for (Json.Value fv2 : funcs.items()) {
+            if (fv2 instanceof Json.Object fn2 && "funcdecl".equals(fn2.string("kind", "funcs"))) {
+                collectAddrTaken(fn2.object("fields", "funcdecl").opt("body"),
+                        addrTaken, "funcdecl.fields.body");
+            }
+        }
+        Json.Value gv0 = doc.opt("globals");
+        if (gv0 instanceof Json.Array garr) {
+            for (Json.Value ge : garr.items()) {
+                if (ge instanceof Json.Object geo) {
+                    collectAddrTaken(geo.opt("init"), addrTaken, "globals.init");
+                }
+            }
+        }
         buildGlobals(doc, types, objects);
 
         GoRootNode mainRoot = null;
@@ -2122,9 +2164,13 @@ public final class NodeFactory {
     private GoExprNode readVar(GoKind kind, BuildCtx ctx, int oid, String path) {
         // M7: package-level variables live in the globals frame, shared by
         // every function; they are never captured and never boxed.
+        // P3-M9 (WS D): ... except when their address is taken — then the
+        // globals-frame slot holds a GoBox cell shared with every &x.
         Integer gslot = globalSlots.get(oid);
         if (gslot != null) {
-            return new GlobalReadNode(kind, globalsFrame, gslot);
+            return addrTaken.contains(oid)
+                    ? new GlobalBoxReadNode(kind, globalsFrame, gslot)
+                    : new GlobalReadNode(kind, globalsFrame, gslot);
         }
         if (isBoxedTransitive(ctx, oid)) {
             return readBoxedVar(kind, ctx, oid, path);
@@ -2287,6 +2333,45 @@ public final class NodeFactory {
     }
 
     /**
+     * Collects the object ids of variables whose address is taken in the
+     * subtree (P3-M9, WS D): every {@code addrof} wire node whose operand
+     * is an {@code ident} contributes the ident's {@code obj} id. The
+     * implicit address-of the exporter inserts for pointer-receiver
+     * method calls uses the same {@code addrof} kind, so those variables
+     * are covered too. Does not descend into function literals: their
+     * bodies belong to the literal's own function, which the
+     * program-level scan reaches separately (object ids are
+     * program-global, so one set serves every function).
+     */
+    private void collectAddrTaken(Json.Value v, Set<Integer> out, String path) {
+        if (v instanceof Json.Object o) {
+            String kind = nodeKind(o);
+            if ("funclit".equals(kind)) {
+                return;
+            }
+            if ("addrof".equals(kind)
+                    && o.opt("fields") instanceof Json.Object fields
+                    && fields.opt("x") instanceof Json.Object x
+                    && "ident".equals(nodeKind(x))
+                    && x.opt("fields") instanceof Json.Object xf
+                    && xf.opt("obj") instanceof Json.Num n) {
+                out.add((int) n.asLong(path));
+            }
+            if (o.opt("fields") instanceof Json.Object flds) {
+                for (Json.Value m : flds.members().values()) {
+                    collectAddrTaken(m, out, path);
+                }
+            }
+            return;
+        }
+        if (v instanceof Json.Array a) {
+            for (Json.Value item : a.items()) {
+                collectAddrTaken(item, out, path);
+            }
+        }
+    }
+
+    /**
      * Pre-scan for a "for" loop: loop-declared variables (for-init and
      * body vardecls) referenced by a function literal anywhere in the loop
      * are boxed (per-iteration cells). For-init variables additionally get
@@ -2306,14 +2391,17 @@ public final class NodeFactory {
         collectFunclitRefs(node, captured, path);
         List<Integer> headerOids = new ArrayList<>();
         for (int oid : initDecls) {
-            if (captured.contains(oid)) {
+            // P3-M9 (WS D): an address-taken header variable needs the
+            // per-iteration treatment too (each iteration's &i must address
+            // that iteration's cell).
+            if (captured.contains(oid) || addrTaken.contains(oid)) {
                 ctx.boxed.add(oid);
                 headerLoopIds.put(oid, loopId);
                 headerOids.add(oid);
             }
         }
         for (int oid : bodyDecls) {
-            if (captured.contains(oid)) {
+            if (captured.contains(oid) || addrTaken.contains(oid)) {
                 ctx.boxed.add(oid);
             }
         }
@@ -2340,12 +2428,15 @@ public final class NodeFactory {
         Set<Integer> captured = new HashSet<>();
         collectFunclitRefs(node, captured, path);
         for (int oid : rangeDecls) {
-            if (captured.contains(oid)) {
+            // P3-M9 (WS D): address-taken range variables get the
+            // per-iteration cell (each iteration's &v addresses that
+            // iteration's variable).
+            if (captured.contains(oid) || addrTaken.contains(oid)) {
                 ctx.boxed.add(oid);
             }
         }
         for (int oid : bodyDecls) {
-            if (captured.contains(oid)) {
+            if (captured.contains(oid) || addrTaken.contains(oid)) {
                 ctx.boxed.add(oid);
             }
         }
@@ -3037,6 +3128,14 @@ public final class NodeFactory {
             case "clear" -> {
                 requireArgs(path, builtin, args, 1);
                 yield new ClearNode(args[0]);
+            }
+            case "min", "max" -> {
+                if (args.length < 1) {
+                    throw new FrontendException(path + ": builtin \"" + builtin
+                            + "\" requires at least one argument, wire has 0");
+                }
+                yield new MinMaxNode(builtinResultKind(f, ctx, path),
+                        builtin.equals("min"), args);
             }
             case "complex" -> {
                 requireArgs(path, builtin, args, 2);
@@ -4017,8 +4116,11 @@ public final class NodeFactory {
      */
     private GoStmtNode writeIdentSlot(Lhs l, GoExprNode value, BuildCtx ctx, String path) {
         // M7: package-level variable — write the globals-frame cell.
+        // P3-M9 (WS D): an address-taken global writes its GoBox cell.
         if (l.isGlobal) {
-            return new GlobalWriteNode(l.kind, globalsFrame, l.slot, value);
+            return addrTaken.contains(l.oid)
+                    ? new GlobalBoxWriteNode(l.kind, globalsFrame, l.slot, value)
+                    : new GlobalWriteNode(l.kind, globalsFrame, l.slot, value);
         }
         if (l.oid >= 0 && isBoxedTransitive(ctx, l.oid)) {
             return new BoxWriteNode(l.kind, boxWriteSlot(ctx, l.oid, path), value);
@@ -4038,8 +4140,11 @@ public final class NodeFactory {
      */
     private GoExprNode readIdentSlot(Lhs l, BuildCtx ctx, String path) {
         // M7: package-level variable — read the globals-frame cell.
+        // P3-M9 (WS D): an address-taken global reads its GoBox cell.
         if (l.isGlobal) {
-            return new GlobalReadNode(l.kind, globalsFrame, l.slot);
+            return addrTaken.contains(l.oid)
+                    ? new GlobalBoxReadNode(l.kind, globalsFrame, l.slot)
+                    : new GlobalReadNode(l.kind, globalsFrame, l.slot);
         }
         if (l.oid >= 0 && isBoxedTransitive(ctx, l.oid)) {
             return readBoxedVar(l.kind, ctx, l.oid, path);
