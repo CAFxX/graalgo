@@ -6886,8 +6886,15 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// (Context.Deadline, Time.Date/...) fail fast (WS D; the
 			// P3-M3 F4 precedent) — the shape must not reach dispatch.
 			// (P3-M8: interface methods are handled above.)
+			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): if the
+			// receiver is a type parameter, don't fail fast here — fall
+			// through to exportMethodCall, which routes through
+			// resolveMethodCall's WS H ifacemethod fallback (now
+			// multi-result capable via the pair plan).
 			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
-				return nil, multiResultSyntheticError(f)
+				if _, isTP := selection.Recv().(*types.TypeParam); !isTP {
+					return nil, multiResultSyntheticError(f)
+				}
 			}
 		}
 		selection, ok := e.info.Selections[sel]
@@ -8171,6 +8178,13 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	var pairPlan *mrPlan
 	if sig.Results().Len() > 1 {
 		pairPlan = e.classifyIfaceMultiResultCall(selection)
+		// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): if the
+		// strict classification fails (e.g., generic Point[P] interface
+		// with type-parameter results), try the lenient fallback
+		// classifier.
+		if pairPlan == nil {
+			pairPlan = e.classifyIfaceFallbackMultiResultCall(selection)
+		}
 		if pairPlan == nil {
 			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
 				return nil, multiResultSyntheticError(f)
@@ -8193,6 +8207,18 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 	// receiver's static type may be a *types.Alias whose underlying is
 	// the interface (R1 P1-1).
 	ifaceType := types.Unalias(selection.Recv())
+	// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): if the receiver
+	// is a type parameter, use its constraint interface for the itab.
+	// This happens for generic Point[P] methods dispatched via the
+	// interface path.
+	if tp, ok := ifaceType.(*types.TypeParam); ok {
+		ifaceType = tp.Constraint()
+		if ifaceType == nil {
+			return nil, fmt.Errorf("gofrontend: type parameter %s has no constraint (exporter bug)",
+				types.TypeString(tp, nil))
+		}
+		ifaceType = types.Unalias(ifaceType)
+	}
 	if nt, ok := ifaceType.(*types.Named); ok {
 		ui, ok := nt.Underlying().(*types.Interface)
 		if !ok {
@@ -8256,12 +8282,20 @@ func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExp
 	if err != nil {
 		return nil, err
 	}
-	// Multi-result methods via the fallback are not supported (WS D):
-	// the pair-plan machinery is keyed on interface method sets, and the
-	// constraint interface path hasn't been wired for it. Fail fast.
+	// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): multi-result
+	// methods via the fallback use the pair plan from
+	// classifyIfaceFallbackMultiResultCall (lenient on types for generic
+	// constraints), mirroring exportIfaceMethodCall's pairPlan path.
+	// The itab maps the method to the concrete type's pair-returning
+	// __-helper, so the node yields the pair and field extraction
+	// proceeds like the concrete Appendix M desugar.
+	var pairPlan *mrPlan
 	if sig.Results().Len() > 1 {
-		return nil, scopeErrorf("method %s via type-parameter constraint has %d results; at most one result is supported in frontend/v1 scope (WS D)",
-			mname, sig.Results().Len())
+		pairPlan = e.classifyIfaceFallbackMultiResultCall(selection)
+		if pairPlan == nil {
+			return nil, scopeErrorf("method %s via type-parameter constraint has %d results; at most one result is supported in frontend/v1 scope (WS D)",
+				mname, sig.Results().Len())
+		}
 	}
 	if err := checkVariadicCall(c, sig); err != nil {
 		return nil, err
@@ -8292,9 +8326,21 @@ func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExp
 	if err != nil {
 		return nil, err
 	}
-	typ, err := e.callType(c)
-	if err != nil {
-		return nil, err
+	// P3-M9 (WS H + WS D): for multi-result, the dispatch yields the
+	// pair (not the multi-valued call result — callType scope-errors on
+	// tuples). Mirror exportIfaceMethodCall's pairPlan path.
+	var typ any
+	if pairPlan != nil {
+		tid, err := e.typeID(pairPlan.tmpType)
+		if err != nil {
+			return nil, err
+		}
+		typ = tid
+	} else {
+		typ, err = e.callType(c)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return e.node("ifacemethod", c, map[string]any{
 		"recv": recv, "method": mname, "iface": ifaceID,

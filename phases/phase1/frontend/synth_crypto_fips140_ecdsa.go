@@ -79,6 +79,29 @@ type Point[P any] interface {
 	Add(p1, p2 P) P
 }
 
+// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): pair types for
+// Point[P] interface multi-result methods dispatched via the WS H
+// ifacemethod fallback. The v0 field is interface{} (not P) to keep the
+// wire type non-generic; at runtime the itab dispatches to the concrete
+// nistec helper which returns its own pair -- field extraction is by
+// name (v0, v1), so the concrete type flows through.
+type __mrPointIfaceSetBytesPair struct {
+	v0 interface{}
+	v1 error
+}
+type __mrPointIfaceBytesXPair struct {
+	v0 []byte
+	v1 error
+}
+type __mrPointIfaceScalarMultPair struct {
+	v0 interface{}
+	v1 error
+}
+type __mrPointIfaceScalarBaseMultPair struct {
+	v0 interface{}
+	v1 error
+}
+
 func P224() *Curve[*nistec.P224Point] { return _P224 }
 
 var _P224 = func() *Curve[*nistec.P224Point] {

@@ -983,6 +983,15 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"crypto/ecdh", "GenerateKey", "__mrnistCurve_GenerateKeyPair", []string{"v0", "v1"}},           // ecdh.Curve.GenerateKey
 	{"crypto/ecdh", "NewPrivateKey", "__mrnistCurve_NewPrivateKeyPair", []string{"v0", "v1"}},       // ecdh.Curve.NewPrivateKey
 	{"crypto/ecdh", "NewPublicKey", "__mrnistCurve_NewPublicKeyPair", []string{"v0", "v1"}},         // ecdh.Curve.NewPublicKey
+	// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): fips140/ecdsa
+	// Point[P] interface multi-result methods, dispatched via the WS H
+	// ifacemethod fallback when called on a type parameter. The pair
+	// types are non-generic (v0 any) for wire simplicity; the itab
+	// dispatches to the concrete nistec helper at runtime.
+	{"crypto/internal/fips140/ecdsa", "SetBytes", "__mrPointIfaceSetBytesPair", []string{"v0", "v1"}},
+	{"crypto/internal/fips140/ecdsa", "BytesX", "__mrPointIfaceBytesXPair", []string{"v0", "v1"}},
+	{"crypto/internal/fips140/ecdsa", "ScalarMult", "__mrPointIfaceScalarMultPair", []string{"v0", "v1"}},
+	{"crypto/internal/fips140/ecdsa", "ScalarBaseMult", "__mrPointIfaceScalarBaseMultPair", []string{"v0", "v1"}},
 }
 
 // mrPlan is the desugar plan for one classified call.
@@ -1214,6 +1223,17 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// path.
 			if recvIface(selection.Recv()) != nil {
 				if plan := e.classifyIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
+			}
+			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
+			// multi-result calls on type parameters (e.g.,
+			// c.newPoint().SetBytes(Q) where the receiver is P
+			// constrained by Point[P]). These dispatch via the WS H
+			// ifacemethod fallback; classify with the lenient
+			// fallback classifier.
+			if _, isTP := selection.Recv().(*types.TypeParam); isTP {
+				if plan := e.classifyIfaceFallbackMultiResultCall(selection); plan != nil {
 					return plan
 				}
 			}
@@ -1578,6 +1598,83 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 		for i := 0; i < st.NumFields(); i++ {
 			if st.Field(i).Name() != m.pairFields[i] ||
 				!types.Identical(st.Field(i).Type(), sig.Results().At(i).Type()) {
+				match = false
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		return &mrPlan{
+			kind: mrIfaceMethod, helperPkg: m.pkgPath,
+			tmpType: nt, pairFields: m.pairFields,
+		}
+	}
+	return nil
+}
+
+// classifyIfaceFallbackMultiResultCall is the WS H fallback variant of
+// classifyIfaceMultiResultCall (P3-M9, graalgo-wsh-wsd-interaction). It
+// matches a multi-result method called on a type parameter (dispatched
+// via the constraint interface) against the m8IfaceMultiResultMethods
+// table.
+//
+// Unlike classifyIfaceMultiResultCall, it is lenient on field types: when
+// the method's result is a type parameter (e.g., P in Point[P].SetBytes),
+// strict types.Identical against the pair struct's field fails (different
+// TypeParam objects). The runtime itab dispatch guarantees the concrete
+// helper's pair is returned, and field extraction is by name — so only
+// the field count and names must match. Non-type-param results still get
+// the strict check.
+func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selection) *mrPlan {
+	if selection.Kind() != types.MethodVal {
+		return nil
+	}
+	f, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil
+	}
+	sig, ok := f.Type().(*types.Signature)
+	if !ok || sig.Results().Len() < 2 {
+		return nil
+	}
+	for _, m := range m8IfaceMultiResultMethods {
+		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
+			continue
+		}
+		sp := getSyntheticPackage(m.pkgPath)
+		if sp == nil {
+			continue
+		}
+		obj := sp.pkg.Scope().Lookup(m.pairType)
+		if obj == nil {
+			continue
+		}
+		nt, _ := obj.Type().(*types.Named)
+		if nt == nil {
+			continue
+		}
+		st, ok := nt.Underlying().(*types.Struct)
+		if !ok || st.NumFields() != sig.Results().Len() {
+			continue
+		}
+		match := true
+		for i := 0; i < st.NumFields(); i++ {
+			if st.Field(i).Name() != m.pairFields[i] {
+				match = false
+				break
+			}
+			// Lenient for type parameters: the constraint's method
+			// returns P, the pair struct field may be P (different
+			// object) or a concrete instantiation. Accept if either
+			// side is a type parameter; otherwise require Identical.
+			if _, isTP := sig.Results().At(i).Type().(*types.TypeParam); isTP {
+				continue
+			}
+			if _, isTP := st.Field(i).Type().(*types.TypeParam); isTP {
+				continue
+			}
+			if !types.Identical(st.Field(i).Type(), sig.Results().At(i).Type()) {
 				match = false
 				break
 			}
