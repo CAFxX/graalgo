@@ -368,7 +368,7 @@ var p224 = &p224Curve{
 }
 
 func initP224() {
-	p224.params = &CurveParams{
+	p224.nistCurve.params = &CurveParams{
 		Name:    "P-224",
 		BitSize: 224,
 		// SP 800-186, Section 3.2.1.2
@@ -400,7 +400,7 @@ var p256 = &p256Curve{
 }
 
 func initP256() {
-	p256.params = &CurveParams{
+	p256.nistCurve.params = &CurveParams{
 		Name:    "P-256",
 		BitSize: 256,
 		// SP 800-186, Section 3.2.1.3
@@ -432,7 +432,7 @@ var p384 = &p384Curve{
 }
 
 func initP384() {
-	p384.params = &CurveParams{
+	p384.nistCurve.params = &CurveParams{
 		Name:    "P-384",
 		BitSize: 384,
 		// SP 800-186, Section 3.2.1.4
@@ -469,7 +469,7 @@ var p521 = &p521Curve{
 }
 
 func initP521() {
-	p521.params = &CurveParams{
+	p521.nistCurve.params = &CurveParams{
 		Name:    "P-521",
 		BitSize: 521,
 		// SP 800-186, Section 3.2.1.5
