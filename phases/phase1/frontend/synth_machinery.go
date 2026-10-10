@@ -422,6 +422,18 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	g := synthGroup{sp: sp}
 	// Two passes: funcs first (so var initializers can call them),
 	// then package vars.
+	// Within funcs: two sub-passes. Pass 1 registers all funcDeclInfos
+	// in the maps (without calling defFunc). Pass 2 calls defFunc for
+	// each. This is needed because defFunc triggers type description,
+	// which can build method tables, which can call multiResultHelperFunc,
+	// which looks up helpers in synthFuncIDs. If a helper is defined
+	// later in the file than a method whose table needs it, single-pass
+	// ordering fails (the lookup happens before registration).
+	type synthFuncEntry struct {
+		obj *types.Func
+		fi  *funcDeclInfo
+	}
+	var funcEntries []*synthFuncEntry
 	for _, file := range sp.files {
 		for _, decl := range file.Decls {
 			d, ok := decl.(*ast.FuncDecl)
@@ -470,11 +482,9 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 				}
 				continue
 			}
-			funcID, err := e.defFunc(obj)
-			if err != nil {
-				return err
-			}
-			fi := &funcDeclInfo{fd: d, obj: obj, funcID: funcID, sig: sig}
+			// Pass 1: create fi and register in maps (defFunc deferred to
+			// pass 2 below).
+			fi := &funcDeclInfo{fd: d, obj: obj, funcID: -1, sig: sig}
 			if d.Recv != nil {
 				recv := sig.Recv()
 				if recv == nil {
@@ -485,32 +495,34 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 				if rn == nil {
 					return scopeErrorf("synthetic %s: method %s has non-named receiver type", sp.path, obj.Name())
 				}
+				// For methods, methodIndex is populated here (dummy for
+				// multi-result is handled above; this is for single-result).
+				// Note: multi-result methods were already 'continue'd above.
 				e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = fi
-				// P3-M9 (tier-1d): synthetic generic functions and methods
-				// on generic types are templates, exactly like user ones
-				// (defFuncs precedent): e.g. unique.Make[T] and
-				// (Handle[T]).Value emit only via monomorphized
-				// instantiations, never directly. Without this, calls to
-				// them either fail the receiver check or emit calls to the
-				// uninstantiated template body.
 				fi.isTemplate = sig.TypeParams().Len() > 0 || rn.Origin().TypeParams().Len() > 0
 			} else {
 				fi.isTemplate = sig.TypeParams().Len() > 0
 			}
-			// P3-M9 (tier-1d): back-pointer for exportInstantiation — a
-			// synthetic template's body must be exported with the synthetic
-			// package's fset/src/info, not the user's.
 			fi.synthPkg = sp
 			e.funcByObj[obj] = fi
-			// P3-M9: record in synthFuncIDs for cross-package generic
-			// instantiations (type-checked in isolation, pointers not
-			// shared). Key: package path + "." + func name.
 			if e.synthFuncIDs == nil {
 				e.synthFuncIDs = make(map[string]*funcDeclInfo)
 			}
 			e.synthFuncIDs[sp.path+"."+obj.Name()] = fi
 			g.fis = append(g.fis, fi)
+			// Defer defFunc to pass 2 (see above).
+			funcEntries = append(funcEntries, &synthFuncEntry{obj: obj, fi: fi})
 		}
+	}
+	// Pass 2: call defFunc for each registered function. Now safe because
+	// all helpers are already in synthFuncIDs/funcByObj, so any method
+	// table building triggered by type description will find them.
+	for _, fe := range funcEntries {
+		funcID, err := e.defFunc(fe.obj)
+		if err != nil {
+			return err
+		}
+		fe.fi.funcID = funcID
 	}
 	// Package vars, in dependency order (M7): an initializer may read
 	// another package-level var declared LATER in the source (e.g. the
