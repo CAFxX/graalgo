@@ -2288,6 +2288,7 @@ func ExportFile(path string) (string, error) {
 			// handled and needs no import; sync is a special overlay
 			// package, not a synthetic source.)
 			"errors",
+			"time", // P3-M9: x509.Certificate uses time.Time (NotBefore/NotAfter); methods must be in methodIndex
 			"math",
 			"math/bits",
 			"math/rand",
