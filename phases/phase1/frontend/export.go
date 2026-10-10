@@ -2220,6 +2220,7 @@ func ExportFile(path string) (string, error) {
 			"crypto/internal/fips140/rsa",
 			"golang.org/x/crypto/cryptobyte",
 			"golang.org/x/crypto/cryptobyte/asn1",
+			"crypto/ecdh",
 			"crypto/elliptic",
 			"crypto/dsa",
 			"crypto/ecdsa",
@@ -7357,6 +7358,20 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 		if e.synthFuncIDs != nil && fn.Pkg() != nil {
 			key := fn.Pkg().Path() + "." + fn.Name()
 			fi, ok = e.synthFuncIDs[key]
+			// P3-M9: fn.Pkg() can be wrong when the same function name
+			// exists in multiple synthetic packages (e.g. P256 in both
+			// crypto/elliptic and crypto/ecdh). If the direct lookup fails,
+			// try to resolve via the call's package qualifier.
+			if !ok {
+				if sel, isSel := c.Fun.(*ast.SelectorExpr); isSel {
+					if pkgIdent, isIdent := sel.X.(*ast.Ident); isIdent {
+						if pkgName, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); isPkg {
+							altKey := pkgName.Imported().Path() + "." + fn.Name()
+							fi, ok = e.synthFuncIDs[altKey]
+						}
+					}
+				}
+			}
 		}
 	}
 	if !ok {
