@@ -22,7 +22,7 @@ on different machines differ in exactly those fields.
 
 Full-scale check on the real tree: vendored go1.27.1 twice
 (`--force` on the second run); `cmp` of the two
-`vendor-manifest.json` files: **byte-identical** (12,018 entries).
+[vendor-manifest.json](vendor-manifest.json) files: **byte-identical** (12,018 entries).
 
 ## (b) Tamper with one vendored file → `verify` fails (passing before)
 

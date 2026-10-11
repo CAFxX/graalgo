@@ -6,7 +6,7 @@
 Valhalla JEP 401 / primitive-class movement. (T4) golang/go #24314 status;
 #77893 five CLs MERGED/ABANDONED check; label-sweep capacity check +
 standout new issues. Wave-4 snapshot baseline: 2026-10-04 ~11:20 CEST
-(`track-resweep-wave4.md`).
+([track-resweep-wave4.md](track-resweep-wave4.md)).
 **Scope:** raw writeups only — no SURVEY.md/CHECKPOINT.md edits, no SURV- ID
 assignment, no graalgo/SPEC.md/PHASES.md/registry edits. New findings clearing
 the candidate bar enter as raw sketches (coordinator assigns SURV- IDs).

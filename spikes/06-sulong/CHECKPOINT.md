@@ -40,4 +40,4 @@ Download: dl/tinygo0.42.0.linux-amd64.tar.gz in progress (detached curl, downloa
 - `-o *.ll` emission confirmed in primary source builder/build.go:672 (v0.42.0).
 - Sulong NOT run: no JVM on box (setup gap, task forbids installing JDK). Verdict overdetermined
   by IR version gap (LLVM 22 opaque-pointer IR vs Sulong ≤12.0.1).
-- Verdict: COMMIT-DIRECT (6 vs 19). REPORT.md written.
+- Verdict: COMMIT-DIRECT (6 vs 19). [REPORT.md](REPORT.md) written.

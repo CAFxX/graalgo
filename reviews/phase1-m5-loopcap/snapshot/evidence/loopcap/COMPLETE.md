@@ -12,7 +12,7 @@
 - `src/test/java/graalgo/frontend/ControlFlowCorpusTest.java`: 12 new test methods.
 - `frontend/export.go`: 8 dead-design markers reverted (no protocol change).
 
-## Design (see DESIGN_WIRING.md)
+## Design (see [DESIGN_WIRING.md](DESIGN_WIRING.md))
 - Factory pre-scan of loop JSON (no exporter change; D1 frozen).
 - For-header vars: two cells (S_outer/S_iter); BoxRefreshNode prologue; write-through via GoBox.outer.
 - Phase stack (not booleans) for nested-loop correctness.

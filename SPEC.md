@@ -1,7 +1,7 @@
 # graalgo — Phase-0 Specification
 
 **Date:** 2026-10-03 · **Status:** ACCEPTED 2026-10-03 (program-owner sign-off; Phase-1 entry gate passed) · **Requirements:** 70 total, all locked — `requirements/GG-0001`–`GG-0060`, `GG-SCHED-0001`–`0004`, `GG-WAKE-0001`–`0003`, `GG-FAIR-0001`–`0003`
-**Study:** `FEASIBILITY.md` · **Roadmap:** `PHASES.md` · **Research:** `research/T1`–`T8`
+**Study:** [FEASIBILITY.md](FEASIBILITY.md) · **Roadmap:** [PHASES.md](PHASES.md) · **Research:** `research/T1`–`T8`
 **Evidence labels:** `[HIST]` established history · `[VERIFIED]` primary-source confirmed ·
 `[PROPOSAL]` recommended but undecided · `[DECIDED]` settled · `[OPEN]` must be closed
 
@@ -30,14 +30,14 @@
 graalgo is a GraalVM/Truffle-based drop-in replacement for the whole Go toolchain:
 `alias go=graalgo` is indistinguishable from real `go`, while additionally exposing
 JVM-integration APIs and executing Go programs on the JVM in three modes — pure JIT,
-pure AOT, and an AOT+JIT hybrid. The feasibility study (`FEASIBILITY.md`) returned
+pure AOT, and an AOT+JIT hybrid. The feasibility study ([FEASIBILITY.md](FEASIBILITY.md)) returned
 **CONDITIONALLY FEASIBLE** as a multi-year R&D program; this spec is the normative
 record of what will be built, replacing the study's recommendations with decisions.
 
 ### 1.2 Document status and companion deliverables
 
 This is a Phase-0 spec: it specifies requirements and architecture. It contains no
-implementation. The Phase-0 done-gates (`PHASES.md` §2) are met by five deliverables
+implementation. The Phase-0 done-gates ([PHASES.md](PHASES.md) §2) are met by five deliverables
 that live alongside this spec, not inside it:
 
 1. this spec — all Phase-0 questions answered with evidence labels, `[OPEN]` = 0 on go/no-go items;
@@ -313,7 +313,7 @@ to the FJP) was **KILLED**: the preemption torture gave 0 latency samples vs
 `[VERIFIED]` (scoped: JDK 25.0.4, 2-vCPU VM, OFF / POLL-10ms / POLL-1ms-watchdog /
 UNCOND / PARK 1µs–1ms configs; the kill indicts
 the yield-to-FJP design, not 1:1 vthreads as the execution vehicle).
-**Root causes (final, per `spikes/02-loom/FAIRNESS_SEARCH.md`):** (1) Loom's
+**Root causes (final, per [spikes/02-loom/FAIRNESS_SEARCH.md](spikes/02-loom/FAIRNESS_SEARCH.md)):** (1) Loom's
 default carrier has no woken-thread priority / no runnext equivalent — woken
 continuations are buried under spinner resubmits (the earlier "LIFO local
 queues" mechanism story was corrected: the default scheduler is
@@ -601,7 +601,7 @@ The intrinsic signatures (GG-0020) are the contract between the Truffle AST
 lowering (Phase 1) and the Java runtime library (Phase 2) `[DECIDED]`. At the
 **Phase-1 interface freeze** the signatures are versioned and documented; Phase 4
 (driver) starts in parallel only after this freeze. Compatibility is checked in
-CI: the AST may only call frozen signatures. **Kill trigger** (PHASES.md §3):
+CI: the AST may only call frozen signatures. **Kill trigger** ([PHASES.md](PHASES.md) §3):
 interface freeze impossible without breaking the toil bound → architecture
 replan.
 
@@ -839,7 +839,7 @@ Every upgrade report publishes per-component toil accounting; the P95 bounds
 conflicts ≤ 5 files, zero unexplained divergences) are checked mechanically, not
 asserted `[DECIDED]`.
 
-**P95-calibration trigger** (spike-3 honesty note, `spikes/03-versiontax/REPORT.md`
+**P95-calibration trigger** (spike-3 honesty note, [spikes/03-versiontax/REPORT.md](spikes/03-versiontax/REPORT.md)
 §6): the dry-run table compared extrapolated P50 against a P95 bound — a
 category mismatch; heavy-class P95 is likely over the bound, and no breach was
 observed, so the bound is promoted **without** bound-compliance evidence. The
@@ -894,7 +894,7 @@ with the direct Truffle AST route. The scored comparison came out 6 vs 19
 against Sulong; root cause is the IR version gap (Go→LLVM frontends emit LLVM
 22, Sulong reads ≤12.0.1 — broken today) plus no maintained full-language
 Go→LLVM frontend and Sulong's lack of precise-GC/threading/signal primitives
-(`spikes/06-sulong/REPORT.md` §1–§3). The PHASES.md REPLAN trigger (Sulong
+([spikes/06-sulong/REPORT.md](spikes/06-sulong/REPORT.md) §1–§3). The [PHASES.md](PHASES.md) REPLAN trigger (Sulong
 wins *and* the direct-AST estimate doubles) is not met — no estimate-doubling
 argument exists either. The default is the direct Truffle AST, full stop.
 **Re-test triggers** (each re-opens the fork, per the verdict-scope rule):
@@ -1051,7 +1051,7 @@ spikes; rows 8–13 are the hybrid-mode falsifiers.
 | 12 | Deopt in-image is correct | Megamorphic interface-dispatch flip-flopping inside an image; results bit-identical to the interpreter | Any divergence → (c) correctness dies |
 | 13 | Stack-depth parity is acceptable | Deep-recursion parity vs gc (expect earlier `StackOverflowError`; quantify) | The gap breaks real programs (e.g. deeply recursive stdlib paths) → silent-compat claims die |
 
-**Program kill criteria** `[DECIDED]` (from PHASES.md §11): any spike kill trigger
+**Program kill criteria** `[DECIDED]` (from [PHASES.md](PHASES.md) §11): any spike kill trigger
 fires without a scoped workaround; the version-tax dry run breaches the toil
 bound with no credible reduction path; two consecutive releases breach the toil
 bound (→ toil-reduction sprint, then re-scope requirement (2) with Carlo if
@@ -1086,7 +1086,7 @@ toolchain-internals depth (cmd/go, cgo, Panama).
 
 ### 10.1 Claim provenance ledger
 
-Extends `FEASIBILITY.md` §11 with the decisions this spec makes:
+Extends [FEASIBILITY.md](FEASIBILITY.md) §11 with the decisions this spec makes:
 
 | Claim | Source | Label |
 |---|---|---|
@@ -1096,14 +1096,14 @@ Extends `FEASIBILITY.md` §11 with the decisions this spec makes:
 | One Truffle AST; specialization budget only at dynamic sites | this spec §3.3 (T5 adversarial) | `[DECIDED]` |
 | Java-object value model; unsafe v1 = handle table | this spec §3.4 (T5) | `[DECIDED]` |
 | Goroutine = vthread + scheduler token; user-space quantum scheduler (option C); netpoller deleted; panic/defer model | this spec §3.5 (spike 2b PASS) | `[DECIDED]` |
-| Spike 2 (1:1 on FJP, back-edge yields): KILLED — 0 latency samples, systematic starvation | `spikes/02-loom` | `[VERIFIED]` |
-| Spike 2b (option C): PASS — 11,824 vs 0 samples, in-flight cap assert never tripped, 48,140/48,140 parks/admissions, 40,588/40,588 wakeups won, scoped fixes (initFifo, 10ms quantum) | `spikes/02b-userspace-scheduler` | `[VERIFIED]` |
-| Spike 1 (asm/cgo surface taxonomy): PASS — four-strategy classification exhaustive over the cgo-relevant asm surface (scope §7; spike 4 drives `reflect.Value.Call` through it) | `spikes/01-asmcgo` | `[VERIFIED]` |
-| Spike 3 (version-tax dry run): PASS — all five diff/scope tools run in <15s total across a real minor Go boundary; P95 ≤200 agent-hours / ≤10 days bound promoted to `[DECIDED]` with the P95-calibration trigger (§6.4) | `spikes/03-versiontax` | `[VERIFIED]` |
-| Spike 4 (reflect/unsafe): PASS — descriptor-based type-layout core + handle-table `unsafe.Pointer` emulation covers everything `reflect`'s unsafe uses | `spikes/04-reflect` | `[VERIFIED]` |
-| Spike 5 (cmd/go parity via `-toolexec`): PASS — stock Go 1.27.1, linux/amd64, logging+delegating wrapper across the 929-txtar matrix (scope note in REPORT §7; argv-interception kill trigger carried in §8 row 5) | `spikes/05-cmdgo` | `[VERIFIED]` |
-| Spike 6 (Sulong vs direct AST): **COMMIT-DIRECT** — 6 vs 19; IR version gap dispositive (LLVM 22 emitted vs ≤12.0.1 readable); re-test triggers (a)/(b)/(c) in §7.1 | `spikes/06-sulong` | `[DECIDED]` |
-| Spike 7 (differential harness): PASS — 45/45 SAME (gc-a vs gc-b), 45/45 rerun SAME, 9/9 mutation classes DETECTED, unit tests green; operational and CI-green | `spikes/07-harness` | `[VERIFIED]` |
+| Spike 2 (1:1 on FJP, back-edge yields): KILLED — 0 latency samples, systematic starvation | [spikes/02-loom/](spikes/02-loom/) | `[VERIFIED]` |
+| Spike 2b (option C): PASS — 11,824 vs 0 samples, in-flight cap assert never tripped, 48,140/48,140 parks/admissions, 40,588/40,588 wakeups won, scoped fixes (initFifo, 10ms quantum) | [spikes/02b-userspace-scheduler/](spikes/02b-userspace-scheduler/) | `[VERIFIED]` |
+| Spike 1 (asm/cgo surface taxonomy): PASS — four-strategy classification exhaustive over the cgo-relevant asm surface (scope §7; spike 4 drives `reflect.Value.Call` through it) | [spikes/01-asmcgo/](spikes/01-asmcgo/) | `[VERIFIED]` |
+| Spike 3 (version-tax dry run): PASS — all five diff/scope tools run in <15s total across a real minor Go boundary; P95 ≤200 agent-hours / ≤10 days bound promoted to `[DECIDED]` with the P95-calibration trigger (§6.4) | [spikes/03-versiontax/](spikes/03-versiontax/) | `[VERIFIED]` |
+| Spike 4 (reflect/unsafe): PASS — descriptor-based type-layout core + handle-table `unsafe.Pointer` emulation covers everything `reflect`'s unsafe uses | [spikes/04-reflect/](spikes/04-reflect/) | `[VERIFIED]` |
+| Spike 5 (cmd/go parity via `-toolexec`): PASS — stock Go 1.27.1, linux/amd64, logging+delegating wrapper across the 929-txtar matrix (scope note in REPORT §7; argv-interception kill trigger carried in §8 row 5) | [spikes/05-cmdgo/](spikes/05-cmdgo/) | `[VERIFIED]` |
+| Spike 6 (Sulong vs direct AST): **COMMIT-DIRECT** — 6 vs 19; IR version gap dispositive (LLVM 22 emitted vs ≤12.0.1 readable); re-test triggers (a)/(b)/(c) in §7.1 | [spikes/06-sulong/](spikes/06-sulong/) | `[DECIDED]` |
+| Spike 7 (differential harness): PASS — 45/45 SAME (gc-a vs gc-b), 45/45 rerun SAME, 9/9 mutation classes DETECTED, unit tests green; operational and CI-green | [spikes/07-harness/](spikes/07-harness/) | `[VERIFIED]` |
 | Intrinsic surface; linkname by symbol name | this spec §3.6 (T4 measurement) | `[DECIDED]` |
 | cgo→Panama; graalgo authors the layout engine; MM-0017 gates FFI | this spec §3.7 (T7) | `[DECIDED]` |
 | Linux-first; Windows out of v1 | this spec §3.8 (T4) | `[DECIDED]` |
@@ -1241,7 +1241,7 @@ configuration, with a re-test trigger. Phase-0 entries:
 | Dependency | Pin | Status |
 |---|---|---|
 | Go release tracked | go1.27.1 (re-vendored atomically per release, GG-0012) | `[VERIFIED]` current as of 2026-10-03 |
-| GraalVM/JDK distribution | Oracle GraalVM **25.0.4.1.1** (LTS line; jars re-pinned in `phases/phase1/lib/LIB.md`) (GG-0027) | `[DECIDED]` 2026-10-04 — program owner: LTS line over the Innovation line (25.4.x); compiler/JIT deltas re-evaluated at Phase 5 |
+| GraalVM/JDK distribution | Oracle GraalVM **25.0.4.1.1** (LTS line; jars re-pinned in [phases/phase1/lib/LIB.md](internal/backend/truffle/lib/LIB.md)) (GG-0027) | `[DECIDED]` 2026-10-04 — program owner: LTS line over the Innovation line (25.4.x); compiler/JIT deltas re-evaluated at Phase 5 |
 | `go/*` frontend API | additive-only per the Go 1 compatibility promise | `[VERIFIED]` |
 
 > Note on the former `[OPEN]` in this appendix: it was explicitly **not** a

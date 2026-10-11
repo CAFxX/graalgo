@@ -1,8 +1,8 @@
 # Wave-6 T3 re-survey triggers (W6)
 
 **Wave:** 6 · **Worker:** T3 triggers · **Fetch date:** 2026-10-04 (all checks ~12:37–12:50 CEST)
-**Baseline:** wave-5 results as of 2026-10-04 ~11:37–11:55 CEST (see `track-t3-wave5-triggers.md` §1). A trigger "fires" only if it changed since that baseline (~1h prior).
-**Mission:** re-check the six standing T3 re-survey triggers from SURVEY.md §5 / wave-5 §1.
+**Baseline:** wave-5 results as of 2026-10-04 ~11:37–11:55 CEST (see [track-t3-wave5-triggers.md](track-t3-wave5-triggers.md) §1). A trigger "fires" only if it changed since that baseline (~1h prior).
+**Mission:** re-check the six standing T3 re-survey triggers from [SURVEY.md](SURVEY.md) §5 / wave-5 §1.
 **Scope:** raw writeups only — no SURVEY.md/CHECKPOINT.md edits, no SURV- IDs assigned. All vendor/project performance numbers are their claims, never ours.
 
 ---

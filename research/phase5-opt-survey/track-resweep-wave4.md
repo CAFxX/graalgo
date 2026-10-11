@@ -195,7 +195,7 @@ status **NEW** (unmerged):
 | [793780](https://go.dev/cl/793780) | runtime: cache grown goroutine stacks to reduce stack-growth cost | geekswaroop | NEW (updated 2026-07-16) |
 | [793920](https://go.dev/cl/793920) | runtime: add stack size watermark for initial stack size heuristic | thepudds | NEW (updated 2026-06-24) |
 
-(Note: SURVEY.md §5/T4 wave-3 wrote "five 2026 CLs on #77893 are unmerged as
+(Note: [SURVEY.md](SURVEY.md) §5/T4 wave-3 wrote "five 2026 CLs on #77893 are unmerged as
 of 2026-10-04" — verified, still true.)
 
 **New fleet data (watch note, 2026-09-27 — strengthens the precedent, does not

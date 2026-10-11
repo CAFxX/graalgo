@@ -4,9 +4,9 @@
 **Status:** wave 1 synthesized 2026-10-04; this document is LIVING — waves continue indefinitely
 until the program owner says stop or Phase 5 begins. Never treat it as finished.
 **Coordinator:** `graalgo-opt-survey` (work registry; hourly heartbeat; checkpoints to disk).
-**Survey dir:** `~/workspace/graalgo/research/phase5-opt-survey/`
-(per-track notes: `track-1-academic.md`, `track-2-jvms.md`, `track-3-dynamic-runtimes.md`,
-`track-4-go-adjacent.md`, `track-5-native-compilers.md`).
+**Survey dir:** [research/phase5-opt-survey/](./)
+(per-track notes: [track-1-academic.md](track-1-academic.md), [track-2-jvms.md](track-2-jvms.md), [track-3-dynamic-runtimes.md](track-3-dynamic-runtimes.md),
+[track-4-go-adjacent.md](track-4-go-adjacent.md), [track-5-native-compilers.md](track-5-native-compilers.md)).
 
 ## Method and rules (standing)
 
@@ -1209,7 +1209,7 @@ branch-prior distribution — unverified, flagged not hand-waved. (2) Paywall:
 mechanism detail beyond abstract+docs unverified (ACM DL 403). (3) GraalNN
 "not available in GraalVM Community Edition" per JDK 24 docs — non-blocking
 only while graalgo pins Oracle GraalVM LTS.
-**Wave-5 update — measurement protocol designed** (`track-surv075-wave5.md`):
+**Wave-5 update — measurement protocol designed** ([track-surv075-wave5.md](track-surv075-wave5.md)):
 the load-bearing Go-idiom generalization question is now a concrete three-stage
 protocol reachable *before* any graalgo prototype exists. Stage 0 (gc-only):
 corpus of 9 named benchmarks + 1 stretch (etcd, cockroachdb, gVisor, esbuild,
@@ -1242,8 +1242,8 @@ in E5 builds (graalgo pins Oracle LTS) ≠ extractable. Additionally granularity
 killed vs SURV-006 regardless: per-method binary cold/hot is too coarse for
 per-call-site inlining-benefit simulation — GraalCC is at most a size-flag
 on/off experiment, never a SURV-006 profile source.
-**Tracks:** wave 4, CGO'25 pair (T2/T5 lane) → `track-cgo25-wave4.md`;
-wave 5, protocol design + GraalCC verdict → `track-surv075-wave5.md`.
+**Tracks:** wave 4, CGO'25 pair (T2/T5 lane) → [track-cgo25-wave4.md](track-cgo25-wave4.md);
+wave 5, protocol design + GraalCC verdict → [track-surv075-wave5.md](track-surv075-wave5.md).
 **Owner decision (2026-10-04 14:11 CEST):** DEFER Stage-0 execution to Phase 5 —
 do not execute now; waves should NOT re-check for this decision; the question
 re-opens at Phase-5 entry.
@@ -1259,8 +1259,8 @@ property / guard cheaper than check / no gc duplication); every one kills
 (guard-is-the-check, no declared-type property, or already covered by gc's
 prove/loopbce/nilcheckelim). One real-cost shape spun off as a §3 angle on
 SURV-070 (assertion-site dominant-type guard, devirt lane). Full reason in
-§5. **Tracks:** wave 4, T2 re-sweep → `track-resweep-wave4.md`; wave 5,
-mechanism vetting → `track-surv077-wave5.md`.
+§5. **Tracks:** wave 4, T2 re-sweep → [track-resweep-wave4.md](track-resweep-wave4.md); wave 5,
+mechanism vetting → [track-surv077-wave5.md](track-surv077-wave5.md).
 
 ### Tier 3 — solid niche / conditional
 
@@ -1711,7 +1711,7 @@ compile-time budget measured alongside.
 **Open risks.** The FIXME's gating is admitted-historical rather than
 principled — the transfer is safe; the economics (compile time in a JIT) are
 the prototype question.
-**Tracks:** wave 4, T5 verification → `track-5-wave4-verify.md`.
+**Tracks:** wave 4, T5 verification → [track-5-wave4-verify.md](track-5-wave4-verify.md).
 
 #### SURV-079 — Lifetime-correlated co-allocation (allocation combining)
 **Bucket:** WOULD-LIKE (precedent: **ABLE** in narrow forms — MLKit region
@@ -2193,7 +2193,7 @@ FaaS-shaped Go workloads vs default layout; steady-state regression check
 (Havlak-style) as a kill gate.
 **Open risks.** Needs a representative training run (profile-staleness risk);
 pays only when cold pages dominate; no evidence on Go or non-Java heaps.
-**Tracks:** wave 4, CGO'25 pair (T2/T5 lane) → `track-cgo25-wave4.md`.
+**Tracks:** wave 4, CGO'25 pair (T2/T5 lane) → [track-cgo25-wave4.md](track-cgo25-wave4.md).
 
 ## §2 Attempted elsewhere — failure reasons as design constraints
 
@@ -2496,7 +2496,7 @@ Transfers that strengthen — not duplicate — the Phase-5 backlog (PHASES.md �
   interface/closure/unsafe/reflect vetoes elision). Rust's frequency argument
   is partly idiom-driven (builder/`Box::new` patterns); in Go the fat part is
   the `copy`/`append` builtins, not general struct unification.
-  **Prototype-gated spike designed** (`track-rustgoals-wave4.md` §3):
+  **Prototype-gated spike designed** ([track-rustgoals-wave4.md](track-rustgoals-wave4.md) §3):
   Stage-0 headroom measurement first (dead-source-unique fraction of copied
   bytes; KILL if <10% or headroom <1% of wall time), then a guarded prototype
   on JIT descriptor facts + guard framework vs gc+PGO (append-growth,
@@ -5662,7 +5662,7 @@ it doesn't transfer.*
   touching SURV-041's per-spawn-site edge; next trigger: any CL
   → MERGED/ABANDONED. (wave 4: T2 re-sweep + T3 triggers + T4 watches)
 - **SURV-077 STRUCK (wave 5) — vacuous analog, structural verdict.**
-  (`track-surv077-wave5.md`, grounded in local Go 1.27.1 compiler source +
+  ([track-surv077-wave5.md](track-surv077-wave5.md), grounded in local Go 1.27.1 compiler source +
   disassembly.) Go has no array covariance (`[]string` is not assignable to
   `[]any`), so the declared element type of a Go slice is *always* exact and
   no store check can exist on the store path: a compiled `s[i] = v` into
@@ -5770,7 +5770,7 @@ it doesn't transfer.*
   fmt/error shapes but the itab-probe residual is sub-1% (getitab 0.85%
   cum); the dominant-profile site costs 4.78 ns/op on the site-cache hit
   path, so the dominant-type guard's marginal saving is not load-bearing
-  (details in `track-surv070-wave6-c4hotness.md`; stays a §3 angle).
+  (details in [track-surv070-wave6-c4hotness.md](track-surv070-wave6-c4hotness.md); stays a §3 angle).
   (wave 6)
 - **Wave-7 re-sweep negatives (2026-10-04, all exact-check records in the
   wave-7 track files):** T3 — 0/6 standing triggers fired (~1h after the
@@ -7047,14 +7047,14 @@ wave-3 review.
 
 ### Per-track wave-1 coverage
 
-- **T1 academic** (`track-1-academic.md`, 402 lines): PLDI/CGO/OOPSLA/ASPLOS/VEE/ISMM/
+- **T1 academic** ([track-1-academic.md](track-1-academic.md), 402 lines): PLDI/CGO/OOPSLA/ASPLOS/VEE/ISMM/
   POPL/ICS venues; 8 candidates (C1–C8), 3 near-misses, 10 negatives. Primary sources
   with title/venue/year/authors throughout. **Gaps:** ~15-year window not yet
   systematically swept — no forward-citation sweep on the cited papers (papers citing
   Dolby 1997/2000, Lattner 2005, Chilimbi 1998/1999, Shuf 2002); VEE/PACT/ASPLOS
   post-2015 under-covered; value-speculation literature beyond Costa 2014 (Suganuma
   lineage) thin.
-- **T2 industry JVMs** (`track-2-jvms.md`, 513 lines): HotSpot, GraalVM, OpenJ9, Azul,
+- **T2 industry JVMs** ([track-2-jvms.md](track-2-jvms.md), 513 lines): HotSpot, GraalVM, OpenJ9, Azul,
   .NET (Native/AOT) each with own pass; THINKING (Valhalla JEP 401/539, Leyden JEP 544,
   4-byte headers draft); ATTEMPTED 3; WOULD-LIKE 1; bucket tally ABLE 14 / THINKING 4 /
   ATTEMPTED 3 / WOULD-LIKE 1; 6 candidates, 5 near-misses. **Gaps:** Graal
@@ -7063,7 +7063,7 @@ wave-3 review.
   primary sources beyond marketing materials; .NET RyuJIT source for guarded-
   devirtualization codegen shapes; Leyden JEP 544 status watch; Crema/Terminus —
   **no verifiable public record found** (re-check; do not cite until verified).
-- **T3 dynamic runtimes** (`track-3-dynamic-runtimes.md`, 195 lines): V8, JSC, .NET,
+- **T3 dynamic runtimes** ([track-3-dynamic-runtimes.md](track-3-dynamic-runtimes.md), 195 lines): V8, JSC, .NET,
   CPython (PEP 659), Cinder, Pyston, HHVM, Swift (SE-0193/0377/0437/0460/0474),
   Ruby YJIT/ZJIT, LuaJIT, SpiderMonkey history; 9 candidates (C1–C9), 10 near-misses,
   15 negatives; explicit Transfer lines (what transfers / what does NOT transfer).
@@ -7075,7 +7075,7 @@ wave-3 review.
   evolution proposals; TruffleRuby/GraalPy; PyPy meta-tracing (guard/deopt discipline
   in its purest form); RaptorJIT; ZJIT re-check when mature; V8 Maglev design docs;
   .NET static+PGO interplay docs; Ruby Sorbet-typed JIT directions.
-- **T4 Go-adjacent** (`track-4-go-adjacent.md`, 164 lines): (a) golang/go issue mining
+- **T4 Go-adjacent** ([track-4-go-adjacent.md](track-4-go-adjacent.md), 164 lines): (a) golang/go issue mining
   — ~18 issues verified by fetch (recalled numbers proved unreliable; every citation
   fetched); 7 candidates (C1–C7); (b) community blogs — go101.org "Go Optimizations
   101" (BCE chapter), dgryski/go-perfbook, golang-design/under-the-hood, titpetric/gozero
@@ -7090,7 +7090,7 @@ wave-3 review.
   escape-analysis gap vs gc (they re-implemented it — better on any case?);
   xgo-dev/llgo GC design notes. #16798/#21536 status TBD (fetch throttled) —
   re-check before claiming.
-- **T5 native compilers + RFCs** (`track-5-native-compilers.md`, 696 lines): LLVM 16
+- **T5 native compilers + RFCs** ([track-5-native-compilers.md](track-5-native-compilers.md), 696 lines): LLVM 16
   transform passes classified pass-by-pass vs gc 1.27.1 SSA passes (**verified** from
   local source; gc PGO consumers verified by grep: inlining budgets + devirtualize
   only); GCC regular IPA passes + -O2/-O3 flags; rustc (niches, attributes,
@@ -7127,7 +7127,7 @@ wave-3 review.
 
 ### Per-track wave-2 coverage
 
-- **T4 wave 2** (`track-4-wave2-tracker.md`, 613 lines): 447 open
+- **T4 wave 2** ([track-4-wave2-tracker.md](track-4-wave2-tracker.md), 613 lines): 447 open
   `label:Performance`+`label:compiler/runtime` issues swept (5 pages cached in
   `.t4-wave2-cache/`; 47 fetched with bodies verified; recalled numbers proved
   unreliable — wave-1 rule held); declined-proposal enumeration; pre-2020
@@ -7143,7 +7143,7 @@ wave-3 review.
   parameter) pending wave-3 review. Declined/attempted mined with obstacle
   reasons (#16798 TCO, #21536 `//go:inline`, #41948 selectgo lock-all,
   #26891, #67520, #47529).
-- **T4 wave 2 targeted** (`track-4-wave2-deadobj-reuse.md`, 344 lines): gc's
+- **T4 wave 2 targeted** ([track-4-wave2-deadobj-reuse.md](track-4-wave2-deadobj-reuse.md), 344 lines): gc's
   heap-object-reuse experiment pinned down — **`GOEXPERIMENT=runtimefreegc`**
   (renamed from `runtimefree`; disabled by default for Go 1.26 per CL 720120),
   tracking issue golang/go#74299, design doc go.dev/design/74299-runtime-freegc,
@@ -7151,7 +7151,7 @@ wave-3 review.
   (runtime.freegc/freegcTracked); soundness bugs #80697 (open), #79909 (fixed).
   Verdict recorded in SURV-056 and §2-16: static free-early sub-case raced;
   allocator-bypass slot reuse + speculative guard/deopt is the open gap.
-- **T3 wave 2** (`track-3-wave2-sources.md`): source-level passes at pinned
+- **T3 wave 2** ([track-3-wave2-sources.md](track-3-wave2-sources.md)): source-level passes at pinned
   commits — V8 `7dce5a4` (ic.cc, js-type-hint-lowering.cc,
   compilation-dependencies.h), JSC `40508b4` (DFGOSRExit.cpp, ExitKind.h,
   ArithProfile.h, jsc.cpp, value-profile + bytecode/exit taxonomy), .NET
@@ -7175,33 +7175,33 @@ wave-3 review.
    (coordinator): static-only form struck to §5 (race-free HB counterexample);
    guarded write-barrier-epoch variant ranked SURV-060; SURV-044/012 kept
    separate (const-value vs type-set), boundary documented. Notes:
-   `track-4-wave3-cg.md`.
+   [track-4-wave3-cg.md](track-4-wave3-cg.md).
 2. **T1 forward-citation sweep** — papers citing the wave-1 corpus (Dolby,
    Lattner, Chilimbi, Shuf, Seidl&Zorn, Artigas); VEE/PACT/ASPLOS post-2015.
-   (W1 working → `track-1-wave3-citations.md`)
+   (W1 working → [track-1-wave3-citations.md](track-1-wave3-citations.md))
 3. **T5 pipeline-order walk** — LLVM `-O2`/`-O3` pipeline order (not just the
    pass list); rustc MIR pass order; RFC full-text search.
-   (W2 working → `track-5-wave3-pipeline.md`)
+   (W2 working → [track-5-wave3-pipeline.md](track-5-wave3-pipeline.md))
 4. **T2 continuous re-sweep** — Graal changelog each wave; Leyden JEP 544 /
    Valhalla JEP 401 status watches; TruffleRuby/GraalPy (with T3).
    Crema/Terminus re-check **retired** — both verified 2026-10-04 (THINKING;
-   see §3/§5). (W3 complete → `track-2-wave3-resweep.md`)
+   see §3/§5). (W3 complete → [track-2-wave3-resweep.md](track-2-wave3-resweep.md))
 5. **T3 remaining source passes** — Cinder, modern Pyston, HHVM
    region-selector, Swift compiler source, TruffleRuby/GraalPy, RaptorJIT, ZJIT
-   re-check, Maglev docs, Sorbet. (W4 complete → `track-3-wave3-sources.md`,
+   re-check, Maglev docs, Sorbet. (W4 complete → [track-3-wave3-sources.md](track-3-wave3-sources.md),
    SURV-066…072)
 6. **T4 comment-depth** — #60879 design discussion, #77893 follow-ups, #51553
    beyond part 1; #15397 deeper read (parked since 2018).
-   (W5 working → `track-4-wave3-comments.md`)
+   (W5 working → [track-4-wave3-comments.md](track-4-wave3-comments.md))
 7. **Re-rank pass** — after wave 3, re-rank §1 against new evidence; promote
    prototype-gated items only on measured prototypes, never on paper numbers.
 
 ### Per-track wave-3 coverage (in progress)
 
-- **Coordinator item 1** (`track-4-wave3-cg.md`): C-G re-verified; SURV-060
+- **Coordinator item 1** ([track-4-wave3-cg.md](track-4-wave3-cg.md)): C-G re-verified; SURV-060
   ranked (Tier 2); static-only variant struck (§5); SURV-044/012 boundary
   resolved (separate, documented).
-- **T2 wave 3** (`track-2-wave3-resweep.md`, 340 lines): Graal 25.0.3/25.0.4
+- **T2 wave 3** ([track-2-wave3-resweep.md](track-2-wave3-resweep.md), 340 lines): Graal 25.0.3/25.0.4
   changelog (GR-78795 unsigned div/mod, GR-79029 DuplicationPhase,
   specialization→inliner feedback edge); Leyden JEP 544 = JDK 28 candidate
   (iterative training → SURV-014 layered-cache angle; inspectability → §4
@@ -7210,7 +7210,7 @@ wave-3 review.
   Crema/Terminus verified (THINKING) — re-check retired. 0 new ranked IDs
   (RC-W3-1 folded as §3 angle on SURV-006); §3 +6 angles, §4 +2 infra,
   §5 updated.
-- **T1 wave 3** (`track-1-wave3-citations.md`, 408 lines): ~15 searches, ~120
+- **T1 wave 3** ([track-1-wave3-citations.md](track-1-wave3-citations.md), 408 lines): ~15 searches, ~120
   entries triaged, 4 citing papers mined with reference-list verification
   (PLDI'21 value fields → Dolby; ISMM'15 DSA-GC → Shuf; CGO'25 GoFree —
   region-lineage, does NOT cite Lattner; ISMM'14 allocation folding, V8).
@@ -7220,7 +7220,7 @@ wave-3 review.
   5 dead research lines recorded in §5; Memento Mori filed as
   SURV-017/E4 angle. 2 CGO'25 papers spotted for T2/T5 (GraalNN,
   Native-Image startup) — wave-4 queue.
-- **T5 wave 3** (`track-5-wave3-pipeline.md`, 551 lines): verbatim O2 pipeline
+- **T5 wave 3** ([track-5-wave3-pipeline.md](track-5-wave3-pipeline.md), 551 lines): verbatim O2 pipeline
   dump (issue #200926); devirt<4> repeater, IPSCCP-before-inline, scalar
   sandwich, ~8× simplifycfg re-runs; rustc MIR order (2022 primary, 2024–2026
   restructure confirmed); RFC triage (1210 still uninstalled — §2 item 6
@@ -7230,7 +7230,7 @@ wave-3 review.
   RC-W3-2 folded into §4 as guard-fact materialization infra; R2/R3/R4/R5/T5
   → §4 JIT-pipeline design notes; VPlan profiler-costing + arg-promotion →
   §3 angles.
-- **T4 wave 3** (`track-4-wave3-comments.md`, 309 lines): full threads on
+- **T4 wave 3** ([track-4-wave3-comments.md](track-4-wave3-comments.md), 309 lines): full threads on
   #77893 (in-flight; 5 CLs unmerged; SURV-041 corrected — gc HAS adaptive
   global heuristic, gap is per-site only; obstacle catalog + histogram-key
   refinement), #51553 (20× bulk-send prototype never submitted; mpx scope
@@ -7238,7 +7238,7 @@ wave-3 review.
   engagement; finnishtable frequency sighting → SURV-058), #15397 (parked
   since 2018; unsafe-points design note → §4.13). 0 new ranked IDs; no
   ATTEMPTED lessons (nothing abandoned with a reason).
-- **T3 wave 3** (`track-3-wave3-sources.md`, complete 2026-10-04): source-level
+- **T3 wave 3** ([track-3-wave3-sources.md](track-3-wave3-sources.md), complete 2026-10-04): source-level
   passes on 9 runtimes at pinned SHAs. 7 new ranked candidates (SURV-066…072,
   all Tier 2); §2 items 17–18 ATTEMPTED (Cinder HIR/Static-Python abandonment,
   Pyston LLVM/nitrous never shipped); 7 complementary §3 angles (confidence-
@@ -7252,7 +7252,7 @@ wave-3 review.
   threshold) converging with .NET 75% / JSC 2:1; HHVM guard *widening* vs
   backoff as the open design choice. **Re-run (2026-10-04, post-reboot):**
   the first W4 died in a VM reboot; its record showed
-  `track-3-wave3-sources.md` already held W1–W9 (the "no output file" claim
+  [track-3-wave3-sources.md](track-3-wave3-sources.md) already held W1–W9 (the "no output file" claim
   in the resume log was wrong — corrected) and SURV-066…072 were already
   synthesized. The re-run re-seeded all repos at the recorded pins and
   mined the deeper passes (W4b–W9b: Swift devirt ordering/write-once
@@ -7287,7 +7287,7 @@ precedent). No tier movements. **74 ranked total (SURV-001…074).**
    no move-only SIL pass; SE-0474 still Accepted/experimental-gated;
    TruffleRuby speculation options: none landed; GraalPy: no JIT-internal
    changelog entries in 25.0–25.4). All triggers remain armed for wave 5.
-   (→ `track-resweep-wave4.md` §B)
+   (→ [track-resweep-wave4.md](track-resweep-wave4.md) §B)
 2. **CGO'25 pair** — ✅ done: both spotted titles verified accurate.
    GraalNN (Milikic/Cugurovic/Jovanovic, CGO'25, DOI 10.1145/3696443.3708958
    — ACM paywalled, mechanism beyond abstract + Oracle docs unverified) →
@@ -7297,13 +7297,13 @@ precedent). No tier movements. **74 ranked total (SURV-001…074).**
    profile-guided first-use-order binary layout, cold-start-only enabling
    infra; Havlak steady-state regress 0.97–0.98× gates it). Sharp divider:
    static-generalizable (P1) vs training-run-dependent (P2) AOT profiling.
-   (→ `track-cgo25-wave4.md`)
+   (→ [track-cgo25-wave4.md](track-cgo25-wave4.md))
 3. **T2 continuous re-sweep** — ✅ done: Graal 25.5 CHANGELOG (11 entries;
    new speculation capability GR-79590 speculative store checks → SURV-077
    Tier 2; GR-79031 exact-arithmetic deopt → §3 angle on SURV-009; GR-79526
    → §3 convergence on SURV-023; GR-79594/79585 → §3 adjacent on SURV-008;
    no new EA/inlining policy); JEP 544 still Candidate (watch: JDK 28
-   ramp-down Dec 2026–Jan 2027); JEP 401 unchanged. (→ `track-resweep-wave4.md` §A)
+   ramp-down Dec 2026–Jan 2027); JEP 401 unchanged. (→ [track-resweep-wave4.md](track-resweep-wave4.md) §A)
 4. **T5 verification gaps** — ✅ done: O2/O3 deltas verified at source level
    (`PassBuilderPipelines.cpp` @ `5e1ed67`; local `opt` install infeasible
    — apt mirrors dead); arg-promotion-at-O3 FIXME still **open and
@@ -7311,11 +7311,11 @@ precedent). No tier movements. **74 ranked total (SURV-001…074).**
    CallSiteSplitting, CHR) → SURV-078 (Tier 3, prototype-gated); rustc MIR
    list re-verified @ `4ddbc06`: new `TailCopyToMove` (Project Goal
    materializing), 4 passes removed, tiering now per-pass policies
-   (§4.10/§4.11 corrected). (→ `track-5-wave4-verify.md`)
+   (§4.10/§4.11 corrected). (→ [track-5-wave4-verify.md](track-5-wave4-verify.md))
 5. **T4 watches** — ✅ done: #24314 OPEN unchanged; #77893 all five CLs
    NEW/unmerged → SURV-041's gap does NOT narrow (fleet data strengthens the
    precedent only); #16798/#21536 CLOSED/FrozenDueToAge → **watches
-   retired**. (→ `track-resweep-wave4.md` §C)
+   retired**. (→ [track-resweep-wave4.md](track-resweep-wave4.md) §C)
 6. **Rust Project Goals 2026 follow-up** — ✅ done: 2026 goal Accepted
    (goals#396), RFC #3943 open under review, prototype #157943 in flight
    (`-Z mir-move-elimination`; #163336 merged 2026-09-30; try-perf:
@@ -7323,26 +7323,26 @@ precedent). No tier movements. **74 ranked total (SURV-001…074).**
    Transfer ruling: static soundness core does NOT transfer (§5 strike);
    guarded speculative variant viable. **Prototype-gated spike designed**
    for the §3 angle on SURV-024 (Stage-0 headroom kill trigger: <10%
-   dead-source-unique or <1% wall-time headroom). (→ `track-rustgoals-wave4.md`)
+   dead-source-unique or <1% wall-time headroom). (→ [track-rustgoals-wave4.md](track-rustgoals-wave4.md))
 7. **Re-rank pass** — ✅ done (below).
 
 ### Per-track wave-4 coverage
 
-- **CGO'25 pair** (`track-cgo25-wave4.md`, 275 lines): both papers verified;
+- **CGO'25 pair** ([track-cgo25-wave4.md](track-cgo25-wave4.md), 275 lines): both papers verified;
   2 ranked (SURV-075 Tier 2, SURV-076 Tier 4); 8 first-class negatives; §3 +7
   angles (AOT profile consumers); §4 items 15 (AOT profile-source duality)
   + 16 (cold-start binary layout).
-- **T2 re-sweep / T3 triggers / T4 watches** (`track-resweep-wave4.md`,
+- **T2 re-sweep / T3 triggers / T4 watches** ([track-resweep-wave4.md](track-resweep-wave4.md),
   290 lines): Graal 25.5, JEP 544/401, TruffleRuby, GraalPy, 6 T3 triggers,
   4 golang/go issue watches; 1 ranked (SURV-077 Tier 2); §3 +4 angles
   (SURV-023 convergence, SURV-008 adjacent, SURV-009 mechanism, AOT
   consumers); §5 extended (re-sweep negatives, watch retirements).
-- **T5 verification** (`track-5-wave4-verify.md`, 340 lines): O2/O3 deltas at
+- **T5 verification** ([track-5-wave4-verify.md](track-5-wave4-verify.md), 340 lines): O2/O3 deltas at
   source level; rustc MIR pass-by-pass @ `4ddbc06`; 1 ranked (SURV-078
   Tier 3); §4.10/§4.11 corrected (StateTransform bracket gone; tiering now
   per-pass policies); §5 pipeline-order negative updated (dump gap closed at
   source level).
-- **Rust Project Goals 2026** (`track-rustgoals-wave4.md`, 438 lines):
+- **Rust Project Goals 2026** ([track-rustgoals-wave4.md](track-rustgoals-wave4.md), 438 lines):
   Accepted goal, open RFC, in-flight prototype, try-perf numbers; transfer
   ruling (static core struck, speculative arm viable); prototype-gated spike
   design for SURV-024 with explicit kill triggers; §3 SURV-024 bullet
@@ -7367,17 +7367,17 @@ total (SURV-001…078): 7 / 40 / 17 / 14.**
    Accepted/experimental-gated; TruffleRuby: no speculation options — method
    note: options now in generated `Options.java`, repo HEAD unchanged from
    wave-3 pin; GraalPy: no JIT changelog entries, pinned at `178ea261`).
-   (→ `track-t3-wave5-triggers.md`)
+   (→ [track-t3-wave5-triggers.md](track-t3-wave5-triggers.md))
 2. **T2 continuous re-sweep** — ✅ done: Graal changelog unchanged (still
    25.5, 12 entries — no new speculation/inlining/EA movement); **JEP 544
    Candidate → Targeted for JDK 28** (direct fetch openjdk.org/jeps/544;
    transition within ~last 10 days; wave-4's Proposed→Target trigger
    satisfied — new watch: ramp-down survival to 28 GA ~Mar 2027); JEP 401
-   unchanged. (→ `track-t2t4-wave5-resweep.md` §A)
+   unchanged. (→ [track-t2t4-wave5-resweep.md](track-t2t4-wave5-resweep.md) §A)
 3. **T4 watches** — ✅ done: #24314 OPEN unchanged; #77893 all five CLs still
    NEW → SURV-041's gap does NOT narrow; label-sweep capacity adequate,
    top-8 probe surfaced watch-notes only (#81887, #81846/#81755, #81957,
-   #81968 — none bar-clearing). (→ `track-t2t4-wave5-resweep.md` §B)
+   #81968 — none bar-clearing). (→ [track-t2t4-wave5-resweep.md](track-t2t4-wave5-resweep.md) §B)
 4. **SURV-075 follow-up** — ✅ done: three-stage measurement protocol
    designed (Stage 0 gc-only constructible today; Stage 1 Java-trained
    surrogate on Go CFGs; Stage 2 Oracle-GraalNN confirmation; 9+1 benchmark
@@ -7386,37 +7386,37 @@ total (SURV-001…078): 7 / 40 / 17 / 14.**
    Stage 0 is a program-owner decision (prototype-adjacent measurement
    work). XGBoost/GraalCC verdict: **not extractable** (docs-only, zero
    public-source trace; plus granularity-killed vs SURV-006 regardless).
-   (→ `track-surv075-wave5.md`)
+   (→ [track-surv075-wave5.md](track-surv075-wave5.md))
 5. **SURV-077 mechanism question** — ✅ done: **KILL**. 11 candidate Go
    checks vetted (Go 1.27.1 source + disassembly); the direct analog is
    vacuous (no array covariance → no store check exists on the store path).
    Spun off a §3 angle on SURV-070 (assertion-site dominant-type guard,
    devirt lane, prototype-gated) — no new SURV- ID minted. (→
-   `track-surv077-wave5.md`)
+   [track-surv077-wave5.md](track-surv077-wave5.md))
 6. **Rust #157943 watch → SURV-024** — ✅ done: #163336 stays merged;
    #163338 still OPEN (gated on #163337); new try-perf numbers on #163359
    (instr −0.4%, cycles 0, RSS −0.6%, binary −0.9% — their claims) mildly
    strengthen "real but young"; transfer ruling unchanged. Wave-6 trip
    conditions: #163338 merges, #163338 try-perf run, or RFC #3943 accepted.
-   (→ `track-t3-wave5-triggers.md` §2)
+   (→ [track-t3-wave5-triggers.md](track-t3-wave5-triggers.md) §2)
 7. **Re-rank pass** — ✅ done (below).
 
 ### Per-track wave-5 coverage
 
-- **T3 triggers + #157943 watch** (`track-t3-wave5-triggers.md`, 230 lines):
+- **T3 triggers + #157943 watch** ([track-t3-wave5-triggers.md](track-t3-wave5-triggers.md), 230 lines):
   6 negatives with exact-check records + wave-6 method notes (pyston_main
   branch, TruffleRuby generated Options.java, GraalPy pin); #163336 merged
   stays, #163338 open; §3 SURV-024 angle refreshed; §5 extended.
-- **T2 re-sweep / T4 watches** (`track-t2t4-wave5-resweep.md`): JEP 544
+- **T2 re-sweep / T4 watches** ([track-t2t4-wave5-resweep.md](track-t2t4-wave5-resweep.md)): JEP 544
   Candidate→Targeted (JDK 28) — §3 angle, watch updated; Graal 25.5
   unchanged; JEP 401 unchanged; #24314 static; #77893 CLs all NEW (SURV-041
   edge intact); label probe watch-notes only; §5 extended.
-- **SURV-075 protocol** (`track-surv075-wave5.md`, 339 lines): full
+- **SURV-075 protocol** ([track-surv075-wave5.md](track-surv075-wave5.md), 339 lines): full
   load-bearing measurement protocol (corpus, 8-shape taxonomy, M1/M2/M3
   metrics, K1–K4 kill triggers, promotion bar) + GraalCC not-extractable
   verdict with granularity kill vs SURV-006; SURV-075 entry updated with
   the wave-5 protocol state; open questions recorded.
-- **SURV-077 vetting** (`track-surv077-wave5.md`): 11 candidates killed with
+- **SURV-077 vetting** ([track-surv077-wave5.md](track-surv077-wave5.md)): 11 candidates killed with
   primary-source evidence; SURV-077 struck to §5 (vacuous analog); C4 shape
   filed as §3 angle on SURV-070 (prototype-gated, no new ID); no overlap
   with SURV-070/SURV-074; gc-BCE duplication explicitly excluded.
@@ -7448,7 +7448,7 @@ the rule holds: paper numbers never promote). **77 active ranked
 
 ### Per-track wave-6 coverage
 
-- **T3 standing triggers** (`track-t3-wave6-triggers.md`): all six
+- **T3 standing triggers** ([track-t3-wave6-triggers.md](track-t3-wave6-triggers.md)): all six
   re-checked ~1h after the wave-5 baseline — 0 fired. Method notes from
   §6 honored (Pyston default branch = pyston_main, still Aug 12 2024
   "(No longer maintained)"; TruffleRuby options read from the full
@@ -7457,7 +7457,7 @@ the rule holds: paper numbers never promote). **77 active ranked
   Aug 18 2026, §25.4 unchanged). Wave-7 refinement: for GraalPy, check
   BOTH the file-history page and raw-vs-pin to disambiguate "file
   unchanged" from "pin stale".
-- **#157943 watch** (`track-surv024-wave6-watch.md`): binary checks via
+- **#157943 watch** ([track-surv024-wave6-watch.md](track-surv024-wave6-watch.md)): binary checks via
   GitHub API state/timeline endpoints (method note: faster and more
   precise than page fetches for these binary checks). #163338 OPEN
   (S-waiting-on-author, last activity 2026-09-30 force-push, gated on
@@ -7466,7 +7466,7 @@ the rule holds: paper numbers never promote). **77 active ranked
   Siblings unchanged. 0/3 trip conditions; SURV-024's transfer ruling
   (§5 static-core strike; guarded-speculative E3 arm only) stands;
   trip conditions re-armed for wave 7.
-- **T2/T4 re-sweep** (`track-t2t4-wave6-resweep.md`): Graal 25.x changelog
+- **T2/T4 re-sweep** ([track-t2t4-wave6-resweep.md](track-t2t4-wave6-resweep.md)): Graal 25.x changelog
   byte-identical (25.5 tops, 12 entries, 14,501 bytes); JEP 544 direct
   fetch 403-blocked (tool-level, not retried — gap, wave 7 re-verifies;
   last verified state = wave 5 Targeted/Release 28; fresh secondaries show
@@ -7481,7 +7481,7 @@ the rule holds: paper numbers never promote). **77 active ranked
 - **SURV-075 Stage-0 owner decision** (coordinator check): memory,
   survey dir, and goal files searched — no owner decision recorded.
   Remains pending; wave 7 re-checks.
-- **SURV-070 C4 hotness** (`track-surv070-wave6-c4hotness.md`, coordinator
+- **SURV-070 C4 hotness** ([track-surv070-wave6-c4hotness.md](track-surv070-wave6-c4hotness.md), coordinator
   measurement): Go 1.27.1, linux/amd64, AMD EPYC 9D25. Sites hot in
   fmt/error shapes (printArg 33.05% cum, errors.as 27.12% cum) but the
   itab-probe residual sub-1% (getitab 0.85% cum). Monomorphic site =
@@ -9607,7 +9607,7 @@ Wave-58 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV
 Wave-59 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–59; §6 wave-59 queue ALL COMPLETE (6/6 items), wave-59 re-rank pass (no movements, no prototype-gated promotions), wave-60 queue written; JEP 544 wave-59 curl re-verification: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-57 pin (**fifty-one consecutive content-identical archives, waves 9–59**; anti-bot script-URL rotation dormant a fourteenth wave w46–w59), Status=Targeted/Release=28 re-verified verbatim, no archive write needed; #157943 0/3 trips — RFC #3943 fifty-first consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z), #163337 wave-24 equality shortcut held at the wave-56 re-pin baseline (updated_at 2026-10-06T10:51:13Z), #163338 open/unmerged via wave-24 check (updated_at 2026-09-30T13:03:50Z, no try-perf); GitHub unauthenticated core quota healthy (0 used at wave start, all reads HTTP 200); T3 0/6 triggers (SE-0474 md5 pin matches, TruffleRuby pin matches + 0 keyword hits, GraalPy raw pin + history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5), JEP 401 Integrated/Release 28, Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + rewrites (no technique, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC 1; T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, #81957 count 26 unchanged (last mpx subscribe 2026-10-06T08:12:49Z — noise), **#81968 QUIET a fifteenth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-60 watch stands**; process notes: no wrong-repo reads this wave (all three repo-sensitive items fetched correctly on first read); SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.
 
 Wave-60 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–60; §6 wave-60 queue ALL COMPLETE (6/6 items), wave-60 re-rank pass (no movements, no prototype-gated promotions), wave-61 queue written; JEP 544 wave-60 curl re-verification: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-57 pin (**fifty-two consecutive content-identical archives, waves 9–60**; anti-bot script-URL rotation dormant a fifteenth wave w46–w60), Status=Targeted/Release=28 re-verified verbatim; #157943 0/3 trips — RFC #3943 fifty-second consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z), #163337 wave-24 equality shortcut held at the wave-56 re-pin baseline (updated_at 2026-10-06T10:51:13Z), #163338 21-event issues-timeline re-scanned fresh this wave (no 404 shortcut), last event cross-referenced 2026-10-01T13:27:54Z Amanieu, no try-perf; GitHub unauthenticated core quota healthy (57 at wave start, all reads HTTP 200); T3 0/6 triggers (SE-0474 md5 pin matches, TruffleRuby pin matches + 0 keyword hits, GraalPy raw pin + history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only — Swift #87489/#88956 crash dossiers are bug investigations, not passes); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5; note bare master/CHANGELOG.md raw path now 404s, pin is the master/compiler/ path), JEP 401 Integrated/Release 28, Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + Oct-5 press rewrites (no technique, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC 1; T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, **#81957 REAL SUBSTANTIVE ACTIVITY: timeline 26→38 events — "runtime: GC stack shrinking is O(n²) in goroutines blocked on one sync.Mutex since Go 1.26" triaged by prattmic (reproduced, milestoned Go1.28), mknyszek 2026-10-06T15:23:33Z questioned fix CL 844405's subtlety and proposed an alternative (runtime bug-fix discussion, not a measured prototype — not bar-clearing)**, **#81968 QUIET a sixteenth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-61 watch stands**; process notes: heartbeat-CST/UTC finding — registry timestamps are UTC, wave-59's "stale hb" claim was a timezone comparison error (hb=14:50 UTC = 16:50 CEST matched wave-59's run window; heartbeat mechanism verified working this wave); SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.
-Wave-61 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–61; §6 wave-61 queue ALL COMPLETE (6/6 items), wave-61 re-rank pass (no movements, no prototype-gated promotions), wave-62 queue written; JEP 544 wave-61 curl re-verification: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-57 pin (**fifty-three consecutive content-identical archives, waves 9–61**; anti-bot script-URL rotation dormant a sixteenth wave w46–w61), Status=Targeted/Release=28 re-verified verbatim; #157943 0/3 trips — RFC #3943 fifty-third consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z), #163337 wave-24 equality shortcut held at the wave-56 re-pin baseline (updated_at 2026-10-06T10:51:13Z), #163338 open/unmerged via wave-24 check (updated_at 2026-09-30T13:03:50Z, no try-perf); GitHub unauthenticated core quota healthy (58 at wave start, all reads HTTP 200); T3 0/6 triggers (SE-0474/TruffleRuby/GraalPy md5 pins all match + 0 keyword hits, GraalPy history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only — new-but-excluded: 1043-day-old Swift PR #69955 de-virtualize-deinits is pre-existing infrastructure); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5; bare master/CHANGELOG.md 404s, pin is the master/compiler/ path), JEP 401 Integrated/Release 28, Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + Oct-5 press rewrites (no technique, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC 1; T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, **#81957 NO new activity this wave — timeline still 38 events (the wave-60 substantive thread is paused since 2026-10-06T15:23:33Z mknyszek comment; re-follow at wave 62)**, **#81968 QUIET a seventeenth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-62 watch stands**; process notes: pre-existing anomaly found during count-audit — wave-58's synthesis footer line is missing from the SURVEY.md synthesis block (line-number gap at old 14103); wave-58's results survive in its track files + the wave-58/59 queue entries, so the log is complete but the synthesis block skips 58 — repaired by the supervisor cron right after wave 61 (line reconstructed from the wave-58 CHECKPOINT log + wave-58 track files, matching the established synthesis pattern; provenance in daily log 2026-10-06); SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.
+Wave-61 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–61; §6 wave-61 queue ALL COMPLETE (6/6 items), wave-61 re-rank pass (no movements, no prototype-gated promotions), wave-62 queue written; JEP 544 wave-61 curl re-verification: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-57 pin (**fifty-three consecutive content-identical archives, waves 9–61**; anti-bot script-URL rotation dormant a sixteenth wave w46–w61), Status=Targeted/Release=28 re-verified verbatim; #157943 0/3 trips — RFC #3943 fifty-third consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z), #163337 wave-24 equality shortcut held at the wave-56 re-pin baseline (updated_at 2026-10-06T10:51:13Z), #163338 open/unmerged via wave-24 check (updated_at 2026-09-30T13:03:50Z, no try-perf); GitHub unauthenticated core quota healthy (58 at wave start, all reads HTTP 200); T3 0/6 triggers (SE-0474/TruffleRuby/GraalPy md5 pins all match + 0 keyword hits, GraalPy history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only — new-but-excluded: 1043-day-old Swift PR #69955 de-virtualize-deinits is pre-existing infrastructure); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5; bare master/CHANGELOG.md 404s, pin is the master/compiler/ path), JEP 401 Integrated/Release 28, Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + Oct-5 press rewrites (no technique, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC 1; T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, **#81957 NO new activity this wave — timeline still 38 events (the wave-60 substantive thread is paused since 2026-10-06T15:23:33Z mknyszek comment; re-follow at wave 62)**, **#81968 QUIET a seventeenth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-62 watch stands**; process notes: pre-existing anomaly found during count-audit — wave-58's synthesis footer line is missing from the [SURVEY.md](SURVEY.md) synthesis block (line-number gap at old 14103); wave-58's results survive in its track files + the wave-58/59 queue entries, so the log is complete but the synthesis block skips 58 — repaired by the supervisor cron right after wave 61 (line reconstructed from the wave-58 CHECKPOINT log + wave-58 track files, matching the established synthesis pattern; provenance in daily log 2026-10-06); SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.
 Wave-62 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–62; §6 wave-62 queue ALL COMPLETE (6/6 items), wave-62 re-rank pass (no movements, no prototype-gated promotions), wave-63 queue written; JEP 544 wave-62 curl re-verification: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-57 pin (**fifty-four consecutive content-identical archives, waves 9–62**; anti-bot script-URL rotation dormant a seventeenth wave w46–w62), Status=Targeted/Release=28 re-verified verbatim; #157943 0/3 trips — RFC #3943 fifty-fourth consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z), #163337 wave-24 equality shortcut HELD at the wave-56 re-pin baseline (updated_at 2026-10-06T10:51:13Z), #163338 open/unmerged via wave-24 check (updated_at 2026-09-30T13:03:50Z, no try-perf); GitHub unauthenticated core quota healthy (58 at wave start, all reads HTTP 200); T3 0/6 triggers (SE-0474/TruffleRuby/GraalPy md5 pins all match + 0 keyword hits, GraalPy history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5; bare master/CHANGELOG.md 404s, pin is the master/compiler/ path), Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + Oct-5 press rewrites (no technique, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC 1; T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, **#81957 NO new activity this wave — timeline still 38 events (the wave-60 substantive thread is paused since 2026-10-06T15:23:33Z mknyszek comment; re-follow at wave 63)**, **#81968 QUIET an eighteenth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-63 watch stands**; process notes: no transient API errors this wave; positive-evidence reads throughout; SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.
 Wave-63 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–63; §6 wave-63 queue ALL COMPLETE (6/6 items), wave-63 re-rank pass (no movements, no prototype-gated promotions), wave-64 queue written; JEP 544 wave-63 curl re-verification: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-57 pin (**fifty-five consecutive content-identical archives, waves 9–63**; anti-bot script-URL rotation dormant an eighteenth wave w46–w63), Status=Targeted/Release=28 re-verified verbatim; #157943 0/3 trips — RFC #3943 fifty-fifth consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z), #163337 wave-24 equality shortcut HELD at the wave-56 re-pin baseline (updated_at 2026-10-06T10:51:13Z), #163338 open/unmerged via wave-24 check (updated_at 2026-09-30T13:03:50Z, no try-perf); GitHub unauthenticated core quota healthy (38 remaining at check time, all reads HTTP 200); T3 0/6 triggers (SE-0474/TruffleRuby/GraalPy md5 pins all match + 0 keyword hits, GraalPy history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only — process note: wave-63 re-fetched TruffleRuby for a full 0/0/0 keyword count after an &&-chain printed only speculat=0); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5; bare master/CHANGELOG.md 404s, pin is the master/compiler/ path), Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + Oct-5 press rewrites (no technique, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC 1; T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, **#81957 REAL new activity this wave — timeline 38→39 events (dmitshur applied the `NeedsFix` label at 2026-10-06T18:27:12Z — the wave-60 substantive thread continues: reproduced + triaged + milestoned Go1.28 + CL-844405 subtlety discussion + maintainer NeedsFix label; no fix CL landed, no benchmark — NOT bar-clearing; re-follow at wave 64)**, **#81968 QUIET a nineteenth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-64 watch stands**; process notes: no transient API errors this wave; positive-evidence reads throughout; SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.
 Wave-64 synthesis 2026-10-06: 77 active ranked (SURV-001…078 minus struck SURV-077, 7/39/17/14) — no new IDs (nothing bar-cleared); §1 header waves 1–64; §6 wave-64 queue ALL COMPLETE (6/6 items), wave-64 re-rank pass (no movements, no prototype-gated promotions), wave-65 queue written; JEP 544 wave-64 curl re-verification: HTTP 200, 33,898 bytes, md5 5b074b447092005a265862c8fc935dad — **byte-identical** to the wave-57 pin (**fifty-six consecutive content-identical archives, waves 9–64**; anti-bot script-URL rotation dormant a nineteenth wave w46–w64), Status=Targeted/Release=28 re-verified verbatim; #157943 0/3 trips — RFC #3943 fifty-sixth consecutive unchanged wave (open/unmerged, updated_at 2026-10-02T15:30:51Z), #163337 wave-24 equality shortcut HELD at the wave-56 re-pin baseline (updated_at 2026-10-06T10:51:13Z), #163338 open/unmerged via wave-24 check (updated_at 2026-09-30T13:03:50Z, no try-perf); GitHub unauthenticated core quota healthy (60 remaining at check time, all reads HTTP 200); T3 0/6 triggers (SE-0474/TruffleRuby/GraalPy md5 pins all match + explicit 0/0/0 keyword hits, GraalPy history sha 9712c23b unchanged, Pyston head fe8afded6166 unchanged, Meta/Swift searches = disqualified noise only); T2 all negative — Graal compiler CHANGELOG 14,501b md5 6397c38a55572509df12814180ec458f (still 25.5; bare master/CHANGELOG.md 404s, pin is the master/compiler/ path), Valhalla 10 rows (no new JEPs), Azul still Oct-1 2x–5x vendor claim + Oct-5/4 press rewrites (no technique, no independent measurement), OpenJ9 still v0.62.0, .NET 11 still RC 1; T4: #24314 static, #77893's five CLs NEW with byte-identical timestamps, **#81957 REAL new activity this wave — timeline 39→40 events (prattmic commented at 2026-10-06T19:02:43Z — substantive technical follow-up on the wave-60 thread: questions why the quadratic behavior isn't seen for goroutines blocked on channels ("Those look almost perfectly linear in my empirical testing"); no fix CL landed, no benchmark — NOT bar-clearing; re-follow at wave 65)**, **#81968 QUIET a twentieth wave — 24 events unchanged, last dmitshur 2026-10-05T22:50:12Z labeling; Gerrit "81968" 0 matches — no prototype CL or benchmark; wave-65 watch stands**; process notes: mis-anchored queue edit caught and reverted before committing (single-edit discipline: verify match counts before and after; multi-match old_text hits the wrong location); positive-evidence reads throughout; SURV-075 Stage-0 not re-checked (standing owner exception); single-owner run (no child coordinator). Next SURV-IDs: 079+.

@@ -1,4 +1,4 @@
-# FAIRNESS_SEARCH.md — exhaustive hunt for fair virtual-thread scheduling under carrier saturation
+# [FAIRNESS_SEARCH.md](FAIRNESS_SEARCH.md) — exhaustive hunt for fair virtual-thread scheduling under carrier saturation
 
 **Date:** 2026-10-03 · **Question:** is there ANY known way — shipped, in-flight, or credibly proposed — to get fair (starvation-free) scheduling of Java virtual threads under carrier saturation, or to customize/replace the virtual-thread scheduler?
 **Context:** spike 02-loom KILLED the 1:1-goroutine-on-vthreads architecture (0/200,000 latency samples vs stock Go under 2-carrier saturation; 7 workaround families failed). Carlo's challenge: "there must be something." This document is the exhaustive answer.
@@ -81,7 +81,7 @@ JDK 26: only JDK-8369238 (class-init unpinning) + JDWP tweaks — IRRELEVANT. JD
 
 ## 2. JDK 25 source verification (independent, local src.zip)
 
-1. **Default scheduler is FIFO, not LIFO — correction to REPORT.md §3.** `VirtualThread.createDefaultScheduler()` (`VirtualThread.java:1429-1454`): `boolean asyncMode = true; // FIFO`; worker queues inherit the FIFO bit (`ForkJoinWorkerThread.java:78`). Shared *submission* queues are cfg=0 (LIFO owner-poll), but carriers take from them via the scan path at the base (FIFO end). The report's "LIFO local queues" phrasing is contradicted by the source (independently confirmed by 2 of the 3 research tracks).
+1. **Default scheduler is FIFO, not LIFO — correction to [REPORT.md](REPORT.md) §3.** `VirtualThread.createDefaultScheduler()` (`VirtualThread.java:1429-1454`): `boolean asyncMode = true; // FIFO`; worker queues inherit the FIFO bit (`ForkJoinWorkerThread.java:78`). Shared *submission* queues are cfg=0 (LIFO owner-poll), but carriers take from them via the scan path at the base (FIFO end). The report's "LIFO local queues" phrasing is contradicted by the source (independently confirmed by 2 of the 3 research tracks).
 2. **Yield path is conditional** (`VirtualThread.afterYield()`, lines 577-585): `Thread.yield()` → if carrier's local queue empty → `externalSubmit` to a probe-chosen shared queue (stealable); else → `submitRunContinuation()` → `execute()` → `poolSubmit()`.
 3. **`poolSubmit` has carrier affinity** (`ForkJoinPool.java:2614-2627`): it keys on `JLA.currentCarrierThread()`, so submissions made while executing on a carrier — `afterYield` resubmits *and unparks issued by mounted vthreads* — land in **the carrier's own work queue**. (The report did not identify this path.)
 4. **No public scheduler API — confirmed.** `ThreadBuilders.VirtualThreadBuilder(Executor)` is package-private, `// invoked by tests` (`ThreadBuilders.java:211-219`).

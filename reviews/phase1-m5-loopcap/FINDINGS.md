@@ -1,9 +1,9 @@
 # FINDINGS — Phase-1 review round: M5 + WS-G + loop-capture (2026-10-04)
 
 **Round:** program-owner directive 2026-10-04 (per-milestone review gate, PLAN.md §4).
-**Baseline:** `snapshot/` (207 files, SHA256SUMS.txt all-OK per all three reviewers).
-**Reviewers:** R1 semantics/design (`R1-design.md`), R2 test adequacy/evidence honesty
-(`R2-testing.md`), R3 craft/consistency (`R3-craft.md`). Independent, read-only.
+**Baseline:** [snapshot/](snapshot/) (207 files, [SHA256SUMS.txt](SHA256SUMS.txt) all-OK per all three reviewers).
+**Reviewers:** R1 semantics/design ([R1-design.md](R1-design.md)), R2 test adequacy/evidence honesty
+([R2-testing.md](R2-testing.md)), R3 craft/consistency ([R3-craft.md](R3-craft.md)). Independent, read-only.
 **Parent verification:** R1's gc-model thesis re-derived from gc's own
 `cmd/compile/internal/loopvar/loopvar.go` (go1.27.1) — confirmed; all 5 P0 oracle
 programs re-run under stock gc — outputs match R1's claims exactly. R2/R3's
@@ -70,7 +70,7 @@ programs re-run under stock gc — outputs match R1's claims exactly. R2/R3's
 - **P1-T4** (R2): 8 loopcap tests pin per-iteration-vs-shared but NOT
   per-iteration-vs-per-closure (adv02: gc `0 1 1 10 11 11` vs per-closure `0 1 0 10 11 10`).
 - **P1-T5..T16** (R2): 12 coverage gaps, each with a gc-pinned program in
-  `R2-testing.md` §3: struct-header post write semantics (adv16), struct field
+  [R2-testing.md](R2-testing.md) §3: struct-header post write semantics (adv16), struct field
   write-through (adv17), range-over-map capture (adv04), while-loop capture
   (adv05), closure invoked during its iteration (adv03), inner-loop over outer
   body var (adv01), cross-frame per-frame defers (adv07), recover→named-result

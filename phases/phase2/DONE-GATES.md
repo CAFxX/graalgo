@@ -1,16 +1,16 @@
 # Phase-2 done-gates — final verdicts (P2-M10)
 
-Verdict table for the five Phase-2 done-gates (PLAN.md §6, from PHASES.md
+Verdict table for the five Phase-2 done-gates ([PLAN.md](PLAN.md) §6, from PHASES.md
 §4). Each gate is binary pass/fail with evidence links. All evidence was
 re-verified fresh during P2-M10 unless noted.
 
 | # | Gate | Verdict | Evidence |
 |---|------|---------|----------|
-| 1 | Stress + torture | **PASS** | `hidden_files/torture/REPORT.md`; torture battery 12/12 PASS (fresh P2-M10 re-run); GOMAXPROCS matrix 8/8 byte-identical vs gc 1.27.1 (fresh re-run); kill criteria NOT triggered |
-| 2 | Pinning audit | **PASS** | `hidden_files/pinning/AUDIT.md`; `hidden_files/pinning/pinaudit-report.md` (186 programs, 0 unexpected pins — fresh P2-M10 re-run: unexpected=0 unreadable=0); `make check` pin gate |
-| 3 | JFR flowing | **PASS** | `hidden_files/jfr/EVENTS.md` + `p2-m6-evidence.jfr` (4 starts/ends, 4 parks, 3 ChannelBlocks verified) |
-| 4 | Reviews + race/model-checking | **PASS** | `reviews/phase2-m*/` (≥2 independent reviews per milestone, all findings remediated); `hidden_files/modelcheck/REPORT.md` (12/12 scripts, no lost wakeup, GG-WAKE-0002 a–f) |
-| 5 | Divergence list | **PASS** | `DIVERGENCES.md` (versioned): DIV-M3-1, DIV-M4-1..9, DIV-M5-1..5, DIV-M6-1, GG-0048 observable list — every entry closed, accepted-with-rationale, or owner-decision-recorded; no orphan [OPEN]s |
+| 1 | Stress + torture | **PASS** | [hidden_files/torture/REPORT.md](hidden_files/torture/REPORT.md); torture battery 12/12 PASS (fresh P2-M10 re-run); GOMAXPROCS matrix 8/8 byte-identical vs gc 1.27.1 (fresh re-run); kill criteria NOT triggered |
+| 2 | Pinning audit | **PASS** | [hidden_files/pinning/AUDIT.md](hidden_files/pinning/AUDIT.md); [hidden_files/pinning/pinaudit-report.md](hidden_files/pinning/pinaudit-report.md) (186 programs, 0 unexpected pins — fresh P2-M10 re-run: unexpected=0 unreadable=0); `make check` pin gate |
+| 3 | JFR flowing | **PASS** | [hidden_files/jfr/EVENTS.md](hidden_files/jfr/EVENTS.md) + `p2-m6-evidence.jfr` (4 starts/ends, 4 parks, 3 ChannelBlocks verified) |
+| 4 | Reviews + race/model-checking | **PASS** | `reviews/phase2-m*/` (≥2 independent reviews per milestone, all findings remediated); [hidden_files/modelcheck/REPORT.md](hidden_files/modelcheck/REPORT.md) (12/12 scripts, no lost wakeup, GG-WAKE-0002 a–f) |
+| 5 | Divergence list | **PASS** | [DIVERGENCES.md](DIVERGENCES.md) (versioned): DIV-M3-1, DIV-M4-1..9, DIV-M5-1..5, DIV-M6-1, GG-0048 observable list — every entry closed, accepted-with-rationale, or owner-decision-recorded; no orphan [OPEN]s |
 
 ## Per-gate detail
 
@@ -75,7 +75,7 @@ re-verified fresh during P2-M10 unless noted.
 
 ### Gate 5 — Divergence list (P2-M10)
 
-- DIVERGENCES.md triage: DIV-M3-1 (`len()` on timer channel; blocking
+- [DIVERGENCES.md](DIVERGENCES.md) triage: DIV-M3-1 (`len()` on timer channel; blocking
   Phase-3 fix), DIV-M4-1..9 (GC), DIV-M5-1..5 (GODEBUG), DIV-M6-1
   (runtime/trace) — all documented with rationale + triggers.
 - GG-0048 scheduling-observable list: (i) fairness CLOSED, (ii)
@@ -85,7 +85,7 @@ re-verified fresh during P2-M10 unless noted.
   CLOSED.
 - P2-M1/M2/M7/M8/M9: no accepted divergences.
 - No orphan [OPEN]s. The P2-M8 sync-scope conditional is discharged by
-  recorded owner acceptance (CHECKPOINT.md 2026-10-06 entry).
+  recorded owner acceptance ([CHECKPOINT.md](CHECKPOINT.md) 2026-10-06 entry).
 
 ## Final verification (sign-off tree)
 

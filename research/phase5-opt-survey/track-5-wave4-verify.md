@@ -2,7 +2,7 @@
 
 **Worker:** wave-4 track worker. **Date:** 2026-10-04 (~10:37–11:15 CEST).
 **Mission:** close the two verification gaps left by wave 3
-(track-5-wave3-pipeline.md §6.1 and §6.9): (1) the O2-vs-O3 delta, in particular
+([track-5-wave3-pipeline.md](track-5-wave3-pipeline.md) §6.1 and §6.9): (1) the O2-vs-O3 delta, in particular
 the standing "arg-promotion at O3" claim with its upstream FIXME; (2) a
 pass-by-pass re-verification of rustc's *current* MIR pass list.
 Verification-only — no SURV- IDs assigned, no edits to SURVEY.md/CHECKPOINT.md,

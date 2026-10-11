@@ -20,7 +20,7 @@ divergence (flakiness) → FAIL. None fired.
 
 ## What was built
 
-`~/workspace/graalgo/tools/diffharness/` (Go module `diffharness`, no
+[tools/diffharness/](../../test/differential/) (Go module `diffharness`, no
 external dependencies):
 
 - `cmd/diffharness` — CLI with `run`, `mutate`, `validate` subcommands.

@@ -1,8 +1,8 @@
-# graalgo consistency audit — CONSISTENCY_AUDIT.md
+# graalgo consistency audit — [CONSISTENCY_AUDIT.md](CONSISTENCY_AUDIT.md)
 
 **Date:** 2026-10-03 · **Trigger:** Carlo: "Are the spec fully consistent and updated?"
-**Scope:** `SPEC.md` (1194 lines) cross-checked against `FEASIBILITY.md`, `PHASES.md`,
-`adr/ADR-0001.md`, `requirements/` (70 `GG-*.yaml`), `spikes/*/REPORT.md`, `reviews/`.
+**Scope:** [SPEC.md](SPEC.md) (1194 lines) cross-checked against [FEASIBILITY.md](FEASIBILITY.md), [PHASES.md](PHASES.md),
+[adr/ADR-0001.md](adr/ADR-0001.md), [requirements/](requirements/) (70 `GG-*.yaml`), `[spikes/](spikes/)*/REPORT.md`, [reviews/](reviews/).
 **Mode:** read-only. Findings ranked P0 (contradiction affecting a gate/decision/requirement),
 P1 (stale text or wrong number), P2 (cosmetic).
 
@@ -19,9 +19,9 @@ D: SPEC↔registry · E: SPEC↔spikes/reviews). Findings below are synthesized 
 
 ## Findings
 
-### Track B — SPEC ↔ FEASIBILITY.md (staleness) — COMPLETE
+### Track B — SPEC ↔ [FEASIBILITY.md](FEASIBILITY.md) (staleness) — COMPLETE
 
-**[P0] B1 — FEASIBILITY.md:26 (headline "Recommended architecture" paragraph)**
+**[P0] B1 — [FEASIBILITY.md](FEASIBILITY.md):26 (headline "Recommended architecture" paragraph)**
 > "goroutines map 1:1 to virtual threads with mandatory back-edge safepoint yields (Loom never preempts)"
 Stale: the second half is the killed mechanism. Under option C, back-edge yields are gone —
 preemption is indefinite `LockSupport.park()` on quantum expiry. First half (1:1 mapping) still true.
@@ -29,7 +29,7 @@ Fix: replace "with mandatory back-edge safepoint yields (Loom never preempts)" w
 user-space quantum scheduler (option C: indefinite park-on-quantum-expiry; back-edge yields
 superseded 2026-10-03, see ADR-0001 / SPEC §3.5; Loom never preempts)".
 
-**[P0] B2 — FEASIBILITY.md:37–39 (hardest-problem #1)**
+**[P0] B2 — [FEASIBILITY.md](FEASIBILITY.md):37–39 (hardest-problem #1)**
 > "Go has M:N work-stealing with async preemption; Loom gives 1:1 virtual threads on carriers with
 > *no* preemption. Faithful `GOMAXPROCS`, fairness, and preemption-equivalent behavior require
 > back-edge safepoint yields throughout the Truffle AST plus a custom carrier pool — the single
@@ -43,7 +43,7 @@ Fix: rewrite mechanism as user-space scheduler (park-on-quantum-expiry, FIFO+run
 platform-thread drainer, in-flight cap); tag "superseded 2026-10-03 by spike 2b / ADR-0001".
 "Heisenbugs" tail stays.
 
-**[P0] B3 — FEASIBILITY.md:140–141 (§4 recommended architecture, item 5)**
+**[P0] B3 — [FEASIBILITY.md](FEASIBILITY.md):140–141 (§4 recommended architecture, item 5)**
 > "**Loom never preempts**: back-edge safepoint yields are mandatory in the Truffle AST;
 > `GOMAXPROCS` maps to a custom carrier `ForkJoinPool`."
 Stale: "mandatory" is false (yields gone; `Safepoint.poll()` at back-edges survives only as the
@@ -54,41 +54,41 @@ quantum-expiry parks (`LockSupport.park()`; yields superseded 2026-10-03, ADR-00
 `GOMAXPROCS` maps to the scheduler's in-flight cap = min(GOMAXPROCS, carrier parallelism) on the
 default Loom carrier pool."
 
-**[P1] B4 — amendment pointer exists but doesn't reach the stale text (FEASIBILITY.md)**
+**[P1] B4 — amendment pointer exists but doesn't reach the stale text ([FEASIBILITY.md](FEASIBILITY.md))**
 Pointer exists only at §8 risk #2 (lines 321–325, historical note pointing to SPEC §3.5) and
 §11 ledger line 405 (strikethrough). The three stale spots (B1–B3: §1 headline, §1 hardest-problems,
 §4 expansion — the most-read sections) carry no inline pointer; a reader of §1–§4 gets the wrong
 architecture entirely; no top-of-document errata banner.
 Fix: add errata banner under the header ("Erratum 2026-10-03: spike 2 KILLED the 1:1-yield-to-FJP
 design; spike 2b PASS decided option C. Concurrency-mechanism text in §1 and §4(5) is superseded;
-SPEC.md §3.5 is normative; ADR-0001") and/or annotate B1–B3 inline.
+[SPEC.md](SPEC.md) §3.5 is normative; ADR-0001") and/or annotate B1–B3 inline.
 
 Track B explicitly NOT stale (verified true under option C): 1:1 mapping claims (lines 26, 140);
 "(Loom never preempts)"; netpoller deletion (GG-0018, refined via slot-releasing NIO wrapper);
 §8 risk #2 body reads as history with accurate kill note; §11 line 405 strikethrough;
 §10 open question #2 still OPEN/relevant; GOMAXPROCS=1 determinism (line 288); §5 safepoint-overhead
 falsifier still relevant; Panama/-toolexec/Truffle modes/value model/panic-defer untouched.
-Verdict: **FEASIBILITY.md consistent with decided architecture: NO.**
+Verdict: **[FEASIBILITY.md](FEASIBILITY.md) consistent with decided architecture: NO.**
 
-### Track C — SPEC ↔ PHASES.md / ADR-0001 — COMPLETE
+### Track C — SPEC ↔ [PHASES.md](PHASES.md) / ADR-0001 — COMPLETE
 
-**[P2] C1 — adr/ADR-0001.md:52 (D2 "Consequence") wrong section citation**
-> "Kill trigger (PHASES.md §2): argv-interception gaps that force the fork *and* whose merge
+**[P2] C1 — [adr/ADR-0001.md](adr/ADR-0001.md):52 (D2 "Consequence") wrong section citation**
+> "Kill trigger ([PHASES.md](PHASES.md) §2): argv-interception gaps that force the fork *and* whose merge
 > burden breaks the toil bound."
-The argv-interception trigger is not named in PHASES.md §2 (generic Phase-0 criteria only); it is
-named in PHASES.md §6 (Phase 4 kill criteria) and SPEC.md:241. Substance correct; pointer off.
-Fix: cite `PHASES.md §6` (or `SPEC §3.1`).
+The argv-interception trigger is not named in [PHASES.md](PHASES.md) §2 (generic Phase-0 criteria only); it is
+named in [PHASES.md](PHASES.md) §6 (Phase 4 kill criteria) and [SPEC.md](SPEC.md):241. Substance correct; pointer off.
+Fix: cite `[PHASES.md](PHASES.md) §6` (or `SPEC §3.1`).
 
-**[P2] C2 — PHASES.md:232 (§9 table, Phase 2 row) ambiguous parenthetical**
+**[P2] C2 — [PHASES.md](PHASES.md):232 (§9 table, Phase 2 row) ambiguous parenthetical**
 > "2 | Preemption-torture + pinning-audit suites (Loom-specific)"
-Under option C fairness is drainer-owned, not Loom's (PHASES.md §4 done-gate (2) itself says so).
+Under option C fairness is drainer-owned, not Loom's ([PHASES.md](PHASES.md) §4 done-gate (2) itself says so).
 "(Loom-specific)" invites the stale reading.
 Fix: "Preemption-torture (user-space scheduler) + pinning-audit suites (JDK/Loom pinning events,
 cgo-budget check)".
 
-**Observation C-O1 (not a finding):** SPEC.md contains no mention of Carlo's signature as the
+**Observation C-O1 (not a finding):** [SPEC.md](SPEC.md) contains no mention of Carlo's signature as the
 Phase-0→1 gate or SPEC acceptance (ID lock) as the Phase-1 entry gate — those live only in
-adr/ADR-0001.md. SPEC's header says "Requirements: requirements/GG-0001–GG-0060 (draft,
+[adr/ADR-0001.md](adr/ADR-0001.md). SPEC's header says "Requirements: requirements/GG-0001–GG-0060 (draft,
 unlocked)" — consistent with the draft-registry part. A one-line pointer in SPEC §1.2 to the ADR's
 gate statement would close the loop.
 
@@ -98,7 +98,7 @@ re-scope counterfactual 7–12 PY built component-by-component (3–5.5 + 1.5–
 Doc itself discloses the baseline was never independently estimated and everything is [ESTIMATE]
 at LOW confidence (±50%).
 
-Track C clean checks: PHASES.md reflects option C in all phases 0–5 (killed design struck through
+Track C clean checks: [PHASES.md](PHASES.md) reflects option C in all phases 0–5 (killed design struck through
 with kill recorded at §2:29; M:N re-scope marked "not pursued"; Phase 2 §4:84–87 names option C
 with scope tokens/drainer/cap/F5 class; only remaining "yield" at §9:242 is a correct reference
 to the old scope's cost component in the counterfactual). All four ADR D5 residuals carried in
@@ -106,13 +106,13 @@ SPEC §3.5 with matching numbers/triggers (overhead 29.9µs = 0.30% at 10ms, SPE
 38µs wakeup + server-hardware re-test + risk-row-10 kill, SPEC:432–438; 13× gap no-production-claims,
 SPEC:439–444; slot-releasing NIO wrapper + Phase-2 throughput trigger, SPEC:405–414;
 never_scheduled=0, SPEC:337–339). Kill triggers match SPEC §8 row 2 verbatim. Effort tables
-SPEC §9 ↔ PHASES §10 agree on every row; done-gates consistent. Verdicts: **PHASES.md reflects
+SPEC §9 ↔ PHASES §10 agree on every row; done-gates consistent. Verdicts: **[PHASES.md](PHASES.md) reflects
 option C: YES; ADR-0001 ↔ SPEC consistent: YES.**
 
 ### Track D — SPEC ↔ requirements registry — COMPLETE
 
 **[P2] D1 — GG-SCHED-0003 weaker than SPEC's effective-cap rule (no contradiction)**
-`requirements/GG-SCHED-0003.yaml:3`: "The number of admitted-but-not-yet-parked virtual threads
+[requirements/GG-SCHED-0003.yaml:3](requirements/GG-SCHED-0003.yaml): "The number of admitted-but-not-yet-parked virtual threads
 SHALL never exceed GOMAXPROCS; the drainer SHALL enforce this as a hard assert."
 SPEC §3.5 (~:352): effective cap is `min(GOMAXPROCS, carrier parallelism)`, clamped in the
 constructor. `min(GOMAXPROCS, carrier)` ≤ GOMAXPROCS, so no contradiction — but the requirement
@@ -158,7 +158,7 @@ Fix: `48,140 parks / 48,140 admissions, 40,588 of 40,588 wakeups won, zero lost`
 **[P1] A3 — SPEC:434** `"15,603 samples/5s vs stock Go's 200,000 (13×)"`. REPORT F1 explicitly
 marks 15,603 as the superseded old draft ("On the old draft's 15,603 vs the coordinator's 12,036
 vs this run's 11,824 (§3.6): machine variance under VM contention"); archived legs: 11,824 /
-13,337 / 13,919. 200,000 traces to `spikes/02-loom/REPORT.md`. 200,000/11,824 ≈ 16.9×. The REPORT's
+13,337 / 13,919. 200,000 traces to [spikes/02-loom/REPORT.md](spikes/02-loom/REPORT.md). 200,000/11,824 ≈ 16.9×. The REPORT's
 own "~13x" (line 102) is itself derived from stale 15,603.
 Fix: `"11,824 samples/5s vs stock Go's 200,000 (~17×)"`; fix REPORT:102 at the source.
 
@@ -188,7 +188,7 @@ CV 0.0123)"`; `"Spike-2b overhead (26.8µs mean/hop)"`; `"Spike-2b lost-wakeup f
 26.8µs → 33.0; 50,558 → 48,140. Fix accordingly.
 
 **[P1] A9 — SPEC:302–303, SPEC:1078** scope note `"(scoped: JDK 25.0.4, 2-vCPU VM, 1ms/100µs
-quanta)"` on the spike-2 kill. `spikes/02-loom/REPORT.md` tested POLL (10 ms) and POLL (1 ms
+quanta)"` on the spike-2 kill. `[spikes/02-loom/REPORT.md](spikes/02-loom/REPORT.md)` tested POLL (10 ms) and POLL (1 ms
 watchdog); 1ms/100µs are spike-2b's O1 legs, not spike-2's configs. JDK/VM parts check out.
 Fix: `"(scoped: JDK 25.0.4, 2-vCPU VM, POLL 10ms / 1ms-watchdog configs)"`.
 
@@ -220,15 +220,15 @@ overstates). Fix: "hypothesized safe; unmeasured until the Phase-2 pinning matri
 
 Track A clean checks: cross-references otherwise resolve (all 70 GG-* IDs → Appendix B; all spike
 citations → existing dirs; all §X/Appendix X refs resolve; research T1–T8 and "T5 §2.3"/"T5 §4.4"
-resolve under the section.item convention; PHASES.md §2/§3/§11 and FEASIBILITY.md §5/§11 exist;
-no literal "ADR-0001" citation in SPEC — only "the companion ADR" — and `adr/ADR-0001.md` exists).
+resolve under the section.item convention; [PHASES.md](PHASES.md) §2/§3/§11 and [FEASIBILITY.md](FEASIBILITY.md) §5/§11 exist;
+no literal "ADR-0001" citation in SPEC — only "the companion ADR" — and [adr/ADR-0001.md](adr/ADR-0001.md) exists).
 Traceable numbers: 200,000; 0 samples; 2,643; never_scheduled=0; 1.05; 29.9µs/0.30%; 38µs/4.3µs/5µs;
 derived 2.7–4.1% and 0.38% arithmetically consistent.
 **Not traceable to the current REPORT: 15,603, CV 0.0123, 26.8µs, 50,558, 40,617, 1.34%, RTT p50
 37µs.**
 Side note: this audit's own brief listed "quanta max/mean 1.01" — both SPEC and REPORT say
 **1.05**; 1.01 appears in neither (brief error, not a SPEC defect).
-Verdict: **SPEC.md internally consistent: NO** — superseded old-draft numbers presented as
+Verdict: **[SPEC.md](SPEC.md) internally consistent: NO** — superseded old-draft numbers presented as
 `[VERIFIED]`, misattributed spike-2 configs, non-existent §8.2 cited 3×. The option-C narrative is
 coherent; no verdict or `[DECIDED]` item changes (spike-2b PASS, 10ms-quantum decision on the
 current 29.9µs = 0.30%, kill triggers unaffected).
@@ -236,13 +236,13 @@ current 29.9µs = 0.30%, kill triggers unaffected).
 ### Track E — SPEC ↔ spike reports / peer reviews — COMPLETE
 
 **[P1] E1 — spike 6's verdict (COMMIT-DIRECT) missing; SPEC presents it as still-open**
-SPEC.md:846–854 (§7.1): "the fork is decided by the Phase-0 scored spike verdict (spike 6), which
+[SPEC.md](SPEC.md):846–854 (§7.1): "the fork is decided by the Phase-0 scored spike verdict (spike 6), which
 must produce a *scored comparison* … not an assumption `[DECIDED]`. The default remains the direct
 Truffle AST `[PROPOSAL]`. If Sulong wins the comparison **and** the direct-AST estimate doubles,
 the program replans… **Falsifier of the default:** spike 6 scores Sulong higher… (GG-0047)".
-Same stale framing at SPEC.md:266 (§3.3) and SPEC.md:996 (§8 row 6, experiment in pending tense).
-REPORT `spikes/06-sulong/REPORT.md:3–5`: "**Verdict: COMMIT-DIRECT** — proceed with the direct
-Truffle AST route. … Sulong does not win the scored comparison (6 vs 19), so the PHASES.md REPLAN
+Same stale framing at [SPEC.md](SPEC.md):266 (§3.3) and [SPEC.md](SPEC.md):996 (§8 row 6, experiment in pending tense).
+REPORT [spikes/06-sulong/REPORT.md:3–5](spikes/06-sulong/REPORT.md): "**Verdict: COMMIT-DIRECT** — proceed with the direct
+Truffle AST route. … Sulong does not win the scored comparison (6 vs 19), so the [PHASES.md](PHASES.md) REPLAN
 trigger (Sulong wins AND direct-AST estimate doubles) is not met." §6 closes the option unless (a)
 Sulong's bitcode support reaches current LLVM, (b) a maintained full-language Go→LLVM frontend
 appears, (c) Sulong gains precise-GC/threading/signal primitives. Root cause: Sulong ceiling
@@ -263,7 +263,7 @@ battery: F1 O1 = 11,824 / 7,014 / 13,919 / 13,337 / 11,786, CVs
 concept. Fix per A9.
 
 **[P2] E4 — spike-2 WHY omits the report's root causes; ledger drops re-test triggers**
-SPEC.md:299–302 WHY = "systematic starvation the yields could not close" — nothing else. REPORT
+[SPEC.md](SPEC.md):299–302 WHY = "systematic starvation the yields could not close" — nothing else. REPORT
 §3 (verified in JDK 25 sources): Loom carrier is an FJP with LIFO local queues and no runnext
 equivalent; no public API to install a custom carrier scheduler (`Thread.ofVirtual().scheduler`
 is package-private); carrier sizing is per-JVM via system properties only (GOMAXPROCS fidelity a
@@ -276,36 +276,36 @@ Fix: record the four root-cause elements in §3.5's kill paragraph or the §10.2
 in the ledger annotated "superseded by option C as a program decision".
 
 **[P2] E5 — §10.1 provenance ledger has no verdict rows for spikes 1, 3, 4, 5, 6, 7**
-SPEC.md:1049–1051 records verdicts only for spike 2 (KILLED) and 2b (PASS); spikes 1/3/4/5/7 cited
+[SPEC.md](SPEC.md):1049–1051 records verdicts only for spike 2 (KILLED) and 2b (PASS); spikes 1/3/4/5/7 cited
 only as falsifiers with no verdict stated; spike 6 missing entirely (E1). §8 rows 1–7 describe
 falsifying experiments in pending tense though all seven spikes have landed.
 Fix: add verdict rows to §10.1 for all 7 spikes (verdict + one-line evidence pointer); mark §8
 rows 1–7 completed with verdicts.
 
 **[P2] E6 — R2 P1-4 only partially remediated (stale-doc supersession)**
-R2 P1-4 demanded: mark PHASES §2 spike 2 KILLED ✓ (`PHASES.md:30`); FEASIBILITY header banner;
+R2 P1-4 demanded: mark PHASES §2 spike 2 KILLED ✓ (`[PHASES.md](PHASES.md):30`); FEASIBILITY header banner;
 one-line notes at §4(5) and §8-risk-2 ✓ (:321–326, :405); align agent-leverage `[OPEN]`s with SPEC
-§7.14 `[DECIDED]`. Missing: `FEASIBILITY.md:1–6` header — **no banner** (fix asked for "Historical
-study record as of 2026-10-03 pre-spike-2b. SPEC.md §1.1 is the normative record; …");
-`FEASIBILITY.md:390` (§9 #14) still "`14. [OPEN] Agent-leverage discount on the 20–40 PY
-estimate — quantify or drop.`"; `PHASES.md:236` (§10) still "No agent-leverage discount applied
+§7.14 `[DECIDED]`. Missing: `[FEASIBILITY.md](FEASIBILITY.md):1–6` header — **no banner** (fix asked for "Historical
+study record as of 2026-10-03 pre-spike-2b. [SPEC.md](SPEC.md) §1.1 is the normative record; …");
+`[FEASIBILITY.md](FEASIBILITY.md):390` (§9 #14) still "`14. [OPEN] Agent-leverage discount on the 20–40 PY
+estimate — quantify or drop.`"; `[PHASES.md](PHASES.md):236` (§10) still "No agent-leverage discount applied
 (`[OPEN]` — quantify or drop)."
 Fix: add the header banner; align both agent-leverage items with SPEC §7.14 `[DECIDED]`
 (discount dropped).
 
 **[P2] E7 — R2 P1-3 partial: GG-0035's statement lacks the respdiff line**
-R2 P1-3's fix: extend 05's R3 ✓ (`spikes/05-cmdgo/REPORT.md:238–246`) + watch in SPEC §5.8 tool
+R2 P1-3's fix: extend 05's R3 ✓ ([spikes/05-cmdgo/REPORT.md:238–246](spikes/05-cmdgo/REPORT.md)) + watch in SPEC §5.8 tool
 list ✓ (:713) and §6.1 checklist ✓ (:768) **plus a line in GG-0035's statement**. Missing: the
-GG-0035 line — `requirements/GG-0035.yaml` statement still lists "apidiff, go/types signature
+GG-0035 line — [requirements/GG-0035.yaml](requirements/GG-0035.yaml) statement still lists "apidiff, go/types signature
 diff, rtlink, flagdiff, godebug-diff" with no respdiff.
 Fix: add respdiff to GG-0035's statement (one line, ID kept).
 
 **[P2] E8 — SPEC omits spike 3's P95-calibration trigger (R2 P1-1 remediation)**
-`spikes/03-versiontax/REPORT.md:§6` honesty note: the table compares extrapolated P50 against a
+`[spikes/03-versiontax/REPORT.md](spikes/03-versiontax/REPORT.md):§6` honesty note: the table compares extrapolated P50 against a
 P95 bound — category mismatch; heavy-class P95 likely over the bound. **Trigger:** the first real
 upgrade SHALL measure the per-component toil distribution and recalibrate; if measured P95
 breaches ≤200 agent-h, the toil-reduction sprint (SPEC §6.5) fires before the next release.
-SPEC.md:117–119 (§2.3) promotes the bound `[PROPOSAL]`→`[DECIDED]` and SPEC.md:801 (§6.4) covers
+[SPEC.md](SPEC.md):117–119 (§2.3) promotes the bound `[PROPOSAL]`→`[DECIDED]` and [SPEC.md](SPEC.md):801 (§6.4) covers
 toil accounting, but neither the trigger nor the "no breach observed, not bound compliance"
 qualification appears.
 Fix: add the P95-calibration trigger to §6.4 or the §10.2 verdict-scope ledger.
@@ -339,7 +339,7 @@ DETECTED, K1–K3 not fired; gc-vs-gc scope since graalgo doesn't exist yet).
 
 Finding counts (deduplicated): **P0 = 3 · P1 = 11 · P2 = 14** — 28 total.
 
-- P0 (all Track B, FEASIBILITY.md): B1 (headline recommendation still "mandatory back-edge
+- P0 (all Track B, [FEASIBILITY.md](FEASIBILITY.md)): B1 (headline recommendation still "mandatory back-edge
   safepoint yields"), B2 (hardest-problem #1: yields + custom carrier pool), B3 (§4(5):
   "GOMAXPROCS maps to a custom carrier ForkJoinPool") — the study's three most-read concurrency
   statements present the killed design as the recommendation with no amendment pointer.
@@ -350,7 +350,7 @@ Finding counts (deduplicated): **P0 = 3 · P1 = 11 · P2 = 14** — 28 total.
 
 What is NOT broken: the option-C design narrative in SPEC §3.5 is coherent and internally
 consistent; the registry (70 GG IDs ↔ SPEC) is an exact bijection with zero stale killed-design
-text; PHASES.md reflects option C in all phases with kill recorded; ADR-0001 ↔ SPEC residuals
+text; [PHASES.md](PHASES.md) reflects option C in all phases with kill recorded; ADR-0001 ↔ SPEC residuals
 and kill triggers match verbatim; every spike verdict except spike 6's is cited correctly; all R1
 review findings and all but three R2 items are traceably remediated. No verdict or `[DECIDED]`
 item changes as a result of this audit — spike-2b PASS, the 10ms-quantum decision (rests on the
@@ -358,32 +358,32 @@ current 29.9µs = 0.30%), and all kill triggers are unaffected.
 
 ### Minimal fix list to reach YES
 
-1. FEASIBILITY.md: add top-of-document errata banner ("spike 2 KILLED the 1:1-yield-to-FJP
+1. [FEASIBILITY.md](FEASIBILITY.md): add top-of-document errata banner ("spike 2 KILLED the 1:1-yield-to-FJP
    design 2026-10-03; spike 2b PASS decided option C; SPEC §3.5 is normative"); rewrite or inline-
    annotate the three stale concurrency spots (B1–B3: :26, :37–39, :140–141). [P0]
-2. SPEC.md: replace every superseded old-draft 2b number with the archived rework-battery
+2. [SPEC.md](SPEC.md): replace every superseded old-draft 2b number with the archived rework-battery
    numbers — §3.5, §8 row 10, §10.1, §10.2 ledger: 15,603→11,824 (O1 legs 7,014–13,919);
    26.8µs mean→33.0µs @1ms / 29.9µs @10ms; 50,558/50,558→48,140/48,140;
    40,617/40,617→40,588/40,588; CV 0.0123→archived F1 CVs; 1.34%→1.91%; RTT p50 37µs→archived
-   per-leg values (55–64µs) or drop; "~13×"→"~17×". Also fix `spikes/02b-userspace-scheduler/
+   per-leg values (55–64µs) or drop; "~13×"→"~17×". Also fix `[spikes/02b-userspace-scheduler/](spikes/02b-userspace-scheduler/)
    REPORT.md:102` "~13x" at the source (derived from the stale 15,603). [P1]
-3. SPEC.md: fix spike-2 kill scope to the tested configs (POLL 10ms / 1ms-watchdog / PARK
+3. [SPEC.md](SPEC.md): fix spike-2 kill scope to the tested configs (POLL 10ms / 1ms-watchdog / PARK
    1µs–1ms; JDK 25.0.4, 2-vCPU VM) — not "1ms/100µs quanta". [P1]
-4. SPEC.md: "§8.2" → "§8 rows 8–13" (3 locations: :513, :916, :1063). [P1]
-5. SPEC.md: record spike 6's COMMIT-DIRECT verdict (6 vs 19; root cause TinyGo LLVM 22 vs Sulong
+4. [SPEC.md](SPEC.md): "§8.2" → "§8 rows 8–13" (3 locations: :513, :916, :1063). [P1]
+5. [SPEC.md](SPEC.md): record spike 6's COMMIT-DIRECT verdict (6 vs 19; root cause TinyGo LLVM 22 vs Sulong
    ≤12.0.1; re-test triggers a/b/c) at §7.1, §3.3, §8 row 6; add §10.1 verdict rows for spikes
    1, 3, 4, 5, 6, 7; mark §8 rows 1–7 completed. [P1]
-6. SPEC.md done-gate record: "Appendix D" → "Appendix C" (the single [OPEN] lives at :1187,
+6. [SPEC.md](SPEC.md) done-gate record: "Appendix D" → "Appendix C" (the single [OPEN] lives at :1187,
    Appendix C). [P2]
-7. FEASIBILITY.md: add the R2-mandated header banner; align the two agent-leverage `[OPEN]`s
-   (`FEASIBILITY.md:390`, `PHASES.md:236`) with SPEC §7.14 `[DECIDED]` (discount dropped). [P2]
-8. `requirements/GG-0035.yaml`: add respdiff to the statement (keep the ID). [P2]
-9. SPEC.md: add spike 3's P95-calibration trigger to §6.4 or the §10.2 verdict-scope ledger. [P2]
-10. SPEC.md §3.5/§10.2: record spike-2's four root causes (LIFO/no-runnext, no public scheduler
+7. [FEASIBILITY.md](FEASIBILITY.md): add the R2-mandated header banner; align the two agent-leverage `[OPEN]`s
+   (`[FEASIBILITY.md](FEASIBILITY.md):390`, `[PHASES.md](PHASES.md):236`) with SPEC §7.14 `[DECIDED]` (discount dropped). [P2]
+8. [requirements/GG-0035.yaml](requirements/GG-0035.yaml): add respdiff to the statement (keep the ID). [P2]
+9. [SPEC.md](SPEC.md): add spike 3's P95-calibration trigger to §6.4 or the §10.2 verdict-scope ledger. [P2]
+10. [SPEC.md](SPEC.md) §3.5/§10.2: record spike-2's four root causes (LIFO/no-runnext, no public scheduler
     API, JVM-global carrier sizing, 7 workaround families) and carry the (a)/(b)/(c) re-test
     triggers annotated "superseded by option C as a program decision". [P2]
 11. P2 sweep: GG-SCHED-0003 pin `min(GOMAXPROCS, carrier parallelism)` (D1); ADR:52 citation
-    → PHASES.md §6 (C1); PHASES.md:232 "(Loom-specific)" reword (C2); Appendix A glossary vs §8
+    → [PHASES.md](PHASES.md) §6 (C1); [PHASES.md](PHASES.md):232 "(Loom-specific)" reword (C2); Appendix A glossary vs §8
     labels (A12); GG-0057 primary home "§3.5, §8" (A13); "asserted safe" → "hypothesized safe;
     unmeasured until the Phase-2 pinning matrix" (A14); confirm E9's two additions intentional.
 
@@ -402,7 +402,7 @@ current 29.9µs = 0.30%), and all kill triggers are unaffected.
   every downstream consumer one place to copy from.
 - Two R2-mandated fixes (FEASIBILITY banner, agent-leverage alignment) and one R2-mandated
   requirement line (GG-0035 respdiff) were reported "remediated" but are absent — the
-  remediation check was scoped to SPEC.md and missed the named files. Remediation verification
+  remediation check was scoped to [SPEC.md](SPEC.md) and missed the named files. Remediation verification
   should grep the *named targets*, not the *usual* target.
 
 ---
@@ -421,9 +421,9 @@ log line is cited in-text.
 
 ### P0 — all FIXED
 
-- **B1** — FIXED: FEASIBILITY.md headline now reads "…with a user-space quantum
+- **B1** — FIXED: [FEASIBILITY.md](FEASIBILITY.md) headline now reads "…with a user-space quantum
   scheduler (option C: indefinite park-on-quantum-expiry; back-edge *yields*
-  superseded 2026-10-03 — see SPEC.md §3.5 / ADR-0001; Loom never preempts)".
+  superseded 2026-10-03 — see [SPEC.md](SPEC.md) §3.5 / ADR-0001; Loom never preempts)".
 - **B2** — FIXED: hardest-problem #1 rewritten around the user-space scheduler
   (park-on-quantum-expiry, FIFO+runnext token queues, platform-thread drainer,
   in-flight cap = min(GOMAXPROCS, carrier parallelism)), tagged "superseded
@@ -436,7 +436,7 @@ log line is cited in-text.
   default Loom carrier pool (no custom carrier pool)".
 - **B4** — FIXED: top-of-document errata banner added under the header
   (spike-2 kill, spike-2b PASS/option C, SPEC §3.5 normative, ADR-0001;
-  "Historical study record as of 2026-10-03 pre-spike-2b; SPEC.md §1.1 is the
+  "Historical study record as of 2026-10-03 pre-spike-2b; [SPEC.md](SPEC.md) §1.1 is the
   normative record").
 
 ### P1 — all FIXED
@@ -447,7 +447,7 @@ log line is cited in-text.
   40,588/40,588 wakeups won** with the archived line cited
   (`logs/stress.log`: `parks=48140 admissions=48140 wakeupCalls=40588 wakeupWon=40588`).
 - **A3** — FIXED: 15,603 samples/5s (13×) → **11,824 samples/5s (~17×)**
-  with the archived leg cited; `spikes/02b-userspace-scheduler/REPORT.md:102`
+  with the archived leg cited; [spikes/02b-userspace-scheduler/REPORT.md:102](spikes/02b-userspace-scheduler/REPORT.md)
   fixed at the source ("~13x" → "~17x (200,000/11,824 on the archived 1 ms leg)").
 - **A4** — FIXED: RTT p50 "37µs" → **~55–64µs** with the archived per-leg
   values noted (one noisier leg 276µs, contention-driven).
@@ -464,7 +464,7 @@ log line is cited in-text.
   0.30%"; "48,140/48,140 parks/admissions; 40,588/40,588 wakeups won".
 - **A9** — FIXED (both sites): spike-2 kill scope → "JDK 25.0.4, 2-vCPU VM,
   OFF / POLL-10ms / POLL-1ms-watchdog / UNCOND / PARK 1µs–1ms configs"
-  (per `spikes/02-loom/REPORT.md` §2).
+  (per [spikes/02-loom/REPORT.md](spikes/02-loom/REPORT.md) §2).
 - **A10** — FIXED (3 sites): "§8.2" → "§8 rows 8–13" (:513, :916); the §10.1
   ledger row → "§8 row 2" (:1063).
 - **E1** — FIXED: spike 6's COMMIT-DIRECT verdict recorded at §7.1 (rewritten:
@@ -476,7 +476,7 @@ log line is cited in-text.
 ### P2 — FIXED except one not-applicable
 
 - **A11** — NOT-APPLICABLE: the string "Appendix D" occurs in **zero** program
-  files (SPEC.md, PHASES.md, FEASIBILITY.md, reviews/, adr/, requirements/
+  files ([SPEC.md](SPEC.md), [PHASES.md](PHASES.md), [FEASIBILITY.md](FEASIBILITY.md), [reviews/](reviews/), [adr/](adr/), [requirements/](requirements/)
   all grepped) — the audit's claim about the done-gate record could not be
   located, so there is nothing to correct. The single `[OPEN]` is at
   SPEC:1187 in Appendix C and the SPEC is internally consistent about it.
@@ -485,9 +485,9 @@ log line is cited in-text.
 - **A13** — FIXED: Appendix B GG-0057 primary home → "§3.5, §8".
 - **A14** — FIXED: "asserted safe, not shown" → "hypothesized safe;
   unmeasured until the Phase-2 pinning matrix".
-- **C1** — FIXED: ADR-0001 D2 "Kill trigger (PHASES.md §2)" → "(PHASES.md §6)"
+- **C1** — FIXED: ADR-0001 D2 "Kill trigger ([PHASES.md](PHASES.md) §2)" → "([PHASES.md](PHASES.md) §6)"
   (pointer correction only; no decision text changed).
-- **C2** — FIXED: PHASES.md §9 row 2 → "Preemption-torture (user-space
+- **C2** — FIXED: [PHASES.md](PHASES.md) §9 row 2 → "Preemption-torture (user-space
   scheduler) + pinning-audit suites (JDK/Loom pinning events, cgo-budget check)".
 - **D1** — FIXED: GG-SCHED-0003 statement pins
   `min(GOMAXPROCS, carrier parallelism)` (ID kept; history line added).
@@ -500,8 +500,8 @@ log line is cited in-text.
 - **E5** — FIXED: §10.1 gained verdict rows for spikes 1, 3, 4, 5, 6, 7
   (verdict + one-line evidence pointer each); §8 rows 1, 3, 4, 5, 7 marked
   "completed 2026-10-03: PASS" (rows 2 and 6 already carried their verdicts).
-- **E6** — FIXED: FEASIBILITY.md header banner (doubles as the R2-mandated
-  banner); `FEASIBILITY.md` §9 #14 and `PHASES.md` §10 agent-leverage items
+- **E6** — FIXED: [FEASIBILITY.md](FEASIBILITY.md) header banner (doubles as the R2-mandated
+  banner); [FEASIBILITY.md](FEASIBILITY.md) §9 #14 and [PHASES.md](PHASES.md) §10 agent-leverage items
   aligned with SPEC §7.14 `[DECIDED]` (discount dropped); additionally fixed
   the §1 estimate paragraph's "currently `[OPEN]`" (same family, unaudited).
 - **E7** — FIXED: GG-0035 statement gains respdiff (ID kept; history line added).
@@ -515,13 +515,13 @@ log line is cited in-text.
 
 ### Verification
 
-- Stale-number sweep over SPEC.md: `15,603`, `0.0123`, `50,558`, `40,617`,
+- Stale-number sweep over [SPEC.md](SPEC.md): `15,603`, `0.0123`, `50,558`, `40,617`,
   `1.34%`, `37µs`, `§8.2`, `Appendix D`, `1ms/100µs quanta` — **zero hits**.
   `26.8µs` survives only in the historical-supersession note ("the old draft's
   26.8µs is superseded").
 - All 70 requirement yamls parse; IDs unique; the two edited files carry
   history lines; no IDs changed.
-- The §10 "open questions" `[OPEN]`s remaining in FEASIBILITY.md are the
+- The §10 "open questions" `[OPEN]`s remaining in [FEASIBILITY.md](FEASIBILITY.md) are the
   historical study record's own list — left intact per the audit's clean
   check; the errata banner points readers to SPEC §1.1 as normative.
 

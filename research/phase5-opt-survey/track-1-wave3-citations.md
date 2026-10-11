@@ -5,7 +5,7 @@
 Shuf et al. 2002 POPL, Artigas et al. 2000 ICS, Adl-Tabatabai et al. 2004 PLDI,
 Luk&Mowry 1996), find citing papers (2016–2026, especially VEE/PACT/ASPLOS/PLDI/CGO/
 OOPSLA/ISMM), and mine optimization ideas that transfer to graalgo.
-**Bar/buckets/edges:** same as the standing survey rules (SURVEY.md "Method and rules").
+**Bar/buckets/edges:** same as the standing survey rules ([SURVEY.md](SURVEY.md) "Method and rules").
 SURV-001…059 already exist — do not re-propose. IDs assigned at synthesis (candidates
 start unnumbered, marked raw/vetted).
 **Evidence honesty:** every number is the cited paper's claim ("paper claims X"),

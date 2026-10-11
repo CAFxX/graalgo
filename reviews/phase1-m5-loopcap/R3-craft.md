@@ -1,12 +1,12 @@
 # R3 — Code craft, directive compliance, docs consistency (M5 + loop-capture)
 
 Reviewer: R3 (craft/consistency lens). Read-only review of the fixed snapshot at
-`~/workspace/graalgo/reviews/phase1-m5-loopcap/snapshot/` (207 files).
-Report written to `~/workspace/graalgo/reviews/phase1-m5-loopcap/R3-craft.md` (only write).
+[reviews/phase1-m5-loopcap/snapshot/](snapshot/) (207 files).
+Report written to [reviews/phase1-m5-loopcap/R3-craft.md](R3-craft.md) (only write).
 
 ## 1. Files audited + checksums verified
 
-- `sha256sum -c ../SHA256SUMS.txt` run from inside `snapshot/`: **207/207 OK**, zero failures.
+- `sha256sum -c ../SHA256SUMS.txt` run from inside [snapshot/](snapshot/): **207/207 OK**, zero failures.
 - Audited in full: `java/frontend/*.java` (86 files incl. `NodeFactory.java`, `Json.java`,
   `Boxing.java`, all `Box*`/`Cap*`/`Panic*`/`Defer*` nodes), `export.go` (2916 lines),
   `evidence/frontend-v1.md` (252 lines), `evidence/freeze-stub.md` (224 lines),
@@ -17,7 +17,7 @@ Report written to `~/workspace/graalgo/reviews/phase1-m5-loopcap/R3-craft.md` (o
   `3c4b7949129926ebbf67f44e4e53e36f`, matching the CHECKPOINT claim),
   `corpus/{controlflow,panic}/README.md` + corpus file listings, `java/frontend/README.md`.
 - Deliberately NOT read (out of scope / unavailable): the live tree
-  `~/workspace/graalgo/phases/phase1/`; `graalgo.values`/`graalgo.runtime`/`graalgo.safepoint`
+  [phases/phase1/](../../phases/phase1/); `graalgo.values`/`graalgo.runtime`/`graalgo.safepoint`
   sources (absent from the snapshot except as call targets); test sources
   (`FreezeSignatureTest`, corpus tests); `Makefile`/build files (absent from the snapshot).
 

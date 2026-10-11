@@ -1,6 +1,6 @@
 # graalgo — Phased Roadmap
 
-**Date:** 2026-10-03 · **Status:** plan, no implementation · **Study:** `FEASIBILITY.md`
+**Date:** 2026-10-03 · **Status:** plan, no implementation · **Study:** [FEASIBILITY.md](FEASIBILITY.md)
 **Evidence labels:** `[HIST]` · `[VERIFIED]` · `[PROPOSAL]` · `[DECIDED]` · `[OPEN]`
 
 ## 1. Contract & conventions
@@ -33,7 +33,7 @@ the two 2×-estimate architectural forks (frontend reuse; driver wrapper-vs-fork
    Superseded by **spike 2b — user-space scheduler** (1:1 virtual threads retained;
    indefinite park on quantum expiry + FIFO/runnext token queue + platform-thread drainer +
    in-flight cap = GOMAXPROCS; FJP demoted to dumb thread pool), verdict **PASS**
-   (`spikes/02b-userspace-scheduler/REPORT.md`); the differential-vs-gc `runtime`/`sync`
+   ([spikes/02b-userspace-scheduler/REPORT.md](spikes/02b-userspace-scheduler/REPORT.md)); the differential-vs-gc `runtime`/`sync`
    stress runs now target the 2b design.
 3. **Version-tax dry run** — perform a mock upgrade of the spike prototype across one real Go
    release boundary; measure toil against the ≤200 agent-hour bound.
@@ -176,7 +176,7 @@ before it becomes a claimed win):
   **extreme devirtualization** (the headline win — speculative interface
   devirtualization via PICs → inlining of concrete method bodies → escape
   analysis promoting heap to stack across abstraction boundaries, per the
-  FEASIBILITY.md §6.5a thesis), and every other whole-program transform the
+  [FEASIBILITY.md](FEASIBILITY.md) §6.5a thesis), and every other whole-program transform the
   closed world enables. Hard requirement: **single-callsite callees are ALWAYS
   inlined** — with a complete call graph this is provably safe, so no
   code-bloat heuristics are needed where gc must guess. The same closed-world

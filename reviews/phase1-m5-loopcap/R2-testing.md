@@ -7,7 +7,7 @@ were run under the oracle; outputs are pinned.
 
 ## 0. Integrity checks
 
-1. `sha256sum -c ../SHA256SUMS.txt` inside `snapshot/` → every file OK, exit 0.
+1. `sha256sum -c ../SHA256SUMS.txt` inside [snapshot/](snapshot/) → every file OK, exit 0.
 2. `evidence/loopcap/pristine/MD5SUMS` → 11/11 pristine copies verify (NodeFactory, GoBox, GoFunc,
    FuncLitNode, BoxWriteNode, 4 Range nodes, pristine pn13, ArithmeticCorpusTest).
 3. Snapshot contains: `corpus/` (7 dirs), `evidence/` (m5 logs, loopcap dir, ws-g dir, CHECKPOINT.md,

@@ -57,9 +57,9 @@ resolution logic; the *contract above* is FROZEN).
 
 ### 2.2 Go API — FROZEN
 
-- `func ExportFile(path string) (string, error)` (`frontend/export.go`) —
+- `func ExportFile(path string) (string, error)` ([frontend/export.go](../../internal/frontend/export.go)) —
   the programmatic entry: type-checks `path`, returns the frontend/v1 JSON
-  document. Signature frozen; behavior defined by `docs/frontend-v1.md`.
+  document. Signature frozen; behavior defined by [docs/frontend-v1.md](docs/frontend-v1.md).
 - `enumerateInstantiations` (export.go, INTERNAL implementation) emits one
   `funcdecl` per monomorphized instantiation; the dedup key format
   `F:<name>|<targs>` (functions) / `M:<recvKey>.<mname>[|<targs>]` (methods;
@@ -68,15 +68,15 @@ resolution logic; the *contract above* is FROZEN).
 
 ### 2.3 Wire format frontend/v1 — FROZEN
 
-The JSON document defined by `docs/frontend-v1.md` is frozen at wire
+The JSON document defined by [docs/frontend-v1.md](docs/frontend-v1.md) is frozen at wire
 version `"v1"`. Consequences:
 
 - No field may be renamed, removed, or retyped; new fields must be optional
   (consumer ignores unknown fields — the forward-compatibility rule).
 - `frontend: "v1"` — consumers reject any other value.
 - Determinism: two runs on the same input are byte-identical
-  (`TestDeterministic` in `frontend/export_test.go`).
-- Machine check: `frontend/tools/validate_frontend_v1.py` enforces the
+  (`TestDeterministic` in [frontend/export_test.go](../../internal/frontend/export_test.go)).
+- Machine check: [frontend/tools/validate_frontend_v1.py](../../internal/frontend/tools/validate_frontend_v1.py) enforces the
   document; it runs in `make check`.
 
 ## 3. Component B — `graalgo-run` (Java)

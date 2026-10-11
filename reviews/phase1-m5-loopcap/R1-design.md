@@ -1,14 +1,14 @@
 # R1 peer review — M5 (defer/panic/recover/Goexit) + loop-capture remediation
 **Lens:** semantics and design. **Reviewer:** R1 (independent; no coordination with other reviewers).
-**Date:** 2026-10-04. **Snapshot:** `~/workspace/graalgo/reviews/phase1-m5-loopcap/snapshot/`
-**Report:** `~/workspace/graalgo/reviews/phase1-m5-loopcap/R1-design.md` (this file; my only write).
+**Date:** 2026-10-04. **Snapshot:** [reviews/phase1-m5-loopcap/snapshot/](snapshot/)
+**Report:** [reviews/phase1-m5-loopcap/R1-design.md](R1-design.md) (this file; my only write).
 
 ## 1. What I reviewed (and checksum verification)
 
-I worked **only** from the fixed snapshot; I never read the live tree at `~/workspace/graalgo/phases/phase1/`.
+I worked **only** from the fixed snapshot; I never read the live tree at [phases/phase1/](../../phases/phase1/).
 
-- Verified integrity: ran `sha256sum -c ../SHA256SUMS.txt` from inside `snapshot/` — **every file OK, zero failures**.
-- Java frontend (`snapshot/java/frontend/`, 77 files), principally:
+- Verified integrity: ran `sha256sum -c ../SHA256SUMS.txt` from inside [snapshot/](snapshot/) — **every file OK, zero failures**.
+- Java frontend ([snapshot/java/frontend/](snapshot/java/frontend/), 77 files), principally:
   - `NodeFactory.java` (2977 lines) — `prescanForBoxes` (:1140), `prescanRangeBoxes`, `snapshotBoxedVar` (:893), `readBoxedVar` (:998), `boxWriteSlot` (:1022), `headerPhase` (:960), loop-phase stack (:203–211), `buildFor` (:2420), `buildRange` (:2521), `buildIncDec` (:2326), `assignTwoPhaseBoxed` (:1708), `classifyLhs`/`readLvalue`/`writeLvalue`
   - `Boxing.java` — `setBoxedCell` (:72), `copyForAssign` (:89)
   - `BoxWriteNode.java`, `BoxRefreshNode.java` (:30), `BoxDeclNode.java`, `BoxReadNode.java`
@@ -16,9 +16,9 @@ I worked **only** from the fixed snapshot; I never read the live tree at `~/work
   - `ForRepeatingNode.java`, `GoLoopNode.java`, `ForStmtNode.java`
   - `RangeSliceNode.java` (:85–95), `RangeMapNode.java`
   - `DeferNode.java`, `PanicNode.java`, `PanicBuiltinNode.java`, `RecoverBuiltinNode.java`, `GoexitCallNode.java`
-- Go exporter: `snapshot/export.go` — `exportFor` (:1868), `exportRange` (:1915)
-- Corpus: `snapshot/corpus/controlflow/` (cf01–cf23), `snapshot/corpus/panic/` (pn01–pn20)
-- Design evidence: `snapshot/evidence/loopcap/{CHECKPOINT_LOOPCAP,DESIGN_WIRING,COMPLETE,PROGRESS}.md`, `snapshot/evidence/CHECKPOINT.md` (tail)
+- Go exporter: [snapshot/export.go](snapshot/export.go) — `exportFor` (:1868), `exportRange` (:1915)
+- Corpus: [snapshot/corpus/controlflow/](snapshot/corpus/controlflow/) (cf01–cf23), [snapshot/corpus/panic/](snapshot/corpus/panic/) (pn01–pn20)
+- Design evidence: `[snapshot/evidence/loopcap/](snapshot/evidence/loopcap/){CHECKPOINT_LOOPCAP,DESIGN_WIRING,COMPLETE,PROGRESS}.md`, [snapshot/evidence/CHECKPOINT.md](snapshot/evidence/CHECKPOINT.md) (tail)
 
 **Method.** I did not trust the prior reports' "gc-oracle verified" claims. I derived gc's true semantics two independent ways: (1) read gc's own loopvar transformation in the installed toolchain (`~/tools/go/src/cmd/compile/internal/loopvar/loopvar.go`, go1.27.1); (2) ran oracle probes with `~/tools/go/bin/go run` on scratch files in `/tmp/oracle` only. The two agree. The project's t1–t11 notes ("for-header vars = two cells; body writes write through to outer; post does NOT mutate body-captured instances") are a **mis-model of gc**, and every P0 below is a place where the implementation follows the mis-model instead of gc.
 

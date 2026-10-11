@@ -602,7 +602,7 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
 ### Open deviations / coordination (for parent)
 - Minimal `panic`/`recover` builtin call nodes + `import "runtime"` overlay
   implemented in WS F (needed for M5 corpus); worker-G's GG-0020 surface
-  absorbs them — flagged in freeze-stub.md, no signature changes.
+  absorbs them — flagged in [freeze-stub.md](freeze-stub.md), no signature changes.
 
 ## WS G complete 2026-10-04 (worker-G) — builtins + intrinsics + fmt stub + freeze v1
 

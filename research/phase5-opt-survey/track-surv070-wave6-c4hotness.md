@@ -1,6 +1,6 @@
 # Wave-6: SURV-070 C4 hotness verification — iface→iface assertion sites
 
-**Question (SURVEY.md §6 wave-6 queue item 6):** quantitative hotness of iface→iface
+**Question ([SURVEY.md](SURVEY.md) §6 wave-6 queue item 6):** quantitative hotness of iface→iface
 assertion sites (fmt/error-traversal shapes); if measured hot, revisit whether the
 assertion-site dominant-type guard (C4, §3 angle on SURV-070) deserves a SURV- ID.
 

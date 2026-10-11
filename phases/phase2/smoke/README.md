@@ -3,7 +3,7 @@
 Archived verification programs (reviewer2 P1-3: the preemption claim must
 be auditable).
 
-## preempt.go — quantum preemption proof
+## [preempt.go](preempt.go) — quantum preemption proof
 
 Two goroutines busy-spin 2M iterations each; main waits on a **wait-loop**
 (`for !(done1 && done2) {}`), then prints both counts.

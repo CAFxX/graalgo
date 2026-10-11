@@ -1,6 +1,6 @@
 # Pinned Java dependencies — graalgo Phase 1
 
-All jars fetched from Maven Central 2026-10-04, sha256 in `SHA256SUMS.txt`
+All jars fetched from Maven Central 2026-10-04, sha256 in [SHA256SUMS.txt](SHA256SUMS.txt)
 (each jar's sha1 verified against the `.jar.sha1` published on Central at
 download time).
 

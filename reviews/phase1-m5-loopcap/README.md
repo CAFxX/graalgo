@@ -19,8 +19,8 @@ Carlo asked "How are changes being reviewed?" and approved, 2026-10-04:
 
 ## Baseline
 
-`snapshot/` is a read-only copy of the tree at review time (2026-10-04 ~13:02
-CEST), checksummed in `SHA256SUMS.txt` (207 files). Reviewers work ONLY from
+[snapshot/](snapshot/) is a read-only copy of the tree at review time (2026-10-04 ~13:02
+CEST), checksummed in [SHA256SUMS.txt](SHA256SUMS.txt) (207 files). Reviewers work ONLY from
 the snapshot — never from the live tree.
 
 CAUTION: the M6 worker (generics) was actively editing
@@ -32,14 +32,14 @@ flag only generics code that *interacts* with M5/loopcap behavior.
 ## Reviewers
 
 - R1 — semantics/design lens: loop-capture design, defer/panic/Goexit machinery.
-  Report: `R1-design.md`.
+  Report: [R1-design.md](R1-design.md).
 - R2 — adversarial/testing lens: test adequacy, red-green/mutation evidence
   non-tautology, new edge-case programs.
-  Report: `R2-testing.md`.
+  Report: [R2-testing.md](R2-testing.md).
 - R3 — craft/consistency lens: code quality, deprecated-API directive
   (`-Xlint:deprecation -Werror`), docs consistency (frontend-v1.md, freeze-stub.md),
   interface-freeze alignment.
-  Report: `R3-craft.md`.
+  Report: [R3-craft.md](R3-craft.md).
 
 Rules: read-only (reports are the only writes, in this directory — no shared
 files, one owner per report). Findings graded P0/P1/P2 with file:line evidence.
@@ -48,6 +48,6 @@ verify from the snapshot.
 
 ## After the round
 
-Parent consolidates findings into `FINDINGS.md`, dispatches remediation,
+Parent consolidates findings into [FINDINGS.md](FINDINGS.md), dispatches remediation,
 re-runs evidence, and records the milestone sign-off in CHECKPOINT.md.
 Work registry: `graalgo-phase1-review-m5-loopcap`.

@@ -9,14 +9,14 @@ This package parses that JSON and builds Truffle nodes.
 
 | File | Role |
 |---|---|
-| `Json.java` | Hand-rolled JSON reader (no third-party deps; choice documented in-file). Path-aware errors. |
-| `FrontendException.java` | Parse/build failures; also the deliberate extension seam (unknown kinds fail naming their workstream). |
-| `NodeFactory.java` | v1 JSON → Truffle nodes. Extension hooks: `registerExprKind` (WS D), `registerStmtKind` (WS E), `registerTypeDecoder` (WS C/D). |
+| [Json.java](Json.java) | Hand-rolled JSON reader (no third-party deps; choice documented in-file). Path-aware errors. |
+| [FrontendException.java](FrontendException.java) | Parse/build failures; also the deliberate extension seam (unknown kinds fail naming their workstream). |
+| [NodeFactory.java](NodeFactory.java) | v1 JSON → Truffle nodes. Extension hooks: `registerExprKind` (WS D), `registerStmtKind` (WS E), `registerTypeDecoder` (WS C/D). |
 | `GoExprNode` / `GoStmtNode` | Node base classes (unboxed `long` / `void` execute). |
 | `ConstNode`, `BinaryOpNode`, `UnaryOpNode`, `VarReadNode`, `VarDeclNode`, `AssignNode`, `IncDecNode`, `BlockNode`, `ExprStmtNode`, `ReturnNode` | v1 straight-line node set (constants, integer arithmetic, assignment). |
 | `GoReturn` | M2 return control-flow signal → WS F `ControlFlowException`. |
 | `GoRootNode` | Root node for `func main`; catches `GoReturn`. |
-| `TypeTable.java` | Bounds-checked view over the type table. |
+| [TypeTable.java](TypeTable.java) | Bounds-checked view over the type table. |
 | `DeferNode`, `FuncLitNode`, `CapReadNode`, `CapWriteNode`, `CapIncDecNode` | M5: `defer` (call-time arg evaluation, LIFO chain), function literals with closure capture over materialized parent frames. |
 | `PanicBuiltinNode`, `RecoverBuiltinNode`, `PanicNode`, `GoexitCallNode` | M5: `panic`/`recover` builtins (wired to the frozen `Panic.throwPanic`/`recover`), the `panic(...)` statement form, `runtime.Goexit`. |
 
@@ -106,12 +106,12 @@ stored on the node and exposed via `getSourceSection()` override.
 
 - `src/test/java/graalgo/frontend/StraightLineCorpusTest.java`
   (`// verifies: GG-0012`): 12-program corpus
-  (`phases/phase1/corpus/straightline/`, conventions in its README.md),
+  (`phases/phase1/corpus/straightline/`, conventions in its [README.md](README.md)),
   differential vs stock gc — the oracle injects `println(vars...)` and the
   test asserts frame-slot reads are bit-identical. Run via `make test`.
 - `src/test/java/graalgo/frontend/ArithmeticCorpusTest.java`
   (`// verifies: GG-0015`): 17-program corpus
-  (`phases/phase1/corpus/arithmetic/`, conventions in its README.md),
+  (`phases/phase1/corpus/arithmetic/`, conventions in its [README.md](README.md)),
   differential vs stock gc with a type-aware oracle (ints decimal, floats
   by `math.Float32/64bits`, strings hex) and per-kind frame-slot reads.
 - `src/test/java/graalgo/values/ValuesTest.java`
@@ -119,7 +119,7 @@ stored on the node and exposed via `getSourceSection()` override.
   `GoConvert` matrices, including gc-probed edge cases.
 - `src/test/java/graalgo/frontend/PanicCorpusTest.java`
   (`// verifies: GG-0019`): 20-program corpus
-  (`phases/phase1/corpus/panic/`, conventions in its README.md),
+  (`phases/phase1/corpus/panic/`, conventions in its [README.md](README.md)),
   differential vs stock gc — recovered programs assert post-defer values
   bit-identical (gc oracle via a `// probe`-anchored deferred `println`);
   fatal programs assert exit code 2, the normalized panic header block,

@@ -169,8 +169,8 @@ expected). The test provides the missing coverage.
 disabled; 100 yields must let the peer run; red-green: no-op yield
 hangs).
 
-**P1-3 (preemption unauditable):** Archived smoke/preempt.go,
-smoke/panic.go, smoke/hello.go with smoke/README.md documenting the
+**P1-3 (preemption unauditable):** Archived [smoke/preempt.go](smoke/preempt.go),
+[smoke/panic.go](smoke/panic.go), [smoke/hello.go](smoke/hello.go) with [smoke/README.md](smoke/README.md) documenting the
 verification (wait-loop shape, quantum-neutered hangs, gc output match).
 
 **P1-4 (GG annotations):** Removed inaccurate verifies: GG-SCHED-0001
@@ -207,11 +207,11 @@ fixed, with red-green verification where applicable.
 - `make -C phases/phase2 check`: both gates clean.
 - Differential: 8/8 non-panicking programs byte-identical (named in
   checkpoint); panic program: exit 2 + message match (verbosity differs).
-- Preemption: smoke/preempt.go completes at --gmp=1, output matches gc.
+- Preemption: [smoke/preempt.go](smoke/preempt.go) completes at --gmp=1, output matches gc.
 - Phase-1 suite: 208/0 (reviewer2 independently re-ran; zero phase1
   files changed by P2-M1 remediation).
 
-**P2-M1 acceptance criteria (PLAN.md §4):**
+**P2-M1 acceptance criteria ([PLAN.md](PLAN.md) §4):**
 1. ✅ Scheduler core with goroutine=vthread+token, quantum preemption
    (10ms), drainer (wake>init>run lanes), cap=min(GOMAXPROCS,carriers)
    with hard assert, armed-ticket discipline.
@@ -439,7 +439,7 @@ all suites green on the final tree.
 
 **Deliverables:** GoChan.java, SelectOp.java, ChanOps.java (overlay),
 GoStrings.java; ChannelTest.java (26), ChannelDifferentialTest.java (12);
-corpus/channels/ (12 programs + expected/panic + regen.sh + README).
+[corpus/channels/](corpus/channels/) (12 programs + expected/panic + regen.sh + README).
 
 **Parent dependencies flagged:** exporter lowering for channel/select
 AST (Phase-1 rejects `*ast.SendStmt`); P2-M10 owns deadlock detection
@@ -650,7 +650,7 @@ bce75f9 (reviewer2) → 6056a98 (reviewer3).
   JVM GC barriers cover all stores.
 
 **ADR-0002** (`phases/phase2/adr/ADR-0002-gc-interop.md`, status: proposed):
-closes PLAN.md §3 [OPEN] heap layout. Decisions: (D1) all Go objects in
+closes [PLAN.md](PLAN.md) §3 [OPEN] heap layout. Decisions: (D1) all Go objects in
 JVM heap, JVM GC *is* the Go GC — no segregated region, no Go marker
 (SPEC §3.4 [DECIDED] + spike); (D2) root enumeration is the JVM's, exact
 by construction — rejects cooperative root publication as duplicated
@@ -676,7 +676,7 @@ reviewer2: 6 P1 + 4 P2). All 22 findings remediated in 3d94f0f:
 - D2 now argues from the funnel invariant (single park site); [MEASURED]
   scoped to what ran; grep gate patterns extended + rationale split;
   GC-visibility differential wired to F3; archived spike path canonical.
-- PLAN.md WS D wording fixed (was: "write barriers at the Truffle level").
+- [PLAN.md](PLAN.md) WS D wording fixed (was: "write barriers at the Truffle level").
 - P2-M4 closeout checklist recorded in ADR (3 blocking deliverables w/
   evidence files).
 Delta re-verification dispatched to both reviewers; implementation starts
@@ -690,13 +690,13 @@ after DELTA-GO from both.
   vehicle, memStats() field table + PauseNs ring via MXBean notifications.
 - `make check`: new off-heap/barrier grep gate (ADR-0002 D3/F3) + GcInterop
   debug-println exclusion (documented, TimerHeap precedent).
-- Differential corpus `corpus/gc/` (4 programs + gc-1.27.1 .expected):
+- Differential corpus [corpus/gc/](corpus/gc/) (4 programs + gc-1.27.1 .expected):
   gc01 finalizer runs, gc02 SetFinalizer(x,nil) removal, gc03 KeepAlive,
   gc04 GC hint. Key empirical finding: stock gc needs GC()+allocation in the
   poll loop for prompt finalization (bare runtime.GC() loop never fired).
 - `GcDifferentialTest` (subprocess SchedMain end-to-end, diffs vs .expected)
   + `GcInteropTest` (7 unit tests). Suite: 113/113 green (101 + 12 new).
-- `DIVERGENCES.md` created with 5 P2-M4 entries (DIV-M4-1..5).
+- [DIVERGENCES.md](DIVERGENCES.md) created with 5 P2-M4 entries (DIV-M4-1..5).
 - Phase-1 suite 208/208 green with exporter change (verified in background).
 - Next: commit, dispatch ≥2 independent implementation reviews, remediate,
   re-verify, sign off.
@@ -708,7 +708,7 @@ after DELTA-GO from both.
   * Fixed Cleanable.clean() misuse (it runs the action; use cancellable flag)
   * Added PINNED set for register/cancel window lifetime
   * Matched gc's 'finalizer already set' fatal
-  * Added DIV-M4-6..9 to DIVERGENCES.md
+  * Added DIV-M4-6..9 to [DIVERGENCES.md](DIVERGENCES.md)
   * Added gc05_finalizer_replace corpus case
 - Key insight: back-to-back runtime.GC() starves finalizer goroutine under
   multi-P (world almost always stopped); GOMAXPROCS=1 required for recording.
@@ -736,10 +736,10 @@ after DELTA-GO from both.
 - `graalgo/runtime/GcInterop.java` (phase-2, Cleaner-based finalizers,
   KeepAlive via reachabilityFence, GC() via MXBean poll, weak vehicle,
   memStats field table)
-- Differential corpus `corpus/gc/` (6 programs: finalizer, remove, replace,
+- Differential corpus [corpus/gc/](corpus/gc/) (6 programs: finalizer, remove, replace,
   keepalive, GC hint, panic-loudness; gc-1.27.1 .expected where applicable)
 - `GcDifferentialTest`, `GcInteropTest`, `GcTortureTest`, `GcVisibilityTest`
-- `DIVERGENCES.md` (DIV-M4-1..9)
+- [DIVERGENCES.md](DIVERGENCES.md) (DIV-M4-1..9)
 - ADR-0002 accepted with scope amendment; `make check` off-heap/barrier gate
 
 **Key findings:**
@@ -777,12 +777,12 @@ entries.
   equals asyncpreemptoff=1), all non-runtime knobs (subsystem absent).
 - REMOVED: deny iff set to gc's "old" value (matches gc fatal);
   accept otherwise. `asynctimerchan=1` denied (our timers are async).
-- Deliberate divergences from gc (→ DIVERGENCES.md): unknown knob →
+- Deliberate divergences from gc (→ [DIVERGENCES.md](DIVERGENCES.md)): unknown knob →
   hard error (gc silently ignores); malformed value → error (gc keeps
   old); bare field without `=` → error (gc skips).
 
 **Design:** `graalgo.sched.launcher.GoDebug` (parse/apply/accessors) +
-`src/main/resources/graalgo/sched/godebug/registry.json` (versioned;
+[src/main/resources/graalgo/sched/godebug/registry.json](../../internal/backend/runtime/src/main/resources/graalgo/sched/godebug/registry.json) (versioned;
 Makefile copies resources) + `SchedMain` startup hook (exit 2 on deny,
 matching gc's fatal). Machine-checked version test (version constant +
 knob-name-set hash). `tools/godebug-diff/` probes per emulated knob.
@@ -792,7 +792,7 @@ knob-name-set hash). `tools/godebug-diff/` probes per emulated knob.
 **Commits:** f1c8774 (registry v1 + Makefile resources), bc67b1a
 (GoDebug/SchedTrace/GcTrace/Panic overlay/SchedMain hook), bb3c268
 (22 tests + drift test + corpus), d5eb521 (godebug-diff 4/4 green),
-fdc7d7f (GODEBUG.md + DIV-M5-1..4), c97b933 (make-check gate exclusions).
+fdc7d7f ([GODEBUG.md](GODEBUG.md) + DIV-M5-1..4), c97b933 (make-check gate exclusions).
 
 **State:**
 - `GoDebug` parses/validates GODEBUG at SchedMain startup; unknown knobs,
@@ -803,7 +803,7 @@ fdc7d7f (GODEBUG.md + DIV-M5-1..4), c97b933 (make-check gate exclusions).
   panicnil (Panic overlay + drift test; byte-identical vs gc on recover path).
 - Tests: phase-2 suite 146/146 green (124 existing + 22 new). `make check` green.
 - `tools/godebug-diff`: 4/4 differential green vs gc (REPORT.md committed).
-- `GODEBUG.md` published; DIV-M5-1..4 recorded.
+- [GODEBUG.md](GODEBUG.md) published; DIV-M5-1..4 recorded.
 
 **Reviews dispatched** against snapshot c97b933 (read-only):
 - reviewer1 (correctness) → reviews/phase2-m5/reviewer1.md
@@ -834,7 +834,7 @@ cleanly via GoDebugException.
 
 **New tests:** testCgocheck2Denied, testNonAsciiDigitsDenied,
 testMemprofilerateHugeAccepted. Registry bumped to v2 (cgocheck
-justification); GODEBUG.md regenerated.
+justification); [GODEBUG.md](GODEBUG.md) regenerated.
 
 **Re-verified:** phase-2 suite 149/149 green, `make check` green,
 godebug-diff 4/4 green.
@@ -850,7 +850,7 @@ reviewer1 (fixed). Methodology findings remediated (commit bba197c):
   disposition retriage fails the check and forces a version bump).
 - **DIV-M5-5 added:** the five NO-OP knobs whose effective behavior
   permanently equals a non-default value; triage principles stated in
-  GODEBUG.md; tracebacklabels justification addresses the no-labels case.
+  [GODEBUG.md](GODEBUG.md); tracebacklabels justification addresses the no-labels case.
 - **godebug-diff comparators strengthened:** schedtrace requires >=3
   lines with strictly increasing timestamps; scheddetail has a negative
   control (no lines without the knob); gctrace requires >=2 cycle lines.
@@ -875,7 +875,7 @@ godebug-diff 4/4 green.
 ## 2026-10-05 — P2-M5 SIGN-OFF
 
 **Acceptance (phases/phase2/PLAN.md §4 P2-M5):** versioned registry
-published (v3, 78 knobs + 9 removed, GODEBUG.md); unknown-knob
+published (v3, 78 knobs + 9 removed, [GODEBUG.md](GODEBUG.md)); unknown-knob
 deny-with-error (falsifiable: testUnknownKnobDenied asserts exit 2);
 godebug-diff 4/4 green with strengthened comparators.
 
@@ -891,7 +891,7 @@ all P0/P1/P2 findings remediated and re-tested (commits fe297b8,
 
 **Deliverables:** GoDebug parser/applier/registry (deny exit 2),
 SchedTrace/GcTrace daemons, panicnil overlay (drift-guarded),
-godebug-diff tool, GODEBUG.md, DIVERGENCES.md DIV-M5-1..5.
+godebug-diff tool, [GODEBUG.md](GODEBUG.md), [DIVERGENCES.md](DIVERGENCES.md) DIV-M5-1..5.
 
 P2-M5 done. Workstream E complete.
 
@@ -1012,7 +1012,7 @@ phases/phase2/hidden_files/jfr/EVENTS.md + p2-m6-evidence.jfr + counts).
 **Commits (8):** a1c2673 (PinAudit tool), 0dd2e2f (JFR <clinit> fix), b65fffc (test-cp), 0a7ef96 (make check wiring), 5b07719 (AUDIT.md), cf2e651 (JFR timing skip), 9828c4a (resilience+report), 6a0f694 (reviewer2), ecaabe0 (reviewer1).
 
 **Evidence:**
-- `make pin-audit`: 186 programs (148 phase-1 corpus + 37 phase-2 corpus + SchedTestRunner), 0 pin events. Report: hidden_files/pinning/pinaudit-report.md (AUDIT_RESULT=PASS).
+- `make pin-audit`: 186 programs (148 phase-1 corpus + 37 phase-2 corpus + SchedTestRunner), 0 pin events. Report: [hidden_files/pinning/pinaudit-report.md](hidden_files/pinning/pinaudit-report.md) (AUDIT_RESULT=PASS).
 - Honest coverage: 147 clean + 13 panic + 1 tests-leg with pin evidence; 26 build-failures (channels/timers frontend v1) contribute none.
 - Finding: 13 pins from lazy JFR event <clinit> on carriers → fixed (force <clinit> on startup thread) → re-audit 0.
 - cgo/FFM budget: +0 (no native/FFM on goroutine paths; grep gate in make check).
@@ -1051,7 +1051,7 @@ phases/phase2/hidden_files/jfr/EVENTS.md + p2-m6-evidence.jfr + counts).
 4. M6 watch item: reproduce drainer re-admission w/o UNPARK under torture;
    P0 if reproduced, else document attempt + re-test trigger.
 5. Overhead budget: fast-path hop vs spike 2b's 1%-of-10ms budget.
-6. Evidence: `hidden_files/torture/REPORT.md` + archived logs.
+6. Evidence: [hidden_files/torture/REPORT.md](hidden_files/torture/REPORT.md) + archived logs.
 7. ≥2 independent reviews, then sign-off (fresh phase-2 test + phase-1
    suite + make check by me).
 
@@ -1249,21 +1249,21 @@ Final evidence, all fresh on the sign-off tree:
 - Race stress: 4/4 scenarios, exact accounting, green.
 
 Deliverables: `WakeupModelTest` (16 tests incl. red-green guard),
-`WakeupRaceStressTest` (4), `JfrParkCostTest`, `hidden_files/modelcheck/REPORT.md`
+`WakeupRaceStressTest` (4), `JfrParkCostTest`, [hidden_files/modelcheck/REPORT.md](hidden_files/modelcheck/REPORT.md)
 (§§1-9), 3 reviews (reviewer1.md, reviewer2.md, reviewer1-rereview.md).
 
 Done-gate 4 (P2-M9) is MET. Next: P2-M10 divergence closeout, then gate 5.
 
 ## 2026-10-06 — P2-M10 divergence closeout (in progress, done-gate 5)
 
-**Divergence triage (all of DIVERGENCES.md):**
+**Divergence triage (all of [DIVERGENCES.md](DIVERGENCES.md)):**
 - DIV-M4-1..9 (GC interop): DOCUMENTED-WITH-TRIGGER — still reproduce as documented (verified at M4 sign-off; GC surface unchanged since). Triggers live in ADR-0002/P2-M4.
 - DIV-M5-1..5 (GODEBUG): DOCUMENTED — registry machine-pinned; deny-with-error behavior green at M5.
 - DIV-M6-1 (runtime/trace): DOCUMENTED — JFR is the native surface; recorded at M6.
-- **DIV-M3-1 (new, P2-M10): `len()` on buffered timer channel returns 1 (gc: 0)** — was accepted at M3 sign-off but never entered DIVERGENCES.md (only in GoTimer javadoc + corpus README). Added to DIVERGENCES.md with blocking Phase-3 re-test trigger: must fix before Phase 3 lowers `time`.
+- **DIV-M3-1 (new, P2-M10): `len()` on buffered timer channel returns 1 (gc: 0)** — was accepted at M3 sign-off but never entered [DIVERGENCES.md](DIVERGENCES.md) (only in GoTimer javadoc + corpus README). Added to [DIVERGENCES.md](DIVERGENCES.md) with blocking Phase-3 re-test trigger: must fix before Phase 3 lowers `time`.
 - P2-M1/M2/M7/M8/M9: no accepted divergences (all differential-clean).
 
-**GG-0048 observable list (done-gate 5):** added to DIVERGENCES.md —
+**GG-0048 observable list (done-gate 5):** added to [DIVERGENCES.md](DIVERGENCES.md) —
 (i) fairness CLOSED, (ii) starvation-freedom CLOSED, (iii) latency
 distribution ACCEPTED-WITH-TOLERANCE (band documented, server-hardware
 re-measure trigger standing), (iv) GOMAXPROCS CLOSED (8/8 byte-identical;
@@ -1280,7 +1280,7 @@ the WS G overlay lands, bind the four primitives and re-run stress as Go
 programs differential vs gc.
 
 **Work items:** (1) full differential battery re-run (in flight), (2) 2
-independent final reviews, (3) DONE-GATES.md verdict table, (4) final
+independent final reviews, (3) [DONE-GATES.md](DONE-GATES.md) verdict table, (4) final
 verify + sign-off.
 
 ## 2026-10-06 — P2-M10 SIGN-OFF (done-gate 5 MET; PHASE 2 COMPLETE)
@@ -1297,7 +1297,7 @@ verify + sign-off.
   preservation → battery logs/gmp-matrix/stress-differential/reviews
   committed (P2-M10 re-run archived per-run); P2-1 torture REPORT
   conditional discharged; P2-2 remediated by the fresh pin-audit;
-  P2-3 AUDIT.md arithmetic fixed; P2-4/P2-5 DIVERGENCES.md citations fixed;
+  P2-3 AUDIT.md arithmetic fixed; P2-4/P2-5 [DIVERGENCES.md](DIVERGENCES.md) citations fixed;
   P2-7 modelcheck section numbering fixed. Red-green claims verified by
   four independent mutations; grep gates verified by constructed
   violations; generated-artifact numbers verified against raw logs.

@@ -3,7 +3,7 @@
 **Question (from wave-4 synthesis):** SURV-077 ports Graal GR-79590 ("speculative store
 checks": remove array store checks by speculating the array's *declared type* is exact;
 default-on, `-Djdk.graal.SpeculativeStoreCheck=false`; resweep note
-`track-resweep-wave4.md:48-80`) to Go. But Go has no array covariance — Java's store
+`[track-resweep-wave4.md](track-resweep-wave4.md):48-80`) to Go. But Go has no array covariance — Java's store
 check exists because `Object[]` may dynamically hold `String[]` — so the direct analog
 may be vacuous. Settle it: enumerate candidate Go checks, vet each, KILL or CONFIRM.
 
@@ -29,7 +29,7 @@ Go spec assignability: `[]string` is **not** assignable to `[]any` (no covarianc
 Java where `String[]` is assignable to `Object[]`). Every slice/array store's element
 type is therefore *always* exact — there is no dynamic property for a store check to
 verify, and gc emits none. The wave-4 raw-candidate note ("Go's `any` slices are the
-exact analog of Java's `Object[]`-declared-exact arrays", `track-resweep-wave4.md:70-80`)
+exact analog of Java's `Object[]`-declared-exact arrays", `[track-resweep-wave4.md](track-resweep-wave4.md):70-80`)
 is **wrong**: the analogy fails at covariance, not at exactness.
 
 Empirical confirmation — `go tool compile -S` of:

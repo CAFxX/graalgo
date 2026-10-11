@@ -1,8 +1,8 @@
 # Wave-5 T3 re-survey triggers + Rust #157943 watch (W5)
 
 **Wave:** 5 · **Worker:** T3 triggers + Rust watch · **Fetch date:** 2026-10-04 (all checks between 11:37 and ~12:00 CEST)
-**Baseline:** wave-4 results as of 2026-10-04 ~11:20 CEST (see `track-resweep-wave4.md` §B and `track-rustgoals-wave4.md`). A trigger "fires" only if it changed since that baseline.
-**Mission:** (1) re-check the six named T3 re-survey triggers from SURVEY.md §5; (2) Rust #157943 watch — landing status of the 7 split PRs, new try-perf numbers vs the wave-4 priors (instr −0.3..−0.7%, cycles −2.2..−2.5%, bootstrap −3.2%), goals#396 and RFC #3943 status.
+**Baseline:** wave-4 results as of 2026-10-04 ~11:20 CEST (see [track-resweep-wave4.md](track-resweep-wave4.md) §B and [track-rustgoals-wave4.md](track-rustgoals-wave4.md)). A trigger "fires" only if it changed since that baseline.
+**Mission:** (1) re-check the six named T3 re-survey triggers from [SURVEY.md](SURVEY.md) §5; (2) Rust #157943 watch — landing status of the 7 split PRs, new try-perf numbers vs the wave-4 priors (instr −0.3..−0.7%, cycles −2.2..−2.5%, bootstrap −3.2%), goals#396 and RFC #3943 status.
 **Scope:** raw writeups only — no SURVEY.md/CHECKPOINT.md edits, no SURV- IDs assigned (079+ reserved for wave synthesis), no SPEC.md/PHASES.md/registry changes. All vendor/project performance numbers are their claims, never ours. This file is the wave-5 record; partial notes are left in place if interrupted.
 
 ---

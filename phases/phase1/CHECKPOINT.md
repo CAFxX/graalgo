@@ -1,24 +1,24 @@
 # Phase 1 checkpoint — graalgo language core
 
-**Status:** PLAN.md r3 complete — delivered to parent for review (2026-10-03). Implementation (M1) held pending review.
+**Status:** [PLAN.md](PLAN.md) r3 complete — delivered to parent for review (2026-10-03). Implementation (M1) held pending review.
 **Registry:** graalgo-phase1 (active), heartbeat hourly via workreg.py.
 
 ## Resume 2026-10-04 — VM reboot ee138137 (recovery run 2026-10-03T23:22Z)
 - Resume subagent picked up from this checkpoint (valid). No restart needed.
 - Integrity re-verified post-reboot: Go 1.27.1 OK; GraalVM 25.0.4+7.1 OK;
-  all 7 lib/*.jar sha256sum -c SHA256SUMS.txt → OK;
+  all 7 [lib/](../../internal/backend/truffle/lib/)*.jar sha256sum -c SHA256SUMS.txt → OK;
   Truffle runtime smoke (SMOKE OK: result=42 runtime=Oracle GraalVM) and
   DSL-processor smoke (DSL OK: long=5 double=6.0) re-run green;
   `make check` placeholder grep gate clean.
   (One transient `sha256sum -c` read failure on first post-reboot run —
-  filesystem hiccup; immediate re-run from lib/ passed 7/7.)
-- No PLAN.md r3 review approval found in any record checked (memory logs
+  filesystem hiccup; immediate re-run from [lib/](../../internal/backend/truffle/lib/) passed 7/7.)
+- No [PLAN.md](PLAN.md) r3 review approval found in any record checked (memory logs
   2026-10-03/2026-10-04, phase1 dir). **Implementation (M1) still held —
   no implementation work started by this resume.** Parent must route
-  PLAN.md r3 (+ open decisions D1/D2/D4/D7/D8, SPEC [OPEN] question) to
+  [PLAN.md](PLAN.md) r3 (+ open decisions D1/D2/D4/D7/D8, SPEC [OPEN] question) to
   Carlo for approval before any M1+ work begins.
 - Minor skeleton note: `make main`/`make test` fail with "no source files"
-  because src/main/java + src/test/java contain only package README.md files
+  because [src/main/java/](../../internal/backend/truffle/src/main/java/) + [src/test/java/](../../internal/backend/truffle/src/test/java/) contain only package README.md files
   (pre-reboot skeleton state; resolves when WS A/B sources land). `make check`
   is the only green target today. Left untouched pending plan approval.
 
@@ -30,12 +30,12 @@
 ## State
 - [x] Work registered (graalgo-phase1)
 - [x] Environment verified (Go 1.27.1 OK; GraalVM 25.0.4 OK)
-- [x] Truffle jars pinned (7 jars, lib/SHA256SUMS.txt; see lib/LIB.md)
+- [x] Truffle jars pinned (7 jars, [lib/SHA256SUMS.txt](../../internal/backend/truffle/lib/SHA256SUMS.txt); see [lib/LIB.md](../../internal/backend/truffle/lib/LIB.md))
 - [x] Toolchain smoke: truffle runtime executes (SMOKE OK), DSL processor generates + dispatches (DSL OK)
-- [x] Truffle jars downloaded + checksummed (lib/SHA256SUMS.txt)
-- [ ] SPEC extract (spec-extract.md) — agent running
-- [ ] Requirement phase map (req-phase-map.md) — agent running
-- [x] PLAN.md r3 (fixpoint: structure r1 → self-review r2 → content r3 with D4 revision from corpus measurement)
+- [x] Truffle jars downloaded + checksummed ([lib/SHA256SUMS.txt](../../internal/backend/truffle/lib/SHA256SUMS.txt))
+- [ ] SPEC extract ([spec-extract.md](spec-extract.md)) — agent running
+- [ ] Requirement phase map ([req-phase-map.md](req-phase-map.md)) — agent running
+- [x] [PLAN.md](PLAN.md) r3 (fixpoint: structure r1 → self-review r2 → content r3 with D4 revision from corpus measurement)
 - [x] GG activation policy corrected (2026-10-03): 31 IDs flipped active then REVERTED to locked —
   rule (c) requires verifies: annotations in *_test.go for active status; none exist yet.
   Policy: activate per-workstream as implementation+tests land (real verifies: annotations, never tautological).
@@ -68,13 +68,13 @@
 ## Resume 2026-10-04 — VM reboot da2b1ea7 (recovery run 2026-10-04T02:22Z)
 - Resume subagent picked up from this checkpoint (valid). No restart needed.
 - Integrity re-verified post-reboot: Go 1.27.1 OK; GraalVM 25.0.4+7.1 OK;
-  all 7 lib/*.jar sha256sum -c SHA256SUMS.txt → 7/7 OK;
+  all 7 [lib/](../../internal/backend/truffle/lib/)*.jar sha256sum -c SHA256SUMS.txt → 7/7 OK;
   `make check` placeholder grep gate clean (58ms).
   (Boot changed ee138137 → da2b1ea7; no approval traffic in between.)
-- Re-checked for PLAN.md r3 review approval: none in memory logs
+- Re-checked for [PLAN.md](PLAN.md) r3 review approval: none in memory logs
   (2026-10-03, 2026-10-04) or phase1 dir — **implementation (M1) still held,
   no implementation work started by this resume.** Parent must route
-  PLAN.md r3 (+ open decisions D1/D2/D4/D7/D8, SPEC [OPEN] question) to
+  [PLAN.md](PLAN.md) r3 (+ open decisions D1/D2/D4/D7/D8, SPEC [OPEN] question) to
   Carlo for approval before any M1+ work begins.
 - Registry: graalgo-phase1 active, heartbeat recorded 2026-10-04T02:23Z.
   Entry remains parked; stall detector will flag if approval doesn't land.
@@ -84,11 +84,11 @@
   25.0.4.1.1 LTS (SPEC Appendix C [OPEN] closed); standing directive: no
   deprecated APIs, enforced by `-Xlint:deprecation -Werror`.
 - Re-pin complete: 7 Truffle jars at 25.0.4.1.1 from Maven Central (sha1
-  verified against Central at download; sha256 in lib/SHA256SUMS.txt);
-  lib/LIB.md rewritten (pin record + build policy). JDK distribution stays
+  verified against Central at download; sha256 in [lib/SHA256SUMS.txt](../../internal/backend/truffle/lib/SHA256SUMS.txt));
+  [lib/LIB.md](../../internal/backend/truffle/lib/LIB.md) rewritten (pin record + build policy). JDK distribution stays
   25.0.4+7.1 (javac/java/JVMCI only; Truffle API is jar-provided).
 - Makefile: JAVAC_FLAGS=-Xlint:deprecation -Werror on main+test; new
-  `smoke-test` target (src/smoke → out/smoke-classes). First -Werror break:
+  `smoke-test` target ([src/smoke/](../../internal/backend/truffle/src/smoke/) → out/smoke-classes). First -Werror break:
   DSL processor node-inlining candidacy hint in DslSmoke.java → fixed with
   @SuppressWarnings("truffle-inlining") + rationale comment (smoke fixture).
 - `make smoke-test` GREEN on 25.0.4.1.1: SMOKE OK (result=42, Oracle GraalVM),
@@ -108,7 +108,7 @@ Toolchain + `graalgo-run` executes a hand-built "hello" AST; diffharness
 backend registered. GG-0027 → active.
 
 ### What landed
-- `src/main/java/graalgo/launcher/Main.java` — PLAN.md §5 CLI contract:
+- [src/main/java/graalgo/launcher/Main.java](../../internal/backend/runtime/src/main/java/graalgo/launcher/Main.java) — [PLAN.md](PLAN.md) §5 CLI contract:
   `graalgo-run file.go` (frontend→AST→execute main; exit = program's),
   `graalgo-run --check file.go` (frontend only; harness build step),
   `graalgo-run --handbuilt-hello` (M1 scaffolding: executes the hand-built
@@ -120,14 +120,14 @@ backend registered. GG-0027 → active.
   check. DECISION (recorded): `--handbuilt-hello` + `Handbuilt` are removed
   when WS B's NodeFactory builds real programs from frontend/v1 JSON (M2);
   they are scaffolding, not a second execution mode.
-- `src/main/java/graalgo/runtime/Runtime.java` — the runtime print path
+- [src/main/java/graalgo/runtime/Runtime.java](../../internal/backend/runtime/src/main/java/graalgo/runtime/Runtime.java) — the runtime print path
   (`println(String)` → stdout + newline). Parity note recorded in code:
   Go's print/println write to stderr; the hello fixture's stdout routing is
   deliberate (harness compares stdout) and not a parity claim; the GG-0045
   stance lands with the real builtins (WS G).
 - `phases/phase1/graalgo-run` — executable wrapper (same classpath as the
   Makefile `run` target); requires `make main` first, never builds.
-- `src/test/java/graalgo/{test/Runner,launcher/HelloTest}.java` —
+- `[src/test/java/graalgo/](../../internal/backend/truffle/src/test/java/graalgo/){test/Runner,launcher/HelloTest}.java` —
   dependency-free test runner + M1 acceptance test (`// verifies: GG-0027`).
 - `tools/diffharness/backends.json` — third backend `graalgo`
   (build `{GRAALGO_RUN} --check {SRC}`, run `{GRAALGO_RUN} {SRC}`,
@@ -171,7 +171,7 @@ diffharness README.
 
 ### What landed
 
-**Go — `frontend/` (module `graalgo-frontend`, Go 1.27):**
+**Go — [frontend/](../../internal/frontend/) (module `graalgo-frontend`, Go 1.27):**
 - `main.go`, `export.go` — CLI (`gofrontend <file.go>` → JSON on stdout;
   exit 0/1/2) + exporter: vendored `go/parser`+`go/types` type-check one
   single-file program, emit AST + type table + object table + positions +
@@ -187,19 +187,19 @@ diffharness README.
   checked-in `.json`), determinism test, scope-error tests (`bad_import/if/
   call` → WS G/E/D), type-error and no-main tests.
 - `tools/validate_frontend_v1.py` — schema validator enforcing
-  `docs/frontend-v1.md` (kinds, required fields, type/obj id bounds,
+  [docs/frontend-v1.md](docs/frontend-v1.md) (kinds, required fields, type/obj id bounds,
   version pin) + `--selftest` (9/9 negative cases rejected).
 
 **Docs:**
-- `docs/frontend-v1.md` — normative wire spec: document layout, positions,
+- [docs/frontend-v1.md](docs/frontend-v1.md) — normative wire spec: document layout, positions,
   type-table schemas (13 go/types kinds), object table, 14 node kinds,
   exporter scope, **versioning rule (additive-only within v1; v2 on
   breaking change)**, §9 exact WS D/E hook points.
-- `frontend/README.md`, `frontend/VENDORING.md` (pinned revision
+- [frontend/README.md](../../internal/frontend/README.md), [frontend/VENDORING.md](../../internal/frontend/VENDORING.md) (pinned revision
   go1.27.1 / 2026-08-28T16:20:06Z + atomic re-vendor procedure + D1
-  falsifier watch), `src/main/java/graalgo/frontend/README.md` (rewritten).
+  falsifier watch), [src/main/java/graalgo/frontend/README.md](../../internal/backend/truffle/src/main/java/graalgo/frontend/README.md) (rewritten).
 
-**Java — `src/main/java/graalgo/frontend/` (compiled to /tmp scratch only;**
+**Java — [src/main/java/graalgo/frontend/](../../internal/backend/truffle/src/main/java/graalgo/frontend/) (compiled to /tmp scratch only;**
 **worker-1 owns `make`/`out/`):**
 - `Json.java` (hand-rolled reader; no new deps — choice documented),
   `FrontendException`, `NodeFactory` (kind registries + `TypeDecoder`
@@ -207,7 +207,7 @@ diffharness README.
   programs (`Const/BinaryOp/UnaryOp/VarRead/VarDecl/Assign/IncDec/Block/
   ExprStmt/Return`), `GoReturn` (M2 stand-in → WS F `ControlFlowException`),
   `GoRootNode`, `TypeTable`.
-- `frontend/javatest/NodeFactoryTest.java` — golden JSON → build → execute
+- [frontend/javatest/NodeFactoryTest.java](../../internal/frontend/javatest/NodeFactoryTest.java) — golden JSON → build → execute
   on Truffle runtime: gc-oracle values (`z==42`; straight02 a/b/c/sum =
   20/44/84/194), node shapes, SourceSection ↔ exporter-pos agreement,
   5 negative cases + Json unit checks. **20/20 pass.**
@@ -233,15 +233,15 @@ diffharness README.
 
 **GG-0012/GG-0013/GG-0044 stay LOCKED** — activation happens at M2 when
 NodeFactory builds straight-line programs end-to-end through `graalgo-run`
-(per PLAN.md). D1 falsifier watch: no go/* API breakage observed; the
-watch is recorded in `frontend/VENDORING.md`.
+(per [PLAN.md](PLAN.md)). D1 falsifier watch: no go/* API breakage observed; the
+watch is recorded in [frontend/VENDORING.md](../../internal/frontend/VENDORING.md).
 
 ### Hook points left for WS D/E (exact)
 
 `NodeFactory.java`: `registerExprKind` (WS D — expressions),
 `registerStmtKind` (WS E — statements), `registerTypeDecoder` (WS C/D —
 type-table kinds beyond int/uint→Long); duplicate registration is an
-error. Full list + M2 stand-in replacements: `docs/frontend-v1.md` §9.
+error. Full list + M2 stand-in replacements: [docs/frontend-v1.md](docs/frontend-v1.md) §9.
 
 ## M2 in progress 2026-10-04 (worker: M2)
 - Deliverable 1: `make clean && make main` green on the current tree (launcher +
@@ -267,7 +267,7 @@ error. Full list + M2 stand-in replacements: `docs/frontend-v1.md` §9.
 
 ## M2 complete 2026-10-04 (worker: M2)
 
-**Acceptance (PLAN.md §4): `gofrontend` emits typed AST; NodeFactory builds
+**Acceptance ([PLAN.md](PLAN.md) §4): `gofrontend` emits typed AST; NodeFactory builds
 straight-line programs end-to-end via `graalgo-run`; GG-0012→active.** All met.
 
 ### What landed
@@ -276,7 +276,7 @@ straight-line programs end-to-end via `graalgo-run`; GG-0012→active.** All met
 + runtime + frontend Java together, `-Xlint:deprecation -Werror` clean — no
 integration breakage from the WS B merge. `make main` now also builds
 `frontend/gofrontend` (overlay build over the vendored go/* tree); `make
-check` runs the placeholder grep gate plus `frontend/build.sh check`
+check` runs the placeholder grep gate plus `[frontend/build.sh](../../internal/frontend/build.sh) check`
 (gofmt/vet/go tests/vendoring diff gate); `make clean` removes the built
 binary and generated overlay.json.
 
@@ -311,10 +311,10 @@ content, run silent execution, exit-code contract, `--dump-vars` values).
    negative case.
 
 **Tests (deliverables 3–4, red-green-first, SPEC §5.2).**
-`corpus/straightline/` — 12 programs (consts, arith, bitwise, shifts incl.
+[corpus/straightline/](corpus/straightline/) — 12 programs (consts, arith, bitwise, shifts incl.
 counts ≥ 64, mixed int/uint, multi-assign/swap, `:=`/redeclare, incdec,
 unary, overflow/wraparound, divmod signs, early return); conventions in
-`corpus/straightline/README.md` (`// observe:` trailer, `z = z` no-op-use
+[corpus/straightline/README.md](corpus/straightline/README.md) (`// observe:` trailer, `z = z` no-op-use
 idiom, println injection rule). `StraightLineCorpusTest`
 (`// verifies: GG-0012`): each program differential vs stock gc — the oracle
 injects `println(vars...)` (before main's closing brace and before every
@@ -323,13 +323,13 @@ stderr; graalgo path is gofrontend→NodeFactory→frame-slot reads; values
 asserted bit-identical.
 - Red run 1 (test written before fixes): 5 failures — const-parse ×3
   (sl04/sl05/sl10), swap miscompile (sl06.b: gc=1 graalgo=2), redeclare
-  (sl07). Log: `hidden_files/m2_red1_const_swap_redeclare.log`.
+  (sl07). Log: [hidden_files/m2_red1_const_swap_redeclare.log](hidden_files/m2_red1_const_swap_redeclare.log).
 - Red run 2 (const-parse fixed): 4 failures — unsigned `>>63` (sl04.d),
-  unsigned `/` (sl05.du), swap, redeclare. `hidden_files/m2_red2_unsigned.log`.
-- Green: 23/23. `hidden_files/m2_green.log`.
+  unsigned `/` (sl05.du), swap, redeclare. [hidden_files/m2_red2_unsigned.log](hidden_files/m2_red2_unsigned.log).
+- Green: 23/23. [hidden_files/m2_green.log](hidden_files/m2_green.log).
 - Mutation red-run: `BinaryOpNode` ADD→SUB mutant → 13 failures (12 corpus +
   `--dump-vars`), each with exact gc-vs-graalgo diffs; reverted → 23/23.
-  `hidden_files/m2_mutant_red.log`.
+  [hidden_files/m2_mutant_red.log](hidden_files/m2_mutant_red.log).
 - `make test`: 23 tests, 0 failures. `make check`: clean.
 
 **Diffharness (manual, one program):** gc-a vs graalgo on `sl06_multiassign`
@@ -342,16 +342,16 @@ stay locked (verified in requirements/*.yaml). `req lint --root
 ~/workspace/graalgo`: **GREEN** — 70 requirements, 826 references.
 
 ### Evidence files
-- `hidden_files/m2_red1_const_swap_redeclare.log`, `m2_red2_unsigned.log`,
+- [hidden_files/m2_red1_const_swap_redeclare.log](hidden_files/m2_red1_const_swap_redeclare.log), `m2_red2_unsigned.log`,
   `m2_green.log`, `m2_mutant_red.log`
-- Corpus: `corpus/straightline/` (12 `.go` + README.md)
+- Corpus: [corpus/straightline/](corpus/straightline/) (12 `.go` + README.md)
 
 ### Deviations / notes
 - `export.go` gained a real (small) fix: `exportDefine` uses
   `info.ObjectOf` instead of `info.Defs` for `:=` lhs (redeclared names live
   in Uses). No go/* API change — D1 falsifier not tripped.
 - `make check` now includes the gofrontend check (new gate, documented in Makefile).
-- `docs/frontend-v1.md` unchanged — the wire format did not change (all
+- [docs/frontend-v1.md](docs/frontend-v1.md) unchanged — the wire format did not change (all
   fixes are factory/exporter semantics, documented in the frontend package
   README's new "Semantic lowerings" section).
 - Docs updated in the same change: launcher README (M2 contract, scaffolding
@@ -361,7 +361,7 @@ stay locked (verified in requirements/*.yaml). `req lint --root
   `info.ObjectOf`, a long-stable API).
 
 ### Open for M3+
-- WS B `frontend/javatest/NodeFactoryTest.java` still compiles to /tmp
+- WS B [frontend/javatest/NodeFactoryTest.java](../../internal/frontend/javatest/NodeFactoryTest.java) still compiles to /tmp
   scratch (unchanged); its straight01 shape assertion
   (`VarDeclNode ×3, AssignNode`) still holds — single vardecls lower to
   `VarDeclNode` as before.
@@ -369,14 +369,14 @@ stay locked (verified in requirements/*.yaml). `req lint --root
 
 ## M3 complete 2026-10-04 (worker: M3)
 
-**Acceptance (PLAN.md §4): expressions + values differential-green on the
+**Acceptance ([PLAN.md](PLAN.md) §4): expressions + values differential-green on the
 arithmetic corpus; GG-0015→active.** All met: 55/55 tests green (23 M2 +
 32 new), corpus differential-green vs stock gc on all 17 programs.
 
 ### What landed
 
 **Value model (deliverable 1, WS C / D5 [DECIDED]).**
-`src/main/java/graalgo/values/`: `GoKind` (kind lattice, `fromBasic`/
+[src/main/java/graalgo/values/](../../internal/backend/truffle/src/main/java/graalgo/values/): `GoKind` (kind lattice, `fromBasic`/
 `fromCompositeKind`, `slotKind()`, `transparent()` — untyped constants
 assume the context kind), `GoString` (byte-wise, unsigned lexicographic
 compare, `fromRune` with FFFD rules), `GoSlice`, `GoMap`
@@ -424,26 +424,26 @@ IEEE bits, correctly rounded by go/constant). Golden
 
 **Safepoint seam (deliverable 3, D8).** `graalgo.safepoint.poll()`
 (no-op in Phase 1), called at `GoRootNode` function entry; signature
-frozen in `docs/freeze-stub.md` (new).
+frozen in [docs/freeze-stub.md](docs/freeze-stub.md) (new).
 
 **Polymorphism probes (deliverable 4, WS D).** `InterfaceDispatchProbes`:
 itab-identity histogram counters behind a flag, hooks only.
 
 **Tests (deliverable 5, red-green-first, SPEC §5.2).**
-`corpus/arithmetic/` — 17 programs (all int/uint widths × ops, float32/64
+[corpus/arithmetic/](corpus/arithmetic/) — 17 programs (all int/uint widths × ops, float32/64
 incl. 0.1+0.2, all conversion pairs incl. uint64→float64 precision loss,
 string conv+compare, comparisons, bool logic, shifts≥width); type-aware
 oracle (ints decimal, floats via `math.Float32/64bits`, strings hex —
 Go's builtin `println` is lossy for floats). `ArithmeticCorpusTest`
 (`// verifies: GG-0015`): 17 per-program tests + corpus-size guard.
-- Red: `hidden_files/m3_red1.log` (compile red — `kindsByName()` missing,
+- Red: [hidden_files/m3_red1.log](hidden_files/m3_red1.log) (compile red — `kindsByName()` missing,
   same class as M1's red; captured before the factory rewrite).
 - Mutant A (float SUB→ADD in `BinaryOpNode`): caught by ar10/ar11.
-  `hidden_files/m3_mutantA_red.log`.
+  [hidden_files/m3_mutantA_red.log](hidden_files/m3_mutantA_red.log).
 - Mutant B (float64→int64 via Java saturating cast): caught by ar13 +
   `ValuesTest.testGoConvertFloatToInt[Narrow]`.
-  `hidden_files/m3_mutantB_red.log`.
-- Green: 55/55. `hidden_files/m3_green.log` (+ `m3_green2.log` after
+  [hidden_files/m3_mutantB_red.log](hidden_files/m3_mutantB_red.log).
+- Green: 55/55. [hidden_files/m3_green.log](hidden_files/m3_green.log) (+ `m3_green2.log` after
   mutant revert).
 
 **GC-probed semantics** (stock gc 1.27.1 amd64, 2026-10-04): float→int64
@@ -472,18 +472,18 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
 **GREEN**.
 
 ### Evidence files
-- `hidden_files/m3_red1.log`, `m3_green.log`, `m3_green2.log`,
+- [hidden_files/m3_red1.log](hidden_files/m3_red1.log), `m3_green.log`, `m3_green2.log`,
   `m3_mutantA_red.log`, `m3_mutantB_red.log`
-- Corpus: `corpus/arithmetic/` (17 `.go` + README.md)
+- Corpus: [corpus/arithmetic/](corpus/arithmetic/) (17 `.go` + README.md)
 
 ### Deviations / notes
-- `docs/frontend-v1.md` gained **additive** wire updates (§6): the
+- [docs/frontend-v1.md](docs/frontend-v1.md) gained **additive** wire updates (§6): the
   `convert` node kind, `basiclit` `sbytes`/`f32bits`/`f64bits` fields, the
   constant-folding normalization, universe-const ident handling. All
   additive-only per §8's versioning rule — still `"frontend": "v1"`.
-- New doc: `docs/freeze-stub.md` (frozen `graalgo.safepoint.poll()`
+- New doc: [docs/freeze-stub.md](docs/freeze-stub.md) (frozen `graalgo.safepoint.poll()`
   signature + call sites).
-- `src/main/java/graalgo/nodes/README.md`: reserved for WS E/F
+- [src/main/java/graalgo/nodes/README.md](../../internal/backend/truffle/src/main/java/graalgo/nodes/README.md): reserved for WS E/F
   control-flow nodes; expression nodes stay in `graalgo.frontend`.
 - D6 specialization budget: no PICs anywhere in M3 (only the
   `InterfaceDispatchProbes` hooks); typed execute methods keep all
@@ -499,7 +499,7 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
 
 ## M4 complete 2026-10-04 (worker: M4)
 
-**M4 acceptance (PLAN.md §4): control flow, composite types, maps green.**
+**M4 acceptance ([PLAN.md](PLAN.md) §4): control flow, composite types, maps green.**
 
 ### Deliverables
 1. **Statement nodes** via `registerStmtKind` (all with `SourceSection`):
@@ -514,13 +514,13 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
    elided inner literals), indexing (array/slice/string/map, comma-ok),
    2- and 3-index slicing, struct field access (incl. embedded/promoted),
    multi-dimensional composites, type assertions (incl. comma-ok).
-4. **Tests**: `corpus/controlflow/` (11 programs) + `corpus/composite/`
+4. **Tests**: [corpus/controlflow/](corpus/controlflow/) (11 programs) + [corpus/composite/](corpus/composite/)
    (10 programs), differential vs stock gc 1.27.1, bit-identical.
    `ControlFlowCorpusTest` + `CompositeCorpusTest` (`// verifies: GG-0014`).
 5. **Red-green**: mutant A (dropped `!` in loop cond → 5 kills),
-   mutant B (slice off-by-one → 2 kills); logs in `hidden_files/m4_red/`.
+   mutant B (slice off-by-one → 2 kills); logs in [hidden_files/m4_red/](hidden_files/m4_red/).
 6. **GG-0014 → active**: `req activate GG-0014`; `req lint` green.
-7. `make check` clean; `docs/frontend-v1.md` §6+§7 updated (additive).
+7. `make check` clean; [docs/frontend-v1.md](docs/frontend-v1.md) §6+§7 updated (additive).
 
 ### Real bugs found by the differential corpus during M4
 1. `buildExpr` never stamped type ids (read top-level `type`, wire has
@@ -544,15 +544,15 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
     use `select` (still WS E Phase 2).
 
 ### Evidence files
-- `hidden_files/m4_red/mutantA_red.log`, `hidden_files/m4_red/mutantB_red.log`
-- Corpus: `corpus/controlflow/` (11 `.go` + README.md),
-  `corpus/composite/` (10 `.go` + README.md)
+- [hidden_files/m4_red/mutantA_red.log](hidden_files/m4_red/mutantA_red.log), [hidden_files/m4_red/mutantB_red.log](hidden_files/m4_red/mutantB_red.log)
+- Corpus: [corpus/controlflow/](corpus/controlflow/) (11 `.go` + README.md),
+  [corpus/composite/](corpus/composite/) (10 `.go` + README.md)
 - Test run: 78 tests, 0 failures (`make test`)
 
 ### Deviations / notes
 - Exporter: `for range x` (no key/value) now accepted (was scope error);
   one-line fix, no wire change.
-- `docs/frontend-v1.md` §6 gained the M4 node kinds, §7 scope updated to
+- [docs/frontend-v1.md](docs/frontend-v1.md) §6 gained the M4 node kinds, §7 scope updated to
   M4. All additive per §8 — still `"frontend": "v1"`.
 - Panics (bounds/nil-map/failed assert) stubbed as `GoPanic` (internal
   error); WS F owns real semantics. Corpus stays in valid-bounds subspace.
@@ -568,7 +568,7 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
 
 ## M5-F in progress 2026-10-04 (worker: F)
 
-**M5 acceptance (PLAN.md §4): defer/panic/recover/Goexit green incl. adversarial (GG-0019→active).**
+**M5 acceptance ([PLAN.md](PLAN.md) §4): defer/panic/recover/Goexit green incl. adversarial (GG-0019→active).**
 
 ### Design (gc-oracle verified, go1.27.1 sources read)
 - Panic = `PanicException extends AbstractTruffleException` (lazy trace via
@@ -627,14 +627,14 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
   frozen `Panic.throwPanic`/`recover`), `FmtCallNode`.
 
 **fmt stub (D4)**: 7 functions (Print/Printf/Println/Sprint/Sprintf/Sprintln/
-Errorf) with **verb-conformance matrix** (`corpus/fmt/matrix.tsv`, 122 rows,
+Errorf) with **verb-conformance matrix** ([corpus/fmt/matrix.tsv](corpus/fmt/matrix.tsv), 122 rows,
 all match gc 1.27.1). Address erasure to `0x0` (documented, nondeterministic
 under gc anyway).
 
-**Freeze v1** (`docs/freeze-stub.md`): 58 functions + 11 nodes, each marked
+**Freeze v1** ([docs/freeze-stub.md](docs/freeze-stub.md)): 58 functions + 11 nodes, each marked
 REAL/STUB/D4. `FreezeSignatureTest` verifies 37 signatures via reflection.
 
-**Corpus** (`corpus/builtins/`, 15 programs): append growth/aliasing, copy
+**Corpus** ([corpus/builtins/](corpus/builtins/), 15 programs): append growth/aliasing, copy
 overlap, delete/lookup, make len/cap, complex, print/stderr, len/cap, new,
 panic, fmt stub, map lifecycle. Expected outputs captured from gc.
 
@@ -643,7 +643,7 @@ panic, fmt stub, map lifecycle. Expected outputs captured from gc.
 - **FmtVerbMatrixTest**: 122/122 rows match gc. `testAddressErasure` pins
   `0x0` erasure.
 - **FreezeSignatureTest**: 37/37 signatures verified.
-- **Mutants** (logs in `hidden_files/ws-g/`):
+- **Mutants** (logs in [hidden_files/ws-g/](hidden_files/ws-g/)):
   1. append tail-copy drop → sum 19 vs 190: KILLED.
   2. `%x` uppercase → "C3A9" vs "c3a9": KILLED.
 - **Red-green**: matrix built from gc oracle first; test failed until
@@ -669,15 +669,15 @@ panic, fmt stub, map lifecycle. Expected outputs captured from gc.
 
 ## M5 complete 2026-10-04 (worker: M5-completion, coordinator-verified)
 
-**Acceptance (PLAN.md §4): defer/panic/recover/Goexit green incl. adversarial
+**Acceptance ([PLAN.md](PLAN.md) §4): defer/panic/recover/Goexit green incl. adversarial
 (GG-0019→active).** All met: 102/102 tests green (81 pre-M5 + 21 new),
 differential vs stock gc on all 20 panic-corpus programs.
 
 ### What landed
 
-**PanicCorpusTest** (`src/test/java/graalgo/frontend/PanicCorpusTest.java`,
+**PanicCorpusTest** ([src/test/java/graalgo/frontend/PanicCorpusTest.java](../../internal/backend/truffle/src/test/java/graalgo/frontend/PanicCorpusTest.java),
 `// verifies: GG-0019`, registered in `Runner.java`) — differential vs stock
-gc 1.27.1 over `corpus/panic/` (20 programs), following the
+gc 1.27.1 over [corpus/panic/](corpus/panic/) (20 programs), following the
 StraightLine/Arithmetic harness style:
 - Recovered programs (`// observe:` trailer): gc oracle injects
   `defer func(){println(...)}()` at a `// probe` anchor (first-registered
@@ -686,29 +686,29 @@ StraightLine/Arithmetic harness style:
   code 2, normalized panic header block (Truffle `Unsafe` `WARNING:` lines
   filtered, `0x…`→`0xADDR`), `goroutine 1 [running]:` header asserted;
   frame bodies NOT compared literally (addresses/paths) — scope documented
-  in test javadoc + new `corpus/panic/README.md`.
+  in test javadoc + new [corpus/panic/README.md](corpus/panic/README.md).
 - gc-oracle facts pinned: panic(nil)→`*PanicNilError` rendering
   ("runtime error: panic called with nil argument"); recover() outside a
   deferred call during panic → nil; Goexit in main → gc's fatal deadlock,
   exit 2 (GG-0045 stance).
 
-**Fixes from the red run** (`hidden_files/m5_red1.log`: 15 FAIL / 6 PASS):
+**Fixes from the red run** ([hidden_files/m5_red1.log](hidden_files/m5_red1.log): 15 FAIL / 6 PASS):
 1. `DeferChain.unwindPanicking` dropped remaining defers after recovery —
    pn07 (gc=7123), pn09 (log=321). Fixed; both green.
 2. `// panic:` trailers given the full first line (7 corpus files).
 3. `-Xss32m` in Makefile + `graalgo-run` — pn12's 10000-deep panic unwind
    needs ~13–16m measured; 32m ≈ 2× headroom, documented in launcher README.
 
-**Mutation evidence** (`hidden_files/m5_mutant_red.log`): reverting the
+**Mutation evidence** ([hidden_files/m5_mutant_red.log](hidden_files/m5_mutant_red.log)): reverting the
 DeferChain fix → pn07/pn09 fail exactly as predicted; reverted cleanly
 (md5-verified).
 
 **GG-0019 → active** (`req activate GG-0019` in tools/req).
 
 ### Evidence
-- `hidden_files/m5_red1.log`, `m5_mutant_red.log`, `/tmp/m5_verify.log`
+- [hidden_files/m5_red1.log](hidden_files/m5_red1.log), `m5_mutant_red.log`, `/tmp/m5_verify.log`
   (coordinator re-run: 102 tests, 0 failures, EXIT=0)
-- Corpus: `corpus/panic/` (20 `.go` + README.md)
+- Corpus: [corpus/panic/](corpus/panic/) (20 `.go` + README.md)
 
 ### Process note (honest)
 The M5 worker was stopped by a session timeout before its final green
@@ -727,7 +727,7 @@ worker (same files, closure-capture area).
 
 ### Coordination note
 The M5 worker reported a second writer editing NodeFactory.java,
-FuncLitNode.java and corpus/panic/*.go during 08:05–08:42 UTC (fixing
+FuncLitNode.java and [corpus/panic/](corpus/panic/)*.go during 08:05–08:42 UTC (fixing
 pn05/pn08/pn10/pn11, twice rewriting files it touched). No second active
 registry entry exists (graalgo-ws-g is done; only this coordinator's M5
 worker was dispatched). No writes observed after 08:53 UTC; final tree
@@ -744,19 +744,19 @@ green on the unified tree.
 
 ## 2026-10-04 ~11:35 CEST — loop-capture two-writer conflict: single-owner dispatched
 - Loop-capture fix worker withdrew after detecting a concurrent incompatible rewrite of
-  `src/main/java/graalgo/frontend/NodeFactory.java` + `frontend/export.go` by the frontend
+  [src/main/java/graalgo/frontend/NodeFactory.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/NodeFactory.java) + [frontend/export.go](../../internal/frontend/export.go) by the frontend
   buildCall worker (factory pre-scan + GoBox cells vs exporter-computed "boxed" wire field).
   Both designs were interleaved in NodeFactory.java (31 GoBox + 20 exporter markers);
   export.go carried 8 exporter-"boxed" markers. Files stable since 11:28 CEST; no active
   writer at dispatch time. Worker's node-layer refactors (GoBox/BoxWriteNode 3-arg/etc.)
-  kept; pristine pre-work copies + MD5SUMS at hidden_files/loopcap/pristine/.
+  kept; pristine pre-work copies + MD5SUMS at [hidden_files/loopcap/pristine/](hidden_files/loopcap/pristine/).
 - Design decision: GoBox/factory pre-scan survives — no exporter/wire-protocol change
   (D1 protocol freeze), node layer complete and compiling, root cause pinned against
   gc-oracle (11 probes). Exporter "boxed" design reverted.
 - Single-owner untangle worker dispatched (registry graalgo-phase1-loopcap-untangle):
   EXCLUSIVE writer of both files until green. Restore NodeFactory from pristine
   (md5-verified), revert export.go markers, implement wiring per
-  hidden_files/loopcap/CHECKPOINT_LOOPCAP.md, red-green (restore pn13 + >=4 new corpus
+  [hidden_files/loopcap/CHECKPOINT_LOOPCAP.md](hidden_files/loopcap/CHECKPOINT_LOOPCAP.md), red-green (restore pn13 + >=4 new corpus
   programs; fail-without/pass-with), full suite green, coverage note on worker-F's M5.
 - Process lesson recorded in AGENTS.md: never assign overlapping mutable file scopes to
   two workers; shared files get a single owner until green, recorded in checkpoint/registry.
@@ -798,10 +798,10 @@ green on the unified tree.
 ## 2026-10-04 ~12:25 CEST — resume after VM reboot e1a646af (reboot ~10:20 UTC)
 - Duplicate-dispatch guard passed: no live java/gradle processes; registry graalgo-phase1-impl heartbeat (10:06 UTC) predates the reboot — no other live owner. Proceeded with resume.
 - Environment verified: Go 1.27.1, Oracle GraalVM 25.0.4+7.1, javac 25.0.4 (via $HOME/tools paths). Post-reboot `make test` re-run: 114/114 green (testPn19DivZero now passes; loop-capture untangle held).
-- Next milestone M6 (WS H generics, D2 monomorphization) unstarted: exporter scope-errors non-main funcs (export.go:529); `typeparam` wire node exists; no instantiation machinery. M6 worker dispatched as single writer of frontend/export.go + NodeFactory.java + new generics corpus. Its brief: named functions → generic functions (info.Instances) → generic methods → corpus/generics/ incl. pathological (higher-order type params, recursive instantiation — the D2 falsifier, honest self-attack) → test/typeparam differential with reason-coded exclusions → docs/frontend-v1.md §6/§7 updates → req lint green → red-green + mutation evidence in hidden_files/m6_*. M7+ (full GOROOT/test harness, fuzz-soak, freeze, reviews) explicitly out of M6 scope.
+- Next milestone M6 (WS H generics, D2 monomorphization) unstarted: exporter scope-errors non-main funcs (export.go:529); `typeparam` wire node exists; no instantiation machinery. M6 worker dispatched as single writer of [frontend/export.go](../../internal/frontend/export.go) + NodeFactory.java + new generics corpus. Its brief: named functions → generic functions (info.Instances) → generic methods → [corpus/generics/](corpus/generics/) incl. pathological (higher-order type params, recursive instantiation — the D2 falsifier, honest self-attack) → test/typeparam differential with reason-coded exclusions → [docs/frontend-v1.md](docs/frontend-v1.md) §6/§7 updates → req lint green → red-green + mutation evidence in hidden_files/m6_*. M7+ (full GOROOT/test harness, fuzz-soak, freeze, reviews) explicitly out of M6 scope.
 
 ## 2026-10-04 ~13:03 CEST — per-milestone review gate adopted; M5+loopcap review round launched
-- Program-owner directive (Carlo): review per milestone, not only at M10. PLAN.md amended:
+- Program-owner directive (Carlo): review per milestone, not only at M10. [PLAN.md](PLAN.md) amended:
   workstream row M rewritten, §4 gains a "Review gate" clause (every milestone M1-M9
   closes with >=2 independent reviews remediated before sign-off; fixed snapshot/diff
   baseline; evidence under reviews/), §7 closeout checklist updated.
@@ -839,7 +839,7 @@ green on the unified tree.
 - Carlo: "You can use work trees if needed to run concurrent codebase changes."
 - Worktree ~/workspace/graalgo-loopcap-rework on branch rework/loopcap-gc-model
   (base 3643fc6 = reviewed state). Remediation worker dispatched as single owner
-  of the worktree's NodeFactory.java + frontend/export.go; brief = FINDINGS.md
+  of the worktree's NodeFactory.java + [frontend/export.go](../../internal/frontend/export.go); brief = FINDINGS.md
   remediation section (gc one-cell model rework, red-green on 5 P0s + adv02/16/17,
   17 adversarial corpus tests, evidence re-filed durably, docs P1-C1..C4).
   Baseline `make test` first; commit on branch only, NO merge to master (parent
@@ -851,18 +851,18 @@ green on the unified tree.
 ## 2026-10-04 ~16:30 CEST — impl resume after VM reboot e7a47e62 (recovery 16:22 CEST)
 - Duplicate-dispatch guard passed: loopcap-rework worker live (registry hb
   14:24 UTC, own resume worker). Worktree ~/workspace/graalgo-loopcap-rework
-  NOT touched. Main-tree M6 scope (frontend/export.go + NodeFactory.java)
+  NOT touched. Main-tree M6 scope ([frontend/export.go](../../internal/frontend/export.go) + NodeFactory.java)
   ownership inherited from the dead M6 worker (no uncommitted M6 changes;
   f3d5b97 captured the in-flight state at 13:19:50 CEST).
 - Env re-verified: Go 1.27.1, Oracle GraalVM 25.0.4+7.1, 3 Truffle jars
   sha256sum OK.
-- M6 state: corpus/generics/ gn01-gn09 (incl. gn06 mutually-recursive
+- M6 state: [corpus/generics/](corpus/generics/) gn01-gn09 (incl. gn06 mutually-recursive
   instantiation = D2 falsifier shape), GenericsCorpusTest 10 tests
   (`// verifies: GG-0014`, registered in Runner); export.go emits one
   funcdecl per go/types instantiation (instByKey); m6_mutation_m1.log
   (instantiation-resolution mutant caught) on file.
 - Gaps to close for M6 sign-off: (a) test/typeparam differential adapter
-  with reason-coded exclusions not built; (b) docs/frontend-v1.md §6/§7
+  with reason-coded exclusions not built; (b) [docs/frontend-v1.md](docs/frontend-v1.md) §6/§7
   lack monomorphization-on-the-wire documentation (zero "instantiat"
   mentions; wire itself is additive — funcdecl per instantiation);
   (c) req lint red on stale Oct-3 tools/req/req binary ("invalid status
@@ -876,7 +876,7 @@ green on the unified tree.
   test/typeparam differential adapter (266 files in
   $HOME/tools/go-1.27.1/test/typeparam) with reason-coded versioned
   exclusions (GG-0033), red-green-first, evidence in hidden_files/m6_*;
-  (2) docs/frontend-v1.md §6/§7 monomorphization-on-the-wire docs
+  (2) [docs/frontend-v1.md](docs/frontend-v1.md) §6/§7 monomorphization-on-the-wire docs
   (currently zero "instantiat" mentions); (3) req lint green — stale
   Oct-3 tools/req/req binary gives bogus `invalid status "locked"`;
   fresh binary at /tmp/req-check (lint still running at dispatch);
@@ -1057,7 +1057,7 @@ the exclusions list).
   frontend-v1.md §6.
 - **P1-4/P1-5:** tools/precommit-check.sh (fails on untracked *.java/*.go
   outside scratch dirs — the 4b24b89 escape) + worker commit checklist in
-  PLAN.md §4. Script verified: flags exactly the 2 new remediation files.
+  [PLAN.md](PLAN.md) §4. Script verified: flags exactly the 2 new remediation files.
 - **Gate hygiene:** deleted leftover frontend/dbg_test.go (pre-existing,
   read /tmp/gn02.go, failed make check since the initial commit).
 - **P2-7 red log:** hidden_files/m6_p27_printnode_red.log — without the
@@ -1077,7 +1077,7 @@ Commits (master, each green: make test + make check):
   also removed pre-existing frontend/dbg_test.go blocking make check).
 - e74b45f P1-2/P1-6/P1-7 exclusions v3 + guards + P2-8/P2-14.
 - b60c4eb P2 nits (P2-9/P2-10/P2-11/P2-12).
-- 7b93471 P1-4/P1-5 precommit-check.sh + PLAN.md checklist.
+- 7b93471 P1-4/P1-5 precommit-check.sh + [PLAN.md](PLAN.md) checklist.
 
 - **P2-13 resolved:** mutation validate re-run post-reboot: green 46/0,
   rerun 46/0, 10 mutations DETECTED, 0 missed. TargSwap line now
@@ -1143,7 +1143,7 @@ complex consts, ellipsis), NodeFactory.java (new 0 args, convert from
 type, complex basiclit), AppendNode.java (fast path, ellipsis, Number
 store), DeleteNode.java (INT64 kind, MapKeys.box), LenNode.java
 (UNTYPED_STRING), ConvertNode.java (STRING<->SLICE), Differential.java
-(normalization order), SliceGrowthTest.java (new), corpus/builtins/*.go
+(normalization order), SliceGrowthTest.java (new), [corpus/builtins/](corpus/builtins/)*.go
 (bi01, bi10, bi13 rewritten), README.md.
 
 **Status**: Awaiting test results. TypeparamDifferentialTest failure
@@ -1178,7 +1178,7 @@ excluded).
 **P1 finding** (spec gap, not a bug): gc's observable `cap` after
 `append` depends on the `growsliceBuf` stack-buffer compiler
 optimization, which is not in the Go language spec and cannot be
-replicated by an interpreter. Recorded in corpus/builtins/README.md.
+replicated by an interpreter. Recorded in [corpus/builtins/README.md](corpus/builtins/README.md).
 Not silently excluded — programs rewritten to test specified behavior.
 
 **Remaining M7 scope**:
@@ -1191,7 +1191,7 @@ Not silently excluded — programs rewritten to test specified behavior.
   other live owner (heartbeat 2026-10-04T23:24Z is this resume's own).
   Worktree ~/workspace/graalgo-loopcap-rework already removed (merged
   4cb9572); periodic merge cron retired — nothing to touch.
-- Env verified: Go 1.27.1, Oracle GraalVM 25.0.4+7.1, lib/*.jar sha256sum OK.
+- Env verified: Go 1.27.1, Oracle GraalVM 25.0.4+7.1, [lib/](../../internal/backend/truffle/lib/)*.jar sha256sum OK.
 - Inherited in-flight uncommitted M7 work (pre-reboot worker, 23:06-23:21 UTC):
   tools/diffharness/internal/harness/corpus.go (absolute corpus path fix);
   DeferNode/DeferredCall/FmtCallNode/NodeFactory/Fmt.java (deferred fmt
@@ -1276,7 +1276,7 @@ M7 scope.
 - My unique contribution (NodeFactory nil-to-nillable `isNillable` fix for
   issue51840.go) was committed by the other worker inside d48b941 (verbatim,
   with attribution to the issue51840 regression). Nothing of mine is lost.
-- My commit 6b830f5 (CHECKPOINT.md only) sits cleanly on top; no file
+- My commit 6b830f5 ([CHECKPOINT.md](CHECKPOINT.md) only) sits cleanly on top; no file
   conflicts. `git status` shows no uncommitted phase1/diffharness changes
   (only the other track's research/* files, untouched).
 - I am NOT running a competing corpus run and will not touch the tree
@@ -1303,7 +1303,7 @@ M7 scope.
 
 ## 2026-10-05 ~03:45 CEST — M7 gate-1 evidence complete
 
-- Commit e0d5734: M7_CORPUS_MANIFEST.md + hidden_files/m7-gate1/corpus_run5.json
+- Commit e0d5734: [M7_CORPUS_MANIFEST.md](M7_CORPUS_MANIFEST.md) + [hidden_files/m7-gate1/corpus_run5.json](hidden_files/m7-gate1/corpus_run5.json)
 - Verification: 5/5 fixed programs PASS in harness (/tmp/m7_verify_run.json)
 - Final tally: 19 PASS, 27 EXCLUDED (all honest WS-scope), 0 unexplained divergences
 - Suite: 183/0 green. Commits: d64469a, 6da57a3, d48b941, 007b42f, 51d0e83, e0d5734
@@ -1320,7 +1320,7 @@ All 10 findings (2 P0, 4 P1, 4 P2) remediated. 9 commits:
 
 - 47ea356 (P0-1): overlap-safe append slice-spread via Intrinsics.memmove;
   + class-hunt find (interleaved arg eval/store in non-spread append);
-  P1-2 zero-arg append identity. New corpus/builtins/bi16_append_overlap.go.
+  P1-2 zero-arg append identity. New [corpus/builtins/bi16_append_overlap.go](corpus/builtins/bi16_append_overlap.go).
 - 61efa54 (P0-2): depth-general nested array/slice printing (kind/name chains).
   New bi17_nested_arrays.go.
 - ddf6322 (P1-3): string([]rune) U+FFFD for invalid scalars (surrogates
@@ -1330,14 +1330,14 @@ All 10 findings (2 P0, 4 P1, 4 P2) remediated. 9 commits:
   24_variadic manifest entry; new bi19 + MainTest.testCheckRejectsVariadicPacking.
 - a68c02c (P2 batch): stale exportPackageVars comment, 27_panic_trace manifest
   precision, 0xADDR normalization limitation documented, evidence to
-  hidden_files/m7-gate1/, ellipsis wire doc fix.
+  [hidden_files/m7-gate1/](hidden_files/m7-gate1/), ellipsis wire doc fix.
 - fffc3dd: gofmt. 5b85def: bi16 extended (nil-target spread, self-alias).
 - cf1b172: exclude issue51840.go + issue51925.go (generic variadic-packing
   compile tests; now loud WS D scope errors; previously built by accident).
 - 5e4cd2b: bump MAX_EXCLUSIONS 222 -> 224 with documented reason.
 
 Suite: 188/0 green (was 183/0; +5 new red-green tests). Corpus re-run
-(post-fix, hidden_files/m7-gate1/corpus_remediation.json): 19/46 same,
+(post-fix, [hidden_files/m7-gate1/corpus_remediation.json](hidden_files/m7-gate1/corpus_remediation.json)): 19/46 same,
 27 diverged = the 27 excluded programs, 0 unexplained. Typeparam: 42
 comparisons, 0 diverged, 224 excluded.
 
@@ -1358,7 +1358,7 @@ probes (new corpus bi16–bi19; +5 suite tests). Notable class-hunts: interleave
 arg eval/store in non-spread append (found via P0-1); Character.isValidCodePoint
 admits surrogates (handled in U+FFFD fix). Manifest corrected: 24_variadic
 reason was inverted (spread works; packing is the WS D boundary); 27_panic_trace
-precision fixed; evidence moved to hidden_files/m7-gate1/.
+precision fixed; evidence moved to [hidden_files/m7-gate1/](hidden_files/m7-gate1/).
 
 Final evidence (independently verified by coordinator):
 - Suite: 188/0 green (suite_final.log).
@@ -1384,7 +1384,7 @@ comparison, dropped defer must turn the harness red); gosmith-class generator
 is [UNVERIFIED] → small template-based generator (SPEC.md:688–690).
 
 Plan: tools/fuzz/ — template-based Go program generator (seeded RNG, in-scope
-per docs/frontend-v1.md §7) + differential driver (gc vs graalgo-run, JSONL
+per [docs/frontend-v1.md](docs/frontend-v1.md) §7) + differential driver (gc vs graalgo-run, JSONL
 journal, checkpoint/resume, delta-minimizer); tools/mutation/ — curated
 source-level mutants (Java frontend + Go exporter), overlay-compile + full
 suite per mutant, kill-rate report with survivor dispositions.
@@ -1417,9 +1417,9 @@ Mutation rig (`tools/mutation/`) built and validated:
 
 Fuzzer soak: 33 programs, 22 DIVERGED (67%). Triaged:
 - P0 (pre-existing): struct field write after boxing to `any` fails
-  (hidden_files/m8_struct_boxing_bug.md; fuzzer seeds 1001+)
+  ([hidden_files/m8_struct_boxing_bug.md](hidden_files/m8_struct_boxing_bug.md); fuzzer seeds 1001+)
 - P1 (pre-existing): nested map printing ClassCastException
-  (hidden_files/m8_nested_map_bug.md; fuzzer seed 1006)
+  ([hidden_files/m8_nested_map_bug.md](hidden_files/m8_nested_map_bug.md); fuzzer seed 1006)
 - Both confirmed on baseline a5731ec (not M8 regressions).
 
 ## 2026-10-05 ~06:00 CEST — M8: mutation 6/6 killed (100% kill rate)
@@ -1499,7 +1499,7 @@ the documented P0/P1s were not fixed. All three closeout items are now done.
   `Fmt.structFieldBoxed` passed the *carrier* index to `getLong`/`getObject`,
   which expect the *field* index. Direct `fmt.Println(struct)` crashed
   identically — boxing was never involved. Red-green:
-  `corpus/builtins/bi20_struct_print.go` (gc-identical).
+  [corpus/builtins/bi20_struct_print.go](corpus/builtins/bi20_struct_print.go) (gc-identical).
 
 ### 3. Documented P1s — ALL FIXED
 - **Nested maps** (commit 6e62b2e): `printMap` used outermost kinds for inner
@@ -1509,9 +1509,9 @@ the documented P0/P1s were not fixed. All three closeout items are now done.
 - **Nil slice/map %v, -0.0, tiny %f** (commit 95b20a2): nil slice→`[]`,
   nil map→`map[]`; `-0.0` literal folds to +0.0 (was IEEE -0.0); float `==`
   uses IEEE not `Double.compare`; `%f` of 1e-300→`0.000000` (was crash).
-  Red-green: `corpus/builtins/bi22_float_edge.go` (gc-identical).
+  Red-green: [corpus/builtins/bi22_float_edge.go](corpus/builtins/bi22_float_edge.go) (gc-identical).
   Note: triage doc's Class D analysis (fmt normalizes -0.0) was wrong;
-  corrected in `hidden_files/m8_triage_cde.md`.
+  corrected in [hidden_files/m8_triage_cde.md](hidden_files/m8_triage_cde.md).
 
 ### Verification
 - Full suite: **195 tests, 0 failures** (`make -C phases/phase1 test`).
@@ -1540,7 +1540,7 @@ proof). Done-gate 2 met.
 
 **Recon findings:**
 - Two components: `gofrontend` (Go, `phases/phase1/frontend/`) → frontend/v1 JSON →
-  `graalgo-run` (Java/Truffle, `NodeFactory` consumer). `docs/frontend-v1.md` is the
+  `graalgo-run` (Java/Truffle, `NodeFactory` consumer). [docs/frontend-v1.md](docs/frontend-v1.md) is the
   normative wire doc (347 lines).
 - `values/InterfaceDispatchProbes.java` exists (M9 hooks, WS L `--dump-polymorphism`
   planned) but is NOT wired: `GoInterface` is a data carrier only (no dispatch impl
@@ -1549,7 +1549,7 @@ proof). Done-gate 2 met.
 - Dispatch sites to measure: method calls (exact-receiver, `SelectorNode`),
   `FuncValueCallNode`, generic instantiation sites (M6).
 
-**Plan:** A. inventory public API (javap + go doc) → INTERFACE_FREEZE.md with
+**Plan:** A. inventory public API (javap + go doc) → [INTERFACE_FREEZE.md](INTERFACE_FREEZE.md) with
 FROZEN/INTERNAL marks + signature-snapshot test. B. wire probes into dispatch
 sites, add `--dump-polymorphism`, measure over diffharness + soak corpora,
 report histogram. C. ≥2 independent reviews. D. suite + make check green, sign-off
@@ -1561,13 +1561,13 @@ only when all gate conditions hold.
   per call site; receiver type key at `methodref` sites), `Main` gained
   `--dump-polymorphism[=path]` (WS L). Smoke-tested: method site monomorphic
   (1 target/1 recv), func-var site inside `apply` correctly bimorphic (2 targets).
-- Freeze doc drafted: `INTERFACE_FREEZE.md` (both components, FROZEN/INTERNAL,
+- Freeze doc drafted: [INTERFACE_FREEZE.md](INTERFACE_FREEZE.md) (both components, FROZEN/INTERNAL,
   builtin registry, machine checks).
 - `FreezeSignatureTest` extended: +NodeFactory entry points, node protocol,
   GoCalls/Runtime, probe APIs, values ctors (instance/static distinguished).
 - New tests: `CallSiteProbesTest` (5 unit tests), `MainTest.testDumpPolymorphism`
   (e2e bimorphic detection). `make test` running.
-- Measurement script: `hidden_files/m9_polymorphism/measure.py` (3 corpora:
+- Measurement script: [hidden_files/m9_polymorphism/measure.py](hidden_files/m9_polymorphism/measure.py) (3 corpora:
   diffharness 47 + phase1 corpus 147 + fuzz regressions 96).
 
 ### M9 progress (2026-10-05 ~10:30 CEST) — test failures found and fixed
@@ -1579,7 +1579,7 @@ Full `make test` (202 tests): 4 failures on first run.
    straightline harness observes main-frame locals via slotsByName, but sl13's
    vars are package-level globals (deliberately absent from slotsByName). So the
    closeout's "suite 195/0" claim was not true for this test. Fix: moved
-   `sl13_global_incdec.go` → `corpus/vars/gv10_global_incdec.go`, testing via
+   `sl13_global_incdec.go` → [corpus/vars/gv10_global_incdec.go](corpus/vars/gv10_global_incdec.go), testing via
    `Differential.checkProgram` (stdout vs gc), matching the gv07 precedent;
    removed the unworkable testSl13 method, added testGv10GlobalIncdec.
    Red-green preserved: M-J01 mutant prints 9 (not 11), M-J02 crashes at build.
@@ -1598,7 +1598,7 @@ Full `make test` (202 tests): 4 failures on first run.
   deterministically threw "missing // observe: trailer". The suite was
   red at M8 sign-off; the 195/0 number was stale (run before the test
   was added) or never re-run.
-- Fixed by the M9 worker: program moved to `corpus/vars/gv10_global_incdec.go`
+- Fixed by the M9 worker: program moved to [corpus/vars/gv10_global_incdec.go](corpus/vars/gv10_global_incdec.go)
   (VarsCorpusTest uses direct gc-output differential, no trailer needed),
   red-green verified vs gc.
 - The mutation (5/5 effective) and corpus-tally evidence were independently
@@ -1611,7 +1611,7 @@ Full `make test` (202 tests): 4 failures on first run.
 - Full suite: **203 tests, 0 failures** (`make test`, exit 0); `make check` green.
 - 5 commits: cd329c8 (probes), 137ff7e (e2e tests), a0028d8 (freeze doc),
   6a9b567 (sl13→gv10 move), f0b011c (Makefile GOTMPDIR).
-- Measurement running in background: `hidden_files/m9_polymorphism/measure.py`
+- Measurement running in background: [hidden_files/m9_polymorphism/measure.py](hidden_files/m9_polymorphism/measure.py)
   over diffharness (47) + phase1 corpus (147) + fuzz regressions (96).
 - 2 independent reviewers dispatched against fixed snapshot f0b011c:
   review1 (freeze completeness/correctness) → reviews/phase1-m9/review1.md;
@@ -1661,8 +1661,8 @@ interface dispatch (WS D) — the real megamorphism risk lives at interface
 call sites, which are unmeasured. Phase 4 must re-measure when interfaces
 land; today's numbers are the pre-interface baseline.
 
-Full data: `hidden_files/m9_polymorphism/report.json`; summary above also in
-`hidden_files/m9_polymorphism/SUMMARY.md`.
+Full data: [hidden_files/m9_polymorphism/report.json](hidden_files/m9_polymorphism/report.json); summary above also in
+[hidden_files/m9_polymorphism/SUMMARY.md](hidden_files/m9_polymorphism/SUMMARY.md).
 
 ## M9 SIGN-OFF (honest, 2026-10-05 ~14:00 CEST)
 
@@ -1677,7 +1677,7 @@ Done-gate 3 criteria, verified:
    part of the 204-test green suite.
 3. ✅ Polymorphism numbers measured and recorded: 170 sites, 99.4% mono /
    0.6% bi / 0% mega (above); committed in
-   `hidden_files/m9_polymorphism/{report.json,SUMMARY.md,measure.py}`.
+   `[hidden_files/m9_polymorphism/](hidden_files/m9_polymorphism/){report.json,SUMMARY.md,measure.py}`.
 4. ✅ ≥2 independent reviews, all findings remediated and re-tested:
    review1 (freeze: 7 P1 + 7 P2, GO-WITH-FINDINGS) and review2 (methodology:
    6 P1 + 11 P2, GO-WITH-FINDINGS) in `reviews/phase1-m9/`; all P1s fixed,
@@ -1702,7 +1702,7 @@ Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh 
 ### M10 progress (2026-10-05 ~12:00 CEST)
 - Grep gates: TODO/FIXME/XXX = 0 files. Placeholder hits all legitimate
   (fail-fast WS scope rejections; frozen Phase-2 API stubs that throw).
-  Strengthened `make check` with debug-leftover gate (src/main only;
+  Strengthened `make check` with debug-leftover gate ([src/main/](../../internal/backend/truffle/src/main/) only;
   test/smoke output legitimate). Both gates green (d3371a6).
 - Self-attack: 6 adversarial programs, all vs gc. Two P0s found+fixed:
   (1) exporter `qualifiedNameForType` dropped nested type args ->
@@ -1712,8 +1712,8 @@ Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh 
       NoClassDefFoundError cascade -> clean `stack overflow` report,
       exit 2 (51e281e; regression
       MainTest.testDeepRecursionReportsCleanStackOverflow).
-  Report: hidden_files/m10_selfattack/REPORT.md. Known limit documented
-  in docs/limitations.md (Phase-4 re-test trigger).
+  Report: [hidden_files/m10_selfattack/REPORT.md](hidden_files/m10_selfattack/REPORT.md). Known limit documented
+  in [docs/limitations.md](docs/limitations.md) (Phase-4 re-test trigger).
 - Reviews dispatched: 2 independent reviewers (code + methodology),
   snapshot 51e281e. Reports -> reviews/phase1-m10/ (pending).
 
@@ -1740,14 +1740,14 @@ Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh 
 - P0-B: deep Go recursion → raw JVM NoClassDefFoundError cascade.
   Fix: catch SOE + unwrap profiler cascade → clean `stack overflow`,
   exit 2. Regression: MainTest.testDeepRecursionReportsCleanStackOverflow.
-  Commit 51e281e. Limit documented: docs/limitations.md (15k ok, 20k+ exit 2).
+  Commit 51e281e. Limit documented: [docs/limitations.md](docs/limitations.md) (15k ok, 20k+ exit 2).
 - Others (defer storm, hostile fmt, defer/panic, typeparams): gc-identical.
-- Report: hidden_files/m10_selfattack/REPORT.md.
+- Report: [hidden_files/m10_selfattack/REPORT.md](hidden_files/m10_selfattack/REPORT.md).
 
 ### Done-gate 5: no placeholders (grep gate) — MET
 - TODO/FIXME/XXX: 0 files. "Stub" hits are fail-fast scope boundaries or
   frozen Phase-2 API surfaces (throw UnsupportedOperationException).
-- `make check` gates: placeholder gate + debug-leftover gate (src/main),
+- `make check` gates: placeholder gate + debug-leftover gate ([src/main/](../../internal/backend/truffle/src/main/)),
   both green. Deprecation enforced by -Xlint:deprecation -Werror.
 
 ### Final verification (fresh runs by M10 worker on sign-off tree)

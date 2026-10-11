@@ -8,4 +8,4 @@
   - sha256 `76007c309f821aaf435bce63162ea0395587fc77350801c81643fe7feea37276`
     (verified against the published `.sha256`; note it is a bare hash, not `sha256sum -c` format)
 - OS: linux/amd64
-- Requirements CLI: `~/workspace/graalgo/tools/req` (`go run . --root ~/workspace/graalgo`)
+- Requirements CLI: [tools/req/](tools/req/) (`go run . --root ~/workspace/graalgo`)

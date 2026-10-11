@@ -8,7 +8,7 @@ Bar (all must hold): (a) semantics-preserving or sound speculative story; (b) pl
 win vs gc **with PGO** on a named benchmark; (c) fits ≥1 graalgo architectural edge;
 (d) not in backlog and not in SURV-001…040; (e) not something gc already does well.
 
-Already covered (do not re-propose): SURV-001…040 (see SURVEY.md §1) + backlog:
+Already covered (do not re-propose): SURV-001…040 (see [SURVEY.md](SURVEY.md) §1) + backlog:
 devirtualization cascade; profile-guided struct field reorder/pack; speculative AoS→SoA;
 type narrowing + bit-packing; speculative data representation (map specialization,
 unboxing); small string optimization; dynamic string interning; inferred store-once;
@@ -331,7 +331,7 @@ is about *locks*, not wake policy); (e) gc does not do it.
    overhead) is addressed by SURV-032 (JIT-specialized select lowering) instead.
    https://github.com/golang/go/issues/41948 (see also #8896)
 4. **#47529 — `//go:noboundcheck` — DECLINED (+1:0/−1:11)** — already recorded in
-   SURVEY.md §2.13; re-verified still closed/declined. Routing stands (SURV-033).
+   [SURVEY.md](SURVEY.md) §2.13; re-verified still closed/declined. Routing stands (SURV-033).
    https://github.com/golang/go/issues/47529
 5. **#26680 — pack info into low bits of interface type pointers — THINKING
    (author-pessimistic).** Author (Go team): "We've generally avoided doing any bit

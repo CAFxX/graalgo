@@ -58,4 +58,4 @@ bound for compiled mode, stated, not a prediction.
 - Netpoller integration (deleted in favor of blocking NIO; owned by runtime track).
 - Deep-recursion stack limits (T5 §8.3.6, separate experiment).
 - GOMAXPROCS *changes at runtime* (no public API to resize carriers; see
-  CARRIER_POOL.md — documented deviation).
+  [CARRIER_POOL.md](CARRIER_POOL.md) — documented deviation).

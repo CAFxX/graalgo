@@ -7,7 +7,7 @@ ramp-down survival watch; Valhalla JEP 401 / primitive-class movement; T2 lane
 (OpenJ9/Azul/.NET) bar-clearing items only. (T4) golang/go #24314 status;
 #77893 five CLs MERGED/ABANDONED check; label-probe watch notes
 #81887, #81846/#81755, #81957, #81968 activity check. Wave-5 snapshot
-baseline: 2026-10-04 ~11:40–11:50 CEST (`track-t2t4-wave5-resweep.md`).
+baseline: 2026-10-04 ~11:40–11:50 CEST ([track-t2t4-wave5-resweep.md](track-t2t4-wave5-resweep.md)).
 **Scope:** raw writeups only — no SURVEY.md/CHECKPOINT.md edits, no SURV- ID
 assignment, no graalgo/SPEC.md/PHASES.md/registry edits. Unchanged items are
 recorded as negatives with the exact check performed. All vendor/project

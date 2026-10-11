@@ -1,7 +1,7 @@
 # Track 2 — Wave-3 continuous re-sweep (W3)
 
 **Wave:** 3 · **Worker:** W3 (T2) · **Date:** 2026-10-04
-**Mission:** re-sweep from SURVEY.md §6 wave-3 queue item 4 —
+**Mission:** re-sweep from [SURVEY.md](SURVEY.md) §6 wave-3 queue item 4 —
 (1) Graal changelog since ~wave 1; (2) Leyden JEP 544 status;
 (3) Valhalla JEP 401 status; (4) TruffleRuby/GraalPy (project/changelog level,
 W4 does source passes); (5) Crema/Terminus re-check.

@@ -6,9 +6,9 @@
 linux/amd64, `-toolexec` injected via `GOFLAGS` into every `go` invocation of
 the `cmd/go` txtar suite; logging wrapper that records each intercepted
 invocation and `exec`s the real tool unchanged. Wrapper v1 (sha256
-`67d5d918…`, source `src/toolexec-log/main.go.v1`) for the matrix; v4
-(sha256 `bf86f300…`, source `src/toolexec-log/main.go`) for the
-response-file follow-up. Full provenance in `src/SHA256SUMS`.
+`67d5d918…`, source [src/toolexec-log/main.go.v1](src/toolexec-log/main.go.v1)) for the matrix; v4
+(sha256 `bf86f300…`, source [src/toolexec-log/main.go](src/toolexec-log/main.go)) for the
+response-file follow-up. Full provenance in [src/SHA256SUMS](src/SHA256SUMS).
 
 ## 1. Objective
 
@@ -25,7 +25,7 @@ agent-hour upgrade bound.
 1. **Seam mapping (source).** Enumerated every `cfg.BuildToolexec` use in
    `src/cmd/go` (go1.27.1) and every direct `exec.Command` in the build
    pipeline to classify wrapped vs unwrapped subprocesses (§4).
-2. **Harness.** A `-toolexec` wrapper in Go (`src/toolexec-log/main.go`):
+2. **Harness.** A `-toolexec` wrapper in Go ([src/toolexec-log/main.go](src/toolexec-log/main.go)):
    appends one record per invocation (timestamp, pid, tool path,
    `TOOLEXEC_IMPORTPATH`, cwd, full argv, `@response-file` expansion with
    size+sha256) to `$GRAALGO_WRAPPER_LOG` under an exclusive flock, then
@@ -33,14 +33,14 @@ agent-hour upgrade bound.
    observable behavior is therefore stock by construction; the log is the
    only side channel.
 3. **Matrix.** 52 txtar scripts from `src/cmd/go/testdata/script/`,
-   sampled per the rationale in `scripts/matrix.txt` (full list:
-   `scripts/matrix_list.txt`), each run twice via a prebuilt `cmd/go` test
+   sampled per the rationale in [scripts/matrix.txt](scripts/matrix.txt) (full list:
+   [scripts/matrix_list.txt](scripts/matrix_list.txt)), each run twice via a prebuilt `cmd/go` test
    binary — once stock, once with `GOFLAGS=-toolexec=<wrapper>` injected
    into every script's `go` invocations. A script passes in a mode iff its
    own stdout/stderr/exit-code/file assertions hold, so equal pass/fail
    across modes = identical observable behavior by the suite's definition.
    Separate `GOCACHE` per mode; serial execution; per-script wrapper logs;
-   results checkpointed to `logs/matrix_results.jsonl` (resumable).
+   results checkpointed to [logs/matrix_results.jsonl](logs/matrix_results.jsonl) (resumable).
    Injection required a *temporary, test-harness-only* patch to
    `script_test.go` (TestMain unsets `GOFLAGS`; the patch synthesizes it
    from `GRAALGO_TOOLEXEC`) — reverted after the spike; the driver itself
@@ -54,8 +54,8 @@ agent-hour upgrade bound.
 
 ## 3. Matrix results
 
-52 scripts × 2 modes = 104 runs (`logs/matrix_results.jsonl`; per-script
-logs in `logs/stock/`, `logs/wrapped/`; wrapper logs in `logs/wraplogs/`).
+52 scripts × 2 modes = 104 runs ([logs/matrix_results.jsonl](logs/matrix_results.jsonl); per-script
+logs in [logs/stock/](logs/stock/), [logs/wrapped/](logs/wrapped/); wrapper logs in [logs/wraplogs/](logs/wraplogs/)).
 
 - **Stock mode: 52/52 pass.**
 - **Wrapped mode (v1): 51/52 pass.** The single divergence was
@@ -254,16 +254,16 @@ follow-up).
 
 ## 8. Artifacts
 
-- `src/toolexec-log/main.go` (+`.v1`, `.v2`), `src/SHA256SUMS` — harness
+- [src/toolexec-log/main.go](src/toolexec-log/main.go) (+`.v1`, `.v2`), [src/SHA256SUMS](src/SHA256SUMS) — harness
   source, all versions, with checksums (v3 binary-only; see manifest)
 - `bin/toolexec-log` (v1), `bin/toolexec-log-v2`, `bin/toolexec-log-v3`,
   `bin/toolexec-log-v4` + `bin/named/compile` (v4, tool-like name),
   `bin/gotest.exe` — built harness and test binaries
-- `scripts/matrix.txt`, `scripts/matrix_list.txt` — sampling rationale + list
-- `scripts/analyze_trace.py` — `-x` trace diff tool
-- `run_matrix.sh`, `launch_matrix.py` — checkpointed/resumable runner +
+- [scripts/matrix.txt](scripts/matrix.txt), [scripts/matrix_list.txt](scripts/matrix_list.txt) — sampling rationale + list
+- [scripts/analyze_trace.py](scripts/analyze_trace.py) — `-x` trace diff tool
+- [run_matrix.sh](run_matrix.sh), [launch_matrix.py](launch_matrix.py) — checkpointed/resumable runner +
   double-fork launcher
-- `logs/matrix_results.jsonl`, `logs/{stock,wrapped}/`, `logs/wraplogs/` —
+- [logs/matrix_results.jsonl](logs/matrix_results.jsonl), `[logs/](logs/){stock,wrapped}/`, [logs/wraplogs/](logs/wraplogs/) —
   raw results (incl. `cgo_long_cmd.v4.log`, `.v4.wraplog` for the fix
   verification)
 - `probes/` — probe workspaces, `-x` traces (`trace-stock.txt`,

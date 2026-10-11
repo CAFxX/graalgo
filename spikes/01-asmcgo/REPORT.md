@@ -28,7 +28,7 @@ Method, per the task:
 3. Emulated the hard "emulate" candidates (memmove/memclr family, math/bits,
    AES-128, SHA-256) with differential evidence.
 4. Built a stub backend: the affected package trees copied under
-   `stub/`, every `.s` file deleted and replaced by the formulations, then
+   [stub/](stub/), every `.s` file deleted and replaced by the formulations, then
    ran the real stdlib test suites for `sync/atomic`, `bytes`, `strings`.
 5. Wrote a Panama FFI equivalent of a small real cgo package (JDK 25,
    JEP 454 final) and showed it working, bit-identical to the cgo output.
@@ -42,7 +42,7 @@ Method, per the task:
 Formulation level, documented choice: **Java VarHandle is the real
 formulation level** — pure Go cannot express atomic memory semantics without
 the assembly being replaced. The spike's Go formulation
-(`harness/atomic/atomic.go`) captures sequential semantics with a
+([harness/atomic/atomic.go](harness/atomic/atomic.go)) captures sequential semantics with a
 channel-striped lock standing in for intrinsic atomicity; it is the
 emulation used to validate semantics differentially, not the production
 shape.
@@ -66,9 +66,9 @@ Differential evidence (`logs/difftest_seed*.log`, all `RESULT: PASS`):
 | 1 | 3000 | 1500 × 50-op | 0 |
 | 777 | 3000 | 1500 × 50-op | 0 |
 
-Plus: `java/AtomicForm.java` 6-invariant concurrent stress — PASS
-(`logs/atomic_java_stress.log`); same invariants through `sync/atomic` asm
-in Go — PASS (`logs/atomic_go_stress.log`).
+Plus: [java/AtomicForm.java](java/AtomicForm.java) 6-invariant concurrent stress — PASS
+([logs/atomic_java_stress.log](logs/atomic_java_stress.log)); same invariants through `sync/atomic` asm
+in Go — PASS ([logs/atomic_go_stress.log](logs/atomic_go_stress.log)).
 
 A formulation bug was found and fixed during stub testing: a panicking op
 (nil deref, exercised by `TestNilDeref`) leaked the stripe lock and
@@ -76,7 +76,7 @@ deadlocked the next op on the same stripe. The first fix attempt
 (`defer unlock(p)`) missed two functions (`Loadp`, `StorepNoWB`) that call
 `lock(ptr)` directly rather than via the `p` variable — caught by a
 bisection harness, then guarded by a permanent regression test
-(`harness/atomic/panic_test.go`: every op on nil must panic *and* release
+([harness/atomic/panic_test.go](harness/atomic/panic_test.go): every op on nil must panic *and* release
 its stripe). All differential evidence was re-run after the fix (still zero
 mismatches). This is exactly the class of bug the stub-backend step exists
 to catch: the emulation's lock discipline, not the intrinsified semantics
@@ -85,7 +85,7 @@ formulation level).
 
 ### 2.2 Intrinsify — `internal/bytealg` (46 `.s` files, amd64 SIMD kernels)
 
-Pure-Go formulations (`harness/bytealg/bytealg.go`): `IndexByte`,
+Pure-Go formulations ([harness/bytealg/bytealg.go](harness/bytealg/bytealg.go)): `IndexByte`,
 `IndexByteString`, `LastIndexByte`, `LastIndexByteString`, `Index`,
 `IndexString`, `Compare`, `Equal`, `Count`, `CountString`. Choice rationale:
 the Truffle backend compiles Go, and these semantics have no platform
@@ -117,7 +117,7 @@ stdlib tests, not by the difftest):
 
 ### 2.3 Emulate — memmove/memclr family (`runtime/memmove_amd64.s`, `memclr_amd64.s`)
 
-`harness/mem/mem.go`: `Memmove`/`MemclrNoHeapPointers`/`Memequal`/`Memcmp`
+[harness/mem/mem.go](harness/mem/mem.go): `Memmove`/`MemclrNoHeapPointers`/`Memequal`/`Memcmp`
 in vet-clean pure Go (`unsafe.Add`). Differential vs `copy` builtin,
 `string ==`, `bytes.Compare`, with canary checks for `Memclr`:
 
@@ -134,14 +134,14 @@ JVM write barriers (which every JVM reference store has by construction).
 
 ### 2.4 JVM-covers — math/bits
 
-`java/BitsForm.java` maps `math/bits` onto `java.lang.Long` methods
+[java/BitsForm.java](java/BitsForm.java) maps `math/bits` onto `java.lang.Long` methods
 (`numberOfLeadingZeros`, `numberOfTrailingZeros`, `bitCount`,
 `reverse`, `reverseBytes`, `rotateLeft/Right`, …). Differential corpus:
 100,013 values, **empty diff** against Go `math/bits`.
 
 ### 2.5 Emulate-then-intrinsify — crypto (AES-128, SHA-256)
 
-`harness/crypto/crypto.go`: portable AES-128 and SHA-256 (S-box and
+[harness/crypto/crypto.go](harness/crypto/crypto.go): portable AES-128 and SHA-256 (S-box and
 constants computed programmatically, no lookup tables copied). Evidence:
 
 | seed | AES-128 blocks | SHA-256 digests | mismatches |
@@ -157,7 +157,7 @@ later.
 
 ## 3. Stub backend
 
-Mechanism (`stub/`, built deterministically by `stub_build.py`): the
+Mechanism ([stub/](stub/), built deterministically by [stub_build.py](stub_build.py)): the
 `sync/atomic`, `bytes`, `strings` trees (plus the `internal/` packages they
 need: `bytealg`, `runtime/atomic`, `runtime/gc` tables, `stringslite`,
 `abi`/`escape.go`, `asan`/`noasan.go`, `testenv`+`cfg`+`goarch`+`platform`)
@@ -191,9 +191,9 @@ Test results (`go test -count=1`; full suite for bytes/strings,
 
 | package | result | detail |
 |---|---|---|
-| `sync/atomic` | PASS | `go test -vet=off -short -count=1`: 95/95 tests pass in 8.9s, incl. hammer concurrency tests (`TestHammerStoreLoad` 1.45s) and `TestNilDeref` (0.55s) (log: `logs/stub_atomic_test_short.log`) |
-| `bytes` | PASS | full suite `go test -count=1`, 83.9s (log: `logs/stub_bytes_test.log`) |
-| `strings` | PASS | full suite `go test -count=1`, 34.6s (log: `logs/stub_strings_test.log`) |
+| `sync/atomic` | PASS | `go test -vet=off -short -count=1`: 95/95 tests pass in 8.9s, incl. hammer concurrency tests (`TestHammerStoreLoad` 1.45s) and `TestNilDeref` (0.55s) (log: [logs/stub_atomic_test_short.log](logs/stub_atomic_test_short.log)) |
+| `bytes` | PASS | full suite `go test -count=1`, 83.9s (log: [logs/stub_bytes_test.log](logs/stub_bytes_test.log)) |
+| `strings` | PASS | full suite `go test -count=1`, 34.6s (log: [logs/stub_strings_test.log](logs/stub_strings_test.log)) |
 
 (`-vet=off` on sync/atomic only: vet flags two `possible misuse of
 unsafe.Pointer` warnings in the upstream test file itself, copied verbatim;
@@ -201,11 +201,11 @@ the non-test code is `go vet` clean.)
 
 ## 4. cgo → Panama
 
-`panama/cgodemo/`: a small real cgo package calling a C checksum function
-and libc `strlen`. `panama/PanamaDemo.java`: the JEP 454 (final in JDK 25)
+[panama/cgodemo/](panama/cgodemo/): a small real cgo package calling a C checksum function
+and libc `strlen`. [panama/PanamaDemo.java](panama/PanamaDemo.java): the JEP 454 (final in JDK 25)
 equivalent covering all three FFI directions: downcall into libc, downcall
 into a custom `libchecksum.so`, and an upcall (C calling back into a Java
-lambda per byte). Results (`panama/cgo_demo.log`, `panama/panama_demo.log`):
+lambda per byte). Results ([panama/cgo_demo.log](panama/cgo_demo.log), [panama/panama_demo.log](panama/panama_demo.log)):
 
 - cgo: `checksum("graalgo-panama-demo") = 14843116955214666767`, `strlen = 19`
 - Panama: identical checksum (**bit-for-bit match**), `strlen = 19`,
@@ -217,7 +217,7 @@ asm files classify as superseded-by-Panama.
 
 ## 5. Kill assessment
 
-The inventory (`inventory/classification.md`, `inventory/symbols_loadbearing.txt`)
+The inventory ([inventory/classification.md](inventory/classification.md), [inventory/symbols_loadbearing.txt](inventory/symbols_loadbearing.txt))
 is exhaustive over `runtime`, `sync`, `reflect`, `net` for linux/amd64:
 
 - `net`: zero `.s` files.
@@ -283,17 +283,17 @@ Tested configuration: linux/amd64, go1.27.1 (`~/tools/go`), GraalVM JDK
 
 ## 8. Artifacts
 
-All under `~/workspace/graalgo/spikes/01-asmcgo/`:
+All under [spikes/01-asmcgo/](./):
 
-- `REPORT.md` (this file)
-- `stub_build.py` — deterministic stub builder
-- `stub/` — the stub backend module (`graalgos01stub`)
-- `harness/` — formulation sources + difftest (`go.mod` module `spike01`)
-- `java/AtomicForm.java`, `java/BitsForm.java`
-- `panama/` — cgo demo, C library, Panama demo, both run logs
-- `inventory/symbols_loadbearing.txt`, `inventory/classification.md`
-- `logs/` — raw logs (difftest ×3, Java/Go atomic stress, stub test runs)
-- `checkpoints/PROGRESS.md`
+- [REPORT.md](REPORT.md) (this file)
+- [stub_build.py](stub_build.py) — deterministic stub builder
+- [stub/](stub/) — the stub backend module (`graalgos01stub`)
+- [harness/](harness/) — formulation sources + difftest (`go.mod` module `spike01`)
+- [java/AtomicForm.java](java/AtomicForm.java), [java/BitsForm.java](java/BitsForm.java)
+- [panama/](panama/) — cgo demo, C library, Panama demo, both run logs
+- [inventory/symbols_loadbearing.txt](inventory/symbols_loadbearing.txt), [inventory/classification.md](inventory/classification.md)
+- [logs/](logs/) — raw logs (difftest ×3, Java/Go atomic stress, stub test runs)
+- [checkpoints/PROGRESS.md](checkpoints/PROGRESS.md)
 
 Checksums (sha256) of harness sources and logs:
 

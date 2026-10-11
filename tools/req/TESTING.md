@@ -1,4 +1,4 @@
-# TESTING.md — `req` CLI test suite
+# [TESTING.md](TESTING.md) — `req` CLI test suite
 
 Test suite for the `req` requirement-registry CLI (`tools/req/`: `add`,
 `lint`, `trace`, `tree`, `supersede`, `retire`). 127 test functions in
@@ -7,13 +7,13 @@ package `main`, all hermetic.
 ## Hermeticity contract
 
 Every test builds its registry and scanned tree inside `t.TempDir()`.
-**No test touches the real `~/workspace/graalgo/requirements/` tree.**
+**No test touches the real [requirements/](../../requirements/) tree.**
 The only exceptions are the `findRoot` tests, which `chdir` into a temp
 dir and restore afterwards. There is no `t.Parallel` anywhere in the
 package: several tests swap `os.Stdin`/`os.Stdout`/`os.Stderr` and the
 working directory, so all tests run sequentially in one process.
 
-Shared fixtures live in `testutil_test.go`: `testRoot`, `reqFile`
+Shared fixtures live in [testutil_test.go](testutil_test.go): `testRoot`, `reqFile`
 (registry YAML builder), `ctxFlags`, `stdLayout`, `captureOutput`,
 `withStdin`, `stubTerminal`, `withCwd`, `snapshotTree` /
 `assertTreeIdentical`, `requireErrContains`.

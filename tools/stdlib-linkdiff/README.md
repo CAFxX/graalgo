@@ -4,7 +4,7 @@ The graalgo linkname-diff tool (P3-M6, GG-0021; SPEC §3.6).
 
 Scans a Go source tree for `//go:linkname` directives and classifies each
 target as **SATISFIED** (provided by graalgo), **ROUTED** (explicit entry
-in `routes.txt`), or **MISSING** (lands on the skip-list — never silently
+in [routes.txt](routes.txt)), or **MISSING** (lands on the skip-list — never silently
 dropped). The JSON report carries `skip_list_size` as a prominent,
 machine-readable top-level field: SPEC §3.6's kill trigger is skip-list
 growth > 15 twice per release.
@@ -53,7 +53,7 @@ record; `--provided PATH` reads a snapshot instead of extracting.
 
 ## Routes
 
-`routes.txt`: one `target -> replacement # reason` per line; the reason
+[routes.txt](routes.txt): one `target -> replacement # reason` per line; the reason
 is mandatory. A routed target is not on the skip-list. Add a route when
 a MISSING target is triaged as deliberately unprovided (with its
 justification and source).
@@ -101,7 +101,7 @@ Files are selected for `--goos/--goarch` (default `linux/amd64`) with
 `go/build.MatchFile`: `//go:build` / `// +build` lines plus filename
 suffixes. Only the tags `linux`, `amd64`, `unix` (and `--tags`) count as
 satisfied. `_test.go` files are excluded from the production contract
-(counted separately). `testdata/` directories are skipped.
+(counted separately). [testdata/](testdata/) directories are skipped.
 
 ## Per-release workflow (Go upgrade)
 
@@ -120,9 +120,9 @@ Run this on every Go upgrade, as part of the upgrade's Phase 2
    release's report. SPEC §3.6 kill trigger: growth > 15 twice.
 4. **Triage new MISSING targets**: for each new skip-list entry decide —
    implement the symbol (lands in the P3-M4 registry or a synthetic
-   package), add a `routes.txt` route with justification, or accept it
+   package), add a [routes.txt](routes.txt) route with justification, or accept it
    onto the skip-list with a recorded reason.
-5. **Diff `routes.txt`** against the previous release; every added or
+5. **Diff [routes.txt](routes.txt)** against the previous release; every added or
    removed route needs its justification reviewed.
 6. **Diff the provided snapshot** (`provided-<ver>.json`) against the
    previous one: unexpected shrinkage means a source regressed
@@ -134,9 +134,9 @@ The trial report naming convention is
 ## Testing
 
 `go test ./...` — 13 tests over the synthetic fixture tree in
-`testdata/fixture` (a fake GOROOT) plus the real graalgo tree for
+[testdata/fixture/](testdata/fixture/) (a fake GOROOT) plus the real graalgo tree for
 provided-set extraction. Red-green evidence for the build-tag filter
-lives in `redgreen/`: `green.log` (all green), `mutation-tagfilter.patch`
+lives in [redgreen/](redgreen/): `green.log` (all green), `mutation-tagfilter.patch`
 (the filter disabled), `red-tagfilter.log`
 (`TestBuildTagGatedExcluded` red under the mutation), `green-rerun.log`
 (green after restore).

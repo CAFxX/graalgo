@@ -3,10 +3,10 @@
 **Worker:** wave-4 track worker. **Date:** 2026-10-04. **Mission:** mine two CGO'25
 papers spotted by the T1 wave-3 forward-citation sweep for angles relevant to a
 GraalVM/Truffle-based AOT+JIT optimizing compiler for Go. NO SURV- IDs (coordinator
-assigns at synthesis from 075+); raw candidates marked raw/vetted; SURVEY.md and
-CHECKPOINT.md are NOT edited here.
+assigns at synthesis from 075+); raw candidates marked raw/vetted; [SURVEY.md](SURVEY.md) and
+[CHECKPOINT.md](CHECKPOINT.md) are NOT edited here.
 
-**Spot (from track-1-wave3-citations.md sweep stats):** "GraalNN: Context-Sensitive
+**Spot (from [track-1-wave3-citations.md](track-1-wave3-citations.md) sweep stats):** "GraalNN: Context-Sensitive
 Static Profiling with Graph Neural Networks" (Milikic et al., CGO'25) and "Improving
 Native-Image Startup Performance" (Basso et al., CGO'25). Both spotted titles were
 accurate — no "spot was wrong" negative to record.

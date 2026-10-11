@@ -1,7 +1,7 @@
 # graalgo.runtime
 
 Runtime entry points callable from generated Truffle ASTs
-(`Runtime.java`).
+([Runtime.java](Runtime.java)).
 
 M1 scope: the print path only (`Runtime.println(String)` — writes the string
 plus a newline to stdout), exercised by the hand-built hello AST.
@@ -10,7 +10,7 @@ WS G grows this package into the intrinsic surface (builtins + runtime
 stubs) under the frozen signature set (GG-0020/GG-0021, PLAN.md D4/D7).
 Parity stances for the real builtins (e.g. Go's print/println write to
 stderr, not stdout) are recorded in GG-0045 when they land — the M1 hello
-fixture's stdout routing is deliberate and documented in `Runtime.java`,
+fixture's stdout routing is deliberate and documented in [Runtime.java](Runtime.java),
 not a parity claim.
 
 ## WS G contents (M4)

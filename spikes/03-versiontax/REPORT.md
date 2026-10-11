@@ -72,7 +72,7 @@ agent/human decision). The go1.26.8 toolchain was built from source
 surfaces that need a runnable old toolchain (c, e). The `script_test.go`
 GOFLAGS-injection patch (spike-05's temporary test-harness-only technique) was
 re-applied to the 1.26.8 tree to run the txtar matrix; pristine hash recorded
-(`logs/script_test.go.pristine.sha256`), revert pending at spike close (see §8).
+([logs/script_test.go.pristine.sha256](logs/script_test.go.pristine.sha256)), revert pending at spike close (see §8).
 
 Measurement honesty: every wall-clock number below is labeled **[M]**
 (measured in this run) or **[ESTIMATE]** (reconstructed/extrapolated).
@@ -82,15 +82,15 @@ Extrapolated numbers are never presented as measured.
 
 ### 3.1 (a) asm/cgo classifications — re-run against the 1.26 tree, diff
 
-**Tool:** `src/asm_inventory.py` — per load-bearing package
+**Tool:** [src/asm_inventory.py](src/asm_inventory.py) — per load-bearing package
 (`src/runtime`, `src/sync`, `src/reflect`, `src/net`,
 `src/internal/runtime/atomic`, `src/internal/bytealg`, `src/internal/cpu`,
 `src/crypto/internal/fips140`, `src/math/bits`), lists every `.s` file and
-its defined TEXT/DATA symbols; `src/asm_diff.py` normalizes (strip package
+its defined TEXT/DATA symbols; [src/asm_diff.py](src/asm_diff.py) normalizes (strip package
 qualifiers, `<>`, `(SB)`, `+off(SB)`) and diffs symbol *sets* per file,
 reporting FILE-ADDED/REMOVED, per-file +/− symbols, and `<ABIInternal>` flips.
-Raw: `logs/asm_inv_1.26.8.txt`, `logs/asm_inv_1.27.1.txt`; semantic diff:
-`logs/asm_diff.txt`.
+Raw: [logs/asm_inv_1.26.8.txt](logs/asm_inv_1.26.8.txt), [logs/asm_inv_1.27.1.txt](logs/asm_inv_1.27.1.txt); semantic diff:
+[logs/asm_diff.txt](logs/asm_diff.txt).
 
 **Findings (judgment):**
 
@@ -116,13 +116,13 @@ Raw: `logs/asm_inv_1.26.8.txt`, `logs/asm_inv_1.27.1.txt`; semantic diff:
 
 ### 3.2 (b) reflect intrinsic inventory — re-measure on 1.26, diff
 
-**Tools:** `src/reflect_inventory.py` (re-extracts `unsafe.*` matches from
+**Tools:** [src/reflect_inventory.py](src/reflect_inventory.py) (re-extracts `unsafe.*` matches from
 non-test `src/reflect/*.go` with the same rules as spike 04's raw inventory;
 superset: also catches the 8 `"unsafe"` import lines, 1 comment line, and
 `float32reg_generic.go` that 04's grep missed — all mechanically NONOP);
-`src/reflect_carryover.py` (carries 04's hand-read categories onto
+[src/reflect_carryover.py](src/reflect_carryover.py) (carries 04's hand-read categories onto
 whitespace-identical lines: 1 judgment item per *changed* line only);
-`src/layout_extract.py` (rtype/itab/abi struct field lists); plus a re-run of
+[src/layout_extract.py](src/layout_extract.py) (rtype/itab/abi struct field lists); plus a re-run of
 04's `linkname_diff.py` against the 1.26.8 tree.
 
 **Findings:**
@@ -145,7 +145,7 @@ AIX-only fixup is the other watch-list item). ~5 min judgment **[ESTIMATE]**.
 **Method:** built go1.26.8 from source; built `bin/gotest126.exe`
 (`go test -c` on 1.26.8's `src/cmd/go` with the temporary test-harness-only
 `script_test.go` patch — pristine hash `f07bb8ee98dab5a8045b37b5dffe51c777c76eca37ae9fedc5c56304d6f21025`);
-16-script sample (`logs/matrix126_sample.txt`) preserving spike-05's
+16-script sample ([logs/matrix126_sample.txt](logs/matrix126_sample.txt)) preserving spike-05's
 seam-coverage rationale (SEAM-DIRECT ×2, BUILD ×4, RUN ×1, TEST ×3, VET ×1,
 LIST ×1, ENV ×1, COVER ×1, CGO ×1 incl. response-file `cgo_long_cmd`, MOD ×1);
 each script stock + wrapped. Wrapped runs used the spike-05 **v4** wrapper
@@ -156,8 +156,8 @@ runs had completed, all still valid). After finding F8 (see below),
 `bin/named126/compile` (same v4 logic, go1.26.8 response-file format,
 tool-like basename per 05's F6a); the other 15 wrapped scripts never touch
 the response-file path, so v4 vs the 1.26 variant is behaviorally identical
-for them. Runner: `run_matrix126.sh` (checkpointed/resumable, detached,
-`logs/matrix126_results.jsonl`; now points at `bin/named126/compile` for
+for them. Runner: [run_matrix126.sh](run_matrix126.sh) (checkpointed/resumable, detached,
+[logs/matrix126_results.jsonl](logs/matrix126_results.jsonl); now points at `bin/named126/compile` for
 replay fidelity).
 
 **Result: 32/32 pass (16 stock, 16 wrapped)** — the `-toolexec` seam is
@@ -182,7 +182,7 @@ wrapper (not the seam):
   run also re-confirmed 05's F6a: the wrapper must be installed under a
   tool-like basename — `bin/named/compile` — or the driver never uses
   response files → E2BIG.)
-- **Fix (this spike):** `src/toolexec-126/main.go` — v4 with `ParseArgs` /
+- **Fix (this spike):** [src/toolexec-126/main.go](src/toolexec-126/main.go) — v4 with `ParseArgs` /
   `encodeArg` / `DecodeArg` ported verbatim from go1.26.8's `objabi`+driver
   and a verbatim (not re-encoded) in-place rewrite; unit-tested against the
   captured real 349 KB response file (12 args, `-ldflags` line intact);
@@ -200,10 +200,10 @@ spike's R3 ("re-verify if `useResponseFile` changes") is extended: watch
 
 ### 3.4 (d) `go/*` frontend API surface — diff between releases
 
-**Tool:** `src/api_dump.go` — parses every package under `src/go` in both
+**Tool:** [src/api_dump.go](src/api_dump.go) — parses every package under `src/go` in both
 trees (host `go/parser`), dumps one canonical line per exported declaration
 (funcs+methods, types, struct fields, interface methods, vars/consts):
-1,434 (1.26.8) → 1,445 (1.27.1) exported declarations. Diff: `logs/api_diff.txt`.
+1,434 (1.26.8) → 1,445 (1.27.1) exported declarations. Diff: [logs/api_diff.txt](logs/api_diff.txt).
 
 **Findings (12 items, all additive):** `go/constant.StringLen`,
 `go/scanner.(*Scanner).End`, `go/token.(*File).String`,
@@ -219,10 +219,10 @@ Ph1) absorbs all of this mechanically — ~8 min triage **[ESTIMATE]**.
 
 ### 3.5 (e) harness corpus expectations
 
-**Method:** `logs/backends126.json` — the 07-harness `run` with backends
+**Method:** [logs/backends126.json](logs/backends126.json) — the 07-harness `run` with backends
 `gc-1.27.1` (reference) vs `gc-1.26.8` over the full 45-program corpus.
 
-**Result: 45/45 SAME, 0 divergences** (`logs/harness_126.json`). Every corpus
+**Result: 45/45 SAME, 0 divergences** ([logs/harness_126.json](logs/harness_126.json)). Every corpus
 expectation (normalizers, exit codes, panic traces) holds across the boundary;
 no expectation updates needed. Mechanical re-run (~2 min **[M]**); judgment:
 none.
@@ -230,7 +230,7 @@ none.
 ### 3.6 (f) 02b scheduler prototype
 
 Pure Java (`build.sh` pins only the GraalVM JDK; no Go toolchain, GOROOT, or
-golang dependency anywhere in `src/`). **Go-release coupling: zero.** Version
+golang dependency anywhere in [src/](src/)). **Go-release coupling: zero.** Version
 tax per release: 0.
 
 ## 4. Toil accounting
@@ -250,7 +250,7 @@ one-time (amortized); *re-run* time is the steady-state cost.
 | (d) go/* API: write api_dump, run, review 12 items + Hasher context | ~7 min (build 6 s) | ~8 min |
 | (c) toolexec: patch script_test.go, build gotest126.exe (~2 min), sample select, sanity run | ~20 min (mostly builds) | ~15 min (patch reconstruction) |
 | (c) toolexec: 16×2 txtar matrix | ~35 min (unattended, detached) | ~5 min (result review) |
-| (c) toolexec: F8 root-cause + 1.26-format wrapper (`src/toolexec-126/`) + unit test + cgo_long_cmd re-run | ~10 min | ~25 min (first-time; steady-state re-sync ~30 min per format change) |
+| (c) toolexec: F8 root-cause + 1.26-format wrapper ([src/toolexec-126/](src/toolexec-126/)) + unit test + cgo_long_cmd re-run | ~10 min | ~25 min (first-time; steady-state re-sync ~30 min per format change) |
 | (e) harness: backends config + 45-program run | 106 s | ~2 min (report review) |
 | (f) scheduler coupling check | <1 min | — |
 | Reading (SKILL, PHASES §2, FEASIBILITY §8+§6, SPEC §6) + this report | — | ~45 min |
@@ -378,7 +378,7 @@ remains T2's [ESTIMATE] (LOW confidence) and is the residual risk (see §8).
    diverges → run the full 929 before concluding.
 4. **`script_test.go` patch:** temporary, test-harness-only; MUST be reverted
    at spike close with hash verification against
-   `logs/script_test.go.pristine.sha256` (same discipline as spike 05 §9).
+   [logs/script_test.go.pristine.sha256](logs/script_test.go.pristine.sha256) (same discipline as spike 05 §9).
 5. **Judgment-time figures** are single-agent (me) [ESTIMATE]s; wall-clock
    assumes the T2 parallelization (4–6 subagents + unattended oracle compute).
 6. **Negative verdicts scoped:** "the 1.26.8→1.27.1 boundary required no

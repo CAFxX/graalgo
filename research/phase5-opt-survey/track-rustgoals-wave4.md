@@ -4,7 +4,7 @@
 **Date:** 2026-10-04. **Fetch date for all status claims below:** 2026-10-04.
 **Purpose:** follow up the §3 complementary angle on SURV-024 ("Rust Project Goals
 2026 include MIR move elimination — prototype-gated spike design") and check whether
-the Rust work is vapor or real. I do NOT assign SURV- IDs; I do NOT edit SURVEY.md
+the Rust work is vapor or real. I do NOT assign SURV- IDs; I do NOT edit [SURVEY.md](SURVEY.md)
 or CHECKPOINT.md. Coordinator disposes.
 
 ## §1 Status of MIR move elimination (as of 2026-10-04)
@@ -259,7 +259,7 @@ do: candidates are (i) allocation-site-anchored guards (descriptor carries a
 "uniquely referenced" bit maintained by the GC/allocator — cheap to test at
 the copy site); (ii) code-version guards (the JIT compiles a move-eliding
 version guarded on a per-site assumption, invalidated by the first observed
-aliasing — mirrors the assumption-dependency framework, SURVEY.md §4).
+aliasing — mirrors the assumption-dependency framework, [SURVEY.md](SURVEY.md) §4).
 
 **Related non-transfer:** Rust's win is partly driven by "Rust objects are
 typically constructed by a method and then moved into their final address" —
@@ -330,7 +330,7 @@ outcome; PEA or gc may already be covering the space).
 ### 3.2 Stage 1 — guarded prototype (only if Stage 0 survives)
 
 **Builds on:** the JIT's escape-analysis/descriptor facts (E1) + the
-assumption-dependency/guard framework (SURVEY.md §4, E3). Concretely:
+assumption-dependency/guard framework ([SURVEY.md](SURVEY.md) §4, E3). Concretely:
 
 1. **Candidate selection:** `PreciseLiveness`-shaped analysis over the JIT IR
    at function scope: for each `copy(dst, src)` and struct-copy site, compute

@@ -1,7 +1,7 @@
 # Wave-6 SURV-024 watch: #157943 trip conditions (W6)
 
 **Worker:** surv024-wave6-watch · **Fetch date:** 2026-10-04 (all checks ~12:37–12:50 CEST)
-**Baseline:** wave-5 results as of 2026-10-04 ~12:00 CEST (see `track-t3-wave5-triggers.md` §2).
+**Baseline:** wave-5 results as of 2026-10-04 ~12:00 CEST (see [track-t3-wave5-triggers.md](track-t3-wave5-triggers.md) §2).
 **Mission:** check the three named wave-6 trip conditions for rust-lang/rust#157943 (MIR move elimination).
 Any one firing triggers a transfer-ruling + Stage-0-prior refresh for SURV-024.
 **Scope:** notes only — no SURVEY.md/CHECKPOINT.md edits, no SURV- IDs. All vendor/project

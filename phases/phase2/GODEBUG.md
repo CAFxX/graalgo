@@ -1,6 +1,6 @@
 # GODEBUG surface (P2-M5, WS E)
 
-Versioned registry of every GODEBUG knob: `src/main/resources/graalgo/sched/godebug/registry.json`
+Versioned registry of every GODEBUG knob: [src/main/resources/graalgo/sched/godebug/registry.json](../../internal/backend/runtime/src/main/resources/graalgo/sched/godebug/registry.json)
 (current version **3**, 78 knobs + 9 removed). The registry is loaded at
 launcher startup by `graalgo.sched.launcher.GoDebug`; unknown knob names,
 malformed values, and non-default values of unsupported knobs are hard
@@ -17,7 +17,7 @@ errors (exit 2), never silently ignored.
    ignored, with a documented justification.
 4. Knobs whose effective behavior permanently equals a *non-default*
    value are NO-OP and the effective values are documented in
-   DIVERGENCES.md DIV-M5-5.
+   [DIVERGENCES.md](DIVERGENCES.md) DIV-M5-5.
 
 ## Dispositions
 
@@ -32,7 +32,7 @@ errors (exit 2), never silently ignored.
 
 1. **Unknown knob → hard error** (gc silently ignores). Rationale: a typo
    (`GODEBUG=schedtace=100`) silently doing nothing is worse than failing loud.
-   (DIVERGENCES.md DIV-M5-1)
+   ([DIVERGENCES.md](DIVERGENCES.md) DIV-M5-1)
 2. **Malformed value → hard error** (gc keeps the old value silently).
    (DIV-M5-2)
 3. **Bare field without `=` → hard error** (gc skips silently). (DIV-M5-3)

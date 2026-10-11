@@ -10,9 +10,9 @@
 > `LockSupport.park()` on quantum expiry, FIFO+runnext token queues, platform-thread drainer,
 > in-flight cap = GOMAXPROCS, Loom's FJP demoted to a dumb thread pool with the default
 > scheduler). Concurrency-mechanism text in §1 (Verdict paragraph, hardest-problem #1) and
-> §4(5) below is superseded; **`SPEC.md` §3.5 is normative**; decisions and residuals are in
-> `adr/ADR-0001.md` (accepted 2026-10-03). Historical study record as of 2026-10-03
-> pre-spike-2b; `SPEC.md` §1.1 is the normative record for everything the spikes decided.
+> §4(5) below is superseded; **[SPEC.md](SPEC.md) §3.5 is normative**; decisions and residuals are in
+> [adr/ADR-0001.md](adr/ADR-0001.md) (accepted 2026-10-03). Historical study record as of 2026-10-03
+> pre-spike-2b; [SPEC.md](SPEC.md) §1.1 is the normative record for everything the spikes decided.
 
 ---
 
@@ -34,7 +34,7 @@ AOT-compiled into one native binary and the embedded JIT re-optimizes hot guest 
 (the shipping Truffle-on-SubstrateVM mechanism, not HotSpot-style tiering). Go values live as Java
 objects (write barriers and exact roots come free from the JVM); goroutines map 1:1 to virtual
 threads with a user-space quantum scheduler (option C: indefinite park-on-quantum-expiry;
-back-edge *yields* superseded 2026-10-03 — see SPEC.md §3.5 / ADR-0001; Loom never preempts); the stdlib is reused
+back-edge *yields* superseded 2026-10-03 — see [SPEC.md](SPEC.md) §3.5 / ADR-0001; Loom never preempts); the stdlib is reused
 maximally — 58% of packages compile unchanged, the coupled 42% builds against a ~60–70-function
 intrinsic surface plus a ~78-package adapted fork, with linkname compatibility by *symbol name*,
 not gc ABI; cgo is replaced by Panama FFI; GraalVM isolates provide the momo project's
@@ -99,7 +99,7 @@ gate: seven cheap spikes (five risk spikes + Sulong evaluation + testing-harness
 
 1. **No Go-on-Truffle/GraalVM project has ever been published** `[VERIFIED]` (exhaustive search;
    nearest are a 23-commit 2020 toy and coursework). graalgo is genuine greenfield: no corpse to
-   autopsy, no code to salvage. (`research/T1-prior-art.md`)
+   autopsy, no code to salvage. ([research/T1-prior-art.md](research/T1-prior-art.md))
 2. **gccgo** (in GCC, `-compiler gccgo` driver hook): the Go team never gated gc's evolution on it;
    it now lags the language badly. Lesson: currency needs a *mechanical, tooled* per-release
    process, not goodwill. `[HIST]`
@@ -119,7 +119,7 @@ gate: seven cheap spikes (five risk spikes + Sulong evaluation + testing-harness
    the AST interpreter. gccgo ≈ 4–6 PY by one engineer and never reached parity `[HIST]`.
 7. **Sulong alternative** (Go→LLVM IR→Truffle, no Go AST interpreter) `[OPEN]`: T1 flags it as the
    one architectural shortcut that must be evaluated before committing. Phase-0 spike verdict
-   (see `PHASES.md` §2): it trades the AST-interpreter build cost for dependence on gollvm-class
+   (see [PHASES.md](PHASES.md) §2): it trades the AST-interpreter build cost for dependence on gollvm-class
    bit-rot risk and a second IR's version coupling. Default remains the direct Truffle AST
    (`[PROPOSAL]`, T5), but the spike must produce a scored comparison, not an assumption.
 
@@ -134,7 +134,7 @@ gate: seven cheap spikes (five risk spikes + Sulong evaluation + testing-harness
    construction; per-release driver cost becomes a conformance gate (the 929 txtar scripts in
    `src/cmd/go/testdata/script/`), not a port. Forking `cmd/go` is the escape hatch if argv
    interception proves insufficient; a Java reimplementation is rejected (~74k LOC, lowest
-   fidelity-per-effort). (`research/T3-toolchain-surface.md`)
+   fidelity-per-effort). ([research/T3-toolchain-surface.md](research/T3-toolchain-surface.md))
 2. **Frontend: `go/parser`+`go/types` as a vendored service**, re-vendored atomically per release
    (`[PROPOSAL]`, T2). Never fork compiler internals; never pin old language versions — support
    old code via `-lang` gates. `go.mod` `go 1.x` directives and GOTOOLCHAIN switching are inherited
@@ -172,7 +172,7 @@ gate: seven cheap spikes (five risk spikes + Sulong evaluation + testing-harness
    must match — the tax is per-release churn of internal symbols, paid via a linkname-diff step
    and an adapted stdlib fork limited to the ~78 coupled packages. Linux-first is well-bounded
    (72 syscall files, epoll); darwin is a moderate deferral; windows is 2–3× cost (IOCP + 6.7k-line
-   syscall layer) and deferred. (`research/T4-stdlib-reuse.md`)
+   syscall layer) and deferred. ([research/T4-stdlib-reuse.md](research/T4-stdlib-reuse.md))
 7. **cgo → Panama FFI** (JEP 454, final in JDK 22 `[VERIFIED]`): keep the stock `cgo` tool and
    host gcc for the C side under all options — do not reimplement C compilation. The hard part
    is the link/ABI boundary and a JVM-aware `runtime/cgo` (Panama bridge for thread-state,
@@ -219,7 +219,7 @@ measurement.
 
 ## 6. Deep dives (condensed; full analysis in the cited notes)
 
-**6.1 Frontend & version tracking** (`research/T2-version-tracking.md`). Go releases every ~182
+**6.1 Frontend & version tracking** ([research/T2-version-tracking.md](research/T2-version-tracking.md)). Go releases every ~182
 days; measured per-release churn (1.26.7→1.27.1: `src/go` 2,893 / `cmd/go` 6,540 / `runtime`
 15,338 lines changed). Toil audit per component with mechanical-vs-judgment split (e.g. new
 `go/types` API surface: mechanical; changed runtime intrinsic semantics: manual review). The
@@ -232,7 +232,7 @@ intake report) but never merges or declares done. Architecture guidance: prefer 
 minimize per-release toil — stable `go/*` frontend over forked internals, `-toolexec` wrapper
 over driver fork (fork ≈ 2× toil forever).
 
-**6.2 Toolchain drop-in surface** (`research/T3-toolchain-surface.md`). Drop-in = 19 commands +
+**6.2 Toolchain drop-in surface** ([research/T3-toolchain-surface.md](research/T3-toolchain-surface.md)). Drop-in = 19 commands +
 shared build-flag set + `go env` variables + GOPROXY/sumdb module behavior + two-level test-result
 caching + vet-via-JSON-`vetConfig` + exit codes 0/1/2 + `PackagePublic` JSON stability — with the
 929 txtar scripts as the de-facto conformance suite. What drop-in does **not** require:
@@ -241,17 +241,17 @@ tool identity via `-V=full`, so differing backends auto-namespace in a shared `G
 behavioral cache compatibility is the bar, verified by test). cgo keeps stock C compilation; the
 risk is the link/ABI boundary + JVM-aware `runtime/cgo`.
 
-**6.3 Stdlib reuse** (`research/T4-stdlib-reuse.md`). See §4(6) for the numbers. Strategy per asm
+**6.3 Stdlib reuse** ([research/T4-stdlib-reuse.md](research/T4-stdlib-reuse.md)). See §4(6) for the numbers. Strategy per asm
 category: intrinsify (atomics/bytealg), evaporate (runtime core), emulate-then-intrinsify
 (crypto), JVM-covers (math). Build-tagged scope: Linux-first bounded; darwin moderate deferral;
 windows 2–3× deferred; `runtime/cgo` + `plugin` stubbed as unsupported initially.
 
-**6.4 Truffle implementation** (`research/T5-truffle-architecture.md`). See §4(3–5). Adversarial
+**6.4 Truffle implementation** ([research/T5-truffle-architecture.md](research/T5-truffle-architecture.md)). See §4(3–5). Adversarial
 PE verdict: Go's static typing vacates Truffle's type-discovery miracle — the real wins are
 speculative interface devirtualization, Graal's escape analysis, and inlining budget. Expect a
 gc-class baseline with headroom, not a miracle.
 
-**6.5 Optimization inventory** (`research/T6-optimization-inventory.md`). Adversarial result: the
+**6.5 Optimization inventory** ([research/T6-optimization-inventory.md](research/T6-optimization-inventory.md)). Adversarial result: the
 "beyond gc" pitch is real but narrow — (1) loop auto-vectorization (gc has none; GraalVM added
 it), (2) always-on runtime profiling vs gc's opt-in PGO, (3) partial escape analysis past gc's
 flow-insensitive EA. gc is a strong baseline (mid-stack inlining since 1.12, PGO inlining +
@@ -283,7 +283,7 @@ this, so the cascade is also the technical argument for why the JIT and hybrid m
 Falsifying benchmark: interface-heavy suite, gc+PGO vs graalgo-JIT steady state — if the cascade
 does not move it, the thesis is wrong and the "beyond gc" pitch shrinks to vectorization.
 
-**6.6 JVM ecosystem integration** (`research/T7-jvm-integration.md`). Polyglot API on
+**6.6 JVM ecosystem integration** ([research/T7-jvm-integration.md](research/T7-jvm-integration.md)). Polyglot API on
 `org.graalvm.polyglot` with SCOPED host access; proposed `graalgo/java` package with
 copy-semantics mappings (string/String, []byte/byte[], slices→List views, maps→Map,
 error↔exception proxies, func↔lambdas, channels as opaque handles) — illustrative, `[PROPOSAL]`.
@@ -297,7 +297,7 @@ Panama replaces cgo (§4(7)); momo's MM-0017 verifier ban must gate the new FFI 
 ## 7. Testing strategy (first-class deliverable)
 
 Built early (harness seed in Phase 0 — it doubles as the development conformance net; see
-`PHASES.md` §9), because it is the mechanism that makes "bounded per-release toil" credible:
+[PHASES.md](PHASES.md) §9), because it is the mechanism that makes "bounded per-release toil" credible:
 
 1. **Differential testing vs gc as oracle.** The reference `go` toolchain is ground truth: compile
    and run the same programs under both, compare stdout/stderr, exit codes, panic
@@ -339,7 +339,7 @@ Built early (harness seed in Phase 0 — it doubles as the development conforman
    > torture 0 vs 200,000 latency samples; Loom's FJP has no woken-thread priority and no
    > public scheduler API (verified in JDK 25 sources). The 1:1-yield design is dead;
    > superseded by the user-space scheduler (spike 2b PASS). This study text is preserved
-   > as the historical record; `SPEC.md` §3.5 is the normative architecture and its §10.2
+   > as the historical record; [SPEC.md](SPEC.md) §3.5 is the normative architecture and its §10.2
    > ledger carries the supersession.
 3. **"Always latest Go" lifetime cost** — the highest *lifetime* expected cost (2–4 PY/yr forever).
    Spike: perform a dry-run upgrade of the Phase-0 prototype across one real release boundary
@@ -377,7 +377,7 @@ viability), GraalJS, gccgo (4–6 PY, never reached parity), TinyGo (subset sinc
 itself (decades). No discount applied for agent assistance — the agent-leverage factor is a
 separate assumption, `[DECIDED]` dropped per SPEC §7.14 (consistency audit 2026-10-03). Critical path 0→1→2→3→5 ≈ 4–5 calendar
 years at full staffing; driver (4) and pipeline (6) parallelize after the Phase-1 interface
-freeze. Full per-phase done-gates and kill criteria: `PHASES.md`.
+freeze. Full per-phase done-gates and kill criteria: [PHASES.md](PHASES.md).
 
 ---
 
@@ -415,7 +415,7 @@ freeze. Full per-phase done-gates and kill criteria: `PHASES.md`.
 
 | Claim | Source | Label |
 |---|---|---|
-| No Go-on-Truffle ever published | `research/T1-prior-art.md` (exhaustive web search) | `[VERIFIED]` |
+| No Go-on-Truffle ever published | [research/T1-prior-art.md](research/T1-prior-art.md) (exhaustive web search) | `[VERIFIED]` |
 | TruffleRuby decade calibration; gccgo/gollvm/llgo/TinyGo lessons | T1 (project histories, primary readmes) | `[HIST]` |
 | Go ~182-day release cadence; per-release churn line counts | T2 (release notes; `~/tools/go` diffs) | `[VERIFIED]` |
 | `-toolexec` seam; 19 commands; 929 txtar scripts; exit codes | T3 (`~/tools/go` go1.27.1 source paths) | `[VERIFIED]` |

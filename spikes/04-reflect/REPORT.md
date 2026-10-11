@@ -28,9 +28,9 @@ across all 9 non-test `reflect` files that import `unsafe`
 - = **302 operational uses**, every line hand-read and assigned to exactly one
   of 13 categories
 
-`prototype/categorize.py` enforces 1:1 coverage mechanically: it exits non-zero
+[prototype/categorize.py](prototype/categorize.py) enforces 1:1 coverage mechanically: it exits non-zero
 if any occurrence is unassigned or double-assigned. Raw evidence:
-`logs/inventory_raw.txt` (every match with file:line), `logs/inventory_categorized.txt`.
+[logs/inventory_raw.txt](logs/inventory_raw.txt) (every match with file:line), [logs/inventory_categorized.txt](logs/inventory_categorized.txt).
 
 ### 1.2 Prototype language choice: Go (documented)
 
@@ -42,10 +42,10 @@ same type battery with the oracle.
 
 ### 1.3 Protocol compliance
 
-- sha256 archive of exact prototype sources with every log: `src_archive/`
-  (7 files) + `logs/SHA256SUMS`. Toolchain pinned: `logs/toolchain.txt`
+- sha256 archive of exact prototype sources with every log: [src_archive/](src_archive/)
+  (7 files) + [logs/SHA256SUMS](logs/SHA256SUMS). Toolchain pinned: [logs/toolchain.txt](logs/toolchain.txt)
   (go1.27.1 linux/amd64).
-- Checkpointing: all intermediate evidence on disk under `logs/`.
+- Checkpointing: all intermediate evidence on disk under [logs/](logs/).
 - No placeholders; negative claims scoped to the tested configuration (§8).
 
 ## 2. The 302-use categorized inventory (step 2) with per-category verdicts (step 4)
@@ -86,25 +86,25 @@ Unsafe API surface actually exercised by `reflect`: `unsafe.Pointer` (298),
 
 ## 3. Layout differential evidence (step 3)
 
-`prototype/layout/layout.go` implements Go struct/array/slice/map/string/interface
+[prototype/layout/layout.go](prototype/layout/layout.go) implements Go struct/array/slice/map/string/interface
 layout from first principles, replicating gc's exact algorithm as read from
 `src/cmd/compile/internal/types/size.go` (`calcStructOffset`, including the
 issue-9401 trailing-zero-size-field `size++` rule) and
 `src/cmd/compile/internal/types2/sizes.go` (including the
 `sync/atomic.align64` special case).
 
-`prototype/difftest/main.go` runs a 32-type battery (padding, nested/embedded
+[prototype/difftest/main.go](prototype/difftest/main.go) runs a 32-type battery (padding, nested/embedded
 structs, zero-size fields in every position, `[0]T`, slice/string headers,
 `atomic.Int64`, recursive types) under stock go1.27.1 and compares
 `unsafe.Offsetof/Sizeof/Alignof` ground truth against the prototype:
-**32/32 match, 0 mismatches** (`logs/difftest.log`).
+**32/32 match, 0 mismatches** ([logs/difftest.log](logs/difftest.log)).
 
-`prototype/handletable/` emulates the handle table (`Handle` = (object index,
+[prototype/handletable/](prototype/handletable/) emulates the handle table (`Handle` = (object index,
 offset), bounds-checked `Add`, word R/W, `SliceFrom`, eface pack/unpack, slice
 headers, frame traffic, synthetic code-pointer table, canonical zero handle,
 opaque Pointer↔uintptr token table, handle-aware race note, descriptor-slot
 offset resolution): **15/15 formulation-existence tests pass**
-(`logs/prototype_tests.log`).
+([logs/prototype_tests.log](logs/prototype_tests.log)).
 
 ## 4. Q3 recommendation: `unsafe.Pointer` v1 semantics (SPEC §10)
 
@@ -140,10 +140,10 @@ all proven by the 15/15 prototype tests.
   bodyless `//go:noescape` declarations are satisfied by **runtime-side**
   `//go:linkname reflect_X reflect.X` wrappers; the newer `//go:linknamestd`
   form is used for `compiledTypelinks` and `adjustAIXGCDataForRuntime`.
-  (`logs/linkname_runtime_to_reflect.txt`)
+  ([logs/linkname_runtime_to_reflect.txt](logs/linkname_runtime_to_reflect.txt))
 - **3 reflect→runtime edges**: `runtime.getStaticuint64s`,
   `runtime.zeroVal`, `runtime.reflectcall` (declared as `call`).
-  (`logs/linkname_reflect_to_runtime.txt`)
+  ([logs/linkname_reflect_to_runtime.txt](logs/linkname_reflect_to_runtime.txt))
 - **6 push markers** (ecosystem-compat, no in-tree consumers — verified by
   grep): `reflect.add`, `reflect.addReflectOff`, `reflect.mapassign`,
   `reflect.rtypeOff`, `reflect.toType`, `reflect.typesByString`. Excluded from
@@ -152,8 +152,8 @@ all proven by the 15/15 prototype tests.
 
 ### 5.2 The per-release diff-scoping rule
 
-`prototype/linkname_diff.py <old_tree> <new_tree>` (archived in
-`src_archive/`, checksummed):
+`[prototype/linkname_diff.py](prototype/linkname_diff.py) <old_tree> <new_tree>` (archived in
+[src_archive/](src_archive/), checksummed):
 
 1. Extracts edge sets mechanically from both trees (runtime/internal/arena
    provider side; reflect consumer side; test files and `badlinkname.go`

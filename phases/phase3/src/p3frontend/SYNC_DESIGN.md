@@ -1,4 +1,4 @@
-# SYNC_DESIGN.md — P3-M2b `sync` Go bindings
+# [SYNC_DESIGN.md](SYNC_DESIGN.md) — P3-M2b `sync` Go bindings
 
 **Scope:** PLAN.md §4 P3-M2 (WS D), GG-0017 sync slice. Implements
 ADR-0002 (freeze exception for the synthetic `sync` package).
@@ -73,10 +73,10 @@ whose receiver unwraps (through pointers) to a sync named type:
 
 ## 4. p3frontend (`phases/phase3/src/p3frontend/`)
 
-- `importer.go`: mirrors the synthetic `sync` signatures for p3frontend's
+- [importer.go](importer.go): mirrors the synthetic `sync` signatures for p3frontend's
   own type-check.
-- `flatten.go`: keeps `import "sync"` specs, like `runtime`/`fmt`.
-- `loader.go`: resolves `"sync"` as synthetic — never the GOROOT stdlib.
+- [flatten.go](flatten.go): keeps `import "sync"` specs, like `runtime`/`fmt`.
+- [loader.go](loader.go): resolves `"sync"` as synthetic — never the GOROOT stdlib.
 
 The `defer`/`go` desugars need no p3frontend work: they are standard
 `funclit`/`call`/`defer`/`gostmt` wire.

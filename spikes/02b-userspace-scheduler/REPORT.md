@@ -13,7 +13,7 @@ and F4 (overhead mean 41us vs 26.8us reported). This revision resolves both
 contradictions by experiment (sections 3.4, 3.6), implements R1's P0-2
 (slot-releasing NIO) and P1(a) (cap clamp) prototype fixes plus the P1(b)
 10 ms battery legs, and re-runs the full battery from the current sources
-with fresh provenance: `./build.sh` (checksums to `logs/SOURCES.sha256`,
+with fresh provenance: `./build.sh` (checksums to [logs/SOURCES.sha256](logs/SOURCES.sha256),
 12:02:36 UTC) then `./run.sh` (logs 12:02:37-12:05:16 UTC); `sha256sum -c`
 clean, no source newer than any log. **Every number below is from those
 archived logs.** The old draft's terminal-only numbers are superseded and
@@ -51,13 +51,13 @@ queues unsolicited; the drainer explicitly admits them.
 
 ### 1.3 Prototype
 
-`~/workspace/graalgo/spikes/02b-userspace-scheduler/`:
-- `src/usched/`: `UserScheduler`, `Goroutine`, `Go`, `Safepoint`, `GoChannel`,
+[spikes/02b-userspace-scheduler/](./):
+- [src/usched/](src/usched/): `UserScheduler`, `Goroutine`, `Go`, `Safepoint`, `GoChannel`,
   `GoSelect`, `GoTimer`, `LatencyProbe`, `MpscQueue`
-- `src/work/`: O1Torture, O2Chan, O3Select, O4Timer, O5Scale, Quiescence,
+- [src/work/](src/work/): O1Torture, O2Chan, O3Select, O4Timer, O5Scale, Quiescence,
   Overhead, Gomaxprocs, LostWakeupStress, **CapExhaustion** (new, P0-2),
   diagnostics
-- `build.sh` (checksums sources to `logs/SOURCES.sha256`), `run.sh` (full battery)
+- [build.sh](build.sh) (checksums sources to [logs/SOURCES.sha256](logs/SOURCES.sha256)), [run.sh](run.sh) (full battery)
 
 Rework additions to `UserScheduler`: `ioEnter`/`ioExit` + `Kind.IOBLOCK` +
 `ioBlocked` lane (P0-2, §3.5); effective-cap clamp
@@ -65,12 +65,12 @@ Rework additions to `UserScheduler`: `ioEnter`/`ioExit` + `Kind.IOBLOCK` +
 instrumentation (quiescence triage, §3.4); drainer swallow-and-continue on
 interrupt (R1 P1-5, prototype half). `Quiescence`: latch-based drain +
 `admitted_before_stop` (harness fix, §3.4). `Overhead`: budget now assessed
-against the configured quantum. `run.sh`: new legs `o1_q10ms`,
-`o1_gmp32_par2`, `overhead_q10ms`, `capexhaustion`; `logs/env.log` records
+against the configured quantum. [run.sh](run.sh): new legs `o1_q10ms`,
+`o1_gmp32_par2`, `overhead_q10ms`, `capexhaustion`; [logs/env.log](logs/env.log) records
 machine load with each battery.
 
 Environment: GraalVM JDK 25.0.4, 2 vCPU / 7 GB VM. **This battery ran under
-heavy contention** (`logs/env.log`: load average 8.97 on 2 vCPUs at battery
+heavy contention** ([logs/env.log](logs/env.log): load average 8.97 on 2 vCPUs at battery
 start — a concurrent mix round-18 battery plus qemu on the same box).
 Thread-wakeup latency, the dominant per-hop overhead cost, degrades under
 contention; absolute µs numbers below carry that context (see §3.6).
@@ -79,7 +79,7 @@ contention; absolute µs numbers below carry that context (see §3.6).
 
 ## 2. Falsifier Results
 
-All numbers below are from the rework battery (`logs/`, 2026-10-03
+All numbers below are from the rework battery ([logs/](logs/), 2026-10-03
 12:02:37-12:05:16 UTC, sources checksummed 12:02:36 UTC). Battery: 19 legs,
 18 PASS, 1 expected FAIL (`overhead` at 1 ms = the documented fired trigger,
 §4).
@@ -307,7 +307,7 @@ it cannot be a regression. (b) The initFifo delta adds one empty-deque poll
 per hop — nanoseconds; it cannot explain a +5 us p50 shift. (c) The
 machine is heavily contended: load average 8.97-9.14 on 2 vCPUs during all
 post-fix runs (concurrent mix round-18 battery + qemu on the same box;
-`logs/env.log`). Thread-wakeup latency — the dominant hop cost — degrades
+[logs/env.log](logs/env.log)). Thread-wakeup latency — the dominant hop cost — degrades
 sharply under contention, and the mean (not the p50) is what moves: p99
 1.2 ms, max 28-61 ms stalls are VM scheduling stalls, not scheduler
 behavior. (d) The battery-run legs (33.0/29.9 us mean) came in well under

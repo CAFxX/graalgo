@@ -211,7 +211,7 @@ importer and executes `main`/tests on the user-space scheduler.
 Differential oracle vs stock gc 1.27.1 per SPEC §5.5 (stdout/stderr bytes
 post-normalization, exit codes, panic messages). Layers (SPEC §5):
 (1) smoke — the curated ~200-program corpus, per-commit; (2) conformance —
-`src/test/` language suite (356 files), per-commit on frontend changes;
+[src/test/](../../internal/backend/interop/src/test/) language suite (356 files), per-commit on frontend changes;
 (3) stdlib + scripts — `go test ./...` as the primary corpus, hours-scale,
 per-release gate, four-way triage per red (graalgo bug / upstream change /
 backend-specific+reason-code / nondeterminism-normalization); (4) fuzz

@@ -3,11 +3,11 @@
 ## Process followed
 - Read: greenfield SKILL.md, spike 2b REPORT.md (full), SPEC.md (full, 1,040 lines),
   FEASIBILITY.md §8 risk 2, PHASES.md §2.
-- Structure fixpoint: outline-r1.md → self-review (6 questions) → outline-r2.md (clean).
+- Structure fixpoint: [outline-r1.md](outline-r1.md) → self-review (6 questions) → [outline-r2.md](outline-r2.md) (clean).
 - Wrote new §3.5, edited §7.2/§7.4/§8.2 rows 2,10,11/§10.1/§10.2, editorial pass
   (one cross-reference fix: "F5 deviation" → "the deviation documented above").
 
-## Every changed section (all in ~/workspace/graalgo/SPEC.md)
+## Every changed section (all in [SPEC.md](../../SPEC.md))
 1. §3.5 Concurrency runtime — full rewrite (lines ~293–407 post-edit): goroutine =
    vthread + scheduler token; FJP demoted to untrusted pool; quantum park preemption
    (10ms default, computed 0.27% marked [ESTIMATE]); initFifo/wakeFifo/runFifo + drainer;

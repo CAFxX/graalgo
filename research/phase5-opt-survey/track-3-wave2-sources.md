@@ -1,6 +1,6 @@
 # Track 3 wave-2 — source-level passes on dynamic runtimes
 
-**Worker:** T3 wave-2 subagent (2026-10-04). **Status:** wave-2 in progress — this file is the checkpoint; wave 1 lives in `track-3-dynamic-runtimes.md`.
+**Worker:** T3 wave-2 subagent (2026-10-04). **Status:** wave-2 in progress — this file is the checkpoint; wave 1 lives in [track-3-dynamic-runtimes.md](track-3-dynamic-runtimes.md).
 **Rule:** every candidate below passed the candidate bar at mining time (check the legs); coordinator assigns SURV- IDs at synthesis. Nothing here is a measurement — all numbers are the cited source's claims.
 **Coverage:** V8 source (map.h, src/compiler IC/deopt), JSC source (dfg/ftl/b3 value profiling + OSR exit), .NET RyuJIT source (dynamic-PGO probes, GDV codegen), PyPy meta-tracing (guard/deopt discipline). Cinder/HHVM-Swift/Pyston/RaptorJIT/Maglev/ZJIT remain in the wave-2 gap list.
 

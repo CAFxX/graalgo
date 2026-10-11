@@ -1,7 +1,7 @@
 # Phase 1 — Normative SPEC extract
 
-**Sources:** `~/workspace/graalgo/SPEC.md` (1242 lines, ACCEPTED 2026-10-03; 70 requirements locked)
-and `~/workspace/graalgo/PHASES.md` §3 (lines 62–77).
+**Sources:** [SPEC.md](../../SPEC.md) (1242 lines, ACCEPTED 2026-10-03; 70 requirements locked)
+and [PHASES.md](../../PHASES.md) §3 (lines 62–77).
 **Extracted:** 2026-10-03. **Scope of this file:** Phase-1-relevant normative content ONLY.
 Concurrency/scheduler internals (§3.5 except defer/panic/Goexit on the main goroutine),
 stdlib adaptation, and AOT/JIT mode implementation (§3.9, §3.11) are excluded except where
@@ -233,8 +233,8 @@ design; interface freeze impossible without breaking the toil bound (→ archite
 
 ## I. Phase-1-relevant testing strategy gates (SPEC §5; GG-0029–GG-0038)
 
-44. SPEC.md:669–671 — *"``src/test/`` language suite (356 files `[VERIFIED]`) — the spec-semantics anchor independent of the stdlib — plus new-feature tests written **red-green first** (they must fail before the lowering change). Runs per-commit on frontend changes."* (GG-0032)
-    → Paraphrase: Phase-1 differential corpus = the 356-file `src/test/` language
+44. SPEC.md:669–671 — *"`[src/test/](../../internal/backend/truffle/src/test/)` language suite (356 files `[VERIFIED]`) — the spec-semantics anchor independent of the stdlib — plus new-feature tests written **red-green first** (they must fail before the lowering change). Runs per-commit on frontend changes."* (GG-0032)
+    → Paraphrase: Phase-1 differential corpus = the 356-file [src/test/](../../internal/backend/truffle/src/test/) language
     suite; every new lowering lands red-green-first; run per-commit on frontend changes.
 
 45. SPEC.md:686–690 — *"program generation across the feature space (generics instantiation, interface dispatch, closure capture, defer/panic/recover chains, select, map iteration, atomics) through the §5.5 harness"*; *"a gosmith-class Go program generator is `[UNVERIFIED]` — verify existence/license and gc-parity before depending on it, else build a small template-based generator."* (GG-0037)

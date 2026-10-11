@@ -46,5 +46,5 @@ JDK 25 sources, `~/tools/graalvm-jdk-25/lib/src.zip`,
 ## What the spike validated (O5)
 Throughput scaling shape with the property set per-launch (1, 2, 4) is
 monotonic to core count and plateaus under oversubscription, matching the
-Go GOMAXPROCS shape qualitatively (see REPORT.md). The mechanism is
+Go GOMAXPROCS shape qualitatively (see [REPORT.md](REPORT.md)). The mechanism is
 adequate for launch-time GOMAXPROCS; it is not a runtime control.

@@ -1,6 +1,6 @@
 # graalgo requirements → phase map (Phase 1 focus)
 
-Source: all 70 requirement files in `~/workspace/graalgo/requirements/` (GG-0001–GG-0060, GG-SCHED-0001–0004, GG-WAKE-0001–0003, GG-FAIR-0001–0003), all `locked`. Read-only pass — no IDs or statuses changed.
+Source: all 70 requirement files in [requirements/](../../requirements/) (GG-0001–GG-0060, GG-SCHED-0001–0004, GG-WAKE-0001–0003, GG-FAIR-0001–0003), all `locked`. Read-only pass — no IDs or statuses changed.
 
 Phase definitions used (from task brief):
 - **Phase 1** — complete Go language (through generics) on a Truffle AST: `go/parser`+`go/types` frontend service, Truffle nodes for all statements/expressions, descriptor-based value model, defer/panic/Goexit, intrinsic surface stubs for language tests, differential harness on language suites.
@@ -39,7 +39,7 @@ Phase definitions used (from task brief):
 | GG-0029 | cross-cutting | Upgrades/releases gated by four layers: differential smoke → language conformance → stdlib+cmd/go suites → generative fuzz soak. | Phase-1 slice: layers 1–2 on the language suites. |
 | GG-0030 | cross-cutting | Differential-vs-gc oracle: stdout/stderr normalized, exit codes, panic traces modulo addresses, sandboxed effects; excludes timings/addresses/GC stats/raw scheduling. | Phase-1 slice: oracle definition applies to language-suite runs (excluding scheduling, which Phase 1 does not have). |
 | GG-0031 | cross-cutting | Nondeterminism controls: GOMAXPROCS=1 scheduling subset, multiset comparison, 3–5 repeat runs, fixed seeds, synctest preference. | Phase-1 slice: multiset/repeat/fixed-seed controls; GOMAXPROCS subset only gains meaning in Phase 2. |
-| GG-0032 | cross-cutting | Corpora: stdlib `go test ./...`, `src/test/` language suite, targeted corpora for churny areas. | Phase-1 slice: `src/test/` language suite is the spec-semantics anchor. |
+| GG-0032 | cross-cutting | Corpora: stdlib `go test ./...`, [src/test/](../../internal/backend/truffle/src/test/) language suite, targeted corpora for churny areas. | Phase-1 slice: [src/test/](../../internal/backend/truffle/src/test/) language suite is the spec-semantics anchor. |
 | GG-0033 | cross-cutting | Backend-specific test exclusions in a versioned, reason-coded list; grows only through per-release review; shrinking is the health metric. | Applies from Phase 1: language-suite exclusions begin here. |
 | GG-0034 | cross-cutting | Every oracle layer mutation-validated (break the lowering, harness goes red); red-green evidence required. | Phase-1 slice: red-green evidence for the language-suite oracle. |
 | GG-0036 | cross-cutting | Per release, differential-corpus results under gc recorded content-addressed; gc drift = upstream, graalgo drift = regression. | Applies from the first Phase-1 differential runs. |
@@ -139,7 +139,7 @@ Requirements Phase 1 owns or exercises during Phase 1:
 15. GG-0029 (layers 1–2 on language suites slice)
 16. GG-0030 (oracle on language suites slice)
 17. GG-0031 (determinism controls slice)
-18. GG-0032 (`src/test/` language suite slice)
+18. GG-0032 ([src/test/](../../internal/backend/truffle/src/test/) language suite slice)
 19. GG-0033
 20. GG-0034 (language-suite oracle red-green slice)
 21. GG-0036

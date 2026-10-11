@@ -1,7 +1,7 @@
 # godebug-diff report
 
 Generated: 2026-10-05T15:53:56Z
-Probes: /home/hatch/workspace/graalgo/phases/phase2/corpus/godebug (db02_panicnil.go, db03_alloc.go, db04_spin.go)
+Probes: [phases/phase2/corpus/godebug/](../../phases/phase2/corpus/godebug/) (db02_panicnil.go, db03_alloc.go, db04_spin.go)
 Backends: stock gc go1.27.1 (/home/hatch/tools/go/bin/go run) vs graalgo SchedMain
 
 ```

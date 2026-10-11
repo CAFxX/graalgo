@@ -2,9 +2,9 @@
 
 **Verdict: FAIL** (kill trigger §8.2 fired — see §6)
 
-Date: 2026-10-03. Prototype: `proto/` (Java, GraalVM JDK 25.0.4). Oracle:
+Date: 2026-10-03. Prototype: [proto/](proto/) (Java, GraalVM JDK 25.0.4). Oracle:
 stock Go 1.27.1. Machine: 2 vCPU / 7 GB. Sources checksummed in
-`logs/SOURCES.sha256`; run manifest in `logs/RUN_MANIFEST.txt`.
+[logs/SOURCES.sha256](logs/SOURCES.sha256); run manifest in [logs/RUN_MANIFEST.txt](logs/RUN_MANIFEST.txt).
 
 ---
 
@@ -29,12 +29,12 @@ Two design corrections vs the research docs, both verified against the JDK
    `jdk.virtualThreadScheduler.parallelism` / `.maxPoolSize` only — GOMAXPROCS
    fidelity is a **launcher** concern (translate at boot). In-process
    `runtime.GOMAXPROCS(n)` cannot resize carriers — documented deviation.
-   Details: `CARRIER_POOL.md`.
+   Details: [CARRIER_POOL.md](CARRIER_POOL.md).
 2. **T7's `-Djdk.tracePinnedThreads` is gone** (absent from JDK 25 sources).
    The pinning audit path is the JFR event `jdk.VirtualThreadPinned`.
 
 The scheduling-observable list (O1–O6) with per-observable measurement
-methods is defined in `OBSERVABLES.md` — this is the proposed close-out of
+methods is defined in [OBSERVABLES.md](OBSERVABLES.md) — this is the proposed close-out of
 SPEC §10 Q2.
 
 ## 2. O1 — Preemption torture (THE falsifying experiment)
@@ -151,17 +151,17 @@ default scheduler past Phase 0 without one of (2)/(3) decided.
 
 ## 7. Deliverables
 
-- `REPORT.md` (this file), `OBSERVABLES.md` (SPEC §10 Q2 proposal),
-  `CARRIER_POOL.md` (JDK 25 carrier-customization research note)
-- Prototype: `proto/src/loomsim/*.java` (Go, Goroutine, Safepoint,
-  Watchdog, GoChannel, GoSelect, GoTimer), `proto/src/work/*.java`
+- [REPORT.md](REPORT.md) (this file), [OBSERVABLES.md](OBSERVABLES.md) (SPEC §10 Q2 proposal),
+  [CARRIER_POOL.md](CARRIER_POOL.md) (JDK 25 carrier-customization research note)
+- Prototype: `[proto/src/loomsim/](proto/src/loomsim/)*.java` (Go, Goroutine, Safepoint,
+  Watchdog, GoChannel, GoSelect, GoTimer), `[proto/src/work/](proto/src/work/)*.java`
   (PreemptTorture, ChanFairness, SelectFairness, TimerLatency,
   GomaxprocsScale, YieldOverhead, PinAudit, UnblockerProbe),
-  `proto/build.sh`
-- Go oracle programs: `go/o1_torture.go`, `o2_chan.go`, `o3_select.go`,
+  [proto/build.sh](proto/build.sh)
+- Go oracle programs: [go/o1_torture.go](go/o1_torture.go), `o2_chan.go`, `o3_select.go`,
   `o4_timer.go`, `o5_scale.go`, `overhead.go` (+ `go/bin/` binaries)
-- Checksums: `logs/SOURCES.sha256`; manifest: `logs/RUN_MANIFEST.txt`;
-  JFR: `logs/jfr/` (see §5 caveat); debug scratch: `scratch/` (not part of
+- Checksums: [logs/SOURCES.sha256](logs/SOURCES.sha256); manifest: [logs/RUN_MANIFEST.txt](logs/RUN_MANIFEST.txt);
+  JFR: [logs/jfr/](logs/jfr/) (see §5 caveat); debug scratch: [scratch/](scratch/) (not part of
   the evidence chain)
 
 ## 8. Notes / loose ends
@@ -172,5 +172,5 @@ default scheduler past Phase 0 without one of (2)/(3) decided.
 - Two measurement bugs were found and fixed during the spike (sample-count
   publication; a global-flag yield storm in the first POLL design) — both
   documented in the trajectory, all O1 numbers above are post-fix.
-- `scratch/` contains debugging probes (DumpTorture, SelMini, DirectUb…);
+- [scratch/](scratch/) contains debugging probes (DumpTorture, SelMini, DirectUb…);
   kept for reproducibility of the investigation, not as deliverables.

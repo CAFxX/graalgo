@@ -4,8 +4,8 @@
 item 4 — (Q1) design the measurement protocol for the SURV-075 load-bearing
 question (does a Java-trained branch-prior model generalize to Go idioms?);
 (Q2) verdict on the JDK 25 XGBoost call-count profiler as a SURV-006 input —
-extractable for Go AOT or not. NO SURV-IDs (coordinator assigns). SURVEY.md,
-CHECKPOINT.md, SPEC.md, PHASES.md, and the requirements registry are NOT
+extractable for Go AOT or not. NO SURV-IDs (coordinator assigns). [SURVEY.md](SURVEY.md),
+[CHECKPOINT.md](CHECKPOINT.md), SPEC.md, PHASES.md, and the requirements registry are NOT
 edited here.
 
 **Evidence labels.** All GraalNN/GraalCC performance numbers below are
@@ -14,7 +14,7 @@ against the local Go 1.27.1 toolchain source (`~/tools/go`, 2026-10-04); the
 oracle/graal absence claims are verified against a sparse tree-listing of the
 public repo at HEAD (2026-10-04).
 
-**SURV-075 recap (from SURVEY.md §1, Tier 2, WOULD-LIKE).** Adopt GraalNN-style
+**SURV-075 recap (from [SURVEY.md](SURVEY.md) §1, Tier 2, WOULD-LIKE).** Adopt GraalNN-style
 ML-inferred control-split branch probabilities as the day-0 static profile
 source for E5 pure-AOT Go images. Verified precedent: GraalNN (Milikic,
 Cugurovic, Jovanovic, Oracle Labs, CGO'25, DOI 10.1145/3696443.3708958) — a
@@ -334,6 +334,6 @@ evidence required (no pooled-only kills).
 
 ---
 
-*Track notes: `track-surv075-wave5.md`. NO SURV-IDs assigned. SURVEY.md,
-CHECKPOINT.md, SPEC.md, PHASES.md, requirements registry untouched per
+*Track notes: [track-surv075-wave5.md](track-surv075-wave5.md). NO SURV-IDs assigned. [SURVEY.md](SURVEY.md),
+[CHECKPOINT.md](CHECKPOINT.md), SPEC.md, PHASES.md, requirements registry untouched per
 brief.*

@@ -1,9 +1,9 @@
 # gofrontend — Go frontend service (WS B)
 
-Type-checks a single-file Go program with the vendored `go/*` packages and
+Type-checks a single-file Go program with the vendored `[go/](go/)*` packages and
 emits the `frontend/v1` typed-AST JSON document to stdout.
 
-- Wire format: [`../docs/frontend-v1.md`](../docs/frontend-v1.md) (normative)
+- Wire format: [`../docs/frontend-v1.md`](../../../../../../../../../phases/phase1/docs/frontend-v1.md) (normative)
 - Vendoring: [`VENDORING.md`](VENDORING.md) (pinned revision, re-vendor procedure)
 - Java consumer: `graalgo.frontend.NodeFactory` (`../src/main/java/graalgo/frontend/`)
 
@@ -11,12 +11,12 @@ emits the `frontend/v1` typed-AST JSON document to stdout.
 
 | Path | Contents |
 |---|---|
-| `main.go`, `export.go` | CLI + exporter (package `graalgo-frontend`) |
-| `export_test.go`, `testdata/` | Golden tests; `testdata/*.go` + checked-in `*.json` goldens; `bad_*.go` scope/type error cases |
-| `go/` | Vendored `$GOROOT/src/go` tree, byte-identical (see `VENDORING.md`) — do not edit |
-| `build.sh` | Overlay build/vet/test/check wrapper (generates `overlay.json`, git-ignored) |
-| `tools/validate_frontend_v1.py` | Schema validator for emitted documents (`--selftest` for its own negative cases) |
-| `javatest/` | Java-side tests: `NodeFactoryTest.java`, golden JSON + `.go` pairs, negative fixtures |
+| [main.go](main.go), [export.go](export.go) | CLI + exporter (package `graalgo-frontend`) |
+| [export_test.go](export_test.go), [testdata/](testdata/) | Golden tests; `[testdata/](testdata/)*.go` + checked-in `*.json` goldens; `bad_*.go` scope/type error cases |
+| [go/](go/) | Vendored `$GOROOT/src/go` tree, byte-identical (see [VENDORING.md](VENDORING.md)) — do not edit |
+| [build.sh](build.sh) | Overlay build/vet/test/check wrapper (generates `overlay.json`, git-ignored) |
+| [tools/validate_frontend_v1.py](tools/validate_frontend_v1.py) | Schema validator for emitted documents (`--selftest` for its own negative cases) |
+| [javatest/](javatest/) | Java-side tests: `NodeFactoryTest.java`, golden JSON + `.go` pairs, negative fixtures |
 
 ## Build & test
 

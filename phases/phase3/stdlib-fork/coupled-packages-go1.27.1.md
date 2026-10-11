@@ -5,7 +5,7 @@ SPEC's ~78 → drift **82.1%**, far above the 15% threshold. The trigger fires
 under every alternative reading of the check too (§4). Per the P3-M6 plan,
 the coordinator must re-examine the fork-vs-overlay boundary (P3-D1).
 
-Machine-readable list: `coupled-packages-go1.27.1.json` (version 1, in this
+Machine-readable list: [coupled-packages-go1.27.1.json](coupled-packages-go1.27.1.json) (version 1, in this
 directory). Tool: `tools/stdlib-excl measure` (see `tools/stdlib-excl/README.md`).
 
 ## 1. The strict pure-Go check, precisely
@@ -111,7 +111,7 @@ it into the fork with a recorded diff. A pure verdict here is therefore a
 
 ## 6. Exclusion list v1 (same milestone)
 
-`exclusions.yaml` v1 publishes 2 entries (`runtime/cgo` → CGO,
+[exclusions.yaml](exclusions.yaml) v1 publishes 2 entries (`runtime/cgo` → CGO,
 `plugin` → UNSUPPORTED_FEATURE), each with SPEC-§3.8 evidence. Review cap
 on go1.27.1: the 5% clause binds — floor(5×274/100) = **13** packages
 (tighter than 25). Validator: `tools/stdlib-excl/README.md`.

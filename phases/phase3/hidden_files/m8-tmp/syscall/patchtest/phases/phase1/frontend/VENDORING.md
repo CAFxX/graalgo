@@ -1,27 +1,27 @@
-# Vendoring record — go/* tree for gofrontend
+# Vendoring record — [go/](go/)* tree for gofrontend
 
 **Pinned revision:** GOROOT `go1.27.1` (`~/tools/go`, symlink to
 `go-1.27.1`), VERSION file `go1.27.1`, build time `2026-08-28T16:20:06Z`
 (`go version go1.27.1 linux/amd64`).
 **Vendored:** 2026-10-04 (WS B). **Tree:** `frontend/go/` = byte-identical
 copy of `$GOROOT/src/go` (329 `.go` files, whole tree including
-`go/internal/*`, test files included verbatim).
+`[go/internal/](go/internal/)*`, test files included verbatim).
 
 ## Why this shape (GG-0012, GG-0044)
 
-SPEC §3.2 / PLAN.md D1 require the `go/*` tree **reused verbatim from the
+SPEC §3.2 / PLAN.md D1 require the `[go/](go/)*` tree **reused verbatim from the
 tracked release, re-vendored atomically every release, zero local patches**.
 Two mechanisms enforce this, because neither alone suffices:
 
 1. **Byte-identical copy** at `frontend/go/`. Verified by
    `diff -r "$GOROOT/src/go" frontend/go` (the `check` action of
-   `build.sh`). Any local patch fails this gate — patches cannot hide.
+   [build.sh](build.sh)). Any local patch fails this gate — patches cannot hide.
 2. **`-overlay` build** (`frontend/build.sh`): the go command resolves
-   `go/ast` etc. to GOROOT, so the build maps every `$GOROOT/src/go/*.go`
+   [go/ast/](go/ast/) etc. to GOROOT, so the build maps every `$GOROOT/src/go/*.go`
    read onto the vendored copy. The compiled `gofrontend` binary therefore
    **literally contains the vendored sources** — the copy is not dead
    weight. (Proof of mechanism: a marker constant added to the vendored
-   `go/token` is what the overlay-built binary prints; see WS B report.)
+   [go/token/](go/token/) is what the overlay-built binary prints; see WS B report.)
 
 Module mode cannot shadow stdlib import paths (`module go` is rejected;
 GOPATH mode resolves std to GOROOT), and rewriting import paths inside the
