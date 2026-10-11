@@ -1,8 +1,8 @@
 package graalgo.p3net;
 
 import com.oracle.truffle.api.dsl.Cached;
-import graalgo.runtime.GoSlice;
-import graalgo.runtime.GoString;
+import graalgo.values.GoSlice;
+import graalgo.values.GoString;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -60,9 +60,10 @@ public final class GoHttp {
             // Headers: flat pairs
             if (headers instanceof GoSlice) {
                 GoSlice hs = (GoSlice) headers;
-                for (int i = 0; i + 1 < hs.length(); i += 2) {
-                    String k = toJavaString(hs.get(i));
-                    String v = toJavaString(hs.get(i + 1));
+                Object[] harr = (Object[]) hs.array();
+                for (int i = 0; i + 1 < hs.len(); i += 2) {
+                    String k = toJavaString(harr[hs.offset() + i]);
+                    String v = toJavaString(harr[hs.offset() + i + 1]);
                     if (k != null) {
                         rb.header(k, v == null ? "" : v);
                     }
@@ -74,8 +75,8 @@ public final class GoHttp {
             List<Object> hp = new ArrayList<>();
             resp.headers().map().forEach((k, vs) -> {
                 for (String v : vs) {
-                    hp.add(GoString.of(k));
-                    hp.add(GoString.of(v));
+                    hp.add(GoString.fromUtf8(k));
+                    hp.add(GoString.fromUtf8(v));
                 }
             });
             byte[] respBody = resp.body();
@@ -96,7 +97,7 @@ public final class GoHttp {
 
     private static String toJavaString(Object o) {
         if (o instanceof GoString) {
-            return ((GoString) o).toJavaString();
+            return ((GoString) o).toString();
         }
         if (o instanceof String) {
             return (String) o;
@@ -110,10 +111,18 @@ public final class GoHttp {
         }
         if (o instanceof GoSlice) {
             GoSlice s = (GoSlice) o;
-            byte[] out = new byte[s.length()];
-            for (int i = 0; i < out.length; i++) {
-                Object e = s.get(i);
-                out[i] = (byte) (e instanceof Long ? (Long) e : 0);
+            byte[] out = new byte[s.len()];
+            Object arr = s.array();
+            if (arr instanceof byte[] barr) {
+                System.arraycopy(barr, s.offset(), out, 0, out.length);
+                return out;
+            }
+            if (arr instanceof Object[] oarr) {
+                for (int i = 0; i < out.length; i++) {
+                    Object e = oarr[s.offset() + i];
+                    out[i] = (byte) (e instanceof Number n ? n.longValue() : 0);
+                }
+                return out;
             }
             return out;
         }

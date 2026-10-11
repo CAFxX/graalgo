@@ -137,6 +137,21 @@ public final class IfaceDispatchNode extends GoExprNode {
                 ? data
                 : graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath(),
                         !target.pointerReceiver(), this);
+        // P3-M9 (ecdsa/hash root fix): a desugared helper installed as a
+        // method-table target may declare its receiver parameter as an
+        // INTERFACE (e.g. hash.__hashWrite(h hash.Hash, p []byte)) instead
+        // of the concrete dynamic type. Passing the raw dynamic value
+        // makes the callee root fabricate a descriptor-less box
+        // (GoFuncRootNode.wrapInterface), which loses the dynamic type's
+        // method set — interface assertions inside the helper then fail
+        // (the "itab loses the method set" defect the hash/* packages
+        // worked around with concrete-receiver helpers). Go semantics:
+        // an interface-typed parameter receives the interface value
+        // itself, dynamic descriptor intact. Concrete-receiver targets
+        // keep the raw value, exactly as before.
+        if (target.isDirect() && receiverParamIsInterface(target)) {
+            callArgs[0] = gi;
+        }
         // P3-M9: pointer-receiver method promoted via a value-embedded
         // struct field — take the address of the promoted field value
         // (gc's implicit &). Struct fields are read by reference, so the
@@ -168,6 +183,22 @@ public final class IfaceDispatchNode extends GoExprNode {
      * a nil interface zero value, or a descriptor-less
      * {@link GoInterface}) panics exactly like calling a nil func value.
      */
+    /**
+     * True when the target function's first parameter (the receiver slot)
+     * is interface-kinded — the signature of a desugared helper installed
+     * in a method table (its "receiver" is a plain interface parameter).
+     * Read off the callee's {@link graalgo.frontend.GoFuncRootNode}
+     * parameter kinds; non-Go roots (none today) answer false.
+     */
+    private static boolean receiverParamIsInterface(IfaceMethodTarget target) {
+        if (target.func().target().getRootNode()
+                instanceof graalgo.frontend.GoFuncRootNode root) {
+            GoKind[] kinds = root.paramKinds();
+            return kinds.length > 0 && kinds[0] == GoKind.INTERFACE;
+        }
+        return false;
+    }
+
     private GoInterface requireReceiver(Object r) {
         if (r instanceof GoInterface gi) {
             if (!gi.isNil()) {

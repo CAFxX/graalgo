@@ -652,11 +652,11 @@ func checkASN1Integer(bytes []byte) bool {
 	return true
 }
 
-// ReadAnyASN1 reads a DER-encoded ASN.1 element (including tag and
+// ReadAnyASN1 reads a DER-encoded ASN.1 element (not including tag and
 // length bytes) into out, and advances. It reports whether the read was
 // successful, and sets outTag to the tag of the element.
 func (s *String) ReadAnyASN1(out *String, outTag *asn1.Tag) bool {
-	return s.readASN1(out, outTag, false)
+	return s.readASN1(out, outTag, true)
 }
 
 func (s *String) readASN1(out *String, outTag *asn1.Tag, skipHeader bool) bool {

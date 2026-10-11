@@ -37,12 +37,22 @@ package graalgo.values;
  * value-copy rule before they reach the box. The field is deliberately
  * mutable: a closure and its loop body share the cell by reference.
  */
-public final class GoBox {
+public final class GoBox implements GoCell {
     /** The current value in canonical boxed form. */
     public Object value;
 
     public GoBox(Object value) {
         this.value = value;
+    }
+
+    @Override
+    public Object get() {
+        return value;
+    }
+
+    @Override
+    public void set(Object v) {
+        value = v;
     }
 
     @Override

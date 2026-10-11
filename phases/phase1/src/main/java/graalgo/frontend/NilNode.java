@@ -12,14 +12,27 @@ import graalgo.values.GoStructDescriptor;
  */
 public final class NilNode extends GoExprNode {
     private final GoStructDescriptor structDesc;
+    /**
+     * Recursive zero template for STRUCT/ARRAY kinds (null otherwise):
+     * the zero of a struct kind must be fully materialized — GoStruct.zero
+     * would leave nested struct fields null (P3-M9).
+     */
+    private final Object zeroTemplate;
 
     public NilNode(GoKind kind, GoStructDescriptor structDesc) {
+        this(kind, structDesc, null);
+    }
+
+    public NilNode(GoKind kind, GoStructDescriptor structDesc, Object zeroTemplate) {
         super(kind);
         this.structDesc = structDesc;
+        this.zeroTemplate = zeroTemplate;
     }
 
     @Override
     public Object executeObject(VirtualFrame frame) {
-        return Boxing.zero(kind(), structDesc);
+        return zeroTemplate != null
+                ? Boxing.freshZeroCopy(zeroTemplate)
+                : Boxing.zero(kind(), structDesc);
     }
 }

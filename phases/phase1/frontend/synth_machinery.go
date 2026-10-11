@@ -249,6 +249,11 @@ var syntheticSources = map[string]string{
 	"internal/poll":         syntheticPollSource,
 	"internal/nettrace":     syntheticNettraceSource,
 	"internal/singleflight": syntheticSingleflightSource,
+	// P3-M9 (RC-6): synthetic internal/graalgo/fmtstate package (real-Go
+	// source in synth_fmtstate.go): the fmt.State implementation used by
+	// Fmt.handleMethods for fmt.Formatter dispatch. Synthetic-only (not in
+	// the user import allow-list).
+	"internal/graalgo/fmtstate": syntheticFmtstateSource,
 	// P3-M9 (tier-5: compress): synthetic compress/* packages (real-Go
 	// sources in synth_compress_{flate,gzip,zlib,lzw,bzip2}.go, generated
 	// by gen_synth_compress.py from gc 1.27.1). gzip/zlib import the
@@ -470,17 +475,26 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 				// intercepts call sites via the table; the stub body is
 				// fail-fast and never emitted. Package-level multi-result
 				// funcs are still skipped (no methodIndex entry needed).
-				if d.Recv != nil {
-					recv := sig.Recv()
-					if recv != nil {
-						if rn := derefNamed(recv.Type()); rn != nil {
-							// Dummy entry: the desugar intercepts all
-							// call sites, so this is never emitted.
-							e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = &funcDeclInfo{fd: d, obj: obj, sig: sig}
+				// P3-M9 (RC-6): bodyless multi-result methods carrying
+				// //go:linkname (e.g. fmtstate.PrinterState.Write) ARE
+				// emitted via exportLinknameDecl — they bind to Java
+				// intrinsics, not Go bodies, so the multi-result emission
+				// limit doesn't apply. Fall through to normal processing.
+				if d.Body == nil {
+					// Fall through to normal processing (do not continue).
+				} else {
+					if d.Recv != nil {
+						recv := sig.Recv()
+						if recv != nil {
+							if rn := derefNamed(recv.Type()); rn != nil {
+								// Dummy entry: the desugar intercepts all
+								// call sites, so this is never emitted.
+								e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = &funcDeclInfo{fd: d, obj: obj, sig: sig}
+							}
 						}
 					}
+					continue
 				}
-				continue
 			}
 			// Pass 1: create fi and register in maps (defFunc deferred to
 			// pass 2 below).
@@ -638,6 +652,22 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	}
 	for _, g := range ordered {
 		e.synthGlobals = append(e.synthGlobals, GlobalEnt{Obj: g.oid, Init: g.init, Pos: g.pos})
+	}
+	// Go spec (Package initialization): after the package's variables
+	// are initialized, its init() functions run in declaration order —
+	// emitted as side-effect-only globals entries like the user
+	// package's (see exportPackageVars). Load-bearing for synthetic
+	// packages whose init computes package state (e.g. the nistec
+	// generator tables, the bzip2 CRC table, zip's compressor
+	// registry).
+	for _, fi := range g.fis {
+		if fi.fd.Recv == nil && fi.obj.Name() == "init" {
+			ent, err := e.initCallEnt(fi)
+			if err != nil {
+				return err
+			}
+			e.synthGlobals = append(e.synthGlobals, ent)
+		}
 	}
 	e.synthGroups = append(e.synthGroups, g)
 	return nil

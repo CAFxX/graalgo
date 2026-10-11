@@ -53,6 +53,29 @@ public final class Fmt {
     private Fmt() {}
 
     /**
+     * The current Printer (P3-M9, RC-6): set around each top-level
+     * Printf/Sprintf/... call so fmt.State methods (invoked via
+     * handleMethods during Formatter dispatch) can delegate to it.
+     */
+    public static final ThreadLocal<Printer> currentPrinter = new ThreadLocal<>();
+
+    /**
+     * Handler for Go's fmt.handleMethods (P3-M9, RC-6): dispatches to
+     * Format/String/Error/GoString methods. Installed by the phase-3
+     * launcher (which has the method tables); null in phase-1-only mode.
+     */
+    public interface FmtMethodHandler {
+        boolean handle(Printer printer, Arg arg, int verb);
+    }
+
+    private static volatile FmtMethodHandler methodHandler;
+
+    /** Installs the handleMethods handler (phase-3 launcher). */
+    public static void setFmtMethodHandler(FmtMethodHandler handler) {
+        methodHandler = handler;
+    }
+
+    /**
      * One formatted argument: the canonical boxed Go value, its kind, its
      * static Go-syntax type name (used for {@code %T} on non-interface
      * values and inside {@code %!verb(...)} markers), and — for
@@ -98,17 +121,35 @@ public final class Fmt {
 
     /** {@code Sprintf}: formats and returns the string. */
     public static GoString sprintf(String format, Arg[] args) {
-        return new GoString(new Printer().doPrintf(format, args));
+        Printer p = new Printer();
+        currentPrinter.set(p);
+        try {
+            return new GoString(p.doPrintf(format, args));
+        } finally {
+            currentPrinter.remove();
+        }
     }
 
     /** {@code Sprint}: {@code %v} of each arg, spaces between non-strings. */
     public static GoString sprint(Arg[] args) {
-        return new GoString(new Printer().doPrint(args));
+        Printer p = new Printer();
+        currentPrinter.set(p);
+        try {
+            return new GoString(p.doPrint(args));
+        } finally {
+            currentPrinter.remove();
+        }
     }
 
     /** {@code Sprintln}: {@code %v} of each arg, spaces always, trailing newline. */
     public static GoString sprintln(Arg[] args) {
-        return new GoString(new Printer().doPrintln(args));
+        Printer p = new Printer();
+        currentPrinter.set(p);
+        try {
+            return new GoString(p.doPrintln(args));
+        } finally {
+            currentPrinter.remove();
+        }
     }
 
     /**
@@ -116,26 +157,44 @@ public final class Fmt {
      * Returns bytes written, like gc.
      */
     public static int print(Arg[] args) {
-        byte[] b = new Printer().doPrint(args);
-        System.out.write(b, 0, b.length);
-        System.out.flush();
-        return b.length;
+        Printer p = new Printer();
+        currentPrinter.set(p);
+        try {
+            byte[] b = p.doPrint(args);
+            System.out.write(b, 0, b.length);
+            System.out.flush();
+            return b.length;
+        } finally {
+            currentPrinter.remove();
+        }
     }
 
     /** {@code Printf}: formats to stdout. Returns bytes written. */
     public static int printf(String format, Arg[] args) {
-        byte[] b = new Printer().doPrintf(format, args);
-        System.out.write(b, 0, b.length);
-        System.out.flush();
-        return b.length;
+        Printer p = new Printer();
+        currentPrinter.set(p);
+        try {
+            byte[] b = p.doPrintf(format, args);
+            System.out.write(b, 0, b.length);
+            System.out.flush();
+            return b.length;
+        } finally {
+            currentPrinter.remove();
+        }
     }
 
     /** {@code Println}: {@code %v} of each arg to stdout, spaces + newline. */
     public static int println(Arg[] args) {
-        byte[] b = new Printer().doPrintln(args);
-        System.out.write(b, 0, b.length);
-        System.out.flush();
-        return b.length;
+        Printer p = new Printer();
+        currentPrinter.set(p);
+        try {
+            byte[] b = p.doPrintln(args);
+            System.out.write(b, 0, b.length);
+            System.out.flush();
+            return b.length;
+        } finally {
+            currentPrinter.remove();
+        }
     }
 
     /**
@@ -207,27 +266,28 @@ public final class Fmt {
     // The printer: a port of fmt's pp + fmt structs.
     // ------------------------------------------------------------------
 
-    static final class Printer {
+    /** The fmt printer (public for FmtHandleMethods in phase3). */
+    public static final class Printer {
         final ByteArrayOutputStream buf = new ByteArrayOutputStream();
 
         /** Writes a String as UTF-8 bytes (ByteArrayOutputStream.write(byte[]) throws). */
-        void writeUtf8(String s) {
+        public void writeUtf8(String s) {
             byte[] b = s.getBytes(StandardCharsets.UTF_8);
             buf.write(b, 0, b.length);
         }
 
         /** Writes raw bytes (for invalid-UTF8 Go strings: Go prints bytes, not U+FFFD). */
-        void writeBytes(byte[] b) {
+        public void writeBytes(byte[] b) {
             buf.write(b, 0, b.length);
         }
 
-        // flags (fmtFlags)
-        boolean minus, plus, sharp, space, zero;
-        boolean sharpV, plusV; // repurposed #/+ for %v (Go syntax / field names)
-        int wid;
-        boolean widPresent;
-        int prec;
-        boolean precPresent;
+        // flags (fmtFlags) — public for FmtHandleMethods.
+        public boolean minus, plus, sharp, space, zero;
+        public boolean sharpV, plusV; // repurposed #/+ for %v (Go syntax / field names)
+        public int wid;
+        public boolean widPresent;
+        public int prec;
+        public boolean precPresent;
 
         boolean reordered; // an explicit %[n] was used
 
@@ -691,6 +751,24 @@ public final class Fmt {
             curArg = arg;
             Object v = arg.value();
             GoKind k = normalize(arg.kind());
+            // P3-M9 (RC-6): Go's handleMethods — dispatch to Format/String/
+            // Error/GoString methods before structural printing. The
+            // errorString special-case below is subsumed when the dynamic
+            // type has the methods, but kept for the synthetic stand-in.
+            // The handler is installed by the phase-3 launcher (which has
+            // the method tables); null in phase-1-only mode.
+            if (depth == 0 && !erroring) {
+                FmtMethodHandler handler = methodHandler;
+                if (handler != null) {
+                    try {
+                        if (handler.handle(this, arg, verb)) {
+                            return;
+                        }
+                    } catch (Exception e) {
+                        // Method dispatch failed; fall through to structural.
+                    }
+                }
+            }
             if (k == GoKind.INTERFACE && v instanceof GoInterface gi
                     && !gi.isNil() && isErrorString(gi)) {
                 // The errorString value models *errors.errorString (a

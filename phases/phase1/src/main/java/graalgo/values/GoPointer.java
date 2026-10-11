@@ -19,10 +19,23 @@ public final class GoPointer {
     private Object elemArray;
     private int elemIndex;
     private boolean isElemPtr;
+    // P3-M9 (WS D): cell pointer for &x where x is a variable (or field)
+    // whose storage is a GoCell. referent() reads the cell's current value
+    // and setReferent() writes it, so *p = v is observable through the
+    // variable and vice versa. A cell pointer is never nil.
+    private final GoCell cell;
 
     public GoPointer(Object referent) {
         this.referent = referent;
         this.isElemPtr = false;
+        this.cell = null;
+    }
+
+    /** Creates a pointer to the storage behind a {@link GoCell} (&x, &s.f). */
+    public GoPointer(GoCell cell) {
+        this.cell = cell;
+        this.isElemPtr = false;
+        this.referent = null; // not used for cell pointers
     }
 
     /**
@@ -35,10 +48,14 @@ public final class GoPointer {
         this.elemIndex = index;
         this.isElemPtr = true;
         this.referent = null; // not used for element pointers
+        this.cell = null;
     }
 
     /** The pointed-to object, or {@code null} for the nil pointer. */
     public Object referent() {
+        if (cell != null) {
+            return cell.get();
+        }
         if (isElemPtr) {
             return java.lang.reflect.Array.get(elemArray, elemIndex);
         }
@@ -49,9 +66,14 @@ public final class GoPointer {
      * Sets the pointed-to object (P3-M9, WS D: {@code *p = v} assignment).
      * The pointer itself is the mutable cell; this is what makes
      * dereference writes observable through the pointer. For element
-     * pointers, writes go to the array slot.
+     * pointers, writes go to the array slot; for cell pointers, to the
+     * variable/field storage the cell addresses.
      */
     public void setReferent(Object referent) {
+        if (cell != null) {
+            cell.set(referent);
+            return;
+        }
         if (isElemPtr) {
             java.lang.reflect.Array.set(elemArray, elemIndex, referent);
             return;
@@ -60,14 +82,41 @@ public final class GoPointer {
     }
 
     public boolean isNil() {
+        if (cell != null) {
+            return false;
+        }
         if (isElemPtr) {
             return elemArray == null;
         }
         return referent == null;
     }
 
+    /**
+     * Pointer equality (Go {@code ==} on pointers): two pointers are equal
+     * iff both are nil or they address the same storage — the same cell,
+     * the same array element, or the same referent object. (Comparing
+     * referent <em>values</em> would conflate distinct variables holding
+     * equal values.)
+     */
+    public boolean sameStorageAs(GoPointer o) {
+        if (isNil() || o.isNil()) {
+            return isNil() && o.isNil();
+        }
+        if (cell != null || o.cell != null) {
+            return cell == o.cell;
+        }
+        if (isElemPtr || o.isElemPtr) {
+            return isElemPtr && o.isElemPtr
+                    && elemArray == o.elemArray && elemIndex == o.elemIndex;
+        }
+        return referent == o.referent;
+    }
+
     @Override
     public String toString() {
+        if (cell != null) {
+            return "GoPointer{cell " + cell + "}";
+        }
         if (isElemPtr) {
             return "GoPointer{&arr[" + elemIndex + "]}";
         }

@@ -146,6 +146,12 @@ public final class NodeFactory {
         public int resultSlot = -1;
         /** Kind of the result slot (M5, WS F); null when resultSlot is -1. */
         public GoKind resultKind;
+        /**
+         * P3-M9 (WS D): the named result's address is taken — its slot
+         * holds a {@link graalgo.values.GoBox} cell instead of the raw
+         * value (see {@link ReturnNode} / {@code GoFuncRootNode}).
+         */
+        public boolean resultBoxed = false;
 
         /** Declared result type-table id (-1 if the function has no result). */
         public int resultTypeId = -1;
@@ -573,6 +579,8 @@ public final class NodeFactory {
                     allocSlot(pf.string("name", "param.fields"), pf.intValue("obj", "param.fields"),
                             pf.intValue("type", "param.fields"), "param.fields", ctx);
                 }
+                prescanAddrTakenDecls(fields.object("body", "funcdecl.fields"), ctx,
+                        "funcdecl.fields");
                 GoStmtNode body = buildStmt(fields.object("body", "funcdecl.fields"), ctx);
                 // M7: package-level variable initialization runs before
                 // main's first statement, in dependency order (Go spec,
@@ -653,6 +661,7 @@ public final class NodeFactory {
         Json.Array params = f.array("params", path);
         int[] paramSlots = new int[params.size()];
         GoKind[] paramKinds = new GoKind[params.size()];
+        List<GoStmtNode> prologue = new ArrayList<>();
         for (int i = 0; i < params.size(); i++) {
             Json.Object p = asObject(params.get(i), path + ".params[" + i + "]");
             if (!"param".equals(p.string("kind", path + ".params[" + i + "]"))) {
@@ -663,7 +672,8 @@ public final class NodeFactory {
             int oid = pf.intValue("obj", path);
             int typeId = pf.intValue("type", path);
             GoKind kind = kindOf(ctx, typeId, path);
-            int slot = allocSlot(pname, oid, typeId, path + ".params[" + i + "]", ctx);
+            int slot = allocParamSlot(pname, oid, typeId, path + ".params[" + i + "]", ctx,
+                    prologue);
             paramSlots[i] = slot;
             paramKinds[i] = kind;
         }
@@ -683,23 +693,38 @@ public final class NodeFactory {
             int roid = rf.intValue("obj", path);
             resultTypeId = rf.intValue("type", path);
             resultKind = kindOf(ctx, resultTypeId, path);
-            resultSlot = allocSlot(rname.isEmpty() ? "result" : rname, roid, resultTypeId,
-                    path + ".results[0]", ctx);
+            // P3-M9 (WS D): an address-taken named result lives in a
+            // GoBox cell in the result slot.
+            if (addrTaken.contains(roid)) {
+                resultSlot = allocBoxSlot(rname.isEmpty() ? "result" : rname, roid,
+                        resultTypeId, path + ".results[0]", ctx);
+                ctx.resultBoxed = true;
+            } else {
+                resultSlot = allocSlot(rname.isEmpty() ? "result" : rname, roid, resultTypeId,
+                        path + ".results[0]", ctx);
+            }
             ctx.resultSlot = resultSlot;
             ctx.resultKind = resultKind;
             ctx.resultTypeId = resultTypeId;
         }
+        prescanAddrTakenDecls(f.object("body", path), ctx, path);
         GoStmtNode body = buildStmt(f.object("body", path), ctx);
-        // Zero the result slot on entry (Go semantics: results start at zero
-        // values, so a bare `return` yields zeros).
-        GoStmtNode entry = body;
+        // Entry: box address-taken parameters, then zero the result slot
+        // (Go semantics: results start at zero values, so a bare `return`
+        // yields zeros; a boxed result's zero goes into its cell).
+        List<GoStmtNode> entryStmts = new ArrayList<>(prologue);
         if (resultSlot >= 0) {
-            GoStmtNode zero = new AssignNode(resultSlot, resultKind,
-                    zeroNode(resultKind, resultTypeId, ctx, path));
-            entry = new BlockNode(new GoStmtNode[]{zero, body});
+            GoExprNode zeroVal = zeroNode(resultKind, resultTypeId, ctx, path);
+            entryStmts.add(ctx.resultBoxed
+                    ? new BoxDeclNode(resultSlot, resultKind, zeroVal)
+                    : new AssignNode(resultSlot, resultKind, zeroVal));
         }
+        entryStmts.add(body);
+        GoStmtNode entry = entryStmts.size() == 1 ? body
+                : new BlockNode(entryStmts.toArray(new GoStmtNode[0]));
         GoFuncRootNode root = new GoFuncRootNode(ctx.frames.build(), entry, closureSlot,
-                paramSlots, paramKinds, resultSlot, resultKind, funcName);
+                paramSlots, paramKinds, resultSlot, resultKind, funcName, null,
+                ctx.resultBoxed);
         root.setSourceSection(sectionFor(fn, "funcdecl"));
         return root;
     }
@@ -2228,6 +2253,14 @@ public final class NodeFactory {
      * at the top of the iteration, before the condition — and the
      * write-back propagates to the carry.
      */
+    /**
+     * The frame slot holding the {@link graalgo.values.GoBox} cell of the
+     * boxed variable {@code oid}, as seen from {@code ctx}: a funclit
+     * snapshot slot for captured variables, the per-iteration cell for a
+     * for-header variable (the carry cell in the init phase), else the
+     * declaring slot. Writes ({@link BoxWriteNode}), reads, and address-of
+     * ({@link BoxAddrNode}) must all resolve to this same cell.
+     */
     private int boxWriteSlot(BuildCtx ctx, int oid, String path) {
         Integer snap = ctx.boxSnapSlots.get(oid);
         if (snap != null) {
@@ -2351,9 +2384,10 @@ public final class NodeFactory {
     private void collectAddrTaken(Json.Value v, Set<Integer> out, String path) {
         if (v instanceof Json.Object o) {
             String kind = nodeKind(o);
-            if ("funclit".equals(kind)) {
-                return;
-            }
+            // P3-M9 (WS D): descend into function literals too — a &x in a
+            // closure body takes the address of the (outer) variable just
+            // the same; missing it would leave the variable unboxed while
+            // the pointer expects its cell.
             if ("addrof".equals(kind)
                     && o.opt("fields") instanceof Json.Object fields
                     && fields.opt("x") instanceof Json.Object x
@@ -2703,7 +2737,40 @@ public final class NodeFactory {
                 }
             };
         }
-        GoExprNode x = buildExpr(f.object("x", path), ctx);
+        Json.Object operand = f.object("x", path);
+        String opKind = nodeKind(operand);
+        // P3-M9 (WS D): &*p is p itself — no dereference happens (so
+        // &*nil is the nil pointer, not a panic).
+        if ("deref".equals(opKind)) {
+            return buildExpr(operand.object("fields", path).object("x", path), ctx);
+        }
+        // P3-M9 (WS D): &x for a variable x must address the variable's
+        // storage (its GoBox cell), not a snapshot of its current value —
+        // otherwise *p = v is invisible through x and vice versa.
+        if ("ident".equals(opKind)) {
+            Json.Object xf = operand.object("fields", path);
+            int oid = xf.intValue("obj", path);
+            if (oid >= 0) {
+                Integer gslot = globalSlots.get(oid);
+                if (gslot != null) {
+                    if (addrTaken.contains(oid)) {
+                        return new GlobalBoxAddrNode(globalsFrame, gslot);
+                    }
+                } else if (isBoxedTransitive(ctx, oid)) {
+                    return new BoxAddrNode(boxWriteSlot(ctx, oid, path));
+                }
+            }
+            // Unboxed variable (its address is never taken per the
+            // program scan — defensive): fall through to the snapshot.
+        }
+        // P3-M9 (WS D): &s.f addresses the field's storage (GoFieldCell).
+        if ("selector".equals(opKind)) {
+            GoExprNode fieldAddr = buildFieldAddr(operand, ctx, path);
+            if (fieldAddr != null) {
+                return fieldAddr;
+            }
+        }
+        GoExprNode x = buildExpr(operand, ctx);
         GoKind xKind = x.kind();
         return new GoExprNode(GoKind.POINTER) {
             @Override
@@ -2714,6 +2781,44 @@ public final class NodeFactory {
                 return new GoPointer(val);
             }
         };
+    }
+
+    /**
+     * Builds {@code &s.f} (P3-M9, WS D): flattens the selector chain's
+     * promotion paths (innermost first) into one field-index path and
+     * addresses the final field's storage via {@link FieldAddrNode}.
+     * Returns null (caller falls back to the snapshot form) when the
+     * base is not a struct / pointer-to-struct expression.
+     */
+    private GoExprNode buildFieldAddr(Json.Object selector, BuildCtx ctx, String path) {
+        List<Json.Object> chain = new ArrayList<>();
+        Json.Object base = selector;
+        while ("selector".equals(nodeKind(base))) {
+            chain.add(base);
+            base = base.object("fields", path).object("x", path);
+        }
+        Json.Value baseType = base.object("fields", path).opt("type");
+        if (!(baseType instanceof Json.Num btn)) {
+            return null;
+        }
+        GoKind baseKind = kindOf(ctx, (int) btn.asLong(path), path);
+        if (baseKind != GoKind.STRUCT && baseKind != GoKind.POINTER) {
+            return null;
+        }
+        List<Integer> hops = new ArrayList<>();
+        for (int i = chain.size() - 1; i >= 0; i--) {
+            Json.Object sf = chain.get(i).object("fields", path);
+            for (Json.Value v : sf.array("selpath", path).items()) {
+                hops.add((int) ((Json.Num) v).asLong(path));
+            }
+        }
+        if (hops.isEmpty()) {
+            return null;
+        }
+        GoKind fieldKind = kindOf(ctx,
+                selector.object("fields", path).intValue("type", path), path);
+        int[] hopArr = hops.stream().mapToInt(Integer::intValue).toArray();
+        return new FieldAddrNode(buildExpr(base, ctx), hopArr, fieldKind);
     }
 
     /**
@@ -2760,7 +2865,7 @@ public final class NodeFactory {
         if (x instanceof NilNode && isNillable(to)) {
             GoStructDescriptor nilSd =
                     to == GoKind.STRUCT ? structDescriptorFor(ctx, toId, path) : null;
-            NilNode n = new NilNode(to, nilSd);
+            NilNode n = new NilNode(to, nilSd, zeroTemplateOrNull(to, toId, ctx, path));
             n.setTypeId(toId);
             return n;
         }
@@ -3339,9 +3444,14 @@ public final class NodeFactory {
             // zero-initialize each element (Go zero value), not leave nulls.
             GoStructDescriptor ultimateDesc =
                     ek == GoKind.STRUCT ? structDescriptorFor(ctx, eid, path) : null;
-            return new NewNode(elemKind, desc, arrayLens, ek, ultimateDesc);
+            // P3-M9: the referent zero comes from the recursive zero
+            // template (nested struct/array fields materialized), not
+            // the shallow descriptor-only GoStruct.zero.
+            return new NewNode(elemKind, desc, arrayLens, ek, ultimateDesc,
+                    zeroTemplateOrNull(elemKind, elemId, ctx, path));
         }
-        return new NewNode(elemKind, desc);
+        return new NewNode(elemKind, desc, null, null, null,
+                zeroTemplateOrNull(elemKind, elemId, ctx, path));
     }
 
     /** {@code append(s, elems...)}: the result type id gives the element kind. */
@@ -3530,6 +3640,7 @@ public final class NodeFactory {
         Json.Array params = f.array("params", path);
         int[] paramSlots = new int[params.size()];
         GoKind[] paramKinds = new GoKind[params.size()];
+        List<GoStmtNode> prologue = new ArrayList<>();
         for (int i = 0; i < params.size(); i++) {
             Json.Object p = asObject(params.get(i), path + ".params[" + i + "]");
             Json.Object pf = p.object("fields", path + ".params[" + i + "]");
@@ -3537,7 +3648,8 @@ public final class NodeFactory {
             int oid = pf.intValue("obj", path);
             int typeId = pf.intValue("type", path);
             GoKind kind = kindOf(ctx, typeId, path);
-            int slot = allocSlot(pname, oid, typeId, path + ".params[" + i + "]", fctx);
+            int slot = allocParamSlot(pname, oid, typeId, path + ".params[" + i + "]", fctx,
+                    prologue);
             paramSlots[i] = slot;
             paramKinds[i] = kind;
         }
@@ -3554,21 +3666,36 @@ public final class NodeFactory {
             int roid = rf.intValue("obj", path);
             int rtypeId = rf.intValue("type", path);
             GoKind rkind = kindOf(ctx, rtypeId, path);
-            int rslot = allocSlot(rname.isEmpty() ? "result" : rname, roid, rtypeId,
-                    path + ".results[0]", fctx);
+            // P3-M9 (WS D): an address-taken named result lives in a
+            // GoBox cell in the result slot.
+            int rslot = addrTaken.contains(roid)
+                    ? allocBoxSlot(rname.isEmpty() ? "result" : rname, roid, rtypeId,
+                            path + ".results[0]", fctx)
+                    : allocSlot(rname.isEmpty() ? "result" : rname, roid, rtypeId,
+                            path + ".results[0]", fctx);
+            if (addrTaken.contains(roid)) {
+                fctx.resultBoxed = true;
+            }
             fctx.resultSlot = rslot;
             fctx.resultKind = rkind;
             fctx.resultTypeId = rtypeId;
         }
+        prescanAddrTakenDecls(f.object("body", path), fctx, path);
         GoStmtNode body = buildBlock(f.object("body", path), fctx);
-        // Zero the result slot on entry (Go semantics: results start at zero
-        // values, so a bare `return` yields zeros).
-        GoStmtNode entry = body;
+        // Entry: box address-taken parameters, then zero the result slot
+        // (Go semantics: results start at zero values, so a bare `return`
+        // yields zeros; a boxed result's zero goes into its cell).
+        List<GoStmtNode> entryStmts = new ArrayList<>(prologue);
         if (fctx.resultSlot >= 0) {
-            GoStmtNode zero = new AssignNode(fctx.resultSlot, fctx.resultKind,
-                    zeroNode(fctx.resultKind, resultTypeId(f, ctx, path), fctx, path));
-            entry = new BlockNode(new GoStmtNode[]{zero, body});
+            GoExprNode zeroVal = zeroNode(fctx.resultKind, resultTypeId(f, ctx, path),
+                    fctx, path);
+            entryStmts.add(fctx.resultBoxed
+                    ? new BoxDeclNode(fctx.resultSlot, fctx.resultKind, zeroVal)
+                    : new AssignNode(fctx.resultSlot, fctx.resultKind, zeroVal));
         }
+        entryStmts.add(body);
+        GoStmtNode entry = entryStmts.size() == 1 ? body
+                : new BlockNode(entryStmts.toArray(new GoStmtNode[0]));
         GoFuncRootNode root;
         {
             // M6: drain the boxSpec triples into the flat array for
@@ -3589,7 +3716,7 @@ public final class NodeFactory {
             }
             root = new GoFuncRootNode(frames.build(), entry, closureSlot,
                     paramSlots, paramKinds, fctx.resultSlot, fctx.resultKind, fctx.funcName,
-                    snapSlots);
+                    snapSlots, fctx.resultBoxed);
             root.setSourceSection(sectionFor(node, "funclit"));
             RootCallTarget target = root.getCallTarget();
             // Does the body capture? The hasCapture flag is set when CapReadNode
@@ -3758,6 +3885,17 @@ public final class NodeFactory {
 
     /** Allocates a frame slot for one declared object; returns the slot index. */
     private int allocSlot(String varName, int oid, int typeId, String path, BuildCtx ctx) {
+        int slot = ctx.frames.addSlot(slotKindFor(typeId, path, ctx), varName, null);
+        if (ctx.objSlots.putIfAbsent(oid, slot) != null) {
+            throw new FrontendException(path + ": duplicate object id " + oid);
+        }
+        ctx.slotsByName.put(varName, slot);
+        ctx.kindsByName.put(varName, kindOf(ctx, typeId, path));
+        return slot;
+    }
+
+    /** The frame slot kind a variable of the given type occupies. */
+    private FrameSlotKind slotKindFor(int typeId, String path, BuildCtx ctx) {
         // Aliases and named types resolve before decoders run.
         int rid = resolveAlias(ctx, typeId, path);
         Json.Object entry = ctx.types.entry(rid, path);
@@ -3765,24 +3903,79 @@ public final class NodeFactory {
             rid = entry.object("detail", path).intValue("underlying", path);
             entry = ctx.types.entry(rid, path);
         }
-        FrameSlotKind slotKind = null;
         for (TypeDecoder d : typeDecoders) {
-            slotKind = d.decode(rid, entry);
+            FrameSlotKind slotKind = d.decode(rid, entry);
             if (slotKind != null) {
-                break;
+                return slotKind;
             }
         }
-        if (slotKind == null) {
-            throw new FrontendException(path + ": no TypeDecoder handles type id " + typeId
-                    + " (WS C/D hook: NodeFactory.registerTypeDecoder)");
-        }
-        int slot = ctx.frames.addSlot(slotKind, varName, null);
+        throw new FrontendException(path + ": no TypeDecoder handles type id " + typeId
+                + " (WS C/D hook: NodeFactory.registerTypeDecoder)");
+    }
+
+    /**
+     * Allocates a slot for an incoming parameter value WITHOUT registering
+     * it as the variable's slot (P3-M9, WS D): an address-taken parameter
+     * lives in a GoBox cell (see {@link #allocParamSlot}); the root writes
+     * the argument into this raw slot and the prologue boxes it.
+     */
+    private int allocRawSlot(String varName, int typeId, String path, BuildCtx ctx) {
+        return ctx.frames.addSlot(slotKindFor(typeId, path, ctx), varName, null);
+    }
+
+    /**
+     * Allocates an Object slot holding the {@link graalgo.values.GoBox}
+     * cell of an address-taken variable and registers it as the variable's
+     * slot (P3-M9, WS D).
+     */
+    private int allocBoxSlot(String varName, int oid, int typeId, String path, BuildCtx ctx) {
+        int slot = ctx.frames.addSlot(FrameSlotKind.Object, varName, null);
         if (ctx.objSlots.putIfAbsent(oid, slot) != null) {
             throw new FrontendException(path + ": duplicate object id " + oid);
         }
         ctx.slotsByName.put(varName, slot);
         ctx.kindsByName.put(varName, kindOf(ctx, typeId, path));
+        ctx.boxed.add(oid);
         return slot;
+    }
+
+    /**
+     * Allocates a parameter's slot (P3-M9, WS D). A plain parameter uses
+     * the standard path. An address-taken parameter lives in a GoBox
+     * cell: the returned slot is the raw incoming slot the root writes
+     * the argument into, the variable's registered slot is the cell, and
+     * a {@link BoxDeclNode} prologue statement (appended to
+     * {@code prologue}) moves the argument into the cell before the body
+     * runs — so {@code &param} and writes through it alias the parameter.
+     */
+    private int allocParamSlot(String pname, int oid, int typeId, String path, BuildCtx ctx,
+                               List<GoStmtNode> prologue) {
+        if (!addrTaken.contains(oid)) {
+            return allocSlot(pname, oid, typeId, path, ctx);
+        }
+        int rawSlot = allocRawSlot(pname, typeId, path, ctx);
+        int boxSlot = allocBoxSlot(pname, oid, typeId, path, ctx);
+        GoKind kind = kindOf(ctx, typeId, path);
+        prologue.add(new BoxDeclNode(boxSlot, kind, new VarReadNode(kind, rawSlot)));
+        return rawSlot;
+    }
+
+    /**
+     * P3-M9 (WS D): boxes every variable declared in a function body
+     * whose address is taken anywhere in the program ({@link #addrTaken}):
+     * its declaration installs a GoBox cell and every access goes through
+     * the cell, so {@code &x} pointers alias the variable. (Loop variables
+     * are additionally handled by the loopcap prescans; this covers plain
+     * declarations in any function or function literal body.)
+     */
+    private void prescanAddrTakenDecls(Json.Value body, BuildCtx ctx, String path) {
+        Set<Integer> decls = new HashSet<>();
+        collectVardeclObjs(body, decls, path);
+        for (int oid : decls) {
+            if (addrTaken.contains(oid)) {
+                ctx.boxed.add(oid);
+            }
+        }
     }
 
     /** Frame slot for an object-table id, allocating on first declaration (M4: shared helper). */
@@ -4282,7 +4475,8 @@ public final class NodeFactory {
         if (l.isIndex) {
             GoStructDescriptor ed = l.elemKind == GoKind.STRUCT
                     ? structDescriptorFor(ctx, l.elemTypeId, path) : null;
-            return new IndexNode(l.container, l.key, l.containerKind, l.elemKind, ed);
+            return new IndexNode(l.container, l.key, l.containerKind, l.elemKind, ed,
+                    zeroTemplateOrNull(l.elemKind, l.elemTypeId, ctx, path));
         }
         if (l.isDeref) {
             // P3-M9 (WS D): *p read.
@@ -4333,7 +4527,8 @@ public final class NodeFactory {
             GoStructDescriptor ed = elemKind == GoKind.STRUCT
                     ? structDescriptorFor(ctx, elemTypeId, path) : null;
             valueNode = new IndexNode(new VarReadNode(container.kind(), tmpC),
-                    new VarReadNode(key.kind(), tmpK), containerKind, elemKind, ed);
+                    new VarReadNode(key.kind(), tmpK), containerKind, elemKind, ed,
+                    zeroTemplateOrNull(elemKind, elemTypeId, ctx, path));
             okNode = new IndexOkNode(new VarReadNode(container.kind(), tmpC),
                     new VarReadNode(key.kind(), tmpK));
         } else if ("typeassert".equals(vk)) {
@@ -4357,7 +4552,8 @@ public final class NodeFactory {
                     ? structDescriptorFor(ctx, assertTypeId, path) : null;
             valueNode = new TypeAssertNode(new VarReadNode(iface.kind(), tmpI), ak, adesc, true, sd,
                     GoTypeStrings.of(ctx, iface.typeId()), GoTypeStrings.of(ctx, assertTypeId),
-                    ifaceMethods, dynMethods);
+                    ifaceMethods, dynMethods,
+                    zeroTemplateOrNull(ak, assertTypeId, ctx, path));
             okNode = new TypeAssertOkNode(new VarReadNode(iface.kind(), tmpI), adesc,
                     ifaceMethods, dynMethods);
         } else {
@@ -4421,7 +4617,7 @@ public final class NodeFactory {
         // M5 (WS F): function literals with results assign the result slot
         // before throwing GoReturn (defer runs before the return completes).
         if (ctx.resultSlot >= 0) {
-            return new ReturnNode(value, ctx.resultSlot, ctx.resultKind);
+            return new ReturnNode(value, ctx.resultSlot, ctx.resultKind, ctx.resultBoxed);
         }
         return new ReturnNode(value);
     }
@@ -4973,6 +5169,18 @@ public final class NodeFactory {
     // M4 (WS E): composite-type expression builders.
     // ------------------------------------------------------------------
 
+    /**
+     * Recursive zero template for STRUCT/ARRAY kinds, null for all other
+     * kinds (P3-M9): nodes that materialize a zero of the kind at runtime
+     * (new(), map-index misses, lenient type asserts, nil) carry this
+     * template and deep-copy it per evaluation — the descriptor-only
+     * GoStruct.zero leaves nested struct fields null.
+     */
+    private Object zeroTemplateOrNull(GoKind kind, int typeId, BuildCtx ctx, String path) {
+        return (kind == GoKind.STRUCT || kind == GoKind.ARRAY)
+                ? zeroTemplateFor(kind, typeId, ctx, path) : null;
+    }
+
     /** Zero-value template for a composite literal element/field type. */
     private Object zeroTemplateFor(GoKind kind, int typeId, BuildCtx ctx, String path) {
         if (kind == GoKind.STRUCT) {
@@ -5153,7 +5361,8 @@ public final class NodeFactory {
         GoKind elemKind = kindOf(ctx, elemTid, path);
         GoStructDescriptor elemDesc =
                 elemKind == GoKind.STRUCT ? structDescriptorFor(ctx, elemTid, path) : null;
-        return new IndexNode(container, key, containerKind, elemKind, elemDesc);
+        return new IndexNode(container, key, containerKind, elemKind, elemDesc,
+                zeroTemplateOrNull(elemKind, elemTid, ctx, path));
     }
 
     private GoExprNode buildSliceExpr(Json.Object node, BuildCtx ctx) {
@@ -5217,7 +5426,8 @@ public final class NodeFactory {
         // interface-conversion panic).
         return new TypeAssertNode(x, ak, adesc, false, sd,
                 GoTypeStrings.of(ctx, x.typeId()), GoTypeStrings.of(ctx, assertTid),
-                ifaceMethods, dynMethods);
+                ifaceMethods, dynMethods,
+                zeroTemplateOrNull(ak, assertTid, ctx, path));
     }
 
     private GoExprNode buildNil(Json.Object node, BuildCtx ctx) {
@@ -5227,7 +5437,7 @@ public final class NodeFactory {
         GoKind kind = kindOf(ctx, typeId, path);
         GoStructDescriptor sd =
                 kind == GoKind.STRUCT ? structDescriptorFor(ctx, typeId, path) : null;
-        NilNode n = new NilNode(kind, sd);
+        NilNode n = new NilNode(kind, sd, zeroTemplateOrNull(kind, typeId, ctx, path));
         n.setTypeId(typeId);
         return n;
     }

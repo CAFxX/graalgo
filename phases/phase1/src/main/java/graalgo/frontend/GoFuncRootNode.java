@@ -47,6 +47,9 @@ public final class GoFuncRootNode extends RootNode {
     private final GoKind[] paramKinds;
     private final int resultSlot;
     private final GoKind resultKind;
+    // P3-M9 (WS D): an address-taken named result's slot holds a GoBox
+    // cell; readResult unwraps it.
+    private final boolean resultBoxed;
     private final String funcName;
     private SourceSection sourceSection;
     /**
@@ -64,6 +67,14 @@ public final class GoFuncRootNode extends RootNode {
     public GoFuncRootNode(FrameDescriptor descriptor, GoStmtNode body,
                           int closureSlot, int[] paramSlots, GoKind[] paramKinds,
                           int resultSlot, GoKind resultKind, String funcName, int[] snapSlots) {
+        this(descriptor, body, closureSlot, paramSlots, paramKinds, resultSlot, resultKind,
+                funcName, snapSlots, false);
+    }
+
+    public GoFuncRootNode(FrameDescriptor descriptor, GoStmtNode body,
+                          int closureSlot, int[] paramSlots, GoKind[] paramKinds,
+                          int resultSlot, GoKind resultKind, String funcName, int[] snapSlots,
+                          boolean resultBoxed) {
         super((TruffleLanguage<?>) null, descriptor);
         this.body = body;
         this.closureSlot = closureSlot;
@@ -71,6 +82,7 @@ public final class GoFuncRootNode extends RootNode {
         this.paramKinds = paramKinds;
         this.resultSlot = resultSlot;
         this.resultKind = resultKind;
+        this.resultBoxed = resultBoxed;
         this.funcName = funcName;
         this.snapSlots = snapSlots;
     }
@@ -176,19 +188,19 @@ public final class GoFuncRootNode extends RootNode {
                 if (chain != null) {
                     chain.unwindReturning(mark);
                 }
-                return readResult(frame, resultSlot, resultKind, r.value);
+                return readResult(frame, resultSlot, resultKind, r.value, resultBoxed);
             }
             if (chain != null) {
                 chain.unwindReturning(mark);
             }
-            return readResult(frame, resultSlot, resultKind, null);
+            return readResult(frame, resultSlot, resultKind, null, resultBoxed);
         } catch (PanicException p) {
             PanicException rest = chain != null ? chain.unwindPanicking(mark, p) : p;
             if (rest != null) {
                 throw rest;
             }
             // Recovered: resume after the chain with the result slot.
-            return readResult(frame, resultSlot, resultKind, null);
+            return readResult(frame, resultSlot, resultKind, null, resultBoxed);
         } catch (Goexit g) {
             if (chain != null) {
                 chain.unwindGoexiting(mark);
@@ -203,8 +215,13 @@ public final class GoFuncRootNode extends RootNode {
 
     /** Result value: the result slot if present, else the GoReturn value, else null. */
     private static Object readResult(VirtualFrame frame, int resultSlot, GoKind resultKind,
-                                     Object returnValue) {
+                                     Object returnValue, boolean resultBoxed) {
         if (resultSlot >= 0) {
+            if (resultBoxed) {
+                // The slot holds the named result's GoBox cell; its value
+                // is already in canonical boxed form.
+                return ((graalgo.values.GoBox) frame.getObject(resultSlot)).value;
+            }
             return Boxing.readSlot(frame, resultSlot, resultKind);
         }
         return returnValue;

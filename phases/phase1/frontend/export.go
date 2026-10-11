@@ -1754,6 +1754,14 @@ func ExportFile(path string) (string, error) {
 			return "", err
 		}
 	}
+	// P3-M9 (RC-6): the fmt.State implementation (internal/graalgo/fmtstate)
+	// must be in the export so Fmt.handleMethods can box a PrinterState as
+	// fmt.State for fmt.Formatter dispatch. The package is synthetic-only
+	// (never imported by user code) and tiny, so import it unconditionally;
+	// importSyntheticPackage is idempotent.
+	if err := e.importSyntheticPackage(getSyntheticPackage("internal/graalgo/fmtstate")); err != nil {
+		return "", err
+	}
 	// P3-M7 (wave 1): synthetic errors/sort are self-contained (no
 	// synthetic->synthetic imports), so no ordering constraints.
 	if needErrors {
@@ -2964,7 +2972,39 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 	for _, g := range ordered {
 		out = append(out, GlobalEnt{Obj: g.oid, Init: g.init, Pos: g.pos})
 	}
+	// Go spec (Package initialization): after the package's variables
+	// are initialized, its init() functions run in declaration order.
+	// They are emitted as side-effect-only globals entries (Obj == -1)
+	// carrying a void call node — the factory evaluates them in
+	// sequence before main, like blank-var initializers.
+	for _, fi := range funcs {
+		if fi.fd.Recv == nil && fi.obj.Name() == "init" {
+			ent, err := e.initCallEnt(fi)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, ent)
+		}
+	}
 	return out, nil
+}
+
+// initCallEnt builds a globals-sequence entry that invokes a
+// package-level init() function for its side effects. The call node
+// mirrors exportFuncCall's direct-call shape (ident fun + no args +
+// nil result type for the void signature).
+func (e *exporter) initCallEnt(fi *funcDeclInfo) (GlobalEnt, error) {
+	sigID, err := e.typeID(fi.obj.Type())
+	if err != nil {
+		return GlobalEnt{}, err
+	}
+	fun := e.node("ident", fi.fd.Name, map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "type": sigID,
+	})
+	call := e.node("call", fi.fd, map[string]any{
+		"fun": fun, "args": []*Node{}, "type": nil,
+	})
+	return GlobalEnt{Obj: -1, Init: call, Pos: e.pos(fi.fd)}, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -5612,9 +5652,10 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	if symbol == "" {
 		return nil, scopeErrorf("func %s without body", fd.Name.Name)
 	}
-	if fi.recv != nil {
-		return nil, scopeErrorf("//go:linkname on method %s is not in M4 scope", fd.Name.Name)
-	}
+	// P3-M9 (RC-6): //go:linkname on methods is allowed (previously M4
+	// scope). The receiver is passed as the first arg; intrinsics that
+	// don't need it (e.g. fmtstate.PrinterState methods, which operate on
+	// the thread-local Printer) ignore it.
 	if fi.isTemplate {
 		return nil, scopeErrorf("//go:linkname on generic func %s is not in M4 scope", fd.Name.Name)
 	}

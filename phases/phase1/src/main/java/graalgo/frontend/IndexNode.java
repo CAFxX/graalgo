@@ -26,16 +26,36 @@ public final class IndexNode extends GoExprNode {
     private final GoKind containerKind;
     private final GoKind elemKind;
     private final GoStructDescriptor elemStructDesc; // for struct-kind map/slice elements
+    /**
+     * Recursive zero template for STRUCT/ARRAY element kinds (null
+     * otherwise): an absent map key must yield the fully recursive zero
+     * value — GoStruct.zero would leave nested struct fields null (P3-M9).
+     */
+    private final Object zeroTemplate;
 
     public IndexNode(GoExprNode container, GoExprNode key,
                      GoKind containerKind, GoKind elemKind,
                      GoStructDescriptor elemStructDesc) {
+        this(container, key, containerKind, elemKind, elemStructDesc, null);
+    }
+
+    public IndexNode(GoExprNode container, GoExprNode key,
+                     GoKind containerKind, GoKind elemKind,
+                     GoStructDescriptor elemStructDesc, Object zeroTemplate) {
         super(elemKind);
         this.container = container;
         this.key = key;
         this.containerKind = containerKind;
         this.elemKind = elemKind;
         this.elemStructDesc = elemStructDesc;
+        this.zeroTemplate = zeroTemplate;
+    }
+
+    /** The element zero value for an absent/nil map read (fresh copy). */
+    private Object zeroValue() {
+        return zeroTemplate != null
+                ? Boxing.freshZeroCopy(zeroTemplate)
+                : Boxing.zero(elemKind, elemStructDesc);
     }
 
     public GoExprNode container() {
@@ -96,14 +116,14 @@ public final class IndexNode extends GoExprNode {
                 GoMap m = (GoMap) container.executeObject(frame);
                 if (m == null) {
                     // Reading a nil map is legal: zero value.
-                    yield Boxing.zero(elemKind, elemStructDesc);
+                    yield zeroValue();
                 }
                 Object k = MapKeys.box(keyKind(), key, frame);
                 Object v = m.get(k);
                 // A present key may hold a null (nil) value; only an
                 // absent key yields the zero value.
                 yield (v == null && !m.containsKey(k))
-                        ? Boxing.zero(elemKind, elemStructDesc)
+                        ? zeroValue()
                         : v;
             }
             default -> throw new FrontendException("index on kind " + containerKind + " (WS E)");

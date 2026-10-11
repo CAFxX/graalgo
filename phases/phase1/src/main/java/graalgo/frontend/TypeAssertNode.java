@@ -42,12 +42,29 @@ public final class TypeAssertNode extends GoExprNode {
      */
     private final List<String> assertedIfaceMethods;
     private final Map<String, Set<String>> dynamicMethodSets;
+    /**
+     * Recursive zero template for STRUCT/ARRAY asserted kinds (null
+     * otherwise): the lenient (comma-ok) failure value must be the fully
+     * recursive zero — GoStruct.zero would leave nested struct fields
+     * null (P3-M9).
+     */
+    private final Object zeroTemplate;
 
     public TypeAssertNode(GoExprNode iface, GoKind kind, GoTypeDescriptor asserted,
                           boolean lenient, GoStructDescriptor structDesc,
                           String ifaceName, String assertedName,
                           List<String> assertedIfaceMethods,
                           Map<String, Set<String>> dynamicMethodSets) {
+        this(iface, kind, asserted, lenient, structDesc, ifaceName, assertedName,
+                assertedIfaceMethods, dynamicMethodSets, null);
+    }
+
+    public TypeAssertNode(GoExprNode iface, GoKind kind, GoTypeDescriptor asserted,
+                          boolean lenient, GoStructDescriptor structDesc,
+                          String ifaceName, String assertedName,
+                          List<String> assertedIfaceMethods,
+                          Map<String, Set<String>> dynamicMethodSets,
+                          Object zeroTemplate) {
         super(kind);
         this.iface = iface;
         this.asserted = asserted;
@@ -57,6 +74,7 @@ public final class TypeAssertNode extends GoExprNode {
         this.assertedName = assertedName;
         this.assertedIfaceMethods = assertedIfaceMethods;
         this.dynamicMethodSets = dynamicMethodSets;
+        this.zeroTemplate = zeroTemplate;
     }
 
     public GoExprNode iface() {
@@ -110,7 +128,9 @@ public final class TypeAssertNode extends GoExprNode {
         GoInterface gi = GoInterface.narrow(iface.executeObject(frame));
         if (!holds(gi, asserted, assertedIfaceMethods, dynamicMethodSets)) {
             if (lenient) {
-                return Boxing.zero(kind(), structDesc);
+                return zeroTemplate != null
+                        ? Boxing.freshZeroCopy(zeroTemplate)
+                        : Boxing.zero(kind(), structDesc);
             }
             // gc: "interface conversion: <iface> is <dynamic>, not <asserted>".
             // The dynamic name comes from the descriptor; the int/int64 and

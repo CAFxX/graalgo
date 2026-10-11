@@ -326,15 +326,24 @@ public final class BinaryOpNode extends GoExprNode {
                 default -> throw new AssertionError("unreachable");
             };
         }
-        // P3-M8b: *T pointer equality (Go: ==/!= on pointers compares referents).
+        // P3-M8b: *T pointer equality (Go: ==/!= on pointers compares
+        // the addressed storage, not the values stored there).
         if (operandKind == GoKind.POINTER) {
             Object l = left.executeObject(frame);
             Object r = right.executeObject(frame);
-            // Nil pointers are Java null; non-nil are GoPointer.
-            Object lr = l instanceof graalgo.values.GoPointer gp ? gp.referent() : null;
-            Object rr = r instanceof graalgo.values.GoPointer gp ? gp.referent() : null;
-            // Referent identity: same object or both nil.
-            boolean eq = lr == rr;
+            // Nil pointers arrive as Java null or as a nil GoPointer;
+            // normalize the latter to null so the two compare equal.
+            Object ln = l instanceof graalgo.values.GoPointer lgp && lgp.isNil() ? null : l;
+            Object rn = r instanceof graalgo.values.GoPointer rgp && rgp.isNil() ? null : r;
+            boolean eq;
+            if (ln == null || rn == null) {
+                eq = ln == null && rn == null;
+            } else if (ln instanceof graalgo.values.GoPointer lp
+                    && rn instanceof graalgo.values.GoPointer rp) {
+                eq = lp.sameStorageAs(rp);
+            } else {
+                eq = ln == rn;
+            }
             return op == Op.EQ ? eq : !eq;
         }
         // P3-M8b: complex equality (Go: ==/!= on complex compares both parts).

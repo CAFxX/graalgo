@@ -33,8 +33,10 @@ public final class NilCheckNode extends GoExprNode {
             default -> {
                 Object v = child.executeObject(frame);
                 // P3-M8b: a *T nil is GoPointer(null referent), not Java null.
+                // P3-M9: ask the pointer itself — a cell pointer (&x) is
+                // never nil even when x currently holds a nil value.
                 if (v instanceof graalgo.values.GoPointer gp) {
-                    yield gp.referent() == null;
+                    yield gp.isNil();
                 }
                 yield v == null;
             }
