@@ -73,7 +73,61 @@ public final class GoEquality {
             return java.util.Arrays.equals(ia2, ib2);
         }
         if (a instanceof double[] da && b instanceof double[] db) {
-            return java.util.Arrays.equals(da, db);
+            // P3-M9 (arrdispatch): IEEE semantics — a NaN element never
+            // equals anything, including itself (matches the scalar Double
+            // branch above; Arrays.equals would wrongly equate NaNs, which
+            // also contradicted this class's documented contract).
+            if (da.length != db.length) {
+                return false;
+            }
+            for (int i = 0; i < da.length; i++) {
+                if (da[i] != db[i] || Double.isNaN(da[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (a instanceof float[] fa && b instanceof float[] fb) {
+            // P3-M9 (arrdispatch): [N]float32 carrier; IEEE semantics as
+            // for double[] above.
+            if (fa.length != fb.length) {
+                return false;
+            }
+            for (int i = 0; i < fa.length; i++) {
+                if (fa[i] != fb[i] || Float.isNaN(fa[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (a instanceof GoComplex32[] ca && b instanceof GoComplex32[] cb) {
+            // P3-M9 (arrdispatch): [N]complex64 carrier. Null elements are
+            // the zero value (unfilled slots of a var-declared array).
+            if (ca.length != cb.length) {
+                return false;
+            }
+            for (int i = 0; i < ca.length; i++) {
+                GoComplex32 x = ca[i] == null ? GoComplex32.ZERO : ca[i];
+                GoComplex32 y = cb[i] == null ? GoComplex32.ZERO : cb[i];
+                if (x.re() != y.re() || x.im() != y.im()) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (a instanceof GoComplex64[] ca && b instanceof GoComplex64[] cb) {
+            // P3-M9 (arrdispatch): [N]complex128 carrier; null-safe as above.
+            if (ca.length != cb.length) {
+                return false;
+            }
+            for (int i = 0; i < ca.length; i++) {
+                GoComplex64 x = ca[i] == null ? GoComplex64.ZERO : ca[i];
+                GoComplex64 y = cb[i] == null ? GoComplex64.ZERO : cb[i];
+                if (x.re() != y.re() || x.im() != y.im()) {
+                    return false;
+                }
+            }
+            return true;
         }
         if (a instanceof boolean[] ba && b instanceof boolean[] bb) {
             return java.util.Arrays.equals(ba, bb);
@@ -132,6 +186,31 @@ public final class GoEquality {
         }
         if (key instanceof double[] da) {
             return java.util.Arrays.hashCode(da);
+        }
+        if (key instanceof float[] fa) {
+            // P3-M9 (arrdispatch): [N]float32 carrier hash.
+            return java.util.Arrays.hashCode(fa);
+        }
+        if (key instanceof GoComplex32[] ca) {
+            // P3-M9 (arrdispatch): [N]complex64 carrier hash; consistent
+            // with equal above (null elements hash as the zero value).
+            int h = 1;
+            for (GoComplex32 c : ca) {
+                GoComplex32 z = c == null ? GoComplex32.ZERO : c;
+                h = 31 * h + Float.hashCode(z.re());
+                h = 31 * h + Float.hashCode(z.im());
+            }
+            return h;
+        }
+        if (key instanceof GoComplex64[] ca) {
+            // P3-M9 (arrdispatch): [N]complex128 carrier hash.
+            int h = 1;
+            for (GoComplex64 c : ca) {
+                GoComplex64 z = c == null ? GoComplex64.ZERO : c;
+                h = 31 * h + Double.hashCode(z.re());
+                h = 31 * h + Double.hashCode(z.im());
+            }
+            return h;
         }
         if (key instanceof boolean[] ba) {
             return java.util.Arrays.hashCode(ba);

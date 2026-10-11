@@ -130,13 +130,18 @@ public final class BinaryOpNode extends GoExprNode {
                         || operandKind == GoKind.UNSAFE_POINTER
                         || operandKind == GoKind.POINTER
                         || (operandKind == GoKind.INTERFACE && (op == Op.EQ || op == Op.NE))
-                        || (operandKind == GoKind.STRUCT && (op == Op.EQ || op == Op.NE)))
+                        || (operandKind == GoKind.STRUCT && (op == Op.EQ || op == Op.NE))
+                        || (operandKind == GoKind.ARRAY && (op == Op.EQ || op == Op.NE)))
                     && !(operandKind == GoKind.BOOL && (op == Op.LT || op == Op.LE || op == Op.GT || op == Op.GE));
             // P3-M8b: unsafe.Pointer, *T pointers, and complex support ==/!=
             // (but not ordering).
             // P3-M9 (tier-1d): structs support ==/!= (but not ordering).
+            // P3-M9 (arrdispatch): arrays support ==/!= (but not ordering) —
+            // Go arrays are comparable iff the element type is (go/types
+            // enforces this; the backend compares element-wise).
             if ((operandKind == GoKind.UNSAFE_POINTER || operandKind == GoKind.POINTER
-                    || operandKind.isComplexKind() || operandKind == GoKind.STRUCT)
+                    || operandKind.isComplexKind() || operandKind == GoKind.STRUCT
+                    || operandKind == GoKind.ARRAY)
                     && !(op == Op.EQ || op == Op.NE)) {
                 ok = false;
             }
@@ -366,6 +371,17 @@ public final class BinaryOpNode extends GoExprNode {
         // which requires identical descriptors and compares longs by value
         // and objects via GoEquality).
         if (operandKind == GoKind.STRUCT) {
+            Object l = left.executeObject(frame);
+            Object r = right.executeObject(frame);
+            boolean eq = graalgo.values.GoEquality.equal(l, r);
+            return op == Op.EQ ? eq : !eq;
+        }
+        // P3-M9 (arrdispatch): array equality (Go: ==/!= on comparable
+        // arrays compares element-wise; go/types rejects uncomparable
+        // element types before the backend, so every ARRAY reaching here
+        // is comparable. GoEquality handles each carrier form with IEEE
+        // float semantics, mirroring the STRUCT branch above).
+        if (operandKind == GoKind.ARRAY) {
             Object l = left.executeObject(frame);
             Object r = right.executeObject(frame);
             boolean eq = graalgo.values.GoEquality.equal(l, r);
