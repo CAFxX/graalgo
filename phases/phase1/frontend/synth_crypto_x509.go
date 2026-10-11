@@ -128,12 +128,14 @@ const (
 	MD2WithRSA
 	MD5WithRSA
 	SHA1WithRSA
+	SHA224WithRSA
 	SHA256WithRSA
 	SHA384WithRSA
 	SHA512WithRSA
 	DSAWithSHA1
 	DSAWithSHA256
 	ECDSAWithSHA1
+	ECDSAWithSHA224
 	ECDSAWithSHA256
 	ECDSAWithSHA384
 	ECDSAWithSHA512
@@ -867,35 +869,6 @@ func parseIP(s string) net.IP {
 	return nil
 }
 
-// hexToBytes decodes a hex string (used for intrinsic key descriptors).
-func hexToBytes(s string) ([]byte, error) {
-	if len(s)%2 != 0 {
-		return nil, errors.New("x509: odd-length hex string")
-	}
-	out := make([]byte, len(s)/2)
-	for i := 0; i < len(out); i++ {
-		hi, ok1 := hexNibble(s[2*i])
-		lo, ok2 := hexNibble(s[2*i+1])
-		if !ok1 || !ok2 {
-			return nil, errors.New("x509: invalid hex character")
-		}
-		out[i] = hi<<4 | lo
-	}
-	return out, nil
-}
-
-func hexNibble(c byte) (byte, bool) {
-	switch {
-	case c >= '0' && c <= '9':
-		return c - '0', true
-	case c >= 'a' && c <= 'f':
-		return c - 'a' + 10, true
-	case c >= 'A' && c <= 'F':
-		return c - 'A' + 10, true
-	}
-	return 0, false
-}
-
 // splitColon splits a colon-separated descriptor (no empty parts).
 func splitColon(s string) []string {
 	var parts []string
@@ -912,40 +885,50 @@ func splitColon(s string) []string {
 // parsePrivateKeyDescriptor decodes the graalgo.x509.parsePrivateKey output
 // ("FMT:ALG:hex:..." with FMT PKCS8/PKCS1/SEC1, ALG RSA/EC/Ed25519) into a
 // crypto.PrivateKey. wantFmt restricts the accepted format ("" = any).
+// __mrParsePrivateKeyDescriptorPair is the pair type for parsePrivateKeyDescriptor.
+type __mrParsePrivateKeyDescriptorPair struct {
+	v0 any
+	v1 error
+}
+
 func parsePrivateKeyDescriptor(desc, wantFmt string) (any, error) {
+	panic("crypto/x509: parsePrivateKeyDescriptor: multi-result desugar")
+}
+
+func __mrParsePrivateKeyDescriptor(desc, wantFmt string) __mrParsePrivateKeyDescriptorPair {
 	parts := splitColon(desc)
 	if len(parts) < 2 {
-		return nil, errors.New("x509: failed to parse private key")
+		return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 	}
 	fmtName, alg := parts[0], parts[1]
 	if wantFmt != "" && fmtName != wantFmt {
-		return nil, errors.New("x509: failed to parse private key")
+		return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 	}
 	rest := parts[1:] // alg + components
 	switch alg {
 	case "RSA":
 		if len(rest) != 6 {
-			return nil, errors.New("x509: failed to parse private key")
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
-		nB, err := hexToBytes(rest[1])
-		if err != nil {
-			return nil, err
+		nB := __hexToBytes(rest[1])
+		if nB == nil {
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
-		eB, err := hexToBytes(rest[2])
-		if err != nil {
-			return nil, err
+		eB := __hexToBytes(rest[2])
+		if eB == nil {
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
-		dB, err := hexToBytes(rest[3])
-		if err != nil {
-			return nil, err
+		dB := __hexToBytes(rest[3])
+		if dB == nil {
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
-		pB, err := hexToBytes(rest[4])
-		if err != nil {
-			return nil, err
+		pB := __hexToBytes(rest[4])
+		if pB == nil {
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
-		qB, err := hexToBytes(rest[5])
-		if err != nil {
-			return nil, err
+		qB := __hexToBytes(rest[5])
+		if qB == nil {
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
 		priv := &rsa.PrivateKey{
 			PublicKey: rsa.PublicKey{
@@ -955,25 +938,35 @@ func parsePrivateKeyDescriptor(desc, wantFmt string) (any, error) {
 			D:      new(big.Int).SetBytes(dB),
 			Primes: []*big.Int{new(big.Int).SetBytes(pB), new(big.Int).SetBytes(qB)},
 		}
-		return priv, nil
+		return __mrParsePrivateKeyDescriptorPair{priv, nil}
 	case "EC":
 		// SEC1: EC:curveName:x:y:d ; PKCS#8: EC:curveName:d (x,y derived).
 		if len(rest) != 5 && len(rest) != 3 {
-			return nil, errors.New("x509: failed to parse private key")
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
 		curve := curveFromName(rest[1])
 		if curve == nil {
-			return nil, errors.New("x509: failed to parse private key")
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
 		var dB []byte
 		var err error
 		if len(rest) == 5 {
-			dB, err = hexToBytes(rest[4])
+			dB = __hexToBytes(rest[4])
+			if dB == nil {
+				err = errors.New("x509: failed to parse private key")
+			} else {
+				err = nil
+			}
 		} else {
-			dB, err = hexToBytes(rest[2])
+			dB = __hexToBytes(rest[2])
+			if dB == nil {
+				err = errors.New("x509: failed to parse private key")
+			} else {
+				err = nil
+			}
 		}
 		if err != nil {
-			return nil, err
+			return __mrParsePrivateKeyDescriptorPair{nil, err}
 		}
 		d := new(big.Int).SetBytes(dB)
 		x, y := curve.ScalarBaseMult(dB)
@@ -981,21 +974,21 @@ func parsePrivateKeyDescriptor(desc, wantFmt string) (any, error) {
 			PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y},
 			D:         d,
 		}
-		return priv, nil
+		return __mrParsePrivateKeyDescriptorPair{priv, nil}
 	case "Ed25519":
 		if len(rest) != 2 {
-			return nil, errors.New("x509: failed to parse private key")
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
-		seed, err := hexToBytes(rest[1])
-		if err != nil {
-			return nil, err
+		seed := __hexToBytes(rest[1])
+		if seed == nil {
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
 		if len(seed) != 32 {
-			return nil, errors.New("x509: failed to parse private key")
+			return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 		}
-		return ed25519.NewKeyFromSeed(seed), nil
+		return __mrParsePrivateKeyDescriptorPair{ed25519.NewKeyFromSeed(seed), nil}
 	}
-	return nil, errors.New("x509: failed to parse private key")
+	return __mrParsePrivateKeyDescriptorPair{nil, errors.New("x509: failed to parse private key")}
 }
 
 // curveFromName maps a JDK curve name to the synthetic elliptic.Curve.
@@ -1106,8 +1099,7 @@ type __mrVerifyPair struct {
 }
 
 func __mrVerify(c *Certificate, opts VerifyOptions) __mrVerifyPair {
-	chains, err := c.verify(opts)
-	return __mrVerifyPair{chains, err}
+	return c.verify(opts)
 }
 
 func (c *Certificate) Verify(opts VerifyOptions) ([][]*Certificate, error) {
@@ -1116,12 +1108,13 @@ func (c *Certificate) Verify(opts VerifyOptions) ([][]*Certificate, error) {
 
 // VerifyHostname verifies the certificate against host h.
 func (c *Certificate) VerifyHostname(h string) error {
-	_, err := c.verify(VerifyOptions{DNSName: h})
+	__tmpVerify := c.verify(VerifyOptions{DNSName: h})
+	err := __tmpVerify.v1
 	return err
 }
 
 // verify implements chain building and checking.
-func (c *Certificate) verify(opts VerifyOptions) ([][]*Certificate, error) {
+func (c *Certificate) verify(opts VerifyOptions) __mrVerifyPair {
 	currentTime := opts.CurrentTime
 	if currentTime.IsZero() {
 		currentTime = time.Now()
@@ -1189,7 +1182,7 @@ func (c *Certificate) verify(opts VerifyOptions) ([][]*Certificate, error) {
 	visit(c, []*Certificate{c})
 
 	if len(chains) == 0 {
-		return nil, &UnknownAuthorityError{Cert: c}
+		return __mrVerifyPair{nil, &UnknownAuthorityError{Cert: c}}
 	}
 
 	// Check each chain for validity, hostname, EKU; return the first valid.
@@ -1199,12 +1192,12 @@ func (c *Certificate) verify(opts VerifyOptions) ([][]*Certificate, error) {
 			lastErr = err
 			continue
 		}
-		return [][]*Certificate{chain}, nil
+		return __mrVerifyPair{[][]*Certificate{chain}, nil}
 	}
 	if lastErr != nil {
-		return nil, lastErr
+		return __mrVerifyPair{nil, lastErr}
 	}
-	return nil, &UnknownAuthorityError{Cert: c}
+	return __mrVerifyPair{nil, &UnknownAuthorityError{Cert: c}}
 }
 
 // verifyChain checks validity periods, hostname, and key usages for a chain.
@@ -1371,24 +1364,32 @@ func hashForAlg(alg SignatureAlgorithm) crypto.Hash {
 
 // hashFromSigAlg maps a signature algorithm to a new hash (nil = direct sign,
 // e.g. Ed25519).
+type __mrHashFromSigAlgPair struct {
+	v0 func() hash.Hash
+	v1 error
+}
+
 func hashFromSigAlg(alg SignatureAlgorithm) (func() hash.Hash, error) {
+	panic("crypto/x509: hashFromSigAlg: multi-result desugar")
+}
+func __mrHashFromSigAlg(alg SignatureAlgorithm) __mrHashFromSigAlgPair {
 	switch alg {
 	case SHA256WithRSA, ECDSAWithSHA256, SHA256WithRSAPSS:
-		return sha256.New, nil
+		return __mrHashFromSigAlgPair{sha256.New, nil}
 	case SHA384WithRSA, ECDSAWithSHA384:
-		return sha512.New384, nil
+		return __mrHashFromSigAlgPair{sha512.New384, nil}
 	case SHA512WithRSA, ECDSAWithSHA512:
-		return sha512.New, nil
+		return __mrHashFromSigAlgPair{sha512.New, nil}
 	case SHA224WithRSA, ECDSAWithSHA224:
-		return sha256.New224, nil
+		return __mrHashFromSigAlgPair{sha256.New224, nil}
 	case SHA1WithRSA, ECDSAWithSHA1:
-		return sha1.New, nil
+		return __mrHashFromSigAlgPair{sha1.New, nil}
 	case MD2WithRSA, MD5WithRSA:
-		return nil, errors.New("x509: insecure signature algorithm")
+		return __mrHashFromSigAlgPair{nil, errors.New("x509: insecure signature algorithm")}
 	case PureEd25519:
-		return nil, nil
+		return __mrHashFromSigAlgPair{nil, nil}
 	}
-	return nil, errors.New("x509: unknown signature algorithm")
+	return __mrHashFromSigAlgPair{nil, errors.New("x509: unknown signature algorithm")}
 }
 
 // verifyHostname checks opts.DNSName against the leaf's SANs/CN.

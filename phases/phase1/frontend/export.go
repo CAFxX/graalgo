@@ -550,6 +550,8 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("crypto/x509").pkg, nil
 	case "crypto/x509/pkix":
 		return getSyntheticPackage("crypto/x509/pkix").pkg, nil
+	case "crypto/tls":
+		return getSyntheticPackage("crypto/tls").pkg, nil
 	}
 	// WS G (P3-M9, module-probe lane): third-party imports resolve from
 	// local disk (module cache/GOPATH) through the general overlay. A path
@@ -2389,6 +2391,11 @@ func ExportFile(path string) (string, error) {
 			"bytes",
 			"strings", // needs errors, io; math/big needs strings (NewReader)
 			"crypto",
+			// P3-M9 (tier-5 x509): the synthetic x509 source imports
+			// crypto/sha1 and crypto/sha256 (hashFromSigAlg uses their
+			// New funcs in value position, which needs funcByObj).
+			"crypto/sha1",
+			"crypto/sha256",
 			"crypto/sha512",
 			"crypto/cipher",
 			"math/big",
@@ -2429,6 +2436,15 @@ func ExportFile(path string) (string, error) {
 			"crypto/rsa",
 			"crypto/hkdf",
 			"crypto/pbkdf2",
+			// P3-M9 (tier-5): synthetic net (x509/tls sources call net.Dialer
+			// methods; methods must be in methodIndex before those packages).
+			"net",
+			// P3-M9 (tier-5): the synthetic tls source imports "os"
+			// (LoadX509KeyPair reads cert/key files); os needs io/fs
+			// (fs.ErrInvalid in ErrInvalid's initializer) and syscall.
+			"io/fs",
+			"syscall",
+			"os",
 			// P3-M9 (tier-5): synthetic crypto/x509 (Java delegation via
 			// graalgo.x509.* intrinsics). pkix first (x509 imports it).
 			"crypto/x509/pkix",
@@ -10065,6 +10081,11 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 				p == "crypto/elliptic" || p == "crypto/ecdh" || p == "crypto/dsa" ||
 				p == "crypto/ecdsa" || p == "crypto/ed25519" || p == "crypto/rsa" ||
 				p == "crypto/hkdf" || p == "crypto/pbkdf2" ||
+				// P3-M9 (tier-5): synthetic crypto/x509 + crypto/tls
+				// qualified idents in expression position (x509.ExtKeyUsageServerAuth,
+				// tls.VersionTLS13, ...); the call path (exportSyntheticPkgCall)
+				// already routes these packages.
+				p == "crypto/x509" || p == "crypto/x509/pkix" || p == "crypto/tls" ||
 				p == "golang.org/x/crypto/cryptobyte" ||
 				p == "golang.org/x/crypto/cryptobyte/asn1" ||
 				p == "crypto/internal/fips140" || p == "crypto/internal/fips140/check" ||

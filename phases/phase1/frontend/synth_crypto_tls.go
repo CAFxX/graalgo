@@ -28,7 +28,6 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
-	"crypto/elliptic"
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
@@ -170,8 +169,7 @@ type Certificate struct {
 // Certificate parsing delegates to Java CertificateFactory where possible;
 // key parsing uses Go (PKCS#1/PKCS#8/EC).
 func __mrX509KeyPair(certPEMBlock, keyPEMBlock []byte) __mrX509KeyPairPair {
-	cert, err := x509KeyPairImpl(certPEMBlock, keyPEMBlock)
-	return __mrX509KeyPairPair{v0: cert, v1: err}
+	return x509KeyPairImpl(certPEMBlock, keyPEMBlock)
 }
 
 type __mrX509KeyPairPair struct {
@@ -183,7 +181,7 @@ func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
 	panic("crypto/tls: X509KeyPair: multi-result desugar")
 }
 
-func x509KeyPairImpl(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
+func x509KeyPairImpl(certPEMBlock, keyPEMBlock []byte) __mrX509KeyPairPair {
 	var cert Certificate
 	var skippedBlockTypes []string
 
@@ -201,13 +199,13 @@ func x509KeyPairImpl(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
 	}
 
 	if len(cert.Certificate) == 0 {
-		return cert, errors.New("tls: failed to find any PEM data in certificate input")
+		return __mrX509KeyPairPair{cert, errors.New("tls: failed to find any PEM data in certificate input")}
 	}
 
 	// Parse leaf for API compatibility (delegates to x509 synthetic)
 	leaf, err := x509.ParseCertificate(cert.Certificate[0])
 	if err != nil {
-		return cert, err
+		return __mrX509KeyPairPair{cert, err}
 	}
 	cert.Leaf = leaf
 
@@ -225,43 +223,48 @@ func x509KeyPairImpl(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
 		}
 	}
 	if keyBlock == nil {
-		return cert, errors.New("tls: failed to find any PEM data in key input")
+		return __mrX509KeyPairPair{cert, errors.New("tls: failed to find any PEM data in key input")}
 	}
 
 	// Store raw key bytes; actual crypto.PrivateKey materialization happens
 	// lazily via the Java SSLEngine key manager (see TlsRuntime).
 	// For API compatibility, we attempt Go-side parsing.
-	priv, err := parsePrivateKey(keyBlock.Bytes)
+	__tmpPK := parsePrivateKey(keyBlock.Bytes)
+	priv, err := __tmpPK.v0, __tmpPK.v1
 	if err != nil {
-		return cert, err
+		return __mrX509KeyPairPair{cert, err}
 	}
 	cert.PrivateKey = priv
 
-	return cert, nil
+	return __mrX509KeyPairPair{cert, nil}
 }
 
-func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
+type __mrTlsParsePrivateKeyPair struct {
+	v0 crypto.PrivateKey
+	v1 error
+}
+
+func parsePrivateKey(der []byte) __mrTlsParsePrivateKeyPair {
 	// Try PKCS#8 first
 	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
 		if pk, ok := key.(crypto.PrivateKey); ok {
-			return pk, nil
+			return __mrTlsParsePrivateKeyPair{pk, nil}
 		}
 	}
 	// Try PKCS#1 (RSA)
 	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
-		return key, nil
+		return __mrTlsParsePrivateKeyPair{key, nil}
 	}
 	// Try EC
 	if key, err := x509.ParseECPrivateKey(der); err == nil {
-		return key, nil
+		return __mrTlsParsePrivateKeyPair{key, nil}
 	}
-	return nil, errors.New("tls: failed to parse private key")
+	return __mrTlsParsePrivateKeyPair{nil, errors.New("tls: failed to parse private key")}
 }
 
 // LoadX509KeyPair loads cert/key from files (via the synthetic os package).
 func __mrLoadX509KeyPair(certFile, keyFile string) __mrLoadX509KeyPairPair {
-	cert, err := loadX509KeyPairImpl(certFile, keyFile)
-	return __mrLoadX509KeyPairPair{v0: cert, v1: err}
+	return loadX509KeyPairImpl(certFile, keyFile)
 }
 
 type __mrLoadX509KeyPairPair struct {
@@ -273,16 +276,17 @@ func LoadX509KeyPair(certFile, keyFile string) (Certificate, error) {
 	panic("crypto/tls: LoadX509KeyPair: multi-result desugar")
 }
 
-func loadX509KeyPairImpl(certFile, keyFile string) (Certificate, error) {
+func loadX509KeyPairImpl(certFile, keyFile string) __mrLoadX509KeyPairPair {
 	certPEMBlock, err := os.ReadFile(certFile)
 	if err != nil {
-		return Certificate{}, err
+		return __mrLoadX509KeyPairPair{Certificate{}, err}
 	}
 	keyPEMBlock, err := os.ReadFile(keyFile)
 	if err != nil {
-		return Certificate{}, err
+		return __mrLoadX509KeyPairPair{Certificate{}, err}
 	}
-	return x509KeyPairImpl(certPEMBlock, keyPEMBlock)
+	pair := x509KeyPairImpl(certPEMBlock, keyPEMBlock)
+	return __mrLoadX509KeyPairPair{pair.v0, pair.v1}
 }
 
 // Conn is a TLS connection backed by Java SSLEngine.
@@ -323,7 +327,8 @@ func Server(conn net.Conn, config *Config) *Conn {
 		return c
 	}
 	cert := &config.Certificates[0]
-	keyAlg, keyParams, err := keyComponents(cert.PrivateKey)
+	__tmpKC := keyComponents(cert.PrivateKey)
+	keyAlg, keyParams, err := __tmpKC.v0, __tmpKC.v1, __tmpKC.v2
 	if err != nil {
 		return c
 	}
@@ -384,18 +389,24 @@ func decodeLengthPrefixed(buf []byte) [][]byte {
 // keyComponents extracts the private-key material for the Java KeyManager.
 // Returns (keyAlg, length-prefixed components, err).
 // RSA: n, e, d, p, q | ECDSA: curveName, x, y, d | Ed25519: seed.
-func keyComponents(priv crypto.PrivateKey) (string, []byte, error) {
+type __mrKeyComponentsPair struct {
+	v0 string
+	v1 []byte
+	v2 error
+}
+
+func keyComponents(priv crypto.PrivateKey) __mrKeyComponentsPair {
 	switch k := priv.(type) {
 	case *rsa.PrivateKey:
 		if len(k.Primes) < 2 {
-			return "", nil, errors.New("tls: RSA private key missing primes")
+			return __mrKeyComponentsPair{"", nil, errors.New("tls: RSA private key missing primes")}
 		}
 		eBytes := big.NewInt(int64(k.E)).Bytes()
 		params := encodeLengthPrefixed([][]byte{
 			k.N.Bytes(), eBytes, k.D.Bytes(),
 			k.Primes[0].Bytes(), k.Primes[1].Bytes(),
 		})
-		return "RSA", params, nil
+		return __mrKeyComponentsPair{"RSA", params, nil}
 	case *ecdsa.PrivateKey:
 		curveName := ""
 		if k.Curve != nil {
@@ -409,25 +420,24 @@ func keyComponents(priv crypto.PrivateKey) (string, []byte, error) {
 			}
 		}
 		if curveName == "" {
-			return "", nil, errors.New("tls: unsupported ECDSA curve")
+			return __mrKeyComponentsPair{"", nil, errors.New("tls: unsupported ECDSA curve")}
 		}
 		params := encodeLengthPrefixed([][]byte{
 			[]byte(curveName), k.X.Bytes(), k.Y.Bytes(), k.D.Bytes(),
 		})
-		return "ECDSA", params, nil
+		return __mrKeyComponentsPair{"ECDSA", params, nil}
 	case ed25519.PrivateKey:
 		if len(k) != 64 {
-			return "", nil, errors.New("tls: invalid Ed25519 private key")
+			return __mrKeyComponentsPair{"", nil, errors.New("tls: invalid Ed25519 private key")}
 		}
-		return "Ed25519", encodeLengthPrefixed([][]byte{k[:32]}), nil
+		return __mrKeyComponentsPair{"Ed25519", encodeLengthPrefixed([][]byte{k[:32]}), nil}
 	}
-	return "", nil, errors.New("tls: unsupported private key type")
+	return __mrKeyComponentsPair{"", nil, errors.New("tls: unsupported private key type")}
 }
 
 // Dial connects to a TLS server (loopback-only in M9).
 func __mrDial(network, addr string, config *Config) __mrDialPair {
-	conn, err := dialImpl(network, addr, config)
-	return __mrDialPair{v0: conn, v1: err}
+	return dialImpl(network, addr, config)
 }
 
 type __mrDialPair struct {
@@ -439,9 +449,9 @@ func Dial(network, addr string, config *Config) (*Conn, error) {
 	panic("crypto/tls: Dial: multi-result desugar")
 }
 
-func dialImpl(network, addr string, config *Config) (*Conn, error) {
+func dialImpl(network, addr string, config *Config) __mrDialPair {
 	if config == nil {
-		return nil, errors.New("tls: nil Config")
+		return __mrDialPair{nil, errors.New("tls: nil Config")}
 	}
 	// Go semantics: default ServerName from the dial address hostname.
 	if config.ServerName == "" {
@@ -449,14 +459,14 @@ func dialImpl(network, addr string, config *Config) (*Conn, error) {
 	}
 	rawConn, err := net.Dial(network, addr)
 	if err != nil {
-		return nil, err
+		return __mrDialPair{nil, err}
 	}
 	conn := Client(rawConn, config)
 	if err := conn.Handshake(); err != nil {
 		rawConn.Close()
-		return nil, err
+		return __mrDialPair{nil, err}
 	}
-	return conn, nil
+	return __mrDialPair{conn, nil}
 }
 
 // hostnameFromAddr strips the port from a host:port address.
@@ -480,8 +490,7 @@ func hostnameFromAddr(addr string) string {
 
 // DialWithDialer connects using a Dialer.
 func __mrDialWithDialer(dialer *net.Dialer, network, addr string, config *Config) __mrDialWithDialerPair {
-	conn, err := dialWithDialerImpl(dialer, network, addr, config)
-	return __mrDialWithDialerPair{v0: conn, v1: err}
+	return dialWithDialerImpl(dialer, network, addr, config)
 }
 
 type __mrDialWithDialerPair struct {
@@ -493,29 +502,28 @@ func DialWithDialer(dialer *net.Dialer, network, addr string, config *Config) (*
 	panic("crypto/tls: DialWithDialer: multi-result desugar")
 }
 
-func dialWithDialerImpl(dialer *net.Dialer, network, addr string, config *Config) (*Conn, error) {
+func dialWithDialerImpl(dialer *net.Dialer, network, addr string, config *Config) __mrDialWithDialerPair {
 	if config == nil {
-		return nil, errors.New("tls: nil Config")
+		return __mrDialWithDialerPair{nil, errors.New("tls: nil Config")}
 	}
 	if config.ServerName == "" {
 		config.ServerName = hostnameFromAddr(addr)
 	}
 	rawConn, err := dialer.Dial(network, addr)
 	if err != nil {
-		return nil, err
+		return __mrDialWithDialerPair{nil, err}
 	}
 	conn := Client(rawConn, config)
 	if err := conn.Handshake(); err != nil {
 		rawConn.Close()
-		return nil, err
+		return __mrDialWithDialerPair{nil, err}
 	}
-	return conn, nil
+	return __mrDialWithDialerPair{conn, nil}
 }
 
 // Listen creates a TLS listener (loopback-only in M9).
 func __mrListen(network, laddr string, config *Config) __mrListenPair {
-	l, err := listenImpl(network, laddr, config)
-	return __mrListenPair{v0: l, v1: err}
+	return listenImpl(network, laddr, config)
 }
 
 type __mrListenPair struct {
@@ -527,15 +535,15 @@ func Listen(network, laddr string, config *Config) (net.Listener, error) {
 	panic("crypto/tls: Listen: multi-result desugar")
 }
 
-func listenImpl(network, laddr string, config *Config) (net.Listener, error) {
+func listenImpl(network, laddr string, config *Config) __mrListenPair {
 	if config == nil || len(config.Certificates) == 0 {
-		return nil, errors.New("tls: neither Certificates, GetCertificate, nor GetConfigForClient set in Config")
+		return __mrListenPair{nil, errors.New("tls: neither Certificates, GetCertificate, nor GetConfigForClient set in Config")}
 	}
 	l, err := net.Listen(network, laddr)
 	if err != nil {
-		return nil, err
+		return __mrListenPair{nil, err}
 	}
-	return NewListener(l, config), nil
+	return __mrListenPair{NewListener(l, config), nil}
 }
 
 // NewListener creates a TLS listener.
@@ -549,11 +557,20 @@ type listener struct {
 }
 
 func (l *listener) Accept() (net.Conn, error) {
+	panic("crypto/tls.listener.Accept: unreachable (Appendix-M desugar did not fire)")
+}
+
+type __listenerAcceptPair struct {
+	c   net.Conn
+	err error
+}
+
+func __listenerAccept(l *listener) __listenerAcceptPair {
 	c, err := l.Listener.Accept()
 	if err != nil {
-		return nil, err
+		return __listenerAcceptPair{nil, err}
 	}
-	return Server(c, l.config), nil
+	return __listenerAcceptPair{Server(c, l.config), nil}
 }
 
 // Engine handshake status codes (from graalgo.tls.engineStatus).
@@ -693,44 +710,62 @@ func (c *Conn) ConnectionState() ConnectionState {
 
 // Read reads decrypted application data via SSLEngine.unwrap.
 func (c *Conn) Read(b []byte) (int, error) {
+	panic("crypto/tls.Conn.Read: unreachable (Appendix-M desugar did not fire)")
+}
+
+type __tlsConnReadPair struct {
+	n int
+	err error
+}
+
+func __tlsConnRead(c *Conn, b []byte) __tlsConnReadPair {
 	if c.engineHandle == 0 {
-		return 0, errors.New("tls: nil engine")
+		return __tlsConnReadPair{0, errors.New("tls: nil engine")}
 	}
 	tmp := make([]byte, 1<<14)
 	for {
 		n, err := c.conn.Read(tmp)
 		if err != nil {
-			return 0, err
+			return __tlsConnReadPair{0, err}
 		}
 		if n == 0 {
 			continue
 		}
 		app := unwrapTrap(c.engineHandle, tmp[:n])
 		if app == nil {
-			return 0, io.EOF
+			return __tlsConnReadPair{0, io.EOF}
 		}
 		if len(app) == 0 {
 			// Handshake/control records only; read more.
 			continue
 		}
 		m := copy(b, app)
-		return m, nil
+		return __tlsConnReadPair{m, nil}
 	}
 }
 
 // Write encrypts via SSLEngine.wrap and writes the records.
 func (c *Conn) Write(b []byte) (int, error) {
+	panic("crypto/tls.Conn.Write: unreachable (Appendix-M desugar did not fire)")
+}
+
+type __tlsConnWritePair struct {
+	n int
+	err error
+}
+
+func __tlsConnWrite(c *Conn, b []byte) __tlsConnWritePair {
 	if c.engineHandle == 0 {
-		return 0, errors.New("tls: nil engine")
+		return __tlsConnWritePair{0, errors.New("tls: nil engine")}
 	}
 	out := wrapTrap(c.engineHandle, b)
 	if out == nil {
-		return 0, errors.New("tls: wrap failed")
+		return __tlsConnWritePair{0, errors.New("tls: wrap failed")}
 	}
 	if err := writeAll(c.conn, out); err != nil {
-		return 0, err
+		return __tlsConnWritePair{0, err}
 	}
-	return len(b), nil
+	return __tlsConnWritePair{len(b), nil}
 }
 
 // Close closes the TLS connection.
@@ -752,13 +787,13 @@ func (c *Conn) LocalAddr() net.Addr { return c.conn.LocalAddr() }
 func (c *Conn) RemoteAddr() net.Addr { return c.conn.RemoteAddr() }
 
 // SetDeadline sets the deadline.
-func (c *Conn) SetDeadline(t time.Time) error { return c.conn.SetDeadline(t) }
+func (c *Conn) SetDeadline(t interface{}) error { return c.conn.SetDeadline(t) }
 
 // SetReadDeadline sets the read deadline.
-func (c *Conn) SetReadDeadline(t time.Time) error { return c.conn.SetReadDeadline(t) }
+func (c *Conn) SetReadDeadline(t interface{}) error { return c.conn.SetReadDeadline(t) }
 
 // SetWriteDeadline sets the write deadline.
-func (c *Conn) SetWriteDeadline(t time.Time) error { return c.conn.SetWriteDeadline(t) }
+func (c *Conn) SetWriteDeadline(t interface{}) error { return c.conn.SetWriteDeadline(t) }
 
 // VerifyHostname verifies the hostname against the peer certificate chain
 // using x509 hostname semantics.

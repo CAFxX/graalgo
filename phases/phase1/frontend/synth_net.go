@@ -1351,6 +1351,33 @@ func Listen(network, address string) (Listener, error) {
 	panic("net.Listen: unreachable (Appendix-M desugar did not fire)")
 }
 
+// Dialer dials connections. Timeout is honored via DialTimeout; the
+// remaining fields are accepted for API compatibility with net.Dialer.
+type Dialer struct {
+	Timeout       time.Duration
+	Deadline      time.Time
+	LocalAddr     Addr
+	DualStack     bool
+	FallbackDelay time.Duration
+	KeepAlive     time.Duration
+}
+
+// Dial connects to the address on the named network.
+func (d *Dialer) Dial(network, address string) (Conn, error) {
+	panic("net.Dialer.Dial: unreachable (Appendix-M desugar did not fire)")
+}
+
+// __dialerDial is the Appendix M desugar target behind (*Dialer).Dial:
+// the real body, returning the dialPair. (The 2-result method cannot be
+// emitted directly under WS D, and its body calls the 2-result
+// package-level Dial/DialTimeout, which cannot appear in return position.)
+func __dialerDial(d *Dialer, network, address string) dialPair {
+	if d.Timeout != 0 {
+		return __dialTimeout(network, address, d.Timeout)
+	}
+	return __dial(network, address)
+}
+
 type dialPair struct {
 	c   Conn
 	err error

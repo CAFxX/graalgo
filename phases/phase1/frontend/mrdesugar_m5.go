@@ -840,12 +840,21 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/x509", "ParsePKCS1PrivateKey", "", "__mrParsePKCS1PrivateKey", "", "__mrParsePKCS1PrivateKeyPair", []string{"v0", "v1"}},
 	{"crypto/x509", "ParseECPrivateKey", "", "__mrParseECPrivateKey", "", "__mrParseECPrivateKeyPair", []string{"v0", "v1"}},
 	{"crypto/x509", "Verify", "Certificate", "__mrVerify", "", "__mrVerifyPair", []string{"v0", "v1"}},
+	{"crypto/x509", "parsePrivateKeyDescriptor", "", "__mrParsePrivateKeyDescriptor", "", "__mrParsePrivateKeyDescriptorPair", []string{"v0", "v1"}},
+	{"crypto/x509", "hashFromSigAlg", "", "__mrHashFromSigAlg", "", "__mrHashFromSigAlgPair", []string{"v0", "v1"}},
 	// P3-M9 (x509/TLS lane): crypto/tls multi-result functions.
 	{"crypto/tls", "X509KeyPair", "", "__mrX509KeyPair", "", "__mrX509KeyPairPair", []string{"v0", "v1"}},
 	{"crypto/tls", "LoadX509KeyPair", "", "__mrLoadX509KeyPair", "", "__mrLoadX509KeyPairPair", []string{"v0", "v1"}},
 	{"crypto/tls", "Dial", "", "__mrDial", "", "__mrDialPair", []string{"v0", "v1"}},
 	{"crypto/tls", "DialWithDialer", "", "__mrDialWithDialer", "", "__mrDialWithDialerPair", []string{"v0", "v1"}},
 	{"crypto/tls", "Listen", "", "__mrListen", "", "__mrListenPair", []string{"v0", "v1"}},
+	// P3-M9 (x509/TLS lane): (*listener).Accept concrete method (the tls
+	// listener type implements net.Listener; the stub panics and calls
+	// rewrite to __listenerAccept).
+	{"crypto/tls", "Accept", "listener", "__listenerAccept", "", "__listenerAcceptPair", []string{"c", "err"}},
+	// P3-M9 (x509/TLS lane): (*Conn).Read/Write concrete methods.
+	{"crypto/tls", "Read", "Conn", "__tlsConnRead", "", "__tlsConnReadPair", []string{"n", "err"}},
+	{"crypto/tls", "Write", "Conn", "__tlsConnWrite", "", "__tlsConnWritePair", []string{"n", "err"}},
 	{"golang.org/x/crypto/cryptobyte", "Bytes", "Builder", "__mrBuilder_Bytes", "", "__mrBuilder_BytesPair", []string{"v0", "v1"}},
 }
 
@@ -1017,6 +1026,10 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "Interfaces", "", "__interfaces", "", "interfacesPair", []string{"ifs", "err"}},
 	// net: methods on TCPListener / Conn (prependRecv).
 	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "", "acceptPair", []string{"c", "err"}},
+	// P3-M9 (x509/TLS lane): (*Dialer).Dial (prependRecv). The method body
+	// calls the 2-result package-level Dial/DialTimeout, which cannot
+	// appear in return position under WS D, so it desugars to __dialerDial.
+	{"net", "Dial", "Dialer", "__dialerDial", "", "dialPair", []string{"c", "err"}},
 	{"net", "Read", "TCPConn", "__tcpConnRead", "", "readPair", []string{"n", "err"}},
 	{"net", "Write", "TCPConn", "__tcpConnWrite", "", "writePair", []string{"n", "err"}},
 	{"net", "Read", "UDPConn", "__udpConnRead", "", "readPair", []string{"n", "err"}},
@@ -1473,6 +1486,13 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// CopyBuffer, ReadAll, LimitedReader.Read,
 			// discard.Write/WriteString).
 			if plan := classifyIoMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
+				return plan
+			}
+			// P3-M9 (tier-4: net): the synthetic net packages'
+			// multi-result API (m9MultiResultFuncs table above) —
+			// methods too (e.g. (*net.Dialer).Dial), mirroring the
+			// package-qualified arm.
+			if plan := classifyM9MultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
 				return plan
 			}
 			// WS G (P3-M9): disk-package multi-result methods (dynamic table).
