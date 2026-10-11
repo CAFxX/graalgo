@@ -13,7 +13,9 @@ P3="$GR/phases/phase3"
 P2="$GR/phases/phase2"
 P1="$GR/phases/phase1"
 export PATH="$HOME/tools/go/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
+# JAVA: the GHA driver sets this to /opt/graalvm/bin/java. Locally, fall
+# back to the worktree-local JDK. (Was hardcoded, ignoring the env.)
+JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
 # TMPDIR: the GHA driver sets this to $OUT_DIR/tmp. Locally, fall back to
 # a worktree-local tmp dir. (Was hardcoded to $P3/hidden_files/m9-tmp/wave3,
 # a leftover that does not exist in the image -> "go: creating work dir"
