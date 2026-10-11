@@ -1191,6 +1191,13 @@ func ExportFile(path string) (string, error) {
 		// this, F-bounded constraints (P Point[P]) recurse infinitely
 		// because the P in the constraint is a different object.
 		typeparamIDs: make(map[*types.TypeName]int),
+		// P3-M9 (generics, issue48344): per-substitution type memo,
+		// SHARED across instantiations (not reset per instantiation).
+		// Keyed by substituted (canonicalized) type, so the same
+		// logical type maps to one wire id everywhere; resetting it
+		// per instantiation causes infinite describeType recursion.
+		substTypeIDs: make(map[types.Type]int),
+		substCanon:   make(map[string]types.Type),
 		namedIDs:     make(map[string]int),
 		// P3-M8-leftovers: anonymous *types.Interface deduplication by
 		// structural key (sorted method implkeys). go/types mints a fresh
@@ -3123,6 +3130,18 @@ type exporter struct {
 	// M6 (WS H): per-instantiation type memo, keyed by unsubstituted type.
 	// The global typeIDs memo is only valid without substitution.
 	substTypeIDs map[types.Type]int
+	// P3-M9 (generics): canonicalization cache for the fresh go/types
+	// objects substType mints. types.Instantiate/NewPointer/NewSlice/...
+	// create a NEW object per call, so two substitutions of the same
+	// logical type yield different objects — defeating the
+	// object-identity memos (substTypeIDs) and causing infinite regress:
+	// describing *Foo[int] -> method table -> on-demand instantiation
+	// -> receiver typeID -> substType mints a fresh *Foo[int] -> memo
+	// miss -> describe again, forever (issue48344, issue54535). The
+	// cache makes substType return the identical object for structurally
+	// identical results. Keyed by substCanonKey (type params by object
+	// identity, so distinct parameters never conflate).
+	substCanon map[string]types.Type
 	// M6 (WS H, issue52026): named types deduplicated by qualified name
 	// (including substituted type arguments). A substituted *types.Named
 	// (e.g. Some[T] under T=int) is a fresh go/types object, but it denotes
@@ -3606,6 +3625,63 @@ func sizesWouldPanic(t types.Type) bool {
 // t unchanged when no substitution is active or t contains no bound type
 // parameter. Composite types are rebuilt only when a component changed, so
 // concrete types keep their canonical go/types identity.
+
+// substCanonKey returns a structural identity string for a substituted
+// type. Composite structure is by name; type parameters are keyed by
+// object identity (%p of the TypeName) so two distinct parameters that
+// happen to share a name never conflate. Only used to canonicalize the
+// fresh objects substType mints within a single exporter run.
+func substCanonKey(t types.Type) string {
+	switch t := t.(type) {
+	case *types.Basic:
+		return "b:" + t.Name()
+	case *types.Named:
+		var sb strings.Builder
+		sb.WriteString("n:")
+		sb.WriteString(qualifiedName(t.Obj()))
+		if targs := t.TypeArgs(); targs != nil && targs.Len() > 0 {
+			sb.WriteByte('[')
+			for i := 0; i < targs.Len(); i++ {
+				if i > 0 {
+					sb.WriteByte(',')
+				}
+				sb.WriteString(substCanonKey(targs.At(i)))
+			}
+			sb.WriteByte(']')
+		}
+		return sb.String()
+	case *types.Pointer:
+		return "p:" + substCanonKey(t.Elem())
+	case *types.Slice:
+		return "s:" + substCanonKey(t.Elem())
+	case *types.Array:
+		return "a:" + strconv.FormatInt(t.Len(), 10) + ":" + substCanonKey(t.Elem())
+	case *types.Map:
+		return "m:" + substCanonKey(t.Key()) + ":" + substCanonKey(t.Elem())
+	case *types.Chan:
+		return "c:" + strconv.Itoa(int(t.Dir())) + ":" + substCanonKey(t.Elem())
+	case *types.TypeParam:
+		return fmt.Sprintf("tp:%p", t.Obj())
+	default:
+		return "x:" + types.TypeString(t, nil)
+	}
+}
+
+// canonSubst canonicalizes a freshly-minted substituted type: the identical
+// object is returned for structurally identical results, so the
+// object-identity memos recognize them.
+func (e *exporter) canonSubst(t types.Type) types.Type {
+	if e.substCanon == nil {
+		e.substCanon = make(map[string]types.Type)
+	}
+	k := substCanonKey(t)
+	if c, ok := e.substCanon[k]; ok {
+		return c
+	}
+	e.substCanon[k] = t
+	return t
+}
+
 func (e *exporter) substType(t types.Type) types.Type {
 	if e.subst == nil {
 		return t
@@ -3640,31 +3716,31 @@ func (e *exporter) substType(t types.Type) types.Type {
 		if err != nil {
 			return t // defensive; describeType fails loudly on bad types
 		}
-		return inst
+		return e.canonSubst(inst)
 	case *types.Pointer:
 		if elem := e.substType(t.Elem()); elem != t.Elem() {
-			return types.NewPointer(elem)
+			return e.canonSubst(types.NewPointer(elem))
 		}
 		return t
 	case *types.Slice:
 		if elem := e.substType(t.Elem()); elem != t.Elem() {
-			return types.NewSlice(elem)
+			return e.canonSubst(types.NewSlice(elem))
 		}
 		return t
 	case *types.Array:
 		if elem := e.substType(t.Elem()); elem != t.Elem() {
-			return types.NewArray(elem, t.Len())
+			return e.canonSubst(types.NewArray(elem, t.Len()))
 		}
 		return t
 	case *types.Map:
 		key, elem := e.substType(t.Key()), e.substType(t.Elem())
 		if key != t.Key() || elem != t.Elem() {
-			return types.NewMap(key, elem)
+			return e.canonSubst(types.NewMap(key, elem))
 		}
 		return t
 	case *types.Chan:
 		if elem := e.substType(t.Elem()); elem != t.Elem() {
-			return types.NewChan(t.Dir(), elem)
+			return e.canonSubst(types.NewChan(t.Dir(), elem))
 		}
 		return t
 	case *types.Signature:
@@ -5851,11 +5927,19 @@ func (e *exporter) prepareInstantiation(inst *instantiation) error {
 	// Scope substitution to this instantiation.
 	savedSubst := e.subst
 	e.subst = inst.subst
-	savedSubstTypes := e.substTypeIDs
-	e.substTypeIDs = make(map[types.Type]int)
+	// P3-M9 (generics, issue48344): do NOT reset substTypeIDs here.
+	// The memo is keyed by substituted (canonicalized) type, so entries
+	// are valid across instantiations — the same canonical *Foo[int]
+	// must map to the same wire id everywhere. Resetting it per
+	// instantiation wipes the in-progress entry for a type whose
+	// describeType is on the stack, and the on-demand method-table
+	// path (methodTableEntries -> methodTableOnDemand ->
+	// prepareInstantiation -> freshSigID -> typeID) then re-describes
+	// the same type forever: describe, method table, instantiate,
+	// receiver typeID, describe, ... (stack overflow). The subst
+	// scoping above is still required; only the memo reset is removed.
 	defer func() {
 		e.subst = savedSubst
-		e.substTypeIDs = savedSubstTypes
 	}()
 
 	var recv *types.Var
