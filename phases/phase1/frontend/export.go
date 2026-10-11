@@ -2973,6 +2973,14 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 				if err != nil {
 					return nil, err
 				}
+				// BUG-MODPROBE-010: multi-result calls in argument position
+				// at package level (var x = f(g())) cannot use the
+				// statement-level hoisting (no exportStmt context for
+				// package inits). Fail fast rather than emitting wrong code.
+				if len(e.mrHoistPre) > 0 {
+					e.mrHoistPre = nil
+					return nil, scopeErrorf("multi-result call in argument position at package level is not supported in frontend/v1 scope (WS D)")
+				}
 				initNode = x
 			} else {
 				// P3-M2b (ADR-0002 D3): package-level `var m sync.Mutex`
@@ -3169,6 +3177,13 @@ type exporter struct {
 	// currently being exported (nil outside such functions). Used to
 	// transform `return a, b` into a pair composite literal.
 	currentMR *userMRInfo
+	// BUG-MODPROBE-010: side channel for temp vardecls hoisted from
+	// multi-result calls in argument position (f(g()) desugar). exportCallArgs
+	// appends the temp vardecls here; exportStmt flushes them by wrapping the
+	// statement in a block. Each exportStmt only flushes preStmts added during
+	// its own execution (tracked via length), so nested statements flush
+	// correctly.
+	mrHoistPre []*Node
 }
 
 // userMRInfo describes a user-defined multi-result function transformed
@@ -5972,7 +5987,31 @@ func (e *exporter) exportBlock(b *ast.BlockStmt) (*Node, error) {
 	return e.node("block", b, map[string]any{"stmts": stmts}), nil
 }
 
+// exportStmt exports a statement.
+// BUG-MODPROBE-010: flushes temp vardecls hoisted from multi-result calls
+// in argument position (f(g()) desugar via exportCallArgs -> e.mrHoistPre).
+// Only preStmts added during THIS statement's export are flushed (tracked
+// via length); nested exportStmt calls flush their own. The statement is
+// wrapped in a block with the hoisted vardecls first.
 func (e *exporter) exportStmt(s ast.Stmt) (*Node, error) {
+	preLen := len(e.mrHoistPre)
+	n, err := e.exportStmtInner(s)
+	if err != nil {
+		return nil, err
+	}
+	if len(e.mrHoistPre) > preLen {
+		newPre := append([]*Node{}, e.mrHoistPre[preLen:]...)
+		e.mrHoistPre = e.mrHoistPre[:preLen]
+		if n == nil {
+			return e.node("block", s, map[string]any{"stmts": newPre}), nil
+		}
+		stmts := append(newPre, n)
+		return e.node("block", s, map[string]any{"stmts": stmts}), nil
+	}
+	return n, nil
+}
+
+func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 	switch s := s.(type) {
 	case *ast.EmptyStmt:
 		return nil, nil // normalized away (documented in docs/frontend-v1.md)
@@ -9449,9 +9488,32 @@ func (e *exporter) exportTypeConversion(c *ast.CallExpr, tn *types.TypeName) (*N
 }
 
 // exportCallArgs exports a call's argument expressions.
+// BUG-MODPROBE-010: a user-defined multi-result call in argument position
+// (f(g())) spreads g's results as f's arguments per Go spec (g() must be
+// the sole argument; the type checker guarantees this for valid Go). The
+// inner call is hoisted to a temp var (emitted to e.mrHoistPre, flushed by
+// exportStmt), and the pair fields are spread as separate arguments.
+// Nested MR calls (h(f(g()))) are handled recursively.
+// Only user-defined MR kinds (mrUser, mrFuncField) are hoisted here; the
+// synthetic M5/M7 kinds keep their pinned fail-fast outside desugar
+// positions (TestMultiResultFailFastKept, GG-0017).
 func (e *exporter) exportCallArgs(c *ast.CallExpr) ([]*Node, error) {
 	args := make([]*Node, 0, len(c.Args))
 	for _, a := range c.Args {
+		if inner, ok := unparen(a).(*ast.CallExpr); ok {
+			if innerPlan := e.classifyMultiResultCall(inner); innerPlan != nil &&
+				(innerPlan.kind == mrUser || innerPlan.kind == mrFuncField) {
+				// User-defined multi-result call as argument: hoist to
+				// temp, unpack.
+				unpacked, pre, err := e.hoistMRCallArg(inner, innerPlan)
+				if err != nil {
+					return nil, err
+				}
+				e.mrHoistPre = append(e.mrHoistPre, pre...)
+				args = append(args, unpacked...)
+				continue
+			}
+		}
 		x, err := e.exportExpr(a)
 		if err != nil {
 			return nil, err
