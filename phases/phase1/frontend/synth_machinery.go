@@ -679,6 +679,31 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	for _, fi := range g.fis {
 		depFuncs[fi.obj] = fi.fd
 	}
+	// P3-M9 (BUG-MODPROBE-009): the disk multi-result transformation
+	// splits F into a __F helper (real body) + F stub (panic body), and
+	// the stub is skipped from g.fis above. But package-var initializers
+	// reference the STUB name, so orderVarInits' transitive scan would
+	// see only the panic body and miss real dependencies (e.g. uuid's
+	// NameSpaceDNS = Must(Parse(...)) must follow xvalues, which Parse
+	// reaches via xtob). Map each stub's func object to its helper's
+	// body so the dependency analysis follows the real implementation.
+	// Interface-method specs have no helper/stub and are skipped.
+	for i := range diskMRSpecs {
+		spec := &diskMRSpecs[i]
+		if spec.pkgPath != sp.path || spec.helper == "" || spec.stub == nil {
+			continue
+		}
+		stubFn, ok := e.info.Defs[spec.stub.Name].(*types.Func)
+		if !ok {
+			continue
+		}
+		for _, fi := range g.fis {
+			if fi.obj.Name() == spec.helper {
+				depFuncs[stubFn] = fi.fd
+				break
+			}
+		}
+	}
 	ordered, err := orderVarInits(varInits, e.info, e.objIDs, func(oid int) string {
 		return e.objects[oid].Name
 	}, depFuncs)
