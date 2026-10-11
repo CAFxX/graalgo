@@ -1,2 +1,0 @@
-reason: crypto/tls has no synthetic source in frontend v1 (not in the 36 wired packages)
-retest: frontend gains synthetic crypto/tls source
