@@ -467,7 +467,16 @@ func (t Time) Sub(u Time) Duration {
 	return Duration(t.unixnano - u.unixnano)
 }
 
-func (t Time) Unix() int64     { return t.unixnano / 1e9 }
+func (t Time) Unix() int64 {
+	// P3-M9: gc parity — the zero Time (0001-01-01) has Unix() == -62135596800,
+	// not 0. The synthetic Time uses unixnano==0 for the zero value (IsZero),
+	// which collides with 1970-01-01; the zero case must return the correct
+	// pre-epoch offset.
+	if t.IsZero() {
+		return -62135596800
+	}
+	return t.unixnano / 1e9
+}
 func (t Time) UnixNano() int64 { return t.unixnano }
 
 func (t Time) Round(d Duration) Time {
