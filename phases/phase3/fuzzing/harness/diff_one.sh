@@ -14,7 +14,13 @@ P2="$GR/phases/phase2"
 P1="$GR/phases/phase1"
 export PATH="$HOME/tools/go/bin:$PATH"
 JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
-export TMPDIR="$P3/hidden_files/m9-tmp/wave3"
+# TMPDIR: the GHA driver sets this to $OUT_DIR/tmp. Locally, fall back to
+# a worktree-local tmp dir. (Was hardcoded to $P3/hidden_files/m9-tmp/wave3,
+# a leftover that does not exist in the image -> "go: creating work dir"
+# failure on the canary.)
+: "${TMPDIR:=$P3/hidden_files/tmp}"
+mkdir -p "$TMPDIR"
+export TMPDIR
 
 CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
 
