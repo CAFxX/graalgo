@@ -14,15 +14,20 @@ package main
 const syntheticCryptoX509Source = `package x509
 
 import (
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rsa"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"hash"
 	"math/big"
 	"net"
 	"time"
@@ -102,6 +107,15 @@ func graalgoX509Ed25519Raw(cert any) []byte
 
 //go:linkname graalgoX509ParseSpki graalgo.x509.parseSpki
 func graalgoX509ParseSpki(spki []byte) string
+
+//go:linkname graalgoX509SubjectAltNames graalgo.x509.subjectAltNames
+func graalgoX509SubjectAltNames(cert any) string
+
+//go:linkname graalgoX509ParsePrivateKey graalgo.x509.parsePrivateKey
+func graalgoX509ParsePrivateKey(der []byte) string
+
+//go:linkname graalgoX509ExtKeyUsage graalgo.x509.extKeyUsage
+func graalgoX509ExtKeyUsage(cert any) string
 
 //go:linkname graalgoX509ParsePkcs1 graalgo.x509.parsePkcs1
 func graalgoX509ParsePkcs1(der []byte) string
@@ -339,12 +353,11 @@ func __mrParseCertificate(der []byte) __mrParseCertificatePair {
 	c.SerialNumber = new(big.Int).SetBytes(graalgoX509SerialNumber(javaCert))
 	c.Subject = parseName(graalgoX509Subject(javaCert))
 	c.Issuer = parseName(graalgoX509Issuer(javaCert))
-	// NotBefore/NotAfter: time.Unix is not accessible from the synthetic
-	// x509 package (cross-package export limitation). The millis values
-	// are available via the intrinsics but cannot be converted to
-	// time.Time here. Fields remain zero values.
-	_ = graalgoX509NotBefore(javaCert)
-	_ = graalgoX509NotAfter(javaCert)
+	// NotBefore/NotAfter from the intrinsic millis via time.Unix.
+	nbMillis := graalgoX509NotBefore(javaCert)
+	naMillis := graalgoX509NotAfter(javaCert)
+	c.NotBefore = time.Unix(nbMillis/1000, (nbMillis%1000)*1000000)
+	c.NotAfter = time.Unix(naMillis/1000, (naMillis%1000)*1000000)
 	c.KeyUsage = KeyUsage(graalgoX509KeyUsage(javaCert))
 	bc := graalgoX509BasicConstraints(javaCert)
 	if bc >= 0 {
@@ -358,6 +371,10 @@ func __mrParseCertificate(der []byte) __mrParseCertificatePair {
 	}
 	c.SubjectKeyId = graalgoX509SubjectKeyId(javaCert)
 	c.AuthorityKeyId = graalgoX509AuthorityKeyId(javaCert)
+	// Extended key usage OIDs.
+	parseExtKeyUsage(c, graalgoX509ExtKeyUsage(javaCert))
+	// Subject Alternative Names (DNS/IP/EMAIL/URI) for hostname verification.
+	parseSubjectAltNames(c, graalgoX509SubjectAltNames(javaCert))
 	pubAlg := graalgoX509PublicKeyAlg(javaCert)
 	c.PublicKeyAlgorithm = pubKeyAlgFromName(pubAlg)
 	pubDER := graalgoX509PublicKeyEncoded(javaCert)
@@ -708,3 +725,867 @@ func ParsePKIXPublicKey(derBytes []byte) (any, error) {
 	panic("crypto/x509: ParsePKIXPublicKey: multi-result desugar")
 }
 `
+
+// ============================================================================
+// P3-M9: Subject Alternative Names, private-key parsing, and Verify.
+// (Appended for the x509/TLS un-scope-limiting lane.)
+// ============================================================================
+
+// parseExtKeyUsage decodes the comma-separated OID list from the
+// graalgo.x509.extKeyUsage intrinsic into ExtKeyUsage/UnknownExtKeyUsage.
+func parseExtKeyUsage(c *Certificate, oids string) {
+	if oids == "" {
+		return
+	}
+	start := 0
+	for i := 0; i <= len(oids); i++ {
+		if i == len(oids) || oids[i] == ',' {
+			oid := oids[start:i]
+			start = i + 1
+			switch oid {
+			case "1.3.6.1.5.5.7.3.1":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageServerAuth)
+			case "1.3.6.1.5.5.7.3.2":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageClientAuth)
+			case "1.3.6.1.5.5.7.3.3":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageCodeSigning)
+			case "1.3.6.1.5.5.7.3.4":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageEmailProtection)
+			case "1.3.6.1.5.5.7.3.8":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageTimeStamping)
+			case "1.3.6.1.5.5.7.3.9":
+				c.ExtKeyUsage = append(c.ExtKeyUsage, ExtKeyUsageOCSPSigning)
+			default:
+				if parsed := parseOID(oid); parsed != nil {
+					c.UnknownExtKeyUsage = append(c.UnknownExtKeyUsage, parsed)
+				}
+			}
+		}
+	}
+}
+
+// parseOID parses a dotted-decimal OID string.
+func parseOID(s string) asn1.ObjectIdentifier {
+	var oid asn1.ObjectIdentifier
+	part := 0
+	digits := 0
+	for i := 0; i <= len(s); i++ {
+		ch := byte('.')
+		if i < len(s) {
+			ch = s[i]
+		}
+		if ch == '.' {
+			if digits == 0 {
+				return nil
+			}
+			oid = append(oid, part)
+			part = 0
+			digits = 0
+		} else if ch >= '0' && ch <= '9' {
+			part = part*10 + int(ch-'0')
+			digits++
+		} else {
+			return nil
+		}
+	}
+	return oid
+}
+
+// parseSubjectAltNames decodes the "TYPE:value;..." encoding produced by the
+// graalgo.x509.subjectAltNames intrinsic into the Certificate SAN fields.
+func parseSubjectAltNames(c *Certificate, san string) {
+	if san == "" {
+		return
+	}
+	start := 0
+	for i := 0; i <= len(san); i++ {
+		if i == len(san) || san[i] == ';' {
+			part := san[start:i]
+			start = i + 1
+			colon := -1
+			for j := 0; j < len(part); j++ {
+				if part[j] == ':' {
+					colon = j
+					break
+				}
+			}
+			if colon < 0 {
+				continue
+			}
+			tag, value := part[:colon], part[colon+1:]
+			switch tag {
+			case "DNS":
+				c.DNSNames = append(c.DNSNames, value)
+			case "EMAIL":
+				c.EmailAddresses = append(c.EmailAddresses, value)
+			case "IP":
+				if ip := parseIP(value); ip != nil {
+					c.IPAddresses = append(c.IPAddresses, ip)
+				}
+			case "URI":
+				c.URIs = append(c.URIs, value)
+			}
+		}
+	}
+}
+
+// parseIP parses a dotted-decimal or colon-hex IP string (no zones).
+func parseIP(s string) net.IP {
+	// IPv4 dotted decimal.
+	var v4 [4]byte
+	n := 0
+	part := 0
+	digits := 0
+	for i := 0; i <= len(s); i++ {
+		ch := byte('.')
+		if i < len(s) {
+			ch = s[i]
+		}
+		if ch == '.' {
+			if digits == 0 || part > 255 || n >= 4 {
+				n = -1
+				break
+			}
+			v4[n] = byte(part)
+			n++
+			part = 0
+			digits = 0
+		} else if ch >= '0' && ch <= '9' {
+			part = part*10 + int(ch-'0')
+			digits++
+		} else {
+			n = -1
+			break
+		}
+	}
+	if n == 4 {
+		return net.IP([]byte{v4[0], v4[1], v4[2], v4[3]})
+	}
+	// IPv6: delegate to net.ParseIP (synthetic net package).
+	if ip := net.ParseIP(s); ip != nil {
+		return ip
+	}
+	return nil
+}
+
+// hexToBytes decodes a hex string (used for intrinsic key descriptors).
+func hexToBytes(s string) ([]byte, error) {
+	if len(s)%2 != 0 {
+		return nil, errors.New("x509: odd-length hex string")
+	}
+	out := make([]byte, len(s)/2)
+	for i := 0; i < len(out); i++ {
+		hi, ok1 := hexNibble(s[2*i])
+		lo, ok2 := hexNibble(s[2*i+1])
+		if !ok1 || !ok2 {
+			return nil, errors.New("x509: invalid hex character")
+		}
+		out[i] = hi<<4 | lo
+	}
+	return out, nil
+}
+
+func hexNibble(c byte) (byte, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return c - '0', true
+	case c >= 'a' && c <= 'f':
+		return c - 'a' + 10, true
+	case c >= 'A' && c <= 'F':
+		return c - 'A' + 10, true
+	}
+	return 0, false
+}
+
+// splitColon splits a colon-separated descriptor (no empty parts).
+func splitColon(s string) []string {
+	var parts []string
+	start := 0
+	for i := 0; i <= len(s); i++ {
+		if i == len(s) || s[i] == ':' {
+			parts = append(parts, s[start:i])
+			start = i + 1
+		}
+	}
+	return parts
+}
+
+// parsePrivateKeyDescriptor decodes the graalgo.x509.parsePrivateKey output
+// ("FMT:ALG:hex:..." with FMT PKCS8/PKCS1/SEC1, ALG RSA/EC/Ed25519) into a
+// crypto.PrivateKey. wantFmt restricts the accepted format ("" = any).
+func parsePrivateKeyDescriptor(desc, wantFmt string) (any, error) {
+	parts := splitColon(desc)
+	if len(parts) < 2 {
+		return nil, errors.New("x509: failed to parse private key")
+	}
+	fmtName, alg := parts[0], parts[1]
+	if wantFmt != "" && fmtName != wantFmt {
+		return nil, errors.New("x509: failed to parse private key")
+	}
+	rest := parts[1:] // alg + components
+	switch alg {
+	case "RSA":
+		if len(rest) != 6 {
+			return nil, errors.New("x509: failed to parse private key")
+		}
+		nB, err := hexToBytes(rest[1])
+		if err != nil {
+			return nil, err
+		}
+		eB, err := hexToBytes(rest[2])
+		if err != nil {
+			return nil, err
+		}
+		dB, err := hexToBytes(rest[3])
+		if err != nil {
+			return nil, err
+		}
+		pB, err := hexToBytes(rest[4])
+		if err != nil {
+			return nil, err
+		}
+		qB, err := hexToBytes(rest[5])
+		if err != nil {
+			return nil, err
+		}
+		priv := &rsa.PrivateKey{
+			PublicKey: rsa.PublicKey{
+				N: new(big.Int).SetBytes(nB),
+				E: int(new(big.Int).SetBytes(eB).Int64()),
+			},
+			D:      new(big.Int).SetBytes(dB),
+			Primes: []*big.Int{new(big.Int).SetBytes(pB), new(big.Int).SetBytes(qB)},
+		}
+		return priv, nil
+	case "EC":
+		// SEC1: EC:curveName:x:y:d ; PKCS#8: EC:curveName:d (x,y derived).
+		if len(rest) != 5 && len(rest) != 3 {
+			return nil, errors.New("x509: failed to parse private key")
+		}
+		curve := curveFromName(rest[1])
+		if curve == nil {
+			return nil, errors.New("x509: failed to parse private key")
+		}
+		var dB []byte
+		var err error
+		if len(rest) == 5 {
+			dB, err = hexToBytes(rest[4])
+		} else {
+			dB, err = hexToBytes(rest[2])
+		}
+		if err != nil {
+			return nil, err
+		}
+		d := new(big.Int).SetBytes(dB)
+		x, y := curve.ScalarBaseMult(dB)
+		priv := &ecdsa.PrivateKey{
+			PublicKey: ecdsa.PublicKey{Curve: curve, X: x, Y: y},
+			D:         d,
+		}
+		return priv, nil
+	case "Ed25519":
+		if len(rest) != 2 {
+			return nil, errors.New("x509: failed to parse private key")
+		}
+		seed, err := hexToBytes(rest[1])
+		if err != nil {
+			return nil, err
+		}
+		if len(seed) != 32 {
+			return nil, errors.New("x509: failed to parse private key")
+		}
+		return ed25519.NewKeyFromSeed(seed), nil
+	}
+	return nil, errors.New("x509: failed to parse private key")
+}
+
+// curveFromName maps a JDK curve name to the synthetic elliptic.Curve.
+func curveFromName(name string) elliptic.Curve {
+	switch name {
+	case "secp224r1":
+		return elliptic.P224()
+	case "secp256r1":
+		return elliptic.P256()
+	case "secp384r1":
+		return elliptic.P384()
+	case "secp521r1":
+		return elliptic.P521()
+	}
+	return nil
+}
+
+// __mrParsePKCS8PrivateKeyPair is the pair type for ParsePKCS8PrivateKey.
+type __mrParsePKCS8PrivateKeyPair struct {
+	v0 any
+	v1 error
+}
+
+func __mrParsePKCS8PrivateKey(der []byte) __mrParsePKCS8PrivateKeyPair {
+	desc := graalgoX509ParsePrivateKey(der)
+	if desc == "" {
+		return __mrParsePKCS8PrivateKeyPair{nil, errors.New("x509: failed to parse private key")}
+	}
+	key, err := parsePrivateKeyDescriptor(desc, "PKCS8")
+	return __mrParsePKCS8PrivateKeyPair{key, err}
+}
+
+func ParsePKCS8PrivateKey(der []byte) (any, error) {
+	panic("crypto/x509: ParsePKCS8PrivateKey: multi-result desugar")
+}
+
+// __mrParsePKCS1PrivateKeyPair is the pair type for ParsePKCS1PrivateKey.
+type __mrParsePKCS1PrivateKeyPair struct {
+	v0 *rsa.PrivateKey
+	v1 error
+}
+
+func __mrParsePKCS1PrivateKey(der []byte) __mrParsePKCS1PrivateKeyPair {
+	desc := graalgoX509ParsePrivateKey(der)
+	if desc == "" {
+		return __mrParsePKCS1PrivateKeyPair{nil, errors.New("x509: failed to parse private key")}
+	}
+	key, err := parsePrivateKeyDescriptor(desc, "PKCS1")
+	if err != nil {
+		return __mrParsePKCS1PrivateKeyPair{nil, err}
+	}
+	rsaKey, ok := key.(*rsa.PrivateKey)
+	if !ok {
+		return __mrParsePKCS1PrivateKeyPair{nil, errors.New("x509: failed to parse private key")}
+	}
+	return __mrParsePKCS1PrivateKeyPair{rsaKey, nil}
+}
+
+func ParsePKCS1PrivateKey(der []byte) (*rsa.PrivateKey, error) {
+	panic("crypto/x509: ParsePKCS1PrivateKey: multi-result desugar")
+}
+
+// __mrParseECPrivateKeyPair is the pair type for ParseECPrivateKey.
+type __mrParseECPrivateKeyPair struct {
+	v0 *ecdsa.PrivateKey
+	v1 error
+}
+
+func __mrParseECPrivateKey(der []byte) __mrParseECPrivateKeyPair {
+	desc := graalgoX509ParsePrivateKey(der)
+	if desc == "" {
+		return __mrParseECPrivateKeyPair{nil, errors.New("x509: failed to parse private key")}
+	}
+	key, err := parsePrivateKeyDescriptor(desc, "SEC1")
+	if err != nil {
+		return __mrParseECPrivateKeyPair{nil, err}
+	}
+	ecKey, ok := key.(*ecdsa.PrivateKey)
+	if !ok {
+		return __mrParseECPrivateKeyPair{nil, errors.New("x509: failed to parse private key")}
+	}
+	return __mrParseECPrivateKeyPair{ecKey, nil}
+}
+
+func ParseECPrivateKey(der []byte) (*ecdsa.PrivateKey, error) {
+	panic("crypto/x509: ParseECPrivateKey: multi-result desugar")
+}
+
+// ============================================================================
+// P3-M9: Certificate.Verify (chain building + signature checks in Go for
+// exact Go semantics; parsing delegates to java.security.cert).
+// ============================================================================
+
+// VerifyOptions contains parameters for Certificate.Verify.
+type VerifyOptions struct {
+	DNSName                  string
+	Intermediates            *CertPool
+	Roots                    *CertPool
+	CurrentTime              time.Time
+	KeyUsages                []ExtKeyUsage
+	MaxConstraintComparisons int
+}
+
+// __mrVerifyPair is the pair type for (*Certificate).Verify.
+type __mrVerifyPair struct {
+	v0 [][]*Certificate
+	v1 error
+}
+
+func __mrVerify(c *Certificate, opts VerifyOptions) __mrVerifyPair {
+	chains, err := c.verify(opts)
+	return __mrVerifyPair{chains, err}
+}
+
+func (c *Certificate) Verify(opts VerifyOptions) ([][]*Certificate, error) {
+	panic("crypto/x509: Verify: multi-result desugar")
+}
+
+// VerifyHostname verifies the certificate against host h.
+func (c *Certificate) VerifyHostname(h string) error {
+	_, err := c.verify(VerifyOptions{DNSName: h})
+	return err
+}
+
+// verify implements chain building and checking.
+func (c *Certificate) verify(opts VerifyOptions) ([][]*Certificate, error) {
+	currentTime := opts.CurrentTime
+	if currentTime.IsZero() {
+		currentTime = time.Now()
+	}
+	roots := opts.Roots
+	if roots == nil {
+		roots = NewCertPool()
+	}
+	intermediates := opts.Intermediates
+	if intermediates == nil {
+		intermediates = NewCertPool()
+	}
+
+	// Collect candidate parents: intermediates + roots.
+	var candidates []*Certificate
+	for _, cert := range intermediates.certs {
+		candidates = append(candidates, cert)
+	}
+	for _, cert := range roots.certs {
+		candidates = append(candidates, cert)
+	}
+
+	var chains [][]*Certificate
+	// Depth-first search for chains from the leaf to a root.
+	var visit func(cert *Certificate, chain []*Certificate)
+	visit = func(cert *Certificate, chain []*Certificate) {
+		// If cert is in Roots, the chain is complete.
+		if roots.containsCert(cert) {
+			newChain := make([]*Certificate, len(chain))
+			copy(newChain, chain)
+			chains = append(chains, newChain)
+			return
+		}
+		if len(chain) > 10 {
+			return
+		}
+		for _, parent := range candidates {
+			if !isParentOf(cert, parent) {
+				continue
+			}
+			if err := cert.CheckSignatureFrom(parent); err != nil {
+				continue
+			}
+			if !parent.IsCA && parent != cert {
+				continue
+			}
+			// Validity of the parent at currentTime.
+			if currentTime.Before(parent.NotBefore) || currentTime.After(parent.NotAfter) {
+				continue
+			}
+			// Avoid cycles.
+			cycle := false
+			for _, link := range chain {
+				if link == parent {
+					cycle = true
+					break
+				}
+			}
+			if cycle {
+				continue
+			}
+			visit(parent, append(chain, parent))
+		}
+	}
+	visit(c, []*Certificate{c})
+
+	if len(chains) == 0 {
+		return nil, &UnknownAuthorityError{Cert: c}
+	}
+
+	// Check each chain for validity, hostname, EKU; return the first valid.
+	var lastErr error
+	for _, chain := range chains {
+		if err := c.verifyChain(chain, opts, currentTime); err != nil {
+			lastErr = err
+			continue
+		}
+		return [][]*Certificate{chain}, nil
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, &UnknownAuthorityError{Cert: c}
+}
+
+// verifyChain checks validity periods, hostname, and key usages for a chain.
+func (c *Certificate) verifyChain(chain []*Certificate, opts VerifyOptions, currentTime time.Time) error {
+	// Validity of every link.
+	for _, cert := range chain {
+		if currentTime.Before(cert.NotBefore) || currentTime.After(cert.NotAfter) {
+			return &CertificateInvalidError{Cert: cert, Reason: Expired}
+		}
+	}
+	// Hostname.
+	if opts.DNSName != "" {
+		if err := c.verifyHostname(opts.DNSName); err != nil {
+			return err
+		}
+	}
+	// Extended key usage.
+	if len(opts.KeyUsages) > 0 {
+		for _, ku := range opts.KeyUsages {
+			if !c.hasExtKeyUsage(ku) {
+				return &CertificateInvalidError{Cert: c, Reason: IncompatibleUsage}
+			}
+		}
+	}
+	return nil
+}
+
+// isParentOf reports whether parent is a plausible issuer of cert.
+func isParentOf(cert, parent *Certificate) bool {
+	if len(cert.RawIssuer) > 0 && len(parent.RawSubject) > 0 {
+		match := len(cert.RawIssuer) == len(parent.RawSubject)
+		if match {
+			for i := range cert.RawIssuer {
+				if cert.RawIssuer[i] != parent.RawSubject[i] {
+					match = false
+					break
+				}
+			}
+		}
+		if !match {
+			return false
+		}
+	}
+	// AuthorityKeyId should match parent's SubjectKeyId (if both present).
+	if len(cert.AuthorityKeyId) > 0 && len(parent.SubjectKeyId) > 0 {
+		if len(cert.AuthorityKeyId) != len(parent.SubjectKeyId) {
+			return false
+		}
+		for i := range cert.AuthorityKeyId {
+			if cert.AuthorityKeyId[i] != parent.SubjectKeyId[i] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// containsCert reports whether the pool contains cert (by Raw bytes).
+func (p *CertPool) containsCert(cert *Certificate) bool {
+	for _, c := range p.certs {
+		if len(c.Raw) == len(cert.Raw) {
+			match := true
+			for i := range c.Raw {
+				if c.Raw[i] != cert.Raw[i] {
+					match = false
+					break
+				}
+			}
+			if match {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasExtKeyUsage reports whether the certificate is valid for the given EKU.
+// A certificate with no EKU is valid for all usages (Go semantics).
+func (c *Certificate) hasExtKeyUsage(ku ExtKeyUsage) bool {
+	if len(c.ExtKeyUsage) == 0 && len(c.UnknownExtKeyUsage) == 0 {
+		return true
+	}
+	for _, eku := range c.ExtKeyUsage {
+		if eku == ku {
+			return true
+		}
+	}
+	return false
+}
+
+// CheckSignatureFrom verifies that parent signed c.
+func (c *Certificate) CheckSignatureFrom(parent *Certificate) error {
+	if parent == nil {
+		return errors.New("x509: nil parent certificate")
+	}
+	return verifyCertSignature(c, parent)
+}
+
+// verifyCertSignature checks c.Signature over c.RawTBSCertificate with
+// parent's public key, per c.SignatureAlgorithm.
+func verifyCertSignature(c, parent *Certificate) error {
+	newHash, err := hashFromSigAlg(c.SignatureAlgorithm)
+	if err != nil {
+		return err
+	}
+	var digest []byte
+	if newHash != nil {
+		h := newHash()
+		h.Write(c.RawTBSCertificate)
+		digest = h.Sum(nil)
+	}
+	switch parent.PublicKeyAlgorithm {
+	case RSA:
+		rsaPub, ok := parent.PublicKey.(*rsa.PublicKey)
+		if !ok {
+			return errors.New("x509: parent public key is not RSA")
+		}
+		if newHash == nil {
+			return errors.New("x509: unsupported signature algorithm")
+		}
+		return rsa.VerifyPKCS1v15(rsaPub, hashForAlg(c.SignatureAlgorithm), digest, c.Signature)
+	case ECDSA:
+		ecdsaPub, ok := parent.PublicKey.(*ecdsa.PublicKey)
+		if !ok {
+			return errors.New("x509: parent public key is not ECDSA")
+		}
+		if newHash == nil {
+			return errors.New("x509: unsupported signature algorithm")
+		}
+		if !ecdsa.VerifyASN1(ecdsaPub, digest, c.Signature) {
+			return errors.New("x509: ECDSA verification failure")
+		}
+		return nil
+	case Ed25519:
+		edPub, ok := parent.PublicKey.(ed25519.PublicKey)
+		if !ok {
+			return errors.New("x509: parent public key is not Ed25519")
+		}
+		if !ed25519.Verify(edPub, c.RawTBSCertificate, c.Signature) {
+			return errors.New("x509: Ed25519 verification failure")
+		}
+		return nil
+	}
+	return errors.New("x509: unsupported public key algorithm")
+}
+
+// hashForAlg maps a signature algorithm to the crypto.Hash value the
+// synthetic rsa package expects.
+func hashForAlg(alg SignatureAlgorithm) crypto.Hash {
+	switch alg {
+	case SHA256WithRSA, ECDSAWithSHA256, SHA256WithRSAPSS:
+		return crypto.SHA256
+	case SHA384WithRSA, ECDSAWithSHA384:
+		return crypto.SHA384
+	case SHA512WithRSA, ECDSAWithSHA512:
+		return crypto.SHA512
+	case SHA224WithRSA, ECDSAWithSHA224:
+		return crypto.SHA224
+	case SHA1WithRSA, ECDSAWithSHA1:
+		return crypto.SHA1
+	}
+	return 0
+}
+
+// hashFromSigAlg maps a signature algorithm to a new hash (nil = direct sign,
+// e.g. Ed25519).
+func hashFromSigAlg(alg SignatureAlgorithm) (func() hash.Hash, error) {
+	switch alg {
+	case SHA256WithRSA, ECDSAWithSHA256, SHA256WithRSAPSS:
+		return sha256.New, nil
+	case SHA384WithRSA, ECDSAWithSHA384:
+		return sha512.New384, nil
+	case SHA512WithRSA, ECDSAWithSHA512:
+		return sha512.New, nil
+	case SHA224WithRSA, ECDSAWithSHA224:
+		return sha256.New224, nil
+	case SHA1WithRSA, ECDSAWithSHA1:
+		return sha1.New, nil
+	case MD2WithRSA, MD5WithRSA:
+		return nil, errors.New("x509: insecure signature algorithm")
+	case PureEd25519:
+		return nil, nil
+	}
+	return nil, errors.New("x509: unknown signature algorithm")
+}
+
+// verifyHostname checks opts.DNSName against the leaf's SANs/CN.
+func (c *Certificate) verifyHostname(h string) error {
+	// Strip trailing dot and port.
+	host := h
+	for i := len(host) - 1; i >= 0; i-- {
+		if host[i] == ':' {
+			host = host[:i]
+			break
+		}
+		if host[i] == '.' {
+			break
+		}
+	}
+	host = trimSuffix(host, ".")
+	if ip := parseIP(host); ip != nil {
+		for _, cand := range c.IPAddresses {
+			if ipEqual(ip, cand) {
+				return nil
+			}
+		}
+		return &HostnameError{Certificate: c, Host: h}
+	}
+	// DNS: try SANs first, then CN fallback.
+	if len(c.DNSNames) > 0 {
+		for _, pattern := range c.DNSNames {
+			if matchHostname(pattern, host) {
+				return nil
+			}
+		}
+		return &HostnameError{Certificate: c, Host: h}
+	}
+	if cn := c.Subject.CommonName; cn != "" {
+		if matchHostname(cn, host) {
+			return nil
+		}
+	}
+	return &HostnameError{Certificate: c, Host: h}
+}
+
+// matchHostname implements Go's wildcard matching (RFC 6125 §6.4.3).
+func matchHostname(pattern, host string) bool {
+	pattern = toLower(pattern)
+	host = toLower(host)
+	if pattern == "" || host == "" {
+		return false
+	}
+	// Wildcard: only a leading "*." is valid, matching exactly one label.
+	if len(pattern) > 2 && pattern[0] == '*' && pattern[1] == '.' {
+		rest := pattern[2:]
+		if !validHostnameLabel(rest) {
+			return false
+		}
+		// Host must have exactly one more label than the pattern suffix.
+		if len(host) <= len(rest) {
+			return false
+		}
+		if host[len(host)-len(rest):] != rest {
+			return false
+		}
+		prefix := host[:len(host)-len(rest)-1]
+		// Prefix must be a single label (no dots).
+		for i := 0; i < len(prefix); i++ {
+			if prefix[i] == '.' {
+				return false
+			}
+		}
+		return len(prefix) > 0
+	}
+	return pattern == host
+}
+
+func validHostnameLabel(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if !(ch >= 'a' && ch <= 'z' || ch >= '0' && ch <= '9' || ch == '-' || ch == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+func toLower(s string) string {
+	out := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch >= 'A' && ch <= 'Z' {
+			ch += 'a' - 'A'
+		}
+		out[i] = ch
+	}
+	return string(out)
+}
+
+func trimSuffix(s, suffix string) string {
+	if len(s) >= len(suffix) && s[len(s)-len(suffix):] == suffix {
+		return s[:len(s)-len(suffix)]
+	}
+	return s
+}
+
+func ipEqual(a, b net.IP) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// UnknownAuthorityError is returned when the chain does not anchor in Roots.
+type UnknownAuthorityError struct {
+	Cert *Certificate
+}
+
+func (e *UnknownAuthorityError) Error() string {
+	return "x509: certificate signed by unknown authority"
+}
+
+// InvalidReason describes a CertificateInvalidError.
+type InvalidReason int
+
+const (
+	NotAuthorizedToSign InvalidReason = iota
+	Expired
+	CANotAuthorizedForThisName
+	TooManyIntermediates
+	IncompatibleUsage
+	NameMismatch
+	NameConstraintsWithoutSANs
+	UnconstrainedName
+	TooManyConstraints
+	CANotAuthorizedForExtKeyUsage
+)
+
+// CertificateInvalidError is returned for invalid chains.
+type CertificateInvalidError struct {
+	Cert   *Certificate
+	Reason InvalidReason
+}
+
+func (e *CertificateInvalidError) Error() string {
+	var reason string
+	switch e.Reason {
+	case NotAuthorizedToSign:
+		reason = "certificate is not standards compliant"
+	case Expired:
+		reason = "certificate has expired or is not yet valid"
+	case CANotAuthorizedForThisName:
+		reason = "certificate is not authorized for this name"
+	case TooManyIntermediates:
+		reason = "too many intermediates"
+	case IncompatibleUsage:
+		reason = "certificate is not valid for the requested usage"
+	default:
+		reason = "certificate is invalid"
+	}
+	name := ""
+	if e.Cert != nil {
+		name = e.Cert.Subject.CommonName
+		if name == "" && len(e.Cert.DNSNames) > 0 {
+			name = e.Cert.DNSNames[0]
+		}
+	}
+	if name != "" {
+		return "x509: " + reason + ": \"" + name + "\""
+	}
+	return "x509: " + reason
+}
+
+// HostnameError is returned on hostname mismatch.
+type HostnameError struct {
+	Certificate *Certificate
+	Host        string
+}
+
+func (e *HostnameError) Error() string {
+	c := e.Certificate
+	var valid string
+	if len(c.DNSNames) > 0 {
+		valid = c.DNSNames[0]
+		for _, n := range c.DNSNames[1:] {
+			valid += ", " + n
+		}
+	} else if c.Subject.CommonName != "" {
+		valid = c.Subject.CommonName
+	}
+	if valid != "" {
+		return "x509: certificate is valid for " + valid + ", not " + e.Host
+	}
+	return "x509: certificate is not valid for " + e.Host
+}

@@ -2433,7 +2433,9 @@ func ExportFile(path string) (string, error) {
 			// graalgo.x509.* intrinsics). pkix first (x509 imports it).
 			"crypto/x509/pkix",
 			"crypto/x509",
-			// "crypto/tls", // P3-M9: deferred (source not yet committed)
+			// P3-M9 (tier-5): synthetic crypto/tls (SSLEngine delegation
+			// via graalgo.tls.* intrinsics; imports crypto/x509).
+			"crypto/tls",
 		} {
 			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
 				return "", err

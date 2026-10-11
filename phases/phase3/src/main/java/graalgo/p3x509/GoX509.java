@@ -2,9 +2,18 @@ package graalgo.p3x509;
 
 import java.io.ByteArrayInputStream;
 import java.math.BigInteger;
+import java.security.AlgorithmParameters;
+import java.security.KeyFactory;
 import java.security.cert.CertificateException;
 import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
+import java.security.interfaces.ECPrivateKey;
+import java.security.interfaces.EdECPrivateKey;
+import java.security.interfaces.RSAPrivateCrtKey;
+import java.security.spec.ECGenParameterSpec;
+import java.security.spec.PKCS8EncodedKeySpec;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
 
 import graalgo.values.GoSlice;
@@ -541,4 +550,374 @@ public final class GoX509 {
         }
         return null;
     }
+
+    /**
+     * Extended key usage OIDs as a comma-separated list (empty if none).
+     * Backs {@code graalgo.x509.extKeyUsage}.
+     */
+    public static Object extKeyUsage(Object certArg) {
+        X509Certificate cert = (X509Certificate) certArg;
+        try {
+            List<String> oids = cert.getExtendedKeyUsage();
+            if (oids == null || oids.isEmpty()) {
+                return toGoString("");
+            }
+            return toGoString(String.join(",", oids));
+        } catch (Exception e) {
+            return toGoString("");
+        }
+    }
+
+    /**
+     * Subject Alternative Names encoded as a semicolon-separated list of
+     * {@code TYPE:value} pairs (TYPE is DNS, IP, EMAIL or URI). Used by the
+     * Go-side Verify hostname check. Empty string if absent/unparseable.
+     * Backs {@code graalgo.x509.subjectAltNames}.
+     */
+    public static Object subjectAltNames(Object certArg) {
+        X509Certificate cert = (X509Certificate) certArg;
+        try {
+            Collection<List<?>> sans = cert.getSubjectAlternativeNames();
+            if (sans == null) {
+                return toGoString("");
+            }
+            StringBuilder sb = new StringBuilder();
+            for (List<?> san : sans) {
+                Integer type = (Integer) san.get(0);
+                String tag;
+                if (type == 1) {
+                    tag = "EMAIL";
+                } else if (type == 2) {
+                    tag = "DNS";
+                } else if (type == 7) {
+                    tag = "IP";
+                } else if (type == 8) {
+                    tag = "URI";
+                } else {
+                    continue;
+                }
+                if (sb.length() > 0) {
+                    sb.append(';');
+                }
+                sb.append(tag).append(':').append(san.get(1).toString());
+            }
+            return toGoString(sb.toString());
+        } catch (Exception e) {
+            return toGoString("");
+        }
+    }
+
+    /**
+     * Parses a private key (PKCS#8, PKCS#1 or SEC1 EC) and returns a
+     * colon-separated descriptor {@code FMT:ALG:hex:hex:...} where FMT is
+     * PKCS8, PKCS1 or SEC1 and ALG is RSA, EC or Ed25519. RSA components:
+     * n, e, d, p, q. EC components: curveName, x, y, d (SEC1) or
+     * curveName, d (PKCS#8; x,y derived). Ed25519: seed. Empty string on
+     * failure. Backs {@code graalgo.x509.parsePrivateKey}.
+     */
+    public static Object parsePrivateKey(Object derArg) {
+        byte[] der = toBytes(derArg);
+        try {
+            // Try PKCS#8 with each known algorithm.
+            String parsed = tryPkcs8(der);
+            String fmt = "PKCS8";
+            if (parsed == null) {
+                parsed = tryPkcs1(der);
+                fmt = "PKCS1";
+            }
+            if (parsed == null) {
+                parsed = trySec1(der);
+                fmt = "SEC1";
+            }
+            if (parsed == null) {
+                return toGoString("");
+            }
+            return toGoString(fmt + ":" + parsed);
+        } catch (Exception e) {
+            return toGoString("");
+        }
+    }
+
+    private static String tryPkcs8(byte[] der) {
+        // RSA
+        try {
+            KeyFactory kf = KeyFactory.getInstance("RSA");
+            RSAPrivateCrtKey key =
+                    (RSAPrivateCrtKey) kf.generatePrivate(new PKCS8EncodedKeySpec(der));
+            return "RSA:" + toHex(key.getModulus().toByteArray()) + ":"
+                    + toHex(key.getPublicExponent().toByteArray()) + ":"
+                    + toHex(key.getPrivateExponent().toByteArray()) + ":"
+                    + toHex(key.getPrimeP().toByteArray()) + ":"
+                    + toHex(key.getPrimeQ().toByteArray());
+        } catch (Exception ignored) {
+        }
+        // EC
+        try {
+            KeyFactory kf = KeyFactory.getInstance("EC");
+            ECPrivateKey key =
+                    (ECPrivateKey) kf.generatePrivate(new PKCS8EncodedKeySpec(der));
+            int fieldSize = key.getParams().getCurve().getField().getFieldSize();
+            String curveName = ecCurveName(fieldSize);
+            if (curveName == null) {
+                return null;
+            }
+            return "EC:" + curveName + ":"
+                    + toHex(stripLeadingZero(key.getS().toByteArray()));
+        } catch (Exception ignored) {
+        }
+        // Ed25519
+        try {
+            KeyFactory kf = KeyFactory.getInstance("Ed25519");
+            EdECPrivateKey key =
+                    (EdECPrivateKey) kf.generatePrivate(new PKCS8EncodedKeySpec(der));
+            byte[] seed = key.getBytes().orElse(null);
+            if (seed == null) {
+                return null;
+            }
+            return "Ed25519:" + toHex(seed);
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private static String tryPkcs1(byte[] der) {
+        // PKCS#1 RSAPrivateKey: SEQUENCE { version, n, e, d, p, q, dp, dq, qinv }
+        try {
+            List<byte[]> ints = parsePkcs1Integers(der);
+            if (ints.size() != 9) {
+                return null;
+            }
+            return "RSA:" + toHex(ints.get(1)) + ":" + toHex(ints.get(2)) + ":"
+                    + toHex(ints.get(3)) + ":" + toHex(ints.get(4)) + ":"
+                    + toHex(ints.get(5));
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static String trySec1(byte[] der) {
+        // SEC1 ECPrivateKey: SEQUENCE { version, privateKey OCTET STRING,
+        //   [0] parameters, [1] publicKey }. Extract d and the curve OID.
+        try {
+            byte[] d = extractSec1PrivateKey(der);
+            String oid = extractSec1CurveOid(der);
+            if (d == null || oid == null) {
+                return null;
+            }
+            String curveName = ecCurveNameByOid(oid);
+            if (curveName == null) {
+                return null;
+            }
+            // Derive x,y from d via scalar multiplication using the JDK.
+            java.security.spec.ECParameterSpec spec = ecSpecForName(curveName);
+            if (spec == null) {
+                return null;
+            }
+            BigInteger s = new BigInteger(1, d);
+            java.security.spec.ECPoint w = scalarMultiply(spec, s);
+            if (w == null) {
+                return null;
+            }
+            return "EC:" + curveName + ":" + toHex(toFixed(w.getAffineX(), spec))
+                    + ":" + toHex(toFixed(w.getAffineY(), spec)) + ":" + toHex(d);
+        } catch (Exception ignored) {
+            return null;
+        }
+    }
+
+    private static byte[] toFixed(BigInteger v, java.security.spec.ECParameterSpec spec) {
+        int size = (spec.getCurve().getField().getFieldSize() + 7) / 8;
+        byte[] raw = stripLeadingZero(v.toByteArray());
+        if (raw.length == size) {
+            return raw;
+        }
+        byte[] out = new byte[size];
+        System.arraycopy(raw, 0, out, size - raw.length,
+                Math.min(raw.length, size));
+        return out;
+    }
+
+    private static java.security.spec.ECParameterSpec ecSpecForName(String name) {
+        try {
+            AlgorithmParameters p = AlgorithmParameters.getInstance("EC");
+            p.init(new ECGenParameterSpec(name));
+            return p.getParameterSpec(
+                    java.security.spec.ECParameterSpec.class);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static java.security.spec.ECPoint scalarMultiply(
+            java.security.spec.ECParameterSpec spec, BigInteger s) {
+        // Double-and-add on the curve.
+        java.security.spec.EllipticCurve curve = spec.getCurve();
+        java.security.spec.ECPoint g = spec.getGenerator();
+        java.security.spec.ECPoint result = java.security.spec.ECPoint.POINT_INFINITY;
+        java.security.spec.ECPoint addend = g;
+        BigInteger k = s.mod(spec.getOrder());
+        while (k.signum() > 0) {
+            if (k.testBit(0)) {
+                result = ecAdd(curve, result, addend);
+            }
+            addend = ecDouble(curve, addend);
+            k = k.shiftRight(1);
+        }
+        return result;
+    }
+
+    private static java.security.spec.ECPoint ecAdd(
+            java.security.spec.EllipticCurve curve,
+            java.security.spec.ECPoint p, java.security.spec.ECPoint q) {
+        if (p.equals(java.security.spec.ECPoint.POINT_INFINITY)) {
+            return q;
+        }
+        if (q.equals(java.security.spec.ECPoint.POINT_INFINITY)) {
+            return p;
+        }
+        BigInteger prime = ((java.security.spec.ECFieldFp) curve.getField()).getP();
+        BigInteger a = curve.getA();
+        BigInteger x1 = p.getAffineX(), y1 = p.getAffineY();
+        BigInteger x2 = q.getAffineX(), y2 = q.getAffineY();
+        BigInteger lambda;
+        if (x1.equals(x2)) {
+            if (!y1.equals(y2)) {
+                return java.security.spec.ECPoint.POINT_INFINITY;
+            }
+            // Doubling.
+            lambda = x1.multiply(x1).multiply(BigInteger.valueOf(3)).add(a)
+                    .multiply(y1.shiftLeft(1).modInverse(prime)).mod(prime);
+        } else {
+            lambda = y2.subtract(y1).multiply(x2.subtract(x1).modInverse(prime))
+                    .mod(prime);
+        }
+        BigInteger x3 = lambda.multiply(lambda).subtract(x1).subtract(x2).mod(prime);
+        BigInteger y3 = lambda.multiply(x1.subtract(x3)).subtract(y1).mod(prime);
+        return new java.security.spec.ECPoint(x3, y3);
+    }
+
+    private static java.security.spec.ECPoint ecDouble(
+            java.security.spec.EllipticCurve curve, java.security.spec.ECPoint p) {
+        return ecAdd(curve, p, p);
+    }
+
+    private static byte[] extractSec1PrivateKey(byte[] der) {
+        // Find the first OCTET STRING (tag 0x04) after the version INTEGER.
+        for (int i = 0; i < der.length - 2; i++) {
+            if ((der[i] & 0xFF) == 0x04) {
+                int len = der[i + 1] & 0xFF;
+                if (len > 0 && len <= 66 && i + 2 + len <= der.length) {
+                    byte[] d = new byte[len];
+                    System.arraycopy(der, i + 2, d, 0, len);
+                    return d;
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String extractSec1CurveOid(byte[] der) {
+        // [0] EXPLICIT parameters containing an OID (tag 0x06).
+        for (int i = 0; i < der.length - 2; i++) {
+            if ((der[i] & 0xFF) == 0xA0) {
+                for (int j = i + 1; j < der.length - 2; j++) {
+                    if ((der[j] & 0xFF) == 0x06) {
+                        int len = der[j + 1] & 0xFF;
+                        if (len > 0 && j + 2 + len <= der.length) {
+                            byte[] oid = new byte[len];
+                            System.arraycopy(der, j + 2, oid, 0, len);
+                            return decodeOid(oid);
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String ecCurveNameByOid(String oid) {
+        if ("1.2.840.10045.3.1.7".equals(oid)) {
+            return "secp256r1";
+        }
+        if ("1.3.132.0.34".equals(oid)) {
+            return "secp384r1";
+        }
+        if ("1.3.132.0.35".equals(oid)) {
+            return "secp521r1";
+        }
+        if ("1.3.132.0.33".equals(oid)) {
+            return "secp224r1";
+        }
+        return null;
+    }
+
+    /** Maps an EC field size in bits to a JDK curve name. */
+    private static String ecCurveName(int fieldSize) {
+        if (fieldSize == 224) {
+            return "secp224r1";
+        }
+        if (fieldSize == 256) {
+            return "secp256r1";
+        }
+        if (fieldSize == 384) {
+            return "secp384r1";
+        }
+        if (fieldSize == 521) {
+            return "secp521r1";
+        }
+        return null;
+    }
+
+    /** Parses all INTEGERs from a PKCS#1 SEQUENCE. */
+    private static List<byte[]> parsePkcs1Integers(byte[] der) {
+        List<byte[]> out = new ArrayList<>();
+        int pos = 0;
+        if (der.length < 2 || der[pos++] != 0x30) {
+            return out;
+        }
+        pos = skipLength(der, pos);
+        if (pos < 0) {
+            return out;
+        }
+        while (pos < der.length) {
+            if (der[pos++] != 0x02) {
+                break;
+            }
+            int lenPos = skipLength(der, pos);
+            if (lenPos < 0) {
+                break;
+            }
+            int len = derLength(der, pos);
+            pos = lenPos;
+            if (len < 0 || pos + len > der.length) {
+                break;
+            }
+            byte[] val = new byte[len];
+            System.arraycopy(der, pos, val, 0, len);
+            out.add(stripLeadingZero(val));
+            pos += len;
+        }
+        return out;
+    }
+
+    /** Decodes a DER OID content octets to dotted-decimal. */
+    private static String decodeOid(byte[] oid) {
+        if (oid.length == 0) {
+            return null;
+        }
+        StringBuilder sb = new StringBuilder();
+        int first = oid[0] & 0xFF;
+        sb.append(first / 40).append('.').append(first % 40);
+        long val = 0;
+        for (int i = 1; i < oid.length; i++) {
+            int b = oid[i] & 0xFF;
+            val = (val << 7) | (b & 0x7F);
+            if ((b & 0x80) == 0) {
+                sb.append('.').append(val);
+                val = 0;
+            }
+        }
+        return sb.toString();
+    }
+
 }

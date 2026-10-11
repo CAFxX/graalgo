@@ -178,6 +178,9 @@ var syntheticSources = map[string]string{
 	// graalgo.x509.* intrinsics; sources committed in ed9bc19).
 	"crypto/x509":      syntheticCryptoX509Source,
 	"crypto/x509/pkix": syntheticCryptoX509PkixSource,
+	// P3-M9 (tier-5): synthetic crypto/tls package (SSLEngine delegation
+	// via graalgo.tls.* intrinsics; source in synth_crypto_tls.go).
+	"crypto/tls": syntheticCryptoTlsSource,
 	// P3-M7 (wave 1): synthetic encoding/xml package (real-Go source in
 	// synth_xml.go). Self-contained (no imports); the token-stream
 	// desugar lives in mrdesugar_m5.go (mrXmlToken).
@@ -1007,6 +1010,7 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		path != "crypto/ecdsa" && path != "crypto/ed25519" && path != "crypto/rsa" &&
 		path != "crypto/hkdf" && path != "crypto/pbkdf2" &&
 		path != "crypto/x509" && path != "crypto/x509/pkix" &&
+		path != "crypto/tls" &&
 		path != "golang.org/x/crypto/cryptobyte" &&
 		path != "golang.org/x/crypto/cryptobyte/asn1" &&
 		path != "crypto/internal/fips140" && path != "crypto/internal/fips140/check" &&

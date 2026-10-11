@@ -12,6 +12,8 @@ import graalgo.iface.IfaceMethodTables;
 import graalgo.p3os.GoOs;
 import graalgo.p3net.GoNet;
 import graalgo.p3net.GoNetpoll;
+import graalgo.p3tls.TlsRuntime;
+import graalgo.p3x509.GoX509;
 import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Linknames;
 import graalgo.runtime.Timers;
@@ -86,6 +88,13 @@ public final class LinknameIntrinsics {
         // GoSlice; each GoNet/GoNetpoll target adapts explicitly (see
         // their javadoc for the calling conventions).
         registerNetIntrinsics();
+        // P3-M9 (tier-5): x509 certificate parsing (java.security.cert
+        // delegation) and TLS (SSLEngine delegation) intrinsic tables.
+        // D5 argument types: []byte arrives as GoSlice, strings as
+        // GoString, ints/bools as Long; the X509Certificate passes through
+        // as Object; each target adapts explicitly.
+        registerX509Intrinsics();
+        registerTlsIntrinsics();
         // itabFor → the P3-M3 itab machinery (ADR-0004 D3).
         Intrinsics.setItabProvider(IfaceMethodTable::itabForDescriptors);
         // Interface method-name lists for itabForIntrinsic.
@@ -228,6 +237,107 @@ public final class LinknameIntrinsics {
         // net.Interface/Interfaces (github.com/google/uuid v1 node IDs).
         Linknames.register("graalgo.net.interfaces",
                 args -> GoNet.interfaces(args[0]), 1);
+    }
+
+    /**
+     * Registers the 26 {@code graalgo.x509.*} intrinsics implemented by
+     * {@link GoX509} (P3-M9 tier-5, x509.md §2). All take a single argument
+     * (the X509Certificate as Object, or DER bytes as GoSlice) and return
+     * the D5-boxed field value ([]byte as GoSlice, strings as GoString,
+     * ints as Long, null on absent/error).
+     */
+    private static void registerX509Intrinsics() {
+        Linknames.register("graalgo.x509.parse",
+                args -> GoX509.parse(args[0]), 1);
+        Linknames.register("graalgo.x509.serialNumber",
+                args -> GoX509.serialNumber(args[0]), 1);
+        Linknames.register("graalgo.x509.subject",
+                args -> GoX509.subject(args[0]), 1);
+        Linknames.register("graalgo.x509.issuer",
+                args -> GoX509.issuer(args[0]), 1);
+        Linknames.register("graalgo.x509.notBefore",
+                args -> GoX509.notBefore(args[0]), 1);
+        Linknames.register("graalgo.x509.notAfter",
+                args -> GoX509.notAfter(args[0]), 1);
+        Linknames.register("graalgo.x509.version",
+                args -> GoX509.version(args[0]), 1);
+        Linknames.register("graalgo.x509.sigAlgOid",
+                args -> GoX509.sigAlgOid(args[0]), 1);
+        Linknames.register("graalgo.x509.signature",
+                args -> GoX509.signature(args[0]), 1);
+        Linknames.register("graalgo.x509.tbsCertificate",
+                args -> GoX509.tbsCertificate(args[0]), 1);
+        Linknames.register("graalgo.x509.keyUsage",
+                args -> GoX509.keyUsage(args[0]), 1);
+        Linknames.register("graalgo.x509.basicConstraints",
+                args -> GoX509.basicConstraints(args[0]), 1);
+        Linknames.register("graalgo.x509.subjectKeyId",
+                args -> GoX509.subjectKeyId(args[0]), 1);
+        Linknames.register("graalgo.x509.authorityKeyId",
+                args -> GoX509.authorityKeyId(args[0]), 1);
+        Linknames.register("graalgo.x509.publicKeyAlg",
+                args -> GoX509.publicKeyAlgOid(args[0]), 1);
+        Linknames.register("graalgo.x509.publicKeyEncoded",
+                args -> GoX509.publicKeyEncoded(args[0]), 1);
+        Linknames.register("graalgo.x509.rawIssuer",
+                args -> GoX509.rawIssuer(args[0]), 1);
+        Linknames.register("graalgo.x509.rawSubject",
+                args -> GoX509.rawSubject(args[0]), 1);
+        Linknames.register("graalgo.x509.rsaModulus",
+                args -> GoX509.rsaModulus(args[0]), 1);
+        Linknames.register("graalgo.x509.rsaExponent",
+                args -> GoX509.rsaExponent(args[0]), 1);
+        Linknames.register("graalgo.x509.ecX",
+                args -> GoX509.ecX(args[0]), 1);
+        Linknames.register("graalgo.x509.ecY",
+                args -> GoX509.ecY(args[0]), 1);
+        Linknames.register("graalgo.x509.ecFieldSize",
+                args -> GoX509.ecFieldSize(args[0]), 1);
+        Linknames.register("graalgo.x509.ed25519Raw",
+                args -> GoX509.ed25519Raw(args[0]), 1);
+        Linknames.register("graalgo.x509.parseSpki",
+                args -> GoX509.parseSpki(args[0]), 1);
+        Linknames.register("graalgo.x509.parsePkcs1",
+                args -> GoX509.parsePkcs1(args[0]), 1);
+        Linknames.register("graalgo.x509.subjectAltNames",
+                args -> GoX509.subjectAltNames(args[0]), 1);
+        Linknames.register("graalgo.x509.parsePrivateKey",
+                args -> GoX509.parsePrivateKey(args[0]), 1);
+        Linknames.register("graalgo.x509.extKeyUsage",
+                args -> GoX509.extKeyUsage(args[0]), 1);
+    }
+
+    /**
+     * Registers the 10 {@code graalgo.tls.*} intrinsics implemented by
+     * {@link TlsRuntime} (P3-M9 tier-5, SSLEngine delegation). The Go side
+     * (synth_crypto_tls.go) drives the handshake state machine; these traps
+     * only implement the cryptographic operations. Engine handles are longs
+     * into TlsRuntime's table; []byte arrives as GoSlice; strings as
+     * GoString; ints/bools as Long.
+     */
+    private static void registerTlsIntrinsics() {
+        Linknames.register("graalgo.tls.newClientEngine",
+                args -> TlsRuntime.newClientEngine(args[0], args[1], args[2],
+                        args[3], args[4]), 5);
+        Linknames.register("graalgo.tls.newServerEngine",
+                args -> TlsRuntime.newServerEngine(args[0], args[1], args[2],
+                        args[3], args[4], args[5]), 6);
+        Linknames.register("graalgo.tls.beginHandshake",
+                args -> TlsRuntime.beginHandshake(args[0]), 1);
+        Linknames.register("graalgo.tls.engineStatus",
+                args -> TlsRuntime.engineStatus(args[0]), 1);
+        Linknames.register("graalgo.tls.wrap",
+                args -> TlsRuntime.wrap(args[0], args[1]), 2);
+        Linknames.register("graalgo.tls.unwrap",
+                args -> TlsRuntime.unwrap(args[0], args[1]), 2);
+        Linknames.register("graalgo.tls.runTasks",
+                args -> TlsRuntime.runTasks(args[0]), 1);
+        Linknames.register("graalgo.tls.peerCertificates",
+                args -> TlsRuntime.peerCertificates(args[0]), 1);
+        Linknames.register("graalgo.tls.connectionState",
+                args -> TlsRuntime.connectionState(args[0]), 1);
+        Linknames.register("graalgo.tls.close",
+                args -> { TlsRuntime.close(args[0]); return null; }, 1);
     }
 
     /**

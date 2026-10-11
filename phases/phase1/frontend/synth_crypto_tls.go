@@ -26,12 +26,18 @@ const syntheticCryptoTlsSource = `package tls
 
 import (
 	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/elliptic"
+	"crypto/rsa"
 	"crypto/x509"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
+	"os"
 	"time"
 	"unsafe"
 )
@@ -163,19 +169,18 @@ type Certificate struct {
 // X509KeyPair parses PEM-encoded cert and key.
 // Certificate parsing delegates to Java CertificateFactory where possible;
 // key parsing uses Go (PKCS#1/PKCS#8/EC).
-func __tlsX509KeyPair(certPEMBlock, keyPEMBlock []byte) *__tlsX509KeyPairPair {
+func __mrX509KeyPair(certPEMBlock, keyPEMBlock []byte) __mrX509KeyPairPair {
 	cert, err := x509KeyPairImpl(certPEMBlock, keyPEMBlock)
-	return &__tlsX509KeyPairPair{v0: cert, v1: err}
+	return __mrX509KeyPairPair{v0: cert, v1: err}
 }
 
-type __tlsX509KeyPairPair struct {
+type __mrX509KeyPairPair struct {
 	v0 Certificate
 	v1 error
 }
 
 func X509KeyPair(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
-	p := __tlsX509KeyPair(certPEMBlock, keyPEMBlock)
-	return p.v0, p.v1
+	panic("crypto/tls: X509KeyPair: multi-result desugar")
 }
 
 func x509KeyPairImpl(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
@@ -238,7 +243,9 @@ func x509KeyPairImpl(certPEMBlock, keyPEMBlock []byte) (Certificate, error) {
 func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
 	// Try PKCS#8 first
 	if key, err := x509.ParsePKCS8PrivateKey(der); err == nil {
-		return key, nil
+		if pk, ok := key.(crypto.PrivateKey); ok {
+			return pk, nil
+		}
 	}
 	// Try PKCS#1 (RSA)
 	if key, err := x509.ParsePKCS1PrivateKey(der); err == nil {
@@ -251,28 +258,31 @@ func parsePrivateKey(der []byte) (crypto.PrivateKey, error) {
 	return nil, errors.New("tls: failed to parse private key")
 }
 
-// LoadX509KeyPair loads cert/key from files.
-func __tlsLoadX509KeyPair(certFile, keyFile string) *__tlsLoadX509KeyPairPair {
+// LoadX509KeyPair loads cert/key from files (via the synthetic os package).
+func __mrLoadX509KeyPair(certFile, keyFile string) __mrLoadX509KeyPairPair {
 	cert, err := loadX509KeyPairImpl(certFile, keyFile)
-	return &__tlsLoadX509KeyPairPair{v0: cert, v1: err}
+	return __mrLoadX509KeyPairPair{v0: cert, v1: err}
 }
 
-type __tlsLoadX509KeyPairPair struct {
+type __mrLoadX509KeyPairPair struct {
 	v0 Certificate
 	v1 error
 }
 
 func LoadX509KeyPair(certFile, keyFile string) (Certificate, error) {
-	p := __tlsLoadX509KeyPair(certFile, keyFile)
-	return p.v0, p.v1
+	panic("crypto/tls: LoadX509KeyPair: multi-result desugar")
 }
 
-//go:linkname loadX509KeyPairTrap graalgo.tls.loadX509KeyPair
-func loadX509KeyPairTrap(certFile, keyFile string) (Certificate, error)
-
 func loadX509KeyPairImpl(certFile, keyFile string) (Certificate, error) {
-	// Delegate file I/O to Java (avoids os package dependency in synthetic)
-	return loadX509KeyPairTrap(certFile, keyFile)
+	certPEMBlock, err := os.ReadFile(certFile)
+	if err != nil {
+		return Certificate{}, err
+	}
+	keyPEMBlock, err := os.ReadFile(keyFile)
+	if err != nil {
+		return Certificate{}, err
+	}
+	return x509KeyPairImpl(certPEMBlock, keyPEMBlock)
 }
 
 // Conn is a TLS connection backed by Java SSLEngine.
@@ -283,48 +293,159 @@ type Conn struct {
 	conn         net.Conn
 	config       *Config
 	isClient     bool
+	// handshakeComplete tracks whether doHandshake finished.
+	handshakeComplete bool
 }
 
-// Client creates a TLS client over conn.
-// The handshake is performed lazily via Java SSLEngine.
+// Client creates a TLS client over conn. The handshake runs on Handshake().
 func Client(conn net.Conn, config *Config) *Conn {
+	if config == nil {
+		config = &Config{}
+	}
 	c := &Conn{conn: conn, config: config, isClient: true}
-	c.engineHandle = newClientEngineTrap(config)
+	c.engineHandle = newClientEngineTrap(
+		config.ServerName,
+		config.InsecureSkipVerify,
+		int64(config.MinVersion),
+		int64(config.MaxVersion),
+		encodeCipherSuites(config.CipherSuites),
+	)
 	return c
 }
 
-// Server creates a TLS server over conn.
+// Server creates a TLS server over conn. The handshake runs on Handshake().
 func Server(conn net.Conn, config *Config) *Conn {
+	if config == nil {
+		config = &Config{}
+	}
 	c := &Conn{conn: conn, config: config, isClient: false}
-	c.engineHandle = newServerEngineTrap(config)
+	if len(config.Certificates) == 0 {
+		return c
+	}
+	cert := &config.Certificates[0]
+	keyAlg, keyParams, err := keyComponents(cert.PrivateKey)
+	if err != nil {
+		return c
+	}
+	c.engineHandle = newServerEngineTrap(
+		encodeLengthPrefixed(cert.Certificate),
+		keyAlg,
+		keyParams,
+		int64(config.MinVersion),
+		int64(config.MaxVersion),
+		encodeCipherSuites(config.CipherSuites),
+	)
 	return c
 }
 
 //go:linkname newClientEngineTrap graalgo.tls.newClientEngine
-func newClientEngineTrap(config *Config) int64
+func newClientEngineTrap(serverName string, insecureSkipVerify bool, minVersion, maxVersion int64, cipherSuites []byte) int64
 
 //go:linkname newServerEngineTrap graalgo.tls.newServerEngine
-func newServerEngineTrap(config *Config) int64
+func newServerEngineTrap(chainDER []byte, keyAlg string, keyParams []byte, minVersion, maxVersion int64, cipherSuites []byte) int64
 
-// Dial connects to a TLS server (loopback-only in M9).
-func __tlsDial(network, addr string, config *Config) *__tlsDialPair {
-	conn, err := dialImpl(network, addr, config)
-	return &__tlsDialPair{v0: conn, v1: err}
+// encodeCipherSuites encodes []uint16 as big-endian bytes.
+func encodeCipherSuites(suites []uint16) []byte {
+	out := make([]byte, 2*len(suites))
+	for i, s := range suites {
+		out[2*i] = byte(s >> 8)
+		out[2*i+1] = byte(s)
+	}
+	return out
 }
 
-type __tlsDialPair struct {
+// encodeLengthPrefixed encodes [][]byte as uint32-BE length + data items.
+func encodeLengthPrefixed(items [][]byte) []byte {
+	var out []byte
+	for _, item := range items {
+		n := len(item)
+		out = append(out, byte(n>>24), byte(n>>16), byte(n>>8), byte(n))
+		out = append(out, item...)
+	}
+	return out
+}
+
+// decodeLengthPrefixed decodes uint32-BE length + data items.
+func decodeLengthPrefixed(buf []byte) [][]byte {
+	var out [][]byte
+	pos := 0
+	for pos+4 <= len(buf) {
+		n := int(buf[pos])<<24 | int(buf[pos+1])<<16 | int(buf[pos+2])<<8 | int(buf[pos+3])
+		pos += 4
+		if n < 0 || pos+n > len(buf) {
+			break
+		}
+		out = append(out, buf[pos:pos+n])
+		pos += n
+	}
+	return out
+}
+
+// keyComponents extracts the private-key material for the Java KeyManager.
+// Returns (keyAlg, length-prefixed components, err).
+// RSA: n, e, d, p, q | ECDSA: curveName, x, y, d | Ed25519: seed.
+func keyComponents(priv crypto.PrivateKey) (string, []byte, error) {
+	switch k := priv.(type) {
+	case *rsa.PrivateKey:
+		if len(k.Primes) < 2 {
+			return "", nil, errors.New("tls: RSA private key missing primes")
+		}
+		eBytes := big.NewInt(int64(k.E)).Bytes()
+		params := encodeLengthPrefixed([][]byte{
+			k.N.Bytes(), eBytes, k.D.Bytes(),
+			k.Primes[0].Bytes(), k.Primes[1].Bytes(),
+		})
+		return "RSA", params, nil
+	case *ecdsa.PrivateKey:
+		curveName := ""
+		if k.Curve != nil {
+			switch k.Curve.Params().Name {
+			case "P-256":
+				curveName = "secp256r1"
+			case "P-384":
+				curveName = "secp384r1"
+			case "P-521":
+				curveName = "secp521r1"
+			}
+		}
+		if curveName == "" {
+			return "", nil, errors.New("tls: unsupported ECDSA curve")
+		}
+		params := encodeLengthPrefixed([][]byte{
+			[]byte(curveName), k.X.Bytes(), k.Y.Bytes(), k.D.Bytes(),
+		})
+		return "ECDSA", params, nil
+	case ed25519.PrivateKey:
+		if len(k) != 64 {
+			return "", nil, errors.New("tls: invalid Ed25519 private key")
+		}
+		return "Ed25519", encodeLengthPrefixed([][]byte{k[:32]}), nil
+	}
+	return "", nil, errors.New("tls: unsupported private key type")
+}
+
+// Dial connects to a TLS server (loopback-only in M9).
+func __mrDial(network, addr string, config *Config) __mrDialPair {
+	conn, err := dialImpl(network, addr, config)
+	return __mrDialPair{v0: conn, v1: err}
+}
+
+type __mrDialPair struct {
 	v0 *Conn
 	v1 error
 }
 
 func Dial(network, addr string, config *Config) (*Conn, error) {
-	p := __tlsDial(network, addr, config)
-	return p.v0, p.v1
+	panic("crypto/tls: Dial: multi-result desugar")
 }
 
 func dialImpl(network, addr string, config *Config) (*Conn, error) {
 	if config == nil {
 		return nil, errors.New("tls: nil Config")
+	}
+	// Go semantics: default ServerName from the dial address hostname.
+	if config.ServerName == "" {
+		config.ServerName = hostnameFromAddr(addr)
 	}
 	rawConn, err := net.Dial(network, addr)
 	if err != nil {
@@ -338,25 +459,46 @@ func dialImpl(network, addr string, config *Config) (*Conn, error) {
 	return conn, nil
 }
 
-// DialWithDialer connects using a Dialer.
-func __tlsDialWithDialer(dialer *net.Dialer, network, addr string, config *Config) *__tlsDialWithDialerPair {
-	conn, err := dialWithDialerImpl(dialer, network, addr, config)
-	return &__tlsDialWithDialerPair{v0: conn, v1: err}
+// hostnameFromAddr strips the port from a host:port address.
+func hostnameFromAddr(addr string) string {
+	// IPv6 [host]:port or host:port.
+	if len(addr) > 0 && addr[0] == '[' {
+		for i := 1; i < len(addr); i++ {
+			if addr[i] == ']' {
+				return addr[1:i]
+			}
+		}
+		return addr
+	}
+	for i := len(addr) - 1; i >= 0; i-- {
+		if addr[i] == ':' {
+			return addr[:i]
+		}
+	}
+	return addr
 }
 
-type __tlsDialWithDialerPair struct {
+// DialWithDialer connects using a Dialer.
+func __mrDialWithDialer(dialer *net.Dialer, network, addr string, config *Config) __mrDialWithDialerPair {
+	conn, err := dialWithDialerImpl(dialer, network, addr, config)
+	return __mrDialWithDialerPair{v0: conn, v1: err}
+}
+
+type __mrDialWithDialerPair struct {
 	v0 *Conn
 	v1 error
 }
 
 func DialWithDialer(dialer *net.Dialer, network, addr string, config *Config) (*Conn, error) {
-	p := __tlsDialWithDialer(dialer, network, addr, config)
-	return p.v0, p.v1
+	panic("crypto/tls: DialWithDialer: multi-result desugar")
 }
 
 func dialWithDialerImpl(dialer *net.Dialer, network, addr string, config *Config) (*Conn, error) {
 	if config == nil {
 		return nil, errors.New("tls: nil Config")
+	}
+	if config.ServerName == "" {
+		config.ServerName = hostnameFromAddr(addr)
 	}
 	rawConn, err := dialer.Dial(network, addr)
 	if err != nil {
@@ -371,19 +513,18 @@ func dialWithDialerImpl(dialer *net.Dialer, network, addr string, config *Config
 }
 
 // Listen creates a TLS listener (loopback-only in M9).
-func __tlsListen(network, laddr string, config *Config) *__tlsListenPair {
+func __mrListen(network, laddr string, config *Config) __mrListenPair {
 	l, err := listenImpl(network, laddr, config)
-	return &__tlsListenPair{v0: l, v1: err}
+	return __mrListenPair{v0: l, v1: err}
 }
 
-type __tlsListenPair struct {
+type __mrListenPair struct {
 	v0 net.Listener
 	v1 error
 }
 
 func Listen(network, laddr string, config *Config) (net.Listener, error) {
-	p := __tlsListen(network, laddr, config)
-	return p.v0, p.v1
+	panic("crypto/tls: Listen: multi-result desugar")
 }
 
 func listenImpl(network, laddr string, config *Config) (net.Listener, error) {
@@ -415,66 +556,181 @@ func (l *listener) Accept() (net.Conn, error) {
 	return Server(c, l.config), nil
 }
 
-// Handshake performs the TLS handshake via Java SSLEngine.
-//go:linkname handshakeTrap graalgo.tls.handshake
-func handshakeTrap(engineHandle int64, isClient bool) int64
+// Engine handshake status codes (from graalgo.tls.engineStatus).
+const (
+	engineFinished   = 0
+	engineNeedWrap   = 1
+	engineNeedUnwrap = 2
+	engineNeedTask   = 3
+)
 
+//go:linkname beginHandshakeTrap graalgo.tls.beginHandshake
+func beginHandshakeTrap(engineHandle int64) int64
+
+//go:linkname engineStatusTrap graalgo.tls.engineStatus
+func engineStatusTrap(engineHandle int64) int64
+
+//go:linkname wrapTrap graalgo.tls.wrap
+func wrapTrap(engineHandle int64, plaintext []byte) []byte
+
+//go:linkname unwrapTrap graalgo.tls.unwrap
+func unwrapTrap(engineHandle int64, netData []byte) []byte
+
+//go:linkname runTasksTrap graalgo.tls.runTasks
+func runTasksTrap(engineHandle int64) int64
+
+//go:linkname peerCertificatesTrap graalgo.tls.peerCertificates
+func peerCertificatesTrap(engineHandle int64) []byte
+
+//go:linkname connectionStateTrap graalgo.tls.connectionState
+func connectionStateTrap(engineHandle int64) int64
+
+// Handshake performs the TLS handshake, driving the Java SSLEngine state
+// machine: shuttling handshake records between the engine and the raw
+// net.Conn until the engine reports FINISHED. Afterwards (client side,
+// unless InsecureSkipVerify) the peer chain is verified in Go for exact
+// Go verification semantics.
 func (c *Conn) Handshake() error {
 	if c.engineHandle == 0 {
 		return errors.New("tls: nil engine")
 	}
-	// Delegate to Java SSLEngine; returns 0 on success, error code otherwise
-	if rc := handshakeTrap(c.engineHandle, c.isClient); rc != 0 {
-		return tlsHandshakeError(rc)
+	if c.handshakeComplete {
+		return nil
+	}
+	if rc := beginHandshakeTrap(c.engineHandle); rc != 0 {
+		return fmt.Errorf("tls: handshake failed (beginHandshake code %d)", rc)
+	}
+	tmp := make([]byte, 1<<14)
+	for {
+		st := engineStatusTrap(c.engineHandle)
+		switch st {
+		case engineFinished:
+			c.handshakeComplete = true
+			return c.verifyPeer()
+		case engineNeedWrap:
+			out := wrapTrap(c.engineHandle, nil)
+			if len(out) > 0 {
+				if err := writeAll(c.conn, out); err != nil {
+					return err
+				}
+			}
+		case engineNeedUnwrap:
+			n, err := c.conn.Read(tmp)
+			if err != nil {
+				return err
+			}
+			if n == 0 {
+				continue
+			}
+			_ = unwrapTrap(c.engineHandle, tmp[:n])
+		case engineNeedTask:
+			runTasksTrap(c.engineHandle)
+		default:
+			return fmt.Errorf("tls: handshake failed (status %d)", st)
+		}
+	}
+}
+
+// verifyPeer verifies the peer certificate chain after the handshake
+// (client side, unless InsecureSkipVerify), using x509.Verify.
+func (c *Conn) verifyPeer() error {
+	if !c.isClient {
+		return nil
+	}
+	if c.config != nil && c.config.InsecureSkipVerify {
+		return nil
+	}
+	peerDERs := decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle))
+	if len(peerDERs) == 0 {
+		return errors.New("tls: no peer certificates")
+	}
+	leaf, err := x509.ParseCertificate(peerDERs[0])
+	if err != nil {
+		return err
+	}
+	opts := x509.VerifyOptions{
+		DNSName: c.config.ServerName,
+	}
+	if c.config != nil && c.config.RootCAs != nil {
+		opts.Roots = c.config.RootCAs
+	}
+	if _, err := leaf.Verify(opts); err != nil {
+		return fmt.Errorf("tls: failed to verify certificate: %w", err)
 	}
 	return nil
 }
 
-func tlsHandshakeError(code int64) error {
-	return fmt.Errorf("tls: handshake failed (code %d)", code)
+func writeAll(conn net.Conn, b []byte) error {
+	for len(b) > 0 {
+		n, err := conn.Write(b)
+		if err != nil {
+			return err
+		}
+		b = b[n:]
+	}
+	return nil
 }
 
-// ConnectionState returns the connection state via Java.
+// ConnectionState returns the negotiated connection parameters.
 func (c *Conn) ConnectionState() ConnectionState {
-	// Query Java for the negotiated parameters
-	vers, suite := connectionStateTrap(c.engineHandle)
-	return ConnectionState{
-		Version:           uint16(vers),
-		HandshakeComplete: true,
-		CipherSuite:       uint16(suite),
-		ServerName:        c.config.ServerName,
+	packed := connectionStateTrap(c.engineHandle)
+	cs := ConnectionState{
+		Version:           uint16(packed >> 32),
+		HandshakeComplete: c.handshakeComplete,
+		CipherSuite:       uint16(packed),
 	}
+	if c.config != nil {
+		cs.ServerName = c.config.ServerName
+	}
+	// Peer certificates.
+	for _, der := range decodeLengthPrefixed(peerCertificatesTrap(c.engineHandle)) {
+		if cert, err := x509.ParseCertificate(der); err == nil {
+			cs.PeerCertificates = append(cs.PeerCertificates, cert)
+		}
+	}
+	return cs
 }
 
-//go:linkname connectionStateTrap graalgo.tls.connectionState
-func connectionStateTrap(engineHandle int64) (int64, int64)
-
-// Read reads decrypted data via Java SSLEngine.unwrap.
-//go:linkname tlsReadTrap graalgo.tls.read
-func tlsReadTrap(engineHandle int64, b []byte) int64
-
+// Read reads decrypted application data via SSLEngine.unwrap.
 func (c *Conn) Read(b []byte) (int, error) {
-	n := tlsReadTrap(c.engineHandle, b)
-	if n < 0 {
-		return 0, tlsIOError(n)
+	if c.engineHandle == 0 {
+		return 0, errors.New("tls: nil engine")
 	}
-	return int(n), nil
+	tmp := make([]byte, 1<<14)
+	for {
+		n, err := c.conn.Read(tmp)
+		if err != nil {
+			return 0, err
+		}
+		if n == 0 {
+			continue
+		}
+		app := unwrapTrap(c.engineHandle, tmp[:n])
+		if app == nil {
+			return 0, io.EOF
+		}
+		if len(app) == 0 {
+			// Handshake/control records only; read more.
+			continue
+		}
+		m := copy(b, app)
+		return m, nil
+	}
 }
 
-// Write encrypts and writes via Java SSLEngine.wrap.
-//go:linkname tlsWriteTrap graalgo.tls.write
-func tlsWriteTrap(engineHandle int64, b []byte) int64
-
+// Write encrypts via SSLEngine.wrap and writes the records.
 func (c *Conn) Write(b []byte) (int, error) {
-	n := tlsWriteTrap(c.engineHandle, b)
-	if n < 0 {
-		return 0, tlsIOError(n)
+	if c.engineHandle == 0 {
+		return 0, errors.New("tls: nil engine")
 	}
-	return int(n), nil
-}
-
-func tlsIOError(code int64) error {
-	return fmt.Errorf("tls: I/O error (code %d)", code)
+	out := wrapTrap(c.engineHandle, b)
+	if out == nil {
+		return 0, errors.New("tls: wrap failed")
+	}
+	if err := writeAll(c.conn, out); err != nil {
+		return 0, err
+	}
+	return len(b), nil
 }
 
 // Close closes the TLS connection.
@@ -504,20 +760,18 @@ func (c *Conn) SetReadDeadline(t time.Time) error { return c.conn.SetReadDeadlin
 // SetWriteDeadline sets the write deadline.
 func (c *Conn) SetWriteDeadline(t time.Time) error { return c.conn.SetWriteDeadline(t) }
 
-// VerifyHostname verifies the hostname against the peer certificate.
+// VerifyHostname verifies the hostname against the peer certificate chain
+// using x509 hostname semantics.
 func (c *Conn) VerifyHostname(host string) error {
 	if c.config != nil && c.config.InsecureSkipVerify {
 		return nil
 	}
-	// Delegate to Java X509TrustManager hostname verification
-	if rc := verifyHostnameTrap(c.engineHandle, host); rc != 0 {
-		return fmt.Errorf("tls: hostname verification failed for %s", host)
+	cs := c.ConnectionState()
+	if len(cs.PeerCertificates) == 0 {
+		return fmt.Errorf("tls: no peer certificates for hostname verification")
 	}
-	return nil
+	return cs.PeerCertificates[0].VerifyHostname(host)
 }
-
-//go:linkname verifyHostnameTrap graalgo.tls.verifyHostname
-func verifyHostnameTrap(engineHandle int64, host string) int64
 
 // Ensure unsafe is imported for linkname (required by Go toolchain).
 var _ = unsafe.Sizeof(0)

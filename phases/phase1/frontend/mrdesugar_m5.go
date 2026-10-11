@@ -835,6 +835,17 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/x509", "ParseCertificate", "", "__mrParseCertificate", "", "__mrParseCertificatePair", []string{"v0", "v1"}},
 	{"crypto/x509", "ParsePKIXPublicKey", "", "__mrParsePKIXPublicKey", "", "__mrParsePKIXPublicKeyPair", []string{"v0", "v1"}},
 	{"crypto/x509", "ParsePKCS1PublicKey", "", "__mrParsePKCS1PublicKey", "", "__mrParsePKCS1PublicKeyPair", []string{"v0", "v1"}},
+	// P3-M9 (x509/TLS lane): private-key parsing, Verify.
+	{"crypto/x509", "ParsePKCS8PrivateKey", "", "__mrParsePKCS8PrivateKey", "", "__mrParsePKCS8PrivateKeyPair", []string{"v0", "v1"}},
+	{"crypto/x509", "ParsePKCS1PrivateKey", "", "__mrParsePKCS1PrivateKey", "", "__mrParsePKCS1PrivateKeyPair", []string{"v0", "v1"}},
+	{"crypto/x509", "ParseECPrivateKey", "", "__mrParseECPrivateKey", "", "__mrParseECPrivateKeyPair", []string{"v0", "v1"}},
+	{"crypto/x509", "Verify", "Certificate", "__mrVerify", "", "__mrVerifyPair", []string{"v0", "v1"}},
+	// P3-M9 (x509/TLS lane): crypto/tls multi-result functions.
+	{"crypto/tls", "X509KeyPair", "", "__mrX509KeyPair", "", "__mrX509KeyPairPair", []string{"v0", "v1"}},
+	{"crypto/tls", "LoadX509KeyPair", "", "__mrLoadX509KeyPair", "", "__mrLoadX509KeyPairPair", []string{"v0", "v1"}},
+	{"crypto/tls", "Dial", "", "__mrDial", "", "__mrDialPair", []string{"v0", "v1"}},
+	{"crypto/tls", "DialWithDialer", "", "__mrDialWithDialer", "", "__mrDialWithDialerPair", []string{"v0", "v1"}},
+	{"crypto/tls", "Listen", "", "__mrListen", "", "__mrListenPair", []string{"v0", "v1"}},
 	{"golang.org/x/crypto/cryptobyte", "Bytes", "Builder", "__mrBuilder_Bytes", "", "__mrBuilder_BytesPair", []string{"v0", "v1"}},
 }
 
