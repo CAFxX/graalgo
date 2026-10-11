@@ -19,6 +19,33 @@ type syntheticPackage struct {
 	info  *types.Info
 	fset  *token.FileSet
 	raw   []byte
+	// raws parallels files for multi-file disk packages (WS G); nil for
+	// embedded single-file synthetic sources (raw covers the one file).
+	raws [][]byte
+}
+
+// srcForFile returns the source bytes for f: per-file bytes for disk
+// packages, the single raw for embedded synthetic sources. e.pos()
+// indexes e.src by per-file fset offsets, so the exporter's src swap must
+// be file-aware once packages span multiple files.
+func (sp *syntheticPackage) srcForFile(f *ast.File) []byte {
+	for i, fi := range sp.files {
+		if fi == f && i < len(sp.raws) {
+			return sp.raws[i]
+		}
+	}
+	return sp.raw
+}
+
+// srcForDecl returns the source bytes for the file containing fd.
+func (sp *syntheticPackage) srcForDecl(fd *ast.FuncDecl) []byte {
+	pos := fd.Pos()
+	for _, f := range sp.files {
+		if f.Pos() <= pos && pos < f.End() {
+			return sp.srcForFile(f)
+		}
+	}
+	return sp.raw
 }
 
 var (
@@ -498,7 +525,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			}
 			// Pass 1: create fi and register in maps (defFunc deferred to
 			// pass 2 below).
-			fi := &funcDeclInfo{fd: d, obj: obj, funcID: -1, sig: sig}
+			fi := &funcDeclInfo{fd: d, obj: obj, funcID: -1, sig: sig, file: file}
 			if d.Recv != nil {
 				recv := sig.Recv()
 				if recv == nil {
@@ -531,7 +558,10 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	// Pass 2: call defFunc for each registered function. Now safe because
 	// all helpers are already in synthFuncIDs/funcByObj, so any method
 	// table building triggered by type description will find them.
+	// WS G: e.src follows the declaration's own file (multi-file disk
+	// packages); e.pos() indexes e.src by per-file fset offsets.
 	for _, fe := range funcEntries {
+		e.src = sp.srcForFile(fe.fi.file)
 		funcID, err := e.defFunc(fe.obj)
 		if err != nil {
 			return err
@@ -551,9 +581,12 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	type synthVarSpec struct {
 		vs   *ast.ValueSpec
 		oids []int
+		file *ast.File
 	}
 	var sspecs []synthVarSpec
 	for _, file := range sp.files {
+		// WS G: per-file source for e.pos() (see Pass 2 above).
+		e.src = sp.srcForFile(file)
 		for _, decl := range file.Decls {
 			d, ok := decl.(*ast.GenDecl)
 			if !ok {
@@ -570,7 +603,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 						return scopeErrorf("synthetic %s: var spec with %d names and %d values is not supported",
 							sp.path, len(vs.Names), len(vs.Values))
 					}
-					sv := synthVarSpec{vs: vs}
+					sv := synthVarSpec{vs: vs, file: file}
 					for _, n := range vs.Names {
 						if n.Name == "_" {
 							sv.oids = append(sv.oids, -1)
@@ -605,6 +638,8 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	}
 	varInits := []ginit{}
 	for _, sv := range sspecs {
+		// WS G: the initializer's own file (multi-file disk packages).
+		e.src = sp.srcForFile(sv.file)
 		for i, n := range sv.vs.Names {
 			if n.Name == "_" {
 				continue
@@ -662,6 +697,8 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	// registry).
 	for _, fi := range g.fis {
 		if fi.fd.Recv == nil && fi.obj.Name() == "init" {
+			// WS G: the init func's own file (multi-file disk packages).
+			e.src = sp.srcForFile(fi.file)
 			ent, err := e.initCallEnt(fi)
 			if err != nil {
 				return err
@@ -688,6 +725,8 @@ func (e *exporter) exportSyntheticBodies(doc *Doc) error {
 				// same rule as user templates.
 				continue
 			}
+			// WS G: the declaration's own file (multi-file disk packages).
+			e.src = g.sp.srcForFile(fi.file)
 			f, err := e.exportFuncDecl(fi)
 			if err != nil {
 				e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
@@ -975,7 +1014,12 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		path != "net" && path != "net/netip" && path != "net/url" &&
 		path != "net/textproto" && path != "internal/poll" &&
 		// P3-M9 (tier-5: net/http): synthetic net/http packages.
-		path != "net/http" && path != "net/http/httptest" {
+		path != "net/http" && path != "net/http/httptest" &&
+		// WS G (P3-M9, module-probe lane): disk-built third-party packages
+		// (and their transitive deps) also lower here — they were merged
+		// via importSyntheticPackage/importPkgTree, so their funcdecls are
+		// in funcByObj/synthFuncIDs like synthetic ones.
+		!e.importedSynthetic[path] && !e.importedPkgTree[path] {
 		return nil, false, nil
 	}
 	obj := e.info.Uses[sel.Sel]

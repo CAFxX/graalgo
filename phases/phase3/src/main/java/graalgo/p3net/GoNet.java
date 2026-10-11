@@ -3,8 +3,10 @@ package graalgo.p3net;
 import java.io.IOException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.NetworkInterface;
 import java.net.ProtocolFamily;
 import java.net.SocketAddress;
+import java.net.SocketException;
 import java.net.StandardProtocolFamily;
 import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
@@ -797,9 +799,92 @@ public final class GoNet {
         }
     }
 
+    /**
+     * graalgo.net.interfaces — writes the serialized interface list into
+     * buf and returns n+1, or -errno. Returns -ENOMEM when the blob does
+     * not fit (the Go side grows the buffer and retries). Blob format
+     * (all int32 little-endian): count, then per interface index, mtu,
+     * nameLen + name bytes, hwLen + hw bytes, flags (bitmask: 1=up,
+     * 4=loopback, 8=pointopoint, 16=multicast; broadcast has no Java API
+     * and is never set).
+     *
+     * <p>P3-M9 (module-probe lane): backs net.Interface/Interfaces
+     * (github.com/google/uuid v1 node IDs).
+     */
+    public static long interfaces(Object bufArg) {
+        final java.util.List<NetworkInterface> ifs;
+        try {
+            java.util.Enumeration<NetworkInterface> en =
+                    NetworkInterface.getNetworkInterfaces();
+            ifs = (en == null) ? java.util.List.of()
+                    : java.util.Collections.list(en);
+        } catch (SocketException e) {
+            return -sockErrno(e);
+        }
+        java.io.ByteArrayOutputStream baos =
+                new java.io.ByteArrayOutputStream();
+        putI32(baos, ifs.size());
+            for (NetworkInterface ni : ifs) {
+                putI32(baos, ni.getIndex());
+                int mtu;
+                try {
+                    mtu = ni.getMTU();
+                } catch (SocketException e) {
+                    mtu = 0;
+                }
+                putI32(baos, mtu);
+                byte[] name = ni.getName()
+                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                putI32(baos, name.length);
+                baos.write(name, 0, name.length);
+                byte[] hw;
+                try {
+                    hw = ni.getHardwareAddress();
+                } catch (SocketException e) {
+                    hw = null;
+                }
+                if (hw == null) {
+                    hw = new byte[0];
+                }
+                putI32(baos, hw.length);
+                baos.write(hw, 0, hw.length);
+                int flags = 0;
+                try {
+                    if (ni.isUp()) {
+                        flags |= 1;
+                    }
+                    if (ni.isLoopback()) {
+                        flags |= 4;
+                    }
+                    if (ni.isPointToPoint()) {
+                        flags |= 8;
+                    }
+                    if (ni.supportsMulticast()) {
+                        flags |= 16;
+                    }
+                } catch (SocketException e) {
+                    // Keep whatever flags were collected.
+                }
+                putI32(baos, flags);
+            }
+            byte[] data = baos.toByteArray();
+            if (!(bufArg instanceof GoSlice gs) || gs.len() < data.length) {
+                return -ENOMEM;
+            }
+            int n = goBufPut(bufArg, data);
+            return n < 0 ? -GoOs.EINVAL : (long) n + 1;
+    }
+
+    private static void putI32(java.io.ByteArrayOutputStream out, int v) {
+        out.write(v & 0xFF);
+        out.write((v >>> 8) & 0xFF);
+        out.write((v >>> 16) & 0xFF);
+        out.write((v >>> 24) & 0xFF);
+    }
+
+
     /** graalgo.net.shutdown — 0 or -errno. */
-    public static long shutdown(Object cookieArg, Object howArg) {
-        long cookie = num(cookieArg);
+    public static long shutdown(Object cookieArg, Object howArg) {        long cookie = num(cookieArg);
         int how = num32(howArg);
         // Validate how first (P2-4): an invalid how is EINVAL regardless
         // of socket type (gc/kernel parity; previously fell through to 0).

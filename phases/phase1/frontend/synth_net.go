@@ -1792,4 +1792,138 @@ func __ipMaskSize(m IPMask) maskSizePair {
 	}
 	return maskSizePair{ones, len(m) * 8}
 }
+
+// ---------------------------------------------------------------------------
+// Interface enumeration (P3-M9 module-probe lane: net.Interface/Interfaces,
+// required by third-party packages such as github.com/google/uuid for v1
+// node IDs). Backed by the graalgo.net.interfaces host trap
+// (java.net.NetworkInterface). M9 scope: the Addrs/MulticastAddrs methods
+// are absent (InterfaceAddrs stays out of scope per its note above).
+// ---------------------------------------------------------------------------
+
+// Flags are network interface flags (gc parity: net.Flags bit values).
+type Flags uint
+
+const (
+	FlagUp Flags = 1 << iota
+	FlagBroadcast
+	FlagLoopback
+	FlagPointToPoint
+	FlagMulticast
+)
+
+// Interface describes a network interface (gc parity: net.Interface,
+// fields used across the stdlib and third-party packages).
+type Interface struct {
+	Index        int
+	MTU          int
+	Name         string
+	HardwareAddr HardwareAddr
+	Flags        Flags
+}
+
+// errnoENOMEM: the interfaces trap reports it when the blob does not fit.
+const errnoENOMEM = 12
+
+//go:linkname netInterfaces graalgo.net.interfaces
+func netInterfaces(buf []byte) int64 // bytes written +1, or -errno
+
+// Interfaces returns the system's network interfaces.
+func Interfaces() ([]Interface, error) {
+	panic("net.Interfaces: unreachable (Appendix-M desugar did not fire)")
+}
+
+type interfacesPair struct {
+	ifs []Interface
+	err error
+}
+
+func __interfaces() interfacesPair {
+	buf := make([]byte, 4096)
+	for {
+		r := netInterfaces(buf)
+		if r == -errnoENOMEM {
+			if len(buf) >= 1<<20 {
+				return interfacesPair{nil, &OpError{Op: "interfaces", Err: errors.New("interface list too large")}}
+			}
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		if r <= 0 {
+			return interfacesPair{nil, &OpError{Op: "interfaces", Err: errno(-r)}}
+		}
+		dec := decodeInterfaces(buf[:r-1])
+		if !dec.ok {
+			return interfacesPair{nil, &OpError{Op: "interfaces", Err: errors.New("malformed interface list")}}
+		}
+		return interfacesPair{dec.ifs, nil}
+	}
+}
+
+// interfacesDecode is the single-result decode output (the v1 frontend
+// has no multi-result functions, WS D).
+type interfacesDecode struct {
+	ifs []Interface
+	ok  bool
+}
+
+// decodeInterfaces parses the graalgo.net.interfaces blob: int32 LE count,
+// then per interface int32 LE index, mtu, nameLen+name bytes,
+// hwLen+hw bytes, flags.
+func decodeInterfaces(b []byte) interfacesDecode {
+	rd := &ifaceReader{b: b}
+	n := rd.int32()
+	if n < 0 {
+		return interfacesDecode{nil, false}
+	}
+	ifs := make([]Interface, 0, n)
+	for i := int32(0); i < n; i++ {
+		idx := rd.int32()
+		mtu := rd.int32()
+		name := rd.bytes()
+		hw := rd.bytes()
+		flags := rd.int32()
+		if !rd.ok() {
+			return interfacesDecode{nil, false}
+		}
+		ifs = append(ifs, Interface{
+			Index:        int(idx),
+			MTU:          int(mtu),
+			Name:         string(name),
+			HardwareAddr: HardwareAddr(hw),
+			Flags:        Flags(flags),
+		})
+	}
+	if !rd.ok() || len(rd.b) != 0 {
+		return interfacesDecode{nil, false}
+	}
+	return interfacesDecode{ifs, true}
+}
+
+type ifaceReader struct {
+	b []byte
+}
+
+func (r *ifaceReader) ok() bool { return r.b != nil }
+
+func (r *ifaceReader) int32() int32 {
+	if len(r.b) < 4 {
+		r.b = nil
+		return 0
+	}
+	v := int32(r.b[0]) | int32(r.b[1])<<8 | int32(r.b[2])<<16 | int32(r.b[3])<<24
+	r.b = r.b[4:]
+	return v
+}
+
+func (r *ifaceReader) bytes() []byte {
+	n := r.int32()
+	if n < 0 || int(n) > len(r.b) {
+		r.b = nil
+		return nil
+	}
+	v := r.b[:n]
+	r.b = r.b[n:]
+	return v
+}
 `
