@@ -934,9 +934,12 @@ func TypeOf(i any) Type {
 }
 
 // TypeFor returns the reflection Type of T.
-// M8 scope: fail-fast (needs generics instantiation in synthetic scope).
+// P3-M9 (arrdispatch): implemented via TypeOf on a typed-nil *T.
+// Generic instantiation in synthetic scope works (the frontend instantiates
+// TypeFor[T] at each call site); (*T)(nil) wrapped in any is a non-nil
+// interface (typed nil), so TypeOf yields *T and Elem() yields T.
 func TypeFor[T any]() Type {
-	panic("reflect: TypeFor: not in M8 scope (needs generics in synthetic scope; re-test when they land)")
+	return TypeOf((*T)(nil)).Elem()
 }
 
 // ValueOf returns a new Value initialized to the concrete value stored
