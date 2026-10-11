@@ -631,6 +631,14 @@ func syntheticFmtPackage() *types.Package {
 			types.NewTuple()),
 	}, nil).Complete())
 	pkg.Scope().Insert(formatterNamed.Obj())
+	// BUG-MODPROBE-010 verification: fmt.Stringer was missing from the
+	// synthetic fmt package (gc 1.27.1: type Stringer interface{ String() string }).
+	// The arrdispatch interface-boxing battery references it as a type.
+	stringerNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Stringer", nil), nil, nil)
+	stringerNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
+		ifaceMethod("String", types.NewTuple(), types.NewTuple(strRes)),
+	}, nil).Complete())
+	pkg.Scope().Insert(stringerNamed.Obj())
 	// P3-M9 (wave 3): fmt.ScanState (gc 1.27.1 exact signature). math/big's
 	// Int/Rat/Float Scan methods and intconv's byteReader embed it.
 	scanStateNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "ScanState", nil), nil, nil)
