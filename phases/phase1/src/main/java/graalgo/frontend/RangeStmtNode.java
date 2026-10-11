@@ -34,7 +34,7 @@ public final class RangeStmtNode extends GoStmtNode implements LabelTarget {
         }
         // Reset the repeating node's iteration state: the same node object
         // executes once per range statement evaluation (e.g. an inner range
-        // inside an outer loop).
+        // inside an outer loop, or a range in a function called multiple times).
         Object repeating = loop.getRepeatingNode();
         if (repeating instanceof RangeSliceNode n) {
             n.reset();
@@ -43,6 +43,8 @@ public final class RangeStmtNode extends GoStmtNode implements LabelTarget {
         } else if (repeating instanceof RangeStringNode n) {
             n.reset();
         } else if (repeating instanceof RangeMapNode n) {
+            n.reset();
+        } else if (repeating instanceof RangeIntNode n) {
             n.reset();
         }
         try {
