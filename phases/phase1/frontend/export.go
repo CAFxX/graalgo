@@ -4392,7 +4392,23 @@ func (e *exporter) collectFuncDecls(file *ast.File) (funcs []*funcDeclInfo, func
 // instKeyForFunc builds the dedup key for a generic-function instantiation.
 func instKeyForFunc(fi *funcDeclInfo, targs []types.Type, subst *typeSubst) string {
 	sub := &typeSubst{parent: subst, bind: bindParams(fi.sig.TypeParams(), targs)}
-	return "F:" + fi.obj.Name() + "|" + joinSubstKeys(targs, sub)
+	// P3-M9 (generics): the key must include the package path. Two generic
+	// functions with the same name in different packages (e.g.
+	// crypto/internal/fips140/ecdsa.GenerateKey[P] and
+	// crypto/internal/fips140/ecdh.GenerateKey[P]) are different functions;
+	// a bare-name key collides and the second instantiation silently reuses
+	// the first one's body (wrong types, wrong field indices — e.g. ecdh's
+	// Curve.N at field 2 vs ecdsa's Curve.N at field 3).
+	return "F:" + funcQualifiedName(fi.obj) + "|" + joinSubstKeys(targs, sub)
+}
+
+// funcQualifiedName returns the package-qualified name of a function,
+// e.g. "crypto/internal/fips140/ecdsa.GenerateKey".
+func funcQualifiedName(fn *types.Func) string {
+	if pkg := fn.Pkg(); pkg != nil {
+		return pkg.Path() + "." + fn.Name()
+	}
+	return fn.Name()
 }
 
 // instNameForFunc builds the display name, e.g. "Min[int]".
@@ -4402,7 +4418,10 @@ func instNameForFunc(fi *funcDeclInfo, targs []types.Type, subst *typeSubst) str
 	for i, ta := range targs {
 		pretty[i] = prettyType(ta, sub)
 	}
-	return fi.obj.Name() + "[" + strings.Join(pretty, ", ") + "]"
+	// P3-M9 (generics): qualify with the package path, matching the
+	// instantiation key — same-named generics in different packages get
+	// distinct display names.
+	return funcQualifiedName(fi.obj) + "[" + strings.Join(pretty, ", ") + "]"
 }
 
 // prettyType renders a type for display names (Go-like, type params

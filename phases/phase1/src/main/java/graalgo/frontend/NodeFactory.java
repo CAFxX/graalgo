@@ -2683,6 +2683,21 @@ public final class NodeFactory {
                     if (arr instanceof graalgo.values.GoSlice gs) {
                         javaArray = gs.array();
                         idx += gs.offset();
+                    } else if (arr instanceof graalgo.values.GoPointer gp) {
+                        // P3-M9: &ptr[i] where ptr is *[N]T — dereference
+                        // the pointer to the underlying Java array (Go:
+                        // implicit (*ptr)[i]). A nil pointer is gc's
+                        // nil-dereference panic.
+                        if (gp.isNil()) {
+                            graalgo.runtime.Panic.throwPanic(
+                                    graalgo.runtime.GoErrors.nilDereference(), null, null, this);
+                        }
+                        javaArray = gp.referent();
+                        // Defensive: the referent may itself be a GoSlice.
+                        if (javaArray instanceof graalgo.values.GoSlice gs2) {
+                            idx += gs2.offset();
+                            javaArray = gs2.array();
+                        }
                     }
                     return new GoPointer(javaArray, idx);
                 }
@@ -3298,12 +3313,33 @@ public final class NodeFactory {
                 elemKind == GoKind.STRUCT ? structDescriptorFor(ctx, elemId, path) : null;
         // P3-M8b: new([N]T) needs the array length and element kind.
         if (elemKind == GoKind.ARRAY) {
-            Json.Object arrayEntry = underlyingEntry(ctx, elemId, path);
-            Json.Object detail = arrayEntry.object("detail", path);
-            int arrayLen = detail.intValue("len", path);
-            int arrayElemId = detail.intValue("elem", path);
-            GoKind arrayElemKind = kindOf(ctx, arrayElemId, path);
-            return new NewNode(elemKind, desc, arrayLen, arrayElemKind);
+            // P3-M9: Go zero-initializes nested arrays recursively —
+            // new([N][M]T) must allocate the inner [M]T arrays, not leave
+            // null elements (else arr[i][j] faults). Collect the length at
+            // each nesting level plus the ultimate (non-array) element kind.
+            java.util.List<Integer> lens = new java.util.ArrayList<>();
+            int eid = elemId;
+            GoKind ek = elemKind;
+            for (int steps = 0; ; steps++) {
+                if (steps > MAX_TYPE_CHAIN_STEPS) {
+                    throw new FrontendException(path + ": nested array type exceeds "
+                            + MAX_TYPE_CHAIN_STEPS + " levels (WS E)");
+                }
+                Json.Object arrayEntry = underlyingEntry(ctx, eid, path);
+                Json.Object detail = arrayEntry.object("detail", path);
+                lens.add(detail.intValue("len", path));
+                eid = detail.intValue("elem", path);
+                ek = kindOf(ctx, eid, path);
+                if (ek != GoKind.ARRAY) {
+                    break;
+                }
+            }
+            int[] arrayLens = lens.stream().mapToInt(Integer::intValue).toArray();
+            // P3-M9: if the ultimate element is a struct, new([N]S) must
+            // zero-initialize each element (Go zero value), not leave nulls.
+            GoStructDescriptor ultimateDesc =
+                    ek == GoKind.STRUCT ? structDescriptorFor(ctx, eid, path) : null;
+            return new NewNode(elemKind, desc, arrayLens, ek, ultimateDesc);
         }
         return new NewNode(elemKind, desc);
     }
