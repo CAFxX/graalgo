@@ -9190,6 +9190,13 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 		if pairPlan == nil {
 			pairPlan = e.classifyIfaceFallbackMultiResultCall(selection)
 		}
+		// WS G (P3-M9, BUG-MODPROBE-005): disk-package interface
+		// methods with multi-result (e.g.
+		// database/sql/driver.ValueConverter.ConvertValue), registered
+		// by transformDiskMultiResult.
+		if pairPlan == nil {
+			pairPlan = e.classifyDiskIfaceMultiResultCall(selection)
+		}
 		if pairPlan == nil {
 			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
 				return nil, multiResultSyntheticError(f)
@@ -9856,6 +9863,15 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 				p == "crypto/internal/fips140/ecdsa" ||
 				p == "crypto/internal/fips140/ed25519" ||
 				p == "crypto/internal/fips140/rsa" {
+				if _, isSel := e.info.Selections[x]; !isSel {
+					return e.exportSyntheticQualified(x, pkgName)
+				}
+			}
+			// WS G (P3-M9, BUG-MODPROBE-007): disk-package qualified
+			// const/var access (e.g., uuid.RFC4122). General: any
+			// disk-built package resolves here; the synthetic list
+			// above is for overlay packages.
+			if _, derr := getDiskPackage(pkgName.Imported().Path()); derr == nil {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}

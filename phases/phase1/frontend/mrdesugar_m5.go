@@ -1465,6 +1465,11 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if plan := e.classifyIfaceMultiResultCall(selection); plan != nil {
 					return plan
 				}
+				// WS G (P3-M9, BUG-MODPROBE-005): disk-package
+				// interface methods with multi-result.
+				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
 			}
 			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
 			// multi-result calls on type parameters (e.g.,
@@ -2049,6 +2054,13 @@ func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName
 			return hp, mf.helper, true
 		}
 	}
+	// WS G (P3-M9, BUG-MODPROBE-005): disk-package multi-result methods
+	// (dynamic diskMRSpecs table). This wires the itab for interface
+	// dispatch of disk interface methods: the concrete type's
+	// pair-returning __-helper becomes the itab target.
+	if spec := lookupDiskMR(pkgPath, name, recvType); spec != nil && spec.helper != "" {
+		return spec.pkgPath, spec.helper, true
+	}
 	return "", "", false
 }
 
@@ -2091,15 +2103,29 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	if sfi, sok := e.synthFuncIDs[helperPkg+"."+helperName]; sok && sfi != nil {
 		fi = sfi
 	} else {
-		sp := getSyntheticPackage(helperPkg)
-		if sp == nil {
-			return nil, false
+		var helperFn *types.Func
+		if dsp, derr := getDiskPackage(helperPkg); derr == nil {
+			// WS G (P3-M9, BUG-MODPROBE-005): disk-package
+			// pair-returning __-helper.
+			helperObj := dsp.pkg.Scope().Lookup(helperName)
+			var ok bool
+			helperFn, ok = helperObj.(*types.Func)
+			if !ok {
+				return nil, false
+			}
+		} else {
+			sp := getSyntheticPackage(helperPkg)
+			if sp == nil {
+				return nil, false
+			}
+			helperObj := sp.pkg.Scope().Lookup(helperName)
+			var ok bool
+			helperFn, ok = helperObj.(*types.Func)
+			if !ok {
+				return nil, false
+			}
 		}
-		helperObj := sp.pkg.Scope().Lookup(helperName)
-		helperFn, ok := helperObj.(*types.Func)
-		if !ok {
-			return nil, false
-		}
+		var ok bool
 		fi, ok = e.funcByObj[helperFn]
 		if !ok || fi == nil {
 			return nil, false

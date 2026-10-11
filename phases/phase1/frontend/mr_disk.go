@@ -79,6 +79,86 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 		}
 		f.Decls = newDecls
 	}
+	// BUG-MODPROBE-005: interface method specs with multi-result.
+	// Generate a pair type per (interface, method) and register a spec
+	// so interface dispatch (classifyDiskIfaceMultiResultCall) can
+	// desugar calls through the interface. The interface declaration
+	// itself is left unchanged (like synthetic io.Reader); only call
+	// sites are desugared. The itab maps the interface method to each
+	// concrete type's pair-returning __-helper (via
+	// multiResultHelperFunc's disk fallback); field extraction is by
+	// name (f1..fN), which is uniform across all disk pair types.
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, gspec := range gd.Specs {
+				ts, ok := gspec.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				it, ok := ts.Type.(*ast.InterfaceType)
+				if !ok || it.Methods == nil {
+					continue
+				}
+				ifaceName := ts.Name.Name
+				for _, m := range it.Methods.List {
+					ft, ok := m.Type.(*ast.FuncType)
+					if !ok {
+						continue
+					}
+					if numResultsFL(ft.Results) <= 1 {
+						continue
+					}
+					rtypes := resultTypesFL(ft.Results)
+					for _, mname := range m.Names {
+						pairType := fmt.Sprintf("__%s_%sPair", ifaceName, mname.Name)
+						pairFields := make([]string, len(rtypes))
+						for i := range rtypes {
+							pairFields[i] = fmt.Sprintf("f%d", i+1)
+						}
+						pairDecl := &ast.GenDecl{
+							Tok: token.TYPE,
+							Specs: []ast.Spec{
+								&ast.TypeSpec{
+									Name: ast.NewIdent(pairType),
+									Type: &ast.StructType{
+										Fields: &ast.FieldList{
+											List: func() []*ast.Field {
+												var fl []*ast.Field
+												for i, rt := range rtypes {
+													fl = append(fl, &ast.Field{
+														Names: []*ast.Ident{ast.NewIdent(pairFields[i])},
+														Type:  rt,
+													})
+												}
+												return fl
+											}(),
+										},
+									},
+								},
+							},
+						}
+						f.Decls = append(f.Decls, pairDecl)
+						specs = append(specs, diskMRSpec{
+							pkgPath:  pkgPath,
+							name:     mname.Name,
+							recvType: ifaceName,
+							// No helper: interface methods have no body.
+							// The itab dispatches to each concrete
+							// type's __-helper at runtime.
+							helper:     "",
+							pairType:   pairType,
+							pairFields: pairFields,
+							stub:       nil,
+						})
+					}
+				}
+			}
+		}
+	}
 	// Eta-expand intrinsic values: var x = time.Now -> var x = func() time.Time { return time.Now() }.
 	// This is a general fix for intrinsics used in value position (M5 limitation).
 	// Currently handles time.Now; extend as needed.
@@ -195,16 +275,236 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 		}
 		f.Decls = newDecls
 	}
+	// BUG-MODPROBE-006: hoist multi-result calls nested in argument
+	// position (e.g., return Must(NewRandom())). The export desugar
+	// only handles top-level 2-target assignments; a nested MR call
+	// would reach export as a call to the (kept-for-resolution) stub.
+	// Hoist to a temp and splice the pair fields. General: works for
+	// any package-level MR function of any disk package, not just the
+	// module that exposed the gap. (Selector/method MR calls nested in
+	// args are a separate case, filed if encountered.)
+	if len(specs) > 0 {
+		specByName := map[string]*diskMRSpec{}
+		for i := range specs {
+			s := &specs[i]
+			if s.recvType == "" && s.helper != "" {
+				specByName[s.name] = s
+			}
+		}
+		if len(specByName) > 0 {
+			counter := 0
+			for _, f := range files {
+				for _, decl := range f.Decls {
+					fd, ok := decl.(*ast.FuncDecl)
+					if !ok || fd.Body == nil {
+						continue
+					}
+					// Skip generated helpers (already rewritten) and
+					// stubs (panic bodies, no calls to hoist).
+					if len(fd.Name.Name) > 2 && fd.Name.Name[:2] == "__" {
+						continue
+					}
+					hoistNestedMRInBlock(fd.Body, specByName, &counter)
+				}
+			}
+		}
+	}
 	return specs
+}
+
+// hoistNestedMRInBlock hoists multi-result calls in argument position
+// throughout a block, inserting temp assignments before the statement.
+func hoistNestedMRInBlock(b *ast.BlockStmt, specByName map[string]*diskMRSpec, counter *int) {
+	var out []ast.Stmt
+	for _, stmt := range b.List {
+		var pre []ast.Stmt
+		stmt = hoistNestedMRInStmt(stmt, specByName, counter, &pre)
+		out = append(out, pre...)
+		out = append(out, stmt)
+	}
+	b.List = out
+}
+
+// hoistNestedMRInStmt rewrites one statement, collecting hoisted
+// temporaries in pre.
+func hoistNestedMRInStmt(s ast.Stmt, specByName map[string]*diskMRSpec, counter *int, pre *[]ast.Stmt) ast.Stmt {
+	switch stmt := s.(type) {
+	case *ast.ReturnStmt:
+		for i, e := range stmt.Results {
+			var p []ast.Stmt
+			stmt.Results[i] = hoistNestedMRExpr(e, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		return stmt
+	case *ast.AssignStmt:
+		for i, e := range stmt.Rhs {
+			// Skip direct MR calls (the export desugar handles
+			// 2-target assignments); hoist only nested ones.
+			if call, ok := unparen(e).(*ast.CallExpr); ok {
+				if id, ok := call.Fun.(*ast.Ident); ok && specByName[id.Name] != nil {
+					continue
+				}
+			}
+			var p []ast.Stmt
+			stmt.Rhs[i] = hoistNestedMRExpr(e, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		return stmt
+	case *ast.ExprStmt:
+		var p []ast.Stmt
+		stmt.X = hoistNestedMRExpr(stmt.X, specByName, counter, &p)
+		*pre = append(*pre, p...)
+		return stmt
+	case *ast.IfStmt:
+		if stmt.Init != nil {
+			var p []ast.Stmt
+			stmt.Init = hoistNestedMRInStmt(stmt.Init, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		var p []ast.Stmt
+		stmt.Cond = hoistNestedMRExpr(stmt.Cond, specByName, counter, &p)
+		*pre = append(*pre, p...)
+		hoistNestedMRInBlock(stmt.Body, specByName, counter)
+		switch e := stmt.Else.(type) {
+		case *ast.BlockStmt:
+			hoistNestedMRInBlock(e, specByName, counter)
+		case *ast.IfStmt:
+			var p2 []ast.Stmt
+			stmt.Else = hoistNestedMRInStmt(e, specByName, counter, &p2)
+			*pre = append(*pre, p2...)
+		}
+		return stmt
+	case *ast.ForStmt:
+		if stmt.Init != nil {
+			var p []ast.Stmt
+			stmt.Init = hoistNestedMRInStmt(stmt.Init, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Cond != nil {
+			var p []ast.Stmt
+			stmt.Cond = hoistNestedMRExpr(stmt.Cond, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Post != nil {
+			var p []ast.Stmt
+			stmt.Post = hoistNestedMRInStmt(stmt.Post, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		hoistNestedMRInBlock(stmt.Body, specByName, counter)
+		return stmt
+	case *ast.RangeStmt:
+		var p []ast.Stmt
+		stmt.X = hoistNestedMRExpr(stmt.X, specByName, counter, &p)
+		*pre = append(*pre, p...)
+		hoistNestedMRInBlock(stmt.Body, specByName, counter)
+		return stmt
+	case *ast.SwitchStmt:
+		if stmt.Init != nil {
+			var p []ast.Stmt
+			stmt.Init = hoistNestedMRInStmt(stmt.Init, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Tag != nil {
+			var p []ast.Stmt
+			stmt.Tag = hoistNestedMRExpr(stmt.Tag, specByName, counter, &p)
+			*pre = append(*pre, p...)
+		}
+		if stmt.Body != nil {
+			for _, cc := range stmt.Body.List {
+				if ccc, ok := cc.(*ast.CaseClause); ok {
+					hoistNestedMRInBlock(&ast.BlockStmt{List: ccc.Body}, specByName, counter)
+					// Copy back (BlockStmt was a view).
+					ccc.Body = (&ast.BlockStmt{List: ccc.Body}).List
+				}
+			}
+		}
+		return stmt
+	case *ast.DeferStmt:
+		var p []ast.Stmt
+		stmt.Call = hoistNestedMRExpr(stmt.Call, specByName, counter, &p).(*ast.CallExpr)
+		*pre = append(*pre, p...)
+		return stmt
+	case *ast.GoStmt:
+		var p []ast.Stmt
+		stmt.Call = hoistNestedMRExpr(stmt.Call, specByName, counter, &p).(*ast.CallExpr)
+		*pre = append(*pre, p...)
+		return stmt
+	case *ast.BlockStmt:
+		hoistNestedMRInBlock(stmt, specByName, counter)
+		return stmt
+	default:
+		return s
+	}
+}
+
+// hoistNestedMRExpr rewrites an expression, hoisting direct
+// multi-result calls in argument position to temps. Returns the
+// rewritten expression; hoisted statements accumulate in pre.
+func hoistNestedMRExpr(e ast.Expr, specByName map[string]*diskMRSpec, counter *int, pre *[]ast.Stmt) ast.Expr {
+	call, ok := e.(*ast.CallExpr)
+	if !ok {
+		return e
+	}
+	// Process the function part first (handles chained calls like
+	// Must(NewRandom()).String()).
+	switch fun := call.Fun.(type) {
+	case *ast.CallExpr:
+		var p []ast.Stmt
+		call.Fun = hoistNestedMRExpr(fun, specByName, counter, &p)
+		*pre = append(*pre, p...)
+	case *ast.SelectorExpr:
+		var p []ast.Stmt
+		fun.X = hoistNestedMRExpr(fun.X, specByName, counter, &p)
+		*pre = append(*pre, p...)
+	}
+	// Process args, hoisting direct MR calls.
+	var newArgs []ast.Expr
+	for _, arg := range call.Args {
+		var p []ast.Stmt
+		newArg := hoistNestedMRExpr(arg, specByName, counter, &p)
+		*pre = append(*pre, p...)
+		if inner, ok := unparen(newArg).(*ast.CallExpr); ok {
+			if id, ok := inner.Fun.(*ast.Ident); ok {
+				if spec := specByName[id.Name]; spec != nil {
+					tmpName := fmt.Sprintf("__mr_arg_%d", *counter)
+					*counter++
+					helperCall := &ast.CallExpr{
+						Fun:  ast.NewIdent(spec.helper),
+						Args: inner.Args,
+					}
+					*pre = append(*pre, &ast.AssignStmt{
+						Lhs: []ast.Expr{ast.NewIdent(tmpName)},
+						Tok: token.DEFINE,
+						Rhs: []ast.Expr{helperCall},
+					})
+					for _, f := range spec.pairFields {
+						newArgs = append(newArgs, &ast.SelectorExpr{
+							X:   ast.NewIdent(tmpName),
+							Sel: ast.NewIdent(f),
+						})
+					}
+					continue
+				}
+			}
+		}
+		newArgs = append(newArgs, newArg)
+	}
+	call.Args = newArgs
+	return call
 }
 
 // numResults counts the result values of a FuncDecl.
 func numResults(fd *ast.FuncDecl) int {
-	if fd.Type.Results == nil {
+	return numResultsFL(fd.Type.Results)
+}
+
+// numResultsFL counts the result values of a results field list.
+func numResultsFL(results *ast.FieldList) int {
+	if results == nil {
 		return 0
 	}
 	n := 0
-	for _, fld := range fd.Type.Results.List {
+	for _, fld := range results.List {
 		if len(fld.Names) == 0 {
 			n++
 		} else {
@@ -216,11 +516,17 @@ func numResults(fd *ast.FuncDecl) int {
 
 // resultTypes returns the result type exprs in order.
 func resultTypes(fd *ast.FuncDecl) []ast.Expr {
+	return resultTypesFL(fd.Type.Results)
+}
+
+// resultTypesFL returns the result type exprs of a results field list in
+// order.
+func resultTypesFL(results *ast.FieldList) []ast.Expr {
 	var out []ast.Expr
-	if fd.Type.Results == nil {
+	if results == nil {
 		return out
 	}
-	for _, fld := range fd.Type.Results.List {
+	for _, fld := range results.List {
 		if len(fld.Names) == 0 {
 			out = append(out, fld.Type)
 		} else {
@@ -604,7 +910,8 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 			}
 			args := make([]ast.Expr, len(pairFields))
 			for i, f := range pairFields {
-				args[i] = &ast.SelectorExpr{X: tmp, Sel: ast.NewIdent(f)}
+				// Use fresh Ident nodes for the uses (not the def site).
+				args[i] = &ast.SelectorExpr{X: ast.NewIdent("__mr_tmp"), Sel: ast.NewIdent(f)}
 			}
 			return []ast.Stmt{assign, mkPair(args)}
 		}
@@ -689,6 +996,13 @@ func classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.T
 	if spec == nil {
 		return nil
 	}
+	// BUG-MODPROBE-005: interface specs (helper == "") are only
+	// reachable via classifyDiskIfaceMultiResultCall (the interface
+	// dispatch path). A concrete-position desugar must never match
+	// them — there is no helper to call.
+	if spec.helper == "" {
+		return nil
+	}
 	if sig.Results().Len() != len(spec.pairFields) {
 		return nil
 	}
@@ -724,4 +1038,61 @@ func mrCallName(call *ast.CallExpr) string {
 		return id.Name
 	}
 	return ""
+}
+
+// classifyDiskIfaceMultiResultCall recognizes WS G (P3-M9) multi-result
+// calls on interface values whose method is a disk-package interface
+// method registered by transformDiskMultiResult (BUG-MODPROBE-005). It
+// mirrors classifyIfaceMultiResultCall but consults the dynamic
+// diskMRSpecs table instead of m8IfaceMultiResultMethods. The itab maps
+// the interface method to each concrete type's pair-returning __-helper
+// (wired via multiResultHelperFunc's disk fallback), so the node yields
+// the pair and field extraction proceeds like the concrete Appendix M
+// desugar. Returns nil when the method is not a registered disk
+// interface method.
+func (e *exporter) classifyDiskIfaceMultiResultCall(selection *types.Selection) *mrPlan {
+	if selection.Kind() != types.MethodVal {
+		return nil
+	}
+	f, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil
+	}
+	sig, ok := f.Type().(*types.Signature)
+	if !ok || sig.Results().Len() < 2 {
+		return nil
+	}
+	if f.Pkg() == nil {
+		return nil
+	}
+	pkgPath := f.Pkg().Path()
+	// For an interface-declared method, the signature's receiver is the
+	// declaring interface's named type (verified against go/types).
+	recv := sig.Recv()
+	if recv == nil {
+		return nil
+	}
+	nt, ok := recv.Type().(*types.Named)
+	if !ok || nt.Obj() == nil {
+		return nil
+	}
+	spec := lookupDiskMR(pkgPath, f.Name(), nt.Obj().Name())
+	if spec == nil {
+		return nil
+	}
+	if sig.Results().Len() != len(spec.pairFields) {
+		return nil
+	}
+	sp, err := getDiskPackage(pkgPath)
+	if err != nil {
+		return nil
+	}
+	pt := diskMRPairType(sp, spec)
+	if pt == nil {
+		return nil
+	}
+	return &mrPlan{
+		kind: mrIfaceMethod, helperPkg: pkgPath,
+		tmpType: pt, pairFields: spec.pairFields,
+	}
 }
