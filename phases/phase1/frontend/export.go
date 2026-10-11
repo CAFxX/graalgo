@@ -2430,7 +2430,13 @@ func ExportFile(path string) (string, error) {
 		}
 	}
 	if needCryptoRand {
-		for _, p := range []string{"errors", "io", "crypto/rand"} {
+		// P3-M9: synthetic crypto/rand's __mrPrime calls big.Int methods
+		// (SetBytes, ProbablyPrime), so math/big's full closure must be
+		// imported here. Without it, method resolution fails with
+		// "gofrontend: method SetBytes/ProbablyPrime not found on Int"
+		// for any program importing crypto/rand (directly, or via
+		// hash/maphash's MakeSeed entropy path).
+		for _, p := range []string{"errors", "io", "bytes", "math", "strconv", "strings", "math/bits", "math/rand", "internal/byteorder", "math/big", "crypto/rand"} {
 			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
 				return "", err
 			}
@@ -2487,9 +2493,10 @@ func ExportFile(path string) (string, error) {
 		}
 	}
 	// hash/maphash additionally imports synthetic crypto/rand (MakeSeed
-	// entropy) and math (Float64bits intrinsics); import them here
-	// explicitly — the needCryptoRand/needMath blocks only run when the
-	// user program imports those packages directly.
+	// entropy) and math (Float64bits intrinsics). The needCryptoRand block
+	// above also runs for maphash (the "hash/maphash" import case sets
+	// needCryptoRand) and brings math/big's closure for __mrPrime; the
+	// explicit list here stays self-sufficient regardless of block order.
 	if needHashMaphash {
 		for _, p := range []string{"errors", "hash", "crypto/rand", "math", "hash/maphash"} {
 			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {

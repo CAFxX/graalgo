@@ -510,6 +510,10 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	// crypto/rand: Read is multi-result (fail-fast).
 	{"crypto/rand", "Read", "", "__randRead", "", "readPair", []string{"n", "err"}},
 	{"crypto/rand", "Prime", "", "__mrPrime", "", "__mrPrimePair", []string{"v0", "v1"}},
+	// P3-M9: (*reader).Read (the method behind the Reader global) needs its
+	// own helper for interface dispatch: without it the *reader method table
+	// is empty and rand.Reader.Read fails with "no method table installed".
+	{"crypto/rand", "Read", "reader", "__randReaderRead", "", "readPair", []string{"n", "err"}},
 	// P3-M8b: hash.Cloner.Clone for every synthetic digest (itab wiring
 	// for the m8IfaceMultiResultMethods "hash"/"Clone" entry above; the
 	// concrete Clone stubs are fail-fast, the real logic is each

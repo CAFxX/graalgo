@@ -53,6 +53,17 @@ func __randRead(b []byte) readPair {
 	return readPair{n: int(graalgoOsGetrandom(b))}
 }
 
+// __randReaderRead serves (*reader).Read through the mrM8 desugar, so the
+// Reader global's Read method has a method-table entry for interface
+// dispatch. Same body as __randRead; the receiver is unused (reader carries
+// no state) but required by the prependRecv calling convention.
+func __randReaderRead(r *reader, b []byte) readPair {
+	if len(b) == 0 {
+		return readPair{}
+	}
+	return readPair{n: int(graalgoOsGetrandom(b))}
+}
+
 // Read generates len(b) random bytes from Reader.
 func Read(b []byte) (n int, err error) {
 	if len(b) == 0 {
