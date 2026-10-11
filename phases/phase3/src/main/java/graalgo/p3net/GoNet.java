@@ -6,6 +6,7 @@ import java.net.InetSocketAddress;
 import java.net.NetworkInterface;
 import java.net.ProtocolFamily;
 import java.net.SocketAddress;
+import java.net.SocketException;
 import java.net.StandardProtocolFamily;
 import java.net.StandardSocketOptions;
 import java.nio.ByteBuffer;
@@ -820,10 +821,9 @@ public final class GoNet {
         } catch (SocketException e) {
             return -sockErrno(e);
         }
-        try {
-            java.io.ByteArrayOutputStream baos =
-                    new java.io.ByteArrayOutputStream();
-            putI32(baos, ifs.size());
+        java.io.ByteArrayOutputStream baos =
+                new java.io.ByteArrayOutputStream();
+        putI32(baos, ifs.size());
             for (NetworkInterface ni : ifs) {
                 putI32(baos, ni.getIndex());
                 int mtu;
@@ -873,9 +873,6 @@ public final class GoNet {
             }
             int n = goBufPut(bufArg, data);
             return n < 0 ? -GoOs.EINVAL : (long) n + 1;
-        } catch (java.io.IOException e) {
-            return -sockErrno(e);
-        }
     }
 
     private static void putI32(java.io.ByteArrayOutputStream out, int v) {

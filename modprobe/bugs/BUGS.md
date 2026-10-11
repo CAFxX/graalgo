@@ -99,3 +99,40 @@ This is a general WS D gap for disk-imported packages, not uuid-specific.
 **Workaround:** None (module compiles as-published; cannot skip `null.go` or `database/sql/driver`).
 
 **Blocks:** uuid probe case01..case08 (all require `github.com/google/uuid` which imports `database/sql/driver` via `null.go`).
+
+**Resolution (2026-10-11):** FIXED (general) — commit pending.
+- `transformDiskMultiResult` (mr_disk.go) now also processes `*ast.InterfaceType` declarations: for each method with >1 result, generates a pair type `__<Iface>_<Method>Pair` (fields f1..fN) and registers a spec with `recvType` = interface name, `helper` = "" (no body). The interface declaration itself is unchanged (synthetic `io.Reader` precedent).
+- New `classifyDiskIfaceMultiResultCall` (mr_disk.go), consulted in `exportIfaceMethodCall` after the two static classifiers: matches the interface method's declaring interface name against the dynamic diskMRSpecs table, returns `mrPlan{kind: mrIfaceMethod}` with the interface pair type. The itab dispatches to each concrete type's `__`-helper at runtime; field extraction is by name.
+- `multiResultHelperFor` (mrdesugar_m5.go) gained a disk fallback consulting `lookupDiskMR`, so `methodTableEntries` maps concrete disk methods to their `__`-helpers for itab construction. `multiResultHelperFunc` gained a disk branch for helper lookup via `getDiskPackage`.
+- `classifyDiskMultiResultCall` skips interface specs (`helper == ""`) so concrete-position desugar never matches them.
+- Also fixed a pre-existing ident-reuse bug in `rewriteReturn`: the package-func branch reused the `__mr_tmp` definition-site ident in the use position; now uses fresh idents (like the method branch).
+
+## BUG-MODPROBE-006: Multi-result calls nested in argument position not hoisted
+
+**Date:** 2026-10-11  
+**Status:** Open (fix in progress)  
+**Owner:** MODULE-PROBE lane (general frontend fix)
+
+**Symptom:**  
+`gofrontend: call to unknown function NewRandom` when exporting `github.com/google/uuid` (`version4.go`: `return Must(NewRandom())`).
+
+**Root cause:**  
+`transformDiskMultiResult` only rewrote bodies of multi-result FuncDecls and var initializers. A multi-result call nested as an argument to another call (e.g., `Must(NewRandom())` inside single-result `New()`) reached export as a call to the kept-for-resolution stub.
+
+**Fix (general):** new `hoistNestedMRInBlock`/`hoistNestedMRInStmt`/`hoistNestedMRExpr` pass at the end of `transformDiskMultiResult`: for every FuncDecl body, hoist direct package-level MR calls in argument position to `__mr_arg_N := __F(args)` temps and splice the pair fields. Handles Return/Assign/Expr/If/For/Range/Switch/Defer/Go statements and chained calls. (Selector/method MR calls nested in args are a separate case, filed if encountered.)
+
+**Reproducer:** `modprobe/uuid/case01/main.go` (via `uuid.New()` → `Must(NewRandom())`).
+
+## BUG-MODPROBE-007: Disk-package qualified const/var access not exported
+
+**Date:** 2026-10-11  
+**Status:** Open (fix in progress)  
+**Owner:** MODULE-PROBE lane (general frontend fix)
+
+**Symptom:**  
+`gofrontend: identifier "uuid" denotes *types.PkgName` when exporting `uuid.RFC4122` (case05).
+
+**Root cause:**  
+`exportSelector` has a hardcoded list of synthetic package paths for qualified const/var access. Disk-built packages (e.g., `github.com/google/uuid`) are not in the list, so they fall through to `exportExpr(x.X)` which fails on the PkgName.
+
+**Fix (general):** after the hardcoded list, check `getDiskPackage(p)`; if it resolves, use `exportSyntheticQualified` (disk packages are in syntheticPackage shape).
