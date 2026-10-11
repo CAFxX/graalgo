@@ -160,8 +160,15 @@ public final class Intrinsics {
      * does too. Out-of-range arguments are the caller's panic (the
      * {@code make} builtin node raises them as Go panics).
      */
-    public static GoSlice makeslice(GoKind elemKind, int len, int cap) {
-        Object array = newTypedArray(elemKind, cap);
+    /**
+     * Allocates a slice with the given length and capacity. For struct
+     * elements, the backing array is zero-initialized (see
+     * {@link #newTypedArray}); the element descriptor may be null for
+     * non-struct kinds.
+     */
+    public static GoSlice makeslice(GoKind elemKind, graalgo.values.GoStructDescriptor elemDesc,
+            int len, int cap) {
+        Object array = newTypedArray(elemKind, elemDesc, cap);
         return new GoSlice(array, 0, len, cap);
     }
 
@@ -184,7 +191,8 @@ public final class Intrinsics {
      * observable (len, cap, elements) triple is identical; only the
      * (unobservable in Phase 1) backing pointer differs.
      */
-    public static GoSlice growslice(GoSlice old, GoKind elemKind, int newLen,
+    public static GoSlice growslice(GoSlice old, GoKind elemKind,
+            graalgo.values.GoStructDescriptor elemDesc, int newLen,
             long elemSizeBytes, boolean elemHasPointers) {
         int oldLen = old == null ? 0 : old.len();
         int oldCap = old == null ? 0 : old.cap();
@@ -193,10 +201,10 @@ public final class Intrinsics {
         }
         if (elemSizeBytes == 0) {
             // gc: slice{zerobase, newLen, newLen} — no backing allocation.
-            return new GoSlice(newTypedArray(elemKind, 0), 0, newLen, newLen);
+            return new GoSlice(newTypedArray(elemKind, elemDesc, 0), 0, newLen, newLen);
         }
         int newCap = nextSliceCap(newLen, oldCap, elemSizeBytes, elemHasPointers);
-        Object array = newTypedArray(elemKind, newCap);
+        Object array = newTypedArray(elemKind, elemDesc, newCap);
         if (old != null && oldLen > 0) {
             memmove(array, 0, old.array(), old.offset(), oldLen);
         }
@@ -325,7 +333,14 @@ public final class Intrinsics {
     }
 
     /** Fresh zeroed typed array for slice backing (D5 array mapping). */
-    static Object newTypedArray(GoKind elemKind, int len) {
+    /**
+     * Allocates a typed Java array for slice elements. For STRUCT elements,
+     * each slot is pre-initialized to the zero-valued GoStruct (Go's
+     * {@code make([]T, n)} zero-initializes; a null slot would NPE on
+     * {@code s[i].field} access). Requires the element descriptor for
+     * struct kinds; may be null for non-struct kinds.
+     */
+    static Object newTypedArray(GoKind elemKind, graalgo.values.GoStructDescriptor elemDesc, int len) {
         return switch (elemKind) {
             case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> new int[len];
             case INT64, UINT64, UNTYPED_INT -> new long[len];
@@ -334,6 +349,15 @@ public final class Intrinsics {
             case BOOL, UNTYPED_BOOL -> new boolean[len];
             case COMPLEX64 -> new graalgo.values.GoComplex32[len];
             case COMPLEX128, UNTYPED_COMPLEX -> new graalgo.values.GoComplex64[len];
+            case STRUCT -> {
+                Object[] arr = new Object[len];
+                if (elemDesc != null) {
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = graalgo.values.GoStruct.zero(elemDesc);
+                    }
+                }
+                yield arr;
+            }
             default -> new Object[len];
         };
     }
@@ -420,10 +444,12 @@ public final class Intrinsics {
     /**
      * Convenience overload for {@code append}: grows {@code old} by
      * {@code additional} elements. {@code old} may be null (append to nil).
+     * No struct descriptor (struct slots are not zero-initialized; the
+     * caller must provide elements for the grown region).
      */
     public static GoSlice growslice(GoSlice old, GoKind elemKind, int additional) {
         int oldLen = old == null ? 0 : old.len();
-        return growslice(old, elemKind, oldLen + additional,
+        return growslice(old, elemKind, null, oldLen + additional,
                 elemSizeBytes(elemKind), elemHasPointers(elemKind));
     }
 

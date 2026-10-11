@@ -30,24 +30,35 @@ public final class AppendNode extends GoExprNode {
      * path, which is only correct for actual zero-size types).
      */
     private final long elemSizeBytes;
+    /**
+     * Element descriptor for struct kinds (P3-M9): growslice zero-initializes
+     * new struct slots; null for non-struct kinds.
+     */
+    private final graalgo.values.GoStructDescriptor elemDesc;
 
     public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren) {
-        this(sliceChild, elemKind, elemChildren, false, 0);
+        this(sliceChild, elemKind, elemChildren, false, 0, null);
     }
 
     public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren,
             boolean ellipsis) {
-        this(sliceChild, elemKind, elemChildren, ellipsis, 0);
+        this(sliceChild, elemKind, elemChildren, ellipsis, 0, null);
     }
 
     public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren,
             boolean ellipsis, long elemSizeBytes) {
+        this(sliceChild, elemKind, elemChildren, ellipsis, elemSizeBytes, null);
+    }
+
+    public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren,
+            boolean ellipsis, long elemSizeBytes, graalgo.values.GoStructDescriptor elemDesc) {
         super(GoKind.SLICE);
         this.sliceChild = sliceChild;
         this.elemKind = elemKind;
         this.elemChildren = elemChildren;
         this.ellipsis = ellipsis;
         this.elemSizeBytes = elemSizeBytes;
+        this.elemDesc = elemDesc;
     }
 
     /** Effective element size for growslice: the struct ABI size when
@@ -81,7 +92,7 @@ public final class AppendNode extends GoExprNode {
                     out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
                 } else {
                     int newLen1 = (s == null ? 0 : s.len()) + n;
-                    out = Intrinsics.growslice(s, elemKind, newLen1, effectiveElemSize(),
+                    out = Intrinsics.growslice(s, elemKind, elemDesc, newLen1, effectiveElemSize(),
                             Intrinsics.elemHasPointers(elemKind));
                 }
                 Object arr = out.array();
@@ -105,7 +116,7 @@ public final class AppendNode extends GoExprNode {
                     out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
                 } else {
                     int newLen1 = (s == null ? 0 : s.len()) + n;
-                    out = Intrinsics.growslice(s, elemKind, newLen1, effectiveElemSize(),
+                    out = Intrinsics.growslice(s, elemKind, elemDesc, newLen1, effectiveElemSize(),
                             Intrinsics.elemHasPointers(elemKind));
                 }
                 Object arr = out.array();
@@ -158,7 +169,7 @@ public final class AppendNode extends GoExprNode {
             out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
         } else {
             int newLen2 = (s == null ? 0 : s.len()) + n;
-            out = Intrinsics.growslice(s, elemKind, newLen2, effectiveElemSize(),
+            out = Intrinsics.growslice(s, elemKind, elemDesc, newLen2, effectiveElemSize(),
                     Intrinsics.elemHasPointers(elemKind));
         }
         Object arr = out.array();

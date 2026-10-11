@@ -3385,7 +3385,15 @@ public final class NodeFactory {
                     throw new FrontendException(path + ": make(slice) takes 1-2 length args");
                 }
                 GoKind elemKind = builtinElemKind(ctx, typeId, path, "make");
-                return new MakeNode(elemKind, args[0], args.length == 2 ? args[1] : null);
+                // P3-M9: struct elements need their descriptor so makeslice
+                // can zero-initialize (Go's make([]T, n) zero-initializes;
+                // null slots NPE on s[i].field access).
+                graalgo.values.GoStructDescriptor elemDesc = null;
+                if (elemKind == GoKind.STRUCT) {
+                    int elemTid = entry.object("detail", path).intValue("elem", path);
+                    elemDesc = structDescriptorFor(ctx, elemTid, path);
+                }
+                return new MakeNode(elemKind, args[0], args.length == 2 ? args[1] : null, elemDesc);
             }
             case "map" -> {
                 // The size hint is semantically invisible (GoMap grows
@@ -3491,12 +3499,15 @@ public final class NodeFactory {
         }
         // P3-M4 (WS C): struct elements need their ABI size for the
         // growslice math (elemSizeBytes(STRUCT) is 0 by design).
+        // P3-M9: struct elements also need their descriptor so growslice
+        // can zero-initialize new slots.
         long elemSizeBytes = 0;
+        graalgo.values.GoStructDescriptor elemDesc = null;
         if (elemKind == GoKind.STRUCT) {
-            elemSizeBytes = graalgo.runtime.Intrinsics.structSizeBytes(
-                    structDescriptorFor(ctx, elemId, path));
+            elemDesc = structDescriptorFor(ctx, elemId, path);
+            elemSizeBytes = graalgo.runtime.Intrinsics.structSizeBytes(elemDesc);
         }
-        return new AppendNode(args[0], elemKind, elems, ellipsis, elemSizeBytes);
+        return new AppendNode(args[0], elemKind, elems, ellipsis, elemSizeBytes, elemDesc);
     }
 
     /**

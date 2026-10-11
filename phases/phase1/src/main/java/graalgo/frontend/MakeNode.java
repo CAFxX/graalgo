@@ -30,13 +30,20 @@ public final class MakeNode extends GoExprNode {
     private final GoKind elemKind;
     private final boolean isMap;
     private final int mapHint; // -1 when absent
+    /**
+     * Element descriptor for struct kinds (P3-M9): makeslice zero-initializes
+     * struct elements; null for non-struct kinds.
+     */
+    private final graalgo.values.GoStructDescriptor elemDesc;
 
     /** Slice form. */
-    public MakeNode(GoKind elemKind, GoExprNode lenChild, GoExprNode capChild) {
+    public MakeNode(GoKind elemKind, GoExprNode lenChild, GoExprNode capChild,
+            graalgo.values.GoStructDescriptor elemDesc) {
         super(GoKind.SLICE);
         this.elemKind = elemKind;
         this.lenChild = lenChild;
         this.capChild = capChild;
+        this.elemDesc = elemDesc;
         this.isMap = false;
         this.mapHint = -1;
     }
@@ -49,6 +56,7 @@ public final class MakeNode extends GoExprNode {
         this.capChild = null;
         this.isMap = true;
         this.mapHint = mapHint;
+        this.elemDesc = null;
     }
 
     @Override
@@ -62,6 +70,6 @@ public final class MakeNode extends GoExprNode {
             // gc: "makeslice: len out of range" panic.
             Panic.throwPanic("makeslice: len out of range", null, null, this);
         }
-        return Intrinsics.makeslice(elemKind, (int) len, (int) cap);
+        return Intrinsics.makeslice(elemKind, elemDesc, (int) len, (int) cap);
     }
 }
