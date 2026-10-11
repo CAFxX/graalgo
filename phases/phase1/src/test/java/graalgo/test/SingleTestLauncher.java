@@ -1,5 +1,7 @@
 // Single-test launcher: runs one test class's test* methods by name filter.
-// Usage: java ... SingleTestLauncher <fully.qualified.ClassName> [methodPrefix]
+// Usage: java ... graalgo.test.SingleTestLauncher <fully.qualified.ClassName> [methodPrefix]
+package graalgo.test;
+
 public final class SingleTestLauncher {
     public static void main(String[] args) throws Exception {
         if (args.length < 1) {
