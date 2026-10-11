@@ -2645,18 +2645,7 @@ func ExportFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	// P3-M5 (WS E, ADR-0005): synthetic package globals first — user
-	// initializers may reference them (e.g. var e error =
-	// context.Canceled); synthetic initializers never reference user
-	// vars. Each synthetic package's globals are dependency-ordered at
-	// import time (importSyntheticPackage), like user package vars.
-	// Only prepend when non-empty to preserve the "globals": [] wire
-	// shape for programs that don't import time/context.
-	if len(e.synthGlobals) > 0 {
-		doc.Globals = append(e.synthGlobals, globals...)
-	} else {
-		doc.Globals = globals
-	}
+	// NOTE: doc.Globals is assembled after all exports below (see below).
 	hasMain := false
 	for _, fi := range funcs {
 		if fi.isTemplate {
@@ -2696,6 +2685,26 @@ func ExportFile(path string) (string, error) {
 	}
 	if !hasMain {
 		return "", scopeErrorf("no func main found (frontend/v1 scope: single-file program with func main)")
+	}
+	// P3-M5 (WS E, ADR-0005): synthetic package globals first — user
+	// initializers may reference them (e.g. var e error =
+	// context.Canceled); synthetic initializers never reference user
+	// vars. Each synthetic package's globals are dependency-ordered at
+	// import time (importSyntheticPackage), like user package vars.
+	// Assembled HERE (after all exports) and non-aliasing: synthetic
+	// packages can be imported lazily during body export, appending to
+	// e.synthGlobals; the old append(e.synthGlobals, globals...) shared
+	// the backing array, so late appends clobbered the user's globals
+	// in doc.Globals (frontend bug: "ident: reference to unknown
+	// object id 0" for the first package-level var).
+	// Only prepend when non-empty to preserve the "globals": [] wire
+	// shape for programs that don't import time/context.
+	if len(e.synthGlobals) > 0 {
+		doc.Globals = make([]GlobalEnt, 0, len(e.synthGlobals)+len(globals))
+		doc.Globals = append(doc.Globals, e.synthGlobals...)
+		doc.Globals = append(doc.Globals, globals...)
+	} else {
+		doc.Globals = globals
 	}
 	doc.Types = e.types
 	doc.Objects = e.objects
