@@ -162,3 +162,23 @@ func main() {
 ```
 
 **Impact:** blocks uuid case01 (which does `u.String() == "f47ac10b-..."`). This is a phase1 Java runtime gap, not a module-import gap — filed for the runtime lane.
+
+## uuid probe results (2026-10-11)
+
+**Harness:** `modprobe/harness/run_module.sh` over `modprobe/uuid/case01..08` (gc 1.27.1 vs graalgo P3SyncMain --gmp=1/4).  
+**Frontend fixes applied:** BUG-005 (interface MR), BUG-006 (nested MR hoist), BUG-007 (disk qualified const/var). All three verified: exports succeed, no frontend errors.
+
+| Case | gc | graalgo | Result | Blocker |
+|------|----|---------|--------|---------|
+| case01 (New/String/eq) | PASS | FAIL (exit 1) | FAIL | BUG-008 (ARRAY EQ) |
+| case02 (UnmarshalText invalid) | PASS | FAIL (exit 1) | FAIL | BUG-008 (ARRAY EQ) |
+| case03 (FromString) | PASS | FAIL (exit 1) | FAIL | BUG-008 (ARRAY EQ) |
+| case04 (Version/Variant) | PASS | FAIL (exit 1) | FAIL | BUG-008 (ARRAY EQ) |
+| case05 (New random props) | PASS | FAIL (exit 1) | FAIL | BUG-008 (ARRAY EQ) |
+| case06 (Nil) | PASS | FAIL (exit 1) | FAIL | BUG-008 (ARRAY EQ) |
+| case07 (NewSHA1/MD5) | PASS | FAIL (exit 1) | FAIL | BUG-008 (ARRAY EQ) |
+| case08 (Must panic) | PASS (exit 2) | FAIL (exit 1) | FAIL | BUG-008 (ARRAY EQ) |
+
+**Summary:** 0/8 PASS. All failures are the same root cause: BUG-MODPROBE-008 (Java `BinaryOpNode` rejects EQ on ARRAY kind; method dispatch on `[16]byte` array receivers returns ARRAY instead of STRING). This is a **phase1 runtime** limitation, not a module-import (frontend) gap. The MODULE-PROBE lane's frontend work (disk import, interface MR, nested hoist, qualified const/var) is complete and verified — exports succeed for all cases. The uuid probe cannot PASS until BUG-008 is fixed in the runtime lane.
+
+**Evidence:** `modprobe/uuid/run-20261011-1830.log` (harness output), `.tmp/case*.gr1.err` (all show `IllegalArgumentException: illegal binary op/kind combination: EQ result=BOOL operand=ARRAY`).
