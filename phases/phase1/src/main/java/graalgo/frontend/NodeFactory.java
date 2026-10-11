@@ -2671,7 +2671,13 @@ public final class NodeFactory {
                 @Override
                 public Object executeObject(VirtualFrame frame) {
                     Object arr = arrNode.executeObject(frame);
-                    int idx = (int) Boxing.toLong(idxNode.executeObject(frame), idxNode.kind());
+                    // P3-M9: box the index per its kind (it may be Int/Long/
+                    // etc., not just Object — e.g. &buf[i/j] or &buf[i+1]).
+                    // Boxing.box reads via the node's own kind; the old
+                    // idxNode.executeObject assumed Object slot kind and
+                    // threw for every integer index expression.
+                    int idx = (int) Boxing.toLong(Boxing.box(idxNode.kind(), idxNode, frame),
+                            idxNode.kind());
                     // Unwrap GoSlice to the underlying Java array.
                     Object javaArray = arr;
                     if (arr instanceof graalgo.values.GoSlice gs) {
