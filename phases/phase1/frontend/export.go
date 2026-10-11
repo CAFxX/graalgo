@@ -36,6 +36,7 @@ package main
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/constant"
@@ -549,6 +550,15 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("crypto/x509").pkg, nil
 	case "crypto/x509/pkix":
 		return getSyntheticPackage("crypto/x509/pkix").pkg, nil
+	}
+	// WS G (P3-M9, module-probe lane): third-party imports resolve from
+	// local disk (module cache/GOPATH) through the general overlay. A path
+	// that resolves nowhere keeps the pre-existing WS G scope error;
+	// a path that resolves but fails to build reports the real failure.
+	if dp, err := getDiskPackage(path); err == nil {
+		return dp.pkg, nil
+	} else if !errors.Is(err, errDiskNotFound) {
+		return nil, fmt.Errorf("gofrontend: import %q: %v", path, err)
 	}
 	return failImporter{}.Import(path)
 }
@@ -1079,7 +1089,12 @@ func ExportFile(path string) (string, error) {
 			// P3-M9 (tier-5: archive/mime): "archive/tar", "archive/zip",
 			// "mime", "mime/multipart", "mime/quotedprintable" likewise.
 			path != "archive/tar" && path != "archive/zip" &&
-			path != "mime" && path != "mime/multipart" && path != "mime/quotedprintable" {
+			path != "mime" && path != "mime/multipart" && path != "mime/quotedprintable" &&
+			// WS G (P3-M9, module-probe lane): third-party imports resolve
+			// from local disk (module cache/GOPATH) through the general
+			// import overlay; only truly unresolvable paths stay a scope
+			// error.
+			!isDiskImportable(path) {
 			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 		}
 	}
@@ -1143,7 +1158,11 @@ func ExportFile(path string) (string, error) {
 			// P3-M9 (tier-5: archive/mime): "archive/tar", "archive/zip",
 			// "mime", "mime/multipart", "mime/quotedprintable" likewise.
 			p == "archive/tar" || p == "archive/zip" ||
-			p == "mime" || p == "mime/multipart" || p == "mime/quotedprintable" {
+			p == "mime" || p == "mime/multipart" || p == "mime/quotedprintable" ||
+			// WS G (P3-M9, module-probe lane): a disk-resolvable third-party
+			// import also needs the overlay importer (its default case
+			// builds the package from the module cache/GOPATH).
+			isDiskImportable(p) {
 			conf.Importer = overlayImporter{}
 			break
 		}
@@ -1175,6 +1194,8 @@ func ExportFile(path string) (string, error) {
 		sizes:        types.SizesFor("gc", "amd64"),
 		// P3-M8: track imported synthetic packages for idempotency.
 		importedSynthetic: make(map[string]bool),
+		// WS G (P3-M9): track importPkgTree walks for idempotency.
+		importedPkgTree: make(map[string]bool),
 		// P3-M9 (WS D): user-defined multi-result functions transformed
 		// to pair-returning form.
 		userMRFuncs: make(map[*types.Func]*userMRInfo),
@@ -1270,6 +1291,9 @@ func ExportFile(path string) (string, error) {
 	// package vars become document globals. Intrinsics (time.Now etc.)
 	// are skipped — every call site is intercepted into wire nodes.
 	needTime, needContext := false, false
+	// WS G (P3-M9, module-probe lane): third-party direct imports that
+	// survived the gate; imported after the synthetic direct imports.
+	var needDisk []string
 	needErrors, needSort, needBytes, needMath, needStrings, needXml, needCsv, needGob := false, false, false, false, false, false, false, false
 	needStrconv, needJson := false, false
 	needBase32, needBase64, needHex, needBinary := false, false, false, false
@@ -1742,6 +1766,23 @@ func ExportFile(path string) (string, error) {
 			needStrconv = true
 			needStrings = true
 			needTime = true
+		default:
+			// WS G (P3-M9, module-probe lane): any other import that
+			// survived the ExportFile gate is a disk-resolvable third-party
+			// package — import its transitive closure through the general
+			// overlay (dependencies first), after the synthetic direct
+			// imports below. Dedupe; importPkgTree is idempotent anyway.
+			p := strings.Trim(imp.Path.Value, "\"`")
+			dup := false
+			for _, q := range needDisk {
+				if q == p {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				needDisk = append(needDisk, p)
+			}
 		}
 	}
 	if needTime {
@@ -2497,6 +2538,16 @@ func ExportFile(path string) (string, error) {
 			}
 		}
 	}
+	// WS G (P3-M9, module-probe lane): third-party direct imports, after
+	// the synthetic direct imports above. importPkgTree merges each
+	// package's transitive closure dependencies-first; idempotent via
+	// e.importedSynthetic, so overlap with the synthetic flow is safe.
+	// Dedupe while preserving first-seen (source) order for determinism.
+	for _, p := range needDisk {
+		if err := e.importPkgTree(p); err != nil {
+			return "", err
+		}
+	}
 	// P3-M3 (WS D, ADR-0003): the "methods" lists on named/pointer entries
 	// are computed from funcByObj, which is only populated now. Any type
 	// described before this point (the GenDecl TYPE scan above,
@@ -3077,6 +3128,12 @@ type exporter struct {
 	// is idempotent; prevents duplicate globals when a dependency like
 	// errors is imported both directly and via io).
 	importedSynthetic map[string]bool
+	// WS G (P3-M9, module-probe lane): import paths already walked by
+	// importPkgTree (synthetic, stub, or disk). Separate from
+	// importedSynthetic: stubs (runtime/fmt/sync/sync-atomic/unsafe)
+	// have no syntheticPackage, and enumerateInstantiations assumes
+	// every importedSynthetic key resolves via getSyntheticPackage.
+	importedPkgTree map[string]bool
 	// P3-M2remed (P0-3): sequence counter for synthetic temporaries
 	// hoisted by exportSyncGoStmt (__sync_go_arg<seq>_<i>); keeps the
 	// names unique across go statements in one export.
@@ -4227,6 +4284,9 @@ type funcDeclInfo struct {
 	// package (P3-M9 tier-1d): exportInstantiation swaps to the synthetic
 	// package's fset/src/info when emitting the body.
 	synthPkg *syntheticPackage
+	// file: the declaration's own *ast.File within synthPkg (WS G:
+	// multi-file disk packages need per-file e.src for e.pos()).
+	file *ast.File
 }
 
 // instantiation is one monomorphized function/method body to emit
@@ -5282,13 +5342,18 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 	}
 	// P3-M9 (tier-5): synthetic packages root their own generic
 	// instantiations (see scanRoots). Deterministic order.
+	// WS G (P3-M9): importedSynthetic also holds disk-built packages;
+	// resolve through importedPackage (synthetic or disk).
 	spaths := make([]string, 0, len(e.importedSynthetic))
 	for p := range e.importedSynthetic {
 		spaths = append(spaths, p)
 	}
 	sort.Strings(spaths)
 	for _, p := range spaths {
-		sp := getSyntheticPackage(p)
+		sp, err := e.importedPackage(p)
+		if err != nil {
+			return nil, err
+		}
 		var sfuncs []*funcDeclInfo
 		for _, fi := range e.funcByObj {
 			if fi.synthPkg == sp {
@@ -5333,7 +5398,7 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 	var savedPkg *types.Package
 	if sp != nil {
 		savedFset, savedSrc, savedInfo, savedPkg = e.fset, e.src, e.info, e.pkg
-		e.fset, e.src, e.info, e.pkg = sp.fset, sp.raw, sp.info, sp.pkg
+		e.fset, e.src, e.info, e.pkg = sp.fset, sp.srcForDecl(inst.decl.fd), sp.info, sp.pkg
 		defer func() {
 			e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
 		}()
@@ -5527,6 +5592,31 @@ func (e *exporter) synthesizeUserPairType(fi *funcDeclInfo) (*types.Named, []str
 // export their receiver as params[0] (the wire "signature" matches).
 func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
+	// WS G (P3-M9): skip disk-package multi-result stubs. The stub
+	// (original name, multi-result signature) exists for type-checking
+	// and method resolution; the desugar rewrites all calls to the
+	// __-helper. The v1 exporter cannot emit multi-result functions.
+	if fi.obj != nil && fi.obj.Pkg() != nil {
+		pkgPath := fi.obj.Pkg().Path()
+		name := fi.obj.Name()
+		if !strings.HasPrefix(name, "__") {
+			recvType := ""
+			if fi.recv != nil {
+				// Get receiver base type name.
+				rt := fi.recv.Type()
+				if pt, ok := rt.(*types.Pointer); ok {
+					rt = pt.Elem()
+				}
+				if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+					recvType = nt.Obj().Name()
+				}
+			}
+			if lookupDiskMR(pkgPath, name, recvType) != nil {
+				// Stub: skip export (desugar handles all calls).
+				return nil, nil
+			}
+		}
+	}
 	if fd.Body == nil {
 		// P3-M4 (WS C, ADR-0004 D1): a bodyless function carrying
 		// //go:linkname binds to an intrinsic by symbol name.
@@ -5746,7 +5836,7 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	var savedPkg *types.Package
 	if sp != nil {
 		savedFset, savedSrc, savedInfo, savedPkg = e.fset, e.src, e.info, e.pkg
-		e.fset, e.src, e.info, e.pkg = sp.fset, sp.raw, sp.info, sp.pkg
+		e.fset, e.src, e.info, e.pkg = sp.fset, sp.srcForDecl(inst.decl.fd), sp.info, sp.pkg
 	}
 	// Scope object ids and substitution to this instantiation.
 	savedObjs := e.objIDs
@@ -7521,7 +7611,18 @@ func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[st
 		key := instKeyForFunc(fi, targs, e.subst)
 		inst, ok := e.instByKey[key]
 		if !ok {
-			return fmt.Errorf("gofrontend: instantiation %s not enumerated (internal error)", key)
+			// WS G (P3-M9, module-probe lane): generic calls in imported
+			// (synthetic or disk) package var initializers export during
+			// importSyntheticPackage, before enumerateInstantiations runs.
+			// Create the instantiation on demand (queued for body emission
+			// via mtPending); the enumerator dedups it later.
+			if _, err := e.ensureFuncInstantiation(fi, targs); err != nil {
+				return err
+			}
+			inst, ok = e.instByKey[key]
+			if !ok {
+				return fmt.Errorf("gofrontend: instantiation %s not enumerated (internal error)", key)
+			}
 		}
 		fields["obj"] = inst.instID
 		fields["type"] = inst.sigID
@@ -8053,7 +8154,18 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 		key := instKeyForFunc(fi, targs, e.subst)
 		inst, ok := e.instByKey[key]
 		if !ok {
-			return nil, fmt.Errorf("gofrontend: instantiation %s not enumerated (internal error)", key)
+			// WS G (P3-M9, module-probe lane): generic calls in imported
+			// (synthetic or disk) package var initializers export during
+			// importSyntheticPackage, before enumerateInstantiations runs.
+			// Create the instantiation on demand (queued for body emission
+			// via mtPending); the enumerator dedups it later.
+			if _, err := e.ensureFuncInstantiation(fi, targs); err != nil {
+				return nil, err
+			}
+			inst, ok = e.instByKey[key]
+			if !ok {
+				return nil, fmt.Errorf("gofrontend: instantiation %s not enumerated (internal error)", key)
+			}
 		}
 		objID = inst.instID
 		sigID = inst.sigID

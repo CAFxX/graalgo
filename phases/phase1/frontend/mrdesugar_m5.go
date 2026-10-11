@@ -998,6 +998,8 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "ParseMAC", "", "__parseMAC", "", "parseMACPair", []string{"hw", "err"}},
 	{"net", "SplitHostPort", "", "__splitHostPort", "", "splitHostPortPair", []string{"host", "port", "err"}},
 	{"net", "Size", "IPMask", "__ipMaskSize", "", "maskSizePair", []string{"ones", "bits"}},
+	// net: interface enumeration (P3-M9 module-probe lane).
+	{"net", "Interfaces", "", "__interfaces", "", "interfacesPair", []string{"ifs", "err"}},
 	// net: methods on TCPListener / Conn (prependRecv).
 	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "", "acceptPair", []string{"c", "err"}},
 	{"net", "Read", "TCPConn", "__tcpConnRead", "", "readPair", []string{"n", "err"}},
@@ -1143,6 +1145,10 @@ type mrPlan struct {
 	kind       mrKind
 	helperPkg  string // "context" or "time"
 	helperName string // "__withCancel", "__deadlineOf", ...
+	// WS G (P3-M9): disk-package multi-result (transformDiskMultiResult).
+	// The helper lives in a disk-built package, resolved via
+	// getDiskPackage, not getSyntheticPackage.
+	isDisk bool
 	// tmpType is the helper's single result type (the __p5mr_N temp).
 	tmpType types.Type
 	// For mrWithCancel/mrWithDeadline: the second extraction is a
@@ -1254,6 +1260,10 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if plan := classifyM9MultiResultCall(pkgPath, obj, targs); plan != nil {
 					return plan
 				}
+				// WS G (P3-M9): disk-package multi-result (dynamic table).
+				if plan := classifyDiskMultiResultCall(pkgPath, obj, targs); plan != nil {
+					return plan
+				}
 			}
 		}
 		return nil
@@ -1305,6 +1315,10 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// P3-M9 (tier-4: net): the synthetic net packages' multi-result
 			// API (m9MultiResultFuncs table above).
 			if plan := classifyM9MultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
+				return plan
+			}
+			// WS G (P3-M9): disk-package multi-result (dynamic table).
+			if plan := classifyDiskMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
 			switch pn.Imported().Path() {
@@ -1435,6 +1449,10 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// CopyBuffer, ReadAll, LimitedReader.Read,
 			// discard.Write/WriteString).
 			if plan := classifyIoMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
+				return plan
+			}
+			// WS G (P3-M9): disk-package multi-result methods (dynamic table).
+			if plan := classifyDiskMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
 				return plan
 			}
 			// P3-M8 (WS D): multi-result calls on interface values
@@ -2344,7 +2362,17 @@ func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan
 // multiResultHelper resolves a desugar plan's __-helper to its
 // *types.Func in the synthetic package scope.
 func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
-	sp := getSyntheticPackage(plan.helperPkg)
+	var sp *syntheticPackage
+	if plan.isDisk {
+		// WS G (P3-M9): disk-built package (transformDiskMultiResult).
+		var err error
+		sp, err = getDiskPackage(plan.helperPkg)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		sp = getSyntheticPackage(plan.helperPkg)
+	}
 	// P3-M8b: import the synthetic package so its helpers are registered
 	// in funcByObj (idempotent). Without this, synthHelperCallNode fails
 	// with "synthetic helper not in funcByObj".
