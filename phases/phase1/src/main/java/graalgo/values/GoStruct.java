@@ -35,8 +35,11 @@ public final class GoStruct {
                 objects[f.index()] = GoString.EMPTY;
             } else if (!f.inLongs() && f.kind() == GoKind.ARRAY && f.arrayLen() >= 0 && f.arrayElemKind() != null) {
                 // P3-M8b: Go new(T) gives zero-valued arrays, not null.
-                // Pre-allocate so d.h[0]=x doesn't NPE.
-                objects[f.index()] = graalgo.frontend.Boxing.newArray(f.arrayElemKind(), f.arrayLen());
+                // Pre-allocate so d.h[0]=x doesn't NPE. P3-M9: struct array
+                // elements are zero-filled via the element descriptor (same
+                // root cause as the make([]T,n) slice fix in Intrinsics).
+                objects[f.index()] = graalgo.frontend.Boxing.newArray(
+                        f.arrayElemKind(), f.arrayElemDesc(), f.arrayLen());
             }
         }
         return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);
@@ -102,18 +105,40 @@ public final class GoStruct {
             if (v instanceof GoStruct gs) {
                 v = gs.deepCopy();
             } else if (v != null && v.getClass().isArray()) {
-                v = cloneArray(v);
+                v = deepCopyArray(v);
             }
             objs[f.index()] = v;
         }
         return new GoStruct(descriptor, longs, objs);
     }
 
-    private static Object cloneArray(Object array) {
+    /**
+     * Deep copy of a Go array value: a fresh array whose struct elements
+     * are deep-copied and whose nested arrays are copied recursively.
+     * Slices, maps, pointers, interfaces, and strings are references and
+     * stay shared (Go value semantics — only structs and arrays are
+     * copied by assignment). A shallow {@code System.arraycopy} here
+     * would leave struct element slots aliased across copies, so that
+     * {@code a[i].field = x} on one copy observably mutates the other.
+     */
+    public static Object deepCopyArray(Object array) {
         Class<?> ct = array.getClass().getComponentType();
         int n = java.lang.reflect.Array.getLength(array);
         Object out = java.lang.reflect.Array.newInstance(ct, n);
-        System.arraycopy(array, 0, out, 0, n);
+        if (out instanceof Object[] oa) {
+            Object[] src = (Object[]) array;
+            for (int i = 0; i < n; i++) {
+                Object e = src[i];
+                if (e instanceof GoStruct gs) {
+                    e = gs.deepCopy();
+                } else if (e != null && e.getClass().isArray()) {
+                    e = deepCopyArray(e);
+                }
+                oa[i] = e;
+            }
+        } else {
+            System.arraycopy(array, 0, out, 0, n);
+        }
         return out;
     }
 

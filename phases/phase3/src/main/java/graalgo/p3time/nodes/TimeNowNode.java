@@ -37,9 +37,11 @@ public final class TimeNowNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         // Wall clock, gc time.Now parity (the synthetic Time carries no
-        // monotonic strip — unixnano only, per ADR-0005 D1).
+        // monotonic strip — unixnano only, per ADR-0005 D1). isSet=true:
+        // Now() never returns the zero Time (bools ride the longs[]
+        // carrier as 0/1).
         return new GoStruct(timeDesc,
-                new long[]{System.currentTimeMillis() * 1_000_000L}, new Object[0]);
+                new long[]{System.currentTimeMillis() * 1_000_000L, 1}, new Object[0]);
     }
 
     /**

@@ -33,7 +33,7 @@ import graalgo.values.GoStructDescriptor;
 public final class TimeChanLenCapTest {
 
     private static final GoStructDescriptor TIME_DESC = GoStructDescriptor.layout(
-            "time.Time", List.of("unixnano"), List.of(GoKind.INT64));
+            "time.Time", List.of("unixnano", "isSet"), List.of(GoKind.INT64, GoKind.BOOL));
 
     // ---------- scaffolding ----------
 

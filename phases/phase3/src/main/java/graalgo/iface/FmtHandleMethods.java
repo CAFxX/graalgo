@@ -150,8 +150,8 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
         GoStructDescriptor desc = new GoStructDescriptor(
                 "internal/graalgo/fmtstate.pair",
                 java.util.List.of(
-                        new GoStructDescriptor.Field("f0", GoKind.INT64, false, 0, 0, null),
-                        new GoStructDescriptor.Field("f1", GoKind.INTERFACE, false, 1, 0, null)));
+                        new GoStructDescriptor.Field("f0", GoKind.INT64, false, 0, 0, null, null),
+                        new GoStructDescriptor.Field("f1", GoKind.INTERFACE, false, 1, 0, null, null)));
         // f0 goes in longs if it's a Long, else objects. Simplified: put in objects.
         // Actually, for the pair to work with the desugar, we need correct layout.
         // For now, put both in objects; the desugar reads by field index.

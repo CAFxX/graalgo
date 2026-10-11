@@ -89,7 +89,9 @@ public final class Boxing {
     /**
      * Go's value-copy rule for assignments, container stores, and
      * interface box/unbox (M4): struct values deep-copy, array values
-     * clone, everything else is already a reference or immutable.
+     * deep-copy (struct elements are copied, not aliased — a shallow
+     * array clone would let {@code b := a; b[i].f = x} observably mutate
+     * {@code a}), everything else is already a reference or immutable.
      */
     static Object copyForAssign(GoKind kind, Object value) {
         if (value instanceof GoStruct gs && kind == GoKind.STRUCT) {
@@ -116,21 +118,13 @@ public final class Boxing {
             // Boxing a struct/array into an interface copies the value.
             Object d = gi.data();
             Object dc = d instanceof GoStruct gs ? gs.deepCopy()
-                    : (d != null && d.getClass().isArray() ? cloneArray(d) : d);
+                    : (d != null && d.getClass().isArray() ? GoStruct.deepCopyArray(d) : d);
             return new GoInterface(gi.descriptor(), dc, gi.itab());
         }
         if (value != null && kind == GoKind.ARRAY && value.getClass().isArray()) {
-            return cloneArray(value);
+            return GoStruct.deepCopyArray(value);
         }
         return value;
-    }
-
-    private static Object cloneArray(Object array) {
-        int n = java.lang.reflect.Array.getLength(array);
-        Object out = java.lang.reflect.Array.newInstance(
-                array.getClass().getComponentType(), n);
-        System.arraycopy(array, 0, out, 0, n);
-        return out;
     }
 
     /** Go's zero value in canonical boxed form (nil → null, except strings/structs). */
@@ -170,9 +164,13 @@ public final class Boxing {
      * {@code float64}→{@code double[]}, {@code bool}→{@code boolean[]},
      * {@code complex64}→{@code GoComplex32[]},
      * {@code complex128}→{@code GoComplex64[]}, everything
-     * else→{@code Object[]}.
+     * else→{@code Object[]}. For STRUCT elements, each slot is
+     * pre-initialized to the zero-valued GoStruct (Go's array zero value
+     * has zero-valued elements; a null slot would NPE on
+     * {@code a[i].field} access). Requires the element descriptor for
+     * struct kinds; may be null for non-struct kinds.
      */
-    public static Object newArray(GoKind elemKind, int len) {
+    public static Object newArray(GoKind elemKind, GoStructDescriptor elemDesc, int len) {
         return switch (elemKind) {
             case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> new int[len];
             case INT64, UINT64, UNTYPED_INT -> new long[len];
@@ -181,8 +179,27 @@ public final class Boxing {
             case BOOL, UNTYPED_BOOL -> new boolean[len];
             case COMPLEX64 -> new graalgo.values.GoComplex32[len];
             case COMPLEX128, UNTYPED_COMPLEX -> new graalgo.values.GoComplex64[len];
+            case STRUCT -> {
+                Object[] arr = new Object[len];
+                if (elemDesc != null) {
+                    for (int i = 0; i < len; i++) {
+                        arr[i] = GoStruct.zero(elemDesc);
+                    }
+                }
+                yield arr;
+            }
             default -> new Object[len];
         };
+    }
+
+    /**
+     * Allocates a fresh typed Java array without struct zero-filling
+     * (legacy): struct element slots stay null. Prefer
+     * {@link #newArray(GoKind, GoStructDescriptor, int)} when the element
+     * descriptor is available.
+     */
+    public static Object newArray(GoKind elemKind, int len) {
+        return newArray(elemKind, null, len);
     }
 
     /** Reads one array element in canonical boxed form. */
@@ -272,23 +289,17 @@ public final class Boxing {
     /**
      * Fresh copy of a zero-value template (struct/array): templates are
      * built once per type at build time and must never be shared between
-     * evaluations.
+     * evaluations. Array copying goes through
+     * {@link graalgo.values.GoStruct#deepCopyArray} — the single canonical
+     * recursive array copier (struct elements deep-copied, nested arrays
+     * recursed).
      */
     static Object freshZeroCopy(Object template) {
         if (template instanceof GoStruct gs) {
             return gs.deepCopy();
         }
         if (template != null && template.getClass().isArray()) {
-            int n = java.lang.reflect.Array.getLength(template);
-            Object out = java.lang.reflect.Array.newInstance(
-                    template.getClass().getComponentType(), n);
-            System.arraycopy(template, 0, out, 0, n);
-            if (out instanceof Object[] oa) {
-                for (int i = 0; i < oa.length; i++) {
-                    oa[i] = freshZeroCopy(oa[i]);
-                }
-            }
-            return out;
+            return GoStruct.deepCopyArray(template);
         }
         return template; // immutable (GoString.EMPTY) or null
     }

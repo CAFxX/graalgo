@@ -10,7 +10,7 @@ import graalgo.values.GoStructDescriptor;
 
 /**
  * Resolution of the synthetic {@code time.Time} struct descriptor (P3-M5,
- * WS E, ADR-0005 D1): {@code struct{ unixnano int64 }}.
+ * WS E, ADR-0005 D1): {@code struct{ unixnano int64; isSet bool }}.
  *
  * <p>The descriptor must be the <em>canonical</em> one — the same
  * instance {@code NodeFactory.structDescriptorFor} would mint — because
@@ -18,10 +18,10 @@ import graalgo.values.GoStructDescriptor;
  * equality hash by it). The factory's method is package-private, so this
  * replicates its exact behavior against the public
  * {@link NodeFactory.BuildCtx} caches: resolve the {@code "time.Time"}
- * named entry to its underlying struct, validate the single
- * {@code unixnano int64} field (fail fast — the exporter contract), and
- * populate {@code ctx.structDescs} / {@code ctx.structFieldTypeIds} with
- * the {@code "struct#"+id} instance the factory would have built. A
+ * named entry to its underlying struct, validate the {@code unixnano
+ * int64} + {@code isSet bool} fields (fail fast — the exporter contract),
+ * and populate {@code ctx.structDescs} / {@code ctx.structFieldTypeIds}
+ * with the {@code "struct#"+id} instance the factory would have built. A
  * later factory-built Time value then shares this instance, and vice
  * versa.
  *
@@ -72,9 +72,9 @@ public final class TimeDescriptors {
             throw new FrontendException(path + ": time.Time underlying is not a struct");
         }
         Json.Array fields = entry.object("detail", path).array("fields", path);
-        if (fields.size() != 1) {
+        if (fields.size() != 2) {
             throw new FrontendException(
-                    path + ": time.Time must be struct{ unixnano int64 }, found "
+                    path + ": time.Time must be struct{ unixnano int64; isSet bool }, found "
                             + fields.size() + " fields");
         }
         Json.Value fv = fields.get(0);
@@ -90,12 +90,25 @@ public final class TimeDescriptors {
         if (fieldKind(ctx, fieldTypeId, path) != GoKind.INT64) {
             throw new FrontendException(path + ": time.Time.unixnano must be int64");
         }
+        Json.Value fv1 = fields.get(1);
+        if (!(fv1 instanceof Json.Object fo1)) {
+            throw new FrontendException(path + ": time.Time field 1 is not an object");
+        }
+        if (!"isSet".equals(fo1.string("name", path))) {
+            throw new FrontendException(
+                    path + ": time.Time field 1 must be \"isSet\", found \""
+                            + fo1.string("name", path) + "\"");
+        }
+        int fieldTypeId1 = fo1.intValue("type", path);
+        if (fieldKind(ctx, fieldTypeId1, path) != GoKind.BOOL) {
+            throw new FrontendException(path + ": time.Time.isSet must be bool");
+        }
         GoStructDescriptor d = ctx.structDescs.get(typeId);
         if (d == null) {
             d = GoStructDescriptor.layout("struct#" + typeId,
-                    List.of("unixnano"), List.of(GoKind.INT64));
+                    List.of("unixnano", "isSet"), List.of(GoKind.INT64, GoKind.BOOL));
             ctx.structDescs.put(typeId, d);
-            ctx.structFieldTypeIds.put(typeId, new int[]{fieldTypeId});
+            ctx.structFieldTypeIds.put(typeId, new int[]{fieldTypeId, fieldTypeId1});
         }
         return d;
     }

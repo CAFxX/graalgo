@@ -6,8 +6,12 @@ package p3frontend
 // frozen); these mirrors pin the signatures so drift fails fast.
 //
 // The signatures match phases/phase1/frontend/synth_time_context.go
-// exactly (not gc's real packages — the synthetic Time is struct{unixnano
-// int64}, Context.Done returns chan struct{}, etc.).
+// exactly (not gc's real packages — the synthetic Time is
+// struct{unixnano int64; isSet bool}, Context.Done returns
+// chan struct{}, etc.).
+//
+// P3-M9: isSet distinguishes the zero Time (0001-01-01, isSet=false)
+// from 1970-01-01 (unixnano==0, isSet=true).
 
 import (
 	"go/constant"
@@ -84,12 +88,12 @@ func syntheticTimePackage() *types.Package {
 		duration.AddMethod(types.NewFunc(token.NoPos, pkg, m.name, sig))
 	}
 
-	// Time = struct{ unixnano int64 }.
+	// Time = struct{ unixnano int64; isSet bool }.
 	timeName := types.NewTypeName(token.NoPos, pkg, "Time", nil)
 	pkg.Scope().Insert(timeName)
 	timeStruct := types.NewStruct(
-		[]*types.Var{newField("unixnano", int64T)},
-		[]string{"unixnano"})
+		[]*types.Var{newField("unixnano", int64T), newField("isSet", boolT)},
+		[]string{"unixnano", "isSet"})
 	timeType := types.NewNamed(timeName, timeStruct, nil)
 
 	// Time methods.

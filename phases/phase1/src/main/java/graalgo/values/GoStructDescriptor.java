@@ -22,10 +22,15 @@ public final class GoStructDescriptor {
     /**
      * One field's placement. arrayLen is the array length for ARRAY-kind
      * fields (-1 for non-arrays); arrayElemKind is the element kind for
-     * ARRAY-kind fields (null for non-arrays). Used by GoStruct.zero to
-     * pre-allocate array fields (Go: new(T) gives zero-valued arrays, not null).
+     * ARRAY-kind fields (null for non-arrays); arrayElemDesc is the element
+     * struct descriptor for ARRAY-kind fields whose element kind is STRUCT
+     * (null otherwise) — used by GoStruct.zero to pre-allocate struct array
+     * elements (Go: new(T) gives zero-valued arrays, not null). Used by
+     * GoStruct.zero to pre-allocate array fields (Go: new(T) gives
+     * zero-valued arrays, not null).
      */
-    public record Field(String name, GoKind kind, boolean inLongs, int index, int arrayLen, GoKind arrayElemKind) {}
+    public record Field(String name, GoKind kind, boolean inLongs, int index, int arrayLen,
+                        GoKind arrayElemKind, GoStructDescriptor arrayElemDesc) {}
 
     private final String typeName;
     private final List<Field> fields;
@@ -59,13 +64,16 @@ public final class GoStructDescriptor {
      * int/uint/float/bool kinds → {@code longs}, everything else →
      * {@code objects}. arrayLens[i] is the array length for ARRAY-kind
      * fields (-1 for non-arrays); arrayElemKinds[i] is the element kind
-     * (null for non-arrays).
+     * (null for non-arrays); arrayElemDescs[i] is the element struct
+     * descriptor for ARRAY-kind fields whose element kind is STRUCT
+     * (null otherwise).
      */
     public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
-            List<Integer> arrayLens, List<GoKind> arrayElemKinds) {
+            List<Integer> arrayLens, List<GoKind> arrayElemKinds, List<GoStructDescriptor> arrayElemDescs) {
         if (names.size() != kinds.size() || names.size() != arrayLens.size()
-                || names.size() != arrayElemKinds.size()) {
-            throw new IllegalArgumentException("names/kinds/arrayLens/arrayElemKinds length mismatch");
+                || names.size() != arrayElemKinds.size() || names.size() != arrayElemDescs.size()) {
+            throw new IllegalArgumentException(
+                    "names/kinds/arrayLens/arrayElemKinds/arrayElemDescs length mismatch");
         }
         java.util.ArrayList<Field> fields = new java.util.ArrayList<>(names.size());
         int longs = 0;
@@ -74,9 +82,23 @@ public final class GoStructDescriptor {
             GoKind k = kinds.get(i);
             boolean inLongs = k.isIntKind() || k.isFloatKind() || k == GoKind.BOOL;
             fields.add(new Field(names.get(i), k, inLongs, inLongs ? longs++ : objects++,
-                    arrayLens.get(i), arrayElemKinds.get(i)));
+                    arrayLens.get(i), arrayElemKinds.get(i), arrayElemDescs.get(i)));
         }
         return new GoStructDescriptor(typeName, fields);
+    }
+
+    /**
+     * Layout without array element descriptors (all null): struct array
+     * elements are left uninitialized (legacy behavior). Prefer the
+     * six-argument overload when element descriptors are available.
+     */
+    public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
+            List<Integer> arrayLens, List<GoKind> arrayElemKinds) {
+        java.util.ArrayList<GoStructDescriptor> descs = new java.util.ArrayList<>(names.size());
+        for (int i = 0; i < names.size(); i++) {
+            descs.add(null);
+        }
+        return layout(typeName, names, kinds, arrayLens, arrayElemKinds, descs);
     }
 
     /**

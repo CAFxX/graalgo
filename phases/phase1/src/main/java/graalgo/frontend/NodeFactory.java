@@ -120,6 +120,14 @@ public final class NodeFactory {
          * not overflow the stack.
          */
         public final Set<Integer> zeroTemplateVisiting = new HashSet<>();
+        /**
+         * P3-M9: struct type ids currently being descriptor-built (recursion
+         * guard for array-element-struct resolution in structDescriptorFor).
+         * A cyclic type graph must fail fast with FrontendException, not
+         * overflow the stack (Go forbids a struct containing an array of
+         * itself, so this only trips on illegal input).
+         */
+        public final Set<Integer> structDescVisiting = new HashSet<>();
         /** Canonical dynamic-type descriptors per type-table id (M4, WS E). */
         public final Map<Integer, graalgo.values.GoTypeDescriptor> typeDescs = new HashMap<>();
         /**
@@ -937,11 +945,31 @@ public final class NodeFactory {
         if (!"struct".equals(entry.string("kind", path))) {
             throw new FrontendException(path + ": not a struct type");
         }
+        // P3-M9: recursion guard for the array-element-struct resolution
+        // below (a struct containing an array of itself is illegal Go, but
+        // fail fast rather than overflowing the stack).
+        if (!ctx.structDescVisiting.add(typeId)) {
+            throw new FrontendException(path + ": cyclic struct type graph (WS E)");
+        }
+        try {
+            return structDescriptorForInner(ctx, typeId, qname, entry, path);
+        } finally {
+            ctx.structDescVisiting.remove(typeId);
+        }
+    }
+
+    /**
+     * Body of {@link #structDescriptorFor} once the type id is resolved to a
+     * struct entry and the recursion guard is held.
+     */
+    private static GoStructDescriptor structDescriptorForInner(
+            BuildCtx ctx, int typeId, String qname, Json.Object entry, String path) {
         Json.Array fields = entry.object("detail", path).array("fields", path);
         List<String> names = new ArrayList<>(fields.size());
         List<GoKind> kinds = new ArrayList<>(fields.size());
         List<Integer> arrayLens = new ArrayList<>(fields.size());
         List<graalgo.values.GoKind> arrayElemKinds = new ArrayList<>(fields.size());
+        List<GoStructDescriptor> arrayElemDescs = new ArrayList<>(fields.size());
         int[] fieldTypeIds = new int[fields.size()];
         for (int i = 0; i < fields.size(); i++) {
             Json.Value fv = fields.get(i);
@@ -955,7 +983,15 @@ public final class NodeFactory {
             // P3-M8b: array length + element kind for GoStruct.zero pre-allocation.
             int[] arrInfo = arrayInfo(ctx, ftid, path);
             arrayLens.add(arrInfo[0]);
-            arrayElemKinds.add(arrInfo[0] >= 0 ? kindOf(ctx, arrInfo[1], path) : null);
+            GoKind elemKind = arrInfo[0] >= 0 ? kindOf(ctx, arrInfo[1], path) : null;
+            arrayElemKinds.add(elemKind);
+            // P3-M9: element struct descriptor for ARRAY-of-STRUCT fields, so
+            // GoStruct.zero can zero-fill struct array elements (same root
+            // cause as the make([]T,n) slice fix in Intrinsics). Recursion
+            // terminates on legal Go (no struct contains an array of
+            // itself); the visiting guard above fails fast otherwise.
+            arrayElemDescs.add(elemKind == GoKind.STRUCT
+                    ? structDescriptorFor(ctx, arrInfo[1], path) : null);
         }
         // P3-M8b: canonicalize process-wide so descriptor identity == type
         // identity across BuildCtxs (functions/packages). The per-BuildCtx
@@ -967,16 +1003,54 @@ public final class NodeFactory {
         // layout, so same-named/different-layout types across runs never
         // collide; identical anonymous structs correctly share (Go: identical
         // anonymous struct types are identical).
-        String key = (qname != null ? "N:" + qname : "S:") + "|" + names + "|" + kinds + "|" + arrayLens;
+        // P3-M9: the key also carries array element kinds and the structural
+        // keys of array element struct descriptors — otherwise two anonymous
+        // structs differing only in their array element struct type would
+        // share a descriptor and GoStruct.zero would fill the wrong element
+        // type. Element keys are structural (not type-id-based) so identical
+        // anonymous structs still share across BuildCtxs.
+        String key = (qname != null ? "N:" + qname : "S:") + "|" + names + "|" + kinds + "|" + arrayLens
+                + "|" + arrayElemKinds + "|" + elemDescKeys(arrayElemDescs);
         GoStructDescriptor cd = STRUCT_DESCS.get(key);
         if (cd == null) {
-            GoStructDescriptor nd = GoStructDescriptor.layout("struct#" + typeId, names, kinds, arrayLens, arrayElemKinds);
+            GoStructDescriptor nd = GoStructDescriptor.layout("struct#" + typeId, names, kinds, arrayLens,
+                    arrayElemKinds, arrayElemDescs);
             GoStructDescriptor prev = STRUCT_DESCS.putIfAbsent(key, nd);
             cd = prev != null ? prev : nd;
         }
         ctx.structDescs.put(typeId, cd);
         ctx.structFieldTypeIds.put(typeId, fieldTypeIds);
         return cd;
+    }
+
+    /**
+     * Structural keys for array element struct descriptors (P3-M9): "-"
+     * for absent, otherwise the recursive layout key. Structural (not
+     * type-id-based) so identical anonymous structs keep sharing
+     * descriptors across BuildCtxs.
+     */
+    private static String elemDescKeys(List<GoStructDescriptor> descs) {
+        StringBuilder sb = new StringBuilder("[");
+        for (GoStructDescriptor d : descs) {
+            sb.append(d == null ? "-" : structLayoutKey(d)).append(',');
+        }
+        return sb.append(']').toString();
+    }
+
+    /** Recursive structural layout key for a struct descriptor (P3-M9). */
+    private static String structLayoutKey(GoStructDescriptor d) {
+        StringBuilder sb = new StringBuilder("{");
+        for (GoStructDescriptor.Field f : d.fields()) {
+            sb.append(f.name()).append(':').append(f.kind());
+            if (f.kind() == GoKind.ARRAY) {
+                sb.append('[').append(f.arrayLen()).append(']').append(f.arrayElemKind());
+                if (f.arrayElemDesc() != null) {
+                    sb.append(structLayoutKey(f.arrayElemDesc()));
+                }
+            }
+            sb.append(';');
+        }
+        return sb.append('}').toString();
     }
 
     /**

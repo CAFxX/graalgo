@@ -438,12 +438,31 @@ func ParseDuration(s string) (Duration, error) {
 }
 
 // Time is a wall-clock instant as Unix nanoseconds. The zero Time has
-// unixnano == 0 (IsZero). Monotonic readings are out of M5 scope.
+// isSet == false (IsZero); every constructor (Unix, Date, Now, ...)
+// sets isSet, so time.Unix(0,0) (1970-01-01, unixnano == 0) is correctly
+// NOT the zero Time (0001-01-01). Monotonic readings are out of M5 scope.
 type Time struct {
 	unixnano int64
+	isSet    bool
 }
 
-func (t Time) IsZero() bool { return t.unixnano == 0 }
+// zeroInstantNano is the Unix-nanosecond reading of the zero time instant
+// (0001-01-01 00:00:00 UTC). -62135596800*1e9 is not representable in an
+// int64, so every synthetic constructor that targets the zero instant
+// (Date, Unix) wraps to this same value — -62135596800*1e9 mod 2^64 as
+// int64 (signed multiplication wraps, two's complement, both under gc and
+// under the graalgo frontend) — making it the canonical in-representation
+// marker of the zero instant. (Written as a literal: the product is not a
+// valid Go constant expression, it overflows int64.)
+const zeroInstantNano = int64(-6795364578871345152)
+
+// IsZero reports whether t represents the zero time instant, January 1,
+// year 1, 00:00:00 UTC. Like gc, this is value-based:
+// time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC).IsZero() is true.
+// The Go zero value Time{} (!isSet) is the zero instant; a constructed
+// Time (isSet) is the zero instant exactly when its unixnano carries the
+// wrapped zero-instant marker above.
+func (t Time) IsZero() bool { return !t.isSet || t.unixnano == zeroInstantNano }
 
 func (t Time) Before(u Time) bool { return t.unixnano < u.unixnano }
 func (t Time) After(u Time) bool  { return t.unixnano > u.unixnano }
@@ -460,7 +479,7 @@ func (t Time) Compare(u Time) int {
 }
 
 func (t Time) Add(d Duration) Time {
-	return Time{unixnano: t.unixnano + int64(d)}
+	return Time{unixnano: t.unixnano + int64(d), isSet: t.isSet || d != 0}
 }
 
 func (t Time) Sub(u Time) Duration {
@@ -469,9 +488,10 @@ func (t Time) Sub(u Time) Duration {
 
 func (t Time) Unix() int64 {
 	// P3-M9: gc parity — the zero Time (0001-01-01) has Unix() == -62135596800,
-	// not 0. The synthetic Time uses unixnano==0 for the zero value (IsZero),
-	// which collides with 1970-01-01; the zero case must return the correct
-	// pre-epoch offset.
+	// not 0. The zero instant's nanos overflow int64, so the wrapped
+	// unixnano cannot simply be divided; the IsZero test above already
+	// identifies the zero instant however it is spelled (Go zero value,
+	// Date(1,1,1), Unix(-62135596800, 0)).
 	if t.IsZero() {
 		return -62135596800
 	}
@@ -488,14 +508,14 @@ func (t Time) Round(d Duration) Time {
 	r := n % dd
 	if r < 0 {
 		if r+r > -dd {
-			return Time{unixnano: n - r}
+			return Time{unixnano: n - r, isSet: t.isSet}
 		}
-		return Time{unixnano: n - dd - r}
+		return Time{unixnano: n - dd - r, isSet: t.isSet}
 	}
 	if r+r < dd {
-		return Time{unixnano: n - r}
+		return Time{unixnano: n - r, isSet: t.isSet}
 	}
-	return Time{unixnano: n + dd - r}
+	return Time{unixnano: n + dd - r, isSet: t.isSet}
 }
 
 func (t Time) Truncate(d Duration) Time {
@@ -503,7 +523,7 @@ func (t Time) Truncate(d Duration) Time {
 		return t
 	}
 	dd := int64(d)
-	return Time{unixnano: t.unixnano - t.unixnano%dd}
+	return Time{unixnano: t.unixnano - t.unixnano%dd, isSet: t.isSet}
 }
 
 // Out-of-M5-scope members: exact gc signatures, fail fast.
@@ -602,7 +622,7 @@ func Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) T
 	doe := yoe*365 + yoe/4 - yoe/100 + doy
 	days := era*146097 + doe - 719468 // days since 1970-01-01
 	unixSec := days*86400 + hour64*3600 + min64*60 + sec64
-	return Time{unixSec*1e9 + nsec64}
+	return Time{unixnano: unixSec*1e9 + nsec64, isSet: true}
 }
 
 // Unix returns the Time corresponding to the given Unix time, sec seconds
@@ -611,7 +631,7 @@ func Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) T
 func Unix(sec int64, nsec int64) Time {
 	sec += timeFloorDiv(nsec, 1e9)
 	nsec = timeFloorMod(nsec, 1e9)
-	return Time{sec*1e9 + nsec}
+	return Time{unixnano: sec*1e9 + nsec, isSet: true}
 }
 
 // timeFloorDiv/timeFloorMod are Euclidean division/modulo (Go's / and %

@@ -286,7 +286,7 @@ public class GoTimerT {
                             "send on closed channel".getBytes(StandardCharsets.UTF_8)));
                 }
                 GoStruct tv = new GoStruct(timeDesc,
-                        new long[]{System.currentTimeMillis() * 1_000_000L}, new Object[0]);
+                        new long[]{System.currentTimeMillis() * 1_000_000L, 1}, new Object[0]);
                 // Non-blocking delivery, mutually exclusive with stop()/
                 // reset()'s drain under lock: for one-shots the buffer is
                 // always free here; for tickers a slow receiver drops the

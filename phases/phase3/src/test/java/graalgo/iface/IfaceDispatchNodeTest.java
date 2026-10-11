@@ -371,7 +371,7 @@ public final class IfaceDispatchNodeTest {
         try {
             graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.MW",
                     List.of(new graalgo.values.GoStructDescriptor.Field("Buf",
-                            GoKind.POINTER, false, 0, -1, null)));
+                            GoKind.POINTER, false, 0, -1, null, null)));
             graalgo.values.GoStruct outer =
                     new graalgo.values.GoStruct(desc, new long[0], new Object[]{"EMBEDDED"});
             GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.MW", outer), 0);
@@ -415,7 +415,7 @@ public final class IfaceDispatchNodeTest {
         try {
             graalgo.values.GoStructDescriptor desc = new graalgo.values.GoStructDescriptor("main.MW",
                     List.of(new graalgo.values.GoStructDescriptor.Field("Buf",
-                            GoKind.POINTER, false, 0, -1, null)));
+                            GoKind.POINTER, false, 0, -1, null, null)));
             Object referent = new Object();
             graalgo.values.GoPointer ptr = new graalgo.values.GoPointer(referent);
             graalgo.values.GoStruct outer =
