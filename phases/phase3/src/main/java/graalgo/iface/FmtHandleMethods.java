@@ -227,15 +227,18 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
         }
 
         // 3. Stringer and error for %v, %s, %q, %x, %X.
+        // P3-M9 BUG-MODPROBE-011: the verb applies to the method's return
+        // value (e.g. %q quotes the String() result), so route through
+        // formatMethodResult rather than writing the raw string.
         if (verb == 'v' || verb == 's' || verb == 'q' || verb == 'x' || verb == 'X') {
             IfaceMethodTarget stringTarget = IfaceMethodTable.lookup(descName, "String");
             if (stringTarget != null && stringTarget.supported()) {
                 Object result = invokeNoArg(stringTarget, receiver);
                 if (result instanceof GoString gs) {
-                    printer.writeUtf8(gs.toString());
+                    printer.formatMethodResult(gs.bytes(), verb);
                     return true;
                 } else if (result instanceof String s) {
-                    printer.writeUtf8(s);
+                    printer.formatMethodResult(s.getBytes(java.nio.charset.StandardCharsets.UTF_8), verb);
                     return true;
                 }
             }
@@ -243,10 +246,10 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
             if (errorTarget != null && errorTarget.supported()) {
                 Object result = invokeNoArg(errorTarget, receiver);
                 if (result instanceof GoString gs) {
-                    printer.writeUtf8(gs.toString());
+                    printer.formatMethodResult(gs.bytes(), verb);
                     return true;
                 } else if (result instanceof String s) {
-                    printer.writeUtf8(s);
+                    printer.formatMethodResult(s.getBytes(java.nio.charset.StandardCharsets.UTF_8), verb);
                     return true;
                 }
             }
@@ -260,6 +263,16 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
         if (!target.isDirect()) {
             // Promoted methods: not implemented for now.
             return null;
+        }
+        if (recv instanceof GoPointer gp && !target.pointerReceiver()) {
+            // P3-M9 BUG-MODPROBE-011: gc's implicit (*p) — a value-receiver
+            // method dispatched on a pointer dereferences first. Without
+            // this the callee receives a GoPointer where it expects the
+            // value, throws, and fmt falls through to structural printing.
+            recv = gp.referent();
+            if (recv == null) {
+                return null; // nil pointer: cannot dereference; structural path handles it
+            }
         }
         if (target.addrOf() && !(recv instanceof GoPointer)) {
             recv = new GoPointer(recv);
