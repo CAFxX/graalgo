@@ -136,3 +136,29 @@ This is a general WS D gap for disk-imported packages, not uuid-specific.
 `exportSelector` has a hardcoded list of synthetic package paths for qualified const/var access. Disk-built packages (e.g., `github.com/google/uuid`) are not in the list, so they fall through to `exportExpr(x.X)` which fails on the PkgName.
 
 **Fix (general):** after the hardcoded list, check `getDiskPackage(p)`; if it resolves, use `exportSyntheticQualified` (disk packages are in syntheticPackage shape).
+
+## BUG-MODPROBE-008: BinaryOpNode rejects EQ/NE on ARRAY kind
+
+**Date:** 2026-10-11  
+**Status:** Open (Java runtime limitation, not frontend)  
+**Owner:** MODULE-PROBE lane (filed; fix belongs to phase1 runtime)
+
+**Symptom:**  
+`java.lang.IllegalArgumentException: illegal binary op/kind combination: EQ result=BOOL operand=ARRAY` when running `u.String() == "..."` where `u` is `uuid.UUID` (`[16]byte`).
+
+**Root cause:**  
+`BinaryOpNode.checkCombo` does not allow EQ/NE on `GoKind.ARRAY`. In Go, arrays are comparable with `==`/`!=` if the element type is comparable. The specific trigger here is a method call on an array receiver (`u.String()`) whose result is compared — the call node evaluates to ARRAY kind (the method dispatch on array receivers appears to return the receiver rather than the string result).
+
+**Reproducer:**  
+```go
+package main
+import "fmt"
+type UUID [16]byte
+func (u UUID) String() string { return "hello" }
+func main() {
+    var u UUID
+    fmt.Println(u.String() == "hello")  // throws IllegalArgumentException
+}
+```
+
+**Impact:** blocks uuid case01 (which does `u.String() == "f47ac10b-..."`). This is a phase1 Java runtime gap, not a module-import gap — filed for the runtime lane.
