@@ -16,6 +16,14 @@ public final class GoTypeStrings {
      * Go-syntax name for a wire type id. Handles basic, named, alias,
      * pointer, slice, array, map, chan, interface, and struct kinds; anything
      * else yields a best-effort placeholder (signatures are WS D).
+     *
+     * <p>P3-M9 BUG-MODPROBE-011: named types render by display name
+     * (package NAME form, e.g. "uuid.Version"), not the raw wire name
+     * ("github.com/google/uuid.Version"). The method-table install keys,
+     * the factory's runtime descriptors, and gc's own %T/panic rendering
+     * all use the display form; the raw wire name leaked here only for
+     * disk-imported types (for local types there is no slash, so
+     * displayNameFor is the identity — which is why local types worked).
      */
     public static String of(NodeFactory.BuildCtx ctx, int typeId) {
         String path = "types[" + typeId + "]";
@@ -24,17 +32,51 @@ public final class GoTypeStrings {
         Json.Object detail = entry.object("detail", path);
         String dpath = path + ".detail";
         return switch (kind) {
-            case "basic", "named" -> detail.string("name", dpath);
+            case "basic" -> detail.string("name", dpath);
+            case "named" -> NodeFactory.displayNameFor(detail.string("name", dpath));
             // The `any` alias renders as `interface {}` in gc messages.
             case "alias" -> "any".equals(detail.string("name", dpath))
                     ? "interface {}" : detail.string("name", dpath);
-            case "pointer" -> "*" + of(ctx, detail.intValue("elem", dpath));
+            // Pointer-to-named keeps the raw qualified name ("*"+qname):
+            // the factory's runtime descriptors and the method-table
+            // install keys both use "*"+qualifiedName for pointer-to-named
+            // (dbd728c), so the lookup key must match byte-exactly.
+            case "pointer" -> "*" + rawOf(ctx, detail.intValue("elem", dpath));
             case "slice" -> "[]" + of(ctx, detail.intValue("elem", dpath));
             case "array" -> "[" + detail.longInt("len", dpath) + "]"
                     + of(ctx, detail.intValue("elem", dpath));
             case "map" -> "map[" + of(ctx, detail.intValue("key", dpath)) + "]"
                     + of(ctx, detail.intValue("elem", dpath));
             case "chan" -> "chan " + of(ctx, detail.intValue("elem", dpath));
+            case "interface" -> detail.bool("empty", dpath) ? "interface {}" : "interface{...}";
+            case "struct" -> "struct{...}";
+            default -> kind;
+        };
+    }
+
+    /**
+     * Pre-BUG-MODPROBE-011 rendering: raw wire names throughout, including
+     * for named types. Used only for pointer element names, where the
+     * method-table/install keyspace uses "*"+qualifiedName (full path)
+     * for pointer-to-named — the display form would miss the install key.
+     */
+    private static String rawOf(NodeFactory.BuildCtx ctx, int typeId) {
+        String path = "types[" + typeId + "]";
+        Json.Object entry = ctx.types.entry(typeId, path);
+        String kind = entry.string("kind", path);
+        Json.Object detail = entry.object("detail", path);
+        String dpath = path + ".detail";
+        return switch (kind) {
+            case "basic", "named" -> detail.string("name", dpath);
+            case "alias" -> "any".equals(detail.string("name", dpath))
+                    ? "interface {}" : detail.string("name", dpath);
+            case "pointer" -> "*" + rawOf(ctx, detail.intValue("elem", dpath));
+            case "slice" -> "[]" + rawOf(ctx, detail.intValue("elem", dpath));
+            case "array" -> "[" + detail.longInt("len", dpath) + "]"
+                    + rawOf(ctx, detail.intValue("elem", dpath));
+            case "map" -> "map[" + rawOf(ctx, detail.intValue("key", dpath)) + "]"
+                    + rawOf(ctx, detail.intValue("elem", dpath));
+            case "chan" -> "chan " + rawOf(ctx, detail.intValue("elem", dpath));
             case "interface" -> detail.bool("empty", dpath) ? "interface {}" : "interface{...}";
             case "struct" -> "struct{...}";
             default -> kind;

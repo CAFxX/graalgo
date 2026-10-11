@@ -281,6 +281,16 @@ public final class Fmt {
             buf.write(b, 0, b.length);
         }
 
+        /**
+         * Formats a String()/Error()/GoString() method result with the verb
+         * (P3-M9 BUG-MODPROBE-011): Go applies the verb to the returned
+         * string, so %q quotes it and %x/%X hex-encode it — writing the raw
+         * string is only correct for %v/%s.
+         */
+        public void formatMethodResult(byte[] sBytes, int verb) {
+            fmtString(sBytes, verb);
+        }
+
         // flags (fmtFlags) — public for FmtHandleMethods.
         public boolean minus, plus, sharp, space, zero;
         public boolean sharpV, plusV; // repurposed #/+ for %v (Go syntax / field names)
