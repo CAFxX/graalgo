@@ -95,8 +95,8 @@ func clientConfig() *tls.Config {
 	return &tls.Config{RootCAs: roots, ServerName: "localhost"}
 }
 
-func runServer(addr string, ready chan<- string) {
-	ln, err := tls.Listen("tcp", addr, serverConfig())
+func runServer(port string, ready chan<- string) {
+	ln, err := tls.Listen("tcp", "127.0.0.1:"+port, serverConfig())
 	if err != nil {
 		panic("listen: " + err.Error())
 	}
@@ -125,8 +125,8 @@ func runServer(addr string, ready chan<- string) {
 	fmt.Println("server: echo-ok")
 }
 
-func runClient(addr string) {
-	conn, err := tls.Dial("tcp", addr, clientConfig())
+func runClient(port string) {
+	conn, err := tls.Dial("tcp", "127.0.0.1:"+port, clientConfig())
 	if err != nil {
 		panic("dial: " + err.Error())
 	}
@@ -148,9 +148,11 @@ func runClient(addr string) {
 }
 
 func main() {
-	addr := "127.0.0.1:18443"
+	// Loopback-only: the port may come from argv, the host is always 127.0.0.1
+	// (the wave3 loopback egress gate requires the literal on the Dial/Listen line).
+	port := "18443"
 	if len(os.Args) > 1 {
-		addr = os.Args[1]
+		port = os.Args[1]
 	}
 	mode := "both"
 	if len(os.Args) > 2 {
@@ -159,23 +161,24 @@ func main() {
 	switch mode {
 	case "server":
 		ready := make(chan string, 1)
-		go runServer(addr, ready)
+		go runServer(port, ready)
 		<-ready
 		// Serve one connection then exit; keep alive briefly.
 		select {}
 	case "client":
-		runClient(addr)
+		runClient(port)
 	default:
 		// In-process client+server (graalgo-to-graalgo).
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		if err != nil {
 			panic(err)
 		}
-		realAddr := ln.Addr().String()
+		tcpAddr := ln.Addr().(*net.TCPAddr)
 		ln.Close()
+		ephemPort := fmt.Sprint(tcpAddr.Port)
 		ready := make(chan string, 1)
-		go runServer(realAddr, ready)
+		go runServer(ephemPort, ready)
 		<-ready
-		runClient(realAddr)
+		runClient(ephemPort)
 	}
 }
