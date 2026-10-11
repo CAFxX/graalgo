@@ -2519,6 +2519,128 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 	return args, preStmts, nil
 }
 
+// hoistMRCallArg hoists a multi-result call in argument position (f(g()))
+// to a temp var. Per Go spec, g's results spread as f's arguments (g() must
+// be the sole argument; the type checker guarantees this for valid Go).
+// Returns the unpacked pair-field selector args and the pre-statements
+// (temp vardecl) that must execute before the outer call.
+// BUG-MODPROBE-010: used by exportCallArgs for the general call path;
+// mirrors the nested handling in multiResultHelperArgs.
+func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, []*Node, error) {
+	var preStmts []*Node
+	var callNode *Node
+	var tmpName string
+	var tmpID, tmpTid int
+	if plan.kind == mrUser {
+		// User-defined MR: export the call normally (pair-valued).
+		// Its args are hoisted recursively via exportCallArgs.
+		var err error
+		callNode, err = e.exportCall(inner)
+		if err != nil {
+			return nil, nil, err
+		}
+		resTid, err := e.typeID(plan.tmpType)
+		if err != nil {
+			return nil, nil, err
+		}
+		e.chanSeq++
+		tmpName = fmt.Sprintf("__p5mr_%d", e.chanSeq)
+		v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+		tmpID, err = e.defVar(v, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		tmpTid = resTid
+	} else if plan.kind == mrFuncField {
+		// Function field call (e.g., c.generate(r)): build the
+		// funcfieldcall node directly (mirrors desugarFuncFieldCall).
+		sel, ok := inner.Fun.(*ast.SelectorExpr)
+		if !ok {
+			return nil, nil, fmt.Errorf("gofrontend: funcfieldcall expects SelectorExpr, got %T", inner.Fun)
+		}
+		recvNode, err := e.exportExpr(sel.X)
+		if err != nil {
+			return nil, nil, err
+		}
+		args, err := e.exportCallArgs(inner)
+		if err != nil {
+			return nil, nil, err
+		}
+		pairTid, err := e.typeID(plan.tmpType)
+		if err != nil {
+			return nil, nil, err
+		}
+		callNode = e.node("funcfieldcall", inner, map[string]any{
+			"recv":       recvNode,
+			"field":      sel.Sel.Name,
+			"args":       args,
+			"pairType":   pairTid,
+			"pairFields": plan.pairFields,
+		})
+		e.chanSeq++
+		tmpName = fmt.Sprintf("__p5mr_%d", e.chanSeq)
+		v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+		tmpID, err = e.defVar(v, false)
+		if err != nil {
+			return nil, nil, err
+		}
+		tmpTid = pairTid
+	} else if plan.kind == mrIfaceMethod {
+		// Interface MR calls in argument position are not yet supported
+		// (same limitation as nested interface MR in multiResultHelperArgs).
+		return nil, nil, scopeErrorf("interface multi-result call in argument position is not supported in frontend/v1 scope (WS D)")
+	} else if plan.kind == mrCacheGet {
+		// fips140cache.Cache.Get(k, newFn, check) inlines to newFn().
+		// In argument position, f(cache.Get(...)) becomes f(newFn()).
+		// newFn() is single-valued, so no hoisting needed.
+		if len(inner.Args) < 2 {
+			return nil, nil, fmt.Errorf("gofrontend: Cache.Get requires at least 2 args (k, new)")
+		}
+		newCall := &ast.CallExpr{
+			Fun:    inner.Args[1],
+			Lparen: inner.Lparen,
+			Args:   []ast.Expr{},
+			Rparen: inner.Rparen,
+		}
+		x, err := e.exportExpr(newCall)
+		if err != nil {
+			return nil, nil, err
+		}
+		return []*Node{x}, nil, nil
+	} else {
+		// Synthetic/disk MR: export args (with nested hoisting), then
+		// build the __-helper call.
+		innerArgs, innerPre, err := e.multiResultHelperArgs(inner, plan)
+		if err != nil {
+			return nil, nil, err
+		}
+		preStmts = append(preStmts, innerPre...)
+		helperFn, err := e.multiResultHelper(plan)
+		if err != nil {
+			return nil, nil, err
+		}
+		callNode, tmpName, tmpID, tmpTid, err = e.synthHelperCall(inner, helperFn, plan.tmpType, innerArgs)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	// Emit the temp vardecl as a pre-statement.
+	preStmts = append(preStmts, e.node("vardecl", inner, map[string]any{
+		"names": []string{tmpName}, "objs": []int{tmpID},
+		"define": true, "type": nil, "values": []*Node{callNode},
+	}))
+	// Spread the pair fields as separate arguments.
+	var args []*Node
+	for i, field := range plan.pairFields {
+		sel, err := e.synthPairField(inner, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, sel)
+	}
+	return args, preStmts, nil
+}
+
 // exportBareMultiResultCall desugars a concrete multi-result call in
 // bare-statement position (w.Write(data) — legal Go, results discarded):
 // the __-helper call runs for its effects and the pair is dropped,
