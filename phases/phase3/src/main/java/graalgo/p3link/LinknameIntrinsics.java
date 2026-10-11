@@ -224,6 +224,10 @@ public final class LinknameIntrinsics {
                 args -> GoNet.sendto(args[0], args[1], args[2]), 3);
         Linknames.register("graalgo.net.recvfrom",
                 args -> GoNet.recvfrom(args[0], args[1], args[2]), 3);
+        // P3-M9 (module-probe lane): interface enumeration for
+        // net.Interface/Interfaces (github.com/google/uuid v1 node IDs).
+        Linknames.register("graalgo.net.interfaces",
+                args -> GoNet.interfaces(args[0]), 1);
     }
 
     /**
