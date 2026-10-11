@@ -724,7 +724,6 @@ func ParsePKCS1PublicKey(der []byte) (*rsa.PublicKey, error) {
 func ParsePKIXPublicKey(derBytes []byte) (any, error) {
 	panic("crypto/x509: ParsePKIXPublicKey: multi-result desugar")
 }
-`
 
 // ============================================================================
 // P3-M9: Subject Alternative Names, private-key parsing, and Verify.
@@ -1589,3 +1588,4 @@ func (e *HostnameError) Error() string {
 	}
 	return "x509: certificate is not valid for " + e.Host
 }
+`
