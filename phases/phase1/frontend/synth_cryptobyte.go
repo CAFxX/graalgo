@@ -611,6 +611,12 @@ func (s *String) readASN1Bytes(out *[]byte) bool {
 	if !s.ReadASN1(&bytes, asn1.INTEGER) || !checkASN1Integer(bytes) {
 		return false
 	}
+	if bytes[0]&0x80 == 0x80 {
+		return false
+	}
+	for len(bytes) > 1 && bytes[0] == 0 {
+		bytes = bytes[1:]
+	}
 	*out = bytes
 	return true
 }
