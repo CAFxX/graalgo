@@ -767,13 +767,15 @@ func main() {
 	}
 }
 
-// TestIfaceInstantiationSkippedMarker (R1 P1-2): the named entry for a
-// generic instantiation with methods (Box[int]) carries an empty
-// "methods" list AND "templateMethodsSkipped": true — the marker the
-// frontend's box sites read to fail fast with the named P3-M3 scope
-// error instead of dying at first dispatch with a misleading
-// "no method table installed" error.
-func TestIfaceInstantiationSkippedMarker(t *testing.T) {
+// TestIfaceInstantiationMethodTable (P3-M9 instantiation method tables):
+// the named entry for a generic instantiation with methods (Box[int])
+// carries a "methods" list with one entry per template method —
+// monomorphized, not skipped — and NO "templateMethodsSkipped" marker.
+// The entry's "obj" references the emitted instantiation object, so
+// interface dispatch (itab) targets real code. (This supersedes the
+// R1 P1-2 P3-M3 scope marker: boxing Box[int] as a non-empty interface
+// is now supported.)
+func TestIfaceInstantiationMethodTable(t *testing.T) {
 	const src = `package main
 
 type Getter interface{ Get() int }
@@ -787,10 +789,6 @@ func main() {
 	println(g.Get())
 }
 `
-	// The program itself is out of P3-M3 scope (instantiation method
-	// tables); what this test pins is the wire marker, not a successful
-	// export of the dispatch. Export must succeed — the scope error
-	// fires at frontend build time (Java), not here.
 	out, err := ExportFile(writeIfaceProg(t, src))
 	if err != nil {
 		t.Fatalf("ExportFile: %v", err)
@@ -799,12 +797,25 @@ func main() {
 	entries := typeEntries(t, doc)
 	_, detail := findNamedEntry(t, entries, "main.Box[int]")
 	methods, _ := detail["methods"].([]any)
-	if len(methods) != 0 {
-		t.Fatalf("main.Box[int] methods = %d entries, want 0 (template methods skipped)", len(methods))
+	if len(methods) != 1 {
+		t.Fatalf("main.Box[int] methods = %d entries, want 1 (monomorphized Get)", len(methods))
 	}
-	skipped, _ := detail["templateMethodsSkipped"].(bool)
-	if !skipped {
-		t.Fatal("main.Box[int] missing templateMethodsSkipped=true marker")
+	mentry, _ := methods[0].(map[string]any)
+	if mentry["name"] != "Get" {
+		t.Fatalf("main.Box[int] method name = %v, want Get", mentry["name"])
+	}
+	if _, has := detail["templateMethodsSkipped"]; has {
+		t.Fatal("main.Box[int] unexpectedly carries templateMethodsSkipped")
+	}
+	// The entry's obj must reference an emitted instantiation object.
+	objID, _ := mentry["obj"].(float64)
+	objects, _ := doc["objects"].([]any)
+	if int(objID) < 0 || int(objID) >= len(objects) {
+		t.Fatalf("method obj %v out of range (objects=%d)", objID, len(objects))
+	}
+	obj, _ := objects[int(objID)].(map[string]any)
+	if obj["kind"] != "inst" {
+		t.Fatalf("method obj kind = %v, want inst (monomorphized)", obj["kind"])
 	}
 	// A non-generic named type with methods must NOT carry the marker.
 	_, bdetail := findNamedEntry(t, entries, "main.Getter")

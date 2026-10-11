@@ -2504,7 +2504,13 @@ func ExportFile(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	e.instByKey = make(map[string]*instantiation, len(insts))
+	// P3-M9: instByKey may already hold on-demand instantiations created
+	// during synthetic import (generic __-helper desugars); preserve
+	// them — enumerateInstantiations seeded its dedup set from instByKey
+	// so insts carries no duplicates.
+	if e.instByKey == nil {
+		e.instByKey = make(map[string]*instantiation, len(insts))
+	}
 	for _, inst := range insts {
 		e.instByKey[inst.key] = inst
 	}
@@ -2514,6 +2520,17 @@ func ExportFile(path string) (string, error) {
 		if err := e.prepareInstantiation(inst); err != nil {
 			return "", err
 		}
+	}
+	// P3-M9 (instantiation method tables): method-table root seeding ran
+	// inside enumerateInstantiations, so instByKey now holds every
+	// template-method monomorphization for the types described so far.
+	// Arm on-demand monomorphization for types described later (during
+	// body export) and rebuild the method tables: template-method
+	// entries now resolve to instantiation object ids instead of being
+	// skipped.
+	e.mtOnDemand = true
+	if err := e.recomputeMethodTables(); err != nil {
+		return "", err
 	}
 	// M7: package-level vars — dependency-order initialization. This runs
 	// after instantiation enumeration so initializers can call
@@ -2560,6 +2577,16 @@ func ExportFile(path string) (string, error) {
 	// after the user's (call sites resolve by object id, so order is
 	// irrelevant; appending keeps user code first for readability).
 	if err := e.exportSyntheticBodies(&doc); err != nil {
+		return "", err
+	}
+	// P3-M9 (instantiation method tables): emit the bodies of on-demand
+	// monomorphizations queued while types were described during body
+	// export, then rebuild the method tables a final time so late
+	// types carry resolved entries.
+	if err := e.drainMethodTablePending(&doc); err != nil {
+		return "", err
+	}
+	if err := e.recomputeMethodTables(); err != nil {
 		return "", err
 	}
 	if !hasMain {
@@ -2988,6 +3015,20 @@ type exporter struct {
 	// M6 (WS H): method declarations by (receiver type name, method name).
 	methodIndex map[methodKey]*funcDeclInfo
 	instByKey   map[string]*instantiation
+	// P3-M9 (instantiation method tables): on-demand monomorphizations
+	// created for template methods of concrete generic instantiations
+	// whose types are described after instantiation enumeration (during
+	// body export). They are prepared immediately (so the method-table
+	// entry under construction and any later body-export lookup see a
+	// valid instID) and queued here for body emission by
+	// drainMethodTablePending after all bodies are exported.
+	mtPending []*instantiation
+	// P3-M9 (instantiation method tables): when true, methodTableEntries
+	// monomorphizes template methods of concrete generic instantiations
+	// instead of skipping them. Armed after instByKey is populated (and
+	// the method-table root seeding inside enumerateInstantiations has
+	// run); before that the old skip behavior applies.
+	mtOnDemand bool
 	// M7: package-level var declarations in source order (collected by
 	// collectPackageVars during the declaration scan; exported in
 	// dependency order by exportPackageVars after the scan).
@@ -4871,10 +4912,302 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 	return nil
 }
 
+// newFuncInstantiation builds the instantiation record for a generic
+// function template with the given type arguments (factored out of
+// enumerateInstantiations so the method-table drain can reuse it).
+func (e *exporter) newFuncInstantiation(fi *funcDeclInfo, targs []types.Type, subst *typeSubst) (*instantiation, error) {
+	key := instKeyForFunc(fi, targs, subst)
+	if !isConcreteKey(key) {
+		return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of %s", fi.obj.Name())
+	}
+	sub2 := &typeSubst{parent: subst, bind: bindParams(fi.sig.TypeParams(), targs)}
+	return &instantiation{
+		decl: fi, subst: sub2, rawTargs: targs,
+		key: key, name: instNameForFunc(fi, targs, subst),
+	}, nil
+}
+
+// seedMethodTableRoots enqueues monomorphizations for the template
+// methods of every concrete generic instantiation described so far
+// (P3-M9 instantiation method tables). Interface dispatch lowers to the
+// itab built from the wire method tables, so each template method needs
+// an emitted instantiation — exactly as if it had been called directly.
+// The existing fixpoint below discovers nested instantiations inside
+// these bodies; the existing prepare/emission loops handle the rest.
+func (e *exporter) seedMethodTableRoots(enqueue func(*instantiation)) error {
+	for _, t := range e.typeList {
+		if t == nil || !isGenericInstantiation(t) {
+			continue
+		}
+		ms := types.NewMethodSet(t)
+		for i := 0; i < ms.Len(); i++ {
+			sel := ms.At(i)
+			mobj, ok := sel.Obj().(*types.Func)
+			if !ok {
+				continue
+			}
+			inst, err := e.buildMethodTableInst(t, sel, mobj)
+			if err != nil {
+				return err
+			}
+			if inst != nil {
+				enqueue(inst)
+			}
+		}
+	}
+	return nil
+}
+
+// buildMethodTableInst computes the monomorphization for one template
+// method of a concrete generic instantiation t (sel/mobj from
+// types.NewMethodSet(t)). It covers the three template shapes
+// methodTableEntries encounters:
+//
+//  1. direct template hit in funcByObj (generic methods keep their
+//     origin object — type params cannot be substituted);
+//  2. multi-result template mapped to its generic __-helper
+//     (helperMapped): the helper is a plain generic function
+//     instantiated with the receiver's type arguments;
+//  3. instantiated method-set copies that miss funcByObj (the common
+//     case): the template is resolved via methodIndex, extended to
+//     promoted methods by walking the selection's embedded path
+//     (mirrors resolvePromotedMethodCall).
+//
+// It returns (nil, nil) when the method cannot be monomorphized here:
+// generic methods with their own type params (no type arguments are
+// available from the method table), unresolvable templates, or
+// non-concrete keys. Callers keep the old skip-and-mark behavior then.
+func (e *exporter) buildMethodTableInst(t types.Type, sel *types.Selection, mobj *types.Func) (*instantiation, error) {
+	mname := mobj.Name()
+	// The declaring receiver: t itself for direct methods; for promoted
+	// methods walk the embedded field path (embeddedFieldType substitutes
+	// type arguments for instantiated receivers).
+	recvT := t
+	if index := sel.Index(); len(index) > 1 {
+		recvT = embeddedFieldType(t, index[:len(index)-1])
+		if recvT == nil {
+			return nil, nil
+		}
+	}
+	rn := derefNamed(recvT)
+	if rn == nil || !isGenericInstantiation(rn) {
+		return nil, nil
+	}
+	// Resolve the receiver's type arguments through the ambient
+	// substitution (methodTableEntries can run inside an instantiation
+	// body where the type mentions bound type parameters).
+	recvTargs := make([]types.Type, 0, rn.TypeArgs().Len())
+	for _, ta := range typeList(rn.TypeArgs()) {
+		recvTargs = append(recvTargs, e.substType(ta))
+	}
+	// Identify the template: direct funcByObj hit, the multi-result
+	// helper, or the methodIndex lookup for instantiated copies.
+	fi, ok := e.funcByObj[mobj]
+	helperMapped := false
+	if !ok {
+		if hfi, ok := e.multiResultHelperFunc(mobj); ok {
+			fi, helperMapped = hfi, true
+		} else if tfi := e.methodTableTemplate(rn, mname); tfi != nil {
+			fi = tfi
+		} else {
+			return nil, nil
+		}
+	}
+	if !fi.isTemplate {
+		return nil, nil
+	}
+	if helperMapped {
+		// The __-helper is a plain generic function parameterized like
+		// the receiver; instantiate it with the receiver's type args
+		// (mirrors the direct-call desugar's targsFromRecv). A
+		// non-concrete key means "not monomorphizable here", not an
+		// exporter bug.
+		inst, err := e.newFuncInstantiation(fi, recvTargs, e.subst)
+		if err != nil {
+			if strings.Contains(err.Error(), "unbound type parameter") {
+				return nil, nil
+			}
+			return nil, err
+		}
+		return inst, nil
+	}
+	if fi.sig.TypeParams().Len() > 0 {
+		// Generic method: no type arguments available from the method
+		// table — genuinely not monomorphizable (Go also forbids type
+		// parameters on interface methods, so it can never dispatch).
+		return nil, nil
+	}
+	// Method instantiation (mirrors resolveMethodCall): bind the
+	// declaration's receiver type parameters to the concrete receiver's
+	// type arguments.
+	declRN := derefNamed(fi.recv.Type())
+	if declRN == nil {
+		return nil, fmt.Errorf("gofrontend: method %s has non-named declared receiver", fi.obj.Name())
+	}
+	declArgs := typeList(declRN.TypeArgs())
+	if len(declArgs) != len(recvTargs) {
+		return nil, fmt.Errorf("gofrontend: receiver arity mismatch for method %s", fi.obj.Name())
+	}
+	bind := make(map[*types.TypeParam]types.Type)
+	for i := range declArgs {
+		tp, ok := declArgs[i].(*types.TypeParam)
+		if !ok {
+			continue // concrete in the declaration; nothing to bind
+		}
+		bind[tp] = recvTargs[i]
+	}
+	sub := &typeSubst{parent: e.subst, bind: bind}
+	recvKey := substString(recvT, sub)
+	key := "M:" + recvKey + "." + mname
+	if !isConcreteKey(key) {
+		return nil, nil
+	}
+	return &instantiation{
+		decl: fi, subst: sub, rawTargs: recvTargs,
+		key: key, name: prettyType(recvT, sub) + "." + mname,
+	}, nil
+}
+
+// methodTableTemplate resolves the template declaration for a method-set
+// member that missed funcByObj (instantiated copies never hit it) and has
+// no multi-result helper. It mirrors resolveMethodCall's methodIndex
+// lookup (including the P3-M8b pointer-identity fallback). rn is the
+// declaring receiver's named type (already walked past promotion).
+func (e *exporter) methodTableTemplate(rn *types.Named, mname string) *funcDeclInfo {
+	if fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]; ok {
+		return fi
+	}
+	return e.findMethodByName(rn.Obj(), mname)
+}
+
+// ensureFuncInstantiation returns the object id for a generic function
+// instantiation, creating it on demand when absent from instByKey. A
+// newly created instantiation is prepared immediately (its instID is
+// referenced by the caller) and queued on e.mtPending for body emission
+// by drainMethodTablePending.
+func (e *exporter) ensureFuncInstantiation(fi *funcDeclInfo, targs []types.Type) (int, error) {
+	inst, err := e.newFuncInstantiation(fi, targs, e.subst)
+	if err != nil {
+		return 0, err
+	}
+	// P3-M9: the desugar can run during synthetic import, before
+	// enumerateInstantiations populates instByKey.
+	if e.instByKey == nil {
+		e.instByKey = make(map[string]*instantiation)
+	}
+	if existing, ok := e.instByKey[inst.key]; ok {
+		return existing.instID, nil
+	}
+	if err := e.prepareInstantiation(inst); err != nil {
+		return 0, err
+	}
+	e.instByKey[inst.key] = inst
+	e.mtPending = append(e.mtPending, inst)
+	return inst.instID, nil
+}
+
+// helperCallTargs extracts the type arguments for a generic __-helper
+// call from the original call expression: instance type args for Ident
+// calls, the receiver's type args (plus the method's own, if any) for
+// method calls — resolved through the ambient substitution.
+func (e *exporter) helperCallTargs(c *ast.CallExpr) ([]types.Type, error) {
+	var targs []types.Type
+	if id, ok := c.Fun.(*ast.Ident); ok {
+		targs = targsFromInstances(e, id)
+	} else if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
+		// Package-qualified call (pkg.Fn): not a method selection;
+		// type args come from the Sel ident's instance info.
+		if x, ok := sel.X.(*ast.Ident); ok {
+			if _, isPkg := e.info.Uses[x].(*types.PkgName); isPkg {
+				targs = targsFromInstances(e, sel.Sel)
+			}
+		}
+		if targs == nil {
+			selection, ok := e.info.Selections[sel]
+			if !ok {
+				return nil, fmt.Errorf("gofrontend: no selection for helper method call")
+			}
+			targs = targsFromRecv(selection.Recv())
+			if ii, ok := e.info.Instances[sel.Sel]; ok {
+				targs = append(targs, typeList(ii.TypeArgs)...)
+			}
+		}
+	} else {
+		return nil, fmt.Errorf("gofrontend: helper call has non-ident/selector fun %T", c.Fun)
+	}
+	out := make([]types.Type, len(targs))
+	for i, ta := range targs {
+		out[i] = e.substType(ta)
+	}
+	return out, nil
+}
+
+// drainMethodTablePending emits the bodies of on-demand method-table
+// instantiations created during body export (e.mtPending): nested
+// instantiations are discovered with the same fixpoint as
+// enumerateInstantiations, then each new instantiation is prepared and
+// emitted. Repeats until no new pending instantiations appear
+// (exportInstantiation can describe new types, whose method tables can
+// queue more).
+func (e *exporter) drainMethodTablePending(doc *Doc) error {
+	for len(e.mtPending) > 0 {
+		batch := e.mtPending
+		e.mtPending = nil
+		seen := make(map[string]bool, len(batch))
+		order := make([]*instantiation, 0, len(batch))
+		var nested []*instantiation
+		for _, inst := range batch {
+			seen[inst.key] = true
+			order = append(order, inst)
+		}
+		enqueue := func(inst *instantiation) {
+			if seen[inst.key] {
+				return
+			}
+			seen[inst.key] = true
+			if _, ok := e.instByKey[inst.key]; ok {
+				return
+			}
+			e.instByKey[inst.key] = inst
+			nested = append(nested, inst)
+			order = append(order, inst)
+		}
+		for i := 0; i < len(order); i++ {
+			if len(order) > 100000 {
+				return fmt.Errorf("gofrontend: instantiation explosion (%d): internal error", len(order))
+			}
+			if err := e.findNested(order[i], enqueue, e.newFuncInstantiation); err != nil {
+				return err
+			}
+		}
+		// The batch was prepared at creation (its instIDs are already
+		// referenced by method tables); only nested discoveries need it.
+		for _, inst := range nested {
+			if err := e.prepareInstantiation(inst); err != nil {
+				return err
+			}
+		}
+		for _, inst := range order {
+			f, err := e.exportInstantiation(inst)
+			if err != nil {
+				return err
+			}
+			doc.Funcs = append(doc.Funcs, f)
+		}
+	}
+	return nil
+}
+
 func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo) ([]*instantiation, error) {
 	// Roots are collected from the user file and from every imported
 	// synthetic package's own body (see scanRoots).
 	seen := make(map[string]*instantiation)
+	// P3-M9: on-demand instantiations created during synthetic import
+	// (generic __-helper desugars) pre-seed the dedup set so roots are
+	// not duplicated.
+	for key, inst := range e.instByKey {
+		seen[key] = inst
+	}
 	var order []*instantiation
 	enqueue := func(inst *instantiation) {
 		if _, ok := seen[inst.key]; ok {
@@ -4883,17 +5216,7 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 		seen[inst.key] = inst
 		order = append(order, inst)
 	}
-	newFuncInst := func(fi *funcDeclInfo, targs []types.Type, subst *typeSubst) (*instantiation, error) {
-		key := instKeyForFunc(fi, targs, subst)
-		if !isConcreteKey(key) {
-			return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of %s", fi.obj.Name())
-		}
-		sub2 := &typeSubst{parent: subst, bind: bindParams(fi.sig.TypeParams(), targs)}
-		return &instantiation{
-			decl: fi, subst: sub2, rawTargs: targs,
-			key: key, name: instNameForFunc(fi, targs, subst),
-		}, nil
-	}
+	newFuncInst := e.newFuncInstantiation
 
 	if err := e.scanRoots(e.info, []*ast.File{file}, funcs, enqueue, newFuncInst); err != nil {
 		return nil, err
@@ -4918,6 +5241,12 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 		}
 	}
 	// Fixpoint: nested instantiations inside generic bodies.
+	// P3-M9 (instantiation method tables): seed monomorphizations for
+	// the template methods of concrete generic instantiations first, so
+	// the fixpoint discovers nested instantiations inside their bodies.
+	if err := e.seedMethodTableRoots(enqueue); err != nil {
+		return nil, err
+	}
 	for i := 0; i < len(order); i++ {
 		if len(order) > 100000 {
 			return nil, fmt.Errorf("gofrontend: instantiation explosion (%d): internal error", len(order))
@@ -8304,27 +8633,136 @@ func typeKeyOf(t types.Type) string {
 // pointer-receiver method promoted via a value-embedded struct field
 // (P3-M9). The Java dispatcher walks "index" to adapt the receiver
 // (P3-M3). Interface-declared methods (no funcdecl exists to point at)
-// and template methods are skipped — the latter are out of P3-M3 scope.
-// Sorted by method name for determinism.
+// are skipped. Template methods of concrete generic instantiations are
+// monomorphized (P3-M9 instantiation method tables): "obj" is the
+// instantiation's object id. Sorted by method name for determinism.
 //
-// The second return value reports whether any template method was skipped
-// for this type (P3-M3 remediation, R1 P1-2): the caller records it as
-// "templateMethodsSkipped" on the entry detail so the frontend can fail
-// fast with the named P3-M3 scope error when such an instantiation is
-// boxed into a non-empty interface, instead of dying at first dispatch
-// with a misleading "no method table installed" error.
+// The second return value reports whether any template method could not
+// be monomorphized for this type (P3-M3 remediation, R1 P1-2): the caller
+// records it as "templateMethodsSkipped" on the entry detail so the
+// frontend can fail fast with the named P3-M3 scope error when such an
+// instantiation is boxed into a non-empty interface, instead of dying at
+// first dispatch with a misleading "no method table installed" error.
+// methodEntry is one wire method-table entry under construction
+// (factored from methodTableEntries so the monomorphization paths share
+// the entry-building logic).
+type methodEntry struct {
+	name        string
+	obj         int
+	recv        string
+	index       []int
+	implkey     string
+	unsupported bool
+	addrOf      bool
+}
+
+// methodTableEntry builds one wire method-table entry for mobj with an
+// already-resolved obj (funcdecl id or instantiation id). fi is the
+// declaration the receiver kind is derived from (template or helper).
+func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *types.Func, fi *funcDeclInfo, obj int, helperMapped bool) (methodEntry, error) {
+	recv := "value"
+	if helperMapped {
+		// The helper is a plain package-level function; the
+		// dispatcher's receiver adaptation must mirror the
+		// method's DECLARED receiver so the helper receives the
+		// same shape the concrete desugar passes it.
+		if msig, ok := mobj.Type().(*types.Signature); ok && msig.Recv() != nil {
+			if _, ok := msig.Recv().Type().(*types.Pointer); ok {
+				recv = "pointer"
+			}
+		}
+	} else if fi.recv != nil {
+		if _, ok := fi.recv.Type().(*types.Pointer); ok {
+			recv = "pointer"
+		}
+	}
+	// Selection.Index() for a method is [embedded field path...,
+	// method index in the declaring type] (go/types selection.go):
+	// the receiver adaptation path is everything but the last entry —
+	// empty for direct methods, e.g. [0] for a method promoted via
+	// embedded field 0. Normalize nil to [] so the wire field is
+	// always an array, never null.
+	index := sel.Index()
+	var path []int
+	if len(index) > 1 {
+		path = index[:len(index)-1]
+	} else {
+		path = []int{}
+	}
+	// P3-M3: promoted method with a pointer receiver via a
+	// value-embedded field: the dispatcher must take the address of
+	// the promoted field value (gc's implicit &). P3-M9: this is
+	// sound for struct-typed fields (read by reference — the live
+	// field object), so mark supported with "addrOf": true. For
+	// non-struct fields (primitives etc.) address-taking would need
+	// writeback (out of scope): mark unsupported ("index": null)
+	// rather than failing the export — the failure fires only if the
+	// method is actually dispatched through an interface (fail fast
+	// at dispatch, named P3-M3 scope error — R2 P2-7 narrowed the
+	// old whole-itab fail-fast to per-method) — never for programs
+	// that merely declare the type.
+	unsupported := false
+	addrOf := false
+	if len(path) > 0 && recv == "pointer" {
+		if ft := embeddedFieldType(t, path); ft != nil {
+			for {
+				if nt, ok := ft.(*types.Named); ok {
+					ft = nt.Underlying()
+					continue
+				}
+				break
+			}
+			if _, ok := ft.(*types.Pointer); !ok {
+				if _, ok := ft.(*types.Struct); ok {
+					addrOf = true
+				} else {
+					unsupported = true
+				}
+			}
+		}
+	}
+	// The *types.Signature on a *types.Func method object carries the
+	// declared receiver; sigKeyOf renders only params/results/variadic,
+	// so no stripping is needed for the implements-check identity key.
+	msig, ok := mobj.Type().(*types.Signature)
+	if !ok {
+		return methodEntry{}, fmt.Errorf("gofrontend: method %s has non-signature type %T (exporter bug)",
+			mobj.Name(), mobj.Type())
+	}
+	return methodEntry{name: mobj.Name(), obj: obj, recv: recv, index: path,
+		implkey: implKeyOf(mobj, msig), unsupported: unsupported, addrOf: addrOf}, nil
+}
+
+// methodTableOnDemand monomorphizes a template method for the method
+// table of a concrete generic instantiation described after
+// instantiation enumeration (e.mtOnDemand must be true). It returns the
+// instantiation — the existing one from instByKey, or a newly created
+// one — or (nil, nil) when the method cannot be monomorphized (the
+// caller keeps the skip-and-mark behavior).
+//
+// A newly created instantiation is prepared immediately: its instID is
+// referenced by the method-table entry under construction and may be
+// looked up by body export after this returns. Body emission is deferred
+// to drainMethodTablePending.
+func (e *exporter) methodTableOnDemand(t types.Type, sel *types.Selection, mobj *types.Func) (*instantiation, error) {
+	inst, err := e.buildMethodTableInst(t, sel, mobj)
+	if err != nil || inst == nil {
+		return inst, err
+	}
+	if existing, ok := e.instByKey[inst.key]; ok {
+		return existing, nil
+	}
+	if err := e.prepareInstantiation(inst); err != nil {
+		return nil, err
+	}
+	e.instByKey[inst.key] = inst
+	e.mtPending = append(e.mtPending, inst)
+	return inst, nil
+}
+
 func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 	ms := types.NewMethodSet(t)
-	type entry struct {
-		name        string
-		obj         int
-		recv        string
-		index       []int
-		implkey     string
-		unsupported bool
-		addrOf      bool
-	}
-	entries := make([]entry, 0, ms.Len())
+	entries := make([]methodEntry, 0, ms.Len())
 	tmplSkipped := false
 	for i := 0; i < ms.Len(); i++ {
 		sel := ms.At(i)
@@ -8349,86 +8787,62 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			var hfi *funcDeclInfo
 			hfi, ok = e.multiResultHelperFunc(mobj)
 			if !ok {
+				// P3-M9 (instantiation method tables): the method-set
+				// object of an instantiated type is a copy that never
+				// hits funcByObj. Resolve the template and monomorphize.
+				if e.mtOnDemand && isGenericInstantiation(t) {
+					inst, err := e.methodTableOnDemand(t, sel, mobj)
+					if err != nil {
+						return nil, false, err
+					}
+					if inst == nil {
+						tmplSkipped = true
+						continue
+					}
+					en, err := e.methodTableEntry(t, sel, mobj, inst.decl, inst.instID, false)
+					if err != nil {
+						return nil, false, err
+					}
+					entries = append(entries, en)
+					continue
+				}
 				continue
 			}
 			fi = hfi
 			helperMapped = true
 		}
 		if fi.isTemplate {
+			// P3-M9 (instantiation method tables): monomorphize template
+			// methods of concrete generic instantiations instead of
+			// skipping them — exactly like resolveMethodCall does for
+			// direct calls. The entry references the instantiation's
+			// object id so interface dispatch (itab) targets emitted
+			// code. Anything not monomorphizable keeps the old
+			// skip-and-mark (fail fast at boxing, never silent).
+			if e.mtOnDemand && isGenericInstantiation(t) {
+				inst, err := e.methodTableOnDemand(t, sel, mobj)
+				if err != nil {
+					return nil, false, err
+				}
+				if inst == nil {
+					tmplSkipped = true
+					continue
+				}
+				en, err := e.methodTableEntry(t, sel, mobj, fi, inst.instID, helperMapped)
+				if err != nil {
+					return nil, false, err
+				}
+				entries = append(entries, en)
+				continue
+			}
 			tmplSkipped = true
 			continue
 		}
-		recv := "value"
-		if helperMapped {
-			// The helper is a plain package-level function; the
-			// dispatcher's receiver adaptation must mirror the
-			// method's DECLARED receiver so the helper receives the
-			// same shape the concrete desugar passes it.
-			if msig, ok := mobj.Type().(*types.Signature); ok && msig.Recv() != nil {
-				if _, ok := msig.Recv().Type().(*types.Pointer); ok {
-					recv = "pointer"
-				}
-			}
-		} else if fi.recv != nil {
-			if _, ok := fi.recv.Type().(*types.Pointer); ok {
-				recv = "pointer"
-			}
+		en, err := e.methodTableEntry(t, sel, mobj, fi, fi.funcID, helperMapped)
+		if err != nil {
+			return nil, false, err
 		}
-		// Selection.Index() for a method is [embedded field path...,
-		// method index in the declaring type] (go/types selection.go):
-		// the receiver adaptation path is everything but the last entry —
-		// empty for direct methods, e.g. [0] for a method promoted via
-		// embedded field 0. Normalize nil to [] so the wire field is
-		// always an array, never null.
-		index := sel.Index()
-		var path []int
-		if len(index) > 1 {
-			path = index[:len(index)-1]
-		} else {
-			path = []int{}
-		}
-		// P3-M3: promoted method with a pointer receiver via a
-		// value-embedded field: the dispatcher must take the address of
-		// the promoted field value (gc's implicit &). P3-M9: this is
-		// sound for struct-typed fields (read by reference — the live
-		// field object), so mark supported with "addrOf": true. For
-		// non-struct fields (primitives etc.) address-taking would need
-		// writeback (out of scope): mark unsupported ("index": null)
-		// rather than failing the export — the failure fires only if the
-		// method is actually dispatched through an interface (fail fast
-		// at dispatch, named P3-M3 scope error — R2 P2-7 narrowed the
-		// old whole-itab fail-fast to per-method) — never for programs
-		// that merely declare the type.
-		unsupported := false
-		addrOf := false
-		if len(path) > 0 && recv == "pointer" {
-			if ft := embeddedFieldType(t, path); ft != nil {
-				for {
-					if nt, ok := ft.(*types.Named); ok {
-						ft = nt.Underlying()
-						continue
-					}
-					break
-				}
-				if _, ok := ft.(*types.Pointer); !ok {
-					if _, ok := ft.(*types.Struct); ok {
-						addrOf = true
-					} else {
-						unsupported = true
-					}
-				}
-			}
-		}
-		// The *types.Signature on a *types.Func method object carries the
-		// declared receiver; sigKeyOf renders only params/results/variadic,
-		// so no stripping is needed for the implements-check identity key.
-		msig, ok := mobj.Type().(*types.Signature)
-		if !ok {
-			return nil, false, fmt.Errorf("gofrontend: method %s has non-signature type %T (exporter bug)",
-				mobj.Name(), mobj.Type())
-		}
-		entries = append(entries, entry{name: mobj.Name(), obj: fi.funcID, recv: recv, index: path,
-			implkey: implKeyOf(mobj, msig), unsupported: unsupported, addrOf: addrOf})
+		entries = append(entries, en)
 	}
 	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
 	out := make([]any, 0, len(entries))
@@ -8445,16 +8859,6 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 		}
 		out = append(out, map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv,
 			"index": idx, "implkey": en.implkey, "addrOf": en.addrOf})
-	}
-	if !tmplSkipped && ms.Len() > 0 && isGenericInstantiation(t) {
-		// The method-set objects of an instantiation (e.g. Box[int])
-		// are instantiated copies, never the origin's *types.Func, so
-		// they miss funcByObj above (the !ok path) rather than hitting
-		// the isTemplate path — but every one of them is template-derived
-		// and therefore skipped. Mark it: boxing such an instantiation
-		// into a non-empty interface fails fast with the named P3-M3
-		// scope error (R1 P1-2) instead of dying at first dispatch.
-		tmplSkipped = true
 	}
 	return out, tmplSkipped, nil
 }

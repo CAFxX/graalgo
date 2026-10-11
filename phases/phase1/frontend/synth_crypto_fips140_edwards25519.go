@@ -37,16 +37,10 @@ type projP2 struct {
 //
 // The zero value is NOT valid, and it may be used only as a receiver.
 type Point struct {
-	// Make the type not comparable (i.e. used with == or as a map key), as
-	// equivalent points can be represented by different Go values.
-	_ incomparable
-
 	// The point is internally represented in extended coordinates (X, Y, Z, T)
 	// where x = X/Z, y = Y/Z, and xy = T/Z per https://eprint.iacr.org/2008/522.
 	x, y, z, t field.Element
 }
-
-type incomparable [0]func()
 
 func checkInitialized(points ...*Point) {
 	for _, p := range points {
@@ -74,38 +68,51 @@ func (v *projP2) Zero() *projP2 {
 }
 
 // identity is the point at infinity.
-var identity = func() *Point {
-	r := __mrPoint_SetBytes(new(Point), []byte{
-	1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-	0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
-	if r.v1 != nil {
-		panic("edwards25519: invalid constant")
+// Initialized lazily to avoid package-init-time field arithmetic bugs.
+var identity *Point
+
+func getIdentity() *Point {
+	if identity == nil {
+		r := __mrPoint_SetBytes(new(Point), []byte{
+		1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
+		if r.v1 != nil {
+			panic("edwards25519: invalid constant")
+		}
+		identity = r.v0
 	}
-	return r.v0
-}()
+	return identity
+}
 
 // NewIdentityPoint returns a new Point set to the identity.
 func NewIdentityPoint() *Point {
-	return new(Point).Set(identity)
+	return new(Point).Set(getIdentity())
 }
 
 // generator is the canonical curve basepoint. See TestGenerator for the
 // correspondence of this encoding with the values in RFC 8032.
-var generator = func() *Point {
-	r := __mrPoint_SetBytes(new(Point), []byte{
-	0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-	0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-	0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-	0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66})
-	if r.v1 != nil {
-		panic("edwards25519: invalid constant")
+// generator is the canonical curve basepoint.
+// Initialized lazily to avoid package-init-time field arithmetic bugs.
+var generator *Point
+
+func getGenerator() *Point {
+	if generator == nil {
+		r := __mrPoint_SetBytes(new(Point), []byte{
+		0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+		0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+		0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
+		0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66})
+		if r.v1 != nil {
+			panic("edwards25519: invalid constant")
+		}
+		generator = r.v0
 	}
-	return r.v0
-}()
+	return generator
+}
 
 // NewGeneratorPoint returns a new Point set to the canonical generator.
 func NewGeneratorPoint() *Point {
-	return new(Point).Set(generator)
+	return new(Point).Set(getGenerator())
 }
 
 func (v *projCached) Zero() *projCached {
@@ -255,15 +262,11 @@ func (v *Point) fromP2(p *projP2) *Point {
 }
 
 // d is a constant in the curve equation.
-var d *field.Element
-
-func init() {
-	d = field.SetBytesOrPanic(new(field.Element), []byte{
-		0xa3, 0x78, 0x59, 0x13, 0xca, 0x4d, 0xeb, 0x75,
-		0xab, 0xd8, 0x41, 0x41, 0x4d, 0x0a, 0x70, 0x00,
-		0x98, 0xe8, 0x79, 0x77, 0x79, 0x40, 0xc7, 0x8c,
-		0x73, 0xfe, 0x6f, 0x2b, 0xee, 0x6c, 0x03, 0x52})
-}
+var d = field.SetBytesOrPanic(new(field.Element), []byte{
+	0xa3, 0x78, 0x59, 0x13, 0xca, 0x4d, 0xeb, 0x75,
+	0xab, 0xd8, 0x41, 0x41, 0x4d, 0x0a, 0x70, 0x00,
+	0x98, 0xe8, 0x79, 0x77, 0x79, 0x40, 0xc7, 0x8c,
+	0x73, 0xfe, 0x6f, 0x2b, 0xee, 0x6c, 0x03, 0x52})
 var d2 = new(field.Element).Add(d, d)
 
 func (v *projCached) FromP3(p *Point) *projCached {

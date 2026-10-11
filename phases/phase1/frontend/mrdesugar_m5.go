@@ -704,6 +704,7 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/internal/fips140/ecdsa", "SignDeterministic", "", "__mrSignDeterministic", "", "__mrSignDeterministicPair", []string{"v0", "v1"}},
 	{"crypto/internal/fips140/ecdsa", "randomPoint", "", "__mrrandomPoint", "", "__mrrandomPointPair", []string{"k", "p", "err"}},
 	{"crypto/internal/fips140/ecdsa", "signGeneric", "", "__mrsignGeneric", "", "__mrsignGenericPair", []string{"v0", "v1"}},
+	{"crypto/internal/fips140/ecdsa", "sign", "", "__mrsign", "", "__mrsignPair", []string{"v0", "v1"}},
 	{"crypto/internal/fips140/ed25519", "GenerateKey", "", "__mrGenerateKey", "", "__mrGenerateKeyPair", []string{"v0", "v1"}},
 	{"crypto/internal/fips140/ed25519", "NewPrivateKey", "", "__mrNewPrivateKey", "", "__mrNewPrivateKeyPair", []string{"v0", "v1"}},
 	{"crypto/internal/fips140/ed25519", "NewPrivateKeyFromSeed", "", "__mrNewPrivateKeyFromSeed", "", "__mrNewPrivateKeyFromSeedPair", []string{"v0", "v1"}},
@@ -2088,6 +2089,15 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	}
 	// Positional shape check: the helper's single result is the pair
 	// struct; its field types must equal the method's result types.
+	// P3-M9 (instantiation method tables): the helper may be generic
+	// with a generic pair type (e.g.
+	// __mrnistCurve_pointFromAffinePair[Point]). Bind its type
+	// parameters from the method receiver's type arguments before
+	// comparing, so instantiated methods resolve to their generic
+	// helper. The binding is positional, mirroring the table's contract
+	// (each helper is written for its receiver); a genuine mismatch
+	// still fails closed below. Non-generic helpers are unaffected
+	// (no type params to bind).
 	hsig := fi.sig
 	if hsig == nil || hsig.Results().Len() != 1 {
 		return nil, false
@@ -2104,10 +2114,26 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	if !ok || pst.NumFields() != sig.Results().Len() {
 		return nil, false
 	}
-	for i := 0; i < pst.NumFields(); i++ {
-		if !types.Identical(pst.Field(i).Type(), sig.Results().At(i).Type()) {
-			return nil, false
+	savedSubst := e.subst
+	if hps := fi.sig.TypeParams(); hps.Len() > 0 {
+		if rtargs := nt.TypeArgs(); rtargs != nil && rtargs.Len() == hps.Len() {
+			bind := make(map[*types.TypeParam]types.Type, hps.Len())
+			for i := 0; i < hps.Len(); i++ {
+				bind[hps.At(i)] = rtargs.At(i)
+			}
+			e.subst = &typeSubst{parent: savedSubst, bind: bind}
 		}
+	}
+	match := true
+	for i := 0; i < pst.NumFields(); i++ {
+		if !types.Identical(e.substType(pst.Field(i).Type()), sig.Results().At(i).Type()) {
+			match = false
+			break
+		}
+	}
+	e.subst = savedSubst
+	if !match {
+		return nil, false
 	}
 	return fi, true
 }
@@ -2592,12 +2618,29 @@ func (e *exporter) synthHelperCallNode(c *ast.CallExpr, fn *types.Func, resultTy
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: synthetic helper %s not in funcByObj", fn.Name())
 	}
+	// P3-M9 (instantiation method tables): a generic helper (e.g.
+	// __mrgenerateFIPS[P]) must be instantiated with the call-site type
+	// arguments — referencing the template's funcID would leave an
+	// unresolvable function object. The instantiation is created on
+	// demand (prepared immediately, body emitted by
+	// drainMethodTablePending).
+	obj := fi.funcID
+	if fi.isTemplate {
+		targs, err := e.helperCallTargs(c)
+		if err != nil {
+			return nil, err
+		}
+		obj, err = e.ensureFuncInstantiation(fi, targs)
+		if err != nil {
+			return nil, err
+		}
+	}
 	sigID, err := e.typeID(fn.Type())
 	if err != nil {
 		return nil, err
 	}
 	fun := e.node("ident", c, map[string]any{
-		"name": fn.Name(), "obj": fi.funcID, "type": sigID,
+		"name": fn.Name(), "obj": obj, "type": sigID,
 	})
 	resTid, err := e.typeID(resultType)
 	if err != nil {
