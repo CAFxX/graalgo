@@ -69,6 +69,8 @@ class Gen:
         self.need_sorted_keys = set()
         self.pending_structs = []
         self.loop_vars = set()  # loop variables: never assigned in body
+        self.loop_depth = 0  # cap loop nesting: unbounded nesting with
+        # prints/appends inside is an output bomb (seed 1000794: 3.4GB)
 
     def r(self):
         return self.rng.random()
@@ -236,13 +238,38 @@ class Gen:
         """Ensure a float divisor isn't a compile-time zero (Go rejects
         constant x/0.0). Runtime zero is fine (yields +Inf)."""
         import re as _re
+
+        def strip_matched_parens(t):
+            # Strip outer parens only when they form a matched pair;
+            # naive strip of first '(' + last ')' unbalances "((A)) / (B)".
+            while len(t) >= 2 and t.startswith("(") and t.endswith(")"):
+                depth = 0
+                matched_at_end = False
+                for i, ch in enumerate(t):
+                    if ch == "(":
+                        depth += 1
+                    elif ch == ")":
+                        depth -= 1
+                        if depth == 0:
+                            matched_at_end = (i == len(t) - 1)
+                            break
+                if not matched_at_end:
+                    break
+                t = t[1:-1].strip()
+            return t
+
         t = b.strip()
         # Normalize: float32(X)/float64(X) -> (X); strip outer parens.
         t = _re.sub(r'float(?:32|64)\(', '(', t)
-        while t.startswith("(") and t.endswith(")"):
-            t = t[1:-1].strip()
+        t = strip_matched_parens(t)
+        # Neutralize scientific notation (1e10, 2.5E-3): the 'e'/'E' is
+        # not an identifier. Without this, a constant divisor containing
+        # e.g. 1e10 is misclassified as a runtime expression, and a
+        # constant-zero divisor slips through -> "invalid operation:
+        # division by zero" (seed 1000061: (1.5-float32(1.5))*... == 0.0).
+        t_no_sci = _re.sub(r'\d[eE][+-]?\d+', '1', t)
         # If it references any identifier, it's runtime → safe (Inf ok).
-        if _re.search(r'[a-zA-Z_]', t):
+        if _re.search(r'[a-zA-Z_]', t_no_sci):
             return b
         # Constant expression: evaluate safely; if zero, use 1.0.
         try:
@@ -366,13 +393,23 @@ class Gen:
         return "\n".join(lines)
 
     def for_stmt(self, depth):
+        if self.loop_depth >= 2:
+            # Nesting cap: emit plain statements instead of another loop.
+            # (Each loop runs up to 20 iterations; unbounded nesting with
+            # prints/appends inside produces output bombs.)
+            return "\n".join(self.stmt(depth + 1)
+                              for _ in range(self.rint(1, 3)))
         bound = self.rint(1, 20)
         self.push_scope()
         self.var_counter += 1
         i = f"fi{self.var_counter}"
         self.scopes[-1][i] = "int"
         self.loop_vars.add(i)
-        body = [self.stmt(depth + 1) for _ in range(self.rint(1, 3))]
+        self.loop_depth += 1
+        try:
+            body = [self.stmt(depth + 1) for _ in range(self.rint(1, 3))]
+        finally:
+            self.loop_depth -= 1
         self.loop_vars.discard(i)
         popped = self.pop_scope()
         lines = [f"for {i} := 0; {i} < {bound}; {i}++ {{"]

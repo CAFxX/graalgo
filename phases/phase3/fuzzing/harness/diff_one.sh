@@ -31,6 +31,15 @@ fi
 timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
+# 2b. Output bomb? (generator-side: the reference implementation spewed
+# more than 1MB — classify as generator-rejected, not a graalgo failure.
+# No point running the graalgo leg on a bomb.)
+gc_size=$(stat -c%s "$WORKDIR/gc.out" 2>/dev/null || echo 0)
+if [ "$gc_size" -gt 1000000 ]; then
+    printf '{"file": "%s", "result": "OUTPUT_BOMB", "detail": "gc output %s bytes > 1MB cap (generator-rejected)"}\n' "$base" "$gc_size"
+    exit 0
+fi
+
 # 3. graalgo run (120s timeout; JVM startup dominates)
 timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
     -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
