@@ -337,25 +337,64 @@ func ipToString(ip IP) string {
 	if len(ip) == 4 {
 		return itoa(int(ip[0])) + "." + itoa(int(ip[1])) + "." + itoa(int(ip[2])) + "." + itoa(int(ip[3]))
 	}
-	// IPv6: simplified full form
+	// IPv6: gc-parity form with "::" zero compression (the longest run of
+	// zero 16-bit groups, first run wins ties; a single zero group is not
+	// compressed).
+	var groups [8]uint16
+	for i := 0; i < 8; i++ {
+		groups[i] = uint16(ip[2*i])<<8 | uint16(ip[2*i+1])
+	}
+	// Find the longest run of zeros (length > 1 to compress).
+	bestStart, bestLen := -1, 0
+	for i := 0; i < 8; {
+		if groups[i] != 0 {
+			i++
+			continue
+		}
+		j := i
+		for j < 8 && groups[j] == 0 {
+			j++
+		}
+		if j-i > bestLen {
+			bestStart, bestLen = i, j-i
+		}
+		i = j
+	}
 	s := ""
 	const hextable = "0123456789abcdef"
-	for i := 0; i < 16; i += 2 {
+	appendGroup := func(v uint16) {
+		if v == 0 {
+			s += "0"
+			return
+		}
+		h := ""
+		for v > 0 {
+			h = string(hextable[v&0xf]) + h
+			v >>= 4
+		}
+		s += h
+	}
+	if bestLen > 1 {
+		for i := 0; i < bestStart; i++ {
+			if i > 0 {
+				s += ":"
+			}
+			appendGroup(groups[i])
+		}
+		s += "::"
+		for i := bestStart + bestLen; i < 8; i++ {
+			if i > bestStart+bestLen {
+				s += ":"
+			}
+			appendGroup(groups[i])
+		}
+		return s
+	}
+	for i := 0; i < 8; i++ {
 		if i > 0 {
 			s += ":"
 		}
-		v := uint16(ip[i])<<8 | uint16(ip[i+1])
-		// Manual hex (avoid strconv dependency issues)
-		if v == 0 {
-			s += "0"
-		} else {
-			h := ""
-			for v > 0 {
-				h = string(hextable[v&0xf]) + h
-				v >>= 4
-			}
-			s += h
-		}
+		appendGroup(groups[i])
 	}
 	return s
 }
