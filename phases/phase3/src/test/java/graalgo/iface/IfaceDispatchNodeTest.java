@@ -17,6 +17,8 @@ import graalgo.runtime.GoErrors;
 import graalgo.runtime.PanicException;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
+import graalgo.values.GoStruct;
+import graalgo.values.GoStructDescriptor;
 import graalgo.values.GoTypeDescriptor;
 import graalgo.values.InterfaceDispatchProbes;
 
@@ -98,17 +100,17 @@ public final class IfaceDispatchNodeTest {
 
     /** Direct (non-promoted) method target. */
     private static IfaceMethodTarget target(CaptureRoot root) {
-        return new IfaceMethodTarget(goFunc(root), new int[0], true, false);
+        return new IfaceMethodTarget(goFunc(root), new int[0], true, false, -1, null);
     }
 
     /** Promoted method target: receiver adapted via the field path. */
     private static IfaceMethodTarget promotedTarget(CaptureRoot root, int... recvPath) {
-        return new IfaceMethodTarget(goFunc(root), recvPath, true, false);
+        return new IfaceMethodTarget(goFunc(root), recvPath, true, false, -1, null);
     }
 
     /** Promoted value-receiver target: trailing dereference applies. */
     private static IfaceMethodTarget promotedValueTarget(CaptureRoot root, int... recvPath) {
-        return new IfaceMethodTarget(goFunc(root), recvPath, false, false);
+        return new IfaceMethodTarget(goFunc(root), recvPath, false, false, -1, null);
     }
 
     private static VirtualFrame frame() {
@@ -432,7 +434,7 @@ public final class IfaceDispatchNodeTest {
 
     /** Unsupported-promotion target (wire "index" null): fails fast only if dispatched. */
     private static IfaceMethodTarget unsupportedTarget(CaptureRoot root) {
-        return new IfaceMethodTarget(goFunc(root), null, true, false);
+        return new IfaceMethodTarget(goFunc(root), null, true, false, -1, null);
     }
 
     /**
@@ -476,6 +478,40 @@ public final class IfaceDispatchNodeTest {
             assertEquals(42L, n.executeLong(frame()),
                     "supported method dispatches despite unsupported sibling");
             assertEquals(1, root.seen.size(), "method invoked once");
+        } finally {
+            tearDown();
+        }
+    }
+
+    /**
+     * P3-M9 (x509/TLS lane): a method promoted via an embedded interface
+     * field dispatches through the field value (e.g.
+     * (*crypto/tls.listener).Addr from embedded net.Listener). The outer
+     * itab carries a redispatch entry (no GoFunc, embeddedIfaceId set);
+     * the dispatcher reads the embedding path to the interface field and
+     * dispatches the method on the field value's itab.
+     */
+    public void testEmbeddedInterfaceRedispatch() {
+        CaptureRoot inner = new CaptureRoot(42L);
+        IfaceMethodTarget redispatch =
+                new IfaceMethodTarget(null, new int[]{0}, false, false, 7, List.of("M"));
+        setUp(Map.of(
+                "main.Outer", Map.of("M", redispatch),
+                "main.Inner", Map.of("M", target(inner))));
+        try {
+            GoInterface innerIface = iface("main.Inner", "INNER-DATA");
+            GoStructDescriptor outerDesc = new GoStructDescriptor("main.Outer", List.of(
+                    new GoStructDescriptor.Field("Iface", GoKind.INTERFACE, false,
+                            0, 0, null, null)));
+            GoStruct outerData = new GoStruct(outerDesc, new long[0],
+                    new Object[]{innerIface});
+            GoExprNode recv = new ConstNode(GoKind.INTERFACE, iface("main.Outer", outerData), 0);
+            IfaceDispatchNode n = node(recv, new GoExprNode[0], List.of("M"), 3);
+            assertEquals(42L, n.executeLong(frame()),
+                    "redispatch through embedded interface field");
+            assertEquals(1, inner.seen.size(), "inner method invoked once");
+            assertEquals("INNER-DATA", inner.seen.get(0)[1],
+                    "receiver is the interface field value's data");
         } finally {
             tearDown();
         }

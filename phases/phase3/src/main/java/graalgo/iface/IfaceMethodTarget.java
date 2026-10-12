@@ -1,5 +1,7 @@
 package graalgo.iface;
 
+import java.util.List;
+
 import graalgo.values.GoFunc;
 
 /**
@@ -24,13 +26,26 @@ import graalgo.values.GoFunc;
  * a named P3-M3 scope error at dispatch — only when that method is
  * actually dispatched (R2 P2-7: narrowing; the itab build carries the
  * unsupported target so supported methods keep working).
+ *
+ * <p>{@code embeddedIfaceId} is the wire type-table id of the embedded
+ * interface's {@code interface}-kind entry for a method promoted via an
+ * embedded interface field (P3-M9, e.g. {@code (*crypto/tls.listener).Addr}
+ * from embedded {@code net.Listener}); -1 for ordinary entries. Such a
+ * redispatch entry carries no {@link GoFunc} (func is null): the
+ * dispatcher reads {@code recvPath} to the interface field value and
+ * dispatches the method on it, using {@code embeddedIfaceMethods} (the
+ * embedded interface's method names in declaration order) for the inner
+ * itab.
  */
-public record IfaceMethodTarget(GoFunc func, int[] recvPath, boolean pointerReceiver, boolean addrOf) {
+public record IfaceMethodTarget(GoFunc func, int[] recvPath, boolean pointerReceiver, boolean addrOf,
+        int embeddedIfaceId, List<String> embeddedIfaceMethods) {
     public IfaceMethodTarget {
         // A null path marks an unsupported promotion (wire "index": null);
         // it must survive (not normalize to empty) so the itab build can
         // fail fast with the named scope error.
         recvPath = recvPath == null ? null : recvPath.clone();
+        embeddedIfaceMethods = embeddedIfaceMethods == null ? List.of()
+                : List.copyOf(embeddedIfaceMethods);
     }
 
     /** False for unsupported promotions (wire {@code "index"} null). */
@@ -41,5 +56,10 @@ public record IfaceMethodTarget(GoFunc func, int[] recvPath, boolean pointerRece
     /** True for directly-declared methods (no receiver adaptation). */
     public boolean isDirect() {
         return recvPath != null && recvPath.length == 0;
+    }
+
+    /** True for embedded-interface redispatch entries (no GoFunc). */
+    public boolean isEmbeddedRedispatch() {
+        return embeddedIfaceId >= 0;
     }
 }

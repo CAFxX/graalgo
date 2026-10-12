@@ -614,6 +614,86 @@ func main() {
 	}
 }
 
+// TestIfaceMethodTableEmbeddedIfaceRedispatch (P3-M9, x509/TLS lane): a
+// method promoted via an embedded interface field (e.g.
+// (*crypto/tls.listener).Addr from the embedded net.Listener) is emitted
+// as a redispatch entry — obj -1 (no funcdecl exists for the interface's
+// declaration), index [0] (the embedding path), and "embeddedIface"
+// carrying the embedded interface's interface-kind type-table id. The
+// dispatcher reads the path to the interface field value and dispatches
+// the method on it. Pre-fix the method was skipped from the table and
+// dispatch failed fast with 'missing method "Addr" for dynamic type
+// "*crypto/tls.listener"' (01_handshake legs red in legs-rebased).
+func TestIfaceMethodTableEmbeddedIfaceRedispatch(t *testing.T) {
+	const src = `package main
+
+type Speaker interface{ Speak() string }
+
+type Dog struct{}
+
+func (d *Dog) Speak() string { return "woof" }
+
+type LoudDog struct{ Speaker }
+
+func main() {
+	ld := &LoudDog{Speaker: &Dog{}}
+	var s Speaker = ld
+	println(s.Speak())
+}
+`
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	doc := decodeExport(t, out)
+	entries := typeEntries(t, doc)
+	id, _ := findNamedEntry(t, entries, "main.LoudDog")
+	found := false
+	for _, e := range entries {
+		em, _ := e.(map[string]any)
+		if em["kind"] != "pointer" {
+			continue
+		}
+		d, _ := em["detail"].(map[string]any)
+		if elem, _ := d["elem"].(float64); int(elem) != id {
+			continue
+		}
+		methods, _ := d["methods"].([]any)
+		for _, m := range methods {
+			mm, _ := m.(map[string]any)
+			if mm["name"] != "Speak" {
+				continue
+			}
+			found = true
+			if obj, _ := mm["obj"].(float64); obj != -1 {
+				t.Fatalf("*LoudDog.Speak obj = %v, want -1 (no funcdecl for interface-declared method)", mm["obj"])
+			}
+			idx, ok := mm["index"].([]any)
+			if !ok || len(idx) != 1 {
+				t.Fatalf("*LoudDog.Speak index = %v (%T), want [0] (embedding path)", mm["index"], mm["index"])
+			}
+			if f, _ := idx[0].(float64); f != 0 {
+				t.Fatalf("*LoudDog.Speak index = %v, want [0]", idx)
+			}
+			emb, ok := mm["embeddedIface"].(float64)
+			if !ok {
+				t.Fatalf("*LoudDog.Speak: no wire \"embeddedIface\" field (%v)", mm)
+			}
+			embID := int(emb)
+			if embID < 0 || embID >= len(entries) {
+				t.Fatalf("*LoudDog.Speak embeddedIface = %d, out of range", embID)
+			}
+			embEnt, _ := entries[embID].(map[string]any)
+			if embEnt["kind"] != "interface" {
+				t.Fatalf("*LoudDog.Speak embeddedIface entry kind = %v, want \"interface\" (ifacemethod id namespace)", embEnt["kind"])
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no *LoudDog pointer entry carries Speak")
+	}
+}
+
 // TestIfaceMethodCallAliasReceiver (R1 P1-1): a method call through an
 // alias of an interface type (type W = Writer) exports an "ifacemethod"
 // wire node — the alias unwraps to the named interface, whose underlying

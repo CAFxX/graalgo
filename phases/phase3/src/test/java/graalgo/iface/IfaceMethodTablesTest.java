@@ -96,6 +96,55 @@ public final class IfaceMethodTablesTest {
     }
 
     /**
+     * P3-M9: a wire {@code "embeddedIface"} entry (method promoted via an
+     * embedded interface field) resolves to a redispatch target — null
+     * GoFunc, the embedding path, and the embedded interface's id +
+     * method names for the inner itab. A non-interface embeddedIface id
+     * fails fast.
+     */
+    public void testEmbeddedIfaceRedispatchResolves() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "interface", "detail": {"methods": [{"name": "M"}, {"name": "N"}]}},
+                   {"kind": "named", "detail": {"name": "main.Outer", "underlying": 0,
+                     "methods": [{"name": "M", "obj": -1, "recv": "value", "index": [0],
+                                  "embeddedIface": 0}]}},
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}}
+                 ],
+                 "objects": [], "funcs": []}""";
+        Map<String, Map<String, IfaceMethodTarget>> out =
+                IfaceMethodTables.resolve(doc, Map.of());
+        IfaceMethodTarget t = out.get("main.Outer").get("M");
+        assertTrue(t != null, "method present");
+        assertTrue(t.func() == null, "redispatch entry carries no GoFunc");
+        assertTrue(t.isEmbeddedRedispatch(), "embeddedIfaceId >= 0 marks redispatch");
+        assertEquals(0, t.embeddedIfaceId(), "embeddedIface id");
+        assertEquals(java.util.List.of("M", "N"), t.embeddedIfaceMethods(),
+                "embedded interface method names in declaration order");
+        assertEquals(1, t.recvPath().length, "embedding path length");
+        assertEquals(0, t.recvPath()[0], "embedding path");
+
+        String badDoc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}},
+                   {"kind": "named", "detail": {"name": "main.Outer", "underlying": 0,
+                     "methods": [{"name": "M", "obj": -1, "recv": "value", "index": [0],
+                                  "embeddedIface": 0}]}}
+                 ],
+                 "objects": [], "funcs": []}""";
+        try {
+            IfaceMethodTables.resolve(badDoc, Map.of());
+        } catch (FrontendException fe) {
+            assertTrue(fe.getMessage().contains("not an interface type"),
+                    "named fail-fast: " + fe.getMessage());
+            return;
+        }
+        throw new AssertionError("expected FrontendException for non-interface embeddedIface id");
+    }
+
+    /**
      * A wire {@code "index": null} marks an unsupported promotion: the
      * target resolves but reports unsupported (the itab build fails fast
      * with the named P3-M3 scope error, not the table resolve).

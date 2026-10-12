@@ -9064,6 +9064,13 @@ type methodEntry struct {
 	implkey     string
 	unsupported bool
 	addrOf      bool
+	// embeddedIface is the type-table id of the embedded interface's
+	// interface-kind entry when the method is promoted via an embedded
+	// interface field (P3-M9 redispatch, see embeddedInterfacePromotion);
+	// -1 for ordinary entries. The dispatcher carries no GoFunc for
+	// such entries (obj is -1): it reads the embedding path to the
+	// interface field value and dispatches the method on it.
+	embeddedIface int
 }
 
 // methodTableEntry builds one wire method-table entry for mobj with an
@@ -9140,7 +9147,59 @@ func (e *exporter) methodTableEntry(t types.Type, sel *types.Selection, mobj *ty
 			mobj.Name(), mobj.Type())
 	}
 	return methodEntry{name: mobj.Name(), obj: obj, recv: recv, index: path,
-		implkey: implKeyOf(mobj, msig), unsupported: unsupported, addrOf: addrOf}, nil
+		implkey: implKeyOf(mobj, msig), unsupported: unsupported, addrOf: addrOf,
+		embeddedIface: -1}, nil
+}
+
+// embeddedInterfacePromotion reports whether the method selection sel on
+// type t is a method promoted via an embedded interface field (e.g.
+// (*crypto/tls.listener).Addr, promoted from the embedded net.Listener).
+// It returns the embedded field's interface type (unwrapped to the
+// *types.Interface, mirroring the ifacemethod "iface" id convention) and
+// the field path from t to that interface value. It returns (nil, nil)
+// when the method is not promoted through an embedded interface —
+// including embedding *I (pointer-to-interface), which keeps the old
+// skip behavior (fail fast at dispatch, never silent).
+func embeddedInterfacePromotion(t types.Type, sel *types.Selection) (types.Type, []int) {
+	idx := sel.Index()
+	if len(idx) < 2 {
+		return nil, nil // not promoted
+	}
+	path := idx[:len(idx)-1]
+	cur := t
+	ifacePath := make([]int, 0, len(path))
+	for _, fi := range path {
+		if p, ok := cur.(*types.Pointer); ok {
+			cur = p.Elem()
+		}
+		if n, ok := cur.(*types.Named); ok {
+			cur = n.Underlying()
+		}
+		st, ok := cur.(*types.Struct)
+		if !ok {
+			return nil, nil
+		}
+		if fi < 0 || fi >= st.NumFields() {
+			return nil, nil
+		}
+		f := st.Field(fi)
+		ifacePath = append(ifacePath, fi)
+		ft := types.Unalias(f.Type())
+		if nt, ok := ft.(*types.Named); ok {
+			if ui, ok := nt.Underlying().(*types.Interface); ok {
+				return ui, ifacePath
+			}
+			// Named non-interface field: keep walking — a struct
+			// can embed an interface deeper down the path.
+			cur = f.Type()
+			continue
+		}
+		if _, ok := ft.(*types.Interface); ok {
+			return ft, ifacePath
+		}
+		cur = f.Type()
+	}
+	return nil, nil
 }
 
 // methodTableOnDemand monomorphizes a template method for the method
@@ -9216,6 +9275,36 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 					entries = append(entries, en)
 					continue
 				}
+				// P3-M9 (x509/TLS lane): method promoted via an embedded
+				// interface field (e.g. (*crypto/tls.listener).Addr from
+				// the embedded net.Listener). The method object is the
+				// interface's declaration — no funcdecl exists — so the
+				// old code skipped it and interface dispatch failed
+				// fast with 'missing method "Addr" for dynamic type
+				// "*crypto/tls.listener"'. Emit a redispatch entry
+				// (obj -1): the dispatcher reads the embedding path to
+				// the interface field value and dispatches the method on
+				// it, exactly like the direct l.Listener.Addr() call.
+				// Methods not promoted through an embedded interface
+				// keep the old skip (fail fast at dispatch, never
+				// silent).
+				if embIface, embPath := embeddedInterfacePromotion(t, sel); embIface != nil {
+					embID, err := e.typeID(embIface)
+					if err != nil {
+						return nil, false, err
+					}
+					msig, ok := mobj.Type().(*types.Signature)
+					if !ok {
+						return nil, false, fmt.Errorf("gofrontend: method %s has non-signature type %T (exporter bug)",
+							mobj.Name(), mobj.Type())
+					}
+					entries = append(entries, methodEntry{
+						name: mobj.Name(), obj: -1, recv: "value",
+						index: embPath, implkey: implKeyOf(mobj, msig),
+						embeddedIface: embID,
+					})
+					continue
+				}
 				continue
 			}
 			fi = hfi
@@ -9267,8 +9356,16 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			}
 			idx = arr
 		}
-		out = append(out, map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv,
-			"index": idx, "implkey": en.implkey, "addrOf": en.addrOf})
+		m := map[string]any{"name": en.name, "obj": en.obj, "recv": en.recv,
+			"index": idx, "implkey": en.implkey, "addrOf": en.addrOf}
+		// P3-M9: embedded-interface redispatch entries carry the
+		// embedded interface's interface-kind type-table id (obj is
+		// -1: no GoFunc to invoke). Only present on redispatch
+		// entries — ordinary entries keep the old wire shape.
+		if en.embeddedIface >= 0 {
+			m["embeddedIface"] = en.embeddedIface
+		}
+		out = append(out, m)
 	}
 	return out, tmplSkipped, nil
 }

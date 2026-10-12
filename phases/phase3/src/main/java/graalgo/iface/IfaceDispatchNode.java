@@ -124,6 +124,37 @@ public final class IfaceDispatchNode extends GoExprNode {
             throw new FrontendException("interface dispatch: method \"" + methodName
                     + "\" promoted via value-embedded field is not supported (P3-M3 scope)");
         }
+        // P3-M9 (x509/TLS lane): method promoted via an embedded interface
+        // field (e.g. (*crypto/tls.listener).Addr from embedded
+        // net.Listener). The entry carries no GoFunc: read the embedding
+        // path to the interface field value and dispatch the method on it,
+        // exactly like the direct l.Listener.Addr() call. Embedding can
+        // chain through several interfaces, so loop until a concrete
+        // target is reached.
+        GoInterface curGi = gi;
+        while (target.isEmbeddedRedispatch()) {
+            Object fieldVal = graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath(),
+                    false, this);
+            curGi = requireReceiver(fieldVal);
+            data = curGi.data();
+            String innerDesc = ((GoTypeDescriptor) curGi.descriptor()).name();
+            IfaceItab innerItab = IfaceMethodTable.itabFor(innerDesc, target.embeddedIfaceId(),
+                    target.embeddedIfaceMethods());
+            probe(innerItab);
+            IfaceMethodTarget inner = innerItab.methods().get(methodName);
+            if (inner == null) {
+                // Unreachable: go/types verified the embedded interface
+                // declares the method, so the field value's itab has it.
+                throw new FrontendException("interface dispatch: method \"" + methodName
+                        + "\" missing from itab for \"" + innerItab.descriptorName()
+                        + "\" (internal error)");
+            }
+            if (!inner.supported()) {
+                throw new FrontendException("interface dispatch: method \"" + methodName
+                        + "\" promoted via value-embedded field is not supported (P3-M3 scope)");
+            }
+            target = inner;
+        }
         Object[] argVals = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
             argVals[i] = boxArg(args[i], frame);
@@ -150,7 +181,7 @@ public final class IfaceDispatchNode extends GoExprNode {
         // itself, dynamic descriptor intact. Concrete-receiver targets
         // keep the raw value, exactly as before.
         if (target.isDirect() && receiverParamIsInterface(target)) {
-            callArgs[0] = gi;
+            callArgs[0] = curGi;
         }
         // P3-M9: pointer-receiver method promoted via a value-embedded
         // struct field — take the address of the promoted field value

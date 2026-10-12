@@ -76,15 +76,34 @@ public final class IfaceMethodTables {
         for (Map.Entry<String, Map<String, MethodRef>> e : objIds.entrySet()) {
             Map<String, IfaceMethodTarget> funcs = new LinkedHashMap<>();
             for (Map.Entry<String, MethodRef> m : e.getValue().entrySet()) {
-                GoFunc f = functions.get(m.getValue().objId);
-                if (f == null) {
-                    throw new FrontendException("ifacemethod: method \"" + m.getKey()
-                            + "\" on dynamic type \"" + e.getKey()
-                            + "\" refers to unknown function object id " + m.getValue().objId
-                            + " (WS D)");
+                MethodRef ref = m.getValue();
+                GoFunc f;
+                List<String> embMethods;
+                if (ref.embeddedIfaceId >= 0) {
+                    // P3-M9: embedded-interface redispatch entry (wire
+                    // "embeddedIface"): no GoFunc — the dispatcher reads
+                    // the embedding path to the interface field value and
+                    // dispatches the method on it.
+                    if (ref.objId != -1) {
+                        throw new FrontendException("ifacemethod: method \"" + m.getKey()
+                                + "\" on dynamic type \"" + e.getKey()
+                                + "\" has embeddedIface but obj != -1 (WS D)");
+                    }
+                    f = null;
+                    embMethods = embeddedIfaceMethodNames(types, ref.embeddedIfaceId,
+                            e.getKey(), m.getKey());
+                } else {
+                    f = functions.get(ref.objId);
+                    if (f == null) {
+                        throw new FrontendException("ifacemethod: method \"" + m.getKey()
+                                + "\" on dynamic type \"" + e.getKey()
+                                + "\" refers to unknown function object id " + ref.objId
+                                + " (WS D)");
+                    }
+                    embMethods = List.of();
                 }
-                funcs.put(m.getKey(), new IfaceMethodTarget(f, m.getValue().recvPath,
-                        m.getValue().pointerReceiver, m.getValue().addrOf));
+                funcs.put(m.getKey(), new IfaceMethodTarget(f, ref.recvPath,
+                        ref.pointerReceiver, ref.addrOf, ref.embeddedIfaceId, embMethods));
             }
             out.put(e.getKey(), funcs);
         }
@@ -92,7 +111,25 @@ public final class IfaceMethodTables {
     }
 
     /** Wire method entry: object id + receiver adaptation data. */
-    private record MethodRef(int objId, int[] recvPath, boolean pointerReceiver, boolean addrOf) {}
+    private record MethodRef(int objId, int[] recvPath, boolean pointerReceiver, boolean addrOf,
+            int embeddedIfaceId) {}
+
+    /**
+     * Method names of the embedded interface's {@code interface}-kind
+     * type-table entry (P3-M9 redispatch): the inner itab for the
+     * interface field value is built from these, in declaration order.
+     */
+    private static List<String> embeddedIfaceMethodNames(TypeTable types, int id,
+            String descName, String methodName) {
+        String mp = "types[" + id + "]";
+        Json.Object entry = types.entry(id, mp);
+        if (!"interface".equals(entry.string("kind", mp))) {
+            throw new FrontendException("ifacemethod: method \"" + methodName
+                    + "\" on dynamic type \"" + descName
+                    + "\" has embeddedIface id " + id + " which is not an interface type (WS D)");
+        }
+        return readInterfaceMethodNames(entry, mp);
+    }
 
     /**
      * Parses {@code jsonText}'s type table and returns the interface
@@ -187,8 +224,17 @@ public final class IfaceMethodTables {
             if (av instanceof Json.Bool b) {
                 addrOf = b.value();
             }
+            // P3-M9: embedded-interface redispatch entries carry the
+            // embedded interface's interface-kind type-table id; absent
+            // (-1) on ordinary entries.
+            int embeddedIfaceId = -1;
+            Json.Value embv = eo.opt("embeddedIface");
+            if (embv instanceof Json.Num n) {
+                embeddedIfaceId = (int) n.asLong(mp);
+            }
             out.put(eo.string("name", mp),
-                    new MethodRef(eo.intValue("obj", mp), recvPath, pointerReceiver, addrOf));
+                    new MethodRef(eo.intValue("obj", mp), recvPath, pointerReceiver, addrOf,
+                            embeddedIfaceId));
         }
         return out;
     }

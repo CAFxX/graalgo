@@ -121,7 +121,7 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
         };
         RootCallTarget target = root.getCallTarget();
         GoFunc func = new GoFunc(target, null);
-        IfaceMethodTarget methodTarget = new IfaceMethodTarget(func, new int[0], false, false);
+        IfaceMethodTarget methodTarget = new IfaceMethodTarget(func, new int[0], false, false, -1, null);
         IfaceMethodTable.installMethod(PRINTER_STATE_DESC, name, methodTarget);
     }
 
