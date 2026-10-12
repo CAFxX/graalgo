@@ -577,3 +577,54 @@ func main() { gMu.Lock(); gMu.Unlock() }
 		}
 	}
 }
+
+// TestSyncOnceFunc: sync.OnceFunc(f) lowers to a funclit capturing a
+// fresh sync.Once; the closure body is once.Do(f) via the syncop wire
+// node. Red-green: fails before the OnceFunc intrinsic ("call to unknown
+// function OnceFunc"), passes after.
+func TestSyncOnceFunc(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+func main() {
+	called := 0
+	f := sync.OnceFunc(func() { called++ })
+	f()
+	f()
+	_ = called
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with sync.OnceFunc: %v", err)
+	}
+	for _, want := range []string{
+		`"kind": "funclit"`,
+		`"kind": "syncnew"`,
+		`"kind": "syncop"`,
+		`"op": "Do"`,
+		`"synctyp": "Once"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("exported JSON missing %s", want)
+		}
+	}
+}
+
+// TestSyncOnceFuncArity: sync.OnceFunc with wrong arity fails fast.
+func TestSyncOnceFuncArity(t *testing.T) {
+	src := `package main
+
+import "sync"
+
+func main() {
+	f := sync.OnceFunc()
+	_ = f
+}
+`
+	_, err := ExportFile(writeSyncProg(t, src))
+	if err == nil {
+		t.Fatalf("ExportFile with sync.OnceFunc(): want arity error, got nil")
+	}
+}
