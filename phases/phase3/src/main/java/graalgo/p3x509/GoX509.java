@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 
+import graalgo.values.GoInterface;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 
@@ -55,57 +56,69 @@ public final class GoX509 {
         }
     }
 
+    /**
+     * Unwraps a Go {@code any} holding an X509Certificate. The Go side passes
+     * the parse result as {@code any}, which arrives as a GoInterface wrapper;
+     * the raw X509Certificate is in its data slot.
+     */
+    private static X509Certificate unwrapCert(Object certArg) {
+        if (certArg instanceof GoInterface) {
+            certArg = ((GoInterface) certArg).data();
+        }
+        return (X509Certificate) certArg;
+    }
+
     /** Serial number as big-endian bytes (Go builds big.Int from this). */
     public static Object serialNumber(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return toGoBytes(cert.getSerialNumber().toByteArray());
     }
 
     /** Subject DN as RFC 2253 string. */
     public static Object subject(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return toGoString(cert.getSubjectX500Principal().getName());
     }
 
     /** Issuer DN as RFC 2253 string. */
     public static Object issuer(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return toGoString(cert.getIssuerX500Principal().getName());
     }
 
     /** NotBefore as Unix millis. */
     public static Object notBefore(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return cert.getNotBefore().getTime();
     }
 
     /** NotAfter as Unix millis. */
     public static Object notAfter(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return cert.getNotAfter().getTime();
     }
 
     /** Version (1, 2, or 3). */
     public static Object version(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return (long) cert.getVersion();
     }
 
     /** Signature algorithm OID as dotted string. */
     public static Object sigAlgOid(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return toGoString(cert.getSigAlgOID());
     }
 
     /** Signature bytes. */
     public static Object signature(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return toGoBytes(cert.getSignature());
     }
 
     /** TBS certificate bytes (for RawTBSCertificate). */
     public static Object tbsCertificate(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         try {
             return toGoBytes(cert.getTBSCertificate());
         } catch (CertificateException e) {
@@ -115,7 +128,7 @@ public final class GoX509 {
 
     /** Key usage as bitmask, or -1 if absent. */
     public static Object keyUsage(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         boolean[] ku = cert.getKeyUsage();
         if (ku == null) {
             return -1L;
@@ -134,14 +147,14 @@ public final class GoX509 {
      * Returns Integer.MAX_VALUE if CA with no path length constraint.
      */
     public static Object basicConstraints(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         int bc = cert.getBasicConstraints();
         return (long) bc;
     }
 
     /** Subject key identifier, or null if absent. */
     public static Object subjectKeyId(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         byte[] ext = cert.getExtensionValue("2.5.29.14");
         if (ext == null) {
             return null;
@@ -152,7 +165,7 @@ public final class GoX509 {
 
     /** Authority key identifier, or null if absent. */
     public static Object authorityKeyId(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         byte[] ext = cert.getExtensionValue("2.5.29.35");
         if (ext == null) {
             return null;
@@ -164,25 +177,25 @@ public final class GoX509 {
 
     /** Public key algorithm name (e.g., "RSA", "EC", "Ed25519"). */
     public static Object publicKeyAlgOid(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return toGoString(cert.getPublicKey().getAlgorithm());
     }
 
     /** Public key in X.509 SubjectPublicKeyInfo DER encoding. */
     public static Object publicKeyEncoded(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return toGoBytes(cert.getPublicKey().getEncoded());
     }
 
     /** Raw issuer DER bytes (for RawIssuer). */
     public static Object rawIssuer(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return toGoBytes(cert.getIssuerX500Principal().getEncoded());
     }
 
     /** Raw subject DER bytes (for RawSubject). */
     public static Object rawSubject(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         return toGoBytes(cert.getSubjectX500Principal().getEncoded());
     }
 
@@ -195,7 +208,7 @@ public final class GoX509 {
 
     /** RSA modulus N as big-endian bytes, or null if not RSA. */
     public static Object rsaModulus(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         java.security.PublicKey key = cert.getPublicKey();
         if (!(key instanceof java.security.interfaces.RSAPublicKey)) {
             return null;
@@ -207,7 +220,7 @@ public final class GoX509 {
 
     /** RSA public exponent E, or -1 if not RSA. */
     public static Object rsaExponent(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         java.security.PublicKey key = cert.getPublicKey();
         if (!(key instanceof java.security.interfaces.RSAPublicKey)) {
             return -1L;
@@ -219,7 +232,7 @@ public final class GoX509 {
 
     /** EC affine X as big-endian bytes, or null if not EC. */
     public static Object ecX(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         java.security.PublicKey key = cert.getPublicKey();
         if (!(key instanceof java.security.interfaces.ECPublicKey)) {
             return null;
@@ -231,7 +244,7 @@ public final class GoX509 {
 
     /** EC affine Y as big-endian bytes, or null if not EC. */
     public static Object ecY(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         java.security.PublicKey key = cert.getPublicKey();
         if (!(key instanceof java.security.interfaces.ECPublicKey)) {
             return null;
@@ -247,7 +260,7 @@ public final class GoX509 {
      * P-521) — the JDK does not expose the curve OID directly.
      */
     public static Object ecFieldSize(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         java.security.PublicKey key = cert.getPublicKey();
         if (!(key instanceof java.security.interfaces.ECPublicKey)) {
             return -1L;
@@ -263,7 +276,7 @@ public final class GoX509 {
      * does not expose raw bytes directly).
      */
     public static Object ed25519Raw(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         java.security.PublicKey key = cert.getPublicKey();
         if (!"Ed25519".equalsIgnoreCase(key.getAlgorithm())
                 && !"EdDSA".equalsIgnoreCase(key.getAlgorithm())) {
@@ -556,7 +569,7 @@ public final class GoX509 {
      * Backs {@code graalgo.x509.extKeyUsage}.
      */
     public static Object extKeyUsage(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         try {
             List<String> oids = cert.getExtendedKeyUsage();
             if (oids == null || oids.isEmpty()) {
@@ -575,7 +588,7 @@ public final class GoX509 {
      * Backs {@code graalgo.x509.subjectAltNames}.
      */
     public static Object subjectAltNames(Object certArg) {
-        X509Certificate cert = (X509Certificate) certArg;
+        X509Certificate cert = unwrapCert(certArg);
         try {
             Collection<List<?>> sans = cert.getSubjectAlternativeNames();
             if (sans == null) {
