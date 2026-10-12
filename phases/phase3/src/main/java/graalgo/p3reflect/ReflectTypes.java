@@ -963,6 +963,16 @@ public final class ReflectTypes {
             Json.Object m = arrObj(methods, i, path);
             String name = m.string("name", path);
             int objId = (int) m.longInt("obj", path);
+            // P3-M9: embedded-interface redispatch entries (obj -1, wire
+            // "embeddedIface") carry no GoFunc — there is no single
+            // function to invoke via reflection. They are omitted from
+            // the reflect method list, exactly as before they existed in
+            // the wire (the old exporter skipped them entirely); the
+            // itab path dispatches them. Anything else with an unknown
+            // obj id stays a loud failure below.
+            if (objId == -1) {
+                continue;
+            }
             String recv = m.string("recv", path);
             // PkgPath for unexported methods (staged patch 06); without
             // it, lowercase ⇒ unexported, path unknown.
