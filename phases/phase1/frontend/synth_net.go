@@ -37,6 +37,7 @@ package net
 
 import _ "unsafe" // for go:linkname
 import "errors"
+import "io"
 import "strconv"
 import "strings"
 import "time"
@@ -577,9 +578,31 @@ type pipePair struct {
 }
 
 func __pipe() pipePair {
-	c1 := &pipeConn{wrCh: make(chan pipeMsg), rdCh: make(chan pipeMsg)}
-	c2 := &pipeConn{wrCh: c1.rdCh, rdCh: c1.wrCh}
+	st := &pipeState{done: make(chan struct{}), mu: make(chan struct{}, 1)}
+	st.mu <- struct{}{} // unlocked
+	c1 := &pipeConn{wrCh: make(chan pipeMsg), rdCh: make(chan pipeMsg), st: st}
+	c2 := &pipeConn{wrCh: c1.rdCh, rdCh: c1.wrCh, st: st}
 	return pipePair{c1, c2}
+}
+
+// pipeState is shared between the two ends of a net.Pipe. Closing either
+// end closes done (once); readers unblock with io.EOF and writers fail
+// with io.ErrClosedPipe (gc parity). The data channels are never closed:
+// close-then-send would panic, so the done channel carries the signal.
+// mu is a channel mutex (token present = unlocked): sync.Mutex as a struct
+// field is rejected by the frontend M2 scope.
+type pipeState struct {
+	done chan struct{}
+	mu   chan struct{}
+}
+
+func (p *pipeConn) pipeClosed() bool {
+	select {
+	case <-p.st.done:
+		return true
+	default:
+		return false
+	}
 }
 
 type pipeMsg struct {
@@ -590,6 +613,7 @@ type pipeMsg struct {
 type pipeConn struct {
 	wrCh chan pipeMsg
 	rdCh chan pipeMsg
+	st   *pipeState
 }
 
 func (p *pipeConn) Read(b []byte) (int, error) {
@@ -598,14 +622,26 @@ func (p *pipeConn) Read(b []byte) (int, error) {
 }
 
 type __pipeReadPair struct {
-	n int
+	n   int
 	err error
 }
 
 func __pipeRead(p *pipeConn, b []byte) __pipeReadPair {
-	msg := <-p.rdCh
-	n := copy(b, msg.b[:msg.n])
-	return __pipeReadPair{n, nil}
+	select {
+	case msg := <-p.rdCh:
+		n := copy(b, msg.b[:msg.n])
+		return __pipeReadPair{n, nil}
+	case <-p.st.done:
+		// Peer closed: deliver any message already queued, else EOF
+		// (gc parity: read after close drains, then EOF).
+		select {
+		case msg := <-p.rdCh:
+			n := copy(b, msg.b[:msg.n])
+			return __pipeReadPair{n, nil}
+		default:
+			return __pipeReadPair{0, io.EOF}
+		}
+	}
 }
 
 func (p *pipeConn) Write(b []byte) (int, error) {
@@ -614,18 +650,35 @@ func (p *pipeConn) Write(b []byte) (int, error) {
 }
 
 type __pipeWritePair struct {
-	n int
+	n   int
 	err error
 }
 
 func __pipeWrite(p *pipeConn, b []byte) __pipeWritePair {
+	// A write racing with Close may still land (the data channel is never
+	// closed); only a write that starts after done is closed fails. This
+	// is panic-free and hang-free; the imprecision (racing write succeeds
+	// instead of ErrClosedPipe) is benign.
+	if p.pipeClosed() {
+		return __pipeWritePair{0, io.ErrClosedPipe}
+	}
 	cp := make([]byte, len(b))
 	copy(cp, b)
 	p.wrCh <- pipeMsg{cp, len(cp)}
 	return __pipeWritePair{len(b), nil}
 }
 
-func (p *pipeConn) Close() error { return nil }
+func (p *pipeConn) Close() error {
+	<-p.st.mu
+	defer func() { p.st.mu <- struct{}{} }()
+	select {
+	case <-p.st.done:
+		return nil // idempotent: already closed by either end
+	default:
+		close(p.st.done)
+		return nil
+	}
+}
 func (p *pipeConn) LocalAddr() Addr { return &pipeAddr{} }
 func (p *pipeConn) RemoteAddr() Addr { return &pipeAddr{} }
 func (p *pipeConn) SetDeadline(t interface{}) error { return nil }
