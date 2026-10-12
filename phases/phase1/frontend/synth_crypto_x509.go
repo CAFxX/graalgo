@@ -30,6 +30,7 @@ import (
 	"hash"
 	"math/big"
 	"net"
+	"strconv"
 	"time"
 )
 
@@ -145,6 +146,50 @@ const (
 	PureEd25519
 )
 
+// String mirrors gc's SignatureAlgorithm names; unknown values render numerically.
+func (algo SignatureAlgorithm) String() string {
+	switch algo {
+	case MD2WithRSA:
+		return "MD2-RSA"
+	case MD5WithRSA:
+		return "MD5-RSA"
+	case SHA1WithRSA:
+		return "SHA1-RSA"
+	case SHA224WithRSA:
+		return "SHA224-RSA"
+	case SHA256WithRSA:
+		return "SHA256-RSA"
+	case SHA384WithRSA:
+		return "SHA384-RSA"
+	case SHA512WithRSA:
+		return "SHA512-RSA"
+	case DSAWithSHA1:
+		return "DSA-SHA1"
+	case DSAWithSHA256:
+		return "DSA-SHA256"
+	case ECDSAWithSHA1:
+		return "ECDSA-SHA1"
+	case ECDSAWithSHA224:
+		return "ECDSA-SHA224"
+	case ECDSAWithSHA256:
+		return "ECDSA-SHA256"
+	case ECDSAWithSHA384:
+		return "ECDSA-SHA384"
+	case ECDSAWithSHA512:
+		return "ECDSA-SHA512"
+	case SHA256WithRSAPSS:
+		return "SHA256-RSAPSS"
+	case SHA384WithRSAPSS:
+		return "SHA384-RSAPSS"
+	case SHA512WithRSAPSS:
+		return "SHA512-RSAPSS"
+	case PureEd25519:
+		return "Ed25519"
+	default:
+		return strconv.Itoa(int(algo))
+	}
+}
+
 // PublicKeyAlgorithm identifies the public key algorithm.
 type PublicKeyAlgorithm int
 
@@ -171,6 +216,32 @@ const (
 	KeyUsageEncipherOnly
 	KeyUsageDecipherOnly
 )
+
+// String mirrors gc's stringer output for KeyUsage.
+func (k KeyUsage) String() string {
+	switch k {
+	case KeyUsageDigitalSignature:
+		return "digitalSignature"
+	case KeyUsageContentCommitment:
+		return "contentCommitment"
+	case KeyUsageKeyEncipherment:
+		return "keyEncipherment"
+	case KeyUsageDataEncipherment:
+		return "dataEncipherment"
+	case KeyUsageKeyAgreement:
+		return "keyAgreement"
+	case KeyUsageCertSign:
+		return "keyCertSign"
+	case KeyUsageCRLSign:
+		return "cRLSign"
+	case KeyUsageEncipherOnly:
+		return "encipherOnly"
+	case KeyUsageDecipherOnly:
+		return "decipherOnly"
+	default:
+		return "KeyUsage(" + strconv.Itoa(int(k)) + ")"
+	}
+}
 
 // ExtKeyUsage identifies extended key usage.
 type ExtKeyUsage int

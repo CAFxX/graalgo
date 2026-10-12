@@ -526,10 +526,323 @@ func (t Time) Truncate(d Duration) Time {
 	return Time{unixnano: t.unixnano - t.unixnano%dd, isSet: t.isSet}
 }
 
-// Out-of-M5-scope members: exact gc signatures, fail fast.
-func (t Time) String() string { panic("time.Time.String: not in M5 scope") }
+// Format renders t per the Go reference layout (M9: civil-date
+// implementation; synthetic Time is UTC-only).
 func (t Time) Format(layout string) string {
-	panic("time.Time.Format: not in M5 scope")
+	// Split unixnano into days + time-of-day (UTC).
+	sec := t.unixnano / 1e9
+	nsec := t.unixnano % 1e9
+	if nsec < 0 {
+		nsec += 1e9
+		sec--
+	}
+	days := sec / 86400
+	secsOfDay := sec % 86400
+	if secsOfDay < 0 {
+		secsOfDay += 86400
+		days--
+	}
+	// Hinnant civil-from-days: days since 1970-01-01 -> y/m/d.
+	z := days + 719468
+	var era int64
+	if z >= 0 {
+		era = z / 146097
+	} else {
+		era = (z - 146096) / 146097
+	}
+	doe := z - era*146097
+	yoe := (doe - doe/1460 + doe/36524 - doe/146096) / 365
+	y := yoe + era*400
+	doy := doe - (365*yoe + yoe/4 - yoe/100)
+	mp := (5*doy + 2) / 153
+	d := doy - (153*mp+2)/5 + 1
+	var m int64
+	if mp < 10 {
+		m = mp + 3
+	} else {
+		m = mp - 9
+	}
+	if m <= 2 {
+		y++
+	}
+	hour := secsOfDay / 3600
+	min := (secsOfDay % 3600) / 60
+	sec2 := secsOfDay % 60
+
+	var b []byte
+	i := 0
+	for i < len(layout) {
+		c := layout[i]
+		switch c {
+		case 'J': // January, Jan
+			if hasPrefix(layout[i:], "January") {
+				b = append(b, monthName(m)...)
+				i += len("January")
+			} else if hasPrefix(layout[i:], "Jan") {
+				b = append(b, monthName(m)[:3]...)
+				i += len("Jan")
+			} else {
+				b = append(b, c)
+				i++
+			}
+		case 'M': // Mon, Monday
+			if hasPrefix(layout[i:], "Monday") {
+				b = append(b, weekdayName(days)...)
+				i += len("Monday")
+			} else if hasPrefix(layout[i:], "Mon") {
+				b = append(b, weekdayName(days)[:3]...)
+				i += len("Mon")
+			} else {
+				b = append(b, c)
+				i++
+			}
+		case '0': // 01, 02, 06, 15, 04, 05
+			switch {
+			case hasPrefix(layout[i:], "01"):
+				b = append(b, byte('0'+m/10), byte('0'+m%10))
+				i += 2
+			case hasPrefix(layout[i:], "02"):
+				b = append(b, byte('0'+d/10), byte('0'+d%10))
+				i += 2
+			case hasPrefix(layout[i:], "06"):
+				yy := y % 100
+				b = append(b, byte('0'+yy/10), byte('0'+yy%10))
+				i += 2
+			case hasPrefix(layout[i:], "03"):
+				h12 := hour % 12
+				if h12 == 0 {
+					h12 = 12
+				}
+				b = append(b, byte('0'+h12/10), byte('0'+h12%10))
+				i += 2
+			case hasPrefix(layout[i:], "04"):
+				b = append(b, byte('0'+min/10), byte('0'+min%10))
+				i += 2
+			case hasPrefix(layout[i:], "05"):
+				b = append(b, byte('0'+sec2/10), byte('0'+sec2%10))
+				i += 2
+			default:
+				b = append(b, c)
+				i++
+			}
+		case '1': // 15, 1, 01 handled above
+			if hasPrefix(layout[i:], "15") {
+				b = append(b, byte('0'+hour/10), byte('0'+hour%10))
+				i += 2
+			} else {
+				b = append(b, byte('0'+m))
+				i++
+			}
+		case '2': // 2006, 2, _2, 02 handled above
+			switch {
+			case hasPrefix(layout[i:], "2006"):
+				ys := itoa4(y)
+				b = append(b, ys...)
+				i += 4
+			case hasPrefix(layout[i:], "_2"):
+				if d < 10 {
+					b = append(b, ' ', byte('0'+d))
+				} else {
+					b = append(b, byte('0'+d/10), byte('0'+d%10))
+				}
+				i += 2
+			default:
+				b = append(b, byte('0'+d))
+				i++
+			}
+		case '_': // _2, _2006
+			if hasPrefix(layout[i:], "_2") {
+				if d < 10 {
+					b = append(b, ' ', byte('0'+d))
+				} else {
+					b = append(b, byte('0'+d/10), byte('0'+d%10))
+				}
+				i += 2
+			} else {
+				b = append(b, c)
+				i++
+			}
+		case '3': // 3 (12h)
+			h12 := hour % 12
+			if h12 == 0 {
+				h12 = 12
+			}
+			b = append(b, byte('0'+h12))
+			i++
+		case '4': // 4 (minute)
+			b = append(b, byte('0'+min))
+			i++
+		case '5': // 5 (second)
+			b = append(b, byte('0'+sec2))
+			i++
+		case 'P': // PM
+			if hour < 12 {
+				b = append(b, "AM"...)
+			} else {
+				b = append(b, "PM"...)
+			}
+			i += 2
+		case 'p': // pm
+			if hour < 12 {
+				b = append(b, "am"...)
+			} else {
+				b = append(b, "pm"...)
+			}
+			i += 2
+		case '.': // fractional seconds .0, .00, ...
+			j := i + 1
+			for j < len(layout) && layout[j] == '0' {
+				j++
+			}
+			if j > i+1 {
+				prec := j - (i + 1)
+				frac := nsec
+				// scale to prec digits
+				div := int64(1)
+				for k := 0; k < 9-prec; k++ {
+					div *= 10
+				}
+				v := frac / div
+				mult := int64(1)
+				for k := 0; k < prec; k++ {
+					mult *= 10
+				}
+				// zero-pad to prec
+				tmp := v
+				digits := make([]byte, prec)
+				for k := prec - 1; k >= 0; k-- {
+					digits[k] = byte('0' + tmp%10)
+					tmp /= 10
+				}
+				_ = mult
+				b = append(b, '.')
+				b = append(b, digits...)
+				i = j
+			} else {
+				b = append(b, c)
+				i++
+			}
+		case 'Z': // Z0700, Z07:00, Z07 -> Z (UTC-only)
+			switch {
+			case hasPrefix(layout[i:], "Z0700"):
+				b = append(b, 'Z')
+				i += 5
+			case hasPrefix(layout[i:], "Z07:00"):
+				b = append(b, 'Z')
+				i += 6
+			case hasPrefix(layout[i:], "Z07"):
+				b = append(b, 'Z')
+				i += 3
+			default:
+				b = append(b, c)
+				i++
+			}
+		case '-': // -0700, -07:00, -07 -> +0000 etc (UTC-only)
+			switch {
+			case hasPrefix(layout[i:], "-0700"):
+				b = append(b, "+0000"...)
+				i += 5
+			case hasPrefix(layout[i:], "-07:00"):
+				b = append(b, "+00:00"...)
+				i += 6
+			case hasPrefix(layout[i:], "-07"):
+				b = append(b, "+00"...)
+				i += 3
+			default:
+				b = append(b, c)
+				i++
+			}
+		default:
+			b = append(b, c)
+			i++
+		}
+	}
+	return string(b)
+}
+
+// monthName returns the full English month name (1-based).
+func monthName(m int64) string {
+	switch m {
+	case 1:
+		return "January"
+	case 2:
+		return "February"
+	case 3:
+		return "March"
+	case 4:
+		return "April"
+	case 5:
+		return "May"
+	case 6:
+		return "June"
+	case 7:
+		return "July"
+	case 8:
+		return "August"
+	case 9:
+		return "September"
+	case 10:
+		return "October"
+	case 11:
+		return "November"
+	case 12:
+		return "December"
+	}
+	return ""
+}
+
+// weekdayName returns the full English weekday name for days since
+// 1970-01-01 (which was a Thursday).
+func weekdayName(days int64) string {
+	w := (days + 4) % 7
+	if w < 0 {
+		w += 7
+	}
+	switch w {
+	case 0:
+		return "Sunday"
+	case 1:
+		return "Monday"
+	case 2:
+		return "Tuesday"
+	case 3:
+		return "Wednesday"
+	case 4:
+		return "Thursday"
+	case 5:
+		return "Friday"
+	case 6:
+		return "Saturday"
+	}
+	return ""
+}
+
+// itoa4 renders a year as 4+ digits (no truncation for y > 9999).
+func itoa4(y int64) []byte {
+	if y < 0 {
+		return append([]byte{'-'}, itoa4(-y)...)
+	}
+	var rev []byte
+	if y == 0 {
+		rev = []byte{'0'}
+	} else {
+		for y > 0 {
+			rev = append(rev, byte('0'+y%10))
+			y /= 10
+		}
+	}
+	for len(rev) < 4 {
+		rev = append(rev, '0')
+	}
+	out := make([]byte, len(rev))
+	for i, c := range rev {
+		out[len(rev)-1-i] = c
+	}
+	return out
+}
+
+func hasPrefix(s, p string) bool {
+	return len(s) >= len(p) && s[:len(p)] == p
 }
 func (t Time) GoString() string { panic("time.Time.GoString: not in M5 scope") }
 func (t Time) AddDate(years int, months int, days int) Time {
