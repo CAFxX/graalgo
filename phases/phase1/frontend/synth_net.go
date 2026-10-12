@@ -614,6 +614,9 @@ type pipeConn struct {
 	wrCh chan pipeMsg
 	rdCh chan pipeMsg
 	st   *pipeState
+	// Per-end deadlines (gc parity), guarded by st.mu.
+	rdDeadline time.Time
+	wrDeadline time.Time
 }
 
 func (p *pipeConn) Read(b []byte) (int, error) {
@@ -627,6 +630,18 @@ type __pipeReadPair struct {
 }
 
 func __pipeRead(p *pipeConn, b []byte) __pipeReadPair {
+	<-p.st.mu
+	rdDeadline := p.rdDeadline
+	p.st.mu <- struct{}{}
+	// A nil timerCh blocks forever in the select below (no deadline).
+	var timerCh <-chan time.Time
+	if !rdDeadline.IsZero() {
+		if d := time.Until(rdDeadline); d <= 0 {
+			return __pipeReadPair{0, errDeadlineExceeded}
+		} else {
+			timerCh = time.After(d)
+		}
+	}
 	select {
 	case msg := <-p.rdCh:
 		n := copy(b, msg.b[:msg.n])
@@ -641,6 +656,8 @@ func __pipeRead(p *pipeConn, b []byte) __pipeReadPair {
 		default:
 			return __pipeReadPair{0, io.EOF}
 		}
+	case <-timerCh:
+		return __pipeReadPair{0, errDeadlineExceeded}
 	}
 }
 
@@ -662,10 +679,25 @@ func __pipeWrite(p *pipeConn, b []byte) __pipeWritePair {
 	if p.pipeClosed() {
 		return __pipeWritePair{0, io.ErrClosedPipe}
 	}
+	<-p.st.mu
+	wrDeadline := p.wrDeadline
+	p.st.mu <- struct{}{}
+	var timerCh <-chan time.Time
+	if !wrDeadline.IsZero() {
+		if d := time.Until(wrDeadline); d <= 0 {
+			return __pipeWritePair{0, errDeadlineExceeded}
+		} else {
+			timerCh = time.After(d)
+		}
+	}
 	cp := make([]byte, len(b))
 	copy(cp, b)
-	p.wrCh <- pipeMsg{cp, len(cp)}
-	return __pipeWritePair{len(b), nil}
+	select {
+	case p.wrCh <- pipeMsg{cp, len(cp)}:
+		return __pipeWritePair{len(b), nil}
+	case <-timerCh:
+		return __pipeWritePair{0, errDeadlineExceeded}
+	}
 }
 
 func (p *pipeConn) Close() error {
@@ -681,9 +713,35 @@ func (p *pipeConn) Close() error {
 }
 func (p *pipeConn) LocalAddr() Addr { return &pipeAddr{} }
 func (p *pipeConn) RemoteAddr() Addr { return &pipeAddr{} }
-func (p *pipeConn) SetDeadline(t interface{}) error { return nil }
-func (p *pipeConn) SetReadDeadline(t interface{}) error { return nil }
-func (p *pipeConn) SetWriteDeadline(t interface{}) error { return nil }
+
+func (p *pipeConn) SetDeadline(t interface{}) error {
+	if err := p.SetReadDeadline(t); err != nil {
+		return err
+	}
+	return p.SetWriteDeadline(t)
+}
+
+func (p *pipeConn) SetReadDeadline(t interface{}) error {
+	tt, ok := t.(time.Time)
+	if !ok {
+		return &OpError{Op: "setdeadline", Net: "pipe", Err: errors.New("net: deadline must be time.Time")}
+	}
+	<-p.st.mu
+	p.rdDeadline = tt
+	p.st.mu <- struct{}{}
+	return nil
+}
+
+func (p *pipeConn) SetWriteDeadline(t interface{}) error {
+	tt, ok := t.(time.Time)
+	if !ok {
+		return &OpError{Op: "setdeadline", Net: "pipe", Err: errors.New("net: deadline must be time.Time")}
+	}
+	<-p.st.mu
+	p.wrDeadline = tt
+	p.st.mu <- struct{}{}
+	return nil
+}
 
 type pipeAddr struct{}
 
