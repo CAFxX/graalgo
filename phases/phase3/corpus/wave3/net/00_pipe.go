@@ -11,7 +11,10 @@ import (
 func main() {
 	c1, c2 := net.Pipe()
 
-	// Basic write/read.
+	// Basic write/read. The reader goroutine reports via the done channel
+	// and main prints, so the output order is deterministic (a racy
+	// Println in the goroutine vs main's Println is scheduler-dependent
+	// and breaks byte-identical differentials).
 	done := make(chan bool)
 	go func() {
 		buf := make([]byte, 5)
@@ -21,7 +24,6 @@ func main() {
 			done <- false
 			return
 		}
-		fmt.Println("read-ok")
 		done <- true
 	}()
 
@@ -34,6 +36,7 @@ func main() {
 	if !<-done {
 		return
 	}
+	fmt.Println("read-ok")
 
 	// Addr.
 	fmt.Println("local", c1.LocalAddr().Network(), c1.LocalAddr().String())
