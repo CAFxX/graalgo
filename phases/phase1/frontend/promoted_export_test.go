@@ -215,10 +215,12 @@ func main() {
 	requireRecvSelector(t, mr, []int{0}, "PInner")
 }
 
-// TestPromotedCallValueRecvViaPointerEmbedFailsFast: a value-receiver
-// method promoted via a POINTER-embedded field needs gc's implicit (*p)
-// deref; the adaptation must not invent it — WS D scope error, named.
-func TestPromotedCallValueRecvViaPointerEmbedFailsFast(t *testing.T) {
+// TestPromotedCallValueRecvViaPointerEmbed: a value-receiver method
+// promoted via a POINTER-embedded field needs gc's implicit (*p) deref.
+// P3-M9 (BUG-011): the exporter now performs this adaptation (dereference
+// GoPointer for value-receiver methods), so the call exports successfully.
+// (Formerly a WS D fail-fast; the adaptation is gc-correct.)
+func TestPromotedCallValueRecvViaPointerEmbed(t *testing.T) {
 	const src = `package main
 
 type PInner struct{ V int }
@@ -232,12 +234,14 @@ func main() {
 	println(po.Get())
 }
 `
-	_, err := ExportFile(writeIfaceProg(t, src))
-	if err == nil {
-		t.Fatal("expected WS D scope error (implicit deref), got success")
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("value-receiver via pointer-embed should now export (implicit deref), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "implicit address-of or deref") {
-		t.Fatalf("error %q does not name the WS D implicit &/* scope error", err)
+	doc := decodeExport(t, out)
+	mr := singleMethodRef(t, doc)
+	if name := methodRefFuncName(t, doc, mr); name != "Get" {
+		t.Fatalf("methodref resolves to %q, want the promoted PInner.Get", name)
 	}
 }
 

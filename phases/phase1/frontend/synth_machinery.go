@@ -1264,15 +1264,24 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 			}
 		}
 	}
-	// Methods (functions with receivers) are not package-level synthetic
-	// functions. Interface methods like io/fs.ReadFileFS.ReadFile are
+	// Methods on concrete synthetic types (e.g. bytes.Buffer.Read) ARE
+	// covered: the named milestone scope error applies to them (the test
+	// pins the "bytes.Buffer.Read" + "M7 scope" attribution). Interface
+	// methods (e.g. io/fs.ReadFileFS.ReadFile) are excluded: they are
 	// handled via the interface dispatch mechanism (exportIfaceMethodCall),
-	// not via the synthetic function desugar table. Returning true here
-	// would incorrectly trigger the M8 scope error for interface methods
-	// that simply aren't supported, instead of letting the interface
-	// dispatch logic handle them.
+	// not via the synthetic function desugar table. Returning true for
+	// them would incorrectly trigger the scope error instead of letting
+	// interface dispatch handle them.
 	if sig.Recv() != nil {
-		return false
+		rt := sig.Recv().Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		// Interface receiver: not a concrete synthetic method.
+		if _, isIface := rt.Underlying().(*types.Interface); isIface {
+			return false
+		}
+		// Concrete receiver: fall through to the result-count check below.
 	}
 	return sig.Results().Len() > 1
 }

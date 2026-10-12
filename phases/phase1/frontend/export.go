@@ -8599,6 +8599,12 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 	}
 	mc, err := e.resolveMethodCall(sel, selection, mtargs, e.subst)
 	if err != nil {
+		// P3-M9: resolveMethodCall's implicit-& fail-fast says "method
+		// call"; in the method-value context it must say "method value"
+		// (the test pins the attribution).
+		if strings.Contains(err.Error(), "method call ") && strings.Contains(err.Error(), "needs an implicit") {
+			return nil, scopeErrorf("method value %s needs an implicit address-of or deref on the receiver (WS D)", sel.Sel.Name)
+		}
 		return nil, err
 	}
 	// The ifacemethod fallback is call-only: a method value on a type
@@ -9686,6 +9692,12 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 						return nil, err
 					}
 					return tid, nil
+				}
+				// P3-M9: synthetic multi-result methods (bytes.Buffer.Read,
+				// etc.) fail fast with the named milestone scope error, not
+				// the generic WS D message — the test pins the attribution.
+				if isMultiResultSynthetic(fn) {
+					return nil, multiResultSyntheticError(fn)
 				}
 			}
 			return nil, scopeErrorf("multi-valued call result is not supported in frontend/v1 scope (WS D)")

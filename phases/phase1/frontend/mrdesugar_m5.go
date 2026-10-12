@@ -1033,21 +1033,13 @@ var ioMultiResultFuncs = []m7MultiResultFunc{
 	{"io", "Read", "LimitedReader", "__limitedReaderRead", "limitedReaderReadPair", []string{"n", "err"}},
 	{"io", "Write", "discard", "__discardWrite", "ioWritePair", []string{"n", "err"}},
 	{"io", "WriteString", "discard", "__discardWriteString", "ioWritePair", []string{"n", "err"}},
-	// P3-M9: synthetic testing/iotest readers/writers. Each Read/Write
-	// desugars to its pair-returning __-helper (see synth_iotest.go);
-	// the pair field names/types match the method results positionally.
-	{"testing/iotest", "Read", "oneByteReader", "__oneByteReaderRead", "oneByteReaderReadPair", []string{"n", "err"}},
-	{"testing/iotest", "Read", "halfReader", "__halfReaderRead", "halfReaderReadPair", []string{"n", "err"}},
-	{"testing/iotest", "Read", "dataErrReader", "__dataErrReaderRead", "dataErrReaderReadPair", []string{"n", "err"}},
-	{"testing/iotest", "Read", "timeoutReader", "__timeoutReaderRead", "timeoutReaderReadPair", []string{"n", "err"}},
-	{"testing/iotest", "Read", "errReader", "__errReaderRead", "errReaderReadPair", []string{"n", "err"}},
-	{"testing/iotest", "Write", "truncateWriter", "__truncateWriterWrite", "truncateWriterWritePair", []string{"n", "err"}},
-	// P3-M9: synthetic testing internal writers. outputWriter.Write and
-	// indenter.Write desugar to their pair-returning __-helpers (see
-	// synth_testing.go); the pair field names/types match the method
-	// results positionally.
-	{"testing", "Write", "outputWriter", "__outputWriterWrite", "outputWriterWritePair", []string{"n", "err"}},
-	{"testing", "Write", "indenter", "__indenterWrite", "indenterWritePair", []string{"n", "err"}},
+	// NOTE (P3-M9): the testing/iotest and testing entries added in 139a681
+	// are intentionally absent. They referenced __-helpers and pair types
+	// that were never defined in any synthetic source, so
+	// classifyIoMultiResultCall could never match them (pair-type lookup
+	// returns nil). Dead table entries referencing non-existent code are
+	// removed, not left dangling; re-add them if/when the helpers are
+	// implemented, with the d1IoTable pin extended in lockstep.
 }
 
 // m8IfaceMultiResultMethod describes one P3-M8 (WS D) multi-result

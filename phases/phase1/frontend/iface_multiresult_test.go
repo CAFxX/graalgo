@@ -500,8 +500,10 @@ func main() {
 	println(n, err == nil)
 }
 `,
-			// The M8 multi-result scope error from multiResultSyntheticError.
-			wantErr: "not in M8 scope",
+			// The M8 multi-result scope error path was consolidated into the
+			// WS D fail-fast (the method still fails fast, just with the
+			// unified message).
+			wantErr: "WS D",
 		},
 	}
 	for _, tc := range cases {

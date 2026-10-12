@@ -743,6 +743,12 @@ func main() {
 // error — the dispatch mechanics for multi-result methods are untested,
 // so the shape must fail fast, never silently miscompile.
 func TestIfaceMultiResultScopeError(t *testing.T) {
+	// P3-M9: this test formerly asserted the WS D fail-fast for
+	// multi-result interface calls. The M8 interface dispatch (structural
+	// match on method shape) now handles them — see
+	// TestD1IfaceMultiResultUserInterface for the full verification.
+	// This test now pins that the old scope error is GONE and the export
+	// succeeds with an ifacemethod node (gc accepts the program).
 	const src = `package main
 
 type Reader interface{ Read(p []byte) (int, error) }
@@ -757,13 +763,26 @@ func main() {
 	println(n)
 }
 `
-	_, err := ExportFile(writeIfaceProg(t, src))
-	if err == nil {
-		t.Fatal("expected multi-result scope error, got success")
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("multi-result interface call should now export (M8 dispatch), got: %v", err)
 	}
-	const want = "at most one result is supported in frontend/v1 scope (WS D)"
-	if !strings.Contains(err.Error(), want) {
-		t.Fatalf("error %q does not contain %q", err, want)
+	doc := decodeExport(t, out)
+	reads := 0
+	for _, f := range doc["funcs"].([]any) {
+		fm, _ := f.(map[string]any)
+		fl, _ := fm["fields"].(map[string]any)
+		if fl["name"] != "main" {
+			continue
+		}
+		for _, n := range findAllKind(fm, "ifacemethod") {
+			if n["fields"].(map[string]any)["method"] == "Read" {
+				reads++
+			}
+		}
+	}
+	if reads != 1 {
+		t.Fatalf("want 1 ifacemethod Read node in main, got %d", reads)
 	}
 }
 
