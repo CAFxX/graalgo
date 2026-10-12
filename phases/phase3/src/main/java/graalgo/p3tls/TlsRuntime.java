@@ -440,6 +440,12 @@ public final class TlsRuntime {
                 if (res.getStatus() == SSLEngineResult.Status.CLOSED) {
                     break;
                 }
+                // No progress (0 consumed, 0 produced): the engine has
+                // nothing to do with this data; without this the loop
+                // spins forever inside wrap.
+                if (res.bytesConsumed() == 0 && res.bytesProduced() == 0) {
+                    break;
+                }
             }
             // Handle the empty-plaintext (handshake) case: wrap once.
             if (plain.length == 0) {
@@ -486,6 +492,13 @@ public final class TlsRuntime {
                 }
                 // BUFFER_UNDERFLOW: need more net data; return what we have.
                 if (res.getStatus() == SSLEngineResult.Status.BUFFER_UNDERFLOW) {
+                    break;
+                }
+                // OK with no progress (0 consumed, 0 produced): the engine
+                // has nothing to do with this data (e.g. already-processed
+                // records). Without this break the loop spins forever
+                // inside unwrap — the 01_handshake client stall.
+                if (res.bytesConsumed() == 0 && res.bytesProduced() == 0) {
                     break;
                 }
             }
