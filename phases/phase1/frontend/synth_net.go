@@ -1414,7 +1414,16 @@ func __dialTCPAddrDeadline(network string, raddr *TCPAddr, deadline time.Time) d
 		return dialPair{nil, __tmpNFD2.err}
 	}
 	fd := __tmpNFD2.fd
+	// disarm clears the connect deadline; nil when not armed. The fail
+	// path must disarm BEFORE fd.close() drops the pollDesc — the old
+	// deferred netPollSetDeadline(ctx, 0) ran after close and threw
+	// "unknown pollDesc ctx" (wave3 net/03 red, 2026-10-12).
+	var disarm func()
 	fail := func(opErr error) dialPair {
+		if disarm != nil {
+			disarm()
+			disarm = nil
+		}
 		fd.close()
 		return dialPair{nil, opErr}
 	}
@@ -1426,7 +1435,19 @@ func __dialTCPAddrDeadline(network string, raddr *TCPAddr, deadline time.Time) d
 		}
 		if ctx, ok := netPollCtxs[fd.cookie]; ok {
 			netPollSetDeadline(ctx, d, 'r'+'w')
-			defer netPollSetDeadline(ctx, 0, 'r'+'w')
+			disarm = func() {
+				// The fd may already be closed (pollDesc dropped);
+				// only disarm a live mapping. Cookies are never
+				// reused, so a present entry is this fd's ctx.
+				if ctx2, ok := netPollCtxs[fd.cookie]; ok {
+					netPollSetDeadline(ctx2, 0, 'r'+'w')
+				}
+			}
+			defer func() {
+				if disarm != nil {
+					disarm()
+				}
+			}()
 		}
 	}
 	sa := encodeSockaddr(raddr.IP, raddr.Port)
