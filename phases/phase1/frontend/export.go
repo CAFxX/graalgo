@@ -5965,6 +5965,13 @@ func (e *exporter) prepareInstantiation(inst *instantiation) error {
 	// the same type forever: describe, method table, instantiate,
 	// receiver typeID, describe, ... (stack overflow). The subst
 	// scoping above is still required; only the memo reset is removed.
+	// P3-M9 (x509): but ensure the memo is non-nil — synthetic machinery
+	// nils subst/substTypeIDs during synthetic emission, and a generic
+	// helper instantiation via synthHelperCallNode can reach typeID with
+	// subst != nil and a nil memo (nil-map write panic).
+	if e.subst != nil && e.substTypeIDs == nil {
+		e.substTypeIDs = make(map[types.Type]int)
+	}
 	defer func() {
 		e.subst = savedSubst
 	}()
