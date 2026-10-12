@@ -1391,6 +1391,33 @@ public final class NodeFactory {
         return WIRE_ID_DESCRIPTORS.get(typeId);
     }
 
+    /**
+     * P3-M9 (reflect): canonical GoTypeDescriptor for a named type by
+     * qualified name, for reflect's {@code Interface()} boxing. The
+     * reflect package's per-run type table knows a type's qualified name
+     * and kind but has no BuildCtx; this builds the same canonical
+     * instance {@link #typeDescriptorFor} would (process-wide
+     * {@code NAMED_DESCS} keyed by qualified name, display name via
+     * {@link #displayNameFor}), so descriptor identity holds whether the
+     * descriptor was first materialized by the frontend or by reflect.
+     * Callers pass {@code "*" + qname} for pointer-to-named, mirroring
+     * {@code typeDescriptorFor}'s naming.
+     */
+    public static graalgo.values.GoTypeDescriptor namedDescriptorFor(
+            String qualifiedName, graalgo.values.GoKind kind) {
+        graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(qualifiedName);
+        if (nd == null) {
+            nd = new graalgo.values.GoTypeDescriptor(
+                    displayNameFor(qualifiedName), kind, false);
+            graalgo.values.GoTypeDescriptor prev =
+                    NAMED_DESCS.putIfAbsent(qualifiedName, nd);
+            if (prev != null) {
+                nd = prev;
+            }
+        }
+        return nd;
+    }
+
     /** Records a descriptor <-> wire id pair (additive; no behavior change). */
     private static void recordDescriptorWireId(
             graalgo.values.GoTypeDescriptor d, int typeId) {

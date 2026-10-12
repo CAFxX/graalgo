@@ -767,7 +767,12 @@ public final class Fmt {
             // type has the methods, but kept for the synthetic stand-in.
             // The handler is installed by the phase-3 launcher (which has
             // the method tables); null in phase-1-only mode.
-            if (depth == 0 && !erroring) {
+            // P3-M9 (reflect-iface): gc's printValue calls handleMethods
+            // for nested values too (depth > 0 via value.Interface());
+            // restricting to depth == 0 broke String()/Format()/Error()
+            // dispatch for slice/array elements, map values, and struct
+            // fields (e.g. []net.IP printed as [[127 0 0 1]]).
+            if (!erroring) {
                 FmtMethodHandler handler = methodHandler;
                 if (handler != null) {
                     try {

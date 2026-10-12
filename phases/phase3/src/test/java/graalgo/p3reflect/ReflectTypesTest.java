@@ -148,4 +148,43 @@ public final class ReflectTypesTest {
         // mints one token for all of them; the timing bound above is the
         // regression pin, not the token count.
     }
+
+    /**
+     * P3-M9 (reflect-iface): {@code descriptorForTok} must build the
+     * canonical descriptor on demand for a named type the frontend never
+     * materialized (e.g. a type only ever touched through
+     * reflect.Value.Interface()). Before the fix it threw
+     * "reflect: no descriptor for token", which broke
+     * {@code reflect.ValueOf(xs).Index(0).Interface()} for any named
+     * element type and, downstream, fmt's Stringer dispatch on
+     * reflect-obtained values.
+     */
+    public void testDescriptorForTokBuildsOnDemandForNamedType() {
+        String doc = """
+                {"types": [
+                  {"kind": "named", "detail": {
+                     "name": "main.S", "pkgpath": "main", "underlying": 1, "methods": []}},
+                  {"kind": "basic", "detail": {"name": "string", "class": "string", "untyped": false}}
+                ]}
+                """;
+        ReflectTypes.install(doc, Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        ReflectTypes.TypeInfo named = null;
+        for (ReflectTypes.TypeInfo ti : table.byTok) {
+            if (ti != null && "main.S".equals(ti.name)) {
+                named = ti;
+            }
+        }
+        assertTrue(named != null, "no named main.S TypeInfo built");
+        // Must not throw; must return the canonical descriptor whose
+        // display name matches the frontend's naming.
+        graalgo.values.GoTypeDescriptor d =
+                ReflectTypes.descriptorForTok(named.tok);
+        assertTrue(d != null, "descriptorForTok returned null for main.S");
+        assertTrue("main.S".equals(d.name()),
+                "descriptor name should be \"main.S\", got \"" + d.name() + "\"");
+        // Identity: a second call returns the same canonical instance.
+        assertTrue(d == ReflectTypes.descriptorForTok(named.tok),
+                "descriptorForTok is not canonical across calls");
+    }
 }

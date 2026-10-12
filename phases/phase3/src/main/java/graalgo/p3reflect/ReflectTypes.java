@@ -240,33 +240,84 @@ public final class ReflectTypes {
     /**
      * Canonical GoTypeDescriptor for a token, for boxing D5 values as
      * {@code any} (the {@code interface}/{@code rawinterface} intrinsics).
-     * Tries the representative wire id first, then any wire id sharing the
-     * token (canonical sharing records the descriptor under whichever id
-     * the frontend happened to build).
+     *
+     * <p>Named and basic types canonicalize by name process-wide, so they
+     * are built directly via the frontend's canonical maps — identical to
+     * the instance {@code typeDescriptorFor} would build, and immune to
+     * cross-document wire-id collisions in the process-wide
+     * {@code WIRE_ID_DESCRIPTORS} registry (wire ids are per-document).
+     * Unnamed composites fall back to the wire-id registry, then to
+     * on-demand structural construction.
      */
     public static graalgo.values.GoTypeDescriptor descriptorForTok(long tok) {
         Table table = table();
         graalgo.values.GoTypeDescriptor d = table.tokToDesc.get(tok);
         if (d == null) {
             TypeInfo t = table.info(tok);
-            d = graalgo.frontend.NodeFactory.descriptorForWireId(t.wireId);
-            if (d == null) {
-                for (Map.Entry<Integer, Long> e : table.wireIdToTok.entrySet()) {
-                    if (e.getValue() == tok) {
-                        d = graalgo.frontend.NodeFactory.descriptorForWireId(e.getKey());
-                        if (d != null) {
-                            break;
+            if (t.isNamed()) {
+                d = graalgo.frontend.NodeFactory.namedDescriptorFor(t.name, t.kind);
+            } else if (!t.basicName.isEmpty()) {
+                d = graalgo.frontend.NodeFactory.basicDescriptorForName(
+                        canonicalBasicName(t.basicName), t.kind);
+            } else if (t.kind == graalgo.values.GoKind.POINTER
+                    && t.elem != null && t.elem.isNamed()) {
+                d = graalgo.frontend.NodeFactory.namedDescriptorFor(
+                        "*" + t.elem.name, t.kind);
+            } else {
+                d = graalgo.frontend.NodeFactory.descriptorForWireId(t.wireId);
+                if (d == null) {
+                    for (Map.Entry<Integer, Long> e : table.wireIdToTok.entrySet()) {
+                        if (e.getValue() == tok) {
+                            d = graalgo.frontend.NodeFactory.descriptorForWireId(e.getKey());
+                            if (d != null) {
+                                break;
+                            }
                         }
                     }
                 }
-            }
-            if (d == null) {
-                throw new IllegalStateException(
-                        "reflect: no descriptor for token " + tok);
+                if (d == null) {
+                    d = buildStructuralDescriptorOnDemand(t);
+                }
             }
             table.tokToDesc.put(tok, d);
         }
         return d;
+    }
+
+    /**
+     * Builds the canonical GoTypeDescriptor for an unnamed composite
+     * TypeInfo the frontend never materialized. Unnamed composites have
+     * no methods, so the descriptor name is only used for %T/diagnostics;
+     * canonicalization is per structural shape in a reflect-side
+     * process-wide map keyed by the Go-syntax type string, giving
+     * self-consistent identity within reflect boxing.
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String,
+            graalgo.values.GoTypeDescriptor> ON_DEMAND_STRUCTURAL_DESCS =
+            new java.util.concurrent.ConcurrentHashMap<>();
+
+    private static graalgo.values.GoTypeDescriptor buildStructuralDescriptorOnDemand(TypeInfo t) {
+        String key = typeString(t.tok);
+        graalgo.values.GoTypeDescriptor d = ON_DEMAND_STRUCTURAL_DESCS.get(key);
+        if (d == null) {
+            d = new graalgo.values.GoTypeDescriptor(key, t.kind, false);
+            graalgo.values.GoTypeDescriptor prev =
+                    ON_DEMAND_STRUCTURAL_DESCS.putIfAbsent(key, d);
+            if (prev != null) {
+                d = prev;
+            }
+        }
+        return d;
+    }
+
+    /**
+     * Canonical basic-type name for a wire basic name, mirroring the
+     * frontend's canonicalization (see NodeFactory.canonicalBasicName).
+     */
+    private static String canonicalBasicName(String wireName) {
+        // The frontend maps aliases/legacy spellings to the canonical Go
+        // name; replicate the mapping used by basicDescriptorForName.
+        return graalgo.frontend.NodeFactory.canonicalBasicName(wireName);
     }
 
     // ------------------------------------------------------------------
