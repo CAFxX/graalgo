@@ -210,6 +210,58 @@ func checkDesugarWiringSynthetic(t *testing.T, want m7StrconvJsonExpect) {
 	}
 }
 
+// TestM8AcceptItabWiring pins the two P3-M9 (x509/TLS lane)
+// m8MultiResultFuncs entries that wire net.Listener.Accept interface
+// dispatch: (*crypto/tls.listener).Accept -> __listenerAccept and
+// (*net.TCPListener).Accept -> __tcpListenerAccept. The second entry was
+// missing, which made __listenerAccept's inner l.Listener.Accept()
+// dispatch fail with 'missing method "Accept" for dynamic type
+// "*net.TCPListener"' (01_handshake legs red in legs-nilmap-fix and
+// legs-verify-fix). Reuses the m7 expectation struct and the shared
+// synthetic-package checker (steps 2-5); step 1 pins the m8 table entry.
+func TestM8AcceptItabWiring(t *testing.T) {
+	wants := []m7StrconvJsonExpect{
+		{"crypto/tls", "Accept", "listener", "__listenerAccept", "__listenerAcceptPair", []string{"c", "err"}},
+		{"net", "Accept", "TCPListener", "__tcpListenerAccept", "acceptPair", []string{"c", "err"}},
+	}
+	for _, want := range wants {
+		name := want.pkgPath + "." + want.recvType + "." + want.name
+		t.Run(name, func(t *testing.T) {
+			// 1. Exactly one m8MultiResultFuncs entry for
+			//    (pkgPath, name, recvType) with the expected wiring.
+			var got *osMultiResultFunc
+			for i := range m8MultiResultFuncs {
+				mf := &m8MultiResultFuncs[i]
+				if mf.pkgPath == want.pkgPath && mf.name == want.name && mf.recvType == want.recvType {
+					if got != nil {
+						t.Fatalf("duplicate m8MultiResultFuncs entry for %s", name)
+					}
+					got = mf
+				}
+			}
+			if got == nil {
+				t.Fatalf("no m8MultiResultFuncs entry for %s", name)
+			}
+			if got.helper != want.helper {
+				t.Fatalf("table helper = %q, want %q", got.helper, want.helper)
+			}
+			if got.pairType != want.pairType {
+				t.Fatalf("table pairType = %q, want %q", got.pairType, want.pairType)
+			}
+			if len(got.pairFields) != len(want.pairFields) {
+				t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
+			}
+			for i, f := range want.pairFields {
+				if got.pairFields[i] != f {
+					t.Fatalf("table pairFields = %v, want %v", got.pairFields, want.pairFields)
+				}
+			}
+			// 2-5. Synthetic-package verification (shared checker).
+			checkDesugarWiringSynthetic(t, want)
+		})
+	}
+}
+
 // lookupM7MultiResultFunc finds the multi-result function (package-level)
 // or method (on the table entry's recvType named type) in the synthetic
 // package scope.

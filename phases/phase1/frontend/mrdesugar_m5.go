@@ -852,6 +852,13 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	// listener type implements net.Listener; the stub panics and calls
 	// rewrite to __listenerAccept).
 	{"crypto/tls", "Accept", "listener", "__listenerAccept", "", "__listenerAcceptPair", []string{"c", "err"}},
+	// P3-M9 (x509/TLS lane, legs-verify-fix): (*net.TCPListener).Accept
+	// itab wiring. __listenerAccept calls l.Listener.Accept() — an
+	// interface dispatch whose dynamic type is *net.TCPListener; without
+	// this entry multiResultHelperFor misses it and the dispatch fails
+	// with 'missing method "Accept" for dynamic type "*net.TCPListener"'
+	// (01_handshake legs red in legs-nilmap-fix and legs-verify-fix).
+	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "", "acceptPair", []string{"c", "err"}},
 	// P3-M9 (x509/TLS lane): (*Conn).Read/Write concrete methods.
 	{"crypto/tls", "Read", "Conn", "__tlsConnRead", "", "__tlsConnReadPair", []string{"n", "err"}},
 	{"crypto/tls", "Write", "Conn", "__tlsConnWrite", "", "__tlsConnWritePair", []string{"n", "err"}},
