@@ -136,6 +136,14 @@ public final class TlsRuntime {
     }
 
     private static byte[] bytes(Object o) {
+        // A Go nil slice arrives as Java null: treat it as empty (Go
+        // semantics: ranging/reading a nil slice yields nothing). Without
+        // this, wrap(handle, nil) in the handshake loop threw, wrap
+        // returned null, and the Go loop spun forever on NEED_WRAP with
+        // no output (01_handshake legs red in legs-rebased).
+        if (o == null) {
+            return new byte[0];
+        }
         if (o instanceof GoSlice) {
             GoSlice gs = (GoSlice) o;
             int[] arr = (int[]) gs.array();
