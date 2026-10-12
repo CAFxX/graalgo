@@ -1012,6 +1012,13 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	{"net", "Write", "UDPConn", "__udpConnWrite", "", "writePair", []string{"n", "err"}},
 	{"net", "ReadFrom", "UDPConn", "__udpConnReadFrom", "", "readFromPair", []string{"n", "addr", "err"}},
 	{"net", "WriteTo", "UDPConn", "__udpConnWriteTo", "", "writePair", []string{"n", "err"}},
+	// net: methods on pipeConn (net.Pipe; prependRecv). The itab maps
+	// these to the pair-returning __-helpers so interface dispatch
+	// (net.Conn) works — without entries the methods stay out of the
+	// table and dispatch fails fast with "missing method" (wave3
+	// net/00_pipe red, 2026-10-12).
+	{"net", "Read", "pipeConn", "__pipeRead", "", "__pipeReadPair", []string{"n", "err"}},
+	{"net", "Write", "pipeConn", "__pipeWrite", "", "__pipeWritePair", []string{"n", "err"}},
 }
 
 // ioMultiResultFuncs is the desugar table for the synthetic io package's
@@ -1134,6 +1141,16 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// concrete nistCurve helpers. Pair types live in synthetic elliptic.
 	{"crypto/elliptic", "Unmarshal", "__mrUnmarshalPair", []string{"x", "y"}},
 	{"crypto/elliptic", "UnmarshalCompressed", "__mrUnmarshalCompressedPair", []string{"x", "y"}},
+	// P3-M9 (tier-4: net): net.Listener.Accept, net.PacketConn.WriteTo,
+	// net.PacketConn.ReadFrom. The corpus calls these on interface values
+	// (ln.Accept(), pc.WriteTo(...)); without entries the export fails
+	// fast with "interface method Accept/WriteTo has 2 results" (wave3
+	// net/02 + net/04 red, 2026-10-12). Pair types live in synthetic
+	// net; field names/types are positionally identical to the methods'
+	// results (checked by classifyIfaceMultiResultCall).
+	{"net", "Accept", "acceptPair", []string{"c", "err"}},
+	{"net", "WriteTo", "writePair", []string{"n", "err"}},
+	{"net", "ReadFrom", "readFromPair", []string{"n", "addr", "err"}},
 }
 
 // mrPlan is the desugar plan for one classified call.
@@ -2018,7 +2035,7 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 
 // multiResultHelperFor maps a multi-result (package path, method name,
 // receiver type name) to its pair-returning __-helper's package and name,
-// unioned over the m7/os/m8/io desugar tables. It is the exporter's view
+// unioned over the m7/os/m8/io/m9 desugar tables. It is the exporter's view
 // of "the concrete implementation behind this multi-result method", used
 // by methodTableEntries to wire interface dispatch at the helper.
 func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName string, ok bool) {
@@ -2042,6 +2059,19 @@ func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName
 		}
 	}
 	for _, mf := range m8MultiResultFuncs {
+		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
+			hp := mf.helperPkg
+			if hp == "" {
+				hp = mf.pkgPath
+			}
+			return hp, mf.helper, true
+		}
+	}
+	// P3-M9 (tier-4: net): the net table. Without this, net multi-result
+	// methods (pipeConn/TCPConn/UDPConn Read/Write, TCPListener.Accept)
+	// never wire into the itab — interface dispatch fails fast with
+	// "method missing" (wave3 net/00_pipe red, 2026-10-12).
+	for _, mf := range m9MultiResultFuncs {
 		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
 			hp := mf.helperPkg
 			if hp == "" {

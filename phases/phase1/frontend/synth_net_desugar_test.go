@@ -4,7 +4,7 @@ import (
 	"testing"
 )
 
-// TestM9NetDesugarWiring pins the 44 P3-M9 (tier-4) m9MultiResultFuncs
+// TestM9NetDesugarWiring pins the 46 P3-M9 (tier-4) m9MultiResultFuncs
 // entries added for the synthetic net packages (Appendix M). It follows
 // the TestM7StrconvJsonDesugarWiring pattern: for each entry it verifies,
 // against the synthetic sources in
@@ -91,11 +91,14 @@ var m9NetTable = []m9NetExpect{
 	{"net", "Write", "UDPConn", "__udpConnWrite", "writePair", []string{"n", "err"}},
 	{"net", "ReadFrom", "UDPConn", "__udpConnReadFrom", "readFromPair", []string{"n", "addr", "err"}},
 	{"net", "WriteTo", "UDPConn", "__udpConnWriteTo", "writePair", []string{"n", "err"}},
+	// net: methods on pipeConn (net.Pipe; prependRecv).
+	{"net", "Read", "pipeConn", "__pipeRead", "__pipeReadPair", []string{"n", "err"}},
+	{"net", "Write", "pipeConn", "__pipeWrite", "__pipeWritePair", []string{"n", "err"}},
 }
 
 func TestM9NetDesugarWiring(t *testing.T) {
-	if len(m9NetTable) != 44 {
-		t.Fatalf("m9NetTable has %d entries, want 44", len(m9NetTable))
+	if len(m9NetTable) != 46 {
+		t.Fatalf("m9NetTable has %d entries, want 46", len(m9NetTable))
 	}
 	for _, want := range m9NetTable {
 		name := want.pkgPath + "." + want.name
