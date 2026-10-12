@@ -786,6 +786,14 @@ func syntheticSyncPackage() *types.Package {
 	once := newPrimitive("Once")
 	addMethod(once, "Do", tuple(param("f", funcT)), nil)
 
+	// P3-M9 (Go 1.21+): OnceFunc returns a function that invokes f only once.
+	// Signature: func OnceFunc(f func()) func(). The runtime behavior is a
+	// trivial once-wrapper: the returned closure captures a Once and calls
+	// Do(f) on each invocation.
+	onceFuncSig := types.NewSignatureType(nil, nil, nil,
+		tuple(param("f", funcT)), tuple(param("", funcT)), false)
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "OnceFunc", onceFuncSig))
+
 	pkg.MarkComplete()
 	return pkg
 }
