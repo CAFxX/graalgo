@@ -111,6 +111,22 @@ func checkM7DesugarWiring(t *testing.T, want m7StrconvJsonExpect) {
 		}
 	}
 
+	// Steps 2-5 (synthetic-package verification) are shared with the m9
+	// table's checker below.
+	checkDesugarWiringSynthetic(t, want)
+}
+
+// checkDesugarWiringSynthetic verifies a desugar table expectation
+// against its synthetic package (steps 2-5 of checkM7DesugarWiring):
+// the multi-result function/method exists, the __-helper exists with
+// matching params, and the pair struct's fields match the result types.
+// The caller has already pinned the table entry itself.
+func checkDesugarWiringSynthetic(t *testing.T, want m7StrconvJsonExpect) {
+	t.Helper()
+	name := want.pkgPath + "." + want.name
+	if want.recvType != "" {
+		name = want.pkgPath + "." + want.recvType + "." + want.name
+	}
 	sp := getSyntheticPackage(want.pkgPath)
 	if sp == nil || sp.pkg == nil {
 		t.Fatalf("synthetic package %q not loaded", want.pkgPath)
