@@ -1178,10 +1178,11 @@ func (c *Certificate) Verify(opts VerifyOptions) ([][]*Certificate, error) {
 }
 
 // VerifyHostname verifies the certificate against host h.
+// It performs hostname matching only (no chain building); the previous
+// implementation incorrectly routed through the full chain verify() with
+// empty roots, which always failed with UnknownAuthorityError.
 func (c *Certificate) VerifyHostname(h string) error {
-	__tmpVerify := c.verify(VerifyOptions{DNSName: h})
-	err := __tmpVerify.v1
-	return err
+	return c.verifyHostname(h)
 }
 
 // verify implements chain building and checking.

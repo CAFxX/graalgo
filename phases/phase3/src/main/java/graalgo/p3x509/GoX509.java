@@ -159,8 +159,11 @@ public final class GoX509 {
         if (ext == null) {
             return null;
         }
-        // Unwrap OCTET STRING
-        return toGoBytes(unwrapOctetString(ext));
+        // Unwrap OCTET STRING twice: getExtensionValue returns the outer
+        // extnValue OCTET STRING, and SubjectKeyIdentifier itself is an
+        // OCTET STRING (RFC 5280: SubjectKeyIdentifier ::= KeyIdentifier,
+        // KeyIdentifier ::= OCTET STRING).
+        return toGoBytes(unwrapOctetString(unwrapOctetString(ext)));
     }
 
     /** Authority key identifier, or null if absent. */
