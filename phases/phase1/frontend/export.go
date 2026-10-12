@@ -8841,7 +8841,8 @@ func ifaceStructKey(t *types.Interface) string {
 	return "iface{" + strings.Join(keys, ";") + "}"
 }
 
-func implKeyOf(mobj *types.Func, sig *types.Signature) string {	name := mobj.Name()
+func implKeyOf(mobj *types.Func, sig *types.Signature) string {
+	name := mobj.Name()
 	if !mobj.Exported() {
 		if pkg := mobj.Pkg(); pkg != nil {
 			name = pkg.Path() + "." + name
