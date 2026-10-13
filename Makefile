@@ -11,8 +11,10 @@
 # internal/backend/runtime) (Go runtime on the JVM: scheduler, netpoller,
 # maps, channels), [internal/backend/interop](internal/backend/interop)
 # (stdlib bindings: Go<->Java interop). Each module has its own Makefile;
-# this file orchestrates. Compile order is load-bearing: truffle, then
-# runtime (against truffle/out/classes), then interop (against both).
+# this file orchestrates. Compile order is load-bearing: the runtime module
+# compiles the joint round first (its sources plus the truffle module's —
+# the two form a compile cycle), then truffle compiles the 8 frozen stubs
+# against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.
 #   `make all` = generate + build + snapshot-check + check + test-ci:

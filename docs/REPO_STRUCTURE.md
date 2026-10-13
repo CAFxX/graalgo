@@ -40,8 +40,11 @@ Related: [Makefile](../Makefile) (root build entry point),
     AST node definitions shared by frontend and backend.
   - [backend/](../internal/backend/) — IR → Truffle nodes. The Java backend
     landed here in the Phase-4 restructure (lane 3); each module has its own
-    `Makefile` (plain `javac`, `-Werror`), built in order truffle → runtime
-    → interop by the root `make build`.
+    `Makefile` (plain `javac`, `-Werror`). The runtime module compiles the
+    joint round first (its sources plus the truffle module's — the two form
+    a compile cycle), then the truffle module compiles the 8 frozen stubs
+    against it, then interop builds against both; root `make build` drives
+    the three in that dependency order.
     - [truffle/](../internal/backend/truffle/) — Truffle AST node
       implementations (the compiled program):
       [src/main/java/](../internal/backend/truffle/src/main/java/) holds

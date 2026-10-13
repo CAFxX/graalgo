@@ -7,15 +7,25 @@
 #     phase-2 graalgo.{sched,jfr,runtime,safepoint} (the scheduler, incl. the
 #     same-FQN replacements that shadow the phase-1 stubs).
 #
-# The 8 frozen phase-1 stubs compile in the TRUFFLE module
-# (internal/backend/truffle); one javac round cannot hold two classes with
-# the same fully-qualified name. Classpath order is load-bearing:
-# runtime/out/classes comes FIRST so the phase-2 "owns" replacements shadow
-# the truffle module's stubs — if the stubs loaded instead, their loud
-# UnsupportedOperationExceptions would fire (fail-fast, never silent).
+# COMPILE CYCLE (read before restructuring): the phase-1 AST sources in the
+# truffle module (graalgo.frontend.*Node) call graalgo.runtime.* intrinsics,
+# while graalgo.runtime/launcher/safepoint call back into graalgo.values/
+# graalgo.frontend — 33 files one way, 11 the other. The two source trees
+# cannot compile as separate javac rounds. This module therefore compiles
+# the JOINT round: its own sources plus the truffle module's sources, in a
+# single javac invocation. The truffle module's own main target then
+# compiles only the 8 frozen stubs (against this module's classes); one
+# javac round cannot hold two classes with the same fully-qualified name.
 #
-# Compile order: the truffle module builds first (frozen dependency); this
-# module compiles against truffle/out/classes.
+# Classpath order stays load-bearing: runtime/out/classes comes BEFORE
+# truffle/out/classes, so the phase-2 "owns" replacements shadow the
+# truffle module's stubs — if the stubs loaded instead, their loud
+# UnsupportedOperationExceptions would fire (fail-fast, never silent). The
+# stub-shadow gate below fails the build if any stub/replacement pair goes
+# missing (a deleted replacement would otherwise silently re-expose a stub).
+#
+# Compile order: this module builds FIRST; truffle and interop build
+# against its out/classes.
 #
 # Pinned toolchain: Oracle GraalVM 25.0.4.1.1 LTS, plain javac,
 # -Xlint:deprecation -Werror (standing directive 2026-10-04).
@@ -29,34 +39,53 @@ TRUFFLE_CLASSES := $(TRUFFLE)/out/classes
 LIB := $(wildcard $(TRUFFLE)/lib/*.jar)
 CP := $(subst $(eval) ,:,$(strip $(LIB)))
 
+# The 8 frozen phase-1 stubs, as paths relative to a src/main/java root.
+# Historical artifacts of the GG-0020 interface freeze: they compile in the
+# truffle module (same-FQN phase-2 replacements compile here), and the
+# runtime classpath order makes the replacements win at load time.
+STUB_REL := graalgo/runtime/ChanOps.java graalgo/runtime/GcInterop.java \
+  graalgo/runtime/GoroutineState.java graalgo/runtime/Netpoll.java \
+  graalgo/runtime/Panic.java graalgo/runtime/Scheduler.java \
+  graalgo/runtime/Timers.java graalgo/safepoint/Safepoint.java
+
 SRC_MAIN := $(shell find src/main/java -name '*.java')
+# Truffle-module sources for the joint round, minus the 8 stubs (compiled
+# by the truffle module's own main target — see the cycle note above).
+TRUFFLE_SRC := $(filter-out $(addprefix $(TRUFFLE)/src/main/java/,$(STUB_REL)),$(shell find $(TRUFFLE)/src/main/java -name '*.java'))
 SRC_TEST := $(shell find src/test/java -name '*.java')
 SRC_RES := $(shell find src/main/resources -type f 2>/dev/null)
 OUT_MAIN := out/classes
 OUT_TEST := out/test-classes
 
 # Runtime classpath: this module's classes FIRST (overlay), then the truffle
-# module's (so the same-FQN replacements shadow the frozen stubs), then jars.
+# module's (the 8 stubs, shadowed), then jars.
 RUN_CP := $(OUT_MAIN):$(TRUFFLE_CLASSES):$(CP)
 TEST_CP := $(OUT_TEST):$(RUN_CP)
 
 JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
+# BRIDGE (frontend lane): subprocess tests (GcDifferentialTest, GoDebugTest)
+# resolve gofrontend via ToolPaths' walk-up, which no longer reaches
+# phases/phase1/frontend from the new class locations. Export the current
+# build location until the frontend lane moves it to internal/frontend/
+# (the walk-up then finds it unaided; a stale env var is skipped via the
+# isExecutable check).
+export GRAALGO_GOFRONTEND := $(CURDIR)/../../../phases/phase1/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
 .PHONY: all main test check clean run
 
 all: main
 
-# The truffle module must be built first (frozen dependency).
-$(TRUFFLE_CLASSES)/.built:
-	$(MAKE) -C $(TRUFFLE) main
-
-main: $(TRUFFLE_CLASSES)/.built $(OUT_MAIN)/.built
-$(OUT_MAIN)/.built: $(SRC_MAIN) $(SRC_RES)
+main: $(OUT_MAIN)/.built
+$(OUT_MAIN)/.built: $(SRC_MAIN) $(TRUFFLE_SRC) $(SRC_RES)
+	@for s in $(STUB_REL); do \
+	  [ -f $(TRUFFLE)/src/main/java/$$s ] || { echo "STUB-SHADOW GATE FAILED: stub missing: $$s"; exit 1; }; \
+	  [ -f src/main/java/$$s ] || { echo "STUB-SHADOW GATE FAILED: replacement missing: $$s"; exit 1; }; \
+	done
 	mkdir -p $(OUT_MAIN)
 	$(JAVAC) -version
-	$(JAVAC) $(JAVAC_FLAGS) -cp "$(TRUFFLE_CLASSES):$(CP)" -processorpath "$(CP)" \
-		-d $(OUT_MAIN) $(SRC_MAIN)
+	$(JAVAC) $(JAVAC_FLAGS) -cp "$(CP)" -processorpath "$(CP)" \
+		-d $(OUT_MAIN) $(SRC_MAIN) $(TRUFFLE_SRC)
 	@if [ -d src/main/resources ]; then \
 		cp -r src/main/resources/. $(OUT_MAIN)/; fi
 	touch $(OUT_MAIN)/.built
@@ -66,6 +95,10 @@ run: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(RUN_CP)" graalgo.sched.launcher.SchedMain $(ARGS)
 
 test: main $(OUT_TEST)/.built
+	# BRIDGE (test lane): the differential tests resolve corpus/… paths
+	# relative to the module working directory (as in the phase-2 tree).
+	# The ./corpus symlink points at phases/phase2/corpus until the test
+	# code-move lane relocates it to test/corpus/; repoint/remove then.
 	mkdir -p out/test-tmp
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) \
@@ -109,7 +142,11 @@ check: main $(OUT_TEST)/.built
 	@# not a code path, and is excluded.
 	@if grep -rn --include='*.java' -E 'Netpoll\.' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java' | grep -v 'src/main/java/graalgo/jfr/ParkReason.java'; then \
 		echo "NETPOLLER GATE FAILED: reachable netpoller code path"; exit 1; fi
-	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/; then \
+	@# Exclusion: ToolPaths (phase-1 launcher, startup-only, never
+	@# goroutine-reachable) imports java.net.URISyntaxException for
+	@# code-source URI parsing — not network I/O; the phase-1 tree never
+	@# ran this gate.
+	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/ | grep -v 'java\.net\.URISyntaxException'; then \
 		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (GG-0018 second disjunct)"; exit 1; fi
 	@echo "netpoller-deletion gate clean"
 	@echo "== off-heap/barrier gate (ADR-0002 D3/F3) =="
