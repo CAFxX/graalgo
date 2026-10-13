@@ -156,8 +156,18 @@ Two sub-layers per GG-0037:
 - **Runner:** `tools/diffharness/run.sh` (backends-p3.json → P3SyncMain).
 - **Result:** GREEN. 66 SAME, 0 real divergences, 12 excluded (scope/bug triage
   in `backends-p3.json`), 2 load-induced timeouts confirmed SAME at 90s.
-- **Oracle:** mutation validation (`validate` subcommand) — pending re-run
-  (killed for load; the reference-side mutations are backend-independent).
+- **Oracle:** mutation validation (`validate` subcommand) re-run on
+  `backends-p3.json` 2026-10-13 22:46 CEST → **pass=true**: [1/3] green run
+  34/34 SAME (0 divergences), [2/3] rerun control 34/34 SAME, [3/3] all 10
+  mutation classes DETECTED (OpSwap, CmpSwap, OffByOne, DropDefer,
+  CondNegate, ConstChange, ReturnSwap, ChanOp, SliceBound, TargSwap).
+  Receipts:
+  [`tools/diffharness/test-results/validate.json`](../../../../tools/diffharness/test-results/validate.json) /
+  [`validate.log`](../../../../tools/diffharness/test-results/validate.log).
+  The GG-0030 falsifier ("oracle unvalidated by mutation →
+  red") is discharged: **Layer 1 verdict GREEN** (was prematurely declared
+  GREEN before the validation re-run; methodology review M10-FIX corrected
+  the record).
 - **Evidence:** `/tmp/verify-green2.json` (66/0/12), `/tmp/dh-smoke-p3-run.log`.
 
 ### 2026-10-13 — Layer 2 (conformance)

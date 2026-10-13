@@ -106,6 +106,14 @@ test: build
 # recorded against the pinned Go toolchain — the upgrade baseline. See
 # [test/snapshots/README.md](test/snapshots/README.md) for the format.
 #
+# Backend: the product launcher P3SyncMain via
+# [tools/diffharness/backends-p3.json](tools/diffharness/backends-p3.json)
+# (NOT the phase-1 `graalgo-run` in `backends.json` — that frontend has no
+# channel/scheduler support, so recording against it enshrines build
+# failures as the baseline and leaves P3SyncMain regressions invisible to
+# the per-push gate). The phase-1 config is retained for the typeparam and
+# srctest adapters (layer 2), which test the frontend.
+#
 # `make snapshot` RE-RECORDS the baseline: run only for a toolchain upgrade
 # or a deliberately re-baselined behavior change, then commit the result.
 # `make snapshot-check` verifies the current tree against the committed
@@ -118,9 +126,9 @@ SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
 SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
 snapshot: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/phases/phase1" \
+	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/phases/phase3" \
 	  $(GO) run ./cmd/diffharness snapshot record \
-	  -config backends.json -corpus corpus -backend graalgo \
+	  -config backends-p3.json -corpus corpus -backend graalgo \
 	  -corpus-label tools/diffharness/corpus \
 	  -out ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -toolchain $(SNAPSHOT_TOOLCHAIN) \
@@ -129,9 +137,9 @@ snapshot: build
 
 snapshot-check: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/phases/phase1" \
+	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/phases/phase3" \
 	  $(GO) run ./cmd/diffharness snapshot check \
-	  -config backends.json -corpus corpus -backend graalgo \
+	  -config backends-p3.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -jobs 4 -timeout 60
 
