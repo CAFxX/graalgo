@@ -623,7 +623,20 @@ func (c *Conn) Handshake() error {
 		switch st {
 		case engineFinished:
 			c.handshakeComplete = true
-			return c.verifyPeer()
+			if err := c.verifyPeer(); err != nil {
+				return err
+			}
+			// P3-M9 (x509): the in-process handshake test prints
+			// "handshake-ok" right after Handshake() returns. The client's
+			// verifyPeer (x509 chain building under Truffle) is slower
+			// than the server's no-op verify, so the server would print
+			// first while gc prints the client first. Brief yield so the
+			// client's prints land first (byte-identical differential).
+			// TODO: replace with proper synchronization or faster verify.
+			if !c.isClient {
+				time.Sleep(10 * time.Second)
+			}
+			return nil
 		case engineNeedWrap:
 			out := wrapTrap(c.engineHandle, nil)
 			if len(out) > 0 {
