@@ -2,6 +2,8 @@ package graalgo.runtime;
 
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.values.GoInterface;
+import graalgo.values.GoKind;
+import graalgo.values.GoTypeDescriptor;
 
 /**
  * Go's {@code panic} / {@code recover} (M5, WS F; GG-0019).
@@ -65,6 +67,17 @@ public final class Panic {
         if (v == null) {
             v = PanicNilError.INSTANCE;
             d = PanicNilError.descriptor();
+        }
+        // bug-019: a GoErrorValue (runtime panic like "comparing uncomparable
+        // type") thrown without a descriptor needs one for recover() to box
+        // it as a GoInterface. Infer gc's type name from the message: most
+        // runtime errors are runtime.errorString; interface conversion is
+        // *runtime.TypeAssertionError.
+        if (v instanceof GoErrorValue gev && d == null) {
+            String typeName = gev.errorString().startsWith("interface conversion: ")
+                    ? "*runtime.TypeAssertionError"
+                    : "runtime.errorString";
+            d = new GoTypeDescriptor(typeName, GoKind.STRING, false);
         }
         throw new PanicException(v, d, goTypeName, throwSite);
     }
