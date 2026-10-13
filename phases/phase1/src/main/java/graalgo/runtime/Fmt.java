@@ -695,8 +695,13 @@ public final class Fmt {
         /**
          * The type name Go would report for this arg: the dynamic type for
          * interface values (descriptor name), the static name otherwise.
+         * A recovered runtime panic ({@link GoErrorValue}) reports gc's
+         * panic type name (P0-fmt-016).
          */
         private String dynamicTypeName(Arg arg) {
+            if (arg.value() instanceof GoErrorValue e && e.typeName() != null) {
+                return e.typeName();
+            }
             if (arg.kind() == GoKind.INTERFACE && arg.value() instanceof GoInterface gi) {
                 Object d = gi.descriptor();
                 if (d instanceof GoTypeDescriptor td) {
@@ -726,6 +731,13 @@ public final class Fmt {
         /** Top-level arg print (handles %T and %p first, like Go's printArg). */
         void printArg(Arg arg, int verb) {
             curArg = arg;
+            if (arg.value() instanceof GoErrorValue e) {
+                // P0-fmt-016: a recovered runtime panic formats by the
+                // panic-value rules for every verb (%T/%p included) — the
+                // generic paths don't know the panic type identity.
+                printGoErrorValue(e, verb);
+                return;
+            }
             if (arg.value() == null) {
                 // A Java-null value is either a nil interface or a typed nil
                 // (nil pointer/map/slice/chan/func); the static kind tells
@@ -894,6 +906,14 @@ public final class Fmt {
                 case STRUCT -> printStruct(arg, (GoStruct) v, verb, depth);
                 case POINTER -> fmtPointer(arg, verb);
                 case INTERFACE -> {
+                    // P0-fmt-016: a recovered runtime panic flows as a raw
+                    // GoErrorValue, not a GoInterface — the blind narrow()
+                    // below would throw ClassCastException. Format it by
+                    // gc's panic-value rules instead.
+                    if (v instanceof GoErrorValue e) {
+                        printGoErrorValue(e, verb);
+                        return;
+                    }
                     // P3-M7: a nil interface arg may flow as Java null — narrow to NIL.
                     GoInterface gi = GoInterface.narrow(v);
                     if (gi.isNil() || gi.data() == null) {
@@ -904,15 +924,14 @@ public final class Fmt {
                         }
                         return;
                     }
-                    // bug-003: a GoErrorValue (e.g. *runtime.PanicNilError)
-                    // formats via its Error() text for the stringable verbs,
-                    // matching gc's handleMethods dispatch. Without this, the
-                    // POINTER-kind descriptor falls through to fmtPointer,
-                    // which prints <nil> (the value is not a GoPointer).
-                    if (gi.data() instanceof GoErrorValue gev
-                            && (verb == 'v' || verb == 's' || verb == 'q'
-                                || verb == 'x' || verb == 'X')) {
-                        fmtString(gev.errorString().getBytes(StandardCharsets.UTF_8), verb);
+                    // P0-fmt-016 (subsumes bug-003): recover() boxes the panic value
+                    // as a GoInterface whose data is the raw GoErrorValue
+                    // (e.g. *PanicNilError). Format by the panic-value rules,
+                    // not by the dynamic (pointer) kind — gc dispatches the
+                    // Error() method. printGoErrorValue handles v/s/q/x/X via
+                    // errorString() (bug-003's behavior) plus T/p/sharpV.
+                    if (gi.data() instanceof GoErrorValue e2) {
+                        printGoErrorValue(e2, verb);
                         return;
                     }
                     GoTypeDescriptor td = (GoTypeDescriptor) gi.descriptor();
@@ -925,6 +944,57 @@ public final class Fmt {
 
         private boolean erroring;
         private boolean wrapErrs;
+
+        /**
+         * Formats a recovered runtime panic value (P0-fmt-016), mirroring
+         * gc's fmt on the runtime's panic types ({@code runtime.boundsError},
+         * {@code runtime.errorString}, {@code runtime.plainError},
+         * {@code *runtime.PanicNilError}, {@code *runtime.TypeAssertionError}):
+         * {@code %T} is the runtime type name; {@code %v}/{@code %s}/
+         * {@code %q}/{@code %x}/{@code %X} use the {@code Error()} text;
+         * {@code %#v} is the Go-syntax form; {@code %p} is the (erased)
+         * address for pointer kinds and a verb mismatch otherwise. With
+         * method dispatch disabled ({@code erroring}, e.g. inside
+         * {@code badVerb}) the value prints structurally, like gc.
+         */
+        private void printGoErrorValue(GoErrorValue e, int verb) {
+            if (verb == 'T') {
+                writeUtf8(e.typeName() != null ? e.typeName() : "error");
+                return;
+            }
+            if (verb == 'p' && e.typeName() != null && e.typeName().startsWith("*")) {
+                // Pointer-kind panic value: gc prints the address, which
+                // graalgo erases to zero like every other pointer.
+                fmt0x64(0, !sharp);
+                return;
+            }
+            if (erroring) {
+                // gc's p.erroring: no method dispatch; struct kinds print
+                // structurally, string kinds print the raw underlying string.
+                if (e.structForm() != null) {
+                    writeUtf8(e.structForm());
+                } else {
+                    fmtS(e.errorString());
+                }
+                return;
+            }
+            if (sharpV) {
+                if (e.goSyntax() != null) {
+                    writeUtf8(e.goSyntax());
+                } else {
+                    // No deterministic Go-syntax form (e.g.
+                    // TypeAssertionError addresses): quote the Error() text.
+                    fmtString(e.errorString().getBytes(java.nio.charset.StandardCharsets.UTF_8), 'q');
+                }
+                return;
+            }
+            switch (verb) {
+                case 'v', 's', 'q', 'x', 'X' ->
+                    fmtString(e.errorString().getBytes(java.nio.charset.StandardCharsets.UTF_8), verb);
+                default -> badVerb(new Arg(e, GoKind.INTERFACE,
+                        e.typeName() != null ? e.typeName() : "error"), verb);
+            }
+        }
 
         private static GoKind normalize(GoKind k) {
             return switch (k) {

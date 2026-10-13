@@ -27,7 +27,12 @@ public final class PanicNilError extends GoErrorValue {
             new GoTypeDescriptor("*runtime.PanicNilError", GoKind.POINTER, false);
 
     private PanicNilError() {
-        super("runtime error: panic called with nil argument");
+        // P0-fmt-016: gc's %T is *runtime.PanicNilError; %#v is
+        // &runtime.PanicNilError{_:[0]*runtime.PanicNilError{}}; %p is the
+        // (erased) address.
+        super("runtime error: panic called with nil argument", false,
+                "*runtime.PanicNilError",
+                "&runtime.PanicNilError{_:[0]*runtime.PanicNilError{}}", null);
     }
 
     public static GoTypeDescriptor descriptor() {

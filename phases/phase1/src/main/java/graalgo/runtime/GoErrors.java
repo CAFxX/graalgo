@@ -51,7 +51,18 @@ public final class GoErrors {
         } else {
             msg = code.fmt.replace("%x", xs).replace("%y", Long.toString(y));
         }
-        return new GoErrorValue("runtime error: " + msg);
+        // P0-fmt-016: gc's boundsError.signed is value-based, not
+        // kind-based — gc reports signed:false for every non-negative x
+        // (the check is emitted unsigned) and signed:true only when x < 0
+        // (verified against gc 1.27.1 for index and slice bounds).
+        boolean s = signed && x < 0;
+        // gc's runtime.boundsError{x, y, signed, code}; %#v renders code
+        // as 0x%x, the badVerb-inner %v as {x y signed code}.
+        String goSyntax = "runtime.boundsError{x:" + xs + ", y:" + y
+                + ", signed:" + s + ", code:0x" + Long.toHexString(code.ordinal()) + "}";
+        String structForm = "{" + xs + " " + y + " " + s + " " + code.ordinal() + "}";
+        return new GoErrorValue("runtime error: " + msg, false,
+                "runtime.boundsError", goSyntax, structForm);
     }
 
     /** Index out of range (signed or unsigned index). */
@@ -61,23 +72,33 @@ public final class GoErrors {
 
     /** Assignment to an entry in a nil map. */
     public static GoErrorValue assignmentToNilMap() {
-        return new GoErrorValue("assignment to entry in nil map");
+        // P0-fmt-016: gc's plainError is a string kind; %#v quotes the
+        // underlying string, and Error() has no "runtime error: " prefix.
+        String s = "assignment to entry in nil map";
+        return new GoErrorValue(s, false, "runtime.plainError", quote(s), s);
     }
 
     /** Nil pointer/map/... dereference (adds the SIGSEGV traceback line). */
     public static GoErrorValue nilDereference() {
-        return new GoErrorValue(
-                "runtime error: invalid memory address or nil pointer dereference", true);
+        // P0-fmt-016: gc's errorString is a string kind whose Error()
+        // prepends "runtime error: ".
+        String s = "invalid memory address or nil pointer dereference";
+        return new GoErrorValue("runtime error: " + s, true,
+                "runtime.errorString", quote(s), s);
     }
 
     /** Integer divide by zero. */
     public static GoErrorValue integerDivideByZero() {
-        return new GoErrorValue("runtime error: integer divide by zero");
+        String s = "integer divide by zero";
+        return new GoErrorValue("runtime error: " + s, false,
+                "runtime.errorString", quote(s), s);
     }
 
     /** Negative shift amount. */
     public static GoErrorValue negativeShift() {
-        return new GoErrorValue("runtime error: negative shift amount");
+        String s = "negative shift amount";
+        return new GoErrorValue("runtime error: " + s, false,
+                "runtime.errorString", quote(s), s);
     }
 
     /**
@@ -85,7 +106,16 @@ public final class GoErrors {
      * <dynamic>, not <asserted>} (gc renders all three in Go syntax).
      */
     public static GoErrorValue interfaceConversion(String iface, String dynamic, String asserted) {
-        return new GoErrorValue("interface conversion: " + iface + " is " + dynamic + ", not " + asserted);
+        // P0-fmt-016: gc's *runtime.TypeAssertionError; its %#v embeds
+        // nondeterministic addresses, so no pre-rendered Go-syntax form.
+        return new GoErrorValue(
+                "interface conversion: " + iface + " is " + dynamic + ", not " + asserted,
+                false, "*runtime.TypeAssertionError", null, null);
+    }
+
+    /** Go-quotes a string as UTF-8 bytes (strconv.Quote). */
+    private static String quote(String s) {
+        return GoQuote.quote(s.getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     /**
