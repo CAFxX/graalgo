@@ -5,7 +5,7 @@ package p3frontend
 // signatures (it cannot reuse them — unexported and frozen); this mirror
 // pins the signatures so drift fails fast.
 //
-// The signatures match phases/phase1/frontend/synth_bytes.go exactly
+// The signatures match internal/frontend/synth_bytes.go exactly
 // (not gc's real package — e.g. Buffer.ReadFrom takes io.Reader from the
 // synthetic io package, and the iter/SpecialCase members are omitted).
 // The drift test (bytes_test.go) compares this mirror method-by-method

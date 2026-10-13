@@ -134,7 +134,7 @@ func TestTimeSyntheticSignatures(t *testing.T) {
 }
 
 // phase1SyntheticContextPackage type-checks the REAL phase-1 synthetic
-// context source (phases/phase1/frontend/synth_time_context.go,
+// context source (internal/frontend/synth_time_context.go,
 // syntheticContextSource const) and returns its *types.Package. This is
 // the drift oracle for the mirror: the test below compares the mirror's
 // Context interface method-by-method against this package, so a
@@ -142,7 +142,7 @@ func TestTimeSyntheticSignatures(t *testing.T) {
 // here instead of silently diverging.
 func phase1SyntheticContextPackage(t *testing.T, timePkg *types.Package) *types.Package {
 	t.Helper()
-	srcPath := "../../../phase1/frontend/synth_time_context.go"
+	srcPath := "../../../../internal/frontend/synth_time_context.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

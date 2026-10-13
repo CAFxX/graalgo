@@ -1,6 +1,6 @@
 # unicode/utf16 corpus (P3-M9 wave 3, tier-1a)
 
-Differential corpus for the synthetic `unicode/utf16` package (phases/phase1/frontend/synth_unicode_utf16.go — verbatim gc 1.27.1).
+Differential corpus for the synthetic `unicode/utf16` package (internal/frontend/synth_unicode_utf16.go — verbatim gc 1.27.1).
 
 ## Coverage
 - `01_encode.go`: `RuneLen`, `Encode`, `Decode`

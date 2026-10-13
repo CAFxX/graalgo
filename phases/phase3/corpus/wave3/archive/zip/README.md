@@ -31,6 +31,6 @@ no network.
 - No synthetic `archive/zip` source exists in frontend/v1, so all
   programs are `.scopelimited`; the gc leg validates each is real
   deterministic Go with exit 0. `retest:` synthetic `archive/zip`
-  lands in `phases/phase1/frontend`, coordinated with the parallel
+  lands in `internal/frontend`, coordinated with the parallel
   `compress/*` worker (the zip corpus exercises `Deflate` via the
   real std `compress/flate` on the gc leg).

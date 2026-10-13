@@ -1,7 +1,7 @@
 # P3-M7 wave-1 corpus: encoding/base64
 
 Differential tests for the synthetic `encoding/base64` package
-(`phases/phase1/frontend/synth_base64.go`).
+(`internal/frontend/synth_base64.go`).
 
 ## Programs
 

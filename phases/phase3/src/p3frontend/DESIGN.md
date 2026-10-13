@@ -324,7 +324,7 @@ and reports `p3frontend: gofrontend: <err>`). A hung exporter is killed
 after a generous timeout (`gofrontendTimeout`, 10 minutes) with a named
 timeout error rather than hanging `ExportDir` forever. Binary resolution
 mirrors `graalgo.launcher.ToolPaths`:
-`GRAALGO_GOFRONTEND`, then `<repo>/phases/phase1/frontend/gofrontend`,
+`GRAALGO_GOFRONTEND`, then `<repo>/internal/frontend/gofrontend`,
 then `PATH`. The `require graalgo-frontend` + `replace` in `go.mod`
 records the dependency explicitly for readers and `go mod graph`; note
 that `go mod tidy` drops the `require` (the module is `package main` and

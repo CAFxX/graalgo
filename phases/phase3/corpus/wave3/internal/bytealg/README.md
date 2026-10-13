@@ -1,7 +1,7 @@
 # wave-3 `internal/bytealg` corpus
 
 Scope-limited corpus for the synthetic `internal/bytealg` package
-(`phases/phase1/frontend/synth_bytealg.go`): portable real-Go
+(`internal/frontend/synth_bytealg.go`): portable real-Go
 implementations of the gc 1.27.1 exported surface (Compare, CompareString,
 Count, CountString, Equal, Index, IndexString, Cutover, IndexByte,
 IndexByteString, LastIndexByte, LastIndexByteString, IndexRabinKarp,

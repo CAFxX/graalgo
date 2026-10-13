@@ -16,14 +16,14 @@ import (
 )
 
 // phase1SyntheticMathPackage type-checks the REAL phase-1 synthetic math
-// source (phases/phase1/frontend/synth_math.go, syntheticMathSource const)
+// source (internal/frontend/synth_math.go, syntheticMathSource const)
 // and returns its *types.Package. This is the drift oracle for the
 // mirror: the test below compares the mirror's package-level functions
 // (names + signatures) and constants against this package, so a
 // phase-1-side change fails fast here instead of silently diverging.
 func phase1SyntheticMathPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../phase1/frontend/synth_math.go"
+	srcPath := "../../../../internal/frontend/synth_math.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

@@ -1,7 +1,7 @@
 # P3-M7 wave-1 corpus: encoding/hex
 
 Differential tests for the synthetic `encoding/hex` package
-(`phases/phase1/frontend/synth_hex.go`).
+(`internal/frontend/synth_hex.go`).
 
 ## Programs
 

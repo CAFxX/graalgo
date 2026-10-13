@@ -1,7 +1,7 @@
 # P3-M9 wave-3 `path/filepath` corpus (tier-2)
 
 Differential corpus for the new synthetic `path/filepath` package
-(`phases/phase1/frontend/synth_filepath.go`): a linux-only port of
+(`internal/frontend/synth_filepath.go`): a linux-only port of
 go1.27.1 `path/filepath` + the unix `filepathlite` core (windows/Plan9
 out per GG-0023). Conventions are the wave-1 ones (`../wave1/README.md`).
 

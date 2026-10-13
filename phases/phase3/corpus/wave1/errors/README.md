@@ -1,7 +1,7 @@
 # P3-M7 wave-1 `errors` corpus
 
 Go programs exercising the wave-1 synthetic `errors` package
-(`phases/phase1/frontend/synth_errors.go`: real-Go New/Is/Unwrap/Join;
+(`internal/frontend/synth_errors.go`: real-Go New/Is/Unwrap/Join;
 As/AsType fail-fast — they need reflect), differential vs stock gc
 1.27.1. Run via `run_differential.sh` (thin wrapper over
 `corpus/wave1/run_wave.sh`; conventions: `corpus/wave1/README.md`).

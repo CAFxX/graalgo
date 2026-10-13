@@ -18,7 +18,7 @@ semantics, the shared-runner model) plus the wave-3 delta
 - No synthetic `mime` source exists in frontend/v1 (imports are not
   supported in frontend/v1 scope — WS G import overlay), so the program
   is `.scopelimited`; the gc leg validates it is real deterministic Go.
-  `retest:` synthetic `mime` source lands in `phases/phase1/frontend`.
+  `retest:` synthetic `mime` source lands in `internal/frontend`.
 - `TypeByExtension`/`ExtensionsByType` are intentionally not covered:
   they read host mime.types files (environment-dependent); the corpus
   pins only the pure parse/format/encoded-word surface.

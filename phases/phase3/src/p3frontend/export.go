@@ -78,7 +78,7 @@ func MergeDir(dir string) (string, error) {
 // gofrontend binary's stdout is ExportFile's return value. Binary
 // resolution mirrors graalgo.launcher.ToolPaths.gofrontend(): the
 // GRAALGO_GOFRONTEND environment variable, then
-// <repo>/phases/phase1/frontend/gofrontend, then bare "gofrontend" on PATH.
+// <repo>/internal/frontend/gofrontend, then bare "gofrontend" on PATH.
 func gofrontendPath() (string, error) {
 	if v := os.Getenv("GRAALGO_GOFRONTEND"); v != "" {
 		return v, nil
@@ -94,7 +94,7 @@ func gofrontendPath() (string, error) {
 	if p, err := exec.LookPath("gofrontend"); err == nil {
 		return p, nil
 	}
-	return "", fmt.Errorf("p3frontend: gofrontend binary not found: set GRAALGO_GOFRONTEND or build phases/phase1/frontend (./build.sh build)")
+	return "", fmt.Errorf("p3frontend: gofrontend binary not found: set GRAALGO_GOFRONTEND or build internal/frontend (./build.sh build)")
 }
 
 func isExecutable(path string) bool {

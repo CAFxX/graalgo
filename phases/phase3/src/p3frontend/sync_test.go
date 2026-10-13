@@ -115,7 +115,7 @@ func TestSyncSyntheticSignatures(t *testing.T) {
 // the same method set are identical types). The frozen exporter
 // deliberately synthesizes RWMutex.RLocker's result as an anonymous
 // interface{Lock(); Unlock()} ("just needs to exist for the signature to
-// type-check", phases/phase1/frontend/export.go — RLocker is out of M2
+// type-check", internal/frontend/export.go — RLocker is out of M2
 // scope and never lowers), while gc names it sync.Locker. Normalizing
 // both sides keeps the oracle strict on what matters (method sets,
 // parameter/result types, receivers) without flagging that documented
