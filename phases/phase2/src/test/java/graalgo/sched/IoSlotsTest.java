@@ -193,8 +193,7 @@ public final class IoSlotsTest {
     }
 
     // White-box: duplicate IO_ENTER fail-fasts in the drainer.
-    public void testDrainerRejectsDuplicateIoEnter() {
-        SchedulerCore sc = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+    public void testDrainerRejectsDuplicateIoEnter() {        SchedulerCore sc = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         GoroutineHandle h = new GoroutineHandle(() -> {});
         h.thread = Thread.currentThread();
         sc.drainer().setInflightForTest(1);
@@ -251,5 +250,39 @@ public final class IoSlotsTest {
             assertTrue(e.getMessage().contains("parked while in blocking I/O"),
                     "wrong message: " + e.getMessage());
         }
+    }
+
+    // M10 (P3-M10 WS J, self-attack F6): ioEnter/ioExit from a thread
+    // that is not a scheduler goroutine fail fast with a named
+    // IllegalStateException — they must not touch another goroutine's
+    // slot accounting, block, or corrupt the drainer. The attack is the
+    // cross-thread call: the caller's ThreadLocal has no handle.
+    public void testIoEnterExitFromForeignThreadFails() throws Exception {
+        AtomicBoolean ok = new AtomicBoolean();
+        withScheduler(1, () -> {
+            // Main (test) thread: not a goroutine — both must fail fast.
+            try {
+                sched.ioEnter();
+                throw new AssertionError("ioEnter from foreign thread must fail fast");
+            } catch (IllegalStateException e) {
+                assertTrue(e.getMessage().contains("not a scheduler goroutine"),
+                        "wrong message: " + e.getMessage());
+            }
+            try {
+                sched.ioExit();
+                throw new AssertionError("ioExit from foreign thread must fail fast");
+            } catch (IllegalStateException e) {
+                assertTrue(e.getMessage().contains("not a scheduler goroutine"),
+                        "wrong message: " + e.getMessage());
+            }
+            // And a goroutine's paired ioEnter/ioExit still works after
+            // the failed foreign calls (no accounting corruption).
+            sched.spawn(() -> {
+                sched.ioEnter();
+                sched.ioExit();
+                ok.set(true);
+            });
+        });
+        assertTrue(ok.get(), "paired ioEnter/ioExit broke after foreign-thread failures");
     }
 }

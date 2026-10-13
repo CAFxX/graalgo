@@ -444,7 +444,40 @@ public final class SchedulerCore {
 
     private void recordCrash(String what, Throwable t) {
         crashCount.incrementAndGet();
+        // M10 (self-attack D3): a class-loading failure while fds are
+        // exhausted is resource exhaustion, not a logic bug. The JVM loads
+        // node classes lazily; a guest that consumed every fd breaks that
+        // load, surfacing as NoClassDefFoundError. Reporting "internal
+        // error" would send operators hunting a phantom graalgo bug —
+        // name the resource instead.
+        if (isClassLoadingFailure(t) && fdExhausted()) {
+            System.err.println("graalgo-run: fatal fd exhaustion in goroutine: " + t
+                    + " (too many open files)");
+            return;
+        }
         System.err.println("graalgo-run: fatal " + what + " in goroutine: " + t);
+    }
+
+    private static boolean isClassLoadingFailure(Throwable t) {
+        return t instanceof NoClassDefFoundError
+                || t instanceof ExceptionInInitializerError
+                || t instanceof ClassNotFoundException;
+    }
+
+    /**
+     * Direct fd-exhaustion probe: can this process still open a file?
+     * Used to distinguish resource exhaustion from genuine internal
+     * errors at crash-report time (M10 self-attack D3).
+     */
+    private static boolean fdExhausted() {
+        try (java.io.InputStream in =
+                java.nio.file.Files.newInputStream(java.nio.file.Path.of("/dev/null"))) {
+            return false;
+        } catch (java.io.IOException e) {
+            String m = e.getMessage();
+            return m != null
+                    && m.toLowerCase(java.util.Locale.ROOT).contains("too many open files");
+        }
     }
 
     /** True if any goroutine died from an uncaught Go panic. */

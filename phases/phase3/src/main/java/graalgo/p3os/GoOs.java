@@ -120,6 +120,8 @@ public final class GoOs {
     public static final int ENOTDIR = 20;
     public static final int EISDIR = 21;
     public static final int EINVAL = 22;
+    public static final int ENFILE = 23;
+    public static final int EMFILE = 24;
     public static final int EFBIG = 27;
     public static final int ENOSPC = 28;
     public static final int ESPIPE = 29;
@@ -347,6 +349,13 @@ public final class GoOs {
             String reason = fse.getReason();
             if (reason != null) {
                 String rl = reason.toLowerCase(Locale.ROOT);
+                // M10 (self-attack D3): fd exhaustion must surface as
+                // EMFILE/ENFILE (gc parity), not EIO. FileChannel.open
+                // reports it as FileSystemException with reason
+                // "Too many open files".
+                if (rl.contains("too many open files")) {
+                    return rl.contains("in system") ? ENFILE : EMFILE;
+                }
                 if (rl.contains("too long")) {
                     return ENAMETOOLONG; // "File name too long" (verified on this JDK)
                 }
@@ -362,8 +371,19 @@ public final class GoOs {
         }
         if (t instanceof IOException ioe) {
             String m = ioe.getMessage();
-            if (m != null && m.toLowerCase(Locale.ROOT).contains("broken pipe")) {
-                return EPIPE; // verified: "Broken pipe" on this JDK
+            if (m != null) {
+                String ml = m.toLowerCase(Locale.ROOT);
+                if (ml.contains("broken pipe")) {
+                    return EPIPE; // verified: "Broken pipe" on this JDK
+                }
+                // M10 (self-attack D3): fd exhaustion must surface as
+                // EMFILE/ENFILE (gc parity), not EIO — Go programs
+                // distinguish "too many open files" (e.g. netpoll
+                // backoff, os.IsTimeout-style checks). The JDK reports
+                // both as "Too many open files[...]".
+                if (ml.contains("too many open files")) {
+                    return ml.contains("in system") ? ENFILE : EMFILE;
+                }
             }
             return EIO;
         }
