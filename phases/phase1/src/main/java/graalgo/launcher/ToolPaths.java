@@ -12,10 +12,10 @@ import java.nio.file.Paths;
  * <ol>
  *   <li>the {@code GRAALGO_GOFRONTEND} environment variable, when it names
  *       an executable file;</li>
- *   <li>{@code <phase1>/frontend/gofrontend}, found by walking up from this
+ *   <li>{@code <repo>/internal/frontend/gofrontend}, found by walking up from this
  *       class's own code location (covers both {@code make run} and the
  *       {@code graalgo-run} wrapper, whose classes live under
- *       {@code <phase1>/out/});</li>
+ *       {@code <repo>/phases/phase1/out/});</li>
  *   <li>bare {@code gofrontend} on {@code PATH} (last resort; resolved by
  *       the OS at process-launch time).</li>
  * </ol>
@@ -38,7 +38,7 @@ public final class ToolPaths {
         }
         Path anchor = codeSourceDir();
         for (int up = 0; anchor != null && up < 5; up++, anchor = anchor.getParent()) {
-            Path cand = anchor.resolve("frontend/gofrontend");
+            Path cand = anchor.resolve("internal/frontend/gofrontend");
             if (Files.isExecutable(cand)) {
                 return cand;
             }
