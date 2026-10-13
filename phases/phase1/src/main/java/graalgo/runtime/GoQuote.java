@@ -9,8 +9,11 @@ package graalgo.runtime;
  * decoding follows {@code utf8.DecodeRuneInString}: invalid encodings
  * decode as {@code RuneError} with width 1 and are emitted as
  * {@code \xNN} per byte.
+ *
+ * <p>Public: the frontend uses {@link #quote} for Go-syntax struct-tag
+ * rendering (P0-fmt-022).
  */
-final class GoQuote {
+public final class GoQuote {
     private GoQuote() {}
 
     private static final char[] LOWER_HEX = "0123456789abcdef".toCharArray();
@@ -156,8 +159,8 @@ final class GoQuote {
         return sb.toString();
     }
 
-    /** {@code strconv.Quote} on UTF-8 bytes. */
-    static String quote(byte[] s) {
+    /** {@code strconv.Quote} on UTF-8 bytes. Public for frontend type rendering (P0-fmt-022). */
+    public static String quote(byte[] s) {
         return quoteWith(s, '"', false, false);
     }
 

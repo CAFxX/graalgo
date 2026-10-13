@@ -49,9 +49,50 @@ public final class GoTypeStrings {
                     + of(ctx, detail.intValue("elem", dpath));
             case "chan" -> "chan " + of(ctx, detail.intValue("elem", dpath));
             case "interface" -> detail.bool("empty", dpath) ? "interface {}" : "interface{...}";
-            case "struct" -> "struct{...}";
+            // P0-fmt-022: anonymous structs render structurally, exactly as
+            // gc does (`struct { A int; B string "tag" }`), not as the
+            // `struct{...}` placeholder. Embedded fields render as just the
+            // type name; tags are Go-quoted. This feeds %#v and %T (and
+            // gc-exact panic messages).
+            case "struct" -> structName(ctx, detail, dpath, false);
             default -> kind;
         };
+    }
+
+    /**
+     * Go-syntax name for an anonymous struct type from its wire fields.
+     * Each field renders as {@code Name Type} (or just {@code Type} when
+     * embedded), with a Go-quoted tag when present; fields join with
+     * {@code "; "}. Matches gc's reflect type strings verbatim.
+     *
+     * @param raw when true, field types render with {@link #rawOf} (the
+     *            method-table keyspace); otherwise with {@link #of}.
+     */
+    private static String structName(NodeFactory.BuildCtx ctx, Json.Object detail, String dpath, boolean raw) {
+        Json.Array fields = detail.array("fields", dpath);
+        if (fields.size() == 0) {
+            return "struct {}";
+        }
+        StringBuilder sb = new StringBuilder("struct { ");
+        for (int i = 0; i < fields.size(); i++) {
+            if (i > 0) {
+                sb.append("; ");
+            }
+            String fpath = dpath + ".fields[" + i + "]";
+            Json.Object f = (Json.Object) fields.get(i);
+            int ftype = f.intValue("type", fpath);
+            String typeName = raw ? rawOf(ctx, ftype) : of(ctx, ftype);
+            boolean embedded = f.opt("embedded") instanceof Json.Bool b && b.value();
+            if (!embedded) {
+                sb.append(f.string("name", fpath)).append(' ');
+            }
+            sb.append(typeName);
+            if (f.opt("tag") instanceof Json.Str tag && !tag.value().isEmpty()) {
+                sb.append(' ').append(graalgo.runtime.GoQuote.quote(
+                        tag.value().getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+            }
+        }
+        return sb.append(" }").toString();
     }
 
     /**
@@ -78,7 +119,9 @@ public final class GoTypeStrings {
                     + rawOf(ctx, detail.intValue("elem", dpath));
             case "chan" -> "chan " + rawOf(ctx, detail.intValue("elem", dpath));
             case "interface" -> detail.bool("empty", dpath) ? "interface {}" : "interface{...}";
-            case "struct" -> "struct{...}";
+            // P0-fmt-022: same structural rendering as of(), so the
+            // method-table keyspace stays consistent between the two.
+            case "struct" -> structName(ctx, detail, dpath, true);
             default -> kind;
         };
     }
