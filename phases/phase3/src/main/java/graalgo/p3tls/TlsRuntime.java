@@ -95,6 +95,15 @@ public final class TlsRuntime {
         }
 
         @Override
+        public String chooseEngineServerAlias(String keyType, java.security.Principal[] issuers,
+                                              SSLEngine engine) {
+            // P3-M9 (x509): SSLEngine (not SSLSocket) drives the handshake —
+            // without this override the engine gets no alias and the
+            // handshake fails with "No available authentication scheme".
+            return "graalgo";
+        }
+
+        @Override
         public String chooseClientAlias(String[] keyType, java.security.Principal[] issuers,
                                         Socket socket) {
             return null;
