@@ -6,6 +6,17 @@ against a pinned Go toolchain — the **upgrade baseline** (PHASES.md M10).
 A future toolchain upgrade or refactor diffs against these files to detect
 behavior drift.
 
+**Backend:** the snapshots are recorded against the **product launcher
+P3SyncMain** (`graalgo` backend in
+[`tools/diffharness/backends-p3.json`](../../tools/diffharness/backends-p3.json)),
+*not* the phase-1 `graalgo-run` in
+[`tools/diffharness/backends.json`](../../tools/diffharness/backends.json).
+Recording against the phase-1 frontend would enshrine its build failures
+(no channel/scheduler support) as the baseline and leave P3SyncMain
+regressions invisible to the per-push gate. The phase-1 config is retained
+for the typeparam and srctest adapters (layer 2), which test the frontend;
+it is no longer the snapshot backend.
+
 ## Layout
 
 - `go<VERSION>.json` — one snapshot file per Go toolchain, e.g.
@@ -27,7 +38,7 @@ Top-level metadata:
 |---|---|
 | `format` | `"graalgo-behavior-snapshot/v1"` — bump on any format or normalization-rule change; old files then fail the check loudly instead of drifting silently |
 | `toolchain` | Go toolchain the snapshot was recorded against, e.g. `"go1.27.1"` |
-| `backend` | Backend name from [`backends.json`](../../tools/diffharness/backends.json) (`"graalgo"`) |
+| `backend` | Backend name from [`backends-p3.json`](../../tools/diffharness/backends-p3.json) (`"graalgo"` → P3SyncMain) |
 | `graalgoCommit` | graalgo git commit the snapshot was recorded from |
 | `recordedAt` | RFC3339 UTC timestamp |
 | `corpus` | Repo-relative corpus label (`"tools/diffharness/corpus"`) |
