@@ -10055,7 +10055,11 @@ func (e *exporter) byteLiteralHex(elts []ast.Expr) (string, bool) {
 		if !ok || tv.Value == nil {
 			return "", false
 		}
-		// Get the constant value as int64
+		// Get the constant value as int64. Int64Val panics on non-Int
+		// constants, so check the kind first.
+		if tv.Value.Kind() != constant.Int {
+			return "", false
+		}
 		v, ok := constant.Int64Val(tv.Value)
 		if !ok || v < 0 || v > 255 {
 			return "", false
