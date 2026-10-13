@@ -4,11 +4,11 @@ package main
 // embedded synthetic stdlib packages. Two registries are read
 // mechanically from the graalgo tree every run — never hand-maintained:
 //
-//   - phases/phase1/frontend/synth_machinery.go's syntheticSources map
+//   - internal/frontend/synth_machinery.go's syntheticSources map
 //     (import path -> embedded-source const expression): the sources
 //     themselves, resolved through const string fragments, '+'
 //     concatenations, and parenthesized forms.
-//   - phases/phase1/frontend/export.go's overlayImporter.Import switch:
+//   - internal/frontend/export.go's overlayImporter.Import switch:
 //     the authoritative set of import paths the overlay substitutes,
 //     i.e. the real-stdlib files shadowed by synthetic packages.
 //
@@ -45,9 +45,9 @@ type synthRegistry struct {
 
 var synthRegCache = map[string]*synthRegistry{}
 
-// frontendDir is phases/phase1/frontend under the graalgo root.
+// frontendDir is internal/frontend under the graalgo root.
 func frontendDir(graalgo string) string {
-	return filepath.Join(graalgo, "phases", "phase1", "frontend")
+	return filepath.Join(graalgo, "internal", "frontend")
 }
 
 // loadSyntheticRegistry resolves the synthetic registry for the graalgo
@@ -347,7 +347,7 @@ func sortedKeys(m map[string]string) []string {
 // cf. ScanResult.ParseErrors, same precedent).
 func (p *ProvidedSet) extractSyntheticProvided(reg *synthRegistry) error {
 	for _, path := range sortedKeys(reg.Sources) {
-		prov := fmt.Sprintf("synthetic %q: phase1/frontend/%s %s",
+		prov := fmt.Sprintf("synthetic %q: internal/frontend/%s %s",
 			path, reg.FileOf[path], reg.ConstOf[path])
 		if err := p.extractGoSourceAs(path, reg.Sources[path], prov); err != nil {
 			p.Skipped = append(p.Skipped,

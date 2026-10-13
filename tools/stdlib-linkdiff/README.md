@@ -35,12 +35,13 @@ diff rather than silent staleness.
    `phases/phase3/src/p3frontend/synth_time_context.go`.
 4. **Normative `time`/`context` sources** — the `syntheticTimeSource` /
    `syntheticContextSource` embedded Go sources in
-   `phases/phase1/frontend/synth_time_context.go` (parsed with go/parser;
+   [internal/frontend/synth_time_context.go](../../internal/frontend/synth_time_context.go)
+   (parsed with go/parser;
    only exported declarations are taken). The p3frontend mirrors of (3)
    pin these via signature-equality tests.
 5. **Embedded synthetic stdlib packages (M10)** — every package in the
    `syntheticSources` registry
-   (`phases/phase1/frontend/synth_machinery.go`): the embedded Go source
+   ([internal/frontend/synth_machinery.go](../../internal/frontend/synth_machinery.go)): the embedded Go source
    is resolved mechanically (const fragments, `+` chains, parenthesized
    concatenations) and parsed with go/parser; exported declarations are
    qualified by import path. A source that fails to parse is recorded
