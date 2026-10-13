@@ -26,14 +26,16 @@ Related: [Makefile](../Makefile) (root build entry point),
 - [internal/](../internal/) — private implementation. Nothing outside the
   module imports it (Go `internal` convention); everything user-facing flows
   through [cmd/graalgo/](../cmd/graalgo/).
-  - [frontend/](../internal/frontend/) — Go source → IR. Moves here from
-    [phases/phase1/frontend/](../phases/phase1/frontend/) when the code lanes
-    land.
-    - [parser/](../internal/frontend/parser/) — consumes the gofrontend JSON
-      export (`export.go`).
-    - [types/](../internal/frontend/types/) — type checking, type tables.
-    - [desugar/](../internal/frontend/desugar/) — multi-result lowering,
-      generics instantiation, synthetic package construction.
+  - [frontend/](../internal/frontend/) — Go source → IR. Moved here from
+    `phases/phase1/frontend/` (code lane 2, 2026-10-13); currently a single
+    Go package (the `gofrontend` tool). The package split below is a
+    follow-up refactor lane (blocked by an exporter/desugar import cycle).
+    - [parser/](../internal/frontend/parser/) — future home: the gofrontend
+      JSON consumer (`export.go`).
+    - [types/](../internal/frontend/types/) — future home: type checking,
+      type tables.
+    - [desugar/](../internal/frontend/desugar/) — future home: multi-result
+      lowering, generics instantiation, synthetic package construction.
   - [ir/](../internal/ir/) — the intermediate representation: JSON schema and
     AST node definitions shared by frontend and backend.
   - [backend/](../internal/backend/) — IR → Truffle nodes. Moves here from
