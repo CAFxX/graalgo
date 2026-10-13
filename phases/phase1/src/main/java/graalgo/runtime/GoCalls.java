@@ -44,6 +44,7 @@ public final class GoCalls {
      * dereference}.
      */
     public static GoErrorValue nilFuncCall() {
-        return new GoErrorValue("runtime error: invalid memory address or nil pointer dereference", true);
+        // P0-fmt-016: gc panics with runtime.errorString here.
+        return GoErrors.nilDereference();
     }
 }
