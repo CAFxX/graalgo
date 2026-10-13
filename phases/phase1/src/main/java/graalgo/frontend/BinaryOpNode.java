@@ -278,7 +278,7 @@ public final class BinaryOpNode extends GoExprNode {
     }
 
     /** Interface equality: nil == nil; else same descriptor and equal data. */
-    private static boolean interfaceEqual(Object l, Object r) {
+    private boolean interfaceEqual(Object l, Object r) {
         boolean lNil = l == null || (l instanceof graalgo.values.GoInterface li && li.isNil());
         boolean rNil = r == null || (r instanceof graalgo.values.GoInterface ri && ri.isNil());
         if (lNil || rNil) {
@@ -286,6 +286,16 @@ public final class BinaryOpNode extends GoExprNode {
         }
         graalgo.values.GoInterface li = (graalgo.values.GoInterface) l;
         graalgo.values.GoInterface ri = (graalgo.values.GoInterface) r;
+        // bug-019: gc panics ("comparing uncomparable type") when both sides
+        // have the identical dynamic type and that type is uncomparable
+        // (func, slice, map, or struct/array containing one). Different
+        // dynamic types, or a nil side, never panic.
+        if (li.descriptor() == ri.descriptor()) {
+            graalgo.values.GoTypeDescriptor td = (graalgo.values.GoTypeDescriptor) li.descriptor();
+            if (!td.isComparable()) {
+                Panic.throwPanic(GoErrors.comparingUncomparable(td.name()), null, null, this);
+            }
+        }
         return li.descriptor() == ri.descriptor()
                 && graalgo.values.GoEquality.equal(li.data(), ri.data());
     }

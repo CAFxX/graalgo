@@ -1101,6 +1101,9 @@ public final class NodeFactory {
      */
     static graalgo.values.GoTypeDescriptor typeDescriptorFor(BuildCtx ctx, int typeId, String path) {
         typeId = resolveAlias(ctx, typeId, path);
+        // bug-019: comparability is a property of the type; compute once
+        // from the type table so interface == can panic like gc.
+        boolean comparable = isComparableType(ctx, typeId, path);
         Json.Object entry = ctx.types.entry(typeId, path);
         String k = entry.string("kind", path);
         if ("basic".equals(k)) {
@@ -1128,7 +1131,7 @@ public final class NodeFactory {
                 graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(name);
                 if (nd == null) {
                     nd = new graalgo.values.GoTypeDescriptor(name,
-                            kindOf(ctx, typeId, path), false);
+                            kindOf(ctx, typeId, path), false, comparable);
                     graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(name, nd);
                     if (prev != null) {
                         nd = prev;
@@ -1153,7 +1156,7 @@ public final class NodeFactory {
                     dispName = k + "#" + Integer.toHexString(key.hashCode());
                 }
                 d = new graalgo.values.GoTypeDescriptor(dispName,
-                        kindOf(ctx, typeId, path), false);
+                        kindOf(ctx, typeId, path), false, comparable);
                 graalgo.values.GoTypeDescriptor prev =
                         STRUCTURAL_DESCS.putIfAbsent(key, d);
                 if (prev != null) {
@@ -1184,7 +1187,7 @@ public final class NodeFactory {
             graalgo.values.GoTypeDescriptor nd = NAMED_DESCS.get(qname);
             if (nd == null) {
                 nd = new graalgo.values.GoTypeDescriptor(displayNameFor(qname),
-                        kindOf(ctx, typeId, path), false);
+                        kindOf(ctx, typeId, path), false, comparable);
                 graalgo.values.GoTypeDescriptor prev = NAMED_DESCS.putIfAbsent(qname, nd);
                 if (prev != null) {
                     nd = prev;
@@ -1199,10 +1202,72 @@ public final class NodeFactory {
         } else {
             name = k + "#" + typeId;
         }
-        d = new graalgo.values.GoTypeDescriptor(name, kindOf(ctx, typeId, path), emptyIface);
+        d = new graalgo.values.GoTypeDescriptor(name, kindOf(ctx, typeId, path), emptyIface, comparable);
         ctx.typeDescs.put(typeId, d);
         recordDescriptorWireId(d, typeId);
         return d;
+    }
+
+    /**
+     * bug-019: whether values of the given type-table type support ==.
+     * Mirrors gc's type comparability (used for the "comparing uncomparable
+     * type" interface-== panic): func, slice, and map types are never
+     * comparable; structs and arrays are comparable iff all fields/elements
+     * are; everything else (basic, pointer, chan, interface) is comparable.
+     * Follows named/alias chains like {@link #kindOf}; cycles (impossible in
+     * valid Go, but cheap to guard) fail open to comparable.
+     */
+    static boolean isComparableType(BuildCtx ctx, int typeId, String path) {
+        return isComparableType(ctx, typeId, path, new java.util.HashSet<>());
+    }
+
+    private static boolean isComparableType(BuildCtx ctx, int typeId, String path,
+                                           java.util.Set<Integer> visiting) {
+        for (int steps = 0; ; steps++) {
+            if (steps > MAX_TYPE_CHAIN_STEPS) {
+                throw new FrontendException(path + ": type chain exceeds "
+                        + MAX_TYPE_CHAIN_STEPS + " steps (cyclic type graph?) (WS E)");
+            }
+            Json.Object entry = ctx.types.entry(typeId, path);
+            String ek = entry.string("kind", path);
+            if ("named".equals(ek)) {
+                typeId = entry.object("detail", path).intValue("underlying", path);
+            } else if ("alias".equals(ek)) {
+                typeId = entry.object("detail", path).intValue("rhs", path);
+            } else {
+                break;
+            }
+        }
+        if (!visiting.add(typeId)) {
+            return true;
+        }
+        try {
+            Json.Object entry = ctx.types.entry(typeId, path);
+            String k = entry.string("kind", path);
+            Json.Object detail = entry.object("detail", path);
+            switch (k) {
+                case "basic", "pointer", "chan", "interface":
+                    return true;
+                case "signature", "slice", "map":
+                    return false;
+                case "array":
+                    return isComparableType(ctx, detail.intValue("elem", path), path, visiting);
+                case "struct": {
+                    Json.Array fields = detail.array("fields", path);
+                    for (int i = 0; i < fields.size(); i++) {
+                        Json.Object f = (Json.Object) fields.get(i);
+                        if (!isComparableType(ctx, f.intValue("type", path), path, visiting)) {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
+                default:
+                    return true;
+            }
+        } finally {
+            visiting.remove(typeId);
+        }
     }
 
     /**

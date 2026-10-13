@@ -87,4 +87,14 @@ public final class GoErrors {
     public static GoErrorValue interfaceConversion(String iface, String dynamic, String asserted) {
         return new GoErrorValue("interface conversion: " + iface + " is " + dynamic + ", not " + asserted);
     }
+
+    /**
+     * bug-019: gc's "comparing uncomparable type" runtime panic, thrown when
+     * two interface values with the identical uncomparable dynamic type are
+     * compared with == (runtime/alg.go: efaceeq/ifaceeq). The type name is
+     * in Go syntax (e.g. "func()", "[]int").
+     */
+    public static GoErrorValue comparingUncomparable(String typeName) {
+        return new GoErrorValue("runtime error: comparing uncomparable type " + typeName);
+    }
 }

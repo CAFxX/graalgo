@@ -33,11 +33,26 @@ public final class GoTypeDescriptor {
     private final String name;
     private final GoKind kind;
     private final boolean emptyInterface;
+    /**
+     * bug-019: whether values of this type can be compared with ==.
+     * gc panics ("comparing uncomparable type") when two interface values
+     * with the identical dynamic type are compared and the type is not
+     * comparable (func, slice, map, or struct/array containing one).
+     * Computed by the frontend from the type table; defaults to true for
+     * descriptors not built from a type entry (all such uses are basic
+     * or pointer kinds, which are comparable).
+     */
+    private final boolean comparable;
 
     public GoTypeDescriptor(String name, GoKind kind, boolean emptyInterface) {
+        this(name, kind, emptyInterface, true);
+    }
+
+    public GoTypeDescriptor(String name, GoKind kind, boolean emptyInterface, boolean comparable) {
         this.name = name;
         this.kind = kind;
         this.emptyInterface = emptyInterface;
+        this.comparable = comparable;
     }
 
     /** Human-readable type name (qualified for named types). */
@@ -52,6 +67,11 @@ public final class GoTypeDescriptor {
     /** True for the empty interface type (matches every non-nil dynamic type). */
     public boolean isEmptyInterface() {
         return emptyInterface;
+    }
+
+    /** True if values of this type support == (bug-019). */
+    public boolean isComparable() {
+        return comparable;
     }
 
     @Override
