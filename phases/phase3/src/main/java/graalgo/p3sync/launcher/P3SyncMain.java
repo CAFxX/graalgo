@@ -453,47 +453,45 @@ public final class P3SyncMain {
      * method is private.)
      */
     private static String runGofrontend(Path goFile) throws IOException, GofrontendException {
-        ProcessBuilder pb = new ProcessBuilder(
-                graalgo.launcher.ToolPaths.gofrontend().toString(), goFile.toString());
-        // P2-M5: gofrontend is a gc-built Go binary; it would inherit
-        // GODEBUG and print its own schedtrace/gctrace lines into the
-        // build log (documented as deterministic), or fatal on knobs like
-        // cgocheck=2. The build log must reflect only gofrontend's
-        // deterministic output.
-        pb.environment().remove("GODEBUG");
-        Process p;
+        // P3-M9: run gofrontend with stdout to a temp file, not a pipe.
+        // Piping 200MB+ through Process.getInputStream() hangs (gofrontend
+        // blocks on write while the reader blocks on read — pipe buffer
+        // deadlock for large outputs). A temp file avoids the pipe entirely.
+        // General fix: benefits any program with a large AST export.
+        Path tmpOut = Files.createTempFile("gofrontend-", ".json");
+        Path tmpErr = Files.createTempFile("gofrontend-", ".err");
         try {
-            p = pb.start();
-        } catch (IOException e) {
-            throw new IOException("failed to start: " + e.getMessage(), e);
-        }
-        final byte[][] bufs = new byte[2][];
-        Thread errDrain = Thread.ofVirtual().start(() -> bufs[1] = readAll(p.getErrorStream()));
-        bufs[0] = readAll(p.getInputStream());
-        try {
-            errDrain.join();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("interrupted while reading gofrontend output", e);
-        }
-        final int exit;
-        try {
-            exit = p.waitFor();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new IOException("interrupted while waiting for gofrontend", e);
-        }
-        if (exit != 0) {
-            throw new GofrontendException(exit, new String(bufs[1], StandardCharsets.UTF_8));
-        }
-        return new String(bufs[0], StandardCharsets.UTF_8);
-    }
-
-    private static byte[] readAll(InputStream in) {
-        try {
-            return in.readAllBytes();
-        } catch (IOException e) {
-            throw new RuntimeException(e);
+            ProcessBuilder pb = new ProcessBuilder(
+                    graalgo.launcher.ToolPaths.gofrontend().toString(), goFile.toString());
+            // P2-M5: gofrontend is a gc-built Go binary; it would inherit
+            // GODEBUG and print its own schedtrace/gctrace lines into the
+            // build log (documented as deterministic), or fatal on knobs like
+            // cgocheck=2. The build log must reflect only gofrontend's
+            // deterministic output.
+            pb.environment().remove("GODEBUG");
+            pb.redirectOutput(tmpOut.toFile());
+            pb.redirectError(tmpErr.toFile());
+            Process p;
+            try {
+                p = pb.start();
+            } catch (IOException e) {
+                throw new IOException("failed to start: " + e.getMessage(), e);
+            }
+            final int exit;
+            try {
+                exit = p.waitFor();
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IOException("interrupted while waiting for gofrontend", e);
+            }
+            if (exit != 0) {
+                String errLog = Files.readString(tmpErr, StandardCharsets.UTF_8);
+                throw new GofrontendException(exit, errLog);
+            }
+            return Files.readString(tmpOut, StandardCharsets.UTF_8);
+        } finally {
+            try { Files.deleteIfExists(tmpOut); } catch (IOException ignored) {}
+            try { Files.deleteIfExists(tmpErr); } catch (IOException ignored) {}
         }
     }
 
