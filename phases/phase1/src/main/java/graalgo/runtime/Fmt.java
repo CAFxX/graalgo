@@ -706,6 +706,19 @@ public final class Fmt {
             return arg.typeName();
         }
 
+        /**
+         * The kind gc's fmtPointer switches on: the dynamic kind for
+         * interface values (unwrapping to the concrete type, like
+         * reflect.ValueOf), the static kind otherwise.
+         */
+        private GoKind dynamicKind(Arg arg) {
+            if (arg.kind() == GoKind.INTERFACE && arg.value() instanceof GoInterface gi
+                    && !gi.isNil() && gi.descriptor() instanceof GoTypeDescriptor td) {
+                return td.kind();
+            }
+            return arg.kind();
+        }
+
         // -- printArg / printValue --------------------------------------------
 
         private Arg curArg; // for badVerb (mirrors Go passing arg through)
@@ -714,32 +727,56 @@ public final class Fmt {
         void printArg(Arg arg, int verb) {
             curArg = arg;
             if (arg.value() == null) {
-                // Go's printArg: a nil slice prints [], a nil map prints
-                // map[] (not <nil>); typed nils print their type for %T.
-                // (M8 closeout, triage class C.)
-                if (verb == 'T') {
-                    if (arg.kind() == GoKind.INTERFACE) {
+                // A Java-null value is either a nil interface or a typed nil
+                // (nil pointer/map/slice/chan/func); the static kind tells
+                // them apart. gc's printArg `arg == nil` fast path only fires
+                // for a nil interface — typed nils format by their kind.
+                // (P0-fmt-018: %p on a nil *int is 0x0, not %!p(<nil>).)
+                if (arg.kind() == GoKind.INTERFACE) {
+                    if (verb == 'T' || verb == 'v') {
                         pad("<nil>");
                     } else {
-                        fmtS(arg.typeName());
+                        badVerb(arg, verb);
                     }
                     return;
                 }
-                if (arg.kind() == GoKind.SLICE) {
-                    pad("[]");
+                // Typed nil: gc formats by the dynamic kind.
+                if (verb == 'T') {
+                    fmtS(arg.typeName());
                     return;
                 }
-                if (arg.kind() == GoKind.MAP) {
-                    pad("map[]");
-                    return;
+                switch (arg.kind()) {
+                    case SLICE -> {
+                        if (verb == 'p') {
+                            fmt0x64(0, !sharp);
+                        } else {
+                            pad("[]");
+                        }
+                        return;
+                    }
+                    case MAP -> {
+                        if (verb == 'p') {
+                            fmt0x64(0, !sharp);
+                        } else {
+                            pad("map[]");
+                        }
+                        return;
+                    }
+                    case POINTER, CHAN, FUNC, UNSAFE_POINTER -> {
+                        if (verb == 'v') {
+                            pad("<nil>");
+                        } else if (verb == 'p') {
+                            fmt0x64(0, !sharp);
+                        } else {
+                            badVerb(arg, verb);
+                        }
+                        return;
+                    }
+                    default -> {
+                        badVerb(arg, verb);
+                        return;
+                    }
                 }
-                // nil interface/pointer/chan/func, like Go's arg == nil.
-                if (verb == 'v') {
-                    pad("<nil>");
-                } else {
-                    badVerb(arg, verb);
-                }
-                return;
             }
             if (verb == 'T') {
                 fmtS(dynamicTypeName(arg));
@@ -1483,7 +1520,13 @@ public final class Fmt {
                         fmt0x64(0, !sharp);
                         return;
                     }
-                    switch (arg.kind()) {
+                    // P0-fmt-018: a typed-nil pointer-ish value in an
+                    // interface (e.g. var a any = (*int)(nil); Printf("%p", a))
+                    // formats as 0x0 like gc — gc's fmtPointer unwraps the
+                    // interface to the dynamic kind. A nil interface stays a
+                    // verb mismatch (%!p(<nil>)).
+                    GoKind k = dynamicKind(arg);
+                    switch (k) {
                         case CHAN, FUNC, MAP, POINTER, SLICE, UNSAFE_POINTER ->
                             fmt0x64(0, !sharp);
                         default -> badVerb(arg, verb);
