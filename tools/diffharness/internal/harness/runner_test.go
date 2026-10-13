@@ -8,16 +8,20 @@ import (
 )
 
 // testBackend builds a Backend pointing at the local go toolchain.
-// DH_GO overrides the toolchain root (as in run.sh); otherwise PATH lookup.
+// DH_GO overrides the toolchain root (as in run.sh); GO (the binary path,
+// as exported by CI) derives the root; otherwise PATH lookup.
 func testBackend(t *testing.T, name string) *Backend {
 	t.Helper()
 	goRoot := os.Getenv("DH_GO")
-	vars := map[string]string{}
-	if goRoot != "" {
-		vars["GO"] = goRoot
-	} else {
-		vars["GO"] = os.ExpandEnv("${HOME}/tools/go")
+	if goRoot == "" {
+		if goBin := os.Getenv("GO"); goBin != "" {
+			goRoot = filepath.Dir(filepath.Dir(goBin))
+		}
 	}
+	if goRoot == "" {
+		goRoot = os.ExpandEnv("${HOME}/tools/go")
+	}
+	vars := map[string]string{"GO": goRoot}
 	return &Backend{
 		Name:  name,
 		Vars:  vars,
