@@ -5,7 +5,6 @@ import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.values.GoKind;
-import graalgo.values.GoPointer;
 import graalgo.values.GoSlice;
 
 /**
@@ -34,7 +33,7 @@ public final class UnsafeSliceDataNode extends GoExprNode {
         if (handle == 0) {
             return null; // nil *T: Java null per the POINTER convention.
         }
-        return new GoPointer(UnsafeTable.current().resolve(handle));
+        return UnsafeTable.pointerFor(UnsafeTable.current().resolve(handle));
     }
 
     /**

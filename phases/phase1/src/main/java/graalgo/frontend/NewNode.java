@@ -73,8 +73,12 @@ public final class NewNode extends GoExprNode {
         // so a *p read before any write (e.g. cryptobyte's
         // `if !*b.inContinuation` on a fresh new(bool)) saw the raw [Z and
         // died in DerefNode.executeBoolean. A cell reads and writes
-        // uniformly from birth; each new() still mints a fresh box, so
-        // p1 != q1 and unsafe identity interning keep working.
+        // uniformly from birth.
+        // P3-M10: the fresh cell is the allocation's storage identity —
+        // UnsafeFromPtrNode interns the cell (not the cell's content, which
+        // is Boxing.zero's JVM-shared cached box), so distinct new(T)
+        // calls mint distinct unsafe.Pointer handles and a pointer keeps
+        // its handle across *p = v writes.
         if (referent instanceof graalgo.values.GoCell cell) {
             return new GoPointer(cell);
         }

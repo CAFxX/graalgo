@@ -26,7 +26,14 @@ public final class UnsafeStringNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         Object p = ptrChild.executeObject(frame);
-        Object referent = p == null ? null : ((GoPointer) p).referent();
+        // P3-M10: see UnsafeSliceNode — an &arr[i] element pointer reaches
+        // stringOf() as an ArrayRef, not as the dereferenced element value.
+        Object referent;
+        if (p instanceof GoPointer gp && gp.isElemPointer()) {
+            referent = new UnsafeTable.ArrayRef(gp.elemArray(), gp.elemIndex());
+        } else {
+            referent = p == null ? null : ((GoPointer) p).referent();
+        }
         long len = lenChild.executeLong(frame);
         return UnsafeOps.stringOf(referent, len, this);
     }

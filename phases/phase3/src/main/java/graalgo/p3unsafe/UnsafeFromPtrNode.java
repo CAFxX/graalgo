@@ -11,9 +11,21 @@ import graalgo.values.GoPointer;
 
 /**
  * {@code *T → unsafe.Pointer} (P3-M8): the {@code "unsafefromptr"} wire
- * node. Interns the {@code GoPointer}'s referent in {@link UnsafeTable}
- * (identity interning → {@code ==} parity with gc); a nil pointer (Java
- * {@code null} child) maps to handle {@code 0}.
+ * node. Interns the {@code GoPointer}'s <em>storage identity</em> in
+ * {@link UnsafeTable} — the cell for cell pointers ({@code new(T)}
+ * scalars, {@code &x}), an {@link UnsafeTable.ArrayRef} for
+ * {@code &arr[i]} element pointers, the referent object otherwise —
+ * never the dereferenced value. A nil pointer (Java {@code null} child or
+ * a nil {@code GoPointer}) maps to handle {@code 0}.
+ *
+ * <p>P3-M10 (pointer-identity root fix): interning the dereferenced value
+ * ({@code gp.referent()}) conflated distinct allocations whose cells hold
+ * the same (JVM-shared, cached) zero box — e.g. every {@code new(int)}
+ * cell holds the identical {@code Long(0)} — so {@code unsafe.Pointer}
+ * of two distinct allocations minted one handle ({@code p1 == q1} was
+ * true, gc: false), and a pointer's handle changed across {@code *p = v}
+ * writes. Storage-identity interning matches
+ * {@link GoPointer#sameStorageAs} and gc in all three cases.
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook — no Phase-1 change.
@@ -35,6 +47,20 @@ public final class UnsafeFromPtrNode extends GoExprNode {
         if (!(p instanceof GoPointer gp)) {
             throw new FrontendException("unsafefromptr: expected a *T value, got "
                     + p.getClass().getSimpleName());
+        }
+        // P3-M10: intern storage identity, not the dereferenced value.
+        // gp.referent() unwraps cell pointers to the cell's *content* —
+        // the JVM-shared cached zero box for fresh new(T) — which made
+        // distinct allocations share one handle.
+        if (gp.isNil()) {
+            return 0;
+        }
+        if (gp.isCellPointer()) {
+            return UnsafeTable.current().intern(gp.cell());
+        }
+        if (gp.isElemPointer()) {
+            return UnsafeTable.current().internEqual(
+                    new UnsafeTable.ArrayRef(gp.elemArray(), gp.elemIndex()));
         }
         return UnsafeTable.current().intern(gp.referent());
     }

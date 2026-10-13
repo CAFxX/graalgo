@@ -92,6 +92,36 @@ public final class GoPointer {
     }
 
     /**
+     * True iff this is a cell pointer ({@code &x}, {@code &s.f},
+     * {@code new(T)} scalars): the storage identity is the cell itself.
+     * (P3-M10: {@code unsafe.Pointer} interning keys on storage identity,
+     * not on the dereferenced value — see {@code UnsafeFromPtrNode}.)
+     */
+    public boolean isCellPointer() {
+        return cell != null;
+    }
+
+    /** The cell behind a cell pointer; null unless {@link #isCellPointer}. */
+    public GoCell cell() {
+        return cell;
+    }
+
+    /** True iff this is an {@code &arr[i]} element pointer. */
+    public boolean isElemPointer() {
+        return isElemPtr;
+    }
+
+    /** The array of an element pointer; undefined unless {@link #isElemPointer}. */
+    public Object elemArray() {
+        return elemArray;
+    }
+
+    /** The index of an element pointer; undefined unless {@link #isElemPointer}. */
+    public int elemIndex() {
+        return elemIndex;
+    }
+
+    /**
      * Pointer equality (Go {@code ==} on pointers): two pointers are equal
      * iff both are nil or they address the same storage — the same cell,
      * the same array element, or the same referent object. (Comparing
