@@ -6,8 +6,8 @@ package p3frontend
 // pins the signatures so drift fails fast.
 //
 // The signatures match phases/phase1/frontend/synth_bytes.go exactly
-// (not gc's real package — e.g. Buffer.ReadFrom takes the synthetic
-// byteReader stand-in, and the iter/SpecialCase members are omitted).
+// (not gc's real package — e.g. Buffer.ReadFrom takes io.Reader from the
+// synthetic io package, and the iter/SpecialCase members are omitted).
 // The drift test (bytes_test.go) compares this mirror method-by-method
 // against the type-checked phase-1 synthetic source.
 
@@ -17,7 +17,10 @@ import (
 )
 
 // syntheticBytesPackage mirrors the P3-M7 synthetic "bytes".
-func syntheticBytesPackage() *types.Package {
+// ioPkg is the synthetic io package (syntheticIoPackage): P3-M8 spells
+// WriteTo/ReadFrom with io.Writer/io.Reader, so the mirror references
+// those types directly (no stand-ins).
+func syntheticBytesPackage(ioPkg *types.Package) *types.Package {
 	pkg := types.NewPackage("bytes", "bytes")
 	// NB: types.Typ[types.Byte]/types.Typ[types.Rune] render as
 	// "uint8"/"int32"; the universe "byte"/"rune" objects render as the
@@ -90,27 +93,11 @@ func syntheticBytesPackage() *types.Package {
 	readerType := types.NewNamed(readerName, readerStruct, nil)
 	readerPtr := types.NewPointer(readerType)
 
-	// byteReader/byteWriter: the synthetic io.Reader/io.Writer stand-ins
-	// (see the synthetic source header; P3-M8 brings io).
-	byteReaderName := types.NewTypeName(token.NoPos, pkg, "byteReader", nil)
-	pkg.Scope().Insert(byteReaderName)
-	byteReaderIface := types.NewInterfaceType([]*types.Func{
-		types.NewFunc(token.NoPos, pkg, "Read",
-			types.NewSignatureType(nil, nil, nil,
-				types.NewTuple(newParam("p", bytesSlice)),
-				types.NewTuple(newParam("n", intT), newParam("err", errorT)), false)),
-	}, nil).Complete()
-	byteReader := types.NewNamed(byteReaderName, byteReaderIface, nil)
-
-	byteWriterName := types.NewTypeName(token.NoPos, pkg, "byteWriter", nil)
-	pkg.Scope().Insert(byteWriterName)
-	byteWriterIface := types.NewInterfaceType([]*types.Func{
-		types.NewFunc(token.NoPos, pkg, "Write",
-			types.NewSignatureType(nil, nil, nil,
-				types.NewTuple(newParam("p", bytesSlice)),
-				types.NewTuple(newParam("n", intT), newParam("err", errorT)), false)),
-	}, nil).Complete()
-	byteWriter := types.NewNamed(byteWriterName, byteWriterIface, nil)
+	// io.Reader/io.Writer for WriteTo/ReadFrom (P3-M8: the phase-1
+	// source spells these with the io interfaces; the mirror references
+	// the synthetic io package's types so the rendered signatures match).
+	ioReaderT := ioReader(ioPkg)
+	ioWriterT := ioWriter(ioPkg)
 
 	// method adds a method to a named type.
 	method := func(named *types.Named, recv types.Type, name string, params, results []*types.Var) {
@@ -142,7 +129,7 @@ func syntheticBytesPackage() *types.Package {
 			[]*types.Var{newParam("", byteT), newParam("", errorT)}},
 		{"ReadBytes", []*types.Var{newParam("delim", byteT)},
 			[]*types.Var{newParam("line", bytesSlice), newParam("err", errorT)}},
-		{"ReadFrom", []*types.Var{newParam("r", byteReader)},
+		{"ReadFrom", []*types.Var{newParam("r", ioReaderT)},
 			[]*types.Var{newParam("n", int64T), newParam("err", errorT)}},
 		{"ReadRune", nil,
 			[]*types.Var{newParam("r", runeT), newParam("size", intT), newParam("err", errorT)}},
@@ -161,7 +148,7 @@ func syntheticBytesPackage() *types.Package {
 			[]*types.Var{newParam("n", intT), newParam("err", errorT)}},
 		{"WriteString", []*types.Var{newParam("s", stringT)},
 			[]*types.Var{newParam("n", intT), newParam("err", errorT)}},
-		{"WriteTo", []*types.Var{newParam("w", byteWriter)},
+		{"WriteTo", []*types.Var{newParam("w", ioWriterT)},
 			[]*types.Var{newParam("n", int64T), newParam("err", errorT)}},
 	}
 	for _, m := range bufferMethods {
@@ -189,7 +176,7 @@ func syntheticBytesPackage() *types.Package {
 		{"Size", nil, []*types.Var{newParam("", int64T)}},
 		{"UnreadByte", nil, []*types.Var{newParam("", errorT)}},
 		{"UnreadRune", nil, []*types.Var{newParam("", errorT)}},
-		{"WriteTo", []*types.Var{newParam("w", byteWriter)},
+		{"WriteTo", []*types.Var{newParam("w", ioWriterT)},
 			[]*types.Var{newParam("n", int64T), newParam("err", errorT)}},
 	}
 	for _, m := range readerMethods {

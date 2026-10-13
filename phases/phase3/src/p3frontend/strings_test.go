@@ -22,7 +22,7 @@ func TestStringsSyntheticSignatures(t *testing.T) {
 	}
 	phase1 := phase1SyntheticPackageForTest(t,
 		"../../../phase1/frontend/synth_strings.go", "syntheticStringsSource",
-		"strings", rejectImports{})
+		"strings", syntheticStdImporter(t))
 
 	// Full exported-scope drift check (names + rendered types).
 	assertScopeMatchesPhase1(t, "strings", mirror, phase1)
@@ -98,7 +98,7 @@ func TestStringsOmissionSet(t *testing.T) {
 	mirror := syntheticStringsPackage()
 	phase1 := phase1SyntheticPackageForTest(t,
 		"../../../phase1/frontend/synth_strings.go", "syntheticStringsSource",
-		"strings", rejectImports{})
+		"strings", syntheticStdImporter(t))
 
 	for name := range omitted {
 		if mirror.Scope().Lookup(name) != nil {

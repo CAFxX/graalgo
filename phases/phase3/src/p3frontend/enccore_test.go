@@ -127,7 +127,8 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 	if ec == nil {
 		t.Fatalf("unknown encoding package %q", path)
 	}
-	imp := importerFunc(func(p string) (*types.Package, error) {
+	var imp importerFunc
+	imp = importerFunc(func(p string) (*types.Package, error) {
 		if p == "encoding/base64" {
 			return phase1EncCorePackage(t, "encoding/base64"), nil
 		}

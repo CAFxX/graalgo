@@ -186,6 +186,70 @@ func TestImportCycle(t *testing.T) {
 		}
 		t.Logf("cycle error: %v", err)
 	})
+
+	// M10 (P3-M10 WS J, self-attack F7): longer and shaped cycles must
+	// also fail fast with a named cycle error — never hang or overflow.
+	// The 3-cycle and 5-cycle stress the DFS stack; the diamond+cycle
+	// stresses the visited-set against re-entrant paths.
+	t.Run("three", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFiles(t, dir, map[string]string{
+			"go.mod":  "module example.com/three\n\ngo 1.27\n",
+			"main.go": "package main\n\nimport _ \"example.com/three/a\"\n\nfunc main() {}\n",
+			"a/a.go":  "package a\n\nimport _ \"example.com/three/b\"\n",
+			"b/b.go":  "package b\n\nimport _ \"example.com/three/c\"\n",
+			"c/c.go":  "package c\n\nimport _ \"example.com/three/a\"\n",
+		})
+		err := runWithTimeout(t, 15*time.Second, func() error {
+			_, err := MergeDir(dir)
+			return err
+		})
+		if err == nil || !strings.Contains(err.Error(), "import cycle") {
+			t.Fatalf("expected import-cycle error, got: %v", err)
+		}
+		t.Logf("cycle error: %v", err)
+	})
+
+	t.Run("five", func(t *testing.T) {
+		dir := t.TempDir()
+		files := map[string]string{
+			"go.mod":  "module example.com/five\n\ngo 1.27\n",
+			"main.go": "package main\n\nimport _ \"example.com/five/a\"\n\nfunc main() {}\n",
+		}
+		pkgs := []string{"a", "b", "c", "d", "e"}
+		for i, p := range pkgs {
+			next := pkgs[(i+1)%len(pkgs)]
+			files[p+"/"+p+".go"] = "package " + p + "\n\nimport _ \"example.com/five/" + next + "\"\n"
+		}
+		writeFiles(t, dir, files)
+		err := runWithTimeout(t, 15*time.Second, func() error {
+			_, err := MergeDir(dir)
+			return err
+		})
+		if err == nil || !strings.Contains(err.Error(), "import cycle") {
+			t.Fatalf("expected import-cycle error, got: %v", err)
+		}
+		t.Logf("cycle error: %v", err)
+	})
+
+	t.Run("diamond", func(t *testing.T) {
+		dir := t.TempDir()
+		writeFiles(t, dir, map[string]string{
+			"go.mod":  "module example.com/dia\n\ngo 1.27\n",
+			"main.go": "package main\n\nimport (\n\t_ \"example.com/dia/a\"\n\t_ \"example.com/dia/b\"\n)\n\nfunc main() {}\n",
+			"a/a.go":  "package a\n\nimport _ \"example.com/dia/c\"\n",
+			"b/b.go":  "package b\n\nimport _ \"example.com/dia/c\"\n",
+			"c/c.go":  "package c\n\nimport _ \"example.com/dia/a\"\n",
+		})
+		err := runWithTimeout(t, 15*time.Second, func() error {
+			_, err := MergeDir(dir)
+			return err
+		})
+		if err == nil || !strings.Contains(err.Error(), "import cycle") {
+			t.Fatalf("expected import-cycle error, got: %v", err)
+		}
+		t.Logf("cycle error: %v", err)
+	})
 }
 
 // TestMultipleGoBuildLines verifies the error path: two //go:build lines
@@ -203,6 +267,51 @@ func TestMultipleGoBuildLines(t *testing.T) {
 	if _, err := (&build.Context{GOOS: "linux", GOARCH: "amd64"}).ImportDir(dir, 0); err == nil {
 		t.Fatalf("expected go/build oracle to reject multiple //go:build lines")
 	}
+}
+
+// TestMalformedGoBuildLines (M10 P3-M10 WS J, self-attack F8): malformed
+// //go:build constraints must produce a clean loader error — never a
+// panic, hang, or silent mis-selection. The 100k-paren case pins the
+// stdlib's "build expression too large" cap (no unbounded recursion).
+func TestMalformedGoBuildLines(t *testing.T) {
+	bad := map[string]string{
+		"parens":   "//go:build (((\n\npackage corpus\n",
+		"empty":    "//go:build\n\npackage corpus\n",
+		"loneop":   "//go:build &&\n\npackage corpus\n",
+		"trailing": "//go:build linux &&\n\npackage corpus\n",
+		"deep":     "//go:build " + strings.Repeat("(", 100000) + "linux" + strings.Repeat(")", 100000) + "\n\npackage corpus\n",
+	}
+	for name, content := range bad {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeFiles(t, dir, map[string]string{"bad.go": content})
+			err := runWithTimeout(t, 15*time.Second, func() error {
+				_, err := NewLoader().SelectFiles(dir)
+				return err
+			})
+			if err == nil || !strings.Contains(err.Error(), "parsing //go:build line") {
+				t.Fatalf("expected //go:build parse error, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestExcludedMainIsCleanError (M10 P3-M10 WS J, self-attack F8): when
+// build tags exclude every file, the failure is a clean loader error,
+// not a panic or a confusing downstream failure.
+func TestExcludedMainIsCleanError(t *testing.T) {
+	dir := t.TempDir()
+	writeFiles(t, dir, map[string]string{
+		"main.go": "//go:build ignore\n\npackage main\n\nfunc main() {}\n",
+	})
+	err := runWithTimeout(t, 15*time.Second, func() error {
+		_, err := MergeDir(dir)
+		return err
+	})
+	if err == nil {
+		t.Fatal("expected an error for a fully-excluded main package, got nil")
+	}
+	t.Logf("excluded-main error: %v", err)
 }
 
 // TestResolveImportNestedModules verifies P1-3: the resolve cache is keyed

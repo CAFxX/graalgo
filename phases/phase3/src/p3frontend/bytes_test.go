@@ -12,7 +12,6 @@ package p3frontend
 // instead of silently diverging.
 
 import (
-	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -64,24 +63,12 @@ func phase1SyntheticBytesPackage(t *testing.T) *types.Package {
 	}
 	bytesFset := token.NewFileSet()
 	bytesFile, err := parser.ParseFile(bytesFset, "bytes.go", raw, parser.AllErrors)
-	if err != nil {
-		t.Fatalf("parsing synthetic bytes source: %v", err)
+	if err != nil {		t.Fatalf("parsing synthetic bytes source: %v", err)
 	}
-	errorsPkg := syntheticErrorsPackage()
-	// syntheticErrorsPackage does not MarkComplete (it is only ever
-	// returned directly by the Importer, never through go/types import
-	// resolution); the drift type-check needs a complete package or the
-	// import resolves to an empty scope ("undefined: errors"). The
-	// instance is fresh per call, so completing it here is side-effect
-	// free.
-	errorsPkg.MarkComplete()
+	// P3-M10: use the shared synthetic importer (resolves "errors", "io",
+	// and "sync" for the M8 import graph).
 	conf := types.Config{
-		Importer: importerFunc(func(path string) (*types.Package, error) {
-			if path == "errors" {
-				return errorsPkg, nil
-			}
-			return nil, fmt.Errorf("unexpected synthetic import %q", path)
-		}),
+		Importer: syntheticStdImporter(t),
 	}
 	pkg, err := conf.Check("bytes", bytesFset, []*ast.File{bytesFile}, nil)
 	if err != nil {
@@ -166,7 +153,7 @@ func bytesNamedMethods(named *types.Named) []*types.Func {
 // funcs, Buffer methods and Reader methods must match the phase-1
 // synthetic source declaration-by-declaration.
 func TestBytesSyntheticSignatures(t *testing.T) {
-	mirror := syntheticBytesPackage()
+	mirror := syntheticBytesPackage(syntheticIoPackage())
 	if mirror.Name() != "bytes" || mirror.Path() != "bytes" {
 		t.Fatalf("package name/path = %s/%s, want bytes/bytes", mirror.Name(), mirror.Path())
 	}
@@ -234,7 +221,7 @@ func TestBytesOmissionsPinned(t *testing.T) {
 		"LINKNAME_MISSING": true, "UNSUPPORTED_FEATURE": true,
 		"DEFERRED_WAVE": true, "NONPORTABLE_BEHAVIOR": true,
 	}
-	mirror := syntheticBytesPackage()
+	mirror := syntheticBytesPackage(syntheticIoPackage())
 	phase1 := phase1SyntheticBytesPackage(t)
 	for _, o := range omissions {
 		if !validReasons[o.reason] {

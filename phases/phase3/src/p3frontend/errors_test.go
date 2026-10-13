@@ -8,6 +8,7 @@ package p3frontend
 import (
 	"fmt"
 	"go/ast"
+	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -78,6 +79,40 @@ type rejectImports struct{}
 
 func (rejectImports) Import(path string) (*types.Package, error) {
 	return nil, fmt.Errorf("unexpected synthetic import %q", path)
+}
+
+// syntheticStdImporter returns a types.Importer resolving the synthetic
+// "errors" and "io" packages for drift tests whose phase-1 sources import
+// them (P3-M8: bytes/strings import io; io itself imports errors and the
+// real sync). The importer is self-referential (declared with var, not
+// :=, so the closure sees it). Shared by bytes_test.go and
+// strings_test.go — one place to extend when the import graph grows.
+func syntheticStdImporter(t *testing.T) types.Importer {
+	t.Helper()
+	errorsPkg := syntheticErrorsPackage()
+	// syntheticErrorsPackage does not MarkComplete (it is only ever
+	// returned directly by the Importer); the drift type-check needs a
+	// complete package.
+	errorsPkg.MarkComplete()
+	var imp importerFunc
+	imp = importerFunc(func(path string) (*types.Package, error) {
+		if path == "errors" {
+			return errorsPkg, nil
+		}
+		if path == "io" {
+			return phase1SyntheticPackageForTest(t,
+				"../../../phase1/frontend/synth_io.go",
+				"syntheticIoSource", "io", imp), nil
+		}
+		if path == "sync" {
+			// The synthetic sync surface is unexported in the phase-1
+			// frontend; real sync is a superset and the drift comparison
+			// never observes it (every sync use is unexported).
+			return importer.Default().Import("sync")
+		}
+		return nil, fmt.Errorf("unexpected synthetic import %q", path)
+	})
+	return imp
 }
 
 // assertScopeMatchesPhase1 is the core drift check: every name in the

@@ -90,6 +90,11 @@ func syntheticJsonPackage() *types.Package {
 	unsupportedValueErrorName := types.NewTypeName(token.NoPos, pkg, "UnsupportedValueError", nil)
 	unsupportedValueError := types.NewNamed(unsupportedValueErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Str", stringT, false)}, nil), nil)
 
+	// UnsupportedTypeError (P3-M10: was missing from the mirror; the
+	// phase-1 source gained it in P3-M8)
+	unsupportedTypeErrorName := types.NewTypeName(token.NoPos, pkg, "UnsupportedTypeError", nil)
+	unsupportedTypeError := types.NewNamed(unsupportedTypeErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "typ", stringT, false)}, nil), nil)
+
 	// jsonReader (unexported; referenced by exported signatures).
 	jsonReaderName := types.NewTypeName(token.NoPos, pkg, "jsonReader", nil)
 	jsonReader := types.NewNamed(jsonReaderName, types.NewInterfaceType([]*types.Func{types.NewFunc(token.NoPos, pkg, "Read", types.NewSignatureType(nil, nil, nil, types.NewTuple(newParam("p", types.NewSlice(byteT))), types.NewTuple(newParam("n", intT), newParam("err", errorT)), false))}, nil).Complete(), nil)
@@ -128,6 +133,8 @@ func syntheticJsonPackage() *types.Package {
 	pkg.Scope().Insert(unmarshalerName)
 	pkg.Scope().Insert(unsupportedValueErrorName)
 	unsupportedValueError.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", types.NewPointer(unsupportedValueError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
+	pkg.Scope().Insert(unsupportedTypeErrorName)
+	unsupportedTypeError.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", types.NewPointer(unsupportedTypeError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
 	pkg.Scope().Insert(jsonReaderName)
 	pkg.Scope().Insert(jsonWriterName)
 
