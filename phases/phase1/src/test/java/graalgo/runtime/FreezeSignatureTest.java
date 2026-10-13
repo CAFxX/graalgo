@@ -1,7 +1,7 @@
 package graalgo.runtime;
 
 import java.lang.reflect.Method;
-// verifies: GG-0020 (WS G: freeze v1 signature verification)
+// verifies: GG-0020 (WS G: freeze v2 signature verification)
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.RecordComponent;
@@ -9,7 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Verifies the GG-0020 freeze v1 signatures via reflection
+ * Verifies the GG-0020 freeze v2 signatures via reflection
  * (verifies: GG-0020).
  *
  * <p>Each frozen signature from {@code docs/freeze-stub.md} and
@@ -50,12 +50,15 @@ public final class FreezeSignatureTest {
         FROZEN.add(new Sig(intr.getName(), "memequal",
             new Class<?>[]{Object.class, int.class, Object.class, int.class, int.class},
             boolean.class));
-        // Slices.
+        // Slices (v2: ADR-0008 added the GoStructDescriptor elemDesc parameter;
+        // struct-element slots are zero-initialized via GoStruct.zero(desc)).
         FROZEN.add(new Sig(intr.getName(), "makeslice",
-            new Class<?>[]{graalgo.values.GoKind.class, int.class, int.class},
+            new Class<?>[]{graalgo.values.GoKind.class,
+                graalgo.values.GoStructDescriptor.class, int.class, int.class},
             graalgo.values.GoSlice.class));
         FROZEN.add(new Sig(intr.getName(), "growslice",
             new Class<?>[]{graalgo.values.GoSlice.class, graalgo.values.GoKind.class,
+                graalgo.values.GoStructDescriptor.class,
                 int.class, long.class, boolean.class},
             graalgo.values.GoSlice.class));
         FROZEN.add(new Sig(intr.getName(), "growslice",
@@ -410,7 +413,7 @@ public final class FreezeSignatureTest {
             throw new AssertionError("frozen signatures missing/changed:\n"
                 + String.join("\n", missing));
         }
-        System.out.println("  (freeze v1: " + FROZEN.size() + " signatures + "
+        System.out.println("  (freeze v2: " + FROZEN.size() + " signatures + "
             + FROZEN_CLASSES.size() + " classes + " + FROZEN_CTORS.size()
             + " ctors + Program record verified)");
     }

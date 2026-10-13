@@ -1,10 +1,14 @@
 # graalgo Phase 1 — Interface Freeze (M9)
 
-**Status:** FROZEN 2026-10-05 (M9, done-gate 3). **Version:** freeze v1.
+**Status:** FROZEN 2026-10-05 (M9, done-gate 3). **Version:** freeze v2
+(2026-10-13, ADR-0008). v1 → v2 delta: exactly the two
+`Intrinsics` slice-allocation signatures below (§3.4) gaining a
+`GoStructDescriptor elemDesc` parameter; nothing else in the freeze
+changes.
 
 This document is the M9 interface freeze for **both** Phase-1 components.
-It supersedes the piecemeal freezes (`docs/freeze-stub.md` for the GG-0020
-intrinsic surface, `docs/frontend-v1.md` for the wire format) by collecting
+It supersedes the piecemeal freezes ([docs/freeze-stub.md](docs/freeze-stub.md) for the GG-0020
+intrinsic surface, [docs/frontend-v1.md](docs/frontend-v1.md) for the wire format) by collecting
 every cross-boundary API in one place with a single change policy. The older
 documents remain normative for their details; where they conflict, this
 document wins and the older one is amended.
@@ -21,17 +25,17 @@ Every entry below is marked **FROZEN** or **INTERNAL**:
   check guards the surface. Silent drift is a GG-0020/GG-0021 review failure.
   Step (c) and the GG-0020 positive direction ("AST calls a non-frozen
   signature → freeze gate red") are enforced by review discipline, not by a
-  CI gate: `FreezeSignatureTest` verifies frozen signatures *exist* with the
+  CI gate: [FreezeSignatureTest](src/test/java/graalgo/runtime/FreezeSignatureTest.java) verifies frozen signatures *exist* with the
   frozen shape; it does not enumerate every call site. No mechanism records
   (c) post-hoc — the ADR is the record.
 - **INTERNAL** — implementation detail of one component. Free to change;
   listed here only to bound the frozen surface (if it's not in §2–§6, it's
   INTERNAL).
 
-**Components.** (A) `gofrontend` — the Go frontend (`phases/phase1/frontend/`):
+**Components.** (A) `gofrontend` — the Go frontend ([frontend/](frontend/)):
 type-checks one single-file Go program with the vendored `go/*` packages and
 emits the frontend/v1 JSON document. (B) `graalgo-run` — the Java/Truffle
-runtime (`phases/phase1/src/`): `NodeFactory` consumes the document, builds
+runtime ([src/](src/)): `NodeFactory` consumes the document, builds
 the Truffle AST, executes `main`.
 
 ## 2. Component A — `gofrontend` (Go)
@@ -89,7 +93,7 @@ version `"v1"`. Consequences:
 | `--dump-polymorphism[=path]` | M9 (WS L): record call-site polymorphism during execution, then print the JSON snapshot (bare flag) or write it to `path` |
 | Exit 0 | success (`func main` completed) |
 | Exit 1 | usage error, unreadable input, gofrontend unlaunchable, launcher-internal error |
-| Exit 2 | build failure (gofrontend rejected the program; stderr passed through verbatim) **or** uncaught Go panic / Goexit in main (gc: exit 2) **or** host stack exhaustion from deep Go recursion (M10: `graalgo-run: stack overflow` on stderr; see `phases/phase1/docs/limitations.md`) |
+| Exit 2 | build failure (gofrontend rejected the program; stderr passed through verbatim) **or** uncaught Go panic / Goexit in main (gc: exit 2) **or** host stack exhaustion from deep Go recursion (M10: `graalgo-run: stack overflow` on stderr; see [docs/limitations.md](docs/limitations.md)) |
 
 ### 3.2 `NodeFactory` — FROZEN
 
@@ -125,19 +129,28 @@ single call-execution choke point (M9 probes attach here).
 
 ### 3.4 Runtime — FROZEN (intrinsic surface)
 
-The GG-0020 intrinsic surface is frozen in `docs/freeze-stub.md`
-(§"GG-0020 intrinsic surface, freeze v1"): `Intrinsics` (memory, slices,
-maps, itab, random, traceback), `BuiltinPrint.print/println`,
+The GG-0020 intrinsic surface is frozen in [docs/freeze-stub.md](docs/freeze-stub.md)
+(§"GG-0020 intrinsic surface"; frozen 2026-10-04, amended to v2 by
+ADR-0008): `Intrinsics` (memory, slices, maps, itab, random,
+traceback), `BuiltinPrint.print/println`,
 `Fmt.sprintf/sprint/sprintln/print/printf/println/errorf`, `Timers`,
 `Scheduler.spawn/yield/park`, `Netpoll.init/open/close`,
 `ChanOps.send/recv/close`, `Panic.throwPanic/recover`,
-`safepoint.Safepoint.poll()`. Additionally frozen at M9:
+`safepoint.Safepoint.poll()`. The v2 slice-allocation signatures
+(ADR-0008 — `elemDesc` zero-initializes struct-element slots via
+`GoStruct.zero(desc)`; null for non-struct kinds):
+
+- `public static GoSlice Intrinsics.makeslice(GoKind elemKind, GoStructDescriptor elemDesc, int len, int cap)`
+- `public static GoSlice Intrinsics.growslice(GoSlice old, GoKind elemKind, GoStructDescriptor elemDesc, int newLen, long elemSizeBytes, boolean elemHasPointers)`
+- `public static GoSlice Intrinsics.growslice(GoSlice old, GoKind elemKind, int additional)` — unchanged convenience overload.
+
+Additionally frozen at M9:
 
 - `graalgo.runtime.GoCalls.invoke(GoFunc fn, Object[] args) -> Object`
   — the single function-invocation entry (nil check, recover-flag
   discipline documented on `FuncValueCallNode`).
 - The M5 runtime surface (frozen 2026-10-04, WS F — called by M5 AST nodes)
-  is incorporated here as FROZEN (from `docs/freeze-stub.md`, resolving the
+  is incorporated here as FROZEN (from [docs/freeze-stub.md](docs/freeze-stub.md), resolving the
   §1 classification): `GoErrors.bounds(BoundsCode,long,long,boolean)`,
   `GoErrors.indexOutOfRange(long,long,boolean)`, `GoErrors.assignmentToNilMap()`,
   `GoErrors.nilDereference()`, `GoErrors.integerDivideByZero()`,
@@ -155,7 +168,7 @@ maps, itab, random, traceback), `BuiltinPrint.print/println`,
 
 The value representations cross the frontend↔runtime boundary (frame slots,
 boxing, descriptors) and are frozen as *types* — i.e. the named public
-classes must exist (checked by `FreezeSignatureTest`); constructors and
+classes must exist (checked by [FreezeSignatureTest](src/test/java/graalgo/runtime/FreezeSignatureTest.java)); constructors and
 accessors are frozen only where listed below, method bodies are INTERNAL:
 
 - `GoKind` (enum), `GoSlice`, `GoMap`, `GoString`, `GoStruct` +
@@ -194,13 +207,13 @@ Phase-1 import overlay (D4), not as builtins.
 |---|---|---|
 | frontend/v1 wire format | `v1` | new field renames/removals → `v2` |
 | `gofrontend` toolVersion | `0.1.0` | any CLI/JSON behavior change |
-| Interface freeze | v1 (this document) | any FROZEN change → v2 + ADR |
+| Interface freeze | v2 (this document; v2 delta = ADR-0008 makeslice/growslice `elemDesc`) | any FROZEN change → v3 + ADR |
 
 ## 6. Machine checks
 
 | Check | Guards |
 |---|---|
-| `FreezeSignatureTest` (suite) | FROZEN Java signatures (§3.2–3.5): name, params, return type, public/static shape — fails on rename/retype/removal; plus FROZEN class existence and the `Program` record's 5 component names. **Coverage is the signature list in the test, not every name in §§3.2–3.5**: builders registered via `registerExprKind`/`registerStmtKind` are covered by contract, not enumerated. Enforcement that AST builders call *only* frozen signatures is review discipline, not a CI gate (see §1(c)). |
+| [FreezeSignatureTest](src/test/java/graalgo/runtime/FreezeSignatureTest.java) (suite) | FROZEN Java signatures (§3.2–3.5): name, params, return type, public/static shape — fails on rename/retype/removal; plus FROZEN class existence and the `Program` record's 5 component names. **Coverage is the signature list in the test, not every name in §§3.2–3.5**: builders registered via `registerExprKind`/`registerStmtKind` are covered by contract, not enumerated. Enforcement that AST builders call *only* frozen signatures is review discipline, not a CI gate (see §1(c)). |
 | `frontend/tools/validate_frontend_v1.py` (`make check`) | frontend/v1 wire format (§2.3) |
 | `TestDeterministic` (`frontend/export_test.go`) | wire determinism (§2.3) |
 | diffharness build-failure parity | gofrontend exit codes (§2.1), graalgo-run exit codes (§3.1) |

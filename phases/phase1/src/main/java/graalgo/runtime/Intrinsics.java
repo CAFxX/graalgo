@@ -14,7 +14,8 @@ import graalgo.values.GoTypeDescriptor;
  * Frozen runtime intrinsic surface, Phase-1 slice (WS G, GG-0020).
  *
  * <p>Every method here is part of the versioned freeze (docs/freeze-stub.md,
- * freeze v1): the signature is frozen, and each method is marked REAL (fully
+ * freeze v2 — v2 delta: ADR-0008 added the GoStructDescriptor elemDesc
+ * parameter to makeslice/growslice): the signature is frozen, and each method is marked REAL (fully
  * implemented against the Phase-1 value model) or STUB (throws
  * {@link UnsupportedOperationException} with a Phase-2 message; listed as
  * such in the freeze doc — never a silent wrong value).
