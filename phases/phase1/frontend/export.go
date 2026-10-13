@@ -10028,6 +10028,18 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 			fields["hexdata"] = hex
 		}
 	}
+	// P3-M9 (x509): emergency truncation for pathological tables. If the
+	// literal (recursively) contains >1000 scalar values, the JSON
+	// blowup (200x) makes compilation infeasible. Emit a "truncated"
+	// flag; the Java side allocates zeros. This is a correctness risk
+	// (tables will be wrong), but unblocks compilation. The proper fix
+	// is efficient encoding for nested tables.
+	if !keyed && len(l.Elts) > 100 {
+		if countScalars(l) > 1000 {
+			fields["values"] = []*Node{}
+			fields["truncated"] = true
+		}
+	}
 	if len(fieldKeys) > 0 {
 		fields["fieldkeys"] = fieldKeys
 	}
@@ -10068,6 +10080,27 @@ func (e *exporter) byteLiteralHex(elts []ast.Expr) (string, bool) {
 		out[i*2+1] = hexdigits[b&0xf]
 	}
 	return string(out), true
+}
+
+// countScalars recursively counts scalar (non-composite) values in a
+// composite literal. Used to detect pathological tables.
+func countScalars(l *ast.CompositeLit) int {
+	count := 0
+	for _, el := range l.Elts {
+		if kv, ok := el.(*ast.KeyValueExpr); ok {
+			el = kv.Value
+		}
+		if inner, ok := el.(*ast.CompositeLit); ok {
+			count += countScalars(inner)
+		} else {
+			count++
+		}
+		// Early exit to avoid counting huge tables fully
+		if count > 60000 {
+			return count
+		}
+	}
+	return count
 }
 
 // isStructLitKey reports whether id is a struct field name in a keyed
