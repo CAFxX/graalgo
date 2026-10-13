@@ -6,7 +6,7 @@ cross-workstream review.
 ## D8 safepoint seam (frozen 2026-10-04, M3)
 
 - Signature: `graalgo.safepoint.Safepoint.poll()` — `public static void`, no arguments,
-  no return value, in `src/main/java/graalgo/safepoint/Safepoint.java`.
+  no return value, in [src/main/java/graalgo/safepoint/Safepoint.java](../src/main/java/graalgo/safepoint/Safepoint.java).
 - Call sites (inserted by the AST builders, not by user code):
   - function entries — `GoRootNode.execute` (M3, WS D);
   - loop back-edges — WS E (when loops land).
@@ -14,6 +14,11 @@ cross-workstream review.
   for GC). Callers must not depend on any side effect today.
 
 ## GG-0020 intrinsic surface, freeze v1 (frozen 2026-10-04, M4/WS G)
+
+**v2 amendment 2026-10-13 (ADR-0008):** `makeslice`/`growslice` gain a
+`GoStructDescriptor elemDesc` parameter (struct-element slots are
+zero-initialized via `GoStruct.zero(desc)`; null for non-struct kinds);
+interface freeze v1 → v2. All other rows unchanged.
 
 The full ~60-function runtime contract the adapted stdlib builds against
 (SPEC §3.6). Each entry gives the frozen Java signature, the owning file,
@@ -40,8 +45,8 @@ Conventions:
 
 | Signature | Notes |
 |-----------|-------|
-| `public static GoSlice makeslice(GoKind elemKind, int len, int cap)` | Exact cap (no size-class rounding observable). [T] |
-| `public static GoSlice growslice(GoSlice old, GoKind elemKind, int newLen, long elemSizeBytes, boolean elemHasPointers)` | gc's growslice ported exactly (nextslicecap + roundupsize). [T] |
+| `public static GoSlice makeslice(GoKind elemKind, GoStructDescriptor elemDesc, int len, int cap)` | Exact cap (no size-class rounding observable). `elemDesc` (v2, ADR-0008): struct-element descriptor, null for non-struct kinds; struct slots zero-initialized. [T] |
+| `public static GoSlice growslice(GoSlice old, GoKind elemKind, GoStructDescriptor elemDesc, int newLen, long elemSizeBytes, boolean elemHasPointers)` | gc's growslice ported exactly (nextslicecap + roundupsize). `elemDesc` (v2, ADR-0008): as in `makeslice`; also covers the fresh growth region. [T] |
 | `public static GoSlice growslice(GoSlice old, GoKind elemKind, int additional)` | Convenience for `append`; computes size/hasPointers from kind. [T] |
 | `public static int slicecopy(GoSlice dst, GoSlice src, GoKind elemKind)` | `copy` builtin; memmove semantics; returns count. [T] |
 | `public static long elemSizeBytes(GoKind kind)` | D5 element size. |
@@ -247,8 +252,8 @@ also verified differentially vs gc via the panic corpus (pn01–pn20). Rows
 marked [T] are in `FreezeSignatureTest`; rows marked [C] are covered
 by corpus differential tests.
 
-Amendment (M9, per `INTERFACE_FREEZE.md` §1 conflict rule): the M5 runtime
-surface is incorporated as FROZEN in `INTERFACE_FREEZE.md` §3.4; this
+Amendment (M9, per [INTERFACE_FREEZE.md](../INTERFACE_FREEZE.md) §1 conflict rule): the M5 runtime
+surface is incorporated as FROZEN in [INTERFACE_FREEZE.md](../INTERFACE_FREEZE.md) §3.4; this
 document's "frozen at the signatures below" stands unchanged. The D8
 safepoint signature is `graalgo.safepoint.Safepoint.poll()` (class name
 was missing in v1).
