@@ -41,6 +41,15 @@ public final class IfaceMethodTablesTest {
         return new GoFunc(target, null, null);
     }
 
+
+    private static graalgo.frontend.Json.Object parseDoc(String text) {
+        graalgo.frontend.Json.Value v = graalgo.frontend.Json.parse(text);
+        if (!(v instanceof graalgo.frontend.Json.Object doc)) {
+            throw new AssertionError("test doc must be a JSON object");
+        }
+        return doc;
+    }
+
     private static final String DOC = """
             {"frontend": "v1",
              "types": [
@@ -67,7 +76,7 @@ public final class IfaceMethodTablesTest {
         GoFunc fmp = goFunc();
         GoFunc fnp = goFunc();
         Map<Integer, GoFunc> functions = Map.of(7, fm, 8, fmp, 9, fnp);
-        Map<String, Map<String, IfaceMethodTarget>> out = IfaceMethodTables.resolve(DOC, functions);
+        Map<String, Map<String, IfaceMethodTarget>> out = IfaceMethodTables.resolve(parseDoc(DOC), functions);
         assertEquals(2, out.size(), "two descriptors with methods");
         IfaceMethodTarget mt = out.get("main.T").get("M");
         assertTrue(mt != null, "main.T has M");
@@ -114,7 +123,7 @@ public final class IfaceMethodTablesTest {
                  ],
                  "objects": [], "funcs": []}""";
         Map<String, Map<String, IfaceMethodTarget>> out =
-                IfaceMethodTables.resolve(doc, Map.of());
+                IfaceMethodTables.resolve(parseDoc(doc), Map.of());
         IfaceMethodTarget t = out.get("main.Outer").get("M");
         assertTrue(t != null, "method present");
         assertTrue(t.func() == null, "redispatch entry carries no GoFunc");
@@ -135,7 +144,7 @@ public final class IfaceMethodTablesTest {
                  ],
                  "objects": [], "funcs": []}""";
         try {
-            IfaceMethodTables.resolve(badDoc, Map.of());
+            IfaceMethodTables.resolve(parseDoc(badDoc), Map.of());
         } catch (FrontendException fe) {
             assertTrue(fe.getMessage().contains("not an interface type"),
                     "named fail-fast: " + fe.getMessage());
@@ -160,7 +169,7 @@ public final class IfaceMethodTablesTest {
                  ],
                  "objects": [], "funcs": []}""";
         Map<String, Map<String, IfaceMethodTarget>> out =
-                IfaceMethodTables.resolve(doc, Map.of(3, goFunc()));
+                IfaceMethodTables.resolve(parseDoc(doc), Map.of(3, goFunc()));
         IfaceMethodTarget t = out.get("main.V").get("M");
         assertTrue(t != null, "method present");
         assertTrue(!t.supported(), "null index = unsupported promotion");
@@ -173,7 +182,7 @@ public final class IfaceMethodTablesTest {
      */
     public void testMissingObjIdFailsFast() {
         try {
-            IfaceMethodTables.resolve(DOC, Map.of(7, goFunc(), 8, goFunc()));
+            IfaceMethodTables.resolve(parseDoc(DOC), Map.of(7, goFunc(), 8, goFunc()));
         } catch (FrontendException fe) {
             String msg = fe.getMessage();
             assertTrue(msg.contains("\"N\""), "names the method: " + msg);
@@ -193,7 +202,7 @@ public final class IfaceMethodTablesTest {
                 {"frontend": "v1",
                  "types": [{"kind": "basic", "detail": {"name": "int", "class": "int"}}],
                  "objects": [], "funcs": []}""";
-        assertEquals(Map.of(), IfaceMethodTables.resolve(doc, Map.of()), "empty table map");
+        assertEquals(Map.of(), IfaceMethodTables.resolve(parseDoc(doc), Map.of()), "empty table map");
     }
 
     /**
@@ -214,7 +223,7 @@ public final class IfaceMethodTablesTest {
                    {"kind": "signature", "detail": {"params": [], "results": []}}],
                  "objects": [], "funcs": []}""";
         Map<String, IfaceMethodTable.IfaceWireEntry> out =
-                IfaceMethodTables.resolveInterfaces(doc);
+                IfaceMethodTables.resolveInterfaces(parseDoc(doc));
         assertTrue(out.containsKey("foo.Bar"),
                 "slashed-path named interface keys by display name; keys=" + out.keySet());
         assertTrue(!out.containsKey("example.com/foo.Bar"),

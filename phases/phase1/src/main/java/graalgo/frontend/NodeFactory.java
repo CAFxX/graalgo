@@ -246,6 +246,11 @@ public final class NodeFactory {
     private final Map<String, ExprBuilder> exprBuilders = new LinkedHashMap<>();
     private final Map<String, StmtBuilder> stmtBuilders = new LinkedHashMap<>();
     private final List<TypeDecoder> typeDecoders = new ArrayList<>();
+    /** The parsed frontend/v1 document from the last buildProgram call.
+     * P3-M9: parse-once — downstream installers (IfaceMethodTables,
+     * ReflectTypes, LinknameIntrinsics) reuse this instead of re-parsing
+     * the JSON text (5x parse of a 200MB document was the gmp1 bottleneck). */
+    private Json.Object document;
     /** Shared function-literal counter for unique trace names (M5, WS F). */
     private int funclitCounter;
     /**
@@ -520,11 +525,22 @@ public final class NodeFactory {
         return out;
     }
 
+    /** Returns the parsed frontend/v1 document from the last buildProgram call.
+     * P3-M9: parse-once — lets downstream installers reuse the DOM instead
+     * of re-parsing the JSON text. */
+    public Json.Object document() {
+        if (document == null) {
+            throw new FrontendException("document: buildProgram has not been called");
+        }
+        return document;
+    }
+
     public Program buildProgram(String jsonText) {
         Json.Value v = Json.parse(jsonText);
         if (!(v instanceof Json.Object doc)) {
             throw new FrontendException("document: must be a JSON object");
         }
+        this.document = doc;
         String fv = doc.string("frontend", "document");
         if (!"v1".equals(fv)) {
             throw new FrontendException("unsupported frontend version \"" + fv

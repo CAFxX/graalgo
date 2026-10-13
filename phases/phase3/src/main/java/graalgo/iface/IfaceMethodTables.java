@@ -36,18 +36,15 @@ public final class IfaceMethodTables {
     private IfaceMethodTables() {}
 
     /**
-     * Parses {@code jsonText}'s type table and resolves every method obj id
-     * to its {@link GoFunc}.
+     * Resolves every method obj id in {@code doc}'s type table to its
+     * {@link GoFunc}.
      *
-     * @param jsonText  the frontend/v1 document
+     * @param doc       the parsed frontend/v1 document (parse-once: caller
+     *                  reuses NodeFactory.document())
      * @param functions obj id → GoFunc, from {@code Program.functions()}
      */
-    public static Map<String, Map<String, IfaceMethodTarget>> resolve(String jsonText,
+    public static Map<String, Map<String, IfaceMethodTarget>> resolve(Json.Object doc,
             Map<Integer, GoFunc> functions) {
-        Json.Value v = Json.parse(jsonText);
-        if (!(v instanceof Json.Object doc)) {
-            throw new FrontendException("document: must be a JSON object");
-        }
         TypeTable types = new TypeTable(doc.array("types", "document"));
         Map<String, Map<String, MethodRef>> objIds = new LinkedHashMap<>();
         for (int id = 0; id < types.size(); id++) {
@@ -132,19 +129,17 @@ public final class IfaceMethodTables {
     }
 
     /**
-     * Parses {@code jsonText}'s type table and returns the interface
-     * method-name lists (P3-M4, WS C, ADR-0004 D3): interface descriptor
-     * name → method names in declaration order, for the
-     * {@code Intrinsics.itabFor} intrinsic. Both named interfaces (keyed
-     * by their qualified name, e.g. {@code main.Writer}) and anonymous
-     * ones (keyed by the factory's structural name, e.g.
-     * {@code interface#3}) are covered.
+     * Returns the interface method-name lists from {@code doc}'s type table
+     * (P3-M4, WS C, ADR-0004 D3): interface descriptor name → method names
+     * in declaration order, for the {@code Intrinsics.itabFor} intrinsic.
+     * Both named interfaces (keyed by their qualified name, e.g.
+     * {@code main.Writer}) and anonymous ones (keyed by the factory's
+     * structural name, e.g. {@code interface#3}) are covered.
+     *
+     * @param doc the parsed frontend/v1 document (parse-once: caller reuses
+     *            NodeFactory.document())
      */
-    public static Map<String, IfaceMethodTable.IfaceWireEntry> resolveInterfaces(String jsonText) {
-        Json.Value v = Json.parse(jsonText);
-        if (!(v instanceof Json.Object doc)) {
-            throw new FrontendException("document: must be a JSON object");
-        }
+    public static Map<String, IfaceMethodTable.IfaceWireEntry> resolveInterfaces(Json.Object doc) {
         TypeTable types = new TypeTable(doc.array("types", "document"));
         Map<String, IfaceMethodTable.IfaceWireEntry> out = new LinkedHashMap<>();
         for (int id = 0; id < types.size(); id++) {

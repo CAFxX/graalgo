@@ -35,11 +35,19 @@ public final class ReflectTypesTest {
      * leaking from the exporter) must throw, not be laundered into a fake
      * INTERFACE kind with fabricated size/align.
      */
-    public void testInvalidTypeWireEntryFailsLoud() {
+        private static graalgo.frontend.Json.Object parseDoc(String text) {
+        graalgo.frontend.Json.Value v = graalgo.frontend.Json.parse(text);
+        if (!(v instanceof graalgo.frontend.Json.Object doc)) {
+            throw new AssertionError("test doc must be a JSON object");
+        }
+        return doc;
+    }
+
+public void testInvalidTypeWireEntryFailsLoud() {
         String doc = "{\"types\": [{\"kind\": \"basic\", \"detail\": "
                 + "{\"name\": \"invalid type\", \"class\": \"unknown\", \"untyped\": false}}]}";
         try {
-            ReflectTypes.install(doc, Map.of());
+            ReflectTypes.install(parseDoc(doc), Map.of());
         } catch (FrontendException e) {
             assertTrue(e.getMessage().contains("unknown basic type"),
                     "unexpected message: " + e.getMessage());
@@ -66,7 +74,7 @@ public final class ReflectTypesTest {
                   {"kind": "basic", "detail": {"name": "int", "class": "int", "untyped": false}}
                 ]}
                 """;
-        ReflectTypes.install(doc, Map.of());
+        ReflectTypes.install(parseDoc(doc), Map.of());
         ReflectTypes.Table table = ReflectTypes.table();
 
         ReflectTypes.TypeInfo sig = findByKind(table, GoKind.FUNC);
@@ -105,7 +113,7 @@ public final class ReflectTypesTest {
     public void testBarePointerWireNameIsUnsafePointer() {
         String doc = "{\"types\": [{\"kind\": \"basic\", \"detail\": "
                 + "{\"name\": \"Pointer\", \"class\": \"pointer\", \"untyped\": false}}]}";
-        ReflectTypes.install(doc, Map.of());
+        ReflectTypes.install(parseDoc(doc), Map.of());
         ReflectTypes.Table table = ReflectTypes.table();
         ReflectTypes.TypeInfo ptr = findByKind(table, GoKind.UNSAFE_POINTER);
         assertTrue(ptr != null, "no UNSAFE_POINTER TypeInfo built for wire name \"Pointer\"");
@@ -140,7 +148,7 @@ public final class ReflectTypesTest {
         }
         sb.append("]}");
         long t0 = System.nanoTime();
-        ReflectTypes.install(sb.toString(), Map.of());
+        ReflectTypes.install(parseDoc(sb.toString()), Map.of());
         double secs = (System.nanoTime() - t0) / 1e9;
         assertTrue(secs < 20.0,
                 "install of 1201 types took " + secs + "s (O(n^2) resolve loop regressed?)");
@@ -167,7 +175,7 @@ public final class ReflectTypesTest {
                   {"kind": "basic", "detail": {"name": "string", "class": "string", "untyped": false}}
                 ]}
                 """;
-        ReflectTypes.install(doc, Map.of());
+        ReflectTypes.install(parseDoc(doc), Map.of());
         ReflectTypes.Table table = ReflectTypes.table();
         ReflectTypes.TypeInfo named = null;
         for (ReflectTypes.TypeInfo ti : table.byTok) {

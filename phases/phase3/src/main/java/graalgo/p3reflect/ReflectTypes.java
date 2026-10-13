@@ -198,12 +198,11 @@ public final class ReflectTypes {
 
     private static volatile Table installed;
 
-    /** Installs the per-run table from the wire document. */
-    public static void install(String jsonText, Map<Integer, GoFunc> functions) {
-        Json.Value v = Json.parse(jsonText);
-        if (!(v instanceof Json.Object doc)) {
-            throw new FrontendException("reflect: document must be a JSON object");
-        }
+    /** Installs the per-run table from the parsed wire document.
+     * @param doc the parsed frontend/v1 document (parse-once: caller reuses
+     *            NodeFactory.document())
+     */
+    public static void install(Json.Object doc, Map<Integer, GoFunc> functions) {
         TypeTable types = new TypeTable(doc.array("types", "document"));
         installed = build(doc, types, functions);
         cacheTypes(types);

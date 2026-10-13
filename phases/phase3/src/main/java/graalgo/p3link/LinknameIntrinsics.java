@@ -4,7 +4,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Map;
 
-import graalgo.frontend.FrontendException;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceMethodTable;
@@ -56,7 +55,7 @@ public final class LinknameIntrinsics {
      * by the P3 launcher after {@code factory.buildProgram(json)} (and
      * after {@code IfaceMethodTable.install}, which this does not repeat).
      */
-    public static void install(String jsonText, NodeFactory.Program program) {
+    public static void install(Json.Object doc, NodeFactory.Program program) {
         // P3-M4 remediation (P2-2): the static registries must be cleared
         // on every install — the launcher calls install per program build
         // (even empty), and without this a previous program's symbols,
@@ -98,9 +97,9 @@ public final class LinknameIntrinsics {
         // itabFor → the P3-M3 itab machinery (ADR-0004 D3).
         Intrinsics.setItabProvider(IfaceMethodTable::itabForDescriptors);
         // Interface method-name lists for itabForIntrinsic.
-        IfaceMethodTable.installInterfaces(IfaceMethodTables.resolveInterfaces(jsonText));
+        IfaceMethodTable.installInterfaces(IfaceMethodTables.resolveInterfaces(doc));
         // Go function bindings for callGo.
-        bindGoFuncs(jsonText, program);
+        bindGoFuncs(doc, program);
     }
 
     /**
@@ -345,11 +344,7 @@ public final class LinknameIntrinsics {
      * ({@code <package>.<name>}, e.g. {@code main.helper}) for
      * intrinsic→Go lookup. Method instantiations are out of M4 scope.
      */
-    static void bindGoFuncs(String jsonText, NodeFactory.Program program) {
-        Json.Value v = Json.parse(jsonText);
-        if (!(v instanceof Json.Object doc)) {
-            throw new FrontendException("document: must be a JSON object");
-        }
+    static void bindGoFuncs(Json.Object doc, NodeFactory.Program program) {
         Json.Object pkg = doc.object("package", "document");
         String pkgName = pkg.string("name", "document.package");
         Map<Integer, GoFunc> functions = program.functions();

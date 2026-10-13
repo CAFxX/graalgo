@@ -285,11 +285,14 @@ public final class P3SyncMain {
             factory.registerStmtKind("gostmt",
                     (node, ctx) -> GoStatementNode.build(node, ctx, factory));
             program = factory.buildProgram(json);
+            // P3-M9: parse-once — the downstream installers reuse the parsed
+            // document instead of re-parsing the 200MB JSON text (was 5x).
+            graalgo.frontend.Json.Object doc = factory.document();
             // P3-M3 (WS D, ADR-0003): install the interface method tables.
             // Method objIDs resolve through Program.functions(); a missing
             // objID fails fast here. Installed on every build (even empty)
             // so a previous program's tables can never leak into this run.
-            IfaceMethodTable.install(IfaceMethodTables.resolve(json, program.functions()));
+            IfaceMethodTable.install(IfaceMethodTables.resolve(doc, program.functions()));
             // P3-M9 (RC-6): install the fmt.handleMethods handler (Formatter/
             // Stringer/error dispatch for fmt verbs) and the Java-implemented
             // fmt.State methods.
@@ -299,13 +302,13 @@ public final class P3SyncMain {
             // on every build (even empty) so a previous program's tables can
             // never leak into this run.
             graalgo.p3unsafe.UnsafeTable.install();
-            graalgo.p3reflect.ReflectTypes.install(json, program.functions());
+            graalgo.p3reflect.ReflectTypes.install(doc, program.functions());
             // P3-M4 (WS C, ADR-0004): linkname symbol table (both
             // directions), itabFor provider, interface method lists, and
             // Go function bindings for callGo. Installed on every build
             // (even empty) so a previous program's bindings can never
             // leak into this run (registries are static).
-            LinknameIntrinsics.install(json, program);
+            LinknameIntrinsics.install(doc, program);
         } catch (FrontendException e) {
             System.err.println("graalgo-sync-run: internal error building AST: " + e.getMessage());
             return EXIT_INPUT_ERROR;
