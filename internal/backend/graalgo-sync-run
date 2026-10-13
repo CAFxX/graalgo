@@ -20,8 +20,8 @@ GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
 # phases/phase1/frontend until the frontend code-move lane relocates it to
 # internal/frontend/ (which the launcher's ToolPaths walk-up then finds on
 # its own). Until then, point the launcher at the current location.
-if [ -z "${GRAALGO_GOFRONTEND:-}" ] && [ -x "$HERE/../../phases/phase1/frontend/gofrontend" ]; then
-  export GRAALGO_GOFRONTEND="$HERE/../../phases/phase1/frontend/gofrontend"
+if [ -z "${GRAALGO_GOFRONTEND:-}" ] && [ -x "$HERE/../frontend/gofrontend" ]; then
+  export GRAALGO_GOFRONTEND="$HERE/../frontend/gofrontend"
 fi
 CP="$HERE/interop/out/classes:$HERE/runtime/out/classes:$HERE/truffle/out/classes"
 for jar in "$HERE"/truffle/lib/*.jar; do

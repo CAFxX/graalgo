@@ -136,7 +136,7 @@ SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
 # Both wrappers now live in internal/backend/.
 snapshot: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/phases/phase3" \
+	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/internal/backend" \
 	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
 	  $(GO) run ./cmd/diffharness snapshot record \
 	  -config backends-p3.json -corpus corpus -backend graalgo \
@@ -148,7 +148,7 @@ snapshot: build
 
 snapshot-check: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/phases/phase3" \
+	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE3_DIR="$(CURDIR)/internal/backend" \
 	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
 	  $(GO) run ./cmd/diffharness snapshot check \
 	  -config backends-p3.json -corpus corpus -backend graalgo \
