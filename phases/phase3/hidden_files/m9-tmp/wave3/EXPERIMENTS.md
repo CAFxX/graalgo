@@ -73,3 +73,18 @@ The 200MB frontend JSON was parsed FIVE times per run:
 | # | Hypothesis | Change/Command | Result | Wall |
 |---|-----------|----------------|--------|------|
 | 21 | 5x JSON parse is the bottleneck | Parse-once: NodeFactory.document() exposes the parsed DOM; all installers take Json.Object instead of String. Committed 73d7242. | Phase1+phase3 build clean. Re-running leg. | 25m |
+
+## Update 10:15 CEST — JSON bottleneck FIXED, TLS handshake deadlock found
+| # | Hypothesis | Change/Command | Result | Wall |
+|---|-----------|----------------|--------|------|
+| 22 | Pipe hang for 200MB | runGofrontend via temp file not pipe. Committed. | gofrontend writes 200MB file OK. | 20m |
+| 23 | gofrontend won't exit | Load-shedder SIGSTOP'd it (load 10.9). Thawed. | Exited, Java proceeded. | 10m |
+| 24 | TLS handshake stuck | Added debug println to handshake loop. | Both sides stuck in NEED_UNWRAP (status=2), 0 bytes flowing. TCP connected but TLS deadlocked. | 30m |
+| 25 | 10s sleep causes GMP=1 stall | Reduced to 100ms. Committed 2408114. | Still stuck (sleep is after handshake, not the cause). | 15m |
+
+## Current state
+- FIXED: 200MB JSON parsed 5x → 1x (parse-once, 73d7242).
+- FIXED: gofrontend pipe hang → temp file (general fix).
+- OPEN: TLS handshake deadlocks on GMP=1 (both sides NEED_UNWRAP, no bytes flowing).
+  GMP=4 worked before these changes. Likely GMP=1 scheduler or SSLEngine state issue.
+- Debug code (println) still in synth_crypto_tls.go — must be removed before final.
