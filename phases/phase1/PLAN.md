@@ -1,6 +1,9 @@
 # Phase 1 plan — Go language core on Truffle
 
-**Status:** r3 content-complete (spec-extract.md + req-phase-map.md consumed). For parent review.
+**Status:** COMPLETE — M10 sign-off 2026-10-05 (done-gates 4, 5 met;
+`phases/phase1/CHECKPOINT.md` tail); Phase 1 (M1–M10) closed. This plan is
+the historical record of what was planned; the checkpoint is the record of
+what was delivered.
 **Normative:** SPEC.md (ACCEPTED 2026-10-03), ADR-0001, PHASES.md §3. 70 GG IDs locked.
 **Extracts:** `spec-extract.md` (54 items), `req-phase-map.md` (31 Phase-1 IDs).
 

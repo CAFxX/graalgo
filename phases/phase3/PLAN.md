@@ -1,6 +1,6 @@
 # Phase 3 plan — Stdlib bring-up (Linux-first)
 
-**Status:** ACCEPTED by program supervisor 2026-10-06 (independent plan review; no per-phase owner gate per the 2026-10-06 "to completion" directive). Implementation dispatched.
+**Status:** ACCEPTED by program supervisor 2026-10-06 (independent plan review; no per-phase owner gate per the 2026-10-06 "to completion" directive). Implementation dispatched. M1–M9 delivered (M9 merged to master 2026-10-13 as `64705cc`); P3-M10 (WS H/I/J: layers + snapshots + closeout) in progress 2026-10-13 — the cross-doc audit, gates 1–5 adjudication, and closeout are this milestone's remaining work (§4 P3-M10, §8).
 **Normative:** SPEC.md (ACCEPTED 2026-10-03) §§2.8, 3.2, 3.3, 3.6, 3.8, 5;
 PHASES.md §5; phases/phase1/INTERFACE_FREEZE.md (v1, still in force);
 phases/phase2/DONE-GATES.md + phases/phase2/CHECKPOINT.md tail (Phase 2
@@ -86,25 +86,33 @@ annotation; never before.
   intrinsic surface; the ~78 coupled packages get a fork with minimal
   diffs; Plan 9 asm per category (runtime-core evaporates, atomics/bytealg
   intrinsified, crypto emulate-then-intrinsify, `math` JVM IEEE754).
-- **[OPEN] Exclusion-list review cap.** PHASES.md §5 kill criterion fires
-  when "exclusion-list growth exceeds the review cap twice" — the cap
-  number itself is undecided. Proposal: 25 packages OR 5% of stdlib test
-  binaries, whichever is hit first, with reason codes mandatory per entry.
-  Needs program-owner confirmation before P3-M6 (the list's first
-  publication).
-- **[OPEN] The ~78 coupled-package set.** SPEC §2.8's count is a
-  measurement on an earlier tree; re-measure on go1.27.1 at P3-M6 and
-  publish the versioned list. If the count drifts >15%, re-examine the
-  fork-vs-overlay boundary (re-test trigger on P3-D1).
-- **[OPEN] crypto "then-intrinsify" timing.** Phase 3 implements
-  emulate-then-intrinsify with the *emulate* leg; the intrinsify leg is
-  deferred to Phase 5 (it is a performance optimization, and every
-  claimed win needs its falsifying benchmark per GG-0007). Confirm the
-  deferral does not break the exclusion-list cap.
-- **[OPEN] `net` scope.** Blocking NIO is proven (Phase 2); `net`,
-  `net/http` are in scope, but the full `net/*` subtree (e.g.
-  `net/http/httptrace` edge cases, `net/rpc`) may exceed the cap —
-  triage per package at P3-M9 with the four-way classification.
+- **[RESOLVED 2026-10-07, P3-M6] Exclusion-list review cap.** Cap approved:
+  25 packages OR 5% of stdlib test binaries, whichever binds first — on
+  go1.27.1 the 5% clause binds (274 test binaries → 13). Enforced
+  mechanically by `stdlib-excl validate` ([tools/stdlib-excl](../../tools/stdlib-excl)), wired into
+  `make -C phases/phase3 check`. Current list
+  ([exclusions.yaml](stdlib-fork/exclusions.yaml), v2): 2 entries, under cap.
+- **[RESOLVED 2026-10-07, P3-M6] The ~78 coupled-package set.** Re-measured
+  on go1.27.1: 142 coupled dirs (82% drift — the P3-D1 re-test trigger
+  fired). Re-examination recorded in
+  [ADR-0001-addendum-p3d1-reexamination.md](adr/ADR-0001-addendum-p3d1-reexamination.md): **P3-D1
+  STANDS** — the real-adaptation subset (asm/cgo, ~44 packages) is smaller
+  than the original loose ~78, so the fork-adaptation budget is not
+  exceeded; the drift was partly definitional (strict documented check vs
+  the original imprecise one). M7–M9 wave planning uses the versioned
+  142-list ([coupled-packages-go1.27.1.json](stdlib-fork/coupled-packages-go1.27.1.json)).
+- **[RESOLVED 2026-10-07, P3-M6] crypto "then-intrinsify" timing.** Deferred
+  to Phase 5+ per ADR-0007 (CHECKPOINT.md: "Crypto emulate leg: intrinsify
+  leg deferred to Phase 5+"). Phase 3 ships the emulate leg only; every
+  claimed intrinsify win needs its falsifying benchmark per GG-0007.
+- **[RESOLVED via M9 delivery] `net` scope.** Triaged per package at M9:
+  netpoller runtime landed (P3-M9, commit `51fc673`, 3 P0s found and fixed
+  in peer review); loopback-only network policy for corpus + go-test trial
+  confirmed (supervisor decision 2026-10-07); wave-3 corpus programs for
+  net/net/http/archive/compress carry `.scopelimited` markers with retest
+  triggers where synthetic sources or socket/netpoll support is still
+  missing. `net/*` edge packages beyond the cap stay triaged per package,
+  they do not silently expand scope.
 
 **Continuous adversarial test-finding track (standing owner directive
 2026-10-06, NOT staffed by this plan):** the supervisor will launch a
@@ -150,9 +158,22 @@ depends on it; no Phase-3 worker staffs it.
   encoding/* `go test` green vs gc (exclusion list cited per skip)
 - P3-M8: package wave 2 (WS G) — io/os/syscall(linux-tagged)/
   reflect+unsafe/crypto(emulate) `go test` green vs gc
-- P3-M9: package wave 3 (WS G) — net/net/http/compress/archive/remaining
-  `go test` green vs gc; full `go test ./...` passes with zero
-  unexplained divergences (GG-0010 →active)
+- P3-M9: package wave 3 (WS G) — **scope as re-planned by supervisor
+  decisions 2026-10-07** (CHECKPOINT.md "M9 analysis complete"): M9 absorbs
+  crypto/tls per the per-package classification. Delivered and merged to
+  master 2026-10-13 (`64705cc`): netpoller runtime (3 P0s found/fixed in
+  peer review), io/fs + path/filepath, x509/TLS (GMP=1/2 handshakes +
+  application-data echo byte-identical vs gc 1.27.1), 19 P0 bugs
+  fixed/verified, wave-3 corpus programs (net/http, archive/tar, archive/zip,
+  mime/*, compress/*) baselined under gc with `.scopelimited` markers +
+  retest triggers where synthetic sources are still missing, 3 independent
+  reviews (correctness C-1, generality F-1/F-2/F-3, robustness) with all
+  findings remediated, final acceptance (Phase-1/2 suites + 70 wave
+  differential samples). **Deferred to the Phase-3 done-gates:** the full
+  `go test ./...` run (no p3test/`go test` trial infrastructure exists yet —
+  the M9 acceptance report records "Upstream go test Trial: NOT
+  IMPLEMENTED"); it is adjudicated under gate 1 at P3-M10, not as an M9
+  milestone gate. (GG-0010 →active)
 - P3-M10: layers + snapshots + closeout (WS H/I/J) — all four testing
   layers operational with the per-commit/per-release cadence wired;
   behavior snapshots recorded for go1.27.1; API/ABI diff tooling trial

@@ -367,8 +367,13 @@ track). Multi-result call-site desugar for 6 ops (Appendix M).
 5. Reviews: 2 independent, against fixed snapshot `382de69`.
    - Reviewer 1 (exporter): FAIL → 8 P1 + 12 P2 all remediated.
    - Reviewer 2 (Java): PASS with 2 P1 (both remediated).
-   Evidence: `reviews/phase3-m5/reviewer1.md`, `reviewer2.md`.
-6. Review evidence committed BEFORE sign-off: YES.
+   **Process gap (found 2026-10-13, P3-M10 cross-doc audit): the
+   per-reviewer report files were never archived — `reviews/phase3-m5/`
+   does not exist in the repo; no commit on any branch ever added it.
+   The findings and their remediation are recorded here and in the
+   sign-off entry below, but the original reviewer reports are lost.**
+6. Review evidence committed BEFORE sign-off: NO — see the process gap
+   note above (corrected 2026-10-13; was incorrectly recorded YES).
 
 **Divergences from plan:** (a) Scope expanded to include frontend channel
 lowering (P2-M2 parent track) — recorded in CHECKPOINT.md 2026-10-06.
@@ -397,8 +402,13 @@ limitation) — documented with re-test trigger.
 - Independent verification on the fixed tree: phase-1 211/211, phase-2 194/194,
   phase-3 58/58, p3frontend ok, phase3 check clean, timectx differential 25/27
   (tc11 gmp=1,4 fail on documented WS E interface-conversion limitation).
-- Reviews committed: reviews/phase3-m5/reviewer1.md (FAIL -> 8 P1 + 12 P2 all
-  remediated), reviewer2.md (PASS -> 2 P1 remediated); 18 remediation commits.
+- Reviews: 2 independent (reviewer 1: FAIL -> 8 P1 + 12 P2 all remediated;
+  reviewer 2: PASS -> 2 P1 remediated); 18 remediation commits.
+  **Correction 2026-10-13 (P3-M10 audit): the per-reviewer report files were
+  never committed — `reviews/phase3-m5/` does not exist (the "Reviews
+  committed" claim above was wrong). Findings/remediation stand as recorded
+  here; the original reports are unrecoverable (process gap, same class as
+  the P3-M1 gap documented in `reviews/phase3-m1/README.md`).**
 - Process lesson: a coordinator's "pre-existing failures" claim must be checked
   against the actual failing test's history, not taken at face value; and /tmp
   fullness is now a pre-suite-run check (Makefile already routes GOTMPDIR to
@@ -2338,3 +2348,77 @@ Compress worker has unstaged synthetic sources + corpus (tar/zip retest ready).
 - **Workaround attempted:** Inlined precomputeParams, wrapped function values,
   type aliases — all hit deeper frontend limitations.
 - Moving to crypto/ecdh (next in dependency order).
+
+## P3-M9 reviews + acceptance (2026-10-13, coordinator lane branches)
+
+Three independent reviews ran against the M9 scope (x509/TLS + P0
+remediation), each on its own lane branch; the report files were committed
+to the lane branches but **never integrated to master**:
+
+- Correctness review (`wt/.../m9-review-correctness`, `f12c5fa`): 1 MEDIUM
+  (reflect: embedded-interface-promoted methods missing) + 5 LOW/INFO.
+  Remediated on master as `3550c49` (M9 C-1: reflect lists
+  embedded-interface-promoted methods; struct-embedded call crash fixed).
+- Generality review (`e358108`): 3 findings, 16 verified-general.
+  Remediated on master as `5b1b331` (M9-generality F-1/F-2/F-3: removed
+  module-specific special-casing).
+- Robustness review (`2df1c56`): no blocking defects, 13/13 Fmt probes pass.
+
+Acceptance ran at `3550c49` on branch `wt/.../m9-acceptance`; final report
+`202aea1` said NOT READY on three findings: (1) TLS handshake hang
+(GMP=1/2 timeouts) — later determined to be a **harness-timeout false
+alarm** (90s harness timeout vs ~135s crypto/tls frontend JSON generation),
+not a product regression; (2)(3) two Phase-1 `--check` validation gaps
+(variadic packing, clear() builtin). Remediated on master as `9fc6bcb` /
+`64705cc` (clear/min/max now fail-fast with named scope errors; the
+variadic-packing test was stale — P3-M9 had implemented packing — and was
+renamed to assert acceptance).
+
+**Acceptance-report accuracy problems (found 2026-10-13, P3-M10 audit):**
+the report's numbers do not match its own logs — it claims "Phase 1:
+180/182, 2 FAIL" while `acceptance/phase1-test.log` records "214 tests,
+3 failures" (it missed the third failure,
+`FreezeSignatureTest.testFrozenSignatures`, entirely); it claims wave-3
+"7 PASS, 0 FAIL" while `acceptance/diff-wave3-sample.log` records
+"7 passed, 1 failed" (00_roundtrip_levels TIMEOUT, reclassified as a
+harness limit). The logs are authoritative, not the report's summary.
+
+**Unremediated:** the `FreezeSignatureTest` failure — the P3-M9 compress
+lane (`f4915c2`, 2026-10-11) added a `GoStructDescriptor elemDesc`
+parameter to the frozen `Intrinsics.makeslice`/`growslice` signatures with
+no ADR and no freeze version bump (freeze policy §1 violation). Phase-1
+`make test` is RED on master because of it. Per-push CI does not run the
+full suite (only `test-ci` smoke), so CI stays green. Code fix owed —
+recorded as finding F-1 in [CLOSEOUT.md](CLOSEOUT.md); docs were not
+changed to paper over it.
+
+## P3-M9 MERGED to master (2026-10-13)
+
+`64705cc` (M9: fix Phase-1 --check validation gaps) merged; master advanced
+to `855f8b03` with CI fixes (Go toolchain pinned to 1.27.1, TestGolden
+toolchain-drift fixes, asm-inventory gate deriving GOROOT from GO env).
+CI green on per-push (`make all`: generate + build + check + test-ci).
+
+Delivered M9 scope (vs PLAN.md §4 as re-planned 2026-10-07): netpoller
+runtime, io/fs + path/filepath, x509/TLS (GMP=1/2 handshakes +
+application-data echo byte-identical vs gc 1.27.1), 19 P0 bugs
+fixed/verified, wave-3 corpus programs baselined under gc (net/http,
+archive/tar, archive/zip, mime/*, compress/*), 3 independent reviews with
+all findings remediated, acceptance on Phase-1/2 suites + 70 wave
+differential samples. Deferred to the Phase-3 done-gates: the full
+`go test ./...` run (no trial infrastructure exists yet).
+
+## P3-M10 started (2026-10-13) — WS H/I/J
+
+Five parallel lanes on master `855f8b03` (chat f7467b85):
+- m10-doc-audit (this lane): cross-doc audit → gates 1–5 adjudication →
+  closeout. Status: audit complete, closeout in progress.
+- m10-testing-layers: gate 2 evidence (`hidden_files/testing/LAYERS.md`).
+- m10-snapshots: gate 3 evidence (`hidden_files/snapshots/`).
+- m10-diff-tooling: gate 5 evidence (`hidden_files/apidiff/TRIAL.md`).
+- m10-self-attack: gate 4 self-attack (I/O fault injection, signal storms,
+  fd exhaustion).
+
+Gate 1 (`go test ./...` green, `hidden_files/stdlib/GO_TEST_ALL.md`) has no
+lane yet — flagged to the parent. Gate adjudication and the closeout live
+in [CLOSEOUT.md](CLOSEOUT.md) (this lane).

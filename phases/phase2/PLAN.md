@@ -1,6 +1,9 @@
 # Phase 2 plan — Runtime: goroutines, channels, GC interop
 
-**Status:** draft for parent review. For implementation dispatch only after approval.
+**Status:** COMPLETE — P2-M10 sign-off `9694cbf` 2026-10-06 (all five
+done-gates met; verdicts in `phases/phase2/DONE-GATES.md`). This plan is the
+historical record of what was planned; the checkpoint is the record of what
+was delivered.
 **Normative:** SPEC.md §3.5 (ACCEPTED 2026-10-03), PHASES.md §4, ADR-0001.
 70 GG IDs locked; Phase-2-owned IDs activate per-workstream below.
 **Inputs:** spike 2b REPORT (`spikes/02b-userspace-scheduler/REPORT.md`, PASS 2026-10-03);

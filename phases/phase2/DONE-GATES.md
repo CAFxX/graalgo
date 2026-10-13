@@ -93,3 +93,16 @@ re-verified fresh during P2-M10 unless noted.
 - Phase-1 `make test`: 208/208, 0 failures
 - Phase-1 `make check`: clean
 - Phase-2 `make check`: all gates green (placeholder, debug, netpoller-deletion, off-heap/barrier, pin-surface + pin-audit smoke PASS)
+
+**Note (2026-10-13, P3-M10 cross-doc audit):** the counts above are the
+P2-M10 sign-off-time record (`9694cbf`) and remain the gate evidence. Both
+suites have grown since: phase-2 is now 194 (P3-M2a added the DIV-M3-1
+timer-channel len/cap regression test, `ef830ad`); phase-1 is now 214
+(tests added across P3-M7/M8). Separately: phase-1 `make test` is currently
+RED on master — `FreezeSignatureTest.testFrozenSignatures` fails on two
+drifted frozen signatures (`makeslice`/`growslice` gained a
+`GoStructDescriptor elemDesc` parameter in the P3-M9 compress lane,
+`f4915c2`, with no ADR and no freeze version bump; see
+[CLOSEOUT.md](../phase3/CLOSEOUT.md) §2 finding F-1). Per-push CI does not run the
+full suite (only `test-ci` smoke), so CI stays green while `make test` is
+red — a code fix is owed, not a doc fix.
