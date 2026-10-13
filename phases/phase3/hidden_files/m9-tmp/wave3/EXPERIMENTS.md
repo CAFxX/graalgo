@@ -105,3 +105,38 @@ OPEN:
   GMP=4 works byte-identical. Likely GMP=1 scheduler interleaving or
   SSLEngine state race. Needs dedicated investigation.
 - Reverted: debug println, 100ms sleep (back to 10s original).
+
+## GMP=1 NEED_UNWRAP deadlock investigation (11:25 CEST)
+| # | Hypothesis | Change/Command | Result | Wall |
+|---|-----------|----------------|--------|------|
+| 27 | HSDEBUG not printing: synth embedded in gofrontend | Rebuilt gofrontend (./build.sh build, 14s). | Binary updated. | 1m |
+| 28 | Need step trace of GMP=1 deadlock | Added println HSDEBUG (isClient, step, status) to Handshake loop; rebuilt gofrontend; running GMP=1 leg with 600s timeout. | Pending. | - |
+| 29 | HSDEBUG revealed: client 2 steps, server 10 steps, then both block | Added step counter; client blocks in Read (waiting server flight), server blocks after 10 iters. TCP ESTAB, buffers empty. | Server's 4KB flight vanished. Suspect: writeAll spin or sleep hang. | 30m |
+| 30 | Distinguish spin vs hang in empty-wrap | Added emptyWrapCount panic after 10k iterations; rebuilt gofrontend; running GMP=1. | Pending. | - |
+| 31 | Empty-wrap not spinning (no panic after 394s) | Killed run; hang is not in empty-wrap loop. | - | 7m |
+| 32 | Suspect writeAll (0,nil) infinite loop | writeAll does b=b[0:] if Write returns (0,nil) — infinite loop! Added panic after 10k iters; rebuilt; running. | Pending. | - |
+| 33 | ROOT CAUSE: Java wrap() single-shot | TLSDEBUG showed client wrap out=6 (truncated Finished), server stuck NEED_UNWRAP. Fixed TlsRuntime.wrap() to drain engine while NEED_WRAP. Committed 2d88164. Testing GMP=1. | Pending. | 45m |
+| 34 | Drain fix v1 (status-checked) didn't work | Timeout after 600s. The engine reports NEED_UNWRAP after partial output, so status-check exits early. | - | 10m |
+| 35 | Drain fix v2 (no status check, bounded 10) | Wrap in a loop up to 10 times, breaking only on empty output. Amended 2d88164. Testing GMP=1. | Pending. | - |
+| 36 | Identified 6 bytes as TLS ChangeCipherSpec | Hex 140303000101 = CCS (type 20). Engine sends CCS separately from Finished. Go loop doesn't wrap again. | - | 15m |
+| 37 | Drain v3: allow 3 consecutive empties | Engine may need status-check between CCS and Finished. Loop up to 20, break after 3 empties. Amended 2d88164. Testing. | Pending. | - |
+| 38 | Go-level fix: re-wrap after tiny output | If wrap returns <10 bytes (e.g. 6-byte CCS), wrap again immediately up to 3x before checking status. Rebuilt gofrontend. Amended 2d88164. Testing. | Pending. | - |
+| 39 | Disable CCS via jdk.tls.client.useCompatibilityMode=false | Tested GMP=1 with CCS disabled. | Timeout (600s), no output. Did not fix. | 10m |
+| 40 | STATUS: Root cause identified, fix elusive | 6-byte CCS (140303000101) sent separately from Finished. Engine reports NEED_UNWRAP after CCS, Go loop stops wrapping. Java drain + Go re-wrap attempted, neither works. GMP=4 works, GMP=1/2 deadlock. | - | 4h+ |
+
+## GMP=1 handshake deadlock ROOT CAUSE FOUND AND FIXED (11:30 CEST)
+| # | Hypothesis | Change/Command | Result | Wall |
+|---|-----------|----------------|--------|------|
+| 41 | unwrap() discards unconsumed bytes | Minimal Java repro (SslRepro.java): drives two SSLEngines, mimics graalgo's byte[] unwrap. Confirmed: client unwraps 127 bytes (ServerHello), engine goes NEED_TASK, 1153 bytes DISCARDED. Client then wraps only 6-byte CCS, both sides deadlock NEED_UNWRAP. | Reproduced exactly. | 30m |
+| 42 | Engine refuses unwrap() in NEED_WRAP state | SslNeedWrap.java: after ServerHello tasks, engine is NEED_WRAP; unwrap() with 1153 bytes returns (0,0), refuses input. | Confirmed: cannot feed input while NEED_WRAP. | 15m |
+| 43 | Fix: buffer unconsumed bytes + run tasks internally | TlsRuntime.java: PENDING map buffers unconsumed input per engine; unwrap() runs delegated tasks internally and continues; hasPending trap lets Go drain pending before blocking on Read. | GMP=1 handshake EXIT=0, BYTE-IDENTICAL to gc 1.27.1. | 60m |
+
+**Root cause:** `unwrapTrap` took a `byte[]`; whatever the SSLEngine didn't consume was silently discarded. After ServerHello (127 bytes), the engine needs tasks before consuming Certificate etc. The 1153 remaining bytes were lost. The client then wrapped a bare 6-byte ChangeCipherSpec (no Finished), sent it, and both sides deadlocked in NEED_UNWRAP.
+
+**Fix (general, not TLS-specific):**
+1. `TlsRuntime.unwrap()`: buffers unconsumed bytes in PENDING map, prepends them to next call's input. Runs delegated tasks internally when engine needs them, continuing to unwrap.
+2. `TlsRuntime.hasPending()`: new trap so Go loop drains pending before blocking on network Read.
+3. `synth_crypto_tls.go`: NEED_UNWRAP case checks hasPending first.
+4. Also fixed latent bug: unwrap() never copied dst→out, always returned empty (broke post-handshake Read).
+
+**Verification:** GMP=1 01_handshake.go EXIT=0, output byte-identical to gc 1.27.1 (7 lines). GMP=2/4 reliability pending (timing-dependent).

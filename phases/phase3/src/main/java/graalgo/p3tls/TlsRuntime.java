@@ -65,6 +65,19 @@ public final class TlsRuntime {
             new ConcurrentHashMap<>();
     private static final AtomicLong NEXT_ENGINE_ID = new AtomicLong(1);
 
+    /**
+     * Unconsumed network input per engine. SSLEngine.unwrap() may consume
+     * only part of its input (e.g. it stops after one record when it needs
+     * tasks run before processing the next). The Go driving loop passes a
+     * fresh byte[] per call, so without buffering here the remainder would
+     * be silently discarded — the peer's flight gets truncated, the local
+     * wrap() then produces a partial flight (e.g. bare ChangeCipherSpec
+     * without Finished), and both sides deadlock in NEED_UNWRAP.
+     * P3-M9 (x509): GMP=1 handshake deadlock root cause.
+     */
+    private static final ConcurrentHashMap<Long, byte[]> PENDING =
+            new ConcurrentHashMap<>();
+
     private static final int APP_BUF = 17 * 1024;
     private static final int NET_BUF = 17 * 1024;
 
@@ -520,25 +533,48 @@ public final class TlsRuntime {
      * graalgo.tls.unwrap(handle, netData) -> appdata | null
      */
     public static Object unwrap(Object handleArg, Object netDataArg) {
-        SSLEngine engine = ENGINES.get(num(handleArg));
+        long handle = num(handleArg);
+        SSLEngine engine = ENGINES.get(handle);
         if (engine == null) {
             return null;
         }
         try {
             byte[] netData = bytes(netDataArg);
-            ByteBuffer src = ByteBuffer.wrap(netData);
+            // Prepend any unconsumed bytes from the previous call: the
+            // engine must see the peer's bytes in order, with none lost.
+            byte[] pending = PENDING.remove(handle);
+            byte[] input;
+            if (pending != null && pending.length > 0) {
+                input = new byte[pending.length + netData.length];
+                System.arraycopy(pending, 0, input, 0, pending.length);
+                System.arraycopy(netData, 0, input, pending.length, netData.length);
+            } else {
+                input = netData;
+            }
+            ByteBuffer src = ByteBuffer.wrap(input);
             java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
             ByteBuffer dst = ByteBuffer.allocate(APP_BUF);
             while (src.hasRemaining()) {
                 SSLEngineResult res = engine.unwrap(src, dst);
                 if (res.getStatus() == SSLEngineResult.Status.BUFFER_OVERFLOW) {
-                    // Grow the app buffer and retry.
-                    ByteBuffer bigger = ByteBuffer.allocate(dst.capacity() * 2);
+                    // Dst is full of valid unwrapped data; drain it to out,
+                    // grow, and retry the unwrap.
                     dst.flip();
-                    bigger.put(dst);
-                    dst = bigger;
+                    byte[] chunk = new byte[dst.remaining()];
+                    dst.get(chunk);
+                    out.write(chunk, 0, chunk.length);
+                    dst = ByteBuffer.allocate(dst.capacity() * 2);
                     continue;
                 }
+                // Drain any produced app bytes before the next unwrap
+                // overwrites dst.
+                dst.flip();
+                if (dst.hasRemaining()) {
+                    byte[] chunk = new byte[dst.remaining()];
+                    dst.get(chunk);
+                    out.write(chunk, 0, chunk.length);
+                }
+                dst.clear();
                 if (res.getStatus() == SSLEngineResult.Status.CLOSED) {
                     return null;
                 }
@@ -547,14 +583,33 @@ public final class TlsRuntime {
                     break;
                 }
                 // OK with no progress (0 consumed, 0 produced): the engine
-                // has nothing to do with this data (e.g. already-processed
-                // records). Without this break the loop spins forever
-                // inside unwrap — the 01_handshake client stall.
+                // may need delegated tasks run before it can consume the
+                // next record (e.g. after ServerHello, before Certificate).
+                // Run them HERE and continue unwrapping — returning now
+                // would strand the remaining bytes: the engine reports
+                // NEED_WRAP after tasks and then refuses unwrap() input,
+                // so the peer's flight gets truncated and both sides
+                // deadlock in NEED_UNWRAP. P3-M9 (x509) GMP=1 root cause.
                 if (res.bytesConsumed() == 0 && res.bytesProduced() == 0) {
+                    if (engine.getHandshakeStatus()
+                            == SSLEngineResult.HandshakeStatus.NEED_TASK) {
+                        Runnable task;
+                        while ((task = engine.getDelegatedTask()) != null) {
+                            task.run();
+                        }
+                        continue;
+                    }
                     break;
                 }
             }
-            dst.flip();
+            // Buffer any input the engine did not consume, so the next
+            // unwrap() (or the status check below) sees it first.
+            int remaining = src.remaining();
+            if (remaining > 0) {
+                byte[] rest = new byte[remaining];
+                src.get(rest);
+                PENDING.put(handle, rest);
+            }
             byte[] result = out.toByteArray();
             return toGoBytes(result);
         } catch (Exception e) {
@@ -660,11 +715,25 @@ public final class TlsRuntime {
     }
 
     /**
+     * Whether the engine holds unconsumed input bytes (see PENDING).
+     * The Go driving loop checks this before blocking on a network read:
+     * if pending bytes exist, it must call unwrap() to drain them first.
+     * Returns 1 if pending bytes exist, 0 otherwise.
+     * graalgo.tls.hasPending(handle) -> 1/0
+     */
+    public static long hasPending(Object handleArg) {
+        byte[] pending = PENDING.get(num(handleArg));
+        return (pending != null && pending.length > 0) ? 1 : 0;
+    }
+
+    /**
      * Closes the SSLEngine and releases resources.
      * graalgo.tls.close(handle) -> void
      */
     public static void close(Object handleArg) {
-        SSLEngine engine = ENGINES.remove(num(handleArg));
+        long handle = num(handleArg);
+        SSLEngine engine = ENGINES.remove(handle);
+        PENDING.remove(handle);
         if (engine != null) {
             try {
                 engine.closeInbound();

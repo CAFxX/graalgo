@@ -593,6 +593,9 @@ func wrapTrap(engineHandle int64, plaintext []byte) []byte
 //go:linkname unwrapTrap graalgo.tls.unwrap
 func unwrapTrap(engineHandle int64, netData []byte) []byte
 
+//go:linkname hasPendingTrap graalgo.tls.hasPending
+func hasPendingTrap(engineHandle int64) int64
+
 //go:linkname runTasksTrap graalgo.tls.runTasks
 func runTasksTrap(engineHandle int64) int64
 
@@ -662,6 +665,14 @@ func (c *Conn) Handshake() error {
 				time.Sleep(time.Millisecond)
 			}
 		case engineNeedUnwrap:
+			// P3-M9 (x509): the engine may hold unconsumed input bytes
+			// from a previous unwrap (buffered Java-side). Drain those
+			// first — do NOT block on a network read when there is
+			// already input waiting, or the handshake deadlocks.
+			if hasPendingTrap(c.engineHandle) != 0 {
+				_ = unwrapTrap(c.engineHandle, nil)
+				continue
+			}
 			n, err := c.conn.Read(tmp)
 			if err != nil {
 				return err
