@@ -167,14 +167,13 @@ func runJavaMutant(repo, mdir string, m Mutant, mutated string) (string, string)
 
 func runGoMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
 	// For Go exporter: copy the frontend dir, apply mutation, build
-	phase1 := filepath.Join(repo, "phases/phase1")
-	frontSrc := filepath.Join(phase1, "frontend")
+	frontSrc := filepath.Join(repo, "internal", "frontend")
 	frontDst := filepath.Join(mdir, "frontend")
 	if err := copyDir(frontSrc, frontDst); err != nil {
 		return "ERROR", fmt.Sprintf("copy: %v", err)
 	}
 	mutPath := filepath.Join(frontDst, filepath.Base(m.File))
-	// m.File is phases/phase1/frontend/export.go, so base is export.go
+	// m.File is internal/frontend/export.go, so base is export.go
 	if err := os.WriteFile(mutPath, []byte(mutated), 0644); err != nil {
 		return "ERROR", err.Error()
 	}

@@ -15,11 +15,11 @@ package main
 //     syncLockerInterface function.
 //  3. phases/phase3/src/p3frontend/synth_time_context.go —
 //     syntheticTimePackage, syntheticContextPackage.
-//  4. phases/phase1/frontend/synth_time_context.go — syntheticTimeSource /
+//  4. internal/frontend/synth_time_context.go — syntheticTimeSource /
 //     syntheticContextSource embedded Go sources (normative; the
 //     p3frontend mirrors of (3) pin them via signature-equality tests).
 //  5. M10: every embedded synthetic package in the syntheticSources
-//     registry (phases/phase1/frontend/synth_machinery.go) — exported
+//     registry (internal/frontend/synth_machinery.go) — exported
 //     symbols qualified by import path (see synth.go).
 //
 // Symbol forms: path.Name (func/var/const/type), path.Type.Method
@@ -794,7 +794,7 @@ func methodIsPointer(nf *ast.CallExpr) bool {
 }
 
 // extractEmbeddedSynthetics extracts exported symbols from the embedded
-// synthetic time/context Go sources in phases/phase1/frontend/
+// synthetic time/context Go sources in internal/frontend/
 // synth_time_context.go (the syntheticTimeSource/syntheticContextSource
 // string constants — the same technique p3frontend's timecontext_test.go
 // uses). Exported package-level funcs/types/vars/consts become
@@ -831,7 +831,7 @@ func (p *ProvidedSet) extractEmbeddedSynthetics(path string) error {
 			}
 			found = true
 			if err := p.extractGoSource(src, fmt.Sprintf(
-				"synthetic: phase1/frontend/synth_time_context.go %s", name)); err != nil {
+				"synthetic: internal/frontend/synth_time_context.go %s", name)); err != nil {
 				return err
 			}
 		}

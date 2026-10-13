@@ -18,7 +18,7 @@
     },
     {
       "description": "Off-by-one in var-spec values bound (exporter)",
-      "file": "phases/phase1/frontend/export.go",
+      "file": "internal/frontend/export.go",
       "id": "M-G01",
       "lang": "go",
       "new": "if i <= len(vs.Values) {",
