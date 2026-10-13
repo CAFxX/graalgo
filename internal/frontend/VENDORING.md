@@ -3,7 +3,7 @@
 **Pinned revision:** GOROOT `go1.27.1` (`~/tools/go`, symlink to
 `go-1.27.1`), VERSION file `go1.27.1`, build time `2026-08-28T16:20:06Z`
 (`go version go1.27.1 linux/amd64`).
-**Vendored:** 2026-10-04 (WS B). **Tree:** `frontend/go/` = byte-identical
+**Vendored:** 2026-10-04 (WS B). **Tree:** [`go/`](go/) = byte-identical
 copy of `$GOROOT/src/go` (329 `.go` files, whole tree including
 `go/internal/*`, test files included verbatim).
 
@@ -13,10 +13,10 @@ SPEC §3.2 / PLAN.md D1 require the `go/*` tree **reused verbatim from the
 tracked release, re-vendored atomically every release, zero local patches**.
 Two mechanisms enforce this, because neither alone suffices:
 
-1. **Byte-identical copy** at `frontend/go/`. Verified by
-   `diff -r "$GOROOT/src/go" frontend/go` (the `check` action of
-   `build.sh`). Any local patch fails this gate — patches cannot hide.
-2. **`-overlay` build** (`frontend/build.sh`): the go command resolves
+1. **Byte-identical copy** at [`go/`](go/). Verified by
+   `diff -r "$GOROOT/src/go" go` (the `check` action of
+   [`build.sh`](build.sh)). Any local patch fails this gate — patches cannot hide.
+2. **`-overlay` build** ([`build.sh`](build.sh)): the go command resolves
    `go/ast` etc. to GOROOT, so the build maps every `$GOROOT/src/go/*.go`
    read onto the vendored copy. The compiled `gofrontend` binary therefore
    **literally contains the vendored sources** — the copy is not dead
@@ -31,7 +31,7 @@ that keeps the tree byte-identical *and* compiled.
 ## Re-vendoring (atomic, per release)
 
 ```sh
-cd phases/phase1/frontend
+cd internal/frontend
 rm -rf go && cp -r "$(go env GOROOT)/src/go" go
 # update the pinned revision at the top of this file
 ./build.sh check   # gofmt + vet + tests + diff gate
@@ -43,7 +43,7 @@ unless someone edits `go/` directly, which the diff gate forbids.
 
 ## D1 falsifier watch (GG-0012)
 
-`export.go` uses only long-stable `go/*` APIs (`parser.ParseFile`,
+[`export.go`](export.go) uses only long-stable `go/*` APIs (`parser.ParseFile`,
 `types.Config.Check`, `Info.{Types,Defs,Uses}`). If a re-vendoring breaks
 compilation of the exporter or changes the behavior of these APIs, **STOP
 and report** — that is the spike-3 toil re-measurement trigger (PLAN.md §8:
