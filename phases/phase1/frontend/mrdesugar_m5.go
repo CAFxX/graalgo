@@ -101,12 +101,13 @@ const (
 	// desugar calls the function value directly and packs the 2
 	// results into the pair struct from the nistCurveFuncFields table.
 	mrFuncField
-	// P3-M9 (WS D): fips140cache.Cache.Get(k, new, check) — the
-	// synthetic cache is a no-memoization stub (Get just returns
-	// new()), so the desugar inlines the new function call directly:
-	// v, err := cache.Get(k, newFn, checkFn) becomes v, err := newFn().
-	// This avoids generic helper instantiation complexity.
-	mrCacheGet
+	// mrTrivialFwd: a synthetic stub method whose body is a trivial
+	// forwarder — a single `return p()` where p is a function-typed
+	// parameter. The desugar inlines the p() call directly at the call
+	// site (e.g. a no-memoization cache stub whose Get just returns
+	// new()). Classified structurally by classifyTrivialForwarder —
+	// never by package/type/method name.
+	mrTrivialFwd
 )
 
 // m7MultiResultFunc describes one desugarable M7 multi-result function:
@@ -1202,6 +1203,9 @@ type mrPlan struct {
 	// For mrDeadline/mrParseDur: the pair field names ([d, ok]/[d, err]).
 	pairFields  []string
 	prependRecv bool
+	// For mrTrivialFwd: index of the forwarded function-typed parameter
+	// in the method's explicit parameter list (receiver excluded).
+	fwdParamIdx int
 }
 
 // classifyMultiResultCall recognizes the Appendix M operations (the 5
@@ -1459,22 +1463,12 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					prependRecv: false,
 				}
 			}
-			// P3-M9 (WS D): fips140cache.Cache.Get — the synthetic cache
-			// is a no-memoization stub, so inline the new() call directly.
-			// This avoids generic helper instantiation complexity.
-			if f.Pkg().Path() == "crypto/internal/fips140cache" && f.Name() == "Get" {
-				sig, _ := f.Type().(*types.Signature)
-				if sig != nil && sig.Recv() != nil {
-					rt := sig.Recv().Type()
-					if pt, ok := rt.(*types.Pointer); ok {
-						rt = pt.Elem()
-					}
-					if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil && nt.Obj().Name() == "Cache" {
-						// pairFields is a placeholder for the arity check;
-						// the desugar inlines new() directly, no pair used.
-						return &mrPlan{kind: mrCacheGet, pairFields: []string{"v", "err"}}
-					}
-				}
+			// mrTrivialFwd: a synthetic stub method whose body trivially
+			// forwards to a function-typed parameter (single
+			// `return p()`). Classified structurally — any synthetic
+			// stub with that shape inlines, not just one named method.
+			if plan := classifyTrivialForwarder(f); plan != nil {
+				return plan
 			}
 			mtargs := targsFromRecv(selection.Recv())
 			if plan := classifyM7MultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
@@ -1546,6 +1540,109 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					return plan
 				}
 			}
+		}
+	}
+	return nil
+}
+
+// classifyTrivialForwarder recognizes a synthetic stub method whose body
+// is a trivial forwarder: a single `return p()` where p names a
+// function-typed parameter. Such stubs (e.g. a no-memoization cache whose
+// Get just returns new()) are semantically equivalent to inlining the p()
+// call at the call site. The check is structural — it inspects the
+// synthetic package's AST for the shape, never the package/type/method
+// name. Returns nil when f is not such a forwarder.
+func classifyTrivialForwarder(f *types.Func) *mrPlan {
+	if f == nil || f.Pkg() == nil {
+		return nil
+	}
+	pkgPath := f.Pkg().Path()
+	if _, ok := syntheticSources[pkgPath]; !ok {
+		return nil // not a synthetic package; no AST to inspect
+	}
+	sig, ok := f.Type().(*types.Signature)
+	if !ok || sig.Results().Len() < 2 {
+		return nil // multi-result desugar only; single results need no plan
+	}
+	sp := getSyntheticPackage(pkgPath)
+	// Match the FuncDecl by name; for methods also match the receiver's
+	// named type (handles *T receivers and generic instantiations).
+	var wantRecv string
+	if sig.Recv() != nil {
+		rt := sig.Recv().Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			wantRecv = nt.Obj().Name()
+		}
+	}
+	for _, file := range sp.files {
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Name.Name != f.Name() {
+				continue
+			}
+			if wantRecv != "" {
+				if fd.Recv == nil || len(fd.Recv.List) == 0 {
+					continue
+				}
+				recvExpr := fd.Recv.List[0].Type
+				if se, ok := recvExpr.(*ast.StarExpr); ok {
+					recvExpr = se.X
+				}
+				// Generic receiver Cache[K, V] is an IndexExpr/IndexListExpr.
+				for {
+					if ie, ok := recvExpr.(*ast.IndexExpr); ok {
+						recvExpr = ie.X
+						continue
+					}
+					if ie, ok := recvExpr.(*ast.IndexListExpr); ok {
+						recvExpr = ie.X
+						continue
+					}
+					break
+				}
+				id, ok := recvExpr.(*ast.Ident)
+				if !ok || id.Name != wantRecv {
+					continue
+				}
+			} else if fd.Recv != nil {
+				continue
+			}
+			// Body must be exactly one statement: return p() — a return
+			// of a zero-arg call to a bare identifier.
+			if fd.Body == nil || len(fd.Body.List) != 1 {
+				continue
+			}
+			ret, ok := fd.Body.List[0].(*ast.ReturnStmt)
+			if !ok || len(ret.Results) != 1 {
+				continue
+			}
+			call, ok := ret.Results[0].(*ast.CallExpr)
+			if !ok || len(call.Args) != 0 {
+				continue
+			}
+			funIdent, ok := call.Fun.(*ast.Ident)
+			if !ok {
+				continue
+			}
+			// funIdent must name a function-typed parameter; its index
+			// tells the desugar which call-site arg to inline.
+			for i := 0; i < sig.Params().Len(); i++ {
+				p := sig.Params().At(i)
+				if p.Name() == funIdent.Name {
+					if _, ok := p.Type().Underlying().(*types.Signature); !ok {
+						return nil
+					}
+					return &mrPlan{
+						kind:        mrTrivialFwd,
+						pairFields:  []string{"v", "err"}, // arity placeholder
+						fwdParamIdx: i,
+					}
+				}
+			}
+			return nil
 		}
 	}
 	return nil
@@ -2328,13 +2425,16 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	// new() call directly: v, err := cache.Get(k, newFn, checkFn)
 	// becomes v, err := newFn(). The synthetic cache is a
 	// no-memoization stub, so this is semantically equivalent.
-	if plan.kind == mrCacheGet {
-		if len(c.Args) < 2 {
-			return nil, fmt.Errorf("gofrontend: Cache.Get requires at least 2 args (k, new)")
+	if plan.kind == mrTrivialFwd {
+		// A trivial-forwarder stub inlines its forwarded parameter call:
+		// v, err := x.M(a0, a1, ...) becomes v, err := aN() where N is
+		// the forwarded parameter's index (from classifyTrivialForwarder).
+		if plan.fwdParamIdx < 0 || plan.fwdParamIdx >= len(c.Args) {
+			return nil, fmt.Errorf("gofrontend: trivial-forwarder arg index %d out of range (%d args)", plan.fwdParamIdx, len(c.Args))
 		}
-		// Build newFn() call: Fun is Args[1], no args.
+		// Build fwdFn() call: Fun is Args[fwdParamIdx], no args.
 		newCall := &ast.CallExpr{
-			Fun:    c.Args[1],
+			Fun:    c.Args[plan.fwdParamIdx],
 			Lparen: c.Lparen,
 			Args:   []ast.Expr{},
 			Rparen: c.Rparen,
@@ -2649,15 +2749,15 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 		// Interface MR calls in argument position are not yet supported
 		// (same limitation as nested interface MR in multiResultHelperArgs).
 		return nil, nil, scopeErrorf("interface multi-result call in argument position is not supported in frontend/v1 scope (WS D)")
-	} else if plan.kind == mrCacheGet {
-		// fips140cache.Cache.Get(k, newFn, check) inlines to newFn().
-		// In argument position, f(cache.Get(...)) becomes f(newFn()).
-		// newFn() is single-valued, so no hoisting needed.
-		if len(inner.Args) < 2 {
-			return nil, nil, fmt.Errorf("gofrontend: Cache.Get requires at least 2 args (k, new)")
+	} else if plan.kind == mrTrivialFwd {
+		// Trivial-forwarder stub in argument position: f(x.M(...))
+		// becomes f(fwdFn()) where fwdFn is Args[fwdParamIdx].
+		// fwdFn() is single-valued, so no hoisting needed.
+		if plan.fwdParamIdx < 0 || plan.fwdParamIdx >= len(inner.Args) {
+			return nil, nil, fmt.Errorf("gofrontend: trivial-forwarder arg index %d out of range (%d args)", plan.fwdParamIdx, len(inner.Args))
 		}
 		newCall := &ast.CallExpr{
-			Fun:    inner.Args[1],
+			Fun:    inner.Args[plan.fwdParamIdx],
 			Lparen: inner.Lparen,
 			Args:   []ast.Expr{},
 			Rparen: inner.Rparen,
