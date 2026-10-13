@@ -682,7 +682,7 @@ public final class TlsRuntime {
 
     private static int parseVersion(String protocol) {
         if (protocol == null) {
-            return 0x0304;
+            return -1;
         }
         switch (protocol) {
             case "TLSv1":
@@ -694,24 +694,73 @@ public final class TlsRuntime {
             case "TLSv1.3":
                 return 0x0304;
             default:
-                return 0x0304;
+                // Unknown protocol string: report -1, never a
+                // plausible-but-wrong version.
+                return -1;
         }
+    }
+
+    // IANA cipher-suite registry names (as returned by
+    // SSLEngine.getSession().getCipherSuite()) to suite IDs. Covers the
+    // TLS 1.3 suites and the TLS 1.2 suites the JDK negotiates. Exact
+    // match only — substring matching mis-maps (e.g. a suite name that
+    // contains another as a substring). Unknown names map to -1, never
+    // to a plausible-but-wrong suite ID.
+    private static final java.util.Map<String, Integer> CIPHER_SUITES =
+            buildCipherSuites();
+
+    private static java.util.Map<String, Integer> buildCipherSuites() {
+        java.util.Map<String, Integer> m = new java.util.HashMap<>();
+        // TLS 1.3 (RFC 8446).
+        m.put("TLS_AES_128_GCM_SHA256", 0x1301);
+        m.put("TLS_AES_256_GCM_SHA384", 0x1302);
+        m.put("TLS_CHACHA20_POLY1305_SHA256", 0x1303);
+        m.put("TLS_AES_128_CCM_SHA256", 0x1304);
+        m.put("TLS_AES_128_CCM_8_SHA256", 0x1305);
+        // TLS 1.2 ECDHE.
+        m.put("TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256", 0xC02B);
+        m.put("TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384", 0xC02C);
+        m.put("TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256", 0xC02F);
+        m.put("TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384", 0xC030);
+        m.put("TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256", 0xCCA8);
+        m.put("TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256", 0xCCA9);
+        m.put("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256", 0xC023);
+        m.put("TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA384", 0xC024);
+        m.put("TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256", 0xC027);
+        m.put("TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA384", 0xC028);
+        m.put("TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA", 0xC009);
+        m.put("TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA", 0xC00A);
+        m.put("TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA", 0xC013);
+        m.put("TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA", 0xC014);
+        m.put("TLS_ECDHE_ECDSA_WITH_3DES_EDE_CBC_SHA", 0xC008);
+        m.put("TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA", 0xC012);
+        // TLS 1.2 DHE.
+        m.put("TLS_DHE_RSA_WITH_AES_128_GCM_SHA256", 0x009E);
+        m.put("TLS_DHE_RSA_WITH_AES_256_GCM_SHA384", 0x009F);
+        m.put("TLS_DHE_RSA_WITH_CHACHA20_POLY1305_SHA256", 0xCCAA);
+        m.put("TLS_DHE_RSA_WITH_AES_128_CBC_SHA256", 0x0067);
+        m.put("TLS_DHE_RSA_WITH_AES_256_CBC_SHA256", 0x006B);
+        m.put("TLS_DHE_RSA_WITH_AES_128_CBC_SHA", 0x0033);
+        m.put("TLS_DHE_RSA_WITH_AES_256_CBC_SHA", 0x0039);
+        m.put("TLS_DHE_RSA_WITH_3DES_EDE_CBC_SHA", 0x0016);
+        // TLS 1.2 RSA key exchange.
+        m.put("TLS_RSA_WITH_AES_128_GCM_SHA256", 0x009C);
+        m.put("TLS_RSA_WITH_AES_256_GCM_SHA384", 0x009D);
+        m.put("TLS_RSA_WITH_AES_128_CBC_SHA256", 0x003C);
+        m.put("TLS_RSA_WITH_AES_256_CBC_SHA256", 0x003D);
+        m.put("TLS_RSA_WITH_AES_128_CBC_SHA", 0x002F);
+        m.put("TLS_RSA_WITH_AES_256_CBC_SHA", 0x0035);
+        m.put("TLS_RSA_WITH_3DES_EDE_CBC_SHA", 0x000A);
+        return m;
     }
 
     private static int parseCipherSuite(String cipher) {
         if (cipher == null) {
-            return 0x1301;
+            return -1;
         }
-        if (cipher.contains("TLS_AES_128_GCM_SHA256")) {
-            return 0x1301;
-        }
-        if (cipher.contains("TLS_AES_256_GCM_SHA384")) {
-            return 0x1302;
-        }
-        if (cipher.contains("TLS_CHACHA20_POLY1305_SHA256")) {
-            return 0x1303;
-        }
-        return 0x1301;
+        Integer id = CIPHER_SUITES.get(cipher);
+        // Unknown suite: report -1, never a plausible-but-wrong ID.
+        return id != null ? id : -1;
     }
 
     /**

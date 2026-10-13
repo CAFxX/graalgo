@@ -1378,23 +1378,12 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 	if !ok {
 		return false
 	}
-	// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction): the
-	// fips140/ecdsa Point[P] interface multi-result methods (SetBytes,
-	// BytesX, ScalarMult, ScalarBaseMult) are handled via the WS H
-	// ifacemethod fallback when called on a type parameter — they are
-	// not fail-fast synthetic multi-results. The desugar intercepts via
-	// the m8IfaceMultiResultMethods table.
-	if p == "crypto/internal/fips140/ecdsa" {
-		if sig.Recv() != nil {
-			rt := sig.Recv().Type()
-			if nt, ok := rt.(*types.Named); ok && nt.Obj().Name() == "Point" {
-				switch fn.Name() {
-				case "SetBytes", "BytesX", "ScalarMult", "ScalarBaseMult":
-					return false
-				}
-			}
-		}
-	}
+	// Methods on generic interface types (e.g. fips140/ecdsa Point[P])
+	// are handled via the WS H ifacemethod fallback when called on a
+	// type parameter — they are not fail-fast synthetic multi-results.
+	// The general interface-receiver check below covers them
+	// structurally (named type whose underlying is an interface);
+	// no per-package/per-type carve-out is needed.
 	// Methods on concrete synthetic types (e.g. bytes.Buffer.Read) ARE
 	// covered: the named milestone scope error applies to them (the test
 	// pins the "bytes.Buffer.Read" + "M7 scope" attribution). Interface
