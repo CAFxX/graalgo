@@ -22,17 +22,19 @@ OUT_TEST := out/test-classes
 OUT_SMOKE := out/smoke-classes
 
 # gofrontend: the Go frontend service binary. Built from the vendored go/*
-# tree via frontend/build.sh (overlay build; see frontend/VENDORING.md).
+# tree via ../../internal/frontend/build.sh (overlay build; see
+# ../../internal/frontend/VENDORING.md).
 # graalgo-run locates it via GRAALGO_GOFRONTEND, else at this path
 # (see graalgo.launcher.ToolPaths).
-GOFRONTEND := frontend/gofrontend
-# P3-M7: the gofrontend binary embeds every non-test frontend/*.go source
+GOFRONTEND := ../../internal/frontend/gofrontend
+# P3-M7: the gofrontend binary embeds every non-test internal/frontend/*.go
+# source
 # (synth_*.go, synth_machinery.go, ...). An explicit file list goes stale
 # the moment a new synthetic package lands — a stale binary then silently
 # tests the wrong sources (the errors/sort wave-1 packages hit this).
-GOFRONTEND_SRC := $(wildcard frontend/*.go) frontend/build.sh frontend/go.mod
+GOFRONTEND_SRC := $(wildcard ../../internal/frontend/*.go) ../../internal/frontend/build.sh ../../internal/frontend/go.mod
 $(GOFRONTEND): $(GOFRONTEND_SRC)
-	cd frontend && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh build
+	cd ../../internal/frontend && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh build
 
 JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
 # -Xss32m (M5 stance): guest-language recursion burns host stack — the
@@ -91,10 +93,10 @@ check:
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== gofrontend check (gofmt/vet/tests/vendoring diff gate) =="
-	cd frontend && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh check
+	cd ../../internal/frontend && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh check
 
 smoke:
 	$(MAKE) run ARGS="corpus/hello.go"
 
 clean:
-	rm -rf out /tmp/smoke-classes /tmp/dsl-classes frontend/gofrontend frontend/overlay.json
+	rm -rf out /tmp/smoke-classes /tmp/dsl-classes ../../internal/frontend/gofrontend ../../internal/frontend/overlay.json
