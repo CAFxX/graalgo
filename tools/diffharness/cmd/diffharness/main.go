@@ -16,6 +16,10 @@
 //	          (3) per-class mutation validation (expects a divergence for
 //	          every mutation class). Exit status is non-zero on any violated
 //	          expectation. This is the red-green evidence for the oracles.
+//
+//	snapshot  behavior snapshots (M10 WS I): record graalgo's observable
+//	          behavior on the corpus as the upgrade baseline, or check the
+//	          current behavior against a recorded snapshot (fails on drift).
 package main
 
 import (
@@ -47,6 +51,8 @@ func main() {
 		err = cmdValidate(os.Args[2:])
 	case "typeparam":
 		err = cmdTypeparam(os.Args[2:])
+	case "snapshot":
+		err = cmdSnapshot(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -58,13 +64,15 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam> [flags]
+	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam|snapshot> [flags]
 
   run      -config PATH -corpus DIR -out PATH [-timeout SEC]
   mutate   -corpus DIR -class CLASS -target PROG [-out FILE]
   validate -config PATH -corpus DIR -mutations FILE -workdir DIR [-out PATH] [-timeout SEC]
   typeparam scan -dir DIR -exclusions FILE -out PATH
   typeparam run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH]
+  snapshot record -config PATH -corpus DIR -backend NAME -out FILE [-toolchain V] [-graalgo-commit SHA] [-runs N] [-jobs N]
+  snapshot check  -config PATH -corpus DIR -backend NAME -snapshot FILE [-jobs N]
 `)
 }
 

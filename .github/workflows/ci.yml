@@ -1,10 +1,11 @@
 # graalgo CI — per project standing order (2026-10-12): runs `make all`
-# (regenerate generated artifacts + build + gates + fast tests) and then
+# (regenerate generated artifacts + build + gates + fast tests +
+# snapshot-check, the M10 behavior-drift gate) and then
 # `git diff --exit-code`: if `make all` regenerates any tracked file
 # differently from what's committed, the build fails.
 #
 # SCOPE (see [Makefile](../../Makefile) header): per-push CI runs the fast subset
-# (generate/build/check/test-ci). The full differential suite
+# (generate/build/snapshot-check/check/test-ci). The full differential suite
 # (`make test`, 30+ min) is excluded from per-push CI by design — it runs
 # in local verification and nightly runs. This is documented, not skipped.
 name: ci
