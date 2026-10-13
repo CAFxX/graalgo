@@ -12,10 +12,11 @@ import java.nio.file.Paths;
  * <ol>
  *   <li>the {@code GRAALGO_GOFRONTEND} environment variable, when it names
  *       an executable file;</li>
- *   <li>{@code <repo>/internal/frontend/gofrontend}, found by walking up from this
+ *   <li>{@code <backend>/../frontend/gofrontend} (i.e.
+ *       {@code internal/frontend/gofrontend}), found by walking up from this
  *       class's own code location (covers both {@code make run} and the
  *       {@code graalgo-run} wrapper, whose classes live under
- *       {@code <repo>/phases/phase1/out/});</li>
+ *       {@code internal/backend/*/out/});</li>
  *   <li>bare {@code gofrontend} on {@code PATH} (last resort; resolved by
  *       the OS at process-launch time).</li>
  * </ol>

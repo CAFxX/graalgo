@@ -38,16 +38,32 @@ Related: [Makefile](../Makefile) (root build entry point),
       lowering, generics instantiation, synthetic package construction.
   - [ir/](../internal/ir/) — the intermediate representation: JSON schema and
     AST node definitions shared by frontend and backend.
-  - [backend/](../internal/backend/) — IR → Truffle nodes. Moves here from
-    [phases/phase3/src/](../phases/phase3/src/) when the code lanes land.
+  - [backend/](../internal/backend/) — IR → Truffle nodes. The Java backend
+    landed here in the Phase-4 restructure (lane 3); each module has its own
+    `Makefile` (plain `javac`, `-Werror`), built in order truffle → runtime
+    → interop by the root `make build`.
     - [truffle/](../internal/backend/truffle/) — Truffle AST node
-      implementations (the compiled program).
+      implementations (the compiled program):
+      [src/main/java/](../internal/backend/truffle/src/main/java/) holds
+      `graalgo.{nodes,values,frontend}` from `phases/phase1` plus the 8
+      frozen phase-1 stubs (`graalgo/runtime/` × 7,
+      `graalgo/safepoint/Safepoint`); the Truffle jars live in
+      [lib/](../internal/backend/truffle/lib/); the launchers
+      [graalgo-run](../internal/backend/graalgo-run) and
+      [graalgo-sync-run](../internal/backend/graalgo-sync-run) sit alongside.
     - [runtime/](../internal/backend/runtime/) — the Go runtime on the JVM:
-      scheduler, netpoller, maps, channels, synchronization. The Phase 2
-      scheduler lands here as `runtime/sched/`.
+      scheduler, netpoller, maps, channels, synchronization:
+      [src/main/java/](../internal/backend/runtime/src/main/java/) holds
+      phase-1 `graalgo.{runtime,launcher,safepoint}` (minus the stubs, which
+      compile in the truffle module) merged with phase-2
+      `graalgo.{sched,jfr,runtime,safepoint}` — the scheduler keeps its
+      `graalgo.sched` package (sources at `.../src/main/java/graalgo/sched/`).
     - [interop/](../internal/backend/interop/) — Go↔Java interop and
       isolates (also the natural home of Phase 5's privileged runtime
-      surface).
+      surface):
+      [src/main/java/](../internal/backend/interop/src/main/java/) holds
+      phase-3 `graalgo.{iface,p3chan,p3crypto,p3link,p3math,p3net,p3os,
+      p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}` (stdlib bindings).
   - [driver/](../internal/driver/) — build orchestration: module-aware
     builds, build caching (toolexec-equivalent), package resolution. This is
     what makes `graalgo build` a drop-in for `go build` in Phase 4.
@@ -99,9 +115,13 @@ new locations.
 | Today | Becomes |
 |---|---|
 | `phases/phase1/frontend/` | [internal/frontend/](../internal/frontend/) |
-| `phases/phase3/src/main/` (Truffle nodes) | [internal/backend/truffle/](../internal/backend/truffle/) |
-| `phases/phase3/src/main/` (runtime) | [internal/backend/runtime/](../internal/backend/runtime/) |
-| `phases/phase2/` (scheduler) | `internal/backend/runtime/sched/` (lands with the code lane) |
+| `phases/phase1/src/main/java/{nodes,values,frontend}/` | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) |
+| `phases/phase1/src/main/java/{runtime,launcher,safepoint}/` | [internal/backend/runtime/src/main/java/](../internal/backend/runtime/src/main/java/) |
+| the 8 frozen phase-1 stubs (`graalgo/runtime/` × 7, `graalgo/safepoint/Safepoint`) | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) (compile with the phase-1 module; shadowed at load by the phase-2 replacements) |
+| `phases/phase2/src/main/java/{sched,jfr,runtime,safepoint}/` | [internal/backend/runtime/src/main/java/](../internal/backend/runtime/src/main/java/) (scheduler keeps package `graalgo.sched`) |
+| `phases/phase3/src/main/java/{iface,p3*}/` | [internal/backend/interop/src/main/java/](../internal/backend/interop/src/main/java/) |
+| `phases/phase1/lib/` (Truffle jars) | [internal/backend/truffle/lib/](../internal/backend/truffle/lib/) |
+| `phases/phase1/graalgo-run`, `phases/phase3/graalgo-sync-run` | [internal/backend/](../internal/backend/) |
 | `phases/phase3/stdlib-fork/` + synthetics | [stdlib/](../stdlib/) |
 | `phases/phase3/corpus/` | [test/corpus/](../test/corpus/) |
 | `tools/diffharness/` | [test/differential/](../test/differential/) |
