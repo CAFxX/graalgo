@@ -4,11 +4,24 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 )
+
+// normalizeGolden replaces environmental metadata (the Go toolchain version
+// embedded as "goroot": "go1.x.y") with a fixed placeholder before comparing.
+// The version is metadata about the build environment, not frontend behavior;
+// without normalization the test fails whenever the toolchain patch version
+// differs from the one that generated the golden files (e.g. CI on go1.27.2
+// vs goldens generated with go1.27.1).
+var gorootVersionRe = regexp.MustCompile(`"goroot": "go[^"]*"`)
+
+func normalizeGolden(s string) string {
+	return gorootVersionRe.ReplaceAllString(s, `"goroot": "goVERSION"`)
+}
 
 // TestGolden: every non-bad_ testdata program exports byte-identical JSON to
 // its checked-in golden file. The goldens pin the frontend/v1 wire format;
@@ -44,8 +57,10 @@ func TestGolden(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read golden %s: %v (run with UPDATE_GOLDEN=1 to create)", golden, err)
 			}
-			if got := out + "\n"; got != string(want) {
-				t.Fatalf("golden mismatch for %s:\nfirst diff at line %d", f, firstDiffLine(got, string(want)))
+			got := normalizeGolden(out + "\n")
+			wantStr := normalizeGolden(string(want))
+			if got != wantStr {
+				t.Fatalf("golden mismatch for %s:\nfirst diff at line %d", f, firstDiffLine(got, wantStr))
 			}
 		})
 	}
