@@ -102,7 +102,7 @@ func TestMissingAndSkipList(t *testing.T) {
 		"runtime.noSuchSymbol42": true,
 		"runtime.otherMissing":   true,
 		"pkgbad.badLocal":        true,
-		"pkgvar.varLocal":        true,
+		// pkgvar.varLocal is a live self-link: satisfied, not listed.
 	}
 	if len(rep.SkipList) != len(want) {
 		t.Fatalf("skip-list has %d entries, want %d: %v", len(rep.SkipList), len(want), rep.SkipList)
@@ -193,8 +193,13 @@ func TestSelfLink(t *testing.T) {
 	if e.Target != "pkgvar.varLocal" {
 		t.Fatalf("varLocal target: got %q, want pkgvar.varLocal (self-link)", e.Target)
 	}
-	if e.Status != StatusMissing {
-		t.Fatalf("varLocal: got %s, want MISSING", e.Status)
+	// A live self-link is a provision, not a need: the target IS the
+	// declared symbol, provided by the compiled package itself.
+	if e.Status != StatusSatisfied {
+		t.Fatalf("varLocal: got %s, want SATISFIED (self-link)", e.Status)
+	}
+	if e.ProvidedFrom != "self" {
+		t.Fatalf("varLocal: ProvidedFrom = %q, want %q", e.ProvidedFrom, "self")
 	}
 }
 
@@ -241,8 +246,8 @@ func TestSkipListSizeExact(t *testing.T) {
 	if rep.SkipListSize != len(rep.SkipList) {
 		t.Fatalf("skip_list_size=%d != len(skip_list)=%d", rep.SkipListSize, len(rep.SkipList))
 	}
-	if rep.SkipListSize != 4 {
-		t.Fatalf("skip_list_size=%d, want exactly 4", rep.SkipListSize)
+	if rep.SkipListSize != 3 {
+		t.Fatalf("skip_list_size=%d, want exactly 3", rep.SkipListSize)
 	}
 	// And it must be prominent + machine-readable in the JSON encoding.
 	data, err := json.Marshal(rep)
@@ -257,8 +262,8 @@ func TestSkipListSizeExact(t *testing.T) {
 	if !ok {
 		t.Fatal("JSON report has no top-level skip_list_size")
 	}
-	if v.(float64) != 4 {
-		t.Fatalf("JSON skip_list_size=%v, want 4", v)
+	if v.(float64) != 3 {
+		t.Fatalf("JSON skip_list_size=%v, want 3", v)
 	}
 }
 
@@ -310,6 +315,14 @@ func TestProvidedExtraction(t *testing.T) {
 		"time.Duration.String", "time.(*Timer).Stop", "time.Month.String",
 		"context.Background", "context.Context", "context.Canceled",
 		"context.Context.Done",
+		// M10: embedded synthetic packages (syntheticSources registry).
+		"graalgo.os.open", "graalgo.net.socket", "graalgo.x509.parse",
+		"graalgo.tls.newClientEngine",
+		"os.Open", "os.ReadFile",
+		"internal/poll.runtime_pollOpen",
+		"reflect.TypeOf", "encoding/json.Marshal", "crypto/sha256.New",
+		"net/http.Get", "syscall.Getenv", "maps.Clone",
+		"internal/reflectlite.TypeOf",
 	}
 	for _, w := range want {
 		if !provided.has(w) {
@@ -321,14 +334,15 @@ func TestProvidedExtraction(t *testing.T) {
 		t.Error("sync/atomic.(*Bool).Add present: fiveOps must not apply to Bool")
 	}
 	// No unexported names may leak, except the genuine lowercase
-	// runtime intrinsic targets from the linkname registry.
-	registryLower := map[string]bool{
-		"runtime.fastrand": true, "runtime.fastrandn": true, "runtime.nanotime": true,
-		"graalgo.runtime.Linknames.callGo": true, // Java method name, exposed by the registry
-	}
+	// targets from the linkname registry (LinknameIntrinsics.java
+	// Go→intrinsic direction): runtime.fastrand, the graalgo.*
+	// frozen namespaces (lowercase by design — os.md §2.4), the
+	// internal/poll.* netpoller table, etc. Provenance — not a
+	// hardcoded list — decides: anything the registry genuinely
+	// registers is exempt.
 	finalIdent := regexp.MustCompile(`([A-Za-z_][\w]*)$`)
-	for s := range provided.Symbols {
-		if registryLower[s] {
+	for s, prov := range provided.Symbols {
+		if strings.HasPrefix(prov, "p3link LinknameIntrinsics.java") {
 			continue
 		}
 		m := finalIdent.FindStringSubmatch(s)

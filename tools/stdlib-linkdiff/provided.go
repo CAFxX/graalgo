@@ -18,6 +18,9 @@ package main
 //  4. phases/phase1/frontend/synth_time_context.go — syntheticTimeSource /
 //     syntheticContextSource embedded Go sources (normative; the
 //     p3frontend mirrors of (3) pin them via signature-equality tests).
+//  5. M10: every embedded synthetic package in the syntheticSources
+//     registry (phases/phase1/frontend/synth_machinery.go) — exported
+//     symbols qualified by import path (see synth.go).
 //
 // Symbol forms: path.Name (func/var/const/type), path.Type.Method
 // (value-receiver or interface method), path.(*Type).Method
@@ -41,6 +44,9 @@ import (
 // ProvidedSet maps symbol -> provenance.
 type ProvidedSet struct {
 	Symbols map[string]string
+	// Skipped records synthetic sources that failed to parse during
+	// extraction (loud in the report; never silently dropped).
+	Skipped []string
 }
 
 func (p *ProvidedSet) add(sym, prov string) {
@@ -79,6 +85,16 @@ func loadProvided(o options) (*ProvidedSet, error) {
 	}
 	if err := p.extractEmbeddedSynthetics(filepath.Join(o.graalgo, "phases", "phase1",
 		"frontend", "synth_time_context.go")); err != nil {
+		return nil, err
+	}
+	// M10 (WS I): the post-M9 embedded synthetic stdlib packages
+	// (syntheticSources registry in synth_machinery.go). Mechanical
+	// extraction like every other source — never hand-maintained.
+	reg, err := loadSyntheticRegistry(o.graalgo)
+	if err != nil {
+		return nil, err
+	}
+	if err := p.extractSyntheticProvided(reg); err != nil {
 		return nil, err
 	}
 	return p, nil
@@ -826,14 +842,32 @@ func (p *ProvidedSet) extractEmbeddedSynthetics(path string) error {
 	return nil
 }
 
-// extractGoSource collects exported symbols from one parsed Go source.
+// extractGoSource collects exported symbols from one parsed Go source,
+// qualified by the source's own package clause.
 func (p *ProvidedSet) extractGoSource(src, prov string) error {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "synth.go", src, 0)
 	if err != nil {
 		return fmt.Errorf("parse embedded synthetic source: %w", err)
 	}
-	pkg := f.Name.Name
+	return p.extractGoSourceFile(f, f.Name.Name, prov)
+}
+
+// extractGoSourceAs collects exported symbols from one Go source,
+// qualified by the explicit package path (the qualifier linkname
+// targets use — the embedded source's package clause may differ from
+// its import path).
+func (p *ProvidedSet) extractGoSourceAs(pkgPath, src, prov string) error {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "synth.go", src, 0)
+	if err != nil {
+		return fmt.Errorf("parse embedded synthetic source: %w", err)
+	}
+	return p.extractGoSourceFile(f, pkgPath, prov)
+}
+
+// extractGoSourceFile walks one parsed file's declarations.
+func (p *ProvidedSet) extractGoSourceFile(f *ast.File, pkg, prov string) error {
 	for _, decl := range f.Decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
