@@ -216,10 +216,23 @@ public final class ConvertNode extends GoExprNode {
             }
             return new graalgo.values.GoSlice(arr, 0, arr.length, arr.length);
         } else { // INT32 (rune)
-            String str = new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-            int[] codePoints = str.codePoints().toArray();
-            int[] arr = new int[codePoints.length];
-            System.arraycopy(codePoints, 0, arr, 0, codePoints.length);
+            // bug-005: Go's []rune(string) decodes with utf8.DecodeRuneInString
+            // semantics — each invalid byte yields one RuneError, advancing one
+            // byte. Java's UTF-8 decoder consumes a multi-byte invalid sequence
+            // as a single replacement char, disagreeing with gc (6 vs 7 runes).
+            // Route through the same decoder the range-over-string loop uses
+            // (RangeStringNode.decodeRune), which matches gc exactly.
+            java.util.ArrayList<Integer> runes = new java.util.ArrayList<>();
+            int off = 0;
+            while (off < bytes.length) {
+                int[] dr = RangeStringNode.decodeRune(bytes, off);
+                runes.add(dr[0]);
+                off += dr[1];
+            }
+            int[] arr = new int[runes.size()];
+            for (int i = 0; i < arr.length; i++) {
+                arr[i] = runes.get(i);
+            }
             return new graalgo.values.GoSlice(arr, 0, arr.length, arr.length);
         }
     }
