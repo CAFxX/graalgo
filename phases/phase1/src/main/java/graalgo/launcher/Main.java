@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.Map;
 
 /**
@@ -100,7 +101,15 @@ public final class Main {
             json = runGofrontend(p);
         } catch (FrontendBuildException e) {
             // gofrontend's stderr is the deterministic build log the harness records.
-            System.err.print(e.buildLog);
+            // M10 (self-attack F11): a gofrontend killed by a signal leaves an
+            // empty build log — the exit status is the only signal. Never fail
+            // silently: report the exit code when there is no log.
+            if (e.buildLog.isEmpty()) {
+                System.err.println("graalgo-run: gofrontend exited " + e.gofrontendExit
+                        + " with no output");
+            } else {
+                System.err.print(e.buildLog);
+            }
             return e.gofrontendExit == 2 ? EXIT_BUILD_FAILURE : EXIT_INPUT_ERROR;
         } catch (IOException e) {
             System.err.println("graalgo-run: cannot launch gofrontend ("
@@ -137,6 +146,11 @@ public final class Main {
         if (check) {
             return EXIT_OK;
         }
+
+        // M10 (self-attack D3): preload all graalgo classes before guest
+        // execution, so a guest that exhausts the process's fds cannot
+        // break lazy class loading (notably on error-reporting paths).
+        graalgo.launcher.ClassPreloader.preload();
 
         if (dumpPoly != null) {
             // M9 (WS L): enable call-site polymorphism recording for this run.
@@ -216,8 +230,24 @@ public final class Main {
             if ("-".equals(dumpPoly)) {
                 System.out.println(polyJson);
             } else {
+                // M10 (self-attack S5): the snapshot must never be left
+                // partially written — a signal arriving mid-write would
+                // corrupt it. Write to a temp file in the same directory
+                // and atomically move it over the target, so observers see
+                // either the complete new snapshot or the previous file,
+                // never a truncation.
+                Path target = Paths.get(dumpPoly);
                 try {
-                    Files.writeString(Paths.get(dumpPoly), polyJson, StandardCharsets.UTF_8);
+                    Path tmp = Files.createTempFile(
+                            target.toAbsolutePath().getParent(), ".graalgo-poly", ".tmp");
+                    try {
+                        Files.writeString(tmp, polyJson, StandardCharsets.UTF_8);
+                        Files.move(tmp, target,
+                                StandardCopyOption.ATOMIC_MOVE,
+                                StandardCopyOption.REPLACE_EXISTING);
+                    } finally {
+                        Files.deleteIfExists(tmp);
+                    }
                 } catch (IOException e) {
                     System.err.println("graalgo-run: cannot write polymorphism snapshot: " + e);
                     return EXIT_INPUT_ERROR;

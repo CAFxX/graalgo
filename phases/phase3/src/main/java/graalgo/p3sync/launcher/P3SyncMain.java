@@ -170,7 +170,15 @@ public final class P3SyncMain {
             json = runGofrontend(p);
         } catch (GofrontendException e) {
             // gofrontend's stderr is the deterministic build log the harness records.
-            System.err.print(e.buildLog);
+            // M10 (self-attack F11): a gofrontend killed by a signal leaves an
+            // empty build log — the exit status is the only signal. Never fail
+            // silently: report the exit code when there is no log.
+            if (e.buildLog.isEmpty()) {
+                System.err.println("graalgo-sync-run: gofrontend exited " + e.exit
+                        + " with no output");
+            } else {
+                System.err.print(e.buildLog);
+            }
             return e.exit == 2 ? EXIT_BUILD_FAILURE : EXIT_INPUT_ERROR;
         } catch (IOException e) {
             System.err.println("graalgo-sync-run: cannot launch gofrontend: " + e.getMessage());
@@ -316,6 +324,10 @@ public final class P3SyncMain {
         if (check) {
             return EXIT_OK;
         }
+        // M10 (self-attack D3): preload all graalgo classes before guest
+        // execution, so a guest that exhausts the process's fds cannot
+        // break lazy class loading (notably on error-reporting paths).
+        graalgo.launcher.ClassPreloader.preload();
         if (dumpPolymorphism) {
             graalgo.values.InterfaceDispatchProbes.reset();
             graalgo.values.InterfaceDispatchProbes.setEnabled(true);
