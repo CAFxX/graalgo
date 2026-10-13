@@ -38,6 +38,14 @@ diff rather than silent staleness.
    `phases/phase1/frontend/synth_time_context.go` (parsed with go/parser;
    only exported declarations are taken). The p3frontend mirrors of (3)
    pin these via signature-equality tests.
+5. **Embedded synthetic stdlib packages (M10)** — every package in the
+   `syntheticSources` registry
+   (`phases/phase1/frontend/synth_machinery.go`): the embedded Go source
+   is resolved mechanically (const fragments, `+` chains, parenthesized
+   concatenations) and parsed with go/parser; exported declarations are
+   qualified by import path. A source that fails to parse is recorded
+   on the report's `synthetic_parse_errors` (loud, never silent) and
+   skipped — one broken synthetic package must not block the diff.
 
 `--snapshot PATH` writes the extracted set as JSON for the per-release
 record; `--provided PATH` reads a snapshot instead of extracting.
@@ -53,11 +61,21 @@ justification and source).
 
 `--json PATH` (default stdout), `--md PATH` (Markdown summary).
 Top-level `skip_list_size` plus the full `skip_list` (distinct MISSING
-targets, each with ref count, example files, reason), per-linkname
-`entries`, `duplicates` (local names linked more than once),
-`provided_by_source` counts, `routes_applied`, `stale_routes` (routes
-that matched zero linknames -- also warned about loudly on stderr),
-and the `constraint_excluded_sample`.
+targets, each with ref count, live ref count, example files, reason),
+per-linkname `entries` (each carrying `shadowed_by` when its
+real-stdlib file is superseded by a synthetic package), `duplicates`
+(local names linked more than once), `provided_by_source` counts,
+`routes_applied`, `stale_routes` (routes that matched zero linknames --
+also warned about loudly on stderr), `synthetic_parse_errors`
+(embedded synthetic sources that failed to parse -- loud, never
+silent), and the `constraint_excluded_sample`.
+
+Two headline sizes: `skip_list_size` (the whole scan population --
+comparable across releases for the SPEC §3.6 growth check) and
+`live_skip_list_size` (targets referenced by at least one live entry:
+code graalgo actually compiles -- the actionable work-list subset).
+The Markdown report renders the live skip-list grouped by target
+package.
 
 ### Tree resolution
 

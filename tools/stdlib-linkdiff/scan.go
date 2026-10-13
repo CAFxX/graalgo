@@ -15,12 +15,16 @@ import (
 // Linkname is one //go:linkname directive found in the scanned tree.
 type Linkname struct {
 	File      string // path relative to the tree root, slash-separated
-	Package   string // package clause of the file
+	Package   string // package clause of the file (import path for synthetic sources)
 	Local     string // fields[0] (the local name)
 	Declared  string // identifier the directive is attached to
 	Target    string // raw target symbol (fields[1]); "" for self-links
 	SelfLink  bool   // single-field form: target is Package.Local
 	Malformed string // non-empty when the directive is malformed (never dropped)
+	// ShadowedBy names the synthetic import path whose package supersedes
+	// this file's real-stdlib package ("" when the file is live). Set by
+	// markShadowed; synthetic-source entries are always live.
+	ShadowedBy string
 }
 
 // ScanResult is the outcome of scanning one Go source tree.
@@ -39,6 +43,70 @@ type ScanResult struct {
 	// (capped) so the filter's effect stays auditable.
 	ExcludedByConstraint []string
 	ParseErrors          []string
+	// SyntheticSourcesScanned counts embedded synthetic sources merged
+	// into Linknames by the caller (File "synthetic/<importPath>").
+	SyntheticSourcesScanned int
+	// SyntheticSkipped records synthetic sources that failed to parse
+	// during the synthetic scan (loud in the report, never fatal).
+	SyntheticSkipped []string
+	// DeclNames maps a scanned file's directory (slash-separated,
+	// tree-relative; "synthetic/<importPath>" for synthetic sources) to
+	// the set of top-level declared function/variable names. gc resolves
+	// a //go:linkname local name against the package's declarations
+	// (verified empirically: the runtime/cgo x_/ _-pair pattern), not
+	// just the declaration the comment is attached to.
+	DeclNames map[string]map[string]bool
+}
+
+// addFileDecls records the top-level declared names of one scanned file.
+func (r *ScanResult) addFileDecls(file string, names []string) {
+	if r.DeclNames == nil {
+		r.DeclNames = map[string]map[string]bool{}
+	}
+	dir := filepath.ToSlash(filepath.Dir(file))
+	set := r.DeclNames[dir]
+	if set == nil {
+		set = map[string]bool{}
+		r.DeclNames[dir] = set
+	}
+	for _, n := range names {
+		if n != "" {
+			set[n] = true
+		}
+	}
+}
+
+// declaredNames returns the top-level function/variable/type names
+// declared in one parsed file.
+func declaredNames(f *ast.File) []string {
+	var out []string
+	for _, decl := range f.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			out = append(out, d.Name.Name)
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch s := spec.(type) {
+				case *ast.ValueSpec:
+					for _, n := range s.Names {
+						out = append(out, n.Name)
+					}
+				case *ast.TypeSpec:
+					out = append(out, s.Name.Name)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// localDeclared reports whether the linkname's local name matches a
+// declared function or variable in its package (gc's rule, verified
+// against the gc toolchain: the runtime/cgo x_cgo_*/_cgo_* pair pattern
+// is accepted iff the local name is declared somewhere in the package).
+func (r *ScanResult) localDeclared(ln Linkname) bool {
+	dir := filepath.ToSlash(filepath.Dir(ln.File))
+	return r.DeclNames[dir][ln.Local]
 }
 
 // ScanTree walks root, selects .go files for (goos, goarch) with
@@ -104,13 +172,15 @@ func scanTree(root, goos, goarch string, extraTags []string,
 			return nil
 		}
 		res.FilesScanned++
-		lns, perr := extractLinknames(root, path)
+		lns, decls, perr := extractLinknames(root, path)
 		if perr != nil {
 			rel, _ := filepath.Rel(root, path)
 			res.ParseErrors = append(res.ParseErrors,
 				filepath.ToSlash(rel)+": "+perr.Error())
 			return nil
 		}
+		rel, _ := filepath.Rel(root, path)
+		res.addFileDecls(filepath.ToSlash(rel), decls)
 		if len(lns) > 0 {
 			res.FilesWithLinknames++
 			res.Linknames = append(res.Linknames, lns...)
@@ -124,30 +194,39 @@ func scanTree(root, goos, goarch string, extraTags []string,
 }
 
 // extractLinknames parses one file and returns its //go:linkname
-// directives. A directive is recognized only as a `//go:linkname`
+// directives plus its top-level declared names (for gc's package-scope
+// local-name rule). A directive is recognized only as a `//go:linkname`
 // line comment (exactly that prefix — `//go:linknamestd` and friends
 // are not directives) attached as documentation to a top-level
 // declaration. Malformed directives are returned with an empty target
 // and a reason recorded in Target==""; they are never dropped.
-func extractLinknames(root, path string) ([]Linkname, error) {
+func extractLinknames(root, path string) ([]Linkname, []string, error) {
 	src, err := os.ReadFile(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, path, src, parser.ParseComments)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	rel, _ := filepath.Rel(root, path)
 	rel = filepath.ToSlash(rel)
+	return linknamesInDecls(f.Decls, rel, f.Name.Name), declaredNames(f), nil
+}
+
+// linknamesInDecls extracts the //go:linkname directives attached to
+// top-level declarations. Shared by the tree scan (file = tree-relative
+// path, pkg = package clause) and the synthetic-source scan (file =
+// "synthetic/<importPath>", pkg = import path).
+func linknamesInDecls(decls []ast.Decl, file, pkg string) []Linkname {
 	var out []Linkname
 	emit := func(doc *ast.CommentGroup, declared string) {
-		for _, ln := range linknamesInDoc(doc, rel, f.Name.Name, declared) {
+		for _, ln := range linknamesInDoc(doc, file, pkg, declared) {
 			out = append(out, ln)
 		}
 	}
-	for _, decl := range f.Decls {
+	for _, decl := range decls {
 		switch d := decl.(type) {
 		case *ast.FuncDecl:
 			emit(d.Doc, d.Name.Name)
@@ -166,7 +245,7 @@ func extractLinknames(root, path string) ([]Linkname, error) {
 					sdoc = s.Doc
 				}
 				if sdoc != nil {
-					for _, ln := range linknamesInDoc(sdoc, rel, f.Name.Name, name) {
+					for _, ln := range linknamesInDoc(sdoc, file, pkg, name) {
 						out = append(out, ln)
 					}
 				} else if d.Doc != nil && (d.Tok == token.VAR || d.Tok == token.CONST) {
@@ -175,7 +254,7 @@ func extractLinknames(root, path string) ([]Linkname, error) {
 					// the directive is per-declaration docs; the block
 					// form is vanishingly rare for linkname).
 					if spec == d.Specs[0] {
-						for _, ln := range linknamesInDoc(d.Doc, rel, f.Name.Name, name) {
+						for _, ln := range linknamesInDoc(d.Doc, file, pkg, name) {
 							out = append(out, ln)
 						}
 					}
@@ -183,7 +262,7 @@ func extractLinknames(root, path string) ([]Linkname, error) {
 			}
 		}
 	}
-	return out, nil
+	return out
 }
 
 // linknamesInDoc extracts //go:linkname directives from one doc comment.

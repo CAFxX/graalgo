@@ -29,14 +29,25 @@ type Entry struct {
 	Route        string `json:"route,omitempty"`        // ROUTED: target -> replacement
 	RouteReason  string `json:"route_reason,omitempty"` // ROUTED: why
 	ProvidedFrom string `json:"provided_from,omitempty"`
+	// ShadowedBy names the synthetic import path superseding this entry's
+	// real-stdlib file ("" when live). Omitted for live entries.
+	ShadowedBy string `json:"shadowed_by,omitempty"`
 }
 
 // SkipEntry is one skip-list row: a distinct MISSING target.
 type SkipEntry struct {
 	Target       string   `json:"target"`
 	LinknameRefs int      `json:"linkname_refs"`
+	// LiveRefs counts references from code graalgo actually compiles
+	// (non-shadowed stdlib files plus synthetic sources). A target with
+	// LiveRefs == 0 is referenced only by real-stdlib files superseded
+	// by a synthetic package.
+	LiveRefs     int      `json:"live_refs"`
 	ExampleFiles []string `json:"example_files"`
-	Reason       string   `json:"reason"`
+	// LiveExampleFiles are up to 5 files with live (non-shadowed)
+	// references to the target.
+	LiveExampleFiles []string `json:"live_example_files"`
+	Reason           string   `json:"reason"`
 }
 
 // Duplicate records a local name declared by linkname more than once.
@@ -65,6 +76,12 @@ type Report struct {
 		TestFilesExcluded  int `json:"test_files_excluded"`
 		ConstraintExcluded int `json:"constraint_excluded_files"`
 		ParseErrors        int `json:"parse_errors"`
+		// M10: embedded synthetic sources are scanned alongside the
+		// vendored tree (their linknames are real needs — the exporter's
+		// linkname scan covers them). Counted separately so the
+		// vendored-tree population stays comparable across releases.
+		SyntheticSourcesScanned int `json:"synthetic_sources_scanned"`
+		SyntheticLinknames      int `json:"synthetic_linknames"`
 	} `json:"counts"`
 
 	// SkipListSize is the headline kill-trigger metric (SPEC §3.6:
@@ -72,6 +89,11 @@ type Report struct {
 	// so release tooling can read it without walking the report.
 	SkipListSize int         `json:"skip_list_size"`
 	SkipList     []SkipEntry `json:"skip_list"`
+	// LiveSkipListSize counts skip-list targets referenced by at least
+	// one live entry (LiveRefs > 0): the actionable subset of the
+	// skip-list — targets referenced only by shadowed (superseded)
+	// real-stdlib files are not compiled by graalgo.
+	LiveSkipListSize int `json:"live_skip_list_size"`
 
 	Entries    []Entry     `json:"entries"`
 	Duplicates []Duplicate `json:"duplicates"`
@@ -85,9 +107,14 @@ type Report struct {
 	StaleRoutes     []string          `json:"stale_routes"`
 	ParseErrors     []string          `json:"parse_errors_detail,omitempty"`
 	ExcludedSample  []string          `json:"constraint_excluded_sample,omitempty"`
+	// SyntheticParseErrors records embedded synthetic sources that
+	// failed to parse during provided-set extraction or the synthetic
+	// scan. Always emitted (possibly []): a broken synthetic source
+	// would panic the frontend's buildSyntheticPackage on import.
+	SyntheticParseErrors []string `json:"synthetic_parse_errors"`
 }
 
-const toolVersion = "1.0.0"
+const toolVersion = "1.1.0"
 
 // normalizeTarget resolves a raw linkname target to the symbol used for
 // classification: unqualified targets are qualified with the file's
@@ -122,8 +149,24 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
 	rep.Counts.TestFilesExcluded = scan.TestFilesExcluded
 	rep.Counts.ConstraintExcluded = scan.ConstraintExcluded
 	rep.Counts.ParseErrors = len(scan.ParseErrors)
+	rep.Counts.SyntheticSourcesScanned = scan.SyntheticSourcesScanned
 	rep.ParseErrors = scan.ParseErrors
 	rep.ExcludedSample = scan.ExcludedByConstraint
+	// Dedupe by synthetic import path: extraction and scan hit the same
+	// broken source with slightly different messages; one row per source.
+	seenSynth := map[string]bool{}
+	for _, s := range append(append([]string{}, provided.Skipped...), scan.SyntheticSkipped...) {
+		key := s
+		if i := strings.Index(s, `"`); i >= 0 {
+			if j := strings.Index(s[i+1:], `"`); j >= 0 {
+				key = s[i+1 : i+1+j]
+			}
+		}
+		if !seenSynth[key] {
+			seenSynth[key] = true
+			rep.SyntheticParseErrors = append(rep.SyntheticParseErrors, s)
+		}
+	}
 
 	routeByTarget := map[string]Route{}
 	for _, r := range routes {
@@ -134,17 +177,23 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
 
 	skipIdx := map[string]int{}
 	skipCount := map[string]int{}
+	skipLive := map[string]int{}
 	skipFiles := map[string][]string{}
+	skipLiveFiles := map[string][]string{}
 	skipReason := map[string]string{}
 	dupFiles := map[string][]string{}
 
 	for _, ln := range scan.Linknames {
 		e := Entry{
-			File:     ln.File,
-			Package:  ln.Package,
-			Local:    ln.Local,
-			Declared: ln.Declared,
-			Target:   normalizeTarget(ln),
+			File:       ln.File,
+			Package:    ln.Package,
+			Local:      ln.Local,
+			Declared:   ln.Declared,
+			Target:     normalizeTarget(ln),
+			ShadowedBy: ln.ShadowedBy,
+		}
+		if strings.HasPrefix(ln.File, "synthetic/") {
+			rep.Counts.SyntheticLinknames++
 		}
 		dupKey := ln.Package + "." + ln.Local
 		dupFiles[dupKey] = append(dupFiles[dupKey], ln.File)
@@ -153,13 +202,25 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
 		case ln.Malformed != "":
 			e.Status = StatusMissing
 			e.Reason = "malformed //go:linkname directive: " + ln.Malformed
-		case ln.Declared != "" && ln.Declared != ln.Local:
-			// gc rejects a local name that does not match the declared
-			// function; record it as MISSING with the reason rather
-			// than silently accepting it.
+		case !scan.localDeclared(ln):
+			// gc resolves the linkname local name against the package's
+			// declarations (verified empirically: the runtime/cgo
+			// x_cgo_*/_cgo_* pair pattern), not just the declaration the
+			// comment is attached to. A local name declared nowhere in
+			// its package is rejected by gc.
 			e.Status = StatusMissing
-			e.Reason = fmt.Sprintf("local name %q does not match declared identifier %q (gc rejects this)",
-				ln.Local, ln.Declared)
+			e.Reason = fmt.Sprintf("local name %q matches no declared function or variable in its package (gc rejects this)",
+				ln.Local)
+		case ln.SelfLink && ln.ShadowedBy == "":
+			// M10: the single-field form (//go:linkname name) on the
+			// declaration of name is a provision, not a need — the
+			// target IS the declared symbol, which the compiled
+			// package provides by construction. (Shadowed self-links
+			// fall through to the normal check: the synthetic
+			// replacement may or may not provide the symbol.)
+			e.Status = StatusSatisfied
+			e.Reason = "self-link: target is the declared symbol itself"
+			e.ProvidedFrom = "self"
 		default:
 			if r, ok := routeByTarget[e.Target]; ok {
 				e.Status = StatusRouted
@@ -183,6 +244,9 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
 		case StatusMissing:
 			rep.Counts.Missing++
 			skipCount[e.Target]++
+			if e.ShadowedBy == "" {
+				skipLive[e.Target]++
+			}
 			if _, ok := skipIdx[e.Target]; !ok {
 				skipIdx[e.Target] = len(rep.SkipList)
 				rep.SkipList = append(rep.SkipList, SkipEntry{Target: e.Target})
@@ -190,6 +254,9 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
 			}
 			if len(skipFiles[e.Target]) < 5 {
 				skipFiles[e.Target] = append(skipFiles[e.Target], e.File)
+			}
+			if e.ShadowedBy == "" && len(skipLiveFiles[e.Target]) < 5 {
+				skipLiveFiles[e.Target] = append(skipLiveFiles[e.Target], e.File)
 			}
 		}
 		rep.Counts.Linknames++
@@ -208,8 +275,13 @@ func Classify(scan *ScanResult, provided *ProvidedSet, routes []Route, o options
 	for i := range rep.SkipList {
 		t := rep.SkipList[i].Target
 		rep.SkipList[i].LinknameRefs = skipCount[t]
+		rep.SkipList[i].LiveRefs = skipLive[t]
 		rep.SkipList[i].ExampleFiles = skipFiles[t]
+		rep.SkipList[i].LiveExampleFiles = skipLiveFiles[t]
 		rep.SkipList[i].Reason = skipReason[t]
+		if skipLive[t] > 0 {
+			rep.LiveSkipListSize++
+		}
 	}
 	sort.Slice(rep.SkipList, func(i, j int) bool { return rep.SkipList[i].Target < rep.SkipList[j].Target })
 	rep.SkipListSize = len(rep.SkipList)
@@ -311,10 +383,13 @@ func markdownSummary(rep *Report) string {
 	fmt.Fprintf(&b, "| ROUTED | %d |\n", rep.Counts.Routed)
 	fmt.Fprintf(&b, "| MISSING | %d |\n", rep.Counts.Missing)
 	fmt.Fprintf(&b, "| **SKIP_LIST_SIZE** | **%d** |\n", rep.SkipListSize)
+	fmt.Fprintf(&b, "| **LIVE_SKIP_LIST_SIZE** | **%d** |\n", rep.LiveSkipListSize)
 	fmt.Fprintf(&b, "| files scanned | %d |\n", rep.Counts.FilesScanned)
 	fmt.Fprintf(&b, "| files with linknames | %d |\n", rep.Counts.FilesWithLinknames)
 	fmt.Fprintf(&b, "| _test.go files excluded | %d |\n", rep.Counts.TestFilesExcluded)
 	fmt.Fprintf(&b, "| constraint-excluded files | %d |\n", rep.Counts.ConstraintExcluded)
+	fmt.Fprintf(&b, "| synthetic sources scanned | %d |\n", rep.Counts.SyntheticSourcesScanned)
+	fmt.Fprintf(&b, "| synthetic linkname directives | %d |\n", rep.Counts.SyntheticLinknames)
 	fmt.Fprintf(&b, "| provided symbols | %d |\n", rep.ProvidedCount)
 	b.WriteString("\n> SPEC §3.6 kill trigger: skip-list growth > 15 twice per release.\n")
 	b.WriteString("> Compare SKIP_LIST_SIZE against the previous release's snapshot.\n\n")
@@ -333,9 +408,35 @@ func markdownSummary(rep *Report) string {
 		b.WriteString("\n")
 	}
 	b.WriteString("## Skip-list (distinct MISSING targets)\n\n")
-	b.WriteString("| target | refs | reason |\n|---|---|---|\n")
+	b.WriteString("`live refs` counts references from code graalgo actually compiles " +
+		"(non-shadowed stdlib files + synthetic sources); a target with 0 live refs is " +
+		"referenced only by real-stdlib files superseded by a synthetic package.\n\n")
+	b.WriteString("| target | refs | live refs | reason |\n|---|---|---|---|\n")
 	for _, s := range rep.SkipList {
-		fmt.Fprintf(&b, "| `%s` | %d | %s |\n", s.Target, s.LinknameRefs, s.Reason)
+		fmt.Fprintf(&b, "| `%s` | %d | %d | %s |\n", s.Target, s.LinknameRefs, s.LiveRefs, s.Reason)
+	}
+	// Live skip-list grouped by target package: the actionable work list.
+	b.WriteString("\n## Live skip-list by target package\n\n")
+	byPkg := map[string][]SkipEntry{}
+	for _, s := range rep.SkipList {
+		if s.LiveRefs == 0 {
+			continue
+		}
+		pkg := targetPackage(s.Target)
+		byPkg[pkg] = append(byPkg[pkg], s)
+	}
+	var pkgs []string
+	for pkg := range byPkg {
+		pkgs = append(pkgs, pkg)
+	}
+	sort.Strings(pkgs)
+	for _, pkg := range pkgs {
+		fmt.Fprintf(&b, "### `%s` (%d)\n\n", pkg, len(byPkg[pkg]))
+		for _, s := range byPkg[pkg] {
+			fmt.Fprintf(&b, "- `%s` — %d live ref(s), e.g. %s\n",
+				s.Target, s.LiveRefs, strings.Join(s.LiveExampleFiles, ", "))
+		}
+		b.WriteString("\n")
 	}
 	if len(rep.Duplicates) > 0 {
 		b.WriteString("\n## Duplicate local names\n\n")
@@ -346,6 +447,15 @@ func markdownSummary(rep *Report) string {
 	if len(rep.ParseErrors) > 0 {
 		b.WriteString("\n## Parse errors\n\n")
 		for _, pe := range rep.ParseErrors {
+			fmt.Fprintf(&b, "- %s\n", pe)
+		}
+	}
+	if len(rep.SyntheticParseErrors) > 0 {
+		b.WriteString("\n## Synthetic sources that failed to parse\n\n")
+		b.WriteString("These embedded synthetic packages contribute no provided " +
+			"symbols and no scanned linknames in this run; the frontend's " +
+			"buildSyntheticPackage would panic importing them.\n\n")
+		for _, pe := range rep.SyntheticParseErrors {
 			fmt.Fprintf(&b, "- %s\n", pe)
 		}
 	}
@@ -366,10 +476,12 @@ func writeSnapshot(path string, p *ProvidedSet) error {
 	type snap struct {
 		Generated string            `json:"generated"`
 		Symbols   map[string]string `json:"symbols"`
+		Skipped   []string          `json:"skipped,omitempty"`
 	}
 	data, err := json.MarshalIndent(snap{
 		Generated: time.Now().UTC().Format(time.RFC3339),
 		Symbols:   p.Symbols,
+		Skipped:   p.Skipped,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -388,6 +500,7 @@ func readSnapshot(path string) (*ProvidedSet, error) {
 	}
 	var snap struct {
 		Symbols map[string]string `json:"symbols"`
+		Skipped []string          `json:"skipped"`
 	}
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
@@ -395,5 +508,5 @@ func readSnapshot(path string) (*ProvidedSet, error) {
 	if len(snap.Symbols) == 0 {
 		return nil, fmt.Errorf("%s: no symbols in snapshot", path)
 	}
-	return &ProvidedSet{Symbols: snap.Symbols}, nil
+	return &ProvidedSet{Symbols: snap.Symbols, Skipped: snap.Skipped}, nil
 }

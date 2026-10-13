@@ -45,6 +45,11 @@ Scans a Go source tree for //go:linkname directives and classifies each
 target as SATISFIED (provided by graalgo), ROUTED (explicit routes.txt
 entry) or MISSING (lands on the skip-list, never silently dropped).
 
+Also scans graalgo's embedded synthetic stdlib packages (their linknames
+are real needs) and marks vendored-tree entries superseded by the
+overlay as shadowed, so the report splits the skip-list into the
+comparable total and the live (actionable) subset.
+
 Usage:
   stdlib-linkdiff [--goroot DIR] [--graalgo DIR] [--goos OS] [--goarch ARCH]
                   [--tags t1,t2] [--routes FILE] [--json PATH] [--md PATH]
@@ -242,6 +247,27 @@ func run(args []string) int {
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "stdlib-linkdiff: scan: "+err.Error())
 		return 1
+	}
+
+	// M10: the embedded synthetic packages are compiled by graalgo, so
+	// their //go:linkname directives are real needs (the exporter's
+	// linkname scan covers them). Mark vendored-tree entries whose
+	// package is superseded by the overlay as shadowed.
+	reg, err := loadSyntheticRegistry(o.graalgo)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "stdlib-linkdiff: synthetic registry: "+err.Error())
+		return 1
+	}
+	synthLNs, synthDecls, synthSkipped := scanSyntheticLinknames(reg)
+	scan.Linknames = append(scan.Linknames, synthLNs...)
+	for file, names := range synthDecls {
+		scan.addFileDecls(file, names)
+	}
+	scan.SyntheticSourcesScanned = len(reg.Sources)
+	scan.SyntheticSkipped = synthSkipped
+	markShadowed(scan, reg.Shadowed)
+	for _, s := range synthSkipped {
+		fmt.Fprintf(os.Stderr, "stdlib-linkdiff: WARNING: synthetic scan skipped: %s\n", s)
 	}
 
 	rep := Classify(scan, provided, routes, o)
