@@ -102,13 +102,13 @@ public final class MainTest {
         assertContains(err, "parse error", "--check stderr on syntax error");
     }
 
-    public void testCheckRejectsVariadicPacking() throws Exception {
-        // Remediation (R1 P1-1, R2 P1-2): non-spread calls to variadic
-        // functions need argument-packing adaptation that v1 does not
-        // implement; the exporter must fail fast with a WS D scope error
-        // instead of emitting a program that crashes at runtime with an
-        // internal ArrayIndexOutOfBoundsException. Pre-fix, --check
-        // accepted this program (exit 0).
+    public void testCheckAcceptsVariadicPacking() throws Exception {
+        // P3-M9 (WS D): non-spread calls to variadic functions are now
+        // supported via argument-packing adaptation (packVariadicArgs in
+        // export.go). The exporter packs trailing args into a slice literal.
+        // This test verifies --check accepts the program (previously, in M7,
+        // this was a scope error; the remediation test testCheckRejectsVariadicPacking
+        // is superseded).
         Path dir = Files.createTempDirectory("graalgo-main-test");
         Path f = dir.resolve("prog.go");
         Files.writeString(f,
@@ -121,9 +121,7 @@ public final class MainTest {
             code[0] = Main.run(new String[] {"--check", f.toString()});
             return code[0];
         });
-        assertEq(Main.EXIT_BUILD_FAILURE, code[0], "--check exit on variadic packing call");
-        assertContains(err, "variadic", "--check stderr names the variadic boundary");
-        assertContains(err, "WS D", "--check stderr names the owning workstream");
+        assertEq(Main.EXIT_OK, code[0], "--check exit on variadic packing call");
     }
 
     public void testRunExecutesStraightLine() {
