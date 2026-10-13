@@ -11,9 +11,17 @@
 # (sync bindings). Each phase has its own Makefile; this file orchestrates.
 #
 # CI SCOPE — honest, not aspirational.
-#   `make all` = generate + build + check + test-ci:
+#   `make all` = generate + build + snapshot-check + check + test-ci:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
+#     snapshot-check
+#               behavior snapshots (M10 WS I): re-runs the differential
+#               corpus under graalgo and fails on drift from the committed
+#               baseline in [test/snapshots/](test/snapshots/) (~1 min,
+#               parallel). Per-push: a refactor that changes observable
+#               behavior must fail loudly at the commit that caused it.
+#               Runs before `check` (independent gate; stays live even when
+#               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
 #               grep gates + the gofrontend gofmt/vet/tests gate
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
@@ -40,10 +48,16 @@
 #     Both are gitignored build outputs; the drift gate guards tracked files
 #     the build might touch.
 GENERATED := phases/phase1/frontend/gofrontend phases/phase1/frontend/overlay.json
+# NOTE: [test/snapshots/](test/snapshots/)/go<VERSION>.json are also generated
+# and committed, but their generator is `make snapshot` (deliberate
+# re-baseline: toolchain upgrade or reviewed behavior change), NOT `make all`
+# — `make all` *verifies* them via snapshot-check instead of regenerating.
 
-.PHONY: all generate build check test-ci test clean
+GO ?= $(HOME)/tools/go/bin/go
 
-all: generate build check test-ci
+.PHONY: all generate build check test-ci test clean snapshot snapshot-check
+
+all: generate build snapshot-check check test-ci
 
 # Force-regenerate the gofrontend binary and overlay.json from the
 # vendored frontend sources (frontend/*.go + frontend/go overlay).
@@ -72,6 +86,40 @@ test: build
 	$(MAKE) -C phases/phase1 test
 	$(MAKE) -C phases/phase2 test
 	$(MAKE) -C phases/phase3 test
+
+# Behavior snapshots (M10 WS I): graalgo's observable behavior on the
+# differential corpus ([tools/diffharness/corpus/](tools/diffharness/corpus/)),
+# recorded against the pinned Go toolchain — the upgrade baseline. See
+# [test/snapshots/README.md](test/snapshots/README.md) for the format.
+#
+# `make snapshot` RE-RECORDS the baseline: run only for a toolchain upgrade
+# or a deliberately re-baselined behavior change, then commit the result.
+# `make snapshot-check` verifies the current tree against the committed
+# baseline and fails on drift (this is what per-push CI runs via `make all`).
+DH := tools/diffharness
+SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
+# /tmp is a 512M tmpfs shared with other work and routinely full: keep go
+# build temps and harness scratch dirs on the persistent disk (same pattern
+# as the phase Makefiles' test targets). $(DH)/.tmp is gitignored.
+SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
+snapshot: build
+	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
+	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/phases/phase1" \
+	  $(GO) run ./cmd/diffharness snapshot record \
+	  -config backends.json -corpus corpus -backend graalgo \
+	  -corpus-label tools/diffharness/corpus \
+	  -out ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
+	  -toolchain $(SNAPSHOT_TOOLCHAIN) \
+	  -graalgo-commit $(shell git rev-parse HEAD) \
+	  -jobs 4 -timeout 60
+
+snapshot-check: build
+	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
+	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/phases/phase1" \
+	  $(GO) run ./cmd/diffharness snapshot check \
+	  -config backends.json -corpus corpus -backend graalgo \
+	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
+	  -jobs 4 -timeout 60
 
 clean:
 	$(MAKE) -C phases/phase1 clean
