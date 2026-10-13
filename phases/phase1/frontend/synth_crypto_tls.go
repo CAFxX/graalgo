@@ -633,8 +633,9 @@ func (c *Conn) Handshake() error {
 			// first while gc prints the client first. Brief yield so the
 			// client's prints land first (byte-identical differential).
 			// TODO: replace with proper synchronization or faster verify.
+			// NOTE: 10s sleep caused GMP=1 stall; using 100ms instead.
 			if !c.isClient {
-				time.Sleep(10 * time.Second)
+				time.Sleep(100 * time.Millisecond)
 			}
 			return nil
 		case engineNeedWrap:
