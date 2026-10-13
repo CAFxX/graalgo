@@ -67,7 +67,6 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam|snapshot> [flags]
 	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam|srctest> [flags]
 
   run      -config PATH -corpus DIR -out PATH [-timeout SEC]
