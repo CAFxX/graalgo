@@ -1,7 +1,7 @@
 # P3-M7 wave-1 corpus: encoding/base32
 
 Differential tests for the synthetic `encoding/base32` package
-(`phases/phase1/frontend/synth_base32.go`).
+(`internal/frontend/synth_base32.go`).
 
 ## Programs
 

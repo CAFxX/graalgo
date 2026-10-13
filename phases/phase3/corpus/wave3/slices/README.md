@@ -1,6 +1,6 @@
 # slices corpus (P3-M9 wave 3, tier-1a)
 
-Differential corpus for the synthetic `slices` package (phases/phase1/frontend/synth_slices.go — gc 1.27.1 adapted for v1).
+Differential corpus for the synthetic `slices` package (internal/frontend/synth_slices.go — gc 1.27.1 adapted for v1).
 
 ## Coverage
 - `01_sort.go`: `slices.Sort` on ints, strings, edge cases

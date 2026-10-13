@@ -1,6 +1,6 @@
 # unicode corpus (P3-M9 wave 3, tier-1a)
 
-Differential corpus for the synthetic `unicode` package (phases/phase1/frontend/synth_unicode.go — gc 1.27.1 tables + letter/graphic/digit/case).
+Differential corpus for the synthetic `unicode` package (internal/frontend/synth_unicode.go — gc 1.27.1 tables + letter/graphic/digit/case).
 
 ## Coverage
 - `01_isletter.go`: `IsLetter`, `IsDigit`, `IsSpace`

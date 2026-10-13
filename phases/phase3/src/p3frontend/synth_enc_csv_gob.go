@@ -6,7 +6,7 @@ package p3frontend
 // unexported and frozen); these mirrors pin the signatures so drift
 // fails fast.
 //
-// The signatures match phases/phase1/frontend/synth_enc_csv_gob.go
+// The signatures match internal/frontend/synth_enc_csv_gob.go
 // exactly.
 
 import (

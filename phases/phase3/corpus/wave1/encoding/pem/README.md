@@ -1,7 +1,7 @@
 # P3-M7 wave-1 corpus: encoding/pem
 
 Differential tests for the synthetic `encoding/pem` package
-(`phases/phase1/frontend/synth_pem.go`).
+(`internal/frontend/synth_pem.go`).
 
 ## Programs
 

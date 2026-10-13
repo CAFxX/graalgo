@@ -397,7 +397,7 @@ func (l *Loader) localRef(importPath, dir string) (*PackageRef, error) {
 // against its synthetic time/context packages (ADR-0005), so the p3frontend
 // mirror must not see the real GOROOT sources. "errors" and "sort" resolve
 // to synthetic markers likewise (P3-M7 wave 1: real-Go synthetic packages
-// in phases/phase1/frontend/synth_errors.go / synth_sort.go). The 8
+// in internal/frontend/synth_errors.go / synth_sort.go). The 8
 // encoding/* primitives (m7-wenc-core) resolve to synthetic markers
 // likewise.
 func (l *Loader) ResolveImport(fromDir, path string) (*PackageRef, error) {

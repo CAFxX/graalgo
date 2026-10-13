@@ -101,7 +101,7 @@ func syntheticStdImporter(t *testing.T) types.Importer {
 		}
 		if path == "io" {
 			return phase1SyntheticPackageForTest(t,
-				"../../../phase1/frontend/synth_io.go",
+				"../../../../internal/frontend/synth_io.go",
 				"syntheticIoSource", "io", imp), nil
 		}
 		if path == "sync" {
@@ -165,7 +165,7 @@ func TestErrorsSyntheticSignatures(t *testing.T) {
 			mirror.Name(), mirror.Path())
 	}
 	phase1 := phase1SyntheticPackageForTest(t,
-		"../../../phase1/frontend/synth_errors.go", "syntheticErrorsSource",
+		"../../../../internal/frontend/synth_errors.go", "syntheticErrorsSource",
 		"errors", rejectImports{})
 
 	// Full exported-scope drift check (names + rendered types).

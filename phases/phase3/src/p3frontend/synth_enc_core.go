@@ -5,7 +5,7 @@ package p3frontend
 // exporter's synthetic signatures (it cannot reuse them — unexported);
 // these mirrors pin the signatures so drift fails fast.
 //
-// The signatures match phases/phase1/frontend/synth_{base32,base64,hex,
+// The signatures match internal/frontend/synth_{base32,base64,hex,
 // binary,ascii85,pem,asn1,encoding}.go exactly. Unexported implementation
 // types (base32DecodePair, __ helpers, ...) are not visible to user code
 // and are not mirrored — except the Appendix M pair/triple structs,

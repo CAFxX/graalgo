@@ -5,7 +5,7 @@ package p3frontend
 // signatures (it cannot reuse them — unexported); this mirror pins the
 // signatures so drift fails fast.
 //
-// The signatures match phases/phase1/frontend/synth_errors.go exactly
+// The signatures match internal/frontend/synth_errors.go exactly
 // (the full gc 1.27.1 public API: New, Is, As, AsType, Unwrap, Join,
 // ErrUnsupported). Unexported implementation types (errorString,
 // joinError, unwrapper, ...) are not visible to user code and are not

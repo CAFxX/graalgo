@@ -1,7 +1,7 @@
 # P3-M9 wave-3 `io/fs` extension corpus (tier-2)
 
 Differential corpus for the P3-M9 synthetic `io/fs` extension
-(`phases/phase1/frontend/synth_iofs.go`): the G2 gap functions `ReadFile`,
+(`internal/frontend/synth_iofs.go`): the G2 gap functions `ReadFile`,
 `WalkDir`, `Glob`, `Sub` plus `ReadDir`, `Stat`, `ValidPath`, and
 `os.DirFS` (implemented in `synth_os.go` over the existing os/file
 abstractions). Conventions are the wave-1 ones (`../wave1/README.md`).

@@ -44,7 +44,7 @@ Per the corpus design (§1.4, §4) the corpus is split into a **pipe leg**
 - No synthetic `net/http` source exists in frontend/v1 (imports are
   not supported in frontend/v1 scope — WS G import overlay), so the
   pipe-leg and recorder-leg programs are `.scopelimited` with
-  `retest:` synthetic `net/http` lands in `phases/phase1/frontend`.
+  `retest:` synthetic `net/http` lands in `internal/frontend`.
 - The loopback-leg programs additionally need TCP socket syscalls +
   netpoller; `retest:` synthetic `net/http` lands AND socket/netpoll
   intrinsics land (P3-M9 WS G or later). RISK-M9-5 (`net/http` server

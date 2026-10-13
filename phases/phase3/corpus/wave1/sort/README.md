@@ -1,7 +1,7 @@
 # P3-M7 wave-1 `sort` corpus
 
 Go programs exercising the wave-1 synthetic `sort` package
-(`phases/phase1/frontend/synth_sort.go`: faithful pdqsort/stable port +
+(`internal/frontend/synth_sort.go`: faithful pdqsort/stable port +
 search; `Find`/`Slice`/`SliceStable`/`SliceIsSorted` fail-fast),
 differential vs stock gc 1.27.1. Run via `run_differential.sh` (thin
 wrapper over `corpus/wave1/run_wave.sh`; conventions:

@@ -16,7 +16,7 @@ general, never module-specific (hard rule 2).
   package list; the ExportFile gate, the importer-selection loop, and the
   needX switch all assumed third-party paths were out of scope.
 - **Fix (general, WS G as always intended):** new
-  `phases/phase1/frontend/diskimport.go` — third-party import paths resolve
+  `internal/frontend/diskimport.go` — third-party import paths resolve
   from local disk ($GOMODCACHE/<path>@<highest version>, then GOPATH/src);
   files selected constraint-aware via go/build (GOOS/GOARCH build tags);
   type-checked with the same overlayImporter (recursive imports work);
