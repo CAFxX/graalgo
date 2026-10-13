@@ -102,6 +102,13 @@ check: main $(OUT_TEST)/.built
 	else \
 		python3 stdlib-fork/gen-asm-inventory.py --check; \
 	fi
+	@echo "== p3frontend Go build/vet gate (P3-M10 self-attack FINDING-4) =="
+	@GO_BIN="$${GO:-$(HOME)/tools/go/bin/go}"; \
+	if [ -x "$$GO_BIN" ]; then \
+		cd src/p3frontend && GOTOOLCHAIN=local "$$GO_BIN" build ./... && GOTOOLCHAIN=local "$$GO_BIN" vet ./...; \
+	else \
+		echo "WARNING: Go toolchain not found ($$GO_BIN); p3frontend gate skipped"; \
+	fi
 
 clean:
 	rm -rf out

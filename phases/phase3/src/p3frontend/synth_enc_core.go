@@ -117,9 +117,9 @@ func syntheticBase32Package() *types.Package {
 			pkg.Scope().Insert(tn)
 			return types.NewNamed(tn, types.NewInterfaceType(methods, nil).Complete(), nil)
 		}
-		writer := mk("Writer", []*types.Func{write})
-		reader := mk("Reader", []*types.Func{read})
-		writeCloser := mk("WriteCloser", []*types.Func{write, close})
+		writer = mk("Writer", []*types.Func{write})
+		reader = mk("Reader", []*types.Func{read})
+		writeCloser = mk("WriteCloser", []*types.Func{write, close})
 		pkg.MarkComplete()
 		return writer, reader, writeCloser
 	}
