@@ -5213,20 +5213,45 @@ public final class NodeFactory {
         boolean keyBoxed = keyOid >= 0 && ctx.boxed.contains(keyOid);
         boolean valBoxed = valOid >= 0 && ctx.boxed.contains(valOid);
         GoStmtNode body = buildStmt(f.object("body", path), ctx);
+        // M10, F-1: per-invocation range iteration state lives in frame
+        // slots, never in node fields (the node object is shared by every
+        // goroutine executing the same compiled function). Allocate hidden
+        // slots for the state each Range*Node needs.
+        int rangeSeq = ctx.frames.addSlot(FrameSlotKind.Boolean, "rangestarted$", null);
         com.oracle.truffle.api.nodes.RepeatingNode repeating;
         if (isIntRange) {
             // P3-M9 (WS E): Go 1.22+ integer range: for i := range n.
-            repeating = new RangeIntNode(rangeX, body, keySlot, keyKind, keyBoxed, define);
+            int boundSlot = ctx.frames.addSlot(FrameSlotKind.Long, "rangebound$", null);
+            int indexSlot = ctx.frames.addSlot(FrameSlotKind.Long, "rangeindex$", null);
+            repeating = new RangeIntNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
+                    rangeSeq, boundSlot, indexSlot);
         } else {
             repeating = switch (xk) {
-                case SLICE -> new RangeSliceNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
-                        valSlot, valKind, valBoxed, define);
-                case ARRAY -> new RangeArrayNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
-                        valSlot, valKind, valBoxed, define);
-                case STRING -> new RangeStringNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
-                        valSlot, valBoxed, define);
-                case MAP -> new RangeMapNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
-                        valSlot, valKind, valBoxed, define);
+                case SLICE -> {
+                    int sliceSlot = ctx.frames.addSlot(FrameSlotKind.Object, "rangeslice$", null);
+                    int indexSlot = ctx.frames.addSlot(FrameSlotKind.Int, "rangeindex$", null);
+                    yield new RangeSliceNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
+                            valSlot, valKind, valBoxed, define, rangeSeq, sliceSlot, indexSlot);
+                }
+                case ARRAY -> {
+                    int arraySlot = ctx.frames.addSlot(FrameSlotKind.Object, "rangearray$", null);
+                    int indexSlot = ctx.frames.addSlot(FrameSlotKind.Int, "rangeindex$", null);
+                    yield new RangeArrayNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
+                            valSlot, valKind, valBoxed, define, rangeSeq, arraySlot, indexSlot);
+                }
+                case STRING -> {
+                    int bytesSlot = ctx.frames.addSlot(FrameSlotKind.Object, "rangebytes$", null);
+                    int posSlot = ctx.frames.addSlot(FrameSlotKind.Int, "rangepos$", null);
+                    yield new RangeStringNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
+                            valSlot, valBoxed, define, rangeSeq, bytesSlot, posSlot);
+                }
+                case MAP -> {
+                    int mapSlot = ctx.frames.addSlot(FrameSlotKind.Object, "rangemap$", null);
+                    int keysSlot = ctx.frames.addSlot(FrameSlotKind.Object, "rangekeys$", null);
+                    int indexSlot = ctx.frames.addSlot(FrameSlotKind.Int, "rangeindex$", null);
+                    yield new RangeMapNode(rangeX, body, keySlot, keyKind, keyBoxed, define,
+                            valSlot, valKind, valBoxed, define, rangeSeq, mapSlot, keysSlot, indexSlot);
+                }
                 default -> throw new FrontendException(path + ": cannot range over " + xk + " (WS E)");
             };
         }

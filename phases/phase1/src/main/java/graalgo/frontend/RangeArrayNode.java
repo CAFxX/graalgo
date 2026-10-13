@@ -11,6 +11,10 @@ import graalgo.values.GoKind;
  * {@code range} over an array (M4, WS E). The array is <em>copied</em> when
  * the range expression is evaluated (gc-verified: writes to the array
  * during iteration are not observed); iteration is over the copy.
+ *
+ * <p>Concurrency (M10, F-1): iteration state lives in <em>frame slots</em>,
+ * never in node fields — the node object is shared by every goroutine
+ * executing the same compiled function (see RangeSliceNode).
  */
 public final class RangeArrayNode extends Node implements RepeatingNode, LabelTarget {
     @Child private GoExprNode x;
@@ -25,19 +29,22 @@ public final class RangeArrayNode extends Node implements RepeatingNode, LabelTa
     private final boolean valDefine;
     private String label;
 
-    private boolean started;
-    private Object array;
-    private int len;
-    private int i;
+    /** Frame slots for the per-invocation iteration state (see class doc). */
+    private final int startedSlot; // boolean: range operand evaluated
+    private final int arraySlot;   // Object: the copied array
+    private final int indexSlot;   // int: current index i
 
     public RangeArrayNode(GoExprNode x, GoStmtNode body,
-                         int keySlot, GoKind keyKind, int valSlot, GoKind valKind) {
-        this(x, body, keySlot, keyKind, false, true, valSlot, valKind, false, true);
+                         int keySlot, GoKind keyKind, int valSlot, GoKind valKind,
+                         int startedSlot, int arraySlot, int indexSlot) {
+        this(x, body, keySlot, keyKind, false, true, valSlot, valKind, false, true,
+                startedSlot, arraySlot, indexSlot);
     }
 
     public RangeArrayNode(GoExprNode x, GoStmtNode body,
                          int keySlot, GoKind keyKind, boolean keyBoxed, boolean keyDefine,
-                         int valSlot, GoKind valKind, boolean valBoxed, boolean valDefine) {
+                         int valSlot, GoKind valKind, boolean valBoxed, boolean valDefine,
+                         int startedSlot, int arraySlot, int indexSlot) {
         this.x = x;
         this.body = body;
         this.keySlot = keySlot;
@@ -48,6 +55,9 @@ public final class RangeArrayNode extends Node implements RepeatingNode, LabelTa
         this.valKind = valKind;
         this.valBoxed = valBoxed;
         this.valDefine = valDefine;
+        this.startedSlot = startedSlot;
+        this.arraySlot = arraySlot;
+        this.indexSlot = indexSlot;
     }
 
     @Override
@@ -55,21 +65,31 @@ public final class RangeArrayNode extends Node implements RepeatingNode, LabelTa
         this.label = label;
     }
 
-    /** Resets iteration state (called before each range statement execution). */
-    public void reset() {
-        started = false;
+    /**
+     * Resets iteration state (called before each range statement
+     * execution, with that execution's frame).
+     */
+    public void reset(VirtualFrame frame) {
+        frame.setBoolean(startedSlot, false);
     }
 
     @Override
     public boolean executeRepeating(VirtualFrame frame) {
-        if (!started) {
-            started = true;
+        final Object array;
+        final int i;
+        if (!frame.getBoolean(startedSlot)) {
+            frame.setBoolean(startedSlot, true);
             Object o = x.executeObject(frame);
             // Value copy of the array at range-evaluation time.
             array = Boxing.copyForAssign(GoKind.ARRAY, o);
-            len = java.lang.reflect.Array.getLength(array);
+            frame.setObject(arraySlot, array);
             i = 0;
+            frame.setInt(indexSlot, 0);
+        } else {
+            array = frame.getObject(arraySlot);
+            i = frame.getInt(indexSlot);
         }
+        final int len = java.lang.reflect.Array.getLength(array);
         if (i >= len) {
             return false;
         }
@@ -99,7 +119,10 @@ public final class RangeArrayNode extends Node implements RepeatingNode, LabelTa
                 Boxing.setSlot(frame, valSlot, valKind, v);
             }
         }
-        i++;
+        // Advance the per-invocation index before running the body (the
+        // body may break/continue/throw; the increment is already committed,
+        // matching the old i++ ordering).
+        frame.setInt(indexSlot, i + 1);
         try {
             body.executeVoid(frame);
         } catch (BreakSignal b) {

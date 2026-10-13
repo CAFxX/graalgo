@@ -20,6 +20,14 @@ import graalgo.values.GoSlice;
  * existing cell ({@code =} form on an outer boxed variable) instead of a
  * raw value, so closures created in the body capture that iteration's
  * variable.
+ *
+ * <p>Concurrency (M10, F-1): iteration state lives in <em>frame slots</em>
+ * ({@code startedSlot}/{@code sliceSlot}/{@code indexSlot}), never in
+ * node fields. The Truffle AST node object is shared by every goroutine
+ * executing the same compiled function; per-node mutable iteration state
+ * raced across goroutines (one worker's slice/length/index clobbering
+ * another's), losing or duplicating iterations. Each invocation's frame
+ * is private, so frame slots give each goroutine its own iteration state.
  */
 public final class RangeSliceNode extends Node implements RepeatingNode, LabelTarget {
     @Child private GoExprNode x;
@@ -34,19 +42,22 @@ public final class RangeSliceNode extends Node implements RepeatingNode, LabelTa
     private final boolean valDefine;
     private String label;
 
-    private boolean started;
-    private GoSlice slice;
-    private int len;
-    private int i;
+    /** Frame slots for the per-invocation iteration state (see class doc). */
+    private final int startedSlot; // boolean: range operand evaluated
+    private final int sliceSlot;   // Object: the GoSlice header (null = nil slice)
+    private final int indexSlot;   // int: current index i
 
     public RangeSliceNode(GoExprNode x, GoStmtNode body,
-                          int keySlot, GoKind keyKind, int valSlot, GoKind valKind) {
-        this(x, body, keySlot, keyKind, false, true, valSlot, valKind, false, true);
+                          int keySlot, GoKind keyKind, int valSlot, GoKind valKind,
+                          int startedSlot, int sliceSlot, int indexSlot) {
+        this(x, body, keySlot, keyKind, false, true, valSlot, valKind, false, true,
+                startedSlot, sliceSlot, indexSlot);
     }
 
     public RangeSliceNode(GoExprNode x, GoStmtNode body,
                           int keySlot, GoKind keyKind, boolean keyBoxed, boolean keyDefine,
-                          int valSlot, GoKind valKind, boolean valBoxed, boolean valDefine) {
+                          int valSlot, GoKind valKind, boolean valBoxed, boolean valDefine,
+                          int startedSlot, int sliceSlot, int indexSlot) {
         this.x = x;
         this.body = body;
         this.keySlot = keySlot;
@@ -57,6 +68,9 @@ public final class RangeSliceNode extends Node implements RepeatingNode, LabelTa
         this.valKind = valKind;
         this.valBoxed = valBoxed;
         this.valDefine = valDefine;
+        this.startedSlot = startedSlot;
+        this.sliceSlot = sliceSlot;
+        this.indexSlot = indexSlot;
     }
 
     @Override
@@ -64,20 +78,30 @@ public final class RangeSliceNode extends Node implements RepeatingNode, LabelTa
         this.label = label;
     }
 
-    /** Resets iteration state (called before each range statement execution). */
-    public void reset() {
-        started = false;
+    /**
+     * Resets iteration state (called before each range statement
+     * execution, with that execution's frame).
+     */
+    public void reset(VirtualFrame frame) {
+        frame.setBoolean(startedSlot, false);
     }
 
     @Override
     public boolean executeRepeating(VirtualFrame frame) {
-        if (!started) {
-            started = true;
+        final GoSlice slice;
+        final int i;
+        if (!frame.getBoolean(startedSlot)) {
+            frame.setBoolean(startedSlot, true);
             Object o = x.executeObject(frame);
             slice = (GoSlice) o;
-            len = slice == null ? 0 : slice.len();
+            frame.setObject(sliceSlot, slice);
             i = 0;
+            frame.setInt(indexSlot, 0);
+        } else {
+            slice = (GoSlice) frame.getObject(sliceSlot);
+            i = frame.getInt(indexSlot);
         }
+        final int len = slice == null ? 0 : slice.len();
         if (i >= len) {
             return false;
         }
@@ -111,7 +135,10 @@ public final class RangeSliceNode extends Node implements RepeatingNode, LabelTa
                 Boxing.setSlot(frame, valSlot, valKind, v);
             }
         }
-        i++;
+        // Advance the per-invocation index before running the body (the
+        // body may break/continue/throw; the increment is already committed,
+        // matching the old i++ ordering).
+        frame.setInt(indexSlot, i + 1);
         try {
             body.executeVoid(frame);
         } catch (BreakSignal b) {
