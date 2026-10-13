@@ -96,7 +96,12 @@ check: main $(OUT_TEST)/.built
 		fi; \
 	fi
 	@echo "== asm-inventory sync gate (P3-M6) =="
-	@python3 stdlib-fork/gen-asm-inventory.py --check
+	@if [ -n "$(GO)" ]; then \
+		GOROOT=$$(dirname $$(dirname "$(GO)")); \
+		python3 stdlib-fork/gen-asm-inventory.py --check --goroot "$$GOROOT"; \
+	else \
+		python3 stdlib-fork/gen-asm-inventory.py --check; \
+	fi
 
 clean:
 	rm -rf out
