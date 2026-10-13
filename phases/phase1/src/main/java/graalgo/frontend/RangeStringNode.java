@@ -14,6 +14,10 @@ import graalgo.values.GoString;
  * {@code unicode/utf8.DecodeRune} exactly — each invalid byte yields
  * {@code U+FFFD} with width 1 (gc-verified: {@code "A\xffB"} ranges as
  * {@code (0,'A')}, {@code (1,U+FFFD)}, {@code (2,'B')}).
+ *
+ * <p>Concurrency (M10, F-1): iteration state lives in <em>frame slots</em>,
+ * never in node fields — the node object is shared by every goroutine
+ * executing the same compiled function (see RangeSliceNode).
  */
 public final class RangeStringNode extends Node implements RepeatingNode, LabelTarget {
     private static final int RUNE_ERROR = 0xFFFD;
@@ -29,16 +33,20 @@ public final class RangeStringNode extends Node implements RepeatingNode, LabelT
     private final boolean valDefine;
     private String label;
 
-    private boolean started;
-    private byte[] bytes;
-    private int pos;
+    /** Frame slots for the per-invocation iteration state (see class doc). */
+    private final int startedSlot; // boolean: range operand evaluated
+    private final int bytesSlot;   // Object: the string's byte[]
+    private final int posSlot;     // int: current byte position
 
-    public RangeStringNode(GoExprNode x, GoStmtNode body, int keySlot, GoKind keyKind, int valSlot) {
-        this(x, body, keySlot, keyKind, false, true, valSlot, false, true);
+    public RangeStringNode(GoExprNode x, GoStmtNode body, int keySlot, GoKind keyKind, int valSlot,
+                           int startedSlot, int bytesSlot, int posSlot) {
+        this(x, body, keySlot, keyKind, false, true, valSlot, false, true,
+                startedSlot, bytesSlot, posSlot);
     }
 
     public RangeStringNode(GoExprNode x, GoStmtNode body, int keySlot, GoKind keyKind, boolean keyBoxed,
-                           boolean keyDefine, int valSlot, boolean valBoxed, boolean valDefine) {
+                           boolean keyDefine, int valSlot, boolean valBoxed, boolean valDefine,
+                           int startedSlot, int bytesSlot, int posSlot) {
         this.x = x;
         this.body = body;
         this.keySlot = keySlot;
@@ -48,6 +56,9 @@ public final class RangeStringNode extends Node implements RepeatingNode, LabelT
         this.valSlot = valSlot;
         this.valBoxed = valBoxed;
         this.valDefine = valDefine;
+        this.startedSlot = startedSlot;
+        this.bytesSlot = bytesSlot;
+        this.posSlot = posSlot;
     }
 
     @Override
@@ -55,9 +66,12 @@ public final class RangeStringNode extends Node implements RepeatingNode, LabelT
         this.label = label;
     }
 
-    /** Resets iteration state (called before each range statement execution). */
-    public void reset() {
-        started = false;
+    /**
+     * Resets iteration state (called before each range statement
+     * execution, with that execution's frame).
+     */
+    public void reset(VirtualFrame frame) {
+        frame.setBoolean(startedSlot, false);
     }
 
     /**
@@ -135,10 +149,17 @@ public final class RangeStringNode extends Node implements RepeatingNode, LabelT
 
     @Override
     public boolean executeRepeating(VirtualFrame frame) {
-        if (!started) {
-            started = true;
+        final byte[] bytes;
+        final int pos;
+        if (!frame.getBoolean(startedSlot)) {
+            frame.setBoolean(startedSlot, true);
             bytes = ((GoString) x.executeObject(frame)).bytes();
+            frame.setObject(bytesSlot, bytes);
             pos = 0;
+            frame.setInt(posSlot, 0);
+        } else {
+            bytes = (byte[]) frame.getObject(bytesSlot);
+            pos = frame.getInt(posSlot);
         }
         if (pos >= bytes.length) {
             return false;
@@ -169,7 +190,10 @@ public final class RangeStringNode extends Node implements RepeatingNode, LabelT
                 Boxing.setSlot(frame, valSlot, GoKind.INT32, Integer.valueOf(dr[0]));
             }
         }
-        pos += dr[1];
+        // Advance the per-invocation position before running the body (the
+        // body may break/continue/throw; the advance is already committed,
+        // matching the old pos += dr[1] ordering).
+        frame.setInt(posSlot, pos + dr[1]);
         try {
             body.executeVoid(frame);
         } catch (BreakSignal b) {

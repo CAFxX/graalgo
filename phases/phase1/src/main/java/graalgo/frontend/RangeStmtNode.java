@@ -32,20 +32,23 @@ public final class RangeStmtNode extends GoStmtNode implements LabelTarget {
         if (init != null) {
             init.executeVoid(frame);
         }
-        // Reset the repeating node's iteration state: the same node object
-        // executes once per range statement evaluation (e.g. an inner range
-        // inside an outer loop, or a range in a function called multiple times).
+        // Reset the repeating node's iteration state: the state lives in
+        // the current invocation's frame slots (M10, F-1 — never in node
+        // fields, which are shared across goroutines), so reset takes the
+        // frame. This covers re-execution of the same statement (e.g. an
+        // inner range inside an outer loop, or a range in a function called
+        // multiple times).
         Object repeating = loop.getRepeatingNode();
         if (repeating instanceof RangeSliceNode n) {
-            n.reset();
+            n.reset(frame);
         } else if (repeating instanceof RangeArrayNode n) {
-            n.reset();
+            n.reset(frame);
         } else if (repeating instanceof RangeStringNode n) {
-            n.reset();
+            n.reset(frame);
         } else if (repeating instanceof RangeMapNode n) {
-            n.reset();
+            n.reset(frame);
         } else if (repeating instanceof RangeIntNode n) {
-            n.reset();
+            n.reset(frame);
         }
         try {
             loop.execute(frame);

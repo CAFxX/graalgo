@@ -17,6 +17,10 @@ import graalgo.values.GoMap;
  * so updates to not-yet-reached entries are observed. A nil map iterates
  * zero times. Iteration order is unspecified — differential tests compare
  * as sorted sets.
+ *
+ * <p>Concurrency (M10, F-1): iteration state lives in <em>frame slots</em>,
+ * never in node fields — the node object is shared by every goroutine
+ * executing the same compiled function (see RangeSliceNode).
  */
 public final class RangeMapNode extends Node implements RepeatingNode, LabelTarget {
     @Child private GoExprNode x;
@@ -31,19 +35,23 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
     private final boolean valDefine;
     private String label;
 
-    private boolean started;
-    private GoMap map;
-    private Object[] keys;
-    private int i;
+    /** Frame slots for the per-invocation iteration state (see class doc). */
+    private final int startedSlot; // boolean: range operand evaluated
+    private final int mapSlot;     // Object: the GoMap (null = nil map)
+    private final int keysSlot;    // Object: the Object[] key snapshot
+    private final int indexSlot;   // int: current index i
 
     public RangeMapNode(GoExprNode x, GoStmtNode body,
-                       int keySlot, GoKind keyKind, int valSlot, GoKind valKind) {
-        this(x, body, keySlot, keyKind, false, true, valSlot, valKind, false, true);
+                       int keySlot, GoKind keyKind, int valSlot, GoKind valKind,
+                       int startedSlot, int mapSlot, int keysSlot, int indexSlot) {
+        this(x, body, keySlot, keyKind, false, true, valSlot, valKind, false, true,
+                startedSlot, mapSlot, keysSlot, indexSlot);
     }
 
     public RangeMapNode(GoExprNode x, GoStmtNode body,
                        int keySlot, GoKind keyKind, boolean keyBoxed, boolean keyDefine,
-                       int valSlot, GoKind valKind, boolean valBoxed, boolean valDefine) {
+                       int valSlot, GoKind valKind, boolean valBoxed, boolean valDefine,
+                       int startedSlot, int mapSlot, int keysSlot, int indexSlot) {
         this.x = x;
         this.body = body;
         this.keySlot = keySlot;
@@ -54,6 +62,10 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
         this.valKind = valKind;
         this.valBoxed = valBoxed;
         this.valDefine = valDefine;
+        this.startedSlot = startedSlot;
+        this.mapSlot = mapSlot;
+        this.keysSlot = keysSlot;
+        this.indexSlot = indexSlot;
     }
 
     @Override
@@ -61,18 +73,31 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
         this.label = label;
     }
 
-    /** Resets iteration state (called before each range statement execution). */
-    public void reset() {
-        started = false;
+    /**
+     * Resets iteration state (called before each range statement
+     * execution, with that execution's frame).
+     */
+    public void reset(VirtualFrame frame) {
+        frame.setBoolean(startedSlot, false);
     }
 
     @Override
     public boolean executeRepeating(VirtualFrame frame) {
-        if (!started) {
-            started = true;
+        final GoMap map;
+        final Object[] keys;
+        final int i;
+        if (!frame.getBoolean(startedSlot)) {
+            frame.setBoolean(startedSlot, true);
             map = (GoMap) x.executeObject(frame);
+            frame.setObject(mapSlot, map);
             keys = map == null ? new Object[0] : map.keysSnapshot();
+            frame.setObject(keysSlot, keys);
             i = 0;
+            frame.setInt(indexSlot, 0);
+        } else {
+            map = (GoMap) frame.getObject(mapSlot);
+            keys = (Object[]) frame.getObject(keysSlot);
+            i = frame.getInt(indexSlot);
         }
         Object key = null;
         // P3-M7: iterate the snapshot directly. The containsKey re-check
@@ -81,7 +106,11 @@ public final class RangeMapNode extends Node implements RepeatingNode, LabelTarg
         // Go spec permits producing or skipping entries deleted mid-iteration;
         // we produce from the snapshot (simple, correct for the common case).
         if (i < keys.length) {
-            key = keys[i++];
+            key = keys[i];
+            // Advance the per-invocation index before producing the entry
+            // (the body may break/continue/throw; the advance is already
+            // committed, matching the old keys[i++] ordering).
+            frame.setInt(indexSlot, i + 1);
         }
         if (key == null) {
             // No live entry left (keys are never null in Phase 1).

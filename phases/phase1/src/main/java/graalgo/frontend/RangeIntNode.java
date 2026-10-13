@@ -18,6 +18,10 @@ import graalgo.values.GoKind;
  * each iteration installs a fresh {@link GoBox} cell in its slot
  * ({@code keyDefine}, {@code :=} form) or mutates the existing cell
  * ({@code =} form on an outer boxed variable).
+ *
+ * <p>Concurrency (M10, F-1): iteration state lives in <em>frame slots</em>,
+ * never in node fields — the node object is shared by every goroutine
+ * executing the same compiled function (see RangeSliceNode).
  */
 public final class RangeIntNode extends Node implements RepeatingNode, LabelTarget {
     @Child private GoExprNode x;
@@ -28,18 +32,23 @@ public final class RangeIntNode extends Node implements RepeatingNode, LabelTarg
     private final boolean keyDefine;
     private String label;
 
-    private boolean started;
-    private long n;
-    private long i;
+    /** Frame slots for the per-invocation iteration state (see class doc). */
+    private final int startedSlot; // boolean: range operand evaluated
+    private final int boundSlot;    // long: the bound n
+    private final int indexSlot;    // long: current index i
 
     public RangeIntNode(GoExprNode x, GoStmtNode body,
-                        int keySlot, GoKind keyKind, boolean keyBoxed, boolean keyDefine) {
+                        int keySlot, GoKind keyKind, boolean keyBoxed, boolean keyDefine,
+                        int startedSlot, int boundSlot, int indexSlot) {
         this.x = x;
         this.body = body;
         this.keySlot = keySlot;
         this.keyKind = keyKind;
         this.keyBoxed = keyBoxed;
         this.keyDefine = keyDefine;
+        this.startedSlot = startedSlot;
+        this.boundSlot = boundSlot;
+        this.indexSlot = indexSlot;
     }
 
     @Override
@@ -47,17 +56,27 @@ public final class RangeIntNode extends Node implements RepeatingNode, LabelTarg
         this.label = label;
     }
 
-    /** Resets iteration state (called before each range statement execution). */
-    public void reset() {
-        started = false;
+    /**
+     * Resets iteration state (called before each range statement
+     * execution, with that execution's frame).
+     */
+    public void reset(VirtualFrame frame) {
+        frame.setBoolean(startedSlot, false);
     }
 
     @Override
     public boolean executeRepeating(VirtualFrame frame) {
-        if (!started) {
-            started = true;
+        final long n;
+        final long i;
+        if (!frame.getBoolean(startedSlot)) {
+            frame.setBoolean(startedSlot, true);
             n = x.executeLong(frame);
+            frame.setLong(boundSlot, n);
             i = 0;
+            frame.setLong(indexSlot, 0);
+        } else {
+            n = frame.getLong(boundSlot);
+            i = frame.getLong(indexSlot);
         }
         if (i >= n) {
             return false;
@@ -86,7 +105,9 @@ public final class RangeIntNode extends Node implements RepeatingNode, LabelTarg
         } catch (ContinueSignal s) {
             // continue: proceed to next iteration
         }
-        i++;
+        // Advance the per-invocation index (committed before the next
+        // executeRepeating call, matching the old i++ ordering).
+        frame.setLong(indexSlot, i + 1);
         return true;
     }
 }
