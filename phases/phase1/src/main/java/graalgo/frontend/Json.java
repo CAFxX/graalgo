@@ -104,13 +104,25 @@ public final class Json {
     /** Parses one complete JSON document; trailing content is an error. */
     public static Value parse(String text) {
         Parser p = new Parser(text);
-        Value v = p.value();
+        Value v = p.value(0);
         p.ws();
         if (!p.eof()) {
             throw p.error("trailing content after JSON document");
         }
         return v;
     }
+
+    /**
+     * Maximum nesting depth of arrays/objects. The parser is recursive
+     * (value → array/object → value); an adversarial document with
+     * unbounded nesting would otherwise exhaust the host stack and
+     * surface as a raw StackOverflowError instead of a named
+     * FrontendException (M10 self-attack F1). Legitimate frontend/v1
+     * documents nest shallowly (measured max ~46 on the corpus, including
+     * 2000-term expression chains which the exporter flattens); 1000 is
+     * ~20x headroom and ~10x below the overflow threshold on a 1m stack.
+     */
+    private static final int MAX_DEPTH = 1000;
 
     private static final class Parser {
         private final String s;
@@ -162,12 +174,15 @@ public final class Json {
             i++;
         }
 
-        Value value() {
+        Value value(int depth) {
             ws();
+            if (depth > MAX_DEPTH) {
+                throw error("nesting too deep (max " + MAX_DEPTH + ")");
+            }
             char c = peek();
             return switch (c) {
-                case '{' -> object();
-                case '[' -> array();
+                case '{' -> object(depth);
+                case '[' -> array(depth);
                 case '"' -> new Str(string());
                 case 't' -> literal("true", new Bool(true));
                 case 'f' -> literal("false", new Bool(false));
@@ -189,7 +204,7 @@ public final class Json {
             throw error("invalid literal");
         }
 
-        Object object() {
+        Object object(int depth) {
             expect('{');
             LinkedHashMap<String, Value> m = new LinkedHashMap<>();
             ws();
@@ -205,7 +220,7 @@ public final class Json {
                 String k = string();
                 ws();
                 expect(':');
-                m.put(k, value());
+                m.put(k, value(depth + 1));
                 ws();
                 char c = peek();
                 if (c == ',') {
@@ -220,7 +235,7 @@ public final class Json {
             }
         }
 
-        Array array() {
+        Array array(int depth) {
             expect('[');
             ArrayList<Value> items = new ArrayList<>();
             ws();
@@ -229,7 +244,7 @@ public final class Json {
                 return new Array(items);
             }
             while (true) {
-                items.add(value());
+                items.add(value(depth + 1));
                 ws();
                 char c = peek();
                 if (c == ',') {
