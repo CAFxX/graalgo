@@ -10016,6 +10016,18 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 		return nil, fmt.Errorf("gofrontend: keyed literal key/value count mismatch")
 	}
 	fields := map[string]any{"type": t, "keyed": keyed, "values": values}
+	// P3-M9 (x509): compact encoding for large byte arrays. A [...]byte{...}
+	// with 88k elements serializes as 17MB of JSON nodes (one per byte).
+	// If the literal has >2000 elements and all are byte-sized integer
+	// literals, encode as a hex string in "hexdata" instead. The Java
+	// NodeFactory.buildComplit decodes it directly. This is a general
+	// frontend optimization, not x509-specific.
+	if !keyed && len(l.Elts) > 2000 {
+		if hex, ok := e.byteLiteralHex(l.Elts); ok {
+			fields["values"] = []*Node{}
+			fields["hexdata"] = hex
+		}
+	}
 	if len(fieldKeys) > 0 {
 		fields["fieldkeys"] = fieldKeys
 	}
@@ -10023,6 +10035,39 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 		fields["keys"] = keys
 	}
 	return e.node("complit", l, fields), nil
+}
+
+// byteLiteralHex extracts byte values from a list of AST expressions.
+// Returns the hex-encoded string and true if all elements are integer
+// literals in [0,255]. Used for compact encoding of large byte arrays.
+func (e *exporter) byteLiteralHex(elts []ast.Expr) (string, bool) {
+	var buf []byte
+	for _, el := range elts {
+		// Handle *ast.BasicLit (e.g., 0x3c, 255)
+		bl, ok := el.(*ast.BasicLit)
+		if !ok {
+			return "", false
+		}
+		// Parse the integer value using go/types info
+		tv, ok := e.info.Types[bl]
+		if !ok || tv.Value == nil {
+			return "", false
+		}
+		// Get the constant value as int64
+		v, ok := constant.Int64Val(tv.Value)
+		if !ok || v < 0 || v > 255 {
+			return "", false
+		}
+		buf = append(buf, byte(v))
+	}
+	// Hex encode
+	const hexdigits = "0123456789abcdef"
+	out := make([]byte, len(buf)*2)
+	for i, b := range buf {
+		out[i*2] = hexdigits[b>>4]
+		out[i*2+1] = hexdigits[b&0xf]
+	}
+	return string(out), true
 }
 
 // isStructLitKey reports whether id is a struct field name in a keyed

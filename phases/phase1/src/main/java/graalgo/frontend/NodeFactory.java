@@ -5481,9 +5481,24 @@ public final class NodeFactory {
             }
         }
         Json.Object compDetail = compEntry.object("detail", path);
-        GoExprNode[] valueNodes = new GoExprNode[values.size()];
-        for (int i = 0; i < values.size(); i++) {
-            valueNodes[i] = buildExpr(asObject(values.get(i), path + ".values[" + i + "]"), ctx);
+        GoExprNode[] valueNodes;
+        // P3-M9 (x509): compact hex encoding for large byte arrays. The
+        // gofrontend emits "hexdata" (hex string) instead of "values" for
+        // byte literals with >2000 elements (e.g., crypto tables). Decode
+        // directly to avoid 88k JSON nodes.
+        if (f.has("hexdata")) {
+            String hex = f.string("hexdata", path);
+            int n = hex.length() / 2;
+            valueNodes = new GoExprNode[n];
+            for (int i = 0; i < n; i++) {
+                int b = Integer.parseInt(hex.substring(i*2, i*2+2), 16);
+                valueNodes[i] = ConstNode.ofInt(GoKind.UINT8, b);
+            }
+        } else {
+            valueNodes = new GoExprNode[values.size()];
+            for (int i = 0; i < values.size(); i++) {
+                valueNodes[i] = buildExpr(asObject(values.get(i), path + ".values[" + i + "]"), ctx);
+            }
         }
         // M7: convert literal values to the composite element/field type.
         // Without this, a concrete value stored into an `any` element (e.g.
