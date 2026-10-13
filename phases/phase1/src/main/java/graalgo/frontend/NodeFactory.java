@@ -3409,7 +3409,14 @@ public final class NodeFactory {
             case "copy" -> buildCopyBuiltin(args, f, ctx, path);
             case "delete" -> {
                 requireArgs(path, builtin, args, 2);
-                yield new DeleteNode(args[0], args[1]);
+                GoExprNode delKey = args[1];
+                int dtid = args[0].typeId();
+                if (dtid >= 0 && kindOf(ctx, dtid, path) == GoKind.MAP) {
+                    // P3-M9 (bug-028): the key must be converted to the
+                    // map's key type (interface boxing for map[any]).
+                    delKey = convertMapKey(delKey, dtid, ctx, path);
+                }
+                yield new DeleteNode(args[0], delKey);
             }
             case "clear" -> {
                 requireArgs(path, builtin, args, 1);
@@ -4503,6 +4510,12 @@ public final class NodeFactory {
                     throw new FrontendException(path + ": index container without a type id (WS E)");
                 }
                 lhs.containerKind = kindOf(ctx, ctid, path);
+                if (lhs.containerKind == GoKind.MAP) {
+                    // P3-M9 (bug-028): the key must be converted to the
+                    // map's key type (interface boxing for map[any]), not
+                    // boxed at its static kind.
+                    lhs.key = convertMapKey(lhs.key, ctid, ctx, path);
+                }
                 lhs.elemTypeId = lf.intValue("type", path);
                 lhs.elemKind = kindOf(ctx, lhs.elemTypeId, path);
             }
@@ -4629,6 +4642,13 @@ public final class NodeFactory {
         if ("index".equals(vk)) {
             GoExprNode container = buildExpr(vf.object("x", path), ctx);
             GoExprNode key = buildExpr(vf.object("index", path), ctx);
+            int ctid = container.typeId();
+            if (ctid >= 0 && kindOf(ctx, ctid, path) == GoKind.MAP) {
+                // P3-M9 (bug-028): convert the key to the map's key type
+                // before the tmp slot is allocated, so the slot kind
+                // matches the converted key.
+                key = convertMapKey(key, ctid, ctx, path);
+            }
             int tmpC = newTmp(container.kind(), ctx);
             int tmpK = newTmp(key.kind(), ctx);
             prog.add(new AssignNode(tmpC, container.kind(), container, false));
@@ -5401,6 +5421,17 @@ public final class NodeFactory {
                 for (int i = 0; i < ks.size(); i++) {
                     keyNodes[i] = buildExpr(asObject(ks.get(i), path + ".keys[" + i + "]"), ctx);
                 }
+                if ("map".equals(ek)) {
+                    // P3-M9 (bug-028): map literal keys must be converted
+                    // to the map's key type (interface boxing for
+                    // map[any]), like the index-expression paths.
+                    int keyTid = compDetail.intValue("key", path);
+                    GoKind keyKind = kindOf(ctx, keyTid, path);
+                    for (int i = 0; i < keyNodes.length; i++) {
+                        keyNodes[i] = maybeConvert(keyNodes[i], keyKind, keyTid, ctx,
+                                path + ".keys[" + i + "]");
+                    }
+                }
             }
         }
         GoExprNode lit = switch (ek) {
@@ -5459,6 +5490,25 @@ public final class NodeFactory {
         return lit;
     }
 
+    /**
+     * Converts a map index key to the map's key type (P3-M9, bug-028).
+     * Go's index expression must be assignable to the key type; for an
+     * interface key type this boxes the key into a {@link GoInterface}
+     * carrying the dynamic type descriptor. Without this, the key was
+     * boxed at its static kind: {@code m[1]} and {@code m[int64(1)]} on a
+     * {@code map[any]} both canonicalized to {@code Long(1)} in
+     * {@link MapKeys#box} and silently aliased, because Go's rule — the
+     * dynamic type is part of an interface key's identity — was lost.
+     * {@link #maybeConvert} is a no-op when the kinds already agree, so
+     * concrete-keyed maps are unaffected.
+     */
+    private GoExprNode convertMapKey(GoExprNode key, int mapTypeId, BuildCtx ctx, String path) {
+        Json.Object detail = underlyingEntry(ctx, mapTypeId, path).object("detail", path);
+        int keyTid = detail.intValue("key", path);
+        GoKind keyKind = kindOf(ctx, keyTid, path);
+        return maybeConvert(key, keyKind, keyTid, ctx, path);
+    }
+
     private GoExprNode buildIndex(Json.Object node, BuildCtx ctx) {
         Json.Object f = fieldsOf(node, "index");
         String path = "index.fields";
@@ -5469,6 +5519,9 @@ public final class NodeFactory {
             throw new FrontendException(path + ": index container without a type id (WS E)");
         }
         GoKind containerKind = kindOf(ctx, ctid, path);
+        if (containerKind == GoKind.MAP) {
+            key = convertMapKey(key, ctid, ctx, path);
+        }
         int elemTid = f.intValue("type", path);
         GoKind elemKind = kindOf(ctx, elemTid, path);
         GoStructDescriptor elemDesc =
