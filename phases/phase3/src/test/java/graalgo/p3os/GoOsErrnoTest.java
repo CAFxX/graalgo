@@ -195,6 +195,26 @@ public final class GoOsErrnoTest {
         checkEq(GoOs.EPIPE, GoOs.errno(new IOException("Broken pipe")), "broken pipe");
     }
 
+    public void testErrnoTooManyOpenFiles() {
+        // M10 (P3-M10 WS J, self-attack D3): fd exhaustion must map to
+        // EMFILE (per-process, e.g. ulimit) / ENFILE (system-wide), not
+        // EIO — gc surfaces these distinctly and Go code branches on
+        // them (e.g. syscall retry predicates).
+        checkEq(GoOs.EMFILE, GoOs.errno(new IOException("Too many open files")),
+                "per-process fd exhaustion");
+        checkEq(GoOs.ENFILE, GoOs.errno(new IOException("Too many open files in system")),
+                "system-wide fd exhaustion");
+        // Case-insensitive like the broken-pipe check.
+        checkEq(GoOs.EMFILE, GoOs.errno(new IOException("too many open files")),
+                "lowercase variant");
+        // FileChannel.open reports EMFILE as FileSystemException (with
+        // the path and reason), not plain IOException — the branch that
+        // actually fires in production.
+        checkEq(GoOs.EMFILE,
+                GoOs.errno(new FileSystemException("/tmp/x", null, "Too many open files")),
+                "FileSystemException variant");
+    }
+
     public void testErrnoGenericIo() {
         checkEq(GoOs.EIO, GoOs.errno(new IOException("disk exploded")), "generic io error");
     }
