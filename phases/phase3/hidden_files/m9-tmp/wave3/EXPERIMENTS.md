@@ -140,3 +140,5 @@ OPEN:
 4. Also fixed latent bug: unwrap() never copied dst→out, always returned empty (broke post-handshake Read).
 
 **Verification:** GMP=1 01_handshake.go EXIT=0, output byte-identical to gc 1.27.1 (7 lines). GMP=2/4 reliability pending (timing-dependent).
+
+| 49 | Rebase onto m9 + re-verify | Rebases 38 commits onto m9@a11ba03 (P0 fixes + CI) with zero conflicts. Rebuilt. GMP=1 handshake re-verified: PASS byte-identical to gc 1.27.1. | Lane ready for integration. | 20m |
