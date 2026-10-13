@@ -32,12 +32,7 @@
 #   corpus differentials). It takes 30+ minutes and runs in local
 #   verification and nightly runs, not per-push. Invoke it explicitly.
 #
-# KNOWN PRE-EXISTING FAILURE (not introduced by CI): `make check` currently
-# fails the phase3 placeholder gate on two TODOs in
-# [phases/phase3/src/main/java/graalgo/p3tls/TlsRuntime.java](phases/phase3/src/main/java/graalgo/p3tls/TlsRuntime.java)
-# (synthetic crypto/tls markers, commit af0238a). These are owned by the
-# x509 lane, which is replacing the synthetic implementation. CI is red on
-# this until that lane lands — this is the gate working as designed.
+
 
 # Generated artifacts and their generators (standing order: every generated
 # file committed to the repo must list its generator here; `make all`
