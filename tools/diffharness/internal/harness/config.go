@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 )
@@ -115,7 +117,19 @@ func LoadConfig(path string) (*Config, error) {
 		for k, v := range b.Vars {
 			ev := os.ExpandEnv(v)
 			if strings.TrimSpace(ev) == "" {
-				ev = strings.ToLower(k) // e.g. GO -> "go" resolved via PATH
+				if k == "GO" {
+					// GO is used as {GO}/bin/go in templates; resolve the
+					// actual binary via PATH and derive the root.
+					if p, err := exec.LookPath("go"); err == nil {
+						if ap, err := filepath.Abs(p); err == nil {
+							p = ap
+						}
+						ev = filepath.Dir(filepath.Dir(p))
+					}
+				}
+				if ev == "" {
+					ev = strings.ToLower(k) // e.g. FOO -> "foo" via PATH
+				}
 			}
 			b.Vars[k] = ev
 		}
