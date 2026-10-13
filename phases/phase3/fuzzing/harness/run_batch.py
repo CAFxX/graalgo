@@ -16,7 +16,8 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-GR = os.environ.get("GR", os.path.expanduser("~/workspace/graalgo-m9"))
+# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
+GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
 
 

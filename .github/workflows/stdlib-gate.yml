@@ -1,0 +1,56 @@
+# Layer 3 — stdlib + scripts per-release gate (phases/phase3/PLAN.md §5,
+# GG-0029/GG-0032): wave1/wave2/wave3 corpora differential vs stock gc.
+#
+# Cadence: weekly (the per-release gate — releases cut from a green gate)
+# plus manual dispatch. Hours-scale by design; the four-way triage per red
+# (graalgo bug / upstream change / backend-specific+reason-code /
+# nondeterminism-normalization) is recorded in the run's report.json.
+name: stdlib-gate
+
+on:
+  schedule:
+    # Weekly per-release gate: Sunday 03:00 UTC.
+    - cron: '0 3 * * 0'
+  workflow_dispatch:
+
+jobs:
+  stdlib-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export GRAALVM_HOME
+        run: echo "GRAALVM_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+
+      - name: Export GO for the Makefiles
+        run: echo "GO=$(which go)" >> "$GITHUB_ENV"
+
+      - name: Layer 3 — stdlib gate (wave corpora differential)
+        env:
+          GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
+          JAVA_BIN: "${{ env.JAVA_HOME }}/bin/java"
+        run: |
+          mkdir -p "$GO_BIN_DIR"
+          ln -sf "$(which go)" "$GO_BIN_DIR/go"
+          ./phases/phase3/stdlib/run_stdlib_gate.sh
+
+      - name: Upload gate report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stdlib-gate-report
+          path: phases/phase3/hidden_files/testing/layer3-*/
+          if-no-files-found: warn

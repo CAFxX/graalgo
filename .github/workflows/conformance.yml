@@ -1,0 +1,55 @@
+# Layer 2 — conformance (phases/phase3/PLAN.md §5, GG-0029/GG-0032):
+# GOROOT/test language suite (356 files), per-commit on frontend changes.
+#
+# The srctest adapter (tools/diffharness/internal/srctest) classifies every
+# file (run / errorcheck / structural exclusions) and runs the
+# language-conformance subset differential gc vs graalgo through the shared
+# diffharness oracle. Exclusions are versioned and reason-coded in
+# tools/diffharness/srctest-exclusions.yaml (GG-0033).
+name: conformance
+
+on:
+  push:
+    paths:
+      - 'phases/phase1/frontend/**'
+      - 'tools/diffharness/**'
+  pull_request:
+    paths:
+      - 'phases/phase1/frontend/**'
+      - 'tools/diffharness/**'
+  workflow_dispatch:
+
+jobs:
+  conformance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export GRAALVM_HOME
+        run: echo "GRAALVM_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+
+      - name: Export GO for the Makefiles
+        run: echo "GO=$(which go)" >> "$GITHUB_ENV"
+
+      - name: Build phase 1 (graalgo-run backend)
+        run: make -C phases/phase1 main
+
+      - name: Conformance differential (GOROOT/test vs gc)
+        # actions/setup-go ships a full GOROOT including test/.
+        env:
+          DH_TIMEOUT: "90"
+          JOBS: "4"
+        run: ./tools/diffharness/run_conformance.sh

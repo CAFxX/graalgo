@@ -4,9 +4,21 @@
 # differently from what's committed, the build fails.
 #
 # SCOPE (see [Makefile](../../Makefile) header): per-push CI runs the fast subset
-# (generate/build/check/test-ci). The full differential suite
-# (`make test`, 30+ min) is excluded from per-push CI by design — it runs
-# in local verification and nightly runs. This is documented, not skipped.
+# (generate/build/check/test-ci) plus the testing-strategy layers at their
+# cadence (phases/phase3/PLAN.md §5):
+#   layer 1 (smoke):            per-commit  — diffharness smoke corpus,
+#                               mutation-validated oracle (this job)
+#   layer 2 (conformance):      per-commit on frontend changes —
+#                               GOROOT/test language suite (`conformance` job,
+#                               paths-filtered)
+#   layer 3 (stdlib+scripts):   per-release gate — wave corpora differential
+#                               (`stdlib-gate.yml`: weekly + manual dispatch)
+#   layer 4 (fuzz soak):        overnight per release — generative
+#                               differential fuzzing (`fuzz-soak.yml`:
+#                               nightly + manual dispatch)
+# The full differential suite (`make test`, 30+ min) is excluded from
+# per-push CI by design — it runs in local verification and the weekly
+# full-suite job. This is documented, not skipped.
 name: ci
 
 on:
@@ -20,7 +32,7 @@ on:
 jobs:
   build-and-check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -50,6 +62,17 @@ jobs:
 
       - name: Fail on drift (generated files differ from committed)
         run: git diff --exit-code
+
+      - name: Layer 1 — smoke (diffharness, per-commit)
+        # Curated differential smoke corpus (46 programs, gc-a vs gc-b vs
+        # graalgo-P3SyncMain) with mutation-validated oracles. PHASE3_DIR
+        # defaults to this repo's phases/phase3 (the graalgo-sync-run
+        # product launcher); DH_GO falls back to PATH (setup-go).
+        # DH_TIMEOUT=90 gives the JVM backend headroom on shared runners.
+        # `make all` above built phases 1+2+3 (required by the backend).
+        env:
+          DH_TIMEOUT: "90"
+        run: ./tools/diffharness/run.sh
 
   full-suite:
     # The long differential suite, excluded from per-push CI by design

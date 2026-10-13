@@ -39,8 +39,8 @@ GR="${GR:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
 P3="$GR/phases/phase3"
 P2="$GR/phases/phase2"
 P1="$GR/phases/phase1"
-export PATH="$HOME/tools/go/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
+export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
+JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
 # Tmp discipline (corpus/wave2/README.md): never write to /tmp.
 export TMPDIR="$P3/hidden_files/m8-tmp/wave2"

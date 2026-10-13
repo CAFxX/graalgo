@@ -29,6 +29,7 @@ import (
 
 	"diffharness/internal/harness"
 	"diffharness/internal/mutate"
+	"diffharness/internal/srctest"
 	"diffharness/internal/typeparam"
 )
 
@@ -47,6 +48,8 @@ func main() {
 		err = cmdValidate(os.Args[2:])
 	case "typeparam":
 		err = cmdTypeparam(os.Args[2:])
+	case "srctest":
+		err = cmdSrctest(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -58,13 +61,15 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam> [flags]
+	fmt.Fprintf(os.Stderr, `usage: diffharness <run|mutate|validate|typeparam|srctest> [flags]
 
   run      -config PATH -corpus DIR -out PATH [-timeout SEC]
   mutate   -corpus DIR -class CLASS -target PROG [-out FILE]
   validate -config PATH -corpus DIR -mutations FILE -workdir DIR [-out PATH] [-timeout SEC]
   typeparam scan -dir DIR -exclusions FILE -out PATH
   typeparam run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH]
+  srctest scan -dir DIR -exclusions FILE -out PATH
+  srctest run  -dir DIR -exclusions FILE -out PATH [-jobs N] [-ref NAME] [-alt NAME] [-config PATH] [-timeout SEC]
 `)
 }
 
@@ -497,6 +502,125 @@ func cmdTypeparamRun(args []string) error {
 		return err
 	}
 	fmt.Printf("typeparam run: %d comparisons, %d diverged, %d excluded, report %s\n",
+		len(comps), div, skipped, *out)
+	if div > 0 {
+		return fmt.Errorf("%d divergences", div)
+	}
+	return nil
+}
+
+// cmdSrctest implements the GOROOT/test differential adapter (conformance
+// layer: PLAN.md §5 layer 2, GG-0029/GG-0032). Modes mirror typeparam.
+func cmdSrctest(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("srctest needs a mode: scan|run")
+	}
+	switch args[0] {
+	case "scan":
+		return cmdSrctestScan(args[1:])
+	case "run":
+		return cmdSrctestRun(args[1:])
+	default:
+		return fmt.Errorf("unknown srctest mode %q (want scan|run)", args[0])
+	}
+}
+
+func cmdSrctestScan(args []string) error {
+	fs := flag.NewFlagSet("srctest scan", flag.ExitOnError)
+	dir := fs.String("dir", "", "GOROOT/test directory")
+	exclusions := fs.String("exclusions", "", "versioned exclusion YAML (GG-0033)")
+	out := fs.String("out", "", "scan JSON output path")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" || *out == "" {
+		return fmt.Errorf("-dir and -out are required")
+	}
+	var excl map[string]typeparam.Exclusion
+	if *exclusions != "" {
+		_, excl2, err := typeparam.LoadExclusions(*exclusions)
+		if err != nil {
+			return err
+		}
+		excl = excl2
+	}
+	files, err := srctest.Scan(*dir, excl)
+	if err != nil {
+		return err
+	}
+	byClass := map[string]int{}
+	for _, f := range files {
+		byClass[f.Class]++
+	}
+	fmt.Printf("srctest scan: %d files, classes=%v\n", len(files), byClass)
+	return typeparam.WriteScanJSON(*out, files)
+}
+
+func cmdSrctestRun(args []string) error {
+	fs := flag.NewFlagSet("srctest run", flag.ExitOnError)
+	dir := fs.String("dir", "", "GOROOT/test directory")
+	exclusions := fs.String("exclusions", "", "versioned exclusion YAML (GG-0033)")
+	out := fs.String("out", "", "report JSON output path")
+	jobs := fs.Int("jobs", 4, "parallel programs")
+	refName := fs.String("ref", "gc-a", "reference backend name")
+	altName := fs.String("alt", "graalgo", "alternate backend name")
+	config := fs.String("config", "", "backend config JSON (default: backends.json next to the exclusions file)")
+	timeout := fs.Int("timeout", 0, "per-program timeout seconds (0 = config default)")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *dir == "" || *exclusions == "" || *out == "" {
+		return fmt.Errorf("-dir, -exclusions and -out are required")
+	}
+	if *jobs < 1 {
+		return fmt.Errorf("-jobs must be >= 1, got %d", *jobs)
+	}
+	_, excl, err := typeparam.LoadExclusions(*exclusions)
+	if err != nil {
+		return err
+	}
+	cfgPath := *config
+	if cfgPath == "" {
+		cfgPath = filepath.Join(filepath.Dir(*exclusions), "backends.json")
+	}
+	cfg, err := harness.LoadConfig(cfgPath)
+	if err != nil {
+		return err
+	}
+	if *timeout > 0 {
+		cfg.TimeoutSec = *timeout
+	}
+	files, err := srctest.Scan(*dir, excl)
+	if err != nil {
+		return err
+	}
+	comps, err := typeparam.Run(cfg, files, *refName, *altName, *jobs)
+	if err != nil {
+		return err
+	}
+	div := 0
+	for _, c := range comps {
+		status := "SAME    "
+		if !c.Same {
+			status = "DIVERGE "
+			div++
+		}
+		fmt.Printf("%s %s", status, c.Program)
+		for _, r := range c.Reasons {
+			fmt.Printf("\n           - %s", r)
+		}
+		fmt.Println()
+	}
+	skipped := 0
+	for _, f := range files {
+		if strings.HasPrefix(f.Class, "exclude") {
+			skipped++
+		}
+	}
+	if err := typeparam.WriteReportJSON(*out, comps, skipped); err != nil {
+		return err
+	}
+	fmt.Printf("srctest run: %d comparisons, %d diverged, %d excluded, report %s\n",
 		len(comps), div, skipped, *out)
 	if div > 0 {
 		return fmt.Errorf("%d divergences", div)

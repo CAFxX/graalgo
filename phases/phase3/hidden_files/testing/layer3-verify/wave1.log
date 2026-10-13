@@ -1,0 +1,5 @@
+== building phase-3 java module ==
+SCOPE-LIMITED strings/03_builder: implicit address-of on method receiver (b.WriteByte on an addressable value needs implicit &); the exporter fails fast by design (WS D limitation) — keep the exporter fail-fast, do not weaken it [retest: WS D lands implicit &/deref on method calls (P3-M8+); then re-run this program differentially]
+SCOPE-LIMITED strings/07_combined: implicit address-of on method receiver (b.WriteByte on an addressable value needs implicit &); the exporter fails fast by design (WS D limitation) — keep the exporter fail-fast, do not weaken it [retest: WS D lands implicit &/deref on method calls (P3-M8+); then re-run this program differentially]
+SCOPE-LIMITED strings/09_panic_title: strings.Title is fail-fast (deprecated upstream; needs unicode tables not in M7 scope) [retest: unicode tables land (P3-M8+); then re-run this program differentially]
+== differential: 76 passed, 3 scope-limited, 0 failed ==

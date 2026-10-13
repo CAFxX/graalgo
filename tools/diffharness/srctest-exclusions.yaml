@@ -1,0 +1,137 @@
+# GOROOT/test conformance exclusions (conformance layer, GG-0033).
+#
+# Versioned, reason-coded per GG-0033: backend-specific / unspecified-behavior /
+# deferred-parity. Structural exclusions (build constraints, non-main packages,
+# stdlib imports, concurrency) are classified by the srctest adapter itself;
+# this file is for per-file triage of differential divergences (four-way triage
+# per PLAN §5: graalgo bug / upstream change / backend-specific+reason-code /
+# nondeterminism-normalization).
+#
+# version history:
+#   1 (2026-10-13): initial triage — 39 divergences from the 2026-10-13 differential.
+#       F-1..F-6 are graalgo bugs filed for the frontend/scheduler lanes.
+version: 1
+exclusions:
+- file: 235.go
+  reason: backend-specific
+  detail: F-2: named result assignment frontend bug (reference to unknown object id)
+- file: alg.go
+  reason: backend-specific
+  detail: map key of kind ARRAY not supported in Phase 1
+- file: bigmap.go
+  reason: backend-specific
+  detail: map key of kind ARRAY not supported in Phase 1
+- file: closure2.go
+  reason: backend-specific
+  detail: range variable *ast.IndexExpr not in frontend/v1 scope (WS D)
+- file: complit2.go
+  reason: backend-specific
+  detail: frontend scope gap (composite literal)
+- file: const3.go
+  reason: backend-specific
+  detail: const type info propagation gap
+- file: convert4.go
+  reason: backend-specific
+  detail: frontend type error (conversion scope gap)
+- file: convert5.go
+  reason: backend-specific
+  detail: frontend type error (conversion scope gap)
+- file: ddd.go
+  reason: backend-specific
+  detail: method call on non-named receiver (WS H)
+- file: devirt.go
+  reason: backend-specific
+  detail: ifacemethod expression kind not supported
+- file: divmod.go
+  reason: backend-specific
+  detail: multi-valued call result not in frontend/v1 scope (WS D)
+- file: func.go
+  reason: backend-specific
+  detail: frontend scope gap
+- file: func6.go
+  reason: backend-specific
+  detail: frontend scope gap
+- file: inline_caller.go
+  reason: backend-specific
+  detail: frontend type error (inlining scope)
+- file: inline_callers.go
+  reason: backend-specific
+  detail: frontend type error (inlining scope)
+- file: method.go
+  reason: backend-specific
+  detail: method call on non-named receiver struct{main.T} (WS H)
+- file: method3.go
+  reason: backend-specific
+  detail: identifier T denotes *types.TypeName (method scope)
+- file: method5.go
+  reason: backend-specific
+  detail: interface method with 2 results not supported
+- file: method7.go
+  reason: backend-specific
+  detail: method expression via interface not supported
+- file: nilptr.go
+  reason: backend-specific
+  detail: & on *ast.ParenExpr not in frontend/v1 scope (WS D)
+- file: nilptr4.go
+  reason: backend-specific
+  detail: frontend scope gap (nil pointer)
+- file: peano.go
+  reason: backend-specific
+  detail: frontend type error
+- file: range4.go
+  reason: backend-specific
+  detail: range variable *ast.StarExpr not in frontend/v1 scope
+- file: recover1.go
+  reason: backend-specific
+  detail: frontend type error (recover scope)
+- file: rename.go
+  reason: backend-specific
+  detail: frontend type error
+- file: slicecap.go
+  reason: backend-specific
+  detail: frontend scope gap
+- file: uintptrescapes3.go
+  reason: backend-specific
+  detail: frontend scope gap (uintptr)
+- file: unsafe_string.go
+  reason: backend-specific
+  detail: frontend scope gap (unsafe)
+- file: defer.go
+  reason: backend-specific
+  detail: F-3: variadic interface forwarding bug (fmt.Sprint(v...) gives [9][8] not 98)
+- file: defernil.go
+  reason: backend-specific
+  detail: F-3: variadic interface forwarding bug (same root cause)
+- file: literal2.go
+  reason: backend-specific
+  detail: F-5: complex number comparison bug ((0+1.8e308i) != itself)
+- file: newexpr.go
+  reason: backend-specific
+  detail: F-4: new(x) with non-constant x returns zero value
+- file: solitaire.go
+  reason: backend-specific
+  detail: F-6: peg-solitaire solver finds no solution (search divergence)
+- file: zerosize.go
+  reason: unspecified-behavior
+  detail: pointer equality for zero-size allocations is unspecified
+- file: nilptr2.go
+  reason: unspecified-behavior
+  detail: prints pointer address (absolute addresses excluded per GG-0030)
+- file: gc.go
+  reason: deferred-parity
+  detail: runtime.GC needs the GC interop layer (Phase 2)
+- file: maymorestack.go
+  reason: deferred-parity
+  detail: runtime.KeepAlive needs the GC interop layer (Phase 2)
+- file: stackobj.go
+  reason: deferred-parity
+  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
+- file: stackobj2.go
+  reason: deferred-parity
+  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
+- file: stackobj3.go
+  reason: deferred-parity
+  detail: runtime.SetFinalizer needs the GC interop layer (Phase 2)
+- file: print.go
+  reason: unspecified-behavior
+  detail: builtin println of pointers/interfaces prints absolute addresses (excluded per GG-0030)

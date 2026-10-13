@@ -1,0 +1,80 @@
+# Layer 4 — fuzz soak (phases/phase3/PLAN.md §5, GG-0037): generative
+# differential fuzzing + native testing.F differential fuzzing, overnight
+# per release.
+#
+# Cadence: nightly (the overnight per-release soak) plus manual dispatch.
+# Each run: seeded program generation + differential harness batches
+# (run_soak.sh) and the native testing.F targets with differential replay
+# (fuzz/run_fuzz_native.sh). Minimized divergences become permanent
+# regressions per SPEC §5.4 (phases/phase3/fuzzing/findings/).
+#
+# The continuous adversarial track reserves the same interface:
+# run_soak.sh --seeds A:B runs one bounded batch.
+name: fuzz-soak
+
+on:
+  schedule:
+    # Nightly overnight soak: 01:00 UTC.
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+    inputs:
+      hours:
+        description: 'Soak duration in hours'
+        required: false
+        default: '6'
+
+jobs:
+  fuzz-soak:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export GRAALVM_HOME
+        run: echo "GRAALVM_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.1'
+
+      - name: Export GO for the Makefiles
+        run: echo "GO=$(which go)" >> "$GITHUB_ENV"
+
+      - name: Layer 4a — generative soak (seeded programs, differential)
+        env:
+          GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
+          JAVA_BIN: "${{ env.JAVA_HOME }}/bin/java"
+          JOBS: "4"
+        run: |
+          mkdir -p "$GO_BIN_DIR"
+          ln -sf "$(which go)" "$GO_BIN_DIR/go"
+          ./phases/phase3/fuzzing/run_soak.sh \
+            --hours "${{ inputs.hours || '6' }}" \
+            --out "$GITHUB_WORKSPACE/fuzz-soak-out"
+
+      - name: Layer 4b — native testing.F differential fuzzing
+        env:
+          GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
+          JOBS: "4"
+        run: |
+          ./tools/diffharness/fuzz/run_fuzz_native.sh \
+            --fuzztime 120 \
+            --out "$GITHUB_WORKSPACE/fuzz-native-out"
+
+      - name: Upload soak reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-soak-report
+          path: |
+            fuzz-soak-out/
+            fuzz-native-out/
+          if-no-files-found: warn
