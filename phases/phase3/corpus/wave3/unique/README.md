@@ -1,7 +1,7 @@
 # wave-3 `unique` corpus
 
 Differential corpus for the P3-M9 synthetic `unique` package
-(`phases/phase1/frontend/synth_unique.go`): exact gc 1.27.1 API
+(`internal/frontend/synth_unique.go`): exact gc 1.27.1 API
 (`Handle[T comparable]`, `Make[T comparable](value T) Handle[T]`,
 `(Handle[T]).Value() T`), real-Go canonicalization over a
 mutex-guarded map.

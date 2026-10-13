@@ -5,7 +5,7 @@ package p3frontend
 // signatures (it cannot reuse them — unexported); this mirror pins the
 // signatures so drift fails fast.
 //
-// The signatures match phases/phase1/frontend/synth_sort.go exactly,
+// The signatures match internal/frontend/synth_sort.go exactly,
 // which carries the exact gc 1.27.1 public API (sort.go, search.go,
 // slice.go). go1.27.1's sort has no generic top-level functions (those
 // live in `slices`), so the whole surface is non-generic. Unexported

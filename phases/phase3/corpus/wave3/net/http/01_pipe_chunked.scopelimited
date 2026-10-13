@@ -1,2 +1,2 @@
 reason: no synthetic net/http source in frontend/v1 (imports are not supported in frontend/v1 scope — WS G import overlay); M9 tier-5 package work
-retest: synthetic net/http source lands in phases/phase1/frontend
+retest: synthetic net/http source lands in internal/frontend

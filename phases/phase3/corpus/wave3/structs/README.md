@@ -1,7 +1,7 @@
 # wave-3 `structs` corpus
 
 Differential corpus for the P3-M9 synthetic `structs` package
-(`phases/phase1/frontend/synth_structs.go`): exact gc 1.27.1 API — the
+(`internal/frontend/synth_structs.go`): exact gc 1.27.1 API — the
 single marker type `HostLayout`.
 
 ## Scope boundary

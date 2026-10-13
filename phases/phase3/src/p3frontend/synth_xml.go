@@ -5,7 +5,7 @@ package p3frontend
 // synthetic signatures (it cannot reuse them — unexported and frozen);
 // this mirror pins the signatures so drift fails fast.
 //
-// The signatures match phases/phase1/frontend/synth_xml.go exactly (the
+// The signatures match internal/frontend/synth_xml.go exactly (the
 // M7 honest subset: token stream over the structural Reader/Writer,
 // fail-fast reflect-driven members).
 

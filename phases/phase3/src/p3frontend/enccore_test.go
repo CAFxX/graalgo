@@ -6,7 +6,7 @@ package p3frontend
 // these tests pin the mirrors against the REAL phase-1 synthetic sources
 // so drift fails fast.
 //
-// The drift oracle type-checks phases/phase1/frontend/synth_*.go. pem's
+// The drift oracle type-checks internal/frontend/synth_*.go. pem's
 // source imports synthetic encoding/base64, resolved here to the real
 // phase-1 base64 source (the bytes->errors precedent).
 
@@ -135,12 +135,12 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 		// P3-M8: the base32 synthetic source imports io (streaming API).
 		if p == "io" {
 			return phase1SyntheticPackageForTest(t,
-				"../../../phase1/frontend/synth_io.go",
+				"../../../../internal/frontend/synth_io.go",
 				"syntheticIoSource", "io", imp), nil
 		}
 		if p == "errors" {
 			return phase1SyntheticPackageForTest(t,
-				"../../../phase1/frontend/synth_errors.go",
+				"../../../../internal/frontend/synth_errors.go",
 				"syntheticErrorsSource", "errors", imp), nil
 		}
 		if p == "sync" {
@@ -152,7 +152,7 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 		return nil, fmt.Errorf("unexpected synthetic import %q", p)
 	})
 	return phase1SyntheticPackageForTest(t,
-		"../../../phase1/frontend/"+ec.srcFile, ec.constName, path, imp)
+		"../../../../internal/frontend/"+ec.srcFile, ec.constName, path, imp)
 }
 
 // encCoreNamedMethods returns the EXPORTED methods of a named type (the

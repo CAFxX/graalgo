@@ -1,7 +1,7 @@
 # P3-M7 wave-1 corpus: encoding/ascii85
 
 Differential tests for the synthetic `encoding/ascii85` package
-(`phases/phase1/frontend/synth_ascii85.go`).
+(`internal/frontend/synth_ascii85.go`).
 
 ## Programs
 

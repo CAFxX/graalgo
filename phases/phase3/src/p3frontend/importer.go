@@ -298,7 +298,7 @@ func (imp *Importer) Files(path string) []*ast.File { return imp.files[path] }
 
 // ---------------------------------------------------------------------------
 // Synthetic packages: exact frozen signatures (INTERFACE_FREEZE.md;
-// phases/phase1/frontend/export.go's overlayImporter, reimplemented).
+// internal/frontend/export.go's overlayImporter, reimplemented).
 // ---------------------------------------------------------------------------
 
 // syntheticRuntimePackage mirrors the frozen synthetic "runtime": Goexit,
@@ -393,7 +393,7 @@ var syncMethodSpecs = map[string][]struct {
 }
 
 // syntheticSyncPackage mirrors the frozen P3-M2b synthetic "sync"
-// (phases/phase1/frontend/export.go's syntheticSyncPackage, reimplemented
+// (internal/frontend/export.go's syntheticSyncPackage, reimplemented
 // — the frozen original is unexported, so this is matched, not reused).
 // All methods have pointer receivers with exact gc 1.27.1 signatures.
 func syntheticSyncPackage() *types.Package {
@@ -453,7 +453,7 @@ func syncLockerInterface(pkg *types.Package) types.Type {
 }
 
 // syntheticAtomicPackage mirrors the frozen P3-M4 synthetic "sync/atomic"
-// (phases/phase1/frontend/export.go's syntheticAtomicPackage, reimplemented
+// (internal/frontend/export.go's syntheticAtomicPackage, reimplemented
 // — the frozen original is unexported, so this is matched, not reused).
 // The six typed wrappers with exact gc 1.27.1 method signatures (pointer
 // receivers), plus the package-level functions with exact signatures.
@@ -549,7 +549,7 @@ func syntheticAtomicPackage() *types.Package {
 }
 
 // syntheticUnsafePackage mirrors the frozen P3-M4 empty synthetic "unsafe"
-// (phases/phase1/frontend/export.go's syntheticUnsafePackage): it exists
+// (internal/frontend/export.go's syntheticUnsafePackage): it exists
 // only so `import _ "unsafe"` (required by //go:linkname directives)
 // type-checks.
 func syntheticUnsafePackage() *types.Package {

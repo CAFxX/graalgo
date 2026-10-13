@@ -1,6 +1,6 @@
 # iter corpus (P3-M9 wave 3, tier-1a)
 
-Differential corpus for the synthetic `iter` package (extended in phases/phase1/frontend/synth_reflect.go).
+Differential corpus for the synthetic `iter` package (extended in internal/frontend/synth_reflect.go).
 
 ## Coverage
 - `01_pull.go`: `iter.Pull` with `slices.Values`

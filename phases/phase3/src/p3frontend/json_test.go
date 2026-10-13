@@ -6,7 +6,7 @@ package p3frontend
 // pins the mirror so drift fails fast.
 //
 // The test extracts the syntheticJsonSource const from
-// phases/phase1/frontend/synth_json.go, type-checks it, and compares the
+// internal/frontend/synth_json.go, type-checks it, and compares the
 // mirror (syntheticJsonPackage) declaration-by-declaration against the
 // resulting *types.Package: every exported type (with methods), function,
 // and var must match in name and signature.
@@ -28,7 +28,7 @@ import (
 // fast here instead of silently diverging.
 func phase1SyntheticJsonPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../phase1/frontend/synth_json.go"
+	srcPath := "../../../../internal/frontend/synth_json.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

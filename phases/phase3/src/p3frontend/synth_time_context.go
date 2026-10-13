@@ -5,7 +5,7 @@ package p3frontend
 // exporter's synthetic signatures (it cannot reuse them — unexported and
 // frozen); these mirrors pin the signatures so drift fails fast.
 //
-// The signatures match phases/phase1/frontend/synth_time_context.go
+// The signatures match internal/frontend/synth_time_context.go
 // exactly (not gc's real packages — the synthetic Time is
 // struct{unixnano int64; isSet bool}, Context.Done returns
 // chan struct{}, etc.).

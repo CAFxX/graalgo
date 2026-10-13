@@ -6,7 +6,7 @@ package p3frontend
 // pin the mirror so drift fails fast.
 //
 // The drift oracle is the REAL phase-1 synthetic source
-// (phases/phase1/frontend/synth_bytes.go, syntheticBytesSource const):
+// (internal/frontend/synth_bytes.go, syntheticBytesSource const):
 // the test type-checks it and compares the mirror declaration-by-
 // declaration (name + signature). A phase-1-side change fails fast here
 // instead of silently diverging.
@@ -25,7 +25,7 @@ import (
 // imports "errors", resolved to the synthetic errors mirror.
 func phase1SyntheticBytesPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../phase1/frontend/synth_bytes.go"
+	srcPath := "../../../../internal/frontend/synth_bytes.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

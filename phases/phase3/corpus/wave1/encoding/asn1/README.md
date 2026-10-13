@@ -1,7 +1,7 @@
 # P3-M7 wave-1 corpus: encoding/asn1
 
 Differential tests for the synthetic `encoding/asn1` package
-(`phases/phase1/frontend/synth_asn1.go`).
+(`internal/frontend/synth_asn1.go`).
 
 ## Programs
 

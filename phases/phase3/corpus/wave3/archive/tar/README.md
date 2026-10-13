@@ -35,6 +35,6 @@ Pure Go over `bytes.Buffer`; no filesystem, no network.
 - No synthetic `archive/tar` source exists in frontend/v1, so all
   programs are `.scopelimited`; the gc leg validates each is real
   deterministic Go with exit 0. `retest:` synthetic `archive/tar`
-  lands in `phases/phase1/frontend`, coordinated with the parallel
+  lands in `internal/frontend`, coordinated with the parallel
   `compress/*` worker (the tar corpus exercises the std reader/writer
   only; no compress imports in the corpus programs themselves).

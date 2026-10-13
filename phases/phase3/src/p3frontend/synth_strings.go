@@ -5,7 +5,7 @@ package p3frontend
 // signatures (it cannot reuse them — unexported); this mirror pins the
 // signatures so drift fails fast.
 //
-// The signatures match phases/phase1/frontend/synth_strings.go exactly
+// The signatures match internal/frontend/synth_strings.go exactly
 // (the full gc 1.27.1 in-scope API: ~50 functions plus Builder, Replacer,
 // Reader with all methods). Unexported implementation types
 // (stringsCaseRange, stringsTrieNode, ...) are not visible to user code

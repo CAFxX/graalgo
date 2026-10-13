@@ -7,7 +7,7 @@ package p3frontend
 // so drift fails fast.
 //
 // Each test extracts the syntheticCsvSource / syntheticGobSource const
-// from phases/phase1/frontend/synth_enc_csv_gob.go, type-checks it, and
+// from internal/frontend/synth_enc_csv_gob.go, type-checks it, and
 // compares the mirror (syntheticCsvPackage / syntheticGobPackage)
 // declaration-by-declaration against the resulting *types.Package: every
 // exported type (with exported struct fields and methods), function, and
@@ -48,7 +48,7 @@ func csvGobTestImporter() types.Importer {
 func phase1SyntheticCsvPackage(t *testing.T) *types.Package {
 	t.Helper()
 	return phase1SyntheticPackageForTest(t,
-		"../../../phase1/frontend/synth_enc_csv_gob.go", "syntheticCsvSource",
+		"../../../../internal/frontend/synth_enc_csv_gob.go", "syntheticCsvSource",
 		"encoding/csv", csvGobTestImporter())
 }
 
@@ -57,7 +57,7 @@ func phase1SyntheticCsvPackage(t *testing.T) *types.Package {
 func phase1SyntheticGobPackage(t *testing.T) *types.Package {
 	t.Helper()
 	return phase1SyntheticPackageForTest(t,
-		"../../../phase1/frontend/synth_enc_csv_gob.go", "syntheticGobSource",
+		"../../../../internal/frontend/synth_enc_csv_gob.go", "syntheticGobSource",
 		"encoding/gob", csvGobTestImporter())
 }
 

@@ -1,7 +1,7 @@
 # P3-M7 wave-1 corpus: strings
 
 Differential tests for the synthetic `strings` package
-(`phases/phase1/frontend/synth_strings.go`).
+(`internal/frontend/synth_strings.go`).
 
 ## Programs
 

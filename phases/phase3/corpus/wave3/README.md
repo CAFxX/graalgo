@@ -41,7 +41,7 @@ the tmp discipline, the shared-runner model) plus the wave-3 delta
 
 ## Tier-1d packages (this worker: embed, structs, unique, weak, internal/*)
 
-- `unique`: synthetic adapter (`phases/phase1/frontend/synth_unique.go`,
+- `unique`: synthetic adapter (`internal/frontend/synth_unique.go`,
   real-Go canonicalization map, exact gc 1.27.1 API). Corpus is fully
   differential: canonicalization/equality/`Value` across int, string,
   struct, array, bool types; concurrent `Make` from 8 goroutines

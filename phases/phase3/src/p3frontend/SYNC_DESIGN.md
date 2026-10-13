@@ -30,7 +30,7 @@ phase-3 module via the public `registerExprKind` hook:
 Old consumers reject both as unknown per freeze §2.3. `toolVersion`
 0.2.0 → 0.3.0 per freeze §5.
 
-## 3. Exporter (`phases/phase1/frontend/export.go`, documented exception)
+## 3. Exporter (`internal/frontend/export.go`, documented exception)
 
 The synthetic `sync` package lives in `overlayImporter` with the four
 named types and exact gc 1.27.1 method signatures (pointer receivers).

@@ -1,7 +1,7 @@
 # P3-M7 wave-1 corpus: encoding/binary
 
 Differential tests for the synthetic `encoding/binary` package
-(`phases/phase1/frontend/synth_binary.go`).
+(`internal/frontend/synth_binary.go`).
 
 ## Programs
 

@@ -6,7 +6,7 @@ package p3frontend
 // pins the mirror so drift fails fast.
 //
 // The test extracts the syntheticStrconvSource const from
-// phases/phase1/frontend/synth_strconv.go, type-checks it, and compares the
+// internal/frontend/synth_strconv.go, type-checks it, and compares the
 // mirror (syntheticStrconvPackage) declaration-by-declaration against the
 // resulting *types.Package: every exported type (with methods), function,
 // var, and const must match in name and signature.
@@ -26,7 +26,7 @@ import (
 // test's importer.
 func phase1SyntheticErrorsPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../phase1/frontend/synth_errors.go"
+	srcPath := "../../../../internal/frontend/synth_errors.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {
@@ -87,7 +87,7 @@ func phase1SyntheticErrorsPackage(t *testing.T) *types.Package {
 // fast here instead of silently diverging.
 func phase1SyntheticStrconvPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../phase1/frontend/synth_strconv.go"
+	srcPath := "../../../../internal/frontend/synth_strconv.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

@@ -10,7 +10,7 @@ package p3frontend
 // bytes mirror used unexported byteReader/byteWriter stand-ins that
 // drifted from the phase-1 source).
 //
-// The signatures match phases/phase1/frontend/synth_io.go exactly.
+// The signatures match internal/frontend/synth_io.go exactly.
 
 import (
 	"go/token"

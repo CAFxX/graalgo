@@ -1,7 +1,7 @@
 # P3-M7 wave-1 corpus: bytes
 
 Differential tests for the synthetic `bytes` package
-(`phases/phase1/frontend/synth_bytes.go`).
+(`internal/frontend/synth_bytes.go`).
 
 ## Programs
 

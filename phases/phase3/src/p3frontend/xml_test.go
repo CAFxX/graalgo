@@ -6,7 +6,7 @@ package p3frontend
 // pins the mirror so drift fails fast.
 //
 // The test extracts the syntheticXmlSource const from
-// phases/phase1/frontend/synth_xml.go, type-checks it, and compares the
+// internal/frontend/synth_xml.go, type-checks it, and compares the
 // mirror (syntheticXmlPackage) declaration-by-declaration against the
 // resulting *types.Package: every exported type (with methods), function,
 // and var must match in name and signature.
@@ -28,7 +28,7 @@ import (
 // fast here instead of silently diverging.
 func phase1SyntheticXmlPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../phase1/frontend/synth_xml.go"
+	srcPath := "../../../../internal/frontend/synth_xml.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {
