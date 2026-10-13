@@ -1,0 +1,228 @@
+mkdir -p out/classes
+/home/hatch/tools/graalvm-jdk-25/bin/javac -version
+javac 25.0.4
+/home/hatch/tools/graalvm-jdk-25/bin/javac -Xlint:deprecation -Werror -cp "../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar" -processorpath "../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar" \
+	-d out/classes src/main/java/graalgo/jfr/ChannelBlockEvent.java src/main/java/graalgo/jfr/ChannelOp.java src/main/java/graalgo/jfr/GoroutineEndEvent.java src/main/java/graalgo/jfr/GoroutineParkEvent.java src/main/java/graalgo/jfr/GoroutineStartEvent.java src/main/java/graalgo/jfr/JfrEvents.java src/main/java/graalgo/jfr/ParkReason.java src/main/java/graalgo/runtime/ChanOps.java src/main/java/graalgo/runtime/GcInterop.java src/main/java/graalgo/runtime/GoChan.java src/main/java/graalgo/runtime/GoStrings.java src/main/java/graalgo/runtime/GoTimer.java src/main/java/graalgo/runtime/GoroutineState.java src/main/java/graalgo/runtime/Netpoll.java src/main/java/graalgo/runtime/Panic.java src/main/java/graalgo/runtime/Scheduler.java src/main/java/graalgo/runtime/SelectOp.java src/main/java/graalgo/runtime/TimerChan.java src/main/java/graalgo/runtime/TimerHeap.java src/main/java/graalgo/runtime/Timers.java src/main/java/graalgo/runtime/sync/GoMutex.java src/main/java/graalgo/runtime/sync/GoOnce.java src/main/java/graalgo/runtime/sync/GoRWMutex.java src/main/java/graalgo/runtime/sync/GoWaitGroup.java src/main/java/graalgo/safepoint/Safepoint.java src/main/java/graalgo/sched/Drainer.java src/main/java/graalgo/sched/GoroutineHandle.java src/main/java/graalgo/sched/ResumeToken.java src/main/java/graalgo/sched/SchedTrace.java src/main/java/graalgo/sched/SchedulerCore.java src/main/java/graalgo/sched/audit/PinAudit.java src/main/java/graalgo/sched/launcher/GcTrace.java src/main/java/graalgo/sched/launcher/GoDebug.java src/main/java/graalgo/sched/launcher/SchedMain.java src/main/java/graalgo/sched/nodes/GoStatementNode.java
+touch out/classes/.built
+mkdir -p out/test-classes
+/home/hatch/tools/graalvm-jdk-25/bin/javac -Xlint:deprecation -Werror -cp "out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar" -d out/test-classes src/test/java/graalgo/jfr/JfrEventsTest.java src/test/java/graalgo/jfr/JfrRegistrationTest.java src/test/java/graalgo/runtime/FreezeGapTest.java src/test/java/graalgo/runtime/GcDifferentialTest.java src/test/java/graalgo/runtime/GcInteropTest.java src/test/java/graalgo/runtime/GcTortureTest.java src/test/java/graalgo/runtime/GcVisibilityTest.java src/test/java/graalgo/runtime/PanicOverlayDriftTest.java src/test/java/graalgo/runtime/TimerTest.java src/test/java/graalgo/runtime/sync/SyncStressTest.java src/test/java/graalgo/sched/ChannelDifferentialTest.java src/test/java/graalgo/sched/ChannelTest.java src/test/java/graalgo/sched/IoSlotsTest.java src/test/java/graalgo/sched/JfrParkCostTest.java src/test/java/graalgo/sched/SchedTestRunner.java src/test/java/graalgo/sched/SchedulerCoreTest.java src/test/java/graalgo/sched/TimerDifferentialTest.java src/test/java/graalgo/sched/WakeupModelTest.java src/test/java/graalgo/sched/WakeupRaceStressTest.java src/test/java/graalgo/sched/audit/PinAuditTest.java src/test/java/graalgo/sched/launcher/GoDebugTest.java src/test/java/graalgo/sched/torture/TortureBattery.java
+touch out/test-classes/.built
+mkdir -p out/test-tmp
+TMPDIR="/home/hatch/workspace/worktrees/graalgo/m9-acceptance/phases/phase2/out/test-tmp" GOTMPDIR="/home/hatch/workspace/worktrees/graalgo/m9-acceptance/phases/phase2/out/test-tmp" \
+/home/hatch/tools/graalvm-jdk-25/bin/java -Djava.io.tmpdir="/home/hatch/workspace/worktrees/graalgo/m9-acceptance/phases/phase2/out/test-tmp" --enable-native-access=ALL-UNNAMED -Xss32m \
+-cp "out/test-classes:out/classes:../phase1/out/classes:../phase1/lib/collections-25.0.4.1.1.jar:../phase1/lib/graal-sdk-25.0.4.1.1.jar:../phase1/lib/nativeimage-25.0.4.1.1.jar:../phase1/lib/polyglot-25.0.4.1.1.jar:../phase1/lib/truffle-api-25.0.4.1.1.jar:../phase1/lib/truffle-dsl-processor-25.0.4.1.1.jar:../phase1/lib/truffle-runtime-25.0.4.1.1.jar" graalgo.sched.SchedTestRunner
+PASS JfrRegistrationTest.testEnsureRegisteredInitializesEventClasses
+PASS JfrRegistrationTest.testAllEventSubclassesRegistered
+PASS PinAuditTest.testDetectsGenuinePin
+PASS PinAuditTest.testAllowlistMarksExpected
+PASS PinAuditTest.testAllowlistThreadPrefixMismatch
+PASS SchedulerCoreTest.testSpawnAndJoin
+PASS SchedulerCoreTest.testQuiescenceAt10k
+PASS SchedulerCoreTest.testParkUnpark
+PASS SchedulerCoreTest.testUnparkBeforePark
+PASS SchedulerCoreTest.testAckBeforeUnparkStress
+PASS SchedulerCoreTest.testCapExceededHardAsserts
+PASS SchedulerCoreTest.testCapEnforcedUnderLoad
+PASS SchedulerCoreTest.testQuantumExpiryPreempts
+PASS SchedulerCoreTest.testSafepointPollWiring
+PASS SchedulerCoreTest.testDrainerLaneOrder
+PASS SchedulerCoreTest.testWakeActionSurvivesUnparkBeforePark
+panic: (string) 0xADDR
+
+goroutine 10270 [running]:
+PASS SchedulerCoreTest.testSpawnedPanicRecorded
+graalgo-run: fatal internal error in goroutine: java.lang.IllegalStateException: synthetic internal error
+PASS SchedulerCoreTest.testSpawnedRuntimeExceptionRecorded
+PASS SchedulerCoreTest.testYieldCurrent
+PASS SchedulerCoreTest.testDrainerSurvivesInterrupt
+PASS ChannelTest.testUnbufferedSendRecv
+PASS ChannelTest.testBufferedFifo
+PASS ChannelTest.testBufferedBlocksWhenFull
+PASS ChannelTest.testBlockedSendDoesNotPinCarrier
+PASS ChannelTest.testCloseWakesReceiver
+PASS ChannelTest.testCloseWakesSenderToPanic
+PASS ChannelTest.testSendOnClosedPanics
+PASS ChannelTest.testCloseOfClosedPanics
+PASS ChannelTest.testRecvOnClosedDrainsThenZero
+PASS ChannelTest.testLenCap
+PASS ChannelTest.testSelectRecvChoosesReady
+PASS ChannelTest.testSelectDefault
+PASS ChannelTest.testSelectDefaultLosesToReady
+PASS ChannelTest.testSelectBlocksUntilReady
+PASS ChannelTest.testSelectFairness
+PASS ChannelTest.testSelectSendHandoff
+PASS ChannelTest.testSelectWakesOnClose
+PASS ChannelTest.testSelectCloseWhileParked
+PASS ChannelTest.testSelectPoisonBeforeDefault
+PASS ChannelTest.testSelectPoisonIgnoredWhenReady
+PASS ChannelTest.testSelectSendOnClosedPanics
+PASS ChannelTest.testSelectRacyCompleteNoStaleWakeup
+PASS ChannelTest.testSelectSameChannelTwice
+PASS ChannelTest.testCloseWakesMultipleReceivers
+PASS ChannelTest.testPingPongStress
+PASS ChannelDifferentialTest.testCh01Unbuffered
+PASS ChannelDifferentialTest.testCh02Buffered
+PASS ChannelDifferentialTest.testCh03CloseDrain
+PASS ChannelDifferentialTest.testCh04ProducerConsumer
+PASS ChannelDifferentialTest.testCh05SelectRecv
+PASS ChannelDifferentialTest.testCh06SelectDefault
+PASS ChannelDifferentialTest.testCh07SelectSend
+PASS ChannelDifferentialTest.testCh08CloseWhileBlocked
+PASS ChannelDifferentialTest.testCh09SendOnClosedPanic
+PASS ChannelDifferentialTest.testCh10CloseOfClosedPanic
+PASS ChannelDifferentialTest.testCh11SelectPoisonDefault
+PASS ChannelDifferentialTest.testCh12SelectPoisonReady
+PASS IoSlotsTest.testIoEnterReleasesSlot
+PASS IoSlotsTest.testIoExitReacquiresSlot
+PASS IoSlotsTest.testReentrantIoEnterFails
+PASS IoSlotsTest.testUnpairedIoExitFails
+PASS IoSlotsTest.testDrainerRejectsUnpairedIoExit
+PASS IoSlotsTest.testDrainerRejectsDuplicateIoEnter
+PASS IoSlotsTest.testDrainerRejectsExitWhileInIo
+PASS IoSlotsTest.testDrainerRejectsParkedWhileInIo
+PASS TimerDifferentialTest.testTm01SleepOrder
+PASS TimerDifferentialTest.testTm02AfterTimeout
+PASS TimerDifferentialTest.testTm03AfterValue
+PASS TimerDifferentialTest.testTm04TimerStop
+PASS TimerDifferentialTest.testTm05TimerStopAfterFire
+PASS TimerDifferentialTest.testTm06TimerResetActive
+PASS TimerDifferentialTest.testTm07TimerResetExpired
+PASS TimerDifferentialTest.testTm08TimerResetUndrained
+PASS TimerDifferentialTest.testTm09Ticker
+PASS TimerDifferentialTest.testTm10TickerDrop
+PASS TimerDifferentialTest.testTm11SelectAfterBoth
+PASS TimerDifferentialTest.testTm12SleepZero
+PASS TimerDifferentialTest.testTm13TickerStopBuffered
+PASS TimerDifferentialTest.testTm14TickerResetBuffered
+PASS TimerDifferentialTest.testTm15TimerChanLenCap
+PASS GoDebugTest.testRegistryVersion
+PASS GoDebugTest.testRegistryKnobHash
+PASS GoDebugTest.testEveryKnobHasJustification
+PASS GoDebugTest.testRegistryKnobCount
+PASS GoDebugTest.testUnknownKnobDenied
+PASS GoDebugTest.testNearMissKnobDenied
+PASS GoDebugTest.testBareFieldDenied
+PASS GoDebugTest.testMalformedValueDenied
+PASS GoDebugTest.testUnsupportedDeniedWhenNonDefault
+PASS GoDebugTest.testUnsupportedAcceptedWhenDefault
+PASS GoDebugTest.testNoopAccepted
+PASS GoDebugTest.testEmulatedParsed
+PASS GoDebugTest.testLaterOverridesEarlier
+PASS GoDebugTest.testRemovedOldValueDenied
+PASS GoDebugTest.testRemovedNewValueAccepted
+PASS GoDebugTest.testEmptyEnv
+PASS GoDebugTest.testCgocheck2Denied
+PASS GoDebugTest.testNonAsciiDigitsDenied
+PASS GoDebugTest.testMemprofilerateHugeAccepted
+PASS GoDebugTest.testNegativeSchedtraceMeansOff
+PASS GoDebugTest.testPanicnil2MeansNewBehavior
+PASS GoDebugTest.testApplySettingsInstalls
+PASS GoDebugTest.testUnknownKnobDeniesAtStartup
+PASS GoDebugTest.testUnsupportedDeniesAtStartup
+PASS GoDebugTest.testPanicnilUncaughtRendering
+PASS GoDebugTest.testPanicnilUncaughtDefaultNotNil
+PASS GoDebugTest.testSchedtraceEmitsLines
+PASS TimerTest.testSleepReleasesSlot
+PASS TimerTest.testSleepZeroImmediate
+PASS TimerTest.testSleepOrder
+PASS TimerTest.testAfterFires
+PASS TimerTest.testTimerStopActive
+PASS TimerTest.testTimerStopUndrained
+PASS TimerTest.testTimerStopDrained
+PASS TimerTest.testTimerResetActive
+PASS TimerTest.testTimerResetExpiredDrained
+PASS TimerTest.testTimerResetExpiredUndrained
+PASS TimerTest.testTickerFires
+PASS TimerTest.testTickerDropsSlowReceiver
+PASS TimerTest.testTickerZeroPanics
+PASS TimerTest.testTickerStopDrainsBufferedTick
+PASS TimerTest.testTickerResetDrainsStaleTick
+PASS TimerTest.testTimerStopAfterFireDrains
+PASS TimerTest.testNoTickAfterStopStress
+PASS TimerTest.testTickZeroReturnsNull
+PASS TimerTest.testTickerResetZeroPanics
+PASS TimerTest.testTimerResetZeroFiresImmediately
+PASS TimerTest.testStartStopTimerFrozen
+PASS TimerTest.testStartTimerFires
+PASS TimerTest.testStartTimerCallbackOnTimerThread
+graalgo-timer: callback threw: java.lang.RuntimeException: boom
+PASS TimerTest.testThrowingCallbackDoesNotKillTimerThread
+PASS TimerTest.testNetpollDeletion
+PASS FreezeGapTest.testFrozenTimerSignatures
+PASS FreezeGapTest.testFrozenNetpollSignatures
+PASS PanicOverlayDriftTest.testOverlayMatchesPhase1Surface
+PASS GcInteropTest.testWeakRefLifecycle
+PASS GcInteropTest.testMemStatsFields
+PASS GcInteropTest.testMemStatsForcedGcCount
+PASS GcInteropTest.testKeepAliveNoop
+PASS GcInteropTest.testSetFinalizerValidation
+PASS GcInteropTest.testSetFinalizerRemoveAbsent
+PASS GcInteropTest.testGcReturnsPromptly
+PASS GcDifferentialTest.testGc01Finalizer
+PASS GcDifferentialTest.testGc02FinalizerRemove
+PASS GcDifferentialTest.testGc03KeepAlive
+PASS GcDifferentialTest.testGc04GcHint
+PASS GcDifferentialTest.testGc05FinalizerReplace
+PASS GcDifferentialTest.testGc06FinalizerPanicIsLoud
+PASS GcDifferentialTest.testGc07FinalizerGatedOnExplicitGc
+PASS GcDifferentialTest.testCorpusComplete
+PASS GcTortureTest.testChannelParkRootEnumeration
+PASS GcTortureTest.testTimerParkRootEnumeration
+PASS GcTortureTest.testQuantumParkRootEnumeration
+PASS GcVisibilityTest.testStructFieldVisibility
+PASS GcVisibilityTest.testSliceBackingArrayVisibility
+PASS GcVisibilityTest.testArrayListVisibility
+PASS GcVisibilityTest.testHashMapVisibility
+PASS GcVisibilityTest.testGoPointerVisibility
+PASS GcVisibilityTest.testInterfaceBoxVisibility
+PASS JfrEventsTest.testEventsFlow
+PASS JfrEventsTest.testIoParkSpansSyscall
+PASS JfrEventsTest.testNoEventsWhenDisabled
+PASS JfrEventsTest.testHotLoopParkFilter
+JFR disabled guard cost: 83.686862 ns/park (nanoTime: 95.119696 ns)
+PASS JfrEventsTest.testDisabledGuardCostNegligible
+PASS SyncStressTest.testMutexExclusion
+PASS SyncStressTest.testMutexCapOne
+PASS SyncStressTest.testMutexUnlockOfUnlockedPanics
+PASS SyncStressTest.testRWMutex
+PASS SyncStressTest.testOnce
+PASS SyncStressTest.testWaitGroup
+PASS SyncStressTest.testWaitGroupNegativePanics
+PASS SyncStressTest.testWaitGroupZeroAwaitImmediate
+  [model] basic: 22 states, 2 terminals, no lost wakeup
+PASS WakeupModelTest.testModelBasicParkUnpark
+  [model] cross: 528 states, 6 terminals, no lost wakeup
+PASS WakeupModelTest.testModelCrossWake
+  [model] threeway: 12365 states, 8 terminals, no lost wakeup
+PASS WakeupModelTest.testModelThreeWay
+  [model] quantum: 7 states, 1 terminals, no lost wakeup
+PASS WakeupModelTest.testModelQuantumNoUnpark
+  [model] io: 9 states, 1 terminals, no lost wakeup
+PASS WakeupModelTest.testModelIoPair
+  [model] unpark-consumed-once: 22 states, 2 terminals, no lost wakeup
+PASS WakeupModelTest.testModelSingleUnparkDoublePark
+  [model] cap1-handoff: 224 states, 3 terminals, no lost wakeup
+PASS WakeupModelTest.testModelCapOneHandoff
+  [model] exit-pending-unpark: 17 states, 1 terminals, no lost wakeup
+PASS WakeupModelTest.testModelExitWithPendingUnpark
+  [model] unpark-during-quantum: 17 states, 1 terminals, no lost wakeup
+PASS WakeupModelTest.testModelUnparkDuringQuantum
+  [model] init-under-wake-flood: 2896 states, 3 terminals, no lost wakeup
+PASS WakeupModelTest.testModelInitUnderWakeFlood
+  [model] mixed-io-park: 339 states, 4 terminals, no lost wakeup
+PASS WakeupModelTest.testModelMixedIoAndPark
+  [model] unpark-io-park: 36 states, 2 terminals, no lost wakeup
+PASS WakeupModelTest.testModelUnparkThenIoThenPark
+PASS WakeupModelTest.testUnparkBeforeParkFastPath
+PASS WakeupModelTest.testParkBeforeUnparkDirectPath
+PASS WakeupModelTest.testDuplicateUnparkAdmittedOnce
+PASS WakeupModelTest.testStaleUnparkAfterRearm
+PASS WakeupModelTest.testModelDetectsWithheldUnpark
+PASS WakeupRaceStressTest.testThunderingHerd
+PASS WakeupRaceStressTest.testTimerStorm
+PASS WakeupRaceStressTest.testTinyQuantumWithChannels
+PASS WakeupRaceStressTest.testReceiverHerd
+JFR park-hook cost: disabled=52.283134ns/park enabled=180.567092ns/park (nanoTime: 128.935625ns)
+PASS JfrParkCostTest.testJfrParkPathCost
+194 tests, 0 failures
+test rc=0

@@ -1,0 +1,36 @@
+SKIP [0-9]* (gc build failed)
+PASS 00_pipe_rendezvous
+PASS 01_pipe_closewitherror
+PASS 02_pipe_partial_write
+PASS 03_pipe_close_errors
+PASS 04_section_seek
+PASS 05_section_overflow
+PASS 06_offsetwriter_seek
+SKIP 07_constructors (scope-limited)
+PASS 08_error_vars
+PASS 09_pipe_concurrent_writers
+PASS 10_section_seek_bounds
+PASS 11_pipe_empty_read
+PASS 12_copy_family
+PASS 13_readall_growth
+PASS 14_readatleast_edges
+PASS 15_iface_callsite
+PASS 16_writestring
+PASS 17_user_iface_dispatch
+PASS 00_file_rw
+PASS 01_errors
+PASS 02_dir_read
+PASS 03_stat
+PASS 04_path_ops
+PASS 05_env
+PASS 06_identity
+PASS 07_seek_truncate
+PASS 08_pipe
+PASS 09_file_modes
+PASS 10_args
+PASS 11_exit3
+PASS 12_stdio
+PASS 13_failfast
+PASS 14_epipe
+== 32 passed, 0 failed ==
+wave2 done rc=0

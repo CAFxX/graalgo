@@ -1,0 +1,10 @@
+PASS 01_compare
+PASS 02_less
+PASS 03_or
+FAIL 00_roundtrip_levels: TIMEOUT
+PASS 01_streaming
+PASS 02_dict
+PASS 03_corrupt
+PASS 04_adversarial
+== 7 passed, 1 failed ==
+wave3 done rc=0
