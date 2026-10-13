@@ -1042,7 +1042,7 @@ the exclusions list).
 - **§19:30 false claims corrected in place:** the "Verified green" line now
   names only the 7 files the completed differential actually verified, and a
   correction block names typeswitch1.go / typeswitch2.go as EXCLUDED
-  (case-T descriptor-identity; residual CCE f[float64](int8(9))) — not green.
+  (case-T descriptor-identity; residual CCE `f[float64](int8(9))`) — not green.
 
 ## 2026-10-04 ~22:00 CEST — M6 remediation progress
 

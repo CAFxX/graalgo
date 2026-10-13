@@ -62,7 +62,7 @@ carrier thread to the virtual thread so `synchronized` no longer pins
   from this survey); smearing is a subsumed detail of that.
 - **Superword auto-vectorization**: C2's SLP pass vectorizes across *unrolled* loop
   bodies (`superword.cpp`); it interacts with strip mining (JDK-8247838 crash: null
-  `_next` after strip mining — [bugs.java.com](https://bugs.java.com/bugdatabase/view_bug?bug_id=8247838)).
+  `_next` after strip mining — [bugs.java.com](https://bugs.openjdk.org/browse/JDK-8247838)).
   **Transfer verdict: complementary angle (ABLE) for the backlog vectorization track** — two
   process notes: (1) vectorize over the unrolled body shape, not the source loop shape;
   (2) the vectorizer and the loop-restructuring passes must be tested *jointly* (their

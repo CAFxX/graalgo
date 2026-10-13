@@ -1,0 +1,22 @@
+# Markdown link check — per project standing order (2026-10-12): every
+# file/directory named in our docs must be a clickable link that works on
+# GitHub. This workflow fails on broken relative links, dangling #anchors,
+# and dead external URLs. Runs on push/PR and weekly.
+name: markdown-links
+
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  links:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check markdown links
+        run: python3 .github/scripts/check_markdown_links.py

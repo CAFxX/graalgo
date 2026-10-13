@@ -1,0 +1,78 @@
+# graalgo CI — per project standing order (2026-10-12): runs `make all`
+# (regenerate generated artifacts + build + gates + fast tests) and then
+# `git diff --exit-code`: if `make all` regenerates any tracked file
+# differently from what's committed, the build fails.
+#
+# SCOPE (see [Makefile](../../Makefile) header): per-push CI runs the fast subset
+# (generate/build/check/test-ci). The full differential suite
+# (`make test`, 30+ min) is excluded from per-push CI by design — it runs
+# in local verification and nightly runs. This is documented, not skipped.
+name: ci
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # Weekly full-suite run: the long differentials excluded from per-push CI.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+jobs:
+  build-and-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # Phase Makefiles honor GRAALVM_HOME and GO when set.
+      GRAALVM_HOME: ${{ env.JAVA_HOME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+
+      - name: Export GO for the Makefiles
+        run: echo "GO=$(which go)" >> "$GITHUB_ENV"
+
+      - name: make all (generate + build + check + fast tests)
+        run: make all
+
+      - name: Fail on drift (generated files differ from committed)
+        run: git diff --exit-code
+
+  full-suite:
+    # The long differential suite, excluded from per-push CI by design
+    # (Makefile header). Runs weekly and on manual dispatch.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      GRAALVM_HOME: ${{ env.JAVA_HOME }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up GraalVM JDK 25
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Go 1.27
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27'
+
+      - name: Export GO for the Makefiles
+        run: echo "GO=$(which go)" >> "$GITHUB_ENV"
+
+      - name: make test (full differential suite)
+        run: make test
