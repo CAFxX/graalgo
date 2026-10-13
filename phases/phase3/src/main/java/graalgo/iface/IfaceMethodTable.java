@@ -196,8 +196,12 @@ public final class IfaceMethodTable {
      *         or a method is missing — both unreachable for well-formed
      *         gofrontend ≥ 0.4.0 output (go/types verified assignability),
      *         so both fail fast instead of dispatching wrong.
+     *
+     * <p>Public for the reflect redispatch path (P3-M9 C-1 fix), which
+     * builds synthetic method funcs for embedded-interface-promoted
+     * methods outside the iface package.
      */
-    static IfaceItab itabFor(String descriptorName, int ifaceId, List<String> ifaceMethodNames) {
+    public static IfaceItab itabFor(String descriptorName, int ifaceId, List<String> ifaceMethodNames) {
         ItabKey key = new ItabKey(descriptorName, ifaceId);
         return itabs.computeIfAbsent(key,
                 k -> buildItab(descriptorName, ifaceId, ifaceMethodNames, table));

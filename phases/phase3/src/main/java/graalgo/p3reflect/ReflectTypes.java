@@ -1,10 +1,20 @@
 package graalgo.p3reflect;
 
+import com.oracle.truffle.api.frame.VirtualFrame;
+import com.oracle.truffle.api.nodes.RootNode;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.Json;
+import graalgo.frontend.SelectorNode;
 import graalgo.frontend.TypeTable;
+import graalgo.iface.IfaceItab;
+import graalgo.iface.IfaceMethodTable;
+import graalgo.iface.IfaceMethodTarget;
+import graalgo.runtime.GoCalls;
 import graalgo.values.GoFunc;
+import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
+import graalgo.values.GoPointer;
+import graalgo.values.GoTypeDescriptor;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -799,7 +809,7 @@ public final class ReflectTypes {
                 TypeInfo u = infoOrShell(table, types, shells, underlying, functions, funcdeclSig);
                 TypeInfo sh = shells[id];
                 List<MethodInfo> methods = readMethods(table, types, shells, d, path,
-                        functions, funcdeclSig);
+                        functions, funcdeclSig, sh);
                 // Named type size/align come from the underlying.
                 yield new TypeInfo(tok, u.kind, sh.name, sh.pkgPath, u.size, u.align,
                         u.elem, u.key, u.arrayLen, u.chanDir, u.fields, methods,
@@ -830,7 +840,7 @@ public final class ReflectTypes {
             case "pointer" -> {
                 TypeInfo elem = infoOrShell(table, types, shells, (int) d.longInt("elem", path), functions, funcdeclSig);
                 List<MethodInfo> methods = readMethods(table, types, shells, d, path,
-                        functions, funcdeclSig);
+                        functions, funcdeclSig, shells[id]);
                 yield new TypeInfo(tok, GoKind.POINTER, "", "", 8, 8,
                         elem, null, 0, null, List.of(), methods,
                         List.of(), List.of(), false, List.of(), "", id);
@@ -952,7 +962,8 @@ public final class ReflectTypes {
      */
     private static List<MethodInfo> readMethods(Table table, TypeTable types, TypeInfo[] shells,
             Json.Object d, String path,
-            Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
+            Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig,
+            TypeInfo receiver) {
         Json.Value mv = d.opt("methods");
         if (!(mv instanceof Json.Array methods) || methods.size() == 0) {
             return List.of();
@@ -962,14 +973,17 @@ public final class ReflectTypes {
             Json.Object m = arrObj(methods, i, path);
             String name = m.string("name", path);
             int objId = (int) m.longInt("obj", path);
-            // P3-M9: embedded-interface redispatch entries (obj -1, wire
-            // "embeddedIface") carry no GoFunc — there is no single
-            // function to invoke via reflection. They are omitted from
-            // the reflect method list, exactly as before they existed in
-            // the wire (the old exporter skipped them entirely); the
-            // itab path dispatches them. Anything else with an unknown
-            // obj id stays a loud failure below.
+            // P3-M9 (C-1 fix): embedded-interface redispatch entries
+            // (obj -1, wire "embeddedIface") carry no GoFunc, but reflect
+            // must list them — gc includes promoted methods in
+            // NumMethod/MethodByName. Build a MethodInfo with the
+            // interface method's signature (receiver prepended) and a
+            // synthetic GoFunc that performs the redispatch.
             if (objId == -1) {
+                MethodInfo redispatch = readRedispatchMethod(table, types, shells,
+                        path, functions, funcdeclSig, m, name, receiver,
+                        sorted.size());
+                sorted.put(name, redispatch);
                 continue;
             }
             String recv = m.string("recv", path);
@@ -997,10 +1011,255 @@ public final class ReflectTypes {
             TypeInfo funcType = infoOrShell(table, types, shells, sigId, functions, funcdeclSig);
             Json.Value ik = m.opt("implkey");
             String implKey = ik instanceof Json.Str s ? s.value() : name;
-            sorted.put(name, new MethodInfo(name, pkgPath, funcType, func,
+            // P3-M9 (C-1 follow-up): methods promoted via an embedded
+            // STRUCT field carry a non-empty wire "index" (embedding path).
+            // The GoFunc expects the embedded struct type as receiver, but
+            // reflect's Method.Func passes the outer struct. Wrap the func
+            // to follow the embedding path first. (Embedded INTERFACE
+            // promotion uses obj == -1 and is handled above.)
+            int[] embPath = readWireIndex(m, path);
+            GoFunc effectiveFunc = func;
+            TypeInfo effectiveFuncType = funcType;
+            if (embPath.length > 0) {
+                boolean isPointerRecv = "pointer".equals(recv);
+                effectiveFunc = makeStructEmbedWrapper(func, embPath, name, isPointerRecv);
+                // The func type's receiver must be the OUTER type (what
+                // reflect passes), not the embedded type. Rebuild with the
+                // receiver TypeInfo prepended.
+                List<TypeInfo> wrapperIns = new ArrayList<>();
+                wrapperIns.add(receiver);
+                wrapperIns.addAll(funcType.ins.subList(1, funcType.ins.size()));
+                int wrapperTok = table.byTok.size();
+                effectiveFuncType = new TypeInfo(wrapperTok, GoKind.FUNC, "", "", 8, 8,
+                        null, null, 0, null, List.of(), List.of(),
+                        List.copyOf(wrapperIns), funcType.outs, funcType.variadic,
+                        List.of(), "", funcType.wireId);
+                table.byTok.add(effectiveFuncType);
+            }
+            sorted.put(name, new MethodInfo(name, pkgPath, effectiveFuncType, effectiveFunc,
                     "pointer".equals(recv), sorted.size(), implKey));
         }
         return List.copyOf(sorted.values());
+    }
+
+    /**
+     * Builds a MethodInfo for an embedded-interface redispatch entry
+     * (obj -1, wire "embeddedIface"; P3-M9 C-1 fix).
+     *
+     * <p>The method is promoted via an embedded interface field (e.g.
+     * {@code (*crypto/tls.listener).Addr} from the embedded
+     * {@code net.Listener}). Its signature is resolved from the embedded
+     * interface's type-table entry; the receiver type is prepended to
+     * form the method's func type. The GoFunc is synthetic: it reads the
+     * embedding path to the interface field value and dispatches the
+     * method on it, mirroring IfaceDispatchNode's redispatch.
+     */
+    private static MethodInfo readRedispatchMethod(Table table, TypeTable types,
+            TypeInfo[] shells, String path,
+            Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig,
+            Json.Object m, String name, TypeInfo receiver, int index) {
+        // PkgPath for unexported methods (same rule as ordinary methods).
+        Json.Value pp = m.opt("pkgpath");
+        String pkgPath;
+        if (pp instanceof Json.Str s) {
+            pkgPath = s.value();
+        } else if (!name.isEmpty() && Character.isLowerCase(name.charAt(0))) {
+            pkgPath = "<unknown>";
+        } else {
+            pkgPath = "";
+        }
+
+        // Embedded interface type-table id (frontend invariant: present
+        // exactly when obj == -1).
+        Json.Value embv = m.opt("embeddedIface");
+        if (!(embv instanceof Json.Num n)) {
+            throw new FrontendException(path + ": reflect: method \"" + name
+                    + "\" has obj -1 but no embeddedIface (exporter bug)");
+        }
+        int embeddedIfaceId = (int) n.asLong(path);
+
+        // Embedding path from the wire "index" array.
+        int[] embPath = readWireIndex(m, path);
+
+        // Resolve the method's signature from the embedded interface's
+        // type-table entry (detail.methods[] carries name/sig/implkey).
+        String ipath = "types[" + embeddedIfaceId + "]";
+        Json.Object ientry = types.entry(embeddedIfaceId, ipath);
+        Json.Object idetail = ientry.object("detail", ipath);
+        Json.Value imv = idetail.opt("methods");
+        if (!(imv instanceof Json.Array imethods)) {
+            throw new FrontendException(path + ": reflect: embeddedIface "
+                    + embeddedIfaceId + " has no methods list");
+        }
+        Integer sigId = null;
+        List<String> embMethodNames = new ArrayList<>();
+        for (int i = 0; i < imethods.size(); i++) {
+            Json.Object im = arrObj(imethods, i, ipath);
+            String iname = im.string("name", ipath);
+            embMethodNames.add(iname);
+            if (name.equals(iname)) {
+                Json.Value sv = im.opt("sig");
+                if (sv instanceof Json.Num sn) {
+                    sigId = (int) sn.asLong(ipath);
+                }
+            }
+        }
+        if (sigId == null) {
+            throw new FrontendException(path + ": reflect: method \"" + name
+                    + "\" not found in embeddedIface " + embeddedIfaceId);
+        }
+
+        // Func type: interface signature with the receiver prepended.
+        // (Interface method signatures never declare a receiver.)
+        // The synthetic TypeInfo is registered in the table so its token
+        // is valid for reflect boxing (Method.Func.Type etc.).
+        TypeInfo sigInfo = infoOrShell(table, types, shells, sigId, functions, funcdeclSig);
+        List<TypeInfo> ins = new ArrayList<>();
+        ins.add(receiver);
+        ins.addAll(sigInfo.ins);
+        int funcTok = table.byTok.size();
+        TypeInfo funcType = new TypeInfo(funcTok, GoKind.FUNC, "", "", 8, 8,
+                null, null, 0, null, List.of(), List.of(),
+                List.copyOf(ins), sigInfo.outs, sigInfo.variadic,
+                List.of(), "", sigId);
+        table.byTok.add(funcType);
+
+        GoFunc func = makeRedispatchFunc(name, embPath, embeddedIfaceId,
+                List.copyOf(embMethodNames));
+
+        Json.Value ik = m.opt("implkey");
+        String implKey = ik instanceof Json.Str s ? s.value() : name;
+        // Redispatch entries hardcode recv "value" in the exporter.
+        return new MethodInfo(name, pkgPath, funcType, func, false, index, implKey);
+    }
+
+    /** Reads a wire "index" int array (embedding path); null → null. */
+    private static int[] readWireIndex(Json.Object eo, String path) {
+        Json.Value iv = eo.opt("index");
+        if (iv == null || iv instanceof Json.Null) {
+            return new int[0];
+        }
+        if (!(iv instanceof Json.Array arr)) {
+            throw new FrontendException(path + ": \"index\" must be an array");
+        }
+        int[] out = new int[arr.size()];
+        for (int i = 0; i < arr.size(); i++) {
+            Json.Value e = arr.get(i);
+            if (!(e instanceof Json.Num num)) {
+                throw new FrontendException(path + ": \"index\" entries must be numbers");
+            }
+            out[i] = (int) num.asLong(path);
+        }
+        return out;
+    }
+
+    /**
+     * Wraps a GoFunc for a method promoted via an embedded STRUCT field
+     * (P3-M9 C-1 follow-up).
+     *
+     * <p>The wrapped func expects the embedded struct type as receiver,
+     * but reflect's Method.Func passes the outer struct value. This wrapper
+     * follows the embedding path to extract the embedded value, then
+     * invokes the inner func with it as receiver.
+     *
+     * <p>args[0] is the GoFunc itself (prepended by GoCalls.invoke);
+     * args[1] is the outer receiver; args[2..] are method arguments.
+     *
+     * <p>For pointer-receiver methods, the embedded value is wrapped in a
+     * GoPointer. Note: this points to a copy, not the field itself, so
+     * mutations won't write back to the outer struct. This matches the
+     * pre-existing value semantics for embedded fields via reflect; the
+     * alternative (crash) is strictly worse.
+     */
+    private static GoFunc makeStructEmbedWrapper(GoFunc inner, int[] embPath,
+            String methodName, boolean pointerReceiver) {
+        RootNode root = new RootNode(null) {
+            @Override
+            public Object execute(VirtualFrame frame) {
+                Object[] args = frame.getArguments();
+                Object recv = args[1];
+                Object data = recv instanceof GoPointer gp ? gp.referent() : recv;
+                Object embedded = SelectorNode.readFieldPath(data, embPath, false);
+                Object effectiveRecv = embedded;
+                if (pointerReceiver && !(embedded instanceof GoPointer)) {
+                    // Pointer-receiver method needs *Inner; wrap the value.
+                    effectiveRecv = new GoPointer(embedded);
+                }
+                Object[] callArgs = new Object[args.length - 1];
+                callArgs[0] = effectiveRecv;
+                System.arraycopy(args, 2, callArgs, 1, args.length - 2);
+                return GoCalls.invoke(inner, callArgs);
+            }
+        };
+        return new GoFunc(root.getCallTarget(), null);
+    }
+
+    /**
+     * Builds a synthetic GoFunc that dispatches a promoted method via the
+     * embedded interface field (P3-M9 C-1 fix).
+     *
+     * <p>args[0] is the receiver (struct value or pointer to struct);
+     * args[1..] are the method arguments. The function reads the embedding
+     * path to the interface field value, builds the inner itab, and
+     * invokes the method — mirroring IfaceDispatchNode's redispatch loop,
+     * including chaining through nested embedded interfaces.
+     */
+    private static GoFunc makeRedispatchFunc(String methodName, int[] embPath,
+            int embeddedIfaceId, List<String> embMethodNames) {
+        RootNode root = new RootNode(null) {
+            @Override
+            public Object execute(VirtualFrame frame) {
+                Object[] args = frame.getArguments();
+                // GoCalls.invoke prepends the GoFunc itself as args[0];
+                // args[1] is the receiver, args[2..] are method arguments.
+                Object recv = args[1];
+                Object data = recv instanceof GoPointer gp ? gp.referent() : recv;
+                Object fieldVal = SelectorNode.readFieldPath(data, embPath, false);
+                if (!(fieldVal instanceof GoInterface gi)) {
+                    throw new FrontendException("reflect: redispatch method \""
+                            + methodName + "\": embedded field is not an interface value");
+                }
+                // Dispatch on the interface value's itab, chaining through
+                // nested embedded-interface redispatches if needed.
+                Object curData = gi.data();
+                String descName = ((GoTypeDescriptor) gi.descriptor()).name();
+                IfaceItab itab = IfaceMethodTable.itabFor(descName, embeddedIfaceId,
+                        embMethodNames);
+                IfaceMethodTarget target = itab.methods().get(methodName);
+                if (target == null) {
+                    throw new FrontendException("reflect: redispatch method \""
+                            + methodName + "\" missing from itab for \"" + descName + "\"");
+                }
+                while (target.isEmbeddedRedispatch()) {
+                    Object fv = SelectorNode.readFieldPath(curData, target.recvPath(), false);
+                    if (!(fv instanceof GoInterface cgi)) {
+                        throw new FrontendException("reflect: redispatch method \""
+                                + methodName + "\": nested embedded field is not an interface");
+                    }
+                    curData = cgi.data();
+                    String idesc = ((GoTypeDescriptor) cgi.descriptor()).name();
+                    IfaceItab iitab = IfaceMethodTable.itabFor(idesc,
+                            target.embeddedIfaceId(), target.embeddedIfaceMethods());
+                    target = iitab.methods().get(methodName);
+                    if (target == null) {
+                        throw new FrontendException("reflect: redispatch method \""
+                                + methodName + "\" missing from nested itab for \"" + idesc + "\"");
+                    }
+                }
+                GoFunc inner = target.func();
+                if (inner == null) {
+                    throw new FrontendException("reflect: redispatch method \""
+                            + methodName + "\" resolved to null function");
+                }
+                // callArgs excludes the leading GoFunc (GoCalls.invoke
+                // prepends it): [receiver, methodArgs...].
+                Object[] callArgs = new Object[args.length - 1];
+                callArgs[0] = curData;
+                System.arraycopy(args, 2, callArgs, 1, args.length - 2);
+                return GoCalls.invoke(inner, callArgs);
+            }
+        };
+        return new GoFunc(root.getCallTarget(), null);
     }
 
     // ------------------------------------------------------------------
