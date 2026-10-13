@@ -46,8 +46,8 @@ def main():
             i += 1
 
     if graalgo_run is None:
-        # Default: phase1 graalgo-run in this repo
-        repo = os.path.abspath(os.path.join(HERE, "..", "..", ".."))
+        # Default: phase1 graalgo-run in this repo (HERE=tools/gate1)
+        repo = os.path.abspath(os.path.join(HERE, "..", ".."))
         graalgo_run = os.path.join(repo, "phases", "phase1", "graalgo-run")
 
     workdir = outdir or tempfile.mkdtemp(prefix=f"gate1-{pkg}-")

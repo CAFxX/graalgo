@@ -86,18 +86,41 @@ func (t *T) Skipf(format string, args ...interface{}) {
 // Skipped reports whether the test was skipped.
 func (t *T) Skipped() bool { return t.skipped }
 
+// Run runs a subtest.
+func (t *T) Run(name string, fn func(*T)) bool {
+	sub := &T{name: t.name + "/" + name}
+	defer func() {
+		if r := recover(); r != nil {
+			switch r.(type) {
+			case fatalSentinel, skipSentinel:
+			default:
+				sub.failed = true
+				sub.logs = append(sub.logs, fmt.Sprintf("panic: %v", r))
+			}
+		}
+		if sub.failed {
+			t.failed = true
+			t.logs = append(t.logs, fmt.Sprintf("subtest %s failed", name))
+			t.logs = append(t.logs, sub.logs...)
+		}
+		if sub.skipped {
+			t.skipped = true
+		}
+	}()
+	fn(sub)
+	return !sub.failed
+}
+
 // Parallel is a no-op (tests run sequentially in the harness).
 func (t *T) Parallel() {}
 
-// Cleanup registers a cleanup function (runs at test end).
-func (t *T) Cleanup(f func()) {
-	cleanups = append(cleanups, f)
-}
+// Cleanup is a no-op in the pilot harness (graalgo v1 cannot call
+// function variables; see Run below). Tests relying on cleanup ordering
+// are skipped by the synthesizer.
+func (t *T) Cleanup(f func()) {}
 
 type fatalSentinel struct{}
 type skipSentinel struct{}
-
-var cleanups []func()
 
 // Result holds the outcome of a single test.
 type Result struct {
@@ -111,11 +134,7 @@ type Result struct {
 func Run(name string, fn func(*T)) (res Result) {
 	res.Name = name
 	t := &T{name: name}
-	cleanups = nil
 	defer func() {
-		for i := len(cleanups) - 1; i >= 0; i-- {
-			cleanups[i]()
-		}
 		if r := recover(); r != nil {
 			switch r.(type) {
 			case fatalSentinel, skipSentinel:

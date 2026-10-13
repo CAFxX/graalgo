@@ -22,7 +22,7 @@ import sys
 SUPPORTED_IMPORTS = {
     "bytes", "errors", "fmt", "math", "math/cmplx", "reflect", "regexp", "sort",
     "strconv", "strings", "sync", "unicode", "unicode/utf8",
-    "encoding", "encoding/json", "io", "os", "path", "time",
+    "encoding", "encoding/json", "io", "io/fs", "os", "path", "time",
     # Test-only helpers that are simple
     "flag",
 }
@@ -159,7 +159,15 @@ def main():
     parts.append("import (")
     parts.append('\t"fmt"')
     parts.append('\t"os"')
-    parts.append(f'\t. "{pkg}"')
+    # Determine import style: if test code uses qualified refs (pkg.X),
+    # use regular import; else dot-import for unqualified refs.
+    # Check the combined file sources for qualified usage.
+    combined = "\n".join(data for _, data in file_sources)
+    use_qualified = bool(re.search(rf"\b{pkg}\.\w+", combined))
+    if use_qualified:
+        parts.append(f'\t"{pkg}"')
+    else:
+        parts.append(f'\t. "{pkg}"')
     for imp in sorted(driver_imports):
         # Skip fmt/os/pkg (already imported); normalize for comparison
         norm = re.sub(r'^[\w.]+\s+', '', imp).strip('"')
