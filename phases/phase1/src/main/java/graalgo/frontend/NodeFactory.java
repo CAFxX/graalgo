@@ -5510,11 +5510,6 @@ public final class NodeFactory {
                 int b = Integer.parseInt(hex.substring(i*2, i*2+2), 16);
                 valueNodes[i] = ConstNode.ofInt(GoKind.UINT8, b);
             }
-        } else if (f.has("truncated") && f.bool("truncated", path)) {
-            // P3-M9 (x509): pathological tables (>50k scalars) are truncated.
-            // Allocate zeros; the table is (hopefully) not needed or recomputed.
-            // This is a correctness risk, but unblocks compilation.
-            valueNodes = new GoExprNode[0];
         } else {
             valueNodes = new GoExprNode[values.size()];
             for (int i = 0; i < values.size(); i++) {

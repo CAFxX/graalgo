@@ -10018,26 +10018,16 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 	fields := map[string]any{"type": t, "keyed": keyed, "values": values}
 	// P3-M9 (x509): compact encoding for large byte arrays. A [...]byte{...}
 	// with 88k elements serializes as 17MB of JSON nodes (one per byte).
-	// If the literal has >2000 elements and all are byte-sized integer
+	// If the literal has >100 elements and all are byte-sized integer
 	// literals, encode as a hex string in "hexdata" instead. The Java
 	// NodeFactory.buildComplit decodes it directly. This is a general
-	// frontend optimization, not x509-specific.
-	if !keyed && len(l.Elts) > 2000 {
+	// frontend optimization, not x509-specific. (The earlier "truncated"
+	// workaround is removed: it silently zeroed literals >100 scalars,
+	// breaking valid certificates. Compact encoding preserves correctness.)
+	if !keyed && len(l.Elts) > 100 {
 		if hex, ok := e.byteLiteralHex(l.Elts); ok {
 			fields["values"] = []*Node{}
 			fields["hexdata"] = hex
-		}
-	}
-	// P3-M9 (x509): emergency truncation for pathological tables. If the
-	// literal (recursively) contains >100 scalar values, the JSON
-	// blowup (200x) makes compilation infeasible. Emit a "truncated"
-	// flag; the Java side allocates zeros. This is a correctness risk
-	// (tables will be wrong), but unblocks compilation. The proper fix
-	// is efficient encoding for nested tables.
-	if !keyed && len(l.Elts) > 10 {
-		if countScalars(l) > 100 {
-			fields["values"] = []*Node{}
-			fields["truncated"] = true
 		}
 	}
 	if len(fieldKeys) > 0 {
