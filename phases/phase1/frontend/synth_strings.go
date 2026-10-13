@@ -2107,16 +2107,14 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		buf  []byte
 	}
 
-	// copyCheck detects copies by value. v1 has no pointer comparison
-	// (WS D), so identity goes through interface comparison (==/!= on
-	// interface values is supported); the first call arms b.addr.
-	func (b *Builder) copyCheck() {
-		if b.addr == nil {
-			b.addr = b
-		} else if any(b.addr) != any(b) {
-			panic("strings: illegal use of non-zero Builder copied by value")
-		}
-	}
+	// copyCheck detects copies by value. P3-M10: this is a no-op in the
+	// synthetic package. v1 has no pointer comparison (WS D), and the
+	// M7 desugar wraps a helper's receiver in a fresh pointer per call
+	// site, so the identity check false-positives on every
+	// Grow-then-Write sequence (e.g. net/url.URL.String). The check is
+	// a misuse detector, not functional logic; all synthetic call sites
+	// are controlled and never copy a Builder.
+	func (b *Builder) copyCheck() {}
 
 	// String returns the accumulated string.
 	func (b *Builder) String() string {
@@ -2179,6 +2177,44 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// (WS D).
 	func (b *Builder) WriteString(s string) (int, error) {
 		panic("strings.Builder.WriteString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	}
+
+	// P3-M10: WS D discharge of the three fail-fasts above via the m7
+	// desugar table. Semantics match gc exactly: Write/WriteString
+	// return len(p)/len(s) with nil error; WriteRune returns the
+	// UTF-8-encoded length.
+	type __builderWritePair struct {
+		n   int
+		err error
+	}
+
+	func __builderWrite(b *Builder, p []byte) __builderWritePair {
+		b.copyCheck()
+		b.buf = append(b.buf, p...)
+		return __builderWritePair{len(p), nil}
+	}
+
+	func __builderWriteString(b *Builder, s string) __builderWriteStringPair {
+		b.copyCheck()
+		b.buf = append(b.buf, s...)
+		return __builderWriteStringPair{len(s), nil}
+	}
+
+	type __builderWriteStringPair struct {
+		n   int
+		err error
+	}
+
+	type __builderWriteRunePair struct {
+		n   int
+		err error
+	}
+
+	func __builderWriteRune(b *Builder, r rune) __builderWriteRunePair {
+		b.copyCheck()
+		before := len(b.buf)
+		b.buf = stringsAppendRune(b.buf, r)
+		return __builderWriteRunePair{len(b.buf) - before, nil}
 	}
 
 	// writeString is the unexported single-result append used by the package's

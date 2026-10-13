@@ -1956,9 +1956,20 @@ func ExportFile(path string) (string, error) {
 	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
 	// The client delegates to java.net.http.HttpClient via the
 	// graalgo.http.client.do intrinsic (registered in LinknameIntrinsics).
+	// P3-M10: importSyntheticPackage does not recurse into imports, so
+	// the block lists net/http's full transitive closure explicitly
+	// (topological order, leaves first) — cf. the needCryptoRand block.
+	// Without net/url et al., method resolution fails with
+	// "gofrontend: method X not found on Y" for any program importing
+	// net/http.
 	if needNetHttp {
-		if err := e.importSyntheticPackage(getSyntheticPackage("net/http")); err != nil {
-			return "", err
+		for _, p := range []string{"errors", "io", "strconv", "bytes", "strings", "time",
+			"bufio", "cmp", "iter", "internal/bytealg", "internal/byteorder",
+			"math", "math/bits", "unique", "slices", "net/netip",
+			"net/textproto", "net/url", "net", "net/http"} {
+			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+				return "", err
+			}
 		}
 	}
 	if needNetHttpHttptest {

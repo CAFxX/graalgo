@@ -44,7 +44,40 @@ import (
 )
 
 //go:linkname httpClientDoIntrinsic graalgo.http.client.do
-func httpClientDoIntrinsic(method string, url string, headers []string, body []byte) []interface{}
+// P3-M10: returns the response as a []byte wire encoding (int64 BE status,
+// int64 BE headerCount, per header: int64 BE keyLen + key + int64 BE valLen
+// + val, int64 BE bodyLen + body) — a concrete []byte needs no interface
+// boxing on the linkname path, unlike []interface{}.
+func httpClientDoIntrinsic(method string, url string, headers []string, body []byte) []byte
+
+// __httpWireReader decodes the graalgo.http.client.do []byte wire format.
+type __httpWireReader struct {
+	b []byte
+	o int
+	ok bool
+}
+
+func (r *__httpWireReader) i64() int64 {
+	if !r.ok || r.o+8 > len(r.b) {
+		r.ok = false
+		return 0
+	}
+	v := int64(r.b[r.o])<<56 | int64(r.b[r.o+1])<<48 | int64(r.b[r.o+2])<<40 | int64(r.b[r.o+3])<<32 |
+		int64(r.b[r.o+4])<<24 | int64(r.b[r.o+5])<<16 | int64(r.b[r.o+6])<<8 | int64(r.b[r.o+7])
+	r.o += 8
+	return v
+}
+
+func (r *__httpWireReader) bytes() []byte {
+	n := r.i64()
+	if !r.ok || n < 0 || r.o+int(n) > len(r.b) {
+		r.ok = false
+		return nil
+	}
+	v := r.b[r.o : r.o+int(n)]
+	r.o += int(n)
+	return v
+}
 
 // ---------------------------------------------------------------------------
 // Status codes
@@ -474,6 +507,19 @@ type limitedReadCloser struct {
 }
 
 func (l *limitedReadCloser) Read(p []byte) (int, error) { return l.R.Read(p) }
+
+// P3-M10: __-helper for the m7 desugar table. The interface call
+// l.R.Read desugars through the mrIfaceMethod path (itab lookup on the
+// concrete dynamic type).
+type __limitedReadCloserReadPair struct {
+	n   int
+	err error
+}
+
+func __limitedReadCloserRead(l *limitedReadCloser, p []byte) __limitedReadCloserReadPair {
+	n, err := l.R.Read(p)
+	return __limitedReadCloserReadPair{n, err}
+}
 func (l *limitedReadCloser) Close() error {
 	if l.closeFn != nil {
 		return l.closeFn()
@@ -621,9 +667,14 @@ func (f HandlerFunc) ServeHTTP(w ResponseWriter, r *Request) { f(w, r) }
 // ---------------------------------------------------------------------------
 
 type ServeMux struct {
-	mu sync.RWMutex
-	m  map[string]muxEntry
+	m map[string]muxEntry
 }
+
+// P3-M10: the v1 frontend (M2 scope) rejects sync primitives as struct
+// fields, so ServeMux/Server synchronization uses package-level mutexes
+// (cf. synth_mathrand.go's globalRandMu). Coarser than gc's per-mux
+// RWMutex, but semantically equivalent mutual exclusion.
+var serveMuxMu sync.Mutex
 
 type muxEntry struct {
 	h       Handler
@@ -635,8 +686,8 @@ func NewServeMux() *ServeMux { return &ServeMux{m: make(map[string]muxEntry)} }
 var DefaultServeMux = NewServeMux()
 
 func (mux *ServeMux) Handle(pattern string, handler Handler) {
-	mux.mu.Lock()
-	defer mux.mu.Unlock()
+	serveMuxMu.Lock()
+	defer serveMuxMu.Unlock()
 	mux.m[pattern] = muxEntry{h: handler, pattern: pattern}
 }
 
@@ -660,8 +711,8 @@ type __muxHandlerPair struct {
 }
 
 func __muxHandler(mux *ServeMux, r *Request) __muxHandlerPair {
-	mux.mu.RLock()
-	defer mux.mu.RUnlock()
+	serveMuxMu.Lock()
+	defer serveMuxMu.Unlock()
 	path := r.URL.Path
 	if path == "" {
 		path = "/"
@@ -808,24 +859,32 @@ func __transportRoundTrip(t *Transport, req *Request) __clientDoPair {
 		urlStr = "http://" + req.Host + req.URL.RequestURI()
 	}
 	result := httpClientDoIntrinsic(req.Method, urlStr, hkv, bodyBytes)
-	if len(result) < 3 {
+	rd := &__httpWireReader{b: result, ok: true}
+	statusCode := rd.i64()
+	if !rd.ok {
 		return __clientDoPair{nil, errors.New("http: client intrinsic failed")}
 	}
-	statusCode := result[0].(int64)
-	headerPairs := result[1].([]interface{})
-	bodyResult := result[2].([]interface{})
+	if statusCode == 0 {
+		return __clientDoPair{nil, errors.New("http: transport error")}
+	}
 	resp := &Response{
 		StatusCode: int(statusCode), Proto: "HTTP/1.1",
 		ProtoMajor: 1, ProtoMinor: 1,
 		Header: make(Header), Request: req,
 	}
 	resp.Status = strconv.Itoa(resp.StatusCode) + " " + StatusText(resp.StatusCode)
-	for i := 0; i+1 < len(headerPairs); i += 2 {
-		resp.Header.Add(headerPairs[i].(string), headerPairs[i+1].(string))
+	nhead := rd.i64()
+	for i := int64(0); i < nhead; i++ {
+		k := rd.bytes()
+		v := rd.bytes()
+		if !rd.ok {
+			return __clientDoPair{nil, errors.New("http: client intrinsic failed")}
+		}
+		resp.Header.Add(string(k), string(v))
 	}
-	bodyOut := make([]byte, len(bodyResult))
-	for i, b := range bodyResult {
-		bodyOut[i] = byte(b.(int64))
+	bodyOut := rd.bytes()
+	if !rd.ok {
+		return __clientDoPair{nil, errors.New("http: client intrinsic failed")}
 	}
 	resp.Body = io.NopCloser(bytes.NewReader(bodyOut))
 	resp.ContentLength = int64(len(bodyOut))
@@ -843,10 +902,16 @@ type Server struct {
 	WriteTimeout   time.Duration
 	IdleTimeout    time.Duration
 	MaxHeaderBytes int
-	mu             sync.Mutex
 	listeners      map[net.Listener]struct{}
 	activeConn     map[net.Conn]struct{}
 }
+
+// P3-M10: see the serveMuxMu note above — the Server's listener/conn
+// bookkeeping maps are guarded by this package-level mutex instead of a
+// per-Server sync.Mutex field (out of M2 scope; and user code builds
+// Server values with composite literals, so a *sync.Mutex field could
+// not be constructor-initialized).
+var httpServerMu sync.Mutex
 
 func (srv *Server) ListenAndServe() error {
 	__tmp := __serverListenAndServe(srv)
@@ -866,7 +931,8 @@ func __serverListenAndServe(srv *Server) __serverListenAndServePair {
 	if err != nil {
 		return __serverListenAndServePair{err}
 	}
-	return __serverServe(srv, l)
+	__tmp := __serverServe(srv, l)
+	return __serverListenAndServePair{__tmp.err}
 }
 
 func (srv *Server) Serve(l net.Listener) error {
@@ -879,28 +945,28 @@ type __serverServePair struct {
 }
 
 func __serverServe(srv *Server, l net.Listener) __serverServePair {
-	srv.mu.Lock()
+	httpServerMu.Lock()
 	if srv.listeners == nil {
 		srv.listeners = make(map[net.Listener]struct{})
 	}
 	srv.listeners[l] = struct{}{}
-	srv.mu.Unlock()
+	httpServerMu.Unlock()
 	defer func() {
-		srv.mu.Lock()
+		httpServerMu.Lock()
 		delete(srv.listeners, l)
-		srv.mu.Unlock()
+		httpServerMu.Unlock()
 	}()
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			return __serverServePair{err}
 		}
-		srv.mu.Lock()
+		httpServerMu.Lock()
 		if srv.activeConn == nil {
 			srv.activeConn = make(map[net.Conn]struct{})
 		}
 		srv.activeConn[c] = struct{}{}
-		srv.mu.Unlock()
+		httpServerMu.Unlock()
 		go srv.serveConn(c)
 	}
 }
@@ -908,9 +974,9 @@ func __serverServe(srv *Server, l net.Listener) __serverServePair {
 func (srv *Server) serveConn(c net.Conn) {
 	defer func() {
 		c.Close()
-		srv.mu.Lock()
+		httpServerMu.Lock()
 		delete(srv.activeConn, c)
-		srv.mu.Unlock()
+		httpServerMu.Unlock()
 	}()
 	br := bufio.NewReader(c)
 	for {
@@ -934,8 +1000,8 @@ func (srv *Server) serveConn(c net.Conn) {
 }
 
 func (srv *Server) Close() error {
-	srv.mu.Lock()
-	defer srv.mu.Unlock()
+	httpServerMu.Lock()
+	defer httpServerMu.Unlock()
 	for l := range srv.listeners {
 		l.Close()
 	}
@@ -969,6 +1035,22 @@ func (w *responseWriter) Write(p []byte) (int, error) {
 		w.WriteHeader(200)
 	}
 	return w.body.Write(p)
+}
+
+// P3-M10: __-helper for the m7 desugar table (v1 cannot emit the
+// multi-result Write method; the body.Write call desugars through the
+// bytes.Buffer.Write table entry).
+type __responseWriterWritePair struct {
+	n   int
+	err error
+}
+
+func __responseWriterWrite(w *responseWriter, p []byte) __responseWriterWritePair {
+	if !w.wroteHeader {
+		w.WriteHeader(200)
+	}
+	n, err := w.body.Write(p)
+	return __responseWriterWritePair{n, err}
 }
 
 func (w *responseWriter) Flush() {
@@ -1076,7 +1158,9 @@ func Error(w ResponseWriter, error string, code int) {
 }
 
 func MaxBytesReader(w ResponseWriter, r io.ReadCloser, n int64) io.ReadCloser {
-	return &limitedReadCloser{R: io.LimitReader(r, n), closeFn: r.Close}
+	// P3-M10: method values on interfaces are out of v1 scope (P3-M3);
+	// the closure below calls the interface method directly instead.
+	return &limitedReadCloser{R: io.LimitReader(r, n), closeFn: func() error { return r.Close() }}
 }
 
 func DetectContentType(data []byte) string {
