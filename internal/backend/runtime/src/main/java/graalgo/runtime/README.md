@@ -33,5 +33,5 @@ not a parity claim.
 `GoroutineState`, etc. — the frozen `throwPanic`/`recover` interface that
 WS G's `PanicNode` wires to.
 
-See [docs/freeze-stub.md](../../../../../docs/freeze-stub.md) (freeze v2; v2 delta: ADR-0008 `elemDesc` on
+See [docs/freeze-stub.md](../../../../../../../../phases/phase1/docs/freeze-stub.md) (freeze v2; v2 delta: ADR-0008 `elemDesc` on
 `makeslice`/`growslice`) for the full 58-function catalog.

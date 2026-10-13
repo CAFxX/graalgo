@@ -44,8 +44,8 @@ jobs:
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
-      - name: Build phase 1 (graalgo-run backend)
-        run: make -C phases/phase1 main
+      - name: Build backend (graalgo-run)
+        run: make -C internal/backend/truffle main && make -C internal/backend/runtime main && make -C internal/backend/interop main
 
       - name: Conformance differential (GOROOT/test vs gc)
         # actions/setup-go ships a full GOROOT including test/.

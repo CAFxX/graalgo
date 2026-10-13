@@ -5,7 +5,7 @@ emits the `frontend/v1` typed-AST JSON document to stdout.
 
 - Wire format: [`../../phases/phase1/docs/frontend-v1.md`](../../phases/phase1/docs/frontend-v1.md) (normative)
 - Vendoring: [`VENDORING.md`](VENDORING.md) (pinned revision, re-vendor procedure)
-- Java consumer: `graalgo.frontend.NodeFactory` ([`../../phases/phase1/src/main/java/graalgo/frontend/`](../../phases/phase1/src/main/java/graalgo/frontend/))
+- Java consumer: `graalgo.frontend.NodeFactory` ([`../backend/truffle/src/main/java/graalgo/frontend/`](../backend/truffle/src/main/java/graalgo/frontend/))
 
 ## Layout
 
@@ -51,12 +51,12 @@ owns the extension (e.g. `if` → WS E, imports → WS G).
 ## Java side
 
 `NodeFactory` + node classes live in
-[`../../phases/phase1/src/main/java/graalgo/frontend/`](../../phases/phase1/src/main/java/graalgo/frontend/)
+[`../backend/truffle/src/main/java/graalgo/frontend/`](../backend/truffle/src/main/java/graalgo/frontend/)
 (worker-1 owns `make`/`out/` — verify to `/tmp` scratch, do not run `make`):
 
 ```sh
 CP=$(ls ../../phases/phase1/lib/*.jar | tr '\n' ':')
-javac -Xlint:deprecation -Werror -cp "$CP" -d /tmp/wsB-classes ../../phases/phase1/src/main/java/graalgo/frontend/*.java
+javac -Xlint:deprecation -Werror -cp "$CP" -d /tmp/wsB-classes ../backend/truffle/src/main/java/graalgo/frontend/*.java
 javac -Xlint:deprecation -Werror -cp "$CP:/tmp/wsB-classes" -d /tmp/wsB-classes javatest/NodeFactoryTest.java
 java --enable-native-access=ALL-UNNAMED -cp "/tmp/wsB-classes:$CP" NodeFactoryTest javatest/
 ```

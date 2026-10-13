@@ -8,9 +8,9 @@ behavior drift.
 
 **Backend:** the snapshots are recorded against the **product launcher
 P3SyncMain** (`graalgo` backend in
-[`tools/diffharness/backends-p3.json`](../../tools/diffharness/backends-p3.json)),
+[`test/differential/backends-p3.json`](../../test/differential/backends-p3.json)),
 *not* the phase-1 `graalgo-run` in
-[`tools/diffharness/backends.json`](../../tools/diffharness/backends.json).
+[`test/differential/backends.json`](../../test/differential/backends.json).
 Recording against the phase-1 frontend would enshrine its build failures
 (no channel/scheduler support) as the baseline and leave P3SyncMain
 regressions invisible to the per-push gate. The phase-1 config is retained

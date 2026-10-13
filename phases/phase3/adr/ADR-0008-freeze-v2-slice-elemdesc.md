@@ -8,7 +8,7 @@ exactly the two slice-allocation signatures below; nothing else in the
 freeze changes.
 **Scope:** [phases/phase1/INTERFACE_FREEZE.md](../../phase1/INTERFACE_FREEZE.md) v1 → v2;
 [phases/phase1/docs/freeze-stub.md](../../phase1/docs/freeze-stub.md) GG-0020 rows;
-[FreezeSignatureTest](../../phase1/src/test/java/graalgo/runtime/FreezeSignatureTest.java) frozen list → v2 signatures.
+[FreezeSignatureTest](../../../internal/backend/truffle/src/test/java/graalgo/runtime/FreezeSignatureTest.java) frozen list → v2 signatures.
 **Normative basis:** [phases/phase1/INTERFACE_FREEZE.md](../../phase1/INTERFACE_FREEZE.md) (v1, in force)
 §§1, 3.4, 5; [phases/phase1/docs/freeze-stub.md](../../phase1/docs/freeze-stub.md) §"GG-0020 intrinsic
 surface"; P3-M9 compress commit `f4915c2`
@@ -58,7 +58,7 @@ surface"; P3-M9 compress commit `f4915c2`
 - [docs/freeze-stub.md](../../phase1/docs/freeze-stub.md): the two GG-0020 rows updated to the v2
   signatures (historical "freeze v1 (frozen 2026-10-04)" line kept;
   v2 amendment noted).
-- [FreezeSignatureTest](../../phase1/src/test/java/graalgo/runtime/FreezeSignatureTest.java): the two `FROZEN` entries updated to the v2
+- [FreezeSignatureTest](../../../internal/backend/truffle/src/test/java/graalgo/runtime/FreezeSignatureTest.java): the two `FROZEN` entries updated to the v2
   parameter lists; version references v1 → v2.
 - Unchanged and still frozen: the 3-arg `growslice(GoSlice,GoKind,int)`
   convenience overload and every other frozen signature.
@@ -78,7 +78,7 @@ Freeze §1 requires the §6 machine check to fail *before* a frozen
 change lands. That ordering was violated here and cannot be recovered
 post-hoc ("No mechanism records (c) post-hoc — the ADR is the
 record"). The record is: the change landed in `f4915c2` without the
-process; [FreezeSignatureTest](../../phase1/src/test/java/graalgo/runtime/FreezeSignatureTest.java) caught it — red on master `855f8b03`
+process; [FreezeSignatureTest](../../../internal/backend/truffle/src/test/java/graalgo/runtime/FreezeSignatureTest.java) caught it — red on master `855f8b03`
 (F-1). The red test on master IS the evidence that the check guards
 the surface. This ADR closes the process gap; it does not rewrite the
 ordering.
@@ -108,7 +108,7 @@ ordering.
 
 ## Verification
 
-- [FreezeSignatureTest](../../phase1/src/test/java/graalgo/runtime/FreezeSignatureTest.java) updated to the v2 list; red-green: the v1 list
+- [FreezeSignatureTest](../../../internal/backend/truffle/src/test/java/graalgo/runtime/FreezeSignatureTest.java) updated to the v2 list; red-green: the v1 list
   fails against the v2 code (observed on master `855f8b03`), the v2
   list passes.
 - Full Phase-1 suite green (`make -C phases/phase1 test`).

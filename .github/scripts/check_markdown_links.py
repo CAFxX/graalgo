@@ -33,6 +33,9 @@ BOT_PROTECTED_URLS = {
     # bugs.openjdk.org serves 403 to Python urllib (AkamaiGHost) but 200
     # to curl/browser; verified live 2026-10-13.
     "https://bugs.openjdk.org/browse/JDK-8247838",
+    # enterprisetimes.co.uk serves 403 to all automated fetches (bot
+    # protection); the article exists. Verified 403 via curl 2026-10-13.
+    "https://www.enterprisetimes.co.uk/2024/10/18/azul-platform-prime-37-faster-than-other-openjdk-distributions/",
 }
 
 

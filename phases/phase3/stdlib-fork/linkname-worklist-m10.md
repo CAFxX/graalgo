@@ -70,9 +70,9 @@ Effort rubric: **S** = hours, **M** = days, **L** = weeks,
 - **What it is:** the linkname the synthetic net/http client uses to reach
   `GoHttp.clientDo` (java.net.http.HttpClient delegation, P3-M9 tier-5).
   `GoHttp.clientDo` is implemented and documented in
-  [phases/phase3/src/main/java/graalgo/p3net/GoHttp.java](../../../phases/phase3/src/main/java/graalgo/p3net/GoHttp.java),
+  [GoHttp.java](../../../internal/backend/interop/src/main/java/graalgo/p3net/GoHttp.java),
   but **never registered** — `Linknames.register` is called only from
-  [LinknameIntrinsics.java](../../../phases/phase3/src/main/java/graalgo/p3link/LinknameIntrinsics.java),
+  [LinknameIntrinsics.java](../../../internal/backend/interop/src/main/java/graalgo/p3link/LinknameIntrinsics.java),
   which has no `graalgo.http.*` table.
 - **Implementing it entails:** adding a `registerHttpIntrinsics()` block
   to `LinknameIntrinsics.install()` following the existing tables, e.g.

@@ -6,7 +6,7 @@ cross-workstream review.
 ## D8 safepoint seam (frozen 2026-10-04, M3)
 
 - Signature: `graalgo.safepoint.Safepoint.poll()` — `public static void`, no arguments,
-  no return value, in [src/main/java/graalgo/safepoint/Safepoint.java](../src/main/java/graalgo/safepoint/Safepoint.java).
+  no return value, in [Safepoint.java](../../../internal/backend/runtime/src/main/java/graalgo/safepoint/Safepoint.java).
 - Call sites (inserted by the AST builders, not by user code):
   - function entries — `GoRootNode.execute` (M3, WS D);
   - loop back-edges — WS E (when loops land).
