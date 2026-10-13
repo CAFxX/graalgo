@@ -867,6 +867,17 @@ public final class Fmt {
                         }
                         return;
                     }
+                    // bug-003: a GoErrorValue (e.g. *runtime.PanicNilError)
+                    // formats via its Error() text for the stringable verbs,
+                    // matching gc's handleMethods dispatch. Without this, the
+                    // POINTER-kind descriptor falls through to fmtPointer,
+                    // which prints <nil> (the value is not a GoPointer).
+                    if (gi.data() instanceof GoErrorValue gev
+                            && (verb == 'v' || verb == 's' || verb == 'q'
+                                || verb == 'x' || verb == 'X')) {
+                        fmtString(gev.errorString().getBytes(StandardCharsets.UTF_8), verb);
+                        return;
+                    }
                     GoTypeDescriptor td = (GoTypeDescriptor) gi.descriptor();
                     printValue(new Arg(gi.data(), td.kind(), td.name(), null, null, null, null), verb, depth + 1);
                 }
