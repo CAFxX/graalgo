@@ -1,31 +1,20 @@
-# P0-fmt lane — red-green evidence
+# P0-fmt lane — red-green evidence (updated)
 
 Worktree: ~/workspace/worktrees/graalgo/p0-fmt, branch wt/f7467b85-7da6-4da0-b9ec-94631a60dafe/p0-fmt, base m9 @ 4170c21.
-Build: incremental javac of changed phase1 files (clean, -Werror).
+Build: incremental javac of changed phase1 files.
 
-## Pre-existing state (reproduced at 4170c21 before fixes)
-- bug-015 (Stringer %v): ALREADY FIXED by P3-M9 RC-6 FmtHandleMethods — repro byte-identical to gc.
-- bug-021 (Stringer ptr/%s/%q): ALREADY FIXED — repro byte-identical to gc.
-- bug-016: BROKEN — ClassCastException GoErrorValue→GoInterface, rc=1.
-- bug-018: BROKEN — `%!p(<nil>)` vs gc `0x0`.
-- bug-022: BROKEN — `struct{...}` vs gc `struct { A int }`.
+## Status by bug (verified via phase1 graalgo-run vs gc 1.27.1)
 
-## Fixes (3 commits)
-1. e33c87f bug-022: GoTypeStrings renders anonymous structs structurally (`struct { A int; B string "tag" }`,
-   embedded as bare type, Go-quoted tags); GoQuote.quote made public.
-2. 284e2f0 bug-018: printArg null branch distinguishes nil interface from typed nils by static kind
-   (%p on nil ptr/chan/func/map/slice → 0x0); fmtPointer %p unwraps interfaces to dynamic kind.
-3. c64adda bug-016: GoErrorValue carries gc panic-type identity (typeName/goSyntax/structForm);
-   GoErrors factories model runtime/error.go (string kinds vs struct, value-based signed flag);
-   Fmt formats recovered panics per gc verb rules; no more blind GoInterface.narrow() cast.
+- bug-016 (recovered panic formatting): FIXED by c64adda — byte-identical.
+- bug-018 (%p on nil): FIXED by 284e2f0 — byte-identical.
+- bug-022 (%#v anonymous structs): FIXED by e33c87f + 68b580e (embedded named types) — byte-identical.
+- bug-015 (Stringer %v): NOT FIXABLE in phase1 — requires method dispatch via phase3 IfaceMethodTable (FmtHandleMethods). Works in phase3 P3SyncMain path. Architectural limitation, not a bug in the fmt implementation.
+- bug-021 (Stringer ptr/%s/%q): SAME as bug-015 — phase3-only.
 
-## Post-fix verification (all vs gc 1.27.1, ~/tools/go/bin/go)
-- All 5 bug repros: BYTE-IDENTICAL stdout, rc=0 (diff against bug dirs' gc.out).
-- Extended matrices byte-identical: panicverbs (T/v/s/q/p/#v/x on boundsError), signedprobe
-  (const/int/uint/neg index), slicesign (slice bounds hi/neg).
-- panicnil: identical except %p (gc real address vs graalgo erased 0x0 — standing policy).
-- panicverbs2 typeassert: gc prints nondeterministic addresses (verified across runs);
-  graalgo prints deterministic fallbacks (quoted Error() text, 0x0) — principled.
-- Targeted regression program (anonymous struct %T/%#v incl. tags/embedded/empty/nested,
-  full %p/%v/%T nil matrix, errors): byte-identical except erased address (by design).
-- Check gates: placeholder + debug-println greps clean on touched files.
+## Why bug-015/021 are phase3-only
+
+Phase1's GoTypeDescriptor carries only name/kind (no methods). Method implkeys in the type table are for interface satisfaction checks, not dispatch. Actual String() invocation needs Truffle call targets built by phase3's IfaceMethodTable. Fmt.java explicitly documents: "The handler is installed by the phase-3 launcher (which has the method tables); null in phase-1-only mode."
+
+## Post-fix verification (phase1, vs gc 1.27.1)
+- bug-016, bug-018, bug-022 repros: BYTE-IDENTICAL stdout, rc=0.
+- Extended matrix (embedded/named/anonymous structs, nil %p matrix, panic verbs): byte-identical except by-design address erasure (0x0).
