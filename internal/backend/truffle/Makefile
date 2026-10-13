@@ -65,7 +65,7 @@ OUT_SMOKE := out/smoke-classes
 # internal/frontend/; repoint GO_FRONTEND_DIR then. The launcher locates the
 # binary via GRAALGO_GOFRONTEND (exported by internal/backend/graalgo-run),
 # else by walking up from its own classes dir to internal/frontend/.
-GO_FRONTEND_DIR ?= ../../../phases/phase1/frontend
+GO_FRONTEND_DIR ?= ../../../internal/frontend
 GOFRONTEND := $(GO_FRONTEND_DIR)/gofrontend
 # P3-M7: the gofrontend binary embeds every non-test frontend/*.go source
 # (synth_*.go, synth_machinery.go, ...). An explicit file list goes stale
@@ -81,7 +81,7 @@ JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
 # the new class locations. Export the current build location until the
 # frontend lane moves it to internal/frontend/ (the walk-up then finds it
 # unaided; a stale env var is skipped via the isExecutable check).
-export GRAALGO_GOFRONTEND := $(CURDIR)/../../../phases/phase1/frontend/gofrontend
+export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 # BRIDGE (test lane): the corpus differential tests locate the corpus via
 # -Dgraalgo.phase1.dir (default: the old phase-1 working directory).
 P1_DIR_PROP := -Dgraalgo.phase1.dir="$(CURDIR)/../../../phases/phase1"

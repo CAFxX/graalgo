@@ -50,7 +50,7 @@ JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
 # build location until the frontend lane moves it to internal/frontend/
 # (the walk-up then finds it unaided; a stale env var is skipped via the
 # isExecutable check).
-export GRAALGO_GOFRONTEND := $(CURDIR)/../../../phases/phase1/frontend/gofrontend
+export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 
 .PHONY: all main test check clean run
