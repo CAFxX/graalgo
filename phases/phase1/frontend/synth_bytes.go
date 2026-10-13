@@ -10058,6 +10058,23 @@ func (b *Buffer) WriteString(s string) (n int, err error) {
 	panic("bytes.Buffer.WriteString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
 }
 
+// P3-M10: WS D discharge of the fail-fast above via the m7 desugar
+// table. Semantics match gc exactly: appends s (growing as needed,
+// ErrTooLarge panic preserved via grow), returns len(s), nil.
+func __bytesBufferWriteString(b *Buffer, s string) __bytesWriteStringPair {
+	b.lastRead = opInvalid
+	m := b.tryGrowByReslice(len(s))
+	if m < 0 {
+		m = b.grow(len(s))
+	}
+	return __bytesWriteStringPair{n: copy(b.buf[m:], s), err: nil}
+}
+
+type __bytesWriteStringPair struct {
+	n   int
+	err error
+}
+
 // MinRead is the minimum slice size passed to a Buffer.Read call by
 // Buffer.ReadFrom. As long as the Buffer has at least MinRead bytes beyond
 // what is required to hold the contents of r, Buffer.ReadFrom will not grow the

@@ -137,6 +137,10 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"bytes", "Read", "Reader", "__bytesReaderRead", "__bytesReadPair", []string{"n", "err"}},
 	// bytes: methods on *Buffer (P3-M9 WS D: v1 cannot emit 2-result methods).
 	{"bytes", "Write", "Buffer", "__bytesBufferWrite", "__bytesWritePair", []string{"n", "err"}},
+	// bytes: Buffer.WriteString (P3-M10 WS D discharge; needed by
+	// net/url.URL.String and the net/http response writer, hence by any
+	// program importing net/http).
+	{"bytes", "WriteString", "Buffer", "__bytesBufferWriteString", "__bytesWriteStringPair", []string{"n", "err"}},
 	// encoding/base32: methods on *Encoding.
 	{"encoding/base32", "Decode", "Encoding", "__base32Decode", "base32DecodePair", []string{"n", "err"}},
 	{"encoding/base32", "DecodeString", "Encoding", "__base32DecodeString", "base32DecodeStringPair", []string{"b", "err"}},
@@ -206,6 +210,12 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"strings", "ReadByte", "Reader", "__stringsReaderReadByte", "stringsReaderReadBytePair", []string{"b", "err"}},
 	{"strings", "ReadRune", "Reader", "__stringsReaderReadRune", "stringsReaderReadRuneTriple", []string{"ch", "size", "err"}},
 	{"strings", "Seek", "Reader", "__stringsReaderSeek", "stringsReaderSeekPair", []string{"n", "err"}},
+	// strings: Builder.Write/WriteString/WriteRune (P3-M10 WS D
+	// discharge of the M7 fail-fasts; needed by url.Values.Encode,
+	// hence by any program importing net/http).
+	{"strings", "Write", "Builder", "__builderWrite", "__builderWritePair", []string{"n", "err"}},
+	{"strings", "WriteString", "Builder", "__builderWriteString", "__builderWriteStringPair", []string{"n", "err"}},
+	{"strings", "WriteRune", "Builder", "__builderWriteRune", "__builderWriteRunePair", []string{"n", "err"}},
 	// P3-M8 (wave 2): synthetic syscall package (synth_syscall.go).
 	// The multi-result members keep exact gc signatures with fail-fast
 	// bodies; the __-helpers return pair structs (real implementations
@@ -470,6 +480,28 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"mime/quotedprintable", "readHexByte", "", "__qpreadHexByte", "__qpreadHexBytePair", []string{"b", "err"}},
 	{"mime/quotedprintable", "Read", "Reader", "__qpReaderRead", "__qpReaderReadPair", []string{"n", "err"}},
 	{"mime/quotedprintable", "Write", "Writer", "__qpWriterWrite", "__qpWriterWritePair", []string{"n", "err"}},
+	// net/http: package-level funcs (P3-M10 — the M9 net/http drop
+	// omitted these; without them any program importing net/http fails
+	// with the WS D multi-result scope error at the first client call).
+	{"net/http", "NewRequest", "", "__newRequest", "__newRequestPair", []string{"req", "err"}},
+	{"net/http", "ReadRequest", "", "__readRequest", "__readRequestPair", []string{"req", "err"}},
+	{"net/http", "readLine", "", "__readLine", "__readLinePair", []string{"line", "err"}},
+	{"net/http", "readMIMEHeader", "", "__readMIMEHeader", "__readMIMEHeaderPair", []string{"hdr", "err"}},
+	{"net/http", "ReadResponse", "", "__readResponse", "__readResponsePair", []string{"resp", "err"}},
+	{"net/http", "Get", "", "__httpGet", "__clientDoPair", []string{"resp", "err"}},
+	{"net/http", "Head", "", "__httpHead", "__clientDoPair", []string{"resp", "err"}},
+	{"net/http", "Post", "", "__httpPost", "__clientDoPair", []string{"resp", "err"}},
+	{"net/http", "PostForm", "", "__httpPostForm", "__clientDoPair", []string{"resp", "err"}},
+	// net/http: methods.
+	{"net/http", "Do", "Client", "__clientDo", "__clientDoPair", []string{"resp", "err"}},
+	{"net/http", "Handler", "ServeMux", "__muxHandler", "__muxHandlerPair", []string{"h", "pattern"}},
+	{"net/http", "RoundTrip", "Transport", "__transportRoundTrip", "__clientDoPair", []string{"resp", "err"}},
+	{"net/http", "Read", "chunkedReader", "__chunkedRead", "__chunkedReadPair", []string{"n", "err"}},
+	{"net/http", "Read", "limitedReadCloser", "__limitedReadCloserRead", "__limitedReadCloserReadPair", []string{"n", "err"}},
+	{"net/http", "Write", "responseWriter", "__responseWriterWrite", "__responseWriterWritePair", []string{"n", "err"}},
+	{"net/http", "Hijack", "responseWriter", "__rwHijack", "__rwHijackPair", []string{"c", "rw", "err"}},
+	// net/http/httptest: methods.
+	{"net/http/httptest", "Write", "ResponseRecorder", "__recorderWrite", "__recorderWritePair", []string{"n", "err"}},
 }
 
 // m8MultiResultFuncs is the desugar table for the crypto/* packages (P3-M8).
@@ -1183,6 +1215,12 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"net", "Accept", "acceptPair", []string{"c", "err"}},
 	{"net", "WriteTo", "writePair", []string{"n", "err"}},
 	{"net", "ReadFrom", "readFromPair", []string{"n", "addr", "err"}},
+	// P3-M10 (tier-5: net/http): RoundTripper.RoundTrip, dispatched via
+	// the itab to the concrete transport's pair-returning __-helper
+	// (wired via the m7MultiResultFuncs entry + methodTableEntries).
+	// Pair fields are positionally identical to the method's results
+	// (checked by classifyIfaceMultiResultCall).
+	{"net/http", "RoundTrip", "__clientDoPair", []string{"resp", "err"}},
 }
 
 // mrPlan is the desugar plan for one classified call.

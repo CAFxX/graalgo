@@ -9,6 +9,7 @@ import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
 import graalgo.p3os.GoOs;
+import graalgo.p3net.GoHttp;
 import graalgo.p3net.GoNet;
 import graalgo.p3net.GoNetpoll;
 import graalgo.p3tls.TlsRuntime;
@@ -94,6 +95,13 @@ public final class LinknameIntrinsics {
         // as Object; each target adapts explicitly.
         registerX509Intrinsics();
         registerTlsIntrinsics();
+        // P3-M9 (tier-5): the HTTP client intrinsic (java.net.http
+        // delegation) for the synthetic net/http Transport.RoundTrip.
+        // D5 argument types: method and URL arrive as GoString, headers
+        // as GoSlice of GoString (flat k/v pairs), body as GoSlice of
+        // bytes; the target adapts explicitly (see GoHttp's javadoc for
+        // the calling convention).
+        registerHttpIntrinsics();
         // itabFor → the P3-M3 itab machinery (ADR-0004 D3).
         Intrinsics.setItabProvider(IfaceMethodTable::itabForDescriptors);
         // Interface method-name lists for itabForIntrinsic.
@@ -339,6 +347,21 @@ public final class LinknameIntrinsics {
                 args -> TlsRuntime.connectionState(args[0]), 1);
         Linknames.register("graalgo.tls.close",
                 args -> { TlsRuntime.close(args[0]); return null; }, 1);
+    }
+
+    /**
+     * Registers the {@code graalgo.http.client.do} intrinsic implemented
+     * by {@link GoHttp} (P3-M9 tier-5, java.net.http.HttpClient
+     * delegation; the synthetic net/http Transport.RoundTrip drives it).
+     * D5 argument types: method and URL arrive as GoString, headers as
+     * GoSlice of GoString (flat k/v pairs), body as GoSlice of bytes
+     * (see {@link GoHttp#clientDo} for the calling convention); returns
+     * the documented GoSlice triple (status Long, header pairs, body
+     * bytes) which the Go side reads as []interface{}.
+     */
+    private static void registerHttpIntrinsics() {
+        Linknames.register("graalgo.http.client.do",
+                args -> GoHttp.clientDo(args[0], args[1], args[2], args[3]), 4);
     }
 
     /**

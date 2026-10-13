@@ -468,7 +468,10 @@ func __parseIPv6(in string) parseAddrPair {
 		for j := i - 1; j >= ellipsis; j-- {
 			ip[j+n] = ip[j]
 		}
-		clear(ip[ellipsis : ellipsis+n])
+		// P3-M10: the clear builtin is out of frontend/v1 scope (WS G).
+		for j := ellipsis; j < ellipsis+n; j++ {
+			ip[j] = 0
+		}
 	} else if ellipsis >= 0 {
 		// Ellipsis must represent at least one 0 group.
 		return parseAddrPair{Addr{}, parseAddrError{in: in, msg: "the :: must expand to at least one field of zeros"}}
@@ -479,12 +482,28 @@ func __parseIPv6(in string) parseAddrPair {
 // AddrFromSlice parses the 4- or 16-byte byte slice as an IPv4 or IPv6 address.
 // Note that a [net.IP] can be passed directly as the []byte argument.
 // If slice's length is not 4 or 16, AddrFromSlice returns [Addr]{}, false.
+//
+// P3-M10: the [4]byte(slice)/[16]byte(slice) conversions below are
+// spelled via bytesTo4/bytesTo16 — slice-to-array conversions are out of
+// frontend/v1 scope (illegal conversion: SLICE -> ARRAY).
+func bytesTo4(s []byte) [4]byte {
+	var a [4]byte
+	copy(a[:], s)
+	return a
+}
+
+func bytesTo16(s []byte) [16]byte {
+	var a [16]byte
+	copy(a[:], s)
+	return a
+}
+
 func __addrFromSlice(slice []byte) addrFromSlicePair {
 	switch len(slice) {
 	case 4:
-		return addrFromSlicePair{AddrFrom4([4]byte(slice)), true}
+		return addrFromSlicePair{AddrFrom4(bytesTo4(slice)), true}
 	case 16:
-		return addrFromSlicePair{AddrFrom16([16]byte(slice)), true}
+		return addrFromSlicePair{AddrFrom16(bytesTo16(slice)), true}
 	}
 	return addrFromSlicePair{Addr{}, false}
 }
@@ -1177,13 +1196,13 @@ func (ip *Addr) UnmarshalBinary(b []byte) error {
 		*ip = Addr{}
 		return nil
 	case n == 4:
-		*ip = AddrFrom4([4]byte(b))
+		*ip = AddrFrom4(bytesTo4(b))
 		return nil
 	case n == 16:
-		*ip = AddrFrom16([16]byte(b))
+		*ip = AddrFrom16(bytesTo16(b))
 		return nil
 	case n > 16:
-		*ip = AddrFrom16([16]byte(b[:16])).WithZone(string(b[16:]))
+		*ip = AddrFrom16(bytesTo16(b[:16])).WithZone(string(b[16:]))
 		return nil
 	}
 	return errors.New("unexpected slice size")

@@ -57,6 +57,42 @@ var m7StrconvJsonTable = []m7StrconvJsonExpect{
 	{"encoding/json", "MarshalJSON", "RawMessage", "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}},
 }
 
+var m7StringsBuilderTable = []m7StrconvJsonExpect{
+	// strings: Builder.Write/WriteString/WriteRune (P3-M10).
+	{"strings", "Write", "Builder", "__builderWrite", "__builderWritePair", []string{"n", "err"}},
+	{"strings", "WriteString", "Builder", "__builderWriteString", "__builderWriteStringPair", []string{"n", "err"}},
+	{"strings", "WriteRune", "Builder", "__builderWriteRune", "__builderWriteRunePair", []string{"n", "err"}},
+}
+
+var m7BytesBufferWriteStringTable = []m7StrconvJsonExpect{
+	// bytes: Buffer.WriteString (P3-M10).
+	{"bytes", "WriteString", "Buffer", "__bytesBufferWriteString", "__bytesWriteStringPair", []string{"n", "err"}},
+}
+
+func TestM7StringsBuilderDesugarWiring(t *testing.T) {
+	if len(m7StringsBuilderTable) != 3 {
+		t.Fatalf("m7StringsBuilderTable has %d entries, want 3", len(m7StringsBuilderTable))
+	}
+	for _, want := range m7StringsBuilderTable {
+		name := want.pkgPath + "." + want.recvType + "." + want.name
+		t.Run(name, func(t *testing.T) {
+			checkM7DesugarWiring(t, want)
+		})
+	}
+}
+
+func TestM7BytesBufferWriteStringDesugarWiring(t *testing.T) {
+	if len(m7BytesBufferWriteStringTable) != 1 {
+		t.Fatalf("m7BytesBufferWriteStringTable has %d entries, want 1", len(m7BytesBufferWriteStringTable))
+	}
+	for _, want := range m7BytesBufferWriteStringTable {
+		name := want.pkgPath + "." + want.recvType + "." + want.name
+		t.Run(name, func(t *testing.T) {
+			checkM7DesugarWiring(t, want)
+		})
+	}
+}
+
 func TestM7StrconvJsonDesugarWiring(t *testing.T) {
 	if len(m7StrconvJsonTable) != 15 {
 		t.Fatalf("m7StrconvJsonTable has %d entries, want 15", len(m7StrconvJsonTable))

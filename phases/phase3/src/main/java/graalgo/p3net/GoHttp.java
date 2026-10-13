@@ -40,9 +40,18 @@ public final class GoHttp {
      * @param urlStr request URL
      * @param headers flat [k, v, k, v, ...] header pairs (GoSlice of GoString)
      * @param body request body bytes (may be null/empty)
-     * @return Object[] { Long statusCode, Object[] headerPairs, Object[] bodyBytes }
+     * @return GoSlice of bytes encoding the response:
+     *         int64 BE status, int64 BE headerCount,
+     *         per header: int64 BE keyLen, key UTF-8 bytes,
+     *                     int64 BE valLen, val UTF-8 bytes,
+     *         int64 BE bodyLen, body bytes.
+     *         P3-M10: a []byte wire format (not []interface{}) — the linkname
+     *         dispatcher returns the target's result unboxed, and Go
+     *         .([]interface{}) assertions need descriptor-identical
+     *         GoInterface elements which Java cannot mint; a concrete
+     *         []byte needs no boxing at all.
      */
-    public static Object[] clientDo(Object method, Object urlStr, Object headers, Object body) {
+    public static Object clientDo(Object method, Object urlStr, Object headers, Object body) {
         String m = toJavaString(method);
         String u = toJavaString(urlStr);
         try {
@@ -72,27 +81,58 @@ public final class GoHttp {
             HttpRequest req = rb.build();
             HttpResponse<byte[]> resp = CLIENT.send(req, HttpResponse.BodyHandlers.ofByteArray());
             int status = resp.statusCode();
-            List<Object> hp = new ArrayList<>();
+            // Collect headers first to count them.
+            List<String> hkeys = new ArrayList<>();
+            List<String> hvals = new ArrayList<>();
             resp.headers().map().forEach((k, vs) -> {
                 for (String v : vs) {
-                    hp.add(GoString.fromUtf8(k));
-                    hp.add(GoString.fromUtf8(v));
+                    hkeys.add(k);
+                    hvals.add(v);
                 }
             });
             byte[] respBody = resp.body();
-            Object[] bodyOut = new Object[respBody == null ? 0 : respBody.length];
-            if (respBody != null) {
-                for (int i = 0; i < respBody.length; i++) {
-                    bodyOut[i] = (long) (respBody[i] & 0xFF);
-                }
+            if (respBody == null) {
+                respBody = new byte[0];
             }
-            return new Object[]{(long) status, hp.toArray(), bodyOut};
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            writeI64(out, status);
+            writeI64(out, hkeys.size());
+            for (int i = 0; i < hkeys.size(); i++) {
+                byte[] kb = hkeys.get(i).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                byte[] vb = hvals.get(i).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                writeI64(out, kb.length);
+                out.write(kb, 0, kb.length);
+                writeI64(out, vb.length);
+                out.write(vb, 0, vb.length);
+            }
+            writeI64(out, respBody.length);
+            out.write(respBody, 0, respBody.length);
+            byte[] enc = out.toByteArray();
+            return goByteSlice(enc);
         } catch (Exception e) {
-            // Return a synthetic 0 status with the error in a header; the Go
-            // side converts non-2xx/valid statuses appropriately.
-            // For transport errors, Go returns an error; we signal via status 0.
-            return new Object[]{(long) 0, new Object[0], new Object[0]};
+            // Transport error: status 0, no headers, empty body. The Go
+            // side converts status 0 into an error.
+            return goByteSlice(new byte[24]);
+            // status=0, headerCount=0, bodyLen=0 (all zeros already).
         }
+    }
+
+    private static void writeI64(java.io.ByteArrayOutputStream out, long v) {
+        for (int i = 7; i >= 0; i--) {
+            out.write((int) ((v >>> (i * 8)) & 0xFF));
+        }
+    }
+
+    /**
+     * Converts a Java byte[] to a Go []byte (GoSlice with int[] backing,
+     * D5 canonical form).
+     */
+    private static GoSlice goByteSlice(byte[] bytes) {
+        int[] arr = new int[bytes.length];
+        for (int i = 0; i < bytes.length; i++) {
+            arr[i] = bytes[i] & 0xFF;
+        }
+        return new GoSlice(arr, 0, arr.length, arr.length);
     }
 
     private static String toJavaString(Object o) {
@@ -115,6 +155,13 @@ public final class GoHttp {
             Object arr = s.array();
             if (arr instanceof byte[] barr) {
                 System.arraycopy(barr, s.offset(), out, 0, out.length);
+                return out;
+            }
+            // P3-M10: Go []byte is int[]-backed in D5 canonical form.
+            if (arr instanceof int[] iarr) {
+                for (int i = 0; i < out.length; i++) {
+                    out[i] = (byte) iarr[s.offset() + i];
+                }
                 return out;
             }
             if (arr instanceof Object[] oarr) {

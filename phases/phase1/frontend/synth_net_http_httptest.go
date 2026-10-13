@@ -26,7 +26,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 )
@@ -62,6 +61,19 @@ func (rw *ResponseRecorder) Header() http.Header {
 // Write always succeeds and writes to rw.Body.
 func (rw *ResponseRecorder) Write(buf []byte) (int, error) {
 	return rw.Body.Write(buf)
+}
+
+// P3-M10: __-helper for the m7 desugar table (v1 cannot emit the
+// multi-result Write method; the Body.Write call desugars through the
+// bytes.Buffer.Write table entry).
+type __recorderWritePair struct {
+	n   int
+	err error
+}
+
+func __recorderWrite(rw *ResponseRecorder, buf []byte) __recorderWritePair {
+	n, err := rw.Body.Write(buf)
+	return __recorderWritePair{n, err}
 }
 
 // WriteHeader sets rw.Code.
@@ -177,9 +189,13 @@ type Server struct {
 	Listener net.Listener
 	Config   *http.Server
 
-	mu     sync.Mutex
 	closed bool
 }
+
+// P3-M10: package-level mutex instead of a sync.Mutex struct field (out
+// of M2 scope for the v1 frontend; cf. the serveMuxMu note in
+// synth_net_http.go).
+var httptestServerMu sync.Mutex
 
 // NewServer starts and returns a new Server.
 func NewServer(handler http.Handler) *Server {
@@ -226,8 +242,8 @@ func __httptestNewUnstartedServer(handler http.Handler) __httptestNewServerPair 
 
 // Start starts a server from NewUnstartedServer.
 func (s *Server) Start() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	httptestServerMu.Lock()
+	defer httptestServerMu.Unlock()
 	if s.closed {
 		panic("httptest: Server.Start called after Close")
 	}
@@ -236,8 +252,8 @@ func (s *Server) Start() {
 
 // Close shuts down the server.
 func (s *Server) Close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	httptestServerMu.Lock()
+	defer httptestServerMu.Unlock()
 	if !s.closed {
 		s.closed = true
 		s.Listener.Close()

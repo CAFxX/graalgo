@@ -21,6 +21,15 @@ import (
 	"iter"
 )
 
+// clearSlice zeroes every element of s. P3-M10: the clear builtin is out
+// of frontend/v1 scope (WS G), so the four call sites below use this.
+func clearSlice[S ~[]E, E any](s S) {
+	var zero E
+	for i := range s {
+		s[i] = zero
+	}
+}
+
 // Copyright 2021 The Go Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
@@ -201,7 +210,7 @@ func Delete[S ~[]E, E any](s S, i, j int) S {
 
 	oldlen := len(s)
 	s = append(s[:i], s[j:]...)
-	clear(s[len(s):oldlen]) // zero/nil out the obsolete elements, for GC
+	clearSlice(s[len(s):oldlen]) // zero/nil out the obsolete elements, for GC
 	return s
 }
 
@@ -221,7 +230,7 @@ func DeleteFunc[S ~[]E, E any](s S, del func(E) bool) S {
 			i++
 		}
 	}
-	clear(s[i:]) // zero/nil out the obsolete elements, for GC
+	clearSlice(s[i:]) // zero/nil out the obsolete elements, for GC
 	return s[:i]
 }
 
@@ -245,7 +254,7 @@ func Replace[S ~[]E, E any](s S, i, j int, v ...E) S {
 	if j == len(s) {
 		s2 := append(s[:i], vv...)
 		if len(s2) < len(s) {
-			clear(s[len(s2):]) // zero/nil out the obsolete elements, for GC
+			clearSlice(s[len(s2):]) // zero/nil out the obsolete elements, for GC
 		}
 		return s2
 	}
@@ -265,7 +274,7 @@ func Replace[S ~[]E, E any](s S, i, j int, v ...E) S {
 		// Easy, as v fits in the deleted portion.
 		copy(r[i:], vv)
 		copy(r[i+m:], s[j:])
-		clear(s[tot:]) // zero/nil out the obsolete elements, for GC
+		clearSlice(s[tot:]) // zero/nil out the obsolete elements, for GC
 		return r
 	}
 
