@@ -67,10 +67,10 @@ jobs:
       - name: Layer 1 — smoke (diffharness, per-commit)
         # Curated differential smoke corpus (46 programs, gc-a vs gc-b vs
         # graalgo-P3SyncMain) with mutation-validated oracles. PHASE3_DIR
-        # defaults to this repo's phases/phase3 (the graalgo-sync-run
+        # defaults to this repo's internal/backend (the graalgo-sync-run
         # product launcher); DH_GO falls back to PATH (setup-go).
         # DH_TIMEOUT=90 gives the JVM backend headroom on shared runners.
-        # `make all` above built phases 1+2+3 (required by the backend).
+        # `make all` above built truffle+runtime+interop (required by the backend).
         env:
           DH_TIMEOUT: "90"
         run: ./tools/diffharness/run.sh

@@ -6,9 +6,13 @@
 # and then `git diff --exit-code` — if the build regenerates any tracked
 # file differently from what's committed, CI fails.
 #
-# Phase layout: [phases/phase1](phases/phase1) (language core + gofrontend),
-# [phases/phase2](phases/phase2) (scheduler core), [phases/phase3](phases/phase3)
-# (sync bindings). Each phase has its own Makefile; this file orchestrates.
+# Backend layout: [internal/backend/truffle](internal/backend/truffle) (Truffle
+# AST implementation + frozen phase-1 stubs), [internal/backend/runtime](
+# internal/backend/runtime) (Go runtime on the JVM: scheduler, netpoller,
+# maps, channels), [internal/backend/interop](internal/backend/interop)
+# (stdlib bindings: Go<->Java interop). Each module has its own Makefile;
+# this file orchestrates. Compile order is load-bearing: truffle, then
+# runtime (against truffle/out/classes), then interop (against both).
 #
 # CI SCOPE — honest, not aspirational.
 #   `make all` = generate + build + snapshot-check + check + test-ci:
@@ -60,27 +64,27 @@ generate:
 	cd phases/phase1/frontend && ./build.sh build
 
 build:
-	$(MAKE) -C phases/phase1 main
-	$(MAKE) -C phases/phase2 main
-	$(MAKE) -C phases/phase3 main
+	$(MAKE) -C internal/backend/truffle main
+	$(MAKE) -C internal/backend/runtime main
+	$(MAKE) -C internal/backend/interop main
 
 check:
-	$(MAKE) -C phases/phase1 check
-	$(MAKE) -C phases/phase2 check
-	$(MAKE) -C phases/phase3 check
+	$(MAKE) -C internal/backend/truffle check
+	$(MAKE) -C internal/backend/runtime check
+	$(MAKE) -C internal/backend/interop check
 
-# CI-feasible tests: phase1 Truffle smoke tests (runtime + DSL processor).
+# CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are
 # `make test` (see header comment).
 test-ci: build
-	$(MAKE) -C phases/phase1 smoke-test
+	$(MAKE) -C internal/backend/truffle smoke-test
 
-# Full test suite: all phase differential/test runners. LONG (30+ min);
+# Full test suite: all backend differential/test runners. LONG (30+ min);
 # for local verification and nightly runs, not per-push CI.
 test: build
-	$(MAKE) -C phases/phase1 test
-	$(MAKE) -C phases/phase2 test
-	$(MAKE) -C phases/phase3 test
+	$(MAKE) -C internal/backend/truffle test
+	$(MAKE) -C internal/backend/runtime test
+	$(MAKE) -C internal/backend/interop test
 
 # Behavior snapshots (M10 WS I): graalgo's observable behavior on the
 # differential corpus ([tools/diffharness/corpus/](tools/diffharness/corpus/)),
@@ -97,9 +101,13 @@ SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
 # build temps and harness scratch dirs on the persistent disk (same pattern
 # as the phase Makefiles' test targets). $(DH)/.tmp is gitignored.
 SNAPSHOT_TMP := $(CURDIR)/$(DH)/.tmp
+# The diffharness resolves the graalgo backend launcher as
+# ${PHASE1_DIR}/graalgo-run (see tools/diffharness/backends.json); the
+# product launcher as ${PHASE3_DIR}/graalgo-sync-run (backends-p3.json).
+# Both wrappers now live in internal/backend/.
 snapshot: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/phases/phase1" \
+	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
 	  $(GO) run ./cmd/diffharness snapshot record \
 	  -config backends.json -corpus corpus -backend graalgo \
 	  -corpus-label tools/diffharness/corpus \
@@ -110,13 +118,13 @@ snapshot: build
 
 snapshot-check: build
 	mkdir -p $(SNAPSHOT_TMP) && cd $(DH) && \
-	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/phases/phase1" \
+	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
 	  $(GO) run ./cmd/diffharness snapshot check \
 	  -config backends.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -jobs 4 -timeout 60
 
 clean:
-	$(MAKE) -C phases/phase1 clean
-	$(MAKE) -C phases/phase2 clean
-	$(MAKE) -C phases/phase3 clean
+	$(MAKE) -C internal/backend/truffle clean
+	$(MAKE) -C internal/backend/runtime clean
+	$(MAKE) -C internal/backend/interop clean

@@ -52,13 +52,13 @@ if [ ! -d "$GOROOT_TEST" ]; then
   exit 2
 fi
 
-PHASE1_DIR="$REPO_ROOT/phases/phase1"
+PHASE1_DIR="$REPO_ROOT/internal/backend"
 if [ ! -x "$PHASE1_DIR/graalgo-run" ]; then
   echo "conformance: $PHASE1_DIR/graalgo-run missing/not executable" >&2
   exit 2
 fi
-if [ ! -d "$PHASE1_DIR/out/classes" ]; then
-  echo "conformance: phase-1 classes not built; run 'make -C $PHASE1_DIR main' first" >&2
+if [ ! -d "$PHASE1_DIR/runtime/out/classes" ]; then
+  echo "conformance: backend classes not built; run 'make build' at the repo root first" >&2
   exit 2
 fi
 

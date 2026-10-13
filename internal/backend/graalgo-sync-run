@@ -1,22 +1,30 @@
 #!/usr/bin/env bash
-# graalgo-sync-run — Phase 3 launcher wrapper.
+# graalgo-sync-run — interop (product) launcher wrapper.
 #
 # Invoked by the diffharness (build: graalgo-sync-run --check {SRC};
-# run: graalgo-sync-run {SRC}). Requires `make main` to have been run in
-# phases/phase1, phases/phase2, and phases/phase3 (out/classes must exist);
-# this script never builds.
+# run: graalgo-sync-run {SRC}). Requires `make build` to have been run first
+# at the repo root (internal/backend/{truffle,runtime,interop}/out/classes
+# must exist); this script never builds.
 #
-# This is the product launcher (P3SyncMain): unlike the phase-1 graalgo-run,
-# it supports channels/select and the full stdlib surface, so the smoke
-# corpus runs without exclusions.
+# This is the product launcher (P3SyncMain): unlike graalgo-run, it supports
+# channels/select and the full stdlib surface, so the smoke corpus runs
+# without exclusions.
+#
+# Classpath order is load-bearing: interop/out/classes FIRST, then
+# runtime/out/classes (so the runtime module's same-FQN replacements shadow
+# the truffle module's frozen phase-1 stubs), then truffle/out/classes.
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
-P1="$HERE/../phase1"
-P2="$HERE/../phase2"
-P3="$HERE"
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes"
-for jar in "$P1"/lib/*.jar; do
+# BRIDGE (frontend lane): the gofrontend binary still builds at
+# phases/phase1/frontend until the frontend code-move lane relocates it to
+# internal/frontend/ (which the launcher's ToolPaths walk-up then finds on
+# its own). Until then, point the launcher at the current location.
+if [ -z "${GRAALGO_GOFRONTEND:-}" ] && [ -x "$HERE/../../phases/phase1/frontend/gofrontend" ]; then
+  export GRAALGO_GOFRONTEND="$HERE/../../phases/phase1/frontend/gofrontend"
+fi
+CP="$HERE/interop/out/classes:$HERE/runtime/out/classes:$HERE/truffle/out/classes"
+for jar in "$HERE"/truffle/lib/*.jar; do
   CP="$CP:$jar"
 done
 # -Djava.io.tmpdir: keep the JVM off /tmp (a full /tmp silently yields

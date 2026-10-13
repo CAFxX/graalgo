@@ -7,7 +7,7 @@ import graalgo.sched.SchedulerCore;
  *
  * <p>Phase-2 same-FQN replacement for the Phase-1 stub
  * (overlay mechanism, P2-D8): every FROZEN signature is byte-identical
- * to {@code phases/phase1/.../graalgo/runtime/ChanOps.java} — only the
+ * to {@code internal/backend/truffle/src/main/java/graalgo/runtime/ChanOps.java} — only the
  * method bodies are real now (bodies are INTERNAL per freeze §3.5, so no
  * ADR/version bump). {@code FreezeSignatureTest} keeps passing.
  *
