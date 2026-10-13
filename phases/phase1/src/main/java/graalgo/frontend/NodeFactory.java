@@ -4309,25 +4309,41 @@ public final class NodeFactory {
         // General lvalue path (M4, WS E): Go's two-phase rule — every lhs
         // index/selector operand and every rhs is evaluated (in lexical
         // order) before any write; writes run left-to-right.
+        // P3-M9 (bug-030): gc re-reads a simple variable container/index
+        // AFTER the rhs completes — the store lands in the variable's
+        // current value (e.g. a slice's new backing array after the rhs
+        // appends). Only non-variable expressions are pinned into
+        // temporaries; simple variable reads are re-evaluated at store
+        // time. (Verified against gc 1.27.1: variable container, index,
+        // selector base, and pointer are all re-read; call results pin.)
         List<GoStmtNode> prog = new ArrayList<>();
         for (Lhs l : lhss) {
             if (l.isIndex) {
-                l.tmpC = newTmp(l.container.kind(), ctx);
-                l.tmpK = newTmp(l.key.kind(), ctx);
-                prog.add(new AssignNode(l.tmpC, l.container.kind(), l.container, false));
-                prog.add(new AssignNode(l.tmpK, l.key.kind(), l.key, false));
-                l.container = new VarReadNode(l.container.kind(), l.tmpC);
-                l.key = new VarReadNode(l.key.kind(), l.tmpK);
+                if (!isSimpleVarRead(l.container)) {
+                    l.tmpC = newTmp(l.container.kind(), ctx);
+                    prog.add(new AssignNode(l.tmpC, l.container.kind(), l.container, false));
+                    l.container = new VarReadNode(l.container.kind(), l.tmpC);
+                }
+                if (!isSimpleVarRead(l.key)) {
+                    l.tmpK = newTmp(l.key.kind(), ctx);
+                    prog.add(new AssignNode(l.tmpK, l.key.kind(), l.key, false));
+                    l.key = new VarReadNode(l.key.kind(), l.tmpK);
+                }
             } else if (l.isSelector) {
-                l.tmpO = newTmp(l.obj.kind(), ctx);
-                prog.add(new AssignNode(l.tmpO, l.obj.kind(), l.obj, false));
-                l.obj = new VarReadNode(l.obj.kind(), l.tmpO);
+                if (!isSimpleVarRead(l.obj)) {
+                    l.tmpO = newTmp(l.obj.kind(), ctx);
+                    prog.add(new AssignNode(l.tmpO, l.obj.kind(), l.obj, false));
+                    l.obj = new VarReadNode(l.obj.kind(), l.tmpO);
+                }
             } else if (l.isDeref) {
                 // P3-M9 (WS D): evaluate the pointer once into a temporary
-                // (Go's two-phase rule: *p is evaluated before the rhs).
-                l.tmpP = newTmp(l.ptr.kind(), ctx);
-                prog.add(new AssignNode(l.tmpP, l.ptr.kind(), l.ptr, false));
-                l.ptr = new VarReadNode(l.ptr.kind(), l.tmpP);
+                // (Go's two-phase rule: *p is evaluated before the rhs) —
+                // unless it is a simple variable, re-read after (bug-030).
+                if (!isSimpleVarRead(l.ptr)) {
+                    l.tmpP = newTmp(l.ptr.kind(), ctx);
+                    prog.add(new AssignNode(l.tmpP, l.ptr.kind(), l.ptr, false));
+                    l.ptr = new VarReadNode(l.ptr.kind(), l.tmpP);
+                }
             }
         }
         if (op != null) {
@@ -4391,6 +4407,25 @@ public final class NodeFactory {
     }
 
     /** One assignment target: identifier, blank, index, or selector (M4, WS E). */
+
+    /**
+     * P3-M9 (bug-030): whether an expression node is a simple variable
+     * read — local ({@link VarReadNode}), global ({@link GlobalReadNode}/
+     * {@link GlobalBoxReadNode}), captured ({@link CapReadNode}), or boxed
+     * ({@link BoxReadNode}). gc re-reads such variables AFTER the rhs of
+     * an assignment completes, so the store uses the variable's current
+     * value; they must NOT be pinned into temporaries before the rhs.
+     * Every other expression shape keeps the pinning (single evaluation,
+     * lexical order for side effects).
+     */
+    private static boolean isSimpleVarRead(GoExprNode n) {
+        return n instanceof VarReadNode
+                || n instanceof GlobalReadNode
+                || n instanceof GlobalBoxReadNode
+                || n instanceof CapReadNode
+                || n instanceof BoxReadNode;
+    }
+
     private static final class Lhs {
         boolean isIdent;
         int slot;
