@@ -1778,7 +1778,15 @@ public final class Fmt {
         private void printStruct(Arg arg, GoStruct s, int verb, int depth) {
             GoStructDescriptor d = s.descriptor();
             if (sharpV) {
-                writeUtf8((arg.typeName()));
+                // P0-fmt: prefer the struct descriptor's type name (qualified
+                // for named types, e.g. main.Inner) over the Arg's kind-based
+                // name. Falls back to arg.typeName() for anonymous structs
+                // (whose descriptor name is the internal struct#id).
+                String tn = d.typeName();
+                if (tn == null || tn.startsWith("struct#")) {
+                    tn = arg.typeName();
+                }
+                writeUtf8(tn);
             }
             buf.write('{');
             var fields = d.fields();

@@ -1029,7 +1029,11 @@ public final class NodeFactory {
                 + "|" + arrayElemKinds + "|" + elemDescKeys(arrayElemDescs);
         GoStructDescriptor cd = STRUCT_DESCS.get(key);
         if (cd == null) {
-            GoStructDescriptor nd = GoStructDescriptor.layout("struct#" + typeId, names, kinds, arrayLens,
+            // P0-fmt: use the qualified name for named structs so %#v renders
+            // main.Inner not struct#N; anonymous structs keep the struct#id
+            // (rendered structurally via GoTypeStrings).
+            GoStructDescriptor nd = GoStructDescriptor.layout(
+                    qname != null ? qname : "struct#" + typeId, names, kinds, arrayLens,
                     arrayElemKinds, arrayElemDescs);
             GoStructDescriptor prev = STRUCT_DESCS.putIfAbsent(key, nd);
             cd = prev != null ? prev : nd;
