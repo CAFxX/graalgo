@@ -237,7 +237,20 @@ public final class TlsRuntime {
 
     private static String[] enabledCipherSuites(byte[] suitesBE) {
         if (suitesBE == null || suitesBE.length == 0) {
-            return null; // JDK defaults
+            // Go's default cipher suite preference order (crypto/tls
+            // defaultCipherSuites), not the JDK's: gc negotiates 0x1301
+            // here, the JDK default order negotiates 0x1302.
+            return new String[]{
+                "TLS_AES_128_GCM_SHA256",
+                "TLS_AES_256_GCM_SHA384",
+                "TLS_CHACHA20_POLY1305_SHA256",
+                "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256",
+                "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256",
+                "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384",
+                "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384",
+                "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256",
+                "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256",
+            };
         }
         List<String> names = new ArrayList<>();
         for (int i = 0; i + 1 < suitesBE.length; i += 2) {

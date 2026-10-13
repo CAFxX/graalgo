@@ -630,6 +630,12 @@ func (c *Conn) Handshake() error {
 				if err := writeAll(c.conn, out); err != nil {
 					return err
 				}
+			} else {
+				// P3-M9 (x509): the engine can report NEED_WRAP while a
+				// wrap produces no bytes (transitional state). Spinning
+				// here starves the peer goroutine on a single worker
+				// (--gmp=1): yield so it can make progress.
+				time.Sleep(time.Millisecond)
 			}
 		case engineNeedUnwrap:
 			n, err := c.conn.Read(tmp)
