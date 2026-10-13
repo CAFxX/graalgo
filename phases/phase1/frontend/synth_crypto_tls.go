@@ -639,6 +639,17 @@ func (c *Conn) Handshake() error {
 			return nil
 		case engineNeedWrap:
 			out := wrapTrap(c.engineHandle, nil)
+			// P3-M9 (x509): TLS 1.3 sends ChangeCipherSpec (6 bytes)
+			// separately from Finished. If wrap returns a tiny output,
+			// the engine may have more (e.g. Finished) — wrap again
+			// immediately instead of trusting a premature NEED_UNWRAP.
+			for i := 0; i < 3 && len(out) > 0 && len(out) < 10; i++ {
+				out2 := wrapTrap(c.engineHandle, nil)
+				if len(out2) == 0 {
+					break
+				}
+				out = append(out, out2...)
+			}
 			if len(out) > 0 {
 				if err := writeAll(c.conn, out); err != nil {
 					return err

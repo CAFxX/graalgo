@@ -421,19 +421,21 @@ public final class TlsRuntime {
         if (engine == null) {
             return -1;
         }
+        long st;
         switch (engine.getHandshakeStatus()) {
             case FINISHED:
             case NOT_HANDSHAKING:
-                return 0;
+                st = 0; break;
             case NEED_WRAP:
-                return 1;
+                st = 1; break;
             case NEED_UNWRAP:
-                return 2;
+                st = 2; break;
             case NEED_TASK:
-                return 3;
+                st = 3; break;
             default:
-                return -1;
+                st = -1; break;
         }
+        return st;
     }
 
     /**
@@ -469,16 +471,44 @@ public final class TlsRuntime {
                     break;
                 }
             }
-            // Handle the empty-plaintext (handshake) case: wrap once.
+            // Handle the empty-plaintext (handshake) case: keep wrapping
+            // until the engine has no more output to produce. A single
+            // wrap() may produce only part of a flight (e.g. a 6-byte
+            // ChangeCipherSpec without the following Finished); without
+            // draining, the peer receives a truncated flight and both
+            // sides deadlock in NEED_UNWRAP.
+            // P3-M9 (x509): GMP=1 handshake deadlock root cause.
+            // Note: we do NOT check handshake status in the loop — the
+            // engine may report NEED_UNWRAP prematurely after a partial
+            // flight (e.g. after CCS but before Finished); we drain based
+            // on output production only, with a bound to prevent spins.
             if (plain.length == 0) {
-                ByteBuffer dst = ByteBuffer.allocate(NET_BUF);
-                SSLEngineResult res = engine.wrap(src, dst);
-                dst.flip();
-                byte[] chunk = new byte[dst.remaining()];
-                dst.get(chunk);
-                out.write(chunk, 0, chunk.length);
+                int emptyCount = 0;
+                for (int i = 0; i < 20; i++) {
+                    ByteBuffer dst = ByteBuffer.allocate(NET_BUF);
+                    SSLEngineResult res = engine.wrap(src, dst);
+                    dst.flip();
+                    byte[] chunk = new byte[dst.remaining()];
+                    dst.get(chunk);
+                    out.write(chunk, 0, chunk.length);
+                    // No output: count consecutive empties; the engine may
+                    // need a status-check cycle between CCS and Finished.
+                    // Allow a few empties before giving up.
+                    if (chunk.length == 0) {
+                        emptyCount++;
+                        if (emptyCount >= 3) {
+                            break;
+                        }
+                    } else {
+                        emptyCount = 0;
+                    }
+                    if (res.getStatus() == SSLEngineResult.Status.CLOSED) {
+                        break;
+                    }
+                }
             }
-            return toGoBytes(out.toByteArray());
+            byte[] result = out.toByteArray();
+            return toGoBytes(result);
         } catch (Exception e) {
             return null;
         }
@@ -525,10 +555,8 @@ public final class TlsRuntime {
                 }
             }
             dst.flip();
-            byte[] chunk = new byte[dst.remaining()];
-            dst.get(chunk);
-            out.write(chunk, 0, chunk.length);
-            return toGoBytes(out.toByteArray());
+            byte[] result = out.toByteArray();
+            return toGoBytes(result);
         } catch (Exception e) {
             return null;
         }
