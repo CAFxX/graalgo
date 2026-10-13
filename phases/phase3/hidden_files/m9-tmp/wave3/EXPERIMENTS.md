@@ -88,3 +88,20 @@ The 200MB frontend JSON was parsed FIVE times per run:
 - OPEN: TLS handshake deadlocks on GMP=1 (both sides NEED_UNWRAP, no bytes flowing).
   GMP=4 worked before these changes. Likely GMP=1 scheduler or SSLEngine state issue.
 - Debug code (println) still in synth_crypto_tls.go — must be removed before final.
+
+## Update 10:45 CEST — GMP=4 WORKS BYTE-IDENTICAL!
+| # | Hypothesis | Change/Command | Result | Wall |
+|---|-----------|----------------|--------|------|
+| 26 | GMP=4 with build fixes | Ran --gmp=4 with parse-once + temp-file | EXIT=0, output BYTE-IDENTICAL to gc 1.27.1 (7 lines, client-first, suite 4865). | 8m |
+
+## Status summary
+FIXED (general, not module-specific):
+- 73d7242: parse-once (200MB JSON 5x→1x parse). Root cause of "40-min hang".
+- e63a6b0: gofrontend via temp file not pipe (200MB pipe deadlock).
+- f957336: NodeFactory truncated-table handling (defensive).
+
+OPEN:
+- GMP=1 TLS handshake deadlocks (both sides NEED_UNWRAP, 0 bytes flowing).
+  GMP=4 works byte-identical. Likely GMP=1 scheduler interleaving or
+  SSLEngine state race. Needs dedicated investigation.
+- Reverted: debug println, 100ms sleep (back to 10s original).
