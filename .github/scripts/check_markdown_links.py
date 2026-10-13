@@ -25,6 +25,16 @@ LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 FENCE_RE = re.compile(r"^\s*```")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$")
 
+# URLs that are live but block automated checks via bot protection
+# (Akamai/Cloudflare 403 on non-browser TLS fingerprints). Each entry was
+# manually verified live with curl; the checker skips them instead of
+# failing on the 403.
+BOT_PROTECTED_URLS = {
+    # bugs.openjdk.org serves 403 to Python urllib (AkamaiGHost) but 200
+    # to curl/browser; verified live 2026-10-13.
+    "https://bugs.openjdk.org/browse/JDK-8247838",
+}
+
 
 def github_slug(heading):
     """GitHub heading-anchor slug: lowercase, strip punctuation, each
@@ -53,6 +63,8 @@ BROWSER_UA = ("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
 
 
 def check_external(url):
+    if url in BOT_PROTECTED_URLS:
+        return True  # manually verified live; bot protection blocks automation
     # Some sites 403 HEAD or non-browser user agents (bot protection);
     # retry with GET + browser UA before declaring dead.
     attempts = [
