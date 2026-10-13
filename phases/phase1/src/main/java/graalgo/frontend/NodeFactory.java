@@ -3504,16 +3504,17 @@ public final class NodeFactory {
                 yield new DeleteNode(args[0], delKey);
             }
             case "clear" -> {
-                requireArgs(path, builtin, args, 1);
-                yield new ClearNode(args[0]);
+                // M9 acceptance: clear/min/max are outside the frozen v1
+                // builtin surface (see docs/freeze-stub.md "Builtin nodes").
+                // The exporter must fail fast with a clean WS G scope error
+                // instead of emitting a program that crashes at runtime.
+                throw new FrontendException(path + ": builtin \"" + builtin
+                        + "\" is not supported in frontend/v1 scope (WS G)");
             }
             case "min", "max" -> {
-                if (args.length < 1) {
-                    throw new FrontendException(path + ": builtin \"" + builtin
-                            + "\" requires at least one argument, wire has 0");
-                }
-                yield new MinMaxNode(builtinResultKind(f, ctx, path),
-                        builtin.equals("min"), args);
+                // M9 acceptance: see "clear" above — outside v1 scope.
+                throw new FrontendException(path + ": builtin \"" + builtin
+                        + "\" is not supported in frontend/v1 scope (WS G)");
             }
             case "complex" -> {
                 requireArgs(path, builtin, args, 2);

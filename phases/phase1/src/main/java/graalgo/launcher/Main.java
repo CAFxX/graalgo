@@ -120,9 +120,18 @@ public final class Main {
         try {
             program = new NodeFactory(source).buildProgram(json);
         } catch (FrontendException e) {
+            // M9 acceptance: scope errors (program uses constructs outside
+            // frontend/v1 scope) are the program's fault → EXIT_BUILD_FAILURE.
+            // Genuine internal errors (factory bugs) → EXIT_INPUT_ERROR.
+            String msg = e.getMessage();
+            if (msg != null && (msg.contains("not supported in frontend/v1 scope")
+                    || msg.contains("not supported in v1"))) {
+                System.err.println("graalgo-run: " + msg);
+                return EXIT_BUILD_FAILURE;
+            }
             // gofrontend accepted the program but the factory cannot build it:
             // a launcher-internal inconsistency, never the program's fault.
-            System.err.println("graalgo-run: internal error building AST: " + e.getMessage());
+            System.err.println("graalgo-run: internal error building AST: " + msg);
             return EXIT_INPUT_ERROR;
         }
         if (check) {
