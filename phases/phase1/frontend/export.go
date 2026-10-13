@@ -10029,13 +10029,13 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 		}
 	}
 	// P3-M9 (x509): emergency truncation for pathological tables. If the
-	// literal (recursively) contains >1000 scalar values, the JSON
+	// literal (recursively) contains >100 scalar values, the JSON
 	// blowup (200x) makes compilation infeasible. Emit a "truncated"
 	// flag; the Java side allocates zeros. This is a correctness risk
 	// (tables will be wrong), but unblocks compilation. The proper fix
 	// is efficient encoding for nested tables.
-	if !keyed && len(l.Elts) > 100 {
-		if countScalars(l) > 1000 {
+	if !keyed && len(l.Elts) > 10 {
+		if countScalars(l) > 100 {
 			fields["values"] = []*Node{}
 			fields["truncated"] = true
 		}
