@@ -75,6 +75,25 @@ check:
 test-ci: build
 	$(MAKE) -C phases/phase1 smoke-test
 
+# Gate 1: go test ./... trial harness (Phase-3 Gate 1).
+#   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
+#   make gate1 PKG=foo — single package trial
+GATE1_PKGS ?= strconv errors sort strings bytes
+gate1-pilot: build
+	@for pkg in $(GATE1_PKGS); do \
+		echo "=== gate1 $$pkg ==="; \
+		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
+		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
+			--graalgo-run "$(CURDIR)/phases/phase1/graalgo-run" || true; \
+	done
+	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
+
+gate1: build
+	@test -n "$(PKG)" || (echo "usage: make gate1 PKG=<pkg>"; exit 1)
+	TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
+	python3 tools/gate1/run.py $(PKG) --out tools/gate1/.tmp/$(PKG) \
+		--graalgo-run "$(CURDIR)/phases/phase1/graalgo-run"
+
 # Full test suite: all phase differential/test runners. LONG (30+ min);
 # for local verification and nightly runs, not per-push CI.
 test: build
