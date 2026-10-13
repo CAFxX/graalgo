@@ -11,11 +11,11 @@ name: conformance
 on:
   push:
     paths:
-      - 'phases/phase1/frontend/**'
+      - 'internal/frontend/**'
       - 'tools/diffharness/**'
   pull_request:
     paths:
-      - 'phases/phase1/frontend/**'
+      - 'internal/frontend/**'
       - 'tools/diffharness/**'
   workflow_dispatch:
 
