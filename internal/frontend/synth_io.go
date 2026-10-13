@@ -44,7 +44,7 @@
 //
 // Re-test trigger (all fail-fast members): when WS D lands multi-result
 // calls, give each a real __-helper + Appendix M table entry and re-run
-// the io corpus (phases/phase3/corpus/wave2/io/).
+// the io corpus (test/corpus/wave2/io/).
 //
 // DEVIATIONS from gc 1.27.1 (all confined to unexported structure;
 // none observable through the public API):

@@ -4,7 +4,7 @@
 #
 # GG-0033 machinery applies: flat "- file:" entries, "reason:" mandatory per
 # entry, "detail:" carries the evidence, "version:" line present. Parsed with
-# the same line-based semantics as tools/diffharness LoadExclusions and the
+# the same line-based semantics as test/differential LoadExclusions and the
 # Java readExclusions in TypeparamDifferentialTest: the "reason_codes:"
 # section below is invisible to those readers ("reason_codes:" does not
 # carry the "reason:" prefix; "- code:" does not carry the "- file:"

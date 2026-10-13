@@ -19,7 +19,7 @@ import java.util.regex.Pattern;
  * pass by construction. Compares exit code and stdout exactly, and stderr
  * under the diffharness' documented normalization rules (addresses,
  * goroutine numbers, file paths/line numbers, and pc offsets are not
- * significant — see tools/diffharness/README.md "What is compared").
+ * significant — see test/differential/README.md "What is compared").
  *
  * <p>Both backends run with a scrubbed environment ({@code GOMAXPROCS=1},
  * {@code GOTOOLCHAIN=local}) in a fresh empty working directory, per the

@@ -629,7 +629,7 @@ public final class Intrinsics {
      * wire carries no package path), no {@code created by} line (the
      * scheduler does not record creators). Each divergence has an
      * explicit re-test trigger in
-     * {@code phases/phase3/corpus/traceback/README.md} ("Re-test
+     * {@code test/corpus/traceback/README.md} ("Re-test
      * triggers").
      *
      * @param goroutineId the id to print (gc: the main goroutine is 1)

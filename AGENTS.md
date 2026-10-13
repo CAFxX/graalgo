@@ -27,8 +27,9 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
 - Per-package Go tests: `go test ./...` inside the package's own module
   directory (frontend modules live under the old `phases/` paths until the
   code-move lanes land — see [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md)).
-- Differential harness: [tools/diffharness/run.sh](tools/diffharness/run.sh)
-  (moves to [test/differential/](test/differential/) with the code lane).
+- Differential harness: [test/differential/run.sh](test/differential/run.sh)
+  (moved here from `tools/diffharness/` with the test-reorganization lane,
+  2026-10-13).
 
 ## 2. Worktree discipline
 

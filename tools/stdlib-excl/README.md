@@ -4,7 +4,7 @@ P3-M6 workstreams 4+5: the stdlib exclusion-list validator and the
 coupled-package re-measurement tool (GG-0009, GG-0033 machinery).
 
 No external dependencies. The YAML reader is a minimal line parser with the
-same semantics as `tools/diffharness` `LoadExclusions` and the Java
+same semantics as `test/differential` `LoadExclusions` and the Java
 `readExclusions` in `TypeparamDifferentialTest` — those readers parse this
 tool's `exclusions.yaml` files unchanged (the `reason_codes:` vocabulary
 section is invisible to them: `reason_codes:` does not carry the `reason:`

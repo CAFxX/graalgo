@@ -27,7 +27,7 @@ import java.util.concurrent.TimeUnit;
  *   <li>{@code testExclusionListCoversAllFiles} — every one of the 266
  *       files is either included by the adapter or carried on the
  *       versioned, reason-coded exclusion list
- *       ({@code tools/diffharness/typeparam-exclusions.yaml}); no stale
+ *       ({@code test/differential/typeparam-exclusions.yaml}); no stale
  *       entries, no unknown reason codes.
  *   <li>{@code testZeroUnexplainedDivergences} — the included files run
  *       differential gc-a vs graalgo (build parity for {@code // compile},
@@ -125,7 +125,7 @@ public final class TypeparamDifferentialTest {
 
     private static Path repoRoot() {
         Path root = phase1Dir().getParent().getParent();
-        Path dh = root.resolve("tools").resolve("diffharness");
+        Path dh = root.resolve("test").resolve("differential");
         if (!Files.isDirectory(dh)) {
             throw new IllegalStateException(
                     "diffharness directory missing at " + dh
@@ -135,7 +135,7 @@ public final class TypeparamDifferentialTest {
     }
 
     private static Path diffharnessDir() {
-        return repoRoot().resolve("tools").resolve("diffharness");
+        return repoRoot().resolve("test").resolve("differential");
     }
 
     private static Path exclusionsFile() {
@@ -194,7 +194,7 @@ public final class TypeparamDifferentialTest {
      * field order is insignificant, {@code detail:} is optional (defaults
      * to ""), entries flush at the next {@code - file:} or EOF. The two
      * readers are conformance-tested against the same fixture (see
-     * {@code tools/diffharness/testdata/exclusions-edge.yaml}).
+     * {@code test/differential/testdata/exclusions-edge.yaml}).
      */
     static Map<String, String[]> readExclusions(Path yaml) throws IOException {
         Map<String, String[]> out = new HashMap<>();
@@ -446,7 +446,7 @@ public final class TypeparamDifferentialTest {
 
     // -- YAML parser conformance (P2-8) -----------------------------------
     // readExclusions must agree with Go LoadExclusions on the shared
-    // fixture tools/diffharness/testdata/exclusions-edge.yaml. Neither
+    // fixture test/differential/testdata/exclusions-edge.yaml. Neither
     // parser unquotes detail values; both accept any field order and a
     // missing detail (defaults to "").
 

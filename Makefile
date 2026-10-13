@@ -108,7 +108,7 @@ test: build
 	$(MAKE) -C internal/backend/interop test
 
 # Behavior snapshots (M10 WS I): graalgo's observable behavior on the
-# differential corpus ([tools/diffharness/corpus/](tools/diffharness/corpus/)),
+# differential corpus ([test/differential/corpus/](test/differential/corpus/)),
 # recorded against the pinned Go toolchain — the upgrade baseline. See
 # [test/snapshots/README.md](test/snapshots/README.md) for the format.
 #
@@ -124,7 +124,7 @@ test: build
 # or a deliberately re-baselined behavior change, then commit the result.
 # `make snapshot-check` verifies the current tree against the committed
 # baseline and fails on drift (this is what per-push CI runs via `make all`).
-DH := tools/diffharness
+DH := test/differential
 SNAPSHOT_TOOLCHAIN := $(shell $(GO) version 2>/dev/null | awk '{print $$3}')
 # /tmp is a 512M tmpfs shared with other work and routinely full: keep go
 # build temps and harness scratch dirs on the persistent disk (same pattern
@@ -140,7 +140,7 @@ snapshot: build
 	  TMPDIR="$(SNAPSHOT_TMP)" GOTMPDIR="$(SNAPSHOT_TMP)" PHASE1_DIR="$(CURDIR)/internal/backend" \
 	  $(GO) run ./cmd/diffharness snapshot record \
 	  -config backends-p3.json -corpus corpus -backend graalgo \
-	  -corpus-label tools/diffharness/corpus \
+	  -corpus-label test/differential/corpus \
 	  -out ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -toolchain $(SNAPSHOT_TOOLCHAIN) \
 	  -graalgo-commit $(shell git rev-parse HEAD) \

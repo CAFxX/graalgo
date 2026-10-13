@@ -12,7 +12,7 @@ spikes/05-cmdgo/probes/
 .DS_Store
 
 # built harness binary (rebuilt by tests from source)
-tools/diffharness/diffharness
+test/differential/diffharness
 
 # fuzzer runtime state (journal, scratch programs, resume state)
 tools/fuzz/work/

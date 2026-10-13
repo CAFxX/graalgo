@@ -65,7 +65,7 @@ jobs:
           GO_BIN_DIR: "${{ github.workspace }}/.go-bin"
           JOBS: "4"
         run: |
-          ./tools/diffharness/fuzz/run_fuzz_native.sh \
+          ./test/differential/fuzz/run_fuzz_native.sh \
             --fuzztime 120 \
             --out "$GITHUB_WORKSPACE/fuzz-native-out"
 

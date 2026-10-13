@@ -27,7 +27,7 @@ type ExclusionFile struct {
 }
 
 // ParseExclusionFile parses the versioned YAML exclusion file with the
-// GG-0033 line-based semantics shared with tools/diffharness LoadExclusions
+// GG-0033 line-based semantics shared with test/differential LoadExclusions
 // and the Java readExclusions in TypeparamDifferentialTest:
 //
 //	# comments allowed

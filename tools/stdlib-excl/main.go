@@ -21,7 +21,7 @@
 //
 // Exit codes: 0 ok, 1 validation/measurement failure, 2 usage error.
 // No external dependencies; the YAML reader is a minimal line parser with
-// the same semantics as tools/diffharness LoadExclusions and the Java
+// the same semantics as test/differential LoadExclusions and the Java
 // readExclusions in TypeparamDifferentialTest (GG-0033 precedent).
 package main
 

@@ -1,7 +1,7 @@
 # Behavior snapshots (M10 WS I)
 
 Behavior snapshots record graalgo's **observable behavior** on the
-differential corpus ([../../tools/diffharness/corpus/](../../tools/diffharness/corpus/))
+differential corpus ([../../test/differential/corpus/](../../test/differential/corpus/))
 against a pinned Go toolchain — the **upgrade baseline** (PHASES.md M10).
 A future toolchain upgrade or refactor diffs against these files to detect
 behavior drift.
@@ -38,10 +38,10 @@ Top-level metadata:
 |---|---|
 | `format` | `"graalgo-behavior-snapshot/v1"` — bump on any format or normalization-rule change; old files then fail the check loudly instead of drifting silently |
 | `toolchain` | Go toolchain the snapshot was recorded against, e.g. `"go1.27.1"` |
-| `backend` | Backend name from [`backends-p3.json`](../../tools/diffharness/backends-p3.json) (`"graalgo"` → P3SyncMain) |
+| `backend` | Backend name from [`backends-p3.json`](../../test/differential/backends-p3.json) (`"graalgo"` → P3SyncMain) |
 | `graalgoCommit` | graalgo git commit the snapshot was recorded from |
 | `recordedAt` | RFC3339 UTC timestamp |
-| `corpus` | Repo-relative corpus label (`"tools/diffharness/corpus"`) |
+| `corpus` | Repo-relative corpus label (e.g. `"test/differential/corpus"`) |
 | `normalizer` | Normalization rule-set id (`"harness.Normalize+backend.stderrFilters/v1"`) |
 | `excluded` | Config exclusion list at record time (coverage is part of the baseline) |
 | `programs` | Per-program entries, sorted by name |
@@ -68,9 +68,9 @@ Per-program entry:
   root to `{WORK}`), so a snapshot recorded on one checkout verifies on
   another.
 - **Addresses / goroutine ids / `.go` line numbers** —
-  [`harness.Normalize`](../../tools/diffharness/internal/harness/normalize.go).
+  [`harness.Normalize`](../../test/differential/internal/harness/normalize.go).
 - **Backend stderr noise** — the backend's `stderrFilters` from
-  [`backends.json`](../../tools/diffharness/backends.json) (e.g. the Truffle
+  [`backends.json`](../../test/differential/backends.json) (e.g. the Truffle
   `sun.misc.Unsafe` warnings).
 
 Recorded **exactly**: message text, exit codes, timeout flags,

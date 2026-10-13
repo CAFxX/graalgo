@@ -1,22 +1,22 @@
 # Layer 2 — conformance (phases/phase3/PLAN.md §5, GG-0029/GG-0032):
 # GOROOT/test language suite (356 files), per-commit on frontend changes.
 #
-# The srctest adapter (tools/diffharness/internal/srctest) classifies every
+# The srctest adapter (test/differential/internal/srctest) classifies every
 # file (run / errorcheck / structural exclusions) and runs the
 # language-conformance subset differential gc vs graalgo through the shared
 # diffharness oracle. Exclusions are versioned and reason-coded in
-# tools/diffharness/srctest-exclusions.yaml (GG-0033).
+# test/differential/srctest-exclusions.yaml (GG-0033).
 name: conformance
 
 on:
   push:
     paths:
       - 'internal/frontend/**'
-      - 'tools/diffharness/**'
+      - 'test/differential/**'
   pull_request:
     paths:
       - 'internal/frontend/**'
-      - 'tools/diffharness/**'
+      - 'test/differential/**'
   workflow_dispatch:
 
 jobs:
@@ -52,4 +52,4 @@ jobs:
         env:
           DH_TIMEOUT: "90"
           JOBS: "4"
-        run: ./tools/diffharness/run_conformance.sh
+        run: ./test/differential/run_conformance.sh

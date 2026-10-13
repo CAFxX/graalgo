@@ -1,6 +1,6 @@
 # exclusions-edge.yaml — conformance fixture for the two hand-rolled
 # exclusion-list parsers (P2-8): Go LoadExclusions
-# (tools/diffharness/internal/typeparam/typeparam.go) and Java
+# (test/differential/internal/typeparam/typeparam.go) and Java
 # readExclusions (TypeparamDifferentialTest.java). Both must produce the
 # same file set from this input. Edge cases: fields out of order, missing
 # detail, comments, blank lines, quoted values.

@@ -79,11 +79,11 @@ Related: [Makefile](../Makefile) (root build entry point),
     unmodified.
 - [test/](../test/) — organized by what each suite proves, not by which phase
   wrote it.
-  - [corpus/](../test/corpus/) — differential corpus programs (moves here
-    from [phases/phase3/corpus/](../phases/phase3/corpus/)).
+  - [corpus/](../test/corpus/) — differential corpus programs (moved here
+    from `phases/phase3/corpus/`, 2026-10-13).
   - [differential/](../test/differential/) — the differential harness: run
     each corpus program under graalgo and under `gc`, byte-compare outputs.
-    Home of [tools/diffharness/](../tools/diffharness/) after the move.
+    Moved here from `tools/diffharness/` (2026-10-13).
   - [e2e/](../test/e2e/) — end-to-end: real published Go modules compiled
     as-published (e.g. `github.com/google/uuid`), output matching `go run`.
   - [snapshots/](../test/snapshots/) — committed behavior snapshots
@@ -126,8 +126,8 @@ new locations.
 | `phases/phase1/lib/` (Truffle jars) | [internal/backend/truffle/lib/](../internal/backend/truffle/lib/) |
 | `phases/phase1/graalgo-run`, `phases/phase3/graalgo-sync-run` | [internal/backend/](../internal/backend/) |
 | `phases/phase3/stdlib-fork/` + synthetics | [stdlib/](../stdlib/) |
-| `phases/phase3/corpus/` | [test/corpus/](../test/corpus/) |
-| `tools/diffharness/` | [test/differential/](../test/differential/) |
+| `phases/phase3/corpus/` | [test/corpus/](../test/corpus/) (landed 2026-10-13) |
+| `tools/diffharness/` | [test/differential/](../test/differential/) (landed 2026-10-13) |
 | `SPEC.md`, `PHASES.md`, `FEASIBILITY.md` | [docs/arch/](../docs/arch/) (one consolidated arch doc) |
 | `requirements/`, `adr/`, `spikes/`, `reviews/`, `research/` | [docs/dev/](../docs/dev/) (ADRs kept) or archived out of the repo |
 | `spec/` | [docs/spec/](../docs/spec/) (curated) |

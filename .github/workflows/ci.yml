@@ -73,7 +73,7 @@ jobs:
         # `make all` above built truffle+runtime+interop (required by the backend).
         env:
           DH_TIMEOUT: "90"
-        run: ./tools/diffharness/run.sh
+        run: ./test/differential/run.sh
 
   full-suite:
     # The long differential suite, excluded from per-push CI by design

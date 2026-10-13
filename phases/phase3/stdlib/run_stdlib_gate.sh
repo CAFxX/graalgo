@@ -66,9 +66,9 @@ run_wave() {
 }
 
 overall=0
-run_wave "wave1" "$GR/phases/phase3/corpus/wave1/run_wave.sh" "$OUTDIR/wave1.log" || overall=1
-run_wave "wave2" "$GR/phases/phase3/corpus/wave2/run_wave.sh" "$OUTDIR/wave2.log" || overall=1
-run_wave "wave3" "$GR/phases/phase3/corpus/wave3/run_wave3.sh" "$OUTDIR/wave3.log" || overall=1
+run_wave "wave1" "$GR/test/corpus/wave1/run_wave.sh" "$OUTDIR/wave1.log" || overall=1
+run_wave "wave2" "$GR/test/corpus/wave2/run_wave.sh" "$OUTDIR/wave2.log" || overall=1
+run_wave "wave3" "$GR/test/corpus/wave3/run_wave3.sh" "$OUTDIR/wave3.log" || overall=1
 
 echo "== [3/3] triage report =="
 python3 - "$OUTDIR" "$overall" <<'EOF'
