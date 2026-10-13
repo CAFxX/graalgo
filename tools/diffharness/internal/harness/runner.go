@@ -161,5 +161,11 @@ func runEnv(overrides map[string]string) []string {
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
 	}
+	// The graalgo backend's launcher (graalgo-run) needs GRAALVM_HOME to
+	// find java; without it the script falls back to a local-only default
+	// and fails with 127 in CI. Pass it through when set.
+	if gh := os.Getenv("GRAALVM_HOME"); gh != "" {
+		base = append(base, "GRAALVM_HOME="+gh)
+	}
 	return overrideEnv(base, overrides)
 }
