@@ -32,7 +32,7 @@ Every entry below is marked **FROZEN** or **INTERNAL**:
   listed here only to bound the frozen surface (if it's not in §2–§6, it's
   INTERNAL).
 
-**Components.** (A) `gofrontend` — the Go frontend ([frontend/](frontend/)):
+**Components.** (A) `gofrontend` — the Go frontend ([internal/frontend/](../../internal/frontend/)):
 type-checks one single-file Go program with the vendored `go/*` packages and
 emits the frontend/v1 JSON document. (B) `graalgo-run` — the Java/Truffle
 runtime ([src/](src/)): `NodeFactory` consumes the document, builds

@@ -1,8 +1,8 @@
 # graalgo.frontend
 
 Frontend service (WS B, PLAN.md D1): `gofrontend` (Go; vendored `go/*`
-verbatim — see [internal/frontend/](../../../../internal/frontend/)) type-checks one single-file package
-and emits `frontend/v1` JSON (wire spec: [phases/phase1/docs/frontend-v1.md](../../../docs/frontend-v1.md)).
+verbatim — see [internal/frontend/](../../../../../../../internal/frontend/)) type-checks one single-file package
+and emits `frontend/v1` JSON (wire spec: [phases/phase1/docs/frontend-v1.md](../../../../../docs/frontend-v1.md)).
 This package parses that JSON and builds Truffle nodes.
 
 ## Contents
@@ -125,7 +125,7 @@ stored on the node and exposed via `getSourceSection()` override.
   fatal programs assert exit code 2, the normalized panic header block,
   and the goroutine-trace header (explicit comparison scope in the
   test's javadoc).
-- [internal/frontend/javatest/NodeFactoryTest.java](../../../../internal/frontend/javatest/NodeFactoryTest.java) (WS B, compiled to
+- [internal/frontend/javatest/NodeFactoryTest.java](../../../../../../../internal/frontend/javatest/NodeFactoryTest.java) (WS B, compiled to
   `/tmp` scratch): golden JSON → build → execute, asserting gc-oracle
   values, node shapes, and `SourceSection` ↔ exporter-position agreement,
   plus negative cases.

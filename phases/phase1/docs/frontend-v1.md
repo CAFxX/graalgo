@@ -1,8 +1,8 @@
 # frontend/v1 — typed-AST JSON wire format
 
 **Status:** normative for Phase 1 (PLAN.md D1). **Version:** `v1`.
-**Producer:** `gofrontend` ([internal/frontend/](../../internal/frontend/)). **Consumer:** `graalgo.frontend.NodeFactory`.
-**Validator:** [internal/frontend/tools/validate_frontend_v1.py](../../internal/frontend/tools/validate_frontend_v1.py) (enforces this document).
+**Producer:** `gofrontend` ([internal/frontend/](../../../internal/frontend/)). **Consumer:** `graalgo.frontend.NodeFactory`.
+**Validator:** [internal/frontend/tools/validate_frontend_v1.py](../../../internal/frontend/tools/validate_frontend_v1.py) (enforces this document).
 
 ## 1. Overview
 

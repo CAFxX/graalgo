@@ -164,14 +164,14 @@ that is what the per-release workflow is for.
 
 1. **Synthetic `regexp/syntax` source does not parse.** The embedded
    source in
-   [phases/phase1/frontend/synth_regexpsyntax.go](../../../phases/phase1/frontend/synth_regexpsyntax.go)
+   [internal/frontend/synth_regexpsyntax.go](../../../internal/frontend/synth_regexpsyntax.go)
    contains a second `import "strconv"` block (line 445, from vendored
    stringer output), so `parser.ParseFile` fails and the frontend's
    `buildSyntheticPackage` would **panic** on any program importing
    `regexp/syntax`. The trial surfaces this under
    `synthetic_parse_errors` instead of dying. Fix (out of this lane's
    scope): strip/merge the duplicate import in the generator
-   ([gen_synth_regexpsyntax.py](../../../phases/phase1/frontend/gen_synth_regexpsyntax.py)) or the checked-in source.
+   ([gen_synth_regexpsyntax.py](../../../internal/frontend/gen_synth_regexpsyntax.py)) or the checked-in source.
 2. **`graalgo.http.client.do` never wired** — see A1 above.
 
 ## 6. Tool changes (v1.0.0 → v1.1.0)
@@ -182,7 +182,7 @@ current tree). Changes, all mechanical:
 
 - **Provided set**: added source 5 — every embedded synthetic package in
   the `syntheticSources` registry
-  ([phases/phase1/frontend/synth_machinery.go](../../../phases/phase1/frontend/synth_machinery.go)), resolved through const
+  ([internal/frontend/synth_machinery.go](../../../internal/frontend/synth_machinery.go)), resolved through const
   fragments/`+` chains/parenthesized concatenations and parsed with
   go/parser; symbols qualified by import path. 241 → 5,772 symbols.
   Unparseable sources are recorded on `synthetic_parse_errors`, never
@@ -192,7 +192,7 @@ current tree). Changes, all mechanical:
   so they are real needs).
 - **Shadow marking**: vendored-tree entries whose import path the overlay
   substitutes (`overlayImporter.Import` switch in
-  [phases/phase1/frontend/export.go](../../../phases/phase1/frontend/export.go), 137 paths) are marked `shadowed_by`;
+  [internal/frontend/export.go](../../../internal/frontend/export.go), 137 paths) are marked `shadowed_by`;
   the report splits `skip_list_size` (comparable across releases) from
   `live_skip_list_size` (actionable subset).
 - **Self-links**: the single-field `//go:linkname name` form is a
