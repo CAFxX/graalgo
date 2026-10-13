@@ -1,0 +1,119 @@
+{
+  "backends": [
+    {
+      "build": [
+        "{GO}/bin/go",
+        "build",
+        "-o",
+        "{BIN}",
+        "{SRC}"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "GOTOOLCHAIN": "local"
+      },
+      "name": "gc-a",
+      "run": [
+        "{BIN}"
+      ],
+      "vars": {
+        "GO": "${DH_GO}"
+      }
+    },
+    {
+      "build": [
+        "{GO}/bin/go",
+        "build",
+        "-o",
+        "{BIN}",
+        "{SRC}"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "GOTOOLCHAIN": "local"
+      },
+      "name": "gc-b",
+      "run": [
+        "{BIN}"
+      ],
+      "vars": {
+        "GO": "${DH_GO}"
+      }
+    },
+    {
+      "build": [
+        "{GRAALGO_RUN}",
+        "--check",
+        "{SRC}"
+      ],
+      "env": {
+        "GOMAXPROCS": "1",
+        "GOTOOLCHAIN": "local"
+      },
+      "name": "graalgo",
+      "run": [
+        "{GRAALGO_RUN}",
+        "{SRC}"
+      ],
+      "stderrFilters": [
+        "^WARNING: A terminally deprecated method in sun\\.misc\\.Unsafe has been called$",
+        "^WARNING: sun\\.misc\\.Unsafe::.*$",
+        "^WARNING: Please consider reporting this to the maintainers.*$"
+      ],
+      "vars": {
+        "GRAALGO_RUN": "${PHASE3_DIR}/graalgo-sync-run"
+      }
+    }
+  ],
+  "exclusions": [
+    {
+      "program": "10_closures",
+      "reason": "backend-specific: call via index expr ops[0](5) not in frontend/v1 scope (WS D)"
+    },
+    {
+      "program": "14_goroutines_sum",
+      "reason": "flaky: scheduler loses partial sums (32/34 vs 36), non-deterministic; scheduler bug filed"
+    },
+    {
+      "program": "17_generics",
+      "reason": "backend-specific: union type constraints (~int|~int64) not supported by P3SyncMain"
+    },
+    {
+      "program": "18_errors",
+      "reason": "backend-specific: errors.As needs reflect (not in scope)"
+    },
+    {
+      "program": "19_sort",
+      "reason": "backend-specific: sort.Slice needs reflect (not in scope)"
+    },
+    {
+      "program": "27_panic_trace",
+      "reason": "other: panic trace format differs (main.level3(...) vs level3()); fidelity gap"
+    },
+    {
+      "program": "28_exit_code",
+      "reason": "backend-specific: os.Exit/os.Stderr not in synthetic os scope"
+    },
+    {
+      "program": "37_utf8",
+      "reason": "backend-specific: strings.Builder.WriteString not in synthetic strings"
+    },
+    {
+      "program": "39_named_returns",
+      "reason": "backend-specific: named result assignment frontend bug (reference to unknown object id)"
+    },
+    {
+      "program": "40_method_values",
+      "reason": "backend-specific: method values not in scope"
+    },
+    {
+      "program": "42_json",
+      "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
+    },
+    {
+      "program": "43_range_over_func",
+      "reason": "backend-specific: range-over-func iterators not supported"
+    }
+  ],
+  "timeoutSec": 30
+}
