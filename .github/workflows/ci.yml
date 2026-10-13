@@ -21,9 +21,6 @@ jobs:
   build-and-check:
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    env:
-      # Phase Makefiles honor GRAALVM_HOME and GO when set.
-      GRAALVM_HOME: ${{ env.JAVA_HOME }}
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +30,12 @@ jobs:
           java-version: '25'
           distribution: 'graalvm'
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Export GRAALVM_HOME
+        # Phase Makefiles honor GRAALVM_HOME and GO when set.
+        # (The env: context is not available in a job-level env mapping,
+        # so export via $GITHUB_ENV instead.)
+        run: echo "GRAALVM_HOME=$JAVA_HOME" >> "$GITHUB_ENV"
 
       - name: Set up Go 1.27
         uses: actions/setup-go@v5
