@@ -1,6 +1,6 @@
 # wave-2 `unsafe` differential corpus (P3-M8)
 
-12 programs (7 differential, 3 trap pins, 2 scope-limited). Run with
+13 programs (8 differential, 3 trap pins, 2 scope-limited). Run with
 `./run_differential.sh` (thin wrapper over `../run_wave.sh unsafe`).
 
 Frontend design note: the synthetic `unsafe` package exposes go/types'
@@ -28,6 +28,11 @@ compile error, exactly like gc. No AST pre-pass; no size tables.
    → nil pointer (gc: `StringData("") == nil`), nil+0 → "".
 7. `08_offsetof_deep` — Offsetof through 20 nested structs (go/types folds
    the constant; no depth cap in the type-checker).
+8. `10_pointer_identity` — pointer identity (P3-M10 regression test):
+   distinct `new(T)` allocations compare unequal, a pointer keeps its
+   handle across `*p = v` writes, `*T→Pointer→*T` round trips preserve the
+   referent for reads and writes, `&arr[i]` element pointers are distinct
+   per index and stable per element, `new(map)` is a non-nil pointer.
 
 ## Intentional-divergence pins (NOT differential — see below)
 

@@ -1,5 +1,7 @@
 package graalgo.p3unsafe;
 
+import graalgo.values.GoCell;
+import graalgo.values.GoPointer;
 import graalgo.values.UnsafeHandles;
 import java.util.HashMap;
 import java.util.IdentityHashMap;
@@ -21,9 +23,14 @@ import java.util.Map;
  *       object always yields the same handle, so {@code p1 ==
  *       unsafe.Pointer(&x); p2 := unsafe.Pointer(&x); p1 == p2} is true
  *       (gc parity). {@code null} interns to handle {@code 0} (the nil
- *       {@code unsafe.Pointer}). Bare scalar boxes ({@code Integer},
- *       {@code Long}, {@code Float}, {@code Double}, {@code Boolean} —
- *       what {@code new(T)} produces for scalar {@code T}) are normalized
+ *       {@code unsafe.Pointer}). P3-M10: the interning key is the
+ *       pointer's <em>storage identity</em> (the {@link GoCell} for cell
+ *       pointers, the {@link ArrayRef} for element pointers — see
+ *       {@link UnsafeFromPtrNode}), never a dereferenced value: distinct
+ *       allocations always mint distinct handles, and a pointer keeps its
+ *       handle across {@code *p = v} writes. Bare scalar boxes
+ *       ({@code Integer}, {@code Long}, {@code Float}, {@code Double},
+ *       {@code Boolean}) reaching {@code intern} directly are normalized
  *       to single-element carrier arrays <em>before</em> interning, so a
  *       table referent is never a bare scalar box: {@code unsafe.Slice}
  *       over a scalar pointer aliases correctly across calls.</li>
@@ -44,13 +51,14 @@ import java.util.Map;
  *       handle values. Interning is what makes this match gc.</li>
  * </ul>
  *
- * <p>Referent shapes the table holds in M8: Java typed arrays (whole-array
+ * <p>Referent shapes the table holds: Java typed arrays (whole-array
  * backing), {@link ArrayRef} (a {@code SliceData} view: array + offset),
  * {@link graalgo.values.GoString} (a {@code StringData} view),
- * {@link graalgo.values.GoStruct}, {@link graalgo.values.GoMap}, and any
- * other object a {@code GoPointer} referent can be. Handles keep their
- * referent alive (strong refs) — this matches gc's "a live
- * {@code unsafe.Pointer} keeps the object alive", with the documented
+ * {@link graalgo.values.GoStruct}, {@link graalgo.values.GoMap},
+ * {@link GoCell} (a cell pointer's storage: {@code new(T)} scalars and
+ * {@code &x} — P3-M10), and any other object a {@code GoPointer} referent
+ * can be. Handles keep their referent alive (strong refs) — this matches
+ * gc's "a live {@code unsafe.Pointer} keeps the object alive", with the documented
  * memory-retention caveat (R-US-2): churning {@code SliceData} in a loop
  * pins memory where gc would free.
  *
@@ -171,6 +179,33 @@ public final class UnsafeTable {
             internedEqual.put(key, h);
         }
         return h;
+    }
+
+    /**
+     * Wraps a resolved handle referent as the Go {@code *T} pointer the
+     * unsafe builtins traffic in — the inverse of the storage-identity
+     * interning in {@link UnsafeFromPtrNode}: {@code resolve(handle)} feeds
+     * this, and re-interning the result yields the same handle.
+     *
+     * <ul>
+     *   <li>a {@link GoCell} (cell-pointer handle: {@code new(T)} scalars,
+     *       {@code &x}) → a cell pointer, so {@code *p} reads and
+     *       {@code *p = v} writes the cell (gc aliasing);</li>
+     *   <li>an {@link ArrayRef} (element-pointer handle: {@code &arr[i]},
+     *       {@code SliceData} views) → an element pointer, so reads and
+     *       writes hit the array slot;</li>
+     *   <li>anything else (plain-referent handles, {@code null} for handle
+     *       0) → a plain {@code GoPointer} over the referent.</li>
+     * </ul>
+     */
+    public static GoPointer pointerFor(Object referent) {
+        if (referent instanceof GoCell cell) {
+            return new GoPointer(cell);
+        }
+        if (referent instanceof ArrayRef ref) {
+            return new GoPointer(ref.array(), ref.offset());
+        }
+        return new GoPointer(referent);
     }
 
     /**

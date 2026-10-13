@@ -19,7 +19,9 @@ import graalgo.values.UnsafeHandles;
  * <ul>
  *   <li>{@link #slice}: {@code null} (nil pointer: len 0 → nil slice),
  *       a whole Java typed array, an {@link UnsafeTable.ArrayRef}
- *       ({@code SliceData} view), or a {@code GoSlice} (sub-slice view).
+ *       ({@code SliceData} view), a {@code GoSlice} (sub-slice view), or
+ *       a bare scalar box (a cell pointer's content: {@code new(T)} /
+ *       {@code &x} scalars — normalized to its stable carrier, P3-M10).
  *       The array's component type must be {@code T}'s carrier — the
  *       handle model cannot reinterpret memory, so a mismatch fails fast
  *       instead of aliasing the wrong type.</li>
@@ -81,6 +83,21 @@ public final class UnsafeOps {
     }
 
     /**
+     * Opens a raw pointer referent for the view intrinsics ({@link #slice},
+     * {@link #stringOf}): a bare scalar box — what a cell pointer's
+     * {@code referent()} yields for {@code new(T)}/{@code &x} scalars —
+     * normalizes to its stable single-element carrier via the table's
+     * {@code normalizeScalar} cache (the same carrier object across calls,
+     * so repeated views alias, corpus 05). P3-M10: this normalization used
+     * to happen at {@code UnsafeTable.intern} time; interning now keys on
+     * the cell itself, so views normalize here instead. Everything else
+     * passes through unchanged.
+     */
+    private static Object openScalar(Object referent) {
+        return UnsafeTable.current().normalizeScalar(referent);
+    }
+
+    /**
      * {@code unsafe.Slice(ptr, len)} given the pointer's referent (null for
      * a nil pointer). Returns the new {@code GoSlice}, or {@code null} for
      * the nil slice.
@@ -89,6 +106,9 @@ public final class UnsafeOps {
         if (len < 0) {
             Panic.throwPanic("runtime error: unsafe.Slice: len out of range", null, null, site);
         }
+        // P3-M10: cell-pointer scalars arrive as bare boxes; open them to
+        // their stable carrier before the shape dispatch.
+        referent = openScalar(referent);
         if (referent == null) {
             if (len != 0) {
                 Panic.throwPanic("runtime error: unsafe.Slice: ptr is nil and len is not zero",
@@ -143,6 +163,8 @@ public final class UnsafeOps {
         if (len < 0) {
             Panic.throwPanic("runtime error: unsafe.String: len out of range", null, null, site);
         }
+        // P3-M10: see slice() — cell-pointer scalars arrive as bare boxes.
+        referent = openScalar(referent);
         if (referent == null) {
             if (len != 0) {
                 Panic.throwPanic("runtime error: unsafe.String: ptr is nil and len is not zero",

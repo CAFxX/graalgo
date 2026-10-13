@@ -5,13 +5,16 @@ import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.values.GoKind;
-import graalgo.values.GoPointer;
 
 /**
  * {@code unsafe.Pointer → *T} (P3-M8): the {@code "unsafetooptr"} wire
- * node. Resolves the handle and wraps the referent in a fresh
- * {@code GoPointer} (pointer identity is the referent's — two conversions
- * of the same handle compare equal by referent).
+ * node. Resolves the handle and wraps the referent via
+ * {@link UnsafeTable#pointerFor}: a cell handle becomes a cell pointer
+ * (reads/writes hit the cell), an element handle an element pointer, any
+ * other handle a plain pointer — so the round trip
+ * {@code (*T)(unsafe.Pointer(p))} addresses the same storage {@code p}
+ * does (P3-M10; previously the resolved carrier/value leaked through
+ * dereference).
  */
 public final class UnsafeToPtrNode extends GoExprNode {
     @Child private GoExprNode child;
@@ -24,7 +27,7 @@ public final class UnsafeToPtrNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         long handle = child.executeLong(frame);
-        return new GoPointer(UnsafeTable.current().resolve(handle));
+        return UnsafeTable.pointerFor(UnsafeTable.current().resolve(handle));
     }
 
     /**
