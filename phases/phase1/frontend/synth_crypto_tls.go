@@ -618,8 +618,13 @@ func (c *Conn) Handshake() error {
 		return fmt.Errorf("tls: handshake failed (beginHandshake code %d)", rc)
 	}
 	tmp := make([]byte, 1<<14)
+	dbgCount := 0
 	for {
 		st := engineStatusTrap(c.engineHandle)
+		if dbgCount < 20 {
+			println("DEBUG handshake loop isClient=", c.isClient, "status=", st)
+			dbgCount++
+		}
 		switch st {
 		case engineFinished:
 			c.handshakeComplete = true
