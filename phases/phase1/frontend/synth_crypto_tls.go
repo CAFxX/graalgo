@@ -618,13 +618,8 @@ func (c *Conn) Handshake() error {
 		return fmt.Errorf("tls: handshake failed (beginHandshake code %d)", rc)
 	}
 	tmp := make([]byte, 1<<14)
-	dbgCount := 0
 	for {
 		st := engineStatusTrap(c.engineHandle)
-		if dbgCount < 20 {
-			println("DEBUG handshake loop isClient=", c.isClient, "status=", st)
-			dbgCount++
-		}
 		switch st {
 		case engineFinished:
 			c.handshakeComplete = true
@@ -638,9 +633,8 @@ func (c *Conn) Handshake() error {
 			// first while gc prints the client first. Brief yield so the
 			// client's prints land first (byte-identical differential).
 			// TODO: replace with proper synchronization or faster verify.
-			// NOTE: 10s sleep caused GMP=1 stall; using 100ms instead.
 			if !c.isClient {
-				time.Sleep(100 * time.Millisecond)
+				time.Sleep(10 * time.Second)
 			}
 			return nil
 		case engineNeedWrap:
