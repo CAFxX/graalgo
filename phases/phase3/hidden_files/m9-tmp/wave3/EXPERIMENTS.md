@@ -57,3 +57,19 @@ The 256MB blowup happens when exporting tls/x509 synthetic packages. Likely caus
 
 ## Key insight
 The "40-min hang" was likely just extreme slowness, not a deadlock. gmp4 proves the pipeline processes 256MB in ~6 min. The gmp1 40-min timeout may have been premature OR the pre-reboot box was contended. The export is legitimate (vendored upstream fiat code); truncation hacks are the wrong fix. Next: clean full-leg run on settled box with 20-min timeout.
+
+## ROOT CAUSE FOUND (09:50 CEST) — 200MB JSON parsed 5x!
+Thread dump from the "hung" gmp1 leg: main thread stuck 517s in
+`Json.parse` (2% CPU) called from `IfaceMethodTables.resolveInterfaces`
+← `LinknameIntrinsics.install` ← `P3SyncMain.run:308`.
+
+The 200MB frontend JSON was parsed FIVE times per run:
+1. NodeFactory.buildProgram (the real AST build)
+2. IfaceMethodTables.resolve
+3. IfaceMethodTables.resolveInterfaces
+4. ReflectTypes.install
+5. LinknameIntrinsics.bindGoFuncs
+
+| # | Hypothesis | Change/Command | Result | Wall |
+|---|-----------|----------------|--------|------|
+| 21 | 5x JSON parse is the bottleneck | Parse-once: NodeFactory.document() exposes the parsed DOM; all installers take Json.Object instead of String. Committed 73d7242. | Phase1+phase3 build clean. Re-running leg. | 25m |
