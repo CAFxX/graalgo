@@ -266,6 +266,14 @@ public final class BinaryOpNode extends GoExprNode {
 
     @Override
     public double executeDouble(VirtualFrame frame) {
+        // bug-010: Go rounds every float32 operation result to float32
+        // precision. Computing in double and widening skips that rounding,
+        // so a directly-consumed float32 add/mul/sub/div (e.g. in a
+        // comparison) sees the unrounded double value. Route through the
+        // float path (correctly rounded) and widen exactly.
+        if (operandKind == GoKind.FLOAT32) {
+            return executeFloat(frame);
+        }
         double l = left.executeDouble(frame);
         double r = right.executeDouble(frame);
         return switch (op) {
