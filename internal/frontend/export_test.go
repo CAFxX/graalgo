@@ -13,7 +13,7 @@ import (
 // TestGolden: every non-bad_ testdata program exports byte-identical JSON to
 // its checked-in golden file. The goldens pin the frontend/v1 wire format;
 // any intentional format change must regenerate them explicitly
-// (UPDATE_GOLDEN=1) and update docs/frontend-v1.md in the same change.
+// (UPDATE_GOLDEN=1) and update docs/arch/frontend-v1.md in the same change.
 func TestGolden(t *testing.T) {
 	files, err := filepath.Glob("testdata/*.go")
 	if err != nil {
