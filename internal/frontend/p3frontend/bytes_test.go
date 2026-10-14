@@ -25,7 +25,7 @@ import (
 // imports "errors", resolved to the synthetic errors mirror.
 func phase1SyntheticBytesPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../../internal/frontend/synth_bytes.go"
+	srcPath := "../synth_bytes.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

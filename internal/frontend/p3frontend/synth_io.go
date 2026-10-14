@@ -1,11 +1,12 @@
 package p3frontend
 
 // P3-M10 (self-attack FINDING-5 follow-up): p3frontend mirror of the
-// phase-1 synthetic "io" package. Minimal by design: it mirrors only the
+// phase-1 synthetic "io" package. Minimal by design: it mirrors the
 // Reader and Writer interfaces — the types the bytes/strings mirrors
-// reference (P3-M8: their WriteTo/ReadFrom now spell io.Writer/io.Reader).
-// The full synthetic io API (Copy, ReadFull, SectionReader, ...) is not
-// mirrored yet; importing "io" directly yields Reader/Writer only. This
+// reference (P3-M8: their WriteTo/ReadFrom now spell io.Writer/io.Reader)
+// — plus ReadAll, which the csv mirror's NewReader needs. The full
+// synthetic io API (Copy, ReadFull, SectionReader, ...) is not mirrored
+// yet; importing "io" directly yields Reader/Writer/ReadAll only. This
 // is strictly better than the previous state (no "io" at all, and the
 // bytes mirror used unexported byteReader/byteWriter stand-ins that
 // drifted from the phase-1 source).
@@ -51,9 +52,17 @@ func syntheticIoPackage() *types.Package {
 	}, nil).Complete()
 	writerIfaceType := types.NewNamed(writerName, writerIface, nil)
 
-	pkg.MarkComplete()
 	_ = readerIfaceType
 	_ = writerIfaceType
+
+	// ReadAll mirrors the synthetic io.ReadAll (needed by the csv
+	// mirror's NewReader): func ReadAll(r Reader) ([]byte, error).
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "ReadAll",
+		types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(newParam("r", readerIfaceType)),
+			types.NewTuple(newParam("", bytesSlice), newParam("", errorT)), false)))
+
+	pkg.MarkComplete()
 	return pkg
 }
 

@@ -142,7 +142,7 @@ func TestTimeSyntheticSignatures(t *testing.T) {
 // here instead of silently diverging.
 func phase1SyntheticContextPackage(t *testing.T, timePkg *types.Package) *types.Package {
 	t.Helper()
-	srcPath := "../../../../internal/frontend/synth_time_context.go"
+	srcPath := "../synth_time_context.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

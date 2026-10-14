@@ -26,7 +26,7 @@ import (
 // test's importer.
 func phase1SyntheticErrorsPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../../internal/frontend/synth_errors.go"
+	srcPath := "../synth_errors.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {
@@ -87,7 +87,7 @@ func phase1SyntheticErrorsPackage(t *testing.T) *types.Package {
 // fast here instead of silently diverging.
 func phase1SyntheticStrconvPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../../internal/frontend/synth_strconv.go"
+	srcPath := "../synth_strconv.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {
