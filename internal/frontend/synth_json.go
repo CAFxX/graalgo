@@ -4,14 +4,20 @@ package main
 // syntheticJsonSource is the P3-M7 synthetic `encoding/json` package.
 const syntheticJsonSource = `package json
 
-import "bytes"
+import (
+	"bytes"
+	"reflect"
+	"strconv"
+)
 
 // Float formatting and parsing for the synthetic encoding/json.
 //
 // All algorithms are clean-room and use only integer arithmetic (no
-// math, no strconv, no unsafe), so they run identically under gc and
+// math, no unsafe), so they run identically under gc and
 // under graalgo's frontend/v1. Byte-identity with gc is verified
-// differentially (see float_test.go).
+// differentially (see float_test.go). (strconv/reflect appear only in
+// error-type shapes — strconv.Quote for InvalidUTF8Error, reflect.Type
+// for the gc-exact error structs — never in the float algorithms.)
 //
 // Formatting (marshal): decompose the float64 into exact (mantissa,
 // exponent) via power-of-2 scaling, expand to the exact decimal,
@@ -1128,18 +1134,18 @@ type SyntaxError struct {
 func (e *SyntaxError) Error() string { return e.msg }
 
 // UnmarshalTypeError describes a JSON value that was not appropriate for
-// a Go value. (Defined for API completeness; the dynamic model rarely
-// produces it.)
+// a Go value. (gc 1.27.1 exact shape; the dynamic model rarely produces
+// it, but third-party implementations construct it.)
 type UnmarshalTypeError struct {
-	Value  string // description of JSON value ("number", "boolean", etc.)
-	Type   string // type name in the dynamic model ("any")
-	Offset int64  // error occurred after reading Offset bytes
+	Value  string       // description of JSON value ("number", "boolean", etc.)
+	Type   reflect.Type // type of Go value it could not be assigned to
+	Offset int64        // error occurred after reading Offset bytes
 	Struct string
 	Field  string
 }
 
 func (e *UnmarshalTypeError) Error() string {
-	return "json: cannot unmarshal " + e.Value + " into Go value of type " + e.Type
+	return "json: cannot unmarshal " + e.Value + " into Go value of type " + e.Type.String()
 }
 
 // Marshaler is the interface implemented by types that can marshal
@@ -1200,11 +1206,42 @@ func (m *RawMessage) UnmarshalJSON(data []byte) error {
 
 // InvalidUnmarshalError describes an invalid argument passed to Unmarshal.
 type InvalidUnmarshalError struct {
-	Type string
+	Type reflect.Type
 }
 
 func (e *InvalidUnmarshalError) Error() string {
-	return "json: Unmarshal(nil " + e.Type + ")"
+	return "json: Unmarshal(nil " + e.Type.String() + ")"
+}
+
+// P3-driver-harden (jsonlib lane): error types aliased by third-party
+// json implementations (segmentio/encoding). gc-exact shapes.
+type InvalidUTF8Error struct {
+	S string
+}
+
+func (e *InvalidUTF8Error) Error() string {
+	return "json: invalid UTF-8 in string: " + strconv.Quote(e.S)
+}
+
+type MarshalerError struct {
+	Type reflect.Type
+	Err  error
+}
+
+func (e *MarshalerError) Error() string {
+	return "json: error calling MarshalJSON for type " + e.Type.String() + ": " + e.Err.Error()
+}
+
+func (e *MarshalerError) Unwrap() error { return e.Err }
+
+type UnmarshalFieldError struct {
+	Key   string
+	Type  reflect.Type
+	Field reflect.StructField
+}
+
+func (e *UnmarshalFieldError) Error() string {
+	return "json: cannot unmarshal " + e.Key + " into Go struct field " + e.Field.Name + " of type " + e.Type.String()
 }
 
 // Number represents a JSON number literal.
@@ -2084,13 +2121,13 @@ func (e *jsonEncoderState) marshalValue(v any) error {
 		// own case above.
 		panic("json.Marshaler: not in M7 scope (needs 2-result methods; re-test when WS D lands)")
 	case complex64:
-		return &UnsupportedTypeError{typ: "complex64"}
+		return &UnsupportedTypeError{Type: reflect.TypeOf(v)}
 	case complex128:
-		return &UnsupportedTypeError{typ: "complex128"}
+		return &UnsupportedTypeError{Type: reflect.TypeOf(v)}
 	case func():
-		return &UnsupportedTypeError{typ: "func()"}
+		return &UnsupportedTypeError{Type: reflect.TypeOf(v)}
 	case chan int:
-		return &UnsupportedTypeError{typ: "chan int"}
+		return &UnsupportedTypeError{Type: reflect.TypeOf(v)}
 	default:
 		panic("not in M7 scope (needs reflect, P3-M8)")
 	}
@@ -2109,7 +2146,8 @@ func (e *jsonUnsupportedValueError) Error() string {
 
 // Actually gc's UnsupportedValueError:
 type UnsupportedValueError struct {
-	Str string
+	Value reflect.Value
+	Str   string
 }
 
 func (e *UnsupportedValueError) Error() string { return "json: unsupported value: " + e.Str }
@@ -2118,10 +2156,12 @@ func (e *UnsupportedValueError) Error() string { return "json: unsupported value
 // encoded (complex, func, chan, ...). gc carries a reflect.Type; without
 // reflect (P3-M8) we carry the Go type name string directly.
 type UnsupportedTypeError struct {
-	typ string
+	Type reflect.Type
 }
 
-func (e *UnsupportedTypeError) Error() string { return "json: unsupported type: " + e.typ }
+func (e *UnsupportedTypeError) Error() string {
+	return "json: unsupported type: " + e.Type.String()
+}
 
 // jsonAppendInt appends a signed integer.
 func jsonAppendInt(b []byte, v int64) []byte {
@@ -2603,6 +2643,17 @@ func Valid(data []byte) bool {
 // lands.
 func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 	panic("json.Indent: not in M7 scope (needs address-of variable; re-test when WS D lands)")
+}
+
+// P3-driver-harden (jsonlib lane): Compact and HTMLEscape (gc 1.27.1
+// exact signatures). Third-party json implementations forward to them;
+// fail-fast bodies like Indent above.
+func Compact(dst *bytes.Buffer, src []byte) error {
+	panic("json.Compact: not in M7 scope (re-test when WS D lands)")
+}
+
+func HTMLEscape(dst *bytes.Buffer, src []byte) {
+	panic("json.HTMLEscape: not in M7 scope (re-test when WS D lands)")
 }
 
 // HTMLEscape is omitted in wave 1 (needs *bytes.Buffer, inexpressible);

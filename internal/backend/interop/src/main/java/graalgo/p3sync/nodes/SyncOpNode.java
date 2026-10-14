@@ -45,13 +45,14 @@ import graalgo.values.GoKind;
  * call protocol), including its {@code recoverAllowed} dance — a direct
  * {@code recover()} inside the Do func returns nil, gc parity.
  *
- * <p>All ops are void except {@code Pool.Get}: the node kind is
- * {@link GoKind#INTERFACE} returning null, mirroring
+ * <p>All ops are void except {@code Pool.Get} and {@code Pool.getnew}:
+ * the node kind is {@link GoKind#INTERFACE} returning null, mirroring
  * {@code GoexitCallNode}.
  *
  * <p>{@code Pool.Get} is the one non-void op: it returns the pooled
  * interface value ({@code GoInterface}, nil-normalized), or the nil
- * interface when the pool is empty.
+ * interface when the pool is empty. {@code Pool.getnew} (P3-driver-harden,
+ * jsonlib lane) reads the pool's {@code New} field.
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook (P2-D8 precedent) — no
@@ -99,6 +100,10 @@ public final class SyncOpNode extends GoExprNode {
             // (Put takes any); Get returns it back, nil-normalized.
             case "Pool.Get" -> { return GoInterface.narrow(((GoPool) r).get()); }
             case "Pool.Put" -> ((GoPool) r).put(args[0].executeObject(frame));
+            // P3-driver-harden (jsonlib lane): Pool.New field access.
+            // getnew reads the New function (may be null); setnew writes it.
+            case "Pool.getnew" -> { return ((GoPool) r).getNew(); }
+            case "Pool.setnew" -> ((GoPool) r).setNew(args[0].executeObject(frame));
             default -> throw new FrontendException("unknown sync op " + syncType + "." + op);
         }
         return null;
@@ -164,8 +169,12 @@ public final class SyncOpNode extends GoExprNode {
         int wantArgs = switch (syncType + "." + op) {
             case "Mutex.Lock", "Mutex.Unlock",
                  "RWMutex.Lock", "RWMutex.Unlock", "RWMutex.RLock", "RWMutex.RUnlock",
-                 "WaitGroup.Done", "WaitGroup.Wait", "Pool.Get" -> 0;
-            case "WaitGroup.Add", "Once.Do", "Pool.Put" -> 1;
+                 "WaitGroup.Done", "WaitGroup.Wait", "Pool.Get",
+                 // P3-driver-harden (jsonlib lane): Pool.New field read.
+                 "Pool.getnew" -> 0;
+            case "WaitGroup.Add", "Once.Do", "Pool.Put",
+                 // P3-driver-harden (jsonlib lane): Pool.New field write.
+                 "Pool.setnew" -> 1;
             default -> throw new FrontendException(path + ": unknown sync op " + syncType + "." + op);
         };
         GoExprNode recv = factory.buildExpr(f.object("recv", path), ctx);

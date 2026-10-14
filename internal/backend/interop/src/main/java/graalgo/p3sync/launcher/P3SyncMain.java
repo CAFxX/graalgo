@@ -202,7 +202,9 @@ public final class P3SyncMain {
             NodeFactory factory = new NodeFactory(source);
             // P3-M2b (WS D, ADR-0002): the sync wire kinds. Public
             // extension hook — no Phase-1 NodeFactory change.
-            factory.registerExprKind("syncnew", SyncNewNode::build);
+            // P3-driver-harden (jsonlib lane): the factory is passed so
+            // SyncNewNode can build the newFn child (sync.Pool{New: f}).
+            factory.registerExprKind("syncnew", (node, ctx) -> SyncNewNode.build(node, ctx, factory));
             // P3-M4 (WS C, ADR-0004 D2): "syncop" with an "atomic.*"
             // synctyp dispatches to AtomicOpNode (real result kinds);
             // the sync.* namespace keeps SyncOpNode.

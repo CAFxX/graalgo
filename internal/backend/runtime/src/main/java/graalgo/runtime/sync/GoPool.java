@@ -3,6 +3,9 @@ package graalgo.runtime.sync;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
+import graalgo.runtime.GoCalls;
+import graalgo.values.GoFunc;
+
 /**
  * Scheduler-agnostic object pool ({@code sync.Pool} semantics) for the
  * Phase-2 runtime.
@@ -12,9 +15,9 @@ import java.util.Deque;
  * reference.
  *
  * <p>Go semantics: {@code Get} returns an arbitrary previously
- * {@code Put} item, or nil if the pool is empty (the {@code New} field is
- * not in M2 scope, so the {@code New}-fallback never triggers — see the
- * frontend's {@code syntheticSyncPackage}). {@code Put(nil)} is a no-op
+ * {@code Put} item; if the pool is empty it falls back to the
+ * {@code New} field (when set, via {@code sync.Pool{New: f}} or
+ * {@code p.New = f}), and then to nil. {@code Put(nil)} is a no-op
  * (a nil item would be indistinguishable from empty on {@code Get}).
  *
  * <p>gc's victim-collection and per-P sharding are performance details,
@@ -29,16 +32,52 @@ import java.util.Deque;
  */
 public final class GoPool {
     private final Deque<Object> items = new ArrayDeque<>();
+    // P3-driver-harden (jsonlib lane): the New func() any field, set via
+    // sync.Pool{New: f} literals (newFn child) or p.New = f (setnew op).
+    private GoFunc newFunc;
 
-    /** Removes and returns an arbitrary pooled item, or null if empty. */
-    public synchronized Object get() {
-        return items.pollFirst();
+    /**
+     * Pops an item, or calls {@code New}, or returns {@code null}.
+     */
+    public Object get() {
+        Object x;
+        GoFunc nf;
+        synchronized (this) {
+            x = items.pollFirst();
+            nf = newFunc;
+        }
+        if (x != null) {
+            return x;
+        }
+        if (nf == null) {
+            return null;
+        }
+        return GoCalls.invoke(nf, new Object[0]);
     }
 
-    /** Adds x to the pool; a null x is a no-op. */
-    public synchronized void put(Object x) {
-        if (x != null) {
-            items.offerFirst(x);
+    /**
+     * Returns an item to the pool; {@code null} is dropped (gc parity).
+     */
+    public void put(Object x) {
+        if (x == null) {
+            return;
         }
+        synchronized (this) {
+            items.addLast(x);
+        }
+    }
+
+    /**
+     * Reads the {@code New} field (may be {@code null}).
+     */
+    public synchronized Object getNew() {
+        return newFunc;
+    }
+
+    /**
+     * Writes the {@code New} field.
+     */
+    public synchronized void setNew(Object f) {
+        newFunc = (GoFunc) f;
     }
 }

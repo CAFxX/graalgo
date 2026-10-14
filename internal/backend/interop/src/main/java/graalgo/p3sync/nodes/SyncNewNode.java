@@ -46,21 +46,26 @@ import graalgo.values.GoKind;
 public final class SyncNewNode extends GoExprNode {
 
     private final String syncType;
+    @Child
+    private GoExprNode newFn;
 
-    private SyncNewNode(GoKind kind, String syncType) {
+    private SyncNewNode(GoKind kind, String syncType, GoExprNode newFn) {
         super(kind);
         this.syncType = syncType;
+        this.newFn = newFn;
     }
 
     @Override
     public Object executeObject(VirtualFrame frame) {
-        return switch (syncType) {
+        Object v = switch (syncType) {
             case "Mutex" -> new GoMutex();
             case "RWMutex" -> new GoRWMutex();
             case "WaitGroup" -> new GoWaitGroup();
             case "Once" -> new GoOnce();
             // P3-M9 (driver-harden, go-cmp lane): sync.Pool for regexp's
             // pools (backtrack.go, exec.go, regexp.go).
+            // P3-driver-harden (jsonlib lane): the New function (from
+            // sync.Pool{New: f} literals) is installed below.
             case "Pool" -> new GoPool();
             // P3-M4 (WS C, ADR-0004 D2): atomic wrapper cells. 64-bit
             // wrappers ride on AtomicLong, 32-bit/bool on AtomicInteger
@@ -73,15 +78,23 @@ public final class SyncNewNode extends GoExprNode {
             case "atomic.Pointer", "atomic.Value" -> new AtomicReference<>();
             default -> throw new IllegalStateException("unknown sync type: " + syncType);
         };
+        // P3-driver-harden (jsonlib lane): sync.Pool{New: f} installs the
+        // New function on the fresh pool.
+        if (v instanceof GoPool pool && newFn != null) {
+            pool.setNew(newFn.executeObject(frame));
+        }
+        return v;
     }
 
     /**
      * Builds the node from the {@code "syncnew"} wire node. Fields:
      * {@code synctyp} (the primitive name), {@code type} (type-table id —
      * the named sync type, or a pointer to it for the {@code &}/{@code new}
-     * forms).
+     * forms), and the optional {@code newFn} child (only for
+     * {@code sync.Pool{New: f}} literals: the exported New function value).
      */
-    public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx) {
+    public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx,
+            NodeFactory factory) {
         Json.Object f = node.object("fields", "syncnew");
         String path = "syncnew.fields";
         String syncType = f.string("synctyp", path);
@@ -99,7 +112,15 @@ public final class SyncNewNode extends GoExprNode {
             throw new FrontendException(path + ": syncnew needs a numeric \"type\" id");
         }
         int typeId = (int) num.asLong(path + ".type");
-        return new SyncNewNode(kindForType(ctx, typeId, path), syncType);
+        GoExprNode newFn = null;
+        Json.Value nfv = f.opt("newFn");
+        if (nfv instanceof Json.Object o) {
+            if (!syncType.equals("Pool")) {
+                throw new FrontendException(path + ": newFn only valid for sync.Pool");
+            }
+            newFn = factory.buildExpr(o, ctx);
+        }
+        return new SyncNewNode(kindForType(ctx, typeId, path), syncType, newFn);
     }
 
     /**
