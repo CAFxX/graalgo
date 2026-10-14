@@ -202,6 +202,60 @@ public final class ReflectOpNode extends GoExprNode {
     }
 
     // ------------------------------------------------------------------
+    // Slice-argument coercions (FuncOf/StructOf take []Type-style args).
+    // A nil Go slice arrives as Java null (see unboxArgs); it coerces to
+    // an empty array.
+    // ------------------------------------------------------------------
+
+    /** Raw elements of a GoSlice argument (boxed). */
+    private static Object[] sliceElements(GoSlice s) {
+        if (s == null) {
+            return new Object[0];
+        }
+        int n = s.len();
+        Object arr = s.array();
+        int off = s.offset();
+        Object[] out = new Object[n];
+        // The backing array is typed by element kind (long[] for
+        // []unsafe.Pointer, boolean[] for []bool, Object[] for refs);
+        // Array.get boxes primitives uniformly.
+        for (int i = 0; i < n; i++) {
+            out[i] = java.lang.reflect.Array.get(arr, off + i);
+        }
+        return out;
+    }
+
+    /** []unsafe.Pointer (type tokens) argument as long[]. */
+    private static long[] toTokArray(GoSlice s) {
+        Object[] els = sliceElements(s);
+        long[] out = new long[els.length];
+        for (int i = 0; i < els.length; i++) {
+            out[i] = ((Number) els[i]).longValue();
+        }
+        return out;
+    }
+
+    /** []string argument as String[]. */
+    private static String[] toStringArray(GoSlice s) {
+        Object[] els = sliceElements(s);
+        String[] out = new String[els.length];
+        for (int i = 0; i < els.length; i++) {
+            out[i] = asString(els[i]);
+        }
+        return out;
+    }
+
+    /** []bool argument as boolean[]. */
+    private static boolean[] toBoolArray(GoSlice s) {
+        Object[] els = sliceElements(s);
+        boolean[] out = new boolean[els.length];
+        for (int i = 0; i < els.length; i++) {
+            out[i] = (Boolean) els[i];
+        }
+        return out;
+    }
+
+    // ------------------------------------------------------------------
     // Dispatch.
     // ------------------------------------------------------------------
 
@@ -237,6 +291,11 @@ public final class ReflectOpNode extends GoExprNode {
             case "tSliceOf" -> ReflectTypes.sliceOf(asTok(argv[0]));
             case "tMapOf" -> ReflectTypes.mapOf(asTok(argv[0]), asTok(argv[1]));
             case "tChanOf" -> ReflectTypes.chanOf(asTok(argv[1]), asInt(argv[0]));
+            case "tFuncOf" -> ReflectTypes.funcOf(toTokArray(asSlice(argv[0])),
+                    toTokArray(asSlice(argv[1])), asBool(argv[2]));
+            case "tStructOf" -> ReflectTypes.structOf(toStringArray(asSlice(argv[0])),
+                    toTokArray(asSlice(argv[1])), toStringArray(asSlice(argv[2])),
+                    toStringArray(asSlice(argv[3])), toBoolArray(asSlice(argv[4])));
             default -> dispatchValue(op, argv);
         };
     }
@@ -452,8 +511,7 @@ public final class ReflectOpNode extends GoExprNode {
             case STRING -> GoString.EMPTY;
             case SLICE, MAP, POINTER, CHAN, FUNC, UNSAFE_POINTER, INTERFACE -> null;
             case ARRAY -> ReflectValues.newArray(t.elem.kind, t.arrayLen);
-            case STRUCT -> new GoStruct(structDescFor(t), new long[structLongs(t)],
-                    new Object[structObjects(t)]);
+            case STRUCT -> zeroStruct(t);
             default -> throw new IllegalStateException("reflect: zero of " + t.kind);
         };
     }
@@ -471,12 +529,44 @@ public final class ReflectOpNode extends GoExprNode {
         return GoStructDescriptor.layout(ReflectTypes.typeString(t.tok), names, kinds);
     }
 
-    private static int structLongs(TypeInfo t) {
-        return structDescFor(t).longsCount();
+    /**
+     * Zero GoStruct for a (possibly synthesized) struct type. Nested
+     * aggregates are zero-filled recursively: struct fields get zero
+     * structs, string fields get GoString.EMPTY, array fields get fresh
+     * arrays with struct elements zeroed. (The flat new-Object[] left
+     * nested struct fields null, breaking Field() chains on New(T).)
+     */
+    private static GoStruct zeroStruct(TypeInfo t) {
+        graalgo.values.GoStructDescriptor desc = structDescFor(t);
+        GoStruct s = new GoStruct(desc, new long[desc.longsCount()],
+                new Object[desc.objectsCount()]);
+        for (int i = 0; i < t.fields.size(); i++) {
+            ReflectTypes.FieldInfo f = t.fields.get(i);
+            if (desc.field(i).inLongs()) {
+                continue; // numeric/bool fields are already zero
+            }
+            Object zv = switch (f.type.kind) {
+                case STRUCT -> zeroStruct(f.type);
+                case STRING -> GoString.EMPTY;
+                case ARRAY -> zeroArray(f.type);
+                default -> null; // slices, maps, pointers, funcs, chans, interfaces
+            };
+            if (zv != null) {
+                s.setObject(i, zv);
+            }
+        }
+        return s;
     }
 
-    private static int structObjects(TypeInfo t) {
-        return structDescFor(t).objectsCount();
+    /** Zero array with struct elements recursively zeroed. */
+    private static Object zeroArray(TypeInfo t) {
+        Object arr = ReflectValues.newArray(t.elem.kind, t.arrayLen);
+        if (t.elem.kind == GoKind.STRUCT && arr instanceof Object[] oa) {
+            for (int i = 0; i < oa.length; i++) {
+                oa[i] = zeroStruct(t.elem);
+            }
+        }
+        return arr;
     }
 
     // ------------------------------------------------------------------
@@ -601,11 +691,21 @@ public final class ReflectOpNode extends GoExprNode {
                 return ReflectValues.pack(desc, elemTok, h, flag);
             }
             case POINTER -> {
-                GoPointer gp = (GoPointer) d5;
-                if (gp == null || gp.referent() == null) {
+                long h;
+                if (d5 instanceof GoPointer gp) {
+                    if (gp.referent() == null) {
+                        return ReflectValues.zero(desc);
+                    }
+                    h = ReflectRefs.intern(gp.referent());
+                } else if (d5 == null) {
                     return ReflectValues.zero(desc);
+                } else {
+                    // reflectNew interns Cell(zero) and denotedValue unwraps
+                    // the Cell, so d5 is the raw value, not a GoPointer.
+                    // Keep the original handle: stores write through the
+                    // cell (setScalar/storeThroughRef handle Cell/FieldRef).
+                    h = p.ptr();
                 }
-                long h = ReflectRefs.intern(gp.referent());
                 long flag = ReflectValues.FLAG_ADDR | (p.flag() & ReflectValues.FLAG_RO);
                 return ReflectValues.pack(desc, t.elem.tok, h, flag);
             }

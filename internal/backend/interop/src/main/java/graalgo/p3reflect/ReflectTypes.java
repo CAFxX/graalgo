@@ -512,8 +512,8 @@ public final class ReflectTypes {
             case BOOL, INT8, UINT8 -> 1;
             case INT16, UINT16 -> 2;
             case INT32, UINT32, FLOAT32 -> 4;
-            case INT64, UINT64, FLOAT64, COMPLEX64, STRING,
-                 UNSAFE_POINTER -> 8;
+            case INT64, UINT64, FLOAT64, COMPLEX64, UNSAFE_POINTER -> 8;
+            case STRING -> 16;
             case COMPLEX128 -> 16;
             default -> 8;
         };
@@ -1390,12 +1390,41 @@ public final class ReflectTypes {
                 sb.append("; ");
             }
             FieldInfo f = t.fields.get(i);
-            sb.append(f.name).append(' ').append(typeString(f.type.tok));
+            // gc renders an embedded field as just its type (no field
+            // name): "struct { main.E }", "struct { *main.E }".
+            if (!f.anonymous) {
+                sb.append(f.name).append(' ');
+            }
+            sb.append(typeString(f.type.tok));
+            // gc renders the tag Go-quoted: struct { X int "json:\"x\"" }.
             if (!f.tag.isEmpty()) {
-                sb.append(' ').append(f.tag);
+                sb.append(' ').append(goQuote(f.tag));
             }
         }
         return sb.append(" }").toString();
+    }
+
+    /** Go-syntax double-quoted string literal (strconv.Quote equivalent). */
+    private static String goQuote(String s) {
+        StringBuilder sb = new StringBuilder("\"");
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 0x20 || c == 0x7F) {
+                        sb.append(String.format("\\x%02x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.append('"').toString();
     }
 
     private static String interfaceString(TypeInfo t) {
@@ -1654,10 +1683,187 @@ public final class ReflectTypes {
         return newTok;
     }
 
+    /**
+     * structOf: token for struct{...} (synthesized; method promotion from
+     * anonymous fields is computed by {@link #promoteMethods}).
+     *
+     * <p>Field offsets follow the gc ABI layout: each field is placed at
+     * the next offset aligned to its alignment, and the struct size is
+     * aligned up to the maximum field alignment. (Verified field-by-field
+     * against gc 1.27.1 by probe.)
+     */
+    public static long structOf(String[] names, long[] toks, String[] tags,
+            String[] pkgPaths, boolean[] anon) {
+        Table table = table();
+        StringBuilder keySb = new StringBuilder("struct{");
+        List<FieldInfo> fields = new ArrayList<>(names.length);
+        long offset = 0;
+        int maxAlign = 1;
+        for (int i = 0; i < names.length; i++) {
+            TypeInfo ft = table.info(toks[i]);
+            int a = Math.max(ft.align, 1);
+            offset = alignUp(offset, a);
+            if (a > maxAlign) {
+                maxAlign = a;
+            }
+            fields.add(new FieldInfo(names[i], pkgPaths[i], ft, tags[i], offset,
+                    new int[]{i}, anon[i]));
+            if (i > 0) {
+                keySb.append(';');
+            }
+            keySb.append(names[i]).append(',').append(tags[i]).append(',')
+                    .append(pkgPaths[i]).append(',').append(anon[i]).append(',')
+                    .append(structuralKey(ft));
+            offset += ft.size;
+        }
+        keySb.append('}');
+        String key = keySb.toString();
+        Long existing = table.keyToTok.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        long size = alignUp(offset, maxAlign);
+        long newTok = table.byTok.size();
+        table.keyToTok.put(key, newTok);
+        List<FieldInfo> fieldInfos = List.copyOf(fields);
+        // Reserve the struct's index BEFORE promoteMethods appends wrapper
+        // func types: newTok must address the struct, not a wrapper.
+        TypeInfo info = new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
+                null, null, 0, null, fieldInfos, List.of(),
+                List.of(), List.of(), false, List.of(), "", -1);
+        table.byTok.add(info);
+        // Promoted methods from anonymous (embedded) fields, gc rules:
+        // shallower embedding depth wins; same-depth duplicates are
+        // ambiguous and dropped; only exported method names promote.
+        List<MethodInfo> promoted = promoteMethods(table, info, fieldInfos);
+        if (!promoted.isEmpty()) {
+            table.byTok.set((int) newTok, new TypeInfo(newTok, GoKind.STRUCT, "", "", size, maxAlign,
+                    null, null, 0, null, fieldInfos, List.copyOf(promoted),
+                    List.of(), List.of(), false, List.of(), "", -1));
+        }
+        return newTok;
+    }
+
+    private static long alignUp(long offset, int align) {
+        long a = align;
+        return (offset + a - 1) & ~(a - 1);
+    }
+
+    /**
+     * Computes the promoted method set for a synthesized struct type,
+     * mirroring gc's StructOf promotion (reflect/type.go) exactly:
+     * single-level, in field order; the Go side (StructOf validation)
+     * already enforced the Issue-15924 position/count panics, so any
+     * embedded field with methods here is necessarily the first and
+     * only field.
+     *
+     * <ul>
+     *   <li>Embedded struct E: promote E's methods.
+     *   <li>Embedded *E: promote *E's methods, then E's methods (gc
+     *       appends both; duplicates are kept — observed gc behavior).
+     *   <li>Embedded interface: gc promotes via a stub; the redispatch
+     *       machinery needs a wire interface id which synthesized types
+     *       lack — documented gap, skipped (the Go side still mirrors
+     *       gc's unexported-method panic).
+     * </ul>
+     *
+     * <p>Each promoted method wraps the embedded type's GoFunc so the
+     * outer struct value is routed down the embedding path. A
+     * value-receiver method promoted through *E embedding needs the
+     * pointer dereferenced (gc semantics); that uses a dedicated
+     * wrapper.
+     */
+    private static List<MethodInfo> promoteMethods(Table table, TypeInfo outer,
+            List<FieldInfo> fields) {
+        List<MethodInfo> out = new ArrayList<>();
+        for (int i = 0; i < fields.size(); i++) {
+            FieldInfo f = fields.get(i);
+            if (!f.anonymous) {
+                continue;
+            }
+            TypeInfo ft = f.type;
+            if (ft.kind == GoKind.INTERFACE) {
+                continue;
+            }
+            int[] path = new int[]{i};
+            if (ft.kind == GoKind.POINTER && ft.elem != null) {
+                boolean ptrEmbed = true;
+                for (MethodInfo m : ft.methods) {
+                    out.add(promoteOne(table, outer, m, path, ptrEmbed, out.size()));
+                }
+                if (ft.elem.kind == GoKind.STRUCT) {
+                    for (MethodInfo m : ft.elem.methods) {
+                        out.add(promoteOne(table, outer, m, path, ptrEmbed, out.size()));
+                    }
+                }
+            } else if (ft.kind == GoKind.STRUCT) {
+                for (MethodInfo m : ft.methods) {
+                    out.add(promoteOne(table, outer, m, path, false, out.size()));
+                }
+            }
+            // Other kinds (e.g. *int): no methods to promote.
+        }
+        return List.copyOf(out);
+    }
+
+    /** Promotes one method: wraps it to route the outer receiver down the embedding path. */
+    private static MethodInfo promoteOne(Table table, TypeInfo outer, MethodInfo m,
+            int[] path, boolean embeddedIsPointer, int index) {
+        GoFunc wrapped;
+        if (embeddedIsPointer && !m.pointerReceiver) {
+            // Value-receiver method via *E: the path yields the *E
+            // pointer; dereference it for the value receiver.
+            wrapped = makeDerefEmbedWrapper(m.func, path);
+        } else {
+            wrapped = makeStructEmbedWrapper(m.func, path, m.name, m.pointerReceiver);
+        }
+        // The method's func type gets the OUTER struct as receiver.
+        List<TypeInfo> ins = new ArrayList<>();
+        ins.add(outer);
+        ins.addAll(m.funcType.ins.subList(1, m.funcType.ins.size()));
+        long wrapperTok = table.byTok.size();
+        TypeInfo wrapperType = new TypeInfo(wrapperTok, GoKind.FUNC,
+                "", "", 8, 8, null, null, 0, null,
+                List.of(), List.of(), List.copyOf(ins),
+                m.funcType.outs, m.funcType.variadic,
+                List.of(), "", -1);
+        table.byTok.add(wrapperType);
+        // gc reports PkgPath "" for promoted methods (observed).
+        return new MethodInfo(m.name, "", wrapperType, wrapped,
+                m.pointerReceiver, index, m.implKey);
+    }
+
+    /**
+     * Wraps a GoFunc for a value-receiver method promoted via an embedded
+     * *E field. The embedding path yields the *E pointer; it is
+     * dereferenced so the value-receiver method gets the E value (gc
+     * semantics). Mirrors {@link #makeStructEmbedWrapper}'s shape.
+     */
+    private static GoFunc makeDerefEmbedWrapper(GoFunc inner, int[] embPath) {
+        RootNode root = new RootNode(null) {
+            @Override
+            public Object execute(VirtualFrame frame) {
+                Object[] args = frame.getArguments();
+                Object recv = args[1];
+                Object data = recv instanceof GoPointer gp ? gp.referent() : recv;
+                Object embedded = SelectorNode.readFieldPath(data, embPath, false);
+                Object effectiveRecv = embedded instanceof GoPointer gp2 ? gp2.referent() : embedded;
+                Object[] callArgs = new Object[args.length - 1];
+                callArgs[0] = effectiveRecv;
+                System.arraycopy(args, 2, callArgs, 1, args.length - 2);
+                return GoCalls.invoke(inner, callArgs);
+            }
+        };
+        return new GoFunc(root.getCallTarget(), null);
+    }
+
     /** Structural key of an already-built TypeInfo (for ptrTo). */
     private static String structuralKey(TypeInfo t) {
         // Reuse the canonical key scheme: named types by name, composites
-        // by structure. (Only used for ptrTo synthesis.)
+        // by structure. Synthesized struct/func/interface types (from
+        // StructOf/FuncOf) key by their full structure so PtrTo(ArrayOf(
+        // StructOf(...))) etc. canonicalize correctly instead of
+        // colliding on kind.
         if (t.isNamed()) {
             return "named:" + t.pkgPath + "." + t.name;
         }
@@ -1667,6 +1873,34 @@ public final class ReflectTypes {
             case MAP -> "map:" + structuralKey(t.key) + ":" + structuralKey(t.elem);
             case POINTER -> "ptr:" + structuralKey(t.elem);
             case CHAN -> "chan:" + t.chanDir + ":" + structuralKey(t.elem);
+            case STRUCT -> {
+                StringBuilder sb = new StringBuilder("struct{");
+                for (int i = 0; i < t.fields.size(); i++) {
+                    if (i > 0) {
+                        sb.append(';');
+                    }
+                    FieldInfo f = t.fields.get(i);
+                    sb.append(f.name).append(',').append(f.tag).append(',')
+                            .append(f.anonymous).append(',')
+                            .append(structuralKey(f.type));
+                }
+                yield sb.append('}').toString();
+            }
+            case FUNC -> {
+                StringBuilder sb = new StringBuilder("func(");
+                for (TypeInfo in : t.ins) {
+                    sb.append(structuralKey(in)).append(',');
+                }
+                sb.append(")->(");
+                for (TypeInfo out : t.outs) {
+                    sb.append(structuralKey(out)).append(',');
+                }
+                if (t.variadic) {
+                    sb.append("...");
+                }
+                yield sb.append(')').toString();
+            }
+            case INTERFACE -> "interface{" + String.join(",", t.interfaceMethods) + "}";
             default -> "basic:" + t.kind;
         };
     }
