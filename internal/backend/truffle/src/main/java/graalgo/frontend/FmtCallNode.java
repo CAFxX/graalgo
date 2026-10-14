@@ -269,7 +269,7 @@ public final class FmtCallNode extends GoExprNode {
         }
         byte[] bytes = s.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
         // Box as GoSlice for the Write call.
-        graalgo.values.GoSlice slice = new graalgo.values.GoSlice(bytes);
+        graalgo.values.GoSlice slice = new graalgo.values.GoSlice(bytes, 0, bytes.length, bytes.length);
         d.call(writer, "Write", new Object[]{slice});
     }
 
