@@ -1543,6 +1543,117 @@ public final class ReflectTypes {
         return newTok;
     }
 
+    /** arrayOf: token for [n]T (synthesized; no methods). */
+    public static long arrayOf(long elemTok, int n) {
+        Table table = table();
+        TypeInfo elem = table.info(elemTok);
+        String key = "array:" + n + ":" + structuralKey(elem);
+        Long existing = table.keyToTok.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        long newTok = table.byTok.size();
+        table.keyToTok.put(key, newTok);
+        long size = elem.size * n;
+        TypeInfo info = new TypeInfo(newTok, GoKind.ARRAY, "", "", size, elem.align,
+                elem, null, n, null, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1);
+        table.byTok.add(info);
+        return newTok;
+    }
+
+    /** sliceOf: token for []T (synthesized; no methods). */
+    public static long sliceOf(long elemTok) {
+        Table table = table();
+        TypeInfo elem = table.info(elemTok);
+        String key = "slice:" + structuralKey(elem);
+        Long existing = table.keyToTok.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        long newTok = table.byTok.size();
+        table.keyToTok.put(key, newTok);
+        // Slice header: ptr, len, cap (3 words)
+        TypeInfo info = new TypeInfo(newTok, GoKind.SLICE, "", "", 24, 8,
+                elem, null, 0, null, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1);
+        table.byTok.add(info);
+        return newTok;
+    }
+
+    /** mapOf: token for map[K]V (synthesized; no methods). */
+    public static long mapOf(long keyTok, long elemTok) {
+        Table table = table();
+        TypeInfo key = table.info(keyTok);
+        TypeInfo elem = table.info(elemTok);
+        String keyStr = "map:" + structuralKey(key) + ":" + structuralKey(elem);
+        Long existing = table.keyToTok.get(keyStr);
+        if (existing != null) {
+            return existing;
+        }
+        long newTok = table.byTok.size();
+        table.keyToTok.put(keyStr, newTok);
+        // Map is a pointer-sized header in the value model
+        TypeInfo info = new TypeInfo(newTok, GoKind.MAP, "", "", 8, 8,
+                elem, key, 0, null, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1);
+        table.byTok.add(info);
+        return newTok;
+    }
+
+    /** chanOf: token for chan T with direction (synthesized; no methods). */
+    public static long chanOf(long elemTok, int dirOrdinal) {
+        Table table = table();
+        TypeInfo elem = table.info(elemTok);
+        ChanDir dir = ChanDir.values()[dirOrdinal];
+        String key = "chan:" + dir + ":" + structuralKey(elem);
+        Long existing = table.keyToTok.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        long newTok = table.byTok.size();
+        table.keyToTok.put(key, newTok);
+        TypeInfo info = new TypeInfo(newTok, GoKind.CHAN, "", "", 8, 8,
+                elem, null, 0, dir, List.of(), List.of(),
+                List.of(), List.of(), false, List.of(), "", -1);
+        table.byTok.add(info);
+        return newTok;
+    }
+
+    /** funcOf: token for func(in...) out (synthesized; no methods). */
+    public static long funcOf(long[] inToks, long[] outToks, boolean variadic) {
+        Table table = table();
+        StringBuilder keySb = new StringBuilder("func:");
+        List<TypeInfo> ins = new ArrayList<>();
+        for (long tok : inToks) {
+            TypeInfo ti = table.info(tok);
+            ins.add(ti);
+            keySb.append(structuralKey(ti)).append(",");
+        }
+        keySb.append("->");
+        List<TypeInfo> outs = new ArrayList<>();
+        for (long tok : outToks) {
+            TypeInfo ti = table.info(tok);
+            outs.add(ti);
+            keySb.append(structuralKey(ti)).append(",");
+        }
+        if (variadic) {
+            keySb.append("variadic");
+        }
+        String key = keySb.toString();
+        Long existing = table.keyToTok.get(key);
+        if (existing != null) {
+            return existing;
+        }
+        long newTok = table.byTok.size();
+        table.keyToTok.put(key, newTok);
+        TypeInfo info = new TypeInfo(newTok, GoKind.FUNC, "", "", 8, 8,
+                null, null, 0, null, List.of(), List.of(),
+                ins, outs, variadic, List.of(), "", -1);
+        table.byTok.add(info);
+        return newTok;
+    }
+
     /** Structural key of an already-built TypeInfo (for ptrTo). */
     private static String structuralKey(TypeInfo t) {
         // Reuse the canonical key scheme: named types by name, composites

@@ -233,6 +233,10 @@ public final class ReflectOpNode extends GoExprNode {
             case "tAssignableTo" -> ReflectTypes.assignableTo(asTok(argv[0]), asTok(argv[1]));
             case "tConvertibleTo" -> ReflectTypes.convertibleTo(asTok(argv[0]), asTok(argv[1]));
             case "tPtrTo" -> ReflectTypes.ptrTo(asTok(argv[0]));
+            case "tArrayOf" -> ReflectTypes.arrayOf(asTok(argv[1]), asInt(argv[0]));
+            case "tSliceOf" -> ReflectTypes.sliceOf(asTok(argv[0]));
+            case "tMapOf" -> ReflectTypes.mapOf(asTok(argv[0]), asTok(argv[1]));
+            case "tChanOf" -> ReflectTypes.chanOf(asTok(argv[1]), asInt(argv[0]));
             default -> dispatchValue(op, argv);
         };
     }

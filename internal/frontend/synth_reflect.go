@@ -384,6 +384,10 @@ func __reflect_tImplements(tok, u unsafe.Pointer) bool        { panic("reflect: 
 func __reflect_tAssignableTo(tok, u unsafe.Pointer) bool      { panic("reflect: intrinsic __reflect_tAssignableTo") }
 func __reflect_tConvertibleTo(tok, u unsafe.Pointer) bool     { panic("reflect: intrinsic __reflect_tConvertibleTo") }
 func __reflect_tPtrTo(tok unsafe.Pointer) unsafe.Pointer      { panic("reflect: intrinsic __reflect_tPtrTo") }
+func __reflect_tArrayOf(n int, elem unsafe.Pointer) unsafe.Pointer { panic("reflect: intrinsic __reflect_tArrayOf") }
+func __reflect_tSliceOf(elem unsafe.Pointer) unsafe.Pointer { panic("reflect: intrinsic __reflect_tSliceOf") }
+func __reflect_tMapOf(key, elem unsafe.Pointer) unsafe.Pointer { panic("reflect: intrinsic __reflect_tMapOf") }
+func __reflect_tChanOf(dir int, elem unsafe.Pointer) unsafe.Pointer { panic("reflect: intrinsic __reflect_tChanOf") }
 
 // Value operations.
 func __reflect_typeof(v any) unsafe.Pointer              { panic("reflect: intrinsic __reflect_typeof") }
@@ -2486,37 +2490,58 @@ func __reflect_taglookup(tag StructTag, key string) reflectTagPair {
 
 // ArrayOf returns the array type containing n elements of type elem.
 func ArrayOf(n int, elem Type) Type {
-	panic("reflect: ArrayOf: not in M8 scope (needs runtime type synthesis; re-test when it lands)")
+	if elem == nil {
+		panic("reflect: ArrayOf(nil)")
+	}
+	if n < 0 {
+		panic("reflect: ArrayOf negative length")
+	}
+	return rtype{tok: __reflect_tArrayOf(n, elem.(rtype).tok)}
 }
 
 // SliceOf returns the slice type with element type elem.
 func SliceOf(elem Type) Type {
-	panic("reflect: SliceOf: not in M8 scope (needs runtime type synthesis; re-test when it lands)")
+	if elem == nil {
+		panic("reflect: SliceOf(nil)")
+	}
+	return rtype{tok: __reflect_tSliceOf(elem.(rtype).tok)}
 }
 
 // MapOf returns the map type with key type k and element type elem.
 func MapOf(key, elem Type) Type {
-	panic("reflect: MapOf: not in M8 scope (needs runtime type synthesis; re-test when it lands)")
+	if key == nil {
+		panic("reflect: MapOf(nil)")
+	}
+	if elem == nil {
+		panic("reflect: MapOf(nil)")
+	}
+	return rtype{tok: __reflect_tMapOf(key.(rtype).tok, elem.(rtype).tok)}
 }
 
 // ChanOf returns a channel type with the given direction and element type.
 func ChanOf(dir ChanDir, elem Type) Type {
-	panic("reflect: ChanOf: not in M8 scope (needs runtime type synthesis; re-test when it lands)")
+	if elem == nil {
+		panic("reflect: ChanOf(nil)")
+	}
+	return rtype{tok: __reflect_tChanOf(int(dir), elem.(rtype).tok)}
 }
 
 // FuncOf returns a function type with the given argument and result types.
 func FuncOf(in, out []Type, variadic bool) Type {
-	panic("reflect: FuncOf: not in M8 scope (needs runtime type synthesis; re-test when it lands)")
+	panic("reflect: FuncOf: not yet implemented (needs slice arg support in reflectop)")
 }
 
 // PtrTo returns the pointer type with element t.
 func PtrTo(t Type) Type {
-	panic("reflect: PtrTo: not in M8 scope (needs runtime type synthesis; re-test when it lands)")
+	if t == nil {
+		panic("reflect: PtrTo(nil)")
+	}
+	return rtype{tok: __reflect_tPtrTo(t.(rtype).tok)}
 }
 
 // PointerTo is the old name for PtrTo.
 func PointerTo(t Type) Type {
-	panic("reflect: PointerTo: not in M8 scope (needs runtime type synthesis; re-test when it lands)")
+	return PtrTo(t)
 }
 
 // StructOf returns the struct type containing fields.
@@ -2636,6 +2661,8 @@ var reflectIntrinsicNames = map[string]bool{
 	"__reflect_tElem": true, "__reflect_tKey": true, "__reflect_tIn": true,
 	"__reflect_tOut": true, "__reflect_tImplements": true, "__reflect_tAssignableTo": true,
 	"__reflect_tConvertibleTo": true, "__reflect_tPtrTo": true,
+	"__reflect_tArrayOf": true, "__reflect_tSliceOf": true,
+	"__reflect_tMapOf": true, "__reflect_tChanOf": true,
 	"__reflect_typeof": true, "__reflect_valueof": true, "__reflect_new": true,
 	"__reflect_newat": true, "__reflect_field": true, "__reflect_index": true,
 	"__reflect_elem": true, "__reflect_len": true, "__reflect_cap": true,
