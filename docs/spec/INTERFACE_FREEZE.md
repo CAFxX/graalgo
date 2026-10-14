@@ -7,8 +7,8 @@
 changes.
 
 This document is the M9 interface freeze for **both** Phase-1 components.
-It supersedes the piecemeal freezes ([docs/freeze-stub.md](docs/freeze-stub.md) for the GG-0020
-intrinsic surface, [docs/frontend-v1.md](docs/frontend-v1.md) for the wire format) by collecting
+It supersedes the piecemeal freezes ([docs/freeze-stub.md](freeze-stub.md) for the GG-0020
+intrinsic surface, [docs/frontend-v1.md](../arch/frontend-v1.md) for the wire format) by collecting
 every cross-boundary API in one place with a single change policy. The older
 documents remain normative for their details; where they conflict, this
 document wins and the older one is amended.
@@ -59,7 +59,7 @@ resolution logic; the *contract above* is FROZEN).
 
 - `func ExportFile(path string) (string, error)` ([frontend/export.go](../../internal/frontend/export.go)) —
   the programmatic entry: type-checks `path`, returns the frontend/v1 JSON
-  document. Signature frozen; behavior defined by [docs/frontend-v1.md](docs/frontend-v1.md).
+  document. Signature frozen; behavior defined by [docs/frontend-v1.md](../arch/frontend-v1.md).
 - `enumerateInstantiations` (export.go, INTERNAL implementation) emits one
   `funcdecl` per monomorphized instantiation; the dedup key format
   `F:<name>|<targs>` (functions) / `M:<recvKey>.<mname>[|<targs>]` (methods;
@@ -68,7 +68,7 @@ resolution logic; the *contract above* is FROZEN).
 
 ### 2.3 Wire format frontend/v1 — FROZEN
 
-The JSON document defined by [docs/frontend-v1.md](docs/frontend-v1.md) is frozen at wire
+The JSON document defined by [docs/frontend-v1.md](../arch/frontend-v1.md) is frozen at wire
 version `"v1"`. Consequences:
 
 - No field may be renamed, removed, or retyped; new fields must be optional
@@ -93,7 +93,7 @@ version `"v1"`. Consequences:
 | `--dump-polymorphism[=path]` | M9 (WS L): record call-site polymorphism during execution, then print the JSON snapshot (bare flag) or write it to `path` |
 | Exit 0 | success (`func main` completed) |
 | Exit 1 | usage error, unreadable input, gofrontend unlaunchable, launcher-internal error |
-| Exit 2 | build failure (gofrontend rejected the program; stderr passed through verbatim) **or** uncaught Go panic / Goexit in main (gc: exit 2) **or** host stack exhaustion from deep Go recursion (M10: `graalgo-run: stack overflow` on stderr; see [docs/limitations.md](docs/limitations.md)) |
+| Exit 2 | build failure (gofrontend rejected the program; stderr passed through verbatim) **or** uncaught Go panic / Goexit in main (gc: exit 2) **or** host stack exhaustion from deep Go recursion (M10: `graalgo-run: stack overflow` on stderr; see [docs/limitations.md](../arch/limitations.md)) |
 
 ### 3.2 `NodeFactory` — FROZEN
 
@@ -129,7 +129,7 @@ single call-execution choke point (M9 probes attach here).
 
 ### 3.4 Runtime — FROZEN (intrinsic surface)
 
-The GG-0020 intrinsic surface is frozen in [docs/freeze-stub.md](docs/freeze-stub.md)
+The GG-0020 intrinsic surface is frozen in [docs/freeze-stub.md](freeze-stub.md)
 (§"GG-0020 intrinsic surface"; frozen 2026-10-04, amended to v2 by
 ADR-0008): `Intrinsics` (memory, slices, maps, itab, random,
 traceback), `BuiltinPrint.print/println`,
@@ -150,7 +150,7 @@ Additionally frozen at M9:
   — the single function-invocation entry (nil check, recover-flag
   discipline documented on `FuncValueCallNode`).
 - The M5 runtime surface (frozen 2026-10-04, WS F — called by M5 AST nodes)
-  is incorporated here as FROZEN (from [docs/freeze-stub.md](docs/freeze-stub.md), resolving the
+  is incorporated here as FROZEN (from [docs/freeze-stub.md](freeze-stub.md), resolving the
   §1 classification): `GoErrors.bounds(BoundsCode,long,long,boolean)`,
   `GoErrors.indexOutOfRange(long,long,boolean)`, `GoErrors.assignmentToNilMap()`,
   `GoErrors.nilDereference()`, `GoErrors.integerDivideByZero()`,

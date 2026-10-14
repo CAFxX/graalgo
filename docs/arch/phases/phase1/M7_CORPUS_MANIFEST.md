@@ -104,8 +104,8 @@ overlay (frontend-v1.md §7). These programs require standard library packages.
 All evidence lives under `phases/phase1/hidden_files/m7-gate1/` (durable;
 the original `/tmp` paths are ephemeral and were copied here 2026-10-05):
 
-- Corpus run: [hidden_files/m7-gate1/corpus_run5.json](hidden_files/m7-gate1/corpus_run5.json) (46 programs, 18 same; `05_slices` diverged here, fixed by `007b42f`)
-- Verify run: [hidden_files/m7-gate1/verify_run.json](hidden_files/m7-gate1/verify_run.json) (5 programs, 10/10 same — the `007b42f` fix plus 4 regression re-checks; final tally 19 pass / 27 excluded / 0 unexplained)
-- Individual red-green verifications: [hidden_files/m7-gate1/matcheck/](hidden_files/m7-gate1/matcheck/) (`/tmp/nilcheck`, `/tmp/varcheck` did not survive; their fixes are covered by `BuiltinsCorpusTest` and the verify run)
-- Suite: 183/0 green ([hidden_files/m7-gate1/suite_183.log](hidden_files/m7-gate1/suite_183.log), `make test`)
+- Corpus run: `hidden_files/m7-gate1/corpus_run5.json` (46 programs, 18 same; `05_slices` diverged here, fixed by `007b42f`)
+- Verify run: `hidden_files/m7-gate1/verify_run.json` (5 programs, 10/10 same — the `007b42f` fix plus 4 regression re-checks; final tally 19 pass / 27 excluded / 0 unexplained)
+- Individual red-green verifications: `hidden_files/m7-gate1/matcheck/` (`/tmp/nilcheck`, `/tmp/varcheck` did not survive; their fixes are covered by `BuiltinsCorpusTest` and the verify run)
+- Suite: 183/0 green (`hidden_files/m7-gate1/suite_183.log`, `make test`)
 - Commits: d64469a (harness), 6da57a3 (SliceGrowthTest), d48b941 (4 fixes), 007b42f (append spread)

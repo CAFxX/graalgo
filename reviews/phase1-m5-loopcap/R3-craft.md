@@ -17,7 +17,7 @@ Report written to [reviews/phase1-m5-loopcap/R3-craft.md](R3-craft.md) (only wri
   `3c4b7949129926ebbf67f44e4e53e36f`, matching the CHECKPOINT claim),
   `corpus/{controlflow,panic}/README.md` + corpus file listings, `java/frontend/README.md`.
 - Deliberately NOT read (out of scope / unavailable): the live tree
-  [phases/phase1/](../../phases/phase1/); `graalgo.values`/`graalgo.runtime`/`graalgo.safepoint`
+  [phases/phase1/](../../docs/arch/phases/phase1); `graalgo.values`/`graalgo.runtime`/`graalgo.safepoint`
   sources (absent from the snapshot except as call targets); test sources
   (`FreezeSignatureTest`, corpus tests); `Makefile`/build files (absent from the snapshot).
 

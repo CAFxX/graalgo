@@ -3,7 +3,7 @@
 Type-checks a single-file Go program with the vendored `go/*` packages and
 emits the `frontend/v1` typed-AST JSON document to stdout.
 
-- Wire format: [`../../phases/phase1/docs/frontend-v1.md`](../../phases/phase1/docs/frontend-v1.md) (normative)
+- Wire format: [`../../phases/phase1/docs/frontend-v1.md`](../../docs/arch/frontend-v1.md) (normative)
 - Vendoring: [`VENDORING.md`](VENDORING.md) (pinned revision, re-vendor procedure)
 - Java consumer: `graalgo.frontend.NodeFactory` ([`../backend/truffle/src/main/java/graalgo/frontend/`](../backend/truffle/src/main/java/graalgo/frontend/))
 
@@ -31,7 +31,7 @@ python3 tools/validate_frontend_v1.py --selftest                 # validator sel
 ```
 
 Regenerating goldens after an *intentional* wire change (must ship with a
-[`docs/frontend-v1.md`](../../phases/phase1/docs/frontend-v1.md) update in
+[`docs/frontend-v1.md`](../../docs/arch/frontend-v1.md) update in
 the same change):
 
 ```sh
@@ -72,4 +72,4 @@ registration) and `Json` unit checks.
 GG-0012/GG-0013/GG-0044 stay **locked**: WS B sources are landed and tested,
 but activation happens at M2 when `NodeFactory` builds straight-line programs
 end-to-end through the `graalgo-run` launcher (per PLAN.md). See
-[`../../phases/phase1/CHECKPOINT.md`](../../phases/phase1/CHECKPOINT.md) (WS-B section).
+[`../../phases/phase1/CHECKPOINT.md`](../../docs/arch/phases/phase1/CHECKPOINT.md) (WS-B section).

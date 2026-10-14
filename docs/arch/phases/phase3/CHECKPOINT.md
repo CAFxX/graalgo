@@ -68,17 +68,17 @@ package flattening (`p3i_<sha256hex8>_` prefix, go/types-driven selector
 rewrite, one merged file into the frozen `gofrontend` binary — the module
 is `package main` and unimportable, so the frozen CLI contract §2.1 is the
 consumption surface; recorded as a design deviation in DESIGN.md §8).
-Design: [src/p3frontend/DESIGN.md](src/p3frontend/DESIGN.md) (spec-first). Tests: 6 (2 cycle
+Design: [src/p3frontend/DESIGN.md](../../../../tools/fuzz-soak/DESIGN.md) (spec-first). Tests: 6 (2 cycle
 subtests) — bootstrap deep-equal vs `ExportFile`, two-package differential
 vs gc (normal: byte-identical stdout, exit 0; panic: identical `panic:`
 line, exit 2), no language pinning (go1.27 tag + generics), determinism,
 import cycles (fail-fast, timeout-guarded). Red-green-first evidence:
-[hidden_files/m1/redgreen.md](hidden_files/m1/redgreen.md) (broken flattener → fail-fast; disabled tag
+`hidden_files/m1/redgreen.md` (broken flattener → fail-fast; disabled tag
 filter → oracle mismatch; both reverted, suite re-run green).
 **Empirical finding:** `func init()` is accepted by `gofrontend` but never
 executed by the runtime (gc prints INIT RAN, graalgo INIT DID NOT RUN) —
 M1 rejects any `func init()` with a clear scope error (documented
-limitation, never a silent gap); probe at [hidden_files/m1/initprobe2.go](hidden_files/m1/initprobe2.go).
+limitation, never a silent gap); probe at `hidden_files/m1/initprobe2.go`.
 Commits: f3e9b05 (design), b5d3b03 (loader; verifies: GG-0023, GG-0012),
 1fc2f3a (importer/flattener/ExportDir; verifies: GG-0012, GG-0013).
 Phase-1/Phase-2 trees untouched (nothing outside `phases/phase3/src/`,
@@ -132,7 +132,7 @@ Phase-1/Phase-2 trees untouched (nothing outside `phases/phase3/src/`,
 (15 incl. subtests), all PASS; `go vet ./...` and `gofmt -l` clean; no
 TODO/placeholder markers. All three red-green mutations (both originals
 + the new quiet-divergence red) re-run with transcripts in
-[hidden_files/m1/redgreen.md](hidden_files/m1/redgreen.md), each reverted byte-exact (`git diff`
+`hidden_files/m1/redgreen.md`, each reverted byte-exact (`git diff`
 empty) and the suite re-run green afterwards. Only
 `phases/phase3/src/`, `phases/phase3/hidden_files/m1/`,
 `phases/phase3/CHECKPOINT.md`, `phases/phase3/PLAN.md`, and
@@ -263,7 +263,7 @@ one-logical-change-per-commit sequence:
     pre-fix), `testUnsupportedPromotionFailsFastAtDispatch`.
 12. `7c1e218` **R2 F3**: Mutation C2 — same-arity GoFunc swap goes RED
     via output mismatch (9/10 vs 11/10), honestly scoping C's claim;
-    remediation red-green evidence appended to [hidden_files/m3/redgreen.md](hidden_files/m3/redgreen.md).
+    remediation red-green evidence appended to `hidden_files/m3/redgreen.md`.
 13. **R2 F6**: `verifies: GG-0017 (iface slice)` annotations on the iface
     code/tests + dated history entry in `requirements/GG-0017.yaml`.
 14. **R2 F1 / R2 P2-6**: wire `index` field documented in ADR-0003 item 2
@@ -273,7 +273,7 @@ one-logical-change-per-commit sequence:
 **Open items carried forward:**
 
 1. **Phase-4 workload-representative polymorphism re-measurement (R2 F5).**
-   The M9 re-measurement ([hidden_files/m3/polymorphism.md](hidden_files/m3/polymorphism.md): 41.9% mono /
+   The M9 re-measurement (`hidden_files/m3/polymorphism.md`: 41.9% mono /
    51.6% poly / 6.5% mega over 31 sites) is mechanism coverage, not a
    workload verdict — the probe set is adversarial by construction. The
    Phase-2 [PLAN.md](PLAN.md) trigger's actual content ("(Phase 4 input)") needs a
@@ -452,7 +452,7 @@ re-derived the 142 and concurs: STANDS.
 - reviewer2.md (294eca5): PASS-WITH-FINDINGS — 0 P0, 2 P1, 8 P2. Included a
   live-breach demo (evil_amd64.S sailed through CheckAsmFiles).
 - Remediation (13 commits, 3a7c218…fdbde78 + aaf1d04): all 2 P1 + 12 P2 fixed
-  with red-green evidence ([hidden_files/m6-remediation/redgreen.md](hidden_files/m6-remediation/redgreen.md)). Notable
+  with red-green evidence (`hidden_files/m6-remediation/redgreen.md`). Notable
   nuance found during P1-1 fix: go/build gates .S/.sx on cgo; graalgo is
   deliberately stricter (no cgo path per SPEC §3.7).
 

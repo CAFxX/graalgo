@@ -1,6 +1,6 @@
 # GODEBUG surface (P2-M5, WS E)
 
-Versioned registry of every GODEBUG knob: [src/main/resources/graalgo/sched/godebug/registry.json](../../internal/backend/runtime/src/main/resources/graalgo/sched/godebug/registry.json)
+Versioned registry of every GODEBUG knob: [src/main/resources/graalgo/sched/godebug/registry.json](../../../../internal/backend/runtime/src/main/resources/graalgo/sched/godebug/registry.json)
 (current version **3**, 78 knobs + 9 removed). The registry is loaded at
 launcher startup by `graalgo.sched.launcher.GoDebug`; unknown knob names,
 malformed values, and non-default values of unsupported knobs are hard

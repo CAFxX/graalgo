@@ -6,11 +6,11 @@ change that landed without the freeze process (finding F-1, m10-doc-audit
 lane closeout §4.1/§5 — on that lane's unmerged branch). The v2 delta is
 exactly the two slice-allocation signatures below; nothing else in the
 freeze changes.
-**Scope:** [phases/phase1/INTERFACE_FREEZE.md](../../phase1/INTERFACE_FREEZE.md) v1 → v2;
-[phases/phase1/docs/freeze-stub.md](../../phase1/docs/freeze-stub.md) GG-0020 rows;
+**Scope:** [phases/phase1/INTERFACE_FREEZE.md](../../spec/INTERFACE_FREEZE.md) v1 → v2;
+[phases/phase1/docs/freeze-stub.md](../../spec/freeze-stub.md) GG-0020 rows;
 [FreezeSignatureTest](../../../internal/backend/truffle/src/test/java/graalgo/runtime/FreezeSignatureTest.java) frozen list → v2 signatures.
-**Normative basis:** [phases/phase1/INTERFACE_FREEZE.md](../../phase1/INTERFACE_FREEZE.md) (v1, in force)
-§§1, 3.4, 5; [phases/phase1/docs/freeze-stub.md](../../phase1/docs/freeze-stub.md) §"GG-0020 intrinsic
+**Normative basis:** [phases/phase1/INTERFACE_FREEZE.md](../../spec/INTERFACE_FREEZE.md) (v1, in force)
+§§1, 3.4, 5; [phases/phase1/docs/freeze-stub.md](../../spec/freeze-stub.md) §"GG-0020 intrinsic
 surface"; P3-M9 compress commit `f4915c2`
 (`f4915c24cff912b577c998f153968d639284ab8a`, 2026-10-11).
 
@@ -55,7 +55,7 @@ surface"; P3-M9 compress commit `f4915c2`
 
 - `INTERFACE_FREEZE.md`: version v1 → v2; §3.4 names the two v2
   signatures explicitly; §5 version table updated.
-- [docs/freeze-stub.md](../../phase1/docs/freeze-stub.md): the two GG-0020 rows updated to the v2
+- [docs/freeze-stub.md](../../spec/freeze-stub.md): the two GG-0020 rows updated to the v2
   signatures (historical "freeze v1 (frozen 2026-10-04)" line kept;
   v2 amendment noted).
 - [FreezeSignatureTest](../../../internal/backend/truffle/src/test/java/graalgo/runtime/FreezeSignatureTest.java): the two `FROZEN` entries updated to the v2

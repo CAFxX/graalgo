@@ -89,18 +89,18 @@ annotation; never before.
 - **[RESOLVED 2026-10-07, P3-M6] Exclusion-list review cap.** Cap approved:
   25 packages OR 5% of stdlib test binaries, whichever binds first — on
   go1.27.1 the 5% clause binds (274 test binaries → 13). Enforced
-  mechanically by `stdlib-excl validate` ([tools/stdlib-excl](../../tools/stdlib-excl)), wired into
+  mechanically by `stdlib-excl validate` ([tools/stdlib-excl](../../../../tools/stdlib-excl)), wired into
   `make -C phases/phase3 check`. Current list
-  ([exclusions.yaml](stdlib-fork/exclusions.yaml), v2): 2 entries, under cap.
+  ([exclusions.yaml](../../../../tools/stdlib-fork/exclusions.yaml), v2): 2 entries, under cap.
 - **[RESOLVED 2026-10-07, P3-M6] The ~78 coupled-package set.** Re-measured
   on go1.27.1: 142 coupled dirs (82% drift — the P3-D1 re-test trigger
   fired). Re-examination recorded in
-  [ADR-0001-addendum-p3d1-reexamination.md](adr/ADR-0001-addendum-p3d1-reexamination.md): **P3-D1
+  [ADR-0001-addendum-p3d1-reexamination.md](../../../dev/adr/ADR-0001-addendum-p3d1-reexamination.md): **P3-D1
   STANDS** — the real-adaptation subset (asm/cgo, ~44 packages) is smaller
   than the original loose ~78, so the fork-adaptation budget is not
   exceeded; the drift was partly definitional (strict documented check vs
   the original imprecise one). M7–M9 wave planning uses the versioned
-  142-list ([coupled-packages-go1.27.1.json](stdlib-fork/coupled-packages-go1.27.1.json)).
+  142-list ([coupled-packages-go1.27.1.json](../../../../tools/stdlib-fork/coupled-packages-go1.27.1.json)).
 - **[RESOLVED 2026-10-07, P3-M6] crypto "then-intrinsify" timing.** Deferred
   to Phase 5+ per ADR-0007 (CHECKPOINT.md: "Crypto emulate leg: intrinsify
   leg deferred to Phase 5+"). Phase 3 ships the emulate leg only; every
@@ -211,7 +211,7 @@ importer and executes `main`/tests on the user-space scheduler.
 Differential oracle vs stock gc 1.27.1 per SPEC §5.5 (stdout/stderr bytes
 post-normalization, exit codes, panic messages). Layers (SPEC §5):
 (1) smoke — the curated ~200-program corpus, per-commit; (2) conformance —
-[src/test/](../../internal/backend/interop/src/test/) language suite (356 files), per-commit on frontend changes;
+[src/test/](../../../../internal/backend/interop/src/test) language suite (356 files), per-commit on frontend changes;
 (3) stdlib + scripts — `go test ./...` as the primary corpus, hours-scale,
 per-release gate, four-way triage per red (graalgo bug / upstream change /
 backend-specific+reason-code / nondeterminism-normalization); (4) fuzz

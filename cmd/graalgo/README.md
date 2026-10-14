@@ -51,11 +51,11 @@ export GRAALGO_HOME=/path/to/graalgo
 
 ## Architecture
 
-The driver is a thin Go program ([cmd/graalgo/](cmd/graalgo/)) that:
+The driver is a thin Go program ([cmd/graalgo/](./)) that:
 
 1. Locates the graalgo installation (`GRAALGO_HOME`, executable path, or cwd).
 2. Dispatches subcommands to the existing infrastructure:
-   - `run`/`build`/`vet` → [internal/backend/graalgo-run](internal/backend/graalgo-run)
+   - `run`/`build`/`vet` → [internal/backend/graalgo-run](../../internal/backend/graalgo-run)
      (the Java launcher wrapper)
    - `fmt` → stock `gofmt`
    - `test` → synthesizes single-file test drivers and runs them via

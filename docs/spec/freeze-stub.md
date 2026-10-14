@@ -6,7 +6,7 @@ cross-workstream review.
 ## D8 safepoint seam (frozen 2026-10-04, M3)
 
 - Signature: `graalgo.safepoint.Safepoint.poll()` — `public static void`, no arguments,
-  no return value, in [Safepoint.java](../../../internal/backend/runtime/src/main/java/graalgo/safepoint/Safepoint.java).
+  no return value, in [Safepoint.java](../../spikes/02-loom/proto/src/loomsim/Safepoint.java).
 - Call sites (inserted by the AST builders, not by user code):
   - function entries — `GoRootNode.execute` (M3, WS D);
   - loop back-edges — WS E (when loops land).
@@ -252,8 +252,8 @@ also verified differentially vs gc via the panic corpus (pn01–pn20). Rows
 marked [T] are in `FreezeSignatureTest`; rows marked [C] are covered
 by corpus differential tests.
 
-Amendment (M9, per [INTERFACE_FREEZE.md](../INTERFACE_FREEZE.md) §1 conflict rule): the M5 runtime
-surface is incorporated as FROZEN in [INTERFACE_FREEZE.md](../INTERFACE_FREEZE.md) §3.4; this
+Amendment (M9, per [INTERFACE_FREEZE.md](INTERFACE_FREEZE.md) §1 conflict rule): the M5 runtime
+surface is incorporated as FROZEN in [INTERFACE_FREEZE.md](INTERFACE_FREEZE.md) §3.4; this
 document's "frozen at the signatures below" stands unchanged. The D8
 safepoint signature is `graalgo.safepoint.Safepoint.poll()` (class name
 was missing in v1).

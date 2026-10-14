@@ -165,7 +165,7 @@ Fixed: DONE-GATES.md annotated (193→194 via P3-M2a `ef830ad`); PLAN.md
 `reviews/phase3-m5/reviewer1.md` + `reviewer2.md` were committed — no
 commit on any branch ever added them. Fixed: both claims corrected with
 an explicit process-gap note (same class as the P3-M1 gap, which *was*
-honestly documented in [reviews/phase3-m1/README.md](../../reviews/phase3-m1/README.md)).
+honestly documented in [reviews/phase3-m1/README.md](../../../../reviews/phase3-m1/README.md)).
 
 **F-5. Stale PLAN status lines.** phase1/PLAN.md ("for parent review") and
 phase2/PLAN.md ("draft for parent review") described pre-kickoff states;
@@ -194,7 +194,7 @@ M10 lane map).
 **Checked and consistent (no fix needed):** PHASES.md §5 gates ≡ PLAN.md
 §6 gates; SPEC §5 testing strategy ≡ PLAN §5 layers; phase2/DIVERGENCES.md
 has no orphan [OPEN]s (matches DONE-GATES.md gate-5 claim); exclusion
-list v2 under cap (matches PLAN); [reviews/phase3-m1/README.md](../../reviews/phase3-m1/README.md) honestly
+list v2 under cap (matches PLAN); [reviews/phase3-m1/README.md](../../../../reviews/phase3-m1/README.md) honestly
 documents its reconstruction.
 
 ---
@@ -206,7 +206,7 @@ documents its reconstruction.
 - [DONE-GATES.md](../phase2/DONE-GATES.md) — sign-off-time annotation + F-1 red-state note (F-1, F-3)
 - [PLAN.md](PLAN.md) — status, [OPEN]→[RESOLVED] ×4, P3-M9 actual scope (F-5, F-6, F-7)
 - [CHECKPOINT.md](CHECKPOINT.md) — P3-M5 review-claim corrections, M9 + M10 entries appended (F-4, F-9)
-- [SPEC.md](../../SPEC.md) §2.8 — coupled-package count re-measured (F-8)
+- [SPEC.md](../../../../SPEC.md) §2.8 — coupled-package count re-measured (F-8)
 - [CLOSEOUT.md](CLOSEOUT.md) — this document (new)
 
 **Verification:** no code touched (`git status` shows only the files

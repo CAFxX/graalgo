@@ -169,8 +169,8 @@ expected). The test provides the missing coverage.
 disabled; 100 yields must let the peer run; red-green: no-op yield
 hangs).
 
-**P1-3 (preemption unauditable):** Archived [smoke/preempt.go](smoke/preempt.go),
-[smoke/panic.go](smoke/panic.go), [smoke/hello.go](smoke/hello.go) with [smoke/README.md](smoke/README.md) documenting the
+**P1-3 (preemption unauditable):** Archived `smoke/preempt.go`,
+`smoke/panic.go`, [smoke/hello.go](../../../../spikes/06-sulong/exp/hello.go) with [smoke/README.md](../../../../README.md) documenting the
 verification (wait-loop shape, quantum-neutered hangs, gc output match).
 
 **P1-4 (GG annotations):** Removed inaccurate verifies: GG-SCHED-0001
@@ -207,7 +207,7 @@ fixed, with red-green verification where applicable.
 - `make -C phases/phase2 check`: both gates clean.
 - Differential: 8/8 non-panicking programs byte-identical (named in
   checkpoint); panic program: exit 2 + message match (verbosity differs).
-- Preemption: [smoke/preempt.go](smoke/preempt.go) completes at --gmp=1, output matches gc.
+- Preemption: `smoke/preempt.go` completes at --gmp=1, output matches gc.
 - Phase-1 suite: 208/0 (reviewer2 independently re-ran; zero phase1
   files changed by P2-M1 remediation).
 
@@ -439,7 +439,7 @@ all suites green on the final tree.
 
 **Deliverables:** GoChan.java, SelectOp.java, ChanOps.java (overlay),
 GoStrings.java; ChannelTest.java (26), ChannelDifferentialTest.java (12);
-[corpus/channels/](corpus/channels/) (12 programs + expected/panic + regen.sh + README).
+[corpus/channels/](../../../../test/corpus/phase2/channels) (12 programs + expected/panic + regen.sh + README).
 
 **Parent dependencies flagged:** exporter lowering for channel/select
 AST (Phase-1 rejects `*ast.SendStmt`); P2-M10 owns deadlock detection
@@ -690,7 +690,7 @@ after DELTA-GO from both.
   vehicle, memStats() field table + PauseNs ring via MXBean notifications.
 - `make check`: new off-heap/barrier grep gate (ADR-0002 D3/F3) + GcInterop
   debug-println exclusion (documented, TimerHeap precedent).
-- Differential corpus [corpus/gc/](corpus/gc/) (4 programs + gc-1.27.1 .expected):
+- Differential corpus [corpus/gc/](../../../../spikes/01-asmcgo/stub/internal/runtime/gc) (4 programs + gc-1.27.1 .expected):
   gc01 finalizer runs, gc02 SetFinalizer(x,nil) removal, gc03 KeepAlive,
   gc04 GC hint. Key empirical finding: stock gc needs GC()+allocation in the
   poll loop for prompt finalization (bare runtime.GC() loop never fired).
@@ -736,7 +736,7 @@ after DELTA-GO from both.
 - `graalgo/runtime/GcInterop.java` (phase-2, Cleaner-based finalizers,
   KeepAlive via reachabilityFence, GC() via MXBean poll, weak vehicle,
   memStats field table)
-- Differential corpus [corpus/gc/](corpus/gc/) (6 programs: finalizer, remove, replace,
+- Differential corpus [corpus/gc/](../../../../spikes/01-asmcgo/stub/internal/runtime/gc) (6 programs: finalizer, remove, replace,
   keepalive, GC hint, panic-loudness; gc-1.27.1 .expected where applicable)
 - `GcDifferentialTest`, `GcInteropTest`, `GcTortureTest`, `GcVisibilityTest`
 - [DIVERGENCES.md](DIVERGENCES.md) (DIV-M4-1..9)
@@ -782,7 +782,7 @@ entries.
   old); bare field without `=` → error (gc skips).
 
 **Design:** `graalgo.sched.launcher.GoDebug` (parse/apply/accessors) +
-[src/main/resources/graalgo/sched/godebug/registry.json](../../internal/backend/runtime/src/main/resources/graalgo/sched/godebug/registry.json) (versioned;
+[src/main/resources/graalgo/sched/godebug/registry.json](../../../../internal/backend/runtime/src/main/resources/graalgo/sched/godebug/registry.json) (versioned;
 Makefile copies resources) + `SchedMain` startup hook (exit 2 on deny,
 matching gc's fatal). Machine-checked version test (version constant +
 knob-name-set hash). `tools/godebug-diff/` probes per emulated knob.
@@ -1012,7 +1012,7 @@ phases/phase2/hidden_files/jfr/EVENTS.md + p2-m6-evidence.jfr + counts).
 **Commits (8):** a1c2673 (PinAudit tool), 0dd2e2f (JFR <clinit> fix), b65fffc (test-cp), 0a7ef96 (make check wiring), 5b07719 (AUDIT.md), cf2e651 (JFR timing skip), 9828c4a (resilience+report), 6a0f694 (reviewer2), ecaabe0 (reviewer1).
 
 **Evidence:**
-- `make pin-audit`: 186 programs (148 phase-1 corpus + 37 phase-2 corpus + SchedTestRunner), 0 pin events. Report: [hidden_files/pinning/pinaudit-report.md](hidden_files/pinning/pinaudit-report.md) (AUDIT_RESULT=PASS).
+- `make pin-audit`: 186 programs (148 phase-1 corpus + 37 phase-2 corpus + SchedTestRunner), 0 pin events. Report: `hidden_files/pinning/pinaudit-report.md` (AUDIT_RESULT=PASS).
 - Honest coverage: 147 clean + 13 panic + 1 tests-leg with pin evidence; 26 build-failures (channels/timers frontend v1) contribute none.
 - Finding: 13 pins from lazy JFR event <clinit> on carriers → fixed (force <clinit> on startup thread) → re-audit 0.
 - cgo/FFM budget: +0 (no native/FFM on goroutine paths; grep gate in make check).
@@ -1051,7 +1051,7 @@ phases/phase2/hidden_files/jfr/EVENTS.md + p2-m6-evidence.jfr + counts).
 4. M6 watch item: reproduce drainer re-admission w/o UNPARK under torture;
    P0 if reproduced, else document attempt + re-test trigger.
 5. Overhead budget: fast-path hop vs spike 2b's 1%-of-10ms budget.
-6. Evidence: [hidden_files/torture/REPORT.md](hidden_files/torture/REPORT.md) + archived logs.
+6. Evidence: [hidden_files/torture/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md) + archived logs.
 7. ≥2 independent reviews, then sign-off (fresh phase-2 test + phase-1
    suite + make check by me).
 
@@ -1249,7 +1249,7 @@ Final evidence, all fresh on the sign-off tree:
 - Race stress: 4/4 scenarios, exact accounting, green.
 
 Deliverables: `WakeupModelTest` (16 tests incl. red-green guard),
-`WakeupRaceStressTest` (4), `JfrParkCostTest`, [hidden_files/modelcheck/REPORT.md](hidden_files/modelcheck/REPORT.md)
+`WakeupRaceStressTest` (4), `JfrParkCostTest`, [hidden_files/modelcheck/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md)
 (§§1-9), 3 reviews (reviewer1.md, reviewer2.md, reviewer1-rereview.md).
 
 Done-gate 4 (P2-M9) is MET. Next: P2-M10 divergence closeout, then gate 5.

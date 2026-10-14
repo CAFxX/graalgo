@@ -5,7 +5,7 @@
 the historical record of what was planned; the checkpoint is the record of
 what was delivered.
 **Normative:** SPEC.md (ACCEPTED 2026-10-03), ADR-0001, PHASES.md §3. 70 GG IDs locked.
-**Extracts:** [spec-extract.md](spec-extract.md) (54 items), [req-phase-map.md](req-phase-map.md) (31 Phase-1 IDs).
+**Extracts:** [spec-extract.md](../../../spec/spec-extract.md) (54 items), [req-phase-map.md](req-phase-map.md) (31 Phase-1 IDs).
 
 ## 1. Objective and scope
 
@@ -96,7 +96,7 @@ alternatives to explore). GraalVM pin: **Oracle GraalVM 25.0.4.1.1, LTS line**
 — Innovation line (25.4.x) re-evaluated at Phase 5; SPEC Appendix C `[OPEN]`
 closed with this pin. **Standing directive:** avoid relying on any deprecated
 API wherever possible — enforced by `-Xlint:deprecation -Werror` in the build
-(deprecated-API use = build break). Truffle jars in [lib/](../../internal/backend/truffle/lib/) re-pinned to
+(deprecated-API use = build break). Truffle jars in [lib/](../../../../internal/backend/truffle/lib) re-pinned to
 25.0.4.1.1 with SHA256SUMS.
 
 ## 4. Milestones and acceptance

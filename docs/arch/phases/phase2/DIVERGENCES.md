@@ -22,7 +22,7 @@ overridden to report 0. gc truth established empirically vs gc 1.27.1:
 
 Evidence: `phases/phase3/hidden_files/m2/redgreen.md` (red run showing
 `cap=1`/`len=1` pre-fix, green post-fix) and the differential timer
-corpus: [corpus/timers/tm15_timer_chan_len_cap.go](corpus/timers/tm15_timer_chan_len_cap.go) (+ gc-recorded
+corpus: [corpus/timers/tm15_timer_chan_len_cap.go](../../../../test/corpus/phase2/timers/tm15_timer_chan_len_cap.go) (+ gc-recorded
 `.expected`) with its Java translation `testTm15TimerChanLenCap`
 (`verifies: GG-0048`), re-run green as part of the full phase-2 suite
 post-fix.
@@ -50,7 +50,7 @@ gc runs finalizers on a dedicated finalizer goroutine with a full Go stack:
 channel ops, `go` statements, and blocking syscalls work. graalgo runs them
 on the single JVM finalizer thread (`graalgo-finalizer`). Touching
 scheduler/channel/timer state from a finalizer body fail-fasts; use a global
-flag + poll loop instead (see [corpus/gc/gc01_finalizer.go](corpus/gc/gc01_finalizer.go)).
+flag + poll loop instead (see [corpus/gc/gc01_finalizer.go](../../../../test/corpus/phase2/gc/gc01_finalizer.go)).
 
 Serialization is preserved: at most one finalizer runs at a time, in
 enqueue order, like gc.
@@ -250,7 +250,7 @@ Per-entry disposition for the closeout (P2-M10):
 
 - Torture F1 legs (production path): 5 legs, 17k–53k samples each
   (36,757 / 16,771 / 25,024 / 52,672 / 41,397), CV 0.001–0.018 — every
-  spinner admitted, no starvation ([hidden_files/torture/REPORT.md](hidden_files/torture/REPORT.md) §1).
+  spinner admitted, no starvation ([hidden_files/torture/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md) §1).
 - Select fairness: differential 12/12 vs gc (P2-M2 sign-off).
 - No accepted divergence; no trigger needed.
 
@@ -304,4 +304,4 @@ Per-entry disposition for the closeout (P2-M10):
 divergences, one (latency distribution) ACCEPTED-WITH-TOLERANCE under the
 documented band, with re-test triggers for the two standing hardware/
 scope notes. Done-gate 5 evidence: this file (versioned) +
-[hidden_files/torture/REPORT.md](hidden_files/torture/REPORT.md) + [hidden_files/modelcheck/REPORT.md](hidden_files/modelcheck/REPORT.md).
+[hidden_files/torture/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md) + [hidden_files/modelcheck/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md).
