@@ -267,7 +267,14 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	}
 	// Constraint-aware file selection (GOOS/GOARCH build tags, including
 	// the legacy // +build lines): _test.go files are never in GoFiles.
-	bp, err := build.Default.ImportDir(dir, 0)
+	// P3-driver-harden (jsonlib lane): the GRAALGO_BUILD_TAGS env var
+	// (space-separated) adds extra build tags, e.g. purego to select
+	// pure-Go fallbacks over assembly stubs (segmentio/asm).
+	ctxt := build.Default
+	if tags := os.Getenv("GRAALGO_BUILD_TAGS"); tags != "" {
+		ctxt.BuildTags = append(append([]string{}, ctxt.BuildTags...), strings.Fields(tags)...)
+	}
+	bp, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
 		return nil, fmt.Errorf("gofrontend: cannot load package %q from %s: %w", importPath, dir, err)
 	}

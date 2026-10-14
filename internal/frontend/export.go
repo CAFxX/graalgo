@@ -1047,6 +1047,18 @@ func syntheticAtomicPackage() *types.Package {
 			types.NewTuple(param("addr", paddr), param("old", boolT), param("new", boolT)), boolRes)
 	}
 
+	// P3-driver-harden (jsonlib lane): atomic.LoadPointer/StorePointer
+	// with exact gc signatures. They lower in exportCall/exportStmt to
+	// plain deref read/write (scoped divergence: atomicity without the
+	// ordering guarantee); the rest of the package-level surface stays
+	// M4.
+	{
+		unsafePtrT := types.Typ[types.UnsafePointer]
+		pUnsafe := types.NewPointer(unsafePtrT)
+		addFunc("LoadPointer", tuple(param("addr", pUnsafe)), tuple(param("", unsafePtrT)))
+		addFunc("StorePointer", types.NewTuple(param("addr", pUnsafe), param("val", unsafePtrT)), nil)
+	}
+
 	pkg.MarkComplete()
 	return pkg
 }
@@ -6371,6 +6383,14 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		if c, ok := isCloseCall(e.info, s.X); ok {
 			return e.exportChanCloseCall(c)
 		}
+		// P3-driver-harden (jsonlib lane): atomic.StorePointer(addr, val)
+		// as a bare statement lowers to *addr = val (statement position
+		// only; expression use is a gc type error).
+		if c, ok := unparen(s.X).(*ast.CallExpr); ok {
+			if n, handled, err := e.exportAtomicStorePointerStmt(s, c); handled {
+				return n, err
+			}
+		}
 		// P3-M8 (WS D): a concrete multi-result call as a bare statement
 		// (w.Write(data) on *io.PipeWriter — legal Go, results
 		// discarded) desugars to the __-helper call with the pair
@@ -8011,8 +8031,16 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// are defined with exact gc signatures but not implemented — they
 		// need &x (WS D). Fail fast with the named scope error, never a
 		// confusing "undefined".
+		//
+		// P3-driver-harden (jsonlib lane): atomic.LoadPointer lowers to
+		// a plain deref read (scoped divergence: atomicity without gc's
+		// ordering guarantee); atomic.StorePointer is statement-only and
+		// handled in exportStmt.
 		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "atomic" {
 			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "sync/atomic" {
+				if sel.Sel.Name == "LoadPointer" {
+					return e.exportAtomicLoadPointer(c)
+				}
 				return nil, scopeErrorf("sync/atomic.%s is not in M4 scope (package-level atomics need addressable operands, WS D)", sel.Sel.Name)
 			}
 		}
@@ -8509,6 +8537,61 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		fields["ellipsis"] = true
 	}
 	return e.node("call", c, fields), nil
+}
+
+// exportAtomicLoadPointer lowers atomic.LoadPointer(addr) to *addr: a
+// plain deref read of the unsafe.Pointer. Scoped divergence from gc (see
+// the exportCall interception): atomicity without the ordering guarantee.
+func (e *exporter) exportAtomicLoadPointer(c *ast.CallExpr) (*Node, error) {
+	if len(c.Args) != 1 {
+		return nil, fmt.Errorf("gofrontend: atomic.LoadPointer takes 1 argument")
+	}
+	px, err := e.exportExpr(c.Args[0])
+	if err != nil {
+		return nil, err
+	}
+	tid, err := e.typeID(types.Typ[types.UnsafePointer])
+	if err != nil {
+		return nil, err
+	}
+	return e.node("deref", c, map[string]any{"x": px, "type": tid}), nil
+}
+
+// exportAtomicStorePointerStmt lowers a bare-statement
+// atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
+// of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
+func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr) (*Node, bool, error) {
+	sel, ok := unwrapSelector(c.Fun)
+	if !ok {
+		return nil, false, nil
+	}
+	pkgIdent, ok := sel.X.(*ast.Ident)
+	if !ok || pkgIdent.Name != "atomic" {
+		return nil, false, nil
+	}
+	obj, ok := e.info.Uses[sel.Sel].(*types.Func)
+	if !ok || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" || sel.Sel.Name != "StorePointer" {
+		return nil, false, nil
+	}
+	if len(c.Args) != 2 {
+		return nil, true, fmt.Errorf("gofrontend: atomic.StorePointer takes 2 arguments")
+	}
+	px, err := e.exportExpr(c.Args[0])
+	if err != nil {
+		return nil, true, err
+	}
+	vx, err := e.exportExpr(c.Args[1])
+	if err != nil {
+		return nil, true, err
+	}
+	tid, err := e.typeID(types.Typ[types.UnsafePointer])
+	if err != nil {
+		return nil, true, err
+	}
+	lhs := e.node("deref", c, map[string]any{"x": px, "type": tid})
+	return e.node("assign", s, map[string]any{
+		"tok": "=", "lhs": []*Node{lhs}, "rhs": []*Node{vx},
+	}), true, nil
 }
 
 // exportFmtCall exports a call to one of the seven D4 fmt stub functions

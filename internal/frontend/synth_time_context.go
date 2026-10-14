@@ -785,6 +785,11 @@ func (t Time) Format(layout string) string {
 	return string(b)
 }
 
+// P3-driver-harden (jsonlib lane): AppendFormat (gc 1.27.1 semantics).
+func (t Time) AppendFormat(b []byte, layout string) []byte {
+	return append(b, t.Format(layout)...)
+}
+
 // monthName returns the full English month name (1-based).
 func monthName(m int64) string {
 	switch m {
