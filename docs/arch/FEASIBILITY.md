@@ -11,7 +11,7 @@
 > in-flight cap = GOMAXPROCS, Loom's FJP demoted to a dumb thread pool with the default
 > scheduler). Concurrency-mechanism text in §1 (Verdict paragraph, hardest-problem #1) and
 > §4(5) below is superseded; **[SPEC.md](SPEC.md) §3.5 is normative**; decisions and residuals are in
-> [adr/ADR-0001.md](adr/ADR-0001.md) (accepted 2026-10-03). Historical study record as of 2026-10-03
+> [adr/ADR-0001.md](../dev/adr/ADR-0001.md) (accepted 2026-10-03). Historical study record as of 2026-10-03
 > pre-spike-2b; [SPEC.md](SPEC.md) §1.1 is the normative record for everything the spikes decided.
 
 ---

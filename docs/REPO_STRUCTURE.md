@@ -92,13 +92,13 @@ Related: [Makefile](../Makefile) (root build entry point),
 - [docs/](../docs/)
   - [REPO_STRUCTURE.md](../docs/REPO_STRUCTURE.md) — this map.
   - [arch/](../docs/arch/) — architecture documentation, consolidated from
-    the research-era [SPEC.md](../SPEC.md), [PHASES.md](../PHASES.md), and
-    [FEASIBILITY.md](../FEASIBILITY.md).
+    the research-era [SPEC.md](arch/SPEC.md), [PHASES.md](arch/PHASES.md), and
+    [FEASIBILITY.md](arch/FEASIBILITY.md).
   - [dev/](../docs/dev/) — contributor guide and architecture decision
     records (ADRs; research-era ones moved here from
     [docs/dev/adr/](../docs/dev/adr/)).
   - [spec/](../docs/spec/) — language conformance notes (the research-era
-    [spec/](../spec/) content, curated).
+    [spec/](spec/) content, curated).
 
 > Migration complete (2026-10-14): the `phases/` directories have been
 > removed. All active code, docs, and tooling now live in the new layout.

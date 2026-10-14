@@ -5,7 +5,7 @@
 
 ## 1. What I reviewed (and checksum verification)
 
-I worked **only** from the fixed snapshot; I never read the live tree at [phases/phase1/](../../docs/arch/phases/phase1).
+I worked **only** from the fixed snapshot; I never read the live tree at [phases/phase1/](../../phases/phase1).
 
 - Verified integrity: ran `sha256sum -c ../SHA256SUMS.txt` from inside [snapshot/](snapshot/) — **every file OK, zero failures**.
 - Java frontend ([snapshot/java/frontend/](snapshot/java/frontend/), 77 files), principally:
