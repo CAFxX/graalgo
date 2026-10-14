@@ -197,6 +197,15 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			return true
 		})
 	}
+	// GAP-GENERIC-MR: index the package-level specs by name for the
+	// hoists below (shared by both).
+	specByName := map[string]*diskMRSpec{}
+	for i := range specs {
+		s := &specs[i]
+		if s.recvType == "" && s.helper != "" {
+			specByName[s.name] = s
+		}
+	}
 	// Rewrite var initializers containing a multi-result call as the
 	// sole argument to an outer call:
 	//   var X = Must(Parse(args))
@@ -235,18 +244,20 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 					newSpecs = append(newSpecs, spec)
 					continue
 				}
-				// Hoist: var __mr_tmp_N = __Inner(args)
+				mrspec := specByName[innerName]
+				if mrspec == nil {
+					// Method or interface-method MR call: not hoisted
+					// here (the export desugar handles call sites).
+					newSpecs = append(newSpecs, spec)
+					continue
+				}
+				// Hoist: var __mr_tmp_N = __Inner(args), preserving the
+				// package qualifier and explicit type arguments
+				// (GAP-GENERIC-MR: F[T](args) -> __F[T](args)).
 				tmpName := fmt.Sprintf("__mr_hoist_%d", len(hoisted))
 				helperCall := &ast.CallExpr{
-					Fun:  ast.NewIdent("__" + innerName),
+					Fun:  mrHelperFunForCall(inner.Fun, innerName),
 					Args: inner.Args,
-				}
-				// Handle selector inner (pkg.Func -> pkg.__Func).
-				if sel, ok := inner.Fun.(*ast.SelectorExpr); ok {
-					helperCall.Fun = &ast.SelectorExpr{
-						X:   sel.X,
-						Sel: ast.NewIdent("__" + innerName),
-					}
 				}
 				hoisted = append(hoisted, &ast.GenDecl{
 					Tok: token.VAR,
@@ -257,12 +268,13 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 						},
 					},
 				})
-				// Rewrite outer args to spread pair fields.
-				// Assume 2 fields (f1, f2); general case needs spec lookup.
-				tmpIdent := ast.NewIdent(tmpName)
-				outer.Args = []ast.Expr{
-					&ast.SelectorExpr{X: tmpIdent, Sel: ast.NewIdent("f1")},
-					&ast.SelectorExpr{X: tmpIdent, Sel: ast.NewIdent("f2")},
+				// Rewrite outer args to spread the pair fields.
+				outer.Args = nil
+				for _, pf := range mrspec.pairFields {
+					outer.Args = append(outer.Args, &ast.SelectorExpr{
+						X:   ast.NewIdent(tmpName),
+						Sel: ast.NewIdent(pf),
+					})
 				}
 				newSpecs = append(newSpecs, spec)
 			}
@@ -284,13 +296,6 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	// module that exposed the gap. (Selector/method MR calls nested in
 	// args are a separate case, filed if encountered.)
 	if len(specs) > 0 {
-		specByName := map[string]*diskMRSpec{}
-		for i := range specs {
-			s := &specs[i]
-			if s.recvType == "" && s.helper != "" {
-				specByName[s.name] = s
-			}
-		}
 		if len(specByName) > 0 {
 			counter := 0
 			for _, f := range files {
@@ -310,6 +315,26 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 		}
 	}
 	return specs
+}
+
+// mrHelperFunForCall builds the __-helper call target for an original
+// multi-result call fun expression: __-prefixes the function name while
+// preserving package qualification (pkg.F -> pkg.__F) and explicit type
+// arguments (F[T] -> __F[T], pkg.F[T] -> pkg.__F[T]). GAP-GENERIC-MR:
+// dropping the type arguments would leave the helper call uninferrable.
+func mrHelperFunForCall(fun ast.Expr, innerName string) ast.Expr {
+	switch f := fun.(type) {
+	case *ast.SelectorExpr:
+		return &ast.SelectorExpr{X: f.X, Sel: ast.NewIdent("__" + innerName)}
+	case *ast.IndexExpr:
+		return &ast.IndexExpr{X: mrHelperFunForCall(f.X, innerName), Index: f.Index}
+	case *ast.IndexListExpr:
+		return &ast.IndexListExpr{X: mrHelperFunForCall(f.X, innerName), Indices: f.Indices}
+	case *ast.ParenExpr:
+		return &ast.ParenExpr{X: mrHelperFunForCall(f.X, innerName)}
+	default:
+		return ast.NewIdent("__" + innerName)
+	}
 }
 
 // hoistNestedMRInBlock hoists multi-result calls in argument position
@@ -538,6 +563,42 @@ func resultTypesFL(results *ast.FieldList) []ast.Expr {
 	return out
 }
 
+// tparamNamesOf returns the type parameter names declared by a FuncType,
+// or nil for a non-generic function.
+func tparamNamesOf(ft *ast.FuncType) []string {
+	if ft == nil || ft.TypeParams == nil {
+		return nil
+	}
+	var out []string
+	for _, fld := range ft.TypeParams.List {
+		for _, n := range fld.Names {
+			out = append(out, n.Name)
+		}
+	}
+	return out
+}
+
+// genericRef builds a reference to a possibly-generic type or function:
+// Name for the non-generic case, Name[T] / Name[T1, T2, ...] for the
+// generic case, from the given type parameter names. Needed because
+// go/types cannot infer type arguments from composite-literal elements
+// or from helper-call arguments that mention only results.
+func genericRef(name string, tparamNames []string) ast.Expr {
+	base := ast.NewIdent(name)
+	switch len(tparamNames) {
+	case 0:
+		return base
+	case 1:
+		return &ast.IndexExpr{X: base, Index: ast.NewIdent(tparamNames[0])}
+	default:
+		idx := &ast.IndexListExpr{X: base}
+		for _, n := range tparamNames {
+			idx.Indices = append(idx.Indices, ast.NewIdent(n))
+		}
+		return idx
+	}
+}
+
 // transformMRFunc transforms one multi-result FuncDecl.
 func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames map[string]bool) (diskMRSpec, *ast.GenDecl, *ast.FuncDecl, *ast.FuncDecl) {
 	name := fd.Name.Name
@@ -559,12 +620,21 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 		pairFields[i] = fmt.Sprintf("f%d", i+1)
 	}
 
-	// Pair struct: type __F_pair struct { f1 T1; f2 T2 }.
+	// GAP-GENERIC-MR: the pair struct and the helper are generic exactly
+	// when the original function is — propagate the type parameter list
+	// so fields, params, and bodies referencing T type-check. The stub
+	// keeps fd.Type (which owns the list); the pair and helper share the
+	// node. go/types gives each declaration its own scope and
+	// type-parameter objects, so the sharing is sound.
+	tparams := fd.Type.TypeParams
+
+	// Pair struct: type __F_pair[T ...] struct { f1 T1; f2 T2 }.
 	pairDecl := &ast.GenDecl{
 		Tok: token.TYPE,
 		Specs: []ast.Spec{
 			&ast.TypeSpec{
-				Name: ast.NewIdent(pairType),
+				Name:       ast.NewIdent(pairType),
+				TypeParams: tparams,
 				Type: &ast.StructType{
 					Fields: &ast.FieldList{
 						List: func() []*ast.Field {
@@ -648,9 +718,13 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 	helperDecl := &ast.FuncDecl{
 		Name: ast.NewIdent(helper),
 		Type: &ast.FuncType{
-			Params: helperParams,
+			TypeParams: tparams,
+			Params:     helperParams,
 			Results: &ast.FieldList{
-				List: []*ast.Field{{Type: ast.NewIdent(pairType)}},
+				// GAP-GENERIC-MR: the pair type is generic exactly when
+				// the function is; reference it with explicit type
+				// arguments.
+				List: []*ast.Field{{Type: genericRef(pairType, tparamNamesOf(fd.Type))}},
 			},
 		},
 		Body: rewrittenBody,
@@ -1327,6 +1401,10 @@ func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string,
 		mrNames:      mrNames,
 		recvType:     recvType,
 		recvVar:      recvVar,
+		// GAP-GENERIC-MR: explicit type arguments for the pair literal
+		// and recursive helper calls (go/types cannot infer them).
+		tparamNames: tparamNamesOf(fd.Type),
+		funcName:    fd.Name.Name,
 	}
 	ctx.rewriteBlock(body)
 	return body
@@ -1340,6 +1418,17 @@ type mrRewriteCtx struct {
 	mrNames      map[string]bool
 	recvType     string
 	recvVar      string
+	// GAP-GENERIC-MR: the enclosing function's type parameter names
+	// (nil for non-generic functions) and its name (to recognize
+	// recursion in return-position call forwarding).
+	tparamNames []string
+	funcName    string
+}
+
+// pairTypeExpr builds the pair composite-literal type: __Pair for the
+// non-generic case, __Pair[T, ...] for the generic case.
+func (ctx *mrRewriteCtx) pairTypeExpr() ast.Expr {
+	return genericRef(ctx.pairType, ctx.tparamNames)
 }
 
 func (ctx *mrRewriteCtx) rewriteBlock(b *ast.BlockStmt) {
@@ -1425,13 +1514,13 @@ func (ctx *mrRewriteCtx) rewriteStmt(stmt ast.Stmt) []ast.Stmt {
 
 // rewriteReturn rewrites one return statement, returning 1-2 statements.
 func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
-	pairType, pairFields, namedResults := ctx.pairType, ctx.pairFields, ctx.namedResults
+	pairFields, namedResults := ctx.pairFields, ctx.namedResults
 	mkPair := func(args []ast.Expr) *ast.ReturnStmt {
 		return &ast.ReturnStmt{
 			Return: rs.Return,
 			Results: []ast.Expr{
 				&ast.CompositeLit{
-					Type: ast.NewIdent(pairType),
+					Type: ctx.pairTypeExpr(),
 					Elts: args,
 				},
 			},
@@ -1484,9 +1573,48 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 			} else if id := callTargetIdent(call.Fun); id != nil {
 				fname = id.Name
 			}
+			// GAP-GENERIC-MR: preserve the callee's explicit type
+			// arguments on the helper call. When the call is recursive
+			// (return F(args) inside F's own body) and carries no
+			// explicit type arguments, forward the enclosing function's
+			// type parameters — inference from the helper call's
+			// arguments cannot recover them.
+			var calleeTargs []ast.Expr
+			switch fun := call.Fun.(type) {
+			case *ast.IndexExpr:
+				calleeTargs = []ast.Expr{fun.Index}
+			case *ast.IndexListExpr:
+				calleeTargs = fun.Indices
+			}
+			var calleeTparamNames []string
+			for _, ta := range calleeTargs {
+				if id, ok := ta.(*ast.Ident); ok {
+					calleeTparamNames = append(calleeTparamNames, id.Name)
+				} else {
+					// Non-identifier type argument (e.g. []byte):
+					// cannot name it; fall back to positional refs.
+					calleeTparamNames = nil
+					break
+				}
+			}
+			if calleeTparamNames == nil && len(calleeTargs) == 0 && fname == ctx.funcName {
+				calleeTparamNames = ctx.tparamNames
+			}
+			helperFun := ast.Expr(ast.NewIdent("__" + fname))
+			if len(calleeTparamNames) > 0 {
+				helperFun = genericRef("__"+fname, calleeTparamNames)
+			} else if len(calleeTargs) > 0 {
+				// Non-identifier type arguments: splice them as-is.
+				switch len(calleeTargs) {
+				case 1:
+					helperFun = &ast.IndexExpr{X: ast.NewIdent("__" + fname), Index: calleeTargs[0]}
+				default:
+					helperFun = &ast.IndexListExpr{X: ast.NewIdent("__" + fname), Indices: calleeTargs}
+				}
+			}
 			tmp := ast.NewIdent("__mr_tmp")
 			helperCall := &ast.CallExpr{
-				Fun:  ast.NewIdent("__" + fname),
+				Fun:  helperFun,
 				Args: call.Args,
 			}
 			assign := &ast.AssignStmt{
@@ -1544,6 +1672,52 @@ func lookupDiskMR(pkgPath, name, recvType string) *diskMRSpec {
 		}
 	}
 	return nil
+}
+
+// diskMRHelperFi maps a disk multi-result stub *types.Func to its
+// __-helper's funcDeclInfo, for generic-instantiation enumeration
+// (scanRoots, GAP-GENERIC-MR). The stub is skipped at synthetic import
+// (never in funcByObj); the helper carries the real body. Returns
+// ok=false when fn is not a disk multi-result stub with a helper.
+func (e *exporter) diskMRHelperFi(fn *types.Func) (*funcDeclInfo, bool) {
+	if fn == nil || fn.Pkg() == nil {
+		return nil, false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Results().Len() < 2 {
+		return nil, false
+	}
+	recvName := ""
+	if recv := sig.Recv(); recv != nil {
+		rt := recv.Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			recvName = nt.Obj().Name()
+		}
+	}
+	spec := lookupDiskMR(fn.Pkg().Path(), fn.Name(), recvName)
+	if spec == nil || spec.helper == "" {
+		return nil, false
+	}
+	// The helper is registered in funcByObj at import. The (path, name)
+	// index is the robust lookup (the *types.Func identity can differ
+	// across type-checks — cf. scanRoots' synthetic fallback); fall back
+	// to the package scope object for funcByObj.
+	if e.synthFuncIDs != nil {
+		if fi, ok := e.synthFuncIDs[fn.Pkg().Path()+"."+spec.helper]; ok {
+			return fi, true
+		}
+	}
+	if sp, err := getDiskPackage(fn.Pkg().Path()); err == nil && sp != nil {
+		if obj, ok := sp.pkg.Scope().Lookup(spec.helper).(*types.Func); ok {
+			if fi, ok := e.funcByObj[obj]; ok {
+				return fi, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // diskMRPairType returns the *types.Named pair type from the disk package.

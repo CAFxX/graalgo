@@ -5365,6 +5365,16 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 			}
 		}
 		if !ok {
+			// WS G (GAP-GENERIC-MR): a generic instantiation of a disk
+			// multi-result stub (transformDiskMultiResult) is redirected
+			// to the generic __-helper: the stub is skipped at import
+			// (never in funcByObj); the helper carries the real body and
+			// is instantiated for the call-site type args.
+			if hfi, ok2 := e.diskMRHelperFi(fn); ok2 {
+				fi, ok = hfi, true
+			}
+		}
+		if !ok {
 			pkgPath := ""
 			if fn.Pkg() != nil {
 				pkgPath = fn.Pkg().Path()
