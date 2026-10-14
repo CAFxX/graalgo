@@ -24,10 +24,12 @@ comes from real reflect).
 - [ ] Fix any compilation issues (should be minimal — it's pure Go)
 
 ### Phase 2: Type descriptor bridge
-- [ ] Runtime hook: construct `abi.Type` from graalgo's wire type table
-- [ ] Frontend: intercept `reflect.TypeOf` → runtime hook
-- [ ] Frontend: intercept `reflect.ValueOf` → runtime hook
-- [ ] Verify basic TypeOf/ValueOf work
+- [x] Runtime hook: construct `abi.Type` from graalgo's wire type table (via ReflectTypes)
+- [x] Frontend: intercept `reflect.TypeOf` → runtime hook (already existed)
+- [x] Frontend: intercept `reflect.ValueOf` → runtime hook (already existed)
+- [x] Iter family: Type.Methods/Fields/Ins/Outs/CanSeq/CanSeq2, Value.Seq/Seq2/Methods/Fields (commit 7b02e11)
+- [x] Type constructors: ArrayOf/SliceOf/MapOf/ChanOf/PtrTo (commit 7b02e11)
+- [ ] Type constructors: FuncOf, StructOf (need slice arg support in reflectop)
 
 ### Phase 3: Real reflect package
 - [ ] Remove synthetic reflect, use real reflect source
