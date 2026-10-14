@@ -123,7 +123,7 @@ new locations.
 | `phases/phase3/stdlib-fork/` + synthetics | [stdlib/](../stdlib/) |
 | `phases/phase3/corpus/` | [test/corpus/](../test/corpus/) (landed 2026-10-13) |
 | `tools/diffharness/` | [test/differential/](../test/differential/) (landed 2026-10-13) |
-| `phases/phase3/src/p3frontend/` | [internal/backend/interop/p3frontend/](../internal/backend/interop/p3frontend/) (landed 2026-10-14) |
+| `phases/phase3/src/p3frontend/` | [internal/frontend/p3frontend/](../internal/frontend/p3frontend/) (landed 2026-10-14) |
 | `phases/phase3/stdlib-fork/` (tooling) | [tools/stdlib-fork/](../tools/stdlib-fork/) (landed 2026-10-14) |
 | `phases/phase3/fuzzing/` | [tools/fuzz-soak/](../tools/fuzz-soak/) (landed 2026-10-14) |
 | `phases/phase1/corpus/`, `phases/phase2/corpus/` | [test/corpus/phase1/](../test/corpus/phase1/), [test/corpus/phase2/](../test/corpus/phase2/) (landed 2026-10-14) |
