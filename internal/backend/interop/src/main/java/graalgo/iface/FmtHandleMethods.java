@@ -51,11 +51,37 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
         Fmt.setFmtMethodHandler(new FmtHandleMethods());
     }
 
+    /**
+     * The printers owning the currently-active {@code Formatter.Format}
+     * dispatches, innermost last (P3-M10, fix-fmt-funcs).
+     *
+     * <p>A {@code fmt.State} value is bound to the {@code Fmt.Printer} that
+     * was formatting when the {@code Format} dispatch began (gc: the
+     * {@code *pp} the state refers to) — <em>not</em> to whatever printer
+     * happens to be {@code Fmt.currentPrinter} when a State method runs.
+     * The two differ as soon as the {@code Format} method itself calls back
+     * into fmt (e.g. {@code fmt.Fprintf(s, ...)} or {@code fmt.Sprintf}
+     * inside {@code Format}): those set their own inner printer, so the
+     * State methods must resolve through this stack. The fallback to
+     * {@code Fmt.currentPrinter} covers direct calls outside a dispatch.
+     */
+    private static final ThreadLocal<java.util.ArrayDeque<Fmt.Printer>> formatPrinterStack =
+            ThreadLocal.withInitial(java.util.ArrayDeque::new);
+
+    /** The printer the current {@code fmt.State} method call belongs to. */
+    private static Fmt.Printer statePrinter() {
+        Fmt.Printer p = formatPrinterStack.get().peekLast();
+        if (p != null) {
+            return p;
+        }
+        return Fmt.currentPrinter.get();
+    }
+
     /** Installs the Java-implemented fmt.State methods. */
     private static void installStateMethods() {
         // Write(b []byte) (int, error)
         installStateMethod("Write", args -> {
-            Fmt.Printer p = Fmt.currentPrinter.get();
+            Fmt.Printer p = statePrinter();
             if (p == null) {
                 throw new IllegalStateException("fmtstate.Write: no current printer");
             }
@@ -69,7 +95,7 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
         });
         // Width() (int, bool)
         installStateMethod("Width", args -> {
-            Fmt.Printer p = Fmt.currentPrinter.get();
+            Fmt.Printer p = statePrinter();
             if (p == null) {
                 throw new IllegalStateException("fmtstate.Width: no current printer");
             }
@@ -77,7 +103,7 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
         });
         // Precision() (int, bool)
         installStateMethod("Precision", args -> {
-            Fmt.Printer p = Fmt.currentPrinter.get();
+            Fmt.Printer p = statePrinter();
             if (p == null) {
                 throw new IllegalStateException("fmtstate.Precision: no current printer");
             }
@@ -85,7 +111,7 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
         });
         // Flag(c int) bool
         installStateMethod("Flag", args -> {
-            Fmt.Printer p = Fmt.currentPrinter.get();
+            Fmt.Printer p = statePrinter();
             if (p == null) {
                 throw new IllegalStateException("fmtstate.Flag: no current printer");
             }
@@ -204,11 +230,24 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
             if (callArgs == null) {
                 return false;
             }
+            // P3-M10 (fix-fmt-funcs): bind the State methods (Write/Width/
+            // Precision/Flag) to the printer being formatted — the Format
+            // method may call back into fmt (Fprintf(s, ...), Sprintf),
+            // which installs its own inner printer.
+            java.util.ArrayDeque<Fmt.Printer> stack = formatPrinterStack.get();
+            Fmt.Printer outer = Fmt.currentPrinter.get();
+            if (outer != null) {
+                stack.addLast(outer);
+            }
             try {
                 GoCalls.invoke(formatTarget.func(), callArgs);
             } catch (Exception e) {
                 e.printStackTrace(System.err);
                 return false;
+            } finally {
+                if (outer != null) {
+                    stack.removeLast();
+                }
             }
             return true;
         }

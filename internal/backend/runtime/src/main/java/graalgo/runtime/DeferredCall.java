@@ -5,6 +5,7 @@ import com.oracle.truffle.api.nodes.Node;
 import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
+import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 
 /**
@@ -181,8 +182,67 @@ public final class DeferredCall {
             case "Sprintf" -> Fmt.sprintf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
             case "Sprintln" -> Fmt.sprintln(fargs);
             case "Errorf" -> Fmt.errorf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Append" -> Fmt.append(sliceArg(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Appendf" -> Fmt.appendf(sliceArg(fargs), fmtStringAt(fargs, 1),
+                    java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
+            case "Appendln" -> Fmt.appendln(sliceArg(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "FormatString" -> Fmt.formatString(fargs[0], intArg(fargs, 1));
+            case "Fprint" -> Fmt.fprint(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Fprintf" -> Fmt.fprintf(fargs[0], fmtStringAt(fargs, 1),
+                    java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
+            case "Fprintln" -> Fmt.fprintln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Sscan" -> FmtScan.sscan(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Sscanf" -> FmtScan.sscanf(fargs[0], fmtStringAt(fargs, 1),
+                    java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
+            case "Sscanln" -> FmtScan.sscanln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Fscan" -> FmtScan.fscan(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Fscanf" -> FmtScan.fscanf(fargs[0], fmtStringAt(fargs, 1),
+                    java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
+            case "Fscanln" -> FmtScan.fscanln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Scan" -> FmtScan.scanStdin(fargs);
+            case "Scanf" -> FmtScan.scanfStdin(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Scanln" -> FmtScan.scanlnStdin(fargs);
             default -> throw new IllegalStateException("unknown fmt function: " + fmtFunc);
         }
+    }
+
+    private String fmtStringAt(Fmt.Arg[] fargs, int at) {
+        if (fargs.length <= at) {
+            throw new IllegalStateException(fmtFunc + " requires a format string");
+        }
+        Object v = fargs[at].value();
+        if (!(v instanceof GoString gs)) {
+            throw new IllegalStateException(fmtFunc + " format is not a string");
+        }
+        return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private GoSlice sliceArg(Fmt.Arg[] fargs) {
+        if (fargs.length == 0) {
+            throw new IllegalStateException(fmtFunc + " requires a []byte argument");
+        }
+        Object v = fargs[0].value();
+        if (v == null) {
+            return null;
+        }
+        if (!(v instanceof GoSlice gs)) {
+            throw new IllegalStateException(fmtFunc + " []byte argument is not a slice");
+        }
+        return gs;
+    }
+
+    private int intArg(Fmt.Arg[] fargs, int at) {
+        if (fargs.length <= at) {
+            throw new IllegalStateException(fmtFunc + " requires an integer argument");
+        }
+        Object v = fargs[at].value();
+        if (v instanceof Integer i) {
+            return i;
+        }
+        if (v instanceof Long l) {
+            return l.intValue();
+        }
+        throw new IllegalStateException(fmtFunc + " integer argument has wrong type");
     }
 
     private String fmtString(Fmt.Arg[] fargs) {

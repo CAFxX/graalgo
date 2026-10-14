@@ -19,12 +19,18 @@ import java.util.List;
 /**
  * Minimal intrinsic-backed {@code fmt} stub (WS G, PLAN.md D4, REAL).
  *
- * <p>Covers exactly the D4 symbol set — {@code Print}, {@code Printf},
+ * <p>Covers the D4 symbol set — {@code Print}, {@code Printf},
  * {@code Println}, {@code Sprint}, {@code Sprintf}, {@code Sprintln},
- * {@code Errorf} — resolved only through the frontend's Phase-1 import
- * overlay (any other {@code fmt.X} is a scope error naming Phase 3).
- * Every symbol is marked {@code replaceable-in-Phase-3} in
- * docs/freeze-stub.md; the stub must never be mistaken for the real
+ * {@code Errorf} — plus the P3-M10 additions: the {@code F*} family
+ * ({@code Fprint}, {@code Fprintf}, {@code Fprintln}), the
+ * {@code Append} family ({@code Append}, {@code Appendf},
+ * {@code Appendln}), the scan family ({@code Scan}, {@code Scanf},
+ * {@code Scanln}, {@code Fscan}, {@code Fscanf}, {@code Fscanln},
+ * {@code Sscan}, {@code Sscanf}, {@code Sscanln}), {@code FormatString},
+ * and the {@code GoStringer} interface — all resolved only through the
+ * frontend's import overlay (any other {@code fmt.X} is a scope error
+ * naming Phase 3). Every symbol is marked {@code replaceable-in-Phase-3}
+ * in docs/freeze-stub.md; the stub must never be mistaken for the real
  * package downstream.
  *
  * <p>Formatting semantics are ported from {@code fmt/print.go} +
@@ -58,6 +64,23 @@ public final class Fmt {
      * handleMethods during Formatter dispatch) can delegate to it.
      */
     public static final ThreadLocal<Printer> currentPrinter = new ThreadLocal<>();
+
+    /**
+     * Restores the printer current before the matching {@code set} (P3-M10,
+     * fix-fmt-funcs): nested fmt calls (e.g. {@code fmt.Fprintf(s, ...)}
+     * inside a {@code Formatter.Format}, or {@code fmt.Sprintf} inside a
+     * {@code Format} method before {@code fmt.FormatString}) must leave the
+     * outer printer in place — the previous {@code remove()} destroyed it,
+     * breaking the State-bound method impls (Write/Flag/Width/Precision)
+     * installed by the interop layer.
+     */
+    private static void restorePrinter(Printer prev) {
+        if (prev == null) {
+            currentPrinter.remove();
+        } else {
+            currentPrinter.set(prev);
+        }
+    }
 
     /**
      * Handler for Go's fmt.handleMethods (P3-M9, RC-6): dispatches to
@@ -122,33 +145,36 @@ public final class Fmt {
     /** {@code Sprintf}: formats and returns the string. */
     public static GoString sprintf(String format, Arg[] args) {
         Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
         currentPrinter.set(p);
         try {
             return new GoString(p.doPrintf(format, args));
         } finally {
-            currentPrinter.remove();
+            restorePrinter(prevPrinter);
         }
     }
 
     /** {@code Sprint}: {@code %v} of each arg, spaces between non-strings. */
     public static GoString sprint(Arg[] args) {
         Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
         currentPrinter.set(p);
         try {
             return new GoString(p.doPrint(args));
         } finally {
-            currentPrinter.remove();
+            restorePrinter(prevPrinter);
         }
     }
 
     /** {@code Sprintln}: {@code %v} of each arg, spaces always, trailing newline. */
     public static GoString sprintln(Arg[] args) {
         Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
         currentPrinter.set(p);
         try {
             return new GoString(p.doPrintln(args));
         } finally {
-            currentPrinter.remove();
+            restorePrinter(prevPrinter);
         }
     }
 
@@ -158,6 +184,7 @@ public final class Fmt {
      */
     public static int print(Arg[] args) {
         Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
         currentPrinter.set(p);
         try {
             byte[] b = p.doPrint(args);
@@ -165,13 +192,14 @@ public final class Fmt {
             System.out.flush();
             return b.length;
         } finally {
-            currentPrinter.remove();
+            restorePrinter(prevPrinter);
         }
     }
 
     /** {@code Printf}: formats to stdout. Returns bytes written. */
     public static int printf(String format, Arg[] args) {
         Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
         currentPrinter.set(p);
         try {
             byte[] b = p.doPrintf(format, args);
@@ -179,13 +207,14 @@ public final class Fmt {
             System.out.flush();
             return b.length;
         } finally {
-            currentPrinter.remove();
+            restorePrinter(prevPrinter);
         }
     }
 
     /** {@code Println}: {@code %v} of each arg to stdout, spaces + newline. */
     public static int println(Arg[] args) {
         Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
         currentPrinter.set(p);
         try {
             byte[] b = p.doPrintln(args);
@@ -193,8 +222,303 @@ public final class Fmt {
             System.out.flush();
             return b.length;
         } finally {
-            currentPrinter.remove();
+            restorePrinter(prevPrinter);
         }
+    }
+
+    /**
+     * Interop-implemented Go method dispatch for the F*, scan and format
+     * families (P3-M10, fix-fmt-funcs). The joint round (this module plus
+     * the truffle AST sources) cannot see {@code graalgo.iface}, so the
+     * phase-3 launcher installs the implementation alongside
+     * {@link FmtMethodHandler}; null in phase-1-only mode, where the F*
+     * and scan families fail loud (there is no structural fallback for a
+     * writer/reader call).
+     */
+    public interface GoMethodDispatch {
+        /**
+         * Calls the named method on the Go value carried by {@code arg},
+         * unwrapping interfaces to the dynamic type (like
+         * {@link FmtMethodHandler#handle}).
+         *
+         * @param arg    the receiver value (a {@link Arg})
+         * @param method the method name ({@code "Write"}, {@code "Read"},
+         *               {@code "Width"}, ...)
+         * @param args   the call arguments in D5 mapping
+         * @return the {@code GoCalls.invoke} result (for pair-returning
+         *         methods, the pair struct value)
+         */
+        Object call(Arg arg, String method, Object[] args);
+
+        /**
+         * True when the Go value carried by {@code arg} has the named
+         * method (used for the {@code fmt.Scanner} check in scanOne).
+         */
+        boolean hasMethod(Arg arg, String method);
+
+        /**
+         * A {@code fmt.ScanState} interface value whose methods delegate
+         * to the thread-local {@code FmtScan.currentScan} (the state
+         * passed to {@code Scanner.Scan}; see FmtScan).
+         */
+        Object scanStateValue();
+
+        /**
+         * True when {@code value} is a {@code fmt.ScanState} interface
+         * value created by {@link #scanStateValue} (used by
+         * {@code Fscan}/{@code Fscanf}/{@code Fscanln} to reuse the
+         * in-progress scan's input, like gc's {@code ss.reset} copying
+         * an {@code *ss} reader).
+         */
+        boolean isScanStateValue(Object value);
+    }
+
+    private static volatile GoMethodDispatch methodDispatch;
+
+    /** Installs the Go method dispatcher (phase-3 launcher). */
+    public static void setGoMethodDispatch(GoMethodDispatch d) {
+        methodDispatch = d;
+    }
+
+    /** The installed Go method dispatcher, or null. */
+    public static GoMethodDispatch goMethodDispatch() {
+        return methodDispatch;
+    }
+
+    /**
+     * Writes {@code b} to the Go writer carried by {@code w} via its
+     * {@code Write} method (gc's {@code Fprint} core: format, then a
+     * single {@code w.Write}). The {@code (n, err)} result is discarded
+     * (statement position); a panicking Write propagates.
+     *
+     * <p>The byte slice is {@code int[]}-backed: that is the D5
+     * representation of {@code []byte} (see ConvertNode.stringToSlice),
+     * and Go code like {@code copy} casts to {@code int[]}.
+     */
+    public static void writeTo(Arg w, byte[] b) {
+        GoMethodDispatch d = methodDispatch;
+        if (d == null) {
+            throw new graalgo.frontend.FrontendException(
+                    "fmt.Fprint: no Go method dispatch installed (needs the phase-3 launcher)");
+        }
+        int[] arr = new int[b.length];
+        for (int i = 0; i < b.length; i++) {
+            arr[i] = b[i] & 0xFF;
+        }
+        d.call(w, "Write", new Object[]{new GoSlice(arr, 0, arr.length, arr.length)});
+    }
+
+    /**
+     * Reads the positional fields of a two-result pair struct value
+     * (what {@code GoCalls.invoke} returns for a {@code (T, U)} Go
+     * method). Field layouts differ ({@code f0/f1} for user and
+     * Java-installed pairs, named fields for the synthetic io pairs),
+     * so this reads by position, not by name.
+     *
+     * @return a two-element array {@code [first, second]}
+     */
+    public static Object[] pairFields(Object pair) {
+        if (pair instanceof GoStruct gs) {
+            GoStructDescriptor desc = gs.descriptor();
+            if (desc.fields().size() >= 2) {
+                return new Object[]{fieldValue(gs, desc, 0), fieldValue(gs, desc, 1)};
+            }
+        }
+        throw new graalgo.frontend.FrontendException(
+                "fmt: expected a two-result pair struct, got " + pair);
+    }
+
+    /**
+     * Reads the positional fields of a three-result struct value (what
+     * {@code GoCalls.invoke} returns for a {@code (T, U, V)} Go method,
+     * e.g. {@code io.RuneScanner.ReadRune}).
+     *
+     * @return a three-element array {@code [first, second, third]}
+     */
+    public static Object[] tripleFields(Object triple) {
+        if (triple instanceof GoStruct gs) {
+            GoStructDescriptor desc = gs.descriptor();
+            if (desc.fields().size() >= 3) {
+                return new Object[]{fieldValue(gs, desc, 0), fieldValue(gs, desc, 1), fieldValue(gs, desc, 2)};
+            }
+        }
+        throw new graalgo.frontend.FrontendException(
+                "fmt: expected a three-result struct, got " + triple);
+    }
+
+    private static Object fieldValue(GoStruct gs, GoStructDescriptor desc, int fieldPos) {
+        GoStructDescriptor.Field f = desc.field(fieldPos);
+        // getLong/getObject take the field position and index internally.
+        return f.inLongs() ? gs.getLong(fieldPos) : gs.getObject(fieldPos);
+    }
+
+    /**
+     * True when the error interface value is {@code io.EOF} (the
+     * canonical {@code *errors.errorString} wrapping {@code "EOF"}).
+     */
+    static boolean isEofError(Object err) {
+        if (err instanceof GoInterface gi && isErrorString(gi)) {
+            byte[] msg = errorStringBytes(gi);
+            return msg.length == 3 && msg[0] == 'E' && msg[1] == 'O' && msg[2] == 'F';
+        }
+        return false;
+    }
+
+    /**
+     * The {@code io.EOF} error value (public for the interop
+     * {@code fmt.ScanState} method implementations): the canonical
+     * {@code *errors.errorString} wrapping {@code "EOF"}.
+     */
+    public static GoInterface eofError() {
+        return errorStringInterface(new GoString(
+                "EOF".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
+
+    /**
+     * A fresh {@code *errors.errorString} with the given message (public
+     * for the interop {@code fmt.ScanState} method implementations).
+     */
+    public static GoInterface newError(String msg) {
+        return errorStringInterface(new GoString(
+                msg.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    }
+
+    /** {@code Fprint}: formats like {@code Sprint}, writes to {@code w}. */
+    public static void fprint(Arg w, Arg[] args) {
+        Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
+        currentPrinter.set(p);
+        try {
+            writeTo(w, p.doPrint(args));
+        } finally {
+            restorePrinter(prevPrinter);
+        }
+    }
+
+    /** {@code Fprintf}: formats like {@code Sprintf}, writes to {@code w}. */
+    public static void fprintf(Arg w, String format, Arg[] args) {
+        Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
+        currentPrinter.set(p);
+        try {
+            writeTo(w, p.doPrintf(format, args));
+        } finally {
+            restorePrinter(prevPrinter);
+        }
+    }
+
+    /** {@code Fprintln}: formats like {@code Sprintln}, writes to {@code w}. */
+    public static void fprintln(Arg w, Arg[] args) {
+        Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
+        currentPrinter.set(p);
+        try {
+            writeTo(w, p.doPrintln(args));
+        } finally {
+            restorePrinter(prevPrinter);
+        }
+    }
+
+    /** {@code Append}: {@code append(b, Sprint(a...)...)}. */
+    public static GoSlice append(GoSlice b, Arg[] args) {
+        Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
+        currentPrinter.set(p);
+        try {
+            return concatBytes(goSliceBytes(b), p.doPrint(args));
+        } finally {
+            restorePrinter(prevPrinter);
+        }
+    }
+
+    /** {@code Appendf}: {@code append(b, Sprintf(format, a...)...)}. */
+    public static GoSlice appendf(GoSlice b, String format, Arg[] args) {
+        Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
+        currentPrinter.set(p);
+        try {
+            return concatBytes(goSliceBytes(b), p.doPrintf(format, args));
+        } finally {
+            restorePrinter(prevPrinter);
+        }
+    }
+
+    /** {@code Appendln}: {@code append(b, Sprintln(a...)...)}. */
+    public static GoSlice appendln(GoSlice b, Arg[] args) {
+        Printer p = new Printer();
+        Printer prevPrinter = currentPrinter.get();
+        currentPrinter.set(p);
+        try {
+            return concatBytes(goSliceBytes(b), p.doPrintln(args));
+        } finally {
+            restorePrinter(prevPrinter);
+        }
+    }
+
+    /** Extracts the bytes of a {@code []byte} value (nil slice ok). */
+    static byte[] goSliceBytes(Object v) {
+        if (v == null) {
+            return new byte[0];
+        }
+        GoSlice s = (GoSlice) v;
+        Object arr = s.array();
+        int off = s.offset();
+        int len = s.len();
+        byte[] out = new byte[len];
+        if (arr instanceof byte[] ba) {
+            System.arraycopy(ba, off, out, 0, len);
+        } else if (arr instanceof int[] ia) {
+            // []byte (uint8) may be backed by int[] in the D5 representation.
+            for (int i = 0; i < len; i++) {
+                out[i] = (byte) ia[off + i];
+            }
+        } else {
+            throw new graalgo.frontend.FrontendException("fmt: []byte backed by " + arr.getClass());
+        }
+        return out;
+    }
+
+    private static GoSlice concatBytes(byte[] a, byte[] b) {
+        // int[]-backed: the D5 representation of []byte.
+        int[] out = new int[a.length + b.length];
+        for (int i = 0; i < a.length; i++) {
+            out[i] = a[i] & 0xFF;
+        }
+        for (int i = 0; i < b.length; i++) {
+            out[a.length + i] = b[i] & 0xFF;
+        }
+        return new GoSlice(out, 0, out.length, out.length);
+    }
+
+    /**
+     * {@code FormatString}: rebuilds the fully qualified formatting
+     * directive captured by the state (gc's {@code fmt.FormatString}).
+     * The state's {@code Flag}/{@code Width}/{@code Precision} methods
+     * are dispatched through the installed {@link GoMethodDispatch}.
+     */
+    public static GoString formatString(Arg state, int verb) {
+        GoMethodDispatch d = methodDispatch;
+        if (d == null) {
+            throw new graalgo.frontend.FrontendException(
+                    "fmt.FormatString: no Go method dispatch installed (needs the phase-3 launcher)");
+        }
+        StringBuilder sb = new StringBuilder("%");
+        for (int c : new int[]{'-', '+', '#', ' ', '0'}) {
+            Object r = d.call(state, "Flag", new Object[]{(long) c});
+            if (Boolean.TRUE.equals(r)) {
+                sb.append((char) c);
+            }
+        }
+        Object[] widPair = pairFields(d.call(state, "Width", new Object[0]));
+        if (Boolean.TRUE.equals(widPair[1])) {
+            sb.append(((Number) widPair[0]).longValue());
+        }
+        Object[] precPair = pairFields(d.call(state, "Precision", new Object[0]));
+        if (Boolean.TRUE.equals(precPair[1])) {
+            sb.append('.').append(((Number) precPair[0]).longValue());
+        }
+        sb.appendCodePoint(verb);
+        return new GoString(sb.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
     }
 
     /**

@@ -180,9 +180,9 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // in synth_errors.go / synth_sort.go, likewise via getSyntheticPackage):
 // it resolves exactly the synthetic package
 // "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface),
-// the synthetic package "fmt" exposing the seven D4 symbols (Print,
-// Printf, Println, Sprint, Sprintf, Sprintln, Errorf) with exact variadic
-// signatures, the synthetic package "sync" exposing the four P3-M2b
+// the synthetic package "fmt" exposing the D4 symbols (Print, Printf,
+// Println, Sprint, Sprintf, Sprintln, Errorf) plus the P3-M10 F*/Append/
+// scan families and FormatString, all with exact variadic signatures, the synthetic package "sync" exposing the four P3-M2b
 // primitives (Mutex, RWMutex, WaitGroup, Once) with exact gc method
 // signatures, the synthetic package "sync/atomic" exposing the P3-M4
 // typed wrappers (Int64, Uint64, Int32, Uint32, Bool, Uintptr) plus the
@@ -709,17 +709,70 @@ func syntheticFmtPackage() *types.Package {
 			types.NewTuple(param("state", scanStateNamed), param("verb", runeT)),
 			types.NewTuple(param("", errorT))),
 	}, nil).Complete())
+	// BUG-MODPROBE-010 verification (second instance): fmt.GoStringer was
+	// missing from the synthetic fmt package (gc 1.27.1:
+	// type GoStringer interface{ GoString() string }).
+	goStringerNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "GoStringer", nil), nil, nil)
+	goStringerNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
+		ifaceMethod("GoString", types.NewTuple(), types.NewTuple(strRes)),
+	}, nil).Complete())
+	pkg.Scope().Insert(goStringerNamed.Obj())
+	// P3-M10 (fix-fmt-funcs): the F* print family, the Append family, the
+	// scan family, and FormatString (gc 1.27.1 exact signatures). The F*
+	// and scan families return (int, error) but are statement-position
+	// only in Phase 1 (results discarded), like the D4 Print variants —
+	// see exportFmtCall.
+	//
+	// The w/r params are io.Writer/io.Reader-shaped anonymous interfaces
+	// (inlined so the fmt overlay stays self-contained — no
+	// cross-synthetic init order). Any writer/reader (concrete type or
+	// interface) is assignable to them, exactly like gc's io.Writer.
+	// (The writer interface for Fprint/Fprintf/Fprintln is defined above
+	// in the P4 desugar section; only the reader is needed here for the
+	// scan family.)
+	readMeth := ifaceMethod("Read", types.NewTuple(param("p", byteSliceT)),
+		types.NewTuple(param("n", intT), param("err", errorT)))
+	readerIface := types.NewInterfaceType([]*types.Func{readMeth}, nil).Complete()
+	r := param("r", readerIface)
+	b := param("b", byteSliceT)
+	bytesRes := param("", byteSliceT)
+	// Fprint/Fprintf/Fprintln are already inserted above (P4 desugar).
+	insert("Append", types.NewTuple(b, a), types.NewTuple(bytesRes))
+	insert("Appendf", types.NewTuple(b, format, a), types.NewTuple(bytesRes))
+	insert("Appendln", types.NewTuple(b, a), types.NewTuple(bytesRes))
+	// FormatString is not variadic (insert always marks variadic).
+	formatStringSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(param("state", stateNamed), param("verb", runeT)),
+		types.NewTuple(strRes), false)
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "FormatString", formatStringSig))
+	str := param("str", stringT)
+	insert("Scan", types.NewTuple(a), types.NewTuple(n, errRes))
+	insert("Scanf", types.NewTuple(format, a), types.NewTuple(n, errRes))
+	insert("Scanln", types.NewTuple(a), types.NewTuple(n, errRes))
+	insert("Fscan", types.NewTuple(r, a), types.NewTuple(n, errRes))
+	insert("Fscanf", types.NewTuple(r, format, a), types.NewTuple(n, errRes))
+	insert("Fscanln", types.NewTuple(r, a), types.NewTuple(n, errRes))
+	insert("Sscan", types.NewTuple(str, a), types.NewTuple(n, errRes))
+	insert("Sscanf", types.NewTuple(str, format, a), types.NewTuple(n, errRes))
+	insert("Sscanln", types.NewTuple(str, a), types.NewTuple(n, errRes))
 	pkg.MarkComplete()
 	return pkg
 }
 
-// fmtOverlayFuncs are the seven D4 symbols (PLAN.md D4) plus the P4
-// F-family (Fprint/Fprintf/Fprintln), which the exporter desugars
-// (mrFmtF) instead of emitting as fmtcall nodes.
+// fmtOverlayFuncs are the fmt symbols the Phase-1 overlay resolves: the
+// seven D4 symbols (PLAN.md D4), the P4 F-family (Fprint/Fprintf/Fprintln,
+// desugared via mrFmtF instead of emitting as fmtcall nodes), plus the
+// P3-M10 Append/scan families and FormatString. Any other fmt.X is a scope
+// error naming Phase 3.
 var fmtOverlayFuncs = map[string]bool{
 	"Print": true, "Printf": true, "Println": true,
 	"Sprint": true, "Sprintf": true, "Sprintln": true, "Errorf": true,
 	"Fprint": true, "Fprintf": true, "Fprintln": true,
+	"Append": true, "Appendf": true, "Appendln": true,
+	"FormatString": true,
+	"Scan":         true, "Scanf": true, "Scanln": true,
+	"Fscan": true, "Fscanf": true, "Fscanln": true,
+	"Sscan": true, "Sscanf": true, "Sscanln": true,
 }
 
 // syncPrimitiveNames are the four P3-M2b (WS D, ADR-0002) primitives bound
@@ -8535,9 +8588,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	return e.node("call", c, fields), nil
 }
 
-// exportFmtCall exports a call to one of the seven D4 fmt stub functions
-// (M6, WS H — the Phase-1 fmt import overlay, PLAN.md D4). Any other fmt.X
-// is a scope error naming Phase 3.
+// exportFmtCall exports a call to one of the fmt overlay functions
+// (M6, WS H — the Phase-1 fmt import overlay, PLAN.md D4; P3-M10 extends
+// the overlay with the Append/scan families and FormatString). Any other
+// fmt.X is a scope error naming Phase 3.
 //
 // The P4 F-family (Fprint/Fprintf/Fprintln) is in fmtOverlayFuncs but
 // never reaches here: it is desugared at statement level (mrFmtF) into
@@ -8558,12 +8612,17 @@ func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node,
 	if err != nil {
 		return nil, err
 	}
-	// The Print variants return (int, error); Phase 1 supports them in
-	// statement position only (results discarded) — the wire type is null.
-	// The Sprint variants and Errorf return a single value.
+	// The Print/scan families return (int, error); Phase 1 supports
+	// them in statement position only (results discarded) — the wire type
+	// is null. The Sprint/Append families, FormatString and Errorf return
+	// a single value. (Fprint/Fprintf/Fprintln never reach here: they are
+	// desugared at statement level, see the guard above.)
 	var typ any
 	switch name {
-	case "Print", "Printf", "Println":
+	case "Print", "Printf", "Println",
+		"Scan", "Scanf", "Scanln",
+		"Fscan", "Fscanf", "Fscanln",
+		"Sscan", "Sscanf", "Sscanln":
 		typ = nil
 	default:
 		typ, err = e.callType(c)

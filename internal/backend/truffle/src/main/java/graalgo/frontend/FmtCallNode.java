@@ -3,20 +3,29 @@ package graalgo.frontend;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.Fmt;
+import graalgo.runtime.FmtScan;
 import graalgo.values.GoKind;
 import graalgo.values.GoString;
 
 /**
- * A call to one of the D4 {@code fmt} stub functions (WS G; verifies
- * GG-0020).
+ * A call to one of the {@code fmt} stub functions (WS G; verifies
+ * GG-0020; P3-M10 extends the surface with the F*, Append and scan families
+ * and FormatString).
  *
- * <p>Only the seven D4 symbols resolve ({@code Print}, {@code Printf},
- * {@code Println}, {@code Sprint}, {@code Sprintf}, {@code Sprintln},
- * {@code Errorf}); the gofrontend import overlay rejects any other
- * {@code fmt.X}. The {@code Print} variants return {@code (int, error)} in
- * Go; Phase 1 supports them in statement position only (results discarded) —
- * value-position use is a Phase-3 scope error from the factory. The
- * {@code Sprint} variants and {@code Errorf} return a single value.
+ * <p>The D4 symbols ({@code Print}, {@code Printf}, {@code Println},
+ * {@code Sprint}, {@code Sprintf}, {@code Sprintln}, {@code Errorf}),
+ * the F* family ({@code Fprint}, {@code Fprintf}, {@code Fprintln}),
+ * the Append family ({@code Append}, {@code Appendf},
+ * {@code Appendln}), the scan family ({@code Scan}, {@code Scanf},
+ * {@code Scanln}, {@code Fscan}, {@code Fscanf}, {@code Fscanln},
+ * {@code Sscan}, {@code Sscanf}, {@code Sscanln}) and
+ * {@code FormatString} resolve through the gofrontend import overlay;
+ * any other {@code fmt.X} is a scope error naming Phase 3. The
+ * {@code Print}, {@code F*} and scan families return {@code (int,
+ * error)} in Go; Phase 1 supports them in statement position only
+ * (results discarded) — value-position use is a Phase-3 scope error from
+ * the factory. The {@code Sprint}/{@code Append} families,
+ * {@code FormatString} and {@code Errorf} return a single value.
  *
  * <p>Static type metadata (kinds, Go-syntax names) is supplied by the
  * factory from the wire type table; values are read from the children at
@@ -132,6 +141,13 @@ public final class FmtCallNode extends GoExprNode {
             case "Sprintf" -> Fmt.sprintf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
             case "Sprintln" -> Fmt.sprintln(fargs);
             case "Errorf" -> Fmt.errorf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Append" -> Fmt.append(sliceArg(fargs, 0),
+                    java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Appendf" -> Fmt.appendf(sliceArg(fargs, 0), fmtStringAt(fargs, 1),
+                    java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
+            case "Appendln" -> Fmt.appendln(sliceArg(fargs, 0),
+                    java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "FormatString" -> Fmt.formatString(fargs[0], runeArg(fargs, 1));
             // Print/Printf/Println in statement position: discard results.
             case "Print" -> {
                 Fmt.print(fargs);
@@ -143,6 +159,61 @@ public final class FmtCallNode extends GoExprNode {
             }
             case "Println" -> {
                 Fmt.println(fargs);
+                yield GoString.EMPTY;
+            }
+            // P3-M10 (fix-fmt-funcs): the F* family — format like the
+            // S* family, write to the writer (fargs[0]), discard (n, err).
+            case "Fprint" -> {
+                Fmt.fprint(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+                yield GoString.EMPTY;
+            }
+            case "Fprintf" -> {
+                Fmt.fprintf(fargs[0], fmtStringAt(fargs, 1),
+                        java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
+                yield GoString.EMPTY;
+            }
+            case "Fprintln" -> {
+                Fmt.fprintln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+                yield GoString.EMPTY;
+            }
+            // P3-M10 (fix-fmt-funcs): the scan family — statement position
+            // only (results discarded); destinations are written through.
+            case "Sscan" -> {
+                FmtScan.sscan(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+                yield GoString.EMPTY;
+            }
+            case "Sscanf" -> {
+                FmtScan.sscanf(fargs[0], fmtStringAt(fargs, 1),
+                        java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
+                yield GoString.EMPTY;
+            }
+            case "Sscanln" -> {
+                FmtScan.sscanln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+                yield GoString.EMPTY;
+            }
+            case "Fscan" -> {
+                FmtScan.fscan(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+                yield GoString.EMPTY;
+            }
+            case "Fscanf" -> {
+                FmtScan.fscanf(fargs[0], fmtStringAt(fargs, 1),
+                        java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
+                yield GoString.EMPTY;
+            }
+            case "Fscanln" -> {
+                FmtScan.fscanln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+                yield GoString.EMPTY;
+            }
+            case "Scan" -> {
+                FmtScan.scanStdin(fargs);
+                yield GoString.EMPTY;
+            }
+            case "Scanf" -> {
+                FmtScan.scanfStdin(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+                yield GoString.EMPTY;
+            }
+            case "Scanln" -> {
+                FmtScan.scanlnStdin(fargs);
                 yield GoString.EMPTY;
             }
             default -> throw new FrontendException("unknown fmt function: " + funcName);
@@ -157,14 +228,46 @@ public final class FmtCallNode extends GoExprNode {
     }
 
     private String fmtString(Fmt.Arg[] fargs) {
-        if (fargs.length == 0) {
+        return fmtStringAt(fargs, 0);
+    }
+
+    private String fmtStringAt(Fmt.Arg[] fargs, int at) {
+        if (fargs.length <= at) {
             throw new FrontendException(funcName + " requires a format string");
         }
-        Object v = fargs[0].value();
+        Object v = fargs[at].value();
         if (!(v instanceof GoString gs)) {
             throw new FrontendException(funcName + " format is not a string");
         }
         return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+
+    private graalgo.values.GoSlice sliceArg(Fmt.Arg[] fargs, int at) {
+        if (fargs.length <= at) {
+            throw new FrontendException(funcName + " requires a []byte argument");
+        }
+        Object v = fargs[at].value();
+        if (v == null) {
+            return null;
+        }
+        if (!(v instanceof graalgo.values.GoSlice gs)) {
+            throw new FrontendException(funcName + " []byte argument is not a slice");
+        }
+        return gs;
+    }
+
+    private int runeArg(Fmt.Arg[] fargs, int at) {
+        if (fargs.length <= at) {
+            throw new FrontendException(funcName + " requires a rune argument");
+        }
+        Object v = fargs[at].value();
+        if (v instanceof Integer i) {
+            return i;
+        }
+        if (v instanceof Long l) {
+            return l.intValue();
+        }
+        throw new FrontendException(funcName + " rune argument is not an integer");
     }
 
     static Object readArg(GoExprNode child, VirtualFrame frame) {

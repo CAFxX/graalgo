@@ -3341,6 +3341,71 @@ public final class NodeFactory {
     }
 
     /**
+     * P3-M10 (fix-fmt-funcs): walks a slice/array element type down to the
+     * scalar, collecting the kind/name chain below the first element level
+     * (e.g. [2][2][2]int -&gt; kinds [ARRAY, INT32]). Factored out of
+     * {@link #buildFmtCall} so pointer-to-composite args (e.g. {@code *[]byte}
+     * scan destinations) get the same chains. Terminates: each step moves
+     * to a strictly smaller type, and go/types rejects recursive array
+     * types before export.
+     */
+    private record ChainWalk(java.util.List<GoKind> kinds, java.util.List<String> names) {}
+
+    private ChainWalk walkElemChain(int startElemId, BuildCtx ctx, String apath) {
+        java.util.List<GoKind> kc = new java.util.ArrayList<>();
+        java.util.List<String> nc = new java.util.ArrayList<>();
+        int curId = startElemId;
+        while (true) {
+            Json.Object curEntry = underlyingEntry(ctx, curId, apath);
+            String ck = curEntry.string("kind", apath);
+            if (!"slice".equals(ck) && !"array".equals(ck)) {
+                break;
+            }
+            Json.Object curDetail = curEntry.object("detail", apath);
+            int nextId = curDetail.intValue("elem", apath);
+            kc.add(kindOf(ctx, nextId, apath));
+            nc.add(GoTypeStrings.of(ctx, nextId));
+            curId = nextId;
+        }
+        return new ChainWalk(java.util.List.copyOf(kc), java.util.List.copyOf(nc));
+    }
+
+    /**
+     * P3-M10 (fix-fmt-funcs): walks a map element type down through nested
+     * maps, collecting the (key, elem) kinds per level (e.g.
+     * map[string]map[string]int -&gt; keyChain=[STRING], elemChain=[INT]).
+     * Factored out of {@link #buildFmtCall}; same termination argument as
+     * {@link #walkElemChain}.
+     */
+    private record MapChainWalk(java.util.List<GoKind> keyKinds, java.util.List<String> keyNames,
+            java.util.List<GoKind> elemKinds, java.util.List<String> elemNames) {}
+
+    private MapChainWalk walkMapChain(int startElemId, BuildCtx ctx, String apath) {
+        java.util.List<GoKind> kkc = new java.util.ArrayList<>();
+        java.util.List<String> knc = new java.util.ArrayList<>();
+        java.util.List<GoKind> kec = new java.util.ArrayList<>();
+        java.util.List<String> nec = new java.util.ArrayList<>();
+        int curId = startElemId;
+        while (true) {
+            Json.Object curEntry = underlyingEntry(ctx, curId, apath);
+            String ck = curEntry.string("kind", apath);
+            if (!"map".equals(ck)) {
+                break;
+            }
+            Json.Object curDetail = curEntry.object("detail", apath);
+            int ckId = curDetail.intValue("key", apath);
+            int ceId = curDetail.intValue("elem", apath);
+            kkc.add(kindOf(ctx, ckId, apath));
+            knc.add(GoTypeStrings.of(ctx, ckId));
+            kec.add(kindOf(ctx, ceId, apath));
+            nec.add(GoTypeStrings.of(ctx, ceId));
+            curId = ceId;
+        }
+        return new MapChainWalk(java.util.List.copyOf(kkc), java.util.List.copyOf(knc),
+                java.util.List.copyOf(kec), java.util.List.copyOf(nec));
+    }
+
+    /**
      * A call to one of the D4 {@code fmt} stub functions (M6, WS H — the
      * Phase-1 import overlay; the wire {@code fmtcall} node is specified in
      * docs/frontend-v1.md §6). Static per-argument type metadata comes from
@@ -3385,28 +3450,11 @@ public final class NodeFactory {
                 int elemId = detail.intValue("elem", apath);
                 elemKinds[i] = kindOf(ctx, elemId, apath);
                 elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                // M7-remediation (R2 P0-2): walk the element type down to
-                // the scalar, collecting the kind/name chain for nested
-                // printing (e.g. [2][2][2]int -> [ARRAY, INT32]).
-                // Terminates: each step moves to a strictly smaller type,
-                // and go/types rejects recursive array types before export.
-                java.util.List<GoKind> kc = new java.util.ArrayList<>();
-                java.util.List<String> nc = new java.util.ArrayList<>();
-                int curId = elemId;
-                while (true) {
-                    Json.Object curEntry = underlyingEntry(ctx, curId, apath);
-                    String ck = curEntry.string("kind", apath);
-                    if (!"slice".equals(ck) && !"array".equals(ck)) {
-                        break;
-                    }
-                    Json.Object curDetail = curEntry.object("detail", apath);
-                    int nextId = curDetail.intValue("elem", apath);
-                    kc.add(kindOf(ctx, nextId, apath));
-                    nc.add(GoTypeStrings.of(ctx, nextId));
-                    curId = nextId;
-                }
-                elemKindChains[i] = java.util.List.copyOf(kc);
-                elemTypeNameChains[i] = java.util.List.copyOf(nc);
+                // M7-remediation (R2 P0-2): element kind/name chains for nested
+                // printing at arbitrary depth (see walkElemChain).
+                ChainWalk w = walkElemChain(elemId, ctx, apath);
+                elemKindChains[i] = w.kinds();
+                elemTypeNameChains[i] = w.names();
                 keyKindChains[i] = java.util.List.of();
                 keyTypeNameChains[i] = java.util.List.of();
             } else if ("map".equals(k)) {
@@ -3416,35 +3464,13 @@ public final class NodeFactory {
                 keyTypeNames[i] = GoTypeStrings.of(ctx, keyId);
                 elemKinds[i] = kindOf(ctx, elemId, apath);
                 elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                // M8 closeout: walk the element type down through nested maps,
-                // collecting the (key, elem) kinds per level for nested-map
-                // printing (e.g. map[string]map[string]int -> keyChain=[STRING],
-                // elemChain=[INT]). Terminates: each step moves to a strictly
-                // smaller type; go/types rejects recursive map types.
-                java.util.List<GoKind> kkc = new java.util.ArrayList<>();
-                java.util.List<String> knc = new java.util.ArrayList<>();
-                java.util.List<GoKind> kec = new java.util.ArrayList<>();
-                java.util.List<String> nec = new java.util.ArrayList<>();
-                int curId = elemId;
-                while (true) {
-                    Json.Object curEntry = underlyingEntry(ctx, curId, apath);
-                    String ck = curEntry.string("kind", apath);
-                    if (!"map".equals(ck)) {
-                        break;
-                    }
-                    Json.Object curDetail = curEntry.object("detail", apath);
-                    int ckId = curDetail.intValue("key", apath);
-                    int ceId = curDetail.intValue("elem", apath);
-                    kkc.add(kindOf(ctx, ckId, apath));
-                    knc.add(GoTypeStrings.of(ctx, ckId));
-                    kec.add(kindOf(ctx, ceId, apath));
-                    nec.add(GoTypeStrings.of(ctx, ceId));
-                    curId = ceId;
-                }
-                keyKindChains[i] = java.util.List.copyOf(kkc);
-                keyTypeNameChains[i] = java.util.List.copyOf(knc);
-                elemKindChains[i] = java.util.List.copyOf(kec);
-                elemTypeNameChains[i] = java.util.List.copyOf(nec);
+                // M8 closeout: key kind/name chains for nested maps, parallel to the
+                // elem chains for nested arrays (see walkMapChain).
+                MapChainWalk w = walkMapChain(elemId, ctx, apath);
+                keyKindChains[i] = w.keyKinds();
+                keyTypeNameChains[i] = w.keyNames();
+                elemKindChains[i] = w.elemKinds();
+                elemTypeNameChains[i] = w.elemNames();
             } else if ("pointer".equals(k)) {
                 // M8 (fuzzer find): %v of a pointer to struct/array/slice/map
                 // prints &value (Go's printValue Pointer case), not the erased
@@ -3453,10 +3479,30 @@ public final class NodeFactory {
                 int elemId = detail.intValue("elem", apath);
                 elemKinds[i] = kindOf(ctx, elemId, apath);
                 elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                elemKindChains[i] = java.util.List.of();
-                elemTypeNameChains[i] = java.util.List.of();
-                keyKindChains[i] = java.util.List.of();
-                keyTypeNameChains[i] = java.util.List.of();
+                // P3-M10 (fix-fmt-funcs): pointer-to-composite (e.g. *[]byte
+                // scan destinations): populate the chains by walking the
+                // referent like the slice/map branches above; other
+                // referents keep empty chains.
+                Json.Object elemEntry = underlyingEntry(ctx, elemId, apath);
+                String ek = elemEntry.string("kind", apath);
+                if ("slice".equals(ek) || "array".equals(ek)) {
+                    ChainWalk w = walkElemChain(elemId, ctx, apath);
+                    elemKindChains[i] = w.kinds();
+                    elemTypeNameChains[i] = w.names();
+                    keyKindChains[i] = java.util.List.of();
+                    keyTypeNameChains[i] = java.util.List.of();
+                } else if ("map".equals(ek)) {
+                    MapChainWalk w = walkMapChain(elemId, ctx, apath);
+                    keyKindChains[i] = w.keyKinds();
+                    keyTypeNameChains[i] = w.keyNames();
+                    elemKindChains[i] = w.elemKinds();
+                    elemTypeNameChains[i] = w.elemNames();
+                } else {
+                    elemKindChains[i] = java.util.List.of();
+                    elemTypeNameChains[i] = java.util.List.of();
+                    keyKindChains[i] = java.util.List.of();
+                    keyTypeNameChains[i] = java.util.List.of();
+                }
             } else {
                 elemKindChains[i] = java.util.List.of();
                 elemTypeNameChains[i] = java.util.List.of();
