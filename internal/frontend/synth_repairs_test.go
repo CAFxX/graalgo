@@ -253,10 +253,13 @@ func TestHoistSyntheticImportsEliminatesOrderError(t *testing.T) {
 	}
 }
 
-// TestSyntheticSyncPoolSurface pins the P3-M9 sync.Pool addition
-// (driver-harden, go-cmp lane): the Pool named type exists with gc's
-// exact method signatures, Get/Put are in scope, and Pool.New is absent
-// (out of scope — opaque Java object cannot carry Go-visible fields).
+// TestSyntheticSyncPoolSurface pins the sync.Pool synthetic type: the
+// Pool named type exists with gc's exact method signatures (Get/Put in
+// scope) and gc's exact field layout — the unexported noCopy/local/
+// localSize/victim/victimSize fields (so invalid literals fail exactly
+// like gc) plus the exported New func() any field (P3-M11 upgrade from
+// the P3-M9 fieldless design; the opaque GoPool Java object carries the
+// New func value at runtime).
 func TestSyntheticSyncPoolSurface(t *testing.T) {
 	pkg := syntheticSyncPackage()
 	obj := pkg.Scope().Lookup("Pool")
@@ -297,13 +300,41 @@ func TestSyntheticSyncPoolSurface(t *testing.T) {
 		!types.IsInterface(putSig.Params().At(0).Type()) {
 		t.Errorf("Pool.Put signature wrong: %s", putSig)
 	}
-	// Pool.New must NOT exist (out of scope).
+	// Pool.New must NOT exist as a method (it is a struct field).
 	if msel("New") != nil {
 		t.Error("Pool.New method unexpectedly present")
 	}
-	for i := 0; i < named.Underlying().(*types.Struct).NumFields(); i++ {
-		t.Errorf("Pool has struct field %s (must be fieldless)",
-			named.Underlying().(*types.Struct).Field(i).Name())
+	// gc-exact field layout: unexported noCopy/local/localSize/victim/
+	// victimSize plus the exported New func() any field.
+	st, ok := named.Underlying().(*types.Struct)
+	if !ok {
+		t.Fatalf("Pool underlying is %T, want *types.Struct", named.Underlying())
+	}
+	wantFields := []struct {
+		name     string
+		exported bool
+	}{
+		{"noCopy", false}, {"local", false}, {"localSize", false},
+		{"victim", false}, {"victimSize", false}, {"New", true},
+	}
+	if st.NumFields() != len(wantFields) {
+		t.Fatalf("Pool has %d fields, want %d (gc-exact layout)", st.NumFields(), len(wantFields))
+	}
+	for i, wf := range wantFields {
+		f := st.Field(i)
+		if f.Name() != wf.name {
+			t.Errorf("Pool field %d = %q, want %q", i, f.Name(), wf.name)
+		}
+		if f.Exported() != wf.exported {
+			t.Errorf("Pool field %q exported=%v, want %v", wf.name, f.Exported(), wf.exported)
+		}
+	}
+	if newField := st.Field(5); newField.Name() == "New" {
+		sig, ok := newField.Type().(*types.Signature)
+		if !ok || sig.Params().Len() != 0 || sig.Results().Len() != 1 ||
+			!types.IsInterface(sig.Results().At(0).Type()) {
+			t.Errorf("Pool.New field type = %v, want func() any", newField.Type())
+		}
 	}
 	if !isSyncPoolNamed(named) {
 		t.Error("isSyncPoolNamed(Pool) = false")
