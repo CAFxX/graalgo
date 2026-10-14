@@ -262,12 +262,6 @@ func (it *MapIter) Reset(v Value) {
 	__reflect_mapiterreset(it.h, v)
 }
 
-// Seq returns an iterator over the map's entries.
-// M8 scope: fail-fast (needs the iter package).
-func (it *MapIter) Seq() iter.Seq2[Value, Value] {
-	panic("reflect: MapIter.Seq: not in M8 scope (needs iter; re-test when the iter package lands)")
-}
-
 // ValueError is the error type for value-method misuse (gc-exact).
 type ValueError struct {
 	Method string
@@ -857,27 +851,98 @@ func (t rtype) OverflowComplex(x complex128) bool {
 
 // Iter-family fail-fasts (re-test: iter package bring-up).
 func (t rtype) Methods() iter.Seq[Method] {
-	panic("reflect: Type.Methods: not in M8 scope (needs iter; re-test when the iter package lands)")
+	return func(yield func(Method) bool) {
+		for i := 0; i < t.NumMethod(); i++ {
+			if !yield(t.Method(i)) {
+				return
+			}
+		}
+	}
 }
 
 func (t rtype) Fields() iter.Seq[StructField] {
-	panic("reflect: Type.Fields: not in M8 scope (needs iter; re-test when the iter package lands)")
+	if t.Kind() != Struct {
+		panic("reflect: Fields of non-struct type " + t.String())
+	}
+	return func(yield func(StructField) bool) {
+		for i := 0; i < t.NumField(); i++ {
+			if !yield(t.Field(i)) {
+				return
+			}
+		}
+	}
 }
 
 func (t rtype) Ins() iter.Seq[Type] {
-	panic("reflect: Type.Ins: not in M8 scope (needs iter; re-test when the iter package lands)")
+	if t.Kind() != Func {
+		panic("reflect: Ins of non-func type " + t.String())
+	}
+	return func(yield func(Type) bool) {
+		for i := 0; i < t.NumIn(); i++ {
+			if !yield(t.In(i)) {
+				return
+			}
+		}
+	}
 }
 
 func (t rtype) Outs() iter.Seq[Type] {
-	panic("reflect: Type.Outs: not in M8 scope (needs iter; re-test when the iter package lands)")
+	if t.Kind() != Func {
+		panic("reflect: Outs of non-func type " + t.String())
+	}
+	return func(yield func(Type) bool) {
+		for i := 0; i < t.NumOut(); i++ {
+			if !yield(t.Out(i)) {
+				return
+			}
+		}
+	}
 }
 
 func (t rtype) CanSeq() bool {
-	panic("reflect: Type.CanSeq: not in M8 scope (needs iter; re-test when the iter package lands)")
+	switch t.Kind() {
+	case Int8, Int16, Int32, Int64, Int, Uint8, Uint16, Uint32, Uint64, Uint, Uintptr, Array, Slice, Chan, String, Map:
+		return true
+	case Func:
+		return canRangeFunc(t, 1)
+	case Pointer:
+		return t.Elem().Kind() == Array
+	}
+	return false
 }
 
 func (t rtype) CanSeq2() bool {
-	panic("reflect: Type.CanSeq2: not in M8 scope (needs iter; re-test when the iter package lands)")
+	switch t.Kind() {
+	case Array, Slice, String, Map:
+		return true
+	case Func:
+		return canRangeFunc(t, 2)
+	case Pointer:
+		return t.Elem().Kind() == Array
+	}
+	return false
+}
+
+// canRangeFunc reports whether t is a func type suitable for range-over-func
+// with seq yield parameters. Ported from reflect.canRangeFunc; uses the
+// public Type API instead of abi.Type access.
+func canRangeFunc(t rtype, seq int) bool {
+	if t.Kind() != Func {
+		return false
+	}
+	if t.NumIn() != 1 || t.NumOut() != 0 {
+		return false
+	}
+	y := t.In(0)
+	if y.Kind() != Func {
+		return false
+	}
+	yt := y.(rtype)
+	if yt.NumIn() != seq || yt.NumOut() != 1 {
+		return false
+	}
+	out := yt.Out(0)
+	return out.Kind() == Bool && out.PkgPath() == ""
 }
 
 // ------------------------------------------------------------------
@@ -1844,19 +1909,169 @@ func (v Value) UnsafePointer() unsafe.Pointer {
 
 // Iter-family fail-fasts (re-test: iter package bring-up).
 func (v Value) Seq() iter.Seq[Value] {
-	panic("reflect: Value.Seq: not in M8 scope (needs iter; re-test when the iter package lands)")
+	// Ported from reflect.iter.go; uses v.Type().CanSeq() instead of
+	// canRangeFunc(v.abiType()) since abi.Type is not directly accessible.
+	t := v.Type()
+	if t.Kind() == Func && t.(rtype).CanSeq() {
+		return func(yield func(Value) bool) {
+			rf := MakeFunc(t.In(0), func(in []Value) []Value {
+				return []Value{ValueOf(yield(in[0]))}
+			})
+			v.Call([]Value{rf})
+		}
+	}
+	switch v.Kind() {
+	case Int, Int8, Int16, Int32, Int64:
+		n := v.Int()
+		return func(yield func(Value) bool) {
+			for i := int64(0); i < n; i++ {
+				tmp := ValueOf(i)
+				if t.PkgPath() != "" {
+					tmp = tmp.Convert(t)
+				}
+				if !yield(tmp) {
+					return
+				}
+			}
+		}
+	case Uint, Uint8, Uint16, Uint32, Uint64, Uintptr:
+		n := v.Uint()
+		return func(yield func(Value) bool) {
+			for i := uint64(0); i < n; i++ {
+				tmp := ValueOf(i)
+				if t.PkgPath() != "" {
+					tmp = tmp.Convert(t)
+				}
+				if !yield(tmp) {
+					return
+				}
+			}
+		}
+	case Pointer:
+		if v.Type().Elem().Kind() != Array {
+			break
+		}
+		n := v.Type().Elem().Len()
+		return func(yield func(Value) bool) {
+			for i := 0; i < n; i++ {
+				if !yield(ValueOf(i)) {
+					return
+				}
+			}
+		}
+	case Array, Slice:
+		return func(yield func(Value) bool) {
+			for i := 0; i < v.Len(); i++ {
+				if !yield(ValueOf(i)) {
+					return
+				}
+			}
+		}
+	case String:
+		return func(yield func(Value) bool) {
+			for i := range v.String() {
+				if !yield(ValueOf(i)) {
+					return
+				}
+			}
+		}
+	case Map:
+		return func(yield func(Value) bool) {
+			it := v.MapRange()
+			for it.Next() {
+				if !yield(it.Key()) {
+					return
+				}
+			}
+		}
+	case Chan:
+		return func(yield func(Value) bool) {
+			for value, ok := v.Recv(); ok; value, ok = v.Recv() {
+				if !yield(value) {
+					return
+				}
+			}
+		}
+	}
+	panic("reflect: " + v.Type().String() + " cannot produce iter.Seq[Value]")
 }
 
-func (v Value) Seq2() iter.Seq2[int, Value] {
-	panic("reflect: Value.Seq2: not in M8 scope (needs iter; re-test when the iter package lands)")
+func (v Value) Seq2() iter.Seq2[Value, Value] {
+	t := v.Type()
+	if t.Kind() == Func && t.(rtype).CanSeq2() {
+		return func(yield func(Value, Value) bool) {
+			rf := MakeFunc(t.In(0), func(in []Value) []Value {
+				return []Value{ValueOf(yield(in[0], in[1]))}
+			})
+			v.Call([]Value{rf})
+		}
+	}
+	switch v.Kind() {
+	case Pointer:
+		if v.Elem().Kind() != Array {
+			break
+		}
+		return func(yield func(Value, Value) bool) {
+			v = v.Elem()
+			for i := 0; i < v.Len(); i++ {
+				if !yield(ValueOf(i), v.Index(i)) {
+					return
+				}
+			}
+		}
+	case Array, Slice:
+		return func(yield func(Value, Value) bool) {
+			for i := 0; i < v.Len(); i++ {
+				if !yield(ValueOf(i), v.Index(i)) {
+					return
+				}
+			}
+		}
+	case String:
+		return func(yield func(Value, Value) bool) {
+			for i, r := range v.String() {
+				if !yield(ValueOf(i), ValueOf(r)) {
+					return
+				}
+			}
+		}
+	case Map:
+		return func(yield func(Value, Value) bool) {
+			it := v.MapRange()
+			for it.Next() {
+				if !yield(it.Key(), it.Value()) {
+					return
+				}
+			}
+		}
+	}
+	panic("reflect: " + v.Type().String() + " cannot produce iter.Seq2[Value, Value]")
 }
 
 func (v Value) Methods() iter.Seq2[Method, Value] {
-	panic("reflect: Value.Methods: not in M8 scope (needs iter; re-test when the iter package lands)")
+	rtype := v.Type()
+	n := v.NumMethod()
+	return func(yield func(Method, Value) bool) {
+		for i := 0; i < n; i++ {
+			if !yield(rtype.Method(i), v.Method(i)) {
+				return
+			}
+		}
+	}
 }
 
 func (v Value) Fields() iter.Seq2[StructField, Value] {
-	panic("reflect: Value.Fields: not in M8 scope (needs iter; re-test when the iter package lands)")
+	t := v.Type()
+	if t.Kind() != Struct {
+		panic("reflect: Fields of non-struct type " + t.String())
+	}
+	return func(yield func(StructField, Value) bool) {
+		for i := 0; i < v.NumField(); i++ {
+			if !yield(t.Field(i), v.Field(i)) {
+				return
+			}
+		}
+	}
 }
 
 // ------------------------------------------------------------------
