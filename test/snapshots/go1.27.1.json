@@ -2,9 +2,9 @@
   "format": "graalgo-behavior-snapshot/v1",
   "toolchain": "go1.27.1",
   "backend": "graalgo",
-  "graalgoCommit": "ecb7f97c452cdf50ce1cd038da62ef76081e6c4e",
-  "recordedAt": "2026-10-13T20:32:57Z",
-  "corpus": "tools/diffharness/corpus",
+  "graalgoCommit": "10b6c50708ec3ad46e3cdab6fd2c65555521babe",
+  "recordedAt": "2026-10-14T13:37:58Z",
+  "corpus": "test/differential/corpus",
   "normalizer": "harness.Normalize+backend.stderrFilters/v1",
   "excluded": [
     {
@@ -429,6 +429,17 @@
       "exitCode": 0,
       "timedOut": false,
       "stdout": "inner\ninnermost\ninner\nouter\nshadowed 2\nouter 1\n",
+      "stderr": ""
+    },
+    {
+      "name": "46_sync_pool",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "1 1\n42\n7\n42\nnew\nnewptr\ntrue\ntrue\n9\n9\n28\ntrue\n",
       "stderr": ""
     }
   ]

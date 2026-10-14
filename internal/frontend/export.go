@@ -805,31 +805,30 @@ var fmtOverlayFuncs = map[string]bool{
 }
 
 // syncPrimitiveNames are the four P3-M2b (WS D, ADR-0002) primitives bound
-// to the Phase-2 Java runtime (graalgo.runtime.sync).
+// to the Phase-2 Java runtime (graalgo.runtime.sync), plus the P3-M11
+// sync.Pool binding (graalgo.runtime.sync.GoPool).
 var syncPrimitiveNames = map[string]bool{
 	"Mutex": true, "RWMutex": true, "WaitGroup": true, "Once": true,
-	// P3-M9 (driver-harden, go-cmp lane): sync.Pool. The pool's New field
-	// is NOT in scope (the primitive is an opaque Java object; fields
-	// cannot be stored on it) — referencing Pool.New is a type error.
-	// Get/Put lower to the syncop wire node like the other primitives.
 	"Pool": true,
 }
 
 // syncOpsInScope is the M2-supported method set per primitive (ADR-0002
 // D6). Defined-but-out-of-scope methods (TryLock/TryRLock/RLocker,
 // WaitGroup.Go) fail fast in exportSyncOp with a named scope error.
+// P3-M11: Pool's field-level ops (GetNew/SetNew/CallNew for the New func
+// field) are exporter-synthesized, not Go method calls, so they bypass
+// exportSyncOp's scope check and need no entry here.
 var syncOpsInScope = map[string]map[string]bool{
 	"Mutex":     {"Lock": true, "Unlock": true},
 	"RWMutex":   {"Lock": true, "Unlock": true, "RLock": true, "RUnlock": true},
 	"WaitGroup": {"Add": true, "Done": true, "Wait": true},
 	"Once":      {"Do": true},
-	// P3-M9 (driver-harden, go-cmp lane): Pool.Get/Put. Pool.New is not
-	// in scope (see syncPrimitiveNames).
-	"Pool": {"Get": true, "Put": true},
+	"Pool":      {"Put": true, "Get": true},
 }
 
 // isSyncPoolNamed reports whether nt is the synthetic sync.Pool named
 // type (the one primitive allowed in array-element position).
+// (P3-M9 driver-harden, go-cmp lane; kept by the P3-M11 Pool upgrade.)
 func isSyncPoolNamed(nt *types.Named) bool {
 	obj := nt.Obj()
 	return obj != nil && obj.Name() == "Pool" &&
@@ -861,6 +860,48 @@ func syncPrimitiveRecv(t types.Type) *types.Named {
 		t = p.Elem()
 	}
 	return syncPrimitiveNamed(t)
+}
+
+// syncPoolNamed reports whether t is the synthetic sync.Pool named type,
+// after one pointer dereference (Pool operations have pointer-receiver /
+// pointer-identity semantics; the Go value IS the Java object, so &/* is
+// a no-op at the value level — the ADR-0002 D1 value model).
+func syncPoolNamed(t types.Type) *types.Named {
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	nt := syncPrimitiveNamed(t)
+	if nt == nil || nt.Obj().Name() != "Pool" {
+		return nil
+	}
+	return nt
+}
+
+// poolNewSelector reports whether x selects the New field of the synthetic
+// sync.Pool (a types.FieldVal selection), returning the Pool named type.
+// Covers p.New and (&p).New / pp.New for *sync.Pool.
+func (e *exporter) poolNewSelector(x ast.Expr) *types.Named {
+	lx, ok := unparen(x).(*ast.SelectorExpr)
+	if !ok || lx.Sel.Name != "New" {
+		return nil
+	}
+	sel, ok := e.info.Selections[lx]
+	if !ok || sel.Kind() != types.FieldVal {
+		return nil
+	}
+	return syncPoolNamed(sel.Recv())
+}
+
+// syncFieldOp emits a field-level "syncop" wire node for the synthetic
+// Pool's New func field (P3-M11): GetNew (read), SetNew (write, emitted as
+// an expression statement by exportAssign), CallNew (p.New() invocation).
+// resultType is the type-table id of the op's result, or nil for the void
+// SetNew — mirroring exportSyncOpNodes' "type" shape (null for void ops).
+func (e *exporter) syncFieldOp(pos ast.Node, op string, nt *types.Named, recv *Node, args []*Node, resultType any) *Node {
+	return e.node("syncop", pos, map[string]any{
+		"op": op, "synctyp": syntheticOpTypeName(nt),
+		"recv": recv, "args": args, "type": resultType,
+	})
 }
 
 // syntheticSyncPackage builds the P3-M2b (WS D, ADR-0002) synthetic "sync"
@@ -929,17 +970,33 @@ func syntheticSyncPackage() *types.Package {
 	once := newPrimitive("Once")
 	addMethod(once, "Do", tuple(param("f", funcT)), nil)
 
-	// P3-M9 (driver-harden, go-cmp lane): sync.Pool. gc's exact method
-	// signatures (pointer receivers): func (p *Pool) Get() any,
-	// func (p *Pool) Put(x any). The New func() any field is NOT in
-	// scope: the primitive is an opaque Java object (ADR-0002 D1) and
-	// cannot carry Go-visible fields — referencing Pool.New fails to
-	// type-check. A nil New is the common case (e.g. regexp's pools);
-	// Get on an empty pool returns nil, matching gc.
+	// P3-M11: sync.Pool (gc 1.27.1 shape, verified against
+	// ~/tools/go/src/sync/pool.go). The only exported field is
+	// New func() any; noCopy/local/localSize/victim/victimSize are
+	// unexported, declared so invalid literals fail exactly like gc
+	// (unkeyed literals and non-New keys are compile errors — the
+	// unexported fields can never be named from another package).
+	// The Go value is the opaque GoPool Java object (ADR-0002 D1);
+	// the unexported fields never materialize at runtime. Methods
+	// Put(x any)/Get() any have exact gc signatures (pointer
+	// receivers, like the real package).
 	anyT := types.NewInterfaceType(nil, nil).Complete()
-	pool := newPrimitive("Pool")
-	addMethod(pool, "Get", nil, tuple(param("", anyT)))
+	newSig := types.NewSignatureType(nil, nil, nil, nil, tuple(param("", anyT)), false) // func() any
+	noCopyName := types.NewTypeName(token.NoPos, pkg, "noCopy", nil)
+	pkg.Scope().Insert(noCopyName)
+	noCopyT := types.NewNamed(noCopyName, emptyStruct, nil)
+	poolName := types.NewTypeName(token.NoPos, pkg, "Pool", nil)
+	pkg.Scope().Insert(poolName)
+	pool := types.NewNamed(poolName, types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, pkg, "noCopy", noCopyT, false),
+		types.NewField(token.NoPos, pkg, "local", types.Typ[types.UnsafePointer], false),
+		types.NewField(token.NoPos, pkg, "localSize", types.Typ[types.Uintptr], false),
+		types.NewField(token.NoPos, pkg, "victim", types.Typ[types.UnsafePointer], false),
+		types.NewField(token.NoPos, pkg, "victimSize", types.Typ[types.Uintptr], false),
+		types.NewField(token.NoPos, pkg, "New", newSig, false),
+	}, nil), nil)
 	addMethod(pool, "Put", tuple(param("x", anyT)), nil)
+	addMethod(pool, "Get", nil, tuple(param("", anyT)))
 
 	// P3-M9 (Go 1.21+): OnceFunc returns a function that invokes f only once.
 	// Signature: func OnceFunc(f func()) func(). The runtime behavior is a
@@ -7390,6 +7447,34 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 // identifier, an index expression, or a selector (M4, WS E); op-assignments
 // require a single lhs (go/types: "requires single-valued expressions").
 func (e *exporter) exportAssign(s *ast.AssignStmt) (*Node, error) {
+	// P3-M11 (sync.Pool): `p.New = f` — the Pool value is the opaque
+	// GoPool Java object (ADR-0002 D1); the generic selector-lvalue path
+	// cannot write its New field. Lower the single simple assignment to
+	// the SetNew syncop, emitted directly as the statement (the same
+	// statement shape a void syncop like p.Put(x) takes).
+	if s.Tok == token.ASSIGN && len(s.Lhs) == 1 && len(s.Rhs) == 1 {
+		if nt := e.poolNewSelector(s.Lhs[0]); nt != nil {
+			lx := unparen(s.Lhs[0]).(*ast.SelectorExpr)
+			recv, err := e.exportExpr(lx.X)
+			if err != nil {
+				return nil, err
+			}
+			val, err := e.exportExpr(s.Rhs[0])
+			if err != nil {
+				return nil, err
+			}
+			inner := e.syncFieldOp(s, "SetNew", nt, recv, []*Node{val}, nil)
+			return e.node("exprstmt", s, map[string]any{"x": inner}), nil
+		}
+	}
+	// Any other assignment shape touching Pool.New (multi-target,
+	// op-assign) is a named loud limitation: the two-phase general
+	// lvalue path cannot address the opaque field.
+	for _, lhs := range s.Lhs {
+		if e.poolNewSelector(lhs) != nil {
+			return nil, scopeErrorf("assignment to sync.Pool.New is only supported as a single `p.New = f` statement (P3-M11 scope)")
+		}
+	}
 	// P3-M5 (WS E, ADR-0005 App M): multi-result time/context calls in
 	// 2-target position desugar to single-result helper calls.
 	if n, handled, err := e.exportMultiResultDesugar(s, false); handled {
@@ -8470,6 +8555,25 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// Selections entry for field selections. This is the correct
 		// placement.)
 		if selection.Kind() == types.FieldVal {
+			// P3-M11 (sync.Pool): `p.New()` — invoking the New func
+			// field. The field read alone cannot serve as the call fun
+			// (buildCall's fun kinds are closed), so lower the whole
+			// call to the CallNew syncop.
+			if nt := e.poolNewSelector(c.Fun); nt != nil {
+				recv, err := e.exportExpr(sel.X)
+				if err != nil {
+					return nil, err
+				}
+				args, err := e.exportCallArgs(c)
+				if err != nil {
+					return nil, err
+				}
+				typ, err := e.callType(c)
+				if err != nil {
+					return nil, err
+				}
+				return e.syncFieldOp(c, "CallNew", nt, recv, args, typ), nil
+			}
 			if _, ok := selection.Obj().(*types.Var); ok {
 				if _, ok := selection.Type().(*types.Signature); ok {
 					// It's a function-typed field. Use exportSelector for
@@ -10598,6 +10702,23 @@ func (e *exporter) exportCompositeLit(l *ast.CompositeLit) (*Node, error) {
 	return e.exportCompositeLitAs(l, t)
 }
 
+// poolNewFieldValue reports whether l is exactly `sync.Pool{New: f}`
+// (P3-M11) and returns f's expression.
+func poolNewFieldValue(l *ast.CompositeLit) (ast.Expr, bool) {
+	if len(l.Elts) != 1 {
+		return nil, false
+	}
+	kv, ok := l.Elts[0].(*ast.KeyValueExpr)
+	if !ok {
+		return nil, false
+	}
+	id, ok := kv.Key.(*ast.Ident)
+	if !ok || id.Name != "New" {
+		return nil, false
+	}
+	return kv.Value, true
+}
+
 // exportCompositeLitAs is exportCompositeLit with an explicit type id
 // (used for the &T{...} normalization, where the pointer type comes from
 // the enclosing UnaryExpr).
@@ -10609,6 +10730,24 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 	if tv, ok := e.info.Types[l]; ok && tv.Type != nil {
 		if nt := syntheticPrimitiveNamed(tv.Type); nt != nil {
 			if len(l.Elts) > 0 {
+				// P3-M11: sync.Pool{New: f} — the only composite literal
+				// with elements a sync primitive accepts (gc: every other
+				// Pool field is unexported, so go/types already rejected
+				// any other key or an unkeyed literal). Lowers to syncnew
+				// carrying the New func, evaluated before construction
+				// (gc's literal evaluation order).
+				if nt.Obj().Name() == "Pool" {
+					if nf, ok := poolNewFieldValue(l); ok {
+						newFn, err := e.exportExpr(nf)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("syncnew", l, map[string]any{
+							"synctyp": syntheticOpTypeName(nt), "type": t,
+							"newfunc": newFn,
+						}), nil
+					}
+				}
 				if atomicPrimitiveNamed(nt) != nil {
 					return nil, scopeErrorf("sync/atomic.%s literal with elements is not in M4 scope", nt.Obj().Name())
 				}
@@ -10974,6 +11113,19 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	if sel, ok := e.info.Selections[x]; ok && sel.Kind() == types.MethodExpr &&
 		recvIface(sel.Recv()) != nil {
 		return nil, scopeErrorf("method expression %s is not supported: method expression via interface (P3-M3 scope)", x.Sel.Name)
+	}
+	// P3-M11 (sync.Pool): the New field of the synthetic Pool type. The
+	// Go value is the opaque GoPool Java object (ADR-0002 D1), so the
+	// generic struct-field "selector" node does not apply: lower the read
+	// to the GetNew syncop. Writes (`p.New = f`) are intercepted in
+	// exportAssign (SetNew); calls (`p.New()`) at the FieldVal call site
+	// (CallNew).
+	if nt := e.poolNewSelector(x); nt != nil {
+		recv, err := e.exportExpr(x.X)
+		if err != nil {
+			return nil, err
+		}
+		return e.syncFieldOp(x, "GetNew", nt, recv, []*Node{}, t), nil
 	}
 	xe, err := e.exportExpr(x.X)
 	if err != nil {
