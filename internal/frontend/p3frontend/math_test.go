@@ -23,7 +23,7 @@ import (
 // phase-1-side change fails fast here instead of silently diverging.
 func phase1SyntheticMathPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../../internal/frontend/synth_math.go"
+	srcPath := "../synth_math.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

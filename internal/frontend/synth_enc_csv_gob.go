@@ -50,7 +50,10 @@ package main
 // M7 extensions (NewReaderString, NewBufferWriter, Bytes) are marked.
 const syntheticCsvSource = `package csv
 
-import "errors"
+import (
+	"errors"
+	"io"
+)
 
 // A ParseError is returned for parsing errors.
 // Line and column numbers are 1-indexed.
@@ -339,18 +342,18 @@ func csvStringContainsAny(s, chars string) bool {
 
 // A Reader reads records from CSV-encoded data.
 //
-// As returned by NewReaderString, a Reader expects input conforming to
+// As returned by NewReader, a Reader expects input conforming to
 // RFC 4180. The exported fields can be changed to customize the details
 // before the first call to Read or ReadAll.
 //
-// M7 divergence: gc's NewReader takes an io.Reader; io is out of M7
-// scope (P3-M8 re-test trigger), so the constructor is absent and the
-// input is the in-memory string passed to NewReaderString (M7
-// extension). The Reader converts all \r\n sequences in its input to
-// plain \n, including in multiline field values, exactly like gc.
+// M7 divergence: gc's NewReader reads lazily from the io.Reader; the
+// synthetic drains the reader eagerly at construction (the parse core is
+// in-memory) and replays any read error from the first Read/ReadAll, so
+// the failure is never silent and never misattributed. NewReaderString
+// (M7 extension) remains the allocation-free in-memory constructor.
 type Reader struct {
 	// Comma is the field delimiter.
-	// It is set to comma (',') by NewReaderString.
+	// It is set to comma (',') by NewReader and NewReaderString.
 	// Comma must be a valid rune and must not be \r, \n,
 	// or the Unicode replacement character (0xFFFD).
 	Comma rune
@@ -412,14 +415,33 @@ type Reader struct {
 
 	// lastRecord is a record cache and only used when ReuseRecord == true.
 	lastRecord []string
+
+	// readErr is the sticky error from NewReader's eager drain of the
+	// io.Reader. It is replayed by the first Read/ReadAll (and every
+	// subsequent one until data is consumed, which never happens once
+	// the drain failed).
+	readErr error
+}
+
+// NewReader returns a new Reader that reads from r.
+//
+// The reader is drained eagerly (see the Reader doc); a drain failure is
+// replayed as the Read/ReadAll error rather than panicking at
+// construction, matching gc's observable behavior (gc surfaces the read
+// error on first Read, and NewReader itself never fails).
+func NewReader(r io.Reader) *Reader {
+	data, readErr := io.ReadAll(r)
+	return &Reader{
+		Comma:   ',',
+		data:    data,
+		readErr: readErr,
+	}
 }
 
 // NewReaderString returns a new Reader that reads from s.
 //
-// M7 EXTENSION (not in gc 1.27.1): gc's NewReader takes an io.Reader;
-// io is out of M7 scope, so this in-memory constructor is provided
-// instead. Re-test trigger: when io lands (P3-M8), add NewReader with
-// the exact gc signature.
+// M7 EXTENSION (not in gc 1.27.1): the allocation-free in-memory
+// constructor. NewReader (exact gc signature) is also available.
 func NewReaderString(s string) *Reader {
 	return &Reader{
 		Comma: ',',
@@ -672,6 +694,9 @@ type csvReadPair struct {
 
 // __csvRead is the Appendix M desugar target behind Reader.Read.
 func __csvRead(r *Reader) csvReadPair {
+	if r.readErr != nil {
+		return csvReadPair{err: r.readErr}
+	}
 	if r.ReuseRecord {
 		out := r.csvReadRecord(r.lastRecord)
 		r.lastRecord = out.rec
@@ -706,6 +731,9 @@ type csvReadAllPair struct {
 
 // __csvReadAll is the Appendix M desugar target behind Reader.ReadAll.
 func __csvReadAll(r *Reader) csvReadAllPair {
+	if r.readErr != nil {
+		return csvReadAllPair{err: r.readErr}
+	}
 	var records [][]string
 	for {
 		out := r.csvReadRecord(nil)
@@ -766,7 +794,7 @@ func (r *Reader) InputOffset() int64 {
 
 // A Writer writes records using CSV encoding.
 //
-// As returned by NewBufferWriter, a Writer writes records terminated by a
+// As returned by NewWriter, a Writer writes records terminated by a
 // newline and uses ',' as the field delimiter. The exported fields can be
 // changed to customize the details before the first call to Write or
 // WriteAll.
@@ -776,24 +804,32 @@ func (r *Reader) InputOffset() int64 {
 // If Writer.UseCRLF is true,
 // the Writer ends each output line with \r\n instead of \n.
 //
-// M7 divergence: gc's NewWriter takes an io.Writer; io is out of M7
-// scope (P3-M8 re-test trigger), so the constructor is absent and output
-// accumulates in memory (Bytes). After all data has been written, the
-// client should call the Flush method (a no-op over the memory buffer).
-// Any errors that occurred should be checked by calling the Error method.
+// M7 divergence: gc buffers through a bufio.Writer and Flush pushes the
+// buffer to the io.Writer; the synthetic accumulates in the same in-memory
+// buffer and Flush writes it to the io.Writer directly. Write itself never
+// touches the io.Writer (errors surface at Flush, reported by Error),
+// exactly like gc.
 type Writer struct {
-	Comma   rune // Field delimiter (set to ',' by NewBufferWriter)
+	Comma   rune // Field delimiter (set to ',' by NewWriter)
 	UseCRLF bool // True to use \r\n as the line terminator
 	buf     []byte
+	w       io.Writer // nil for NewBufferWriter (in-memory only)
+	werr    error     // sticky error from Flush's write to w
+}
+
+// NewWriter returns a new Writer that writes to w.
+func NewWriter(w io.Writer) *Writer {
+	return &Writer{
+		Comma: ',',
+		w:     w,
+	}
 }
 
 // NewBufferWriter returns a new Writer that accumulates output in memory;
 // Bytes returns the accumulated output.
 //
-// M7 EXTENSION (not in gc 1.27.1): gc's NewWriter takes an io.Writer;
-// io is out of M7 scope, so this in-memory constructor is provided
-// instead. Re-test trigger: when io lands (P3-M8), add NewWriter with
-// the exact gc signature.
+// M7 EXTENSION (not in gc 1.27.1): the in-memory constructor. NewWriter
+// (exact gc signature) is also available.
 func NewBufferWriter() *Writer {
 	return &Writer{
 		Comma: ',',
@@ -895,16 +931,26 @@ func csvCommaBytes(r rune) []byte {
 }
 
 // Flush writes any buffered data to the underlying writer.
-// Over the M7 in-memory buffer this is a no-op.
+// Over a NewBufferWriter (in-memory) this is a no-op.
 // To check if an error occurred during Flush, call Error.
 func (w *Writer) Flush() {
+	if w.w == nil || w.werr != nil {
+		return
+	}
+	// 2-target interface call: desugars via the m8 io.Write entry,
+	// dispatching through the itab to the concrete writer's pair helper.
+	n, ferr := w.w.Write(w.buf)
+	if ferr != nil {
+		w.werr = ferr
+		return
+	}
+	w.buf = w.buf[n:]
 }
 
 // Error reports any error that has occurred during
-// a previous Write or Flush. Over the M7 in-memory buffer no IO errors
-// are possible; it reports misconfiguration (invalid Comma) only.
+// a previous Write or Flush.
 func (w *Writer) Error() error {
-	return nil
+	return w.werr
 }
 
 // WriteAll writes multiple CSV records to w using Write and

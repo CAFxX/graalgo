@@ -28,7 +28,7 @@ import (
 // fast here instead of silently diverging.
 func phase1SyntheticXmlPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../../internal/frontend/synth_xml.go"
+	srcPath := "../synth_xml.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

@@ -28,7 +28,7 @@ import (
 // fast here instead of silently diverging.
 func phase1SyntheticJsonPackage(t *testing.T) *types.Package {
 	t.Helper()
-	srcPath := "../../../../internal/frontend/synth_json.go"
+	srcPath := "../synth_json.go"
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, srcPath, nil, 0)
 	if err != nil {

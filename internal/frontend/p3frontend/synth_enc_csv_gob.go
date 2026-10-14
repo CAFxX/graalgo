@@ -115,6 +115,19 @@ func syntheticCsvPackage() *types.Package {
 		newSig(nil, tuple(newParam("s", stringT)), tuple(newParam("", rPtr)))))
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "NewBufferWriter",
 		newSig(nil, tuple(), tuple(newParam("", wPtr)))))
+	// NewReader/NewWriter (exact gc signatures): the params are the
+	// synthetic io package's Reader/Writer interfaces (shared mirror —
+	// the same objects the bytes/strings mirrors use for
+	// io.Writer/io.Reader), so signatures render as "io.Reader"/
+	// "io.Writer" under the drift test's qualifier and the importer
+	// checks assignability against the real method sets.
+	ioPkg := syntheticIoPackage()
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "NewReader",
+		newSig(nil, tuple(newParam("r", ioReader(ioPkg))),
+			tuple(newParam("", rPtr)))))
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "NewWriter",
+		newSig(nil, tuple(newParam("w", ioWriter(ioPkg))),
+			tuple(newParam("", wPtr)))))
 
 	// Pair structs for desugar.
 	for _, p := range []struct {

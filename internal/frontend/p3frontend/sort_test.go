@@ -78,7 +78,7 @@ func TestSortSyntheticSignatures(t *testing.T) {
 			mirror.Name(), mirror.Path())
 	}
 	phase1 := phase1SyntheticPackageForTest(t,
-		"../../../../internal/frontend/synth_sort.go", "syntheticSortSource",
+		"../synth_sort.go", "syntheticSortSource",
 		"sort", rejectImports{})
 
 	// Full exported-scope drift check (names + rendered types). This

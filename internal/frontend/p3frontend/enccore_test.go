@@ -135,12 +135,12 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 		// P3-M8: the base32 synthetic source imports io (streaming API).
 		if p == "io" {
 			return phase1SyntheticPackageForTest(t,
-				"../../../../internal/frontend/synth_io.go",
+				"../synth_io.go",
 				"syntheticIoSource", "io", imp), nil
 		}
 		if p == "errors" {
 			return phase1SyntheticPackageForTest(t,
-				"../../../../internal/frontend/synth_errors.go",
+				"../synth_errors.go",
 				"syntheticErrorsSource", "errors", imp), nil
 		}
 		if p == "sync" {
@@ -152,7 +152,7 @@ func phase1EncCorePackage(t *testing.T, path string) *types.Package {
 		return nil, fmt.Errorf("unexpected synthetic import %q", p)
 	})
 	return phase1SyntheticPackageForTest(t,
-		"../../../../internal/frontend/"+ec.srcFile, ec.constName, path, imp)
+		"../"+ec.srcFile, ec.constName, path, imp)
 }
 
 // encCoreNamedMethods returns the EXPORTED methods of a named type (the

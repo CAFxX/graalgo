@@ -24,8 +24,8 @@ import (
 	"testing"
 )
 
-// csvGobTestImporter resolves the synthetic csv/gob sources' single
-// import ("errors") to the drift-pinned synthetic errors mirror.
+// csvGobTestImporter resolves the synthetic csv/gob sources' imports
+// ("errors", "io") to the drift-pinned synthetic mirrors.
 func csvGobTestImporter() types.Importer {
 	return importerFunc(func(path string) (*types.Package, error) {
 		if path == "errors" {
@@ -35,6 +35,9 @@ func csvGobTestImporter() types.Importer {
 			// — cf. bytes_test.go. Fresh per call, so side-effect free.
 			pkg.MarkComplete()
 			return pkg, nil
+		}
+		if path == "io" {
+			return syntheticIoPackage(), nil
 		}
 		return nil, fmt.Errorf("unexpected synthetic import %q", path)
 	})
@@ -48,7 +51,7 @@ func csvGobTestImporter() types.Importer {
 func phase1SyntheticCsvPackage(t *testing.T) *types.Package {
 	t.Helper()
 	return phase1SyntheticPackageForTest(t,
-		"../../../../internal/frontend/synth_enc_csv_gob.go", "syntheticCsvSource",
+		"../synth_enc_csv_gob.go", "syntheticCsvSource",
 		"encoding/csv", csvGobTestImporter())
 }
 
@@ -57,7 +60,7 @@ func phase1SyntheticCsvPackage(t *testing.T) *types.Package {
 func phase1SyntheticGobPackage(t *testing.T) *types.Package {
 	t.Helper()
 	return phase1SyntheticPackageForTest(t,
-		"../../../../internal/frontend/synth_enc_csv_gob.go", "syntheticGobSource",
+		"../synth_enc_csv_gob.go", "syntheticGobSource",
 		"encoding/gob", csvGobTestImporter())
 }
 
