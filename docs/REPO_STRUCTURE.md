@@ -128,11 +128,17 @@ new locations.
 | `phases/phase3/stdlib-fork/` + synthetics | [stdlib/](../stdlib/) |
 | `phases/phase3/corpus/` | [test/corpus/](../test/corpus/) (landed 2026-10-13) |
 | `tools/diffharness/` | [test/differential/](../test/differential/) (landed 2026-10-13) |
+| `phases/phase3/src/p3frontend/` | [internal/backend/interop/p3frontend/](../internal/backend/interop/p3frontend/) (landed 2026-10-14) |
+| `phases/phase3/stdlib-fork/` (tooling) | [tools/stdlib-fork/](../tools/stdlib-fork/) (landed 2026-10-14) |
+| `phases/phase3/fuzzing/` | [tools/fuzz-soak/](../tools/fuzz-soak/) (landed 2026-10-14) |
+| `phases/phase1/corpus/`, `phases/phase2/corpus/` | [test/corpus/phase1/](../test/corpus/phase1/), [test/corpus/phase2/](../test/corpus/phase2/) (landed 2026-10-14) |
+| `phases/phase2/tools/torture/` | [tools/torture/](../tools/torture/) (landed 2026-10-14) |
 | `SPEC.md`, `PHASES.md`, `FEASIBILITY.md` | [docs/arch/](../docs/arch/) (one consolidated arch doc) |
 | `requirements/`, `adr/`, `spikes/`, `reviews/`, `research/` | [docs/dev/](../docs/dev/) (ADRs kept) or archived out of the repo |
 | `spec/` | [docs/spec/](../docs/spec/) (curated) |
 | `hidden_files/` | removed — evidence lives in commit messages |
 | `phases/*/out/`, `*.err`, compiled binaries | removed — build artifacts, covered by [.gitignore](../.gitignore) |
+| `phases/` (all) | **removed 2026-10-14** — migration complete, zero files remain |
 
 ## Principles
 
