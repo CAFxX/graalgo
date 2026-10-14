@@ -114,6 +114,105 @@ func TestTypeError(t *testing.T) {
 	}
 }
 
+// TestPackageLevelMRArgHoist (BUG-MODPROBE-010): a multi-result call nested
+// in argument position at package scope (var x = f(g())) must export: the
+// inner call hoists to a synthesized package-level temp global emitted
+// immediately before the consuming variable's initializer, whose init
+// selects the temp's pair fields. General mechanism — any package, any
+// user-defined multi-result function — never module-specific.
+func TestPackageLevelMRArgHoist(t *testing.T) {
+	const src = `package main
+
+func mkPair(s string) (int, error) {
+	if s == "" {
+		return 0, errNo
+	}
+	return len(s), nil
+}
+
+func mustInt(v int, err error) int {
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+var errNo = errorf("no")
+
+func errorf(s string) error {
+	return errWrap{s}
+}
+
+type errWrap struct{ s string }
+
+func (e errWrap) Error() string { return e.s }
+
+var hoisted = mustInt(mkPair("abcd"))
+
+func main() {
+	println("hoisted =", hoisted)
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "pkgvar.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var doc struct {
+		Objects []struct {
+			Name string `json:"name"`
+		} `json:"objects"`
+		Globals []struct {
+			Obj  int `json:"obj"`
+			Init *struct {
+				Kind   string         `json:"kind"`
+				Fields map[string]any `json:"fields"`
+			} `json:"init"`
+		} `json:"globals"`
+	}
+	if err := json.Unmarshal([]byte(out), &doc); err != nil {
+		t.Fatalf("unmarshal doc: %v", err)
+	}
+	names := make([]string, 0, len(doc.Globals))
+	for _, g := range doc.Globals {
+		if g.Obj < 0 {
+			continue
+		}
+		names = append(names, doc.Objects[g.Obj].Name)
+	}
+	tempIdx, consIdx := -1, -1
+	for i, n := range names {
+		if strings.HasPrefix(n, "__p5mr_") {
+			tempIdx = i
+		}
+		if n == "hoisted" {
+			consIdx = i
+		}
+	}
+	if tempIdx < 0 {
+		t.Fatalf("no hoisted temp global emitted; globals=%v", names)
+	}
+	if consIdx < 0 {
+		t.Fatalf("no 'hoisted' global emitted; globals=%v", names)
+	}
+	if tempIdx > consIdx {
+		t.Fatalf("temp global emitted after its consumer (tempIdx=%d, consIdx=%d)", tempIdx, consIdx)
+	}
+	// The consumer's init must reference the temp's pair fields.
+	init := doc.Globals[consIdx].Init
+	if init == nil || init.Kind != "call" {
+		t.Fatalf("consumer init is not a call node: %+v", init)
+	}
+	args, _ := init.Fields["args"].([]any)
+	if len(args) != 2 {
+		t.Fatalf("consumer init has %d args, want 2 (pair fields)", len(args))
+	}
+}
+
 // TestNoMain: a file without func main is rejected explicitly.
 func TestNoMain(t *testing.T) {
 	dir := t.TempDir()
