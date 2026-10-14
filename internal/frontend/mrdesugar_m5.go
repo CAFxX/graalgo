@@ -90,13 +90,6 @@ const (
 	// __-helper (wired via methodTableEntries), so the node yields the
 	// pair and field extraction proceeds exactly like mrM7.
 	mrIfaceMethod
-	// P4 (driver-harden): fmt.Fprint/Fprintf/Fprintln. Desugars to
-	// w.Write([]byte(fmt.Sprintf/Sprint/Sprintln(...))): formatting
-	// reuses the fmtcall wire node and the write reuses the m8
-	// io.Writer.Write interface dispatch (yielding ioWritePair), so no
-	// backend change is needed. The fmtVariant field selects the
-	// S-family function. Field extraction proceeds like mrIfaceMethod.
-	mrFmtF
 	// P3-M9 (WS D): a user-defined multi-result function/method
 	// transformed to pair-returning form. Unlike mrM7 (which calls a
 	// separate __-helper in a synthetic package), the call is to the
@@ -1255,9 +1248,6 @@ type mrPlan struct {
 	// For mrTrivialFwd: index of the forwarded function-typed parameter
 	// in the method's explicit parameter list (receiver excluded).
 	fwdParamIdx int
-	// For mrFmtF: the S-family variant ("Sprint", "Sprintf", "Sprintln")
-	// used to format before the io.Writer.Write.
-	fmtVariant string
 }
 
 // classifyMultiResultCall recognizes the Appendix M operations (the 5
@@ -1326,13 +1316,6 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	// P4 (driver-harden): dot-imported fmt F-family (Fprint/Fprintf/
 	// Fprintln called as bare idents). Detected structurally via the
 	// func's package path.
-	if id, ok := c.Fun.(*ast.Ident); ok {
-		if obj, ok := e.info.Uses[id].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "fmt" {
-			if plan := fmtFPlan(obj); plan != nil {
-				return plan
-			}
-		}
-	}
 	// P3-M9 (WS D): user-defined package-level multi-result functions
 	// called as `foo()` (Ident, not SelectorExpr).
 	if id, ok := c.Fun.(*ast.Ident); ok {
@@ -1434,13 +1417,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// P4 (driver-harden): the fmt F-family (Fprint/Fprintf/
 			// Fprintln). Detected structurally: package "fmt", one of
 			// the three names, resolving to the overlay stub with a
-			// 2-result signature. Desugars (mrFmtF) to
-			// w.Write([]byte(fmt.S...(...))).
-			if pn.Imported().Path() == "fmt" {
-				if plan := fmtFPlan(fn); plan != nil {
-					return plan
-				}
-			}
+			// 2-result signature.
 			switch pn.Imported().Path() {
 			case "context":
 				switch fn.Name() {
@@ -2561,11 +2538,6 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	if plan.kind == mrFuncField {
 		return e.desugarFuncFieldCall(s, c, plan, define)
 	}
-	// P4 (driver-harden): fmt.Fprint/Fprintf/Fprintln — desugar to
-	// w.Write([]byte(fmt.S...(...))).
-	if plan.kind == mrFmtF {
-		return e.desugarFmtF(s, c, plan, define)
-	}
 	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, err
@@ -2909,240 +2881,6 @@ func (e *exporter) exportBareMultiResultCall(s *ast.ExprStmt, c *ast.CallExpr, p
 	return exprStmt, nil
 }
 
-// fmtFPlan returns the mrFmtF plan for a fmt F-family function
-// (Fprint/Fprintf/Fprintln), or nil. The check is structural: one of the
-// three names with a 2-result signature (the overlay stub's shape).
-func fmtFPlan(fn *types.Func) *mrPlan {
-	var variant string
-	switch fn.Name() {
-	case "Fprint":
-		variant = "Sprint"
-	case "Fprintf":
-		variant = "Sprintf"
-	case "Fprintln":
-		variant = "Sprintln"
-	default:
-		return nil
-	}
-	sig, ok := fn.Type().(*types.Signature)
-	if !ok || sig.Results().Len() != 2 {
-		return nil
-	}
-	return &mrPlan{
-		kind:       mrFmtF,
-		fmtVariant: variant,
-		tmpType:    ioWritePairType(),
-		pairFields: []string{"n", "err"},
-	}
-}
-
-// ioWritePairType returns the synthetic io package's ioWritePair named
-// type — the (n int, err error) carrier yielded by the io.Writer.Write
-// interface dispatch.
-func ioWritePairType() types.Type {
-	sp := getSyntheticPackage("io")
-	if sp == nil {
-		return nil
-	}
-	obj := sp.pkg.Scope().Lookup("ioWritePair")
-	if obj == nil {
-		return nil
-	}
-	nt, _ := obj.Type().(*types.Named)
-	return nt
-}
-
-// fmtFWriteNode builds the ifacemethod wire node for
-// w.Write([]byte(fmt.Sprintf/Sprint/Sprintln(...))) — the mrFmtF desugar
-// of fmt.Fprint/Fprintf/Fprintln. c is the original F-call; variant is
-// the S-family function ("Sprint", "Sprintf", or "Sprintln").
-//
-// The formatting reuses the fmtcall wire node (same shape exportFmtCall
-// emits for the S-family); the []byte conversion reuses the convert
-// node; the write reuses the ifacemethod node (the backend auto-boxes a
-// non-interface receiver via boxArg). The node yields ioWritePair, so
-// the standard pair extraction applies. No backend change is needed.
-func (e *exporter) fmtFWriteNode(c *ast.CallExpr, variant string) (*Node, error) {
-	if len(c.Args) < 1 {
-		return nil, fmt.Errorf("gofrontend: fmt F-call with no arguments")
-	}
-	if c.Ellipsis.IsValid() {
-		return nil, scopeErrorf("fmt F-call with ... spread is not supported in frontend/v1 scope (WS D)")
-	}
-	// The writer.
-	recv, err := e.exportExpr(c.Args[0])
-	if err != nil {
-		return nil, err
-	}
-	// The format arguments -> fmtcall node (S-family).
-	var fmtArgs []*Node
-	for _, a := range c.Args[1:] {
-		x, err := e.exportExpr(a)
-		if err != nil {
-			return nil, err
-		}
-		fmtArgs = append(fmtArgs, x)
-	}
-	strTid, err := e.typeID(types.Typ[types.String])
-	if err != nil {
-		return nil, err
-	}
-	fmtNode := e.node("fmtcall", c, map[string]any{
-		"func": variant, "args": fmtArgs, "type": strTid,
-	})
-	// []byte(string).
-	byteSliceTid, err := e.typeID(types.NewSlice(types.Typ[types.Byte]))
-	if err != nil {
-		return nil, err
-	}
-	convNode := e.node("convert", c, map[string]any{
-		"x": fmtNode, "to": byteSliceTid, "type": byteSliceTid, "from": strTid,
-	})
-	// io.Writer interface and its Write signature, from the synthetic
-	// io package (canonical objects, shared with the m8 table).
-	ioPkg := getSyntheticPackage("io").pkg
-	wObj := ioPkg.Scope().Lookup("Writer")
-	wNamed, ok := wObj.Type().(*types.Named)
-	if !ok {
-		return nil, fmt.Errorf("gofrontend: synthetic io.Writer is not a named type")
-	}
-	ifaceType, ok := wNamed.Underlying().(*types.Interface)
-	if !ok {
-		return nil, fmt.Errorf("gofrontend: synthetic io.Writer underlying is not an interface")
-	}
-	ifaceID, err := e.typeID(ifaceType)
-	if err != nil {
-		return nil, err
-	}
-	var writeSig *types.Signature
-	for i := 0; i < ifaceType.NumMethods(); i++ {
-		if m := ifaceType.Method(i); m.Name() == "Write" {
-			writeSig, _ = m.Type().(*types.Signature)
-		}
-	}
-	if writeSig == nil {
-		return nil, fmt.Errorf("gofrontend: synthetic io.Writer has no Write method")
-	}
-	sigID, err := e.typeID(writeSig)
-	if err != nil {
-		return nil, err
-	}
-	pairType := ioWritePairType()
-	if pairType == nil {
-		return nil, fmt.Errorf("gofrontend: synthetic io.ioWritePair not found")
-	}
-	pairTid, err := e.typeID(pairType)
-	if err != nil {
-		return nil, err
-	}
-	return e.node("ifacemethod", c, map[string]any{
-		"recv": recv, "method": "Write", "iface": ifaceID,
-		"args": []*Node{convNode}, "sig": sigID, "type": pairTid,
-	}), nil
-}
-
-// desugarFmtF emits the desugared block for an mrFmtF plan (P4,
-// driver-harden): fmt.Fprint/Fprintf/Fprintln in 2-target position.
-//
-//	__ffp_N := w.Write([]byte(fmt.Sprintf/Sprint/Sprintln(...)))
-//	<targets> := __ffp_N.n, __ffp_N.err
-//
-// The pair temp and field extraction reuse desugarExtract (mrFmtF is in
-// its pair-field case).
-func (e *exporter) desugarFmtF(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
-	writeNode, err := e.fmtFWriteNode(c, plan.fmtVariant)
-	if err != nil {
-		return nil, err
-	}
-	pairType := ioWritePairType()
-	resTid, err := e.typeID(pairType)
-	if err != nil {
-		return nil, err
-	}
-	e.chanSeq++
-	tmpName := fmt.Sprintf("__ffp_%d", e.chanSeq)
-	v := types.NewVar(token.NoPos, nil, tmpName, pairType)
-	tmpID, err := e.defVar(v, false)
-	if err != nil {
-		return nil, err
-	}
-	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, resTid, writeNode, nil)
-}
-
-// exportBareFmtFCall exports fmt.Fprint/Fprintf/Fprintln as a bare
-// statement (results discarded): the write still executes for its
-// side effect; the (n, err) pair is dropped.
-func (e *exporter) exportBareFmtFCall(s *ast.ExprStmt, c *ast.CallExpr, plan *mrPlan) (*Node, error) {
-	writeNode, err := e.fmtFWriteNode(c, plan.fmtVariant)
-	if err != nil {
-		return nil, err
-	}
-	return e.node("exprstmt", s, map[string]any{"x": writeNode}), nil
-}
-
-// exportFmtFReturn exports `return fmt.Fprint/Fprintf/Fprintln(...)`
-// (the call is the sole result): desugars to temps and returns the
-// extracted (n, err).
-func (e *exporter) exportFmtFReturn(s *ast.ReturnStmt, c *ast.CallExpr, plan *mrPlan) (*Node, error) {
-	writeNode, err := e.fmtFWriteNode(c, plan.fmtVariant)
-	if err != nil {
-		return nil, err
-	}
-	pairType := ioWritePairType()
-	resTid, err := e.typeID(pairType)
-	if err != nil {
-		return nil, err
-	}
-	e.chanSeq++
-	pairName := fmt.Sprintf("__ffp_%d", e.chanSeq)
-	pv := types.NewVar(token.NoPos, nil, pairName, pairType)
-	pairID, err := e.defVar(pv, false)
-	if err != nil {
-		return nil, err
-	}
-	stmts := []*Node{e.node("vardecl", s, map[string]any{
-		"names": []string{pairName}, "objs": []int{pairID},
-		"define": true, "type": nil, "values": []*Node{writeNode},
-	})}
-	var results []*Node
-	for i, field := range plan.pairFields {
-		e.chanSeq++
-		tmpName := fmt.Sprintf("__ffr_%d", e.chanSeq)
-		var ftyp types.Type
-		if i == 0 {
-			ftyp = types.Typ[types.Int]
-		} else {
-			ftyp = types.Universe.Lookup("error").Type()
-		}
-		ftid, err := e.typeID(ftyp)
-		if err != nil {
-			return nil, err
-		}
-		v := types.NewVar(token.NoPos, nil, tmpName, ftyp)
-		tmpID, err := e.defVar(v, false)
-		if err != nil {
-			return nil, err
-		}
-		sel, err := e.synthPairField(c, pairName, pairID, resTid, pairType, field, i)
-		if err != nil {
-			return nil, err
-		}
-		stmts = append(stmts, e.node("vardecl", s, map[string]any{
-			"names": []string{tmpName}, "objs": []int{tmpID},
-			"define": true, "type": nil, "values": []*Node{sel},
-		}))
-		results = append(results, e.node("ident", s, map[string]any{
-			"name": tmpName, "obj": tmpID, "type": ftid,
-		}))
-	}
-	stmts = append(stmts, e.node("return", s, map[string]any{"results": results}))
-	return e.node("block", s, map[string]any{"stmts": stmts}), nil
-}
-
-// desugarIfaceMultiResult emits the desugared block for an mrIfaceMethod
-// plan (P3-M8, WS D): the "helper call" is the ifacemethod dispatch node
-// built by exportIfaceMethodCall. The temp declaration mirrors
-// synthHelperCall's tail; field extraction and target assignment are
 // shared via desugarExtract.
 func (e *exporter) desugarIfaceMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
 	sel, ok := c.Fun.(*ast.SelectorExpr)
@@ -3199,7 +2937,7 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField, mrFmtF:
+	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {

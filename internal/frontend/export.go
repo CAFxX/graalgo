@@ -620,9 +620,7 @@ func syntheticFmtPackage() *types.Package {
 	// P4 (driver-harden): the F-family (Fprint/Fprintf/Fprintln) with
 	// exact gc signatures. The writer is a minimal io.Writer interface,
 	// structurally identical to the synthetic io.Writer, so every
-	// io.Writer implementation is assignable to it. The bodies are not
-	// here: the exporter desugars F-calls to w.Write([]byte(S...))
-	// (mrFmtF), reusing the fmtcall and ifacemethod wire nodes.
+	// io.Writer implementation is assignable to it.
 	ioPkg := types.NewPackage("io", "io")
 	ioByteSliceT := types.NewSlice(types.Typ[types.Byte])
 	ioWriteFn := types.NewFunc(token.NoPos, ioPkg, "Write",
@@ -760,10 +758,9 @@ func syntheticFmtPackage() *types.Package {
 }
 
 // fmtOverlayFuncs are the fmt symbols the Phase-1 overlay resolves: the
-// seven D4 symbols (PLAN.md D4), the P4 F-family (Fprint/Fprintf/Fprintln,
-// desugared via mrFmtF instead of emitting as fmtcall nodes), plus the
-// P3-M10 Append/scan families and FormatString. Any other fmt.X is a scope
-// error naming Phase 3.
+// seven D4 symbols (PLAN.md D4), the P4 F-family (Fprint/Fprintf/Fprintln),
+// plus the P3-M10 Append/scan families and FormatString. Any other fmt.X is
+// a scope error naming Phase 3.
 var fmtOverlayFuncs = map[string]bool{
 	"Print": true, "Printf": true, "Println": true,
 	"Sprint": true, "Sprintf": true, "Sprintln": true, "Errorf": true,
@@ -6464,12 +6461,6 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 				if plan.kind == mrM7 || plan.kind == mrXmlToken {
 					return e.exportBareMultiResultCall(s, c, plan)
 				}
-				// P4 (driver-harden): fmt.Fprint/Fprintf/Fprintln as a
-				// bare statement — the write executes for its side
-				// effect; the (n, err) pair is discarded.
-				if plan.kind == mrFmtF {
-					return e.exportBareFmtFCall(s, c, plan)
-				}
 			}
 		}
 		x, err := e.exportExpr(s.X)
@@ -6478,15 +6469,6 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		}
 		return e.node("exprstmt", s, map[string]any{"x": x}), nil
 	case *ast.ReturnStmt:
-		// P4 (driver-harden): `return fmt.Fprint/Fprintf/Fprintln(...)`
-		// (the call is the sole result) desugars to temps + return.
-		if len(s.Results) == 1 {
-			if c, ok := unparen(s.Results[0]).(*ast.CallExpr); ok {
-				if plan := e.classifyMultiResultCall(c); plan != nil && plan.kind == mrFmtF {
-					return e.exportFmtFReturn(s, c, plan)
-				}
-			}
-		}
 		results := make([]*Node, 0, len(s.Results))
 		for _, r := range s.Results {
 			x, err := e.exportExpr(r)
@@ -8592,18 +8574,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 // (M6, WS H — the Phase-1 fmt import overlay, PLAN.md D4; P3-M10 extends
 // the overlay with the Append/scan families and FormatString). Any other
 // fmt.X is a scope error naming Phase 3.
-//
-// The P4 F-family (Fprint/Fprintf/Fprintln) is in fmtOverlayFuncs but
-// never reaches here: it is desugared at statement level (mrFmtF) into
-// w.Write([]byte(fmt.S...(...))). Seeing it here is an exporter bug.
 func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node, error) {
 	name := sel.Sel.Name
 	if !fmtOverlayFuncs[name] {
 		return nil, scopeErrorf("fmt.%s is not supported in frontend/v1 scope (Phase 3)", name)
-	}
-	switch name {
-	case "Fprint", "Fprintf", "Fprintln":
-		return nil, fmt.Errorf("gofrontend: fmt.%s reached exportFmtCall (must be desugared at statement level)", name)
 	}
 	if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "fmt" {
 		return nil, scopeErrorf("fmt.%s did not resolve to the overlay package", name)
@@ -8612,14 +8586,14 @@ func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node,
 	if err != nil {
 		return nil, err
 	}
-	// The Print/scan families return (int, error); Phase 1 supports
+	// The Print/F-print/scan families return (int, error); Phase 1 supports
 	// them in statement position only (results discarded) — the wire type
 	// is null. The Sprint/Append families, FormatString and Errorf return
-	// a single value. (Fprint/Fprintf/Fprintln never reach here: they are
-	// desugared at statement level, see the guard above.)
+	// a single value.
 	var typ any
 	switch name {
 	case "Print", "Printf", "Println",
+		"Fprint", "Fprintf", "Fprintln",
 		"Scan", "Scanf", "Scanln",
 		"Fscan", "Fscanf", "Fscanln",
 		"Sscan", "Sscanf", "Sscanln":
