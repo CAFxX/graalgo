@@ -1989,13 +1989,7 @@ func (v Value) Seq() iter.Seq[Value] {
 			}
 		}
 	case Chan:
-		return func(yield func(Value) bool) {
-			for value, ok := v.Recv(); ok; value, ok = v.Recv() {
-				if !yield(value) {
-					return
-				}
-			}
-		}
+		panic("reflect.Value.Seq: not in M8 scope (chan iteration needs reflect.Value.Recv multi-result, WS D; re-test when it lands)")
 	}
 	panic("reflect: " + v.Type().String() + " cannot produce iter.Seq[Value]")
 }
