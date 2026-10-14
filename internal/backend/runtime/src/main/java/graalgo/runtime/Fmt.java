@@ -21,17 +21,18 @@ import java.util.List;
  *
  * <p>Covers the D4 symbol set — {@code Print}, {@code Printf},
  * {@code Println}, {@code Sprint}, {@code Sprintf}, {@code Sprintln},
- * {@code Errorf} — plus the P3-M10 additions: the {@code F*} family
- * ({@code Fprint}, {@code Fprintf}, {@code Fprintln}), the
- * {@code Append} family ({@code Append}, {@code Appendf},
- * {@code Appendln}), the scan family ({@code Scan}, {@code Scanf},
- * {@code Scanln}, {@code Fscan}, {@code Fscanf}, {@code Fscanln},
- * {@code Sscan}, {@code Sscanf}, {@code Sscanln}), {@code FormatString},
- * and the {@code GoStringer} interface — all resolved only through the
- * frontend's import overlay (any other {@code fmt.X} is a scope error
- * naming Phase 3). Every symbol is marked {@code replaceable-in-Phase-3}
- * in docs/freeze-stub.md; the stub must never be mistaken for the real
- * package downstream.
+ * {@code Errorf} — plus the P3-M10 additions: the {@code Append} family
+ * ({@code Append}, {@code Appendf}, {@code Appendln}), the scan family
+ * ({@code Scan}, {@code Scanf}, {@code Scanln}, {@code Fscan},
+ * {@code Fscanf}, {@code Fscanln}, {@code Sscan}, {@code Sscanf},
+ * {@code Sscanln}), {@code FormatString}, and the {@code GoStringer}
+ * interface — all resolved only through the frontend's import overlay
+ * (any other {@code fmt.X} is a scope error naming Phase 3). (The
+ * {@code F*} family — {@code Fprint}, {@code Fprintf},
+ * {@code Fprintln} — is desugared at the frontend to
+ * {@code w.Write} and never reaches this class.) Every symbol is marked
+ * {@code replaceable-in-Phase-3} in docs/freeze-stub.md; the stub must
+ * never be mistaken for the real package downstream.
  *
  * <p>Formatting semantics are ported from {@code fmt/print.go} +
  * {@code fmt/format.go} (gc) and held to the verb-conformance matrix
@@ -227,13 +228,14 @@ public final class Fmt {
     }
 
     /**
-     * Interop-implemented Go method dispatch for the F*, scan and format
-     * families (P3-M10, fix-fmt-funcs). The joint round (this module plus
-     * the truffle AST sources) cannot see {@code graalgo.iface}, so the
+     * Interop-implemented Go method dispatch for the scan/format families
+     * (P3-M10, fix-fmt-funcs). The joint round (this module plus the
+     * truffle AST sources) cannot see {@code graalgo.iface}, so the
      * phase-3 launcher installs the implementation alongside
-     * {@link FmtMethodHandler}; null in phase-1-only mode, where the F*
-     * and scan families fail loud (there is no structural fallback for a
-     * writer/reader call).
+     * {@link FmtMethodHandler}; null in phase-1-only mode, where the
+     * scan family and FormatString fail loud (there is no structural
+     * fallback for a reader/state call). (The F* print family is
+     * desugared at the frontend to w.Write and needs no dispatch.)
      */
     public interface GoMethodDispatch {
         /**
@@ -283,29 +285,6 @@ public final class Fmt {
     /** The installed Go method dispatcher, or null. */
     public static GoMethodDispatch goMethodDispatch() {
         return methodDispatch;
-    }
-
-    /**
-     * Writes {@code b} to the Go writer carried by {@code w} via its
-     * {@code Write} method (gc's {@code Fprint} core: format, then a
-     * single {@code w.Write}). The {@code (n, err)} result is discarded
-     * (statement position); a panicking Write propagates.
-     *
-     * <p>The byte slice is {@code int[]}-backed: that is the D5
-     * representation of {@code []byte} (see ConvertNode.stringToSlice),
-     * and Go code like {@code copy} casts to {@code int[]}.
-     */
-    public static void writeTo(Arg w, byte[] b) {
-        GoMethodDispatch d = methodDispatch;
-        if (d == null) {
-            throw new graalgo.frontend.FrontendException(
-                    "fmt.Fprint: no Go method dispatch installed (needs the phase-3 launcher)");
-        }
-        int[] arr = new int[b.length];
-        for (int i = 0; i < b.length; i++) {
-            arr[i] = b[i] & 0xFF;
-        }
-        d.call(w, "Write", new Object[]{new GoSlice(arr, 0, arr.length, arr.length)});
     }
 
     /**
@@ -381,42 +360,6 @@ public final class Fmt {
     public static GoInterface newError(String msg) {
         return errorStringInterface(new GoString(
                 msg.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
-    }
-
-    /** {@code Fprint}: formats like {@code Sprint}, writes to {@code w}. */
-    public static void fprint(Arg w, Arg[] args) {
-        Printer p = new Printer();
-        Printer prevPrinter = currentPrinter.get();
-        currentPrinter.set(p);
-        try {
-            writeTo(w, p.doPrint(args));
-        } finally {
-            restorePrinter(prevPrinter);
-        }
-    }
-
-    /** {@code Fprintf}: formats like {@code Sprintf}, writes to {@code w}. */
-    public static void fprintf(Arg w, String format, Arg[] args) {
-        Printer p = new Printer();
-        Printer prevPrinter = currentPrinter.get();
-        currentPrinter.set(p);
-        try {
-            writeTo(w, p.doPrintf(format, args));
-        } finally {
-            restorePrinter(prevPrinter);
-        }
-    }
-
-    /** {@code Fprintln}: formats like {@code Sprintln}, writes to {@code w}. */
-    public static void fprintln(Arg w, Arg[] args) {
-        Printer p = new Printer();
-        Printer prevPrinter = currentPrinter.get();
-        currentPrinter.set(p);
-        try {
-            writeTo(w, p.doPrintln(args));
-        } finally {
-            restorePrinter(prevPrinter);
-        }
     }
 
     /** {@code Append}: {@code append(b, Sprint(a...)...)}. */

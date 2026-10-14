@@ -187,10 +187,6 @@ public final class DeferredCall {
                     java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
             case "Appendln" -> Fmt.appendln(sliceArg(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
             case "FormatString" -> Fmt.formatString(fargs[0], intArg(fargs, 1));
-            case "Fprint" -> Fmt.fprint(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Fprintf" -> Fmt.fprintf(fargs[0], fmtStringAt(fargs, 1),
-                    java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
-            case "Fprintln" -> Fmt.fprintln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
             case "Sscan" -> FmtScan.sscan(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
             case "Sscanf" -> FmtScan.sscanf(fargs[0], fmtStringAt(fargs, 1),
                     java.util.Arrays.copyOfRange(fargs, 2, fargs.length));

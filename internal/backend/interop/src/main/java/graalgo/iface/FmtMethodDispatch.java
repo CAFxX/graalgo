@@ -23,8 +23,9 @@ import graalgo.values.GoTypeDescriptor;
 
 /**
  * The {@link Fmt.GoMethodDispatch} implementation (P3-M10, fix-fmt-funcs):
- * Go method dispatch for the {@code fmt} F*, scan and format families, installed
+ * Go method dispatch for the {@code fmt} scan and format families, installed
  * by the phase-3 launcher next to {@link FmtHandleMethods#install}.
+ * (The F* print family is desugared at the frontend and needs no dispatch.)
  *
  * <p>Also installs the Java-implemented {@code fmt.ScanState} methods for
  * the synthetic {@code internal/graalgo/fmtscan.ScanStateImpl} descriptor

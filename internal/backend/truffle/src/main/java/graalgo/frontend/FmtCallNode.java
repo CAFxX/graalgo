@@ -9,23 +9,23 @@ import graalgo.values.GoString;
 
 /**
  * A call to one of the {@code fmt} stub functions (WS G; verifies
- * GG-0020; P3-M10 extends the surface with the F*, Append and scan families
- * and FormatString).
+ * GG-0020; P3-M10 extends the surface with the Append and scan families
+ * and FormatString; the F* family is desugared at the frontend and never
+ * reaches this node).
  *
  * <p>The D4 symbols ({@code Print}, {@code Printf}, {@code Println},
  * {@code Sprint}, {@code Sprintf}, {@code Sprintln}, {@code Errorf}),
- * the F* family ({@code Fprint}, {@code Fprintf}, {@code Fprintln}),
  * the Append family ({@code Append}, {@code Appendf},
  * {@code Appendln}), the scan family ({@code Scan}, {@code Scanf},
  * {@code Scanln}, {@code Fscan}, {@code Fscanf}, {@code Fscanln},
  * {@code Sscan}, {@code Sscanf}, {@code Sscanln}) and
  * {@code FormatString} resolve through the gofrontend import overlay;
  * any other {@code fmt.X} is a scope error naming Phase 3. The
- * {@code Print}, {@code F*} and scan families return {@code (int,
- * error)} in Go; Phase 1 supports them in statement position only
- * (results discarded) — value-position use is a Phase-3 scope error from
- * the factory. The {@code Sprint}/{@code Append} families,
- * {@code FormatString} and {@code Errorf} return a single value.
+ * {@code Print} and scan families return {@code (int, error)} in Go;
+ * Phase 1 supports them in statement position only (results discarded)
+ * — value-position use is a Phase-3 scope error from the factory. The
+ * {@code Sprint}/{@code Append} families, {@code FormatString} and
+ * {@code Errorf} return a single value.
  *
  * <p>Static type metadata (kinds, Go-syntax names) is supplied by the
  * factory from the wire type table; values are read from the children at
@@ -159,21 +159,6 @@ public final class FmtCallNode extends GoExprNode {
             }
             case "Println" -> {
                 Fmt.println(fargs);
-                yield GoString.EMPTY;
-            }
-            // P3-M10 (fix-fmt-funcs): the F* family — format like the
-            // S* family, write to the writer (fargs[0]), discard (n, err).
-            case "Fprint" -> {
-                Fmt.fprint(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-                yield GoString.EMPTY;
-            }
-            case "Fprintf" -> {
-                Fmt.fprintf(fargs[0], fmtStringAt(fargs, 1),
-                        java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
-                yield GoString.EMPTY;
-            }
-            case "Fprintln" -> {
-                Fmt.fprintln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
                 yield GoString.EMPTY;
             }
             // P3-M10 (fix-fmt-funcs): the scan family — statement position
