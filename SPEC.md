@@ -201,9 +201,9 @@ by source measurement. The load-bearing remainder builds against the intrinsic
 surface (GG-0020) plus an adapted stdlib fork for the coupled packages.
 The coupled set was re-measured on go1.27.1 at P3-M6 (was "~78" from an
 imprecise earlier check): **142 of 399 dirs (36%)**, versioned with per-dir
-reasons in [coupled-packages-go1.27.1.json](phases/phase3/stdlib-fork/coupled-packages-go1.27.1.json)
+reasons in [coupled-packages-go1.27.1.json](tools/stdlib-fork/coupled-packages-go1.27.1.json)
 `[VERIFIED]`; the P3-D1 re-test trigger fired and the re-examination
-([ADR-0001-addendum-p3d1-reexamination.md](phases/phase3/adr/ADR-0001-addendum-p3d1-reexamination.md)) concluded
+([ADR-0001-addendum-p3d1-reexamination.md](docs/dev/adr/ADR-0001-addendum-p3d1-reexamination.md)) concluded
 P3-D1 STANDS — the real-adaptation subset (asm/cgo, ~44 packages) is smaller
 than the original loose ~78, so the fork-adaptation budget is not exceeded. Plan 9
 asm (485 files / ~127k lines `[VERIFIED]`) is handled per category: runtime-core

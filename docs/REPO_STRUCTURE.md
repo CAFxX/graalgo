@@ -95,19 +95,14 @@ Related: [Makefile](../Makefile) (root build entry point),
     the research-era [SPEC.md](../SPEC.md), [PHASES.md](../PHASES.md), and
     [FEASIBILITY.md](../FEASIBILITY.md).
   - [dev/](../docs/dev/) — contributor guide and architecture decision
-    records (ADRs; research-era ones move here from
-    [adr/](../adr/) and [phases/phase3/adr/](../phases/phase3/adr/)).
+    records (ADRs; research-era ones moved here from
+    [docs/dev/adr/](../docs/dev/adr/)).
   - [spec/](../docs/spec/) — language conformance notes (the research-era
     [spec/](../spec/) content, curated).
 
-> Migration note: the code-move lanes have not landed yet, so the legacy
-> phase-organized layout ([phases/](../phases/), [tools/](../tools/),
-> [requirements/](../requirements/), [adr/](../adr/),
-> [research/](../research/), [reviews/](../reviews/),
-> [spikes/](../spikes/) and the root-era docs [SPEC.md](../SPEC.md),
-> [PHASES.md](../PHASES.md), [FEASIBILITY.md](../FEASIBILITY.md)) still
-> coexists with this skeleton. New work starts in the new layout; no new
-> files go into `phases/`.
+> Migration complete (2026-10-14): the `phases/` directories have been
+> removed. All active code, docs, and tooling now live in the new layout.
+> Historical phase documents are archived under [docs/arch/phases/](arch/phases/).
 
 ## Old → new mapping
 
