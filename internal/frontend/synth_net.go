@@ -1928,6 +1928,19 @@ func __parseCIDR(s string) parseCIDRPair {
 	return parseCIDRPair{ip, ipnet, nil}
 }
 
+// IPv4Mask returns the IP mask (in 4-byte form) of the IPv4 mask
+// a.b.c.d (gc 1.27.1 net/ip.go exact).
+// P4 (driver-harden): was absent; real-world packages (e.g. pflag's
+// ParseIPv4Mask) call net.IPv4Mask.
+func IPv4Mask(a, b, c, d byte) IPMask {
+	p := make(IPMask, netIPv4len)
+	p[0] = a
+	p[1] = b
+	p[2] = c
+	p[3] = d
+	return p
+}
+
 // CIDRMask returns an IPMask consisting of 'ones' 1 bits
 // followed by 0s up to a total length of 'bits' bits.
 func CIDRMask(ones, bits int) IPMask {
@@ -1989,6 +2002,21 @@ func __ipMaskSize(m IPMask) maskSizePair {
 		break
 	}
 	return maskSizePair{ones, len(m) * 8}
+}
+
+// String returns the hexadecimal form of m (gc 1.27.1 net/ip.go exact).
+// P4 (driver-harden): was absent; real-world packages (e.g. pflag's
+// ipMaskValue.String) call net.IPMask.String.
+func (m IPMask) String() string {
+	if len(m) == 0 {
+		return "<nil>"
+	}
+	const hextable = "0123456789abcdef"
+	buf := make([]byte, 0, len(m)*2)
+	for _, b := range m {
+		buf = append(buf, hextable[b>>4], hextable[b&0xf])
+	}
+	return string(buf)
 }
 
 // ---------------------------------------------------------------------------

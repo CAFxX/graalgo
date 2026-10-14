@@ -137,61 +137,70 @@ func csvItoa(v int) string {
 
 // csvDecodeRune decodes the first rune of b (utf8.DecodeRune without the
 // unicode/utf8 import): returns (rune, size).
-func csvDecodeRune(b []byte) (rune, int) {
+// P4 (driver-harden): returns a struct (not 2 values) — the synthetic
+// exporter cannot desugar package-internal multi-result calls (M7 table
+// covers only public API); struct return avoids 2-target positions.
+type csvRuneResult struct {
+	r    rune
+	size int
+}
+
+func csvDecodeRune(b []byte) csvRuneResult {
 	if len(b) == 0 {
-		return 0xFFFD, 0
+		return csvRuneResult{0xFFFD, 0}
 	}
 	c0 := b[0]
 	if c0 < 0x80 {
-		return rune(c0), 1
+		return csvRuneResult{rune(c0), 1}
 	}
 	// Multi-byte sequences; accept only the shortest valid form.
 	if c0 < 0xC2 || c0 > 0xF4 || len(b) < 2 {
-		return 0xFFFD, 1
+		return csvRuneResult{0xFFFD, 1}
 	}
 	c1 := b[1]
 	if c1 < 0x80 || c1 > 0xBF {
-		return 0xFFFD, 1
+		return csvRuneResult{0xFFFD, 1}
 	}
 	if c0 < 0xE0 {
-		return rune(c0&0x1F)<<6 | rune(c1&0x3F), 2
+		return csvRuneResult{rune(c0&0x1F)<<6 | rune(c1&0x3F), 2}
 	}
 	if len(b) < 3 {
-		return 0xFFFD, 1
+		return csvRuneResult{0xFFFD, 1}
 	}
 	c2 := b[2]
 	if c2 < 0x80 || c2 > 0xBF {
-		return 0xFFFD, 1
+		return csvRuneResult{0xFFFD, 1}
 	}
 	if c0 < 0xF0 {
 		r := rune(c0&0x0F)<<12 | rune(c1&0x3F)<<6 | rune(c2&0x3F)
 		if r < 0x800 || (r >= 0xD800 && r <= 0xDFFF) {
-			return 0xFFFD, 1
+			return csvRuneResult{0xFFFD, 1}
 		}
-		return r, 3
+		return csvRuneResult{r, 3}
 	}
 	if len(b) < 4 {
-		return 0xFFFD, 1
+		return csvRuneResult{0xFFFD, 1}
 	}
 	c3 := b[3]
 	if c3 < 0x80 || c3 > 0xBF {
-		return 0xFFFD, 1
+		return csvRuneResult{0xFFFD, 1}
 	}
 	r := rune(c0&0x07)<<18 | rune(c1&0x3F)<<12 | rune(c2&0x3F)<<6 | rune(c3&0x3F)
 	if r < 0x10000 || r > 0x10FFFF {
-		return 0xFFFD, 1
+		return csvRuneResult{0xFFFD, 1}
 	}
-	return r, 4
+	return csvRuneResult{r, 4}
 }
 
 // csvDecodeRuneString is csvDecodeRune for strings (writer path).
-func csvDecodeRuneString(s string) (rune, int) {
+// P4 (driver-harden): returns csvRuneResult (see csvDecodeRune).
+func csvDecodeRuneString(s string) csvRuneResult {
 	if len(s) == 0 {
-		return 0xFFFD, 0
+		return csvRuneResult{0xFFFD, 0}
 	}
 	c0 := s[0]
 	if c0 < 0x80 {
-		return rune(c0), 1
+		return csvRuneResult{rune(c0), 1}
 	}
 	var tmp [4]byte
 	n := len(s)
@@ -206,8 +215,7 @@ func csvDecodeRuneString(s string) (rune, int) {
 
 // csvNextRune returns the next rune in b or 0xFFFD.
 func csvNextRune(b []byte) rune {
-	r, _ := csvDecodeRune(b)
-	return r
+	return csvDecodeRune(b).r
 }
 
 // csvRuneLen is utf8.RuneLen for validated runes.
@@ -547,7 +555,8 @@ parseField:
 		if r.TrimLeadingSpace {
 			i := 0
 			for i < len(line) {
-				c, size := csvDecodeRune(line[i:])
+				rr := csvDecodeRune(line[i:])
+				c, size := rr.r, rr.size
 				if !csvIsSpace(c) {
 					break
 				}
@@ -991,7 +1000,7 @@ func (w *Writer) csvFieldNeedsQuotes(field string) bool {
 		}
 	}
 
-	r1, _ := csvDecodeRuneString(field)
+	r1 := csvDecodeRuneString(field).r
 	return csvIsSpace(r1)
 }
 `

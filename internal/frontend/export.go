@@ -616,6 +616,25 @@ func syntheticFmtPackage() *types.Package {
 	insert("Sprintf", types.NewTuple(format, a), types.NewTuple(strRes))
 	insert("Sprintln", types.NewTuple(a), types.NewTuple(strRes))
 	insert("Errorf", types.NewTuple(format, a), types.NewTuple(errResOnly))
+	// P4 (driver-harden): the F-family (Fprint/Fprintf/Fprintln) with
+	// exact gc signatures. The writer is a minimal io.Writer interface,
+	// structurally identical to the synthetic io.Writer, so every
+	// io.Writer implementation is assignable to it. The bodies are not
+	// here: the exporter desugars F-calls to w.Write([]byte(S...))
+	// (mrFmtF), reusing the fmtcall and ifacemethod wire nodes.
+	ioPkg := types.NewPackage("io", "io")
+	ioByteSliceT := types.NewSlice(types.Typ[types.Byte])
+	ioWriteFn := types.NewFunc(token.NoPos, ioPkg, "Write",
+		types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(param("p", ioByteSliceT)),
+			types.NewTuple(param("n", intT), param("err", errorT)), false))
+	ioWriterTN := types.NewTypeName(token.NoPos, ioPkg, "Writer", nil)
+	ioWriter := types.NewNamed(ioWriterTN,
+		types.NewInterfaceType([]*types.Func{ioWriteFn}, nil).Complete(), nil)
+	w := param("w", ioWriter)
+	insert("Fprint", types.NewTuple(w, a), types.NewTuple(n, errRes))
+	insert("Fprintf", types.NewTuple(w, format, a), types.NewTuple(n, errRes))
+	insert("Fprintln", types.NewTuple(w, a), types.NewTuple(n, errRes))
 	// P3-M9 (wave 3): the State/Scanner/Formatter interfaces (gc 1.27.1
 	// exact signatures). math/big's Int/Float Format/Scan methods are
 	// declared against them. Types only — the stub keeps just the seven
@@ -693,10 +712,13 @@ func syntheticFmtPackage() *types.Package {
 	return pkg
 }
 
-// fmtOverlayFuncs are the seven D4 symbols (PLAN.md D4).
+// fmtOverlayFuncs are the seven D4 symbols (PLAN.md D4) plus the P4
+// F-family (Fprint/Fprintf/Fprintln), which the exporter desugars
+// (mrFmtF) instead of emitting as fmtcall nodes.
 var fmtOverlayFuncs = map[string]bool{
 	"Print": true, "Printf": true, "Println": true,
 	"Sprint": true, "Sprintf": true, "Sprintln": true, "Errorf": true,
+	"Fprint": true, "Fprintf": true, "Fprintln": true,
 }
 
 // syncPrimitiveNames are the four P3-M2b (WS D, ADR-0002) primitives bound
@@ -6300,9 +6322,16 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		// fail-fast (TestMultiResultFailFastKept), and interface calls
 		// keep the D1 exportIfaceMethodCall path via exportExpr below.
 		if c, ok := unparen(s.X).(*ast.CallExpr); ok {
-			if plan := e.classifyMultiResultCall(c); plan != nil &&
-				(plan.kind == mrM7 || plan.kind == mrXmlToken) {
-				return e.exportBareMultiResultCall(s, c, plan)
+			if plan := e.classifyMultiResultCall(c); plan != nil {
+				if plan.kind == mrM7 || plan.kind == mrXmlToken {
+					return e.exportBareMultiResultCall(s, c, plan)
+				}
+				// P4 (driver-harden): fmt.Fprint/Fprintf/Fprintln as a
+				// bare statement — the write executes for its side
+				// effect; the (n, err) pair is discarded.
+				if plan.kind == mrFmtF {
+					return e.exportBareFmtFCall(s, c, plan)
+				}
 			}
 		}
 		x, err := e.exportExpr(s.X)
@@ -6311,6 +6340,15 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		}
 		return e.node("exprstmt", s, map[string]any{"x": x}), nil
 	case *ast.ReturnStmt:
+		// P4 (driver-harden): `return fmt.Fprint/Fprintf/Fprintln(...)`
+		// (the call is the sole result) desugars to temps + return.
+		if len(s.Results) == 1 {
+			if c, ok := unparen(s.Results[0]).(*ast.CallExpr); ok {
+				if plan := e.classifyMultiResultCall(c); plan != nil && plan.kind == mrFmtF {
+					return e.exportFmtFReturn(s, c, plan)
+				}
+			}
+		}
 		results := make([]*Node, 0, len(s.Results))
 		for _, r := range s.Results {
 			x, err := e.exportExpr(r)
@@ -8415,10 +8453,18 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 // exportFmtCall exports a call to one of the seven D4 fmt stub functions
 // (M6, WS H — the Phase-1 fmt import overlay, PLAN.md D4). Any other fmt.X
 // is a scope error naming Phase 3.
+//
+// The P4 F-family (Fprint/Fprintf/Fprintln) is in fmtOverlayFuncs but
+// never reaches here: it is desugared at statement level (mrFmtF) into
+// w.Write([]byte(fmt.S...(...))). Seeing it here is an exporter bug.
 func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node, error) {
 	name := sel.Sel.Name
 	if !fmtOverlayFuncs[name] {
 		return nil, scopeErrorf("fmt.%s is not supported in frontend/v1 scope (Phase 3)", name)
+	}
+	switch name {
+	case "Fprint", "Fprintf", "Fprintln":
+		return nil, fmt.Errorf("gofrontend: fmt.%s reached exportFmtCall (must be desugared at statement level)", name)
 	}
 	if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "fmt" {
 		return nil, scopeErrorf("fmt.%s did not resolve to the overlay package", name)
