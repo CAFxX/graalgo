@@ -206,3 +206,234 @@ func f2() (a, b, c int) {
 		}
 	}
 }
+
+// Regression tests for GAP-GENERIC-MR: the disk multi-result transform
+// must support GENERIC multi-result functions. Before the fix, the
+// generated __-helper and pair type dropped the type parameter list, so
+// any body or field referencing T failed type-checking with
+// "undefined: T" (the reported instance was segmentio/encoding/json's
+// decodeInto[T any] returning ([]byte, error), called with explicit
+// type arguments).
+//
+// Each test parses a snippet, runs transformDiskMultiResult, and
+// type-checks the rewritten AST, asserting zero errors — plus structural
+// assertions that the helper and pair type are generic (a type-check
+// alone would not catch a silently dropped [T any]).
+
+// transformDiskMR parses src, runs the transform, and returns the
+// rewritten file, the specs, and the type errors.
+func transformDiskMR(t *testing.T, src string) (*ast.File, []diskMRSpec, []error) {
+	t.Helper()
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "p.go", src, 0)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	specs := transformDiskMultiResult("example.com/p", []*ast.File{f})
+	conf := types.Config{Importer: importer.Default()}
+	var errs []error
+	conf.Error = func(e error) { errs = append(errs, e) }
+	_, _ = conf.Check("example.com/p", fset, []*ast.File{f}, nil)
+	return f, specs, errs
+}
+
+// findFuncDecl returns the named FuncDecl in f, or nil.
+func findFuncDecl(f *ast.File, name string) *ast.FuncDecl {
+	for _, decl := range f.Decls {
+		if fd, ok := decl.(*ast.FuncDecl); ok && fd.Name.Name == name {
+			return fd
+		}
+	}
+	return nil
+}
+
+// checkDiskMRGenericClean asserts the transform type-checks and that the
+// generated helper and pair type carry the type parameter list.
+func checkDiskMRGenericClean(t *testing.T, src, funcName, helperName, pairName string, wantTparams int) []diskMRSpec {
+	t.Helper()
+	f, specs, errs := transformDiskMR(t, src)
+	if len(errs) != 0 {
+		t.Fatalf("got %d type errors, want 0: %v", len(errs), errs)
+	}
+	if len(specs) != 1 {
+		t.Fatalf("got %d specs, want 1", len(specs))
+	}
+	sp := specs[0]
+	if sp.name != funcName || sp.helper != helperName || sp.pairType != pairName {
+		t.Fatalf("spec = %+v, want name=%s helper=%s pairType=%s", sp, funcName, helperName, pairName)
+	}
+	helper := findFuncDecl(f, helperName)
+	if helper == nil {
+		t.Fatalf("helper %s not found in rewritten file", helperName)
+	}
+	if got := len(tparamNamesOf(helper.Type)); got != wantTparams {
+		t.Fatalf("helper %s has %d type params, want %d", helperName, got, wantTparams)
+	}
+	// The pair type declaration must be generic too.
+	foundPair := false
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.TYPE {
+			continue
+		}
+		for _, s := range gd.Specs {
+			ts, ok := s.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != pairName {
+				continue
+			}
+			foundPair = true
+			var got int
+			if ts.TypeParams != nil {
+				for _, fld := range ts.TypeParams.List {
+					got += len(fld.Names)
+				}
+			}
+			if got != wantTparams {
+				t.Fatalf("pair type %s has %d type params, want %d", pairName, got, wantTparams)
+			}
+		}
+	}
+	if !foundPair {
+		t.Fatalf("pair type %s not found in rewritten file", pairName)
+	}
+	// The stub keeps the original generic multi-result signature.
+	stub := findFuncDecl(f, funcName)
+	if stub == nil {
+		t.Fatalf("stub %s not found in rewritten file", funcName)
+	}
+	if got := len(tparamNamesOf(stub.Type)); got != wantTparams {
+		t.Fatalf("stub %s has %d type params, want %d", funcName, got, wantTparams)
+	}
+	return specs
+}
+
+func TestDiskMRGenericTwoResult(t *testing.T) {
+	// The reported shape: decodeInto[T any] returning ([]byte, error),
+	// called with explicit type arguments — the segmentio/encoding/json
+	// instance of GAP-GENERIC-MR.
+	checkDiskMRGenericClean(t, `package p
+
+func DecodeInto[T any](v []byte, dest *T) ([]byte, error) {
+	var zero T
+	_ = zero
+	*dest = zero
+	return v, nil
+}
+
+func Use() {
+	var i int
+	rest, err := DecodeInto[int]([]byte{1, 2}, &i)
+	_, _ = rest, err
+}
+`, "DecodeInto", "__DecodeInto", "__DecodeIntoPair", 1)
+}
+
+func TestDiskMRGenericBareReturn(t *testing.T) {
+	// Named results + bare return in a generic function: the pair
+	// literal must carry explicit type arguments (go/types cannot infer
+	// them from the literal elements).
+	checkDiskMRGenericClean(t, `package p
+
+func First[T any](s []T) (v T, ok bool) {
+	if len(s) == 0 {
+		return
+	}
+	v = s[0]
+	ok = true
+	return
+}
+`, "First", "__First", "__FirstPair", 1)
+}
+
+func TestDiskMRGenericRecursion(t *testing.T) {
+	// return F(args) inside F's own generic body: the recursive helper
+	// call must forward the type arguments explicitly.
+	checkDiskMRGenericClean(t, `package p
+
+func Strip[T any](s []T, n int) ([]T, int) {
+	if n <= 0 || len(s) == 0 {
+		return s, n
+	}
+	return Strip[T](s[1:], n-1)
+}
+`, "Strip", "__Strip", "__StripPair", 1)
+}
+
+func TestDiskMRGenericTwoTypeParams(t *testing.T) {
+	// Two type parameters: IndexListExpr references on the pair literal.
+	checkDiskMRGenericClean(t, `package p
+
+func Zip[A, B any](a []A, b []B) ([]A, []B) {
+	return a, b
+}
+
+func Use() {
+	x, y := Zip[int, string]([]int{1}, []string{"a"})
+	_, _ = x, y
+}
+`, "Zip", "__Zip", "__ZipPair", 2)
+}
+
+func TestDiskMRGenericVarHoist(t *testing.T) {
+	// var X = id(F[T](args)): the hoisted helper call must keep the
+	// explicit type arguments, and the outer call spreads the pair
+	// fields.
+	f, specs, errs := transformDiskMR(t, `package p
+
+func DecodeInto[T any](v []byte) ([]byte, T) {
+	var zero T
+	return v, zero
+}
+
+func id(b []byte, t int) int { return t }
+
+var X = id(DecodeInto[int]([]byte{1}))
+`)
+	_ = specs
+	if len(errs) != 0 {
+		t.Fatalf("got %d type errors, want 0: %v", len(errs), errs)
+	}
+	// The hoisted var must call __DecodeInto[int], not __DecodeInto.
+	found := false
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR {
+			continue
+		}
+		for _, s := range gd.Specs {
+			vs, ok := s.(*ast.ValueSpec)
+			if !ok || len(vs.Values) != 1 {
+				continue
+			}
+			call, ok := vs.Values[0].(*ast.CallExpr)
+			if !ok {
+				continue
+			}
+			if idx, ok := call.Fun.(*ast.IndexExpr); ok {
+				if id, ok := idx.X.(*ast.Ident); ok && id.Name == "__DecodeInto" {
+					found = true
+				}
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("hoisted var does not call __DecodeInto[int]")
+	}
+}
+
+func TestDiskMRGenericMethod(t *testing.T) {
+	// A generic METHOD (own type params, non-generic receiver) on a disk
+	// type: the helper is generic over the method's type params.
+	checkDiskMRGenericClean(t, `package p
+
+type Box struct{ n int }
+
+func (b Box) GetOr[T any](dflt T) (T, bool) {
+	if b.n > 0 {
+		return dflt, true
+	}
+	var zero T
+	return zero, false
+}
+`, "GetOr", "__Box_GetOr", "__Box_GetOrPair", 1)
+}
