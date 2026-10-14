@@ -14,7 +14,7 @@ import (
 // so "validate" exits 1 with a precise message.
 func runValidate(args []string, stdout, stderr io.Writer) error {
 	fs := newFlagSet("validate")
-	listPath := fs.String("list", "", "path to exclusions.yaml (default: <repo>/phases/phase3/stdlib-fork/exclusions.yaml)")
+	listPath := fs.String("list", "", "path to exclusions.yaml (default: <repo>/tools/stdlib-fork/exclusions.yaml)")
 	srcRoot := fs.String("src", "", "stdlib source root (default: canonical resolution -- vendored tree for the pinned version when present, else live GOROOT/src with a loud warning)")
 	maxEntries := fs.Int("max", 25, "hard cap on exclusion entries (review cap)")
 	testBinaries := fs.Int("test-binaries", 0, "stdlib test-binary count for the 5% clause (0 = count from --src)")
@@ -221,7 +221,7 @@ func defaultSrcRoot(stderr io.Writer) (string, error) {
 // same rule; the two copies are documented as twins -- keep in sync):
 //
 //  1. Vendored tree when present: $HOME/workspace/graalgo-stdlib/<ver>/,
-//     where <ver> is phases/phase3/stdlib-fork/pinned-version.txt. The
+//     where <ver> is tools/stdlib-fork/pinned-version.txt. The
 //     vendor tool lays $GOROOT/src contents FLAT at the target dir --
 //     there is no src/ subdir (an earlier probe for <ver>/src could never
 //     fire, so validation always silently fell through to the live
@@ -248,7 +248,7 @@ func resolveStdlibTree(repoRoot, home string, stderr io.Writer) (string, error) 
 		return cand, nil
 	}
 	if repoRoot != "" {
-		pinPath := filepath.Join(repoRoot, "phases", "phase3", "stdlib-fork", "pinned-version.txt")
+		pinPath := filepath.Join(repoRoot, "tools", "stdlib-fork", "pinned-version.txt")
 		if data, err := os.ReadFile(pinPath); err == nil {
 			if ver := strings.TrimSpace(string(data)); ver != "" {
 				cand := filepath.Join(home, "workspace", "graalgo-stdlib", ver)
@@ -278,7 +278,7 @@ func resolveStdlibTree(repoRoot, home string, stderr io.Writer) (string, error) 
 // different Go version than the pin: the tree the pin names would not be
 // the tree the manifest describes, so no measurement may claim the pin.
 func crossCheckPin(repoRoot, ver string) error {
-	data, err := os.ReadFile(filepath.Join(repoRoot, "phases", "phase3", "stdlib-fork", "vendor-manifest.json"))
+	data, err := os.ReadFile(filepath.Join(repoRoot, "tools", "stdlib-fork", "vendor-manifest.json"))
 	if err != nil {
 		return fmt.Errorf("stdlib tree: cannot read vendor manifest: %w", err)
 	}

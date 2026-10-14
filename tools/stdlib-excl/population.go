@@ -11,7 +11,7 @@ import (
 // count for the 5% cap clause) and "measure" (the per-dir classification).
 //
 // Population definition (documented in
-// phases/phase3/stdlib-fork/coupled-packages-go1.27.1.md): directories under
+// tools/stdlib-fork/coupled-packages-go1.27.1.md): directories under
 // the stdlib source root containing at least one non-test .go file,
 // excluding:
 //   - cmd/            (tool binaries, not stdlib packages)

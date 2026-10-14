@@ -13,7 +13,7 @@ prefix and `- code:` does not carry the `- file:` prefix).
 ## validate
 
 ```
-stdlib-excl validate --list phases/phase3/stdlib-fork/exclusions.yaml \
+stdlib-excl validate --list tools/stdlib-fork/exclusions.yaml \
     [--src DIR] [--max N] [--test-binaries N] [--baseline PATH]
 ```
 
@@ -40,7 +40,7 @@ Enforces the exclusion-list contract; rejects (exit 1) when:
    `~/workspace/graalgo-stdlib/<ver>/` (flat layout -- the target dir
    IS the src root, no `src/` subdir), used only when the committed
    `vendor-manifest.json` records the same `goVersion` as
-   `phases/phase3/stdlib-fork/pinned-version.txt` (a manifest/pin skew
+   `tools/stdlib-fork/pinned-version.txt` (a manifest/pin skew
    fails loud);
 2. otherwise `GOROOT/src` of the pinned toolchain
    (`~/tools/go/bin/go`), announced loudly on stderr -- results then
@@ -59,7 +59,7 @@ stdlib-excl measure --src DIR --out report.json [--go-version V]
 
 Walks the stdlib source root, applies the strict pure-Go check per package
 dir for GOOS=linux GOARCH=amd64 (definition in
-`phases/phase3/stdlib-fork/coupled-packages-go1.27.1.md` §1), and writes a
+`tools/stdlib-fork/coupled-packages-go1.27.1.md` §1), and writes a
 versioned JSON report: per-dir class (`pure` / `coupled` / `not-linux-amd64`)
 with reasons (`asm`, `cgo`, `linkname`, `build-tags`), the non-test-only
 secondary metric, counts, and the test-binary count. `--go-version`

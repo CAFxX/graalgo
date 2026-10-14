@@ -40,7 +40,7 @@ Usage:
                       [--test-binaries N] [--baseline PATH]
   stdlib-excl measure  --src DIR --out PATH [--go-version V]
 
-validate checks phases/phase3/stdlib-fork/exclusions.yaml:
+validate checks tools/stdlib-fork/exclusions.yaml:
   every entry carries a reason code from the file's reason_codes
   vocabulary; the entry count stays under the review cap (default 25,
   additionally 5% of stdlib test binaries, whichever binds first);
