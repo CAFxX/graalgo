@@ -161,9 +161,12 @@ def main():
     parts.append('\t"os"')
     # Determine import style: if test code uses qualified refs (pkg.X),
     # use regular import; else dot-import for unqualified refs.
-    # Check the combined file sources for qualified usage.
+    # Check the combined file sources for qualified usage, ignoring string
+    # literals (test expectations often mention "pkg.Func" in strings).
     combined = "\n".join(data for _, data in file_sources)
-    use_qualified = bool(re.search(rf"\b{pkg}\.\w+", combined))
+    no_strings = re.sub(r"`[^`]*`", "", combined)  # raw strings
+    no_strings = re.sub(r'"(?:[^"\\]|\\.)*"', "", no_strings)  # interpreted strings
+    use_qualified = bool(re.search(rf"\b{pkg}\.\w+", no_strings))
     if use_qualified:
         parts.append(f'\t"{pkg}"')
     else:
