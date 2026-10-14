@@ -40,7 +40,7 @@ func cmdRun(root string, args []string) int {
 	if strings.HasSuffix(target, ".go") {
 		runArgs := []string{target}
 		runArgs = append(runArgs, progArgs...)
-		return graalgoRun(root, runArgs)
+		return graalgoRunProgram(root, runArgs)
 	}
 
 	// Package (directory or import path): find its main package files.
@@ -59,7 +59,7 @@ func cmdRun(root string, args []string) int {
 	}
 	runArgs := []string{files[0]}
 	runArgs = append(runArgs, progArgs...)
-	return graalgoRun(root, runArgs)
+	return graalgoRunProgram(root, runArgs)
 }
 
 // cmdBuild implements `graalgo build [packages]`.

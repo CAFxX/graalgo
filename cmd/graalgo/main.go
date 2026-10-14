@@ -202,6 +202,26 @@ func graalgoRun(root string, args []string) int {
 	return 0
 }
 
+// graalgoRunProgram invokes the backend for `graalgo run` and emulates
+// `go run`'s exit contract: when the program exits non-zero, `go run`
+// prints "exit status N" to stderr and exits 1 (rather than propagating
+// the raw code). This keeps `graalgo run` byte-identical to `go run` on
+// stderr and exit code for programs that exit non-zero.
+//
+// Known wart: the backend's own failure codes (1 = input error, 2 =
+// build failure) share the exit-code space with program exits, so a
+// backend failure also gets the "exit status N" treatment; `go run`
+// prints no such line for its own build failures. Disambiguating needs
+// a backend exit-code convention change.
+func graalgoRunProgram(root string, args []string) int {
+	code := graalgoRun(root, args)
+	if code != 0 {
+		fmt.Fprintf(os.Stderr, "exit status %d\n", code)
+		return 1
+	}
+	return 0
+}
+
 // resolveFiles turns package/file arguments into a list of .go files.
 // With no args, uses *.go in the current directory. Directories are
 // expanded to their *.go files (non-recursive, like a simple package).
