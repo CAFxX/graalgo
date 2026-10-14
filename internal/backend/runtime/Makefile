@@ -185,8 +185,8 @@ check: main $(OUT_TEST)/.built
 # before milestone sign-off.
 # BRIDGE (test lane): the corpora still live under phases/ until the test
 # code-move lane relocates them to test/corpus/; repoint P1_CORPUS/P2_CORPUS.
-P1_CORPUS ?= ../../../phases/phase1/corpus
-P2_CORPUS ?= ../../../phases/phase2/corpus
+P1_CORPUS ?= ../../../test/corpus/phase1
+P2_CORPUS ?= ../../../test/corpus/phase2
 pin-audit: main $(OUT_TEST)/.built
 	mkdir -p out/test-tmp
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
@@ -199,11 +199,11 @@ pin-audit: main $(OUT_TEST)/.built
 # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
 # Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
 torture: main $(OUT_TEST)/.built
-	bash ../../../phases/phase2/tools/torture/run_battery.sh
+	bash ../../../tools/torture/run_battery.sh
 
 # P2-M8 GOMAXPROCS matrix (differential vs gc).
 gmp-matrix: main $(OUT_TEST)/.built
-	bash ../../../phases/phase2/tools/torture/gmp_matrix.sh
+	bash ../../../tools/torture/gmp_matrix.sh
 
 clean:
 	rm -rf out

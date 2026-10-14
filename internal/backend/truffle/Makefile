@@ -153,7 +153,7 @@ check:
 
 # BRIDGE (test lane): the corpus still lives at phases/phase1/corpus until
 # the test code-move lane relocates it to test/corpus/; repoint P1_CORPUS_DIR.
-P1_CORPUS_DIR ?= ../../../phases/phase1/corpus
+P1_CORPUS_DIR ?= ../../../test/corpus/phase1
 smoke:
 	$(MAKE) run ARGS="$(P1_CORPUS_DIR)/hello.go"
 
