@@ -539,7 +539,8 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 		// Batch failed entirely; mark all as failed.
 		return out
 	}
-	// Parse JSON array.
+	// Parse JSON array. Results are in the same order as the batch file
+	// lines (the Java batch processor outputs sequentially).
 	var results []struct {
 		File   string `json:"file"`
 		Exit   int    `json:"exit"`
@@ -549,43 +550,55 @@ func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workR
 	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
 		return out
 	}
-	// Map results by (mode, src). We need to know which mode each file was.
-	// The batch file had "mode:src" lines; reconstruct the mapping.
+	// Map results by (mode, src) using positional matching: the Nth
+	// non-empty batch line corresponds to the Nth result.
 	data, _ := os.ReadFile(batchPath)
+	resultIdx := 0
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// Find the matching result by file path.
+		if resultIdx >= len(results) {
+			break
+		}
 		colon := strings.Index(line, ":")
 		if colon < 0 {
+			resultIdx++
 			continue
 		}
 		mode := line[:colon]
 		src := line[colon+1:]
-		for _, r := range results {
-			if r.File == src {
-				oc := harness.Outcome{
-					Program:  filepath.Base(filepath.Dir(src)),
-					Backend:  alt.Name,
-					Stdout:   harness.Normalize(r.Stdout),
-					Stderr:   alt.FilterStderr(harness.Normalize(r.Stderr)),
-					ExitCode: r.Exit,
+		r := results[resultIdx]
+		resultIdx++
+		// Sanity: the result's file should match the batch line's src.
+		// If not, the batch processor reordered output; fall back to
+		// file-path matching (may conflate check/run for the same file).
+		if r.File != src {
+			for _, rr := range results {
+				if rr.File == src {
+					r = rr
+					break
 				}
-				if mode == "check" {
-					oc.BuildOK = r.Exit == 0
-					// For build, stdout+stderr combined is the build log.
-					// The single-file path puts build errors on stderr.
-					oc.BuildLog = oc.Stderr
-					if oc.BuildLog == "" {
-						oc.BuildLog = oc.Stdout
-					}
-				}
-				out[batchKey(mode, src)] = oc
-				break
 			}
 		}
+		oc := harness.Outcome{
+			Program:  filepath.Base(filepath.Dir(src)),
+			Backend:  alt.Name,
+			Stdout:   harness.Normalize(r.Stdout),
+			Stderr:   alt.FilterStderr(harness.Normalize(r.Stderr)),
+			ExitCode: r.Exit,
+		}
+		if mode == "check" {
+			oc.BuildOK = r.Exit == 0
+			// For build, stdout+stderr combined is the build log.
+			// The single-file path puts build errors on stderr.
+			oc.BuildLog = oc.Stderr
+			if oc.BuildLog == "" {
+				oc.BuildLog = oc.Stdout
+			}
+		}
+		out[batchKey(mode, src)] = oc
 	}
 	return out
 }
