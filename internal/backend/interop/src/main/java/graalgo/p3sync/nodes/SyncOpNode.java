@@ -16,10 +16,13 @@ import graalgo.values.GoInterface;
 import graalgo.values.GoString;
 import java.nio.charset.StandardCharsets;
 import graalgo.runtime.sync.GoOnce;
+import graalgo.runtime.sync.GoPool;
 import graalgo.runtime.sync.GoRWMutex;
 import graalgo.runtime.sync.GoWaitGroup;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
+
+import java.util.Map;
 
 /**
  * A method call on a {@code sync} primitive (P3-M2b, WS D, ADR-0002):
@@ -45,13 +48,17 @@ import graalgo.values.GoKind;
  * call protocol), including its {@code recoverAllowed} dance — a direct
  * {@code recover()} inside the Do func returns nil, gc parity.
  *
- * <p>All ops are void except {@code Pool.Get}: the node kind is
- * {@link GoKind#INTERFACE} returning null, mirroring
- * {@code GoexitCallNode}.
- *
- * <p>{@code Pool.Get} is the one non-void op: it returns the pooled
- * interface value ({@code GoInterface}, nil-normalized), or the nil
- * interface when the pool is empty.
+ * <p>P3-M11 ({@code sync.Pool}): {@code Put}/{@code Get} move
+ * {@code any}-valued items through the {@link GoPool} (the Put arg is
+ * boxed to an interface value by the builder, the atomic.Value
+ * precedent); {@code Get} invokes the pool's {@code New} func when empty
+ * and it is set. The {@code New} field itself is addressed by the
+ * exporter-synthesized field ops {@code GetNew} (read), {@code SetNew}
+ * (write) and {@code CallNew} ({@code p.New()} invocation) — the Go
+ * value is the opaque {@link GoPool} object, so no struct-field node
+ * applies. {@code Get}/{@code CallNew} return {@code any} values and
+ * {@code GetNew} the func value; the rest are void and return null,
+ * mirroring {@code GoexitCallNode}.
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook (P2-D8 precedent) — no
@@ -69,8 +76,21 @@ public final class SyncOpNode extends GoExprNode {
     private final String op;
     private final String syncType;
 
-    private SyncOpNode(String op, String syncType, GoExprNode recv, GoExprNode[] args) {
-        super(GoKind.INTERFACE);
+    /**
+     * {@code "Pool.Get"}/{@code "Pool.GetNew"}/{@code "Pool.CallNew"} →
+     * result kind; void ops ({@code Put}, {@code SetNew}, and all the
+     * P3-M2b mutex ops) are absent and stay {@link GoKind#INTERFACE}
+     * returning null. The atomic.Value precedent ({@link AtomicOpNode})
+     * for value-returning overlay ops.
+     */
+    private static final Map<String, GoKind> RESULT_KINDS = Map.of(
+            "Pool.Get", GoKind.INTERFACE,
+            "Pool.GetNew", GoKind.FUNC,
+            "Pool.CallNew", GoKind.INTERFACE);
+
+    private SyncOpNode(String op, String syncType, GoKind resultKind,
+            GoExprNode recv, GoExprNode[] args) {
+        super(resultKind);
         this.op = op;
         this.syncType = syncType;
         this.recv = recv;
@@ -94,14 +114,42 @@ public final class SyncOpNode extends GoExprNode {
             case "WaitGroup.Done" -> panicOnMisuse(() -> ((GoWaitGroup) r).done());
             case "WaitGroup.Wait" -> ((GoWaitGroup) r).await();
             case "Once.Do" -> doOnce((GoOnce) r, frame);
-            // P3-M9 (driver-harden, go-cmp lane): sync.Pool. The Put
-            // argument arrives already boxed as an interface value
-            // (Put takes any); Get returns it back, nil-normalized.
-            case "Pool.Get" -> { return GoInterface.narrow(((GoPool) r).get()); }
-            case "Pool.Put" -> ((GoPool) r).put(args[0].executeObject(frame));
+            // P3-M11 (sync.Pool): the Go value IS the GoPool object
+            // (ADR-0002 D1). Put's arg is boxed to an interface value by
+            // the builder (boxToInterface, the atomic.Value precedent);
+            // Get returns the pooled interface value, or null for the nil
+            // interface (gc: Get may return nil even with items stored).
+            case "Pool.Put" -> poolOf(r).put(args[0].executeObject(frame));
+            case "Pool.Get" -> {
+                GoPool pool = poolOf(r);
+                Object x = pool.get();
+                if (x == null) {
+                    Object nf = pool.getNewFunc();
+                    if (nf instanceof GoFunc f) {
+                        x = invokeFuncValue(f, frame);
+                    }
+                }
+                return x;
+            }
+            // P3-M11: the New func field — read (GetNew), write (SetNew),
+            // and direct invocation (CallNew, for p.New()).
+            case "Pool.GetNew" -> {
+                return poolOf(r).getNewFunc();
+            }
+            case "Pool.SetNew" -> poolOf(r).setNewFunc(args[0].executeObject(frame));
+            case "Pool.CallNew" -> {
+                return invokeNewFunc(poolOf(r).getNewFunc(), frame);
+            }
             default -> throw new FrontendException("unknown sync op " + syncType + "." + op);
         }
         return null;
+    }
+
+    private static GoPool poolOf(Object r) {
+        if (!(r instanceof GoPool p)) {
+            throw new FrontendException("sync op on non-GoPool value: " + r.getClass().getName());
+        }
+        return p;
     }
 
     /**
@@ -132,6 +180,28 @@ public final class SyncOpNode extends GoExprNode {
             Panic.throwPanic(GoCalls.nilFuncCall(), null, null, this);
             return;
         }
+        once.doOnce(() -> invokeFuncValue(f, frame));
+    }
+
+    /**
+     * Invokes a {@code sync.Pool}'s New func value (P3-M11, the CallNew
+     * op): a nil New is a Go nil-dereference panic (calling a nil func
+     * value, gc parity).
+     */
+    private Object invokeNewFunc(Object funcValue, VirtualFrame frame) {
+        if (!(funcValue instanceof GoFunc f)) {
+            Panic.throwPanic(GoCalls.nilFuncCall(), null, null, this);
+            throw new AssertionError("unreachable");
+        }
+        return invokeFuncValue(f, frame);
+    }
+
+    /**
+     * Invokes a Go func value synchronously through the {@code GoCalls}
+     * protocol, including its {@code recoverAllowed} dance — a direct
+     * {@code recover()} inside the func returns nil, gc parity.
+     */
+    private Object invokeFuncValue(GoFunc f, VirtualFrame frame) {
         // FuncValueCallNode's recoverAllowed dance: recover() is only
         // non-nil when called directly by a deferred function — clear the
         // flag for this nested call, restore afterwards.
@@ -141,7 +211,7 @@ public final class SyncOpNode extends GoExprNode {
             state.setRecoverAllowed(false);
         }
         try {
-            once.doOnce(() -> GoCalls.invoke(f, new Object[0]));
+            return GoCalls.invoke(f, new Object[0]);
         } finally {
             if (state != null) {
                 state.setRecoverAllowed(prev);
@@ -164,8 +234,11 @@ public final class SyncOpNode extends GoExprNode {
         int wantArgs = switch (syncType + "." + op) {
             case "Mutex.Lock", "Mutex.Unlock",
                  "RWMutex.Lock", "RWMutex.Unlock", "RWMutex.RLock", "RWMutex.RUnlock",
-                 "WaitGroup.Done", "WaitGroup.Wait", "Pool.Get" -> 0;
-            case "WaitGroup.Add", "Once.Do", "Pool.Put" -> 1;
+                 "WaitGroup.Done", "WaitGroup.Wait",
+                 // P3-M11 (sync.Pool).
+                 "Pool.Get", "Pool.GetNew", "Pool.CallNew" -> 0;
+            case "WaitGroup.Add", "Once.Do",
+                 "Pool.Put", "Pool.SetNew" -> 1;
             default -> throw new FrontendException(path + ": unknown sync op " + syncType + "." + op);
         };
         GoExprNode recv = factory.buildExpr(f.object("recv", path), ctx);
@@ -182,6 +255,14 @@ public final class SyncOpNode extends GoExprNode {
             }
             args[i] = factory.buildExpr(o, ctx);
         }
-        return new SyncOpNode(op, syncType, recv, args);
+        // P3-M11: Pool.Put's parameter is declared `any` — the wire
+        // carries the concrete arg node, so box it to an interface value
+        // exactly as implicit call-arg conversions do (the atomic.Value
+        // precedent in AtomicOpNode).
+        if (syncType.equals("Pool") && op.equals("Put")) {
+            args[0] = factory.boxToInterface(args[0], ctx, path + ".args[0]");
+        }
+        GoKind resultKind = RESULT_KINDS.getOrDefault(syncType + "." + op, GoKind.INTERFACE);
+        return new SyncOpNode(op, syncType, resultKind, recv, args);
     }
 }

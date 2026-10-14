@@ -18,12 +18,14 @@ import graalgo.runtime.sync.GoWaitGroup;
 import graalgo.values.GoKind;
 
 /**
- * Construction of a {@code sync} primitive (P3-M2b, WS D, ADR-0002) or a
- * {@code sync/atomic} wrapper cell (P3-M4, WS C, ADR-0004 D2): the
- * {@code "syncnew"} wire node.
+ * Construction of a {@code sync} primitive (P3-M2b, WS D, ADR-0002; P3-M11
+ * adds {@code sync.Pool}) or a {@code sync/atomic} wrapper cell (P3-M4, WS
+ * C, ADR-0004 D2): the {@code "syncnew"} wire node.
  *
  * <p>A {@code sync.Mutex} Go value <em>is</em> the {@link GoMutex} Java
- * object (opaque, like {@code GoChan} — ADR-0002 D1); an
+ * object (opaque, like {@code GoChan} — ADR-0002 D1); a
+ * {@code sync.Pool} Go value <em>is</em> the {@link GoPool} Java object
+ * (same value model); an
  * {@code atomic.Int64} Go value <em>is</em> the {@link AtomicLong} cell,
  * an {@code atomic.Int32}/{@code Uint32}/{@code Bool} value <em>is</em>
  * the {@link AtomicInteger} cell. Copying copies the reference:
@@ -47,21 +49,37 @@ public final class SyncNewNode extends GoExprNode {
 
     private final String syncType;
 
-    private SyncNewNode(GoKind kind, String syncType) {
+    /**
+     * Optional initializer for the {@code New} func field, from the
+     * {@code "newfunc"} wire field ({@code sync.Pool{New: f}} — P3-M11).
+     * Null for every other construction shape.
+     */
+    @Child
+    private GoExprNode newFuncInit;
+
+    private SyncNewNode(GoKind kind, String syncType, GoExprNode newFuncInit) {
         super(kind);
         this.syncType = syncType;
+        this.newFuncInit = newFuncInit;
     }
 
     @Override
     public Object executeObject(VirtualFrame frame) {
+        // P3-M11: the literal's New func evaluates before construction
+        // (gc's composite-literal evaluation order).
+        Object newFunc = newFuncInit != null ? newFuncInit.executeObject(frame) : null;
         return switch (syncType) {
             case "Mutex" -> new GoMutex();
             case "RWMutex" -> new GoRWMutex();
             case "WaitGroup" -> new GoWaitGroup();
             case "Once" -> new GoOnce();
-            // P3-M9 (driver-harden, go-cmp lane): sync.Pool for regexp's
-            // pools (backtrack.go, exec.go, regexp.go).
-            case "Pool" -> new GoPool();
+            // P3-M11 (sync.Pool): the Go value IS the GoPool object
+            // (ADR-0002 D1).
+            case "Pool" -> {
+                GoPool pool = new GoPool();
+                pool.setNewFunc(newFunc);
+                yield pool;
+            }
             // P3-M4 (WS C, ADR-0004 D2): atomic wrapper cells. 64-bit
             // wrappers ride on AtomicLong, 32-bit/bool on AtomicInteger
             // (the phase-1 Atomics backing). P3-M10: the generic
@@ -79,9 +97,12 @@ public final class SyncNewNode extends GoExprNode {
      * Builds the node from the {@code "syncnew"} wire node. Fields:
      * {@code synctyp} (the primitive name), {@code type} (type-table id —
      * the named sync type, or a pointer to it for the {@code &}/{@code new}
-     * forms).
+     * forms), and the optional {@code "newfunc"} (P3-M11: the
+     * {@code sync.Pool{New: f}} literal's func value; rejected on any
+     * other synctyp).
      */
-    public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx) {
+    public static GoExprNode build(Json.Object node, NodeFactory.BuildCtx ctx,
+            NodeFactory factory) {
         Json.Object f = node.object("fields", "syncnew");
         String path = "syncnew.fields";
         String syncType = f.string("synctyp", path);
@@ -94,12 +115,20 @@ public final class SyncNewNode extends GoExprNode {
                  "atomic.Pointer", "atomic.Value" -> { /* ok */ }
             default -> throw new FrontendException(path + ": unknown sync type " + syncType);
         }
+        GoExprNode newFuncInit = null;
+        Json.Value nfv = f.opt("newfunc");
+        if (nfv instanceof Json.Object o) {
+            if (!"Pool".equals(syncType)) {
+                throw new FrontendException(path + ": newfunc on non-Pool syncnew " + syncType);
+            }
+            newFuncInit = factory.buildExpr(o, ctx);
+        }
         Json.Value tv = f.opt("type");
         if (!(tv instanceof Json.Num num)) {
             throw new FrontendException(path + ": syncnew needs a numeric \"type\" id");
         }
         int typeId = (int) num.asLong(path + ".type");
-        return new SyncNewNode(kindForType(ctx, typeId, path), syncType);
+        return new SyncNewNode(kindForType(ctx, typeId, path), syncType, newFuncInit);
     }
 
     /**
