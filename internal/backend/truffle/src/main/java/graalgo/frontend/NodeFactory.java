@@ -1820,6 +1820,9 @@ public final class NodeFactory {
     private static Object fieldZeroTemplate(BuildCtx ctx, GoKind kind, int fieldTypeId, String path) {
         return switch (kind) {
             case STRING -> GoString.EMPTY;
+            // WS G: a complex field's zero value is (0+0i), not nil.
+            case COMPLEX64 -> graalgo.values.GoComplex32.ZERO;
+            case COMPLEX128, UNTYPED_COMPLEX -> graalgo.values.GoComplex64.ZERO;
             case STRUCT -> structZeroTemplate(ctx, fieldTypeId, path);
             case ARRAY -> arrayZeroTemplate(ctx, fieldTypeId, path);
             default -> null;
@@ -4013,6 +4016,16 @@ public final class NodeFactory {
             case Object -> {
                 if (kind == GoKind.STRING) {
                     yield ConstNode.ofString(GoString.EMPTY);
+                }
+                // WS G: a complex zero value is (0+0i), not nil (mirrors
+                // Boxing.zeroValue; without this, `var z complex128` reads
+                // null and every complex use — conversion included — sees
+                // a nil instead of the zero value).
+                if (kind == GoKind.COMPLEX64) {
+                    yield ConstNode.ofObject(kind, graalgo.values.GoComplex32.ZERO);
+                }
+                if (kind == GoKind.COMPLEX128 || kind == GoKind.UNTYPED_COMPLEX) {
+                    yield ConstNode.ofObject(kind, graalgo.values.GoComplex64.ZERO);
                 }
                 if (kind == GoKind.STRUCT) {
                     // Fresh per evaluation (M4, WS E): a shared template

@@ -167,8 +167,11 @@ public final class Boxing {
      * else→{@code Object[]}. For STRUCT elements, each slot is
      * pre-initialized to the zero-valued GoStruct (Go's array zero value
      * has zero-valued elements; a null slot would NPE on
-     * {@code a[i].field} access). Requires the element descriptor for
-     * struct kinds; may be null for non-struct kinds.
+     * {@code a[i].field} access). Complex elements are likewise
+     * pre-initialized to (0+0i): Go has no nil complex, and a null slot
+     * would surface as a nil instead of the zero value (WS G).
+     * Requires the element descriptor for struct kinds; may be null for
+     * non-struct kinds.
      */
     public static Object newArray(GoKind elemKind, GoStructDescriptor elemDesc, int len) {
         return switch (elemKind) {
@@ -177,8 +180,16 @@ public final class Boxing {
             case FLOAT32 -> new float[len];
             case FLOAT64, UNTYPED_FLOAT -> new double[len];
             case BOOL, UNTYPED_BOOL -> new boolean[len];
-            case COMPLEX64 -> new graalgo.values.GoComplex32[len];
-            case COMPLEX128, UNTYPED_COMPLEX -> new graalgo.values.GoComplex64[len];
+            case COMPLEX64 -> {
+                graalgo.values.GoComplex32[] arr = new graalgo.values.GoComplex32[len];
+                java.util.Arrays.fill(arr, graalgo.values.GoComplex32.ZERO);
+                yield arr;
+            }
+            case COMPLEX128, UNTYPED_COMPLEX -> {
+                graalgo.values.GoComplex64[] arr = new graalgo.values.GoComplex64[len];
+                java.util.Arrays.fill(arr, graalgo.values.GoComplex64.ZERO);
+                yield arr;
+            }
             case STRUCT -> {
                 Object[] arr = new Object[len];
                 if (elemDesc != null) {

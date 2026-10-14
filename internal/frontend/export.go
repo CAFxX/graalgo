@@ -7529,7 +7529,19 @@ func (e *exporter) foldedConst(x ast.Expr, v constant.Value) (*Node, error) {
 		fields["f64bits"] = int64(math.Float64bits(f64))
 	}
 	// M7: complex constants carry the real/imag parts as bit patterns.
-	if v.Kind() == constant.Complex {
+	// Gate on the expression's TYPE, not just the constant kind: a folded
+	// int/float constant in complex context (e.g. the operand of
+	// complex128(1<<70), which go/types types as complex128) needs the
+	// creal/cimag keys the factory requires for every complex-typed
+	// basiclit — mirroring the *ast.BasicLit case below. constant.Real/Imag
+	// pass non-complex values through (real part as-is, imag part zero).
+	complexTyped := v.Kind() == constant.Complex
+	if !complexTyped {
+		if tv, ok := e.info.Types[x]; ok && isComplexType(tv.Type) {
+			complexTyped = true
+		}
+	}
+	if complexTyped {
 		realPart := constant.Real(v)
 		imagPart := constant.Imag(v)
 		r32, _ := constant.Float32Val(realPart)

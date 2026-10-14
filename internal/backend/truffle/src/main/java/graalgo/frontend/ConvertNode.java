@@ -17,6 +17,11 @@ import graalgo.values.GoKind;
  *   <li>float → int/uint: truncation toward zero; out-of-range mirrors
  *       gc/amd64 ({@link GoConvert}).</li>
  *   <li>float32 ↔ float64: widening exact, narrowing correctly rounded.</li>
+ *   <li>complex64 ↔ complex128: widening exact, narrowing rounds each
+ *       component to float32 (verified against stock gc).</li>
+ *   <li>untyped int/float constant → complex64/128: the real part comes
+ *       from the constant (exact decimal for untyped ints), the imaginary
+ *       part is zero; go/types guarantees representability.</li>
  *   <li>int → string: the rune conversion (out-of-range → U+FFFD).</li>
  * </ul>
  * Untyped constants never reach this node for same-family targets (they
@@ -61,8 +66,20 @@ public final class ConvertNode extends GoExprNode {
         // P3-M9: []T -> *T (e.g., &s[0] desugared as convert in generic
         // contexts). At runtime, create a pointer to the first element.
         boolean sliceToPointer = from == GoKind.SLICE && to == GoKind.POINTER;
+        // WS G: complex <-> complex (complex64 <-> complex128, either
+        // direction; go/types rejects complex <-> float/int and
+        // float/int <-> complex, so those never reach this node).
+        boolean complexToComplex = from.isComplexKind() && to.isComplexKind();
+        // WS G: untyped int/float constant -> complex (e.g. complex128(1.5),
+        // complex64(3)); the constant is the real part, imaginary part zero.
+        // go/types guarantees representability in the target. Untyped
+        // complex constants are transparent to complex targets (GoKind),
+        // so they only reach here via direct construction.
+        boolean untypedConstToComplex = (from == GoKind.UNTYPED_INT || from == GoKind.UNTYPED_FLOAT)
+                && to.isComplexKind();
         if (!(numeric || intToString || stringToString || boolToBool || unsafeEscape
-                || stringToSlice || sliceToString || ifaceToPointer || sliceToPointer)) {
+                || stringToSlice || sliceToString || ifaceToPointer || sliceToPointer
+                || complexToComplex || untypedConstToComplex)) {
             throw new IllegalArgumentException(
                     "illegal conversion: " + from + " -> " + to);
         }
@@ -164,6 +181,11 @@ public final class ConvertNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         GoKind to = kind();
+        // WS G: complex-typed conversions. Complex values travel as objects
+        // (GoComplex32 for complex64, GoComplex64 for complex128 — D5).
+        if (to.isComplexKind()) {
+            return convertToComplex(frame);
+        }
         if (to == GoKind.STRING && from == GoKind.STRING) {
             return child.executeObject(frame);
         }
@@ -204,6 +226,45 @@ public final class ConvertNode extends GoExprNode {
             return new graalgo.values.GoPointer(v, 0);
         }
         throw new UnsupportedOperationException("conversion " + from + " -> " + to + " has no object value");
+    }
+
+    /**
+     * Builds the complex value for a complex-typed conversion (WS G).
+     *
+     * <p>complex64 ↔ complex128 converts component-wise: widening is exact,
+     * narrowing rounds each component to float32 (Java {@code (float)} casts
+     * are correctly rounded, matching gc's CVTSD2SS). An untyped int/float
+     * constant becomes {@code (real, 0)}: the real part comes from the
+     * constant — the exact decimal for untyped ints (so {@code 1<<70} stays
+     * exact), the exporter's correctly-rounded f64 bits for untyped floats
+     * (unary negation included via the child node's own execute method) —
+     * and go/types guarantees representability in the target.
+     */
+    private Object convertToComplex(VirtualFrame frame) {
+        GoKind to = kind();
+        if (from.isComplexKind()) {
+            Object v = child.executeObject(frame);
+            double re, im;
+            if (v instanceof graalgo.values.GoComplex64 c) {
+                re = c.re();
+                im = c.im();
+            } else if (v instanceof graalgo.values.GoComplex32 c) {
+                re = c.re();
+                im = c.im();
+            } else {
+                throw new FrontendException(
+                        "complex conversion of non-complex value " + v + " (WS G)");
+            }
+            return to == GoKind.COMPLEX64
+                    ? new graalgo.values.GoComplex32((float) re, (float) im)
+                    : new graalgo.values.GoComplex64(re, im);
+        }
+        double re = from == GoKind.UNTYPED_INT
+                ? Double.parseDouble(child.exactDecimal())
+                : child.executeDouble(frame);
+        return to == GoKind.COMPLEX64
+                ? new graalgo.values.GoComplex32((float) re, 0f)
+                : new graalgo.values.GoComplex64(re, 0d);
     }
 
     /** Converts a Go string to a []byte or []rune slice. */

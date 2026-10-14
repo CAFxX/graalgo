@@ -40,6 +40,10 @@ public final class GoStruct {
                 // root cause as the make([]T,n) slice fix in Intrinsics).
                 objects[f.index()] = graalgo.frontend.Boxing.newArray(
                         f.arrayElemKind(), f.arrayElemDesc(), f.arrayLen());
+            } else if (!f.inLongs() && f.kind().isComplexKind()) {
+                // WS G: a complex field's zero value is (0+0i), not nil.
+                objects[f.index()] = f.kind() == GoKind.COMPLEX64
+                        ? GoComplex32.ZERO : GoComplex64.ZERO;
             }
         }
         return new GoStruct(descriptor, new long[descriptor.longsCount()], objects);

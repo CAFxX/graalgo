@@ -338,7 +338,8 @@ public final class Intrinsics {
      * Allocates a typed Java array for slice elements. For STRUCT elements,
      * each slot is pre-initialized to the zero-valued GoStruct (Go's
      * {@code make([]T, n)} zero-initializes; a null slot would NPE on
-     * {@code s[i].field} access). Requires the element descriptor for
+     * {@code s[i].field} access). Complex elements are likewise
+     * pre-initialized to (0+0i) (WS G). Requires the element descriptor for
      * struct kinds; may be null for non-struct kinds.
      */
     static Object newTypedArray(GoKind elemKind, graalgo.values.GoStructDescriptor elemDesc, int len) {
@@ -348,8 +349,16 @@ public final class Intrinsics {
             case FLOAT32 -> new float[len];
             case FLOAT64, UNTYPED_FLOAT -> new double[len];
             case BOOL, UNTYPED_BOOL -> new boolean[len];
-            case COMPLEX64 -> new graalgo.values.GoComplex32[len];
-            case COMPLEX128, UNTYPED_COMPLEX -> new graalgo.values.GoComplex64[len];
+            case COMPLEX64 -> {
+                graalgo.values.GoComplex32[] arr = new graalgo.values.GoComplex32[len];
+                java.util.Arrays.fill(arr, graalgo.values.GoComplex32.ZERO);
+                yield arr;
+            }
+            case COMPLEX128, UNTYPED_COMPLEX -> {
+                graalgo.values.GoComplex64[] arr = new graalgo.values.GoComplex64[len];
+                java.util.Arrays.fill(arr, graalgo.values.GoComplex64.ZERO);
+                yield arr;
+            }
             case STRUCT -> {
                 Object[] arr = new Object[len];
                 if (elemDesc != null) {
