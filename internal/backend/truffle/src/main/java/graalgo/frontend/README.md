@@ -2,7 +2,7 @@
 
 Frontend service (WS B, PLAN.md D1): `gofrontend` (Go; vendored `go/*`
 verbatim — see [internal/frontend/](../../../../../../../../internal/frontend/)) type-checks one single-file package
-and emits `frontend/v1` JSON (wire spec: [phases/phase1/docs/frontend-v1.md](../../../../../../../../phases/phase1/docs/frontend-v1.md)).
+and emits `frontend/v1` JSON (wire spec: \[docs/arch/frontend-v1.md\](../../../../../../../../docs/arch/frontend-v1.md)).
 This package parses that JSON and builds Truffle nodes.
 
 ## Contents
