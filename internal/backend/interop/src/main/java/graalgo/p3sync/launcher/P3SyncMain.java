@@ -26,6 +26,14 @@ import graalgo.p3chan.nodes.ChanRecvNode;
 import graalgo.p3chan.nodes.ChanSendNode;
 import graalgo.p3chan.nodes.MakeChanNode;
 import graalgo.p3chan.nodes.SelectNode;
+import graalgo.rtstack.RuntimeCallerNode;
+import graalgo.rtstack.RuntimeCallersFramesNode;
+import graalgo.rtstack.RuntimeCallersNode;
+import graalgo.rtstack.RuntimeFramesNextNode;
+import graalgo.rtstack.RuntimeFuncEntryNode;
+import graalgo.rtstack.RuntimeFuncFileLineNode;
+import graalgo.rtstack.RuntimeFuncForPCNode;
+import graalgo.rtstack.RuntimeFuncNameNode;
 import graalgo.p3link.LinknameIntrinsics;
 import graalgo.p3os.GoOs;
 import graalgo.p3sync.nodes.AtomicOpNode;
@@ -278,6 +286,26 @@ public final class P3SyncMain {
             // P4 (driver-harden): runtime.GOMAXPROCS(n) (same rationale).
             factory.registerExprKind("runtimegomaxprocs",
                     (node, ctx) -> GoMaxProcsNode.build(node, ctx, factory));
+            // Stack-inspection family (synthetic runtime package):
+            // runtime.Callers/Caller/CallersFrames/FuncForPC and the
+            // Frames/Func methods. Public extension hooks — no Phase-1/
+            // Phase-2 change.
+            factory.registerExprKind("runtimecallers",
+                    (node, ctx) -> RuntimeCallersNode.build(node, ctx, factory));
+            factory.registerExprKind("runtimecaller",
+                    (node, ctx) -> RuntimeCallerNode.build(node, ctx, factory));
+            factory.registerExprKind("runtimecallersframes",
+                    (node, ctx) -> RuntimeCallersFramesNode.build(node, ctx, factory));
+            factory.registerExprKind("runtimeframesnext",
+                    (node, ctx) -> RuntimeFramesNextNode.build(node, ctx, factory));
+            factory.registerExprKind("runtimefuncforpc",
+                    (node, ctx) -> RuntimeFuncForPCNode.build(node, ctx, factory));
+            factory.registerExprKind("runtimefuncname",
+                    (node, ctx) -> RuntimeFuncNameNode.build(node, ctx, factory));
+            factory.registerExprKind("runtimefuncentry",
+                    (node, ctx) -> RuntimeFuncEntryNode.build(node, ctx, factory));
+            factory.registerExprKind("runtimefuncfileline",
+                    (node, ctx) -> RuntimeFuncFileLineNode.build(node, ctx, factory));
             // P3-M8: the synthetic unsafe wire kinds (Pointer conversions,
             // Slice/SliceData/String/StringData, Add trap). Public extension
             // hooks — no Phase-1/Phase-2 change. The per-run handle table is

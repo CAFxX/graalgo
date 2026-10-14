@@ -179,7 +179,9 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // (wave 1) with the synthetic errors and sort packages (real-Go sources
 // in synth_errors.go / synth_sort.go, likewise via getSyntheticPackage):
 // it resolves exactly the synthetic package
-// "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface),
+// "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface
+// and the stack-inspection family: Callers/CallersFrames/Caller/FuncForPC
+// plus Frames/Frame/Func),
 // the synthetic package "fmt" exposing the seven D4 symbols (Print,
 // Printf, Println, Sprint, Sprintf, Sprintln, Errorf) with exact variadic
 // signatures, the synthetic package "sync" exposing the four P3-M2b
@@ -202,69 +204,151 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // "unsafe".
 // Every other import still fails via failImporter. WS G's full
 // import overlay absorbs this carve-out.
+// syntheticRuntimePackage builds the synthetic "runtime" package for the
+// import overlay. The runtime package is inherently implementation-defined
+// (gc's own runtime/ is machine-specific and cannot compile on graalgo),
+// so the overlay declares its API surface with exact gc 1.27.1 signatures
+// (verified against ~/tools/go-1.27.1/src/runtime/*.go) and the backend
+// implements each member as an intrinsic wire node (see exportCall and
+// graalgo.rtstack):
+//   - Goexit (M5, WS F), the build constants GOARCH/GOOS and NumCPU
+//     (P4 driver-harden), GOMAXPROCS (P4 driver-harden),
+//   - the P2-M4 GC-interop surface (SetFinalizer/KeepAlive/GC, ADR-0002 D4),
+//   - the stack-inspection family: Callers, CallersFrames, Caller,
+//     FuncForPC, and the Frames/Frame/Func types with their methods.
+//
+// The multi-result members (Caller, (*Frames).Next, (*Func).FileLine) keep
+// their exact multi-result signatures for type-checking; call sites
+// desugar through the mrRuntimeStack plan (mrdesugar_m5.go) to the
+// single-result intrinsic wire nodes returning pair structs
+// (callerPair/framesNextPair/funcFileLinePair), exactly like the mrM7
+// Appendix M desugar — except there is no real-Go __-helper (the overlay
+// has no source): the wire node itself is the implementation.
+func syntheticRuntimePackage() *types.Package {
+	pkg := types.NewPackage("runtime", "runtime")
+	strTyp := types.Typ[types.String]
+	intTyp := types.Typ[types.Int]
+	uintptrTyp := types.Typ[types.Uintptr]
+	boolTyp := types.Typ[types.Bool]
+
+	param := func(name string, t types.Type) *types.Var {
+		return types.NewParam(token.NoPos, pkg, name, t)
+	}
+	tuple := func(vs ...*types.Var) *types.Tuple {
+		return types.NewTuple(vs...)
+	}
+	addFunc := func(name string, params, results *types.Tuple) *types.Func {
+		fn := types.NewFunc(token.NoPos, pkg, name,
+			types.NewSignatureType(nil, nil, nil, params, results, false))
+		pkg.Scope().Insert(fn)
+		return fn
+	}
+	newNamed := func(name string, underlying types.Type) *types.Named {
+		tname := types.NewTypeName(token.NoPos, pkg, name, nil)
+		pkg.Scope().Insert(tname)
+		return types.NewNamed(tname, underlying, nil)
+	}
+	newField := func(name string, t types.Type) *types.Var {
+		return types.NewField(token.NoPos, pkg, name, t, false)
+	}
+	addMethod := func(named *types.Named, name string, params, results *types.Tuple) {
+		recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(named))
+		named.AddMethod(types.NewFunc(token.NoPos, pkg, name,
+			types.NewSignatureType(recv, nil, nil, params, results, false)))
+	}
+
+	// M5 (WS F): Goexit — the Phase-1 Goexit trigger.
+	addFunc("Goexit", nil, nil)
+	// P4 (driver-harden): the build constants and NumCPU. Real modules
+	// (e.g. uuid's tests) read runtime.GOARCH/GOOS and call
+	// runtime.NumCPU. Values match the host (linux/amd64); NumCPU
+	// returns the host count via a wire node (see below).
+	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "GOARCH", strTyp,
+		constant.MakeString("amd64")))
+	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "GOOS", strTyp,
+		constant.MakeString("linux")))
+	addFunc("NumCPU", nil, tuple(param("", intTyp)))
+	// P4 (driver-harden): GOMAXPROCS. Sets and returns the GOMAXPROCS
+	// value; the backend tracks it as a no-op cell (no real scheduler
+	// tuning on the JVM) but the call must type-check and round-trip.
+	addFunc("GOMAXPROCS", tuple(param("n", intTyp)), tuple(param("", intTyp)))
+	// P2-M4 (GC interop, ADR-0002 D4): the Go-observable GC surface.
+	// Signatures match gc's runtime package exactly; the Java side is
+	// graalgo.runtime.GcInterop (Phase-1 stub, Phase-2 real).
+	anyT := types.NewInterfaceType(nil, nil).Complete()
+	addFunc("SetFinalizer", tuple(param("obj", anyT), param("finalizer", anyT)), nil)
+	addFunc("KeepAlive", tuple(param("x", anyT)), nil)
+	addFunc("GC", nil, nil)
+
+	// Stack-inspection family (unblocks internal/bisect via expvar <->
+	// godebug, hence the Caddy import chain). gc 1.27.1 signatures,
+	// verified against src/runtime/traceback.go and src/runtime/symtab.go.
+	//
+	// PCs are opaque: the backend interns each (function, file, line)
+	// site to a dense id (graalgo.runtime.StackTrace). Interned ids are
+	// only meaningful to CallersFrames/FuncForPC — exactly gc's contract
+	// ("Iterating over the returned slice of PCs directly is
+	// discouraged").
+	uintptrSlice := types.NewSlice(uintptrTyp)
+	addFunc("Callers", tuple(param("skip", intTyp), param("pc", uintptrSlice)),
+		tuple(param("", intTyp)))
+	// type Func: opaque (gc: unexported fields).
+	fn := newNamed("Func", types.NewStruct(nil, nil))
+	// type Frame: the gc struct shape, with exported fields so the
+	// (*Frames).Next desugar can extract them from the pair.
+	frame := newNamed("Frame", types.NewStruct([]*types.Var{
+		newField("PC", uintptrTyp),
+		newField("Func", types.NewPointer(fn)),
+		newField("Function", strTyp),
+		newField("File", strTyp),
+		newField("Line", intTyp),
+		newField("Entry", uintptrTyp),
+	}, nil))
+	// type Frames: opaque (gc: unexported fields).
+	frames := newNamed("Frames", types.NewStruct(nil, nil))
+	addFunc("CallersFrames", tuple(param("pcs", uintptrSlice)),
+		tuple(param("", types.NewPointer(frames))))
+	addFunc("Caller", tuple(param("skip", intTyp)), tuple(
+		param("pc", uintptrTyp),
+		param("file", strTyp),
+		param("line", intTyp),
+		param("ok", boolTyp)))
+	addFunc("FuncForPC", tuple(param("pc", uintptrTyp)),
+		tuple(param("", types.NewPointer(fn))))
+	addMethod(frames, "Next", nil, tuple(param("", frame), param("", boolTyp)))
+	addMethod(fn, "Name", nil, tuple(param("", strTyp)))
+	addMethod(fn, "Entry", nil, tuple(param("", uintptrTyp)))
+	addMethod(fn, "FileLine", tuple(param("pc", uintptrTyp)), tuple(
+		param("file", strTyp),
+		param("line", intTyp)))
+	// Pair structs for the mrRuntimeStack desugar (unexported: user code
+	// can never name them — go/types rejects unexported cross-package
+	// references — so there is no collision).
+	newNamed("callerPair", types.NewStruct([]*types.Var{
+		newField("pc", uintptrTyp),
+		newField("file", strTyp),
+		newField("line", intTyp),
+		newField("ok", boolTyp),
+	}, nil))
+	newNamed("framesNextPair", types.NewStruct([]*types.Var{
+		newField("frame", frame),
+		newField("more", boolTyp),
+	}, nil))
+	newNamed("funcFileLinePair", types.NewStruct([]*types.Var{
+		newField("file", strTyp),
+		newField("line", intTyp),
+	}, nil))
+
+	pkg.MarkComplete()
+	return pkg
+}
+
 type overlayImporter struct{}
 
 func (overlayImporter) Import(path string) (*types.Package, error) {
 	switch path {
 	case "runtime":
-		pkg := types.NewPackage("runtime", "runtime")
-		sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
-		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "Goexit", sig))
-		// P4 (driver-harden): the build constants and NumCPU. Real modules
-		// (e.g. uuid's tests) read runtime.GOARCH/GOOS and call
-		// runtime.NumCPU. Values match the host (linux/amd64); NumCPU
-		// returns the host count via a wire node (see below).
-		strTyp := types.Typ[types.String]
-		pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "GOARCH", strTyp,
-			constant.MakeString("amd64")))
-		pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "GOOS", strTyp,
-			constant.MakeString("linux")))
-		intTyp := types.Typ[types.Int]
-		numCPUSig := types.NewSignatureType(nil, nil, nil, nil,
-			types.NewTuple(types.NewVar(token.NoPos, pkg, "", intTyp)), false)
-		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "NumCPU", numCPUSig))
-		// P4 (driver-harden): GOMAXPROCS. Sets and returns the GOMAXPROCS
-		// value; the backend tracks it as a no-op cell (no real scheduler
-		// tuning on the JVM) but the call must type-check and round-trip.
-		gomaxprocsSig := types.NewSignatureType(nil, nil, nil,
-			types.NewTuple(types.NewVar(token.NoPos, pkg, "n", intTyp)),
-			types.NewTuple(types.NewVar(token.NoPos, pkg, "", intTyp)), false)
-		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "GOMAXPROCS", gomaxprocsSig))
-		// P2-M4 (GC interop, ADR-0002 D4): the Go-observable GC surface.
-		// Signatures match gc's runtime package exactly; the Java side is
-		// graalgo.runtime.GcInterop (Phase-1 stub, Phase-2 real).
-		anyT := types.NewInterfaceType(nil, nil).Complete()
-		mkSig := func(params ...*types.Var) *types.Signature {
-			return types.NewSignatureType(nil, nil, nil, types.NewTuple(params...), nil, false)
-		}
-		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "SetFinalizer", mkSig(
-			types.NewVar(token.NoPos, pkg, "obj", anyT),
-			types.NewVar(token.NoPos, pkg, "finalizer", anyT))))
-		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "KeepAlive", mkSig(
-			types.NewVar(token.NoPos, pkg, "x", anyT))))
-		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "GC", mkSig()))
-		// P3-M9 (driver-harden, go-cmp lane): runtime.FuncForPC and the
-		// Func type. gc signatures: func FuncForPC(pc uintptr) *Func,
-		// func (f *Func) Name() string. The backend does not implement
-		// PC-to-name mapping (no function PC table); calls fail fast
-		// with a named scope error (see exportCall). The type surface
-		// must exist so packages referencing it (e.g. go-cmp's
-		// internal/function) type-check.
-		funcNamed := types.NewNamed(
-			types.NewTypeName(token.NoPos, pkg, "Func", nil), types.NewStruct(nil, nil), nil)
-		pkg.Scope().Insert(funcNamed.Obj())
-		funcPtr := types.NewPointer(funcNamed)
-		nameSig := types.NewSignatureType(
-			types.NewParam(token.NoPos, pkg, "f", funcPtr), nil, nil,
-			nil, types.NewTuple(types.NewVar(token.NoPos, pkg, "", strTyp)), false)
-		funcNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "Name", nameSig))
-		uintptrTyp := types.Typ[types.Uintptr]
-		funcForPCSig := types.NewSignatureType(nil, nil, nil,
-			types.NewTuple(types.NewVar(token.NoPos, pkg, "pc", uintptrTyp)),
-			types.NewTuple(types.NewVar(token.NoPos, pkg, "", funcPtr)), false)
-		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "FuncForPC", funcForPCSig))
-		pkg.MarkComplete()
-		return pkg, nil
+		return syntheticRuntimePackage(), nil
 	case "fmt":
 		return syntheticFmtPackage(), nil
 	case "sync":
@@ -939,6 +1023,29 @@ func syntheticPrimitiveRecv(t types.Type) *types.Named {
 		return nt
 	}
 	return atomicPrimitiveRecv(t)
+}
+
+// runtimeStackMethod reports whether a MethodVal selection is one of the
+// synthetic runtime stack-inspection methods ((*Frames).Next,
+// (*Func).Name/Entry/FileLine), returning the method name. The check is
+// structural on the receiver's named type (package path "runtime" plus the
+// type name) — a user type with the same method names is never matched.
+func runtimeStackMethod(selection *types.Selection) (string, bool) {
+	recv := selection.Recv()
+	if pt, ok := recv.(*types.Pointer); ok {
+		recv = pt.Elem()
+	}
+	nt, ok := recv.(*types.Named)
+	if !ok || nt.Obj() == nil || nt.Obj().Pkg() == nil || nt.Obj().Pkg().Path() != "runtime" {
+		return "", false
+	}
+	switch mname := selection.Obj().Name(); {
+	case nt.Obj().Name() == "Frames" && mname == "Next":
+		return mname, true
+	case nt.Obj().Name() == "Func" && (mname == "Name" || mname == "Entry" || mname == "FileLine"):
+		return mname, true
+	}
+	return "", false
 }
 
 // syntheticOpTypeName returns the syncop "synctyp" for a synthetic primitive
@@ -5416,6 +5523,14 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 		if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
 			continue
 		}
+		// mrRuntimeStack: the synthetic runtime stack-inspection methods
+		// ((*Frames).Next, (*Func).Name/Entry/FileLine) lower to
+		// intrinsic wire nodes, never through resolveMethodCall/
+		// methodIndex (the synthetic runtime overlay declares no
+		// funcdecls to instantiate).
+		if _, isRt := runtimeStackMethod(selection); isRt {
+			continue
+		}
 		var mtargs []types.Type
 		if ii, ok := e.info.Instances[sel.Sel]; ok {
 			mtargs = typeList(ii.TypeArgs)
@@ -8148,26 +8263,12 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			}
 			return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 		}
-		// P3-M9 (driver-harden, go-cmp lane): runtime.FuncForPC. The type
-		// surface exists (see overlayImporter), but the backend has no
-		// PC-to-function table. Rewrite to a runtime panic so the
-		// enclosing body still exports (e.g. go-cmp's NameOf); an actual
-		// call fails fast with a clear message, never a confusing
-		// "undefined" or backend crash.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" && sel.Sel.Name == "FuncForPC" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
-				panicCall := &ast.CallExpr{
-					Fun: ast.NewIdent("panic"),
-					Args: []ast.Expr{
-						&ast.BasicLit{
-							Kind:  token.STRING,
-							Value: `"runtime.FuncForPC not implemented (no PC-to-function table on the JVM backend)"`,
-						},
-					},
-				}
-				return e.exportCall(panicCall)
-			}
-		}
+		// P3-M9 (driver-harden, go-cmp lane) note: runtime.FuncForPC was
+		// once rewritten to a panic ("no PC-to-function table"). The
+		// stack-inspection lane implements it for real via the
+		// "runtimefuncforpc" wire node (PC interning in
+		// graalgo.runtime.StackTrace), so the call falls through to the
+		// general runtime interception below.
 		// P2-M4 (GC interop, ADR-0002 D4): runtime.SetFinalizer/KeepAlive/GC.
 		// Emitted as "call" nodes with the gcinterop marker naming the
 		// intrinsic; the factory builds the corresponding CallNode which
@@ -8218,6 +8319,64 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 					}
 					return e.node("runtimegomaxprocs", c, map[string]any{"x": arg, "type": typ}), nil
 				}
+				// Stack-inspection family: runtime.Callers/CallersFrames/
+				// FuncForPC are single-result intrinsics, emitted as
+				// additive wire nodes (graalgo.rtstack). runtime.Caller,
+				// (*Frames).Next and (*Func).FileLine are multi-result:
+				// only the N-target assignment desugar (mrRuntimeStack in
+				// mrdesugar_m5.go) may lower them — any other position
+				// fails fast here with the named scope error.
+				if sel.Sel.Name == "Callers" {
+					if len(c.Args) != 2 {
+						return nil, fmt.Errorf("gofrontend: runtime.Callers takes 2 arguments")
+					}
+					args, err := e.exportCallArgs(c)
+					if err != nil {
+						return nil, err
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimecallers", c, map[string]any{
+						"skip": args[0], "pc": args[1], "type": typ,
+					}), nil
+				}
+				if sel.Sel.Name == "CallersFrames" {
+					if len(c.Args) != 1 {
+						return nil, fmt.Errorf("gofrontend: runtime.CallersFrames takes 1 argument")
+					}
+					args, err := e.exportCallArgs(c)
+					if err != nil {
+						return nil, err
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimecallersframes", c, map[string]any{
+						"pcs": args[0], "type": typ,
+					}), nil
+				}
+				if sel.Sel.Name == "FuncForPC" {
+					if len(c.Args) != 1 {
+						return nil, fmt.Errorf("gofrontend: runtime.FuncForPC takes 1 argument")
+					}
+					args, err := e.exportCallArgs(c)
+					if err != nil {
+						return nil, err
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimefuncforpc", c, map[string]any{
+						"pc": args[0], "type": typ,
+					}), nil
+				}
+				if sel.Sel.Name == "Caller" {
+					return nil, scopeErrorf("runtime.Caller is multi-result: use pc, file, line, ok := runtime.Caller(skip) (4-target assignment) in frontend/v1 scope (WS D)")
+				}
 			}
 		}
 		// M6 (WS H): method call — receiver-based dispatch resolved by
@@ -8237,7 +8396,33 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				}
 			}
 		}
+		// Stack-inspection methods: (*Func).Name/(*Func).Entry are
+		// single-result intrinsics, emitted as additive wire nodes
+		// (graalgo.rtstack). (*Frames).Next and (*Func).FileLine are
+		// multi-result: only the mrRuntimeStack desugar may lower them
+		// (direct exportCall positions fail fast with the named scope
+		// error below).
 		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			if mname, isRt := runtimeStackMethod(selection); isRt {
+				switch mname {
+				case "Name", "Entry":
+					recv, err := e.exportExpr(sel.X)
+					if err != nil {
+						return nil, err
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					kind := "runtimefuncname"
+					if mname == "Entry" {
+						kind = "runtimefuncentry"
+					}
+					return e.node(kind, c, map[string]any{"f": recv, "type": typ}), nil
+				default:
+					return nil, scopeErrorf("runtime.%s is multi-result: use an N-target assignment (frame, more := frames.Next(); file, line := fn.FileLine(pc)) in frontend/v1 scope (WS D)", mname)
+				}
+			}
 			if nt := syntheticPrimitiveRecv(selection.Recv()); nt != nil {
 				return e.exportSyncOp(c, sel, nt)
 			}
