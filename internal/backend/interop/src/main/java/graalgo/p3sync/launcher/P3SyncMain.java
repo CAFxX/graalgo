@@ -36,6 +36,7 @@ import graalgo.rtstack.RuntimeFuncForPCNode;
 import graalgo.rtstack.RuntimeFuncNameNode;
 import graalgo.p3link.LinknameIntrinsics;
 import graalgo.p3os.GoOs;
+import graalgo.p3sync.nodes.AtomicAddrNode;
 import graalgo.p3sync.nodes.AtomicOpNode;
 import graalgo.p3sync.nodes.SyncNewNode;
 import graalgo.p3sync.nodes.SyncOpNode;
@@ -211,6 +212,10 @@ public final class P3SyncMain {
             // P3-M2b (WS D, ADR-0002): the sync wire kinds. Public
             // extension hook — no Phase-1 NodeFactory change.
             factory.registerExprKind("syncnew", (node, ctx) -> SyncNewNode.build(node, ctx, factory));
+            // fix-linkname (Caddy/godebug lane): the atomicaddr wire node
+            // (package-level sync/atomic word ops).
+            factory.registerExprKind("atomicaddr",
+                    (node, ctx) -> AtomicAddrNode.build(node, ctx, factory));
             // P3-M4 (WS C, ADR-0004 D2): "syncop" with an "atomic.*"
             // synctyp dispatches to AtomicOpNode (real result kinds);
             // the sync.* namespace keeps SyncOpNode.

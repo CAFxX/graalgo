@@ -824,6 +824,7 @@
             }
           }
         ],
+        "pkgpath": "main",
         "results": [
           {
             "kind": "param",
@@ -1012,6 +1013,7 @@
             }
           }
         ],
+        "pkgpath": "main",
         "results": [
           {
             "kind": "param",
@@ -1978,6 +1980,7 @@
         "name": "main",
         "obj": 2,
         "params": [],
+        "pkgpath": "main",
         "sig": 16
       }
     }

@@ -1849,14 +1849,25 @@ public final class NodeFactory {
             case "WaitGroup" -> new graalgo.runtime.sync.GoWaitGroup();
             case "Once" -> new graalgo.runtime.sync.GoOnce();
             case "Pool" -> new GoPool();
+            // fix-linkname: sync.Map.
+            case "Map" -> new graalgo.runtime.sync.GoSyncMap();
+            // fix-linkname: sync/atomic wrapper cells (struct fields).
+            case "atomic.Int64", "atomic.Uint64", "atomic.Uintptr" ->
+                new graalgo.runtime.sync.GoAtomicInt64();
+            case "atomic.Int32", "atomic.Uint32", "atomic.Bool" ->
+                new graalgo.runtime.sync.GoAtomicInt32();
+            case "atomic.Pointer", "atomic.Value" ->
+                new java.util.concurrent.atomic.AtomicReference<>();
             default -> throw new IllegalArgumentException("unknown sync primitive " + prim);
         };
     }
 
     /**
-     * Whether the type-table id denotes one of the synthetic sync
+     * Whether the type-table id denotes one of the synthetic sync/atomic
      * primitive named types (resolving aliases). Returns the primitive
-     * name ("Mutex", "RWMutex", "WaitGroup", "Once", "Pool") or null.
+     * name ("Mutex", ..., "Map", "atomic.Int64", ..., "atomic.Pointer",
+     * "atomic.Value") or null. Generic instantiations (e.g.
+     * {@code sync/atomic.Pointer[T]}) match by their base name.
      */
     private static String syncPrimitiveName(BuildCtx ctx, int typeId, String path) {
         int rid = resolveAlias(ctx, typeId, path);
@@ -1865,11 +1876,29 @@ public final class NodeFactory {
             return null;
         }
         String name = entry.object("detail", path).string("name", path);
-        if (name != null && name.startsWith("sync.")) {
+        if (name == null) {
+            return null;
+        }
+        if (name.startsWith("sync.")) {
             String base = name.substring(5);
             switch (base) {
-                case "Mutex", "RWMutex", "WaitGroup", "Once", "Pool":
+                case "Mutex", "RWMutex", "WaitGroup", "Once", "Pool",
+                     // fix-linkname: sync.Map.
+                     "Map":
                     return base;
+            }
+        }
+        if (name.startsWith("sync/atomic.")) {
+            String base = name.substring(12);
+            // Strip generic instantiation suffix: Pointer[T] -> Pointer.
+            int br = base.indexOf('[');
+            if (br >= 0) {
+                base = base.substring(0, br);
+            }
+            switch (base) {
+                case "Int64", "Uint64", "Uintptr", "Int32", "Uint32", "Bool",
+                     "Pointer", "Value":
+                    return "atomic." + base;
             }
         }
         return null;
@@ -5609,6 +5638,12 @@ public final class NodeFactory {
     /** Zero-value template for a composite literal element/field type. */
     private Object zeroTemplateFor(GoKind kind, int typeId, BuildCtx ctx, String path) {
         if (kind == GoKind.STRUCT) {
+            // fix-linkname: sync primitive fields get usable Java objects,
+            // not empty structs (mirrors fieldZeroTemplate).
+            String prim = syncPrimitiveName(ctx, typeId, path);
+            if (prim != null) {
+                return newSyncPrimitive(prim);
+            }
             return structZeroTemplate(ctx, typeId, path);
         }
         if (kind == GoKind.ARRAY) {

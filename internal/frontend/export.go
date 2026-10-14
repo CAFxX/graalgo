@@ -810,6 +810,11 @@ var fmtOverlayFuncs = map[string]bool{
 var syncPrimitiveNames = map[string]bool{
 	"Mutex": true, "RWMutex": true, "WaitGroup": true, "Once": true,
 	"Pool": true,
+	// fix-linkname (Caddy/godebug lane): sync.Map. The four multi-result
+	// methods (Load, LoadOrStore, LoadAndDelete, Swap) desugar via
+	// mrSyncMap (pair-returning syncop); the rest lower to syncop
+	// directly.
+	"Map": true,
 }
 
 // syncOpsInScope is the M2-supported method set per primitive (ADR-0002
@@ -823,7 +828,17 @@ var syncOpsInScope = map[string]map[string]bool{
 	"RWMutex":   {"Lock": true, "Unlock": true, "RLock": true, "RUnlock": true},
 	"WaitGroup": {"Add": true, "Done": true, "Wait": true},
 	"Once":      {"Do": true},
-	"Pool":      {"Put": true, "Get": true},
+	// P3-M9 (driver-harden, go-cmp lane): Pool.Get/Put. Pool.New is not
+	// in scope (see syncPrimitiveNames).
+	"Pool": {"Get": true, "Put": true},
+	// fix-linkname (Caddy/godebug lane): sync.Map's full gc method set.
+	// The four multi-result methods (Load, LoadOrStore, LoadAndDelete,
+	// Swap) are desugared by the mrSyncMap plan, not executed here —
+	// they are listed so the scope check passes and the classifier arm
+	// (not this switch) handles them.
+	"Map": {"Load": true, "Store": true, "LoadOrStore": true, "LoadAndDelete": true,
+		"Delete": true, "Swap": true, "CompareAndSwap": true, "CompareAndDelete": true,
+		"Range": true, "Clear": true},
 }
 
 // isSyncPoolNamed reports whether nt is the synthetic sync.Pool named
@@ -1005,6 +1020,48 @@ func syntheticSyncPackage() *types.Package {
 	onceFuncSig := types.NewSignatureType(nil, nil, nil,
 		tuple(param("f", funcT)), tuple(param("", funcT)), false)
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "OnceFunc", onceFuncSig))
+
+	// fix-linkname (Caddy/godebug lane): sync.Map. gc 1.27.1 exact method
+	// signatures (all pointer receivers; verified against
+	// ~/tools/go-1.27.1/src/sync/map.go). The Go value IS the Java
+	// GoSyncMap object (opaque, ADR-0002 D1), like the other primitives.
+	// The four multi-result methods (Load, LoadOrStore, LoadAndDelete,
+	// Swap) desugar through the mrSyncMap plan (mrdesugar_m5.go): the
+	// desugar builds the "syncop" wire node directly with the pair type
+	// below, exactly like the mrRuntimeStack precedent — there is no
+	// __-helper because the types-built overlay has no real-Go source.
+	// Single-result and void methods lower to "syncop" unchanged.
+	m := newPrimitive("Map")
+	anyBoolPair := types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, pkg, "v", anyT, false),
+		types.NewField(token.NoPos, pkg, "ok", boolT, false),
+	}, nil)
+	mapPairName := types.NewTypeName(token.NoPos, pkg, "mapAnyBoolPair", nil)
+	pkg.Scope().Insert(mapPairName)
+	types.NewNamed(mapPairName, anyBoolPair, nil)
+	// The mrSyncMap classifier (mrdesugar_m5.go) finds the pair type via
+	// scope lookup, like classifyRuntimeStackMethod's named().
+	addMethod(m, "Load", tuple(param("key", anyT)),
+		types.NewTuple(param("value", anyT), param("ok", boolT)))
+	addMethod(m, "Store", types.NewTuple(param("key", anyT), param("value", anyT)), nil)
+	addMethod(m, "LoadOrStore", types.NewTuple(param("key", anyT), param("value", anyT)),
+		types.NewTuple(param("actual", anyT), param("loaded", boolT)))
+	addMethod(m, "LoadAndDelete", tuple(param("key", anyT)),
+		types.NewTuple(param("value", anyT), param("loaded", boolT)))
+	addMethod(m, "Delete", tuple(param("key", anyT)), nil)
+	addMethod(m, "Swap", types.NewTuple(param("key", anyT), param("value", anyT)),
+		types.NewTuple(param("previous", anyT), param("loaded", boolT)))
+	addMethod(m, "CompareAndSwap",
+		types.NewTuple(param("key", anyT), param("old", anyT), param("new", anyT)),
+		tuple(param("swapped", boolT)))
+	addMethod(m, "CompareAndDelete",
+		types.NewTuple(param("key", anyT), param("old", anyT)),
+		tuple(param("deleted", boolT)))
+	addMethod(m, "Clear", nil, nil)
+	rangeFuncSig := types.NewSignatureType(nil, nil, nil,
+		types.NewTuple(param("key", anyT), param("value", anyT)),
+		tuple(param("", boolT)), false)
+	addMethod(m, "Range", tuple(param("f", rangeFuncSig)), nil)
 
 	pkg.MarkComplete()
 	return pkg
@@ -1287,14 +1344,9 @@ func syntheticAtomicPackage() *types.Package {
 		addFunc("CompareAndSwap"+nm,
 			types.NewTuple(param("addr", paddr), param("old", wt), param("new", wt)), boolRes)
 	}
-	{
-		paddr := types.NewPointer(boolT)
-		addFunc("LoadBool", tuple(param("addr", paddr)), tuple(param("", boolT)))
-		addFunc("StoreBool", types.NewTuple(param("addr", paddr), param("val", boolT)), nil)
-		addFunc("SwapBool", types.NewTuple(param("addr", paddr), param("new", boolT)), tuple(param("old", boolT)))
-		addFunc("CompareAndSwapBool",
-			types.NewTuple(param("addr", paddr), param("old", boolT), param("new", boolT)), boolRes)
-	}
+	// Note: gc has no package-level bool atomics (only the atomic.Bool
+	// wrapper type's methods); LoadBool/StoreBool/... are deliberately
+	// absent so programs using them fail exactly like gc ("undefined").
 
 	// P3-driver-harden (jsonlib lane): atomic.LoadPointer/StorePointer
 	// with exact gc signatures. They lower in exportCall/exportStmt to
@@ -6332,6 +6384,9 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	}
 	fields := map[string]any{
 		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
+		// Cross-package linkname resolution (Go->Go direction) binds every
+		// compiled function under pkgpath.name; the path is additive.
+		"pkgpath": funcPkgPath(e, fi),
 	}
 	if len(results) > 0 {
 		fields["results"] = results
@@ -6340,10 +6395,16 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 }
 
 // linknameDirective scans fd's doc comment for gc's //go:linkname
-// directive ("//go:linkname <local> <symbol>"). Returns "" when absent.
+// directive ("//go:linkname <local> [<symbol>]"). Returns "" when absent.
+// gc allows the symbol to be omitted: the target defaults to the
+// package's own default object symbol (pkgPath + "." + local), which
+// marks the local symbol as referenceable by that name from another
+// package — the internal/godebug <-> runtime split uses exactly this
+// form (godebug declares "//go:linkname setUpdate", runtime provides it
+// via "//go:linkname godebug_setUpdate internal/godebug.setUpdate").
 // A malformed directive or a local name that does not match the declared
 // function is a scope error (gc rejects both at compile time).
-func linknameDirective(fd *ast.FuncDecl) (string, error) {
+func linknameDirective(fd *ast.FuncDecl, pkgPath string) (string, error) {
 	if fd.Doc == nil {
 		return "", nil
 	}
@@ -6353,15 +6414,38 @@ func linknameDirective(fd *ast.FuncDecl) (string, error) {
 			continue
 		}
 		fields := strings.Fields(text[len("go:linkname "):])
-		if len(fields) != 2 {
-			return "", scopeErrorf("//go:linkname on func %s must have exactly two fields (local symbol)", fd.Name.Name)
+		if len(fields) < 1 || len(fields) > 2 {
+			return "", scopeErrorf("//go:linkname on func %s must have one or two fields (local [symbol])", fd.Name.Name)
 		}
 		if fields[0] != fd.Name.Name {
 			return "", scopeErrorf("//go:linkname local name %q does not match func %s", fields[0], fd.Name.Name)
 		}
-		return fields[1], nil
+		if len(fields) == 2 {
+			return fields[1], nil
+		}
+		// Single-field form: the package's default object symbol, mirroring
+		// gc's objabi.PathToPrefix(pkgpath) + "." + local (PathToPrefix is
+		// the identity for paths needing no escaping; graalgo's symbol
+		// namespace uses raw import paths throughout, e.g.
+		// "internal/poll.runtime_pollOpen").
+		return pkgPath + "." + fields[0], nil
 	}
 	return "", nil
+}
+
+// funcPkgPath returns the import path of the package that declares fi,
+// for linkname default symbols and the funcdecl "pkgpath" wire field
+// (cross-package linkname resolution binds every compiled function under
+// pkgpath.name). The object's own package is authoritative; the
+// exporter's current package is the fallback (user file: "main").
+func funcPkgPath(e *exporter, fi *funcDeclInfo) string {
+	if fi != nil && fi.obj != nil && fi.obj.Pkg() != nil {
+		return fi.obj.Pkg().Path()
+	}
+	if e != nil && e.pkg != nil {
+		return e.pkg.Path()
+	}
+	return ""
 }
 
 // exportLinknameDecl emits a bodyless //go:linkname function (P3-M4, WS C,
@@ -6371,7 +6455,8 @@ func linknameDirective(fd *ast.FuncDecl) (string, error) {
 // scope error.
 func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
-	symbol, err := linknameDirective(fd)
+	pkgPath := funcPkgPath(e, fi)
+	symbol, err := linknameDirective(fd, pkgPath)
 	if err != nil {
 		return nil, err
 	}
@@ -6402,7 +6487,7 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	}
 	fields := map[string]any{
 		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params,
-		"linkname": symbol,
+		"linkname": symbol, "pkgpath": pkgPath,
 	}
 	if len(results) > 0 {
 		fields["results"] = results
@@ -6544,6 +6629,8 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	fields := map[string]any{
 		"name": inst.name, "obj": inst.instID, "instof": inst.decl.funcID,
 		"typeargs": inst.targIDs, "sig": inst.sigID, "params": params, "body": body,
+		// Same cross-package binding as funcdecl (see exportFuncDecl).
+		"pkgpath": funcPkgPath(e, inst.decl),
 	}
 	if len(results) > 0 {
 		fields["results"] = results
@@ -8432,6 +8519,20 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				if sel.Sel.Name == "LoadPointer" {
 					return e.exportAtomicLoadPointer(c)
 				}
+				// fix-linkname (Caddy/godebug lane): package-level atomic
+				// word/bool ops (LoadUint64, StoreInt32, …). The address
+				// operand evaluates to a GoPointer; the "atomicaddr"
+				// wire node wraps it in a delegating AtomicLong /
+				// AtomicInteger cell, and the existing "syncop" atomic
+				// machinery (AtomicOpNode) performs the op — the same
+				// node that serves the typed wrappers. RMW ops
+				// (Add/Swap/CompareAndSwap) serialize on a shared lock
+				// (documented in GoPointerCell64); Load/Store are plain
+				// volatile-cell accesses, the exportAtomicLoadPointer
+				// precedent.
+				if n, handled, err := e.exportAtomicWordOp(c, sel.Sel.Name); handled {
+					return n, err
+				}
 				return nil, scopeErrorf("sync/atomic.%s is not in M4 scope (package-level atomics need addressable operands, WS D)", sel.Sel.Name)
 			}
 		}
@@ -9037,6 +9138,89 @@ func (e *exporter) exportAtomicLoadPointer(c *ast.CallExpr) (*Node, error) {
 	return e.node("deref", c, map[string]any{"x": px, "type": tid}), nil
 }
 
+// atomicWordOp describes one package-level sync/atomic word/bool
+// operation (fix-linkname): the syncop op name, the atomic synctyp
+// (shared with the typed wrappers so AtomicOpNode serves both), the
+// atomicaddr cell kind, and the value-argument count after the address.
+type atomicWordOp struct {
+	op      string // syncop op: Load/Store/Add/Swap/CompareAndSwap
+	synctyp string // e.g. "atomic.Uint64"
+	cell    string // atomicaddr cell kind: "int64", "int32", "bool"
+	nargs   int    // value args after addr
+}
+
+// atomicWordOps is the package-level atomic word/bool surface lowered to
+// the atomicaddr+syncop wire nodes (fix-linkname, Caddy/godebug lane).
+// gc's exact function names (verified against
+// ~/tools/go-1.27.1/src/sync/atomic/doc.go). And/Or, the Pointer/Value
+// package funcs, and anything else stay M4: the caller fails fast with
+// the named scope error.
+var atomicWordOps = map[string]atomicWordOp{
+	"LoadInt32":             {"Load", "atomic.Int32", "int32", 0},
+	"StoreInt32":            {"Store", "atomic.Int32", "int32", 1},
+	"AddInt32":              {"Add", "atomic.Int32", "int32", 1},
+	"SwapInt32":             {"Swap", "atomic.Int32", "int32", 1},
+	"CompareAndSwapInt32":   {"CompareAndSwap", "atomic.Int32", "int32", 2},
+	"LoadInt64":             {"Load", "atomic.Int64", "int64", 0},
+	"StoreInt64":            {"Store", "atomic.Int64", "int64", 1},
+	"AddInt64":              {"Add", "atomic.Int64", "int64", 1},
+	"SwapInt64":             {"Swap", "atomic.Int64", "int64", 1},
+	"CompareAndSwapInt64":   {"CompareAndSwap", "atomic.Int64", "int64", 2},
+	"LoadUint32":            {"Load", "atomic.Uint32", "int32", 0},
+	"StoreUint32":           {"Store", "atomic.Uint32", "int32", 1},
+	"AddUint32":             {"Add", "atomic.Uint32", "int32", 1},
+	"SwapUint32":            {"Swap", "atomic.Uint32", "int32", 1},
+	"CompareAndSwapUint32":  {"CompareAndSwap", "atomic.Uint32", "int32", 2},
+	"LoadUint64":            {"Load", "atomic.Uint64", "int64", 0},
+	"StoreUint64":           {"Store", "atomic.Uint64", "int64", 1},
+	"AddUint64":             {"Add", "atomic.Uint64", "int64", 1},
+	"SwapUint64":            {"Swap", "atomic.Uint64", "int64", 1},
+	"CompareAndSwapUint64":  {"CompareAndSwap", "atomic.Uint64", "int64", 2},
+	"LoadUintptr":           {"Load", "atomic.Uintptr", "int64", 0},
+	"StoreUintptr":          {"Store", "atomic.Uintptr", "int64", 1},
+	"AddUintptr":            {"Add", "atomic.Uintptr", "int64", 1},
+	"SwapUintptr":           {"Swap", "atomic.Uintptr", "int64", 1},
+	"CompareAndSwapUintptr": {"CompareAndSwap", "atomic.Uintptr", "int64", 2},
+	// Note: no Bool entries — gc has no package-level bool atomics.
+}
+
+// exportAtomicWordOp lowers a package-level sync/atomic word/bool call
+// (atomic.LoadUint64(&x), …) to the atomicaddr+syncop wire nodes.
+// The address operand is exported as a *T expression (a GoPointer at
+// runtime); "atomicaddr" wraps it in a delegating AtomicLong /
+// AtomicInteger cell so the existing AtomicOpNode serves the op
+// unchanged. Returns handled=false for names outside atomicWordOps.
+func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool, error) {
+	desc, ok := atomicWordOps[name]
+	if !ok {
+		return nil, false, nil
+	}
+	if len(c.Args) != desc.nargs+1 {
+		return nil, true, fmt.Errorf("gofrontend: atomic.%s takes %d arguments, got %d",
+			name, desc.nargs+1, len(c.Args))
+	}
+	addr, err := e.exportExpr(c.Args[0])
+	if err != nil {
+		return nil, true, err
+	}
+	var args = make([]*Node, 0, len(c.Args)-1)
+	for _, a := range c.Args[1:] {
+		x, err := e.exportExpr(a)
+		if err != nil {
+			return nil, true, err
+		}
+		args = append(args, x)
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, true, err
+	}
+	recv := e.node("atomicaddr", c, map[string]any{"addr": addr, "cell": desc.cell})
+	return e.node("syncop", c, map[string]any{
+		"op": desc.op, "synctyp": desc.synctyp, "recv": recv, "args": args, "type": typ,
+	}), true, nil
+}
+
 // exportAtomicStorePointerStmt lowers a bare-statement
 // atomic.StorePointer(addr, val) call to *addr = val: a plain deref write
 // of the unsafe.Pointer. Same scoped divergence as exportAtomicLoadPointer.
@@ -9469,6 +9653,100 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	return e.node("methodref", sel, map[string]any{"obj": objID, "recv": recv, "type": sigID}), nil
 }
 
+// exportPrimMethodValue lowers a method value x.M on a synthetic sync /
+// sync/atomic primitive (fix-linkname) to a funclit capturing the
+// receiver and performing the syncop. The general methodValueNode path
+// cannot serve these: the methods have no funcdecl (the overlay is
+// types-built), and pointer-receiver methods on value receivers need
+// gc's implicit & — which is a no-op at the value level anyway (the Go
+// value IS the Java primitive object, ADR-0002 D1), so the receiver is
+// used directly. The receiver is hoisted (evaluated once, Go semantics)
+// via mrHoistPre, like exportSyncOnceFunc.
+// Multi-result primitive methods (sync.Map.Load, …) are a named loud
+// limitation: the funclit would need the pair desugar in return
+// position (WS D).
+// Returns handled=false when the selection is not a synthetic
+// primitive method.
+func (e *exporter) exportPrimMethodValue(x *ast.SelectorExpr, sel *types.Selection, recv *Node, t int) (*Node, bool, error) {
+	nt := syntheticPrimitiveRecv(sel.Recv())
+	if nt == nil {
+		return nil, false, nil
+	}
+	fn, ok := sel.Obj().(*types.Func)
+	if !ok {
+		return nil, false, nil
+	}
+	if err := syntheticOpInScope(nt, fn.Name()); err != nil {
+		return nil, true, err
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil, true, fmt.Errorf("gofrontend: primitive method %s has non-signature type", fn.Name())
+	}
+	if sig.Results().Len() > 1 {
+		return nil, true, scopeErrorf("method value %s is multi-result: not supported in frontend/v1 scope (WS D)", fn.Name())
+	}
+	// Hoist the receiver: evaluated once at method-value creation.
+	recvType := sel.Recv()
+	recvTid, err := e.typeID(recvType)
+	if err != nil {
+		return nil, true, err
+	}
+	e.chanSeq++
+	recvName := fmt.Sprintf("__primrecv_%d", e.chanSeq)
+	recvVar := types.NewVar(token.NoPos, nil, recvName, recvType)
+	recvID, err := e.defVar(recvVar, false)
+	if err != nil {
+		return nil, true, err
+	}
+	e.mrHoistPre = append(e.mrHoistPre, e.node("vardecl", x, map[string]any{
+		"names": []string{recvName}, "objs": []int{recvID},
+		"define": true, "type": nil, "values": []*Node{recv},
+	}))
+	recvIdent := e.node("ident", x, map[string]any{
+		"name": recvName, "obj": recvID, "type": recvTid,
+	})
+	// Funclit params/results from the method signature (minus receiver).
+	params, err := e.exportSignatureVars(x, sig.Params())
+	if err != nil {
+		return nil, true, err
+	}
+	results, err := e.exportSignatureVars(x, sig.Results())
+	if err != nil {
+		return nil, true, err
+	}
+	var args = make([]*Node, 0, len(params))
+	for _, p := range params {
+		args = append(args, e.node("ident", x, map[string]any{
+			"name": p.Fields["name"], "obj": p.Fields["obj"], "type": p.Fields["type"],
+		}))
+	}
+	var resultTyp any
+	if sig.Results().Len() == 1 {
+		resultTyp, err = e.typeID(sig.Results().At(0).Type())
+		if err != nil {
+			return nil, true, err
+		}
+	}
+	op := e.node("syncop", x, map[string]any{
+		"op": fn.Name(), "synctyp": syntheticOpTypeName(nt),
+		"recv": recvIdent, "args": args, "type": resultTyp,
+	})
+	var body *Node
+	if sig.Results().Len() == 0 {
+		body = e.node("block", x, map[string]any{
+			"stmts": []*Node{e.node("exprstmt", x, map[string]any{"x": op})},
+		})
+	} else {
+		body = e.node("block", x, map[string]any{
+			"stmts": []*Node{e.node("return", x, map[string]any{"results": []*Node{op}})},
+		})
+	}
+	return e.node("funclit", x, map[string]any{
+		"params": params, "results": results, "body": body, "type": t,
+	}), true, nil
+}
+
 // methodValueNode exports a method value x.M in value position (selection
 // kind MethodVal) as a "methodvalue" wire node (P3-M9, WS H follow-up).
 // It mirrors methodRefNode's resolution exactly — resolveMethodCall,
@@ -9481,6 +9759,12 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 // The "type" field is the method value's static func type (no receiver),
 // from the selector expression's type.
 func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selection, recv *Node, t int) (*Node, error) {
+	// fix-linkname: method values on synthetic sync/sync/atomic
+	// primitives lower to a capturing funclit (no funcdecl exists for
+	// the overlay's types-built methods).
+	if n, handled, err := e.exportPrimMethodValue(sel, selection, recv, t); handled {
+		return n, err
+	}
 	var mtargs []types.Type
 	if ii, ok := e.info.Instances[sel.Sel]; ok {
 		mtargs = typeList(ii.TypeArgs)
@@ -10554,6 +10838,18 @@ func (e *exporter) exportSyncOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *type
 	// (package-aware scope check via syntheticOpInScope).
 	if err := syntheticOpInScope(nt, sel.Sel.Name); err != nil {
 		return nil, err
+	}
+	// fix-linkname: sync.Map's multi-result methods (Load, LoadOrStore,
+	// LoadAndDelete, Swap) only desugar in N-target assignment position
+	// (the mrSyncMap plan, via exportMultiResultDesugar). Any other
+	// position (return, argument, single-value) fails fast with a named
+	// scope error — mirroring the runtime.* multi-result precedent —
+	// instead of callType's generic WS D message.
+	if nt.Obj().Pkg() != nil && nt.Obj().Pkg().Path() == "sync" && nt.Obj().Name() == "Map" {
+		switch sel.Sel.Name {
+		case "Load", "LoadOrStore", "LoadAndDelete", "Swap":
+			return nil, scopeErrorf("sync.Map.%s is multi-result: use an N-target assignment (v, ok := m.Load(k)) in frontend/v1 scope (WS D)", sel.Sel.Name)
+		}
 	}
 	recv, err := e.exportExpr(sel.X)
 	if err != nil {

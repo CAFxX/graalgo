@@ -128,16 +128,17 @@ func TestSyncCompositeScopeErrors(t *testing.T) {
 	}
 }
 
-// TestSyncMethodValueScopeError: a method value on a sync primitive
-// (f := m.Lock) fails fast with the existing WS H scope error.
-func TestSyncMethodValueScopeError(t *testing.T) {
+// TestSyncMethodValueSupported: a method value on a sync primitive
+// (f := m.Lock) is supported (fix-linkname: exportPrimMethodValue lowers
+// it to a capturing funclit). Previously this was a WS H scope error.
+func TestSyncMethodValueSupported(t *testing.T) {
 	src := "package main\n\nimport \"sync\"\n\nfunc main() {\n\tvar m sync.Mutex\n\tf := m.Lock\n\t_ = f\n}\n"
-	_, err := ExportFile(writeSyncProg(t, src))
-	if err == nil {
-		t.Fatal("expected method-value scope error, got success")
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("method value on sync.Mutex should be supported, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), "method value") {
-		t.Fatalf("expected method-value scope error, got: %v", err)
+	if !strings.Contains(out, "__primrecv_") {
+		t.Errorf("method value did not lower to a capturing funclit")
 	}
 }
 

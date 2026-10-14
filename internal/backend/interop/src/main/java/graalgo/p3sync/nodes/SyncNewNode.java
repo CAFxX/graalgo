@@ -10,10 +10,13 @@ import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
+import graalgo.runtime.sync.GoAtomicInt32;
+import graalgo.runtime.sync.GoAtomicInt64;
 import graalgo.runtime.sync.GoMutex;
 import graalgo.runtime.sync.GoOnce;
 import graalgo.runtime.sync.GoPool;
 import graalgo.runtime.sync.GoRWMutex;
+import graalgo.runtime.sync.GoSyncMap;
 import graalgo.runtime.sync.GoWaitGroup;
 import graalgo.values.GoKind;
 
@@ -80,14 +83,20 @@ public final class SyncNewNode extends GoExprNode {
                 pool.setNewFunc(newFunc);
                 yield pool;
             }
+            // fix-linkname (Caddy/godebug lane): sync.Map (GoMap-backed,
+            // Go == key semantics, coarse locking).
+            case "Map" -> new GoSyncMap();
             // P3-M4 (WS C, ADR-0004 D2): atomic wrapper cells. 64-bit
-            // wrappers ride on AtomicLong, 32-bit/bool on AtomicInteger
-            // (the phase-1 Atomics backing). P3-M10: the generic
+            // wrappers ride on GoAtomicInt64 (AtomicLong + LongCell),
+            // 32-bit/bool on GoAtomicInt32 (AtomicInteger + IntCell) —
+            // fix-linkname: the cell interfaces let the package-level
+            // word ops address arbitrary Go memory through the same
+            // Atomics surface. P3-M10: the generic
             // Pointer[T] and the any-typed Value ride on an
             // AtomicReference cell (Go *T is an opaque Java reference,
             // Go any a Java object; a zero Pointer loads null = nil *T).
-            case "atomic.Int64", "atomic.Uint64", "atomic.Uintptr" -> new AtomicLong();
-            case "atomic.Int32", "atomic.Uint32", "atomic.Bool" -> new AtomicInteger();
+            case "atomic.Int64", "atomic.Uint64", "atomic.Uintptr" -> new GoAtomicInt64();
+            case "atomic.Int32", "atomic.Uint32", "atomic.Bool" -> new GoAtomicInt32();
             case "atomic.Pointer", "atomic.Value" -> new AtomicReference<>();
             default -> throw new IllegalStateException("unknown sync type: " + syncType);
         };
@@ -108,6 +117,8 @@ public final class SyncNewNode extends GoExprNode {
         String syncType = f.string("synctyp", path);
         switch (syncType) {
             case "Mutex", "RWMutex", "WaitGroup", "Once", "Pool",
+                 // fix-linkname (Caddy/godebug lane): sync.Map.
+                 "Map",
                  // P3-M4 (WS C, ADR-0004 D2): atomic wrapper cells.
                  // P3-M10: plus the generic Pointer[T] and any-typed Value.
                  "atomic.Int64", "atomic.Uint64", "atomic.Int32",

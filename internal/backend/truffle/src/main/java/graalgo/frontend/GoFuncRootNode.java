@@ -166,7 +166,14 @@ public final class GoFuncRootNode extends RootNode {
             // pre-existing gap out of M4 scope; atomic cells clone
             // because their entire state is the integer.)
             if (paramKinds[i] == graalgo.values.GoKind.STRUCT) {
-                if (arg instanceof java.util.concurrent.atomic.AtomicLong al) {
+                // fix-linkname: match the GoAtomic wrappers before the
+                // raw AtomicLong/Integer (they extend them) so the clone
+                // keeps the LongCell/IntCell interface.
+                if (arg instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
+                    arg = new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
+                } else if (arg instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
+                    arg = new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
+                } else if (arg instanceof java.util.concurrent.atomic.AtomicLong al) {
                     arg = new java.util.concurrent.atomic.AtomicLong(al.get());
                 } else if (arg instanceof java.util.concurrent.atomic.AtomicInteger ai) {
                     arg = new java.util.concurrent.atomic.AtomicInteger(ai.get());

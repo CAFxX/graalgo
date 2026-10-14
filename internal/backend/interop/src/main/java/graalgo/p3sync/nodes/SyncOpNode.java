@@ -12,8 +12,11 @@ import graalgo.runtime.GoroutineState;
 import graalgo.runtime.Panic;
 import graalgo.runtime.sync.GoMutex;
 import graalgo.runtime.sync.GoPool;
+import graalgo.runtime.sync.GoSyncMap;
 import graalgo.values.GoInterface;
 import graalgo.values.GoString;
+import graalgo.values.GoStruct;
+import graalgo.values.GoStructDescriptor;
 import java.nio.charset.StandardCharsets;
 import graalgo.runtime.sync.GoOnce;
 import graalgo.runtime.sync.GoPool;
@@ -60,6 +63,17 @@ import java.util.Map;
  * {@code GetNew} the func value; the rest are void and return null,
  * mirroring {@code GoexitCallNode}.
  *
+ * <p>fix-linkname (Caddy/godebug lane): {@code sync.Map}. The four
+ * multi-result methods (Load, LoadOrStore, LoadAndDelete, Swap) return
+ * the {@code mapAnyBoolPair{v, ok}} struct for the mrSyncMap desugar
+ * (the node kind is {@link GoKind#STRUCT} for those ops); the
+ * {@code any}-typed arguments are boxed to {@link GoInterface} at
+ * build time, exactly like call-site adaptation. {@code Range}
+ * invokes the Go callback per entry (with the
+ * {@code FuncValueCallNode} recoverAllowed dance, like
+ * {@code Once.Do}); entries deleted mid-iteration are skipped, per the
+ * Go spec.
+ *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook (P2-D8 precedent) — no
  * Phase-1 {@code NodeFactory} change.
@@ -75,6 +89,12 @@ public final class SyncOpNode extends GoExprNode {
 
     private final String op;
     private final String syncType;
+    /**
+     * Non-null for the pair-returning {@code sync.Map} ops (Load,
+     * LoadOrStore, LoadAndDelete, Swap): the {@code mapAnyBoolPair}
+     * descriptor for building the result struct.
+     */
+    private final GoStructDescriptor pairDesc;
 
     /**
      * {@code "Pool.Get"}/{@code "Pool.GetNew"}/{@code "Pool.CallNew"} →
@@ -88,13 +108,14 @@ public final class SyncOpNode extends GoExprNode {
             "Pool.GetNew", GoKind.FUNC,
             "Pool.CallNew", GoKind.INTERFACE);
 
-    private SyncOpNode(String op, String syncType, GoKind resultKind,
-            GoExprNode recv, GoExprNode[] args) {
-        super(resultKind);
+    private SyncOpNode(String op, String syncType, GoExprNode recv, GoExprNode[] args,
+            GoKind kind, GoStructDescriptor pairDesc) {
+        super(kind);
         this.op = op;
         this.syncType = syncType;
         this.recv = recv;
         this.args = args;
+        this.pairDesc = pairDesc;
     }
 
     @Override
@@ -140,6 +161,24 @@ public final class SyncOpNode extends GoExprNode {
             case "Pool.CallNew" -> {
                 return invokeNewFunc(poolOf(r).getNewFunc(), frame);
             }
+            // fix-linkname: sync.Map. The any-typed arguments were boxed
+            // to GoInterface at build time; the pair ops return the
+            // mapAnyBoolPair struct for the mrSyncMap desugar.
+            case "Map.Load" -> { return mapPair((GoSyncMap) r,
+                    ((GoSyncMap) r).load(args[0].executeObject(frame))); }
+            case "Map.Store" -> ((GoSyncMap) r).store(
+                    args[0].executeObject(frame), args[1].executeObject(frame));
+            case "Map.LoadOrStore" -> { return mapPair((GoSyncMap) r,
+                    ((GoSyncMap) r).loadOrStore(
+                            args[0].executeObject(frame), args[1].executeObject(frame))); }
+            case "Map.LoadAndDelete" -> { return mapPair((GoSyncMap) r,
+                    ((GoSyncMap) r).loadAndDelete(args[0].executeObject(frame))); }
+            case "Map.Delete" -> ((GoSyncMap) r).delete(args[0].executeObject(frame));
+            case "Map.Swap" -> { return mapPair((GoSyncMap) r,
+                    ((GoSyncMap) r).swap(
+                            args[0].executeObject(frame), args[1].executeObject(frame))); }
+            case "Map.Range" -> doRange((GoSyncMap) r, frame);
+            case "Map.Clear" -> ((GoSyncMap) r).clear();
             default -> throw new FrontendException("unknown sync op " + syncType + "." + op);
         }
         return null;
@@ -150,6 +189,98 @@ public final class SyncOpNode extends GoExprNode {
             throw new FrontendException("sync op on non-GoPool value: " + r.getClass().getName());
         }
         return p;
+    }
+
+    @Override
+    public boolean executeBoolean(VirtualFrame frame) {
+        Object r = recv.executeObject(frame);
+        if (r == null) {
+            Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+        }
+        // Only the boolean sync.Map ops reach here (kind BOOL).
+        return switch (syncType + "." + op) {
+            case "Map.CompareAndSwap" -> ((GoSyncMap) r).compareAndSwap(args[0].executeObject(frame),
+                    args[1].executeObject(frame), args[2].executeObject(frame));
+            case "Map.CompareAndDelete" -> ((GoSyncMap) r).compareAndDelete(
+                    args[0].executeObject(frame), args[1].executeObject(frame));
+            default -> throw new FrontendException(
+                    "sync op " + syncType + "." + op + " is not a boolean op");
+        };
+    }
+
+    /**
+     * Builds the {@code mapAnyBoolPair{v, ok}} result struct for the
+     * multi-result {@code sync.Map} ops. The stored value is already a
+     * {@link GoInterface} (boxed at build time); a missing value yields
+     * the nil interface, matching gc.
+     */
+    private GoStruct mapPair(GoSyncMap m, GoSyncMap.LoadResult lr) {
+        if (pairDesc == null) {
+            throw new FrontendException("sync.Map." + op + ": missing pair descriptor");
+        }
+        int vIdx = -1;
+        int okIdx = -1;
+        for (GoStructDescriptor.Field f : pairDesc.fields()) {
+            if (f.name().equals("v") && !f.inLongs()) {
+                vIdx = f.index();
+            } else if (f.name().equals("ok") && f.inLongs()) {
+                okIdx = f.index();
+            }
+        }
+        if (vIdx < 0 || okIdx < 0) {
+            throw new FrontendException(
+                    "sync.Map." + op + ": mapAnyBoolPair needs v (objects) and ok (longs) fields");
+        }
+        long[] longs = new long[pairDesc.longsCount()];
+        Object[] objs = new Object[pairDesc.objectsCount()];
+        // The value rides through even when ok is false (LoadOrStore on a
+        // new key returns the stored value); a Java-null value means
+        // absent (load/loadAndDelete/swap miss) → the nil interface.
+        objs[vIdx] = lr.value() != null ? GoInterface.narrow(lr.value()) : GoInterface.NIL;
+        longs[okIdx] = lr.ok() ? 1 : 0;
+        return new GoStruct(pairDesc, longs, objs);
+    }
+
+    /**
+     * {@code Map.Range(f)}: invokes the Go callback for each entry. The
+     * callback runs with the {@code FuncValueCallNode} recoverAllowed
+     * dance (like {@code Once.Do}); a false return stops the iteration.
+     * Entries deleted mid-iteration are skipped (Go spec).
+     */
+    private Object doRange(GoSyncMap m, VirtualFrame frame) {
+        Object fv = args[0].executeObject(frame);
+        if (!(fv instanceof GoFunc f)) {
+            Panic.throwPanic(GoCalls.nilFuncCall(), null, null, this);
+            return null;
+        }
+        GoroutineState state = GoroutineState.current();
+        boolean prev = state != null && state.isRecoverAllowed();
+        if (state != null) {
+            state.setRecoverAllowed(false);
+        }
+        try {
+            for (Object k : m.keysSnapshot()) {
+                if (!m.containsKey(k)) {
+                    continue;
+                }
+                Object v = m.get(k);
+                Object cont = GoCalls.invoke(f, new Object[]{k, v});
+                if (cont instanceof Boolean b) {
+                    if (!b) {
+                        break;
+                    }
+                } else {
+                    throw new FrontendException(
+                            "sync.Map.Range callback returned non-bool: "
+                                    + (cont == null ? "null" : cont.getClass().getName()));
+                }
+            }
+        } finally {
+            if (state != null) {
+                state.setRecoverAllowed(prev);
+            }
+        }
+        return null;
     }
 
     /**
@@ -231,21 +362,28 @@ public final class SyncOpNode extends GoExprNode {
         String path = "syncop.fields";
         String op = f.string("op", path);
         String syncType = f.string("synctyp", path);
-        int wantArgs = switch (syncType + "." + op) {
+        String key = syncType + "." + op;
+        int wantArgs = switch (key) {
             case "Mutex.Lock", "Mutex.Unlock",
                  "RWMutex.Lock", "RWMutex.Unlock", "RWMutex.RLock", "RWMutex.RUnlock",
                  "WaitGroup.Done", "WaitGroup.Wait",
                  // P3-M11 (sync.Pool).
-                 "Pool.Get", "Pool.GetNew", "Pool.CallNew" -> 0;
+                 "Pool.Get", "Pool.GetNew", "Pool.CallNew",
+                 // fix-linkname: sync.Map.
+                 "Map.Clear" -> 0;
             case "WaitGroup.Add", "Once.Do",
-                 "Pool.Put", "Pool.SetNew" -> 1;
-            default -> throw new FrontendException(path + ": unknown sync op " + syncType + "." + op);
+                 "Pool.Put", "Pool.SetNew",
+                 // fix-linkname: sync.Map.
+                 "Map.Load", "Map.LoadAndDelete", "Map.Delete", "Map.Range" -> 1;
+            case "Map.Store", "Map.LoadOrStore", "Map.Swap", "Map.CompareAndDelete" -> 2;
+            case "Map.CompareAndSwap" -> 3;
+            default -> throw new FrontendException(path + ": unknown sync op " + key);
         };
         GoExprNode recv = factory.buildExpr(f.object("recv", path), ctx);
         Json.Array arr = f.array("args", path);
         if (arr.size() != wantArgs) {
             throw new FrontendException(
-                    path + ": " + syncType + "." + op + " takes " + wantArgs + " arguments");
+                    path + ": " + key + " takes " + wantArgs + " arguments");
         }
         GoExprNode[] args = new GoExprNode[arr.size()];
         for (int i = 0; i < args.length; i++) {
@@ -262,7 +400,39 @@ public final class SyncOpNode extends GoExprNode {
         if (syncType.equals("Pool") && op.equals("Put")) {
             args[0] = factory.boxToInterface(args[0], ctx, path + ".args[0]");
         }
-        GoKind resultKind = RESULT_KINDS.getOrDefault(syncType + "." + op, GoKind.INTERFACE);
-        return new SyncOpNode(op, syncType, resultKind, recv, args);
+        // fix-linkname: sync.Map's any-typed arguments are boxed to
+        // GoInterface here (call-site adaptation for any params); the
+        // Range callback is func-typed and stays unboxed.
+        if (syncType.equals("Map") && !op.equals("Range") && !op.equals("Clear")) {
+            for (int i = 0; i < args.length; i++) {
+                args[i] = factory.boxToInterface(args[i], ctx, path + ".args[" + i + "]");
+            }
+        }
+        // The pair-returning Map ops (mrSyncMap desugar) build the
+        // mapAnyBoolPair struct: STRUCT kind + descriptor from the wire
+        // "type" field. The boolean ops are BOOL kind. Pool ops use
+        // RESULT_KINDS.
+        GoKind kind = RESULT_KINDS.getOrDefault(key, GoKind.INTERFACE);
+        GoStructDescriptor pairDesc = null;
+        // fix-linkname: Map ops override the kind.
+        switch (key) {
+            case "Map.Load", "Map.LoadOrStore", "Map.LoadAndDelete", "Map.Swap" -> {
+                kind = GoKind.STRUCT;
+                Json.Value tv = f.opt("type");
+                if (!(tv instanceof Json.Num num)) {
+                    throw new FrontendException(
+                            path + ": " + key + " needs a numeric \"type\" id (the pair type)");
+                }
+                int typeId = (int) num.asLong(path + ".type");
+                if (NodeFactory.kindOf(ctx, typeId, path) != GoKind.STRUCT) {
+                    throw new FrontendException(
+                            path + ": " + key + " pair type must be a struct kind");
+                }
+                pairDesc = NodeFactory.structDescriptorFor(ctx, typeId, path);
+            }
+            case "Map.CompareAndSwap", "Map.CompareAndDelete" -> kind = GoKind.BOOL;
+            default -> { /* keep RESULT_KINDS or INTERFACE */ }
+        }
+        return new SyncOpNode(op, syncType, recv, args, kind, pairDesc);
     }
 }

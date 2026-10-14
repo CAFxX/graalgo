@@ -5,6 +5,7 @@ import java.util.Arrays;
 import java.util.Map;
 
 import graalgo.frontend.Json;
+import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
@@ -13,9 +14,11 @@ import graalgo.p3net.GoHttp;
 import graalgo.p3net.GoNet;
 import graalgo.p3net.GoNetpoll;
 import graalgo.p3tls.TlsRuntime;
+import graalgo.p3unsafe.UnsafeTable;
 import graalgo.p3x509.GoX509;
 import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Linknames;
+import graalgo.runtime.GoDebug;
 import graalgo.runtime.Timers;
 import graalgo.values.GoFunc;
 import graalgo.values.GoString;
@@ -62,6 +65,7 @@ public final class LinknameIntrinsics {
         // (even empty), and without this a previous program's symbols,
         // intrinsics, and Go bindings would leak into this run.
         Linknames.clear();
+        GoDebug.clear();
         // Go → intrinsic: the M4 gc-symbol table. D5 argument types:
         // fastrandn takes an int32 (Integer).
         Linknames.register("runtime.fastrand", args -> Intrinsics.fastrand(), 0);
@@ -108,6 +112,109 @@ public final class LinknameIntrinsics {
         IfaceMethodTable.installInterfaces(IfaceMethodTables.resolveInterfaces(doc));
         // Go function bindings for callGo.
         bindGoFuncs(doc, program);
+        // fix-linkname (Caddy/godebug lane): the runtime provider
+        // intrinsics for internal/godebug's //go:linkname consumers
+        // (runtime.write, godebug setUpdate/registerMetric/
+        // setNewIncNonDefault).
+        registerGodebugIntrinsics();
+    }
+
+    /**
+     * The runtime provider side of {@code internal/godebug}'s
+     * {@code //go:linkname} consumers (fix-linkname, Caddy/godebug lane).
+     *
+     * <p>In gc, package runtime provides these symbols:
+     * <ul>
+     *   <li>{@code runtime.write(fd, p, n)} — raw fd write used by
+     *       godebug's {@code runtimeStderr};</li>
+     *   <li>{@code internal/godebug.setUpdate} — provided by
+     *       {@code runtime.godebug_setUpdate};</li>
+     *   <li>{@code internal/godebug.registerMetric} — provided by
+     *       {@code runtime.registerMetric} (metrics.go);</li>
+     *   <li>{@code internal/godebug.setNewIncNonDefault} — provided by
+     *       {@code runtime.setNewIncNonDefault} (runtime.go).</li>
+     * </ul>
+     * The Go-callable state lives in {@link GoDebug};
+     * {@code runtime.write} is implemented here (it needs the interop
+     * {@code UnsafeTable}).
+     */
+    private static void registerGodebugIntrinsics() {
+        Linknames.register("runtime.write", args -> runtimeWrite(args[0], args[1], args[2]), 3);
+        Linknames.register("internal/godebug.setUpdate", args -> {
+            if (!(args[0] instanceof GoFunc f)) {
+                throw new FrontendException("godebug.setUpdate: expected a func argument");
+            }
+            Object env = GoOs.getenv(GoString.fromUtf8("GODEBUG"));
+            String envStr = env instanceof GoString gs
+                    ? new String(gs.bytes(), StandardCharsets.UTF_8) : "";
+            GoDebug.setUpdate(f, envStr);
+            return null;
+        }, 1);
+        Linknames.register("internal/godebug.registerMetric", args -> {
+            if (!(args[0] instanceof GoString gs) || !(args[1] instanceof GoFunc f)) {
+                throw new FrontendException(
+                        "godebug.registerMetric: expected (string, func) arguments");
+            }
+            GoDebug.registerMetric(new String(gs.bytes(), StandardCharsets.UTF_8), f);
+            return null;
+        }, 2);
+        Linknames.register("internal/godebug.setNewIncNonDefault", args -> {
+            if (!(args[0] instanceof GoFunc f)) {
+                throw new FrontendException(
+                        "godebug.setNewIncNonDefault: expected a func argument");
+            }
+            GoDebug.setNewIncNonDefault(f);
+            return null;
+        }, 1);
+    }
+
+    /**
+     * {@code runtime.write(fd uintptr, p unsafe.Pointer, n int32) int32}:
+     * writes n bytes from p to a raw file descriptor. Only the stdio fds
+     * are wired (1 → stdout, 2 → stderr); anything else returns
+     * {@code -EBADF}, and an I/O failure returns {@code -EIO} (gc: the
+     * negative errno).
+     */
+    private static Object runtimeWrite(Object fdArg, Object pArg, Object nArg) {
+        long fd = ((Number) fdArg).longValue();
+        long p = ((Number) pArg).longValue();
+        int n = ((Number) nArg).intValue();
+        if (n == 0) {
+            return 0;
+        }
+        if (p == 0 || n < 0) {
+            throw new FrontendException("runtime.write: nil pointer or negative length");
+        }
+        Object ref = UnsafeTable.current().resolve(p);
+        if (!(ref instanceof UnsafeTable.ArrayRef ar) || !(ar.array() instanceof byte[] bytes)) {
+            throw new FrontendException(
+                    "runtime.write: pointer does not address a byte array (got "
+                            + (ref == null ? "null" : ref.getClass().getSimpleName()) + ")");
+        }
+        int off = ar.offset();
+        if (off < 0 || off + n > bytes.length) {
+            throw new FrontendException("runtime.write: range out of bounds");
+        }
+        try {
+            if (fd == 1) {
+                System.out.write(bytes, off, n);
+                System.out.flush();
+                if (System.out.checkError()) {
+                    return -5; // -EIO
+                }
+            } else if (fd == 2) {
+                System.err.write(bytes, off, n);
+                System.err.flush();
+                if (System.err.checkError()) {
+                    return -5; // -EIO
+                }
+            } else {
+                return -9; // -EBADF
+            }
+        } catch (RuntimeException e) {
+            return -5; // -EIO
+        }
+        return n;
     }
 
     /**
@@ -366,12 +473,26 @@ public final class LinknameIntrinsics {
 
     /**
      * Binds every top-level program function under its qualified Go name
-     * ({@code <package>.<name>}, e.g. {@code main.helper}) for
-     * intrinsic→Go lookup. Method instantiations are out of M4 scope.
+     * ({@code <pkgpath>.<name>}, e.g. {@code main.helper}) for
+     * intrinsic→Go lookup and for the Go→Go linkname fallback in
+     * {@link Linknames#dispatch} (fix-linkname: cross-package symbol
+     * resolution — a {@code //go:linkname} stub in one package resolves
+     * to the provider function in another by symbol name, exactly like
+     * gc's linker).
+     *
+     * <p>The package path comes from the funcdecl's additive
+     * {@code "pkgpath"} field (emitted by the frontend for every
+     * funcdecl); documents predating the field fall back to the document
+     * package name (the previous behavior). Bodyless
+     * {@code //go:linkname} stubs are <em>not</em> bound: a stub is a
+     * consumer, not a provider — binding it would let
+     * {@link Linknames#dispatch} recurse into the stub itself instead of
+     * failing fast on a symbol with no provider (gc: undefined-symbol
+     * link error). Method instantiations remain out of scope.
      */
     static void bindGoFuncs(Json.Object doc, NodeFactory.Program program) {
         Json.Object pkg = doc.object("package", "document");
-        String pkgName = pkg.string("name", "document.package");
+        String docPkgName = pkg.string("name", "document.package");
         Map<Integer, GoFunc> functions = program.functions();
         for (Json.Value f : doc.array("funcs", "document").items()) {
             if (!(f instanceof Json.Object fn)
@@ -379,13 +500,21 @@ public final class LinknameIntrinsics {
                 continue;
             }
             Json.Object fields = fn.object("fields", "document.funcs");
+            // Linkname stubs are consumers, never providers (see javadoc).
+            if (fields.opt("linkname") instanceof Json.Str) {
+                continue;
+            }
             int objId = fields.intValue("obj", "document.funcs.fields");
             GoFunc gf = functions.get(objId);
             if (gf == null) {
                 continue; // main's GoRootNode is not in functions()
             }
             String name = fields.string("name", "document.funcs.fields");
-            Linknames.bindGo(pkgName + "." + name, gf);
+            String pkgPath = docPkgName;
+            if (fields.opt("pkgpath") instanceof Json.Str pp) {
+                pkgPath = pp.value();
+            }
+            Linknames.bindGo(pkgPath + "." + name, gf);
         }
     }
 }
