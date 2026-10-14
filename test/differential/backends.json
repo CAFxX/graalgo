@@ -56,7 +56,7 @@
         "{SRC}"
       ],
       "vars": {
-        "GRAALGO_RUN": "${PHASE1_DIR}/graalgo-run"
+        "GRAALGO_RUN": "${PHASE1_DIR}/../../internal/backend/graalgo-run"
       },
       "stderrFilters": [
         "^WARNING: A terminally deprecated method in sun\\.misc\\.Unsafe has been called$",

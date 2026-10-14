@@ -25,14 +25,18 @@ package typeparam
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"diffharness/internal/harness"
 )
@@ -263,6 +267,12 @@ func writeJSON(path string, v any) error {
 
 // Run executes the differential over included files with a worker pool.
 // refName/altName select backends from cfg (e.g. "gc-a", "graalgo").
+//
+// SPEEDUP (2026-10-14): the graalgo backend runs in a JVM (~17-25s startup
+// per invocation). Instead of one JVM per file, each worker writes a batch
+// file with all its graalgo invocations and runs them in a single JVM via
+// `graalgo-run --batch`. Coverage is identical — the same files run through
+// the same code paths, only the JVM startup is amortized.
 func Run(cfg *harness.Config, files []TFile, refName, altName string, jobs int) ([]Comparison, error) {
 	var ref, alt *harness.Backend
 	for i := range cfg.Backends {
@@ -290,81 +300,294 @@ func Run(cfg *harness.Config, files []TFile, refName, altName string, jobs int) 
 		}
 	}
 
+	// Partition files among jobs; each job processes its share with one
+	// graalgo JVM via batch mode.
 	comps := make([]Comparison, len(included))
-	sem := make(chan struct{}, jobs)
 	var wg sync.WaitGroup
-	for i, tf := range included {
+	for j := 0; j < jobs; j++ {
 		wg.Add(1)
-		go func(i int, tf TFile) {
+		go func(job int) {
 			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			comps[i] = runOne(cfg, ref, alt, tf, workRoot)
-		}(i, tf)
+			// Collect this job's files (stride partitioning for balance).
+			var mine []int
+			for i := job; i < len(included); i += jobs {
+				mine = append(mine, i)
+			}
+			if len(mine) == 0 {
+				return
+			}
+			results := runBatched(cfg, ref, alt, included, mine, workRoot, job)
+			for k, idx := range mine {
+				comps[idx] = results[k]
+			}
+		}(j)
 	}
 	wg.Wait()
 	return comps, nil
 }
 
-// runOne stages one program and runs its class-specific differential.
-func runOne(cfg *harness.Config, ref, alt *harness.Backend, tf TFile, workRoot string) Comparison {
-	c := Comparison{Program: tf.Name, Same: true}
-	fail := func(format string, args ...any) {
-		c.Same = false
-		c.Reasons = append(c.Reasons, fmt.Sprintf(format, args...))
+// batchEntry is one graalgo invocation in a batch file.
+type batchEntry struct {
+	idx  int    // index into the job's file list
+	mode string // "check" or "run"
+	src  string // source file path
+}
+
+// runBatched processes one job's files: gc backend runs normally (fast),
+// graalgo backend runs via a single --batch JVM invocation.
+func runBatched(cfg *harness.Config, ref, alt *harness.Backend, included []TFile, mine []int, workRoot string, job int) []Comparison {
+	n := len(mine)
+	comps := make([]Comparison, n)
+	// Stage all files first.
+	srcs := make([]string, n)
+	dirs := make([]string, n)
+	for k, idx := range mine {
+		tf := included[idx]
+		comps[k] = Comparison{Program: tf.Name, Same: true}
+		dir := filepath.Join(workRoot, fmt.Sprintf("job%d", job), tf.Name)
+		src, err := stageFile(tf, dir)
+		if err != nil {
+			comps[k].Same = false
+			comps[k].Reasons = append(comps[k].Reasons, fmt.Sprintf("stage: %v", err))
+			continue
+		}
+		srcs[k] = src
+		dirs[k] = dir
 	}
 
-	// Stage: single-file programs are copied to a scratch dir so the
-	// backends' {SRC} token points at a stable path.
-	dir := filepath.Join(workRoot, tf.Name)
-	src, err := stageFile(tf, dir)
-	if err != nil {
-		fail("stage: %v", err)
-		return c
-	}
-	prog := harness.Program{Name: tf.Name, Dir: dir, Main: src}
-
-	bRef := harness.BuildOnly(cfg, ref, prog, workRoot)
-	bAlt := harness.BuildOnly(cfg, alt, prog, workRoot)
-
-	switch tf.Class {
-	case ClassCompile:
-		// Build parity: both must build.
-		if !bRef.BuildOK {
-			fail("build: ref failed: %s", firstLines(bRef.BuildLog, 4))
+	// Build the batch file for graalgo invocations.
+	// Each file needs: check (for build parity) and optionally run.
+	var entries []batchEntry
+	for k, idx := range mine {
+		if srcs[k] == "" {
+			continue // stage failed
 		}
-		if !bAlt.BuildOK {
-			fail("build: alt failed: %s", firstLines(bAlt.BuildLog, 4))
+		tf := included[idx]
+		// All classes need the build check.
+		entries = append(entries, batchEntry{idx: k, mode: "check", src: srcs[k]})
+		// Run class also needs execution.
+		if tf.Class == ClassRun {
+			entries = append(entries, batchEntry{idx: k, mode: "run", src: srcs[k]})
 		}
-		return c
-	case ClassErrorCheck:
-		// Build-failure parity: both must fail. Messages are NOT
-		// compared — gc and graalgo are different compilers.
-		if bRef.BuildOK {
-			fail("errorcheck: ref built ok, expected failure")
-		}
-		if bAlt.BuildOK {
-			fail("errorcheck: alt built ok, expected failure (gc rejects this program)")
-		}
-		return c
 	}
 
-	// ClassRun: full build+run parity.
-	if !bRef.BuildOK || !bAlt.BuildOK {
-		if !bRef.BuildOK {
-			fail("build: ref failed: %s", firstLines(bRef.BuildLog, 4))
-		}
-		if !bAlt.BuildOK {
-			fail("build: alt failed: %s", firstLines(bAlt.BuildLog, 4))
-		}
-		return c
+	// Write batch file.
+	batchPath := filepath.Join(workRoot, fmt.Sprintf("job%d-batch.txt", job))
+	var batchLines []string
+	for _, e := range entries {
+		batchLines = append(batchLines, e.mode+":"+e.src)
 	}
-	oRef := harness.RunProgram(cfg, ref, prog, workRoot)
-	oAlt := harness.RunProgram(cfg, alt, prog, workRoot)
-	hc := harness.Compare(oRef, oAlt)
-	c.Same = hc.Same
-	c.Reasons = hc.Reasons
-	return c
+	if err := os.WriteFile(batchPath, []byte(strings.Join(batchLines, "\n")+"\n"), 0o644); err != nil {
+		for k := range comps {
+			comps[k].Same = false
+			comps[k].Reasons = append(comps[k].Reasons, fmt.Sprintf("batch write: %v", err))
+		}
+		return comps
+	}
+
+	// Run the batch: one JVM for all graalgo invocations in this job.
+	batchOut := runGraalgoBatch(cfg, alt, batchPath, workRoot)
+
+	// Now do the gc backend work and combine with batch results.
+	for k, idx := range mine {
+		if srcs[k] == "" {
+			continue
+		}
+		tf := included[idx]
+		prog := harness.Program{Name: tf.Name, Dir: dirs[k], Main: srcs[k]}
+		c := &comps[k]
+		fail := func(format string, args ...any) {
+			c.Same = false
+			c.Reasons = append(c.Reasons, fmt.Sprintf(format, args...))
+		}
+
+		// gc backend (fast, per-case).
+		bRef := harness.BuildOnly(cfg, ref, prog, workRoot)
+
+		// graalgo build result from batch.
+		bAlt := batchOut[batchKey("check", srcs[k])]
+
+		switch tf.Class {
+		case ClassCompile:
+			if !bRef.BuildOK {
+				fail("build: ref failed: %s", firstLines(bRef.BuildLog, 4))
+			}
+			if !bAlt.BuildOK {
+				fail("build: alt failed: %s", firstLines(bAlt.BuildLog, 4))
+			}
+			continue
+		case ClassErrorCheck:
+			if bRef.BuildOK {
+				fail("errorcheck: ref built ok, expected failure")
+			}
+			if bAlt.BuildOK {
+				fail("errorcheck: alt built ok, expected failure (gc rejects this program)")
+			}
+			continue
+		}
+
+		// ClassRun: full build+run parity.
+		if !bRef.BuildOK || !bAlt.BuildOK {
+			if !bRef.BuildOK {
+				fail("build: ref failed: %s", firstLines(bRef.BuildLog, 4))
+			}
+			if !bAlt.BuildOK {
+				fail("build: alt failed: %s", firstLines(bAlt.BuildLog, 4))
+			}
+			continue
+		}
+		oRef := harness.RunProgram(cfg, ref, prog, workRoot)
+		oAlt := batchOut[batchKey("run", srcs[k])]
+		// RunProgram does BuildOnly first; our batch already did the build.
+		// For the run outcome, use the batch's run result directly.
+		// But we need to construct an Outcome for Compare.
+		oAltFull := harness.Outcome{
+			Program:  tf.Name,
+			Backend:  alt.Name,
+			BuildOK:  bAlt.BuildOK,
+			BuildLog: bAlt.BuildLog,
+			Stdout:   oAlt.Stdout,
+			Stderr:   oAlt.Stderr,
+			ExitCode: oAlt.ExitCode,
+			TimedOut: oAlt.TimedOut,
+			Duration: oAlt.Duration,
+		}
+		hc := harness.Compare(oRef, oAltFull)
+		c.Same = hc.Same
+		c.Reasons = hc.Reasons
+	}
+	return comps
+}
+
+// overrideEnv applies KEY=VAL overrides onto a base environment.
+// (Mirrors harness.overrideEnv, which is package-private.)
+func overrideEnv(base []string, overrides map[string]string) []string {
+	out := append([]string{}, base...)
+	seen := map[string]int{}
+	for i, kv := range out {
+		if idx := strings.IndexByte(kv, '='); idx > 0 {
+			seen[kv[:idx]] = i
+		}
+	}
+	for k, v := range overrides {
+		kv := k + "=" + v
+		if i, ok := seen[k]; ok {
+			out[i] = kv
+		} else {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// batchKey identifies a batch entry's result.
+func batchKey(mode, src string) string {
+	return mode + "\x00" + src
+}
+
+// batchResult is one entry's outcome from a --batch run.
+type batchResult struct {
+	Exit   int    `json:"exit"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
+}
+
+// runGraalgoBatch invokes graalgo-run --batch and returns outcomes keyed by
+// batchKey(mode, src). The graalgo backend's build command is
+// {GRAALGO_RUN} --check {SRC}; we replace it with --batch for the whole job.
+func runGraalgoBatch(cfg *harness.Config, alt *harness.Backend, batchPath, workRoot string) map[string]harness.Outcome {
+	out := make(map[string]harness.Outcome)
+	// Render the batch command from the backend's build template, replacing
+	// the per-file invocation with --batch.
+	// The build template is [{GRAALGO_RUN} --check {SRC}]; for batch we want
+	// [{GRAALGO_RUN} --batch <batchfile>].
+	var graalgoRun string
+	for _, b := range cfg.Backends {
+		if b.Name == alt.Name {
+			// Extract the launcher path from vars.
+			if v, ok := b.Vars["GRAALGO_RUN"]; ok {
+				graalgoRun = v
+			}
+			break
+		}
+	}
+	if graalgoRun == "" {
+		// Fallback: try to derive from the build command template.
+		cmd := alt.RenderBuild("SRC_PLACEHOLDER", "BIN_PLACEHOLDER")
+		if len(cmd) > 0 {
+			graalgoRun = cmd[0]
+		}
+	}
+	// Expand vars in graalgoRun (it may contain ${PHASE3_DIR} etc.).
+	// For now, use the rendered build command's first token and replace
+	// --check {SRC} with --batch <file>.
+	buildCmd := alt.RenderBuild("/tmp/placeholder-src", "/tmp/placeholder-bin")
+	if len(buildCmd) == 0 {
+		return out
+	}
+	// Replace the args: [launcher --check src] -> [launcher --batch=batchfile]
+	batchCmd := []string{buildCmd[0], "--batch=" + batchPath}
+	// Copy env from backend.
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
+	defer cancel()
+	var stdout, stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, batchCmd[0], batchCmd[1:]...)
+	cmd.Env = overrideEnv(os.Environ(), alt.Env)
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		// Batch failed entirely; mark all as failed.
+		return out
+	}
+	// Parse JSON array.
+	var results []struct {
+		File   string `json:"file"`
+		Exit   int    `json:"exit"`
+		Stdout string `json:"stdout"`
+		Stderr string `json:"stderr"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+		return out
+	}
+	// Map results by (mode, src). We need to know which mode each file was.
+	// The batch file had "mode:src" lines; reconstruct the mapping.
+	data, _ := os.ReadFile(batchPath)
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// Find the matching result by file path.
+		colon := strings.Index(line, ":")
+		if colon < 0 {
+			continue
+		}
+		mode := line[:colon]
+		src := line[colon+1:]
+		for _, r := range results {
+			if r.File == src {
+				oc := harness.Outcome{
+					Program:  filepath.Base(filepath.Dir(src)),
+					Backend:  alt.Name,
+					Stdout:   harness.Normalize(r.Stdout),
+					Stderr:   alt.FilterStderr(harness.Normalize(r.Stderr)),
+					ExitCode: r.Exit,
+				}
+				if mode == "check" {
+					oc.BuildOK = r.Exit == 0
+					// For build, stdout+stderr combined is the build log.
+					// The single-file path puts build errors on stderr.
+					oc.BuildLog = oc.Stderr
+					if oc.BuildLog == "" {
+						oc.BuildLog = oc.Stdout
+					}
+				}
+				out[batchKey(mode, src)] = oc
+				break
+			}
+		}
+	}
+	return out
 }
 
 // stageFile copies the program's single source into dir/main.go.

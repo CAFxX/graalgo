@@ -55,6 +55,7 @@ public final class Main {
         boolean check = false;
         boolean dumpVars = false;
         String dumpPoly = null;
+        String batchFile = null;
         String file = null;
         for (String a : args) {
             if (a.equals("--dump-polymorphism")) {
@@ -65,12 +66,20 @@ public final class Main {
                 dumpPoly = a.substring("--dump-polymorphism=".length());
                 continue;
             }
+            if (a.startsWith("--batch=")) {
+                batchFile = a.substring("--batch=".length());
+                continue;
+            }
             switch (a) {
                 case "--check":
                     check = true;
                     break;
                 case "--dump-vars":
                     dumpVars = true;
+                    break;
+                case "--batch":
+                    // --batch takes its file as the next arg; handled below
+                    batchFile = "";
                     break;
                 case "--help":
                 case "-h":
@@ -80,15 +89,38 @@ public final class Main {
                     if (a.startsWith("-")) {
                         return usageError("unknown flag: " + a);
                     }
+                    if (batchFile != null && batchFile.isEmpty()) {
+                        batchFile = a;
+                        continue;
+                    }
                     if (file != null) {
                         return usageError("too many input files");
                     }
                     file = a;
             }
         }
+        // Batch mode: process multiple files in one JVM to amortize startup.
+        // Each line of the batch file is "check:<path>" or "run:<path>".
+        // Output is a JSON array on stdout: [{"file":..., "exit":N,
+        // "stdout":..., "stderr":...}]. Coverage is identical to sequential
+        // single-file invocations — the same code path runs per file.
+        if (batchFile != null) {
+            if (batchFile.isEmpty()) {
+                return usageError("--batch requires a file argument");
+            }
+            return runBatch(batchFile);
+        }
         if (file == null) {
             return usageError("no input file");
         }
+        return runOne(file, check, dumpVars, dumpPoly);
+    }
+
+    /**
+     * Runs one file through frontend → AST → execute.
+     * Extracted from {@link #run} so batch mode reuses the exact same path.
+     */
+    static int runOne(String file, boolean check, boolean dumpVars, String dumpPoly) {
         Path p = Paths.get(file);
         if (!Files.isReadable(p)) {
             System.err.println("graalgo-run: cannot read input file: " + file);
@@ -257,6 +289,98 @@ public final class Main {
         return exitCode;
     }
 
+    /**
+     * Batch mode: run multiple files sequentially in one JVM.
+     *
+     * <p>The batch file has one entry per line: {@code check:<path>} or
+     * {@code run:<path>}. Each entry runs the same code path as a
+     * single-file invocation (same frontend, same AST build, same
+     * execution) — coverage is identical, only the JVM startup is amortized.
+     *
+     * <p>Output is a JSON array on stdout, one object per entry:
+     * {@code {"file":..., "exit":N, "stdout":..., "stderr":...}}.
+     * The process exit code is 0 if the batch file was processed (even if
+     * individual entries failed); per-entry failures are in the JSON.
+     */
+    static int runBatch(String batchFile) {
+        java.util.List<String> lines;
+        try {
+            lines = Files.readAllLines(Paths.get(batchFile), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            System.err.println("graalgo-run: cannot read batch file: " + batchFile);
+            return EXIT_INPUT_ERROR;
+        }
+        StringBuilder out = new StringBuilder("[\n");
+        boolean first = true;
+        // Save the real stdout/stderr; each entry's output is captured.
+        java.io.PrintStream realOut = System.out;
+        java.io.PrintStream realErr = System.err;
+        for (String line : lines) {
+            line = line.trim();
+            if (line.isEmpty() || line.startsWith("#")) {
+                continue;
+            }
+            int colon = line.indexOf(':');
+            if (colon < 0) {
+                System.err.println("graalgo-run: bad batch line (want mode:path): " + line);
+                return EXIT_INPUT_ERROR;
+            }
+            String mode = line.substring(0, colon);
+            String file = line.substring(colon + 1);
+            boolean check = mode.equals("check");
+            if (!check && !mode.equals("run")) {
+                System.err.println("graalgo-run: bad batch mode (want check|run): " + mode);
+                return EXIT_INPUT_ERROR;
+            }
+            // Capture this entry's stdout/stderr.
+            java.io.ByteArrayOutputStream bout = new java.io.ByteArrayOutputStream();
+            java.io.ByteArrayOutputStream berr = new java.io.ByteArrayOutputStream();
+            System.setOut(new java.io.PrintStream(bout, true, StandardCharsets.UTF_8));
+            System.setErr(new java.io.PrintStream(berr, true, StandardCharsets.UTF_8));
+            int exit;
+            try {
+                exit = runOne(file, check, false, null);
+            } finally {
+                System.setOut(realOut);
+                System.setErr(realErr);
+            }
+            if (!first) {
+                out.append(",\n");
+            }
+            first = false;
+            out.append("  {\"file\": ").append(jsonStr(file));
+            out.append(", \"exit\": ").append(exit);
+            out.append(", \"stdout\": ").append(jsonStr(bout.toString(StandardCharsets.UTF_8)));
+            out.append(", \"stderr\": ").append(jsonStr(berr.toString(StandardCharsets.UTF_8)));
+            out.append("}");
+        }
+        out.append("\n]\n");
+        realOut.print(out.toString());
+        return EXIT_OK;
+    }
+
+    /** JSON string literal with the standard escapes. */
+    private static String jsonStr(String s) {
+        StringBuilder b = new StringBuilder("\"");
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"': b.append("\\\""); break;
+                case '\\': b.append("\\\\"); break;
+                case '\n': b.append("\\n"); break;
+                case '\r': b.append("\\r"); break;
+                case '\t': b.append("\\t"); break;
+                default:
+                    if (c < 0x20) {
+                        b.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        b.append(c);
+                    }
+            }
+        }
+        return b.append("\"").toString();
+    }
+
     /** gofrontend's side of a failed build: its exit code and captured stderr. */
     public static final class FrontendBuildException extends Exception {
         final int gofrontendExit;
@@ -323,12 +447,15 @@ public final class Main {
 
     private static void usage() {
         System.out.println("usage: graalgo-run [--check] [--dump-vars] [--dump-polymorphism[=path]] file.go");
+        System.out.println("       graalgo-run --batch=batchfile");
         System.out.println("       graalgo-run --help");
         System.out.println("  --check      frontend only (diffharness build step)");
         System.out.println("  --dump-vars  after executing, print name=value per frame slot (debug aid)");
         System.out.println("  --dump-polymorphism[=path]");
         System.out.println("               M9 (WS L): record call-site polymorphism during execution,");
         System.out.println("               then print the JSON snapshot (bare flag) or write it to path");
+        System.out.println("  --batch=file run each 'check:path' or 'run:path' line in one JVM;");
+        System.out.println("               results as JSON array on stdout (harness speedup)");
     }
 
     /**
