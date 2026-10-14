@@ -9,6 +9,7 @@ import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.source.SourceSection;
 import com.oracle.truffle.api.source.Source;
+import graalgo.runtime.sync.GoPool;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
@@ -1823,10 +1824,55 @@ public final class NodeFactory {
             // WS G: a complex field's zero value is (0+0i), not nil.
             case COMPLEX64 -> graalgo.values.GoComplex32.ZERO;
             case COMPLEX128, UNTYPED_COMPLEX -> graalgo.values.GoComplex64.ZERO;
-            case STRUCT -> structZeroTemplate(ctx, fieldTypeId, path);
+            // P3-M9 (driver-harden, go-cmp lane): sync primitive fields get
+            // usable Java primitive objects, not empty structs. Each
+            // evaluation gets its own instance (the template is copied
+            // per use via Boxing.freshZeroCopy for the non-pool cases;
+            // pools are freshened in arrayZeroTemplate/deepCopyArray).
+            case STRUCT -> {
+                String prim = syncPrimitiveName(ctx, fieldTypeId, path);
+                if (prim != null) {
+                    yield newSyncPrimitive(prim);
+                }
+                yield structZeroTemplate(ctx, fieldTypeId, path);
+            }
             case ARRAY -> arrayZeroTemplate(ctx, fieldTypeId, path);
             default -> null;
         };
+    }
+
+    /** Manufactures a fresh Java object for a sync primitive type name. */
+    private static Object newSyncPrimitive(String prim) {
+        return switch (prim) {
+            case "Mutex" -> new graalgo.runtime.sync.GoMutex();
+            case "RWMutex" -> new graalgo.runtime.sync.GoRWMutex();
+            case "WaitGroup" -> new graalgo.runtime.sync.GoWaitGroup();
+            case "Once" -> new graalgo.runtime.sync.GoOnce();
+            case "Pool" -> new GoPool();
+            default -> throw new IllegalArgumentException("unknown sync primitive " + prim);
+        };
+    }
+
+    /**
+     * Whether the type-table id denotes one of the synthetic sync
+     * primitive named types (resolving aliases). Returns the primitive
+     * name ("Mutex", "RWMutex", "WaitGroup", "Once", "Pool") or null.
+     */
+    private static String syncPrimitiveName(BuildCtx ctx, int typeId, String path) {
+        int rid = resolveAlias(ctx, typeId, path);
+        Json.Object entry = ctx.types.entry(rid, path);
+        if (!"named".equals(entry.string("kind", path))) {
+            return null;
+        }
+        String name = entry.object("detail", path).string("name", path);
+        if (name != null && name.startsWith("sync.")) {
+            String base = name.substring(5);
+            switch (base) {
+                case "Mutex", "RWMutex", "WaitGroup", "Once", "Pool":
+                    return base;
+            }
+        }
+        return null;
     }
 
     private static Object arrayZeroTemplate(BuildCtx ctx, int arrayTypeId, String path) {
@@ -1852,7 +1898,7 @@ public final class NodeFactory {
         Object elemZero = fieldZeroTemplate(ctx, elemKind, elemId, path);
         if (elemZero != null && arr instanceof Object[] oa) {
             // Elements share the template; Boxing.freshZeroCopy gives each
-            // evaluation its own copy.
+            // evaluation its own copy (fresh primitives for sync types).
             Arrays.fill(oa, elemZero);
         }
         return arr;
@@ -5588,7 +5634,15 @@ public final class NodeFactory {
             for (int i = 0; i < len; i++) {
                 objs[i] = switch (ek) {
                     case ARRAY -> zeroArrayFor(elemTid, ctx, path);
-                    case STRUCT -> Boxing.freshZeroCopy(structZeroTemplate(ctx, elemTid, path));
+                    // P3-M9 (driver-harden, go-cmp lane): sync primitive
+                    // slots get fresh instances (never shared templates).
+                    case STRUCT -> {
+                        String prim = syncPrimitiveName(ctx, elemTid, path);
+                        if (prim != null) {
+                            yield newSyncPrimitive(prim);
+                        }
+                        yield Boxing.freshZeroCopy(structZeroTemplate(ctx, elemTid, path));
+                    }
                     default -> GoString.EMPTY;
                 };
             }

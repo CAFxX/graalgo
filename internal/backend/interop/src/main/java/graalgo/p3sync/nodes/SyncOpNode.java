@@ -11,6 +11,8 @@ import graalgo.runtime.GoErrors;
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.Panic;
 import graalgo.runtime.sync.GoMutex;
+import graalgo.runtime.sync.GoPool;
+import graalgo.values.GoInterface;
 import graalgo.values.GoString;
 import java.nio.charset.StandardCharsets;
 import graalgo.runtime.sync.GoOnce;
@@ -43,8 +45,13 @@ import graalgo.values.GoKind;
  * call protocol), including its {@code recoverAllowed} dance — a direct
  * {@code recover()} inside the Do func returns nil, gc parity.
  *
- * <p>All ops are void: the node kind is {@link GoKind#INTERFACE} returning
- * null, mirroring {@code GoexitCallNode}.
+ * <p>All ops are void except {@code Pool.Get}: the node kind is
+ * {@link GoKind#INTERFACE} returning null, mirroring
+ * {@code GoexitCallNode}.
+ *
+ * <p>{@code Pool.Get} is the one non-void op: it returns the pooled
+ * interface value ({@code GoInterface}, nil-normalized), or the nil
+ * interface when the pool is empty.
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook (P2-D8 precedent) — no
@@ -87,6 +94,11 @@ public final class SyncOpNode extends GoExprNode {
             case "WaitGroup.Done" -> panicOnMisuse(() -> ((GoWaitGroup) r).done());
             case "WaitGroup.Wait" -> ((GoWaitGroup) r).await();
             case "Once.Do" -> doOnce((GoOnce) r, frame);
+            // P3-M9 (driver-harden, go-cmp lane): sync.Pool. The Put
+            // argument arrives already boxed as an interface value
+            // (Put takes any); Get returns it back, nil-normalized.
+            case "Pool.Get" -> { return GoInterface.narrow(((GoPool) r).get()); }
+            case "Pool.Put" -> ((GoPool) r).put(args[0].executeObject(frame));
             default -> throw new FrontendException("unknown sync op " + syncType + "." + op);
         }
         return null;
@@ -152,8 +164,8 @@ public final class SyncOpNode extends GoExprNode {
         int wantArgs = switch (syncType + "." + op) {
             case "Mutex.Lock", "Mutex.Unlock",
                  "RWMutex.Lock", "RWMutex.Unlock", "RWMutex.RLock", "RWMutex.RUnlock",
-                 "WaitGroup.Done", "WaitGroup.Wait" -> 0;
-            case "WaitGroup.Add", "Once.Do" -> 1;
+                 "WaitGroup.Done", "WaitGroup.Wait", "Pool.Get" -> 0;
+            case "WaitGroup.Add", "Once.Do", "Pool.Put" -> 1;
             default -> throw new FrontendException(path + ": unknown sync op " + syncType + "." + op);
         };
         GoExprNode recv = factory.buildExpr(f.object("recv", path), ctx);

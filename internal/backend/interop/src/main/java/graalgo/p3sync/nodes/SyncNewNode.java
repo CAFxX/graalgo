@@ -12,6 +12,7 @@ import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
 import graalgo.runtime.sync.GoMutex;
 import graalgo.runtime.sync.GoOnce;
+import graalgo.runtime.sync.GoPool;
 import graalgo.runtime.sync.GoRWMutex;
 import graalgo.runtime.sync.GoWaitGroup;
 import graalgo.values.GoKind;
@@ -58,6 +59,9 @@ public final class SyncNewNode extends GoExprNode {
             case "RWMutex" -> new GoRWMutex();
             case "WaitGroup" -> new GoWaitGroup();
             case "Once" -> new GoOnce();
+            // P3-M9 (driver-harden, go-cmp lane): sync.Pool for regexp's
+            // pools (backtrack.go, exec.go, regexp.go).
+            case "Pool" -> new GoPool();
             // P3-M4 (WS C, ADR-0004 D2): atomic wrapper cells. 64-bit
             // wrappers ride on AtomicLong, 32-bit/bool on AtomicInteger
             // (the phase-1 Atomics backing). P3-M10: the generic
@@ -82,7 +86,7 @@ public final class SyncNewNode extends GoExprNode {
         String path = "syncnew.fields";
         String syncType = f.string("synctyp", path);
         switch (syncType) {
-            case "Mutex", "RWMutex", "WaitGroup", "Once",
+            case "Mutex", "RWMutex", "WaitGroup", "Once", "Pool",
                  // P3-M4 (WS C, ADR-0004 D2): atomic wrapper cells.
                  // P3-M10: plus the generic Pointer[T] and any-typed Value.
                  "atomic.Int64", "atomic.Uint64", "atomic.Int32",

@@ -180,13 +180,12 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // in synth_errors.go / synth_sort.go, likewise via getSyntheticPackage):
 // it resolves exactly the synthetic package
 // "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface),
-// the synthetic package "fmt" exposing the D4 symbols (Print, Printf,
-// Println, Sprint, Sprintf, Sprintln, Errorf) plus the P3-M10 F*/Append/
-// scan families and FormatString, all with exact variadic signatures, the synthetic package "sync" exposing the four P3-M2b
+// the synthetic package "fmt" exposing the seven D4 symbols (Print,
+// Printf, Println, Sprint, Sprintf, Sprintln, Errorf) with exact variadic
+// signatures, the synthetic package "sync" exposing the four P3-M2b
 // primitives (Mutex, RWMutex, WaitGroup, Once) with exact gc method
 // signatures, the synthetic package "sync/atomic" exposing the P3-M4
-// typed wrappers (Int64, Uint64, Int32, Uint32, Bool, Uintptr) plus the
-// P3-M10 generic additions (Pointer[T], Value) with exact
+// typed wrappers (Int64, Uint64, Int32, Uint32, Bool, Uintptr) with exact
 // gc method signatures, the synthetic package "time" (ADR-0005 D1:
 // Duration/Time/Month/Weekday as real Go, clock/timer intrinsics), the
 // synthetic package "context" (ADR-0005 D2: real Go on sync.Mutex,
@@ -243,6 +242,26 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "KeepAlive", mkSig(
 			types.NewVar(token.NoPos, pkg, "x", anyT))))
 		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "GC", mkSig()))
+		// P3-M9 (driver-harden, go-cmp lane): runtime.FuncForPC and the
+		// Func type. gc signatures: func FuncForPC(pc uintptr) *Func,
+		// func (f *Func) Name() string. The backend does not implement
+		// PC-to-name mapping (no function PC table); calls fail fast
+		// with a named scope error (see exportCall). The type surface
+		// must exist so packages referencing it (e.g. go-cmp's
+		// internal/function) type-check.
+		funcNamed := types.NewNamed(
+			types.NewTypeName(token.NoPos, pkg, "Func", nil), types.NewStruct(nil, nil), nil)
+		pkg.Scope().Insert(funcNamed.Obj())
+		funcPtr := types.NewPointer(funcNamed)
+		nameSig := types.NewSignatureType(
+			types.NewParam(token.NoPos, pkg, "f", funcPtr), nil, nil,
+			nil, types.NewTuple(types.NewVar(token.NoPos, pkg, "", strTyp)), false)
+		funcNamed.AddMethod(types.NewFunc(token.NoPos, pkg, "Name", nameSig))
+		uintptrTyp := types.Typ[types.Uintptr]
+		funcForPCSig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(token.NoPos, pkg, "pc", uintptrTyp)),
+			types.NewTuple(types.NewVar(token.NoPos, pkg, "", funcPtr)), false)
+		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "FuncForPC", funcForPCSig))
 		pkg.MarkComplete()
 		return pkg, nil
 	case "fmt":
@@ -617,23 +636,6 @@ func syntheticFmtPackage() *types.Package {
 	insert("Sprintf", types.NewTuple(format, a), types.NewTuple(strRes))
 	insert("Sprintln", types.NewTuple(a), types.NewTuple(strRes))
 	insert("Errorf", types.NewTuple(format, a), types.NewTuple(errResOnly))
-	// P4 (driver-harden): the F-family (Fprint/Fprintf/Fprintln) with
-	// exact gc signatures. The writer is a minimal io.Writer interface,
-	// structurally identical to the synthetic io.Writer, so every
-	// io.Writer implementation is assignable to it.
-	ioPkg := types.NewPackage("io", "io")
-	ioByteSliceT := types.NewSlice(types.Typ[types.Byte])
-	ioWriteFn := types.NewFunc(token.NoPos, ioPkg, "Write",
-		types.NewSignatureType(nil, nil, nil,
-			types.NewTuple(param("p", ioByteSliceT)),
-			types.NewTuple(param("n", intT), param("err", errorT)), false))
-	ioWriterTN := types.NewTypeName(token.NoPos, ioPkg, "Writer", nil)
-	ioWriter := types.NewNamed(ioWriterTN,
-		types.NewInterfaceType([]*types.Func{ioWriteFn}, nil).Complete(), nil)
-	w := param("w", ioWriter)
-	insert("Fprint", types.NewTuple(w, a), types.NewTuple(n, errRes))
-	insert("Fprintf", types.NewTuple(w, format, a), types.NewTuple(n, errRes))
-	insert("Fprintln", types.NewTuple(w, a), types.NewTuple(n, errRes))
 	// P3-M9 (wave 3): the State/Scanner/Formatter interfaces (gc 1.27.1
 	// exact signatures). math/big's Int/Float Format/Scan methods are
 	// declared against them. Types only — the stub keeps just the seven
@@ -707,75 +709,25 @@ func syntheticFmtPackage() *types.Package {
 			types.NewTuple(param("state", scanStateNamed), param("verb", runeT)),
 			types.NewTuple(param("", errorT))),
 	}, nil).Complete())
-	// BUG-MODPROBE-010 verification (second instance): fmt.GoStringer was
-	// missing from the synthetic fmt package (gc 1.27.1:
-	// type GoStringer interface{ GoString() string }).
-	goStringerNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "GoStringer", nil), nil, nil)
-	goStringerNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
-		ifaceMethod("GoString", types.NewTuple(), types.NewTuple(strRes)),
-	}, nil).Complete())
-	pkg.Scope().Insert(goStringerNamed.Obj())
-	// P3-M10 (fix-fmt-funcs): the F* print family, the Append family, the
-	// scan family, and FormatString (gc 1.27.1 exact signatures). The F*
-	// and scan families return (int, error) but are statement-position
-	// only in Phase 1 (results discarded), like the D4 Print variants —
-	// see exportFmtCall.
-	//
-	// The w/r params are io.Writer/io.Reader-shaped anonymous interfaces
-	// (inlined so the fmt overlay stays self-contained — no
-	// cross-synthetic init order). Any writer/reader (concrete type or
-	// interface) is assignable to them, exactly like gc's io.Writer.
-	// (The writer interface for Fprint/Fprintf/Fprintln is defined above
-	// in the P4 desugar section; only the reader is needed here for the
-	// scan family.)
-	readMeth := ifaceMethod("Read", types.NewTuple(param("p", byteSliceT)),
-		types.NewTuple(param("n", intT), param("err", errorT)))
-	readerIface := types.NewInterfaceType([]*types.Func{readMeth}, nil).Complete()
-	r := param("r", readerIface)
-	b := param("b", byteSliceT)
-	bytesRes := param("", byteSliceT)
-	// Fprint/Fprintf/Fprintln are already inserted above (P4 desugar).
-	insert("Append", types.NewTuple(b, a), types.NewTuple(bytesRes))
-	insert("Appendf", types.NewTuple(b, format, a), types.NewTuple(bytesRes))
-	insert("Appendln", types.NewTuple(b, a), types.NewTuple(bytesRes))
-	// FormatString is not variadic (insert always marks variadic).
-	formatStringSig := types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(param("state", stateNamed), param("verb", runeT)),
-		types.NewTuple(strRes), false)
-	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "FormatString", formatStringSig))
-	str := param("str", stringT)
-	insert("Scan", types.NewTuple(a), types.NewTuple(n, errRes))
-	insert("Scanf", types.NewTuple(format, a), types.NewTuple(n, errRes))
-	insert("Scanln", types.NewTuple(a), types.NewTuple(n, errRes))
-	insert("Fscan", types.NewTuple(r, a), types.NewTuple(n, errRes))
-	insert("Fscanf", types.NewTuple(r, format, a), types.NewTuple(n, errRes))
-	insert("Fscanln", types.NewTuple(r, a), types.NewTuple(n, errRes))
-	insert("Sscan", types.NewTuple(str, a), types.NewTuple(n, errRes))
-	insert("Sscanf", types.NewTuple(str, format, a), types.NewTuple(n, errRes))
-	insert("Sscanln", types.NewTuple(str, a), types.NewTuple(n, errRes))
 	pkg.MarkComplete()
 	return pkg
 }
 
-// fmtOverlayFuncs are the fmt symbols the Phase-1 overlay resolves: the
-// seven D4 symbols (PLAN.md D4), the P4 F-family (Fprint/Fprintf/Fprintln),
-// plus the P3-M10 Append/scan families and FormatString. Any other fmt.X is
-// a scope error naming Phase 3.
+// fmtOverlayFuncs are the seven D4 symbols (PLAN.md D4).
 var fmtOverlayFuncs = map[string]bool{
 	"Print": true, "Printf": true, "Println": true,
 	"Sprint": true, "Sprintf": true, "Sprintln": true, "Errorf": true,
-	"Fprint": true, "Fprintf": true, "Fprintln": true,
-	"Append": true, "Appendf": true, "Appendln": true,
-	"FormatString": true,
-	"Scan":         true, "Scanf": true, "Scanln": true,
-	"Fscan": true, "Fscanf": true, "Fscanln": true,
-	"Sscan": true, "Sscanf": true, "Sscanln": true,
 }
 
 // syncPrimitiveNames are the four P3-M2b (WS D, ADR-0002) primitives bound
 // to the Phase-2 Java runtime (graalgo.runtime.sync).
 var syncPrimitiveNames = map[string]bool{
 	"Mutex": true, "RWMutex": true, "WaitGroup": true, "Once": true,
+	// P3-M9 (driver-harden, go-cmp lane): sync.Pool. The pool's New field
+	// is NOT in scope (the primitive is an opaque Java object; fields
+	// cannot be stored on it) — referencing Pool.New is a type error.
+	// Get/Put lower to the syncop wire node like the other primitives.
+	"Pool": true,
 }
 
 // syncOpsInScope is the M2-supported method set per primitive (ADR-0002
@@ -786,6 +738,17 @@ var syncOpsInScope = map[string]map[string]bool{
 	"RWMutex":   {"Lock": true, "Unlock": true, "RLock": true, "RUnlock": true},
 	"WaitGroup": {"Add": true, "Done": true, "Wait": true},
 	"Once":      {"Do": true},
+	// P3-M9 (driver-harden, go-cmp lane): Pool.Get/Put. Pool.New is not
+	// in scope (see syncPrimitiveNames).
+	"Pool": {"Get": true, "Put": true},
+}
+
+// isSyncPoolNamed reports whether nt is the synthetic sync.Pool named
+// type (the one primitive allowed in array-element position).
+func isSyncPoolNamed(nt *types.Named) bool {
+	obj := nt.Obj()
+	return obj != nil && obj.Name() == "Pool" &&
+		obj.Pkg() != nil && obj.Pkg().Path() == "sync"
 }
 
 // syncPrimitiveNamed reports whether t is exactly one of the synthetic
@@ -816,12 +779,14 @@ func syncPrimitiveRecv(t types.Type) *types.Named {
 }
 
 // syntheticSyncPackage builds the P3-M2b (WS D, ADR-0002) synthetic "sync"
-// package for the import overlay: the four Phase-2-bound primitives with
+// package for the import overlay: the Phase-2-bound primitives with
 // exact gc 1.27.1 method signatures (pointer receivers, like the real
 // package; verified against ~/tools/go-1.27.1/src/sync/*.go). Out-of-scope
-// methods (TryLock/TryRLock/RLocker/WaitGroup.Go) are defined with exact
-// signatures so misuse fails fast with a named "not in M2 scope" error
-// instead of a confusing "undefined" type error.
+// methods (TryLock/TryRLock/RLocker, WaitGroup.Go, Pool.New) are defined
+// with exact signatures so misuse fails fast with a named "not in M2 scope"
+// error instead of a confusing "undefined" type error — except Pool.New,
+// which cannot even be defined (fields are not storable on the opaque
+// Java object), so it fails to type-check.
 func syntheticSyncPackage() *types.Package {
 	pkg := types.NewPackage("sync", "sync")
 	intT := types.Typ[types.Int]
@@ -879,6 +844,18 @@ func syntheticSyncPackage() *types.Package {
 	once := newPrimitive("Once")
 	addMethod(once, "Do", tuple(param("f", funcT)), nil)
 
+	// P3-M9 (driver-harden, go-cmp lane): sync.Pool. gc's exact method
+	// signatures (pointer receivers): func (p *Pool) Get() any,
+	// func (p *Pool) Put(x any). The New func() any field is NOT in
+	// scope: the primitive is an opaque Java object (ADR-0002 D1) and
+	// cannot carry Go-visible fields — referencing Pool.New fails to
+	// type-check. A nil New is the common case (e.g. regexp's pools);
+	// Get on an empty pool returns nil, matching gc.
+	anyT := types.NewInterfaceType(nil, nil).Complete()
+	pool := newPrimitive("Pool")
+	addMethod(pool, "Get", nil, tuple(param("", anyT)))
+	addMethod(pool, "Put", tuple(param("x", anyT)), nil)
+
 	// P3-M9 (Go 1.21+): OnceFunc returns a function that invokes f only once.
 	// Signature: func OnceFunc(f func()) func(). The runtime behavior is a
 	// trivial once-wrapper: the returned closure captures a Once and calls
@@ -892,13 +869,9 @@ func syntheticSyncPackage() *types.Package {
 }
 
 // atomicPrimitiveNames are the P3-M4 (WS C, ADR-0004) typed wrappers bound
-// to the phase-1 JVM atomics (graalgo.runtime.Atomics), plus the P3-M10
-// generic/noCopy additions: Pointer[T] (the generic typed pointer wrapper)
-// and Value (the any-typed wrapper). Instantiations (Pointer[string], …)
-// are *types.Named with type args, so the name check below still matches.
+// to the phase-1 JVM atomics (graalgo.runtime.Atomics).
 var atomicPrimitiveNames = map[string]bool{
 	"Int64": true, "Uint64": true, "Int32": true, "Uint32": true, "Bool": true, "Uintptr": true,
-	"Pointer": true, "Value": true,
 }
 
 // atomicOpsInScope is the M4-supported method set per wrapper (ADR-0004
@@ -911,10 +884,6 @@ var atomicOpsInScope = map[string]map[string]bool{
 	"Uint32":  {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true},
 	"Bool":    {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
 	"Uintptr": {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true},
-	// P3-M10: Pointer[T] and Value have no Add in gc (pointer/any
-	// arithmetic is meaningless); the four reference ops are in scope.
-	"Pointer": {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
-	"Value":   {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
 }
 
 // atomicPrimitiveNamed reports whether t is exactly one of the synthetic
@@ -985,16 +954,11 @@ func syntheticScopeLabel(nt *types.Named) string {
 // syntheticAtomicPackage builds the P3-M4 (WS C, ADR-0004) synthetic
 // "sync/atomic" package for the import overlay: the six typed wrappers
 // with exact gc 1.27.1 method signatures (pointer receivers, like the
-// real package; verified against ~/tools/go/src/sync/atomic/type.go),
-// plus the P3-M10 generic additions Pointer[T] (declared via the types
-// API with a T-any type parameter; instantiations flow through the same
-// overlay — atomicPrimitiveNamed matches the *types.Named instantiation)
-// and Value (the any-typed wrapper), both with exact gc 1.27.1 method
-// signatures (verified against ~/tools/go/src/sync/atomic/type.go and
-// value.go). And/Or are defined with exact signatures so misuse fails
-// fast with a named "not in M4 scope" error. Package-level functions
-// (AddInt32, …) are defined with exact signatures and rejected at call
-// sites (they need &x — WS D).
+// real package; verified against ~/tools/go-1.27.1/src/sync/atomic/type.go).
+// And/Or are defined with exact signatures so misuse fails fast with a
+// named "not in M4 scope" error. Package-level functions (AddInt32, …)
+// are defined with exact signatures and rejected at call sites (they need
+// &x — WS D); Pointer[T]/Value are out of scope entirely.
 func syntheticAtomicPackage() *types.Package {
 	pkg := types.NewPackage("sync/atomic", "atomic")
 	int64T := types.Typ[types.Int64]
@@ -1047,77 +1011,6 @@ func syntheticAtomicPackage() *types.Package {
 	addMethod(b, "Swap", tuple(param("new", boolT)), tuple(param("old", boolT)))
 	addMethod(b, "CompareAndSwap",
 		types.NewTuple(param("old", boolT), param("new", boolT)), boolRes)
-
-	// P3-M10: atomic.Pointer[T] — the generic typed pointer wrapper
-	// (gc 1.27.1 sync/atomic/type.go: Load() *T, Store(*T), Swap(*T) *T,
-	// CompareAndSwap(*T, *T) bool; no Add, like gc). Declared via the
-	// types API: the named type carries a T-any type parameter, and the
-	// method signatures reference the *types.TypeParam, so go/types
-	// instantiates them for Pointer[string], Pointer[*T], … exactly as
-	// it does for real generic sources. The overlay needs no other
-	// change: atomicPrimitiveNamed matches the instantiation's
-	// *types.Named by origin name, and the syncop wire node carries
-	// synctyp "atomic.Pointer".
-	anyT := types.NewInterfaceType(nil, nil).Complete()
-	tname := types.NewTypeName(token.NoPos, pkg, "Pointer", nil)
-	pkg.Scope().Insert(tname)
-	ptrNamed := types.NewNamed(tname, emptyStruct, nil)
-	tparam := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), anyT)
-	ptrNamed.SetTypeParams([]*types.TypeParam{tparam})
-	// addPtrMethod declares one method on Pointer[T]. The signature
-	// carries its own receiver type parameters (rparams), as the checker
-	// does for real generic methods (signature.go): the same *TypeParam
-	// cannot be bound twice (bindTParams panics), and Named.expandMethod
-	// substitutes the instantiation's type args via the signature's
-	// rparams — so each method gets fresh T objects, and its
-	// params/results are built against them. Without rparams the
-	// signature would keep the raw *T at call sites.
-	//
-	// Every parameter is *T (named per gc); results are *T except
-	// CompareAndSwap's bool. tStar marks the *T result slots.
-	tStar := types.Type(nil)
-	addPtrMethod := func(name string, pnames []string, rtypes []types.Type) {
-		rtparam := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), anyT)
-		tPtr := types.NewPointer(rtparam)
-		pvars := make([]*types.Var, len(pnames))
-		for i, pn := range pnames {
-			pvars[i] = param(pn, tPtr)
-		}
-		rvars := make([]*types.Var, len(rtypes))
-		for i, rt := range rtypes {
-			if rt == tStar {
-				rt = tPtr
-			}
-			rvars[i] = param("", rt)
-		}
-		recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(ptrNamed))
-		var ptup, rtup *types.Tuple
-		if len(pvars) > 0 {
-			ptup = types.NewTuple(pvars...)
-		}
-		if len(rvars) > 0 {
-			rtup = types.NewTuple(rvars...)
-		}
-		sig := types.NewSignatureType(recv, []*types.TypeParam{rtparam}, nil,
-			ptup, rtup, false)
-		ptrNamed.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
-	}
-	tBool := types.Typ[types.Bool]
-	addPtrMethod("Load", nil, []types.Type{tStar})
-	addPtrMethod("Store", []string{"val"}, nil)
-	addPtrMethod("Swap", []string{"new"}, []types.Type{tStar})
-	addPtrMethod("CompareAndSwap", []string{"old", "new"}, []types.Type{tBool})
-
-	// P3-M10: atomic.Value — the any-typed wrapper (gc 1.27.1
-	// sync/atomic/value.go: Load() any, Store(any), Swap(any) any,
-	// CompareAndSwap(any, any) bool). The Go value IS the Java
-	// AtomicReference cell (ADR-0002 D1), same as the typed wrappers.
-	v := newWrapper("Value")
-	addMethod(v, "Load", nil, tuple(param("", anyT)))
-	addMethod(v, "Store", tuple(param("val", anyT)), nil)
-	addMethod(v, "Swap", tuple(param("new", anyT)), tuple(param("old", anyT)))
-	addMethod(v, "CompareAndSwap",
-		types.NewTuple(param("old", anyT), param("new", anyT)), boolRes)
 
 	// Package-level functions: exact gc signatures, rejected at call
 	// sites (ADR-0004 D2 — they need &x, WS D).
@@ -2833,15 +2726,6 @@ func ExportFile(path string) (string, error) {
 	if err := e.recomputeMethodTables(); err != nil {
 		return "", err
 	}
-	// BUG-MODPROBE-010: register pair types for user-defined multi-result
-	// functions BEFORE package-level var initializers are exported.
-	// Initializers like `var x = Must(Parse(...))` hoist the inner
-	// multi-result call via classifyMultiResultCall, which consults
-	// userMRFuncs — previously populated only inside exportFuncDecl,
-	// which runs after exportPackageVars, so the call failed fast.
-	if err := e.registerUserMRPairs(funcs); err != nil {
-		return "", err
-	}
 	// M7: package-level vars — dependency-order initialization. This runs
 	// after instantiation enumeration so initializers can call
 	// package-level functions (funcByObj is populated) and generic
@@ -3054,12 +2938,6 @@ type ginit struct {
 	init *Node
 	expr ast.Expr
 	pos  *Pos
-	// BUG-MODPROBE-010: temp globals hoisted from multi-result calls in
-	// argument position within this initializer's expression
-	// (var x = f(g())). Emitted immediately before this entry, in order;
-	// the temps are uniquely named and unobservable elsewhere, so they
-	// need no dependency analysis.
-	pre []ginit
 }
 
 // varDepAnalyzer finds the package-level variables an initializer
@@ -3218,9 +3096,6 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 		for i, n := range vs.Names {
 			var initNode *Node
 			var initExpr ast.Expr
-			// BUG-MODPROBE-010: temp globals hoisted while exporting this
-			// name's initializer (drained from e.mrHoistPre below).
-			var hoistPre []ginit
 			// P3-M5 (WS E, ADR-0005 D1): package-level `var t time.Timer`
 			// / `var t time.Ticker` (with or without init) is not in M5
 			// scope (mirrors the local-var path).
@@ -3231,26 +3106,18 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 			}
 			if i < len(vs.Values) {
 				initExpr = vs.Values[i]
-				preBase := len(e.mrHoistPre)
 				x, err := e.exportExpr(initExpr)
 				if err != nil {
 					return nil, err
 				}
 				// BUG-MODPROBE-010: multi-result calls in argument position
-				// at package level (var x = f(g())) hoist the inner call to
-				// a synthesized package-level temp global. The
-				// statement-level flush (exportStmt) has no package-init
-				// equivalent, so hoisted temps are drained here and emitted
-				// immediately before this variable's initializer (Go
-				// evaluation order within one initializer is preserved).
-				for _, pn := range e.mrHoistPre[preBase:] {
-					pg, perr := packageHoistTemp(pn)
-					if perr != nil {
-						return nil, perr
-					}
-					hoistPre = append(hoistPre, pg)
+				// at package level (var x = f(g())) cannot use the
+				// statement-level hoisting (no exportStmt context for
+				// package inits). Fail fast rather than emitting wrong code.
+				if len(e.mrHoistPre) > 0 {
+					e.mrHoistPre = nil
+					return nil, scopeErrorf("multi-result call in argument position at package level is not supported in frontend/v1 scope (WS D)")
 				}
-				e.mrHoistPre = e.mrHoistPre[:preBase]
 				initNode = x
 			} else {
 				// P3-M2b (ADR-0002 D3): package-level `var m sync.Mutex`
@@ -3274,7 +3141,7 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 				// Blank: no variable, but the initializer is evaluated
 				// for side effects (Go spec, Package initialization).
 				if initNode != nil {
-					inits = append(inits, ginit{oid: -1, init: initNode, expr: initExpr, pos: specPos, pre: hoistPre})
+					inits = append(inits, ginit{oid: -1, init: initNode, expr: initExpr, pos: specPos})
 				}
 				continue
 			}
@@ -3286,7 +3153,7 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 			if !ok {
 				return nil, fmt.Errorf("gofrontend: package var %q missing from object table", n.Name)
 			}
-			inits = append(inits, ginit{oid: oid, init: initNode, expr: initExpr, pos: specPos, pre: hoistPre})
+			inits = append(inits, ginit{oid: oid, init: initNode, expr: initExpr, pos: specPos})
 		}
 	}
 
@@ -3306,13 +3173,6 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 
 	out := make([]GlobalEnt, 0, len(ordered))
 	for _, g := range ordered {
-		// BUG-MODPROBE-010: hoisted temps evaluate immediately before
-		// their consuming initializer (Go evaluation order within one
-		// initializer); the temps are uniquely named and unobservable
-		// elsewhere, so they ride along instead of being sorted.
-		for _, p := range g.pre {
-			out = append(out, GlobalEnt{Obj: p.oid, Init: p.init, Pos: p.pos})
-		}
 		out = append(out, GlobalEnt{Obj: g.oid, Init: g.init, Pos: g.pos})
 	}
 	// Go spec (Package initialization): after the package's variables
@@ -3468,6 +3328,8 @@ type exporter struct {
 	// automatic: any user-defined 2+ result function gets a synthesized
 	// pair struct.
 	userMRFuncs map[*types.Func]*userMRInfo
+	// P3-M9 (driver-harden): name-based fallback for synthetic MR funcs.
+	// Synthetic packages are type-checked separately from their callers,
 	// P3-M9 (WS D): the userMRInfo for the function whose body is
 	// currently being exported (nil outside such functions). Used to
 	// transform `return a, b` into a pair composite literal.
@@ -4466,7 +4328,15 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 	case *types.Array:
 		// P3-M2b (ADR-0002 D3): as for slices — array zeros are factory-made.
 		if nt := syntheticPrimitiveNamed(t.Elem()); nt != nil {
-			return TypeEnt{}, syntheticCompositeScopeError(nt, "an array element")
+			// P3-M9 (driver-harden, go-cmp lane): sync.Pool is the
+			// exception — the factory manufactures a distinct GoPool
+			// per slot (NodeFactory.arrayZeroTemplate/zeroArrayFor),
+			// so [N]sync.Pool (regexp's matchPool) works. Other
+			// primitives still scope-error: their zeros would be
+			// unusable empty structs.
+			if !isSyncPoolNamed(nt) {
+				return TypeEnt{}, syntheticCompositeScopeError(nt, "an array element")
+			}
 		}
 		if nt := timeTimerTickerNamedExact(t.Elem()); nt != nil {
 			return TypeEnt{}, timerScopeErrorf(nt, "an array element")
@@ -4520,12 +4390,11 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		fields := make([]any, 0, t.NumFields())
 		vars := make([]*types.Var, 0, t.NumFields())
 		for i := 0; i < t.NumFields(); i++ {
-			// P3-M2b (ADR-0002 D3): the factory manufactures field zeros
-			// (frozen); a sync primitive field would zero to an unusable
-			// empty struct. *sync.X fields are fine (nil is correct).
-			if nt := syntheticPrimitiveNamed(t.Field(i).Type()); nt != nil {
-				return TypeEnt{}, syntheticCompositeScopeError(nt, "a struct field")
-			}
+			// P3-M2b (ADR-0002 D3): the factory manufactures field zeros.
+			// P3-M9 (driver-harden, go-cmp lane): sync primitive fields are
+			// now allowed — the factory's fieldZeroTemplate manufactures a
+			// usable Java primitive object (not an empty struct). *sync.X
+			// fields were already fine (nil is correct).
 			if nt := timeTimerTickerNamedExact(t.Field(i).Type()); nt != nil {
 				return TypeEnt{}, timerScopeErrorf(nt, "a struct field")
 			}
@@ -4939,6 +4808,10 @@ type methodCall struct {
 	key       string     // dedup key ("" when !needsInst)
 	name      string     // display name ("" when !needsInst)
 	needsInst bool
+	// panicMsg, when non-empty, marks a synthetic method with no backend
+	// implementation (e.g. (*runtime.Func).Name). methodRefNode emits a
+	// runtime panic instead of a method call.
+	panicMsg string
 	// rawTargsForEmit are the actual argument types in bind order, for the
 	// wire "typeargs" field (valid when needsInst).
 	rawTargsForEmit []types.Type
@@ -4969,6 +4842,14 @@ type methodCall struct {
 func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Selection, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
 	mname := sel.Sel.Name
 	rn := derefNamed(selection.Recv())
+	// P3-M9 (driver-harden, go-cmp lane): (*runtime.Func).Name(). The type
+	// surface exists (synthetic, via AddMethod) but the method is not in
+	// methodIndex. Return a marker methodCall; methodRefNode emits a
+	// runtime panic for it.
+	if rn != nil && rn.Obj().Name() == "Func" && rn.Obj().Pkg() != nil &&
+		rn.Obj().Pkg().Path() == "runtime" && mname == "Name" {
+		return &methodCall{panicMsg: "runtime.Func.Name not implemented (no PC-to-function table)"}, nil
+	}
 	if rn != nil {
 		fi, ok := e.methodIndex[methodKey{rn.Obj(), mname}]
 		if !ok {
@@ -5201,7 +5082,22 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 	// The declaring named type: walk the receiver type along the
 	// adaptation path (embeddedFieldType substitutes type arguments for
 	// instantiated receivers, e.g. GInner[int] under GOuter[int]).
-	dn := derefNamed(embeddedFieldType(selection.Recv(), path))
+	// P3-M9 (driver-harden, go-cmp lane): if the embedded field is an
+	// INTERFACE (e.g. go-cmp's reporter embedding reporterIface), the
+	// method is interface-promoted. Dispatch via the interface using
+	// the ifaceFallback mechanism; the receiver is adapted via recvPath
+	// in methodRefNode.
+	fieldType := embeddedFieldType(selection.Recv(), path)
+	if fieldType != nil {
+		if _, ok := fieldType.Underlying().(*types.Interface); ok {
+			// Verify the method is in the interface's method set.
+			if msel := types.NewMethodSet(fieldType).Lookup(e.pkg, mname); msel == nil {
+				return notFound()
+			}
+			return &methodCall{ifaceFallback: fieldType, subst: subst, recvPath: path}, nil
+		}
+	}
+	dn := derefNamed(fieldType)
 	if dn == nil {
 		return notFound()
 	}
@@ -6046,9 +5942,6 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Save the original results (with named result vars) before the
-	// multi-result transform below replaces them with the pair.
-	origResults := results
 	// P3-M9 (WS D): user-defined multi-result functions are automatically
 	// transformed to pair-returning form. Synthesize a pair struct type,
 	// change the signature to return it, and transform `return a, b` in
@@ -6057,24 +5950,23 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	var mrInfo *userMRInfo
 	sigParams := fi.sig.Params()
 	sigResults := fi.sig.Results()
-	if len(results) > 1 {
-		// Only transform user-defined functions (not synthetic — those
-		// use the table-driven mechanism with __-helpers).
-		if fi.synthPkg == nil {
-			// BUG-MODPROBE-010: the pair type is normally pre-registered
-			// by registerUserMRPairs (before package var initializers are
-			// exported); registerUserMRFunc reuses that entry and only
-			// synthesizes when exportFuncDecl runs outside that flow.
-			var rerr error
-			mrInfo, rerr = e.registerUserMRFunc(fi)
-			if rerr != nil {
-				return nil, rerr
+	if len(results) > 1 && !fi.isTemplate && fi.synthPkg == nil {
+		// P3-M9 (WS D): user-defined multi-result functions are transformed
+		// to pair-returning form. Synthetic packages are excluded (they use
+		// the table-driven mechanism). Generic templates are skipped.
+		{
+			pairType, fieldNames, serr := e.synthesizeUserPairType(fi)
+			if serr != nil {
+				return nil, serr
 			}
-			if mrInfo == nil {
-				return nil, fmt.Errorf("gofrontend: no pair registration for multi-result func %s (exporter bug)", fi.obj.Name())
+			mrInfo = &userMRInfo{
+				pairType:   pairType,
+				pairFields: fieldNames,
+				origSig:    fi.sig,
 			}
+			e.userMRFuncs[fi.obj] = mrInfo
 			// New signature: same params, single pair result.
-			pairVar := types.NewParam(token.NoPos, e.pkg, "", mrInfo.pairType)
+			pairVar := types.NewParam(token.NoPos, e.pkg, "", pairType)
 			sigResults = types.NewTuple(pairVar)
 			// Export a single result var for the pair type.
 			pairResult, err := e.exportParamVar(fd.Type, pairVar)
@@ -6082,14 +5974,6 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 				return nil, err
 			}
 			results = []*Node{pairResult}
-		} else {
-			// P3-M8 (WS D; REVIEW-1 P2-5): this is also the fail-fast for the
-			// `return <multi-result interface call>` position — a 2-result
-			// call can only type-check as a return value inside a function
-			// with the same results, which v1 rejects here. Named loud
-			// limitation; re-test trigger: extend exportMultiResultDesugar
-			// to return positions (see DESIGN.md §5).
-			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
 		}
 	}
 	sig, err := e.freshSigID(fi.recv, sigParams, sigResults, fi.sig.Variadic())
@@ -6105,31 +5989,6 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
-	}
-	// If this was a multi-result transform and the original results had
-	// names, define them as locals at the start of the body so assignments
-	// to named results work. The `return` packs them into the pair.
-	if mrInfo != nil {
-		var namedDecls []*Node
-		for _, r := range origResults {
-			name, _ := r.Fields["name"].(string)
-			if name == "" {
-				continue
-			}
-			oid, _ := r.Fields["obj"].(int)
-			tid, _ := r.Fields["type"].(int)
-			// Define as a local var (no initializer; zero value).
-			namedDecls = append(namedDecls, e.node("vardecl", fd.Type, map[string]any{
-				"names": []string{name}, "objs": []int{oid},
-				"define": true, "type": tid, "values": []*Node{},
-			}))
-		}
-		if len(namedDecls) > 0 {
-			stmts := body.Fields["stmts"].([]*Node)
-			body = e.node("block", fd.Body, map[string]any{
-				"stmts": append(namedDecls, stmts...),
-			})
-		}
 	}
 	fields := map[string]any{
 		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
@@ -6520,10 +6379,9 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		// fail-fast (TestMultiResultFailFastKept), and interface calls
 		// keep the D1 exportIfaceMethodCall path via exportExpr below.
 		if c, ok := unparen(s.X).(*ast.CallExpr); ok {
-			if plan := e.classifyMultiResultCall(c); plan != nil {
-				if plan.kind == mrM7 || plan.kind == mrXmlToken {
-					return e.exportBareMultiResultCall(s, c, plan)
-				}
+			if plan := e.classifyMultiResultCall(c); plan != nil &&
+				(plan.kind == mrM7 || plan.kind == mrXmlToken) {
+				return e.exportBareMultiResultCall(s, c, plan)
 			}
 		}
 		x, err := e.exportExpr(s.X)
@@ -6532,41 +6390,6 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		}
 		return e.node("exprstmt", s, map[string]any{"x": x}), nil
 	case *ast.ReturnStmt:
-		// BUG-MODPROBE-010 (generalized): a multi-result call in return
-		// position — e.g. `return json.Marshal(x)` — desugars via
-		// hoistMRCallArg like the assignment case: hoist to a temp,
-		// return the unpacked fields. Only the single-result form can
-		// hold a multi-result call (Go forbids mixing); the hoisted temp
-		// rides e.mrHoistPre so exportStmt wraps it in a block before the
-		// return. In a transformed user MR function, the unpacked values
-		// are packed into the function's pair (the backend's return takes
-		// 0/1 results).
-		if len(s.Results) == 1 {
-			if c, ok := unparen(s.Results[0]).(*ast.CallExpr); ok {
-				if plan := e.classifyMultiResultCall(c); plan != nil {
-					unpacked, pre, err := e.hoistMRCallArg(c, plan)
-					if err != nil {
-						return nil, err
-					}
-					e.mrHoistPre = append(e.mrHoistPre, pre...)
-					if e.currentMR != nil {
-						mr := e.currentMR
-						pairTypeID, err := e.typeID(mr.pairType)
-						if err != nil {
-							return nil, err
-						}
-						pairNode := e.node("complit", s, map[string]any{
-							"type":      pairTypeID,
-							"keyed":     true,
-							"values":    unpacked,
-							"fieldkeys": mr.pairFields,
-						})
-						return e.node("return", s, map[string]any{"results": []*Node{pairNode}}), nil
-					}
-					return e.node("return", s, map[string]any{"results": unpacked}), nil
-				}
-			}
-		}
 		results := make([]*Node, 0, len(s.Results))
 		for _, r := range s.Results {
 			x, err := e.exportExpr(r)
@@ -6791,7 +6614,7 @@ func (e *exporter) exportSyncDefer(s *ast.DeferStmt, sel *ast.SelectorExpr, sele
 		bodyArgs = idents[1:]
 	}
 	inner := e.node("syncop", c, map[string]any{
-		"op": op, "synctyp": syntheticOpTypeName(nt),
+		"op": op, "synctyp": typeName,
 		"recv": bodyRecv, "args": bodyArgs, "type": nil,
 	})
 	body := e.node("block", c, map[string]any{
@@ -8202,6 +8025,26 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			}
 			return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 		}
+		// P3-M9 (driver-harden, go-cmp lane): runtime.FuncForPC. The type
+		// surface exists (see overlayImporter), but the backend has no
+		// PC-to-function table. Rewrite to a runtime panic so the
+		// enclosing body still exports (e.g. go-cmp's NameOf); an actual
+		// call fails fast with a clear message, never a confusing
+		// "undefined" or backend crash.
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" && sel.Sel.Name == "FuncForPC" {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
+				panicCall := &ast.CallExpr{
+					Fun: ast.NewIdent("panic"),
+					Args: []ast.Expr{
+						&ast.BasicLit{
+							Kind:  token.STRING,
+							Value: `"runtime.FuncForPC not implemented (no PC-to-function table on the JVM backend)"`,
+						},
+					},
+				}
+				return e.exportCall(panicCall)
+			}
+		}
 		// P2-M4 (GC interop, ADR-0002 D4): runtime.SetFinalizer/KeepAlive/GC.
 		// Emitted as "call" nodes with the gcinterop marker naming the
 		// intrinsic; the factory builds the corresponding CallNode which
@@ -8668,10 +8511,9 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	return e.node("call", c, fields), nil
 }
 
-// exportFmtCall exports a call to one of the fmt overlay functions
-// (M6, WS H — the Phase-1 fmt import overlay, PLAN.md D4; P3-M10 extends
-// the overlay with the Append/scan families and FormatString). Any other
-// fmt.X is a scope error naming Phase 3.
+// exportFmtCall exports a call to one of the seven D4 fmt stub functions
+// (M6, WS H — the Phase-1 fmt import overlay, PLAN.md D4). Any other fmt.X
+// is a scope error naming Phase 3.
 func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node, error) {
 	name := sel.Sel.Name
 	if !fmtOverlayFuncs[name] {
@@ -8684,17 +8526,12 @@ func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node,
 	if err != nil {
 		return nil, err
 	}
-	// The Print/F-print/scan families return (int, error); Phase 1 supports
-	// them in statement position only (results discarded) — the wire type
-	// is null. The Sprint/Append families, FormatString and Errorf return
-	// a single value.
+	// The Print variants return (int, error); Phase 1 supports them in
+	// statement position only (results discarded) — the wire type is null.
+	// The Sprint variants and Errorf return a single value.
 	var typ any
 	switch name {
-	case "Print", "Printf", "Println",
-		"Fprint", "Fprintf", "Fprintln",
-		"Scan", "Scanf", "Scanln",
-		"Fscan", "Fscanf", "Fscanln",
-		"Sscan", "Sscanf", "Sscanln":
+	case "Print", "Printf", "Println":
 		typ = nil
 	default:
 		typ, err = e.callType(c)
@@ -8952,13 +8789,46 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	if err != nil {
 		return nil, err
 	}
+	// P3-M9: synthetic method with no backend (panicMsg). Emit a runtime
+	// panic so the enclosing body exports; an actual call fails fast.
+	if mc.panicMsg != "" {
+		panicCall := &ast.CallExpr{
+			Fun: ast.NewIdent("panic"),
+			Args: []ast.Expr{
+				&ast.BasicLit{Kind: token.STRING, Value: `"` + mc.panicMsg + `"`},
+			},
+		}
+		return e.exportCall(panicCall)
+	}
 	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
 	// devirtualization fails (type parameter's concrete type is not a
 	// named type), dispatch via the constraint interface. The ifacemethod
 	// node is a complete call (not a function reference), so return it
 	// directly; the caller (exportMethodCall) detects the kind and skips
 	// the "call" wrapper.
+	// P3-M9 (driver-harden, go-cmp lane): for interface-promoted methods
+	// (embedded interface fields), adapt the receiver by walking recvPath
+	// with a selector node, so dispatch happens on the field, not the
+	// outer struct.
 	if mc.ifaceFallback != nil {
+		if len(mc.recvPath) > 0 {
+			adapted := embeddedFieldType(selection.Recv(), mc.recvPath)
+			if adapted == nil {
+				return nil, fmt.Errorf("gofrontend: cannot adapt receiver for promoted interface method %s (exporter bug)", sel.Sel.Name)
+			}
+			tid, err := e.typeID(adapted)
+			if err != nil {
+				return nil, err
+			}
+			path := make([]any, len(mc.recvPath))
+			for i, v := range mc.recvPath {
+				path[i] = v
+			}
+			recv = e.node("selector", sel, map[string]any{
+				"x": recv, "field": embeddedFieldName(selection.Recv(), mc.recvPath),
+				"selpath": path, "type": tid,
+			})
+		}
 		return e.exportIfaceFallbackCall(c, sel, selection, recv, mc.ifaceFallback)
 	}
 	// P3-M9: variadic method calls pack trailing args into a slice literal
