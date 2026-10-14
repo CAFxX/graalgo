@@ -2987,6 +2987,15 @@ func ExportFile(path string) (string, error) {
 	if err := e.recomputeMethodTables(); err != nil {
 		return "", err
 	}
+	// BUG-MODPROBE-010: register pair types for user-defined multi-result
+	// functions BEFORE package-level var initializers are exported.
+	// Initializers like `var x = Must(Parse(...))` hoist the inner
+	// multi-result call via classifyMultiResultCall, which consults
+	// userMRFuncs — previously populated only inside exportFuncDecl,
+	// which runs after exportPackageVars, so the call failed fast.
+	if err := e.registerUserMRPairs(funcs); err != nil {
+		return "", err
+	}
 	// M7: package-level vars — dependency-order initialization. This runs
 	// after instantiation enumeration so initializers can call
 	// package-level functions (funcByObj is populated) and generic
@@ -3199,6 +3208,12 @@ type ginit struct {
 	init *Node
 	expr ast.Expr
 	pos  *Pos
+	// BUG-MODPROBE-010: temp globals hoisted from multi-result calls in
+	// argument position within this initializer's expression
+	// (var x = f(g())). Emitted immediately before this entry, in order;
+	// the temps are uniquely named and unobservable elsewhere, so they
+	// need no dependency analysis.
+	pre []ginit
 }
 
 // varDepAnalyzer finds the package-level variables an initializer
@@ -3357,6 +3372,9 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 		for i, n := range vs.Names {
 			var initNode *Node
 			var initExpr ast.Expr
+			// BUG-MODPROBE-010: temp globals hoisted while exporting this
+			// name's initializer (drained from e.mrHoistPre below).
+			var hoistPre []ginit
 			// P3-M5 (WS E, ADR-0005 D1): package-level `var t time.Timer`
 			// / `var t time.Ticker` (with or without init) is not in M5
 			// scope (mirrors the local-var path).
@@ -3367,18 +3385,26 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 			}
 			if i < len(vs.Values) {
 				initExpr = vs.Values[i]
+				preBase := len(e.mrHoistPre)
 				x, err := e.exportExpr(initExpr)
 				if err != nil {
 					return nil, err
 				}
 				// BUG-MODPROBE-010: multi-result calls in argument position
-				// at package level (var x = f(g())) cannot use the
-				// statement-level hoisting (no exportStmt context for
-				// package inits). Fail fast rather than emitting wrong code.
-				if len(e.mrHoistPre) > 0 {
-					e.mrHoistPre = nil
-					return nil, scopeErrorf("multi-result call in argument position at package level is not supported in frontend/v1 scope (WS D)")
+				// at package level (var x = f(g())) hoist the inner call to
+				// a synthesized package-level temp global. The
+				// statement-level flush (exportStmt) has no package-init
+				// equivalent, so hoisted temps are drained here and emitted
+				// immediately before this variable's initializer (Go
+				// evaluation order within one initializer is preserved).
+				for _, pn := range e.mrHoistPre[preBase:] {
+					pg, perr := packageHoistTemp(pn)
+					if perr != nil {
+						return nil, perr
+					}
+					hoistPre = append(hoistPre, pg)
 				}
+				e.mrHoistPre = e.mrHoistPre[:preBase]
 				initNode = x
 			} else {
 				// P3-M2b (ADR-0002 D3): package-level `var m sync.Mutex`
@@ -3402,7 +3428,7 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 				// Blank: no variable, but the initializer is evaluated
 				// for side effects (Go spec, Package initialization).
 				if initNode != nil {
-					inits = append(inits, ginit{oid: -1, init: initNode, expr: initExpr, pos: specPos})
+					inits = append(inits, ginit{oid: -1, init: initNode, expr: initExpr, pos: specPos, pre: hoistPre})
 				}
 				continue
 			}
@@ -3414,7 +3440,7 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 			if !ok {
 				return nil, fmt.Errorf("gofrontend: package var %q missing from object table", n.Name)
 			}
-			inits = append(inits, ginit{oid: oid, init: initNode, expr: initExpr, pos: specPos})
+			inits = append(inits, ginit{oid: oid, init: initNode, expr: initExpr, pos: specPos, pre: hoistPre})
 		}
 	}
 
@@ -3434,6 +3460,13 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 
 	out := make([]GlobalEnt, 0, len(ordered))
 	for _, g := range ordered {
+		// BUG-MODPROBE-010: hoisted temps evaluate immediately before
+		// their consuming initializer (Go evaluation order within one
+		// initializer); the temps are uniquely named and unobservable
+		// elsewhere, so they ride along instead of being sorted.
+		for _, p := range g.pre {
+			out = append(out, GlobalEnt{Obj: p.oid, Init: p.init, Pos: p.pos})
+		}
 		out = append(out, GlobalEnt{Obj: g.oid, Init: g.init, Pos: g.pos})
 	}
 	// Go spec (Package initialization): after the package's variables
@@ -6221,6 +6254,9 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Save the original results (with named result vars) before the
+	// multi-result transform below replaces them with the pair.
+	origResults := results
 	// P3-M9 (WS D): user-defined multi-result functions are automatically
 	// transformed to pair-returning form. Synthesize a pair struct type,
 	// change the signature to return it, and transform `return a, b` in
@@ -6233,27 +6269,27 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		// P3-M9 (WS D): user-defined multi-result functions are transformed
 		// to pair-returning form. Synthetic packages are excluded (they use
 		// the table-driven mechanism). Generic templates are skipped.
-		{
-			pairType, fieldNames, serr := e.synthesizeUserPairType(fi)
-			if serr != nil {
-				return nil, serr
-			}
-			mrInfo = &userMRInfo{
-				pairType:   pairType,
-				pairFields: fieldNames,
-				origSig:    fi.sig,
-			}
-			e.userMRFuncs[fi.obj] = mrInfo
-			// New signature: same params, single pair result.
-			pairVar := types.NewParam(token.NoPos, e.pkg, "", pairType)
-			sigResults = types.NewTuple(pairVar)
-			// Export a single result var for the pair type.
-			pairResult, err := e.exportParamVar(fd.Type, pairVar)
-			if err != nil {
-				return nil, err
-			}
-			results = []*Node{pairResult}
+		// BUG-MODPROBE-010: the pair type is normally pre-registered
+		// by registerUserMRPairs (before package var initializers are
+		// exported); registerUserMRFunc reuses that entry and only
+		// synthesizes when exportFuncDecl runs outside that flow.
+		var rerr error
+		mrInfo, rerr = e.registerUserMRFunc(fi)
+		if rerr != nil {
+			return nil, rerr
 		}
+		if mrInfo == nil {
+			return nil, fmt.Errorf("gofrontend: no pair registration for multi-result func %s (exporter bug)", fi.obj.Name())
+		}
+		// New signature: same params, single pair result.
+		pairVar := types.NewParam(token.NoPos, e.pkg, "", mrInfo.pairType)
+		sigResults = types.NewTuple(pairVar)
+		// Export a single result var for the pair type.
+		pairResult, err := e.exportParamVar(fd.Type, pairVar)
+		if err != nil {
+			return nil, err
+		}
+		results = []*Node{pairResult}
 	}
 	sig, err := e.freshSigID(fi.recv, sigParams, sigResults, fi.sig.Variadic())
 	if err != nil {
@@ -6268,6 +6304,31 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
+	}
+	// If this was a multi-result transform and the original results had
+	// names, define them as locals at the start of the body so assignments
+	// to named results work. The `return` packs them into the pair.
+	if mrInfo != nil {
+		var namedDecls []*Node
+		for _, r := range origResults {
+			name, _ := r.Fields["name"].(string)
+			if name == "" {
+				continue
+			}
+			oid, _ := r.Fields["obj"].(int)
+			tid, _ := r.Fields["type"].(int)
+			// Define as a local var (no initializer; zero value).
+			namedDecls = append(namedDecls, e.node("vardecl", fd.Type, map[string]any{
+				"names": []string{name}, "objs": []int{oid},
+				"define": true, "type": tid, "values": []*Node{},
+			}))
+		}
+		if len(namedDecls) > 0 {
+			stmts := body.Fields["stmts"].([]*Node)
+			body = e.node("block", fd.Body, map[string]any{
+				"stmts": append(namedDecls, stmts...),
+			})
+		}
 	}
 	fields := map[string]any{
 		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
@@ -6677,6 +6738,41 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		}
 		return e.node("exprstmt", s, map[string]any{"x": x}), nil
 	case *ast.ReturnStmt:
+		// BUG-MODPROBE-010 (generalized): a multi-result call in return
+		// position — e.g. `return json.Marshal(x)` — desugars via
+		// hoistMRCallArg like the assignment case: hoist to a temp,
+		// return the unpacked fields. Only the single-result form can
+		// hold a multi-result call (Go forbids mixing); the hoisted temp
+		// rides e.mrHoistPre so exportStmt wraps it in a block before the
+		// return. In a transformed user MR function, the unpacked values
+		// are packed into the function's pair (the backend's return takes
+		// 0/1 results).
+		if len(s.Results) == 1 {
+			if c, ok := unparen(s.Results[0]).(*ast.CallExpr); ok {
+				if plan := e.classifyMultiResultCall(c); plan != nil {
+					unpacked, pre, err := e.hoistMRCallArg(c, plan)
+					if err != nil {
+						return nil, err
+					}
+					e.mrHoistPre = append(e.mrHoistPre, pre...)
+					if e.currentMR != nil {
+						mr := e.currentMR
+						pairTypeID, err := e.typeID(mr.pairType)
+						if err != nil {
+							return nil, err
+						}
+						pairNode := e.node("complit", s, map[string]any{
+							"type":      pairTypeID,
+							"keyed":     true,
+							"values":    unpacked,
+							"fieldkeys": mr.pairFields,
+						})
+						return e.node("return", s, map[string]any{"results": []*Node{pairNode}}), nil
+					}
+					return e.node("return", s, map[string]any{"results": unpacked}), nil
+				}
+			}
+		}
 		results := make([]*Node, 0, len(s.Results))
 		for _, r := range s.Results {
 			x, err := e.exportExpr(r)
