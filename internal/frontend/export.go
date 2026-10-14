@@ -190,8 +190,8 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // Duration/Time/Month/Weekday as real Go, clock/timer intrinsics), the
 // synthetic package "context" (ADR-0005 D2: real Go on sync.Mutex,
 // channels, synthetic time, and P3-M3 interface dispatch), the synthetic
-// package "errors" (P3-M7: New/Is/Unwrap/Join as real Go; As/AsType
-// fail-fast — they need reflect), the synthetic package "sort" (P3-M7:
+// package "errors" (P3-M7: New/Is/Unwrap/Join/AsType as real Go; As
+// fail-fast — it needs reflect), the synthetic package "sort" (P3-M7:
 // pdqsort/stable/search as real Go; Find/Slice/SliceStable/SliceIsSorted
 // fail-fast — multi-result/reflect), the 8 P3-M7 (wave 1) encoding/*
 // primitive packages (encoding/base32, encoding/base64, encoding/hex,
@@ -5418,9 +5418,19 @@ func (e *exporter) ensureFuncInstantiation(fi *funcDeclInfo, targs []types.Type)
 // method calls — resolved through the ambient substitution.
 func (e *exporter) helperCallTargs(c *ast.CallExpr) ([]types.Type, error) {
 	var targs []types.Type
-	if id, ok := c.Fun.(*ast.Ident); ok {
+	fun := c.Fun
+	// P4: generic instantiation calls (foo[T](x), pkg.Fn[T](x)) present
+	// Fun as *ast.IndexExpr / *ast.IndexListExpr — unwrap to the
+	// underlying ident/selector before classifying (cf. unwrapSelector
+	// in exportCall).
+	if sel, ok := unwrapSelector(fun); ok {
+		fun = sel
+	} else if id := callTargetIdent(fun); id != nil {
+		fun = id
+	}
+	if id, ok := fun.(*ast.Ident); ok {
 		targs = targsFromInstances(e, id)
-	} else if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
+	} else if sel, ok := fun.(*ast.SelectorExpr); ok {
 		// Package-qualified call (pkg.Fn): not a method selection;
 		// type args come from the Sel ident's instance info.
 		if x, ok := sel.X.(*ast.Ident); ok {

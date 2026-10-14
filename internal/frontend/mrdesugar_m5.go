@@ -133,6 +133,10 @@ type m7MultiResultFunc struct {
 // desugars through base32DecodeStringPair{b, err} — there is no
 // base32AppendPair).
 var m7MultiResultFuncs = []m7MultiResultFunc{
+	// errors: AsType[E error] (P4 — was M7 fail-fast). The pair struct
+	// and helper are generic; the desugar instantiates both with the
+	// call's type argument (instantiatePairType + helperCallTargs).
+	{"errors", "AsType", "", "__asTypePub", "asTypePair", []string{"v", "ok"}},
 	// bytes: methods on *Reader (P3-M9 WS D: v1 cannot emit 2-result methods).
 	{"bytes", "Read", "Reader", "__bytesReaderRead", "__bytesReadPair", []string{"n", "err"}},
 	// bytes: methods on *Buffer (P3-M9 WS D: v1 cannot emit 2-result methods).
@@ -1354,7 +1358,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		}
 		return nil
 	}
-	sel, ok := c.Fun.(*ast.SelectorExpr)
+	sel, ok := unwrapSelector(c.Fun)
 	if !ok {
 		return nil
 	}
@@ -3003,6 +3007,7 @@ func (e *exporter) synthHelperCallNode(c *ast.CallExpr, fn *types.Func, resultTy
 	// demand (prepared immediately, body emitted by
 	// drainMethodTablePending).
 	obj := fi.funcID
+	sig := fn.Type()
 	if fi.isTemplate {
 		targs, err := e.helperCallTargs(c)
 		if err != nil {
@@ -3012,8 +3017,20 @@ func (e *exporter) synthHelperCallNode(c *ast.CallExpr, fn *types.Func, resultTy
 		if err != nil {
 			return nil, err
 		}
+		// P4: the wire signature must be the instantiated one. The
+		// template's generic signature serializes with empty
+		// params/results, so the backend's adaptArgsForInterfaceParams
+		// would skip arg boxing (observed: errors.AsType[*myErr] never
+		// matches because *myErr is never boxed to error).
+		if s, ok := sig.(*types.Signature); ok {
+			instSig, err := types.Instantiate(nil, s, targs, true)
+			if err != nil {
+				return nil, err
+			}
+			sig = instSig
+		}
 	}
-	sigID, err := e.typeID(fn.Type())
+	sigID, err := e.typeID(sig)
 	if err != nil {
 		return nil, err
 	}
