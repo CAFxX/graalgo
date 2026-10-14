@@ -6046,6 +6046,9 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Save the original results (with named result vars) before the
+	// multi-result transform below replaces them with the pair.
+	origResults := results
 	// P3-M9 (WS D): user-defined multi-result functions are automatically
 	// transformed to pair-returning form. Synthesize a pair struct type,
 	// change the signature to return it, and transform `return a, b` in
@@ -6102,6 +6105,31 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
+	}
+	// If this was a multi-result transform and the original results had
+	// names, define them as locals at the start of the body so assignments
+	// to named results work. The `return` packs them into the pair.
+	if mrInfo != nil {
+		var namedDecls []*Node
+		for _, r := range origResults {
+			name, _ := r.Fields["name"].(string)
+			if name == "" {
+				continue
+			}
+			oid, _ := r.Fields["obj"].(int)
+			tid, _ := r.Fields["type"].(int)
+			// Define as a local var (no initializer; zero value).
+			namedDecls = append(namedDecls, e.node("vardecl", fd.Type, map[string]any{
+				"names": []string{name}, "objs": []int{oid},
+				"define": true, "type": tid, "values": []*Node{},
+			}))
+		}
+		if len(namedDecls) > 0 {
+			stmts := body.Fields["stmts"].([]*Node)
+			body = e.node("block", fd.Body, map[string]any{
+				"stmts": append(namedDecls, stmts...),
+			})
+		}
 	}
 	fields := map[string]any{
 		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
@@ -6504,6 +6532,41 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		}
 		return e.node("exprstmt", s, map[string]any{"x": x}), nil
 	case *ast.ReturnStmt:
+		// BUG-MODPROBE-010 (generalized): a multi-result call in return
+		// position — e.g. `return json.Marshal(x)` — desugars via
+		// hoistMRCallArg like the assignment case: hoist to a temp,
+		// return the unpacked fields. Only the single-result form can
+		// hold a multi-result call (Go forbids mixing); the hoisted temp
+		// rides e.mrHoistPre so exportStmt wraps it in a block before the
+		// return. In a transformed user MR function, the unpacked values
+		// are packed into the function's pair (the backend's return takes
+		// 0/1 results).
+		if len(s.Results) == 1 {
+			if c, ok := unparen(s.Results[0]).(*ast.CallExpr); ok {
+				if plan := e.classifyMultiResultCall(c); plan != nil {
+					unpacked, pre, err := e.hoistMRCallArg(c, plan)
+					if err != nil {
+						return nil, err
+					}
+					e.mrHoistPre = append(e.mrHoistPre, pre...)
+					if e.currentMR != nil {
+						mr := e.currentMR
+						pairTypeID, err := e.typeID(mr.pairType)
+						if err != nil {
+							return nil, err
+						}
+						pairNode := e.node("complit", s, map[string]any{
+							"type":      pairTypeID,
+							"keyed":     true,
+							"values":    unpacked,
+							"fieldkeys": mr.pairFields,
+						})
+						return e.node("return", s, map[string]any{"results": []*Node{pairNode}}), nil
+					}
+					return e.node("return", s, map[string]any{"results": unpacked}), nil
+				}
+			}
+		}
 		results := make([]*Node, 0, len(s.Results))
 		for _, r := range s.Results {
 			x, err := e.exportExpr(r)

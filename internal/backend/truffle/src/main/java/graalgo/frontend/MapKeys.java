@@ -16,7 +16,10 @@ final class MapKeys {
 
     static Object box(GoKind kind, GoExprNode node, VirtualFrame frame) {
         switch (kind) {
-            case ARRAY, SLICE, MAP -> throw new FrontendException(
+            // ARRAY keys are comparable in Go (value equality); GoEquality
+            // provides value-based equals/hashCode. SLICE and MAP are not
+            // comparable and cannot be map keys.
+            case SLICE, MAP -> throw new FrontendException(
                     "map key of kind " + kind + " is not supported in Phase 1 (WS D)");
             default -> {
             }
