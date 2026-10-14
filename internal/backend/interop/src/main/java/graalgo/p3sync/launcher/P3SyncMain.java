@@ -16,6 +16,10 @@ import graalgo.frontend.NodeFactory;
 import graalgo.iface.IfaceDispatchBuilder;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
+import graalgo.p3builtin.nodes.ClearNode;
+import graalgo.p3builtin.nodes.GoMaxProcsNode;
+import graalgo.p3builtin.nodes.MinMaxNode;
+import graalgo.p3builtin.nodes.NumCPUNode;
 import graalgo.p3chan.nodes.ChanCloseNode;
 import graalgo.p3chan.nodes.ChanLenCapNode;
 import graalgo.p3chan.nodes.ChanRecvNode;
@@ -259,6 +263,21 @@ public final class P3SyncMain {
                     (node, ctx) -> MathSqrtNode.build(node, factory, ctx));
             factory.registerExprKind("mathfma",
                     (node, ctx) -> MathFmaNode.build(node, factory, ctx));
+            // P4 (driver-harden): the min/max builtin wire kind. The frozen
+            // v1 builtin path rejects min/max (WS G), but real modules use
+            // them — the frontend lowers them to this additive node. Public
+            // extension hook — no Phase-1/Phase-2 change.
+            factory.registerExprKind("minmax",
+                    (node, ctx) -> MinMaxNode.build(node, ctx, factory));
+            // P4 (driver-harden): the clear builtin wire kind (same
+            // rationale as minmax above).
+            factory.registerExprKind("clear",
+                    (node, ctx) -> ClearNode.build(node, ctx, factory));
+            // P4 (driver-harden): runtime.NumCPU() (same rationale).
+            factory.registerExprKind("runtimenumcpu", NumCPUNode::build);
+            // P4 (driver-harden): runtime.GOMAXPROCS(n) (same rationale).
+            factory.registerExprKind("runtimegomaxprocs",
+                    (node, ctx) -> GoMaxProcsNode.build(node, ctx, factory));
             // P3-M8: the synthetic unsafe wire kinds (Pointer conversions,
             // Slice/SliceData/String/StringData, Add trap). Public extension
             // hooks — no Phase-1/Phase-2 change. The per-run handle table is

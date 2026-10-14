@@ -209,6 +209,26 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		pkg := types.NewPackage("runtime", "runtime")
 		sig := types.NewSignatureType(nil, nil, nil, nil, nil, false)
 		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "Goexit", sig))
+		// P4 (driver-harden): the build constants and NumCPU. Real modules
+		// (e.g. uuid's tests) read runtime.GOARCH/GOOS and call
+		// runtime.NumCPU. Values match the host (linux/amd64); NumCPU
+		// returns the host count via a wire node (see below).
+		strTyp := types.Typ[types.String]
+		pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "GOARCH", strTyp,
+			constant.MakeString("amd64")))
+		pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "GOOS", strTyp,
+			constant.MakeString("linux")))
+		intTyp := types.Typ[types.Int]
+		numCPUSig := types.NewSignatureType(nil, nil, nil, nil,
+			types.NewTuple(types.NewVar(token.NoPos, pkg, "", intTyp)), false)
+		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "NumCPU", numCPUSig))
+		// P4 (driver-harden): GOMAXPROCS. Sets and returns the GOMAXPROCS
+		// value; the backend tracks it as a no-op cell (no real scheduler
+		// tuning on the JVM) but the call must type-check and round-trip.
+		gomaxprocsSig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(types.NewVar(token.NoPos, pkg, "n", intTyp)),
+			types.NewTuple(types.NewVar(token.NoPos, pkg, "", intTyp)), false)
+		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "GOMAXPROCS", gomaxprocsSig))
 		// P2-M4 (GC interop, ADR-0002 D4): the Go-observable GC surface.
 		// Signatures match gc's runtime package exactly; the Java side is
 		// graalgo.runtime.GcInterop (Phase-1 stub, Phase-2 real).
@@ -7947,6 +7967,35 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 						"gcinterop": sel.Sel.Name, "args": args,
 					}), nil
 				}
+				// P4 (driver-harden): runtime.NumCPU(). Emitted as an
+				// additive "runtimenumcpu" wire node; the backend returns
+				// the host processor count.
+				if sel.Sel.Name == "NumCPU" {
+					if len(c.Args) != 0 {
+						return nil, fmt.Errorf("gofrontend: runtime.NumCPU takes no arguments")
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimenumcpu", c, map[string]any{"type": typ}), nil
+				}
+				// P4 (driver-harden): runtime.GOMAXPROCS(n). Emitted as an
+				// additive "runtimegomaxprocs" wire node.
+				if sel.Sel.Name == "GOMAXPROCS" {
+					if len(c.Args) != 1 {
+						return nil, fmt.Errorf("gofrontend: runtime.GOMAXPROCS takes one argument")
+					}
+					arg, err := e.exportExpr(c.Args[0])
+					if err != nil {
+						return nil, err
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimegomaxprocs", c, map[string]any{"x": arg, "type": typ}), nil
+				}
 			}
 		}
 		// M6 (WS H): method call — receiver-based dispatch resolved by
@@ -8309,6 +8358,38 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			}
 			args = append(args, x)
 		}
+	case "min", "max":
+		// P4 (driver-harden): min/max lower to the additive "minmax" wire
+		// node — the frozen v1 builtin path rejects them (WS G), but real
+		// modules (e.g. uuid) use min. General: works for all ordered
+		// types with Go 1.21 NaN-propagating float semantics.
+		if len(c.Args) < 1 {
+			return nil, scopeErrorf("%s requires at least one argument", b.Name())
+		}
+		var err error
+		args, err = e.exportCallArgs(c)
+		if err != nil {
+			return nil, err
+		}
+		typ, err := e.callType(c)
+		if err != nil {
+			return nil, err
+		}
+		return e.node("minmax", c, map[string]any{
+			"op": b.Name(), "args": args, "type": typ,
+		}), nil
+	case "clear":
+		// P4 (driver-harden): clear lowers to the additive "clear" wire
+		// node — the frozen v1 builtin path rejects it (WS G), but real
+		// modules use it. General: maps and slices per Go 1.21 semantics.
+		if len(c.Args) != 1 {
+			return nil, scopeErrorf("clear requires exactly one argument")
+		}
+		x, err := e.exportExpr(c.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		return e.node("clear", c, map[string]any{"x": x}), nil
 	default:
 		var err error
 		args, err = e.exportCallArgs(c)

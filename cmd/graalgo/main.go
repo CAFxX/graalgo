@@ -16,7 +16,7 @@
 //
 // The driver locates the graalgo installation via the GRAALGO_HOME
 // environment variable, or by walking up from its own executable path to
-// find internal/backend/graalgo-run.
+// find internal/backend/graalgo-sync-run.
 package main
 
 import (
@@ -135,7 +135,7 @@ Format the Go source files in the named packages using gofmt.
 }
 
 // findGraalgoRoot locates the graalgo installation root: the directory
-// containing internal/backend/graalgo-run.
+// containing internal/backend/graalgo-sync-run (the product launcher).
 func findGraalgoRoot() (string, error) {
 	// 1. GRAALGO_HOME env var
 	if home := os.Getenv("GRAALGO_HOME"); home != "" {
@@ -180,14 +180,14 @@ func findGraalgoRoot() (string, error) {
 }
 
 func isGraalgoRoot(dir string) bool {
-	info, err := os.Stat(filepath.Join(dir, "internal", "backend", "graalgo-run"))
+	info, err := os.Stat(filepath.Join(dir, "internal", "backend", "graalgo-sync-run"))
 	return err == nil && !info.IsDir()
 }
 
-// graalgoRun invokes internal/backend/graalgo-run with the given args,
+// graalgoRun invokes internal/backend/graalgo-sync-run with the given args,
 // wiring stdio through. Returns the process exit code.
 func graalgoRun(root string, args []string) int {
-	runner := filepath.Join(root, "internal", "backend", "graalgo-run")
+	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
 	cmd := exec.Command(runner, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout

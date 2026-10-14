@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"go/build"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,17 +108,32 @@ func (r *testRunner) runPackage(dir string) bool {
 		return true
 	}
 
-	// Collect non-test Go files in the package (the code under test).
+	// Collect non-test Go files in the package (the code under test),
+	// honoring build constraints (GOOS/GOARCH/filename suffixes and
+	// //go:build lines) — the same file set `go test` would use. Without
+	// this, build-tag-gated alternatives (e.g. node_js.go vs node_net.go)
+	// are inlined together and redeclare each other's symbols.
+	buildable := buildableGoFiles(dir)
 	var srcFiles []string
-	allFiles, _ := filepath.Glob(filepath.Join(dir, "*.go"))
-	for _, f := range allFiles {
+	for _, f := range buildable {
 		if !strings.HasSuffix(f, "_test.go") {
 			srcFiles = append(srcFiles, f)
 		}
 	}
+	// The test files themselves must also satisfy build constraints.
+	var runnableTests []string
+	for _, tf := range testFiles {
+		base := filepath.Base(tf)
+		for _, b := range buildable {
+			if filepath.Base(b) == base {
+				runnableTests = append(runnableTests, tf)
+				break
+			}
+		}
+	}
 
 	ok := true
-	for _, tf := range testFiles {
+	for _, tf := range runnableTests {
 		if !r.runTestFile(dir, tf, srcFiles) {
 			ok = false
 		}
@@ -128,6 +144,30 @@ func (r *testRunner) runPackage(dir string) bool {
 		fmt.Printf("FAIL %s\n", dir)
 	}
 	return ok
+}
+
+// buildableGoFiles returns the .go files in dir that satisfy the current
+// platform's build constraints, using the same rules as `go build`.
+func buildableGoFiles(dir string) []string {
+	ctxt := build.Default
+	pkg, err := ctxt.ImportDir(dir, 0)
+	if err != nil {
+		// Not importable (no go.mod context, etc.): fall back to all
+		// files and let the backend report real errors.
+		all, _ := filepath.Glob(filepath.Join(dir, "*.go"))
+		return all
+	}
+	var out []string
+	for _, f := range pkg.GoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	for _, f := range pkg.TestGoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	for _, f := range pkg.XTestGoFiles {
+		out = append(out, filepath.Join(dir, f))
+	}
+	return out
 }
 
 // runTestFile synthesizes a driver for one _test.go file and runs it.

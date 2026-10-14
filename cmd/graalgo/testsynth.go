@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -54,18 +55,66 @@ func (t *graalgoT) Errorf(format string, args ...interface{}) {
 	println("    ", t.name, ": ", sprintf(format, args...))
 }
 
+func (t *graalgoT) Error(args ...interface{}) {
+	t.failed = true
+	println("    ", t.name, ": ", sprintf("", args...))
+}
+
 func (t *graalgoT) Fatalf(format string, args ...interface{}) {
 	t.failed = true
 	println("    ", t.name, ": ", sprintf(format, args...))
 	panic("graalgo test fatal: " + t.name)
 }
 
+func (t *graalgoT) Fatal(args ...interface{}) {
+	t.failed = true
+	println("    ", t.name, ": ", sprintf("", args...))
+	panic("graalgo test fatal: " + t.name)
+}
+
+func (t *graalgoT) Fail() {
+	t.failed = true
+}
+
+func (t *graalgoT) Failed() bool {
+	return t.failed
+}
+
 func (t *graalgoT) Logf(format string, args ...interface{}) {
 	println("    ", t.name, ": ", sprintf(format, args...))
 }
 
+func (t *graalgoT) Log(args ...interface{}) {
+	println("    ", t.name, ": ", sprintf("", args...))
+}
+
+func (t *graalgoT) Name() string {
+	return t.name
+}
+
+func (t *graalgoT) Helper() {}
+
 func (t *graalgoT) Skip(args ...interface{}) {
 	panic("graalgo test skip: " + t.name)
+}
+
+func (t *graalgoT) SkipNow() {
+	panic("graalgo test skip: " + t.name)
+}
+
+func (t *graalgoT) Skipped() bool {
+	return false
+}
+
+func (t *graalgoT) Run(name string, f func(*graalgoT)) bool {
+	sub := &graalgoT{name: t.name + "/" + name}
+	f(sub)
+	if sub.failed {
+		t.failed = true
+		println("    --- FAIL:", sub.name)
+		return false
+	}
+	return true
 }
 
 func sprintf(format string, args ...interface{}) string {
@@ -142,6 +191,10 @@ func itoa(n int64) string {
 // selected test functions. It extracts the TestXxx function declarations
 // from the test file (rewritten to take *graalgoT) plus the package's
 // non-test sources.
+// synthesizeTestDriver builds a single-file Go program that runs the
+// selected test functions. It extracts the TestXxx function declarations
+// from the test file (rewritten to take *graalgoT) plus the package's
+// non-test sources.
 func synthesizeTestDriver(dir, testFile string, srcFiles, tests []string) (string, error) {
 	// Parse the test file.
 	fset := token.NewFileSet()
@@ -150,85 +203,214 @@ func synthesizeTestDriver(dir, testFile string, srcFiles, tests []string) (strin
 		return "", fmt.Errorf("parse %s: %w", testFile, err)
 	}
 
-	var sb strings.Builder
-	sb.WriteString("package main\n\n")
+	// Collect imports from all inlined files (deduplicated). The backend
+	// resolves imports via its own import machinery (the same path
+	// `graalgo run` uses for packages), so we preserve them instead of
+	// stripping — stripping breaks references like hash.Hash.
+	imports := make(map[string]string) // path -> name ("" for default)
+	collectImports := func(f *ast.File) {
+		for _, imp := range f.Imports {
+			path := strings.Trim(imp.Path.Value, "\"")
+			// The testing import is rewritten to the graalgoT shim;
+			// keeping it would be an unused import.
+			if path == "testing" {
+				continue
+			}
+			name := ""
+			if imp.Name != nil {
+				name = imp.Name.Name
+			}
+			if _, ok := imports[path]; !ok {
+				imports[path] = name
+			}
+		}
+	}
 
-	// Inline non-test source files (package clause stripped).
-	// For each source file, extract only func declarations (no imports,
-	// to avoid conflicts). Skip the main function (we generate our own).
+	type srcUnit struct {
+		path string
+		f    *ast.File
+	}
+	var units []srcUnit
 	for _, sf := range srcFiles {
 		sfset := token.NewFileSet()
 		sfAST, err := parser.ParseFile(sfset, sf, nil, 0)
 		if err != nil {
 			continue
 		}
-		sb.WriteString(fmt.Sprintf("\n// --- from %s ---\n", filepath.Base(sf)))
-		for _, decl := range sfAST.Decls {
-			if fn, ok := decl.(*ast.FuncDecl); ok {
-				// Skip main (we generate our own test runner main).
-				if fn.Name.Name == "main" && fn.Recv == nil {
+		collectImports(sfAST)
+		units = append(units, srcUnit{sf, sfAST})
+	}
+	collectImports(tf)
+	var sibUnits []srcUnit
+	siblings, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	for _, sib := range siblings {
+		if sib == testFile {
+			continue
+		}
+		sibSet := token.NewFileSet()
+		sibAST, err := parser.ParseFile(sibSet, sib, nil, 0)
+		if err != nil {
+			continue
+		}
+		collectImports(sibAST)
+		sibUnits = append(sibUnits, srcUnit{sib, sibAST})
+	}
+
+	// Build the body first; imports are pruned against it below.
+	var body strings.Builder
+
+	// Inline non-test source files (package clause stripped): funcs plus
+	// type/var/const declarations. Skip imports (emitted separately) and
+	// the main function (we generate our own).
+	for _, u := range units {
+		body.WriteString(fmt.Sprintf("\n// --- from %s ---\n", filepath.Base(u.path)))
+		for _, decl := range u.f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Name.Name == "main" && d.Recv == nil {
 					continue
 				}
-				printDecl(&sb, fset, fn)
-				sb.WriteString("\n")
+				printDecl(&body, fset, d)
+				body.WriteString("\n")
+			case *ast.GenDecl:
+				if d.Tok == token.IMPORT {
+					continue
+				}
+				printDecl(&body, fset, d)
+				body.WriteString("\n")
 			}
 		}
 	}
 
-	// Extract TestXxx functions from the test file, rewriting *testing.T
-	// to *graalgoT.
-	sb.WriteString(fmt.Sprintf("\n// --- tests from %s ---\n", filepath.Base(testFile)))
+	// The test file: TestXxx functions (rewritten to *graalgoT) plus the
+	// file's own non-test helpers and declarations.
+	body.WriteString(fmt.Sprintf("\n// --- tests from %s ---\n", filepath.Base(testFile)))
 	testSet := make(map[string]bool)
 	for _, t := range tests {
 		testSet[t] = true
 	}
 	for _, decl := range tf.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv != nil {
-			continue
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			n := d.Name.Name
+			isTest := testSet[n]
+			// Skip other entry points (Test/Benchmark/Fuzz/Example).
+			// Methods (Recv != nil) are always inlined — tests use
+			// them (e.g. badRand.Read implementing io.Reader).
+			isEntry := strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
+				strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example")
+			if !isTest && isEntry {
+				continue
+			}
+			rewriteParam(d)
+			printDecl(&body, fset, d)
+			body.WriteString("\n")
+		case *ast.GenDecl:
+			if d.Tok == token.IMPORT {
+				continue
+			}
+			printDecl(&body, fset, d)
+			body.WriteString("\n")
 		}
-		if !testSet[fn.Name.Name] {
-			continue
+	}
+
+	// Sibling test files: every non-entry-point declaration (helpers).
+	for _, u := range sibUnits {
+		body.WriteString(fmt.Sprintf("\n// --- helpers from %s ---\n", filepath.Base(u.path)))
+		for _, decl := range u.f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil {
+					n := d.Name.Name
+					if strings.HasPrefix(n, "Test") || strings.HasPrefix(n, "Benchmark") ||
+						strings.HasPrefix(n, "Fuzz") || strings.HasPrefix(n, "Example") {
+						continue
+					}
+				}
+				rewriteParam(d)
+				printDecl(&body, fset, d)
+				body.WriteString("\n")
+			case *ast.GenDecl:
+				if d.Tok == token.IMPORT {
+					continue
+				}
+				printDecl(&body, fset, d)
+				body.WriteString("\n")
+			}
 		}
-		// Rewrite the *testing.T param to *graalgoT.
-		rewriteParam(fn)
-		printDecl(&sb, fset, fn)
-		sb.WriteString("\n")
 	}
 
 	// Shim + main runner.
-	sb.WriteString(testShim)
-	sb.WriteString("\nfunc main() {\n")
-	sb.WriteString("\tfailed := 0\n")
+	body.WriteString(testShim)
+	body.WriteString("\nfunc main() {\n")
+	body.WriteString("\tfailed := 0\n")
 	for _, t := range tests {
-		sb.WriteString(fmt.Sprintf("\tfunc() {\n"))
-		sb.WriteString(fmt.Sprintf("\t\ttt := &graalgoT{name: %q}\n", t))
-		sb.WriteString(fmt.Sprintf("\t\tdefer func() {\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\tif r := recover(); r != nil {\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\ts := toString(r)\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\tif len(s) >= 17 && s[:17] == \"graalgo test skip\" {\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\t\tprintln(\"    --- SKIP:\", tt.name)\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\t} else if !tt.failed {\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\t\ttt.failed = true\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\t\tprintln(\"    --- FAIL:\", tt.name, \"(panic:\", s, \")\")\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\t}\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t}\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\tif tt.failed {\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\tprintln(\"    --- FAIL:\", tt.name)\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\tfailed++\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t} else {\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t\tprintln(\"    --- PASS:\", tt.name)\n"))
-		sb.WriteString(fmt.Sprintf("\t\t\t}\n"))
-		sb.WriteString(fmt.Sprintf("\t\t}()\n"))
-		sb.WriteString(fmt.Sprintf("\t\t%s(tt)\n", t))
-		sb.WriteString(fmt.Sprintf("\t}()\n"))
+		body.WriteString("\tfunc() {\n")
+		body.WriteString(fmt.Sprintf("\t\ttt := &graalgoT{name: %q}\n", t))
+		body.WriteString("\t\tdefer func() {\n")
+		body.WriteString("\t\t\tif r := recover(); r != nil {\n")
+		body.WriteString("\t\t\t\ts := toString(r)\n")
+		body.WriteString("\t\t\t\tif len(s) >= 17 && s[:17] == \"graalgo test skip\" {\n")
+		body.WriteString("\t\t\t\t\tprintln(\"    --- SKIP:\", tt.name)\n")
+		body.WriteString("\t\t\t\t} else if !tt.failed {\n")
+		body.WriteString("\t\t\t\t\ttt.failed = true\n")
+		body.WriteString("\t\t\t\t\tprintln(\"    --- FAIL:\", tt.name, \"(panic:\", s, \")\")\n")
+		body.WriteString("\t\t\t\t}\n")
+		body.WriteString("\t\t\t}\n")
+		body.WriteString("\t\t\tif tt.failed {\n")
+		body.WriteString("\t\t\t\tprintln(\"    --- FAIL:\", tt.name)\n")
+		body.WriteString("\t\t\t\tfailed++\n")
+		body.WriteString("\t\t\t} else {\n")
+		body.WriteString("\t\t\t\tprintln(\"    --- PASS:\", tt.name)\n")
+		body.WriteString("\t\t\t}\n")
+		body.WriteString("\t\t}()\n")
+		body.WriteString(fmt.Sprintf("\t\t%s(tt)\n", t))
+		body.WriteString("\t}()\n")
 	}
-	sb.WriteString("\tif failed > 0 {\n")
-	sb.WriteString("\t\tprintln(\"FAIL\")\n")
-	sb.WriteString("\t\tpanic(\"tests failed\")\n")
-	sb.WriteString("\t}\n")
-	sb.WriteString("\tprintln(\"PASS\")\n")
-	sb.WriteString("}\n")
+	body.WriteString("\tif failed > 0 {\n")
+	body.WriteString("\t\tprintln(\"FAIL\")\n")
+	body.WriteString("\t\tpanic(\"tests failed\")\n")
+	body.WriteString("\t}\n")
+	body.WriteString("\tprintln(\"PASS\")\n")
+	body.WriteString("}\n")
+
+	bodyStr := body.String()
+
+	// Prune imports not referenced in the body. Helpers from sibling
+	// files pull in imports this driver's tests may not use — Go
+	// rejects unused imports.
+	var sb strings.Builder
+	sb.WriteString("package main\n\n")
+	if len(imports) > 0 {
+		var paths []string
+		for p := range imports {
+			paths = append(paths, p)
+		}
+		sort.Strings(paths)
+		var kept []string
+		for _, p := range paths {
+			name := imports[p]
+			pkgName := name
+			if pkgName == "" || pkgName == "_" || pkgName == "." {
+				pkgName = pathBase(p)
+			}
+			if pkgName != "" && strings.Contains(bodyStr, pkgName+".") {
+				kept = append(kept, p)
+			}
+		}
+		if len(kept) > 0 {
+			sb.WriteString("import (\n")
+			for _, p := range kept {
+				if name := imports[p]; name != "" {
+					sb.WriteString(fmt.Sprintf("\t%s %q\n", name, p))
+				} else {
+					sb.WriteString(fmt.Sprintf("\t%q\n", p))
+				}
+			}
+			sb.WriteString(")\n")
+		}
+	}
+	sb.WriteString(bodyStr)
 
 	// Write to a temp file.
 	tmp, err := os.CreateTemp("", "graalgo-test-*.go")
@@ -244,6 +426,14 @@ func synthesizeTestDriver(dir, testFile string, srcFiles, tests []string) (strin
 	return tmp.Name(), nil
 }
 
+// pathBase returns the last element of an import path.
+func pathBase(p string) string {
+	if i := strings.LastIndex(p, "/"); i >= 0 {
+		return p[i+1:]
+	}
+	return p
+}
+
 // printDecl prints a single AST declaration to the builder.
 func printDecl(sb *strings.Builder, fset *token.FileSet, decl ast.Decl) {
 	var buf bytes.Buffer
@@ -251,27 +441,57 @@ func printDecl(sb *strings.Builder, fset *token.FileSet, decl ast.Decl) {
 	sb.WriteString(buf.String())
 }
 
-// rewriteParam rewrites a *testing.T parameter to *graalgoT in a FuncDecl.
+// rewriteParam rewrites *testing.T to *graalgoT everywhere in a FuncDecl:
+// the parameter list AND any nested function literals (e.g. the closure
+// passed to t.Run). Uses an AST walk so no testing.T reference survives.
 func rewriteParam(fn *ast.FuncDecl) {
-	if fn.Type.Params == nil {
-		return
-	}
-	for _, param := range fn.Type.Params.List {
-		// Look for *testing.T or testing.T
-		switch t := param.Type.(type) {
+	ast.Inspect(fn, func(n ast.Node) bool {
+		switch t := n.(type) {
 		case *ast.StarExpr:
 			if sel, ok := t.X.(*ast.SelectorExpr); ok {
 				if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
-					// Replace with graalgoT identifier
-					param.Type = &ast.StarExpr{X: &ast.Ident{Name: "graalgoT"}}
+					t.X = &ast.Ident{Name: "graalgoT"}
 				}
 			}
 		case *ast.SelectorExpr:
 			if ident, ok := t.X.(*ast.Ident); ok && ident.Name == "testing" && t.Sel.Name == "T" {
-				param.Type = &ast.Ident{Name: "graalgoT"}
+				// testing.T as a bare type (not pointer): replace the
+				// selector with the graalgoT identifier.
+				// (Handled by replacing the parent; see below.)
 			}
 		}
-		// Also rewrite testing.X references in the body to graalgo equivalents
-		// (best effort; the shim covers the common methods)
+		return true
+	})
+	// Second pass: replace bare testing.T selector expressions (non-pointer
+	// type references) which ast.Inspect can't swap in place.
+	rewriteBareTestingT(fn.Type)
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if fl, ok := n.(*ast.FuncLit); ok {
+			rewriteBareTestingT(fl.Type)
+		}
+		return true
+	})
+}
+
+// rewriteBareTestingT replaces testing.T (non-pointer) with graalgoT in a
+// function type's params and results.
+func rewriteBareTestingT(ft *ast.FuncType) {
+	if ft == nil {
+		return
+	}
+	rewriteFieldList(ft.Params)
+	rewriteFieldList(ft.Results)
+}
+
+func rewriteFieldList(fl *ast.FieldList) {
+	if fl == nil {
+		return
+	}
+	for _, f := range fl.List {
+		if sel, ok := f.Type.(*ast.SelectorExpr); ok {
+			if ident, ok := sel.X.(*ast.Ident); ok && ident.Name == "testing" && sel.Sel.Name == "T" {
+				f.Type = &ast.Ident{Name: "graalgoT"}
+			}
+		}
 	}
 }
