@@ -9,9 +9,10 @@ package p3frontend
 // (the full gc 1.27.1 public API: New, Is, As, AsType, Unwrap, Join,
 // ErrUnsupported). Unexported implementation types (errorString,
 // joinError, unwrapper, ...) are not visible to user code and are not
-// mirrored. As/AsType keep exact gc signatures with fail-fast bodies in
-// the synthetic source (they need reflect); AsType's generic signature is
-// mirrored with an explicit *types.TypeParam.
+// mirrored. As keeps its exact gc signature with a fail-fast body in
+// the synthetic source (it needs reflect); AsType is a real
+// implementation there (generics; no reflect needed). AsType's generic
+// signature is mirrored with an explicit *types.TypeParam.
 
 import (
 	"go/token"

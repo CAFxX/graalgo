@@ -108,6 +108,113 @@ func TestM7StrconvJsonDesugarWiring(t *testing.T) {
 	}
 }
 
+// TestM7ErrorsAsTypeDesugarWiring pins the m7MultiResultFuncs entry for
+// errors.AsType and its synthetic wiring. AsType is the first generic
+// entry in the table, so the pair-field check is generic-aware: the
+// pair's E and AsType's E are distinct *types.TypeParam objects (never
+// types.Identical), so they are compared by name and constraint
+// instead. Uses a dedicated checker rather than checkM7DesugarWiring,
+// whose step 5 requires Identical field/result types.
+func TestM7ErrorsAsTypeDesugarWiring(t *testing.T) {
+	// 1. Exactly one table entry for errors.AsType with the expected
+	// helper, pair type, and fields in result order.
+	var got *m7MultiResultFunc
+	for i := range m7MultiResultFuncs {
+		mf := &m7MultiResultFuncs[i]
+		if mf.pkgPath == "errors" && mf.name == "AsType" && mf.recvType == "" {
+			if got != nil {
+				t.Fatal("duplicate m7MultiResultFuncs entry for errors.AsType")
+			}
+			got = mf
+		}
+	}
+	if got == nil {
+		t.Fatal("no m7MultiResultFuncs entry for errors.AsType")
+	}
+	if got.helper != "__asTypePub" {
+		t.Fatalf("table helper = %q, want %q", got.helper, "__asTypePub")
+	}
+	if got.pairType != "asTypePair" {
+		t.Fatalf("table pairType = %q, want %q", got.pairType, "asTypePair")
+	}
+	if len(got.pairFields) != 2 || got.pairFields[0] != "v" || got.pairFields[1] != "ok" {
+		t.Fatalf("table pairFields = %v, want [v ok]", got.pairFields)
+	}
+
+	// 2. errors.AsType exists in the synthetic package with 2 results.
+	sp := getSyntheticPackage("errors")
+	if sp == nil || sp.pkg == nil {
+		t.Fatal("synthetic package \"errors\" not loaded")
+	}
+	mrObj := sp.pkg.Scope().Lookup("AsType")
+	mrFn, ok := mrObj.(*types.Func)
+	if !ok {
+		t.Fatalf("synthetic errors.AsType is %T, want *types.Func", mrObj)
+	}
+	sig, ok := mrFn.Type().(*types.Signature)
+	if !ok {
+		t.Fatalf("synthetic errors.AsType has type %T, want signature", mrFn.Type())
+	}
+	if sig.Results().Len() != 2 {
+		t.Fatalf("synthetic errors.AsType has %d results, want 2", sig.Results().Len())
+	}
+
+	// 3. The __-helper exists and takes AsType's params positionally.
+	hobj := sp.pkg.Scope().Lookup("__asTypePub")
+	helper, ok := hobj.(*types.Func)
+	if !ok {
+		t.Fatalf("synthetic errors.__asTypePub is %T, want *types.Func", hobj)
+	}
+	hsig, ok := helper.Type().(*types.Signature)
+	if !ok {
+		t.Fatalf("synthetic helper __asTypePub has type %T, want signature", helper.Type())
+	}
+	if hsig.Params().Len() != sig.Params().Len() {
+		t.Fatalf("helper __asTypePub takes %d params, AsType has %d",
+			hsig.Params().Len(), sig.Params().Len())
+	}
+	for i := 0; i < sig.Params().Len(); i++ {
+		if !types.Identical(hsig.Params().At(i).Type(), sig.Params().At(i).Type()) {
+			t.Fatalf("helper __asTypePub param %d type %v != AsType param type %v",
+				i, hsig.Params().At(i).Type(), sig.Params().At(i).Type())
+		}
+	}
+	if hsig.Results().Len() != 1 {
+		t.Fatalf("helper __asTypePub has %d results, want 1 (the pair)", hsig.Results().Len())
+	}
+
+	// 4. The pair struct has fields (v, ok) in order; ok is bool, and
+	// v's type parameter matches AsType's result-0 type parameter by
+	// name and constraint.
+	pobj := sp.pkg.Scope().Lookup("asTypePair")
+	nt, ok := pobj.Type().(*types.Named)
+	if !ok {
+		t.Fatalf("synthetic asTypePair has type %T, want named struct", pobj.Type())
+	}
+	st, ok := nt.Underlying().(*types.Struct)
+	if !ok {
+		t.Fatalf("synthetic asTypePair underlying is %T, want struct", nt.Underlying())
+	}
+	if st.NumFields() != 2 || st.Field(0).Name() != "v" || st.Field(1).Name() != "ok" {
+		t.Fatalf("asTypePair fields = %v, want [v ok]", st.NumFields())
+	}
+	if !types.Identical(st.Field(1).Type(), sig.Results().At(1).Type()) {
+		t.Fatalf("pair field ok type %v != AsType result bool type %v",
+			st.Field(1).Type(), sig.Results().At(1).Type())
+	}
+	fp, ok := st.Field(0).Type().(*types.TypeParam)
+	rp, ok2 := sig.Results().At(0).Type().(*types.TypeParam)
+	if !ok || !ok2 {
+		t.Fatalf("pair field v type %T / AsType result-0 type %T: want both type params",
+			st.Field(0).Type(), sig.Results().At(0).Type())
+	}
+	if fp.Obj().Name() != rp.Obj().Name() ||
+		!types.Identical(fp.Constraint(), rp.Constraint()) {
+		t.Fatalf("pair field v type param %v (constraint %v) != AsType E %v (constraint %v)",
+			fp, fp.Constraint(), rp, rp.Constraint())
+	}
+}
+
 // checkM7DesugarWiring verifies a single m7MultiResultFuncs table entry
 // against its synthetic package. Shared by TestM7StrconvJsonDesugarWiring
 // and TestM7CompressDesugarWiring.

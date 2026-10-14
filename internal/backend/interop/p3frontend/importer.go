@@ -97,7 +97,7 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		return pkg, nil
 	case "errors":
 		// P3-M7 (wave 1): synthetic errors package (real-Go New/Is/Unwrap/
-		// Join; As/AsType fail-fast). Self-contained: no synthetic
+		// Join/AsType; As fail-fast). Self-contained: no synthetic
 		// dependencies.
 		pkg := syntheticErrorsPackage()
 		imp.pkgs[path] = pkg

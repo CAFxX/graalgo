@@ -9,16 +9,15 @@
 // wire document (shared type/object tables) via exportSyntheticPackages.
 //
 // Exact gc 1.27.1 public API signatures (errors.go, wrap.go, join.go).
-// Only frontend/v1-supported constructs (no generics, no reflect, no
-// unsafe): New, Is, Unwrap, Join are real Go; As/AsType cannot be
-// implemented without reflect, so they keep exact gc signatures with
-// fail-fast bodies — fail fast, NEVER silent. Re-test when reflect
-// lands (see phases/phase3/hidden_files/m7-errors-sort/redgreen.md).
+// Only frontend/v1-supported constructs (no reflect, no unsafe):
+// New, Is, Unwrap, Join, AsType are real Go; As cannot be implemented
+// without reflect, so it keeps its exact gc signature with a fail-fast
+// body — fail fast, NEVER silent. Re-test when reflect lands.
 package main
 
 // syntheticErrorsSource is the P3-M7 synthetic `errors` package: exact
 // gc 1.27.1 signatures for the full public API; real implementations for
-// New/Is/Unwrap/Join; fail-fast bodies for As/AsType (need reflect).
+// New/Is/Unwrap/Join/AsType; fail-fast body for As (needs reflect).
 const syntheticErrorsSource = `package errors
 
 // New returns an error that formats as the given text.
@@ -146,23 +145,101 @@ func errorsIs(err, target error, targetComparable bool) bool {
 // As finds the first error in err's tree that matches target, and if one is found, sets
 // target to that error value and returns true. Otherwise, it returns false.
 //
+// For most uses, prefer [AsType]. As is equivalent to [AsType] but sets its target
+// argument rather than returning the matching error and doesn't require its target
+// argument to implement error.
+//
+// The tree consists of err itself, followed by the errors obtained by repeatedly
+// calling its Unwrap() error or Unwrap() []error method. When err wraps multiple
+// errors, As examines err followed by a depth-first traversal of its children.
+//
+// An error matches target if the error's concrete value is assignable to the value
+// pointed to by target, or if the error has a method As(any) bool such that
+// As(target) returns true. In the latter case, the As method is responsible for
+// setting target.
+//
 // As panics if target is not a non-nil pointer to either a type that implements
 // error, or to any interface type.
 //
 // M7 scope: exact gc 1.27.1 signature, fail-fast body. A real
-// implementation needs reflect (arbitrary *T target setting) —
-// unavailable to v1 synthetic packages. Re-test when reflect lands.
+// implementation needs reflect (arbitrary *T target validation and
+// setting) — unavailable to v1 synthetic packages: the synthetic
+// reflect package's Implements/AssignableTo/Set are still fail-fast
+// intrinsics. Re-test when the reflect runtime lands.
 func As(err error, target any) bool {
 	panic("errors.As: not in M7 scope (needs reflect; re-test when reflect lands)")
 }
 
-// AsType finds the first error in err's tree that matches the type E.
+// errorAsser is the As(any) bool method set. gc asserts against the
+// anonymous interface{ As(any) bool }; named here — identical semantics,
+// and the v1 exporter handles named interface assertions.
+type errorAsser interface {
+	As(any) bool
+}
+
+// AsType finds the first error in err's tree that matches the type E, and
+// if one is found, returns that error value and true. Otherwise, it
+// returns the zero value of E and false.
 //
-// M7 scope: exact gc 1.27.1 generic signature, fail-fast body. Needs
-// generics instantiation in synthetic scope plus reflect for the
-// As(any) path. Re-test when they land.
+// The tree consists of err itself, followed by the errors obtained by
+// repeatedly calling its Unwrap() error or Unwrap() []error method. When
+// err wraps multiple errors, AsType examines err followed by a
+// depth-first traversal of its children.
+//
+// An error err matches the type E if the type assertion err.(E) holds,
+// or if the error has a method As(any) bool such that err.As(target)
+// returns true when target is a non-nil *E. In the latter case, the As
+// method is responsible for setting target.
+//
+// P4 (was M7 scope): real implementation — unlike As it needs no
+// reflect, only generic instantiation plus the type assertion err.(E).
+// Faithful port of gc 1.27.1's asType, using the named
+// unwrapper/multiUnwrapper interfaces above. NB: the loop-top
+// assertions run only on non-nil err (nil guarded on entry, Unwrap-nil
+// returns immediately, Join children skip nils) — matching gc, and
+// avoiding the P3 runtime's nil-interface assertion NPE.
 func AsType[E error](err error) (E, bool) {
-	panic("errors.AsType: not in M7 scope (needs generics + reflect; re-test when they land)")
+	if err == nil {
+		var zero E
+		return zero, false
+	}
+	var pe *E // lazily initialized
+	return asType(err, &pe)
+}
+
+func asType[E error](err error, ppe **E) (_ E, _ bool) {
+	for {
+		if e, ok := err.(E); ok {
+			return e, true
+		}
+		if x, ok := err.(errorAsser); ok {
+			if *ppe == nil {
+				*ppe = new(E)
+			}
+			if x.As(*ppe) {
+				return **ppe, true
+			}
+		}
+		switch x := err.(type) {
+		case unwrapper:
+			err = x.Unwrap()
+			if err == nil {
+				return
+			}
+		case multiUnwrapper:
+			for _, err := range x.Unwrap() {
+				if err == nil {
+					continue
+				}
+				if x, ok := asType(err, ppe); ok {
+					return x, true
+				}
+			}
+			return
+		default:
+			return
+		}
+	}
 }
 
 // Join returns an error that wraps the given errors.
@@ -216,5 +293,59 @@ func (e *joinError) Error() string {
 
 func (e *joinError) Unwrap() []error {
 	return e.errs
+}
+
+// asTypePair is the pair-returning form of AsType for the WS D desugar
+// (m7MultiResultFuncs): fields in result order (v, ok). v1 cannot emit
+// multi-result funcdecls, so user call sites errors.AsType[T](err)
+// desugar to the __asTypePub[T] helper below via the table; the pair
+// struct is instantiated with the call's type argument.
+type asTypePair[E error] struct {
+	v  E
+	ok bool
+}
+
+// __asTypePub is the WS D __-helper behind errors.AsType: the real
+// implementation in single-result form. It mirrors AsType above
+// structurally (the public multi-result body is skipped at export, so
+// the logic cannot be shared by delegation — a call to AsType from
+// here would desugar back into __asTypePub and recurse forever).
+func __asTypePub[E error](err error) asTypePair[E] {
+	if err == nil {
+		return asTypePair[E]{}
+	}
+	var pe *E // lazily initialized
+	for {
+		if e, ok := err.(E); ok {
+			return asTypePair[E]{v: e, ok: true}
+		}
+		if x, ok := err.(errorAsser); ok {
+			if pe == nil {
+				pe = new(E)
+			}
+			if x.As(pe) {
+				return asTypePair[E]{v: *pe, ok: true}
+			}
+		}
+		switch x := err.(type) {
+		case unwrapper:
+			err = x.Unwrap()
+			if err == nil {
+				return asTypePair[E]{}
+			}
+		case multiUnwrapper:
+			for _, err := range x.Unwrap() {
+				if err == nil {
+					continue
+				}
+				if p := __asTypePub[E](err); p.ok {
+					return p
+				}
+			}
+			return asTypePair[E]{}
+		default:
+			return asTypePair[E]{}
+		}
+	}
 }
 `

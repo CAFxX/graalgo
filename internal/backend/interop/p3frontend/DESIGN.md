@@ -110,9 +110,9 @@ over a visited set plus an explicit stack.
   nodes and raises the named `not in M2 scope` errors
   (`TestSyncScopeErrorParity`).
 - `"errors"` → synthetic package with the exact gc 1.27.1 signatures
-  (P3-M7 wave-1): real-Go `New`/`Is`/`Unwrap`/`Join`; `As`/`AsType`
-  keep exact signatures with fail-fast bodies (need `reflect`). Pinned
-  by `TestErrorsSyntheticSignatures` (drift vs the phase-1 source,
+  (P3-M7 wave-1): real-Go `New`/`Is`/`Unwrap`/`Join`/`AsType`; `As`
+  keeps its exact signature with a fail-fast body (needs `reflect`).
+  Pinned by `TestErrorsSyntheticSignatures` (drift vs the phase-1 source,
   including the generic `AsType`).
 - `"sort"` → synthetic package with the exact gc 1.27.1 signatures
   (P3-M7 wave-1): faithful pdqsort/stable port plus search; `Find`/
