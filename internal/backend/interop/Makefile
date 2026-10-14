@@ -40,7 +40,7 @@ TEST_CP := $(OUT_TEST):$(RUN_CP)
 
 # p3frontend Go sources and stdlib-fork tooling now live in their
 # Phase-4 homes (moved from phases/phase3 during the migration cleanup).
-P3FRONTEND := p3frontend
+P3FRONTEND := ../../frontend/p3frontend
 STDLIB_FORK := ../../../tools/stdlib-fork
 
 JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
