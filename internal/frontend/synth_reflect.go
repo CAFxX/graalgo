@@ -388,6 +388,10 @@ func __reflect_tArrayOf(n int, elem unsafe.Pointer) unsafe.Pointer { panic("refl
 func __reflect_tSliceOf(elem unsafe.Pointer) unsafe.Pointer { panic("reflect: intrinsic __reflect_tSliceOf") }
 func __reflect_tMapOf(key, elem unsafe.Pointer) unsafe.Pointer { panic("reflect: intrinsic __reflect_tMapOf") }
 func __reflect_tChanOf(dir int, elem unsafe.Pointer) unsafe.Pointer { panic("reflect: intrinsic __reflect_tChanOf") }
+func __reflect_tFuncOf(in, out []unsafe.Pointer, variadic bool) unsafe.Pointer { panic("reflect: intrinsic __reflect_tFuncOf") }
+func __reflect_tStructOf(names []string, toks []unsafe.Pointer, tags []string, pkgPaths []string, anon []bool) unsafe.Pointer {
+	panic("reflect: intrinsic __reflect_tStructOf")
+}
 
 // Value operations.
 func __reflect_typeof(v any) unsafe.Pointer              { panic("reflect: intrinsic __reflect_typeof") }
@@ -2521,8 +2525,29 @@ func ChanOf(dir ChanDir, elem Type) Type {
 }
 
 // FuncOf returns a function type with the given argument and result types.
+// The variadic check mirrors gc 1.27.1 (verified by probe): a variadic
+// function must have at least one input and the last input must be a slice.
 func FuncOf(in, out []Type, variadic bool) Type {
-	panic("reflect: FuncOf: not yet implemented (needs slice arg support in reflectop)")
+	// A nil Type in the arg list panics with the type-assertion failure
+	// gc produces at in[i].(*rtype): message matched exactly by probe.
+	inToks := make([]unsafe.Pointer, len(in))
+	for i, t := range in {
+		if t == nil {
+			panic("interface conversion: reflect.Type is nil, not *reflect.rtype")
+		}
+		inToks[i] = t.(rtype).tok
+	}
+	outToks := make([]unsafe.Pointer, len(out))
+	for i, t := range out {
+		if t == nil {
+			panic("interface conversion: reflect.Type is nil, not *reflect.rtype")
+		}
+		outToks[i] = t.(rtype).tok
+	}
+	if variadic && (len(inToks) == 0 || __reflect_tKind(inToks[len(inToks)-1]) != Slice) {
+		panic("reflect.FuncOf: last arg of variadic func must be slice")
+	}
+	return rtype{tok: __reflect_tFuncOf(inToks, outToks, variadic)}
 }
 
 // PtrTo returns the pointer type with element t.
@@ -2538,9 +2563,192 @@ func PointerTo(t Type) Type {
 	return PtrTo(t)
 }
 
-// StructOf returns the struct type containing fields.
+// StructOf returns the struct type containing fields. The validation order
+// and panic messages mirror gc 1.27.1 exactly (read from reflect/type.go
+// StructOf + runtimeStructField, verified by probe):
+// empty name, invalid name, nil type, anonymous-with-PkgPath,
+// unexported-without-PkgPath (first BYTE ASCII-lowercase/'_', best-effort),
+// PkgPath agreement across fields, embedded-type panics, duplicate field
+// ('_' exempt).
 func StructOf(fields []StructField) Type {
-	panic("reflect: StructOf: not in M8 scope (needs runtime type synthesis; re-test when it lands)")
+	names := make([]string, len(fields))
+	toks := make([]unsafe.Pointer, len(fields))
+	tags := make([]string, len(fields))
+	pkgPaths := make([]string, len(fields))
+	anon := make([]bool, len(fields))
+	seen := make(map[string]bool, len(fields))
+	seenPkgPath := ""
+	for i, f := range fields {
+		if f.Name == "" {
+			panic("reflect.StructOf: field " + reflectItoa(i) + " has no name")
+		}
+		if !reflectIsValidFieldName(f.Name) {
+			panic("reflect.StructOf: field " + reflectItoa(i) + " has invalid name")
+		}
+		if f.Type == nil {
+			panic("reflect.StructOf: field " + reflectItoa(i) + " has no type")
+		}
+		ftok := f.Type.(rtype).tok
+		if f.Anonymous && f.PkgPath != "" {
+			panic("reflect.StructOf: field \"" + f.Name + "\" is anonymous but has PkgPath set")
+		}
+		if f.PkgPath == "" {
+			// gc checks only the first byte (best-effort): non-ASCII
+			// lowercase slips through as exported.
+			if c := f.Name[0]; c >= 'a' && c <= 'z' || c == '_' {
+				panic("reflect.StructOf: field \"" + f.Name + "\" is unexported but missing PkgPath")
+			}
+		} else if seenPkgPath == "" {
+			seenPkgPath = f.PkgPath
+		} else if seenPkgPath != f.PkgPath {
+			panic("reflect.StructOf: fields with different PkgPath " + seenPkgPath + " and " + f.PkgPath)
+		}
+		if f.Anonymous {
+			reflectCheckEmbedded(i, len(fields), ftok, f.Type.(rtype).String())
+		}
+		if seen[f.Name] && f.Name != "_" {
+			panic("reflect.StructOf: duplicate field " + f.Name)
+		}
+		seen[f.Name] = true
+		names[i] = f.Name
+		toks[i] = ftok
+		tags[i] = string(f.Tag)
+		pkgPaths[i] = f.PkgPath
+		anon[i] = f.Anonymous
+	}
+	return rtype{tok: __reflect_tStructOf(names, toks, tags, pkgPaths, anon)}
+}
+
+// reflectCheckEmbedded mirrors gc's embedded-field validation in StructOf:
+// illegal **T/*interface embeddings, and the Issue-15924 "not implemented"
+// panics for embedded types with methods (position/count dependent).
+// Method promotion itself happens in the runtime (ReflectTypes.structOf).
+func reflectCheckEmbedded(i, nfields int, ftok unsafe.Pointer, typeStr string) {
+	k := __reflect_tKind(ftok)
+	if k == Pointer {
+		etok := __reflect_tElem(ftok)
+		ek := __reflect_tKind(etok)
+		if ek == Pointer || ek == Interface {
+			panic("reflect.StructOf: illegal embedded field type " + typeStr)
+		}
+		if __reflect_tNumMethod(ftok) > 0 {
+			if i > 0 {
+				panic("reflect: embedded type with methods not implemented if type is not first field")
+			}
+			if nfields > 1 {
+				panic("reflect: embedded type with methods not implemented if there is more than one field")
+			}
+		}
+		return
+	}
+	if k == Interface {
+		// gc promotes interface methods via a stub and panics on
+		// unexported ones (Issue 15924). graalgo skips interface
+		// promotion (documented gap in ReflectTypes.structOf) but
+		// mirrors the panic.
+		nm := __reflect_tNumMethod(ftok)
+		for j := 0; j < nm; j++ {
+			if m := __reflect_tMethod(ftok, j); m.PkgPath != "" {
+				panic("reflect: embedded interface with unexported method(s) not implemented")
+			}
+		}
+		return
+	}
+	if __reflect_tNumMethod(ftok) > 0 && i > 0 {
+		panic("reflect: embedded type with methods not implemented if type is not first field")
+	}
+}
+
+// reflectIsValidFieldName reports whether name is usable as a struct field
+// name (gc reflect.isValidFieldName): a non-empty Go identifier. Non-ASCII
+// runes are accepted as letters (the synthetic package cannot import
+// unicode — wave-1 scope precedent, see synth_bytes.go — so full
+// unicode.IsLetter/IsDigit classification is approximated); structurally
+// invalid UTF-8 is rejected.
+func reflectIsValidFieldName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); {
+		c := name[i]
+		if c < 0x80 {
+			if c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' ||
+				(i > 0 && c >= '0' && c <= '9') {
+				i++
+				continue
+			}
+			return false
+		}
+		n := reflectRuneLen(name, i)
+		if n <= 0 {
+			return false
+		}
+		i += n
+	}
+	return true
+}
+
+// reflectRuneLen returns the length of the UTF-8 rune starting at name[i],
+// or 0 if those bytes are not a valid UTF-8 encoding. It mirrors the
+// per-rune checks of utf8.Valid (rejecting overlongs, surrogates,
+// out-of-range values) plus U+FFFD itself, which gc's range-over-string
+// reports as-is and unicode.IsLetter rejects. Single-result: the synthetic
+// scope cannot call multi-result functions.
+func reflectRuneLen(name string, i int) int {
+	c0 := name[i]
+	if c0 < 0x80 {
+		return 1
+	}
+	var n int
+	switch {
+	case c0 < 0xC2:
+		return 0
+	case c0 < 0xE0:
+		n = 2
+	case c0 < 0xF0:
+		n = 3
+	case c0 < 0xF5:
+		n = 4
+	default:
+		return 0
+	}
+	if i+n > len(name) {
+		return 0
+	}
+	c1 := name[i+1]
+	if c1 < 0x80 || c1 >= 0xC0 {
+		return 0
+	}
+	switch n {
+	case 2:
+		// c0 >= 0xC2 excludes overlong 2-byte forms.
+	case 3:
+		c2 := name[i+2]
+		if c2 < 0x80 || c2 >= 0xC0 {
+			return 0
+		}
+		if c0 == 0xE0 && c1 < 0xA0 {
+			return 0 // overlong
+		}
+		if c0 == 0xED && c1 >= 0xA0 {
+			return 0 // surrogate
+		}
+		if c0 == 0xEF && c1 == 0xBF && c2 == 0xBD {
+			return 0 // U+FFFD is not a letter
+		}
+	case 4:
+		c2, c3 := name[i+2], name[i+3]
+		if c2 < 0x80 || c2 >= 0xC0 || c3 < 0x80 || c3 >= 0xC0 {
+			return 0
+		}
+		if c0 == 0xF0 && c1 < 0x90 {
+			return 0 // overlong
+		}
+		if c0 == 0xF4 && c1 >= 0x90 {
+			return 0 // > U+10FFFF
+		}
+	}
+	return n
 }
 `
 
@@ -2657,6 +2865,7 @@ var reflectIntrinsicNames = map[string]bool{
 	"__reflect_tConvertibleTo": true, "__reflect_tPtrTo": true,
 	"__reflect_tArrayOf": true, "__reflect_tSliceOf": true,
 	"__reflect_tMapOf": true, "__reflect_tChanOf": true,
+	"__reflect_tFuncOf": true, "__reflect_tStructOf": true,
 	"__reflect_typeof": true, "__reflect_valueof": true, "__reflect_new": true,
 	"__reflect_newat": true, "__reflect_field": true, "__reflect_index": true,
 	"__reflect_elem": true, "__reflect_len": true, "__reflect_cap": true,

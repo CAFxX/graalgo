@@ -106,7 +106,10 @@ public final class ReflectCalls {
         if (resultSlice.len() == 0) {
             return null;
         }
-        GoStruct resultValue = (GoStruct) resultSlice.array();
+        // The callback is a real Go func value; its []Value result slice may
+        // be backed by Object[] rather than GoStruct[] — read via Array.get.
+        GoStruct resultValue = (GoStruct) java.lang.reflect.Array.get(
+                resultSlice.array(), resultSlice.offset());
         // Unbox the single Value to D5.
         return ReflectValues.unbox(resultValue);
     }

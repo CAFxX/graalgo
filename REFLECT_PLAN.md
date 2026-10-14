@@ -29,7 +29,20 @@ comes from real reflect).
 - [x] Frontend: intercept `reflect.ValueOf` → runtime hook (already existed)
 - [x] Iter family: Type.Methods/Fields/Ins/Outs/CanSeq/CanSeq2, Value.Seq/Seq2/Methods/Fields (commit 7b02e11)
 - [x] Type constructors: ArrayOf/SliceOf/MapOf/ChanOf/PtrTo (commit 7b02e11)
-- [ ] Type constructors: FuncOf, StructOf (need slice arg support in reflectop)
+- [x] Type constructors: FuncOf, StructOf (slice-arg coercions in ReflectOpNode;
+      Go-side validation mirrors gc panic messages; commit pending)
+      Bugs fixed along the way (2026-10-15):
+      - structOf token-index: newTok computed before promoteMethods appended
+        wrapper func types -> struct landed at wrong index, typeString
+        recursed forever. Fixed by reserving the index first.
+      - basicSize(STRING) was 8, must be 16 (gc ABI) — field offsets/sizes.
+      - reflectElem POINTER case: New(T).Elem() CCE'd on Cell-unwrapped
+        referent (pre-existing, named structs too) — keep original handle.
+      - zeroFor: nested struct fields were null — recursive zeroStruct.
+      - invokeMakeFunc: result slice element read (was array cast).
+- Differential: test/differential/corpus/47_reflect_funcof_structof/main.go
+  byte-identical vs gc 1.27.1 (FuncOf/StructOf basics, panics, embedding
+  promotion + calls, MakeFunc, New/Elem/Set, offsets/sizes/tags).
 
 ### Phase 3: Real reflect package
 - [ ] Remove synthetic reflect, use real reflect source
