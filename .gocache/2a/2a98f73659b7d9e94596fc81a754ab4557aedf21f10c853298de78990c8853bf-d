@@ -1,6 +1,0 @@
-=== RUN   TestDebugBytesMethod
-Selection kind: 1, Obj: func (*bytes.Buffer).Read(p []byte) (n int, err error), Pkg: bytes
-isMultiResultSynthetic: true
---- PASS: TestDebugBytesMethod (0.05s)
-PASS
-ok  	graalgo-frontend	0.060s

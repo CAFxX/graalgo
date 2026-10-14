@@ -1,6 +1,0 @@
-# test log
-getenv GOTMPDIR
-open /home/hatch/workspace/graalgo-m7-int/.tmp/TestSyntheticBytesM74159790692/001/synbytes.go
-stat /home/hatch/workspace/graalgo-m7-int/.tmp/TestSyntheticBytesM74159790692/001/synbytes.go
-open /home/hatch/workspace/graalgo-m7-int/.tmp/TestSyntheticBytesM74159790692/001/synbytes.go
-open /home/hatch/workspace/graalgo-m7-int/.tmp
