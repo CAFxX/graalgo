@@ -20,8 +20,14 @@ comes from real reflect).
 ## Phases
 
 ### Phase 1: `internal/abi` compilation
-- [ ] Verify `internal/abi` compiles under graalgo
-- [ ] Fix any compilation issues (should be minimal — it's pure Go)
+- [x] Probe real internal/abi under graalgo (2026-10-15): loads from GOROOT
+      disk importer, but fails: `func FuncPCABI0 without body` — funcpc.go's
+      two functions are gc compile intrinsics (asm-implemented). Everything
+      else in the package is pure Go. Needed: frontend intrinsics
+      `__abi_FuncPCABI0` / `__abi_FuncPCABIInternal` returning opaque stable
+      func ids (used by reflect/makefunc.go, map.go race hooks, type.go
+      embeddedIfaceMethStub).
+- [ ] Provide the two FuncPC* intrinsics (frontend + runtime).
 
 ### Phase 2: Type descriptor bridge
 - [x] Runtime hook: construct `abi.Type` from graalgo's wire type table (via ReflectTypes)
@@ -44,10 +50,40 @@ comes from real reflect).
   byte-identical vs gc 1.27.1 (FuncOf/StructOf basics, panics, embedding
   promotion + calls, MakeFunc, New/Elem/Set, offsets/sizes/tags).
 
-### Phase 3: Real reflect package
+### Phase 3: Real reflect package (DESIGN, grounded 2026-10-15)
 - [ ] Remove synthetic reflect, use real reflect source
 - [ ] Keep interceptions ONLY for unsafe-based primitives
 - [ ] All other reflect code runs unmodified
+
+Design (empirically grounded):
+1. `internal/abi` loads from GOROOT today; only blocker is the two
+   FuncPC* compile intrinsics (Phase 1 finding above).
+2. Cast interception point exists: `exportUnsafeConversion` in
+   `internal/frontend/synth_unsafe.go` (`unsafefromptr`/`unsafetooptr`
+   wire nodes). Scoped rule: inside packages reflect/internal-abi,
+   `(*T)(unsafe.Pointer(x))` where T is a descriptor type lowers to a
+   `__reflect_cast` intrinsic instead of the generic path.
+3. Materialized descriptors: runtime keeps token -> materialized *abi.Type,
+   allocated as the MOST-DERIVED Go struct (abi.StructType for structs,
+   abi.FuncType for funcs, ...). Then `(*structType)(unsafe.Pointer(t))`
+   is a valid downcast: unsafefromptr/unsafetooptr round-trip the same
+   object (handle-based pointer model, UnsafeToPtrNode), and field reads
+   go through the referent's most-derived descriptor. All pure-Go methods
+   on *abi.Type (Kind, Elem, Field, ...) then work unmodified.
+4. Interface-word reads: `*(*abi.EmptyInterface)(unsafe.Pointer(&i))` in
+   abi.TypeOf -> intercept to (typeTok, data) from the graalgo `any`;
+   materialize *abi.Type from the token (cached). NoEscape -> identity.
+5. Value data path: real reflect's Value methods do `*(*T)(v.ptr)` loads,
+   stores, and `add` pointer arithmetic on the DATA pointer (152
+   unsafe.Pointer uses in value.go). These need memory primitives, not
+   logic reimplementation: typed load/store through unsafe.Pointer +
+   add. Enumerate the pattern set; each becomes an intrinsic. The TYPE
+   side (all of type.go) needs no value-memory support.
+6. Linknames (Phase 4): runtime.reflectcall (Value.Call),
+   runtime.zeroVal, runtime.getStaticuint64s.
+
+NOT pursued: real gc-layout flat memory for descriptors (backend has no
+flat memory model; p3unsafe is handle/object-based — verified 2026-10-15).
 
 ### Phase 4: Runtime linknames
 - [ ] Implement `runtime.reflectcall` (for Value.Call)
