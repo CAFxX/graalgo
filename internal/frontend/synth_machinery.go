@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"strings"
 	"sync"
 )
 
@@ -343,11 +344,499 @@ func getSyntheticPackage(path string) *syntheticPackage {
 	return sp
 }
 
+// restoreRawStrings repairs generator backtick-stripping damage. Some
+// synthetic generators (e.g. gen_synth_regexpsyntax.py) embed their
+// source in an outer backtick literal and naively replace every inner
+// backtick with a single quote, turning raw strings like `[:alnum:]`
+// into illegal rune literals like '[:alnum:]'. Any single-quoted
+// literal that is not a legal rune literal is necessarily such damage
+// (valid gc sources contain no illegal rune literals), so it is
+// converted back to a raw string. Legal rune literals are untouched,
+// and sources without damage are returned byte-identical.
+//
+// Must run before hoistSyntheticImports: the import scanner tracks raw
+// strings, and restoring them first keeps that tracking exact.
+func restoreRawStrings(src string) string {
+	var b strings.Builder
+	b.Grow(len(src))
+	i, n := 0, len(src)
+	const (
+		sCode = iota
+		sLineComment
+		sBlockComment
+		sRawString
+		sInterpString
+	)
+	state := sCode
+	// scanRune scans a rune literal starting at src[i] == '\'' using
+	// Go escape processing; it returns the literal content and the
+	// index just past the closing quote, or ok=false if the literal is
+	// unterminated on this line.
+	scanRune := func(i int) (content string, end int, ok bool) {
+		var cb strings.Builder
+		j := i + 1
+		for j < n && src[j] != '\n' {
+			if src[j] == '\\' && j+1 < n {
+				cb.WriteByte(src[j])
+				cb.WriteByte(src[j+1])
+				j += 2
+				continue
+			}
+			if src[j] == '\'' {
+				return cb.String(), j + 1, true
+			}
+			cb.WriteByte(src[j])
+			j++
+		}
+		return "", j, false
+	}
+	for i < n {
+		c := src[i]
+		switch state {
+		case sCode:
+			switch {
+			case c == '/' && i+1 < n && src[i+1] == '/':
+				state = sLineComment
+				b.WriteString("//")
+				i += 2
+			case c == '/' && i+1 < n && src[i+1] == '*':
+				state = sBlockComment
+				b.WriteString("/*")
+				i += 2
+			case c == '`':
+				state = sRawString
+				b.WriteByte(c)
+				i++
+			case c == '"':
+				state = sInterpString
+				b.WriteByte(c)
+				i++
+			case c == '\'':
+				content, end, ok := scanRune(i)
+				if ok && isLegalRuneLiteral(content) {
+					b.WriteString(src[i:end])
+					i = end
+					continue
+				}
+				// Illegal or unterminated: reinterpret as
+				// backtick-stripping damage. The damaged text
+				// has no escape processing (backslashes are
+				// literal raw-string content), so the nearest
+				// quote on this line closes the literal.
+				k := i + 1
+				for k < n && src[k] != '\n' && src[k] != '\'' {
+					k++
+				}
+				if k < n && src[k] == '\'' {
+					b.WriteByte('`')
+					b.WriteString(src[i+1 : k])
+					b.WriteByte('`')
+					i = k + 1
+				} else {
+					// No closing quote: leave it; the parser
+					// reports the real error.
+					b.WriteByte(c)
+					i++
+				}
+			default:
+				b.WriteByte(c)
+				i++
+			}
+		case sLineComment:
+			b.WriteByte(c)
+			i++
+			if c == '\n' {
+				state = sCode
+			}
+		case sBlockComment:
+			b.WriteByte(c)
+			i++
+			if c == '*' && i < n && src[i] == '/' {
+				b.WriteByte('/')
+				i++
+				state = sCode
+			}
+		case sRawString:
+			b.WriteByte(c)
+			i++
+			if c == '`' {
+				state = sCode
+			}
+		case sInterpString:
+			b.WriteByte(c)
+			i++
+			if c == '\\' && i < n {
+				b.WriteByte(src[i])
+				i++
+			} else if c == '"' {
+				state = sCode
+			}
+		}
+	}
+	return b.String()
+}
+
+// isLegalRuneLiteral reports whether content is a legal Go rune literal
+// body (the text between the single quotes).
+func isLegalRuneLiteral(content string) bool {
+	if content == "" {
+		return false
+	}
+	if content[0] != '\\' {
+		return len([]rune(content)) == 1
+	}
+	switch content {
+	case `\a`, `\b`, `\f`, `\n`, `\r`, `\t`, `\v`, `\\`, `\'`, `\"`:
+		return true
+	}
+	rest := content[1:]
+	switch {
+	case len(rest) == 3 && rest[0] == 'x' && isHexDigits(rest[1:]):
+		return true
+	case len(rest) == 5 && rest[0] == 'u' && isHexDigits(rest[1:]):
+		return true
+	case len(rest) == 9 && rest[0] == 'U' && isHexDigits(rest[1:]):
+		return true
+	case len(rest) == 3 && isOctalDigits(rest):
+		return true
+	}
+	return false
+}
+
+func isHexDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
+			return false
+		}
+	}
+	return true
+}
+
+func isOctalDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '7' {
+			return false
+		}
+	}
+	return true
+}
+
+// hoistSyntheticImports merges every top-level import declaration in src
+// into a single import block placed immediately after the package clause,
+// and returns the rewritten source. It is a no-op (returns src unchanged)
+// when every import declaration already precedes all other declarations.
+//
+// Generators that concatenate gc's per-file sources into one synthetic
+// file (e.g. gen_synth_regexpsyntax.py) leave each file's import block
+// where it was, scattering imports after other declarations — a parse
+// error ("imports must appear before other declarations"). The rewrite is
+// semantics-preserving: Go imports are order-independent, and only the
+// package clause may precede them. Duplicate import paths are dropped
+// (first occurrence wins); a path imported under two different local
+// names is kept twice so the type-checker reports the real conflict.
+//
+// The scan is comment- and string-aware: an "import" inside a comment,
+// interpreted string, rune literal, or raw string literal is never
+// treated as a declaration.
+func hoistSyntheticImports(src string) string {
+	type lexState struct {
+		inBlockComment bool
+		inRawString    bool
+	}
+	// codePrefix returns the code portion of line (comments stripped),
+	// updating st across line boundaries. String literals are stripped
+	// too unless keepStrings, in which case their contents are preserved
+	// (used to extract import specs verbatim).
+	codePrefix := func(line string, st *lexState, keepStrings bool) string {
+		var b strings.Builder
+		i, n := 0, len(line)
+		write := func(c byte) {
+			if keepStrings {
+				b.WriteByte(c)
+			}
+		}
+		for i < n {
+			switch {
+			case st.inBlockComment:
+				j := strings.Index(line[i:], "*/")
+				if j < 0 {
+					return b.String()
+				}
+				i += j + 2
+				st.inBlockComment = false
+			case st.inRawString:
+				j := strings.IndexByte(line[i:], '`')
+				if j < 0 {
+					if keepStrings {
+						b.WriteString(line[i:])
+					}
+					return b.String()
+				}
+				if keepStrings {
+					b.WriteString(line[i : i+j+1])
+				}
+				i += j + 1
+				st.inRawString = false
+			case strings.HasPrefix(line[i:], "//"):
+				return b.String()
+			case strings.HasPrefix(line[i:], "/*"):
+				st.inBlockComment = true
+				i += 2
+			case line[i] == '`':
+				write('`')
+				st.inRawString = true
+				i++
+			case line[i] == '"' || line[i] == '\'':
+				q := line[i]
+				write(q)
+				i++
+				for i < n {
+					c := line[i]
+					write(c)
+					i++
+					if c == '\\' && i < n {
+						write(line[i])
+						i++
+						continue
+					}
+					if c == q {
+						break
+					}
+				}
+			default:
+				b.WriteByte(line[i])
+				i++
+			}
+		}
+		return b.String()
+	}
+
+	lines := strings.Split(src, "\n")
+	st := &lexState{}
+	code := make([]string, len(lines))
+	for i, ln := range lines {
+		code[i] = codePrefix(ln, st, false)
+	}
+	// codeKeep parallels code but preserves string literal contents, so
+	// import specs can be extracted verbatim. The lex state evolves
+	// identically (keepStrings only affects output, not transitions).
+	stKeep := &lexState{}
+	codeKeep := make([]string, len(lines))
+	for i, ln := range lines {
+		codeKeep[i] = codePrefix(ln, stKeep, true)
+	}
+
+	type importDecl struct {
+		first, last int // line range [first,last)
+		specs       []string
+	}
+	var decls []importDecl
+	pkgLine := -1
+	seenNonImportDecl := false
+	needsRewrite := false
+	depth := 0
+	for i := 0; i < len(lines); {
+		t := strings.TrimSpace(code[i])
+		// Braces in the code portion are structural (strings and
+		// comments are already stripped), so depth tracks top level.
+		// Import declarations are consumed with continue and contain
+		// no braces, so skipping the depth update for them is safe.
+		if depth == 0 && pkgLine < 0 && isPackageClause(t) {
+			pkgLine = i
+		} else if depth == 0 && pkgLine >= 0 && isImportStartLine(t) {
+			if seenNonImportDecl {
+				needsRewrite = true
+			}
+			decl := importDecl{first: i}
+			// Extract specs from the string-preserving layer: the
+			// structural layer above stripped the import paths.
+			kt := strings.TrimSpace(codeKeep[i])
+			rest := strings.TrimSpace(kt[len("import"):])
+			if strings.HasPrefix(rest, "(") {
+				// Block form. It may be all on one line:
+				// import ("a"; "b").
+				inner := rest[1:]
+				if k := strings.Index(inner, ")"); k >= 0 {
+					for _, spec := range strings.Split(inner[:k], ";") {
+						if s := strings.TrimSpace(spec); s != "" {
+							decl.specs = append(decl.specs, s)
+						}
+					}
+					decl.last = i + 1
+					i++
+				} else {
+					// Multi-line: consume through the closing ")".
+					// Specs come from the string-preserving layer.
+					i++
+					for i < len(lines) {
+						ct := strings.TrimSpace(codeKeep[i])
+						if ct == ")" {
+							break
+						}
+						if ct != "" {
+							decl.specs = append(decl.specs, ct)
+						}
+						i++
+					}
+					decl.last = i + 1 // include the ")" line
+					i++               // skip past ")"
+				}
+			} else {
+				// Single form: the spec is everything after "import".
+				if rest != "" {
+					decl.specs = []string{rest}
+				}
+				decl.last = i + 1
+				i++
+			}
+			decls = append(decls, decl)
+			continue
+		} else if depth == 0 && pkgLine >= 0 && t != "" {
+			seenNonImportDecl = true
+		}
+		depth += strings.Count(code[i], "{") - strings.Count(code[i], "}")
+		i++
+	}
+	if !needsRewrite || pkgLine < 0 || len(decls) == 0 {
+		return src
+	}
+	// Merge specs in first-appearance order, dropping duplicate paths.
+	// A path imported under a different local name is kept twice so the
+	// type-checker reports the conflict honestly.
+	seenPath := map[string]string{}
+	var specs []string
+	for _, decl := range decls {
+		for _, spec := range decl.specs {
+			path := importSpecPath(spec)
+			if prev, ok := seenPath[path]; ok {
+				if prev == spec {
+					continue // exact duplicate: drop
+				}
+				// Same path, different local name: keep both.
+				specs = append(specs, spec)
+				continue
+			}
+			seenPath[path] = spec
+			specs = append(specs, spec)
+		}
+	}
+	var b strings.Builder
+	b.WriteString("import (\n")
+	for _, spec := range specs {
+		b.WriteString("\t" + spec + "\n")
+	}
+	b.WriteString(")\n")
+	block := b.String()
+
+	// Delete the original declaration lines, then insert the merged
+	// block immediately after the package clause.
+	del := make([]bool, len(lines))
+	for _, decl := range decls {
+		for j := decl.first; j < decl.last && j < len(lines); j++ {
+			del[j] = true
+		}
+	}
+	var out []string
+	for i, ln := range lines {
+		if i == pkgLine {
+			out = append(out, ln, block)
+			continue
+		}
+		if del[i] {
+			continue
+		}
+		out = append(out, ln)
+	}
+	return strings.Join(out, "\n")
+}
+
+// isPackageClause reports whether t is a top-level package clause.
+func isPackageClause(t string) bool {
+	if !strings.HasPrefix(t, "package ") {
+		return false
+	}
+	rest := strings.TrimSpace(t[len("package "):])
+	if rest == "" {
+		return false
+	}
+	for _, r := range rest {
+		if !(r == '_' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// isImportStartLine reports whether the trimmed code line t starts an
+// import declaration. The keyword is recognized only when the character
+// following "import" cannot continue an identifier (so `importx` and
+// `import_` are not imports, but `import"fmt"`, `import."x"` and the
+// blank `import_"x"` are).
+func isImportStartLine(t string) bool {
+	if !strings.HasPrefix(t, "import") {
+		return false
+	}
+	rest := t[len("import"):]
+	if rest == "" {
+		return true
+	}
+	c := rest[0]
+	switch {
+	case c == ' ' || c == '\t' || c == '(' || c == '"' || c == '.':
+		return true
+	case c == '_':
+		// import_ is an identifier; import _ / import_"x" is blank.
+		return len(rest) == 1 || !isIdentChar(rest[1])
+	default:
+		return false
+	}
+}
+
+func isIdentChar(c byte) bool {
+	return c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9'
+}
+
+// importSpecPath extracts the quoted import path from an import spec
+// (e.g. `alias "example.com/x"` -> `"example.com/x"`).
+func importSpecPath(spec string) string {
+	i := strings.Index(spec, "\"")
+	if i < 0 {
+		return spec
+	}
+	j := strings.Index(spec[i+1:], "\"")
+	if j < 0 {
+		return spec
+	}
+	return spec[i : i+1+j+1]
+}
+
 func buildSyntheticPackage(path string) *syntheticPackage {
 	src, ok := syntheticSources[path]
 	if !ok {
 		panic("gofrontend: no synthetic source for " + path)
 	}
+	// General generator-damage repair (any synthetic package, never
+	// package-specific):
+	//  1. restoreRawStrings: some generators embed their source in an
+	//     outer backtick literal and naively replace inner backticks
+	//     with single quotes, turning raw strings into illegal rune
+	//     literals.
+	//  2. hoistSyntheticImports: generators that concatenate gc's
+	//     per-file sources leave each file's import block in place,
+	//     scattering imports after other declarations (a parse error:
+	//     "imports must appear before other declarations").
+	// Both are semantics-preserving and byte-identical no-ops for
+	// sources without the respective damage (such sources parse today,
+	// and neither repair triggers on parseable input).
+	src = restoreRawStrings(src)
+	src = hoistSyntheticImports(src)
 	fset := token.NewFileSet()
 	// P3-M8 (wave 2): ParseComments populates doc comments so the
 	// //go:linkname directives in synthetic sources (os) are visible to

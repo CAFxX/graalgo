@@ -135,6 +135,20 @@ public final class GoStruct {
                 Object e = src[i];
                 if (e instanceof GoStruct gs) {
                     e = gs.deepCopy();
+                } else if (e instanceof graalgo.runtime.sync.GoMutex) {
+                    // P3-M9 (driver-harden, go-cmp lane): copied sync
+                    // primitives get fresh instances per slot — sharing
+                    // would let operations through one copy be observed
+                    // through another, which gc's value copy does not do.
+                    e = new graalgo.runtime.sync.GoMutex();
+                } else if (e instanceof graalgo.runtime.sync.GoRWMutex) {
+                    e = new graalgo.runtime.sync.GoRWMutex();
+                } else if (e instanceof graalgo.runtime.sync.GoWaitGroup) {
+                    e = new graalgo.runtime.sync.GoWaitGroup();
+                } else if (e instanceof graalgo.runtime.sync.GoOnce) {
+                    e = new graalgo.runtime.sync.GoOnce();
+                } else if (e instanceof graalgo.runtime.sync.GoPool) {
+                    e = new graalgo.runtime.sync.GoPool();
                 } else if (e != null && e.getClass().isArray()) {
                     e = deepCopyArray(e);
                 }

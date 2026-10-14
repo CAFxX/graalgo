@@ -312,6 +312,24 @@ public final class Boxing {
         if (template != null && template.getClass().isArray()) {
             return GoStruct.deepCopyArray(template);
         }
+        // P3-M9 (driver-harden, go-cmp lane): sync primitives are opaque
+        // Java objects; the template must not be shared — each use gets a
+        // fresh instance (a shared Mutex would serialize unrelated code).
+        if (template instanceof graalgo.runtime.sync.GoMutex) {
+            return new graalgo.runtime.sync.GoMutex();
+        }
+        if (template instanceof graalgo.runtime.sync.GoRWMutex) {
+            return new graalgo.runtime.sync.GoRWMutex();
+        }
+        if (template instanceof graalgo.runtime.sync.GoWaitGroup) {
+            return new graalgo.runtime.sync.GoWaitGroup();
+        }
+        if (template instanceof graalgo.runtime.sync.GoOnce) {
+            return new graalgo.runtime.sync.GoOnce();
+        }
+        if (template instanceof graalgo.runtime.sync.GoPool) {
+            return new graalgo.runtime.sync.GoPool();
+        }
         return template; // immutable (GoString.EMPTY) or null
     }
 }
