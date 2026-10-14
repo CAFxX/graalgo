@@ -192,7 +192,7 @@ current tree). Changes, all mechanical:
   so they are real needs).
 - **Shadow marking**: vendored-tree entries whose import path the overlay
   substitutes (`overlayImporter.Import` switch in
-  [internal/frontend/export.go](../../reviews/phase1-m5-loopcap/snapshot/export.go), 137 paths) are marked `shadowed_by`;
+  [internal/frontend/export.go](../../docs/arch/reviews/phase1-m5-loopcap/snapshot/export.go), 137 paths) are marked `shadowed_by`;
   the report splits `skip_list_size` (comparable across releases) from
   `live_skip_list_size` (actionable subset).
 - **Self-links**: the single-field `//go:linkname name` form is a

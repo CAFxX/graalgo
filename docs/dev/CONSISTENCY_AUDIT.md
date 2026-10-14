@@ -2,7 +2,7 @@
 
 **Date:** 2026-10-03 · **Trigger:** Carlo: "Are the spec fully consistent and updated?"
 **Scope:** [SPEC.md](SPEC.md) (1194 lines) cross-checked against [FEASIBILITY.md](FEASIBILITY.md), [PHASES.md](PHASES.md),
-[adr/ADR-0001.md](adr/ADR-0001.md), [requirements/](requirements/) (70 `GG-*.yaml`), `[spikes/](spikes/)*/REPORT.md`, [reviews/](reviews/).
+[adr/ADR-0001.md](adr/ADR-0001.md), [requirements/](../../requirements/) (70 `GG-*.yaml`), `[spikes/](../arch/spikes/)*/REPORT.md`, [reviews/](../arch/reviews/).
 **Mode:** read-only. Findings ranked P0 (contradiction affecting a gate/decision/requirement),
 P1 (stale text or wrong number), P2 (cosmetic).
 
@@ -112,7 +112,7 @@ option C: YES; ADR-0001 ↔ SPEC consistent: YES.**
 ### Track D — SPEC ↔ requirements registry — COMPLETE
 
 **[P2] D1 — GG-SCHED-0003 weaker than SPEC's effective-cap rule (no contradiction)**
-[requirements/GG-SCHED-0003.yaml:3](requirements/GG-SCHED-0003.yaml): "The number of admitted-but-not-yet-parked virtual threads
+[requirements/GG-SCHED-0003.yaml:3](../../requirements/GG-SCHED-0003.yaml): "The number of admitted-but-not-yet-parked virtual threads
 SHALL never exceed GOMAXPROCS; the drainer SHALL enforce this as a hard assert."
 SPEC §3.5 (~:352): effective cap is `min(GOMAXPROCS, carrier parallelism)`, clamped in the
 constructor. `min(GOMAXPROCS, carrier)` ≤ GOMAXPROCS, so no contradiction — but the requirement
@@ -158,7 +158,7 @@ Fix: `48,140 parks / 48,140 admissions, 40,588 of 40,588 wakeups won, zero lost`
 **[P1] A3 — SPEC:434** `"15,603 samples/5s vs stock Go's 200,000 (13×)"`. REPORT F1 explicitly
 marks 15,603 as the superseded old draft ("On the old draft's 15,603 vs the coordinator's 12,036
 vs this run's 11,824 (§3.6): machine variance under VM contention"); archived legs: 11,824 /
-13,337 / 13,919. 200,000 traces to [spikes/02-loom/REPORT.md](spikes/02-loom/REPORT.md). 200,000/11,824 ≈ 16.9×. The REPORT's
+13,337 / 13,919. 200,000 traces to [spikes/02-loom/REPORT.md](../arch/spikes/02-loom/REPORT.md). 200,000/11,824 ≈ 16.9×. The REPORT's
 own "~13x" (line 102) is itself derived from stale 15,603.
 Fix: `"11,824 samples/5s vs stock Go's 200,000 (~17×)"`; fix REPORT:102 at the source.
 
@@ -188,7 +188,7 @@ CV 0.0123)"`; `"Spike-2b overhead (26.8µs mean/hop)"`; `"Spike-2b lost-wakeup f
 26.8µs → 33.0; 50,558 → 48,140. Fix accordingly.
 
 **[P1] A9 — SPEC:302–303, SPEC:1078** scope note `"(scoped: JDK 25.0.4, 2-vCPU VM, 1ms/100µs
-quanta)"` on the spike-2 kill. `[spikes/02-loom/REPORT.md](spikes/02-loom/REPORT.md)` tested POLL (10 ms) and POLL (1 ms
+quanta)"` on the spike-2 kill. `[spikes/02-loom/REPORT.md](../arch/spikes/02-loom/REPORT.md)` tested POLL (10 ms) and POLL (1 ms
 watchdog); 1ms/100µs are spike-2b's O1 legs, not spike-2's configs. JDK/VM parts check out.
 Fix: `"(scoped: JDK 25.0.4, 2-vCPU VM, POLL 10ms / 1ms-watchdog configs)"`.
 
@@ -296,7 +296,7 @@ Fix: add the header banner; align both agent-leverage items with SPEC §7.14 `[D
 **[P2] E7 — R2 P1-3 partial: GG-0035's statement lacks the respdiff line**
 R2 P1-3's fix: extend 05's R3 ✓ ([spikes/05-cmdgo/REPORT.md:238–246](spikes/05-cmdgo/REPORT.md)) + watch in SPEC §5.8 tool
 list ✓ (:713) and §6.1 checklist ✓ (:768) **plus a line in GG-0035's statement**. Missing: the
-GG-0035 line — [requirements/GG-0035.yaml](requirements/GG-0035.yaml) statement still lists "apidiff, go/types signature
+GG-0035 line — [requirements/GG-0035.yaml](../../requirements/GG-0035.yaml) statement still lists "apidiff, go/types signature
 diff, rtlink, flagdiff, godebug-diff" with no respdiff.
 Fix: add respdiff to GG-0035's statement (one line, ID kept).
 
@@ -377,7 +377,7 @@ current 29.9µs = 0.30%), and all kill triggers are unaffected.
    Appendix C). [P2]
 7. [FEASIBILITY.md](FEASIBILITY.md): add the R2-mandated header banner; align the two agent-leverage `[OPEN]`s
    (`[FEASIBILITY.md](FEASIBILITY.md):390`, `[PHASES.md](PHASES.md):236`) with SPEC §7.14 `[DECIDED]` (discount dropped). [P2]
-8. [requirements/GG-0035.yaml](requirements/GG-0035.yaml): add respdiff to the statement (keep the ID). [P2]
+8. [requirements/GG-0035.yaml](../../requirements/GG-0035.yaml): add respdiff to the statement (keep the ID). [P2]
 9. [SPEC.md](SPEC.md): add spike 3's P95-calibration trigger to §6.4 or the §10.2 verdict-scope ledger. [P2]
 10. [SPEC.md](SPEC.md) §3.5/§10.2: record spike-2's four root causes (LIFO/no-runnext, no public scheduler
     API, JVM-global carrier sizing, 7 workaround families) and carry the (a)/(b)/(c) re-test
@@ -464,7 +464,7 @@ log line is cited in-text.
   0.30%"; "48,140/48,140 parks/admissions; 40,588/40,588 wakeups won".
 - **A9** — FIXED (both sites): spike-2 kill scope → "JDK 25.0.4, 2-vCPU VM,
   OFF / POLL-10ms / POLL-1ms-watchdog / UNCOND / PARK 1µs–1ms configs"
-  (per [spikes/02-loom/REPORT.md](spikes/02-loom/REPORT.md) §2).
+  (per [spikes/02-loom/REPORT.md](../arch/spikes/02-loom/REPORT.md) §2).
 - **A10** — FIXED (3 sites): "§8.2" → "§8 rows 8–13" (:513, :916); the §10.1
   ledger row → "§8 row 2" (:1063).
 - **E1** — FIXED: spike 6's COMMIT-DIRECT verdict recorded at §7.1 (rewritten:
@@ -476,7 +476,7 @@ log line is cited in-text.
 ### P2 — FIXED except one not-applicable
 
 - **A11** — NOT-APPLICABLE: the string "Appendix D" occurs in **zero** program
-  files ([SPEC.md](SPEC.md), [PHASES.md](PHASES.md), [FEASIBILITY.md](FEASIBILITY.md), [reviews/](reviews/), [adr/](adr/), [requirements/](requirements/)
+  files ([SPEC.md](SPEC.md), [PHASES.md](PHASES.md), [FEASIBILITY.md](FEASIBILITY.md), [reviews/](../arch/reviews/), [adr/](adr/), [requirements/](../../requirements/)
   all grepped) — the audit's claim about the done-gate record could not be
   located, so there is nothing to correct. The single `[OPEN]` is at
   SPEC:1187 in Appendix C and the SPEC is internally consistent about it.

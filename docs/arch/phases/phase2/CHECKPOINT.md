@@ -170,7 +170,7 @@ disabled; 100 yields must let the peer run; red-green: no-op yield
 hangs).
 
 **P1-3 (preemption unauditable):** Archived `smoke/preempt.go`,
-`smoke/panic.go`, [smoke/hello.go](../../../../spikes/06-sulong/exp/hello.go) with [smoke/README.md](../../../../README.md) documenting the
+`smoke/panic.go`, [smoke/hello.go](../../spikes/06-sulong/exp/hello.go) with [smoke/README.md](../../../../README.md) documenting the
 verification (wait-loop shape, quantum-neutered hangs, gc output match).
 
 **P1-4 (GG annotations):** Removed inaccurate verifies: GG-SCHED-0001
@@ -690,7 +690,7 @@ after DELTA-GO from both.
   vehicle, memStats() field table + PauseNs ring via MXBean notifications.
 - `make check`: new off-heap/barrier grep gate (ADR-0002 D3/F3) + GcInterop
   debug-println exclusion (documented, TimerHeap precedent).
-- Differential corpus [corpus/gc/](../../../../spikes/01-asmcgo/stub/internal/runtime/gc) (4 programs + gc-1.27.1 .expected):
+- Differential corpus [corpus/gc/](../../spikes/01-asmcgo/stub/internal/runtime/gc) (4 programs + gc-1.27.1 .expected):
   gc01 finalizer runs, gc02 SetFinalizer(x,nil) removal, gc03 KeepAlive,
   gc04 GC hint. Key empirical finding: stock gc needs GC()+allocation in the
   poll loop for prompt finalization (bare runtime.GC() loop never fired).
@@ -736,7 +736,7 @@ after DELTA-GO from both.
 - `graalgo/runtime/GcInterop.java` (phase-2, Cleaner-based finalizers,
   KeepAlive via reachabilityFence, GC() via MXBean poll, weak vehicle,
   memStats field table)
-- Differential corpus [corpus/gc/](../../../../spikes/01-asmcgo/stub/internal/runtime/gc) (6 programs: finalizer, remove, replace,
+- Differential corpus [corpus/gc/](../../spikes/01-asmcgo/stub/internal/runtime/gc) (6 programs: finalizer, remove, replace,
   keepalive, GC hint, panic-loudness; gc-1.27.1 .expected where applicable)
 - `GcDifferentialTest`, `GcInteropTest`, `GcTortureTest`, `GcVisibilityTest`
 - [DIVERGENCES.md](DIVERGENCES.md) (DIV-M4-1..9)
@@ -1051,7 +1051,7 @@ phases/phase2/hidden_files/jfr/EVENTS.md + p2-m6-evidence.jfr + counts).
 4. M6 watch item: reproduce drainer re-admission w/o UNPARK under torture;
    P0 if reproduced, else document attempt + re-test trigger.
 5. Overhead budget: fast-path hop vs spike 2b's 1%-of-10ms budget.
-6. Evidence: [hidden_files/torture/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md) + archived logs.
+6. Evidence: [hidden_files/torture/REPORT.md](../../spikes/01-asmcgo/REPORT.md) + archived logs.
 7. ≥2 independent reviews, then sign-off (fresh phase-2 test + phase-1
    suite + make check by me).
 
@@ -1249,7 +1249,7 @@ Final evidence, all fresh on the sign-off tree:
 - Race stress: 4/4 scenarios, exact accounting, green.
 
 Deliverables: `WakeupModelTest` (16 tests incl. red-green guard),
-`WakeupRaceStressTest` (4), `JfrParkCostTest`, [hidden_files/modelcheck/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md)
+`WakeupRaceStressTest` (4), `JfrParkCostTest`, [hidden_files/modelcheck/REPORT.md](../../spikes/01-asmcgo/REPORT.md)
 (§§1-9), 3 reviews (reviewer1.md, reviewer2.md, reviewer1-rereview.md).
 
 Done-gate 4 (P2-M9) is MET. Next: P2-M10 divergence closeout, then gate 5.

@@ -311,7 +311,7 @@ content, run silent execution, exit-code contract, `--dump-vars` values).
    negative case.
 
 **Tests (deliverables 3–4, red-green-first, SPEC §5.2).**
-[corpus/straightline/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/straightline) — 12 programs (consts, arith, bitwise, shifts incl.
+[corpus/straightline/](../../reviews/phase1-m5-loopcap/snapshot/corpus/straightline) — 12 programs (consts, arith, bitwise, shifts incl.
 counts ≥ 64, mixed int/uint, multi-assign/swap, `:=`/redeclare, incdec,
 unary, overflow/wraparound, divmod signs, early return); conventions in
 [corpus/straightline/README.md](../../../../README.md) (`// observe:` trailer, `z = z` no-op-use
@@ -344,7 +344,7 @@ stay locked (verified in requirements/*.yaml). `req lint --root
 ### Evidence files
 - `hidden_files/m2_red1_const_swap_redeclare.log`, `m2_red2_unsigned.log`,
   `m2_green.log`, `m2_mutant_red.log`
-- Corpus: [corpus/straightline/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/straightline) (12 `.go` + README.md)
+- Corpus: [corpus/straightline/](../../reviews/phase1-m5-loopcap/snapshot/corpus/straightline) (12 `.go` + README.md)
 
 ### Deviations / notes
 - `export.go` gained a real (small) fix: `exportDefine` uses
@@ -430,7 +430,7 @@ frozen in [docs/freeze-stub.md](../../../spec/freeze-stub.md) (new).
 itab-identity histogram counters behind a flag, hooks only.
 
 **Tests (deliverable 5, red-green-first, SPEC §5.2).**
-[corpus/arithmetic/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/arithmetic) — 17 programs (all int/uint widths × ops, float32/64
+[corpus/arithmetic/](../../reviews/phase1-m5-loopcap/snapshot/corpus/arithmetic) — 17 programs (all int/uint widths × ops, float32/64
 incl. 0.1+0.2, all conversion pairs incl. uint64→float64 precision loss,
 string conv+compare, comparisons, bool logic, shifts≥width); type-aware
 oracle (ints decimal, floats via `math.Float32/64bits`, strings hex —
@@ -474,7 +474,7 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
 ### Evidence files
 - `hidden_files/m3_red1.log`, `m3_green.log`, `m3_green2.log`,
   `m3_mutantA_red.log`, `m3_mutantB_red.log`
-- Corpus: [corpus/arithmetic/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/arithmetic) (17 `.go` + README.md)
+- Corpus: [corpus/arithmetic/](../../reviews/phase1-m5-loopcap/snapshot/corpus/arithmetic) (17 `.go` + README.md)
 
 ### Deviations / notes
 - [docs/frontend-v1.md](../../frontend-v1.md) gained **additive** wire updates (§6): the
@@ -514,7 +514,7 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
    elided inner literals), indexing (array/slice/string/map, comma-ok),
    2- and 3-index slicing, struct field access (incl. embedded/promoted),
    multi-dimensional composites, type assertions (incl. comma-ok).
-4. **Tests**: [corpus/controlflow/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/controlflow) (11 programs) + [corpus/composite/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/composite)
+4. **Tests**: [corpus/controlflow/](../../reviews/phase1-m5-loopcap/snapshot/corpus/controlflow) (11 programs) + [corpus/composite/](../../reviews/phase1-m5-loopcap/snapshot/corpus/composite)
    (10 programs), differential vs stock gc 1.27.1, bit-identical.
    `ControlFlowCorpusTest` + `CompositeCorpusTest` (`// verifies: GG-0014`).
 5. **Red-green**: mutant A (dropped `!` in loop cond → 5 kills),
@@ -545,8 +545,8 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
 
 ### Evidence files
 - `hidden_files/m4_red/mutantA_red.log`, `hidden_files/m4_red/mutantB_red.log`
-- Corpus: [corpus/controlflow/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/controlflow) (11 `.go` + README.md),
-  [corpus/composite/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/composite) (10 `.go` + README.md)
+- Corpus: [corpus/controlflow/](../../reviews/phase1-m5-loopcap/snapshot/corpus/controlflow) (11 `.go` + README.md),
+  [corpus/composite/](../../reviews/phase1-m5-loopcap/snapshot/corpus/composite) (10 `.go` + README.md)
 - Test run: 78 tests, 0 failures (`make test`)
 
 ### Deviations / notes
@@ -627,14 +627,14 @@ GG-0016 stays locked per PLAN.md. `req lint --root ~/workspace/graalgo`:
   frozen `Panic.throwPanic`/`recover`), `FmtCallNode`.
 
 **fmt stub (D4)**: 7 functions (Print/Printf/Println/Sprint/Sprintf/Sprintln/
-Errorf) with **verb-conformance matrix** ([corpus/fmt/matrix.tsv](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/fmt/matrix.tsv), 122 rows,
+Errorf) with **verb-conformance matrix** ([corpus/fmt/matrix.tsv](../../reviews/phase1-m5-loopcap/snapshot/corpus/fmt/matrix.tsv), 122 rows,
 all match gc 1.27.1). Address erasure to `0x0` (documented, nondeterministic
 under gc anyway).
 
 **Freeze v1** ([docs/freeze-stub.md](../../../spec/freeze-stub.md)): 58 functions + 11 nodes, each marked
 REAL/STUB/D4. `FreezeSignatureTest` verifies 37 signatures via reflection.
 
-**Corpus** ([corpus/builtins/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/builtins), 15 programs): append growth/aliasing, copy
+**Corpus** ([corpus/builtins/](../../reviews/phase1-m5-loopcap/snapshot/corpus/builtins), 15 programs): append growth/aliasing, copy
 overlap, delete/lookup, make len/cap, complex, print/stderr, len/cap, new,
 panic, fmt stub, map lifecycle. Expected outputs captured from gc.
 
@@ -643,7 +643,7 @@ panic, fmt stub, map lifecycle. Expected outputs captured from gc.
 - **FmtVerbMatrixTest**: 122/122 rows match gc. `testAddressErasure` pins
   `0x0` erasure.
 - **FreezeSignatureTest**: 37/37 signatures verified.
-- **Mutants** (logs in [hidden_files/ws-g/](../../../../reviews/phase1-m5-loopcap/snapshot/evidence/ws-g)):
+- **Mutants** (logs in [hidden_files/ws-g/](../../reviews/phase1-m5-loopcap/snapshot/evidence/ws-g)):
   1. append tail-copy drop → sum 19 vs 190: KILLED.
   2. `%x` uppercase → "C3A9" vs "c3a9": KILLED.
 - **Red-green**: matrix built from gc oracle first; test failed until
@@ -677,7 +677,7 @@ differential vs stock gc on all 20 panic-corpus programs.
 
 **PanicCorpusTest** ([src/test/java/graalgo/frontend/PanicCorpusTest.java](../../../../internal/backend/truffle/src/test/java/graalgo/frontend/PanicCorpusTest.java),
 `// verifies: GG-0019`, registered in `Runner.java`) — differential vs stock
-gc 1.27.1 over [corpus/panic/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/panic) (20 programs), following the
+gc 1.27.1 over [corpus/panic/](../../reviews/phase1-m5-loopcap/snapshot/corpus/panic) (20 programs), following the
 StraightLine/Arithmetic harness style:
 - Recovered programs (`// observe:` trailer): gc oracle injects
   `defer func(){println(...)}()` at a `// probe` anchor (first-registered
@@ -699,7 +699,7 @@ StraightLine/Arithmetic harness style:
 3. `-Xss32m` in Makefile + `graalgo-run` — pn12's 10000-deep panic unwind
    needs ~13–16m measured; 32m ≈ 2× headroom, documented in launcher README.
 
-**Mutation evidence** ([hidden_files/m5_mutant_red.log](../../../../reviews/phase1-m5-loopcap/snapshot/evidence/m5_mutant_red.log)): reverting the
+**Mutation evidence** ([hidden_files/m5_mutant_red.log](../../reviews/phase1-m5-loopcap/snapshot/evidence/m5_mutant_red.log)): reverting the
 DeferChain fix → pn07/pn09 fail exactly as predicted; reverted cleanly
 (md5-verified).
 
@@ -708,7 +708,7 @@ DeferChain fix → pn07/pn09 fail exactly as predicted; reverted cleanly
 ### Evidence
 - `hidden_files/m5_red1.log`, `m5_mutant_red.log`, `/tmp/m5_verify.log`
   (coordinator re-run: 102 tests, 0 failures, EXIT=0)
-- Corpus: [corpus/panic/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/panic) (20 `.go` + README.md)
+- Corpus: [corpus/panic/](../../reviews/phase1-m5-loopcap/snapshot/corpus/panic) (20 `.go` + README.md)
 
 ### Process note (honest)
 The M5 worker was stopped by a session timeout before its final green
@@ -727,7 +727,7 @@ worker (same files, closure-capture area).
 
 ### Coordination note
 The M5 worker reported a second writer editing NodeFactory.java,
-FuncLitNode.java and [corpus/panic/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/panic)*.go during 08:05–08:42 UTC (fixing
+FuncLitNode.java and [corpus/panic/](../../reviews/phase1-m5-loopcap/snapshot/corpus/panic)*.go during 08:05–08:42 UTC (fixing
 pn05/pn08/pn10/pn11, twice rewriting files it touched). No second active
 registry entry exists (graalgo-ws-g is done; only this coordinator's M5
 worker was dispatched). No writes observed after 08:53 UTC; final tree
@@ -749,14 +749,14 @@ green on the unified tree.
   Both designs were interleaved in NodeFactory.java (31 GoBox + 20 exporter markers);
   export.go carried 8 exporter-"boxed" markers. Files stable since 11:28 CEST; no active
   writer at dispatch time. Worker's node-layer refactors (GoBox/BoxWriteNode 3-arg/etc.)
-  kept; pristine pre-work copies + MD5SUMS at [hidden_files/loopcap/pristine/](../../../../reviews/phase1-m5-loopcap/snapshot/evidence/loopcap/pristine).
+  kept; pristine pre-work copies + MD5SUMS at [hidden_files/loopcap/pristine/](../../reviews/phase1-m5-loopcap/snapshot/evidence/loopcap/pristine).
 - Design decision: GoBox/factory pre-scan survives — no exporter/wire-protocol change
   (D1 protocol freeze), node layer complete and compiling, root cause pinned against
   gc-oracle (11 probes). Exporter "boxed" design reverted.
 - Single-owner untangle worker dispatched (registry graalgo-phase1-loopcap-untangle):
   EXCLUSIVE writer of both files until green. Restore NodeFactory from pristine
   (md5-verified), revert export.go markers, implement wiring per
-  [hidden_files/loopcap/CHECKPOINT_LOOPCAP.md](../../../../reviews/phase1-m5-loopcap/snapshot/evidence/loopcap/CHECKPOINT_LOOPCAP.md), red-green (restore pn13 + >=4 new corpus
+  [hidden_files/loopcap/CHECKPOINT_LOOPCAP.md](../../reviews/phase1-m5-loopcap/snapshot/evidence/loopcap/CHECKPOINT_LOOPCAP.md), red-green (restore pn13 + >=4 new corpus
   programs; fail-without/pass-with), full suite green, coverage note on worker-F's M5.
 - Process lesson recorded in AGENTS.md: never assign overlapping mutable file scopes to
   two workers; shared files get a single owner until green, recorded in checkpoint/registry.
@@ -1143,7 +1143,7 @@ complex consts, ellipsis), NodeFactory.java (new 0 args, convert from
 type, complex basiclit), AppendNode.java (fast path, ellipsis, Number
 store), DeleteNode.java (INT64 kind, MapKeys.box), LenNode.java
 (UNTYPED_STRING), ConvertNode.java (STRING<->SLICE), Differential.java
-(normalization order), SliceGrowthTest.java (new), [corpus/builtins/](../../../../reviews/phase1-m5-loopcap/snapshot/corpus/builtins)*.go
+(normalization order), SliceGrowthTest.java (new), [corpus/builtins/](../../reviews/phase1-m5-loopcap/snapshot/corpus/builtins)*.go
 (bi01, bi10, bi13 rewritten), README.md.
 
 **Status**: Awaiting test results. TypeparamDifferentialTest failure
@@ -1712,7 +1712,7 @@ Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh 
       NoClassDefFoundError cascade -> clean `stack overflow` report,
       exit 2 (51e281e; regression
       MainTest.testDeepRecursionReportsCleanStackOverflow).
-  Report: [hidden_files/m10_selfattack/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md). Known limit documented
+  Report: [hidden_files/m10_selfattack/REPORT.md](../../spikes/01-asmcgo/REPORT.md). Known limit documented
   in [docs/limitations.md](../../limitations.md) (Phase-4 re-test trigger).
 - Reviews dispatched: 2 independent reviewers (code + methodology),
   snapshot 51e281e. Reports -> reviews/phase1-m10/ (pending).
@@ -1742,7 +1742,7 @@ Worker: graalgo-phase1-m10 (registered). Sign-off rule: no sign-off until fresh 
   exit 2. Regression: MainTest.testDeepRecursionReportsCleanStackOverflow.
   Commit 51e281e. Limit documented: [docs/limitations.md](../../limitations.md) (15k ok, 20k+ exit 2).
 - Others (defer storm, hostile fmt, defer/panic, typeparams): gc-identical.
-- Report: [hidden_files/m10_selfattack/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md).
+- Report: [hidden_files/m10_selfattack/REPORT.md](../../spikes/01-asmcgo/REPORT.md).
 
 ### Done-gate 5: no placeholders (grep gate) — MET
 - TODO/FIXME/XXX: 0 files. "Stub" hits are fail-fast scope boundaries or

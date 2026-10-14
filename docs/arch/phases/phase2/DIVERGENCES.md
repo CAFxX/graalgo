@@ -250,7 +250,7 @@ Per-entry disposition for the closeout (P2-M10):
 
 - Torture F1 legs (production path): 5 legs, 17k–53k samples each
   (36,757 / 16,771 / 25,024 / 52,672 / 41,397), CV 0.001–0.018 — every
-  spinner admitted, no starvation ([hidden_files/torture/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md) §1).
+  spinner admitted, no starvation ([hidden_files/torture/REPORT.md](../../spikes/01-asmcgo/REPORT.md) §1).
 - Select fairness: differential 12/12 vs gc (P2-M2 sign-off).
 - No accepted divergence; no trigger needed.
 
@@ -304,4 +304,4 @@ Per-entry disposition for the closeout (P2-M10):
 divergences, one (latency distribution) ACCEPTED-WITH-TOLERANCE under the
 documented band, with re-test triggers for the two standing hardware/
 scope notes. Done-gate 5 evidence: this file (versioned) +
-[hidden_files/torture/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md) + [hidden_files/modelcheck/REPORT.md](../../../../spikes/01-asmcgo/REPORT.md).
+[hidden_files/torture/REPORT.md](../../spikes/01-asmcgo/REPORT.md) + [hidden_files/modelcheck/REPORT.md](../../spikes/01-asmcgo/REPORT.md).

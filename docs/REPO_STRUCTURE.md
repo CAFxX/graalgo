@@ -128,9 +128,14 @@ new locations.
 | `phases/phase3/fuzzing/` | [tools/fuzz-soak/](../tools/fuzz-soak/) (landed 2026-10-14) |
 | `phases/phase1/corpus/`, `phases/phase2/corpus/` | [test/corpus/phase1/](../test/corpus/phase1/), [test/corpus/phase2/](../test/corpus/phase2/) (landed 2026-10-14) |
 | `phases/phase2/tools/torture/` | [tools/torture/](../tools/torture/) (landed 2026-10-14) |
+| `modprobe/` | [test/e2e/](../test/e2e/) (landed 2026-10-14; harness, uuid cases, bug log) |
 | `SPEC.md`, `PHASES.md`, `FEASIBILITY.md` | [docs/arch/](../docs/arch/) (one consolidated arch doc) |
-| `requirements/`, `adr/`, `spikes/`, `reviews/`, `research/` | [docs/dev/](../docs/dev/) (ADRs kept) or archived out of the repo |
-| `spec/` | [docs/spec/](../docs/spec/) (curated) |
+| `adr/` | [docs/dev/adr/](../docs/dev/adr/) (landed 2026-10-14) |
+| `spikes/` | [docs/arch/spikes/](../docs/arch/spikes/) (landed 2026-10-14; cited by the archived phase docs) |
+| `reviews/` | [docs/arch/reviews/](../docs/arch/reviews/) (landed 2026-10-14; cited by the archived phase docs) |
+| `research/` study tracks (`T1`–`T8`, OUTLINEs) | [docs/arch/research/](../docs/arch/research/) (landed 2026-10-14); `research/phase5-opt-survey/` stays — active Phase-5 work |
+| `requirements/` | still at root — live registry, `tools/req/` walks up to find it; move deferred |
+| `spec/` | removed 2026-10-14 — was outline drafts and rework scratch, not curated spec content (which lives in [docs/spec/](../docs/spec/)) |
 | `hidden_files/` | removed — evidence lives in commit messages |
 | `phases/*/out/`, `*.err`, compiled binaries | removed — build artifacts, covered by [.gitignore](../.gitignore) |
 | `phases/` (all) | **removed 2026-10-14** — migration complete, zero files remain |
