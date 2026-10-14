@@ -36,9 +36,11 @@ func cmdRun(root string, args []string) int {
 	target := rest[0]
 	progArgs := rest[1:]
 
-	// Single file: run it directly.
+	// Single file: run it directly. Program args are separated from the
+	// launcher's own flags by "--" (the launcher treats every bare
+	// "-..." before "--" as its own flag).
 	if strings.HasSuffix(target, ".go") {
-		runArgs := []string{target}
+		runArgs := []string{target, "--"}
 		runArgs = append(runArgs, progArgs...)
 		return graalgoRunProgram(root, runArgs)
 	}
@@ -57,7 +59,7 @@ func cmdRun(root string, args []string) int {
 			return code
 		}
 	}
-	runArgs := []string{files[0]}
+	runArgs := []string{files[0], "--"}
 	runArgs = append(runArgs, progArgs...)
 	return graalgoRunProgram(root, runArgs)
 }

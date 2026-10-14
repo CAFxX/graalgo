@@ -29,6 +29,11 @@ for jar in "$HERE"/truffle/lib/*.jar; do
 done
 # -Djava.io.tmpdir: keep the JVM off /tmp (a full /tmp silently yields
 # empty output with exit 0 — methodology review finding, cf. wave runners).
+# --sun-misc-unsafe-memory-access=allow: suppress the JDK 25 "terminally
+# deprecated sun.misc.Unsafe" warnings on stderr (Truffle uses Unsafe
+# internally); they would otherwise pollute the program's stderr and break
+# byte-identity vs `go run`.
 exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m \
+  --sun-misc-unsafe-memory-access=allow \
   -Djava.io.tmpdir="${TMPDIR:-/tmp}" \
   -cp "$CP" graalgo.p3sync.launcher.P3SyncMain "$@"

@@ -24,6 +24,10 @@ for jar in "$HERE"/truffle/lib/*.jar; do
   CP="$CP:$jar"
 done
 exec "$GRAALVM_HOME/bin/java" --enable-native-access=ALL-UNNAMED -Xss32m \
+  --sun-misc-unsafe-memory-access=allow \
   -cp "$CP" graalgo.launcher.Main "$@"
+# --sun-misc-unsafe-memory-access=allow: suppress the JDK 25 "terminally
+# deprecated sun.misc.Unsafe" warnings on stderr (Truffle uses Unsafe
+# internally); they would otherwise pollute the program's stderr.
 # -Xss32m: see the truffle module Makefile's M5 stance note (guest recursion
 # burns host stack; the panic corpus's 10000-deep unwind needs ~13-16m).
