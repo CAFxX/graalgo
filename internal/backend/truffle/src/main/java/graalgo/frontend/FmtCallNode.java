@@ -10,8 +10,9 @@ import graalgo.values.GoString;
 /**
  * A call to one of the {@code fmt} stub functions (WS G; verifies
  * GG-0020; P3-M10 extends the surface with the Append and scan families
- * and FormatString; the F* family is desugared at the frontend and never
- * reaches this node).
+ * and FormatString; the real-fmt lane (2026-10-14) killed the F-family
+ * desugaring — Fprint/Fprintf/Fprintln now reach this node and write
+ * to the io.Writer via GoMethodDispatch).
  *
  * <p>The D4 symbols ({@code Print}, {@code Printf}, {@code Println},
  * {@code Sprint}, {@code Sprintf}, {@code Sprintln}, {@code Errorf}),
@@ -161,6 +162,22 @@ public final class FmtCallNode extends GoExprNode {
                 Fmt.println(fargs);
                 yield GoString.EMPTY;
             }
+            // Real-fmt lane (2026-10-14): F-family writes to the io.Writer
+            // (first arg). Format via the S-family, then dispatch Write
+            // through GoMethodDispatch. Statement position: discard (n, err).
+            case "Fprint" -> {
+                fprintTo(fargs[0], Fmt.sprint(java.util.Arrays.copyOfRange(fargs, 1, fargs.length)));
+                yield GoString.EMPTY;
+            }
+            case "Fprintf" -> {
+                fprintTo(fargs[0], Fmt.sprintf(fmtString(fargs),
+                        java.util.Arrays.copyOfRange(fargs, 2, fargs.length)));
+                yield GoString.EMPTY;
+            }
+            case "Fprintln" -> {
+                fprintTo(fargs[0], Fmt.sprintln(java.util.Arrays.copyOfRange(fargs, 1, fargs.length)));
+                yield GoString.EMPTY;
+            }
             // P3-M10 (fix-fmt-funcs): the scan family — statement position
             // only (results discarded); destinations are written through.
             case "Sscan" -> {
@@ -239,6 +256,21 @@ public final class FmtCallNode extends GoExprNode {
             throw new FrontendException(funcName + " []byte argument is not a slice");
         }
         return gs;
+    }
+
+    // Real-fmt lane (2026-10-14): write a formatted GoString to an
+    // io.Writer via GoMethodDispatch. The writer is fargs[0] (interface
+    // value); Write takes []byte and returns the (n, err) pair, which
+    // we discard in statement position.
+    private void fprintTo(Fmt.Arg writer, GoString s) {
+        Fmt.GoMethodDispatch d = Fmt.goMethodDispatch();
+        if (d == null) {
+            throw new FrontendException("fmt." + funcName + ": no Go method dispatch installed (needs the phase-3 launcher)");
+        }
+        byte[] bytes = s.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        // Box as GoSlice for the Write call.
+        graalgo.values.GoSlice slice = new graalgo.values.GoSlice(bytes);
+        d.call(writer, "Write", new Object[]{slice});
     }
 
     private int runeArg(Fmt.Arg[] fargs, int at) {
