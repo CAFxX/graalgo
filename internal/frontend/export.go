@@ -773,9 +773,12 @@ var fmtOverlayFuncs = map[string]bool{
 }
 
 // syncPrimitiveNames are the four P3-M2b (WS D, ADR-0002) primitives bound
-// to the Phase-2 Java runtime (graalgo.runtime.sync).
+// to the Phase-2 Java runtime (graalgo.runtime.sync), plus Pool
+// (GAP-SYNC-POOL: type+export exist; the Java SyncOpNode cases are a
+// separate work item).
 var syncPrimitiveNames = map[string]bool{
 	"Mutex": true, "RWMutex": true, "WaitGroup": true, "Once": true,
+	"Pool": true,
 }
 
 // syncOpsInScope is the M2-supported method set per primitive (ADR-0002
@@ -786,6 +789,7 @@ var syncOpsInScope = map[string]map[string]bool{
 	"RWMutex":   {"Lock": true, "Unlock": true, "RLock": true, "RUnlock": true},
 	"WaitGroup": {"Add": true, "Done": true, "Wait": true},
 	"Once":      {"Do": true},
+	"Pool":      {"Get": true, "Put": true},
 }
 
 // syncPrimitiveNamed reports whether t is exactly one of the synthetic
@@ -878,6 +882,25 @@ func syntheticSyncPackage() *types.Package {
 
 	once := newPrimitive("Once")
 	addMethod(once, "Do", tuple(param("f", funcT)), nil)
+
+	// GAP-SYNC-POOL (P4 driver-harden): sync.Pool for API compatibility
+	// (third-party packages like segmentio/encoding/json pool transient
+	// values through it). gc-identical shape: New is a func() any field;
+	// Get/Put have pointer receivers. Export/runtime lowering of Get/Put
+	// is a separate work item; the type must exist first so such packages
+	// type-check.
+	{
+		anyT := types.Universe.Lookup("any").Type()
+		newSig := types.NewSignatureType(nil, nil, nil, nil, tuple(param("", anyT)), false)
+		tname := types.NewTypeName(token.NoPos, pkg, "Pool", nil)
+		pkg.Scope().Insert(tname)
+		pool := types.NewNamed(tname,
+			types.NewStruct([]*types.Var{
+				types.NewVar(token.NoPos, pkg, "New", newSig),
+			}, nil), nil)
+		addMethod(pool, "Get", nil, tuple(param("", anyT)))
+		addMethod(pool, "Put", tuple(param("x", anyT)), nil)
+	}
 
 	// P3-M9 (Go 1.21+): OnceFunc returns a function that invokes f only once.
 	// Signature: func OnceFunc(f func()) func(). The runtime behavior is a
@@ -1636,6 +1659,8 @@ func ExportFile(path string) (string, error) {
 			needErrors = true
 		case "encoding/json":
 			needJson = true
+			// synth_json.go's bytes import needs errors for initializers.
+			needErrors = true
 		case "encoding/csv":
 			needCsv = true
 			needErrors = true
@@ -10386,6 +10411,12 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 	if tv, ok := e.info.Types[l]; ok && tv.Type != nil {
 		if nt := syntheticPrimitiveNamed(tv.Type); nt != nil {
 			if len(l.Elts) > 0 {
+				// GAP-SYNC-POOL: sync.Pool{New: f} is legal — New is an
+				// exported field (gc-identical). Emit a syncnew node
+				// carrying the New function for the pool implementation.
+				if nt.Obj().Name() == "Pool" {
+					return e.exportPoolNew(l, t)
+				}
 				if atomicPrimitiveNamed(nt) != nil {
 					return nil, scopeErrorf("sync/atomic.%s literal with elements is not in M4 scope", nt.Obj().Name())
 				}
@@ -10460,6 +10491,32 @@ func (e *exporter) exportCompositeLitAs(l *ast.CompositeLit, t int) (*Node, erro
 		fields["keys"] = keys
 	}
 	return e.node("complit", l, fields), nil
+}
+
+// exportPoolNew exports a sync.Pool{New: f} composite literal
+// (GAP-SYNC-POOL). New is an exported field (gc-identical), so the literal
+// is legal; it lowers to a syncnew node carrying the New function for the
+// pool implementation. The Java SyncNewNode/SyncOpNode Pool cases are a
+// separate work item; this is the frontend half.
+func (e *exporter) exportPoolNew(l *ast.CompositeLit, t int) (*Node, error) {
+	if len(l.Elts) != 1 {
+		return nil, scopeErrorf("sync.Pool literal with %d elements is not supported (only {New: f})", len(l.Elts))
+	}
+	kv, ok := l.Elts[0].(*ast.KeyValueExpr)
+	if !ok {
+		return nil, scopeErrorf("sync.Pool literal must use the New: field key")
+	}
+	key, ok := kv.Key.(*ast.Ident)
+	if !ok || key.Name != "New" {
+		return nil, scopeErrorf("sync.Pool literal must use the New: field key")
+	}
+	newFn, err := e.exportExpr(kv.Value)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("syncnew", l, map[string]any{
+		"synctyp": "Pool", "type": t, "newfn": newFn,
+	}), nil
 }
 
 // byteLiteralHex extracts byte values from a list of AST expressions.

@@ -4,7 +4,10 @@ package main
 // syntheticJsonSource is the P3-M7 synthetic `encoding/json` package.
 const syntheticJsonSource = `package json
 
-import "bytes"
+import (
+	"bytes"
+	"reflect"
+)
 
 // Float formatting and parsing for the synthetic encoding/json.
 //
@@ -1127,19 +1130,59 @@ type SyntaxError struct {
 
 func (e *SyntaxError) Error() string { return e.msg }
 
+// InvalidUTF8Error describes a failure to encode a string as UTF-8.
+// (gc-identical signature; deprecated in the stdlib but kept for
+// compatibility — third-party packages alias it.)
+type InvalidUTF8Error struct {
+	S string // the whole string value that caused the error
+}
+
+func (e *InvalidUTF8Error) Error() string {
+	return "json: invalid UTF-8 in string: " + jsonQuoteString(e.S)
+}
+
+// MarshalerError represents an error from calling MarshalJSON or
+// MarshalText. (gc-identical exported shape; the unexported sourceFunc
+// is omitted — cross-package construction only uses exported fields.)
+type MarshalerError struct {
+	Type reflect.Type
+	Err  error
+}
+
+func (e *MarshalerError) Error() string {
+	return "json: error calling MarshalJSON for type " + e.Type.String() + ": " + e.Err.Error()
+}
+
+func (e *MarshalerError) Unwrap() error { return e.Err }
+
+// UnmarshalFieldError describes a JSON object key that was not
+// appropriate for an exported struct field. (gc-identical.)
+type UnmarshalFieldError struct {
+	Key   string
+	Type  reflect.Type
+	Field reflect.StructField
+}
+
+func (e *UnmarshalFieldError) Error() string {
+	return "json: cannot unmarshal object key " + jsonQuoteString(e.Key) +
+		" into unexported field " + e.Field.Name + " of type " + e.Type.String()
+}
+
 // UnmarshalTypeError describes a JSON value that was not appropriate for
-// a Go value. (Defined for API completeness; the dynamic model rarely
-// produces it.)
+// a Go value. (gc-identical exported shape.)
 type UnmarshalTypeError struct {
-	Value  string // description of JSON value ("number", "boolean", etc.)
-	Type   string // type name in the dynamic model ("any")
-	Offset int64  // error occurred after reading Offset bytes
+	Value  string       // description of JSON value ("number", "boolean", etc.)
+	Type   reflect.Type // type of Go value it could not be assigned to
+	Offset int64        // error occurred after reading Offset bytes
 	Struct string
 	Field  string
 }
 
 func (e *UnmarshalTypeError) Error() string {
-	return "json: cannot unmarshal " + e.Value + " into Go value of type " + e.Type
+	if e.Struct != "" || e.Field != "" {
+		return "json: cannot unmarshal " + e.Value + " into Go struct field " + e.Struct + "." + e.Field + " of type " + e.Type.String()
+	}
+	return "json: cannot unmarshal " + e.Value + " into Go value of type " + e.Type.String()
 }
 
 // Marshaler is the interface implemented by types that can marshal
@@ -1200,11 +1243,17 @@ func (m *RawMessage) UnmarshalJSON(data []byte) error {
 
 // InvalidUnmarshalError describes an invalid argument passed to Unmarshal.
 type InvalidUnmarshalError struct {
-	Type string
+	Type reflect.Type
 }
 
 func (e *InvalidUnmarshalError) Error() string {
-	return "json: Unmarshal(nil " + e.Type + ")"
+	if e.Type == nil {
+		return "json: Unmarshal(nil)"
+	}
+	if e.Type.Kind() != reflect.Pointer {
+		return "json: Unmarshal(non-pointer " + e.Type.String() + ")"
+	}
+	return "json: Unmarshal(nil " + e.Type.String() + ")"
 }
 
 // Number represents a JSON number literal.
@@ -2109,19 +2158,27 @@ func (e *jsonUnsupportedValueError) Error() string {
 
 // Actually gc's UnsupportedValueError:
 type UnsupportedValueError struct {
-	Str string
+	Value reflect.Value
+	Str   string
 }
 
 func (e *UnsupportedValueError) Error() string { return "json: unsupported value: " + e.Str }
 
 // UnsupportedTypeError is gc's error for values of types that cannot be
-// encoded (complex, func, chan, ...). gc carries a reflect.Type; without
-// reflect (P3-M8) we carry the Go type name string directly.
+// encoded (complex, func, chan, ...). (gc-identical exported shape; the
+// unexported typ field is a fallback for internal constructors that don't
+// have a reflect.Type handy.)
 type UnsupportedTypeError struct {
-	typ string
+	Type reflect.Type
+	typ  string
 }
 
-func (e *UnsupportedTypeError) Error() string { return "json: unsupported type: " + e.typ }
+func (e *UnsupportedTypeError) Error() string {
+	if e.typ != "" {
+		return "json: unsupported type: " + e.typ
+	}
+	return "json: unsupported type: " + e.Type.String()
+}
 
 // jsonAppendInt appends a signed integer.
 func jsonAppendInt(b []byte, v int64) []byte {
@@ -2605,6 +2662,77 @@ func Indent(dst *bytes.Buffer, src []byte, prefix, indent string) error {
 	panic("json.Indent: not in M7 scope (needs address-of variable; re-test when WS D lands)")
 }
 
-// HTMLEscape is omitted in wave 1 (needs *bytes.Buffer, inexpressible);
-// re-test when synthetic bytes lands with type Buffer.
+// Compact appends to dst the JSON-encoded src with insignificant space
+// characters elided. (gc-identical behavior: validates with the
+// recursive-descent parser, then strips whitespace outside strings;
+// dst is untouched when src is invalid.)
+func Compact(dst *bytes.Buffer, src []byte) error {
+	parser := &jsonParser{data: src}
+	jvp := parser.parseValue()
+	if jvp.err != nil {
+		return jvp.err
+	}
+	parser.skipSpace()
+	if parser.off < len(parser.data) {
+		c := parser.data[parser.off]
+		return jsonSyntaxError(src, parser.off, c, "after top-level value")
+	}
+	dst.Write(jsonStripSpace(src))
+	return nil
+}
+
+// jsonStripSpace removes insignificant whitespace (space, tab, newline,
+// carriage return) outside string literals. The input must already be
+// valid JSON.
+func jsonStripSpace(src []byte) []byte {
+	out := make([]byte, 0, len(src))
+	inStr := false
+	esc := false
+	for _, c := range src {
+		if inStr {
+			out = append(out, c)
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		if c == '"' {
+			inStr = true
+			out = append(out, c)
+			continue
+		}
+		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// HTMLEscape appends to dst the JSON-encoded src with <, >, &, U+2028 and
+// U+2029 characters inside string literals changed to \u003c, \u003e,
+// \u0026, \u2028, \u2029. (gc-identical port of encoding/json.)
+func HTMLEscape(dst *bytes.Buffer, src []byte) {
+	start := 0
+	for i := 0; i < len(src); i++ {
+		c := src[i]
+		if c == '<' || c == '>' || c == '&' {
+			dst.Write(src[start:i])
+			dst.Write([]byte{'\\', 'u', '0', '0', jsonHexDigits[c>>4], jsonHexDigits[c&0xF]})
+			start = i + 1
+		}
+		// Convert U+2028 and U+2029 (E2 80 A8 and E2 80 A9).
+		if c == 0xE2 && i+2 < len(src) && src[i+1] == 0x80 && src[i+2]&^1 == 0xA8 {
+			dst.Write(src[start:i])
+			dst.Write([]byte{'\\', 'u', '2', '0', '2', jsonHexDigits[src[i+2]&0xF]})
+			start = i + 3
+		}
+	}
+	dst.Write(src[start:])
+}
 `

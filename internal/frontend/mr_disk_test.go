@@ -437,3 +437,89 @@ func (b Box) GetOr[T any](dflt T) (T, bool) {
 }
 `, "GetOr", "__Box_GetOr", "__Box_GetOrPair", 1)
 }
+
+func TestDiskMRFuncValueNotRewrittenToHelper(t *testing.T) {
+	// A return-position call to a func VALUE (parameter decode of func
+	// type decodeFunc) must not be rewritten to a __decode helper call:
+	// there is no such helper. The call is kept for the export desugar
+	// via the two-value form. (Reported instance: segmentio's
+	// decodeFromString returning decode(d, b, p).)
+	f, specs, errs := transformDiskMR(t, `package p
+
+type decodeFunc func([]byte) ([]byte, error)
+
+func decodePlain(b []byte) ([]byte, error) {
+	return b, nil
+}
+
+func wrap(b []byte, decode decodeFunc) ([]byte, error) {
+	return decode(b)
+}
+`)
+	if len(errs) != 0 {
+		t.Fatalf("got %d type errors, want 0: %v", len(errs), errs)
+	}
+	if len(specs) != 2 {
+		t.Fatalf("specs = %+v, want [decodePlain wrap]", specs)
+	}
+	helper := findFuncDecl(f, "__wrap")
+	if helper == nil {
+		t.Fatalf("helper __wrap not found")
+	}
+	// The rewritten body must not reference __decode.
+	foundBad := false
+	ast.Inspect(helper.Body, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == "__decode" {
+			foundBad = true
+			return false
+		}
+		return true
+	})
+	if foundBad {
+		t.Fatalf("rewritten __wrap body references __decode")
+	}
+	// It must use the two-value form: __mr_t1, __mr_t2 := decode(b).
+	foundTwoValue := false
+	ast.Inspect(helper.Body, func(n ast.Node) bool {
+		if as, ok := n.(*ast.AssignStmt); ok && as.Tok == token.DEFINE && len(as.Lhs) == 2 {
+			if call, ok := as.Rhs[0].(*ast.CallExpr); ok {
+				if id, ok := call.Fun.(*ast.Ident); ok && id.Name == "decode" {
+					foundTwoValue = true
+					return false
+				}
+			}
+		}
+		return true
+	})
+	if !foundTwoValue {
+		t.Fatalf("rewritten __wrap body lacks the two-value func-value call")
+	}
+}
+
+func TestDiskMRLabeledLoopReturn(t *testing.T) {
+	// Returns inside a labeled for loop must be rewritten: the old
+	// rewriteStmt did not descend into *ast.LabeledStmt, leaving
+	// multi-value returns in the single-result helper body (reported
+	// instance: segmentio's parseUintHex with its parseLoop label).
+	checkDiskMRClean(t, `package p
+
+func parseHex(b []byte) (uint64, []byte, error) {
+	var value uint64
+parseLoop:
+	for i, c := range b {
+		switch {
+		case c >= '0' && c <= '9':
+			value = value*16 + uint64(c-'0')
+		default:
+			if i == 0 {
+				return 0, b, errHex
+			}
+			break parseLoop
+		}
+	}
+	return value, b, nil
+}
+
+var errHex = error(nil)
+`)
+}

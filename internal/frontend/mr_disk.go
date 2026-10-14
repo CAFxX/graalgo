@@ -1405,6 +1405,10 @@ func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string,
 		// and recursive helper calls (go/types cannot infer them).
 		tparamNames: tparamNamesOf(fd.Type),
 		funcName:    fd.Name.Name,
+		// Names bound as locals (receiver, params, var/:=): a
+		// return-position call to such a name is a func value, not a
+		// reference to the package-level multi-result function.
+		boundNames: locallyBoundNames(fd),
 	}
 	ctx.rewriteBlock(body)
 	return body
@@ -1423,6 +1427,68 @@ type mrRewriteCtx struct {
 	// recursion in return-position call forwarding).
 	tparamNames []string
 	funcName    string
+	// boundNames are the names bound as locals in the enclosing
+	// function (receiver, params, var/:= declarations). A
+	// return-position call to such a name is a func value call, never a
+	// reference to the package-level multi-result function, so it must
+	// not be rewritten to a __-helper call.
+	boundNames map[string]bool
+}
+
+// locallyBoundNames returns the names bound as locals anywhere in fd
+// (receiver, params, var and := declarations, range variables). It is a
+// conservative over-approximation: a name bound in any nested block
+// counts. Used by the return rewrite to distinguish a call to the
+// package-level multi-result function from a call to a shadowing func
+// value (e.g. a decodeFunc parameter named decode).
+func locallyBoundNames(fd *ast.FuncDecl) map[string]bool {
+	bound := map[string]bool{}
+	addFields := func(fl *ast.FieldList) {
+		if fl == nil {
+			return
+		}
+		for _, f := range fl.List {
+			for _, n := range f.Names {
+				bound[n.Name] = true
+			}
+		}
+	}
+	if fd.Recv != nil {
+		addFields(fd.Recv)
+	}
+	addFields(fd.Type.Params)
+	if fd.Body == nil {
+		return bound
+	}
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if n.Tok == token.DEFINE {
+				for _, e := range n.Lhs {
+					if id, ok := unparen(e).(*ast.Ident); ok {
+						bound[id.Name] = true
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				bound[id.Name] = true
+			}
+		case *ast.RangeStmt:
+			if n.Tok == token.DEFINE {
+				for _, e := range []ast.Expr{n.Key, n.Value} {
+					if e == nil {
+						continue
+					}
+					if id, ok := unparen(e).(*ast.Ident); ok {
+						bound[id.Name] = true
+					}
+				}
+			}
+		}
+		return true
+	})
+	return bound
 }
 
 // pairTypeExpr builds the pair composite-literal type: __Pair for the
@@ -1447,6 +1513,16 @@ func (ctx *mrRewriteCtx) rewriteStmt(stmt ast.Stmt) []ast.Stmt {
 	case *ast.BlockStmt:
 		ctx.rewriteBlock(s)
 		return []ast.Stmt{s}
+	case *ast.LabeledStmt:
+		// Descend into the labeled statement (e.g. parseLoop: for ...).
+		// A labeled return expanding to two statements drops the label
+		// (labels are semantically irrelevant on return).
+		rewritten := ctx.rewriteStmt(s.Stmt)
+		if len(rewritten) == 1 {
+			s.Stmt = rewritten[0]
+			return []ast.Stmt{s}
+		}
+		return rewritten
 	case *ast.IfStmt:
 		ctx.rewriteBlock(s.Body)
 		if s.Else != nil {
@@ -1542,90 +1618,98 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 	case 1:
 		// Single expr which is a call: in the ORIGINAL code this
 		// type-checked as a multi-result call forwarding its values
-		// (e.g. return vr.Value()). It must be multi-result, so rewrite
-		// it. We don't need mrNames here.
+		// (e.g. return vr.Value()).
 		if call, ok := rs.Results[0].(*ast.CallExpr); ok {
-			// For methods (selector calls): use two-value assignment
-			// __t1, __t2 := x.M(args); return Pair{__t1, __t2}. This
-			// works for both concrete and interface receivers; the
-			// desugar rewrites the call during export.
-			if _, ok := call.Fun.(*ast.SelectorExpr); ok {
-				tmps := make([]ast.Expr, len(pairFields))
-				for i := range pairFields {
-					tmps[i] = ast.NewIdent(fmt.Sprintf("__mr_t%d", i+1))
-				}
-				assign := &ast.AssignStmt{
-					Lhs: tmps,
-					Tok: token.DEFINE,
-					Rhs: []ast.Expr{call},
-				}
-				args := make([]ast.Expr, len(pairFields))
-				for i := range pairFields {
-					// Use fresh Ident nodes for the uses (not the def sites).
-					args[i] = ast.NewIdent(fmt.Sprintf("__mr_t%d", i+1))
-				}
-				return []ast.Stmt{assign, mkPair(args)}
-			}
-			// Package-level func: __t := __F(args); return Pair{__t.f1, __t.f2}.
 			var fname string
 			if id, ok := call.Fun.(*ast.Ident); ok {
 				fname = id.Name
 			} else if id := callTargetIdent(call.Fun); id != nil {
 				fname = id.Name
 			}
-			// GAP-GENERIC-MR: preserve the callee's explicit type
-			// arguments on the helper call. When the call is recursive
-			// (return F(args) inside F's own body) and carries no
-			// explicit type arguments, forward the enclosing function's
-			// type parameters — inference from the helper call's
-			// arguments cannot recover them.
-			var calleeTargs []ast.Expr
-			switch fun := call.Fun.(type) {
-			case *ast.IndexExpr:
-				calleeTargs = []ast.Expr{fun.Index}
-			case *ast.IndexListExpr:
-				calleeTargs = fun.Indices
-			}
-			var calleeTparamNames []string
-			for _, ta := range calleeTargs {
-				if id, ok := ta.(*ast.Ident); ok {
-					calleeTparamNames = append(calleeTparamNames, id.Name)
-				} else {
-					// Non-identifier type argument (e.g. []byte):
-					// cannot name it; fall back to positional refs.
-					calleeTparamNames = nil
-					break
+			// Direct __F form only when fname names a known
+			// multi-result function AND no local shadows it: a
+			// return-position call to a func value (a parameter or
+			// variable, e.g. a decodeFunc named decode) must keep the
+			// original call — there is no __-helper for it. The
+			// export desugar rewrites named MR functions in the
+			// two-value form below.
+			if fname != "" && ctx.mrNames[fname] && !ctx.boundNames[fname] {
+				// Package-level func: __t := __F(args);
+				// return Pair{__t.f1, __t.f2}.
+				// GAP-GENERIC-MR: preserve the callee's explicit type
+				// arguments on the helper call. When the call is recursive
+				// (return F(args) inside F's own body) and carries no
+				// explicit type arguments, forward the enclosing function's
+				// type parameters — inference from the helper call's
+				// arguments cannot recover them.
+				var calleeTargs []ast.Expr
+				switch fun := call.Fun.(type) {
+				case *ast.IndexExpr:
+					calleeTargs = []ast.Expr{fun.Index}
+				case *ast.IndexListExpr:
+					calleeTargs = fun.Indices
 				}
-			}
-			if calleeTparamNames == nil && len(calleeTargs) == 0 && fname == ctx.funcName {
-				calleeTparamNames = ctx.tparamNames
-			}
-			helperFun := ast.Expr(ast.NewIdent("__" + fname))
-			if len(calleeTparamNames) > 0 {
-				helperFun = genericRef("__"+fname, calleeTparamNames)
-			} else if len(calleeTargs) > 0 {
-				// Non-identifier type arguments: splice them as-is.
-				switch len(calleeTargs) {
-				case 1:
-					helperFun = &ast.IndexExpr{X: ast.NewIdent("__" + fname), Index: calleeTargs[0]}
-				default:
-					helperFun = &ast.IndexListExpr{X: ast.NewIdent("__" + fname), Indices: calleeTargs}
+				var calleeTparamNames []string
+				for _, ta := range calleeTargs {
+					if id, ok := ta.(*ast.Ident); ok {
+						calleeTparamNames = append(calleeTparamNames, id.Name)
+					} else {
+						// Non-identifier type argument (e.g. []byte):
+						// cannot name it; fall back to positional refs.
+						calleeTparamNames = nil
+						break
+					}
 				}
+				if calleeTparamNames == nil && len(calleeTargs) == 0 && fname == ctx.funcName {
+					calleeTparamNames = ctx.tparamNames
+				}
+				helperFun := ast.Expr(ast.NewIdent("__" + fname))
+				if len(calleeTparamNames) > 0 {
+					helperFun = genericRef("__"+fname, calleeTparamNames)
+				} else if len(calleeTargs) > 0 {
+					// Non-identifier type arguments: splice them as-is.
+					switch len(calleeTargs) {
+					case 1:
+						helperFun = &ast.IndexExpr{X: ast.NewIdent("__" + fname), Index: calleeTargs[0]}
+					default:
+						helperFun = &ast.IndexListExpr{X: ast.NewIdent("__" + fname), Indices: calleeTargs}
+					}
+				}
+				tmp := ast.NewIdent("__mr_tmp")
+				helperCall := &ast.CallExpr{
+					Fun:  helperFun,
+					Args: call.Args,
+				}
+				assign := &ast.AssignStmt{
+					Lhs: []ast.Expr{tmp},
+					Tok: token.DEFINE,
+					Rhs: []ast.Expr{helperCall},
+				}
+				args := make([]ast.Expr, len(pairFields))
+				for i, f := range pairFields {
+					// Use fresh Ident nodes for the uses (not the def site).
+					args[i] = &ast.SelectorExpr{X: ast.NewIdent("__mr_tmp"), Sel: ast.NewIdent(f)}
+				}
+				return []ast.Stmt{assign, mkPair(args)}
 			}
-			tmp := ast.NewIdent("__mr_tmp")
-			helperCall := &ast.CallExpr{
-				Fun:  helperFun,
-				Args: call.Args,
+			// General fallback: __t1, __t2 := <original call>;
+			// return Pair{__t1, __t2}. Correct for func values, methods
+			// (selector calls), and any other multi-valued call; the
+			// export desugar rewrites calls to named multi-result
+			// functions here.
+			tmps := make([]ast.Expr, len(pairFields))
+			for i := range pairFields {
+				tmps[i] = ast.NewIdent(fmt.Sprintf("__mr_t%d", i+1))
 			}
 			assign := &ast.AssignStmt{
-				Lhs: []ast.Expr{tmp},
+				Lhs: tmps,
 				Tok: token.DEFINE,
-				Rhs: []ast.Expr{helperCall},
+				Rhs: []ast.Expr{call},
 			}
 			args := make([]ast.Expr, len(pairFields))
-			for i, f := range pairFields {
-				// Use fresh Ident nodes for the uses (not the def site).
-				args[i] = &ast.SelectorExpr{X: ast.NewIdent("__mr_tmp"), Sel: ast.NewIdent(f)}
+			for i := range pairFields {
+				// Use fresh Ident nodes for the uses (not the def sites).
+				args[i] = ast.NewIdent(fmt.Sprintf("__mr_t%d", i+1))
 			}
 			return []ast.Stmt{assign, mkPair(args)}
 		}
