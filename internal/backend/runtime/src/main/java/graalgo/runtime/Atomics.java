@@ -2,6 +2,10 @@ package graalgo.runtime;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+
+import graalgo.values.GoEquality;
+import graalgo.values.GoPointer;
 
 /**
  * Frozen atomic intrinsic surface (WS G, GG-0020, REAL).
@@ -127,5 +131,81 @@ public final class Atomics {
      */
     public static boolean swapBool(AtomicInteger addr, boolean new_) {
         return addr.getAndSet(new_ ? 1 : 0) != 0;
+    }
+
+    // -- generic pointer / value (P3-M10: atomic.Pointer[T], atomic.Value) --
+    // The Go value IS the AtomicReference cell (ADR-0002 D1). A Go *T is an
+    // opaque Java reference (GoKind.POINTER) and a Go any is a Java object
+    // (GoKind.INTERFACE); both ride on the same reference cell. A zero
+    // Pointer loads Java null, which is Go's nil *T.
+
+    /** Atomic pointer/value load. */
+    public static Object loadPointer(AtomicReference<Object> addr) {
+        return addr.get();
+    }
+
+    /** Atomic pointer/value store. */
+    public static void storePointer(AtomicReference<Object> addr, Object v) {
+        addr.set(v);
+    }
+
+    /** Atomic pointer/value swap; returns the previous value. */
+    public static Object swapPointer(AtomicReference<Object> addr, Object v) {
+        return addr.getAndSet(v);
+    }
+
+    /**
+     * Atomic {@code Pointer[T]} compare-and-swap with Go pointer equality
+     * (P3-M10): two {@code *T} values are equal when they address the same
+     * storage ({@link GoPointer#sameStorageAs}), not when the wrapper
+     * objects are identical — {@code &x} evaluated twice yields two
+     * wrappers for one address, and gc's CAS compares addresses. A nil
+     * {@code *T} (Java null, or a nil {@link GoPointer}) equals only nil,
+     * mirroring the {@code POINTER} branch of {@code BinaryOpNode}.
+     */
+    public static boolean compareAndSwapGoPointer(AtomicReference<Object> addr, Object old, Object new_) {
+        for (;;) {
+            Object cur = addr.get();
+            if (!goPointersEqual(cur, old)) {
+                return false;
+            }
+            if (addr.compareAndSet(cur, new_)) {
+                return true;
+            }
+            // Lost the race: retry against the fresh value.
+        }
+    }
+
+    /** Go {@code ==} on {@code *T} values carried as opaque Java references. */
+    static boolean goPointersEqual(Object a, Object b) {
+        Object an = a instanceof GoPointer ap && ap.isNil() ? null : a;
+        Object bn = b instanceof GoPointer bp && bp.isNil() ? null : b;
+        if (an == null || bn == null) {
+            return an == null && bn == null;
+        }
+        if (an instanceof GoPointer ap && bn instanceof GoPointer bp) {
+            return ap.sameStorageAs(bp);
+        }
+        return an == bn;
+    }
+
+    /**
+     * Atomic {@code Value} compare-and-swap with Go interface equality
+     * (P3-M10): two {@code any} values are equal per Go {@code ==} — same
+     * dynamic type and equal dynamic value ({@link GoEquality#equal}) —
+     * so separately boxed equal values compare equal, not just identical
+     * wrapper objects.
+     */
+    public static boolean compareAndSwapGoValue(AtomicReference<Object> addr, Object old, Object new_) {
+        for (;;) {
+            Object cur = addr.get();
+            if (!GoEquality.equal(cur, old)) {
+                return false;
+            }
+            if (addr.compareAndSet(cur, new_)) {
+                return true;
+            }
+            // Lost the race: retry against the fresh value.
+        }
     }
 }

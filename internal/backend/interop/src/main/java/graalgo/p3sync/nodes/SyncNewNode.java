@@ -4,6 +4,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
@@ -59,9 +60,13 @@ public final class SyncNewNode extends GoExprNode {
             case "Once" -> new GoOnce();
             // P3-M4 (WS C, ADR-0004 D2): atomic wrapper cells. 64-bit
             // wrappers ride on AtomicLong, 32-bit/bool on AtomicInteger
-            // (the phase-1 Atomics backing).
+            // (the phase-1 Atomics backing). P3-M10: the generic
+            // Pointer[T] and the any-typed Value ride on an
+            // AtomicReference cell (Go *T is an opaque Java reference,
+            // Go any a Java object; a zero Pointer loads null = nil *T).
             case "atomic.Int64", "atomic.Uint64", "atomic.Uintptr" -> new AtomicLong();
             case "atomic.Int32", "atomic.Uint32", "atomic.Bool" -> new AtomicInteger();
+            case "atomic.Pointer", "atomic.Value" -> new AtomicReference<>();
             default -> throw new IllegalStateException("unknown sync type: " + syncType);
         };
     }
@@ -79,8 +84,10 @@ public final class SyncNewNode extends GoExprNode {
         switch (syncType) {
             case "Mutex", "RWMutex", "WaitGroup", "Once",
                  // P3-M4 (WS C, ADR-0004 D2): atomic wrapper cells.
+                 // P3-M10: plus the generic Pointer[T] and any-typed Value.
                  "atomic.Int64", "atomic.Uint64", "atomic.Int32",
-                 "atomic.Uint32", "atomic.Bool", "atomic.Uintptr" -> { /* ok */ }
+                 "atomic.Uint32", "atomic.Bool", "atomic.Uintptr",
+                 "atomic.Pointer", "atomic.Value" -> { /* ok */ }
             default -> throw new FrontendException(path + ": unknown sync type " + syncType);
         }
         Json.Value tv = f.opt("type");

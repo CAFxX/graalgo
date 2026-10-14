@@ -2066,12 +2066,34 @@ public final class NodeFactory {
     }
 
     /**
+     * Boxes {@code child} into an interface value (P3-M10). This is the
+     * public hook for interop node builders whose wire ops take
+     * interface-typed operands without an explicit conversion node on
+     * the wire — e.g. the {@code atomic.Value} syncop args, which are
+     * declared {@code any}, so concrete arg nodes must box exactly as
+     * call args do. Behavior is identical to the implicit-conversion
+     * path: already-interface children pass through untouched
+     * ({@link GoKind#transparent}), concrete children box with their
+     * dynamic-type descriptor. No existing kind's behavior changes.
+     *
+     * <p>The target is always the empty interface, so the P3-M3
+     * "generic instantiation as non-empty interface" fail-fast (which
+     * needs the target's type-table id) is vacuous here and skipped —
+     * boxing an instantiation into {@code any} is always legal.
+     */
+    public GoExprNode boxToInterface(GoExprNode child, BuildCtx ctx, String path) {
+        if (GoKind.transparent(child.kind(), GoKind.INTERFACE)) {
+            return child;
+        }
+        return boxInterface(child, ctx, path);
+    }
+
+    /**
      * Boxes a concrete value into an interface (M4, WS E). The dynamic type
      * is the value's static type id (named types stay distinct); an untyped
      * constant takes its default type.
      */
-    private GoExprNode boxInterface(GoExprNode child, BuildCtx ctx, String path) {
-        GoKind from = child.kind();
+    private GoExprNode boxInterface(GoExprNode child, BuildCtx ctx, String path) {        GoKind from = child.kind();
         GoKind dataKind;
         graalgo.values.GoTypeDescriptor descriptor;
         if (from.isUntyped()) {

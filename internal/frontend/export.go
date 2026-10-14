@@ -185,7 +185,8 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // signatures, the synthetic package "sync" exposing the four P3-M2b
 // primitives (Mutex, RWMutex, WaitGroup, Once) with exact gc method
 // signatures, the synthetic package "sync/atomic" exposing the P3-M4
-// typed wrappers (Int64, Uint64, Int32, Uint32, Bool, Uintptr) with exact
+// typed wrappers (Int64, Uint64, Int32, Uint32, Bool, Uintptr) plus the
+// P3-M10 generic additions (Pointer[T], Value) with exact
 // gc method signatures, the synthetic package "time" (ADR-0005 D1:
 // Duration/Time/Month/Weekday as real Go, clock/timer intrinsics), the
 // synthetic package "context" (ADR-0005 D2: real Go on sync.Mutex,
@@ -841,9 +842,13 @@ func syntheticSyncPackage() *types.Package {
 }
 
 // atomicPrimitiveNames are the P3-M4 (WS C, ADR-0004) typed wrappers bound
-// to the phase-1 JVM atomics (graalgo.runtime.Atomics).
+// to the phase-1 JVM atomics (graalgo.runtime.Atomics), plus the P3-M10
+// generic/noCopy additions: Pointer[T] (the generic typed pointer wrapper)
+// and Value (the any-typed wrapper). Instantiations (Pointer[string], …)
+// are *types.Named with type args, so the name check below still matches.
 var atomicPrimitiveNames = map[string]bool{
 	"Int64": true, "Uint64": true, "Int32": true, "Uint32": true, "Bool": true, "Uintptr": true,
+	"Pointer": true, "Value": true,
 }
 
 // atomicOpsInScope is the M4-supported method set per wrapper (ADR-0004
@@ -856,6 +861,10 @@ var atomicOpsInScope = map[string]map[string]bool{
 	"Uint32":  {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true},
 	"Bool":    {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
 	"Uintptr": {"Load": true, "Store": true, "Add": true, "Swap": true, "CompareAndSwap": true},
+	// P3-M10: Pointer[T] and Value have no Add in gc (pointer/any
+	// arithmetic is meaningless); the four reference ops are in scope.
+	"Pointer": {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
+	"Value":   {"Load": true, "Store": true, "Swap": true, "CompareAndSwap": true},
 }
 
 // atomicPrimitiveNamed reports whether t is exactly one of the synthetic
@@ -926,11 +935,16 @@ func syntheticScopeLabel(nt *types.Named) string {
 // syntheticAtomicPackage builds the P3-M4 (WS C, ADR-0004) synthetic
 // "sync/atomic" package for the import overlay: the six typed wrappers
 // with exact gc 1.27.1 method signatures (pointer receivers, like the
-// real package; verified against ~/tools/go-1.27.1/src/sync/atomic/type.go).
-// And/Or are defined with exact signatures so misuse fails fast with a
-// named "not in M4 scope" error. Package-level functions (AddInt32, …)
-// are defined with exact signatures and rejected at call sites (they need
-// &x — WS D); Pointer[T]/Value are out of scope entirely.
+// real package; verified against ~/tools/go/src/sync/atomic/type.go),
+// plus the P3-M10 generic additions Pointer[T] (declared via the types
+// API with a T-any type parameter; instantiations flow through the same
+// overlay — atomicPrimitiveNamed matches the *types.Named instantiation)
+// and Value (the any-typed wrapper), both with exact gc 1.27.1 method
+// signatures (verified against ~/tools/go/src/sync/atomic/type.go and
+// value.go). And/Or are defined with exact signatures so misuse fails
+// fast with a named "not in M4 scope" error. Package-level functions
+// (AddInt32, …) are defined with exact signatures and rejected at call
+// sites (they need &x — WS D).
 func syntheticAtomicPackage() *types.Package {
 	pkg := types.NewPackage("sync/atomic", "atomic")
 	int64T := types.Typ[types.Int64]
@@ -983,6 +997,77 @@ func syntheticAtomicPackage() *types.Package {
 	addMethod(b, "Swap", tuple(param("new", boolT)), tuple(param("old", boolT)))
 	addMethod(b, "CompareAndSwap",
 		types.NewTuple(param("old", boolT), param("new", boolT)), boolRes)
+
+	// P3-M10: atomic.Pointer[T] — the generic typed pointer wrapper
+	// (gc 1.27.1 sync/atomic/type.go: Load() *T, Store(*T), Swap(*T) *T,
+	// CompareAndSwap(*T, *T) bool; no Add, like gc). Declared via the
+	// types API: the named type carries a T-any type parameter, and the
+	// method signatures reference the *types.TypeParam, so go/types
+	// instantiates them for Pointer[string], Pointer[*T], … exactly as
+	// it does for real generic sources. The overlay needs no other
+	// change: atomicPrimitiveNamed matches the instantiation's
+	// *types.Named by origin name, and the syncop wire node carries
+	// synctyp "atomic.Pointer".
+	anyT := types.NewInterfaceType(nil, nil).Complete()
+	tname := types.NewTypeName(token.NoPos, pkg, "Pointer", nil)
+	pkg.Scope().Insert(tname)
+	ptrNamed := types.NewNamed(tname, emptyStruct, nil)
+	tparam := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), anyT)
+	ptrNamed.SetTypeParams([]*types.TypeParam{tparam})
+	// addPtrMethod declares one method on Pointer[T]. The signature
+	// carries its own receiver type parameters (rparams), as the checker
+	// does for real generic methods (signature.go): the same *TypeParam
+	// cannot be bound twice (bindTParams panics), and Named.expandMethod
+	// substitutes the instantiation's type args via the signature's
+	// rparams — so each method gets fresh T objects, and its
+	// params/results are built against them. Without rparams the
+	// signature would keep the raw *T at call sites.
+	//
+	// Every parameter is *T (named per gc); results are *T except
+	// CompareAndSwap's bool. tStar marks the *T result slots.
+	tStar := types.Type(nil)
+	addPtrMethod := func(name string, pnames []string, rtypes []types.Type) {
+		rtparam := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), anyT)
+		tPtr := types.NewPointer(rtparam)
+		pvars := make([]*types.Var, len(pnames))
+		for i, pn := range pnames {
+			pvars[i] = param(pn, tPtr)
+		}
+		rvars := make([]*types.Var, len(rtypes))
+		for i, rt := range rtypes {
+			if rt == tStar {
+				rt = tPtr
+			}
+			rvars[i] = param("", rt)
+		}
+		recv := types.NewParam(token.NoPos, pkg, "", types.NewPointer(ptrNamed))
+		var ptup, rtup *types.Tuple
+		if len(pvars) > 0 {
+			ptup = types.NewTuple(pvars...)
+		}
+		if len(rvars) > 0 {
+			rtup = types.NewTuple(rvars...)
+		}
+		sig := types.NewSignatureType(recv, []*types.TypeParam{rtparam}, nil,
+			ptup, rtup, false)
+		ptrNamed.AddMethod(types.NewFunc(token.NoPos, pkg, name, sig))
+	}
+	tBool := types.Typ[types.Bool]
+	addPtrMethod("Load", nil, []types.Type{tStar})
+	addPtrMethod("Store", []string{"val"}, nil)
+	addPtrMethod("Swap", []string{"new"}, []types.Type{tStar})
+	addPtrMethod("CompareAndSwap", []string{"old", "new"}, []types.Type{tBool})
+
+	// P3-M10: atomic.Value — the any-typed wrapper (gc 1.27.1
+	// sync/atomic/value.go: Load() any, Store(any), Swap(any) any,
+	// CompareAndSwap(any, any) bool). The Go value IS the Java
+	// AtomicReference cell (ADR-0002 D1), same as the typed wrappers.
+	v := newWrapper("Value")
+	addMethod(v, "Load", nil, tuple(param("", anyT)))
+	addMethod(v, "Store", tuple(param("val", anyT)), nil)
+	addMethod(v, "Swap", tuple(param("new", anyT)), tuple(param("old", anyT)))
+	addMethod(v, "CompareAndSwap",
+		types.NewTuple(param("old", anyT), param("new", anyT)), boolRes)
 
 	// Package-level functions: exact gc signatures, rejected at call
 	// sites (ADR-0004 D2 — they need &x, WS D).
@@ -6573,7 +6658,7 @@ func (e *exporter) exportSyncDefer(s *ast.DeferStmt, sel *ast.SelectorExpr, sele
 		bodyArgs = idents[1:]
 	}
 	inner := e.node("syncop", c, map[string]any{
-		"op": op, "synctyp": typeName,
+		"op": op, "synctyp": syntheticOpTypeName(nt),
 		"recv": bodyRecv, "args": bodyArgs, "type": nil,
 	})
 	body := e.node("block", c, map[string]any{

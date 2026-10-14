@@ -3,6 +3,7 @@ package graalgo.p3sync.nodes;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 
@@ -28,6 +29,12 @@ import graalgo.values.GoKind;
  * {@link AtomicInteger} cell itself (ADR-0002 D1: the Go value IS the
  * Java object); the implementation delegates to
  * {@link graalgo.runtime.Atomics} (the real phase-1 atomics).
+ *
+ * <p>P3-M10: the generic {@code Pointer[T]} and the any-typed
+ * {@code Value} ride on an {@link AtomicReference} cell. A Go
+ * {@code *T} result is {@code POINTER} kind (an opaque Java reference;
+ * a zero Pointer loads null, i.e. Go's nil {@code *T}); a Go
+ * {@code any} result is {@code INTERFACE} kind.
  *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook — no Phase-1
@@ -62,7 +69,15 @@ public final class AtomicOpNode extends GoExprNode {
             Map.entry("atomic.Uintptr.Load", GoKind.UINT64),
             Map.entry("atomic.Uintptr.Add", GoKind.UINT64),
             Map.entry("atomic.Uintptr.Swap", GoKind.UINT64),
-            Map.entry("atomic.Uintptr.CompareAndSwap", GoKind.BOOL));
+            Map.entry("atomic.Uintptr.CompareAndSwap", GoKind.BOOL),
+            // P3-M10: Pointer[T] (Go *T results are POINTER kind) and
+            // Value (Go any results are INTERFACE kind).
+            Map.entry("atomic.Pointer.Load", GoKind.POINTER),
+            Map.entry("atomic.Pointer.Swap", GoKind.POINTER),
+            Map.entry("atomic.Pointer.CompareAndSwap", GoKind.BOOL),
+            Map.entry("atomic.Value.Load", GoKind.INTERFACE),
+            Map.entry("atomic.Value.Swap", GoKind.INTERFACE),
+            Map.entry("atomic.Value.CompareAndSwap", GoKind.BOOL));
 
     /** Expected D5 argument count per op. */
     private static final Map<String, Integer> ARG_COUNTS = Map.of(
@@ -113,6 +128,17 @@ public final class AtomicOpNode extends GoExprNode {
         return c;
     }
 
+    @SuppressWarnings("unchecked")
+    private AtomicReference<Object> cellRef(VirtualFrame frame) {
+        Object r = cell(frame);
+        if (!(r instanceof AtomicReference<?> c)) {
+            throw new FrontendException(
+                    "atomic op " + atomicType + "." + op + " on non-AtomicReference cell: "
+                            + r.getClass().getName());
+        }
+        return (AtomicReference<Object>) c;
+    }
+
     @Override
     public long executeLong(VirtualFrame frame) {
         return switch (atomicType + "." + op) {
@@ -161,6 +187,15 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Bool.Swap" -> Atomics.swapBool(cell32(frame), args[0].executeBoolean(frame));
             case "atomic.Bool.CompareAndSwap" -> Atomics.compareAndSwapBool(cell32(frame),
                     args[0].executeBoolean(frame), args[1].executeBoolean(frame));
+            // P3-M10: reference-cell CAS with Go equality semantics
+            // (Pointer[T] compares addresses via GoPointer.sameStorageAs;
+            // Value compares interface values via GoEquality) — Java
+            // reference identity is wrong for both (&x evaluated twice
+            // yields two wrappers; separately boxed equal anys differ).
+            case "atomic.Pointer.CompareAndSwap" -> Atomics.compareAndSwapGoPointer(cellRef(frame),
+                    args[0].executeObject(frame), args[1].executeObject(frame));
+            case "atomic.Value.CompareAndSwap" -> Atomics.compareAndSwapGoValue(cellRef(frame),
+                    args[0].executeObject(frame), args[1].executeObject(frame));
             default -> throw new FrontendException(
                     "atomic op " + atomicType + "." + op + " is not a boolean op");
         };
@@ -168,7 +203,8 @@ public final class AtomicOpNode extends GoExprNode {
 
     @Override
     public Object executeObject(VirtualFrame frame) {
-        // Only the void Store reaches here (kind INTERFACE).
+        // Only the void Store reaches here (kind INTERFACE), plus the
+        // POINTER/INTERFACE-valued Load/Swap of Pointer[T]/Value.
         switch (atomicType + "." + op) {
             case "atomic.Int64.Store" -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uint64.Store" -> Atomics.storeInt64(cell64(frame), args[0].executeLong(frame));
@@ -176,6 +212,28 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Int32.Store" -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Uint32.Store" -> Atomics.storeInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Bool.Store" -> Atomics.storeBool(cell32(frame), args[0].executeBoolean(frame));
+            // P3-M10: Pointer[T] (*T is an opaque Java reference; a zero
+            // Pointer loads null, which is Go's nil *T) and Value (any).
+            case "atomic.Pointer.Load" -> {
+                return Atomics.loadPointer(cellRef(frame));
+            }
+            case "atomic.Pointer.Store" -> {
+                Atomics.storePointer(cellRef(frame), args[0].executeObject(frame));
+                return null;
+            }
+            case "atomic.Pointer.Swap" -> {
+                return Atomics.swapPointer(cellRef(frame), args[0].executeObject(frame));
+            }
+            case "atomic.Value.Load" -> {
+                return Atomics.loadPointer(cellRef(frame));
+            }
+            case "atomic.Value.Store" -> {
+                Atomics.storePointer(cellRef(frame), args[0].executeObject(frame));
+                return null;
+            }
+            case "atomic.Value.Swap" -> {
+                return Atomics.swapPointer(cellRef(frame), args[0].executeObject(frame));
+            }
             default -> throw new FrontendException(
                     "atomic op " + atomicType + "." + op + " is not a void op");
         }
@@ -221,6 +279,16 @@ public final class AtomicOpNode extends GoExprNode {
                 throw new FrontendException(path + ".args[" + i + "]: must be a node object");
             }
             args[i] = factory.buildExpr(o, ctx);
+        }
+        // P3-M10: atomic.Value's operands are declared `any` — the wire
+        // carries the concrete arg nodes, so box them to interface values
+        // exactly as implicit call-arg conversions do. (The typed
+        // wrappers' params are never interfaces; Pointer[T]'s are *T.)
+        // Load takes no args; Store/Swap/CompareAndSwap take only anys.
+        if (synctyp.equals("atomic.Value") && !"Load".equals(op)) {
+            for (int i = 0; i < args.length; i++) {
+                args[i] = factory.boxToInterface(args[i], ctx, path + ".args[" + i + "]");
+            }
         }
         return new AtomicOpNode(op, synctyp, resultKind, recv, args);
     }
