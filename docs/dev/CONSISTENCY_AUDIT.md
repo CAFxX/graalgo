@@ -521,7 +521,7 @@ log line is cited in-text.
   26.8µs is superseded").
 - All 70 requirement yamls parse; IDs unique; the two edited files carry
   history lines; no IDs changed.
-- The §10 "open questions" `[OPEN]`s remaining in [FEASIBILITY.md](FEASIBILITY.md) are the
+- The §10 "open questions" `[OPEN]`s remaining in [FEASIBILITY.md](../arch/FEASIBILITY.md) are the
   historical study record's own list — left intact per the audit's clean
   check; the errata banner points readers to SPEC §1.1 as normative.
 
