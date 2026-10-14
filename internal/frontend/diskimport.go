@@ -139,11 +139,23 @@ func resolveDiskPackageDir(importPath string) (string, error) {
 
 	resolve := func() (string, error) {
 		if mc := goModCache(); mc != "" {
+			// P4 (driver-harden): subpackage imports (e.g.
+			// github.com/google/go-cmp/cmp). The module cache stores
+			// the MODULE with the version (go-cmp@v0.7.0/cmp), not the
+			// package. Try progressively shorter prefixes: the full
+			// path as a module first, then stripping trailing elements
+			// as subpackage paths.
 			escaped := escapeModulePath(importPath)
-			parent := filepath.Join(mc, filepath.Dir(escaped))
-			base := filepath.Base(escaped)
-			entries, err := os.ReadDir(parent)
-			if err == nil {
+			elems := strings.Split(escaped, string(filepath.Separator))
+			for i := len(elems); i >= 1; i-- {
+				modEscaped := strings.Join(elems[:i], string(filepath.Separator))
+				subPath := strings.Join(elems[i:], string(filepath.Separator))
+				parent := filepath.Join(mc, filepath.Dir(modEscaped))
+				base := filepath.Base(modEscaped)
+				entries, err := os.ReadDir(parent)
+				if err != nil {
+					continue
+				}
 				best := ""
 				for _, e := range entries {
 					name := e.Name()
@@ -156,7 +168,13 @@ func resolveDiskPackageDir(importPath string) (string, error) {
 					}
 				}
 				if best != "" {
-					return filepath.Join(parent, base+"@"+best), nil
+					dir := filepath.Join(parent, base+"@"+best)
+					if subPath != "" {
+						dir = filepath.Join(dir, subPath)
+					}
+					if st, err := os.Stat(dir); err == nil && st.IsDir() {
+						return dir, nil
+					}
 				}
 			}
 		}
