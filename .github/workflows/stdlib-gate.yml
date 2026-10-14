@@ -45,12 +45,12 @@ jobs:
         run: |
           mkdir -p "$GO_BIN_DIR"
           ln -sf "$(which go)" "$GO_BIN_DIR/go"
-          ./phases/phase3/stdlib/run_stdlib_gate.sh
+          ./tools/run_stdlib_gate.sh
 
       - name: Upload gate report
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: stdlib-gate-report
-          path: phases/phase3/hidden_files/testing/layer3-*/
+          path: .out/stdlib-gate/layer3-*/
           if-no-files-found: warn

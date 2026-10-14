@@ -56,7 +56,7 @@ jobs:
         run: |
           mkdir -p "$GO_BIN_DIR"
           ln -sf "$(which go)" "$GO_BIN_DIR/go"
-          ./phases/phase3/fuzzing/run_soak.sh \
+          ./tools/fuzz-soak/run_soak.sh \
             --hours "${{ inputs.hours || '6' }}" \
             --out "$GITHUB_WORKSPACE/fuzz-soak-out"
 

@@ -1,4 +1,0 @@
-F3 nSpin=10000 secs=20 quanta min=78 max=79 mean=78.2 max/mean=1.01
-F3 admitted_before_stop=10000 drained=true drain_wait_ms=499 maxInflight=2
-RESULT=PASS
-EXIT=0

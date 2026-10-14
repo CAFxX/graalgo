@@ -1,6 +1,0 @@
-# import config
-packagefile errors=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b003/_pkg_.a
-packagefile internal/bytealg=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b010/_pkg_.a
-packagefile internal/strconv=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b022/_pkg_.a
-packagefile internal/stringslite=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b034/_pkg_.a
-packagefile unicode/utf8=/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/crypto/go-build1645791516/b042/_pkg_.a

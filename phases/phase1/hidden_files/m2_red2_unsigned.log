@@ -1,6 +1,0 @@
-FAIL StraightLineCorpusTest.testSl04Shifts: graalgo.frontend.FrontendException: basiclit.fields: cannot parse integer constant "9223372036854775808" (WS D)
-FAIL StraightLineCorpusTest.testSl05IntUint: graalgo.frontend.FrontendException: basiclit.fields: cannot parse integer constant "18446744073709551615" (WS D)
-FAIL StraightLineCorpusTest.testSl06Multiassign: java.lang.AssertionError: sl06_multiassign.b: gc=1 graalgo=2
-FAIL StraightLineCorpusTest.testSl07Define: graalgo.frontend.FrontendException: objects[0]: duplicate object id 0
-FAIL StraightLineCorpusTest.testSl10Overflow: graalgo.frontend.FrontendException: basiclit.fields: cannot parse integer constant "9223372036854775808" (WS D)
-23 tests, 5 failures

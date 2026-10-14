@@ -1,2 +1,0 @@
-{"crypto/internal/fips140/hmac", "Clone", "HMAC", "__mrHMAC_Clone", "", "__mrHMAC_ClonePair", []string{"v0", "v1"}},
-{"crypto/internal/fips140/hmac", "Write", "HMAC", "__mrHMAC_Write", "", "__mrHMAC_WritePair", []string{"n", "err"}},

@@ -1,8 +1,0 @@
-# import config
-packagefile errors=/home/hatch/workspace/.gocache-m8-crypto/85/85be88377cd933a517aa198cb48396ec27e4dcfd1a854baa31c2ab880f7dfd23-d
-packagefile internal/bytealg=/home/hatch/workspace/.gocache-m8-crypto/f7/f76452db319c52dff3bcd7d87a60f2b41d1b5f6d2fc5859641397b8aaaea063f-d
-packagefile io=/home/hatch/workspace/.gocache-m8-crypto/66/6679b9449c0e834ddf048fa8c0643d1dcd7b5e9ef50623ce3a86b2f535a1702c-d
-packagefile iter=/home/hatch/workspace/.gocache-m8-crypto/a1/a142ff76e483384fb01686e2d94cf96e6d9e073ea58c9dc4f741077432192a59-d
-packagefile math/bits=/home/hatch/workspace/.gocache-m8-crypto/ff/ff4c1f299c01789f7263474d4974ea8f9015e97a352c6bdebbc7d7fcae0e1863-d
-packagefile unicode=/home/hatch/workspace/.gocache-m8-crypto/8c/8ca4fffd68b02aaed928cef2154ef3142691aba27e19427e2d0ee271a3fc32f6-d
-packagefile unicode/utf8=/home/hatch/workspace/.gocache-m8-crypto/ad/ad8e1ae53307df21ee7ceb661450f63a5c6657df0c7c275828a7fbcd214c9c3a-d

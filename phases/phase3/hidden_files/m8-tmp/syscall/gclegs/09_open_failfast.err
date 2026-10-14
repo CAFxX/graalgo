@@ -1,7 +1,0 @@
-panic: syscall.Open: no graalgo intrinsic; use os; re-test: fd-domain unification, Phase 4/Panama
-
-goroutine 1 [running]:
-m8synth/syscall.Open(...)
-	/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/syscall/gclegs/synthref-09_open_failfast/gopath/src/m8synth/syscall/syscall.go:2938
-main.main()
-	/home/hatch/workspace/graalgo-m8-pipe/phases/phase3/hidden_files/m8-tmp/syscall/gclegs/synthref-09_open_failfast/gopath/src/m8prog/main.go:11 +0x25

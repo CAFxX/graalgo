@@ -1,7 +1,0 @@
-{"crypto/internal/fips140/ecdsa", "GenerateKey", "", "__mrGenerateKey", "", "__mrGenerateKeyPair", []string{"v0", "v1"}},
-{"crypto/internal/fips140/ecdsa", "NewPrivateKey", "", "__mrNewPrivateKey", "", "__mrNewPrivateKeyPair", []string{"v0", "v1"}},
-{"crypto/internal/fips140/ecdsa", "NewPublicKey", "", "__mrNewPublicKey", "", "__mrNewPublicKeyPair", []string{"v0", "v1"}},
-{"crypto/internal/fips140/ecdsa", "Sign", "", "__mrSign", "", "__mrSignPair", []string{"v0", "v1"}},
-{"crypto/internal/fips140/ecdsa", "SignDeterministic", "", "__mrSignDeterministic", "", "__mrSignDeterministicPair", []string{"v0", "v1"}},
-{"crypto/internal/fips140/ecdsa", "randomPoint", "", "__mrrandomPoint", "", "__mrrandomPointPair", []string{"k", "p", "err"}},
-{"crypto/internal/fips140/ecdsa", "signGeneric", "", "__mrsignGeneric", "", "__mrsignGenericPair", []string{"v0", "v1"}},

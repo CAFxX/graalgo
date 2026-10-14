@@ -1,3 +1,0 @@
-{"crypto/hkdf", "Expand", "", "__mrExpand", "", "__mrExpandPair", []string{"v0", "v1"}},
-{"crypto/hkdf", "Extract", "", "__mrExtract", "", "__mrExtractPair", []string{"v0", "v1"}},
-{"crypto/hkdf", "Key", "", "__mrKey", "", "__mrKeyPair", []string{"v0", "v1"}},

@@ -1,4 +1,0 @@
-F1 nSpin=2 secs=10 gmp=2(req) cap=2 quantumNs=100000 carriers=2
-F1 samples=17728 pongerIters=17728 spinnerCV=0.0001 cap=2 maxInflight=2
-F1 wakeProvenance: direct=35453 stashed=4 ioExit=0
-RESULT=PASS

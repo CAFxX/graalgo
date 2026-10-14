@@ -1,6 +1,0 @@
-FAIL ControlFlowCorpusTest.testCf02For: java.lang.AssertionError: cf02_for.sum: gc=5050 graalgo=0
-FAIL ControlFlowCorpusTest.testCf03While: java.lang.AssertionError: cf03_while.i: gc=50 graalgo=0
-FAIL ControlFlowCorpusTest.testCf05Labeled: java.lang.AssertionError: cf05_labeled.total: gc=680 graalgo=0
-FAIL ControlFlowCorpusTest.testCf11Goto: java.lang.AssertionError: cf11_goto.d: gc=4 graalgo=101
-FAIL CompositeCorpusTest.testCo09String: java.lang.AssertionError: co09_string.sum: gc=532 graalgo=0
-78 tests, 5 failures

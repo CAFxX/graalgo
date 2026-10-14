@@ -1,9 +1,0 @@
-# Stack depth limit measurement (2026-10-05, -Xss32m)
-# program: countdown(n), Go frames; graalgo-run exit code
-depth=1000 exit=0 stderr_first=[1000]
-depth=5000 exit=0 stderr_first=[5000]
-depth=10000 exit=0 stderr_first=[10000]
-depth=15000 exit=0 stderr_first=[15000]
-depth=20000 exit=2 stderr_first=[graalgo-run: stack overflow: Go call depth exceeded the host stack limit (deep recursion; see docs/limitations.md)]
-depth=30000 exit=2 stderr_first=[graalgo-run: stack overflow: Go call depth exceeded the host stack limit (deep recursion; see docs/limitations.md)]
-depth=100000 exit=2 stderr_first=[graalgo-run: stack overflow: Go call depth exceeded the host stack limit (deep recursion; see docs/limitations.md)]

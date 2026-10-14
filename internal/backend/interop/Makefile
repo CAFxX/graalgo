@@ -38,10 +38,10 @@ OUT_TEST := out/test-classes
 RUN_CP := $(OUT_MAIN):$(RUNTIME_CLASSES):$(TRUFFLE_CLASSES):$(CP)
 TEST_CP := $(OUT_TEST):$(RUN_CP)
 
-# BRIDGE (stdlib lane): stdlib-fork and the phase-3 Go sources still live
-# under phases/phase3 until the stdlib code-move lane relocates them to
-# stdlib/; repoint P3_LEGACY then.
-P3_LEGACY := ../../../phases/phase3
+# p3frontend Go sources and stdlib-fork tooling now live in their
+# Phase-4 homes (moved from phases/phase3 during the migration cleanup).
+P3FRONTEND := p3frontend
+STDLIB_FORK := ../../../tools/stdlib-fork
 
 JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
 # BRIDGE (frontend lane): end-to-end tests run P3SyncMain in-process and
@@ -95,9 +95,9 @@ check: main $(OUT_TEST)/.built
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== stdlib exclusion-list gate (P3-M6) =="
-	@if [ -f $(P3_LEGACY)/stdlib-fork/exclusions.yaml ]; then \
+	@if [ -f $(STDLIB_FORK)/exclusions.yaml ]; then \
 		if [ -x "$(HOME)/tools/go/bin/go" ]; then \
-			cd ../../../tools/stdlib-excl && GOTOOLCHAIN=local $(HOME)/tools/go/bin/go run . validate --list ../../phases/phase3/stdlib-fork/exclusions.yaml; \
+			cd ../../../tools/stdlib-excl && GOTOOLCHAIN=local $(HOME)/tools/go/bin/go run . validate --list ../stdlib-fork/exclusions.yaml; \
 		else \
 			echo "WARNING: $(HOME)/tools/go/bin/go not found; exclusion-list gate skipped"; \
 		fi; \
@@ -105,14 +105,14 @@ check: main $(OUT_TEST)/.built
 	@echo "== asm-inventory sync gate (P3-M6) =="
 	@if [ -n "$(GO)" ]; then \
 		GOROOT=$$(dirname $$(dirname "$(GO)")); \
-		python3 $(P3_LEGACY)/stdlib-fork/gen-asm-inventory.py --check --goroot "$$GOROOT"; \
+		python3 $(STDLIB_FORK)/gen-asm-inventory.py --check --goroot "$$GOROOT"; \
 	else \
-		python3 $(P3_LEGACY)/stdlib-fork/gen-asm-inventory.py --check; \
+		python3 $(STDLIB_FORK)/gen-asm-inventory.py --check; \
 	fi
 	@echo "== p3frontend Go build/vet gate (P3-M10 self-attack FINDING-4) =="
 	@GO_BIN="$${GO:-$(HOME)/tools/go/bin/go}"; \
 	if [ -x "$$GO_BIN" ]; then \
-		cd $(P3_LEGACY)/src/p3frontend && GOTOOLCHAIN=local "$$GO_BIN" build ./... && GOTOOLCHAIN=local "$$GO_BIN" vet ./...; \
+		cd $(P3FRONTEND) && GOTOOLCHAIN=local "$$GO_BIN" build ./... && GOTOOLCHAIN=local "$$GO_BIN" vet ./...; \
 	else \
 		echo "WARNING: Go toolchain not found ($$GO_BIN); p3frontend gate skipped"; \
 	fi
