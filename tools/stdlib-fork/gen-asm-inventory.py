@@ -49,9 +49,9 @@ MD_NAME = f"asm-inventory-{VERSION}.md"
 # a string literal. The JSON next to this script stays the single source of
 # truth; `make -C internal/backend/interop check` runs this script with --check to assert
 # the generated file is in sync.
+# (2026-10-14: GO_DIR updated for the Phase-4 move of p3frontend Go sources
+# from internal/backend/interop/ to internal/frontend/.)
 GO_NAME = "zz_asm_inventory_gen.go"
-# Phase-4 restructure (2026-10-14): the p3frontend Go sources moved from
-# internal/backend/interop/p3frontend/ to internal/frontend/p3frontend/.
 GO_DIR = os.path.join(SCRIPT_DIR, "..", "..", "internal", "frontend", "p3frontend")
 
 CATEGORIES = (
