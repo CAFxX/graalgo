@@ -899,6 +899,14 @@ func (e *exporter) exportTimeIntrinsic(c *ast.CallExpr, name string) (*Node, err
 	if err != nil {
 		return nil, err
 	}
+	return e.timeIntrinsicNode(c, name, args, typ)
+}
+
+// timeIntrinsicNode builds the wire node for a synthetic time intrinsic
+// call from already-exported args. Split out of exportTimeIntrinsic so
+// intrinsic values (exportTimeIntrinsicValue) can synthesize the call
+// without an *ast.CallExpr.
+func (e *exporter) timeIntrinsicNode(pos ast.Node, name string, args []*Node, typ any) (*Node, error) {
 	duration := func() (*Node, error) {
 		if len(args) != 1 {
 			return nil, scopeErrorf("time.%s takes 1 argument", name)
@@ -910,46 +918,111 @@ func (e *exporter) exportTimeIntrinsic(c *ast.CallExpr, name string) (*Node, err
 		if len(args) != 0 {
 			return nil, scopeErrorf("time.Now takes no arguments")
 		}
-		return e.node("timenow", c, map[string]any{"type": typ}), nil
+		return e.node("timenow", pos, map[string]any{"type": typ}), nil
 	case "Sleep":
 		d, err := duration()
 		if err != nil {
 			return nil, err
 		}
-		return e.node("timesleep", c, map[string]any{"duration": d}), nil
+		return e.node("timesleep", pos, map[string]any{"duration": d}), nil
 	case "After":
 		d, err := duration()
 		if err != nil {
 			return nil, err
 		}
-		return e.node("timeafter", c, map[string]any{"duration": d, "type": typ}), nil
+		return e.node("timeafter", pos, map[string]any{"duration": d, "type": typ}), nil
 	case "Tick":
 		d, err := duration()
 		if err != nil {
 			return nil, err
 		}
-		return e.node("timetick", c, map[string]any{"duration": d, "type": typ}), nil
+		return e.node("timetick", pos, map[string]any{"duration": d, "type": typ}), nil
 	case "NewTimer":
 		d, err := duration()
 		if err != nil {
 			return nil, err
 		}
-		return e.node("timenew", c, map[string]any{"kind": "timer", "duration": d, "type": typ}), nil
+		return e.node("timenew", pos, map[string]any{"kind": "timer", "duration": d, "type": typ}), nil
 	case "NewTicker":
 		d, err := duration()
 		if err != nil {
 			return nil, err
 		}
-		return e.node("timenew", c, map[string]any{"kind": "ticker", "duration": d, "type": typ}), nil
+		return e.node("timenew", pos, map[string]any{"kind": "ticker", "duration": d, "type": typ}), nil
 	case "AfterFunc":
 		if len(args) != 2 {
 			return nil, scopeErrorf("time.AfterFunc takes 2 arguments")
 		}
-		return e.node("timeafterfunc", c, map[string]any{
+		return e.node("timeafterfunc", pos, map[string]any{
 			"duration": args[0], "func": args[1], "type": typ,
 		}), nil
 	}
 	return nil, scopeErrorf("time.%s is not a recognized intrinsic", name)
+}
+
+// exportTimeIntrinsicValue lowers a synthetic time intrinsic used in value
+// position (e.g. `timeNow = time.Now`) to a synthesized wrapper closure:
+// func() time.Time { return time.Now() }. General: any time intrinsic, any
+// arity — parameters are forwarded to the intrinsic call, and evaluation
+// is deferred to call time, matching gc's func-value semantics. (The M5
+// fail-fast this replaces assumed intrinsics could only be called.)
+func (e *exporter) exportTimeIntrinsicValue(x *ast.SelectorExpr, obj *types.Func) (*Node, error) {
+	sig, ok := obj.Type().(*types.Signature)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: time intrinsic %s has non-signature type %s", obj.Name(), obj.Type())
+	}
+	params, err := e.exportSignatureVars(x, sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	// Forward the wrapper's params as the intrinsic call's args.
+	args := make([]*Node, 0, len(params))
+	for i := range params {
+		v := sig.Params().At(i)
+		oid, ok := e.objIDs[v]
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: wrapper param %q missing from object table", v.Name())
+		}
+		tid, err := e.typeID(v.Type())
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, e.node("ident", x, map[string]any{
+			"name": v.Name(), "obj": oid, "type": tid,
+		}))
+	}
+	var typ any
+	nr := sig.Results().Len()
+	if nr == 1 {
+		typ, err = e.typeID(sig.Results().At(0).Type())
+		if err != nil {
+			return nil, err
+		}
+	} else if nr > 1 {
+		return nil, scopeErrorf("time.%s has %d results; an intrinsic value with multiple results is not supported in frontend/v1 scope", obj.Name(), nr)
+	}
+	call, err := e.timeIntrinsicNode(x, obj.Name(), args, typ)
+	if err != nil {
+		return nil, err
+	}
+	results, err := e.exportSignatureVars(x, sig.Results())
+	if err != nil {
+		return nil, err
+	}
+	var stmt *Node
+	if nr == 1 {
+		stmt = e.node("return", x, map[string]any{"results": []*Node{call}})
+	} else {
+		stmt = e.node("exprstmt", x, map[string]any{"x": call})
+	}
+	body := e.node("block", x, map[string]any{"stmts": []*Node{stmt}})
+	tid, err := e.typeID(sig)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("funclit", x, map[string]any{
+		"params": params, "results": results, "body": body, "type": tid,
+	}), nil
 }
 
 // exportMathIntrinsic lowers a call to a synthetic math intrinsic
@@ -1256,7 +1329,10 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 		return e.node("ident", x, map[string]any{"name": x.Sel.Name, "obj": oid, "type": t}), nil
 	case *types.Func:
 		if obj.Pkg() != nil && obj.Pkg().Path() == "time" && timeIntrinsicNames[obj.Name()] {
-			return nil, scopeErrorf("time.%s is an intrinsic and cannot be used in value position (M5)", obj.Name())
+			// A time intrinsic in value position (e.g. `timeNow = time.Now`)
+			// lowers to a synthesized wrapper closure; the call itself
+			// stays a wire node inside the closure body.
+			return e.exportTimeIntrinsicValue(x, obj)
 		}
 		if obj.Pkg() != nil && obj.Pkg().Path() == "math" && mathIntrinsicNames[obj.Name()] {
 			return nil, scopeErrorf("math.%s is an intrinsic and cannot be used in value position (M7)", obj.Name())
