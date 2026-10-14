@@ -8017,6 +8017,43 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 					}
 					return e.node("call", c, fields), nil
 				}
+				// The field itself is not func-typed, but the call target
+				// (selector plus index/paren wrappers) evaluates to a
+				// function value — e.g. ms.less[k](p, q) where less is
+				// []func(...), or m.handlers[name](args). The wrapper
+				// selects a func value out of the field's type. Export the
+				// whole target expression and emit a plain call node —
+				// the computed-func-value shape the factory already
+				// builds (func-valued variable / reflect precedent).
+				// Parens are transparent: unwrap them so the factory sees
+				// the operative fun shape (index, never paren).
+				funExpr := c.Fun
+				for {
+					if p, ok := funExpr.(*ast.ParenExpr); ok {
+						funExpr = p.X
+					} else {
+						break
+					}
+				}
+				if tv, ok := e.info.Types[funExpr]; ok && tv.Type != nil {
+					if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
+						fun, err := e.exportExpr(funExpr)
+						if err != nil {
+							return nil, err
+						}
+						args, err := e.exportCallArgsPacked(c, sig)
+						if err != nil {
+							return nil, err
+						}
+						typ, err := e.callType(c)
+						if err != nil {
+							return nil, err
+						}
+						return e.node("call", c, map[string]any{
+							"fun": fun, "args": args, "type": typ,
+						}), nil
+					}
+				}
 			}
 			// Non-function field in call position: fall through to the
 			// scope error below (invalid Go, but give a named error).

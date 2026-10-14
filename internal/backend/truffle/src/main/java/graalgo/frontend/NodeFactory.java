@@ -3214,6 +3214,26 @@ public final class NodeFactory {
             return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
                     false, ctx.funcObjId);
         }
+        if ("index".equals(funKind)) {
+            // Call to a func value selected out of a composite, e.g.
+            // ms.less[k](p, q) where less is []func(...) (Gate-1 sort
+            // divergence: the multiSorter pattern), or m.handlers[name](args).
+            // The exporter emits the index expression as the fun operand;
+            // build it and require a func result (mirrors the call/selector
+            // branches above).
+            GoExprNode fn = buildExpr(fun, ctx);
+            if (fn.kind() != GoKind.FUNC) {
+                throw new FrontendException(path + ": call to non-function value of kind "
+                        + fn.kind() + " (WS D)");
+            }
+            Json.Object ff = fun.object("fields", path + ".fun");
+            Json.Value sig = ff.opt("type");
+            List<Integer> paramTypes = (sig instanceof Json.Null || sig == null) ? null
+                    : signatureParamTypeIds(ctx, ff.intValue("type", path + ".fun.fields"), path);
+            args = adaptArgsForInterfaceParams(args, paramTypes, ctx, path);
+            return new FuncValueCallNode(fn, args, callResultKind(node, ctx, path),
+                    false, ctx.funcObjId);
+        }
         throw new FrontendException(path + ": call to " + funKind + " is not supported"
                 + " in frontend/v1 scope (WS D: methods and qualified calls)");
     }
