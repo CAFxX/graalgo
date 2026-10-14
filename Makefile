@@ -56,7 +56,7 @@ GENERATED := internal/frontend/gofrontend internal/frontend/overlay.json
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate build check test-ci test clean snapshot snapshot-check
+.PHONY: all generate build check test-ci test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-ci
 
@@ -154,6 +154,29 @@ snapshot-check: build
 	  -config backends-p3.json -corpus corpus -backend graalgo \
 	  -snapshot ../../test/snapshots/$(SNAPSHOT_TOOLCHAIN).json \
 	  -jobs 4 -timeout 60
+
+# Fast debug cycle (see internal/backend/fast-cycle/fast-cycle).
+# Uses a persistent warm JVM: in-process compilation (~0.5s) and runs
+# without JVM startup (~4s for a Go program, ~1s for a Java test).
+# Target: edit -> result in a few seconds.
+#   make fast-build          incremental compile of changed files
+#   make fast-run GO=foo.go   compile + run a Go program
+#   make fast-test TEST=com.foo.Bar [METHOD=testX]  compile + run Java test
+#   make fast-watch GO=foo.go  rebuild + rerun on file change
+fast-build:
+	internal/backend/fast-cycle/fast-cycle build
+
+fast-run:
+	@test -n "$(GO)" || (echo "usage: make fast-run GO=<file.go>"; exit 1)
+	internal/backend/fast-cycle/fast-cycle run "$(GO)"
+
+fast-test:
+	@test -n "$(TEST)" || (echo "usage: make fast-test TEST=<class> [METHOD=<m>]"; exit 1)
+	internal/backend/fast-cycle/fast-cycle test "$(TEST)" $(METHOD)
+
+fast-watch:
+	@test -n "$(GO)" || (echo "usage: make fast-watch GO=<file.go>"; exit 1)
+	internal/backend/fast-cycle/fast-cycle watch "$(GO)"
 
 clean:
 	$(MAKE) -C internal/backend/truffle clean

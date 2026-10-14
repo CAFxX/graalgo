@@ -1,0 +1,330 @@
+#!/usr/bin/env bash
+# fast-cycle — client for the FastCycleDaemon.
+#
+# Usage:
+#   fast-cycle build              incremental compile of changed files
+#   fast-cycle run <GoFile>       compile (if needed) + run a Go program
+#   fast-cycle test <TestClass>   compile (if needed) + run a Java test class
+#   fast-cycle watch <GoFile>     rebuild + rerun on file change
+#   fast-cycle stop               stop the daemon
+#   fast-cycle status             check daemon
+#
+# The daemon (FastCycleDaemon.java) holds a warm JVM: compilation uses the
+# in-process JavaCompiler API, runs use a fresh classloader per invocation.
+# Typical cycle: edit -> fast-cycle run foo.go -> result in ~2s.
+
+set -euo pipefail
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND="$(cd -- "$HERE/.." && pwd)"
+GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
+JAVA="$GRAALVM_HOME/bin/java"
+JAVAC="$GRAALVM_HOME/bin/javac"
+PORT=47321
+PORT_FILE="$HOME/.fastcycle.port"
+
+TRUFFLE="$BACKEND/truffle"
+RUNTIME="$BACKEND/runtime"
+INTEROP="$BACKEND/interop"
+LIB_CP=$(ls "$TRUFFLE"/lib/*.jar | tr '\n' ':' | sed 's/:$//')
+
+RUNTIME_CLASSES="$RUNTIME/out/classes"
+TRUFFLE_CLASSES="$TRUFFLE/out/classes"
+INTEROP_CLASSES="$INTEROP/out/classes"
+
+# Full runtime classpath (matches graalgo-run overlay order)
+FULL_CP="$RUNTIME_CLASSES:$TRUFFLE_CLASSES:$INTEROP_CLASSES:$LIB_CP"
+
+# The 8 frozen stubs (compile in truffle module, not the joint round)
+STUBS="graalgo/runtime/ChanOps.java graalgo/runtime/GcInterop.java graalgo/runtime/GoroutineState.java graalgo/runtime/Netpoll.java graalgo/runtime/Panic.java graalgo/runtime/Scheduler.java graalgo/runtime/Timers.java graalgo/safepoint/Safepoint.java"
+
+daemon_pid() {
+    pgrep -f "FastCycleDaemon" || true
+}
+
+ensure_daemon() {
+    if echo "PING" | timeout 2 nc 127.0.0.1 $PORT 2>/dev/null | grep -q "PONG"; then
+        return 0
+    fi
+    # Start the daemon
+    echo "Starting FastCycleDaemon..." >&2
+    # Compile the daemon itself if needed
+    if [ ! -f "$HERE/FastCycleDaemon.class" ] || [ "$HERE/FastCycleDaemon.java" -nt "$HERE/FastCycleDaemon.class" ]; then
+        "$JAVAC" -d "$HERE" "$HERE/FastCycleDaemon.java"
+    fi
+    # The launcher resolves gofrontend via GRAALGO_GOFRONTEND; export it for
+    # the daemon's environment (matches the truffle Makefile's export).
+    export GRAALGO_GOFRONTEND="$BACKEND/../frontend/gofrontend"
+    # Daemon needs the truffle jars for compilation; run with full cp
+    setsid env GRAALGO_GOFRONTEND="$GRAALGO_GOFRONTEND" "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
+        -cp "$HERE:$FULL_CP" FastCycleDaemon \
+        >"$HERE/daemon.log" 2>&1 < /dev/null &
+    disown
+    # Wait for readiness
+    for i in $(seq 1 30); do
+        if echo "PING" | timeout 2 nc 127.0.0.1 $PORT 2>/dev/null | grep -q "PONG"; then
+            echo "Daemon ready." >&2
+            return 0
+        fi
+        sleep 1
+    done
+    echo "Daemon failed to start; see $HERE/daemon.log" >&2
+    return 1
+}
+
+send() {
+    echo "$1" | timeout 120 nc 127.0.0.1 $PORT
+}
+
+# Map a .java source path to its module, output dir, and joint-round membership.
+# Echoes: "<module> <outdir> <joint|stub|normal>"
+classify() {
+    local f="$1"
+    case "$f" in
+        "$TRUFFLE/src/main/java/"*)
+            local rel="${f#$TRUFFLE/src/main/java/}"
+            for s in $STUBS; do
+                if [ "$rel" = "$s" ]; then
+                    echo "truffle $TRUFFLE_CLASSES stub"
+                    return
+                fi
+            done
+            echo "truffle $RUNTIME_CLASSES joint"
+            ;;
+        "$RUNTIME/src/main/java/"*)
+            echo "runtime $RUNTIME_CLASSES normal"
+            ;;
+        "$INTEROP/src/main/java/"*)
+            echo "interop $INTEROP_CLASSES normal"
+            ;;
+        "$TRUFFLE/src/test/java/"*)
+            echo "truffle-test $TRUFFLE/out/test-classes normal"
+            ;;
+        "$RUNTIME/src/test/java/"*)
+            echo "runtime-test $RUNTIME/out/test-classes normal"
+            ;;
+        *)
+            echo "unknown unknown unknown"
+            ;;
+    esac
+}
+
+# Find changed MAIN files using git for candidates (fast) + mtime check.
+# Git gives us the list of modified/untracked files; we then verify via
+# mtime whether they actually need recompilation (avoids recompiling
+# already-built files on every invocation).
+find_changed_main() {
+    local backend_root="$BACKEND"
+    # Get candidate .java files from git (modified + untracked)
+    local candidates
+    candidates=$(cd "$backend_root/.." 2>/dev/null && {
+        git diff --name-only HEAD -- 'internal/backend/truffle/src/main/java/*.java' 'internal/backend/runtime/src/main/java/*.java' 'internal/backend/interop/src/main/java/*.java' 2>/dev/null
+        git ls-files --others --exclude-standard -- 'internal/backend/truffle/src/main/java/*.java' 'internal/backend/runtime/src/main/java/*.java' 'internal/backend/interop/src/main/java/*.java' 2>/dev/null
+    } | sort -u)
+    if [ -n "$candidates" ]; then
+        echo "$candidates" | while IFS= read -r rel; do
+            [ -z "$rel" ] && continue
+            local jf="$backend_root/../$rel"
+            [ -f "$jf" ] || continue
+            # Map to module/srcdir for classify
+            read -r _mod outdir _kind <<< "$(classify "$jf")"
+            [ "$outdir" = "unknown" ] && continue
+            # Derive srcdir from the path
+            local srcdir=""
+            case "$jf" in
+                "$TRUFFLE/src/main/java/"*) srcdir="$TRUFFLE/src/main/java" ;;
+                "$RUNTIME/src/main/java/"*) srcdir="$RUNTIME/src/main/java" ;;
+                "$INTEROP/src/main/java/"*) srcdir="$INTEROP/src/main/java" ;;
+            esac
+            [ -z "$srcdir" ] && continue
+            local rel2="${jf#$srcdir/}"
+            local classfile="$outdir/${rel2%.java}.class"
+            if [ ! -f "$classfile" ] || [ "$jf" -nt "$classfile" ]; then
+                echo "$jf"
+            fi
+        done
+    fi
+    # Also check for files that are newer than their class but not in git
+    # (e.g., after a git checkout that reverted an edit). This is rare;
+    # do a quick mtime scan only if git found nothing.
+    if [ -z "$candidates" ]; then
+        for srcdir in "$TRUFFLE/src/main/java" "$RUNTIME/src/main/java" "$INTEROP/src/main/java"; do
+            [ -d "$srcdir" ] || continue
+            while IFS= read -r -d '' jf; do
+                read -r _mod outdir _kind <<< "$(classify "$jf")"
+                [ "$outdir" = "unknown" ] && continue
+                local rel="${jf#$srcdir/}"
+                local classfile="$outdir/${rel%.java}.class"
+                if [ ! -f "$classfile" ] || [ "$jf" -nt "$classfile" ]; then
+                    echo "$jf"
+                fi
+            done < <(find "$srcdir" -name '*.java' -newer "$srcdir" -print0 2>/dev/null | head -20)
+            # Limit the fallback scan to avoid slowness
+        done
+    fi
+}
+
+# Find changed TEST files for a specific module's test dir
+find_changed_test() {
+    local srcdir="$1"   # e.g. $TRUFFLE/src/test/java
+    local outdir="$2"   # e.g. $TRUFFLE/out/test-classes
+    [ -d "$srcdir" ] || return 0
+    while IFS= read -r -d '' jf; do
+        local rel="${jf#$srcdir/}"
+        local classfile="$outdir/${rel%.java}.class"
+        if [ ! -f "$classfile" ] || [ "$jf" -nt "$classfile" ]; then
+            echo "$jf"
+        fi
+    done < <(find "$srcdir" -name '*.java' -print0)
+}
+
+# Legacy alias for compatibility
+find_changed() {
+    find_changed_main
+}
+
+do_build() {
+    ensure_daemon || return 1
+    local changed
+    changed=$(find_changed_main)
+    if [ -z "$changed" ]; then
+        echo "No changes." >&2
+        return 0
+    fi
+    local count
+    count=$(echo "$changed" | wc -l)
+    echo "Compiling $count changed file(s)..." >&2
+
+    # Group by (outdir) — all use the same full cp for simplicity and
+    # correctness (the joint round needs everything visible anyway).
+    # The daemon compiles in-process: ~0.5s for a few files.
+    local files_arg
+    files_arg=$(echo "$changed" | tr '\n' ' ')
+    # Use one outdir per group; for simplicity, compile each file to its own
+    # outdir via separate calls grouped by outdir.
+    declare -A groups
+    while IFS= read -r jf; do
+        [ -z "$jf" ] && continue
+        read -r _mod outdir _kind <<< "$(classify "$jf")"
+        if [ -z "${groups["$outdir"]:-}" ]; then
+            groups["$outdir"]="$jf"
+        else
+            groups["$outdir"]="${groups["$outdir"]} $jf"
+        fi
+    done <<< "$changed"
+
+    local failed=0
+    for outdir in "${!groups[@]}"; do
+        mkdir -p "$outdir"
+        local resp
+        resp=$(send "COMPILE $outdir $FULL_CP $LIB_CP ${groups[$outdir]}")
+        local status
+        status=$(echo "$resp" | head -1)
+        if [ "$status" != "OK" ]; then
+            echo "$resp" >&2
+            failed=1
+        fi
+    done
+    return $failed
+}
+
+do_run() {
+    local gofile="$1"
+    do_build || return 1
+    ensure_daemon || return 1
+    # graalgo.launcher.Main takes the Go file as arg (matches graalgo-run)
+    send "RUN $FULL_CP graalgo.launcher.Main $gofile"
+}
+
+do_test() {
+    local testclass="$1"
+    shift
+    # Optional second arg: specific method name
+    local method="${1:-}"
+    if [ -n "$method" ]; then
+        shift
+    fi
+    do_build || return 1
+    ensure_daemon || return 1
+    # Compile test sources on demand: figure out which module's test dir
+    # holds the test class, compile changed files there.
+    local testdir="" testout=""
+    local relpath="${testclass//.//}.java"
+    for mod in "$TRUFFLE" "$RUNTIME"; do
+        if [ -f "$mod/src/test/java/$relpath" ]; then
+            testdir="$mod/src/test/java"
+            testout="$mod/out/test-classes"
+            break
+        fi
+    done
+    if [ -n "$testdir" ]; then
+        local tchanged
+        tchanged=$(find_changed_test "$testdir" "$testout")
+        if [ -n "$tchanged" ]; then
+            mkdir -p "$testout"
+            local count
+            count=$(echo "$tchanged" | wc -l)
+            echo "Compiling $count changed test file(s)..." >&2
+            local tcp="$testout:$FULL_CP"
+            local resp
+            resp=$(send "COMPILE $testout $tcp $LIB_CP $tchanged")
+            if [ "$(echo "$resp" | head -1)" != "OK" ]; then
+                echo "$resp" >&2
+                return 1
+            fi
+        fi
+        # Test classpath: test classes first, then main.
+        # RUNTEST invokes methods directly (no System.exit).
+        # Pass the phase1 dir property (matches the Makefile's P1_DIR_PROP).
+        # $BACKEND is internal/backend, so phases is ../../phases.
+        local p1dir="$BACKEND/../../phases/phase1"
+        # For truffle tests, the property is graalgo.phase1.dir
+        local props="graalgo.phase1.dir=$p1dir"
+        if [ -n "$method" ]; then
+            send "RUNTEST $testout:$FULL_CP $testclass $method -- $props"
+        else
+            send "RUNTEST $testout:$FULL_CP $testclass -- $props"
+        fi
+    else
+        # Not a test class; assume it's a main class
+        send "RUN $FULL_CP $testclass $*"
+    fi
+}
+
+do_watch() {
+    local gofile="$1"
+    echo "Watching for changes (Ctrl-C to stop)..." >&2
+    # Initial run
+    do_run "$gofile"
+    # Watch loop: poll mtimes every 0.5s (inotifywait may not be installed)
+    declare -A mtimes
+    while IFS= read -r -d '' jf; do
+        mtimes["$jf"]=$(stat -c %Y "$jf" 2>/dev/null || echo 0)
+    done < <(find "$TRUFFLE/src" "$RUNTIME/src" "$INTEROP/src" -name '*.java' -print0 2>/dev/null)
+
+    while true; do
+        sleep 0.5
+        local changed=0
+        while IFS= read -r -d '' jf; do
+            local mt
+            mt=$(stat -c %Y "$jf" 2>/dev/null || echo 0)
+            if [ "${mtimes["$jf"]:-0}" != "$mt" ]; then
+                mtimes["$jf"]=$mt
+                changed=1
+            fi
+        done < <(find "$TRUFFLE/src" "$RUNTIME/src" "$INTEROP/src" -name '*.java' -print0 2>/dev/null)
+        if [ "$changed" = 1 ]; then
+            echo "--- change detected ---" >&2
+            do_run "$gofile"
+        fi
+    done
+}
+
+case "${1:-}" in
+    build)  do_build ;;
+    run)    do_run "${2:?usage: fast-cycle run <GoFile>}" ;;
+    test)   do_test "${2:?usage: fast-cycle test <TestClass>}" ;;
+    watch)  do_watch "${2:?usage: fast-cycle watch <GoFile>}" ;;
+    stop)   send "STOP" || true; pkill -f FastCycleDaemon || true; echo "Stopped." ;;
+    status) ensure_daemon && echo "Daemon running." ;;
+    *) echo "usage: fast-cycle {build|run|test|watch|stop|status}"; exit 1 ;;
+esac
