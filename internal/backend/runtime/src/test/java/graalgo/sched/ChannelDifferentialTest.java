@@ -43,7 +43,7 @@ public final class ChannelDifferentialTest {
 
     private SchedulerCore sched;
     private static final Path CORPUS =
-            Paths.get("corpus/channels");
+            Paths.get("../../../test/corpus/phase2/channels");
 
     private static void assertEquals(String expected, String actual, String msg) {
         if (!expected.equals(actual)) {

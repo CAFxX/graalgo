@@ -276,7 +276,7 @@ public final class GoDebugTest {
     // Harness
     // ------------------------------------------------------------------
 
-    private static final Path CORPUS = Paths.get("corpus/godebug");
+    private static final Path CORPUS = Paths.get("../../../test/corpus/phase2/godebug");
 
     private static final class ProcessResult {
         final String stdout;

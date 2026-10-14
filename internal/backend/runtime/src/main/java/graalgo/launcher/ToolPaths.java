@@ -38,7 +38,7 @@ public final class ToolPaths {
             }
         }
         Path anchor = codeSourceDir();
-        for (int up = 0; anchor != null && up < 5; up++, anchor = anchor.getParent()) {
+        for (int up = 0; anchor != null && up < 8; up++, anchor = anchor.getParent()) {
             Path cand = anchor.resolve("internal/frontend/gofrontend");
             if (Files.isExecutable(cand)) {
                 return cand;

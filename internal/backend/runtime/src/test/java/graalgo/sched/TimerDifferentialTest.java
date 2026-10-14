@@ -47,7 +47,7 @@ import graalgo.runtime.Timers;
 public final class TimerDifferentialTest {
 
     private SchedulerCore sched;
-    private static final Path CORPUS = Paths.get("corpus/timers");
+    private static final Path CORPUS = Paths.get("../../../test/corpus/phase2/timers");
 
     private static void assertEquals(String expected, String actual, String msg) {
         if (!expected.equals(actual)) {

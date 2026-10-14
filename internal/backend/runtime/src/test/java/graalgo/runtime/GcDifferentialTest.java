@@ -27,7 +27,7 @@ import java.util.stream.Stream;
  */
 public final class GcDifferentialTest {
 
-    private static final Path CORPUS = Paths.get("corpus/gc");
+    private static final Path CORPUS = Paths.get("../../../test/corpus/phase2/gc");
     private static final List<String> PROGRAMS = List.of(
             "gc01_finalizer",
             "gc02_finalizer_remove",
