@@ -21,7 +21,7 @@ section 2.8 (GG-0009) category:
 
 Output (next to this script):
     asm-inventory-go1.27.1.json   machine-readable source of truth, embedded
-                                 by internal/frontend/p3frontend/asm.go
+                                 by phases/phase3/src/p3frontend/asm.go
                                  via //go:embed; the loader resolves every
                                  buildable assembly file against it.
     asm-inventory-go1.27.1.md     human-readable summary.
@@ -50,6 +50,8 @@ MD_NAME = f"asm-inventory-{VERSION}.md"
 # truth; `make -C internal/backend/interop check` runs this script with --check to assert
 # the generated file is in sync.
 GO_NAME = "zz_asm_inventory_gen.go"
+# Phase-4 restructure (2026-10-14): the p3frontend Go sources moved from
+# internal/backend/interop/p3frontend/ to internal/frontend/p3frontend/.
 GO_DIR = os.path.join(SCRIPT_DIR, "..", "..", "internal", "frontend", "p3frontend")
 
 CATEGORIES = (

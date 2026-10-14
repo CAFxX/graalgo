@@ -20,11 +20,18 @@ public final class GoStackFrame {
      * in each caller frame, not the function definition).
      */
     private SourceSection section;
+    /**
+     * The section at push time (the function definition site). Unlike
+     * {@link #section}, never mutated by call-site updates — used for
+     * {@code runtime.Func.Entry} attribution.
+     */
+    private final SourceSection defSection;
 
     public GoStackFrame(GoStackFrame parent, String funcName, SourceSection section) {
         this.parent = parent;
         this.funcName = funcName;
         this.section = section;
+        this.defSection = section;
     }
 
     /**
@@ -57,6 +64,11 @@ public final class GoStackFrame {
      */
     public SourceSection section() {
         return section;
+    }
+
+    /** The function definition site (null for the empty stack). */
+    public SourceSection defSection() {
+        return defSection;
     }
 
     /** True for the empty stack. */

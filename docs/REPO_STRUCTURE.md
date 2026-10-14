@@ -66,7 +66,11 @@ Related: [Makefile](../Makefile) (root build entry point),
       surface):
       [src/main/java/](../internal/backend/interop/src/main/java/) holds
       phase-3 `graalgo.{iface,p3chan,p3crypto,p3link,p3math,p3net,p3os,
-      p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}` (stdlib bindings).
+      p3reflect,p3sync,p3time,p3tls,p3unsafe,p3x509}` (stdlib bindings) plus
+      [`graalgo.rtstack`](../internal/backend/interop/src/main/java/graalgo/rtstack/)
+      (the synthetic `runtime` package's stack-inspection intrinsics:
+      `Callers`/`Caller`/`CallersFrames`/`FuncForPC` and the
+      `Frames`/`Func` methods).
   - [driver/](../internal/driver/) — build orchestration: module-aware
     builds, build caching (toolexec-equivalent), package resolution. This is
     what makes `graalgo build` a drop-in for `go build` in Phase 4.
