@@ -70,6 +70,11 @@ build:
 	$(MAKE) -C internal/backend/runtime main
 	$(MAKE) -C internal/backend/interop main
 
+# The graalgo driver binary (Phase-4): `alias go=graalgo`.
+# Builds cmd/graalgo into ./graalgo.
+graalgo:
+	$(GO) build -o graalgo ./cmd/graalgo/
+
 check:
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
