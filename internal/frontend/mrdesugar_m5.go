@@ -109,6 +109,24 @@ const (
 	// new()). Classified structurally by classifyTrivialForwarder —
 	// never by package/type/method name.
 	mrTrivialFwd
+	// mrRuntimeStack: the synthetic runtime package's multi-result
+	// stack-inspection members (runtime.Caller, (*Frames).Next,
+	// (*Func).FileLine). Unlike every other kind there is no __-helper:
+	// the synthetic runtime overlay has no real-Go source, so the
+	// desugar builds the intrinsic wire node directly
+	// (desugarRuntimeStack) and the pair-typed temp + field extraction
+	// proceed exactly like mrM7. rtStackOp selects the wire node.
+	mrRuntimeStack
+)
+
+// rtStackOpKind selects the intrinsic wire node for an mrRuntimeStack plan.
+type rtStackOpKind int
+
+const (
+	rtStackNone         rtStackOpKind = iota
+	rtStackCaller                     // runtime.Caller(skip) -> "runtimecaller"
+	rtStackFramesNext                 // (*Frames).Next() -> "runtimeframesnext"
+	rtStackFuncFileLine               // (*Func).FileLine(pc) -> "runtimefuncfileline"
 )
 
 // m7MultiResultFunc describes one desugarable M7 multi-result function:
@@ -1249,6 +1267,12 @@ type mrPlan struct {
 	// For mrTrivialFwd: index of the forwarded function-typed parameter
 	// in the method's explicit parameter list (receiver excluded).
 	fwdParamIdx int
+	// For mrFmtF: the S-family variant ("Sprint", "Sprintf", "Sprintln")
+	// used to format before the io.Writer.Write.
+	fmtVariant string
+	// For mrRuntimeStack: which intrinsic wire node desugarRuntimeStack
+	// builds (rtStackCaller/rtStackFramesNext/rtStackFuncFileLine).
+	rtStackOp rtStackOpKind
 }
 
 // classifyMultiResultCall recognizes the Appendix M operations (the 5
@@ -1449,6 +1473,21 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 						methodRecv: nt, methodName: "cancelFunc",
 					}
 				}
+			case "runtime":
+				// runtime.Caller(skip): the 4-result stack-inspection
+				// intrinsic. Desugars (mrRuntimeStack) to the "runtimecaller"
+				// wire node returning callerPair; field extraction proceeds
+				// like mrM7.
+				if fn.Name() == "Caller" {
+					nt := named(pn.Imported(), "callerPair")
+					if nt == nil {
+						return nil
+					}
+					return &mrPlan{
+						kind: mrRuntimeStack, rtStackOp: rtStackCaller,
+						tmpType: nt, pairFields: []string{"pc", "file", "line", "ok"},
+					}
+				}
 			case "time":
 				if fn.Name() == "ParseDuration" {
 					nt := named(timePkg, "durationPair")
@@ -1512,6 +1551,14 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					pairFields:  mrInfo.pairFields,
 					prependRecv: false,
 				}
+			}
+			// mrRuntimeStack: the synthetic runtime package's
+			// multi-result stack-inspection methods ((*Frames).Next,
+			// (*Func).FileLine). The receiver's named type must be the
+			// runtime overlay's Frames/Func — a user method with the same
+			// name is never desugared.
+			if plan := classifyRuntimeStackMethod(f, selection); plan != nil {
+				return plan
 			}
 			// mrTrivialFwd: a synthetic stub method whose body trivially
 			// forwards to a function-typed parameter (single
@@ -1871,6 +1918,62 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 // classifyM9MultiResultCall desugars the P3-M9 (tier-4: net)
 // multi-result API (m9MultiResultFuncs table above). Same contract as
 // classifyOsMultiResultCall.
+// classifyRuntimeStackMethod classifies the synthetic runtime package's
+// multi-result stack-inspection methods: (*Frames).Next desugars to the
+// "runtimeframesnext" wire node returning framesNextPair, and
+// (*Func).FileLine(pc) to the "runtimefuncfileline" wire node returning
+// funcFileLinePair. The pair types are looked up in the method's own
+// package (the runtime overlay), so the plan never depends on overlay
+// package identity.
+func classifyRuntimeStackMethod(f *types.Func, selection *types.Selection) *mrPlan {
+	if f.Pkg() == nil || f.Pkg().Path() != "runtime" {
+		return nil
+	}
+	recv := selection.Recv()
+	if pt, ok := recv.(*types.Pointer); ok {
+		recv = pt.Elem()
+	}
+	nt, ok := recv.(*types.Named)
+	if !ok || nt.Obj() == nil || nt.Obj().Pkg() == nil || nt.Obj().Pkg().Path() != "runtime" {
+		return nil
+	}
+	named := func(name string) *types.Named {
+		obj := f.Pkg().Scope().Lookup(name)
+		if obj == nil {
+			return nil
+		}
+		tn, ok := obj.(*types.TypeName)
+		if !ok {
+			return nil
+		}
+		n, _ := tn.Type().(*types.Named)
+		return n
+	}
+	switch {
+	case nt.Obj().Name() == "Frames" && f.Name() == "Next":
+		pair := named("framesNextPair")
+		if pair == nil {
+			return nil
+		}
+		return &mrPlan{
+			kind: mrRuntimeStack, rtStackOp: rtStackFramesNext,
+			tmpType: pair, pairFields: []string{"frame", "more"},
+			prependRecv: true,
+		}
+	case nt.Obj().Name() == "Func" && f.Name() == "FileLine":
+		pair := named("funcFileLinePair")
+		if pair == nil {
+			return nil
+		}
+		return &mrPlan{
+			kind: mrRuntimeStack, rtStackOp: rtStackFuncFileLine,
+			tmpType: pair, pairFields: []string{"file", "line"},
+			prependRecv: true,
+		}
+	}
+	return nil
+}
+
 func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil
@@ -2539,6 +2642,11 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	if plan.kind == mrFuncField {
 		return e.desugarFuncFieldCall(s, c, plan, define)
 	}
+	// mrRuntimeStack: the synthetic runtime stack-inspection intrinsics
+	// build their wire node directly (no __-helper exists).
+	if plan.kind == mrRuntimeStack {
+		return e.desugarRuntimeStack(s, c, plan, define)
+	}
 	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, err
@@ -2552,6 +2660,85 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 		return nil, err
 	}
 	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, helperCall, preStmts)
+}
+
+// desugarRuntimeStack desugars the synthetic runtime package's
+// multi-result stack-inspection calls: runtime.Caller(skip),
+// (*Frames).Next(), (*Func).FileLine(pc). Unlike every other Appendix M
+// kind there is no __-helper — the synthetic runtime overlay has no
+// real-Go source — so the intrinsic wire node ("runtimecaller",
+// "runtimeframesnext", "runtimefuncfileline") is built directly with the
+// pair-typed result; the __p5mr_N temp declaration and field extraction
+// then proceed exactly like mrM7 via desugarExtract.
+func (e *exporter) desugarRuntimeStack(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	var kind string
+	var args []*Node
+	switch plan.rtStackOp {
+	case rtStackCaller:
+		// runtime.Caller(skip): package-level call, one argument.
+		if len(c.Args) != 1 {
+			return nil, fmt.Errorf("gofrontend: runtime.Caller takes 1 argument")
+		}
+		kind = "runtimecaller"
+		a, err := e.exportExpr(c.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		args = []*Node{a}
+	case rtStackFramesNext, rtStackFuncFileLine:
+		// Method calls: the receiver is the first wire-node argument
+		// (prependRecv, mirroring multiResultHelperArgs).
+		sel, ok := unwrapSelector(c.Fun)
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: runtime stack method call has non-selector fun %T", c.Fun)
+		}
+		recv, err := e.exportExpr(sel.X)
+		if err != nil {
+			return nil, err
+		}
+		args = []*Node{recv}
+		if plan.rtStackOp == rtStackFuncFileLine {
+			if len(c.Args) != 1 {
+				return nil, fmt.Errorf("gofrontend: runtime.Func.FileLine takes 1 argument")
+			}
+			kind = "runtimefuncfileline"
+			a, err := e.exportExpr(c.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, a)
+		} else {
+			kind = "runtimeframesnext"
+			if len(c.Args) != 0 {
+				return nil, fmt.Errorf("gofrontend: runtime.Frames.Next takes no arguments")
+			}
+		}
+	default:
+		return nil, fmt.Errorf("gofrontend: unknown runtime stack op %d", plan.rtStackOp)
+	}
+	tmpTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{"type": tmpTid}
+	switch plan.rtStackOp {
+	case rtStackCaller:
+		fields["skip"] = args[0]
+	case rtStackFramesNext:
+		fields["f"] = args[0]
+	case rtStackFuncFileLine:
+		fields["f"] = args[0]
+		fields["pc"] = args[1]
+	}
+	call := e.node(kind, c, fields)
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, call, nil)
 }
 
 // desugarFuncFieldCall desugars a function field call (e.g.,
@@ -3031,7 +3218,7 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField:
+	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField, mrRuntimeStack:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {
