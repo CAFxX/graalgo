@@ -117,6 +117,14 @@ const (
 	// (desugarRuntimeStack) and the pair-typed temp + field extraction
 	// proceed exactly like mrM7. rtStackOp selects the wire node.
 	mrRuntimeStack
+	// mrSyncMap: the synthetic sync package's multi-result Map methods
+	// (Load, LoadOrStore, LoadAndDelete, Swap). Like mrRuntimeStack
+	// there is no __-helper: the types-built overlay has no real-Go
+	// source, so the desugar builds the "syncop" wire node directly
+	// (desugarSyncMap) with the mapAnyBoolPair type, and field
+	// extraction proceeds like mrM7. syncMapOp carries the method name
+	// for wire-node construction and arity checks.
+	mrSyncMap
 )
 
 // rtStackOpKind selects the intrinsic wire node for an mrRuntimeStack plan.
@@ -1273,6 +1281,10 @@ type mrPlan struct {
 	// For mrRuntimeStack: which intrinsic wire node desugarRuntimeStack
 	// builds (rtStackCaller/rtStackFramesNext/rtStackFuncFileLine).
 	rtStackOp rtStackOpKind
+	// For mrSyncMap: the sync.Map multi-result method name
+	// (Load/LoadOrStore/LoadAndDelete/Swap), selecting the syncop wire
+	// node op and its arity check in desugarSyncMap.
+	syncMapOp string
 }
 
 // classifyMultiResultCall recognizes the Appendix M operations (the 5
@@ -1558,6 +1570,12 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			// runtime overlay's Frames/Func — a user method with the same
 			// name is never desugared.
 			if plan := classifyRuntimeStackMethod(f, selection); plan != nil {
+				return plan
+			}
+			// mrSyncMap: the synthetic sync package's multi-result Map
+			// methods (Load/LoadOrStore/LoadAndDelete/Swap). The
+			// receiver's named type must be the sync overlay's Map.
+			if plan := classifySyncMapMethod(f, selection); plan != nil {
 				return plan
 			}
 			// mrTrivialFwd: a synthetic stub method whose body trivially
@@ -1968,6 +1986,49 @@ func classifyRuntimeStackMethod(f *types.Func, selection *types.Selection) *mrPl
 		return &mrPlan{
 			kind: mrRuntimeStack, rtStackOp: rtStackFuncFileLine,
 			tmpType: pair, pairFields: []string{"file", "line"},
+			prependRecv: true,
+		}
+	}
+	return nil
+}
+
+// classifySyncMapMethod recognizes the synthetic sync package's
+// multi-result Map methods (Load, LoadOrStore, LoadAndDelete, Swap —
+// the (any, bool) results). The receiver's named type must be the sync
+// overlay's Map — a user method with the same name is never desugared
+// (the mrRuntimeStack precedent). Returns an mrSyncMap plan carrying
+// the mapAnyBoolPair type; desugarSyncMap builds the "syncop" wire
+// node directly (no __-helper: the types-built overlay has no real-Go
+// source).
+func classifySyncMapMethod(f *types.Func, selection *types.Selection) *mrPlan {
+	if f.Pkg() == nil || f.Pkg().Path() != "sync" {
+		return nil
+	}
+	recv := selection.Recv()
+	if pt, ok := recv.(*types.Pointer); ok {
+		recv = pt.Elem()
+	}
+	nt, ok := recv.(*types.Named)
+	if !ok || nt.Obj() == nil || nt.Obj().Pkg() == nil || nt.Obj().Pkg().Path() != "sync" {
+		return nil
+	}
+	if nt.Obj().Name() != "Map" {
+		return nil
+	}
+	var pair *types.Named
+	if obj := f.Pkg().Scope().Lookup("mapAnyBoolPair"); obj != nil {
+		if tn, ok := obj.(*types.TypeName); ok {
+			pair, _ = tn.Type().(*types.Named)
+		}
+	}
+	if pair == nil {
+		return nil
+	}
+	switch f.Name() {
+	case "Load", "LoadOrStore", "LoadAndDelete", "Swap":
+		return &mrPlan{
+			kind: mrSyncMap, syncMapOp: f.Name(),
+			tmpType: pair, pairFields: []string{"v", "ok"},
 			prependRecv: true,
 		}
 	}
@@ -2647,6 +2708,11 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	if plan.kind == mrRuntimeStack {
 		return e.desugarRuntimeStack(s, c, plan, define)
 	}
+	// mrSyncMap: the synthetic sync.Map multi-result methods build the
+	// "syncop" wire node directly (no __-helper exists).
+	if plan.kind == mrSyncMap {
+		return e.desugarSyncMap(s, c, plan, define)
+	}
 	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
 		return nil, err
@@ -2739,6 +2805,52 @@ func (e *exporter) desugarRuntimeStack(s *ast.AssignStmt, c *ast.CallExpr, plan 
 		return nil, err
 	}
 	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, call, nil)
+}
+
+// desugarSyncMap desugars an N-target assignment of a sync.Map
+// multi-result method (v, ok := m.Load(k)) — the mrSyncMap plan. Like
+// desugarRuntimeStack there is no __-helper: the "syncop" wire node is
+// built directly with the mapAnyBoolPair result type, then the shared
+// pair-temp + field extraction (desugarExtract) splits it across the
+// targets. Arity is checked per op (fail-fast, never silent).
+func (e *exporter) desugarSyncMap(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	sel, ok := unwrapSelector(c.Fun)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync.Map method call has non-selector fun %T", c.Fun)
+	}
+	recv, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	wantArgs := map[string]int{
+		"Load": 1, "LoadOrStore": 2, "LoadAndDelete": 1, "Swap": 2,
+	}[plan.syncMapOp]
+	if wantArgs == 0 && plan.syncMapOp != "" {
+		return nil, fmt.Errorf("gofrontend: unknown sync.Map op %q", plan.syncMapOp)
+	}
+	if len(args) != wantArgs {
+		return nil, fmt.Errorf("gofrontend: sync.Map.%s takes %d arguments, got %d",
+			plan.syncMapOp, wantArgs, len(args))
+	}
+	pairTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	call := e.node("syncop", c, map[string]any{
+		"op": plan.syncMapOp, "synctyp": "Map", "recv": recv, "args": args, "type": pairTid,
+	})
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, pairTid, call, nil)
 }
 
 // desugarFuncFieldCall desugars a function field call (e.g.,
@@ -3218,7 +3330,7 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField, mrRuntimeStack:
+	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField, mrRuntimeStack, mrSyncMap:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {

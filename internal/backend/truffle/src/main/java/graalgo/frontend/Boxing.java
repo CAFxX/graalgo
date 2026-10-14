@@ -107,6 +107,16 @@ public final class Boxing {
         // q:=p; q.Store(5)` must be visible through p). Mirrors the
         // GoStruct branch directly above.
         if (kind == GoKind.STRUCT) {
+            // fix-linkname: the GoAtomicInt64/32 wrappers extend
+            // AtomicLong/Integer, so they must be matched first —
+            // cloning them as raw AtomicLong/Integer would drop the
+            // LongCell/IntCell interface the atomic ops require.
+            if (value instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
+                return new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
+            }
+            if (value instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
+                return new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
+            }
             if (value instanceof java.util.concurrent.atomic.AtomicLong al) {
                 return new java.util.concurrent.atomic.AtomicLong(al.get());
             }
@@ -329,6 +339,22 @@ public final class Boxing {
         }
         if (template instanceof graalgo.runtime.sync.GoPool) {
             return new graalgo.runtime.sync.GoPool();
+        }
+        // fix-linkname: sync.Map copies get a fresh empty map (sharing
+        // would let Store through one copy be observed through another).
+        if (template instanceof graalgo.runtime.sync.GoSyncMap) {
+            return new graalgo.runtime.sync.GoSyncMap();
+        }
+        // fix-linkname: atomic wrapper cells (struct fields) — fresh
+        // instances, preserving the LongCell/IntCell interface.
+        if (template instanceof graalgo.runtime.sync.GoAtomicInt64 gi64) {
+            return new graalgo.runtime.sync.GoAtomicInt64(gi64.get());
+        }
+        if (template instanceof graalgo.runtime.sync.GoAtomicInt32 gi32) {
+            return new graalgo.runtime.sync.GoAtomicInt32(gi32.get());
+        }
+        if (template instanceof java.util.concurrent.atomic.AtomicReference<?>) {
+            return new java.util.concurrent.atomic.AtomicReference<>();
         }
         return template; // immutable (GoString.EMPTY) or null
     }

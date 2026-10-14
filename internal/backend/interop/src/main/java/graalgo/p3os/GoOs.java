@@ -1436,6 +1436,11 @@ public final class GoOs {
         String k = goStr(keyArg);
         ENV_REMOVED.remove(k);
         ENV_OVERLAY.put(k, goStr(valArg));
+        // fix-linkname: GODEBUG changes re-invoke internal/godebug's
+        // update callback (gc: runtime calls update(def, env) on change).
+        if (k.equals("GODEBUG")) {
+            graalgo.runtime.GoDebug.onGodebugChange(goStr(valArg));
+        }
         return 0;
     }
 
@@ -1444,6 +1449,10 @@ public final class GoOs {
         String k = goStr(keyArg);
         ENV_OVERLAY.remove(k);
         ENV_REMOVED.add(k);
+        // fix-linkname: see setenv.
+        if (k.equals("GODEBUG")) {
+            graalgo.runtime.GoDebug.onGodebugChange("");
+        }
         return 0;
     }
 
@@ -1452,6 +1461,8 @@ public final class GoOs {
         ENV_OVERLAY.clear();
         ENV_REMOVED.clear();
         ENV_CLEARED = true;
+        // fix-linkname: see setenv.
+        graalgo.runtime.GoDebug.onGodebugChange("");
         return 0;
     }
 

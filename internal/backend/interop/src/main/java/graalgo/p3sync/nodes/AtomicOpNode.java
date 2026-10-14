@@ -1,8 +1,8 @@
 package graalgo.p3sync.nodes;
 
 import java.util.Map;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import graalgo.runtime.sync.IntCell;
+import graalgo.runtime.sync.LongCell;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
@@ -25,8 +25,8 @@ import graalgo.values.GoKind;
  * return values, so this node carries the real result kind
  * ({@code INT64}/{@code INT32}/{@code BOOL}; {@code INTERFACE} for the
  * void {@code Store}) and implements the kind-appropriate execute
- * method. The receiver evaluates to the {@link AtomicLong} /
- * {@link AtomicInteger} cell itself (ADR-0002 D1: the Go value IS the
+ * method. The receiver evaluates to the {@link LongCell} /
+ * {@link IntCell} cell itself (ADR-0002 D1: the Go value IS the
  * Java object); the implementation delegates to
  * {@link graalgo.runtime.Atomics} (the real phase-1 atomics).
  *
@@ -108,21 +108,21 @@ public final class AtomicOpNode extends GoExprNode {
         return r;
     }
 
-    private AtomicLong cell64(VirtualFrame frame) {
+    private LongCell cell64(VirtualFrame frame) {
         Object r = cell(frame);
-        if (!(r instanceof AtomicLong c)) {
+        if (!(r instanceof LongCell c)) {
             throw new FrontendException(
-                    "atomic op " + atomicType + "." + op + " on non-AtomicLong cell: "
+                    "atomic op " + atomicType + "." + op + " on non-LongCell cell: "
                             + r.getClass().getName());
         }
         return c;
     }
 
-    private AtomicInteger cell32(VirtualFrame frame) {
+    private IntCell cell32(VirtualFrame frame) {
         Object r = cell(frame);
-        if (!(r instanceof AtomicInteger c)) {
+        if (!(r instanceof IntCell c)) {
             throw new FrontendException(
-                    "atomic op " + atomicType + "." + op + " on non-AtomicInteger cell: "
+                    "atomic op " + atomicType + "." + op + " on non-IntCell cell: "
                             + r.getClass().getName());
         }
         return c;

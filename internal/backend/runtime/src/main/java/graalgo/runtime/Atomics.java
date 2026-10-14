@@ -1,7 +1,7 @@
 package graalgo.runtime;
 
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import graalgo.runtime.sync.IntCell;
+import graalgo.runtime.sync.LongCell;
 import java.util.concurrent.atomic.AtomicReference;
 
 import graalgo.values.GoEquality;
@@ -10,7 +10,7 @@ import graalgo.values.GoPointer;
 /**
  * Frozen atomic intrinsic surface (WS G, GG-0020, REAL).
  *
- * <p>Phase-1 implementations over {@link AtomicInteger}/{@link AtomicLong};
+ * <p>Phase-1 implementations over {@link IntCell}/{@link LongCell};
  * the Phase-1 memory model is single-threaded, so these are sequentially
  * consistent by construction. Backed by {@code java.util.concurrent.atomic}
  * (no deprecated APIs).
@@ -21,71 +21,71 @@ public final class Atomics {
     // -- int32 ----------------------------------------------------------
 
     /** Atomic int32 load. */
-    public static int loadInt32(AtomicInteger addr) {
+    public static int loadInt32(IntCell addr) {
         return addr.get();
     }
 
     /** Atomic int32 store. */
-    public static void storeInt32(AtomicInteger addr, int v) {
+    public static void storeInt32(IntCell addr, int v) {
         addr.set(v);
     }
 
     /** Atomic int32 add; returns the new value. */
-    public static int addInt32(AtomicInteger addr, int delta) {
+    public static int addInt32(IntCell addr, int delta) {
         return addr.addAndGet(delta);
     }
 
     /** Atomic int32 compare-and-swap; returns whether the swap happened. */
-    public static boolean compareAndSwapInt32(AtomicInteger addr, int old, int new_) {
+    public static boolean compareAndSwapInt32(IntCell addr, int old, int new_) {
         return addr.compareAndSet(old, new_);
     }
 
     /** Atomic int32 swap; returns the previous value. */
-    public static int swapInt32(AtomicInteger addr, int new_) {
+    public static int swapInt32(IntCell addr, int new_) {
         return addr.getAndSet(new_);
     }
 
     // -- int64 ----------------------------------------------------------
 
     /** Atomic int64 load. */
-    public static long loadInt64(AtomicLong addr) {
+    public static long loadInt64(LongCell addr) {
         return addr.get();
     }
 
     /** Atomic int64 store. */
-    public static void storeInt64(AtomicLong addr, long v) {
+    public static void storeInt64(LongCell addr, long v) {
         addr.set(v);
     }
 
     /** Atomic int64 add; returns the new value. */
-    public static long addInt64(AtomicLong addr, long delta) {
+    public static long addInt64(LongCell addr, long delta) {
         return addr.addAndGet(delta);
     }
 
     /** Atomic int64 compare-and-swap; returns whether the swap happened. */
-    public static boolean compareAndSwapInt64(AtomicLong addr, long old, long new_) {
+    public static boolean compareAndSwapInt64(LongCell addr, long old, long new_) {
         return addr.compareAndSet(old, new_);
     }
 
     /** Atomic int64 swap; returns the previous value. */
-    public static long swapInt64(AtomicLong addr, long new_) {
+    public static long swapInt64(LongCell addr, long new_) {
         return addr.getAndSet(new_);
     }
 
     // -- pointer-sized (uintptr) -----------------------------------------
 
     /** Atomic uintptr load. */
-    public static long loadUintptr(AtomicLong addr) {
+    public static long loadUintptr(LongCell addr) {
         return addr.get();
     }
 
     /** Atomic uintptr store. */
-    public static void storeUintptr(AtomicLong addr, long v) {
+    public static void storeUintptr(LongCell addr, long v) {
         addr.set(v);
     }
 
     /** Atomic uintptr compare-and-swap. */
-    public static boolean compareAndSwapUintptr(AtomicLong addr, long old, long new_) {
+    public static boolean compareAndSwapUintptr(LongCell addr, long old, long new_) {
         return addr.compareAndSet(old, new_);
     }
 
@@ -93,7 +93,7 @@ public final class Atomics {
      * Atomic uintptr add (P3-M4, WS C: the {@code atomic.Uintptr} wrapper's
      * {@code Add}).
      */
-    public static long addUintptr(AtomicLong addr, long delta) {
+    public static long addUintptr(LongCell addr, long delta) {
         return addr.addAndGet(delta);
     }
 
@@ -101,27 +101,27 @@ public final class Atomics {
      * Atomic uintptr swap (P3-M4, WS C: the {@code atomic.Uintptr}
      * wrapper's {@code Swap}).
      */
-    public static long swapUintptr(AtomicLong addr, long new_) {
+    public static long swapUintptr(LongCell addr, long new_) {
         return addr.getAndSet(new_);
     }
 
     // -- bool -------------------------------------------------------------
 
     /**
-     * Atomic bool load. Booleans ride on an {@link AtomicInteger}
+     * Atomic bool load. Booleans ride on an {@link IntCell}
      * (0/1); Phase 2 may repack this.
      */
-    public static boolean loadBool(AtomicInteger addr) {
+    public static boolean loadBool(IntCell addr) {
         return addr.get() != 0;
     }
 
     /** Atomic bool store. */
-    public static void storeBool(AtomicInteger addr, boolean v) {
+    public static void storeBool(IntCell addr, boolean v) {
         addr.set(v ? 1 : 0);
     }
 
     /** Atomic bool compare-and-swap. */
-    public static boolean compareAndSwapBool(AtomicInteger addr, boolean old, boolean new_) {
+    public static boolean compareAndSwapBool(IntCell addr, boolean old, boolean new_) {
         return addr.compareAndSet(old ? 1 : 0, new_ ? 1 : 0);
     }
 
@@ -129,7 +129,7 @@ public final class Atomics {
      * Atomic bool swap (P3-M4, WS C: the {@code atomic.Bool} wrapper's
      * {@code Swap}).
      */
-    public static boolean swapBool(AtomicInteger addr, boolean new_) {
+    public static boolean swapBool(IntCell addr, boolean new_) {
         return addr.getAndSet(new_ ? 1 : 0) != 0;
     }
 

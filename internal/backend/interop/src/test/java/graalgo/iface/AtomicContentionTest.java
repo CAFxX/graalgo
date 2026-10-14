@@ -1,7 +1,7 @@
 package graalgo.iface;
 
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicLong;
+import graalgo.runtime.sync.GoAtomicInt64;
 
 import graalgo.runtime.Atomics;
 
@@ -30,7 +30,7 @@ public final class AtomicContentionTest {
      * updates.
      */
     public void testConcurrentAddInt64() throws Exception {
-        AtomicLong cell = new AtomicLong();
+        GoAtomicInt64 cell = new GoAtomicInt64();
         int threads = 8, perThread = 1000;
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(threads);
@@ -59,7 +59,7 @@ public final class AtomicContentionTest {
      * the exact total (CAS is the linearization point).
      */
     public void testCasSpinConverges() throws Exception {
-        AtomicLong cell = new AtomicLong();
+        GoAtomicInt64 cell = new GoAtomicInt64();
         int threads = 4, perThread = 1000;
         CountDownLatch start = new CountDownLatch(1);
         CountDownLatch done = new CountDownLatch(threads);
@@ -92,7 +92,7 @@ public final class AtomicContentionTest {
      * sibling).
      */
     public void testSwapInt64ReturnsOld() {
-        AtomicLong cell = new AtomicLong(41);
+        GoAtomicInt64 cell = new GoAtomicInt64(41);
         long old = Atomics.swapInt64(cell, 42);
         assertEquals(41, old, "swap must return the previous value");
         assertEquals(42, Atomics.loadInt64(cell), "swap must install the new value");

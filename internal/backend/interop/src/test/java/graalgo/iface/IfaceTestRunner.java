@@ -20,6 +20,8 @@ public final class IfaceTestRunner {
         TESTS.add(IfaceMethodTablesTest.class);
         TESTS.add(graalgo.frontend.DescriptorNamesTest.class);
         TESTS.add(LinknameTest.class);
+        // fix-linkname (Caddy/godebug lane): sync.Map backing store.
+        TESTS.add(SyncMapTest.class);
         TESTS.add(ItabForIntrinsicTest.class);
         TESTS.add(AtomicContentionTest.class);
         TESTS.add(graalgo.p3sync.launcher.LinknameEndToEndTest.class);

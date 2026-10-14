@@ -1874,6 +1874,7 @@
         "name": "main",
         "obj": 0,
         "params": [],
+        "pkgpath": "main",
         "sig": 1
       }
     }

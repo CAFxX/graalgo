@@ -7002,6 +7002,7 @@
         "name": "main",
         "obj": 1,
         "params": [],
+        "pkgpath": "main",
         "sig": 109
       }
     },
@@ -7273,6 +7274,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -10493,6 +10495,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -11422,6 +11425,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -11715,6 +11719,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -12386,6 +12391,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -12493,6 +12499,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -12631,6 +12638,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -12769,6 +12777,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -12922,6 +12931,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -13075,6 +13085,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -13228,6 +13239,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -13496,6 +13508,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -13706,6 +13719,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -14832,6 +14846,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -15192,6 +15207,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -15437,6 +15453,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -16719,6 +16736,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -17654,6 +17672,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -18887,6 +18906,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -19797,6 +19817,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -24828,6 +24849,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -25028,6 +25050,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -25198,6 +25221,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -25368,6 +25392,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -25538,6 +25563,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -25939,6 +25965,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -26219,6 +26246,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -26404,6 +26432,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -26646,6 +26675,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -26755,6 +26785,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -27896,6 +27927,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -28302,6 +28334,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -44577,6 +44610,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -44789,6 +44823,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -45824,6 +45859,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -46714,6 +46750,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -47987,6 +48024,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -48301,6 +48339,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -48422,6 +48461,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -48588,6 +48628,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -48709,6 +48750,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -48830,6 +48872,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -48951,6 +48994,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -49072,6 +49116,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -49193,6 +49238,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -49314,6 +49360,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -49435,6 +49482,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -49556,6 +49604,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -49677,6 +49726,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -49769,6 +49819,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -49861,6 +49912,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -49997,6 +50049,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -50118,6 +50171,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -50258,6 +50312,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -50398,6 +50453,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -50683,6 +50739,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -54061,6 +54118,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -54451,6 +54509,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -54901,6 +54960,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -55341,6 +55401,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -56480,6 +56541,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -57239,6 +57301,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -58468,6 +58531,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -58602,6 +58666,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -58736,6 +58801,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -58857,6 +58923,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -58993,6 +59060,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "results": [
           {
             "kind": "param",
@@ -59114,6 +59182,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "sig": 219
       }
     },
@@ -59233,6 +59302,7 @@
             }
           }
         ],
+        "pkgpath": "time",
         "sig": 221
       }
     }

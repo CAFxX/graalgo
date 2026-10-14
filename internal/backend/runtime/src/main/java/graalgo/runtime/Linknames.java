@@ -76,18 +76,34 @@ public final class Linknames {
     /**
      * Dispatches a linkname call. Unknown symbols and arity mismatches
      * fail fast — a linked call must never silently do the wrong thing.
+     *
+     * <p>Resolution order (fix-linkname): a Java intrinsic registered
+     * under the symbol wins; otherwise a Go function bound under the
+     * symbol's qualified name ({@code package.name}) is invoked through
+     * the {@link GoCalls} protocol. The second arm is gc's cross-package
+     * Go→Go linkname (e.g. package b's
+     * {@code //go:linkname f a.f} stub resolving to package a's
+     * {@code func f}); linkname stubs themselves are never bound (see
+     * {@code bindGo}), so a symbol with no provider fails fast here
+     * instead of recursing into its own stub (gc reports an undefined-
+     * symbol link error for the same program).
      */
     public static Object dispatch(String symbol, Object[] args) {
         Registration r = TARGETS.get(symbol);
-        if (r == null) {
-            throw new FrontendException(
-                    "linkname: no intrinsic registered for symbol \"" + symbol + "\"");
+        if (r != null) {
+            if (args.length != r.arity()) {
+                throw new FrontendException("linkname: symbol \"" + symbol + "\" takes "
+                        + r.arity() + " arguments, got " + args.length);
+            }
+            return r.target().invoke(args);
         }
-        if (args.length != r.arity()) {
-            throw new FrontendException("linkname: symbol \"" + symbol + "\" takes "
-                    + r.arity() + " arguments, got " + args.length);
+        GoFunc fn = GO_FUNCS.get(symbol);
+        if (fn != null) {
+            return GoCalls.invoke(fn, args);
         }
-        return r.target().invoke(args);
+        throw new FrontendException(
+                "linkname: no intrinsic registered and no Go function bound for symbol \""
+                        + symbol + "\"");
     }
 
     /** Binds a compiled Go function under its qualified Go name (launcher). */
