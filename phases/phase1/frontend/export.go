@@ -2645,6 +2645,15 @@ func ExportFile(path string) (string, error) {
 	if err := e.recomputeMethodTables(); err != nil {
 		return "", err
 	}
+	// BUG-MODPROBE-010: register pair types for user-defined multi-result
+	// functions BEFORE package-level var initializers are exported.
+	// Initializers like `var x = Must(Parse(...))` hoist the inner
+	// multi-result call via classifyMultiResultCall, which consults
+	// userMRFuncs — previously populated only inside exportFuncDecl,
+	// which runs after exportPackageVars, so the call failed fast.
+	if err := e.registerUserMRPairs(funcs); err != nil {
+		return "", err
+	}
 	// M7: package-level vars — dependency-order initialization. This runs
 	// after instantiation enumeration so initializers can call
 	// package-level functions (funcByObj is populated) and generic
@@ -2857,6 +2866,12 @@ type ginit struct {
 	init *Node
 	expr ast.Expr
 	pos  *Pos
+	// BUG-MODPROBE-010: temp globals hoisted from multi-result calls in
+	// argument position within this initializer's expression
+	// (var x = f(g())). Emitted immediately before this entry, in order;
+	// the temps are uniquely named and unobservable elsewhere, so they
+	// need no dependency analysis.
+	pre []ginit
 }
 
 // varDepAnalyzer finds the package-level variables an initializer
@@ -3015,6 +3030,9 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 		for i, n := range vs.Names {
 			var initNode *Node
 			var initExpr ast.Expr
+			// BUG-MODPROBE-010: temp globals hoisted while exporting this
+			// name's initializer (drained from e.mrHoistPre below).
+			var hoistPre []ginit
 			// P3-M5 (WS E, ADR-0005 D1): package-level `var t time.Timer`
 			// / `var t time.Ticker` (with or without init) is not in M5
 			// scope (mirrors the local-var path).
@@ -3025,18 +3043,26 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 			}
 			if i < len(vs.Values) {
 				initExpr = vs.Values[i]
+				preBase := len(e.mrHoistPre)
 				x, err := e.exportExpr(initExpr)
 				if err != nil {
 					return nil, err
 				}
 				// BUG-MODPROBE-010: multi-result calls in argument position
-				// at package level (var x = f(g())) cannot use the
-				// statement-level hoisting (no exportStmt context for
-				// package inits). Fail fast rather than emitting wrong code.
-				if len(e.mrHoistPre) > 0 {
-					e.mrHoistPre = nil
-					return nil, scopeErrorf("multi-result call in argument position at package level is not supported in frontend/v1 scope (WS D)")
+				// at package level (var x = f(g())) hoist the inner call to
+				// a synthesized package-level temp global. The
+				// statement-level flush (exportStmt) has no package-init
+				// equivalent, so hoisted temps are drained here and emitted
+				// immediately before this variable's initializer (Go
+				// evaluation order within one initializer is preserved).
+				for _, pn := range e.mrHoistPre[preBase:] {
+					pg, perr := packageHoistTemp(pn)
+					if perr != nil {
+						return nil, perr
+					}
+					hoistPre = append(hoistPre, pg)
 				}
+				e.mrHoistPre = e.mrHoistPre[:preBase]
 				initNode = x
 			} else {
 				// P3-M2b (ADR-0002 D3): package-level `var m sync.Mutex`
@@ -3060,7 +3086,7 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 				// Blank: no variable, but the initializer is evaluated
 				// for side effects (Go spec, Package initialization).
 				if initNode != nil {
-					inits = append(inits, ginit{oid: -1, init: initNode, expr: initExpr, pos: specPos})
+					inits = append(inits, ginit{oid: -1, init: initNode, expr: initExpr, pos: specPos, pre: hoistPre})
 				}
 				continue
 			}
@@ -3072,7 +3098,7 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 			if !ok {
 				return nil, fmt.Errorf("gofrontend: package var %q missing from object table", n.Name)
 			}
-			inits = append(inits, ginit{oid: oid, init: initNode, expr: initExpr, pos: specPos})
+			inits = append(inits, ginit{oid: oid, init: initNode, expr: initExpr, pos: specPos, pre: hoistPre})
 		}
 	}
 
@@ -3092,6 +3118,13 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 
 	out := make([]GlobalEnt, 0, len(ordered))
 	for _, g := range ordered {
+		// BUG-MODPROBE-010: hoisted temps evaluate immediately before
+		// their consuming initializer (Go evaluation order within one
+		// initializer); the temps are uniquely named and unobservable
+		// elsewhere, so they ride along instead of being sorted.
+		for _, p := range g.pre {
+			out = append(out, GlobalEnt{Obj: p.oid, Init: p.init, Pos: p.pos})
+		}
 		out = append(out, GlobalEnt{Obj: g.oid, Init: g.init, Pos: g.pos})
 	}
 	// Go spec (Package initialization): after the package's variables
@@ -5827,18 +5860,20 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		// Only transform user-defined functions (not synthetic — those
 		// use the table-driven mechanism with __-helpers).
 		if fi.synthPkg == nil {
-			pairType, fieldNames, serr := e.synthesizeUserPairType(fi)
-			if serr != nil {
-				return nil, serr
+			// BUG-MODPROBE-010: the pair type is normally pre-registered
+			// by registerUserMRPairs (before package var initializers are
+			// exported); registerUserMRFunc reuses that entry and only
+			// synthesizes when exportFuncDecl runs outside that flow.
+			var rerr error
+			mrInfo, rerr = e.registerUserMRFunc(fi)
+			if rerr != nil {
+				return nil, rerr
 			}
-			mrInfo = &userMRInfo{
-				pairType:   pairType,
-				pairFields: fieldNames,
-				origSig:    fi.sig,
+			if mrInfo == nil {
+				return nil, fmt.Errorf("gofrontend: no pair registration for multi-result func %s (exporter bug)", fi.obj.Name())
 			}
-			e.userMRFuncs[fi.obj] = mrInfo
 			// New signature: same params, single pair result.
-			pairVar := types.NewParam(token.NoPos, e.pkg, "", pairType)
+			pairVar := types.NewParam(token.NoPos, e.pkg, "", mrInfo.pairType)
 			sigResults = types.NewTuple(pairVar)
 			// Export a single result var for the pair type.
 			pairResult, err := e.exportParamVar(fd.Type, pairVar)
