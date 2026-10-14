@@ -206,7 +206,7 @@ documents its reconstruction.
 - [DONE-GATES.md](../phase2/DONE-GATES.md) — sign-off-time annotation + F-1 red-state note (F-1, F-3)
 - [PLAN.md](PLAN.md) — status, [OPEN]→[RESOLVED] ×4, P3-M9 actual scope (F-5, F-6, F-7)
 - [CHECKPOINT.md](CHECKPOINT.md) — P3-M5 review-claim corrections, M9 + M10 entries appended (F-4, F-9)
-- [SPEC.md](../../../../SPEC.md) §2.8 — coupled-package count re-measured (F-8)
+- [SPEC.md](../../SPEC.md) §2.8 — coupled-package count re-measured (F-8)
 - [CLOSEOUT.md](CLOSEOUT.md) — this document (new)
 
 **Verification:** no code touched (`git status` shows only the files

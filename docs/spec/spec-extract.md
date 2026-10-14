@@ -1,7 +1,7 @@
 # Phase 1 — Normative SPEC extract
 
-**Sources:** [SPEC.md](../../SPEC.md) (1242 lines, ACCEPTED 2026-10-03; 70 requirements locked)
-and [PHASES.md](../../PHASES.md) §3 (lines 62–77).
+**Sources:** [SPEC.md](../arch/SPEC.md) (1242 lines, ACCEPTED 2026-10-03; 70 requirements locked)
+and [PHASES.md](../arch/PHASES.md) §3 (lines 62–77).
 **Extracted:** 2026-10-03. **Scope of this file:** Phase-1-relevant normative content ONLY.
 Concurrency/scheduler internals (§3.5 except defer/panic/Goexit on the main goroutine),
 stdlib adaptation, and AOT/JIT mode implementation (§3.9, §3.11) are excluded except where
