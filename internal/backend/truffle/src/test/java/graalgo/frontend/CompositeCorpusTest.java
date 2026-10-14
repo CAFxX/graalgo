@@ -25,7 +25,7 @@ public final class CompositeCorpusTest {
         long n;
         try (java.util.stream.Stream<java.nio.file.Path> s =
                 java.nio.file.Files.list(java.nio.file.Path.of(
-                        System.getProperty("graalgo.phase1.dir", "."),
+                        System.getProperty("graalgo.repo.dir", "."),
                         "corpus", "composite"))) {
             n = s.map(p -> p.getFileName().toString())
                     .filter(x -> x.startsWith("co") && x.endsWith(".go"))
@@ -49,7 +49,7 @@ public final class CompositeCorpusTest {
 
     static void checkProgram(String base) throws Exception {
         java.nio.file.Path src = java.nio.file.Path.of(
-                System.getProperty("graalgo.phase1.dir", "."), "corpus", "composite",
+                System.getProperty("graalgo.repo.dir", "."), "corpus", "composite",
                 base + ".go");
         java.util.List<String> vars = ControlFlowCorpusTest.observeVars(src);
         long[] expected = ControlFlowCorpusTest.gcOracle(src, vars);

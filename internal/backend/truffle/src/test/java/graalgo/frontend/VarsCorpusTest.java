@@ -24,12 +24,12 @@ import java.util.stream.Stream;
 // behavior).
 public final class VarsCorpusTest {
 
-    private static Path phase1Dir() {
-        return Path.of(System.getProperty("graalgo.phase1.dir", "."));
+    private static Path repoDir() {
+        return Path.of(System.getProperty("graalgo.repo.dir", "."));
     }
 
     private static Path corpusDir() {
-        return phase1Dir().resolve("corpus").resolve("vars");
+        return repoDir().resolve("test").resolve("corpus").resolve("phase1").resolve("vars");
     }
 
     private static Path prog(String base) {

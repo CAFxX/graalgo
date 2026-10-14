@@ -37,12 +37,12 @@ import java.util.stream.Stream;
 // vs stock gc on the generics corpus).
 public final class GenericsCorpusTest {
 
-    private static Path phase1Dir() {
-        return Path.of(System.getProperty("graalgo.phase1.dir", "."));
+    private static Path repoDir() {
+        return Path.of(System.getProperty("graalgo.repo.dir", "."));
     }
 
     private static Path corpusDir() {
-        return phase1Dir().resolve("corpus").resolve("generics");
+        return repoDir().resolve("test").resolve("corpus").resolve("phase1").resolve("generics");
     }
 
     private static List<String> programs() throws Exception {

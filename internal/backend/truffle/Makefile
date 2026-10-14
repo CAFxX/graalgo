@@ -84,7 +84,7 @@ JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 # BRIDGE (test lane): the corpus differential tests locate the corpus via
 # -Dgraalgo.phase1.dir (default: the old phase-1 working directory).
-P1_DIR_PROP := -Dgraalgo.phase1.dir="$(CURDIR)/../../../phases/phase1"
+P1_DIR_PROP := -Dgraalgo.repo.dir="$(CURDIR)/../../.."
 # -Xss32m (M5 stance): guest-language recursion burns host stack — the
 # panic corpus's 10000-deep unwind (pn12) needs ~13-16m (~1.3-1.6KB per
 # nested call through Truffle's exception profiling); 32m is ~2x headroom.

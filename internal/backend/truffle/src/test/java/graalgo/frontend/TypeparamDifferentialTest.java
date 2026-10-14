@@ -70,66 +70,54 @@ public final class TypeparamDifferentialTest {
     /** Expected version of the exclusion list (bumped on material changes). */
     private static final String EXPECTED_EXCLUSIONS_VERSION = "4";
 
-    private static Path phase1Dir() {
-        return resolvePhase1Dir(
-                System.getProperty("graalgo.phase1.dir"),
+    private static Path repoDir() {
+        return resolveRepoDir(
+                System.getProperty("graalgo.repo.dir"),
                 Path.of(System.getProperty("user.dir")));
     }
 
     /**
-     * Resolves the phases/phase1 directory robustly. The old code stripped
-     * two levels off the raw property-or-cwd with no validation, so any
-     * nonstandard working directory (e.g. phases/phase1/frontend) silently
-     * produced a wrong repo root and a confusing "No such file or
-     * directory" from the diffharness build. This version validates every
-     * candidate against the real layout and fails fast with a clear message.
+     * Resolves the repo root robustly by looking for the test/differential
+     * directory marker.
      */
-    static Path resolvePhase1Dir(String prop, Path cwd) {
+    static Path resolveRepoDir(String prop, Path cwd) {
         if (prop != null && !prop.isBlank()) {
             Path p = Path.of(prop);
             if (!p.isAbsolute()) {
                 p = cwd.resolve(p);
             }
             p = p.toAbsolutePath().normalize();
-            if (!isPhase1Dir(p)) {
+            if (!isRepoDir(p)) {
                 throw new IllegalStateException(
-                        "graalgo.phase1.dir=" + prop + " does not resolve to a phases/phase1 "
-                                + "directory (resolved: " + p + ")");
+                        "graalgo.repo.dir=" + prop + " does not resolve to the repo root "
+                                + "(resolved: " + p + ")");
             }
             return p;
         }
         Path base = cwd.toAbsolutePath().normalize();
         for (Path c = base; c != null; c = c.getParent()) {
-            if (isPhase1Dir(c)) {
+            if (isRepoDir(c)) {
                 return c;
-            }
-            Path cand = c.resolve("phases").resolve("phase1");
-            if (isPhase1Dir(cand)) {
-                return cand;
             }
         }
         throw new IllegalStateException(
-                "cannot locate phases/phase1 from working directory " + base
-                        + "; set -Dgraalgo.phase1.dir=<dir>");
+                "cannot locate repo root from working directory " + base
+                        + "; set -Dgraalgo.repo.dir=<dir>");
     }
 
-    /** True when p is a real phases/phase1 checkout (layout markers). */
-    private static boolean isPhase1Dir(Path p) {
-        Path name = p.getFileName();
-        Path parent = p.getParent();
-        return name != null && name.toString().equals("phase1")
-                && parent != null && parent.getFileName().toString().equals("phases")
-                && Files.isDirectory(p.resolve("src"))
-                && Files.isDirectory(p.resolve("frontend"));
+    /** True when p is the repo root (layout markers). */
+    private static boolean isRepoDir(Path p) {
+        return Files.isDirectory(p.resolve("test").resolve("differential"))
+                && Files.isDirectory(p.resolve("internal").resolve("backend"));
     }
 
     private static Path repoRoot() {
-        Path root = phase1Dir().getParent().getParent();
+        Path root = repoDir();
         Path dh = root.resolve("test").resolve("differential");
         if (!Files.isDirectory(dh)) {
             throw new IllegalStateException(
                     "diffharness directory missing at " + dh
-                            + " (phase1Dir=" + phase1Dir() + "); repo layout assumption broken");
+                            + " (repoDir=" + repoDir() + "); repo layout assumption broken");
         }
         return root;
     }
@@ -341,7 +329,7 @@ public final class TypeparamDifferentialTest {
         ProcessBuilder pb = new ProcessBuilder(cmd);
         pb.environment().put("GOTOOLCHAIN", "local");
         pb.environment().put("DH_GO", ToolPaths.stockGo().getParent().getParent().toString());
-        pb.environment().put("PHASE1_DIR", phase1Dir().toAbsolutePath().toString());
+        pb.environment().put("REPO_DIR", repoDir().toAbsolutePath().toString());
         pb.redirectErrorStream(true);
         Process p = pb.start();
         // Stream the adapter's progress to the test log.
@@ -368,8 +356,7 @@ public final class TypeparamDifferentialTest {
         Json.Object summary = report.object("summary", "report");
         long diverged = summary.longInt("diverged", "report.summary");
         if (diverged > 0 || p.exitValue() != 0) {
-            Path dst = phase1Dir().resolve("hidden_files")
-                    .resolve("m6_typeparam_divergences.json");
+            Path dst = repoDir().resolve(".out").resolve("typeparam-divergences.json");
             Files.createDirectories(dst.getParent());
             Files.copy(reportOut, dst, StandardCopyOption.REPLACE_EXISTING);
             Json.Array comps = report.array("comparisons", "report");

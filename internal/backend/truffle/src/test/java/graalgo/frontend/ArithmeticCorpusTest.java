@@ -40,12 +40,12 @@ import java.util.stream.Stream;
 // gc across all int/uint/float widths, conversions, and comparisons).
 public final class ArithmeticCorpusTest {
 
-    private static Path phase1Dir() {
-        return Path.of(System.getProperty("graalgo.phase1.dir", "."));
+    private static Path repoDir() {
+        return Path.of(System.getProperty("graalgo.repo.dir", "."));
     }
 
     private static Path corpusDir() {
-        return phase1Dir().resolve("corpus").resolve("arithmetic");
+        return repoDir().resolve("test").resolve("corpus").resolve("phase1").resolve("arithmetic");
     }
 
     private static List<String> programs() throws Exception {

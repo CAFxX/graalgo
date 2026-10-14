@@ -23,12 +23,12 @@ import java.util.stream.Stream;
 // observable behavior on the builtins corpus).
 public final class BuiltinsCorpusTest {
 
-    private static Path phase1Dir() {
-        return Path.of(System.getProperty("graalgo.phase1.dir", "."));
+    private static Path repoDir() {
+        return Path.of(System.getProperty("graalgo.repo.dir", "."));
     }
 
     private static Path corpusDir() {
-        return phase1Dir().resolve("corpus").resolve("builtins");
+        return repoDir().resolve("test").resolve("corpus").resolve("phase1").resolve("builtins");
     }
 
     private static Path prog(String base) {

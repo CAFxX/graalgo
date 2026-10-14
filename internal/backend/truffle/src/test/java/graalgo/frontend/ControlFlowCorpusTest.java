@@ -35,12 +35,12 @@ import java.util.stream.Stream;
 // break/continue/goto/labels — execute with gc-identical observable behavior).
 public final class ControlFlowCorpusTest {
 
-    private static Path phase1Dir() {
-        return Path.of(System.getProperty("graalgo.phase1.dir", "."));
+    private static Path repoDir() {
+        return Path.of(System.getProperty("graalgo.repo.dir", "."));
     }
 
     private static Path corpusDir() {
-        return phase1Dir().resolve("corpus").resolve("controlflow");
+        return repoDir().resolve("test").resolve("corpus").resolve("phase1").resolve("controlflow");
     }
 
     /** Guards against accidental corpus shrinkage. */
