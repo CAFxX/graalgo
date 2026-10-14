@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 )
 
 // P3-M5 (WS E, ADR-0005 Appendix M): multi-result call-site desugar.
@@ -2848,6 +2849,99 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 		args = append(args, sel)
 	}
 	return args, preStmts, nil
+}
+
+// registerUserMRPairs pre-registers pair types for every user-defined
+// multi-result function in funcs (BUG-MODPROBE-010). It runs before
+// package-level variable initializers are exported: initializers like
+// `var x = Must(Parse(...))` hoist the inner multi-result call via
+// classifyMultiResultCall, which consults userMRFuncs — previously
+// populated only inside exportFuncDecl, which runs after exportPackageVars,
+// so the call failed fast with "multi-valued call result is not supported".
+// Registration is idempotent: exportFuncDecl reuses the pre-registered
+// entry for the same *types.Func.
+func (e *exporter) registerUserMRPairs(funcs []*funcDeclInfo) error {
+	for _, fi := range funcs {
+		if _, err := e.registerUserMRFunc(fi); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// registerUserMRFunc synthesizes the pair type for one user-defined
+// multi-result function and records it in e.userMRFuncs. It is the single
+// decision point for "does this func get a userMRFuncs entry", shared by
+// registerUserMRPairs (pre-pass) and exportFuncDecl, so the two can never
+// disagree. Returns (nil, nil) when fi must not be registered (synthetic
+// package func, generic template, at most one result, bodyless linkname
+// stub, or WS G disk-package multi-result stub — all cases exportFuncDecl
+// skips or rejects before reaching registration).
+func (e *exporter) registerUserMRFunc(fi *funcDeclInfo) (*userMRInfo, error) {
+	if fi == nil || fi.synthPkg != nil || fi.isTemplate {
+		return nil, nil
+	}
+	if fi.sig == nil || fi.sig.Results().Len() <= 1 {
+		return nil, nil
+	}
+	if fi.fd != nil && fi.fd.Body == nil {
+		// Bodyless (//go:linkname): exportFuncDecl routes these to
+		// exportLinknameDecl before reaching registration.
+		return nil, nil
+	}
+	if fi.obj != nil && fi.obj.Pkg() != nil {
+		// WS G: disk-package multi-result stubs are skipped by
+		// exportFuncDecl (the desugar rewrites all calls to the
+		// __-helper); keep the pre-pass consistent so call sites still
+		// classify against the disk table, not a user pair.
+		name := fi.obj.Name()
+		if !strings.HasPrefix(name, "__") {
+			recvType := ""
+			if fi.recv != nil {
+				rt := fi.recv.Type()
+				if pt, ok := rt.(*types.Pointer); ok {
+					rt = pt.Elem()
+				}
+				if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+					recvType = nt.Obj().Name()
+				}
+			}
+			if lookupDiskMR(fi.obj.Pkg().Path(), name, recvType) != nil {
+				return nil, nil
+			}
+		}
+	}
+	if mrInfo, ok := e.userMRFuncs[fi.obj]; ok {
+		return mrInfo, nil
+	}
+	pairType, fieldNames, err := e.synthesizeUserPairType(fi)
+	if err != nil {
+		return nil, err
+	}
+	mrInfo := &userMRInfo{
+		pairType:   pairType,
+		pairFields: fieldNames,
+		origSig:    fi.sig,
+	}
+	e.userMRFuncs[fi.obj] = mrInfo
+	return mrInfo, nil
+}
+
+// packageHoistTemp converts one mrHoistPre vardecl node (emitted by
+// hoistMRCallArg and the other hoisting intrinsics) into a package-level
+// temp global initializer (BUG-MODPROBE-010). The temp's object id was
+// registered by defVar at hoist time, so emitting it as a GlobalEnt reuses
+// the exact backend path of a user-declared package var.
+func packageHoistTemp(pn *Node) (ginit, error) {
+	if pn.Kind != "vardecl" {
+		return ginit{}, fmt.Errorf("gofrontend: mrHoistPre node kind %q is not vardecl (exporter bug)", pn.Kind)
+	}
+	objs, _ := pn.Fields["objs"].([]int)
+	vals, _ := pn.Fields["values"].([]*Node)
+	if len(objs) != 1 || len(vals) != 1 || vals[0] == nil {
+		return ginit{}, fmt.Errorf("gofrontend: mrHoistPre vardecl has %d objs/%d values, want exactly 1 each (exporter bug)", len(objs), len(vals))
+	}
+	return ginit{oid: objs[0], init: vals[0], pos: pn.Pos}, nil
 }
 
 // exportBareMultiResultCall desugars a concrete multi-result call in
