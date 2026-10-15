@@ -48,10 +48,13 @@ import graalgo.values.GoString;
 
 /**
  * Host-side implementation of the {@code graalgo.os.*} linkname
- * intrinsics (P3-M8, wave 2; os.md §2). One class, no real syscalls, no
- * JNI/JNA: everything is built on host JVM APIs ({@code java.nio.file},
+ * intrinsics (P3-M8, wave 2; os.md §2). One class, no JNI/JNA: everything
+ * is built on host JVM APIs ({@code java.nio.file},
  * {@code java.nio.channels}, {@code ProcessHandle},
- * {@code com.sun.security.auth.module.UnixSystem}).
+ * {@code com.sun.security.auth.module.UnixSystem}), plus exactly one
+ * Panama FFM downcall (libc {@code umask(2)}, in {@link Umask}) to read
+ * the process umask once at init so create-path modes apply gc's
+ * {@code perm &^ umask} (P1-R5-5).
  *
  * <p>Calling conventions (os.md §2.3; the synthetic os package's header
  * documents the Go side):
@@ -277,6 +280,10 @@ public final class GoOs {
     }
 
     static {
+        // P1-R5-5: read the process umask once (Panama FFM) while still
+        // single-threaded, before any guest code runs, so open-create
+        // and mkdir apply gc's perm&^umask.
+        Umask.preload();
         resetState(new String[0]);
     }
 
@@ -524,6 +531,16 @@ public final class GoOs {
         return s;
     }
 
+    /**
+     * Permission set for a <em>creation</em> call (open-create, mkdir):
+     * gc applies {@code perm &^ umask}; the cached process mask comes
+     * from {@link Umask} (P1-R5-5). Creation only — {@link #chmod} keeps
+     * the exact bits, exactly like gc.
+     */
+    private static Set<PosixFilePermission> createPerms(int perm) {
+        return toPerms((perm & 0777) & ~Umask.MASK);
+    }
+
     private static ChannelHandle channelHandle(long h) {
         Handle handle = HANDLES.get(h);
         return handle instanceof ChannelHandle ch ? ch : null;
@@ -637,11 +654,11 @@ public final class GoOs {
             }
             FileChannel ch = FileChannel.open(p, opts);
             if (create) {
-                // D1: apply the requested 0777 bits exactly (the JVM
-                // cannot read umask, so gc's perm&~umask is approximated
-                // by the exact perm — documented in the synthetic os).
+                // P1-R5-5: gc's open(2) create path applies perm&^umask
+                // (Umask caches the process mask at init; 0 on non-POSIX
+                // = exact bits, where umask is meaningless).
                 try {
-                    Files.setPosixFilePermissions(p, toPerms((int) (perm & 0777)));
+                    Files.setPosixFilePermissions(p, createPerms((int) perm));
                 } catch (UnsupportedOperationException uoe) {
                     // Non-POSIX filesystem: keep the created defaults.
                 }
@@ -1168,7 +1185,9 @@ public final class GoOs {
         try {
             Files.createDirectory(p);
             try {
-                Files.setPosixFilePermissions(p, toPerms(num32(permArg) & 0777));
+                // P1-R5-5: gc's mkdir(2) applies perm&^umask (see open's
+                // create path above).
+                Files.setPosixFilePermissions(p, createPerms(num32(permArg)));
             } catch (UnsupportedOperationException uoe) {
                 // Non-POSIX filesystem: keep the created defaults.
             }

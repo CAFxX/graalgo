@@ -62,9 +62,10 @@
 // all hold. os imports synthetic syscall for error identity only (R3).
 //
 // Divergences from gc, all documented:
-//   - D1: umask is unreadable from the JVM: Mkdir/OpenFile-create apply
-//     the requested 0777 bits exactly, ignoring umask (re-test: native
-//     umask read, Phase 4/Panama).
+//   - D1 (resolved 2026-10-15, P1-R5-5): the process umask is read once
+//     from libc via Panama FFM at JVM init (GoOs.Umask) and the Java side
+//     applies perm &^ umask on the Mkdir/OpenFile-create paths, exactly
+//     like gc.
 //   - D2: File.Stat on an open handle stats the stored open path (the
 //     JVM has no fstat-on-channel); pipe/stdio modes are synthesized
 //     from the handle kind (S_IFIFO/S_IFCHR, size 0).
@@ -1685,8 +1686,8 @@ const syntheticOsPart6 = `
 // ---------------------------------------------------------------------------
 
 // Mkdir creates a new directory with the specified name and permission
-// bits (before umask — D1: the JVM cannot read umask, so the requested
-// 0777 bits are applied exactly).
+// bits (before umask — the Java side applies perm &^ umask exactly like
+// gc; see Umask in internal/backend/interop/src/main/java/graalgo/p3os).
 func Mkdir(name string, perm FileMode) error {
 	if name == "" {
 		return &PathError{Op: "mkdir", Path: name, Err: syscall.ENOENT}
