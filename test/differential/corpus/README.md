@@ -65,6 +65,9 @@ Coverage map:
 | 43  | range_over_func      | range-over-func iterators (1.23+)                |
 | 44  | copy_builtin         | copy incl. overlapping                           |
 | 45  | shadowing            | variable shadowing                               |
+| 46  | [sync_pool](46_sync_pool/) | sync.Pool Put/Get (pre-existing pinSlow panic) |
+| 47  | [reflect_funcof_structof](47_reflect_funcof_structof/) | reflect FuncOf, StructOf              |
+| 48  | [atomic_pointer_make](48_atomic_pointer_make/) | atomic.Pointer[T] in make(): cell init, Load/Store/Swap/CAS (NEW-P0-3) |
 
 Excluded by design (documented, not silent): map iteration order printed
 raw, wall-clock timings, `unsafe`, cgo, network/file-system effects,

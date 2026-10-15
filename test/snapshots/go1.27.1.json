@@ -450,6 +450,17 @@
       "stdin": "",
       "stdout": "named new-elem: 7\nkind=func str=\"func(int, string) float64\"\nvariadic: false in: 2 out: 1\nf2: func(...int) variadic: true in0: []int\ncanonical: true ptr: *func(int, string) float64\npanic: interface conversion: reflect.Type is nil, not *reflect.rtype\npanic: reflect.FuncOf: last arg of variadic func must be slice\npanic: reflect.FuncOf: last arg of variadic func must be slice\nkind=struct str=\"struct { A int; b string; C float64 \\\"json:\\\\\\\"c\\\\\\\"\\\" }\"\nfield b: true b string main 8\nnumfield: 3 field1off: 8 field2off: 24 size: 32 align: 8\npanic: reflect.StructOf: field 0 has no name\npanic: reflect.StructOf: duplicate field A\npanic: reflect.StructOf: field \"a\" is unexported but missing PkgPath\npanic: reflect.StructOf: field \"a\" is unexported but missing PkgPath\nkind=struct str=\"struct { main.E }\"\npromoted Hello: true Hello true\ncall: hello 42\nptr-embed Pong: true Pong\ncall3: 10\nptr-embed value method: true\nmakefunc: 5\nsetfield: 9\ntag: c\n",
       "timedOut": false
+    },
+    {
+      "args": [],
+      "buildLog": "",
+      "buildOk": true,
+      "exitCode": 0,
+      "name": "48_atomic_pointer_make",
+      "stderr": "",
+      "stdin": "",
+      "stdout": "true\n11\n11 22\ntrue 11\nfalse\ndistinct: true\n",
+      "timedOut": false
     }
   ],
   "recordedAt": "2026-10-14T13:37:58Z",
