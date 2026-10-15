@@ -1,7 +1,10 @@
 package graalgo.runtime;
 
 import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Deque;
+import java.util.List;
 
 /**
  * A goroutine's chain of deferred calls (M5, WS F; SPEC §3.5).
@@ -17,9 +20,17 @@ import java.util.Deque;
  */
 public final class DeferChain {
     private final Deque<DeferredCall> chain = new ArrayDeque<>();
+    /** Monotonic push-order counter (PKG-039: merges stashed range defers). */
+    private long nextSeqno = 1;
 
     /** Pushes a deferred call (frozen). Evaluated arguments are captured. */
     public void push(DeferredCall call) {
+        call.setSeqno(nextSeqno++);
+        pushEntry(call);
+    }
+
+    /** Pushes without re-stamping the push order (merge-back only). */
+    private void pushEntry(DeferredCall call) {
         chain.push(call);
     }
 
@@ -145,5 +156,60 @@ public final class DeferChain {
                 // Recovered: the goexit continues (remaining defers run).
             }
         }
+    }
+
+    /**
+     * PKG-039: pops and returns the entries above {@code base} in push
+     * order (oldest first). Used by the range-over-func yield to extract
+     * the loop body's deferred calls (gc's {@code deferrangefunc}).
+     */
+    public List<DeferredCall> takeAbove(int base) {
+        List<DeferredCall> out = new ArrayList<>();
+        while (chain.size() > base) {
+            out.add(chain.pop());
+        }
+        Collections.reverse(out);
+        return out;
+    }
+
+    /**
+     * PKG-039: merges range-over-func stashed deferred calls back into
+     * the chain for the owning function's unwind (gc's
+     * {@code deferrangefunc}: body defers belong to the enclosing
+     * function, not to the sequence function). The chain entries above
+     * {@code mark} and the stashed calls (both in push order) are merged
+     * by push order ({@link DeferredCall#seqno}) and pushed back, so the
+     * subsequent {@code unwind*(mark)} drains everything in true LIFO
+     * order. The stash is cleared.
+     *
+     * @param mark  the unwinding function's watermark.
+     * @param stash the enclosing frame's stashed range-body defers in
+     *              push order; empty or null is a no-op.
+     */
+    public void adoptRangeDefers(int mark, List<DeferredCall> stash) {
+        if (stash == null || stash.isEmpty()) {
+            return;
+        }
+        List<DeferredCall> above = takeAbove(mark);
+        List<DeferredCall> merged = new ArrayList<>(above.size() + stash.size());
+        int i = 0;
+        int j = 0;
+        while (i < above.size() && j < stash.size()) {
+            if (above.get(i).seqno() < stash.get(j).seqno()) {
+                merged.add(above.get(i++));
+            } else {
+                merged.add(stash.get(j++));
+            }
+        }
+        while (i < above.size()) {
+            merged.add(above.get(i++));
+        }
+        while (j < stash.size()) {
+            merged.add(stash.get(j++));
+        }
+        for (DeferredCall dc : merged) {
+            pushEntry(dc);
+        }
+        stash.clear();
     }
 }

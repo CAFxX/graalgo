@@ -119,6 +119,18 @@ public final class GoErrors {
     }
 
     /**
+     * PKG-039: gc's range-over-func iterator-misuse panics
+     * ({@code runtime.panicrangestate}): {@code runtime.errorString}
+     * values, whose {@code Error()} prepends {@code "runtime error: "},
+     * e.g. {@code "runtime error: range function continued iteration
+     * after whole loop exit"}.
+     */
+    public static GoErrorValue rangeState(String msg) {
+        return new GoErrorValue("runtime error: " + msg, false,
+                "runtime.errorString", quote(msg), msg);
+    }
+
+    /**
      * bug-019: gc's "comparing uncomparable type" runtime panic, thrown when
      * two interface values with the identical uncomparable dynamic type are
      * compared with == (runtime/alg.go: efaceeq/ifaceeq). The type name is
