@@ -104,18 +104,75 @@ func TestSyncScopeErrors(t *testing.T) {
 	}
 }
 
-// TestSyncCompositeScopeErrors: sync primitives in factory-zero positions
-// (struct fields, array/slice elements, map keys/elements) fail fast.
-func TestSyncCompositeScopeErrors(t *testing.T) {
-	cases := map[string]string{
-		"type T struct { mu sync.Mutex }":   "not in M2 scope",
-		"var s []sync.Mutex":                "not in M2 scope",
-		"var a [2]sync.WaitGroup":           "not in M2 scope",
-		"var mm map[string]sync.Mutex":      "not in M2 scope",
-		"var mk map[sync.Mutex]int":         "not in M2 scope",
-		"var st struct { mu sync.RWMutex }": "not in M2 scope",
+// TestSyncCompositeSupported: sync primitives in struct-field positions
+// (and [N]sync.Pool array slots) export successfully. The M2 fail-fast for
+// these positions was deliberately removed (933fd93 driver-harden-gocmp,
+// extended by d174a1e5 fix-linkname): the backend manufactures a fresh
+// GoMutex/GoRWMutex/GoWaitGroup/GoOnce/GoPool per field/slot
+// (NodeFactory.newSyncPrimitive via the type table), so the zero value
+// is a usable primitive — verified end-to-end through the product
+// launcher, byte-identical to gc 1.27.1: struct-held mutex under
+// contention (10 goroutines x 100 increments == 1000), independent
+// instances per struct value, struct-field RWMutex/WaitGroup/Once, and
+// per-slot-distinct [2]sync.Pool.
+func TestSyncCompositeSupported(t *testing.T) {
+	supported := []struct {
+		name string
+		decl string
+		use  string
+		prim string // named type the wire type table must carry
+	}{
+		{"struct field mutex",
+			"type T struct { mu sync.Mutex }",
+			"t := T{}\n\tt.mu.Lock()\n\tt.mu.Unlock()",
+			`"name": "sync.Mutex"`},
+		{"struct field rwmutex",
+			"var st struct { mu sync.RWMutex }",
+			"st.mu.RLock()\n\tst.mu.RUnlock()",
+			`"name": "sync.RWMutex"`},
+		{"struct field waitgroup",
+			"var st struct { wg sync.WaitGroup }",
+			"st.wg.Add(1)\n\tst.wg.Done()\n\tst.wg.Wait()",
+			`"name": "sync.WaitGroup"`},
+		{"struct field once",
+			"var st struct { o sync.Once }",
+			"st.o.Do(func() {})",
+			`"name": "sync.Once"`},
+		{"array of pools",
+			"var pools [2]sync.Pool",
+			"pools[0].Put(1)\n\t_ = pools[0].Get()",
+			`"name": "sync.Pool"`},
 	}
-	for decl, want := range cases {
+	for _, c := range supported {
+		t.Run(c.name, func(t *testing.T) {
+			src := "package main\n\nimport \"sync\"\n\n" + c.decl +
+				"\n\nfunc main() {\n\t" + c.use + "\n}\n"
+			out, err := ExportFile(writeSyncProg(t, src))
+			if err != nil {
+				t.Fatalf("%s: export failed, want success: %v", c.decl, err)
+			}
+			// The backend manufactures the primitive from the type
+			// table: the named sync type must be present in the wire
+			// doc, otherwise the field would lower to an empty struct.
+			if !strings.Contains(out, c.prim) {
+				t.Errorf("%s: wire doc missing type-table entry %s", c.decl, c.prim)
+			}
+		})
+	}
+	// Positions that still fail fast: slice elements and map keys/elements
+	// zero through the factory to an unusable empty struct (export.go:
+	// syntheticCompositeScopeError). Non-Pool array elements stay scoped
+	// too — a conservative frontend gate even though the backend could
+	// manufacture per-slot zeros there. [N]sync.Pool is the deliberate
+	// exception: the factory manufactures a distinct GoPool per slot
+	// (NodeFactory.zeroArrayFor), which regexp's matchPool needs.
+	stillScoped := map[string]string{
+		"var s []sync.Mutex":           "not in M2 scope",
+		"var a [2]sync.WaitGroup":      "not in M2 scope",
+		"var mm map[string]sync.Mutex": "not in M2 scope",
+		"var mk map[sync.Mutex]int":    "not in M2 scope",
+	}
+	for decl, want := range stillScoped {
 		src := "package main\n\nimport \"sync\"\n\n" + decl + "\n\nfunc main() {}\n"
 		_, err := ExportFile(writeSyncProg(t, src))
 		if err == nil {
