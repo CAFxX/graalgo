@@ -55,6 +55,48 @@ public final class SchedulerCoreTest {
         }
     }
 
+    // ---------- numGoroutines (PKG-023: runtime.NumGoroutine) ----------
+
+    /**
+     * PKG-023: {@code numGoroutines()} counts exactly the goroutines that
+     * currently exist. N goroutines are spawned and parked
+     * (scheduler-aware park — blocked goroutines must count, like gc);
+     * the count is asserted while they are blocked, then all are woken
+     * and the count is asserted again at quiescence.
+     *
+     * <p>Red-green: fails if the counter misses spawns (blocked-phase
+     * assert), misses completions (quiescence assert), or excludes
+     * parked goroutines.
+     */
+    public void testNumGoroutines() throws Exception {
+        SchedulerCore sched = new SchedulerCore(16, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            int n = 8;
+            CountDownLatch parked = new CountDownLatch(n);
+            List<GoroutineHandle> handles = new ArrayList<>();
+            for (int i = 0; i < n; i++) {
+                handles.add(sched.spawn(() -> {
+                    parked.countDown();
+                    // Scheduler-aware park: releases the in-flight slot
+                    // (runner rule: never JVM-block inside a goroutine).
+                    sched.parkCurrent(null);
+                }));
+            }
+            assertTrue(parked.await(10, TimeUnit.SECONDS), "all goroutines parked");
+            assertEquals(n, sched.numGoroutines(),
+                    "N blocked goroutines counted while parked");
+            for (GoroutineHandle h : handles) {
+                sched.unpark(h);
+            }
+            sched.awaitQuiescence();
+            assertEquals(0, sched.numGoroutines(), "quiescence: none live");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
     /**
      * Quiescence at scale: 10k goroutines all run to completion.
      * P2-M1 acceptance: quiescence probe green at 10k goroutines.

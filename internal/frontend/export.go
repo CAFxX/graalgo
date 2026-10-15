@@ -219,7 +219,8 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // implements each member as an intrinsic wire node (see exportCall and
 // graalgo.rtstack):
 //   - Goexit (M5, WS F), the build constants GOARCH/GOOS and NumCPU
-//     (P4 driver-harden), GOMAXPROCS (P4 driver-harden),
+//     (P4 driver-harden), GOMAXPROCS (P4 driver-harden), NumGoroutine
+//     (PKG-023: real implementation over the scheduler's live count),
 //   - the P2-M4 GC-interop surface (SetFinalizer/KeepAlive/GC, ADR-0002 D4),
 //   - the stack-inspection family: Callers, CallersFrames, Caller,
 //     FuncForPC, and the Frames/Frame/Func types with their methods.
@@ -283,6 +284,15 @@ func syntheticRuntimePackage() *types.Package {
 	// value; the backend tracks it as a no-op cell (no real scheduler
 	// tuning on the JVM) but the call must type-check and round-trip.
 	addFunc("GOMAXPROCS", tuple(param("n", intTyp)), tuple(param("", intTyp)))
+	// PKG-023: NumGoroutine (gc 1.27.1, src/runtime/debug.go:179:
+	// "NumGoroutine returns the number of goroutines that currently
+	// exist"). Implemented for real: the backend's "runtimenumgoroutine"
+	// wire node reads the scheduler's live-goroutine counter (see
+	// graalgo.sched.SchedulerCore.numGoroutines), which counts
+	// blocked/parked goroutines exactly like gc. Upstream test files
+	// (e.g. iter/pull_test.go) use it for goroutine-leak detection, so
+	// it is genuine stdlib surface, not harness-only.
+	addFunc("NumGoroutine", nil, tuple(param("", intTyp)))
 	// P2-M4 (GC interop, ADR-0002 D4): the Go-observable GC surface.
 	// Signatures match gc's runtime package exactly; the Java side is
 	// graalgo.runtime.GcInterop (Phase-1 stub, Phase-2 real).
@@ -7988,6 +7998,20 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 						return nil, err
 					}
 					return e.node("runtimegomaxprocs", c, map[string]any{"x": arg, "type": typ}), nil
+				}
+				// PKG-023: runtime.NumGoroutine(). Emitted as an additive
+				// "runtimenumgoroutine" wire node; the backend returns the
+				// scheduler's live-goroutine count (gc semantics: running,
+				// runnable, and blocked/parked goroutines all count).
+				if sel.Sel.Name == "NumGoroutine" {
+					if len(c.Args) != 0 {
+						return nil, fmt.Errorf("gofrontend: runtime.NumGoroutine takes no arguments")
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimenumgoroutine", c, map[string]any{"type": typ}), nil
 				}
 				// MemStats family (unblocks runtime/debug, hence Badger via
 				// testify): runtime.ReadMemStats, GOROOT, Version, Stack.
