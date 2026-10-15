@@ -60,11 +60,9 @@ OUT_SMOKE := out/smoke-classes
 
 # gofrontend: the Go frontend service binary. Built from the vendored go/*
 # tree via frontend/build.sh (overlay build; see frontend/VENDORING.md).
-# BRIDGE (frontend lane): the Go frontend sources still live at
-# phases/phase1/frontend until the frontend code-move lane relocates them to
-# internal/frontend/; repoint GO_FRONTEND_DIR then. The launcher locates the
-# binary via GRAALGO_GOFRONTEND (exported by internal/backend/graalgo-run),
-# else by walking up from its own classes dir to internal/frontend/.
+# The launcher locates the binary via GRAALGO_GOFRONTEND (exported by
+# internal/backend/graalgo-run), else by walking up from its own classes
+# dir to internal/frontend/.
 GO_FRONTEND_DIR ?= ../../../internal/frontend
 GOFRONTEND := $(GO_FRONTEND_DIR)/gofrontend
 # P3-M7: the gofrontend binary embeds every non-test frontend/*.go source
@@ -76,14 +74,13 @@ $(GOFRONTEND): $(GOFRONTEND_SRC)
 	cd $(GO_FRONTEND_DIR) && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh build
 
 JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
-# BRIDGE (frontend lane): subprocess tests and `run` resolve gofrontend via
-# ToolPaths' walk-up, which no longer reaches phases/phase1/frontend from
-# the new class locations. Export the current build location until the
-# frontend lane moves it to internal/frontend/ (the walk-up then finds it
-# unaided; a stale env var is skipped via the isExecutable check).
+# gofrontend location: the frontend already lives at internal/frontend/, so
+# ToolPaths' walk-up finds it unaided; the explicit export is a harmless
+# redundancy (a stale env var is skipped via the isExecutable check).
+# (Retired 2026-10-15: was a "# BRIDGE (frontend lane)" comment awaiting the
+# code-move that already landed.)
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
-# BRIDGE (test lane): the corpus differential tests locate the corpus via
-# -Dgraalgo.phase1.dir (default: the old phase-1 working directory).
+# Corpus differential tests locate the corpus via -Dgraalgo.repo.dir.
 P1_DIR_PROP := -Dgraalgo.repo.dir="$(CURDIR)/../../.."
 # -Xss32m (M5 stance): guest-language recursion burns host stack — the
 # panic corpus's 10000-deep unwind (pn12) needs ~13-16m (~1.3-1.6KB per
@@ -151,8 +148,8 @@ check:
 	@echo "== gofrontend check (gofmt/vet/tests/vendoring diff gate) =="
 	cd $(GO_FRONTEND_DIR) && PATH="$(GO_BIN_DIR):$$PATH" ./build.sh check
 
-# BRIDGE (test lane): the corpus still lives at phases/phase1/corpus until
-# the test code-move lane relocates it to test/corpus/; repoint P1_CORPUS_DIR.
+# (Retired 2026-10-15: was a "# BRIDGE (test lane)" comment; the corpus
+# already lives at test/corpus/phase1.)
 P1_CORPUS_DIR ?= ../../../test/corpus/phase1
 smoke:
 	$(MAKE) run ARGS="$(P1_CORPUS_DIR)/hello.go"
