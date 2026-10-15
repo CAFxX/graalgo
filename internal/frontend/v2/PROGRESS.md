@@ -15,6 +15,17 @@ for the design.
       paren, call, selector
 - [x] Driver CLI + hello-world smoke test (passes)
 - [x] End-to-end: hello-world Go → valid frontend/v1 JSON
+- [x] Mechanical AST-node coverage matrix (`emit/coverage_test.go`):
+      60 AST node types classified — 18 handled, 6 via go/types,
+      8 structural, 3 non-Node (documented), 25 loudly rejected
+- [x] Negative tests (`emit/negative_test.go`): 17 unhandled constructs
+      proven to fail loudly with "unsupported" (no silent drops)
+
+## Master merge log
+
+- 2026-10-15 21:10 CEST: merged `704932ce` (PKG-012 sync intrinsics,
+  PKG-011 cell identity, bug-038/041/042 fixes). Clean merge, no conflicts.
+  Standing order: merge master at least hourly.
 
 ## Next
 
