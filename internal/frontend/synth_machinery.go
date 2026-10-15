@@ -90,12 +90,12 @@ var syntheticSources = map[string]string{
 	// from. os imports io/fs, io, syscall, time, errors (all synthetic).
 	"os":    syntheticOsSource,
 	"io/fs": syntheticIoFsSource,
-	// P3-M8 (wave 2): synthetic reflect package (real-Go source in
-	// synth_reflect.go). The wire type table carries field offsets/tags,
-	// method tables, and signatures; the runtime GoRType table is built
-	// from it (phases/phase3 p3reflect). internal/reflectlite is a pure
+	// real-reflect (Phase 3): the synthetic reflect overlay is retired —
+	// the real reflect package compiles from GOROOT via the disk
+	// importer. "reflect" is deliberately absent from this map so
+	// resolveDiskPackageDir admits the real package (the guard there
+	// rejects synthetic-overlay paths). internal/reflectlite is a pure
 	// adapter; iter is the minimal generic sequence declarations.
-	"reflect":              syntheticReflectSource,
 	"internal/reflectlite": syntheticReflectliteSource,
 	"iter":                 syntheticIterSource,
 	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_structs.go,
