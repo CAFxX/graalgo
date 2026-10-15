@@ -402,6 +402,68 @@ func FileInfoToDirEntry(info FileInfo) DirEntry {
 	return dirInfo{fileInfo: info}
 }
 
+// FormatFileInfo returns a formatted version of info for human readability.
+// Implementations of FileInfo can call this from a String method.
+// Port of go1.27.1 io/fs/format.go (single-result, no generics —
+// frontend/v1 scope).
+func FormatFileInfo(info FileInfo) string {
+	name := info.Name()
+	b := make([]byte, 0, 40+len(name))
+	b = append(b, info.Mode().String()...)
+	b = append(b, ' ')
+
+	size := info.Size()
+	var usize uint64
+	if size >= 0 {
+		usize = uint64(size)
+	} else {
+		b = append(b, '-')
+		usize = uint64(-size)
+	}
+	var buf [20]byte
+	i := len(buf) - 1
+	for usize >= 10 {
+		q := usize / 10
+		buf[i] = byte('0' + usize - q*10)
+		i--
+		usize = q
+	}
+	buf[i] = byte('0' + usize)
+	b = append(b, buf[i:]...)
+	b = append(b, ' ')
+
+	b = append(b, info.ModTime().Format(time.DateTime)...)
+	b = append(b, ' ')
+
+	b = append(b, name...)
+	if info.IsDir() {
+		b = append(b, '/')
+	}
+
+	return string(b)
+}
+
+// FormatDirEntry returns a formatted version of dir for human readability.
+// Implementations of DirEntry can call this from a String method.
+// Port of go1.27.1 io/fs/format.go.
+func FormatDirEntry(dir DirEntry) string {
+	name := dir.Name()
+	b := make([]byte, 0, 5+len(name))
+
+	// The Type method does not return any permission bits,
+	// so strip them from the string.
+	mode := dir.Type().String()
+	mode = mode[:len(mode)-9]
+
+	b = append(b, mode...)
+	b = append(b, ' ')
+	b = append(b, name...)
+	if dir.IsDir() {
+		b = append(b, '/')
+	}
+	return string(b)
+}
+
 // ---------------------------------------------------------------------------
 // ReadFile.
 // ---------------------------------------------------------------------------
@@ -977,6 +1039,60 @@ func (f *subFS) Sub(dir string) (FS, error) {
 
 func __subFSSub(f *subFS, dir string) fsSubPair {
 	panic("fs.__subFSSub: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+}
+
+// ---------------------------------------------------------------------------
+// ReadLink / Lstat.
+// ---------------------------------------------------------------------------
+
+// ReadLinkFS is the interface implemented by a file system that supports
+// reading symbolic links (gc 1.27.1 io/fs/readlink.go, exact shape).
+type ReadLinkFS interface {
+	FS
+
+	// ReadLink returns the destination of the named symbolic link.
+	ReadLink(name string) (string, error)
+
+	// Lstat returns a FileInfo describing the named file. If the file is
+	// a symbolic link, the returned FileInfo describes the symbolic link.
+	Lstat(name string) (FileInfo, error)
+}
+
+// fsReadLinkPair is the Appendix-M single-result carrier for ReadLink.
+type fsReadLinkPair struct {
+	s   string
+	err error
+}
+
+// fsLstatPair is the Appendix-M single-result carrier for Lstat.
+type fsLstatPair struct {
+	fi  FileInfo
+	err error
+}
+
+// ReadLink returns the destination of the named symbolic link.
+// If fsys does not implement ReadLinkFS, ReadLink returns an error.
+// (Appendix M: 2-target call sites desugar to __fsReadLink; every other
+// position fails fast. Body never runs.)
+func ReadLink(fsys FS, name string) (string, error) {
+	panic("fs.ReadLink: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+}
+
+func __fsReadLink(fsys FS, name string) fsReadLinkPair {
+	panic("fs.__fsReadLink: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
+}
+
+// Lstat returns a FileInfo describing the named file. If the file is a
+// symbolic link, the returned FileInfo describes the symbolic link.
+// If fsys does not implement ReadLinkFS, Lstat is identical to Stat.
+// (Appendix M: 2-target call sites desugar to __fsLstat; every other
+// position fails fast. Body never runs.)
+func Lstat(fsys FS, name string) (FileInfo, error) {
+	panic("fs.Lstat: unreachable (Appendix-M desugar did not fire; re-test when WS D lands)")
+}
+
+func __fsLstat(fsys FS, name string) fsLstatPair {
+	panic("fs.__fsLstat: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 `
 
