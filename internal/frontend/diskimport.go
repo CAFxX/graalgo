@@ -360,10 +360,11 @@ func (e *exporter) importedPackage(p string) (*syntheticPackage, error) {
 // importPkgTree merges path and its transitive dependencies into the
 // export document, dependencies first (post-order: valid Go initialization
 // order), sorted for determinism. Synthetic paths reuse the existing
-// importSyntheticPackage; signature-only stub paths (runtime, fmt, sync,
-// sync/atomic, unsafe — no bodies to merge, their call sites are handled
+// importSyntheticPackage; signature-only stub paths (runtime, fmt,
+// unsafe — no bodies to merge, their call sites are handled
 // by existing wire logic) are walked with nothing to merge; anything else
-// resolves from disk. Idempotent via e.importedPkgTree (and
+// resolves from disk (sync and sync/atomic included, since 503608ea
+// retired their synthetic packages). Idempotent via e.importedPkgTree (and
 // e.importedSynthetic for overlap with the needX direct-import flow), so
 // sharing the tree with the synthetic flow is safe.
 func (e *exporter) importPkgTree(path string) error {
