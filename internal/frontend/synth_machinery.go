@@ -312,7 +312,7 @@ var syntheticSources = map[string]string{
 	"mime/quotedprintable": syntheticMimeQuotedprintableSource,
 	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest
 	// (real-Go sources in synth_net_http.go / synth_net_http_httptest.go,
-// net/http and net/http/httptest are REAL (P4 bridge-removal): the
+	// net/http and net/http/httptest are REAL (P4 bridge-removal): the
 	// synthetic sources are retired. Real net/http compiles from GOROOT
 	// via the general disk overlay.
 }

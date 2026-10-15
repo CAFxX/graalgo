@@ -1166,11 +1166,11 @@ func ExportFile(path string) (string, error) {
 //
 // General mechanism (hunt-special-cases): instead of a per-package
 // allow-list, admit:
-// 1. The 5 packages with dedicated synthetic constructors (not in
-//    syntheticSources): runtime, fmt, sync, sync/atomic, unsafe.
-// 2. Any package with a synthetic source (syntheticSources map) —
-//    including future additions, no allow-list update needed.
-// 3. Disk-importable third-party packages.
+//  1. The 5 packages with dedicated synthetic constructors (not in
+//     syntheticSources): runtime, fmt, sync, sync/atomic, unsafe.
+//  2. Any package with a synthetic source (syntheticSources map) —
+//     including future additions, no allow-list update needed.
+//  3. Disk-importable third-party packages.
 //
 // Internal packages (internal/*, crypto/internal/*) have synthetic
 // sources but are NOT user-importable; they are excluded here and in
@@ -1198,12 +1198,13 @@ func needsOverlayImporter(p string) bool {
 //
 // General mechanism (hunt-special-cases): instead of a per-package
 // allow-list, admit:
-// 1. The 5 packages with dedicated synthetic constructors: runtime, fmt,
-//    sync, sync/atomic, unsafe.
-// 2. Any package with a synthetic source (syntheticSources map) except
-//    internal packages (internal/*, crypto/internal/*) which stay
-//    synthetic-only.
-// 3. Disk-importable third-party packages.
+//  1. The 5 packages with dedicated synthetic constructors: runtime, fmt,
+//     sync, sync/atomic, unsafe.
+//  2. Any package with a synthetic source (syntheticSources map) except
+//     internal packages (internal/*, crypto/internal/*) which stay
+//     synthetic-only.
+//  3. Disk-importable third-party packages.
+//
 // Every other import is a scope error.
 func checkImportAllowed(imp *ast.ImportSpec) error {
 	path := strings.Trim(imp.Path.Value, "\"`")
