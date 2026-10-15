@@ -1000,8 +1000,12 @@ public final class ReflectTypes {
             }
             GoFunc func = functions.get(objId);
             if (func == null) {
-                throw new FrontendException(path + ": reflect: method \"" + name
-                        + "\" refers to unknown function object id " + objId);
+                // Disk-MR stubs are skipped by the frontend; the method is
+                // not available via reflect. Skip instead of failing.
+                System.err.println("warning: " + path + ": reflect: method \"" + name
+                        + "\" refers to unknown function object id " + objId
+                        + " (skipped; likely a disk-MR stub)");
+                continue;
             }
             Integer sigId = funcdeclSig.get(objId);
             if (sigId == null) {
