@@ -79,7 +79,7 @@ public final class IfaceDispatchBuilder implements NodeFactory.ExprBuilder {
         }
         List<String> ifaceMethodNames = ifaceMethodNames(ctx, ifaceId, path);
         args = adaptArgsForInterfaceParams(args, signatureParamTypeIds(ctx, f, path), ctx, path);
-        return IfaceDispatchNodeGen.create(recv, args, method, ifaceMethodNames, ifaceId,
+        return new IfaceDispatchNode(recv, args, method, ifaceMethodNames, ifaceId,
                 resultKind(ctx, f, path), ctx.funcObjId);
     }
 

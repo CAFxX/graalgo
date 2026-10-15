@@ -1,12 +1,10 @@
 package graalgo.iface;
 
 import java.util.List;
+import java.util.Map;
 
 import com.oracle.truffle.api.frame.FrameSlotKind;
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.dsl.Cached;
-import com.oracle.truffle.dsl.Fallback;
-import com.oracle.truffle.dsl.Specialization;
 
 import graalgo.frontend.Boxing;
 import graalgo.frontend.FrontendException;
@@ -34,12 +32,11 @@ import graalgo.values.InterfaceDispatchProbes;
  *
  * <p>The itab is built once per (descriptor name, interface id) as an
  * immutable {@link IfaceItab} (D6) and cached in {@link IfaceMethodTable}.
- * Dispatch uses Truffle DSL polymorphic inline caching on the receiver's
- * <em>descriptor identity</em> (limit 3, SPEC §3.3); the 4th distinct
- * descriptor falls back to the megamorphic {@code @Fallback} path which
- * resolves the itab without caching (still correct — itabs are immutable
- * per D6). Megamorphic transitions are counted in a volatile long for
- * observability. Every dispatch records
+ * Dispatch polymorphic-caches on <em>itab identity</em>, limit 3; the 4th
+ * distinct itab flips the site megamorphic with a {@link java.util.HashMap}
+ * fallback keyed on itab identity (still correct, no deopt — itabs are
+ * immutable per D6). Megamorphic transitions are counted in a volatile
+ * long for observability. Every dispatch records
  * {@code InterfaceDispatchProbes.record(itab)} (the M9 re-measurement
  * hook).
  *
@@ -55,7 +52,10 @@ import graalgo.values.InterfaceDispatchProbes;
  * <p>verifies: GG-0014
  * <p>verifies: GG-0017 (iface slice)
  */
-public abstract class IfaceDispatchNode extends GoExprNode {
+public final class IfaceDispatchNode extends GoExprNode {
+
+    /** PIC limit (SPEC §3.3). */
+    private static final int PIC_LIMIT = 3;
 
     @Child
     private GoExprNode recv;
@@ -71,6 +71,14 @@ public abstract class IfaceDispatchNode extends GoExprNode {
      */
     private final int enclosingFuncObj;
 
+    /** One PIC slot: an itab identity and the resolved method target. Immutable. */
+    private record PicSlot(IfaceItab itab, IfaceMethodTarget target) {}
+
+    private volatile PicSlot pic0;
+    private volatile PicSlot pic1;
+    private volatile PicSlot pic2;
+    /** Megamorphic fallback (identity-keyed: IfaceItab has no equals). Written under lock. */
+    private volatile Map<IfaceItab, IfaceMethodTarget> megamorphic;
     /**
      * Process-wide count of megamorphic transitions (observability).
      * Atomic: the increment races across dispatch threads (R2 P2-2) —
@@ -100,77 +108,29 @@ public abstract class IfaceDispatchNode extends GoExprNode {
         megamorphicTransitions.set(0);
     }
 
-    /** The receiver's dynamic-type descriptor (the polymorphism key). */
-    static Object descriptorOf(GoInterface gi) {
-        return gi.descriptor();
-    }
-
-    /** Resolves (and probes) the itab for a receiver descriptor. */
-    IfaceItab itabForDescriptor(Object descriptor) {
-        String descName = ((GoTypeDescriptor) descriptor).name();
+    private Object dispatch(VirtualFrame frame) {
+        GoInterface gi = requireReceiver(recv.executeObject(frame));
+        Object data = gi.data(); // null for typed-nil: passed through as params[0]
+        String descName = ((GoTypeDescriptor) gi.descriptor()).name();
         IfaceItab itab = IfaceMethodTable.itabFor(descName, ifaceId, ifaceMethodNames);
         probe(itab);
-        return itab;
-    }
-
-    /** Resolves the method target within an itab (fail-fast on internal error). */
-    IfaceMethodTarget targetForItab(IfaceItab itab) {
-        IfaceMethodTarget t = itab.methods().get(methodName);
-        if (t == null) {
-            // Unreachable: itabFor already failed fast on a missing method.
-            throw new FrontendException("interface dispatch: method \"" + methodName
-                    + "\" missing from itab for \"" + itab.descriptorName()
-                    + "\" (internal error)");
-        }
+        IfaceMethodTarget target = lookupPic(itab);
         // R2 P2-7: an unsupported promotion (pointer receiver via a
         // value-embedded field — wire "index" null) fails fast here, only
         // when the method is actually dispatched. The itab build carries
         // the unsupported target precisely so programs dispatching only
         // supported methods through the interface keep working.
-        if (!t.supported()) {
+        if (!target.supported()) {
             throw new FrontendException("interface dispatch: method \"" + methodName
                     + "\" promoted via value-embedded field is not supported (P3-M3 scope)");
         }
-        return t;
-    }
-
-    /**
-     * Polymorphic dispatch entry point (DSL-generated).
-     *
-     * <p>Specializes on the receiver's descriptor identity (limit 3);
-     * each specialization caches the resolved itab and method target.
-     * The fallback handles the megamorphic case without caching.
-     */
-    abstract Object executeDispatch(VirtualFrame frame, GoInterface gi);
-
-    @Specialization(limit = "3", guards = "descriptorOf(gi) == cachedDescriptor")
-    Object doCached(VirtualFrame frame, GoInterface gi,
-            @Cached("descriptorOf(gi)") Object cachedDescriptor,
-            @Cached("itabForDescriptor(cachedDescriptor)") IfaceItab cachedItab,
-            @Cached("targetForItab(cachedItab)") IfaceMethodTarget cachedTarget) {
-        return invokeWithTarget(frame, gi, cachedTarget);
-    }
-
-    @Fallback
-    Object doMegamorphic(VirtualFrame frame, GoInterface gi) {
-        megamorphicTransitions.incrementAndGet();
-        IfaceItab itab = itabForDescriptor(descriptorOf(gi));
-        return invokeWithTarget(frame, gi, targetForItab(itab));
-    }
-
-    /**
-     * Invokes the resolved target (shared by all specializations).
-     *
-     * <p>P3-M9 (x509/TLS lane): method promoted via an embedded interface
-     * field (e.g. (*crypto/tls.listener).Addr from embedded
-     * net.Listener). The entry carries no GoFunc: read the embedding
-     * path to the interface field value and dispatch the method on it,
-     * exactly like the direct l.Listener.Addr() call. Embedding can
-     * chain through several interfaces, so loop until a concrete
-     * target is reached.
-     */
-    private Object invokeWithTarget(VirtualFrame frame, GoInterface gi, IfaceMethodTarget target) {
-        Object data = gi.data(); // null for typed-nil: passed through as params[0]
+        // P3-M9 (x509/TLS lane): method promoted via an embedded interface
+        // field (e.g. (*crypto/tls.listener).Addr from embedded
+        // net.Listener). The entry carries no GoFunc: read the embedding
+        // path to the interface field value and dispatch the method on it,
+        // exactly like the direct l.Listener.Addr() call. Embedding can
+        // chain through several interfaces, so loop until a concrete
+        // target is reached.
         GoInterface curGi = gi;
         while (target.isEmbeddedRedispatch()) {
             Object fieldVal = graalgo.frontend.SelectorNode.readFieldPath(data, target.recvPath(),
@@ -250,6 +210,11 @@ public abstract class IfaceDispatchNode extends GoExprNode {
     }
 
     /**
+     * The receiver must be a non-nil interface value. Nil (Java null from
+     * a nil interface zero value, or a descriptor-less
+     * {@link GoInterface}) panics exactly like calling a nil func value.
+     */
+    /**
      * True when the target function's first parameter (the receiver slot)
      * is interface-kinded — the signature of a desugared helper installed
      * in a method table (its "receiver" is a plain interface parameter).
@@ -265,11 +230,6 @@ public abstract class IfaceDispatchNode extends GoExprNode {
         return false;
     }
 
-    /**
-     * The receiver must be a non-nil interface value. Nil (Java null from
-     * a nil interface zero value, or a descriptor-less
-     * {@link GoInterface}) panics exactly like calling a nil func value.
-     */
     private GoInterface requireReceiver(Object r) {
         if (r instanceof GoInterface gi) {
             if (!gi.isNil()) {
@@ -284,6 +244,68 @@ public abstract class IfaceDispatchNode extends GoExprNode {
         }
         throw new FrontendException("ifacemethod: receiver evaluated to "
                 + r.getClass().getName() + ", not a GoInterface (internal error)");
+    }
+
+    private IfaceMethodTarget lookupPic(IfaceItab itab) {
+        PicSlot s0 = pic0;
+        if (s0 != null && s0.itab == itab) {
+            return s0.target;
+        }
+        PicSlot s1 = pic1;
+        if (s1 != null && s1.itab == itab) {
+            return s1.target;
+        }
+        PicSlot s2 = pic2;
+        if (s2 != null && s2.itab == itab) {
+            return s2.target;
+        }
+        return lookupPicMiss(itab);
+    }
+
+    private synchronized IfaceMethodTarget lookupPicMiss(IfaceItab itab) {
+        // Recheck under the lock: another thread may have filled the slot.
+        PicSlot s0 = pic0;
+        if (s0 != null && s0.itab == itab) {
+            return s0.target;
+        }
+        PicSlot s1 = pic1;
+        if (s1 != null && s1.itab == itab) {
+            return s1.target;
+        }
+        PicSlot s2 = pic2;
+        if (s2 != null && s2.itab == itab) {
+            return s2.target;
+        }
+        IfaceMethodTarget t = itab.methods().get(methodName);
+        if (t == null) {
+            // Unreachable: itabFor already failed fast on a missing method.
+            throw new FrontendException("interface dispatch: method \"" + methodName
+                    + "\" missing from itab for \"" + itab.descriptorName() + "\" (internal error)");
+        }
+        if (pic0 == null) {
+            pic0 = new PicSlot(itab, t);
+            return t;
+        }
+        if (pic1 == null) {
+            pic1 = new PicSlot(itab, t);
+            return t;
+        }
+        if (pic2 == null) {
+            pic2 = new PicSlot(itab, t);
+            return t;
+        }
+        Map<IfaceItab, IfaceMethodTarget> mm = megamorphic;
+        if (mm == null) {
+            mm = new java.util.HashMap<>();
+            megamorphic = mm;
+            megamorphicTransitions.incrementAndGet();
+        }
+        IfaceMethodTarget mt = mm.get(itab);
+        if (mt == null) {
+            mm.put(itab, t);
+            return t;
+        }
+        return mt;
     }
 
     /** M9 polymorphism probe site, created lazily on first probed dispatch. */
@@ -343,12 +365,12 @@ public abstract class IfaceDispatchNode extends GoExprNode {
 
     @Override
     public Object executeObject(VirtualFrame frame) {
-        return IfaceDispatchNodeGen.executeDispatch(this, frame, requireReceiver(recv.executeObject(frame)));
+        return dispatch(frame);
     }
 
     @Override
     public long executeLong(VirtualFrame frame) {
-        Object r = executeObject(frame);
+        Object r = dispatch(frame);
         // P3-M9: use Boxing.toLong for correct zero-extension of unsigned
         // kinds (uint32(0xFFFFFFFF) -> 4294967295L, not -1L). A bare
         // ((Number) r).longValue() sign-extends Integer-held uint32 values.
@@ -357,24 +379,26 @@ public abstract class IfaceDispatchNode extends GoExprNode {
 
     @Override
     public int executeInt(VirtualFrame frame) {
-        return ((Number) executeObject(frame)).intValue();
+        return ((Number) dispatch(frame)).intValue();
     }
 
     @Override
     public double executeDouble(VirtualFrame frame) {
-        Object r = executeObject(frame);
+        Object r = dispatch(frame);
         return r == null ? 0d : ((Number) r).doubleValue();
     }
 
     @Override
     public boolean executeBoolean(VirtualFrame frame) {
-        return (Boolean) executeObject(frame);
+        return (Boolean) dispatch(frame);
     }
 
     @Override
     public String toString() {
+        int pic = (pic0 != null ? 1 : 0) + (pic1 != null ? 1 : 0) + (pic2 != null ? 1 : 0);
         return "IfaceDispatchNode{" + methodName + ", iface=" + ifaceId
-                + ", dsl-pic-limit=3"
+                + ", pic=" + pic + "/" + PIC_LIMIT
+                + ", megamorphic=" + (megamorphic != null)
                 + ", megamorphicTransitions=" + megamorphicTransitions.get() + "}";
     }
 }
