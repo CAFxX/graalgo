@@ -1,1 +1,0 @@
-graalgo-run: fatal internal error in goroutine: graalgo.values.UnsafeHandles$UnsafeEscapeException: unsafe.Pointer → uintptr conversion traps (D5: unsafe.Pointer never escapes as an integer)

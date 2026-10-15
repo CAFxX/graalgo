@@ -1,6 +1,6 @@
 # wave-2 `unsafe` differential corpus (P3-M8)
 
-13 programs (8 differential, 3 trap pins, 2 scope-limited). Run with
+12 programs (9 differential, 2 trap pins, 2 scope-limited). Run with
 `./run_differential.sh` (thin wrapper over `../run_wave.sh unsafe`).
 
 Frontend design note: the synthetic `unsafe` package exposes go/types'
@@ -18,6 +18,12 @@ compile error, exactly like gc. No AST pre-pass; no size tables.
    const/array-length positions, same-package unexported fields.
 3. `02_pointer_roundtrip` — `*T→Pointer→*T`, interning `==` parity
    (`p1 == p2` for the same referent), nil round-trips.
+3b. [`03b_ptr2uintptr_identity`](03b_ptr2uintptr_identity.go) —
+   `unsafe.Pointer → uintptr` yields the handle as an integer identity
+   token (PKG-007): nil → 0, stability (same referent → same token),
+   distinctness, equality-as-identity, nil is the only zero token.
+   Prints only portable properties (gc addresses and graalgo handles
+   differ numerically).
 4. `04_slicedata_roundtrip` — SliceData→Slice aliasing (writes visible via
    the original), sub-slice views differ as pointers but re-intern stably,
    nil slice → nil pointer.
@@ -36,13 +42,16 @@ compile error, exactly like gc. No AST pre-pass; no size tables.
 
 ## Intentional-divergence pins (NOT differential — see below)
 
-8. `03a_add_trap` / `03b_ptr2uintptr_trap` / `03c_uintptr2ptr_trap` —
-   the three D5 traps, each with a `.panic` file pinning the exact first
-   stderr line (`UnsafeEscapeException`, exit 1). gc implements all three,
+8. [`03a_add_trap`](03a_add_trap.go) / [`03c_uintptr2ptr_trap`](03c_uintptr2ptr_trap.go) —
+   the two remaining D5 traps, each with a `.panic` file pinning the exact first
+   stderr line (`UnsafeEscapeException`, exit 1). gc implements both,
    so the gc leg exits 0: the exit code differs BY DESIGN. The `.panic`
    line and (empty) stdout are the assertions. Runner gap (see handoff):
    `run_wave.sh` compares exit codes unconditionally; these need a
    `.divergent` marker (skip exit comparison, still pin stdout+stderr).
+   (`03b` was the third trap pin until PKG-007: `unsafe.Pointer → uintptr`
+   now yields the handle as an integer identity token instead of trapping,
+   so it moved to the differential list above.)
 9. DIV-US-1 (`unsafe.String` copies): post-`String()` writes through the
    original pointer are invisible to the string on graalgo, visible under
    gc. Pinned by the Java unit checks (copy verified), not as a
