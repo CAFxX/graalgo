@@ -111,6 +111,11 @@ Compile the named packages. With no package arguments, builds the
 package in the current directory. Unlike go build, graalgo build
 validates the frontend translation; it does not produce a binary
 (the Truffle backend is JIT-compiled at run time).
+
+Flags:
+	-o file		output binary path (not yet supported)
+	-ldflags=flags	linker flags (not yet supported)
+	-tags=tags	build tags
 `)
 	case "test":
 		fmt.Printf(`usage: graalgo test [build/test flags] [packages]
