@@ -127,9 +127,19 @@ func compareSemver(a, b string) int {
 // GOPATH/src/<path>, then to the toolchain's GOROOT/src/<path> so plain
 // stdlib packages outside the synthetic overlay (e.g.
 // database/sql/driver) resolve through the same general mechanism.
-// Synthetic-overlay paths never reach here (the importer's cases claim
-// them first), so GOROOT can never shadow a synthetic package.
+// Synthetic-overlay paths never resolve from disk, wherever the call
+// comes from: the disk fallback exists for stdlib outside the overlay
+// and third-party modules. GOROOT must never shadow a synthetic package —
+// building e.g. the real GOROOT bytes as a disk package registers its
+// multi-result members in the global disk-MR table, which then shadows
+// the synthetic fail-fast/desugar contracts for every later export in
+// the process (TestSyntheticBytesCutFailsFast isolation). The importer's
+// cases claim synthetic paths first, but direct getDiskPackage callers
+// (multiResultHelperFunc) bypass the importer, so the guard lives here.
 func resolveDiskPackageDir(importPath string) (string, error) {
+	if _, ok := syntheticSources[importPath]; ok {
+		return "", fmt.Errorf("%w: %q (synthetic overlay)", errDiskNotFound, importPath)
+	}
 	diskMu.Lock()
 	if d, ok := diskDirCache[importPath]; ok {
 		diskMu.Unlock()
