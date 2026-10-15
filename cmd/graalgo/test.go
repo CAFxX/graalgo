@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // cmdTest implements `graalgo test [packages]`.
@@ -113,10 +114,16 @@ func newTestRunner(root string, verbose bool, runRe *regexp.Regexp) *testRunner 
 
 // runPackage discovers and runs the tests in one directory.
 // Returns false if any test failed.
+//
+// A single driver is synthesized per package (not per file) so the
+// output matches `go test`: per-test === RUN / --- PASS lines and one
+// PASS/FAIL summary, then the `ok`/`FAIL` package line with the import
+// path and timing.
 func (r *testRunner) runPackage(dir string) bool {
+	importPath := importPathForDir(dir)
 	testFiles, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
 	if err != nil || len(testFiles) == 0 {
-		fmt.Printf("?   %s [no test files]\n", dir)
+		fmt.Printf("?   \t%s\t[no test files]\n", importPath)
 		return true
 	}
 
@@ -144,18 +151,96 @@ func (r *testRunner) runPackage(dir string) bool {
 		}
 	}
 
-	ok := true
+	// Discover the selected tests of every file, applying the -run
+	// filter (regex, like `go test`).
+	var ftList []fileTests
 	for _, tf := range runnableTests {
-		if !r.runTestFile(dir, tf, srcFiles) {
-			ok = false
+		tests, err := discoverTests(tf)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", tf, err)
+			return false
+		}
+		var selected []string
+		for _, t := range tests {
+			if r.runRe == nil || r.runRe.MatchString(t) {
+				selected = append(selected, t)
+			}
+		}
+		if len(selected) > 0 {
+			ftList = append(ftList, fileTests{file: tf, tests: selected})
 		}
 	}
+
+	// The synthesized driver prints go-test-format output itself
+	// (=== RUN / --- PASS/FAIL lines, PASS/FAIL summary); a non-zero
+	// exit means the package failed.
+	t0 := time.Now()
+	ok := true
+	if len(ftList) > 0 {
+		driver, err := synthesizeTestDriver(dir, ftList, srcFiles, r.verbose)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
+			return false
+		}
+		defer os.Remove(driver)
+		if code := graalgoRun(r.root, []string{driver}); code != 0 {
+			ok = false
+		}
+	} else if r.verbose {
+		// `go test -v` with no tests selected prints a warning and
+		// a PASS summary before the ok line.
+		fmt.Println("testing: warning: no tests to run")
+		fmt.Println("PASS")
+	}
+	elapsed := time.Since(t0).Seconds()
+	okSuffix := ""
+	if len(ftList) == 0 {
+		okSuffix = " [no tests to run]"
+	}
 	if ok {
-		fmt.Printf("ok  %s\n", dir)
+		fmt.Printf("ok  \t%s\t%.3fs%s\n", importPath, elapsed, okSuffix)
 	} else {
-		fmt.Printf("FAIL %s\n", dir)
+		fmt.Printf("FAIL\t%s\t%.3fs\nFAIL\n", importPath, elapsed)
 	}
 	return ok
+}
+
+// importPathForDir resolves a directory to the import path `go test`
+// prints, using the enclosing go.mod module path.
+func importPathForDir(dir string) string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return dir
+	}
+	d := abs
+	for {
+		if modData, err := os.ReadFile(filepath.Join(d, "go.mod")); err == nil {
+			if module := parseModulePath(modData); module != "" {
+				rel, err := filepath.Rel(d, abs)
+				if err != nil || rel == "." {
+					return module
+				}
+				return module + "/" + filepath.ToSlash(rel)
+			}
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	return abs
+}
+
+// parseModulePath extracts the module path from go.mod data.
+func parseModulePath(modData []byte) string {
+	for _, line := range strings.Split(string(modData), "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "module ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		}
+	}
+	return ""
 }
 
 // buildableGoFiles returns the .go files in dir that satisfy the current
@@ -180,50 +265,4 @@ func buildableGoFiles(dir string) []string {
 		out = append(out, filepath.Join(dir, f))
 	}
 	return out
-}
-
-// runTestFile synthesizes a driver for one _test.go file and runs it.
-// Returns false if any test in the file failed.
-func (r *testRunner) runTestFile(dir, testFile string, srcFiles []string) bool {
-	tests, err := discoverTests(testFile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", testFile, err)
-		return false
-	}
-	if len(tests) == 0 {
-		return true
-	}
-
-	// Apply -run filter (regex, like `go test`).
-	var selected []string
-	for _, t := range tests {
-		if r.runRe == nil || r.runRe.MatchString(t) {
-			selected = append(selected, t)
-		}
-	}
-	if len(selected) == 0 {
-		return true
-	}
-
-	driver, err := synthesizeTestDriver(dir, testFile, srcFiles, selected)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "graalgo test: %s: %v\n", testFile, err)
-		return false
-	}
-	defer os.Remove(driver)
-
-	if r.verbose {
-		fmt.Printf("=== RUN %s\n", testFile)
-	}
-	code := graalgoRun(r.root, []string{driver})
-	if code != 0 {
-		fmt.Fprintf(os.Stderr, "--- FAIL: %s (driver exit %d)\n", testFile, code)
-		return false
-	}
-	if r.verbose {
-		for _, t := range selected {
-			fmt.Printf("--- PASS: %s\n", t)
-		}
-	}
-	return true
 }
