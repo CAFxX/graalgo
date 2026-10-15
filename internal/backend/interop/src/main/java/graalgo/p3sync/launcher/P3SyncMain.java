@@ -116,7 +116,7 @@ public final class P3SyncMain {
         int gmp = 0; // 0 = default (carriers)
         boolean check = false;
         boolean dumpPolymorphism = false;
-        String file = null;
+        java.util.List<String> files = new java.util.ArrayList<>();
         // P3-M8 (wave 2, R6): program argv. Everything after a bare
         // "--" is the Go program's argv (os.Args); the first element is
         // always the input-file path. Without "--", os.Args is just
@@ -125,8 +125,8 @@ public final class P3SyncMain {
         java.util.List<String> goArgs = new java.util.ArrayList<>();
         for (String a : args) {
             if (dashdash) {
-                if (file == null) {
-                    file = a;
+                if (files.isEmpty()) {
+                    files.add(a);
                 } else {
                     goArgs.add(a);
                 }
@@ -159,28 +159,29 @@ public final class P3SyncMain {
                     if (a.startsWith("-")) {
                         return usageError("unknown flag: " + a);
                     }
-                    if (file != null) {
-                        return usageError("too many input files");
-                    }
-                    file = a;
+                    files.add(a);
                 }
             }
         }
-        if (file == null) {
+        if (files.isEmpty()) {
             return usageError("no input file");
         }
         if (gmp == 0) {
             gmp = Runtime.getRuntime().availableProcessors();
         }
-        Path p = Paths.get(file);
-        if (!Files.isReadable(p)) {
-            System.err.println("graalgo-sync-run: cannot read input file: " + file);
-            return EXIT_INPUT_ERROR;
+        java.util.List<Path> paths = new java.util.ArrayList<>();
+        for (String f : files) {
+            Path p = Paths.get(f);
+            if (!Files.isReadable(p)) {
+                System.err.println("graalgo-sync-run: cannot read input file: " + f);
+                return EXIT_INPUT_ERROR;
+            }
+            paths.add(p);
         }
 
         final String json;
         try {
-            json = runGofrontend(p);
+            json = runGofrontend(paths);
         } catch (GofrontendException e) {
             // gofrontend's stderr is the deterministic build log the harness records.
             // M10 (self-attack F11): a gofrontend killed by a signal leaves an
@@ -198,17 +199,23 @@ public final class P3SyncMain {
             return EXIT_INPUT_ERROR;
         }
 
-        final String srcText;
-        try {
-            srcText = Files.readString(p, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            System.err.println("graalgo-sync-run: cannot read input file: " + file);
-            return EXIT_INPUT_ERROR;
+        // Build one Truffle Source per input file; the frontend's position
+        // "file" index selects among them (frontend/v1 wire format).
+        Source[] sources = new Source[paths.size()];
+        for (int i = 0; i < paths.size(); i++) {
+            final String srcText;
+            try {
+                srcText = Files.readString(paths.get(i), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                System.err.println("graalgo-sync-run: cannot read input file: " + files.get(i));
+                return EXIT_INPUT_ERROR;
+            }
+            sources[i] = Source.newBuilder("go", srcText,
+                    paths.get(i).getFileName().toString()).build();
         }
-        Source source = Source.newBuilder("go", srcText, p.getFileName().toString()).build();
         final NodeFactory.Program program;
         try {
-            NodeFactory factory = new NodeFactory(source);
+            NodeFactory factory = new NodeFactory(sources);
             // P3-M2b (WS D, ADR-0002): the sync wire kinds. Public
             // extension hook — no Phase-1 NodeFactory change.
             factory.registerExprKind("syncnew", (node, ctx) -> SyncNewNode.build(node, ctx, factory));
@@ -405,7 +412,7 @@ public final class P3SyncMain {
         // Go initialization runs — os.Args[i] must already be visible
         // to package-var initializers. os.Args[0] is the input-file path.
         String[] goArgv = new String[goArgs.size() + 1];
-        goArgv[0] = file;
+        goArgv[0] = files.get(0);
         for (int i = 0; i < goArgs.size(); i++) {
             goArgv[i + 1] = goArgs.get(i);
         }
@@ -531,7 +538,7 @@ public final class P3SyncMain {
      * Phase-2 {@code SchedMain.runGofrontend}; duplicated because that
      * method is private.)
      */
-    private static String runGofrontend(Path goFile) throws IOException, GofrontendException {
+    private static String runGofrontend(java.util.List<Path> goFiles) throws IOException, GofrontendException {
         // P3-M9: run gofrontend with stdout to a temp file, not a pipe.
         // Piping 200MB+ through Process.getInputStream() hangs (gofrontend
         // blocks on write while the reader blocks on read — pipe buffer
@@ -540,8 +547,12 @@ public final class P3SyncMain {
         Path tmpOut = Files.createTempFile("gofrontend-", ".json");
         Path tmpErr = Files.createTempFile("gofrontend-", ".err");
         try {
-            ProcessBuilder pb = new ProcessBuilder(
-                    graalgo.launcher.ToolPaths.gofrontend().toString(), goFile.toString());
+            java.util.List<String> cmd = new java.util.ArrayList<>();
+            cmd.add(graalgo.launcher.ToolPaths.gofrontend().toString());
+            for (Path p : goFiles) {
+                cmd.add(p.toString());
+            }
+            ProcessBuilder pb = new ProcessBuilder(cmd);
             // P2-M5: gofrontend is a gc-built Go binary; it would inherit
             // GODEBUG and print its own schedtrace/gctrace lines into the
             // build log (documented as deterministic), or fatal on knobs like
@@ -576,7 +587,7 @@ public final class P3SyncMain {
 
     private static void usage() {
         System.err.println(
-                "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] file.go [-- args...]");
+                "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] file.go [file.go...] [-- args...]");
         System.err.println(
                 "  --            program argv follow (os.Args[0] is always the input-file path)");
         System.err.println("  --gmp=N   in-flight cap (default: carriers); effective cap = min(gmp, carriers)");
