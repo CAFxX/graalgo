@@ -1008,31 +1008,10 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"golang.org/x/crypto/cryptobyte", "Bytes", "Builder", "__mrBuilder_Bytes", "", "__mrBuilder_BytesPair", []string{"v0", "v1"}},
 }
 
-// nistCurveFuncField describes one desugarable function field on the
-// synthetic crypto/ecdh nistCurve struct (P3-M9 WS D). The fields
-// (generate, newPrivateKey, newPublicKey, sharedSecret) are of function
-// type with 2 results. Calls like c.generate(r) are FieldVal selections
-// (not MethodVal), so they need a separate table and classifier arm.
-// The pairType is the struct used to pack the 2 results; pairFields are
-// the field names in result order.
-type nistCurveFuncField struct {
-	pkgPath    string   // synthetic package path ("crypto/ecdh")
-	structName string   // struct containing the field ("nistCurve")
-	fieldName  string   // function field name ("generate", etc.)
-	pairType   string   // pair struct type name
-	pairFields []string // field names in result order
-}
-
-// nistCurveFuncFields is the desugar table for the nistCurve function
-// fields. Each entry was verified against the synthetic source:
-// the field exists on nistCurve with a 2-result function type, and the
-// pair struct exists with the named fields.
-var nistCurveFuncFields = []nistCurveFuncField{
-	{"crypto/ecdh", "nistCurve", "generate", "__mrnistCurve_generatePair", []string{"v0", "v1"}},
-	{"crypto/ecdh", "nistCurve", "newPrivateKey", "__mrnistCurve_newPrivateKeyPair", []string{"v0", "v1"}},
-	{"crypto/ecdh", "nistCurve", "newPublicKey", "__mrnistCurve_newPublicKeyPair", []string{"v0", "v1"}},
-	{"crypto/ecdh", "nistCurve", "sharedSecret", "__mrnistCurve_sharedSecretPair", []string{"v0", "v1"}},
-}
+// (nistCurve func-field table removed: hunt-special-cases. The synthetic
+// crypto/ecdh nistCurve fields are pair-returning (1 result), so the
+// N>1 check never triggers for them. Non-synthetic nistCurve doesn't exist.
+// classifyGeneralFuncField handles all func-typed struct fields generally.)
 
 // osMultiResultFunc describes one desugarable P3-M8 (wave 2) multi-result
 // function: the synthetic os package's multi-result API (exact gc 1.27.1
@@ -1747,15 +1726,15 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			}
 		}
 	}
-	// P3-M9 (WS D): function field call (e.g., c.generate(r) where
-	// generate is a field of function type on nistCurve). The selection
-	// is FieldVal (not MethodVal), and the field type is *types.Signature
-	// with N>1 results. First try the nistCurve table (for pre-declared
-	// pair types), then the general fallback (synthesized pair types).
+	// P3-M9 (WS D): function field call (e.g., f.decode(rr) where decode
+	// is a field of function type). The selection is FieldVal (not
+	// MethodVal), and the field type is *types.Signature with N>1 results.
+	// Handled generally by classifyGeneralFuncField — no per-package
+	// tables (hunt-special-cases).
 	if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.FieldVal {
 		if v, ok := selection.Obj().(*types.Var); ok {
 			if sig, ok := v.Type().(*types.Signature); ok && sig.Results().Len() > 1 {
-				if plan := e.classifyNistCurveFuncField(selection, v); plan != nil {
+				if plan := e.classifyGeneralFuncField(selection, v); plan != nil {
 					return plan
 				}
 			}
@@ -1865,81 +1844,6 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 		}
 	}
 	return nil
-}
-
-// classifyNistCurveFuncField recognizes function field calls on the
-// synthetic crypto/ecdh nistCurve struct (P3-M9 WS D). The selection must
-// be a FieldVal on nistCurve, and the field name must be in the
-// nistCurveFuncFields table. Returns nil when the call is not one of
-// the table's fields.
-//
-// fix-funcfield-mr (Gate-1): generalized fallback — any func-typed struct
-// field with N>1 results gets a synthesized pair type. This handles
-// image/format.go's f.decode(rr) and similar patterns. The pair type is
-// synthesized on demand (like synthesizeUserPairType) with fields f0, f1,
-// etc.
-func (e *exporter) classifyNistCurveFuncField(selection *types.Selection, v *types.Var) *mrPlan {
-	// Get the struct type from the receiver.
-	recv := selection.Recv()
-	if recv == nil {
-		return nil
-	}
-	// Unwrap pointer if needed.
-	rt := recv
-	if pt, ok := rt.(*types.Pointer); ok {
-		rt = pt.Elem()
-	}
-	nt, ok := rt.(*types.Named)
-	if !ok || nt.Obj() == nil {
-		return nil
-	}
-	// Check package path and struct name.
-	if nt.Obj().Pkg() == nil || nt.Obj().Pkg().Path() != "crypto/ecdh" {
-		// Not nistCurve — try the general fallback below.
-		return e.classifyGeneralFuncField(selection, v)
-	}
-	if nt.Obj().Name() != "nistCurve" {
-		return e.classifyGeneralFuncField(selection, v)
-	}
-	// Look up the field in the table.
-	fieldName := v.Name()
-	for _, ff := range nistCurveFuncFields {
-		if ff.pkgPath != "crypto/ecdh" || ff.structName != "nistCurve" || ff.fieldName != fieldName {
-			continue
-		}
-		// Verify the signature has 2 results (already checked by caller,
-		// but verify arity matches pairFields).
-		sig, ok := v.Type().(*types.Signature)
-		if !ok || sig.Results().Len() != len(ff.pairFields) {
-			return nil
-		}
-		// Look up the pair type in the synthetic package.
-		sp := getSyntheticPackage(ff.pkgPath)
-		obj := sp.pkg.Scope().Lookup(ff.pairType)
-		if obj == nil {
-			return nil
-		}
-		pairNt, _ := obj.Type().(*types.Named)
-		if pairNt == nil {
-			return nil
-		}
-		// P3-M9 (generics, funcs): bail out if the pair type is a generic
-		// template. The template's field types contain typeparams, which
-		// would leak into the type table. This optimization is for
-		// concrete types only; generic cases fall through to other plans.
-		if origin := pairNt.Origin(); origin == pairNt {
-			if tparams := origin.TypeParams(); tparams != nil && tparams.Len() > 0 {
-				return nil
-			}
-		}
-		return &mrPlan{
-			kind:       mrFuncField,
-			tmpType:    pairNt,
-			pairFields: ff.pairFields,
-		}
-	}
-	// Not in the nistCurve table — try the general fallback.
-	return e.classifyGeneralFuncField(selection, v)
 }
 
 // classifyGeneralFuncField handles func-typed struct field calls for ANY
