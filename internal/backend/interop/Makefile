@@ -86,13 +86,23 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 # placeholder + debug-leftover grep gates (Phase-1 done-gate 5 discipline).
 # The launcher (P3SyncMain) is excluded from the debug gate: printing usage
 # and diagnostics to stderr is its job (same exclusion as SchedMain and Main).
+# The two `fatal error: ` emissions in graalgo.p3link.SyncRuntime
+# (syncThrow/syncFatal; NEW-P0-1 2026-10-15) are excluded as well: they
+# implement gc's runtime.throw/runtime.fatal via sync.throw/sync.fatal,
+# where the literal `fatal error: <msg>` line on stderr + flush + exit(2)
+# is the specified observable program behavior, not a debug leftover. The
+# shared p3log mechanism cannot carry this: it is JUL-backed and decorates
+# the message (timestamp/logger/level), breaking the byte-exact stderr
+# contract the corpus .panic.gc files pin down. The exclusion below is
+# scoped to that file + message literal, so any other
+# System.out/err.println in src/main still fails the gate.
 check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
 	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
-	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java'; then \
+	@echo "== debug-leftover grep gate (src/main only; launcher + gc-faithful fatal-error output are legitimate) =="
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java' | grep -v -E 'SyncRuntime\.java:[0-9]+:.*System\.err\.println\("fatal error: "'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== stdlib exclusion-list gate (P3-M6) =="
