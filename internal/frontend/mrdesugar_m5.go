@@ -3878,3 +3878,135 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 		"x": x, "field": field, "selpath": []any{i}, "type": ftid,
 	}), nil
 }
+
+// etaExpandMRFuncValues rewrites variable initializers that capture a
+// multi-result function as a value:
+//
+//	var lstat = os.Lstat  →  var lstat = func(name string) (os.FileInfo, error) { return os.Lstat(name) }
+//
+// Rationale (general, real-x509 lane): frontend/v1 cannot represent a
+// multi-result function as a value (M5 scope error "X in value position
+// ... multi-result function values require v2"). Eta-expansion is the
+// semantics-preserving general fix: the wrapper is an ordinary
+// multi-result closure, which the existing machinery already handles —
+// exportFuncLit pair-transforms it, the MR-closure-var link
+// (linkFuncLitMRVars and the exportPackageVars ValueSpec case) connects
+// call sites through the variable to the pair info, and the inner call
+// desugars through the standard multi-result call path
+// (classifyMultiResultCall + hoistMRCallArg). This covers any
+// package-qualified multi-result function (synthetic Appendix-M tables,
+// the disk MR table, user pair-transforms) — not just os.Lstat.
+//
+// Runs post-typecheck (it needs info for the signature); called from
+// buildDiskPackage, buildSyntheticPackage, and ExportFiles. Idempotent:
+// after expansion the RHS is a FuncLit, which never re-matches. Method
+// values keep their existing path (Selections non-nil skips them).
+func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Package) {
+	for _, f := range files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.ValueSpec:
+				for i, v := range n.Values {
+					if lit := etaExpandFuncValue(v, info, pkg); lit != nil {
+						n.Values[i] = lit
+					}
+				}
+			case *ast.AssignStmt:
+				if n.Tok != token.DEFINE {
+					return true
+				}
+				for i, rhs := range n.Rhs {
+					if lit := etaExpandFuncValue(rhs, info, pkg); lit != nil {
+						n.Rhs[i] = lit
+					}
+				}
+			case *ast.KeyValueExpr:
+				// Struct/map literal field holding a multi-result function
+				// value, e.g. cipherFunc: des.NewCipher in x509's
+				// rfc1423Algos table. Call sites through the field desugar
+				// via the mrFuncField plan (classifyGeneralFuncField).
+				if lit := etaExpandFuncValue(n.Value, info, pkg); lit != nil {
+					n.Value = lit
+				}
+			}
+			return true
+		})
+	}
+}
+
+// etaExpandFuncValue returns the eta-expanded wrapper closure for v when v
+// is a bare package-qualified reference to a multi-result function, or nil
+// when v is not such a reference.
+func etaExpandFuncValue(v ast.Expr, info *types.Info, pkg *types.Package) *ast.FuncLit {
+	sel, ok := unparen(v).(*ast.SelectorExpr)
+	if !ok {
+		return nil
+	}
+	if _, isSel := info.Selections[sel]; isSel {
+		return nil
+	}
+	obj, ok := info.Uses[sel.Sel].(*types.Func)
+	if !ok {
+		return nil
+	}
+	sig, ok := obj.Type().(*types.Signature)
+	if !ok || sig.Results().Len() <= 1 {
+		return nil
+	}
+	if tp := sig.TypeParams(); tp != nil && tp.Len() > 0 {
+		return nil
+	}
+	return etaExpandSelector(sel, sig, info, pkg)
+}
+
+// etaExpandSelector builds `func(p0 T0, ...) (R0, ...) { return pkg.F(p0, ...) }`.
+// The FuncType's field lists are intentionally empty: the exporter reads the
+// signature from info.Types[funcType] (populated here), never from the
+// syntax. Fresh param vars are registered in info.Uses/Types so the
+// argument idents export; the original selector is reused as the call's
+// Fun so its existing info entries (PkgName, Func) classify the inner
+// multi-result call.
+func etaExpandSelector(sel *ast.SelectorExpr, sig *types.Signature, info *types.Info, pkg *types.Package) *ast.FuncLit {
+	params := sig.Params()
+	used := make(map[string]bool, params.Len())
+	for i := 0; i < params.Len(); i++ {
+		if name := params.At(i).Name(); name != "" {
+			used[name] = true
+		}
+	}
+	freshVars := make([]*types.Var, params.Len())
+	args := make([]ast.Expr, params.Len())
+	for i := 0; i < params.Len(); i++ {
+		p := params.At(i)
+		name := p.Name()
+		if name == "" || name == "_" {
+			name = fmt.Sprintf("__eta_p%d", i)
+			for used[name] {
+				name = "_" + name
+			}
+		}
+		used[name] = true
+		fv := types.NewParam(sel.Pos(), pkg, name, p.Type())
+		freshVars[i] = fv
+		id := ast.NewIdent(name)
+		id.NamePos = sel.Pos()
+		info.Uses[id] = fv
+		info.Types[id] = types.TypeAndValue{Type: p.Type()}
+		args[i] = id
+	}
+	call := &ast.CallExpr{Fun: sel, Lparen: sel.Pos(), Args: args, Rparen: sel.End()}
+	if sig.Variadic() {
+		call.Ellipsis = sel.End()
+	}
+	freshSig := types.NewSignatureType(nil, nil, nil, types.NewTuple(freshVars...), sig.Results(), sig.Variadic())
+	funcType := &ast.FuncType{Func: sel.Pos(), Params: &ast.FieldList{}, Results: &ast.FieldList{}}
+	info.Types[funcType] = types.TypeAndValue{Type: freshSig}
+	body := &ast.BlockStmt{
+		Lbrace: sel.Pos(),
+		List: []ast.Stmt{
+			&ast.ReturnStmt{Return: sel.Pos(), Results: []ast.Expr{call}},
+		},
+		Rbrace: sel.End(),
+	}
+	return &ast.FuncLit{Type: funcType, Body: body}
+}

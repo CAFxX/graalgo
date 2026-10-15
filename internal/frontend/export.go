@@ -1073,6 +1073,9 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("gofrontend: type error: %v", err)
 	}
+	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
+	// where F is multi-result.
+	etaExpandMRFuncValues(files, info, pkg)
 
 	e := &exporter{
 		fset:    fset,
@@ -4625,6 +4628,25 @@ func derefNamed(t types.Type) *types.Named {
 	return n
 }
 
+// derefStruct unwraps pointer and alias layers, returning the underlying
+// *types.Struct when t is (a pointer to) an anonymous or named struct type,
+// or nil otherwise. Used to detect promoted-method receivers that are not
+// named types (general, real-x509 lane).
+func derefStruct(t types.Type) *types.Struct {
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
+	}
+	for {
+		a, ok := t.(*types.Alias)
+		if !ok {
+			break
+		}
+		t = a.Rhs()
+	}
+	s, _ := t.(*types.Struct)
+	return s
+}
+
 // bindRecvParams binds the type parameters appearing in a method
 // declaration's receiver type (the actual *types.TypeParam objects in the
 // declared receiver's type arguments — note these are NOT identical to the
@@ -4927,7 +4949,17 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	}
 	// The receiver is not a named type: it must be a type parameter being
 	// instantiated (bound-method call on a type param, e.g. v.String() with
-	// v: T). Resolve the concrete type through the substitution and look
+	// v: T), or an anonymous struct whose method is promoted through an
+	// embedded field (e.g. x509's struct{ sync.Once; v *Certificate }.Do).
+	// The promotion machinery above is receiver-shape-agnostic: walk the
+	// index path to the declaring named type and resolve there.
+	// General (real-x509 lane).
+	if derefStruct(selection.Recv()) != nil {
+		if mc, err := e.resolvePromotedMethodCall(sel, selection, nil, mname, methodTargs, subst); err == nil {
+			return mc, nil
+		}
+	}
+	// Resolve the concrete type through the substitution and look
 	// the method up in its method set (devirtualized per instantiation).
 	tp, ok := selection.Recv().(*types.TypeParam)
 	if !ok {
@@ -5057,15 +5089,19 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 // Anything unresolvable here reports the historical "method %s not found
 // on %s" error, so genuinely missing methods fail exactly as before.
 func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *types.Selection, rn *types.Named, mname string, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
+	recvDesc := selection.Recv().String()
+	if rn != nil {
+		recvDesc = rn.Obj().Name()
+	}
 	notFound := func() (*methodCall, error) {
-		return nil, fmt.Errorf("gofrontend: method %s not found on %s", mname, rn.Obj().Name())
+		return nil, fmt.Errorf("gofrontend: method %s not found on %s", mname, recvDesc)
 	}
 	// Defensive: an ambiguous selector has no denoted method object.
 	// go/types rejects these during type-checking, so this is
 	// unreachable in practice — but resolving one would mean silently
 	// picking a candidate, which must never happen.
 	if selection.Obj() == nil {
-		return nil, fmt.Errorf("gofrontend: ambiguous selector %s on %s: no candidate chosen", mname, rn.Obj().Name())
+		return nil, fmt.Errorf("gofrontend: ambiguous selector %s on %s: no candidate chosen", mname, recvDesc)
 	}
 	var msel *types.Selection
 	var recvAddrOf bool
@@ -5136,7 +5172,13 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 	}
 	fi, ok := e.methodIndex[methodKey{dn.Obj(), mname}]
 	if !ok {
-		return notFound()
+		// fix-sync-tests (generalized): on-demand disk method indexing,
+		// mirroring the named-receiver caller above. The declaring type
+		// may come from a disk-imported package (e.g. real sync.Once)
+		// whose methods are not in methodIndex yet.
+		if fi = e.indexDiskMethodOnDemand(dn.Obj(), mname); fi == nil {
+			return notFound()
+		}
 	}
 	// The instantiation (if any) is keyed by the DECLARING receiver, not
 	// the outer one: bindRecvParams binds the declaring origin's type
@@ -10870,10 +10912,18 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 // instMRInfoForCall returns the MR info for a generic instantiation call,
 // e.g. hashStr[string](...) or hashStr("...") (via type inference).
 // For explicit type args, Fun is an IndexExpr/IndexListExpr; for inferred
-// type args, Fun is a plain Ident recorded in info.Instances.
-// Returns nil if not a generic MR instantiation call.
+// type args, Fun is a plain Ident recorded in info.Instances. Package-
+// qualified calls (slices.BinarySearchFunc(...), with inferred or explicit
+// type args) unwrap to the selector's Sel ident, which carries the
+// info.Instances entry. Returns nil if not a generic MR instantiation call.
 func (e *exporter) instMRInfoForCall(c *ast.CallExpr) *userMRInfo {
 	id := callTargetIdent(c.Fun)
+	if id == nil {
+		// General (real-x509 lane): package-qualified generic call.
+		if sel, ok := unwrapSelector(c.Fun); ok {
+			id = sel.Sel
+		}
+	}
 	if id == nil {
 		return nil
 	}
@@ -11490,3 +11540,4 @@ func isCommaOkRhs(r ast.Expr) bool {
 	}
 	return false
 }
+

@@ -336,6 +336,9 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	if err != nil {
 		return nil, fmt.Errorf("gofrontend: type error in %q: %w", importPath, err)
 	}
+	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
+	// where F is multi-result (e.g. path/filepath's `var lstat = os.Lstat`).
+	etaExpandMRFuncValues(files, info, pkg)
 	// Stubs served type-checking; keep them for method resolution
 	// (the desugar rewrites all calls, so stubs are never exported).
 	// Mark them via the spec so the exporter can skip them.

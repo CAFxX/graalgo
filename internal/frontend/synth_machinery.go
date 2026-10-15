@@ -864,6 +864,9 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	if err != nil {
 		panic("gofrontend: synthetic " + path + " type error: " + err.Error())
 	}
+	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
+	// where F is multi-result.
+	etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
 	return &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
