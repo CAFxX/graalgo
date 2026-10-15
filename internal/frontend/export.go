@@ -1420,7 +1420,7 @@ func needsOverlayImporter(p string) bool {
 		// P3-M9 (tier-5): asymmetric crypto public packages +
 		// cryptobyte (internal fips140/* stay synthetic-only).
 		p == "crypto/elliptic" || p == "crypto/ecdh" || p == "crypto/dsa" || p == "crypto/ecdsa" || p == "crypto/ed25519" || p == "crypto/rsa" || p == "crypto/hkdf" || p == "crypto/pbkdf2" ||
-		p == "crypto/x509" || p == "crypto/tls" ||
+		p == "crypto/x509" || p == "crypto/x509/pkix" || p == "crypto/tls" ||
 		p == "golang.org/x/crypto/cryptobyte" || p == "golang.org/x/crypto/cryptobyte/asn1" ||
 		p == "cmp" || p == "slices" || p == "maps" || p == "unicode" || p == "unicode/utf8" || p == "unicode/utf16" ||
 		// P3-M9 (tier1c): "math/bits" likewise.
@@ -1496,7 +1496,7 @@ func checkImportAllowed(imp *ast.ImportSpec) error {
 		// P3-M9 (tier-5): asymmetric crypto public packages +
 		// cryptobyte (internal fips140/* stay synthetic-only).
 		path != "crypto/elliptic" && path != "crypto/ecdh" && path != "crypto/dsa" && path != "crypto/ecdsa" && path != "crypto/ed25519" && path != "crypto/rsa" && path != "crypto/hkdf" && path != "crypto/pbkdf2" &&
-		path != "crypto/x509" && path != "crypto/tls" &&
+		path != "crypto/x509" && path != "crypto/x509/pkix" && path != "crypto/tls" &&
 		path != "golang.org/x/crypto/cryptobyte" && path != "golang.org/x/crypto/cryptobyte/asn1" &&
 		path != "cmp" && path != "slices" && path != "maps" && path != "unicode" && path != "unicode/utf8" && path != "unicode/utf16" &&
 		// P3-M9 (tier1c): "math/bits" likewise.

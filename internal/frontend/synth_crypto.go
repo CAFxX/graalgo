@@ -259,23 +259,11 @@ type Decrypter interface {
 
 type DecrypterOpts any
 
-// SignMessage signs msg with signer. If signer implements [MessageSigner],
-// [MessageSigner.SignMessage] is called directly. Otherwise, msg is hashed
-// with opts.HashFunc() and signed with [Signer.Sign].
-func SignMessage(signer Signer, rand io.Reader, msg []byte, opts SignerOpts) (signature []byte, err error) {
-	if ms, ok := signer.(MessageSigner); ok {
-		return ms.SignMessage(rand, msg, opts)
-	}
-	if hash := opts.HashFunc(); hash != 0 {
-		if !hash.Available() {
-			return nil, hashUnavailableError(hash)
-		}
-		h := hash.New()
-		h.Write(msg)
-		msg = h.Sum(nil)
-	}
-	return signer.Sign(rand, msg, opts)
-}
+// P3-M9 (tier-5): SignMessage removed from synthetic crypto — the
+// 2-result interface method calls (ms.SignMessage, signer.Sign) are
+// WS D-unsupported in frontend/v1. The MessageSigner interface is
+// kept for type compatibility; the function will be restored when
+// WS D supports multi-result interface calls.
 
 type hashUnavailableError Hash
 
