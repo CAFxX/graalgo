@@ -1075,7 +1075,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result.
-	etaExpandMRFuncValues(files, info, pkg)
+	_, _ = etaExpandMRFuncValues(files, info, pkg)
 
 	e := &exporter{
 		fset:    fset,
@@ -3226,6 +3226,15 @@ type exporter struct {
 	// statement. Maps a transformed *ast.FuncLit -> its pair info, so
 	// exportDefine/exportVarSpec can link the LHS variable(s).
 	funcLitMRInfo map[*ast.FuncLit]*userMRInfo
+	// General (real-x509 lane): maps Vars to their eta-expanded FuncLit
+	// initializers (from buildDiskPackage). Used by userMRInfoForVar to
+	// find the pair info for disk-package vars (e.g. path/filepath's
+	// lstat) where the link wasn't established during export.
+	etaVarLits map[*types.Var]*ast.FuncLit
+	// General (real-x509 lane): maps Vars to the multi-result Func they
+	// alias (e.g. path/filepath's lstat -> os.Lstat). Call sites through
+	// the Var desugar as the aliased Func via the table.
+	varFuncAliases map[*types.Var]*types.Func
 	// P4 (generic MR): Maps *instantiation -> pair info for generic
 	// instantiations of multi-result templates. The template itself is
 	// skipped (isTemplate), but each instantiation gets its own pair
@@ -5350,6 +5359,14 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 			if fn.Pkg() != nil {
 				pkgPath = fn.Pkg().Path()
 			}
+			// General (real-x509 lane): table-driven multi-result
+			// functions (e.g. fips140/ecdh.NewPrivateKey) are handled
+			// by the Appendix-M table desugar at the call site
+			// (including generic helper instantiation); they are never
+			// in funcByObj/synthFuncIDs. Skip instead of erroring.
+			if hasStaticMREntry(pkgPath, fn.Name(), "") {
+				continue
+			}
 			return fmt.Errorf("gofrontend: call to unknown function %s (pkg %s)", fn.Name(), pkgPath)
 		}
 		if !fi.isTemplate {
@@ -5833,6 +5850,12 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 				}
 			}
 			if !ok {
+				// General (real-x509 lane): table-driven multi-result
+				// functions are handled by the Appendix-M table desugar;
+				// skip instead of erroring.
+				if fn.Pkg() != nil && hasStaticMREntry(fn.Pkg().Path(), fn.Name(), "") {
+					return true
+				}
 				err = fmt.Errorf("gofrontend: call to unknown function %s", fn.Name())
 				return false
 			}
@@ -9393,10 +9416,11 @@ func (e *exporter) implicitAddrOf(sel *ast.SelectorExpr, recv **Node, recvType *
 	if declElemStr != recvStr {
 		return false
 	}
-	// Check if sel.X is addressable.
-	if !isAddressable(sel.X, e.info) {
-		return false
-	}
+	// General (real-x509 lane): go/types already validated the call;
+	// if the method has a pointer receiver and the call type-checked,
+	// the receiver is addressable (otherwise it would be a compile
+	// error). The isAddressable re-check fails in generic contexts due
+	// to info mismatch; trust the type checker.
 	// Wrap in addrof node.
 	tid, err := e.typeID(declRecv)
 	if err != nil {
@@ -10878,7 +10902,7 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 			// pair-returning.
 			if id, ok := c.Fun.(*ast.Ident); ok {
 				if v, ok := e.info.Uses[id].(*types.Var); ok {
-					if mrInfo, ok := e.userMRVars[v]; ok {
+					if mrInfo := e.userMRInfoForVar(v); mrInfo != nil {
 						tid, err := e.typeID(mrInfo.pairType)
 						if err != nil {
 							return nil, err

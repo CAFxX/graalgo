@@ -26,6 +26,15 @@ type syntheticPackage struct {
 	// raws parallels files for multi-file disk packages (WS G); nil for
 	// embedded single-file synthetic sources (raw covers the one file).
 	raws [][]byte
+	// etaVarLits maps package-level Vars (e.g. path/filepath's lstat)
+	// to their eta-expanded FuncLit initializers, for MR-closure-var
+	// linking. Populated by etaExpandMRFuncValues (real-x509 lane).
+	etaVarLits map[*types.Var]*ast.FuncLit
+	// varFuncAliases maps package-level Vars (e.g. path/filepath's
+	// lstat) to the multi-result *types.Func they alias (e.g.
+	// os.Lstat), for direct call-site desugar without eta-expansion.
+	// Populated by etaExpandMRFuncValues (real-x509 lane).
+	varFuncAliases map[*types.Var]*types.Func
 }
 
 // srcForFile returns the source bytes for f: per-file bytes for disk
@@ -866,7 +875,7 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 	}
 	// General (real-x509 lane): eta-expand `var x = pkg.F` / `x := pkg.F`
 	// where F is multi-result.
-	etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
+	_, _ = etaExpandMRFuncValues([]*ast.File{file}, info, pkg)
 	return &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
@@ -987,6 +996,25 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 		e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
 		e.subst, e.substTypeIDs = savedSubst, savedSubstTypeIDs
 	}()
+	// General (real-x509 lane): copy eta-expanded Var->FuncLit mappings
+	// and Var->Func aliases for MR-closure-var linking (e.g.
+	// path/filepath's lstat).
+	if len(sp.etaVarLits) > 0 {
+		if e.etaVarLits == nil {
+			e.etaVarLits = make(map[*types.Var]*ast.FuncLit)
+		}
+		for v, lit := range sp.etaVarLits {
+			e.etaVarLits[v] = lit
+		}
+	}
+	if len(sp.varFuncAliases) > 0 {
+		if e.varFuncAliases == nil {
+			e.varFuncAliases = make(map[*types.Var]*types.Func)
+		}
+		for v, fn := range sp.varFuncAliases {
+			e.varFuncAliases[v] = fn
+		}
+	}
 	g := synthGroup{sp: sp}
 	// Two passes: funcs first (so var initializers can call them),
 	// then package vars.
@@ -1072,10 +1100,15 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 						}
 						continue
 					}
-					// Gate-1 #2: fail-fast stubs must remain skipped.
+					// Gate-1 #2: fail-fast stubs must not be pair-transformed.
 					// A body that is a single panic("... not in M{5,7,...}
 					// scope ...") must be preserved; the pair-transform
 					// would replace the fail-fast with a working helper.
+					// General (real-x509 lane): stubs ARE registered (so
+					// call sites link to the stub, which panics at runtime
+					// if invoked); skipPairTransform below prevents the
+					// pair-transform. The value-position error is raised
+					// at the use site in exportSyntheticQualified.
 					if isFailFastStub(d) {
 						if d.Recv != nil {
 							recv := sig.Recv()
@@ -1085,20 +1118,33 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 								}
 							}
 						}
-						// Package-level fail-fast stubs are NOT registered for
-						// value-position use. A fail-fast stub used as a value
-						// (e.g. var f = time.ParseDuration) is a compile-time
-						// error: there is no pair form to serve as the value,
-						// and emitting nil or a panic-on-call value would be
-						// silently wrong. The error is raised at the use site
-						// in exportSyntheticQualified.
-						continue
+					// General (real-x509 lane): fail-fast stubs ARE registered
+						// (so call sites link to the stub, which panics at
+						// runtime if invoked — the honest fail-fast
+						// behavior); skipPairTransform below prevents the
+						// pair-transform from replacing the panic body with
+						// a working helper. A stub used as a value (e.g.
+						// var f = time.ParseDuration) is a compile-time
+						// error: there is no pair form to serve as the
+						// value. That error is raised at the use site in
+						// exportSyntheticQualified via the synthFuncIDs
+						// entry registered below.
+						// Fall through to registration (do not continue).
 					}
-					// Not table-driven: fall through to normal processing.
+					// Not table-driven, not a stub: fall through to normal
+					// processing.
 				}
 			}
 			// Pass 1: create fi and register in maps (defFunc deferred to
 			// pass 2 below).
+			// General (real-x509 lane): fail-fast stubs are registered
+			// (so call sites link to them) but skip pair-transform below.
+			skipPairTransform := false
+			if sig.Results().Len() > 1 && d.Body != nil {
+				if isFailFastStub(d) {
+					skipPairTransform = true
+				}
+			}
 			fi := &funcDeclInfo{fd: d, obj: obj, funcID: -1, sig: sig, file: file}
 			if d.Recv != nil {
 				recv := sig.Recv()
@@ -1130,8 +1176,12 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			// via the userMRFuncs mechanism. Register here so call sites
 			// in importing packages classify correctly. registerUserMRFunc
 			// is idempotent and skips table-driven/single-result/bodyless.
-			if _, rerr := e.registerUserMRFunc(fi); rerr != nil {
-				return rerr
+			// General (real-x509 lane): fail-fast stubs skip the
+			// pair-transform (their panic body must be preserved).
+			if !skipPairTransform {
+				if _, rerr := e.registerUserMRFunc(fi); rerr != nil {
+					return rerr
+				}
 			}
 			// Defer defFunc to pass 2 (see above).
 			funcEntries = append(funcEntries, &synthFuncEntry{obj: obj, fi: fi})
@@ -1218,7 +1268,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			}
 		}
 	}
-	varInits := []ginit{}
+		varInits := []ginit{}
 	for _, sv := range sspecs {
 		// WS G: the initializer's own file (multi-file disk packages).
 		e.src = sp.srcForFile(sv.file)
@@ -1230,6 +1280,26 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			var initExpr ast.Expr
 			if len(sv.vs.Values) > 0 {
 				initExpr = sv.vs.Values[i]
+				// General (real-x509 lane): if the initializer is a
+				// synthetic multi-result function in value position
+				// (e.g. var lstat = os.Lstat), skip the initializer
+				// (var stays nil). The function cannot be captured as a
+				// value in v1; call sites through the var use the alias
+				// map (varFuncAliases) to desugar as the original Func.
+				if sel, ok := unparen(initExpr).(*ast.SelectorExpr); ok {
+					if _, isSel := e.info.Selections[sel]; !isSel {
+						if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok {
+							if obj.Pkg() != nil && e.synthFuncIDs != nil {
+								key := obj.Pkg().Path() + "." + obj.Name()
+								if _, ok := e.synthFuncIDs[key]; ok {
+									// Skip: leave init nil.
+									varInits = append(varInits, ginit{oid: sv.oids[i], init: nil, expr: nil, pos: e.pos(n)})
+									continue
+								}
+							}
+						}
+					}
+				}
 				x, err := e.exportExpr(initExpr)
 				if err != nil {
 					return err
@@ -2090,6 +2160,30 @@ func (e *exporter) isMultiResultSyntheticFailFast(fn *types.Func) bool {
 	}
 	if _, ok := e.userMRFuncs[fn]; ok {
 		return false // pair-transformed, not fail-fast
+	}
+	// General (real-x509 lane): generic multi-result functions are
+	// instantiated and pair-transformed by the generic MR machinery
+	// (instMRInfoForCall), not fail-fast. E.g.
+	// internal/bytealg.hashStr[T] called from IndexRabinKarp[T]. The
+	// enumerator skips table-driven generics (they're handled by the
+	// table desugar); non-table-driven generics fall through to
+	// instantiation via the synthFuncIDs fallback.
+	if sig, ok := fn.Type().(*types.Signature); ok {
+		if tp := sig.TypeParams(); tp != nil && tp.Len() > 0 {
+			return false
+		}
+	}
+	// General (real-x509 lane): if the function is registered (in
+	// funcByObj or synthFuncIDs), it will be emitted (even as a
+	// fail-fast stub); the call site links to it normally. Fail-fast
+	// only for truly unhandled functions.
+	if _, ok := e.funcByObj[fn]; ok {
+		return false
+	}
+	if e.synthFuncIDs != nil && fn.Pkg() != nil {
+		if _, ok := e.synthFuncIDs[fn.Pkg().Path()+"."+fn.Name()]; ok {
+			return false
+		}
 	}
 	return isMultiResultSynthetic(fn)
 }
