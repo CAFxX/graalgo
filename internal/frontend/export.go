@@ -1403,6 +1403,9 @@ func ExportFiles(paths []string) (string, error) {
 		userMRVars: make(map[*types.Var]*userMRInfo),
 		// MR-closure-var: func lit -> pair info side channel.
 		funcLitMRInfo: make(map[*ast.FuncLit]*userMRInfo),
+		// P4 (generic MR): Maps *instantiation -> pair info for generic
+		// instantiations of multi-result templates.
+		instMRInfos: make(map[*instantiation]*userMRInfo),
 	}
 	// fileBases lists the input files in order; position "file" indices
 	// index into this array (frontend/v1 wire format).
@@ -3508,6 +3511,11 @@ type exporter struct {
 	// statement. Maps a transformed *ast.FuncLit -> its pair info, so
 	// exportDefine/exportVarSpec can link the LHS variable(s).
 	funcLitMRInfo map[*ast.FuncLit]*userMRInfo
+	// P4 (generic MR): Maps *instantiation -> pair info for generic
+	// instantiations of multi-result templates. The template itself is
+	// skipped (isTemplate), but each instantiation gets its own pair
+	// type synthesized from the substituted result types.
+	instMRInfos map[*instantiation]*userMRInfo
 	// P3-M9 (driver-harden): name-based fallback for synthetic MR funcs.
 	// Synthetic packages are type-checked separately from their callers,
 	// P3-M9 (WS D): the userMRInfo for the function whose body is
@@ -6129,6 +6137,56 @@ func (e *exporter) synthesizePairTypeForSig(sig *types.Signature, nameHint strin
 	return named, fieldNames, nil
 }
 
+// synthesizeInstPairType creates a named struct type for a generic
+// instantiation of a multi-result template (P4 generic MR). The struct
+// has fields f0, f1, ... with the SUBSTITUTED result types in order.
+// The name includes the instantiation key for uniqueness.
+func (e *exporter) synthesizeInstPairType(inst *instantiation) (*userMRInfo, error) {
+	sig := inst.decl.sig
+	n := sig.Results().Len()
+	fields := make([]*types.Var, n)
+	fieldNames := make([]string, n)
+	for i := 0; i < n; i++ {
+		fname := fmt.Sprintf("f%d", i)
+		fieldNames[i] = fname
+		// Apply the instantiation's substitution to get the concrete type.
+		rt := e.substType(sig.Results().At(i).Type())
+		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
+	}
+	st := types.NewStruct(fields, nil)
+	// Unique name: __wsd_pair_<func>_<instkey> (sanitized).
+	name := fmt.Sprintf("__wsd_pair_%s", inst.decl.obj.Name())
+	// Append a hash of the instantiation key for uniqueness.
+	// Use a simple sanitization: replace non-alphanumeric with underscore.
+	safeKey := ""
+	for _, r := range inst.key {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') {
+			safeKey += string(r)
+		} else {
+			safeKey += "_"
+		}
+	}
+	if safeKey != "" {
+		name = fmt.Sprintf("%s_%s", name, safeKey)
+	}
+	// Ensure uniqueness in case of collisions.
+	base := name
+	for i := 1; ; i++ {
+		if e.pkg.Scope().Lookup(name) == nil {
+			break
+		}
+		name = fmt.Sprintf("%s_%d", base, i)
+	}
+	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
+	named := types.NewNamed(tname, st, nil)
+	e.pkg.Scope().Insert(tname)
+	return &userMRInfo{
+		pairType:   named,
+		pairFields: fieldNames,
+		origSig:    sig,
+	}, nil
+}
+
 // exportFuncDecl emits a non-generic top-level function or method. Methods
 // export their receiver as params[0] (the wire "signature" matches).
 func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
@@ -6490,6 +6548,19 @@ func (e *exporter) prepareInstantiation(inst *instantiation) error {
 	inst.instID = instID
 	inst.sigID = sigID
 	inst.targIDs = targIDs
+	// P4 (generic MR): if the template has multiple results, synthesize
+	// the MR pair type for this instantiation. The template itself is
+	// skipped (isTemplate), but each instantiation needs its own pair
+	// type with substituted result types.
+	if inst.decl.sig != nil && inst.decl.sig.Results().Len() > 1 {
+		if _, ok := e.instMRInfos[inst]; !ok {
+			mrInfo, err := e.synthesizeInstPairType(inst)
+			if err != nil {
+				return err
+			}
+			e.instMRInfos[inst] = mrInfo
+		}
+	}
 	return nil
 }
 
@@ -6558,10 +6629,30 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// P4 (generic MR): if this instantiation is of a multi-result template,
+	// apply the pair transform (like exportFuncDecl does for non-generic
+	// functions). The pair type was synthesized in prepareInstantiation.
+	var mrInfo *userMRInfo
 	if len(results) > 1 {
-		return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", inst.name, len(results))
+		mrInfo = e.instMRInfos[inst]
+		if mrInfo == nil {
+			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", inst.name, len(results))
+		}
+		// New signature: same params, single pair result.
+		pairVar := types.NewParam(token.NoPos, e.pkg, "", mrInfo.pairType)
+		pairResult, err := e.exportParamVar(fd.Type, pairVar)
+		if err != nil {
+			return nil, err
+		}
+		results = []*Node{pairResult}
+	}
+	// Set the current transform so return statements are rewritten.
+	prevMR := e.currentMR
+	if mrInfo != nil {
+		e.currentMR = mrInfo
 	}
 	body, err := e.exportBlock(fd.Body)
+	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
 	}
@@ -11102,6 +11193,17 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 					}
 				}
 			}
+			// P4 (generic MR): generic instantiation call, e.g.
+			// hashStr[string](...). The Fun is an IndexExpr/IndexListExpr,
+			// not handled by calledFunc. Look up the instantiation's MR
+			// info via info.Instances.
+			if mrInfo := e.instMRInfoForCall(c); mrInfo != nil {
+				tid, err := e.typeID(mrInfo.pairType)
+				if err != nil {
+					return nil, err
+				}
+				return tid, nil
+			}
 			return nil, scopeErrorf("multi-valued call result is not supported in frontend/v1 scope (WS D)")
 		}
 		tid, err := e.typeID(tv.Type)
@@ -11111,6 +11213,38 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 		typ = tid
 	}
 	return typ, nil
+}
+
+// instMRInfoForCall returns the MR info for a generic instantiation call,
+// e.g. hashStr[string](...) or hashStr("...") (via type inference).
+// For explicit type args, Fun is an IndexExpr/IndexListExpr; for inferred
+// type args, Fun is a plain Ident recorded in info.Instances.
+// Returns nil if not a generic MR instantiation call.
+func (e *exporter) instMRInfoForCall(c *ast.CallExpr) *userMRInfo {
+	id := callTargetIdent(c.Fun)
+	if id == nil {
+		return nil
+	}
+	ii, ok := e.info.Instances[id]
+	if !ok {
+		return nil
+	}
+	fn, ok := denotedFunc(e.info, id)
+	if !ok {
+		return nil
+	}
+	fi, ok := e.funcByObj[fn]
+	if !ok || !fi.isTemplate {
+		return nil
+	}
+	// Find the instantiation via the same key logic as exportFuncCall.
+	targs := typeList(ii.TypeArgs)
+	key := instKeyForFunc(fi, targs, e.subst)
+	inst, ok := e.instByKey[key]
+	if !ok {
+		return nil
+	}
+	return e.instMRInfos[inst]
 }
 
 // calledFunc returns the *types.Func denoted by a call expression's Fun,

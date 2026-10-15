@@ -1421,6 +1421,16 @@ func targsFromRecv(recv types.Type) []types.Type {
 }
 
 func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
+	// P4 (generic MR): generic instantiation call, e.g. hashStr[string](...).
+	// The Fun is an IndexExpr/IndexListExpr. Check for instantiation MR
+	// info before the Ident/SelectorExpr cases (which don't match).
+	if mrInfo := e.instMRInfoForCall(c); mrInfo != nil {
+		return &mrPlan{
+			kind:       mrUser,
+			tmpType:    mrInfo.pairType,
+			pairFields: mrInfo.pairFields,
+		}
+	}
 	// P4 (driver-harden): dot-imported fmt F-family (Fprint/Fprintf/
 	// Fprintln called as bare idents). Detected structurally via the
 	// func's package path.
