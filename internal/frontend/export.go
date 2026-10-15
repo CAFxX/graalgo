@@ -5026,6 +5026,14 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 	// the method up in its method set (devirtualized per instantiation).
 	tp, ok := selection.Recv().(*types.TypeParam)
 	if !ok {
+		// real-reflect: anonymous struct receivers (e.g. reflect's
+		// package-level funcLookupCache var of type struct{sync.Mutex;
+		// m sync.Map} calling the promoted Lock) resolve through the
+		// promoted-method path — anonymous structs have no direct
+		// methods, so any method is promoted via embedding.
+		if _, isStruct := types.Unalias(selection.Recv()).Underlying().(*types.Struct); isStruct {
+			return e.resolvePromotedMethodCall(sel, selection, nil, mname, methodTargs, subst)
+		}
 		return nil, scopeErrorf("method call %s on non-named receiver %s (WS H)", mname, selection.Recv())
 	}
 	if subst == nil {
@@ -5152,15 +5160,24 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 // Anything unresolvable here reports the historical "method %s not found
 // on %s" error, so genuinely missing methods fail exactly as before.
 func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *types.Selection, rn *types.Named, mname string, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
+	// rn may be nil for anonymous receivers (e.g. a package-level var of
+	// anonymous struct type with an embedded sync.Mutex, as in
+	// reflect's funcLookupCache); the type string is used in errors then.
+	recvName := selection.Recv().String()
+	if rn != nil {
+		recvName = rn.Obj().Name()
+	}
+	if mname == "Kind" {
+	}
 	notFound := func() (*methodCall, error) {
-		return nil, fmt.Errorf("gofrontend: method %s not found on %s", mname, rn.Obj().Name())
+		return nil, fmt.Errorf("gofrontend: method %s not found on %s", mname, recvName)
 	}
 	// Defensive: an ambiguous selector has no denoted method object.
 	// go/types rejects these during type-checking, so this is
 	// unreachable in practice — but resolving one would mean silently
 	// picking a candidate, which must never happen.
 	if selection.Obj() == nil {
-		return nil, fmt.Errorf("gofrontend: ambiguous selector %s on %s: no candidate chosen", mname, rn.Obj().Name())
+		return nil, fmt.Errorf("gofrontend: ambiguous selector %s on %s: no candidate chosen", mname, recvName)
 	}
 	var msel *types.Selection
 	ms := types.NewMethodSet(selection.Recv())
@@ -5175,17 +5192,25 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 		// type: a pointer-receiver method promoted via a VALUE-embedded
 		// field is absent from methodset(Recv) — it lives only in
 		// methodset(*Recv), and the call relies on gc's implicit & of
-		// the embedded field. That implicit & is out of WS D scope, so
-		// fail fast with the named scope error (consistent with the
-		// direct-method path in methodRefNode) — never a confusing
-		// "not found" for a method that exists.
+		// the receiver. When the receiver expression is addressable,
+		// take the selection from the pointer method set; the shared tail
+		// below adapts along the same embedding path, and methodRefNode's
+		// implicitAddrOf supplies the &. Otherwise fail fast with the named scope
+		// error — never a confusing "not found" for a method that
+		// exists.
 		pms := types.NewMethodSet(types.NewPointer(selection.Recv()))
 		for i := 0; i < pms.Len(); i++ {
 			if s := pms.At(i); s.Obj().Name() == mname {
-				return nil, scopeErrorf("method call %s needs an implicit address-of or deref on the receiver (WS D)", mname)
+				if !isAddressable(sel.X, e.info) {
+					return nil, scopeErrorf("method call %s needs an implicit address-of or deref on the receiver (WS D)", mname)
+				}
+				msel = s
+				break
 			}
 		}
-		return notFound()
+		if msel == nil {
+			return notFound()
+		}
 	}
 	index := msel.Index()
 	if len(index) < 2 {
@@ -5422,6 +5447,12 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 		if syntheticPrimitiveRecv(selection.Recv()) != nil {
 			continue
 		}
+		// real-reflect: promoted sync primitive methods (e.g.
+		// funcLookupCache.Lock()) also lower to syncop, never through
+		// resolveMethodCall/methodIndex.
+		if nt, _ := promotedSyncPrimitive(selection); nt != nil {
+			continue
+		}
 		// P3-M3 (WS D, ADR-0003): interface method calls lower to
 		// ifacemethod nodes, never through resolveMethodCall/methodIndex
 		// (dispatch is dynamic via the itab; nothing to instantiate).
@@ -5448,7 +5479,15 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 		}
 		mc, err := e.resolveMethodCall(sel, selection, mtargs, nil)
 		if err != nil {
-			return err
+			// real-reflect: the scan also covers imported packages
+			// (tier-5). A method that cannot be resolved here (e.g. a
+			// promoted method from a dependency whose methods are not
+			// yet in methodIndex) is not a generic-instantiation root;
+			// skip it — the body export will resolve (or fail fast
+			// with a proper error) when the method is actually
+			// emitted. Failing the whole enumeration on such methods
+			// blocks real-reflect compilation.
+			continue
 		}
 		if mc.needsInst {
 			enqueue(&instantiation{decl: mc.decl, subst: mc.subst, rawTargs: mc.rawTargsForEmit, key: mc.key, name: mc.name})
@@ -6750,6 +6789,11 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 			if nt := syntheticPrimitiveRecv(selection.Recv()); nt != nil {
 				return e.exportSyncDefer(s, sel, selection, nt)
 			}
+			// real-reflect: promoted sync primitive methods in defer
+			// position (e.g. defer funcLookupCache.Unlock()).
+			if nt, path := promotedSyncPrimitive(selection); nt != nil {
+				return e.exportPromotedSyncDefer(s, sel, selection, nt, path)
+			}
 		}
 	}
 	call, err := e.exportCall(s.Call)
@@ -6892,6 +6936,94 @@ func (e *exporter) exportSyncDefer(s *ast.DeferStmt, sel *ast.SelectorExpr, sele
 	inner := e.node("syncop", c, map[string]any{
 		"op": op, "synctyp": syntheticOpTypeName(nt),
 		"recv": bodyRecv, "args": bodyArgs, "type": nil,
+	})
+	body := e.node("block", c, map[string]any{
+		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": inner})},
+	})
+	funclit := e.node("funclit", c, map[string]any{
+		"params": params, "results": []*Node{}, "body": body,
+	})
+	call := e.node("call", c, map[string]any{
+		"fun": funclit, "args": outerArgs, "type": nil,
+	})
+	return e.node("defer", s, map[string]any{"call": call}), nil
+}
+
+// exportPromotedSyncDefer desugars `defer x.Op(args)` where the method is
+// promoted through embedding from a sync primitive (real-reflect:
+// defer funcLookupCache.Unlock()). The receiver is adapted along the
+// embedding path to the primitive, then the standard sync defer desugar
+// applies. The receiver here is always a package-level var (addressable);
+// it is captured by the closure (evaluated at return time, like &R).
+func (e *exporter) exportPromotedSyncDefer(s *ast.DeferStmt, sel *ast.SelectorExpr, selection *types.Selection, nt *types.Named, path []int) (*Node, error) {
+	c := s.Call
+	op := sel.Sel.Name
+	if err := syntheticOpInScope(nt, op); err != nil {
+		return nil, err
+	}
+	// Adapt the receiver along the embedding path.
+	recv, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	adapted := embeddedFieldType(selection.Recv(), path)
+	if adapted == nil {
+		return nil, fmt.Errorf("gofrontend: cannot adapt receiver for promoted sync defer %s (exporter bug)", op)
+	}
+	tid, err := e.typeID(adapted)
+	if err != nil {
+		return nil, err
+	}
+	apath := make([]any, len(path))
+	for i, v := range path {
+		apath[i] = v
+	}
+	recv = e.node("selector", sel, map[string]any{
+		"x": recv, "field": embeddedFieldName(selection.Recv(), path),
+		"selpath": apath, "type": tid,
+	})
+	// Args are params (evaluated at defer time).
+	argNodes, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	fn, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync method %s.%s is not a *types.Func", nt.Obj().Name(), op)
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: sync method %s.%s has non-signature type", nt.Obj().Name(), op)
+	}
+	params := []*Node{}
+	idents := []*Node{}
+	if sig.Params().Len() != len(argNodes) {
+		return nil, fmt.Errorf("gofrontend: sync.%s.%s arity mismatch (internal error)", nt.Obj().Name(), op)
+	}
+	outerArgs := []*Node{}
+	for i := range argNodes {
+		v := types.NewParam(token.NoPos, nil, fmt.Sprintf("__sync_arg%d", i), sig.Params().At(i).Type())
+		id, err := e.defVar(v, true)
+		if err != nil {
+			return nil, err
+		}
+		ptid, err := e.typeID(sig.Params().At(i).Type())
+		if err != nil {
+			return nil, err
+		}
+		name := fmt.Sprintf("__sync_arg%d", i)
+		params = append(params, e.node("param", c, map[string]any{
+			"name": name, "obj": id, "type": ptid,
+		}))
+		idents = append(idents, e.node("ident", c, map[string]any{
+			"name": name, "obj": id, "type": ptid,
+		}))
+		outerArgs = append(outerArgs, argNodes[i])
+	}
+	// The adapted receiver is captured (package var, addressable).
+	inner := e.node("syncop", c, map[string]any{
+		"op": op, "synctyp": syntheticOpTypeName(nt),
+		"recv": recv, "args": idents, "type": nil,
 	})
 	body := e.node("block", c, map[string]any{
 		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": inner})},
@@ -8589,6 +8721,41 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			if nt := syntheticPrimitiveRecv(selection.Recv()); nt != nil {
 				return e.exportSyncOp(c, sel, nt)
 			}
+			// real-reflect: promoted sync primitive methods (e.g.
+			// reflect's funcLookupCache.Lock() where funcLookupCache is
+			// a package var of anonymous struct type embedding
+			// sync.Mutex). The method resolves through the embedding
+			// path to a sync primitive; adapt the receiver along the
+			// path and emit the syncop node.
+			if nt, path := promotedSyncPrimitive(selection); nt != nil {
+				recv, err := e.exportExpr(sel.X)
+				if err != nil {
+					return nil, err
+				}
+				if len(path) > 0 {
+					adapted := embeddedFieldType(selection.Recv(), path)
+					if adapted == nil {
+						return nil, fmt.Errorf("gofrontend: cannot adapt receiver for promoted sync method %s (exporter bug)", sel.Sel.Name)
+					}
+					tid, err := e.typeID(adapted)
+					if err != nil {
+						return nil, err
+					}
+					apath := make([]any, len(path))
+					for i, v := range path {
+						apath[i] = v
+					}
+					recv = e.node("selector", sel, map[string]any{
+						"x": recv, "field": embeddedFieldName(selection.Recv(), path),
+						"selpath": apath, "type": tid,
+					})
+				}
+				args, err := e.exportCallArgs(c)
+				if err != nil {
+					return nil, err
+				}
+				return e.exportSyncOpNodes(c, sel, nt, recv, args)
+			}
 			// P3-M5 (WS E, ADR-0005 D1): (*time.Timer).Stop/Reset and
 			// (*time.Ticker).Stop/Reset lower to additive "timeop" wire
 			// nodes (the Go values are opaque Java objects).
@@ -9897,6 +10064,45 @@ func embeddedFieldName(t types.Type, path []int) string {
 		t = st.Field(idx).Type()
 	}
 	return name
+}
+
+// promotedSyncPrimitive reports whether the method denoted by selection is
+// promoted through embedding from a synthetic sync/sync/atomic primitive
+// (real-reflect: reflect's funcLookupCache.Lock()). It returns the
+// primitive's Named type and the embedding path (Selection.Index minus
+// the method's own index), or (nil, nil) when the method is not promoted
+// from a primitive.
+func promotedSyncPrimitive(selection *types.Selection) (*types.Named, []int) {
+	if selection == nil || selection.Obj() == nil {
+		return nil, nil
+	}
+	mname := selection.Obj().Name()
+	// Search the value method set first, then the pointer method set
+	// (pointer-receiver methods promoted via value-embedded fields, with
+	// gc's implicit & on addressable receivers).
+	for _, recv := range []types.Type{selection.Recv(), types.NewPointer(selection.Recv())} {
+		ms := types.NewMethodSet(recv)
+		for i := 0; i < ms.Len(); i++ {
+			s := ms.At(i)
+			if s.Obj().Name() != mname {
+				continue
+			}
+			index := s.Index()
+			if len(index) < 2 {
+				// Direct method, not promoted.
+				return nil, nil
+			}
+			path := index[:len(index)-1]
+			fieldType := embeddedFieldType(selection.Recv(), path)
+			if dn := derefNamed(fieldType); dn != nil {
+				if nt := syntheticPrimitiveRecv(dn); nt != nil {
+					return nt, path
+				}
+			}
+			return nil, nil
+		}
+	}
+	return nil, nil
 }
 
 // recomputeMethodTables recomputes the wire "methods" list of every
