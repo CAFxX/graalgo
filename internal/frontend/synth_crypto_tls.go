@@ -25,6 +25,7 @@ package main
 const syntheticCryptoTlsSource = `package tls
 
 import (
+	"context"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -146,13 +147,31 @@ type ConnectionState struct {
 	HandshakeComplete           bool
 	DidResume                   bool
 	CipherSuite                 uint16
+	CurveID                     CurveID
 	NegotiatedProtocol          string
+	NegotiatedProtocolIsMutual  bool
 	ServerName                  string
 	PeerCertificates            []*x509.Certificate
 	VerifiedChains              [][]*x509.Certificate
 	SignedCertificateTimestamps [][]byte
 	OCSPResponse                []byte
 	TLSUnique                   []byte
+	ECHAccepted                 bool
+	HelloRetryRequest           bool
+	LocalCertificate            [][]byte
+
+	ekm func(label string, context []byte, length int) ([]byte, error)
+
+	testingOnlyPeerSignatureAlgorithm SignatureScheme
+}
+
+// ExportKeyingMaterial returns length bytes of exported key material in a new
+// slice as defined in RFC 5705. If context is nil, it is not used as part of
+// the seed. If the connection was set to allow renegotiation via
+// Config.Renegotiation, or if the connections supports neither TLS 1.3 nor
+// Extended Master Secret, this function will return an error.
+func (cs *ConnectionState) ExportKeyingMaterial(label string, context []byte, length int) ([]byte, error) {
+	return cs.ekm(label, context, length)
 }
 
 // SignatureScheme identifies a signature scheme.
@@ -486,6 +505,92 @@ func hostnameFromAddr(addr string) string {
 		}
 	}
 	return addr
+}
+
+// Dialer dials TLS connections given a configuration and a Dialer for the
+// underlying connection.
+type Dialer struct {
+	// NetDialer is the optional dialer to use for the TLS connections'
+	// underlying TCP connections.
+	// A nil NetDialer is equivalent to the net.Dialer zero value.
+	NetDialer *net.Dialer
+
+	// Config is the TLS configuration to use for new connections.
+	// A nil configuration is equivalent to the zero
+	// configuration; see the documentation of Config for the
+	// defaults.
+	Config *Config
+}
+
+// Dial connects to the given network address and initiates a TLS
+// handshake, returning the resulting TLS connection.
+//
+// The returned [Conn], if any, will always be of type *[Conn].
+//
+// Dial uses context.Background internally; to specify the context,
+// use [Dialer.DialContext].
+func (d *Dialer) Dial(network, addr string) (net.Conn, error) {
+	panic("crypto/tls: Dialer.Dial: multi-result desugar")
+}
+
+func __mrDialerDial(d *Dialer, network, addr string) __mrDialerDialPair {
+	return d.dialImpl(network, addr)
+}
+
+type __mrDialerDialPair struct {
+	v0 net.Conn
+	v1 error
+}
+
+func (d *Dialer) dialImpl(network, addr string) __mrDialerDialPair {
+	p := d.dialContextImpl(context.Background(), network, addr)
+	return __mrDialerDialPair{p.v0, p.v1}
+}
+
+func (d *Dialer) netDialer() *net.Dialer {
+	if d.NetDialer != nil {
+		return d.NetDialer
+	}
+	return new(net.Dialer)
+}
+
+// DialContext connects to the given network address and initiates a TLS
+// handshake, returning the resulting TLS connection.
+//
+// The provided Context must be non-nil. If the context expires before
+// the connection is complete, an error is returned. Once successfully
+// connected, any expiration of the context will not affect the
+// connection.
+//
+// The returned [Conn], if any, will always be of type *[Conn].
+func (d *Dialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	panic("crypto/tls: Dialer.DialContext: multi-result desugar")
+}
+
+func __mrDialerDialContext(d *Dialer, ctx context.Context, network, addr string) __mrDialerDialContextPair {
+	return d.dialContextImpl(ctx, network, addr)
+}
+
+type __mrDialerDialContextPair struct {
+	v0 net.Conn
+	v1 error
+}
+
+func (d *Dialer) dialContextImpl(ctx context.Context, network, addr string) __mrDialerDialContextPair {
+	if d.Config == nil {
+		// Mirror DialWithDialer: nil config is an error in this synthetic impl.
+		return __mrDialerDialContextPair{nil, errors.New("tls: nil Config")}
+	}
+	rawConn, err := d.netDialer().DialContext(ctx, network, addr)
+	if err != nil {
+		return __mrDialerDialContextPair{nil, err}
+	}
+	conn := Client(rawConn, d.Config)
+	if err := conn.Handshake(); err != nil {
+		rawConn.Close()
+		return __mrDialerDialContextPair{nil, err}
+	}
+	return __mrDialerDialContextPair{conn, nil}
 }
 
 // DialWithDialer connects using a Dialer.
@@ -828,13 +933,13 @@ func (c *Conn) LocalAddr() net.Addr { return c.conn.LocalAddr() }
 func (c *Conn) RemoteAddr() net.Addr { return c.conn.RemoteAddr() }
 
 // SetDeadline sets the deadline.
-func (c *Conn) SetDeadline(t interface{}) error { return c.conn.SetDeadline(t) }
+func (c *Conn) SetDeadline(t time.Time) error { return c.conn.SetDeadline(t) }
 
 // SetReadDeadline sets the read deadline.
-func (c *Conn) SetReadDeadline(t interface{}) error { return c.conn.SetReadDeadline(t) }
+func (c *Conn) SetReadDeadline(t time.Time) error { return c.conn.SetReadDeadline(t) }
 
 // SetWriteDeadline sets the write deadline.
-func (c *Conn) SetWriteDeadline(t interface{}) error { return c.conn.SetWriteDeadline(t) }
+func (c *Conn) SetWriteDeadline(t time.Time) error { return c.conn.SetWriteDeadline(t) }
 
 // VerifyHostname verifies the hostname against the peer certificate chain
 // using x509 hostname semantics.
