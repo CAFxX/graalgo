@@ -230,6 +230,10 @@ func syntheticRuntimePackage() *types.Package {
 	intTyp := types.Typ[types.Int]
 	uintptrTyp := types.Typ[types.Uintptr]
 	boolTyp := types.Typ[types.Bool]
+	uint64Typ := types.Typ[types.Uint64]
+	uint32Typ := types.Typ[types.Uint32]
+	float64Typ := types.Typ[types.Float64]
+	byteSlice := types.NewSlice(types.Typ[types.Byte])
 
 	param := func(name string, t types.Type) *types.Var {
 		return types.NewParam(token.NoPos, pkg, name, t)
@@ -338,6 +342,63 @@ func syntheticRuntimePackage() *types.Package {
 		newField("file", strTyp),
 		newField("line", intTyp),
 	}, nil))
+
+	// MemStats (gc 1.27.1, src/runtime/mstats.go): the memory-statistics
+	// struct. Field order and types match gc exactly. The backend
+	// implements ReadMemStats as an intrinsic wire node populating the
+	// struct from JVM/GC telemetry (see exportCall).
+	bySizeElem := types.NewStruct([]*types.Var{
+		newField("Size", uint32Typ),
+		newField("Mallocs", uint64Typ),
+		newField("Frees", uint64Typ),
+	}, nil)
+	memStats := newNamed("MemStats", types.NewStruct([]*types.Var{
+		newField("Alloc", uint64Typ),
+		newField("TotalAlloc", uint64Typ),
+		newField("Sys", uint64Typ),
+		newField("Lookups", uint64Typ),
+		newField("Mallocs", uint64Typ),
+		newField("Frees", uint64Typ),
+		newField("HeapAlloc", uint64Typ),
+		newField("HeapSys", uint64Typ),
+		newField("HeapIdle", uint64Typ),
+		newField("HeapInuse", uint64Typ),
+		newField("HeapReleased", uint64Typ),
+		newField("HeapObjects", uint64Typ),
+		newField("StackInuse", uint64Typ),
+		newField("StackSys", uint64Typ),
+		newField("MSpanInuse", uint64Typ),
+		newField("MSpanSys", uint64Typ),
+		newField("MCacheInuse", uint64Typ),
+		newField("MCacheSys", uint64Typ),
+		newField("BuckHashSys", uint64Typ),
+		newField("GCSys", uint64Typ),
+		newField("OtherSys", uint64Typ),
+		newField("NextGC", uint64Typ),
+		newField("LastGC", uint64Typ),
+		newField("PauseTotalNs", uint64Typ),
+		newField("PauseNs", types.NewArray(uint64Typ, 256)),
+		newField("PauseEnd", types.NewArray(uint64Typ, 256)),
+		newField("NumGC", uint32Typ),
+		newField("NumForcedGC", uint32Typ),
+		newField("GCCPUFraction", float64Typ),
+		newField("EnableGC", boolTyp),
+		newField("DebugGC", boolTyp),
+		newField("BySize", types.NewArray(bySizeElem, 61)),
+	}, nil))
+	// ReadMemStats (gc 1.27.1, src/runtime/mstats.go:356): populates m
+	// with current memory statistics.
+	addFunc("ReadMemStats", tuple(param("m", types.NewPointer(memStats))), nil)
+	// GOROOT (gc 1.27.1, src/runtime/extern.go:354): returns the GOROOT
+	// environment value.
+	addFunc("GOROOT", nil, tuple(param("", strTyp)))
+	// Version (gc 1.27.1, src/runtime/extern.go:375): returns the Go
+	// version string.
+	addFunc("Version", nil, tuple(param("", strTyp)))
+	// Stack (gc 1.27.1, src/runtime/mprof.go:1690): formats a stack
+	// trace into buf, returns bytes written.
+	addFunc("Stack", tuple(param("buf", byteSlice), param("all", boolTyp)),
+		tuple(param("", intTyp)))
 
 	pkg.MarkComplete()
 	return pkg
@@ -8358,6 +8419,54 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 						return nil, err
 					}
 					return e.node("runtimegomaxprocs", c, map[string]any{"x": arg, "type": typ}), nil
+				}
+				// MemStats family (unblocks runtime/debug, hence Badger via
+				// testify): runtime.ReadMemStats, GOROOT, Version, Stack.
+				// Emitted as additive wire nodes; the backend implements
+				// them as intrinsics (see graalgo.runtime.MemStatsInterop).
+				if sel.Sel.Name == "ReadMemStats" {
+					if len(c.Args) != 1 {
+						return nil, fmt.Errorf("gofrontend: runtime.ReadMemStats takes one argument")
+					}
+					arg, err := e.exportExpr(c.Args[0])
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimereadmemstats", c, map[string]any{"m": arg}), nil
+				}
+				if sel.Sel.Name == "GOROOT" {
+					if len(c.Args) != 0 {
+						return nil, fmt.Errorf("gofrontend: runtime.GOROOT takes no arguments")
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimegoroot", c, map[string]any{"type": typ}), nil
+				}
+				if sel.Sel.Name == "Version" {
+					if len(c.Args) != 0 {
+						return nil, fmt.Errorf("gofrontend: runtime.Version takes no arguments")
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimeversion", c, map[string]any{"type": typ}), nil
+				}
+				if sel.Sel.Name == "Stack" {
+					if len(c.Args) != 2 {
+						return nil, fmt.Errorf("gofrontend: runtime.Stack takes two arguments")
+					}
+					args, err := e.exportCallArgs(c)
+					if err != nil {
+						return nil, err
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("runtimestack", c, map[string]any{"args": args, "type": typ}), nil
 				}
 				// Stack-inspection family: runtime.Callers/CallersFrames/
 				// FuncForPC are single-result intrinsics, emitted as
