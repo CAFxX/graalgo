@@ -2,7 +2,6 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.dsl.Cached;
-import com.oracle.truffle.api.dsl.Fallback;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
@@ -40,7 +39,7 @@ public abstract class CallDispatchNode extends Node {
         return callNode.call(GoCalls.callArgs(fn, args));
     }
 
-    @Fallback
+    @Specialization(replaces = "callCached")
     static Object callMegamorphic(GoFunc fn, Object[] args) {
         return GoCalls.invoke(fn, args);
     }
