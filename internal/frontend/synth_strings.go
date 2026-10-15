@@ -34,14 +34,17 @@
 //
 // Out-of-scope members (exact gc signatures + panic bodies — fail fast,
 // NEVER silent):
-//   - Multi-result functions/methods (Cut, CutPrefix, CutSuffix, CutLast,
-//     Builder.Write/WriteRune/WriteString, Reader.Read/ReadAt/ReadByte/
-//     ReadRune/Seek): declared for type-checking, skipped at emission,
-//     every call site fails fast via isMultiResultSynthetic (WS D; the
-//     P3-M5 time.ParseDuration precedent). Re-test when WS D lands.
+//   - Multi-result methods (Builder.Write/WriteRune/WriteString,
+//     Reader.Read/ReadAt/ReadByte/ReadRune/Seek): declared for
+//     type-checking, skipped at emission, every call site fails fast via
+//     isMultiResultSynthetic (WS D; the P3-M5 time.ParseDuration
+//     precedent). Re-test when WS D lands.
 //   - Title: deprecated upstream; needs the unicode Letter/Digit tables
 //     (too large to inline for a deprecated function). Exact signature,
 //     panic body. Re-test when the unicode wave lands.
+//
+// Note: Cut, CutPrefix, CutSuffix, CutLast now have REAL implementations
+// (pair-transformed via the general userMRFuncs mechanism, not table-driven).
 //
 // Deliberate, documented divergences (inexpressible signatures — the
 // parameter types live in unavailable packages; the P3-M5
@@ -2078,22 +2081,34 @@ func stringsAppendRune(b []byte, r rune) []byte {
 
 	// Cut slices s around the first instance of sep.
 	func Cut(s, sep string) (before, after string, found bool) {
-		panic("strings.Cut: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		if i := Index(s, sep); i >= 0 {
+			return s[:i], s[i+len(sep):], true
+		}
+		return s, "", false
 	}
 
 	// CutPrefix returns s without the leading prefix string.
 	func CutPrefix(s, prefix string) (after string, found bool) {
-		panic("strings.CutPrefix: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		if !HasPrefix(s, prefix) {
+			return s, false
+		}
+		return s[len(prefix):], true
 	}
 
 	// CutSuffix returns s without the trailing suffix string.
 	func CutSuffix(s, suffix string) (before string, found bool) {
-		panic("strings.CutSuffix: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		if !HasSuffix(s, suffix) {
+			return s, false
+		}
+		return s[:len(s)-len(suffix)], true
 	}
 
 	// CutLast slices s around the last instance of sep.
 	func CutLast(s, sep string) (before, after string, found bool) {
-		panic("strings.CutLast: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		if i := LastIndex(s, sep); i >= 0 {
+			return s[:i], s[i+len(sep):], true
+		}
+		return s, "", false
 	}
 
 	// ---------------------------------------------------------------------------
