@@ -47,7 +47,16 @@ public enum GoKind {
     INTERFACE(false, 0),
     FUNC(false, 0),
     CHAN(false, 0),
-    UNSAFE_POINTER(false, 0);
+    UNSAFE_POINTER(false, 0),
+    /**
+     * A generic type parameter (e.g. {@code T} in {@code func F[T any](x T)}).
+     * Type parameters appear in the type table when generic declarations are
+     * exported (the frontend emits them for unsubstituted signatures). At
+     * runtime they behave like their constraint: the method set and layout
+     * come from the constraint type. Instantiated uses are substituted with
+     * concrete types before reaching the backend.
+     */
+    TYPEPARAM(false, 0);
 
     private final boolean signed;
     private final int bits;
