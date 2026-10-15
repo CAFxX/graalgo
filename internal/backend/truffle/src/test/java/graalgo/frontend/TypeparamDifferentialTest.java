@@ -34,7 +34,7 @@ import java.util.concurrent.TimeUnit;
  *       build-failure parity for {@code // errorcheck}, full run parity
  *       for {@code // run}); any divergence fails the test with the
  *       adapter's JSON report copied to
- *       {@code phases/phase1/hidden_files/m6_typeparam_divergences.json}.
+ *       {@code .out/typeparam-divergences.json} under the repo root.
  * </ul>
  *
  * <p>Red-green-first (SPEC §5.2): the oracle is stock gc at test time —
@@ -381,53 +381,66 @@ public final class TypeparamDifferentialTest {
     }
 
     // -- Path-resolution unit tests --------------------------------------
-    // The old repoRoot() stripped two levels off the raw cwd with no
-    // validation; running the suite from any nonstandard directory
+    // These pin the robust repo-root resolution: the pre-migration
+    // resolvePhase1Dir() stripped two levels off the raw cwd with no
+    // validation, so running the suite from any nonstandard directory
     // (e.g. phases/phase1/frontend) silently produced a wrong root and a
     // confusing "No such file or directory" from the diffharness build.
-    // These pin the robust resolution (red: the old code fails
-    // testResolvePhase1DirFromSubdir).
+    // The Phase-4 migration generalized that resolver to resolveRepoDir()
+    // (repo root located by layout markers, with the graalgo.repo.dir
+    // property honored); these tests pin the current mechanism.
+    // Red: a naive walk-up that doesn't validate the layout markers fails
+    // testResolveRepoDirFromSubdir.
 
-    private static Path fakePhase1() throws IOException {
+    /** A fake repo tree carrying the isRepoDir() layout markers. */
+    private static Path fakeRepo() throws IOException {
         Path root = Files.createTempDirectory("fake-repo-");
-        Path p1 = root.resolve("phases").resolve("phase1");
-        Files.createDirectories(p1.resolve("src"));
-        Files.createDirectories(p1.resolve("frontend"));
-        return p1;
+        Files.createDirectories(root.resolve("test").resolve("differential"));
+        Files.createDirectories(root.resolve("internal").resolve("backend"));
+        return root;
     }
 
-    public void testResolvePhase1DirFromPhase1Cwd() throws IOException {
-        Path p1 = fakePhase1();
-        if (!resolvePhase1Dir(null, p1).equals(p1)) {
-            throw new AssertionError("cwd=phase1 not resolved");
-        }
-    }
-
-    public void testResolvePhase1DirFromSubdir() throws IOException {
-        // The dead worker's case: cwd one level too deep must still find it.
-        Path p1 = fakePhase1();
-        Path deep = p1.resolve("frontend");
-        if (!resolvePhase1Dir(null, deep).equals(p1)) {
-            throw new AssertionError("cwd=phase1/frontend not resolved to " + p1);
-        }
-    }
-
-    public void testResolvePhase1DirFromRepoRoot() throws IOException {
-        Path p1 = fakePhase1();
-        if (!resolvePhase1Dir(null, p1.getParent().getParent()).equals(p1)) {
+    public void testResolveRepoDirFromRepoRootCwd() throws IOException {
+        Path root = fakeRepo();
+        if (!resolveRepoDir(null, root).equals(root)) {
             throw new AssertionError("cwd=repo root not resolved");
         }
     }
 
-    public void testResolvePhase1DirProperty() throws IOException {
-        Path p1 = fakePhase1();
-        if (!resolvePhase1Dir(p1.toString(), Path.of("/nonexistent")).equals(p1)) {
+    public void testResolveRepoDirFromSubdir() throws IOException {
+        // The dead worker's case: cwd several levels too deep must still
+        // walk up to the root.
+        Path root = fakeRepo();
+        Path deep = root.resolve("test").resolve("differential");
+        if (!resolveRepoDir(null, deep).equals(root)) {
+            throw new AssertionError("cwd=test/differential not resolved to " + root);
+        }
+    }
+
+    public void testResolveRepoDirFromDeepSubdir() throws IOException {
+        Path root = fakeRepo();
+        Path deep = root.resolve("internal").resolve("backend")
+                .resolve("truffle").resolve("src");
+        Files.createDirectories(deep);
+        if (!resolveRepoDir(null, deep).equals(root)) {
+            throw new AssertionError("cwd=internal/backend/truffle/src not resolved to " + root);
+        }
+    }
+
+    public void testResolveRepoDirProperty() throws IOException {
+        Path root = fakeRepo();
+        if (!resolveRepoDir(root.toString(), Path.of("/nonexistent")).equals(root)) {
             throw new AssertionError("absolute property not honored");
         }
-        Path rel = p1.getParent().getParent().relativize(p1);
-        Path got = resolvePhase1Dir(rel.toString(), p1.getParent().getParent());
-        if (!got.equals(p1)) {
+        Path got = resolveRepoDir(".", root);
+        if (!got.equals(root)) {
             throw new AssertionError("relative property not resolved against cwd: " + got);
+        }
+        try {
+            resolveRepoDir("test", root);
+            throw new AssertionError("expected IllegalStateException for non-root property");
+        } catch (IllegalStateException expected) {
+            // expected
         }
     }
 
@@ -463,22 +476,22 @@ public final class TypeparamDifferentialTest {
         }
     }
 
-    public void testResolvePhase1DirFailsFast() throws IOException {
-        Path p1 = fakePhase1();
-        // The garbage cwd must not be under a phase1 tree; java.io.tmpdir is
+    public void testResolveRepoDirFailsFast() throws IOException {
+        Path root = fakeRepo();
+        // The garbage cwd must not be under a repo tree; java.io.tmpdir is
         // routed to out/test-tmp (under the repo) by the Makefile, so use an
         // explicit system-temp path here.
         Path garbage = Files.createTempDirectory(Path.of("/tmp"), "garbage-cwd-");
         try {
-            resolvePhase1Dir(null, garbage);
+            resolveRepoDir(null, garbage);
             throw new AssertionError("expected IllegalStateException for garbage cwd");
         } catch (IllegalStateException expected) {
-            if (!expected.getMessage().contains("graalgo.phase1.dir")) {
+            if (!expected.getMessage().contains("graalgo.repo.dir")) {
                 throw new AssertionError("unhelpful message: " + expected.getMessage());
             }
         }
         try {
-            resolvePhase1Dir("/nonexistent-phase1", p1);
+            resolveRepoDir("/nonexistent-repo-dir", root);
             throw new AssertionError("expected IllegalStateException for bad property");
         } catch (IllegalStateException expected) {
             // expected
