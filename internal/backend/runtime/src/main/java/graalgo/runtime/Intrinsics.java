@@ -213,6 +213,15 @@ public final class Intrinsics {
             throw new IllegalArgumentException("growslice: negative new length " + newLen);
         }
         if (elemSizeBytes == 0) {
+            // P3 bug-042: the zero-size fast path below skips copying old
+            // elements — valid only for truly zero-size types. Arrays are
+            // never zero-size (even [0]T has identity); a zero elemSizeBytes
+            // for ARRAY means the frontend failed to compute the ABI size.
+            // Fail fast instead of silently dropping elements.
+            if (elemKind == graalgo.values.GoKind.ARRAY) {
+                throw new IllegalArgumentException(
+                        "growslice: ARRAY element with elemSizeBytes=0 (frontend bug)");
+            }
             // gc: slice{zerobase, newLen, newLen} — no backing allocation,
             // cap grows to exactly newLen (never doubled). A zero-size type
             // has exactly one value, so there is nothing to copy from the
