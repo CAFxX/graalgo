@@ -414,6 +414,51 @@ func itoa(n int) string {
 	return string(b[i:])
 }
 
+// Mask returns the result of masking the IP address ip with mask.
+// Ported from GOROOT net/ip.go (required by real crypto/x509 from disk;
+// see networkNumberAndMask above).
+func (ip IP) Mask(mask IPMask) IP {
+	if len(mask) == netIPv6len && len(ip) == netIPv4len && __allFF(mask[:12]) {
+		mask = mask[12:]
+	}
+	if len(mask) == netIPv4len && len(ip) == netIPv6len && __isV4InV6Prefix(ip[:12]) {
+		ip = ip[12:]
+	}
+	n := len(ip)
+	if n != len(mask) {
+		return nil
+	}
+	out := make(IP, n)
+	for i := 0; i < n; i++ {
+		out[i] = ip[i] & mask[i]
+	}
+	return out
+}
+
+// __allFF reports whether b consists entirely of 0xff bytes.
+func __allFF(b []byte) bool {
+	for _, c := range b {
+		if c != 0xff {
+			return false
+		}
+	}
+	return true
+}
+
+// __isV4InV6Prefix reports whether b is the 12-byte IPv4-in-IPv6 prefix
+// (::ffff:0:0/96).
+func __isV4InV6Prefix(b []byte) bool {
+	if len(b) != 12 {
+		return false
+	}
+	for i := 0; i < 10; i++ {
+		if b[i] != 0 {
+			return false
+		}
+	}
+	return b[10] == 0xff && b[11] == 0xff
+}
+
 // To4 converts the IPv4 address ip to a 4-byte representation.
 // If ip is not an IPv4 address, To4 returns nil.
 func (ip IP) To4() IP {
@@ -1969,6 +2014,60 @@ const (
 	netIPv4len = 4
 	netIPv6len = 16
 )
+
+// IPv4len and IPv6len are the byte lengths of IPv4 and IPv6 addresses.
+// Exported names matching GOROOT net (required by real crypto/x509 from disk).
+const (
+	IPv4len = netIPv4len
+	IPv6len = netIPv6len
+)
+
+// networkNumberAndMask returns the IP address and the IP mask of the
+// network defined by n, in the same length family. Ported from GOROOT
+// net/ip.go (required by real crypto/x509 from disk, which calls
+// (*net.IPNet).Contains; the synthetic net package is still present
+// until the real-net lane routes it via the disk importer).
+func networkNumberAndMask(n *IPNet) (ip IP, m IPMask) {
+	if ip = n.IP.To4(); ip == nil {
+		ip = n.IP
+		if len(ip) != netIPv6len {
+			return nil, nil
+		}
+	}
+	m = n.Mask
+	switch len(m) {
+	case netIPv4len:
+		if len(ip) != netIPv4len {
+			return nil, nil
+		}
+	case netIPv6len:
+		if len(ip) == netIPv4len {
+			m = m[12:]
+		}
+	default:
+		return nil, nil
+	}
+	return
+}
+
+// Contains reports whether the network includes ip.
+// Ported from GOROOT net/ip.go (see networkNumberAndMask above).
+func (n *IPNet) Contains(ip IP) bool {
+	nn, m := networkNumberAndMask(n)
+	if x := ip.To4(); x != nil {
+		ip = x
+	}
+	l := len(ip)
+	if l != len(nn) {
+		return false
+	}
+	for i := 0; i < l; i++ {
+		if nn[i]&m[i] != ip[i]&m[i] {
+			return false
+		}
+	}
+	return true
+}
 
 func (n *IPNet) String() string {
 	if n == nil {
