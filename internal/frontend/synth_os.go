@@ -2064,11 +2064,11 @@ func Getgroups() ([]int, error) {
 	start := 0
 	for i := 0; i <= len(s); i++ {
 		if i == len(s) || s[i] == 0 {
-			n, ok := __parseUint(s[start:i])
-			if !ok {
+			p := __parseUint(s[start:i])
+			if !p.ok {
 				return nil, &PathError{Op: "getgroups", Path: "", Err: syscall.EINVAL}
 			}
-			out = append(out, int(n))
+			out = append(out, int(p.n))
 			start = i + 1
 		}
 	}
@@ -2076,19 +2076,26 @@ func Getgroups() ([]int, error) {
 }
 
 // __parseUint parses a decimal uint64 (avoids depending on synthetic
-// strconv's desugar surface from inside os).
-func __parseUint(s string) (uint64, bool) {
+// strconv's desugar surface from inside os). Single-result via pair
+// struct (WS D): multi-result synthetic functions need the pair
+// transform, and this helper is only used once.
+type __parseUintPair struct {
+	n  uint64
+	ok bool
+}
+
+func __parseUint(s string) __parseUintPair {
 	if s == "" {
-		return 0, false
+		return __parseUintPair{0, false}
 	}
 	var n uint64
 	for i := 0; i < len(s); i++ {
 		if s[i] < '0' || s[i] > '9' {
-			return 0, false
+			return __parseUintPair{0, false}
 		}
 		n = n*10 + uint64(s[i]-'0')
 	}
-	return n, true
+	return __parseUintPair{n, true}
 }
 
 // Hostname returns the host name reported by the kernel.

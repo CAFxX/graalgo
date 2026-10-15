@@ -454,8 +454,6 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 	return failImporter{}.Import(path)
 }
 
-
-
 // runtimeStackMethod reports whether a MethodVal selection is one of the
 // synthetic runtime stack-inspection methods ((*Frames).Next,
 // (*Func).Name/Entry/FileLine), returning the method name. The check is
@@ -8575,7 +8573,13 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
 	// time.ParseDuration.
-	if e.isMultiResultSyntheticFailFast(fn) {
+	// P4 (generic MR, real-fmt2): generic templates are exempt. The
+	// template itself is never in userMRFuncs (registerUserMRFunc skips
+	// isTemplate), but each instantiation gets its own pair type via
+	// instMRInfos (see exportInstantiation). Fail-fasting here would
+	// incorrectly reject generic multi-result calls like
+	// internal/bytealg.hashStr[string] from real disk packages.
+	if e.isMultiResultSyntheticFailFast(fn) && !isGenericFunc(fn) {
 		return nil, multiResultSyntheticError(fn)
 	}
 	fi, ok := e.funcByObj[fn]
@@ -10197,11 +10201,19 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 // e.g. hashStr[string](...) or hashStr("...") (via type inference).
 // For explicit type args, Fun is an IndexExpr/IndexListExpr; for inferred
 // type args, Fun is a plain Ident recorded in info.Instances.
+// For package-qualified calls (pkg.Func), Fun is a SelectorExpr; use
+// the Sel ident (the function name) for the Instances lookup.
 // Returns nil if not a generic MR instantiation call.
 func (e *exporter) instMRInfoForCall(c *ast.CallExpr) *userMRInfo {
 	id := callTargetIdent(c.Fun)
 	if id == nil {
-		return nil
+		// Package-qualified generic call (e.g. bytealg.hashStr(sep)):
+		// the Sel ident denotes the generic function.
+		if sel, ok := c.Fun.(*ast.SelectorExpr); ok {
+			id = sel.Sel
+		} else {
+			return nil
+		}
 	}
 	ii, ok := e.info.Instances[id]
 	if !ok {

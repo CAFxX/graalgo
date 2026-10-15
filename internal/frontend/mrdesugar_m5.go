@@ -1887,6 +1887,7 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 			}
 			return nil
 		}
+		return nil
 	}
 	return nil
 }
@@ -1898,12 +1899,12 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 //
 // Design: the field holds a function value. For the call to work, the
 // stored value must be pair-returning. This holds because:
-// - Synthetic packages declare pair-returning field types explicitly
-//   (e.g., nistCurve.generate)
-// - Disk/user packages: the field is assigned a function that has been
-//   pair-transformed (via userMRFuncs or the disk MR table), so the
-//   value is pair-returning even though the declared field type is
-//   multi-result.
+//   - Synthetic packages declare pair-returning field types explicitly
+//     (e.g., nistCurve.generate)
+//   - Disk/user packages: the field is assigned a function that has been
+//     pair-transformed (via userMRFuncs or the disk MR table), so the
+//     value is pair-returning even though the declared field type is
+//     multi-result.
 //
 // The desugar emits a regular "call" node (not "funcfieldcall") with the
 // pair type — the backend already handles selector-fun calls via
