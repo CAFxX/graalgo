@@ -546,11 +546,21 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 
 	// Sibling test files (not selected): every non-entry-point
-	// declaration is inlined as helpers.
+	// declaration is inlined as helpers. Like runnableTests in test.go,
+	// only files satisfying the current platform's build constraints
+	// are considered — the raw glob alone would inline build-tag-gated
+	// siblings (e.g. math's export_s390x_test.go, constrained to s390x
+	// by its filename suffix) whose helpers reference build-excluded
+	// sources (hasVX from arith_s390x.go) and fail to compile on this
+	// platform (PKG-037).
 	var sibUnits []srcUnit
+	buildable := make(map[string]bool)
+	for _, f := range buildableGoFiles(dir) {
+		buildable[f] = true
+	}
 	siblings, _ := filepath.Glob(filepath.Join(dir, "*_test.go"))
 	for _, sib := range siblings {
-		if selectedFiles[sib] {
+		if selectedFiles[sib] || !buildable[sib] {
 			continue
 		}
 		sibSet := token.NewFileSet()

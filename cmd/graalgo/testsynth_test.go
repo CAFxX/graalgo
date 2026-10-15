@@ -1,6 +1,7 @@
 package main
 
 import (
+	"go/build"
 	"os"
 	"path/filepath"
 	"strings"
@@ -852,5 +853,59 @@ func TestIsSelfImportShortPath(t *testing.T) {
 	}
 	if isSelfImport(dir, "otherpkg") {
 		t.Errorf("isSelfImport(mypkg dir, \"otherpkg\") = true, want false")
+	}
+}
+
+// TestSiblingBuildTaggedFileExcluded is the regression test for
+// PKG-037: sibling test files (helpers not selected for -run) were
+// collected with a raw *_test.go glob, ignoring build constraints.
+// math's export_s390x_test.go (constrained to s390x by the _s390x
+// filename suffix) was inlined on amd64, where its `var HasVX = hasVX`
+// helper references hasVX from the equally s390x-only arith_s390x.go
+// and fails to compile with "undefined: hasVX". The fix filters
+// siblings through buildableGoFiles (the same build-constraint-aware
+// mechanism runnableTests in test.go uses) — general for all packages
+// and all GOOS/GOARCH tags, not math-specific.
+func TestSiblingBuildTaggedFileExcluded(t *testing.T) {
+	if build.Default.GOARCH == "s390x" {
+		t.Skip("the s390x-constrained sibling is buildable on s390x; nothing to exclude")
+	}
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/sibbuild\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package sib\n\nfunc F() int { return 1 }\n")
+	// Selected test file: buildable on every platform.
+	writeFile(t, root, "p_test.go", `package sib
+
+import "testing"
+
+func TestSelected(t *testing.T) {
+	if F() != 1 {
+		t.Fatal("bad")
+	}
+}
+`)
+	// Sibling helper file constrained to s390x by filename suffix —
+	// mirrors math/export_s390x_test.go. Its helper references a name
+	// that only exists in s390x-gated sources (mirrors hasVX from
+	// arith_s390x.go); inlining it on another platform would leave the
+	// reference undefined — the PKG-037 failure.
+	writeFile(t, root, "export_s390x_test.go", `package sib
+
+var HasVX = hasVX
+`)
+	testFile := filepath.Join(root, "p_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestSelected" {
+		t.Fatalf("discoverTests = %v", tests)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "p.go")})
+	if strings.Contains(src, "HasVX") {
+		t.Errorf("driver inlined the s390x-constrained sibling's helper on %s/%s:\n%s",
+			build.Default.GOOS, build.Default.GOARCH, src)
 	}
 }
