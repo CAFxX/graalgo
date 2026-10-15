@@ -395,6 +395,60 @@ func TestUsesIt(t *testing.T) {
 	}
 }
 
+// TestDotImportOfAnyPackagePreserved pins the general dot-import
+// mechanism (PKG-028): a test file dot-importing ANY package — not just
+// the package under test — keeps the dot-import verbatim in the driver's
+// import block, and the test body's unqualified references survive
+// verbatim (not rewritten to a qualified form). Dot-imported names are
+// unqualified in the test file; dropping or rewriting the import would
+// leave them undefined. The frontend resolves dot-imports correctly
+// (probed: dot-import of synthetic strings type-checks), so preservation
+// is the right mechanism — no qualification rewrite is needed or wanted.
+//
+// (PKG-028's actual defect turned out to be the synthetic `path`
+// package's scope-limited surface — Match/ErrBadPattern dropped — not
+// the synthesis. This test guards the synthesis half so a future "fix"
+// cannot regress dot-import preservation.)
+func TestDotImportOfAnyPackagePreserved(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/dotany\n\ngo 1.21\n")
+	writeFile(t, root, "dep/dep.go", "package dep\n\nfunc Helper() string { return \"h\" }\n")
+	writeFile(t, root, "a.go", "package dotany\n")
+	writeFile(t, root, "a_test.go", `package dotany_test
+
+import (
+	. "example.com/dotany/dep"
+	"testing"
+)
+
+func TestDotDep(t *testing.T) {
+	if Helper() != "h" {
+		t.Fatal("bad")
+	}
+}
+`)
+	testFile := filepath.Join(root, "a_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tests) != 1 || tests[0] != "TestDotDep" {
+		t.Fatalf("discoverTests = %v", tests)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "a.go")})
+	if !strings.Contains(src, `. "example.com/dotany/dep"`) {
+		t.Errorf("driver dropped the dot-import of a non-self package:\n%s", src)
+	}
+	if !strings.Contains(src, `Helper() != "h"`) {
+		t.Errorf("driver lost or rewrote the unqualified reference:\n%s", src)
+	}
+	if strings.Contains(src, "dep.Helper(") {
+		t.Errorf("driver qualified a dot-imported reference (the dot-import provides it):\n%s", src)
+	}
+}
+
 // TestIsSelfImportShortPath covers self-import detection when there is
 // no module context at all: a package under a (fake) GOROOT whose test
 // files import it by its short path. Detection must work purely by
