@@ -203,7 +203,6 @@ func main() {
 	}
 }
 
-
 // findKind walks the decoded export JSON and returns the first node with the
 // given kind, or nil.
 func findKind(n any, kind string) map[string]any {
@@ -440,5 +439,32 @@ func main() {
 	_, err := ExportFile(writeSyncProg(t, src))
 	if err == nil {
 		t.Fatalf("ExportFile with sync.OnceFunc(): want arity error, got nil")
+	}
+}
+
+// TestSyntheticDiskDepMethodsResolved (PKG-008): a synthetic package may
+// import a disk package (synthetic io imports the real sync; mime/multipart
+// imports path/filepath). The disk dependency's methods must be merged into
+// methodIndex/funcByObj when the synthetic package is imported — otherwise
+// method calls in the synthetic package's own body fail with
+// "gofrontend: method X not found on Y". The failing method varied run to
+// run (Lock vs Unlock vs Do): scanRoots resolves every MethodVal selection
+// in the imported bodies while iterating info.Selections, a Go map.
+// This test imports bytes, whose transitive synthetic dependency io calls
+// sync.Mutex.Lock/Unlock and sync.Once.Do in its body; pre-fix the export
+// failed deterministically (only the method name varied).
+func TestSyntheticDiskDepMethodsResolved(t *testing.T) {
+	src := `package main
+
+import "bytes"
+
+func main() {
+	var b bytes.Buffer
+	b.WriteString("hi")
+	println(b.String())
+}
+`
+	if _, err := ExportFile(writeSyncProg(t, src)); err != nil {
+		t.Fatalf("ExportFile with synthetic bytes (disk sync dep via io): %v", err)
 	}
 }

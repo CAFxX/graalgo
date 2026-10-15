@@ -941,15 +941,33 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	// net/netip importing unique) must be imported first, otherwise their
 	// functions (e.g. unique.Make) are not in the exporter's index and
 	// call sites fail with "call to unknown function". Dependencies are
-	// imported before the package itself (post-order). Only synthetic
-	// sources are followed; signature-only stubs (runtime, unsafe, etc.)
-	// and disk packages are handled by their own mechanisms.
+	// imported before the package itself (post-order).
+	// GENERAL (fix-disk-sync-methods): the same holds for DISK imports of
+	// synthetic packages (e.g. synthetic io importing the real sync, or
+	// mime/multipart importing path/filepath). Without the merge, the
+	// disk package's methods never join methodIndex/funcByObj, and method
+	// calls in the synthetic package's own body — resolved by scanRoots
+	// (every MethodVal selection) and exportSyntheticBodies — fail with
+	// "gofrontend: method X not found on Y". importPkgTree merges the
+	// disk closure dependencies-first; it is idempotent, handles mixed
+	// synthetic/disk closures via resolvePkgTree, and maps the
+	// signature-only stubs (runtime, fmt, unsafe) to (nil, nil) so they
+	// are skipped. The old "handled by their own mechanisms" assumption
+	// was wrong: needDisk/importPkgTree only covers the user program's
+	// direct imports, never disk packages reachable solely through
+	// synthetic packages. Every synthetic package type-checks through the
+	// same overlay importer at build time, so each import here is known
+	// to resolve (synthetic, stub, or disk) — no new failure modes.
 	for _, imp := range sp.pkg.Imports() {
 		ip := imp.Path()
 		if _, ok := syntheticSources[ip]; ok {
 			if err := e.importSyntheticPackage(getSyntheticPackage(ip)); err != nil {
 				return err
 			}
+			continue
+		}
+		if err := e.importPkgTree(ip); err != nil {
+			return err
 		}
 	}
 	savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
