@@ -1,15 +1,15 @@
 # frontend/v2 — proper parser → AST pipeline
 
 **Status:** design / in-progress (long-lived parallel track, started 2026-10-15).
-**Goal:** Replace the bodge-y v1 frontend with a clean parser → AST → IR
+**Goal:** Replace the bodge-y v1 frontend with a clean parser → AST → backend
 pipeline. No synthetic packages, no package-name special cases, no stdlib-call
-desugaring, no import overlay.
+desugaring, no import overlay, no JSON wire format.
 **Scope:** The new frontend accepts **ALL Go syntax from the start** — the
 complete Go 1.27 language, including generics (type parameters, instantiation,
 constraints), not a subset. If `go/parser` accepts it, v2 handles it.
-**IR contract:** Unchanged. v2 emits the same `frontend/v1` JSON wire format
-specified in [frontend-v1.md](frontend-v1.md), consumed by
-`graalgo.frontend.NodeFactory`. The backend does not change.
+**No JSON:** v2 skips the `frontend/v1` JSON wire format entirely. It constructs
+backend nodes directly via a proper Go→Java API (not serialized JSON). The JSON
+was a bodge for passing data between processes; v2 is a proper pipeline.
 
 ## 1. Why v2
 
@@ -30,7 +30,7 @@ reaches differential parity on the corpus.
 ## 2. Pipeline stages
 
 ```
-.go files → [parse] → ast.Package → [check] → typed info → [emit] → frontend/v1 JSON
+.go files → [parse] → ast.Package → [check] → typed info → [emit] → backend nodes (direct, no JSON)
 ```
 
 ### Stage 1 — Parse (`v2/parser/`)
@@ -56,7 +56,7 @@ reaches differential parity on the corpus.
 
 ### Stage 3 — Emit (`v2/emit/`)
 
-- Walks the typed AST and emits `frontend/v1` JSON.
+- Walks the typed AST and constructs backend nodes directly (no JSON).
 - **One node type → one emit function.** No 12k-line monolith. The emitter
   is organized by AST node kind, each in its own file.
 - **Full Go 1.27 syntax from the start.** Every AST node kind that
@@ -67,10 +67,8 @@ reaches differential parity on the corpus.
 - **No desugaring of stdlib calls.** If the source says `fmt.Fprint`, the IR
   says `fmt.Fprint`. If the backend cannot handle it, fix the backend.
 - **Legitimate lowerings only**: language-level desugaring that `go/types`
-  itself does not do but which the IR requires (e.g., multi-result
+  itself does not do but which the backend requires (e.g., multi-result
   handling — but done as a general mechanism, not per-package).
-- Deterministic output (same input → byte-identical JSON), matching the
-  v1 `TestDeterministic` contract.
 
 ## 3. What v2 does NOT do
 
@@ -108,7 +106,7 @@ internal/frontend/v2/
   go.mod          — separate module (graalgo-frontend-v2)
   parser/         — stage 1: go/parser wrapper
   checker/        — stage 2: go/types wrapper, real importer
-  emit/           — stage 3: typed AST → frontend/v1 JSON
+  emit/           — stage 3: typed AST → backend nodes (direct construction, no JSON serialization)
   driver/         — main: CLI (mirrors v1 flags for drop-in replacement)
   testdata/       — corpus inputs for differential testing vs v1
 ```
