@@ -694,6 +694,111 @@ func main() {
 	}
 }
 
+// TestIfaceMethodTableAnonStructEmbeddedIface (PKG-036): an anonymous
+// struct embedding an interface — the encoding/hex pattern
+// (`struct{ Reader io.Reader }` in hex_test.go) — carries a "methods"
+// list on its "struct"-kind type-table entry, with the promoted method
+// as a redispatch entry (obj -1, index = the embedding path, wire
+// "embeddedIface" pointing at the interface-kind entry). Covered at one
+// and two embedding depths: promotion is general, not hex-specific.
+// Pre-fix the struct entry had no "methods" list at all, the launcher
+// installed no table, and dispatch died fatally with 'no method table
+// installed for dynamic type "struct{Reader io.Reader}"'.
+func TestIfaceMethodTableAnonStructEmbeddedIface(t *testing.T) {
+	const src = `package main
+
+type Reader interface{ Read(p []byte) (int, error) }
+
+type StringReader struct{ s string }
+
+func (r *StringReader) Read(p []byte) (int, error) {
+	n := copy(p, r.s)
+	r.s = r.s[n:]
+	return n, nil
+}
+
+type Inner struct{ Reader }
+
+func main() {
+	// One embedding depth (the hex_test.go shape).
+	var r1 Reader = struct{ Reader }{&StringReader{s: "hello"}}
+	// Two embedding depths through a named intermediate struct.
+	var r2 Reader = struct{ Inner }{Inner{&StringReader{s: "world"}}}
+	buf := make([]byte, 5)
+	n1, _ := r1.Read(buf)
+	n2, _ := r2.Read(buf)
+	println(n1, n2, string(buf))
+	// A plain anonymous struct (no embedded fields) keeps the old
+	// wire shape: no "methods" list on its struct-kind entry.
+	_ = struct{ X int }{X: 1}
+}
+`
+	out, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	doc := decodeExport(t, out)
+	entries := typeEntries(t, doc)
+	// want maps embedding path length -> whether the entry was found.
+	want := map[int]bool{1: false, 2: false}
+	for _, e := range entries {
+		em, _ := e.(map[string]any)
+		if em["kind"] != "struct" {
+			continue
+		}
+		d, _ := em["detail"].(map[string]any)
+		fields, _ := d["fields"].([]any)
+		if len(fields) != 1 {
+			continue
+		}
+		f0, _ := fields[0].(map[string]any)
+		emb, _ := f0["embedded"].(bool)
+		if !emb {
+			// No embedded fields: the wire shape is unchanged (no
+			// "methods" key at all).
+			if _, ok := d["methods"]; ok {
+				t.Fatalf("struct entry without embedded fields carries a \"methods\" list: %v", d)
+			}
+			continue
+		}
+		methods, ok := d["methods"].([]any)
+		if !ok || len(methods) != 1 {
+			t.Fatalf("struct entry with embedded field has methods = %v, want exactly [Read]", d["methods"])
+		}
+		mm, _ := methods[0].(map[string]any)
+		if mm["name"] != "Read" {
+			t.Fatalf("struct entry method name = %v, want Read", mm["name"])
+		}
+		if obj, _ := mm["obj"].(float64); obj != -1 {
+			t.Fatalf("struct entry Read obj = %v, want -1 (redispatch: no funcdecl for interface-declared method)", mm["obj"])
+		}
+		idx, ok := mm["index"].([]any)
+		if !ok {
+			t.Fatalf("struct entry Read index = %v (%T), want the embedding path", mm["index"], mm["index"])
+		}
+		embIDVal, ok := mm["embeddedIface"].(float64)
+		if !ok {
+			t.Fatalf("struct entry Read: no wire \"embeddedIface\" field (%v)", mm)
+		}
+		embID := int(embIDVal)
+		if embID < 0 || embID >= len(entries) {
+			t.Fatalf("struct entry Read embeddedIface = %d, out of range", embID)
+		}
+		embEnt, _ := entries[embID].(map[string]any)
+		if embEnt["kind"] != "interface" {
+			t.Fatalf("struct entry Read embeddedIface entry kind = %v, want \"interface\"", embEnt["kind"])
+		}
+		// The embedding path length distinguishes the one- and
+		// two-depth shapes ([0] vs [0 0]).
+		want[len(idx)] = true
+	}
+	for depth, found := range want {
+		if !found {
+			t.Fatalf("no struct entry carries Read with embedding path length %d", depth)
+		}
+	}
+}
+
 // TestIfaceMethodCallAliasReceiver (R1 P1-1): a method call through an
 // alias of an interface type (type W = Writer) exports an "ifacemethod"
 // wire node — the alias unwraps to the named interface, whose underlying

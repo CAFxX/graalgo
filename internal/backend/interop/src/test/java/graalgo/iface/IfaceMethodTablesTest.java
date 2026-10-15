@@ -193,6 +193,50 @@ public final class IfaceMethodTablesTest {
     }
 
     /**
+     * PKG-036: "struct"-kind entries (anonymous structs with promoted
+     * methods, e.g. hex_test.go's {@code struct{ Reader io.Reader }})
+     * install under the factory's structural descriptor name — the same
+     * name the factory mints at box sites. A struct entry without a
+     * "methods" list installs nothing (plain structs keep the old wire
+     * shape).
+     */
+    public void testStructEntriesInstall() {
+        String doc = """
+                {"frontend": "v1",
+                 "types": [
+                   {"kind": "basic", "detail": {"name": "int", "class": "int"}},
+                   {"kind": "interface", "detail": {"empty": false,
+                     "methods": [{"name": "Read", "sig": 0}], "embedded": []}},
+                   {"kind": "named", "detail": {"name": "main.Reader",
+                     "underlying": 1, "methods": []}},
+                   {"kind": "struct", "detail": {
+                     "fields": [{"name": "Reader", "type": 2, "embedded": true}],
+                     "methods": [{"name": "Read", "obj": -1, "recv": "value",
+                       "index": [0], "embeddedIface": 1}]}},
+                   {"kind": "struct", "detail": {
+                     "fields": [{"name": "x", "type": 0, "embedded": false}]}}
+                 ],
+                 "objects": [], "funcs": []}""";
+        Map<String, Map<String, IfaceMethodTarget>> out =
+                IfaceMethodTables.resolve(parseDoc(doc), Map.of());
+        // goSyntaxName for the struct entry: struct{Reader main.Reader}.
+        Map<String, IfaceMethodTarget> methods = out.get("struct{Reader main.Reader}");
+        assertTrue(methods != null,
+                "struct entry installs under the structural name; keys=" + out.keySet());
+        IfaceMethodTarget t = methods.get("Read");
+        assertTrue(t != null, "Read present");
+        assertTrue(t.func() == null, "redispatch entry carries no GoFunc");
+        assertTrue(t.isEmbeddedRedispatch(), "embeddedIfaceId >= 0 marks redispatch");
+        assertEquals(1, t.embeddedIfaceId(), "embeddedIface id");
+        assertEquals(java.util.List.of("Read"), t.embeddedIfaceMethods(),
+                "embedded interface method names");
+        assertEquals(1, t.recvPath().length, "embedding path length");
+        assertEquals(0, t.recvPath()[0], "embedding path");
+        // The plain struct entry (no "methods" key) installs nothing.
+        assertEquals(1, out.size(), "only the embedding struct installs a table");
+    }
+
+    /**
      * A document without any method tables resolves to an empty map
      * (install is still called — no stale tables).
      * verifies: GG-0014

@@ -267,6 +267,12 @@ the extension:
   `methods` list on `named` type-table entries is populated since P3-M3
   (ADR-0003: one `{name, obj, recv}` per method via `types.NewMethodSet`);
   `pointer` entries carry the same field with the full `*T` method set.
+  `struct` entries carry it too when the struct has embedded fields
+  (PKG-036): an anonymous struct can promote methods via embedding
+  (including embedded interfaces, e.g. `struct{ Reader io.Reader }`)
+  and be boxed into an interface, so it needs a method table for
+  dispatch; structs without embedded fields have an empty method set
+  and carry no list.
   Generic structs carry field offsets of `-1`
   (instantiation-dependent; see §6).
 - statements: block, `var`/`:=`, `=`/op-assign (lhs: identifier, index,
