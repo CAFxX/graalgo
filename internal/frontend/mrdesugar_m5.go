@@ -1492,6 +1492,17 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			if !ok {
 				return nil
 			}
+			// Gate-1 #2: userMRFuncs check for package-qualified calls.
+			// Synthetic packages with real Go source (e.g., strings.Cut)
+			// get pair-transformed when not table-driven; their call
+			// sites must desugar via userMRFuncs, not fail fast.
+			if mrInfo, ok := e.userMRFuncs[fn]; ok {
+				return &mrPlan{
+					kind:       mrUser,
+					tmpType:    mrInfo.pairType,
+					pairFields: mrInfo.pairFields,
+				}
+			}
 			// P3-M7 (wave 1): encoding/* package-level multi-result
 			// members (hex.Decode, binary.Uvarint, ascii85.Decode,
 			// pem.Decode, asn1.Marshal/Unmarshal).
@@ -3222,6 +3233,37 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 	return args, preStmts, nil
 }
 
+// isTableDrivenMR reports whether fi is a multi-result function served by
+// a static table (Appendix M) or the disk MR table, rather than the user
+// pair-transform. Synthetic packages with real Go source (e.g.,
+// regexp/syntax) and no table coverage need the user mechanism for their
+// multi-result functions; blanket-excluding all synthetic packages breaks
+// them (Gate-1 #2: image/*, regexp, index/suffixarray).
+func isTableDrivenMR(fi *funcDeclInfo) bool {
+	if fi == nil || fi.obj == nil || fi.obj.Pkg() == nil {
+		return true // conservative: skip if we can't determine
+	}
+	pkgPath := fi.obj.Pkg().Path()
+	name := fi.obj.Name()
+	recvType := ""
+	if fi.recv != nil {
+		rt := fi.recv.Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			recvType = nt.Obj().Name()
+		}
+	}
+	if hasStaticMREntry(pkgPath, name, recvType) {
+		return true
+	}
+	if lookupDiskMR(pkgPath, name, recvType) != nil {
+		return true
+	}
+	return false
+}
+
 // registerUserMRPairs pre-registers pair types for every user-defined
 // multi-result function in funcs (BUG-MODPROBE-010). It runs before
 // package-level variable initializers are exported: initializers like
@@ -3249,7 +3291,14 @@ func (e *exporter) registerUserMRPairs(funcs []*funcDeclInfo) error {
 // stub, or WS G disk-package multi-result stub — all cases exportFuncDecl
 // skips or rejects before reaching registration).
 func (e *exporter) registerUserMRFunc(fi *funcDeclInfo) (*userMRInfo, error) {
-	if fi == nil || fi.synthPkg != nil || fi.isTemplate {
+	if fi == nil || fi.isTemplate {
+		return nil, nil
+	}
+	// Synthetic packages: skip only if table-driven (static Appendix-M
+	// tables or disk MR table). Synthetic packages with real Go source
+	// and no table coverage (e.g., regexp/syntax) need the user
+	// pair-transform for their multi-result functions (Gate-1 #2).
+	if fi.synthPkg != nil && isTableDrivenMR(fi) {
 		return nil, nil
 	}
 	if fi.sig == nil || fi.sig.Results().Len() <= 1 {
