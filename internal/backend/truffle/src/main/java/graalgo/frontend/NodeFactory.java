@@ -339,8 +339,6 @@ public final class NodeFactory {
         // M5 (WS F): defer/panic/recover/Goexit + function literals.
         registerStmtKind("defer", this::buildDefer);
         registerExprKind("funclit", this::buildFuncLit);
-        // M6 (WS H): the D4 fmt stub via the Phase-1 import overlay.
-        registerExprKind("fmtcall", this::buildFmtCall);
         // P3-M9 (WS D): implicit address-of for method receivers. When a
         // pointer-receiver method is called on an addressable value, the
         // exporter wraps the receiver in an "addrof" node (x.M() → (&x).M()).
@@ -987,6 +985,7 @@ public final class NodeFactory {
         List<Integer> arrayLens = new ArrayList<>(fields.size());
         List<graalgo.values.GoKind> arrayElemKinds = new ArrayList<>(fields.size());
         List<GoStructDescriptor> arrayElemDescs = new ArrayList<>(fields.size());
+        List<GoStructDescriptor> structDescs = new ArrayList<>(fields.size());
         int[] fieldTypeIds = new int[fields.size()];
         for (int i = 0; i < fields.size(); i++) {
             Json.Value fv = fields.get(i);
@@ -996,7 +995,8 @@ public final class NodeFactory {
             names.add(fo.string("name", path));
             int ftid = fo.intValue("type", path);
             fieldTypeIds[i] = ftid;
-            kinds.add(kindOf(ctx, ftid, path));
+            GoKind kind = kindOf(ctx, ftid, path);
+            kinds.add(kind);
             // P3-M8b: array length + element kind for GoStruct.zero pre-allocation.
             int[] arrInfo = arrayInfo(ctx, ftid, path);
             arrayLens.add(arrInfo[0]);
@@ -1009,6 +1009,12 @@ public final class NodeFactory {
             // itself); the visiting guard above fails fast otherwise.
             arrayElemDescs.add(elemKind == GoKind.STRUCT
                     ? structDescriptorFor(ctx, arrInfo[1], path) : null);
+            // real-fmt2: nested struct descriptor for STRUCT-kind fields,
+            // so ABI size computation (structSizeBytes) can recurse into
+            // nested structs. The visiting guard above prevents infinite
+            // recursion on cyclic types.
+            structDescs.add(kind == GoKind.STRUCT
+                    ? structDescriptorFor(ctx, ftid, path) : null);
         }
         // P3-M8b: canonicalize process-wide so descriptor identity == type
         // identity across BuildCtxs (functions/packages). The per-BuildCtx
@@ -1026,8 +1032,12 @@ public final class NodeFactory {
         // share a descriptor and GoStruct.zero would fill the wrong element
         // type. Element keys are structural (not type-id-based) so identical
         // anonymous structs still share across BuildCtxs.
+        // real-fmt2: the key also carries nested struct descriptor keys,
+        // so structs differing only in a nested struct field type get
+        // distinct descriptors.
         String key = (qname != null ? "N:" + qname : "S:") + "|" + names + "|" + kinds + "|" + arrayLens
-                + "|" + arrayElemKinds + "|" + elemDescKeys(arrayElemDescs);
+                + "|" + arrayElemKinds + "|" + elemDescKeys(arrayElemDescs)
+                + "|" + elemDescKeys(structDescs);
         GoStructDescriptor cd = STRUCT_DESCS.get(key);
         if (cd == null) {
             // P0-fmt: use the qualified name for named structs so %#v renders
@@ -1035,7 +1045,7 @@ public final class NodeFactory {
             // (rendered structurally via GoTypeStrings).
             GoStructDescriptor nd = GoStructDescriptor.layout(
                     qname != null ? qname : "struct#" + typeId, names, kinds, arrayLens,
-                    arrayElemKinds, arrayElemDescs);
+                    arrayElemKinds, arrayElemDescs, structDescs);
             GoStructDescriptor prev = STRUCT_DESCS.putIfAbsent(key, nd);
             cd = prev != null ? prev : nd;
         }
@@ -3377,16 +3387,20 @@ public final class NodeFactory {
         return args;
     }
 
-    /** Parameter type ids from a wire signature entry; null when not a (non-variadic) signature. */
+    /** Parameter type ids from a wire signature entry; null when not a signature.
+     * Variadic signatures are included: the frontend pre-packs variadic
+     * args into the trailing []T slice (exportCallArgsPacked /
+     * packHelperVariadicArgs), so the wire arg list aligns with the params
+     * and interface adaptation applies normally (the old "v1 has no
+     * variadic adaptation" skip left concrete args to interface params
+     * unboxed, and GoFuncRootNode.wrapInterface then minted a bogus
+     * "interface" descriptor — real-fmt2). */
     private static List<Integer> signatureParamTypeIds(BuildCtx ctx, int sigId, String path) {
         Json.Object entry = ctx.types.entry(sigId, path);
         if (!"signature".equals(entry.string("kind", path))) {
             return null;
         }
         Json.Object detail = entry.object("detail", path);
-        if (detail.has("variadic") && detail.bool("variadic", path)) {
-            return null; // v1 has no variadic adaptation
-        }
         Json.Array params = detail.array("params", path);
         List<Integer> out = new ArrayList<>(params.size());
         for (int i = 0; i < params.size(); i++) {
@@ -3415,191 +3429,6 @@ public final class NodeFactory {
         return out;
     }
 
-    /**
-     * P3-M10 (fix-fmt-funcs): walks a slice/array element type down to the
-     * scalar, collecting the kind/name chain below the first element level
-     * (e.g. [2][2][2]int -&gt; kinds [ARRAY, INT32]). Factored out of
-     * {@link #buildFmtCall} so pointer-to-composite args (e.g. {@code *[]byte}
-     * scan destinations) get the same chains. Terminates: each step moves
-     * to a strictly smaller type, and go/types rejects recursive array
-     * types before export.
-     */
-    private record ChainWalk(java.util.List<GoKind> kinds, java.util.List<String> names) {}
-
-    private ChainWalk walkElemChain(int startElemId, BuildCtx ctx, String apath) {
-        java.util.List<GoKind> kc = new java.util.ArrayList<>();
-        java.util.List<String> nc = new java.util.ArrayList<>();
-        int curId = startElemId;
-        while (true) {
-            Json.Object curEntry = underlyingEntry(ctx, curId, apath);
-            String ck = curEntry.string("kind", apath);
-            if (!"slice".equals(ck) && !"array".equals(ck)) {
-                break;
-            }
-            Json.Object curDetail = curEntry.object("detail", apath);
-            int nextId = curDetail.intValue("elem", apath);
-            kc.add(kindOf(ctx, nextId, apath));
-            nc.add(GoTypeStrings.of(ctx, nextId));
-            curId = nextId;
-        }
-        return new ChainWalk(java.util.List.copyOf(kc), java.util.List.copyOf(nc));
-    }
-
-    /**
-     * P3-M10 (fix-fmt-funcs): walks a map element type down through nested
-     * maps, collecting the (key, elem) kinds per level (e.g.
-     * map[string]map[string]int -&gt; keyChain=[STRING], elemChain=[INT]).
-     * Factored out of {@link #buildFmtCall}; same termination argument as
-     * {@link #walkElemChain}.
-     */
-    private record MapChainWalk(java.util.List<GoKind> keyKinds, java.util.List<String> keyNames,
-            java.util.List<GoKind> elemKinds, java.util.List<String> elemNames) {}
-
-    private MapChainWalk walkMapChain(int startElemId, BuildCtx ctx, String apath) {
-        java.util.List<GoKind> kkc = new java.util.ArrayList<>();
-        java.util.List<String> knc = new java.util.ArrayList<>();
-        java.util.List<GoKind> kec = new java.util.ArrayList<>();
-        java.util.List<String> nec = new java.util.ArrayList<>();
-        int curId = startElemId;
-        while (true) {
-            Json.Object curEntry = underlyingEntry(ctx, curId, apath);
-            String ck = curEntry.string("kind", apath);
-            if (!"map".equals(ck)) {
-                break;
-            }
-            Json.Object curDetail = curEntry.object("detail", apath);
-            int ckId = curDetail.intValue("key", apath);
-            int ceId = curDetail.intValue("elem", apath);
-            kkc.add(kindOf(ctx, ckId, apath));
-            knc.add(GoTypeStrings.of(ctx, ckId));
-            kec.add(kindOf(ctx, ceId, apath));
-            nec.add(GoTypeStrings.of(ctx, ceId));
-            curId = ceId;
-        }
-        return new MapChainWalk(java.util.List.copyOf(kkc), java.util.List.copyOf(knc),
-                java.util.List.copyOf(kec), java.util.List.copyOf(nec));
-    }
-
-    /**
-     * A call to one of the D4 {@code fmt} stub functions (M6, WS H — the
-     * Phase-1 import overlay; the wire {@code fmtcall} node is specified in
-     * docs/frontend-v1.md §6). Static per-argument type metadata comes from
-     * the wire type table; values are read from the children at runtime.
-     */
-    private GoExprNode buildFmtCall(Json.Object node, BuildCtx ctx) {
-        Json.Object f = fieldsOf(node, "fmtcall");
-        String path = "fmtcall.fields";
-        String func = f.string("func", path);
-        Json.Array argNodes = f.array("args", path);
-        int n = argNodes.size();
-        GoExprNode[] args = new GoExprNode[n];
-        GoKind[] kinds = new GoKind[n];
-        String[] typeNames = new String[n];
-        GoKind[] elemKinds = new GoKind[n];
-        String[] elemTypeNames = new String[n];
-        // M7-remediation (R2 P0-2): element kind/name chains for nested
-        // array/slice printing at arbitrary depth. The old single
-        // elemElemKind field structurally capped nesting at depth 2;
-        // walk the type table down to the scalar instead.
-        java.util.List<GoKind>[] elemKindChains = new java.util.List[n];
-        java.util.List<String>[] elemTypeNameChains = new java.util.List[n];
-        GoKind[] keyKinds = new GoKind[n];
-        String[] keyTypeNames = new String[n];
-        // M8 closeout: key kind/name chains for nested maps, parallel to the
-        // elem chains for nested arrays (see Fmt.Arg).
-        java.util.List<GoKind>[] keyKindChains = new java.util.List[n];
-        java.util.List<String>[] keyTypeNameChains = new java.util.List[n];
-        for (int i = 0; i < n; i++) {
-            String apath = path + ".args[" + i + "]";
-            args[i] = buildExpr(asObject(argNodes.get(i), apath), ctx);
-            int typeId = args[i].typeId();
-            if (typeId < 0) {
-                throw new FrontendException(apath + ": fmt argument without a type id (WS H)");
-            }
-            kinds[i] = kindOf(ctx, typeId, apath);
-            typeNames[i] = GoTypeStrings.of(ctx, typeId);
-            Json.Object entry = underlyingEntry(ctx, typeId, apath);
-            String k = entry.string("kind", apath);
-            Json.Object detail = entry.object("detail", apath);
-            if ("slice".equals(k) || "array".equals(k)) {
-                int elemId = detail.intValue("elem", apath);
-                elemKinds[i] = kindOf(ctx, elemId, apath);
-                elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                // M7-remediation (R2 P0-2): element kind/name chains for nested
-                // printing at arbitrary depth (see walkElemChain).
-                ChainWalk w = walkElemChain(elemId, ctx, apath);
-                elemKindChains[i] = w.kinds();
-                elemTypeNameChains[i] = w.names();
-                keyKindChains[i] = java.util.List.of();
-                keyTypeNameChains[i] = java.util.List.of();
-            } else if ("map".equals(k)) {
-                int keyId = detail.intValue("key", apath);
-                int elemId = detail.intValue("elem", apath);
-                keyKinds[i] = kindOf(ctx, keyId, apath);
-                keyTypeNames[i] = GoTypeStrings.of(ctx, keyId);
-                elemKinds[i] = kindOf(ctx, elemId, apath);
-                elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                // M8 closeout: key kind/name chains for nested maps, parallel to the
-                // elem chains for nested arrays (see walkMapChain).
-                MapChainWalk w = walkMapChain(elemId, ctx, apath);
-                keyKindChains[i] = w.keyKinds();
-                keyTypeNameChains[i] = w.keyNames();
-                elemKindChains[i] = w.elemKinds();
-                elemTypeNameChains[i] = w.elemNames();
-            } else if ("pointer".equals(k)) {
-                // M8 (fuzzer find): %v of a pointer to struct/array/slice/map
-                // prints &value (Go's printValue Pointer case), not the erased
-                // address. Thread the referent kind so fmtPointer takes the
-                // &-path; other referents keep the erased 0x0.
-                int elemId = detail.intValue("elem", apath);
-                elemKinds[i] = kindOf(ctx, elemId, apath);
-                elemTypeNames[i] = GoTypeStrings.of(ctx, elemId);
-                // P3-M10 (fix-fmt-funcs): pointer-to-composite (e.g. *[]byte
-                // scan destinations): populate the chains by walking the
-                // referent like the slice/map branches above; other
-                // referents keep empty chains.
-                Json.Object elemEntry = underlyingEntry(ctx, elemId, apath);
-                String ek = elemEntry.string("kind", apath);
-                if ("slice".equals(ek) || "array".equals(ek)) {
-                    ChainWalk w = walkElemChain(elemId, ctx, apath);
-                    elemKindChains[i] = w.kinds();
-                    elemTypeNameChains[i] = w.names();
-                    keyKindChains[i] = java.util.List.of();
-                    keyTypeNameChains[i] = java.util.List.of();
-                } else if ("map".equals(ek)) {
-                    MapChainWalk w = walkMapChain(elemId, ctx, apath);
-                    keyKindChains[i] = w.keyKinds();
-                    keyTypeNameChains[i] = w.keyNames();
-                    elemKindChains[i] = w.elemKinds();
-                    elemTypeNameChains[i] = w.elemNames();
-                } else {
-                    elemKindChains[i] = java.util.List.of();
-                    elemTypeNameChains[i] = java.util.List.of();
-                    keyKindChains[i] = java.util.List.of();
-                    keyTypeNameChains[i] = java.util.List.of();
-                }
-            } else {
-                elemKindChains[i] = java.util.List.of();
-                elemTypeNameChains[i] = java.util.List.of();
-                keyKindChains[i] = java.util.List.of();
-                keyTypeNameChains[i] = java.util.List.of();
-            }
-        }
-        // The wire "type" is null for the Print variants (results discarded,
-        // statement position only); a single id for the Sprint variants.
-        GoKind resultKind;
-        Json.Value t = f.opt("type");
-        if (t instanceof Json.Null || t == null) {
-            resultKind = GoKind.INTERFACE;
-        } else {
-            resultKind = kindOf(ctx, f.intValue("type", path), path);
-        }
-        return new FmtCallNode(func, args, kinds, typeNames, elemKinds, elemTypeNames,
-                elemKindChains, elemTypeNameChains, keyKinds, keyTypeNames,
-                keyKindChains, keyTypeNameChains, resultKind);
-    }
-
-    /**
      * Builtin call wiring (M6, WS H — integration of the WS G intrinsic
      * surface): {@code panic}/{@code recover} (M5, WS F), {@code print}/
      * {@code println}, {@code len}, {@code cap}, {@code make}, {@code new},
@@ -3914,14 +3743,6 @@ public final class NodeFactory {
         String path = "defer.fields";
         Json.Object call = f.object("call", path);
         String callKind = call.string("kind", path + ".call");
-        // Deferred fmt overlay call (M7, e.g. `defer fmt.Println(x)`): build
-        // the FmtCallNode; DeferNode evaluates its arguments now and replays
-        // the formatting at return/unwind time.
-        if ("fmtcall".equals(callKind)) {
-            FmtCallNode fmtCall = (FmtCallNode) buildFmtCall(call, ctx);
-            fmtCall.setSourceSection(sectionFor(node, "defer"));
-            return new DeferNode(fmtCall);
-        }
         Json.Object cf = call.object("fields", path + ".call");
         String cpath = path + ".call.fields";
         // Deferred builtin: pass the builtin name through; DeferNode builds
@@ -4995,19 +4816,26 @@ public final class NodeFactory {
             if (l.isBlank) {
                 continue; // evaluated already; discarded
             }
-            if (!l.isIdent) {
-                throw new FrontendException(path + ": comma-ok target must be a variable (WS E)");
-            }
             GoExprNode v = i == 0
-                    ? maybeConvert(valueNode, l.kind, l.typeId, ctx, path)
+                    ? maybeConvert(valueNode, targetKind(l), targetTypeId(l), ctx, path)
                     : okNode; // bool: no conversion
             GoStmtNode w;
-            if (l.oid >= 0 && isBoxedTransitive(ctx, l.oid)) {
-                // M6: boxed comma-ok target — fresh cell on :=, cell write on =.
-                w = isDecl ? new BoxDeclNode(l.slot, l.kind, v)
-                        : new BoxWriteNode(l.kind, boxWriteSlot(ctx, l.oid, path), v);
+            if (l.isIdent) {
+                if (l.oid >= 0 && isBoxedTransitive(ctx, l.oid)) {
+                    // M6: boxed comma-ok target — fresh cell on :=, cell write on =.
+                    w = isDecl ? new BoxDeclNode(l.slot, l.kind, v)
+                            : new BoxWriteNode(l.kind, boxWriteSlot(ctx, l.oid, path), v);
+                } else {
+                    w = isDecl ? new VarDeclNode(l.slot, l.kind, v) : new AssignNode(l.slot, l.kind, v);
+                }
             } else {
-                w = isDecl ? new VarDeclNode(l.slot, l.kind, v) : new AssignNode(l.slot, l.kind, v);
+                // real-fmt2: comma-ok with selector/index/deref target
+                // (e.g. w.err, _ = x.(error)). Legal Go for `=` (not
+                // `:=`); writeLvalue handles the lvalue kind.
+                if (isDecl) {
+                    throw new FrontendException(path + ": comma-ok := target must be a variable (WS E)");
+                }
+                w = writeLvalue(l, v, ctx, path);
             }
             w.setSourceSection(sectionFor(stmtNode, "comma-ok"));
             prog.add(w);
