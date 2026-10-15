@@ -633,8 +633,7 @@ func Set(name, value string) error {
 	return CommandLine.Set(name, value)
 }
 
-// writeStr writes s to w (the synthetic fmt package exposes only the
-// seven D4 pure functions, so Fprint/Fprintf/Fprintln are unavailable).
+// writeStr writes s to w.
 func writeStr(w io.Writer, s string) {
 	w.Write([]byte(s))
 }

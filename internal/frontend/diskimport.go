@@ -327,10 +327,10 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	}
 	// The same overlay importer: the package's own imports resolve
 	// recursively (synthetic, stub, or further disk packages).
-	// WS G (multi-result): rewrite multi-result FuncDecls to the
-	// __-helper + stub shape BEFORE type-checking, so call sites
-	// type-check against the stub's original signature.
-	mrSpecs := transformDiskMultiResult(importPath, files)
+	// Multi-result: rewrite multi-result FuncDecls to the __-helper +
+	// stub shape BEFORE type-checking, so call sites type-check against
+	// the stub's original signature.
+	mrSpecs := transformMultiResult(importPath, files)
 	conf := types.Config{Importer: overlayImporter{}}
 	pkg, err := conf.Check(importPath, fset, files, info)
 	if err != nil {
@@ -339,7 +339,7 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// Stubs served type-checking; keep them for method resolution
 	// (the desugar rewrites all calls, so stubs are never exported).
 	// Mark them via the spec so the exporter can skip them.
-	registerDiskMRSpecs(mrSpecs)
+	registerMRSpecs(mrSpecs)
 	return &syntheticPackage{
 		path: importPath, pkg: pkg,
 		files: files, info: info, fset: fset, raws: raws,
@@ -360,7 +360,7 @@ func (e *exporter) importedPackage(p string) (*syntheticPackage, error) {
 // importPkgTree merges path and its transitive dependencies into the
 // export document, dependencies first (post-order: valid Go initialization
 // order), sorted for determinism. Synthetic paths reuse the existing
-// importSyntheticPackage; signature-only stub paths (runtime, fmt, sync,
+// importSyntheticPackage; signature-only stub paths (runtime, sync,
 // sync/atomic, unsafe — no bodies to merge, their call sites are handled
 // by existing wire logic) are walked with nothing to merge; anything else
 // resolves from disk. Idempotent via e.importedPkgTree (and
@@ -394,12 +394,15 @@ func (e *exporter) importPkgTree(path string) error {
 
 // resolvePkgTree maps an import path to its *syntheticPackage for body
 // merging, or (nil, nil) for signature-only stubs with no bodies.
+// NOTE: "fmt" is NOT a stub — the real GOROOT fmt sources resolve from
+// disk via getDiskPackage (real-fmt2 lane: no synthetic fmt package).
+// "sync"/"sync/atomic" also resolve from disk (real-sync2 lane).
 func resolvePkgTree(path string) (*syntheticPackage, error) {
 	if _, ok := syntheticSources[path]; ok {
 		return getSyntheticPackage(path), nil
 	}
 	switch path {
-	case "runtime", "fmt", "unsafe":
+	case "runtime", "unsafe":
 		return nil, nil
 	}
 	return getDiskPackage(path)
