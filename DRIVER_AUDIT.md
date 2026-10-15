@@ -73,3 +73,6 @@ the driver work."
 - `graalgo run` with non-zero exit: both exit 1 with "exit status N" on stderr.
 - `graalgo test -run` with regex (after fix): matches `go test` selection.
 - `graalgo test` with invalid `-run` regex: both exit 1 with error on stderr.
+- `graalgo fmt` vs `gofmt -w`: byte-identical (shells out to gofmt).
+- `graalgo version`: prints version, exit 0.
+- Unknown command: both exit 2.
