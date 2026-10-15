@@ -1739,6 +1739,7 @@
             }
           }
         ],
+        "pkgpath": "main",
         "results": [
           {
             "kind": "param",
@@ -1973,6 +1974,7 @@
             }
           }
         ],
+        "pkgpath": "main",
         "results": [
           {
             "kind": "param",
@@ -2093,6 +2095,7 @@
         "name": "main",
         "obj": 3,
         "params": [],
+        "pkgpath": "main",
         "sig": 29
       }
     },
@@ -2184,6 +2187,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -2293,6 +2297,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -2636,6 +2641,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -3017,6 +3023,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -3324,6 +3331,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -4402,6 +4410,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -4538,6 +4547,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -5255,6 +5265,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -5991,6 +6002,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -6100,6 +6112,7 @@
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
