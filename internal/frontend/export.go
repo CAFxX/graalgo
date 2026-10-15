@@ -3622,18 +3622,18 @@ func (e *exporter) initCallEnt(fi *funcDeclInfo) (GlobalEnt, error) {
 // ---------------------------------------------------------------------------
 
 type exporter struct {
-	fset     *token.FileSet
-	src      []byte // raw source bytes of the single input file (M8: rune-based positions)
+	fset *token.FileSet
+	src  []byte // raw source bytes of the single input file (M8: rune-based positions)
 	// fileIndex maps each input file's *token.File to its index in the
 	// files order; srcByFile maps it to that file's source bytes.
 	// Multi-file packages need per-file bytes for e.pos() rune columns.
 	fileIndex map[*token.File]int
 	srcByFile map[*token.File][]byte
-	info       *types.Info
-	pkg        *types.Package // the type-checked package (P3-M3: method-set lookup visibility)
-	types    []TypeEnt
-	typeList []types.Type // parallel to types: the go/types type per id (P3-M3)
-	typeIDs  map[types.Type]int
+	info      *types.Info
+	pkg       *types.Package // the type-checked package (P3-M3: method-set lookup visibility)
+	types     []TypeEnt
+	typeList  []types.Type // parallel to types: the go/types type per id (P3-M3)
+	typeIDs   map[types.Type]int
 	// P3-M9 (WS H): canonical IDs for type parameters by TypeName.
 	// Different *types.TypeParam objects denoting the same parameter
 	// must share one wire ID, or F-bounded constraints recurse forever.
