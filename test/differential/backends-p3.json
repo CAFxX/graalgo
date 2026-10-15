@@ -109,10 +109,6 @@
     {
       "program": "42_json",
       "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
-    },
-    {
-      "program": "43_range_over_func",
-      "reason": "backend-specific: range-over-func iterators not supported"
     }
   ],
   "timeoutSec": 30

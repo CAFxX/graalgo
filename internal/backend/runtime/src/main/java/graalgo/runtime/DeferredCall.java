@@ -101,6 +101,25 @@ public final class DeferredCall {
         return kind;
     }
 
+    /**
+     * PKG-039: global push order of this deferred call, stamped by
+     * {@link DeferChain#push}. Range-over-func bodies stash their defers
+     * in the enclosing frame (gc's {@code deferrangefunc}); at unwind
+     * the stashed calls are merged back with the chain by this order so
+     * interleaved defers run in true LIFO push order.
+     */
+    private long seqno;
+
+    /** Stamps the push order (called by {@link DeferChain#push}). */
+    void setSeqno(long seqno) {
+        this.seqno = seqno;
+    }
+
+    /** The push order stamped at {@link DeferChain#push} time. */
+    long seqno() {
+        return seqno;
+    }
+
     /** Invokes the captured deferred call. */
     public void invoke() {
         switch (kind) {
