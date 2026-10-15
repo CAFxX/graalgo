@@ -9,6 +9,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -660,7 +661,15 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 
 	// Prune imports not referenced in the body. Helpers from sibling
 	// files pull in imports this driver's tests may not use — Go
-	// rejects unused imports.
+	// rejects unused imports. The local package name comes from the
+	// import spec when explicit; otherwise it is the package's DECLARED
+	// name, resolved from its source directory — not the last path
+	// element. Those differ for parent-module imports with a major-version
+	// suffix (github.com/caddyserver/caddy/v2 declares package caddy),
+	// for stdlib v2 paths (math/rand/v2 declares package rand), and for
+	// third-party renames (gopkg.in/yaml.v2 declares package yaml).
+	// Guessing from the path prunes the import and the driver fails with
+	// "undefined: <name>".
 	var sb strings.Builder
 	sb.WriteString("package main\n\n")
 	if len(imports) > 0 {
@@ -672,9 +681,15 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		var kept []string
 		for _, p := range paths {
 			name := imports[p]
+			if name == "_" || name == "." {
+				// Side-effect and dot imports are never referenced by
+				// package name, but dropping them changes semantics.
+				kept = append(kept, p)
+				continue
+			}
 			pkgName := name
-			if pkgName == "" || pkgName == "_" || pkgName == "." {
-				pkgName = pathBase(p)
+			if pkgName == "" {
+				pkgName = resolveImportPkgName(dir, p)
 			}
 			if pkgName != "" && strings.Contains(bodyStr, pkgName+".") {
 				kept = append(kept, p)
@@ -714,6 +729,220 @@ func pathBase(p string) string {
 		return p[i+1:]
 	}
 	return p
+}
+
+// importPkgNameCache memoizes resolveImportPkgName: the declared name of
+// an import path cannot change within one synthesis run.
+var importPkgNameCache = map[string]string{}
+
+// resolveImportPkgName returns the declared package name for an import
+// path — the identifier the synthesized driver's body uses to reference
+// it. Resolution order:
+//  1. packages inside the tested module (parent/sibling imports such as
+//     github.com/caddyserver/caddy/v2 from within that module),
+//  2. standard library via GOROOT,
+//  3. third-party modules via the module cache, then GOPATH/src.
+//
+// Falls back to the last path element (the previous behavior) when the
+// source directory cannot be found.
+func resolveImportPkgName(dir, importPath string) string {
+	if n, ok := importPkgNameCache[importPath]; ok {
+		return n
+	}
+	name := pathBase(importPath)
+	if d, err := importDirForPath(dir, importPath); err == nil {
+		if pn, err := packageNameInDir(d); err == nil && pn != "" {
+			name = pn
+		}
+	}
+	importPkgNameCache[importPath] = name
+	return name
+}
+
+// moduleForDir walks up from dir to the enclosing go.mod, returning the
+// module root directory and the declared module path.
+func moduleForDir(dir string) (root, modulePath string) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", ""
+	}
+	d := abs
+	for {
+		if modData, err := os.ReadFile(filepath.Join(d, "go.mod")); err == nil {
+			if module := parseModulePath(modData); module != "" {
+				return d, module
+			}
+		}
+		parent := filepath.Dir(d)
+		if parent == d {
+			break
+		}
+		d = parent
+	}
+	return "", ""
+}
+
+// importDirForPath maps an import path to its source directory on disk,
+// relative to the module containing dir.
+func importDirForPath(dir, importPath string) (string, error) {
+	// Same module: parent and sibling package imports (e.g. the caddy
+	// root package imported by caddyconfig's tests).
+	if modRoot, modulePath := moduleForDir(dir); modulePath != "" {
+		if importPath == modulePath || strings.HasPrefix(importPath, modulePath+"/") {
+			rel := strings.TrimPrefix(importPath, modulePath)
+			rel = strings.TrimPrefix(rel, "/")
+			d := filepath.Join(modRoot, filepath.FromSlash(rel))
+			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				return d, nil
+			}
+		}
+	}
+	// Standard library.
+	if isStdImportPath(importPath) {
+		if goroot := goRoot(); goroot != "" {
+			d := filepath.Join(goroot, "src", filepath.FromSlash(importPath))
+			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				return d, nil
+			}
+		}
+	} else {
+		// Third-party: module cache first, then GOPATH/src.
+		if mc := goModCacheDir(); mc != "" {
+			if d, ok := findInModCache(mc, importPath); ok {
+				return d, nil
+			}
+		}
+		for _, gp := range goPathDirs() {
+			d := filepath.Join(gp, "src", filepath.FromSlash(importPath))
+			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				return d, nil
+			}
+		}
+	}
+	return "", fmt.Errorf("no source directory for import %q", importPath)
+}
+
+// isStdImportPath reports whether importPath is a standard-library path:
+// the first element contains no dot (no hostname).
+func isStdImportPath(importPath string) bool {
+	first := importPath
+	if i := strings.Index(first, "/"); i >= 0 {
+		first = first[:i]
+	}
+	return !strings.Contains(first, ".")
+}
+
+// goRoot returns GOROOT for the toolchain building this driver.
+func goRoot() string {
+	if gr := os.Getenv("GOROOT"); gr != "" {
+		return gr
+	}
+	return runtime.GOROOT()
+}
+
+// goModCacheDir returns the module cache directory.
+func goModCacheDir() string {
+	if mc := os.Getenv("GOMODCACHE"); mc != "" {
+		return mc
+	}
+	if gopath := os.Getenv("GOPATH"); gopath != "" {
+		return filepath.Join(strings.Split(gopath, string(os.PathListSeparator))[0], "pkg", "mod")
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "go", "pkg", "mod")
+	}
+	return ""
+}
+
+// goPathDirs returns the GOPATH entries.
+func goPathDirs() []string {
+	if gp := os.Getenv("GOPATH"); gp != "" {
+		return strings.Split(gp, string(os.PathListSeparator))
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		return []string{filepath.Join(h, "go")}
+	}
+	return nil
+}
+
+// findInModCache locates importPath under the module cache, trying
+// progressively shorter module prefixes (the cache stores the module at
+// <escaped>@<version>, with the package as a subdirectory). Any version
+// will do: the declared package name does not vary by version.
+func findInModCache(mc, importPath string) (string, bool) {
+	escaped := escapeModulePath(importPath)
+	elems := strings.Split(escaped, "/")
+	for i := len(elems); i >= 1; i-- {
+		modEscaped := strings.Join(elems[:i], "/")
+		subPath := strings.Join(elems[i:], "/")
+		parent := filepath.Join(mc, filepath.Dir(modEscaped))
+		base := filepath.Base(modEscaped)
+		entries, err := os.ReadDir(parent)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if !e.IsDir() || !strings.HasPrefix(e.Name(), base+"@") {
+				continue
+			}
+			d := filepath.Join(parent, e.Name())
+			if subPath != "" {
+				d = filepath.Join(d, filepath.FromSlash(subPath))
+			}
+			if st, err := os.Stat(d); err == nil && st.IsDir() {
+				return d, true
+			}
+		}
+	}
+	return "", false
+}
+
+// escapeModulePath applies the module cache escaping: uppercase letters
+// become ! plus the lowercase letter.
+func escapeModulePath(p string) string {
+	var sb strings.Builder
+	for _, r := range p {
+		if r >= 'A' && r <= 'Z' {
+			sb.WriteByte('!')
+			sb.WriteRune(r - 'A' + 'a')
+		} else {
+			sb.WriteRune(r)
+		}
+	}
+	return sb.String()
+}
+
+// packageNameInDir returns the declared package name of the Go package in
+// directory d, parsing only the package clause of one source file.
+func packageNameInDir(d string) (string, error) {
+	entries, err := os.ReadDir(d)
+	if err != nil {
+		return "", err
+	}
+	var fallback string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") {
+			continue
+		}
+		if fallback == "" {
+			fallback = name
+		}
+		// Prefer a non-test file; the package clause is identical either way.
+		if !strings.HasSuffix(name, "_test.go") {
+			fallback = name
+			break
+		}
+	}
+	if fallback == "" {
+		return "", fmt.Errorf("no Go files in %s", d)
+	}
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, filepath.Join(d, fallback), nil, parser.PackageClauseOnly)
+	if err != nil {
+		return "", err
+	}
+	return f.Name.Name, nil
 }
 
 // printDecl prints a single AST declaration to the builder.
