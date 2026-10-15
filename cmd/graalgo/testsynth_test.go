@@ -163,19 +163,21 @@ func TestBlank(t *testing.T) {}
 	}
 }
 
-// TestDotSelfImportDropped is the regression test for PKG-002: an
-// external test file (package foo_test) dot-importing the package under
-// test must not produce a dot-import in the driver — the package's own
-// declarations are inlined at top level, so the dot-import would
-// redeclare every one of them.
-func TestDotSelfImportDropped(t *testing.T) {
+// TestNoInlineForExternalOnly is the regression test for PKG-002's
+// primary fix: when no test file needs white-box access (every test
+// file is declared outside the package itself), the package's own
+// sources are NOT inlined. The tests exercise the real imported
+// package, so a dot-import of the package under test cannot redeclare
+// anything, and the package's types keep their identity where other
+// packages' APIs mention them.
+func TestNoInlineForExternalOnly(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "go.mod", "module example.com/dotself\n\ngo 1.21\n")
-	writeFile(t, root, "dot.go", "package dotself\n\nconst UpperCase = 1\n\nfunc Shout(s string) string { return s }\n")
-	writeFile(t, root, "dot_test.go", `package dotself_test
+	writeFile(t, root, "go.mod", "module example.com/extonly\n\ngo 1.21\n")
+	writeFile(t, root, "dot.go", "package extonly\n\nconst UpperCase = 1\n\nfunc Shout(s string) string { return s }\n")
+	writeFile(t, root, "dot_test.go", `package extonly_test
 
 import (
-	. "example.com/dotself"
+	. "example.com/extonly"
 	"testing"
 )
 
@@ -193,45 +195,130 @@ func TestDot(t *testing.T) {
 	src := synthDriver(t, root,
 		[]fileTests{{file: testFile, tests: tests}},
 		[]string{filepath.Join(root, "dot.go")})
-	if strings.Contains(src, `. "example.com/dotself"`) {
-		t.Errorf("driver kept the dot self-import:\n%s", src)
+	// The package's sources are not inlined...
+	if strings.Contains(src, "// --- from dot.go ---") {
+		t.Errorf("driver inlined sources no test file needs:\n%s", src)
 	}
-	// The package's own declarations are inlined and the test's
-	// unqualified references survive.
-	if !strings.Contains(src, "const UpperCase = 1") {
-		t.Errorf("driver lost the inlined declaration:\n%s", src)
+	// ...so the dot-import of the real package must be kept: it is
+	// load-bearing for the test's unqualified references.
+	if !strings.Contains(src, `. "example.com/extonly"`) {
+		t.Errorf("driver dropped the load-bearing dot-import:\n%s", src)
 	}
 	if !strings.Contains(src, `Shout("x")`) {
 		t.Errorf("driver lost the test body:\n%s", src)
 	}
 }
 
-// TestBlankSelfImportDropped covers the blank form of PKG-002: a blank
-// self-import is redundant (the inlined inits already run) and must be
-// dropped.
-func TestBlankSelfImportDropped(t *testing.T) {
+// TestDotSelfImportDroppedWhenInlining covers the other half of
+// PKG-002: when a test file IS in the package itself (white-box), the
+// sources are inlined, and a dot self-import from an external test
+// file must be dropped — otherwise it redeclares every inlined name.
+func TestDotSelfImportDroppedWhenInlining(t *testing.T) {
 	root := t.TempDir()
-	writeFile(t, root, "go.mod", "module example.com/blankself\n\ngo 1.21\n")
-	writeFile(t, root, "b.go", "package blankself\n")
-	writeFile(t, root, "b_test.go", `package blankself_test
+	writeFile(t, root, "go.mod", "module example.com/mixedwb\n\ngo 1.21\n")
+	writeFile(t, root, "m.go", "package mixedwb\n\nconst Answer = 42\n")
+	writeFile(t, root, "m_test.go", `package mixedwb
+
+import "testing"
+
+func TestWhiteBox(t *testing.T) {
+	if Answer != 42 {
+		t.Fatal("bad")
+	}
+}
+`)
+	writeFile(t, root, "e_test.go", `package mixedwb_test
 
 import (
-	_ "example.com/blankself"
+	. "example.com/mixedwb"
 	"testing"
 )
 
-func TestBlankSelf(t *testing.T) {}
+func TestExternal(t *testing.T) {
+	if Answer != 42 {
+		t.Fatal("bad")
+	}
+}
 `)
-	testFile := filepath.Join(root, "b_test.go")
-	tests, err := discoverTests(testFile)
+	for _, tf := range []string{filepath.Join(root, "m_test.go"), filepath.Join(root, "e_test.go")} {
+		tests, err := discoverTests(tf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(tests) != 1 {
+			t.Fatalf("discoverTests(%s) = %v", tf, tests)
+		}
+	}
+	src := synthDriver(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "m_test.go"), tests: []string{"TestWhiteBox"}},
+			{file: filepath.Join(root, "e_test.go"), tests: []string{"TestExternal"}},
+		},
+		[]string{filepath.Join(root, "m.go")})
+	// White-box access needs the sources inlined...
+	if !strings.Contains(src, "const Answer = 42") {
+		t.Errorf("driver did not inline sources needed for white-box access:\n%s", src)
+	}
+	// ...so the dot self-import must go.
+	if strings.Contains(src, `. "example.com/mixedwb"`) {
+		t.Errorf("driver kept the dot self-import alongside inlined sources:\n%s", src)
+	}
+}
+
+// TestMixedSelfImportForms pins the import list's multi-form support:
+// one test file dot-imports the package under test while another
+// references it qualified. Both forms must survive — collapsing to one
+// would leave the other's references undefined (gc accepts both forms
+// in one import block).
+func TestMixedSelfImportForms(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/multiform\n\ngo 1.21\n")
+	writeFile(t, root, "m.go", "package multiform\n\nfunc Hello() string { return \"hi\" }\n")
+	writeFile(t, root, "a_test.go", `package multiform_test
+
+import (
+	. "example.com/multiform"
+	"testing"
+)
+
+func TestA(t *testing.T) {
+	if Hello() != "hi" {
+		t.Fatal("bad")
+	}
+}
+`)
+	writeFile(t, root, "b_test.go", `package multiform_test
+
+import (
+	"example.com/multiform"
+	"testing"
+)
+
+func TestB(t *testing.T) {
+	if multiform.Hello() != "hi" {
+		t.Fatal("bad")
+	}
+}
+`)
+	testsA, err := discoverTests(filepath.Join(root, "a_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testsB, err := discoverTests(filepath.Join(root, "b_test.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	src := synthDriver(t, root,
-		[]fileTests{{file: testFile, tests: tests}},
-		[]string{filepath.Join(root, "b.go")})
-	if strings.Contains(src, `_ "example.com/blankself"`) {
-		t.Errorf("driver kept the blank self-import:\n%s", src)
+		[]fileTests{
+			{file: filepath.Join(root, "a_test.go"), tests: testsA},
+			{file: filepath.Join(root, "b_test.go"), tests: testsB},
+		},
+		[]string{filepath.Join(root, "m.go")})
+	if !strings.Contains(src, `. "example.com/multiform"`) {
+		t.Errorf("driver dropped the dot self-import form:\n%s", src)
+	}
+	if !strings.Contains(src, "\t\"example.com/multiform\"\n") {
+		t.Errorf("driver dropped the plain self-import form:\n%s", src)
 	}
 }
 
