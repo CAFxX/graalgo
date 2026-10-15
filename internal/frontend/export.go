@@ -1030,25 +1030,6 @@ func ExportFile(path string) (string, error) {
 	return ExportFiles([]string{path})
 }
 
-// needsOverlayImporter reports whether import path p must resolve
-// through the synthetic/disk overlay importer (WS G).
-//
-// General mechanism (hunt-special-cases): instead of a per-package
-// allow-list, admit:
-// 1. The 5 packages with dedicated synthetic constructors (not in
-//    syntheticSources): runtime, fmt, sync, sync/atomic, unsafe.
-// 2. Any package with a synthetic source (syntheticSources map) —
-//    including future additions, no allow-list update needed.
-// 3. Disk-importable third-party packages.
-//
-// Internal packages (internal/*, crypto/internal/*) have synthetic
-// sources but are NOT user-importable; they are excluded here and in
-// checkImportAllowed.
-func needsOverlayImporter(p string) bool {
-	// The 5 dedicated-constructor packages.
-	if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" {
-		return true
-	}
 // synthetic/disk overlay importer (WS G).
 //
 // General mechanism (hunt-special-cases): instead of a per-package
@@ -1117,6 +1098,53 @@ func checkImportAllowed(imp *ast.ImportSpec) error {
 	}
 	return fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 }
+
+// ExportFiles type-checks the Go source files at paths — all files of one
+// package — and returns the frontend/v1 JSON document.
+//
+// All files are parsed and type-checked together as a single package
+// (go/types conf.Check over []*ast.File), so cross-file references
+// resolve. All files must declare the same package name. Position "file"
+// indices in the document index into the paths order.
+func ExportFiles(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", fmt.Errorf("gofrontend: no input files")
+	}
+	fset := token.NewFileSet()
+	files := make([]*ast.File, 0, len(paths))
+	srcs := make([][]byte, 0, len(paths))
+	pkgName := ""
+	for _, path := range paths {
+		fi, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("gofrontend: %v", err)
+		}
+		if fi.IsDir() {
+			return "", fmt.Errorf("gofrontend: package directories are not supported in frontend/v1 scope (WS G): %s", path)
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("gofrontend: %v", err)
+		}
+		// P3-M4 (WS C, ADR-0004): parser.ParseComments populates doc comments
+		// so //go:linkname directives are visible (fd.Doc).
+		file, err := parser.ParseFile(fset, path, src, parser.AllErrors|parser.ParseComments)
+		if err != nil {
+			return "", fmt.Errorf("gofrontend: parse error: %v", err)
+		}
+		if pkgName == "" {
+			pkgName = file.Name.Name
+		} else if file.Name.Name != pkgName {
+			return "", fmt.Errorf("gofrontend: %s declares package %s, expected %s", path, file.Name.Name, pkgName)
+		}
+		files = append(files, file)
+		srcs = append(srcs, src)
+	}
+	for _, file := range files {
+		for _, imp := range file.Imports {
+			if err := checkImportAllowed(imp); err != nil {
+				return "", err
+			}
 		}
 	}
 

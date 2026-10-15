@@ -3348,7 +3348,7 @@ func isTableDrivenMR(fi *funcDeclInfo) bool {
 	if hasStaticMREntry(pkgPath, name, recvType) {
 		return true
 	}
-	if lookupDiskMR(pkgPath, name, recvType) != nil {
+	if lookupMRSpec(pkgPath, name, recvType) != nil {
 		return true
 	}
 	return false
