@@ -263,13 +263,6 @@
       }
     },
     {
-      "kind": "alias",
-      "detail": {
-        "name": "any",
-        "rhs": 17
-      }
-    },
-    {
       "kind": "interface",
       "detail": {
         "embedded": [],
@@ -291,7 +284,7 @@
         "params": [
           {
             "name": "errs",
-            "type": 20
+            "type": 19
           }
         ],
         "results": [
@@ -329,7 +322,7 @@
         "results": [
           {
             "name": "",
-            "type": 23
+            "type": 22
           }
         ],
         "variadic": false
@@ -355,7 +348,7 @@
         "methods": [],
         "name": "main.__wsd_pair_parseLen",
         "pkgpath": "main",
-        "underlying": 26
+        "underlying": 25
       }
     },
     {
@@ -395,7 +388,7 @@
         "results": [
           {
             "name": "",
-            "type": 25
+            "type": 24
           }
         ],
         "variadic": false
@@ -460,7 +453,7 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 33,
+        "elem": 32,
         "methods": [
           {
             "addrOf": false,
@@ -479,7 +472,7 @@
         "methods": [],
         "name": "errors.errorString",
         "pkgpath": "errors",
-        "underlying": 34
+        "underlying": 33
       }
     },
     {
@@ -501,7 +494,7 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 33,
+        "elem": 32,
         "methods": [
           {
             "addrOf": false,
@@ -520,7 +513,7 @@
         "params": [
           {
             "name": "e",
-            "type": 35
+            "type": 34
           }
         ],
         "results": [
@@ -556,7 +549,7 @@
         "methods": [],
         "name": "errors.unwrapper",
         "pkgpath": "errors",
-        "underlying": 39
+        "underlying": 38
       }
     },
     {
@@ -568,7 +561,7 @@
           {
             "implkey": "Unwrap\u0000func()(named:error)",
             "name": "Unwrap",
-            "sig": 40
+            "sig": 39
           }
         ]
       }
@@ -666,7 +659,7 @@
         "methods": [],
         "name": "errors.errorIsser",
         "pkgpath": "errors",
-        "underlying": 46
+        "underlying": 45
       }
     },
     {
@@ -678,7 +671,7 @@
           {
             "implkey": "Is\u0000func(named:error)(basic:1)",
             "name": "Is",
-            "sig": 47
+            "sig": 46
           }
         ]
       }
@@ -707,7 +700,7 @@
         "methods": [],
         "name": "errors.multiUnwrapper",
         "pkgpath": "errors",
-        "underlying": 49
+        "underlying": 48
       }
     },
     {
@@ -719,7 +712,7 @@
           {
             "implkey": "Unwrap\u0000func()(slice(named:error))",
             "name": "Unwrap",
-            "sig": 50
+            "sig": 49
           }
         ]
       }
@@ -731,7 +724,7 @@
         "results": [
           {
             "name": "",
-            "type": 51
+            "type": 50
           }
         ],
         "variadic": false
@@ -771,7 +764,7 @@
         "params": [
           {
             "name": "errs",
-            "type": 20
+            "type": 19
           }
         ],
         "results": [
@@ -786,7 +779,7 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 55,
+        "elem": 54,
         "methods": [
           {
             "addrOf": false,
@@ -813,7 +806,7 @@
         "methods": [],
         "name": "errors.joinError",
         "pkgpath": "errors",
-        "underlying": 56
+        "underlying": 55
       }
     },
     {
@@ -827,7 +820,7 @@
             "offset": 0,
             "pkgpath": "errors",
             "tag": "",
-            "type": 57
+            "type": 56
           }
         ]
       }
@@ -847,7 +840,7 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 55,
+        "elem": 54,
         "methods": [
           {
             "addrOf": false,
@@ -874,7 +867,7 @@
         "params": [
           {
             "name": "e",
-            "type": 59
+            "type": 58
           }
         ],
         "results": [
@@ -889,7 +882,7 @@
     {
       "kind": "slice",
       "detail": {
-        "elem": 62
+        "elem": 61
       }
     },
     {
@@ -903,7 +896,7 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 55,
+        "elem": 54,
         "methods": [
           {
             "addrOf": false,
@@ -930,13 +923,13 @@
         "params": [
           {
             "name": "e",
-            "type": 63
+            "type": 62
           }
         ],
         "results": [
           {
             "name": "",
-            "type": 23
+            "type": 22
           }
         ],
         "variadic": false
@@ -1035,7 +1028,7 @@
     {
       "kind": "func",
       "name": "asType",
-      "type": 18,
+      "type": 17,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1043,7 +1036,7 @@
     {
       "kind": "func",
       "name": "Join",
-      "type": 19,
+      "type": 18,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1051,7 +1044,7 @@
     {
       "kind": "func",
       "name": "Error",
-      "type": 21,
+      "type": 20,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1059,7 +1052,7 @@
     {
       "kind": "func",
       "name": "Unwrap",
-      "type": 22,
+      "type": 21,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1067,7 +1060,7 @@
     {
       "kind": "func",
       "name": "__asTypePub",
-      "type": 24,
+      "type": 23,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1083,7 +1076,7 @@
     {
       "kind": "var",
       "name": "__p5mr_1",
-      "type": 25,
+      "type": 24,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1115,7 +1108,7 @@
     {
       "kind": "var",
       "name": "",
-      "type": 25,
+      "type": 24,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1163,7 +1156,7 @@
     {
       "kind": "var",
       "name": "e",
-      "type": 35,
+      "type": 34,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1195,7 +1188,7 @@
     {
       "kind": "var",
       "name": "u",
-      "type": 38,
+      "type": 37,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1283,7 +1276,7 @@
     {
       "kind": "var",
       "name": "x",
-      "type": 45,
+      "type": 44,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1299,7 +1292,7 @@
     {
       "kind": "var",
       "name": "x",
-      "type": 38,
+      "type": 37,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1307,7 +1300,7 @@
     {
       "kind": "var",
       "name": "x",
-      "type": 48,
+      "type": 47,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1355,7 +1348,7 @@
     {
       "kind": "var",
       "name": "errs",
-      "type": 20,
+      "type": 19,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1387,7 +1380,7 @@
     {
       "kind": "var",
       "name": "e",
-      "type": 54,
+      "type": 53,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1403,7 +1396,7 @@
     {
       "kind": "var",
       "name": "e",
-      "type": 59,
+      "type": 58,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1419,7 +1412,7 @@
     {
       "kind": "var",
       "name": "b",
-      "type": 61,
+      "type": 60,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1435,7 +1428,7 @@
     {
       "kind": "var",
       "name": "e",
-      "type": 63,
+      "type": 62,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1443,7 +1436,7 @@
     {
       "kind": "var",
       "name": "",
-      "type": 23,
+      "type": 22,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1492,7 +1485,7 @@
                     },
                     "fields": {
                       "op": "==",
-                      "type": 28,
+                      "type": 27,
                       "x": {
                         "kind": "ident",
                         "pos": {
@@ -1565,7 +1558,7 @@
                                     "f1"
                                   ],
                                   "keyed": true,
-                                  "type": 25,
+                                  "type": 24,
                                   "values": [
                                     {
                                       "kind": "basiclit",
@@ -1667,7 +1660,7 @@
                           "f1"
                         ],
                         "keyed": true,
-                        "type": 25,
+                        "type": 24,
                         "values": [
                           {
                             "kind": "call",
@@ -1724,7 +1717,7 @@
                               "len": 3
                             },
                             "fields": {
-                              "type": 17
+                              "type": 16
                             }
                           }
                         ]
@@ -1769,11 +1762,11 @@
             "fields": {
               "name": "",
               "obj": 21,
-              "type": 25
+              "type": 24
             }
           }
         ],
-        "sig": 27
+        "sig": 26
       }
     },
     {
@@ -1818,7 +1811,7 @@
                     },
                     "fields": {
                       "op": "!=",
-                      "type": 28,
+                      "type": 27,
                       "x": {
                         "kind": "ident",
                         "pos": {
@@ -1844,7 +1837,7 @@
                           "len": 3
                         },
                         "fields": {
-                          "type": 17
+                          "type": 16
                         }
                       }
                     }
@@ -2008,7 +2001,7 @@
             }
           }
         ],
-        "sig": 29
+        "sig": 28
       }
     },
     {
@@ -2112,7 +2105,7 @@
         "obj": 3,
         "params": [],
         "pkgpath": "main",
-        "sig": 30
+        "sig": 29
       }
     },
     {
@@ -2158,7 +2151,7 @@
                       },
                       "fields": {
                         "keyed": false,
-                        "type": 32,
+                        "type": 31,
                         "values": [
                           {
                             "kind": "ident",
@@ -2221,7 +2214,7 @@
             }
           }
         ],
-        "sig": 31
+        "sig": 30
       }
     },
     {
@@ -2283,7 +2276,7 @@
                           "fields": {
                             "name": "e",
                             "obj": 27,
-                            "type": 35
+                            "type": 34
                           }
                         }
                       }
@@ -2309,7 +2302,7 @@
             "fields": {
               "name": "e",
               "obj": 27,
-              "type": 35
+              "type": 34
             }
           }
         ],
@@ -2331,7 +2324,7 @@
             }
           }
         ],
-        "sig": 36
+        "sig": 35
       }
     },
     {
@@ -2376,7 +2369,7 @@
                     },
                     "fields": {
                       "op": "==",
-                      "type": 28,
+                      "type": 27,
                       "x": {
                         "kind": "ident",
                         "pos": {
@@ -2402,7 +2395,7 @@
                           "len": 3
                         },
                         "fields": {
-                          "type": 17
+                          "type": 16
                         }
                       }
                     }
@@ -2441,7 +2434,7 @@
                                   "len": 3
                                 },
                                 "fields": {
-                                  "type": 17
+                                  "type": 16
                                 }
                               }
                             ]
@@ -2484,7 +2477,7 @@
                       },
                       "fields": {
                         "commaOk": true,
-                        "type": 38,
+                        "type": 37,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -2578,7 +2571,7 @@
                                   "len": 3
                                 },
                                 "fields": {
-                                  "type": 17
+                                  "type": 16
                                 }
                               }
                             ]
@@ -2611,7 +2604,7 @@
                       },
                       "fields": {
                         "args": [],
-                        "iface": 39,
+                        "iface": 38,
                         "method": "Unwrap",
                         "recv": {
                           "kind": "ident",
@@ -2625,10 +2618,10 @@
                           "fields": {
                             "name": "u",
                             "obj": 31,
-                            "type": 38
+                            "type": 37
                           }
                         },
-                        "sig": 40,
+                        "sig": 39,
                         "type": 3
                       }
                     }
@@ -2675,7 +2668,7 @@
             }
           }
         ],
-        "sig": 37
+        "sig": 36
       }
     },
     {
@@ -2720,7 +2713,7 @@
                     },
                     "fields": {
                       "op": "||",
-                      "type": 28,
+                      "type": 27,
                       "x": {
                         "kind": "binary",
                         "pos": {
@@ -2732,7 +2725,7 @@
                         },
                         "fields": {
                           "op": "==",
-                          "type": 28,
+                          "type": 27,
                           "x": {
                             "kind": "ident",
                             "pos": {
@@ -2758,7 +2751,7 @@
                               "len": 3
                             },
                             "fields": {
-                              "type": 17
+                              "type": 16
                             }
                           }
                         }
@@ -2774,7 +2767,7 @@
                         },
                         "fields": {
                           "op": "==",
-                          "type": 28,
+                          "type": 27,
                           "x": {
                             "kind": "ident",
                             "pos": {
@@ -2800,7 +2793,7 @@
                               "len": 3
                             },
                             "fields": {
-                              "type": 17
+                              "type": 16
                             }
                           }
                         }
@@ -3057,7 +3050,7 @@
             }
           }
         ],
-        "sig": 41
+        "sig": 40
       }
     },
     {
@@ -3144,7 +3137,7 @@
                                       },
                                       "fields": {
                                         "op": "!=",
-                                        "type": 28,
+                                        "type": 27,
                                         "x": {
                                           "kind": "call",
                                           "pos": {
@@ -3171,7 +3164,7 @@
                                                 "name": "recover"
                                               }
                                             },
-                                            "type": 17
+                                            "type": 16
                                           }
                                         },
                                         "y": {
@@ -3184,7 +3177,7 @@
                                             "len": 3
                                           },
                                           "fields": {
-                                            "type": 17
+                                            "type": 16
                                           }
                                         }
                                       }
@@ -3259,7 +3252,7 @@
                           },
                           "params": [],
                           "results": [],
-                          "type": 43
+                          "type": 42
                         }
                       },
                       "type": null
@@ -3365,7 +3358,7 @@
             }
           }
         ],
-        "sig": 42
+        "sig": 41
       }
     },
     {
@@ -3431,7 +3424,7 @@
                               },
                               "fields": {
                                 "op": "==",
-                                "type": 28,
+                                "type": 27,
                                 "x": {
                                   "kind": "ident",
                                   "pos": {
@@ -3457,7 +3450,7 @@
                                     "len": 3
                                   },
                                   "fields": {
-                                    "type": 17
+                                    "type": 16
                                   }
                                 }
                               }
@@ -3703,7 +3696,7 @@
                                         }
                                       }
                                     ],
-                                    "iface": 46,
+                                    "iface": 45,
                                     "method": "Is",
                                     "recv": {
                                       "kind": "ident",
@@ -3717,10 +3710,10 @@
                                       "fields": {
                                         "name": "x",
                                         "obj": 42,
-                                        "type": 45
+                                        "type": 44
                                       }
                                     },
-                                    "sig": 47,
+                                    "sig": 46,
                                     "type": 12
                                   }
                                 }
@@ -3759,7 +3752,7 @@
                                     },
                                     "fields": {
                                       "commaOk": true,
-                                      "type": 45,
+                                      "type": 44,
                                       "x": {
                                         "kind": "ident",
                                         "pos": {
@@ -3847,7 +3840,7 @@
                                 },
                                 "fields": {
                                   "bindobj": 44,
-                                  "bindtype": 38,
+                                  "bindtype": 37,
                                   "body": {
                                     "kind": "block",
                                     "pos": {
@@ -3898,7 +3891,7 @@
                                                 },
                                                 "fields": {
                                                   "args": [],
-                                                  "iface": 39,
+                                                  "iface": 38,
                                                   "method": "Unwrap",
                                                   "recv": {
                                                     "kind": "ident",
@@ -3912,10 +3905,10 @@
                                                     "fields": {
                                                       "name": "x",
                                                       "obj": 44,
-                                                      "type": 38
+                                                      "type": 37
                                                     }
                                                   },
-                                                  "sig": 40,
+                                                  "sig": 39,
                                                   "type": 3
                                                 }
                                               }
@@ -3944,7 +3937,7 @@
                                               },
                                               "fields": {
                                                 "op": "==",
-                                                "type": 28,
+                                                "type": 27,
                                                 "x": {
                                                   "kind": "ident",
                                                   "pos": {
@@ -3970,7 +3963,7 @@
                                                     "len": 3
                                                   },
                                                   "fields": {
-                                                    "type": 17
+                                                    "type": 16
                                                   }
                                                 }
                                               }
@@ -4028,7 +4021,7 @@
                                   "default": false,
                                   "nilcase": false,
                                   "types": [
-                                    38
+                                    37
                                   ]
                                 }
                               },
@@ -4043,7 +4036,7 @@
                                 },
                                 "fields": {
                                   "bindobj": 45,
-                                  "bindtype": 48,
+                                  "bindtype": 47,
                                   "body": {
                                     "kind": "block",
                                     "pos": {
@@ -4225,7 +4218,7 @@
                                               },
                                               "fields": {
                                                 "args": [],
-                                                "iface": 49,
+                                                "iface": 48,
                                                 "method": "Unwrap",
                                                 "recv": {
                                                   "kind": "ident",
@@ -4239,11 +4232,11 @@
                                                   "fields": {
                                                     "name": "x",
                                                     "obj": 45,
-                                                    "type": 48
+                                                    "type": 47
                                                   }
                                                 },
-                                                "sig": 50,
-                                                "type": 51
+                                                "sig": 49,
+                                                "type": 50
                                               }
                                             }
                                           }
@@ -4283,7 +4276,7 @@
                                   "default": false,
                                   "nilcase": false,
                                   "types": [
-                                    48
+                                    47
                                   ]
                                 }
                               },
@@ -4444,7 +4437,7 @@
             }
           }
         ],
-        "sig": 44
+        "sig": 43
       }
     },
     {
@@ -4581,7 +4574,7 @@
             }
           }
         ],
-        "sig": 52
+        "sig": 51
       }
     },
     {
@@ -4686,7 +4679,7 @@
                               },
                               "fields": {
                                 "op": "!=",
-                                "type": 28,
+                                "type": 27,
                                 "x": {
                                   "kind": "ident",
                                   "pos": {
@@ -4712,7 +4705,7 @@
                                     "len": 3
                                   },
                                   "fields": {
-                                    "type": 17
+                                    "type": 16
                                   }
                                 }
                               }
@@ -4781,7 +4774,7 @@
                     "fields": {
                       "name": "errs",
                       "obj": 51,
-                      "type": 20
+                      "type": 19
                     }
                   }
                 }
@@ -4807,7 +4800,7 @@
                     },
                     "fields": {
                       "op": "==",
-                      "type": 28,
+                      "type": 27,
                       "x": {
                         "kind": "ident",
                         "pos": {
@@ -4876,7 +4869,7 @@
                                   "len": 3
                                 },
                                 "fields": {
-                                  "type": 17
+                                  "type": 16
                                 }
                               }
                             ]
@@ -4920,7 +4913,7 @@
                           "errs"
                         ],
                         "keyed": true,
-                        "type": 54,
+                        "type": 53,
                         "values": [
                           {
                             "kind": "call",
@@ -4981,7 +4974,7 @@
                                   "name": "make"
                                 }
                               },
-                              "type": 58
+                              "type": 57
                             }
                           }
                         ]
@@ -5032,7 +5025,7 @@
                               },
                               "fields": {
                                 "op": "!=",
-                                "type": 28,
+                                "type": 27,
                                 "x": {
                                   "kind": "ident",
                                   "pos": {
@@ -5058,7 +5051,7 @@
                                     "len": 3
                                   },
                                   "fields": {
-                                    "type": 17
+                                    "type": 16
                                   }
                                 }
                               }
@@ -5101,7 +5094,7 @@
                                             "selpath": [
                                               0
                                             ],
-                                            "type": 57,
+                                            "type": 56,
                                             "x": {
                                               "kind": "ident",
                                               "pos": {
@@ -5114,7 +5107,7 @@
                                               "fields": {
                                                 "name": "e",
                                                 "obj": 55,
-                                                "type": 54
+                                                "type": 53
                                               }
                                             }
                                           }
@@ -5146,7 +5139,7 @@
                                                   "selpath": [
                                                     0
                                                   ],
-                                                  "type": 57,
+                                                  "type": 56,
                                                   "x": {
                                                     "kind": "ident",
                                                     "pos": {
@@ -5159,7 +5152,7 @@
                                                     "fields": {
                                                       "name": "e",
                                                       "obj": 55,
-                                                      "type": 54
+                                                      "type": 53
                                                     }
                                                   }
                                                 }
@@ -5195,7 +5188,7 @@
                                                 "name": "append"
                                               }
                                             },
-                                            "type": 57
+                                            "type": 56
                                           }
                                         }
                                       ],
@@ -5225,7 +5218,7 @@
                     "fields": {
                       "name": "errs",
                       "obj": 51,
-                      "type": 20
+                      "type": 19
                     }
                   }
                 }
@@ -5253,7 +5246,7 @@
                       "fields": {
                         "name": "e",
                         "obj": 55,
-                        "type": 54
+                        "type": 53
                       }
                     }
                   ]
@@ -5277,7 +5270,7 @@
             "fields": {
               "name": "errs",
               "obj": 51,
-              "type": 20
+              "type": 19
             }
           }
         ],
@@ -5299,7 +5292,7 @@
             }
           }
         ],
-        "sig": 53
+        "sig": 52
       }
     },
     {
@@ -5344,7 +5337,7 @@
                     },
                     "fields": {
                       "op": "==",
-                      "type": 28,
+                      "type": 27,
                       "x": {
                         "kind": "call",
                         "pos": {
@@ -5370,7 +5363,7 @@
                                 "selpath": [
                                   0
                                 ],
-                                "type": 57,
+                                "type": 56,
                                 "x": {
                                   "kind": "ident",
                                   "pos": {
@@ -5383,7 +5376,7 @@
                                   "fields": {
                                     "name": "e",
                                     "obj": 57,
-                                    "type": 59
+                                    "type": 58
                                   }
                                 }
                               }
@@ -5506,7 +5499,7 @@
                                           "selpath": [
                                             0
                                           ],
-                                          "type": 57,
+                                          "type": 56,
                                           "x": {
                                             "kind": "ident",
                                             "pos": {
@@ -5519,7 +5512,7 @@
                                             "fields": {
                                               "name": "e",
                                               "obj": 57,
-                                              "type": 59
+                                              "type": 58
                                             }
                                           }
                                         }
@@ -5568,8 +5561,8 @@
                       },
                       "fields": {
                         "from": 2,
-                        "to": 61,
-                        "type": 61,
+                        "to": 60,
+                        "type": 60,
                         "x": {
                           "kind": "ifacemethod",
                           "pos": {
@@ -5626,7 +5619,7 @@
                                     "selpath": [
                                       0
                                     ],
-                                    "type": 57,
+                                    "type": 56,
                                     "x": {
                                       "kind": "ident",
                                       "pos": {
@@ -5639,7 +5632,7 @@
                                       "fields": {
                                         "name": "e",
                                         "obj": 57,
-                                        "type": 59
+                                        "type": 58
                                       }
                                     }
                                   }
@@ -5699,7 +5692,7 @@
                                 "fields": {
                                   "name": "b",
                                   "obj": 59,
-                                  "type": 61
+                                  "type": 60
                                 }
                               }
                             ],
@@ -5727,7 +5720,7 @@
                                       "fields": {
                                         "name": "b",
                                         "obj": 59,
-                                        "type": 61
+                                        "type": 60
                                       }
                                     },
                                     {
@@ -5743,7 +5736,7 @@
                                         "const": "10",
                                         "f32bits": 1092616192,
                                         "f64bits": 4621819117588971520,
-                                        "type": 62,
+                                        "type": 61,
                                         "value": "'\\n'"
                                       }
                                     }
@@ -5763,7 +5756,7 @@
                                       "name": "append"
                                     }
                                   },
-                                  "type": 61
+                                  "type": 60
                                 }
                               }
                             ],
@@ -5793,7 +5786,7 @@
                                 "fields": {
                                   "name": "b",
                                   "obj": 59,
-                                  "type": 61
+                                  "type": 60
                                 }
                               }
                             ],
@@ -5821,7 +5814,7 @@
                                       "fields": {
                                         "name": "b",
                                         "obj": 59,
-                                        "type": 61
+                                        "type": 60
                                       }
                                     },
                                     {
@@ -5873,7 +5866,7 @@
                                       "name": "append"
                                     }
                                   },
-                                  "type": 61
+                                  "type": 60
                                 }
                               }
                             ],
@@ -5915,7 +5908,7 @@
                         }
                       },
                       "max": null,
-                      "type": 57,
+                      "type": 56,
                       "x": {
                         "kind": "selector",
                         "pos": {
@@ -5930,7 +5923,7 @@
                           "selpath": [
                             0
                           ],
-                          "type": 57,
+                          "type": 56,
                           "x": {
                             "kind": "ident",
                             "pos": {
@@ -5943,7 +5936,7 @@
                             "fields": {
                               "name": "e",
                               "obj": 57,
-                              "type": 59
+                              "type": 58
                             }
                           }
                         }
@@ -5973,7 +5966,7 @@
                         "len": 9
                       },
                       "fields": {
-                        "from": 61,
+                        "from": 60,
                         "to": 2,
                         "type": 2,
                         "x": {
@@ -5988,7 +5981,7 @@
                           "fields": {
                             "name": "b",
                             "obj": 59,
-                            "type": 61
+                            "type": 60
                           }
                         }
                       }
@@ -6014,7 +6007,7 @@
             "fields": {
               "name": "e",
               "obj": 57,
-              "type": 59
+              "type": 58
             }
           }
         ],
@@ -6036,7 +6029,7 @@
             }
           }
         ],
-        "sig": 60
+        "sig": 59
       }
     },
     {
@@ -6085,7 +6078,7 @@
                         "selpath": [
                           0
                         ],
-                        "type": 57,
+                        "type": 56,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -6098,7 +6091,7 @@
                           "fields": {
                             "name": "e",
                             "obj": 61,
-                            "type": 63
+                            "type": 62
                           }
                         }
                       }
@@ -6124,7 +6117,7 @@
             "fields": {
               "name": "e",
               "obj": 61,
-              "type": 63
+              "type": 62
             }
           }
         ],
@@ -6142,11 +6135,11 @@
             "fields": {
               "name": "",
               "obj": 62,
-              "type": 23
+              "type": 22
             }
           }
         ],
-        "sig": 64
+        "sig": 63
       }
     }
   ],
@@ -6252,7 +6245,7 @@
               "type": 1
             }
           },
-          "type": 25
+          "type": 24
         }
       },
       "pos": {
@@ -6303,7 +6296,7 @@
                   "fields": {
                     "name": "__p5mr_1",
                     "obj": 17,
-                    "type": 25
+                    "type": 24
                   }
                 }
               }
@@ -6335,7 +6328,7 @@
                   "fields": {
                     "name": "__p5mr_1",
                     "obj": 17,
-                    "type": 25
+                    "type": 24
                   }
                 }
               }

@@ -3702,13 +3702,21 @@ func (e *exporter) typeID(t types.Type) (int, error) {
 	if b, ok := t.(*types.Basic); ok && b.Kind() == types.Invalid {
 		return 0, fmt.Errorf("gofrontend: types.Invalid reached typeID (would be types[%d]); refusing to serialize", len(e.types))
 	}
-	// P3-M8b: unwrap aliases to unsafe.Pointer (from the synthetic unsafe
-	// package) directly to the basic type. The alias indirection through
-	// the type table confuses kindOf; the basic type is the canonical form.
+	// PKG-041: canonicalize type aliases to the aliased type's descriptor.
+	// go/types represents every use of an alias as *types.Alias. In gc an
+	// alias IS the aliased type — one type, one identity: interface ==
+	// compares them equal and reflect reports a single name. Minting a
+	// separate "alias" wire entry per spelling (e.g. os.PathError, declared
+	// as `type PathError = fs.PathError`, vs io/fs.PathError) gives the
+	// same Go type two wire ids, breaking both. Canonicalize here — the
+	// single choke point for wire type ids — so every alias use maps to
+	// the aliased type's id and no alias entries are ever minted. General:
+	// all aliases, all packages — not PathError-specific, not name-keyed.
+	// This subsumes the P3-M8b unsafe.Pointer special case (types.Unalias
+	// resolves that alias to the basic type, which the "basic" arm below
+	// handles).
 	if a, ok := t.(*types.Alias); ok {
-		if b, ok := types.Unalias(a).(*types.Basic); ok && b.Kind() == types.UnsafePointer {
-			t = b
-		}
+		t = types.Unalias(a)
 	}
 	// P3-M9 (WS H, graalgo-wsh-fallback): apply substitution BEFORE the
 	// TypeParam check. When in an instantiation (e.subst != nil), a type
@@ -4247,11 +4255,10 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 		}
 		return mk("typeparam", map[string]any{"name": t.Obj().Name(), "constraint": c}), nil
 	case *types.Alias:
-		rhs, err := e.typeID(t.Rhs())
-		if err != nil {
-			return TypeEnt{}, err
-		}
-		return mk("alias", map[string]any{"name": qualifiedName(t.Obj()), "rhs": rhs}), nil
+		// PKG-041: unreachable via typeID (aliases canonicalize to the
+		// aliased type there, so no alias entries are ever minted), but
+		// keep the invariant local — an alias denotes its aliased type.
+		return e.describeType(types.Unalias(t))
 	default:
 		return TypeEnt{}, fmt.Errorf("gofrontend: unsupported go/types type %T", t)
 	}

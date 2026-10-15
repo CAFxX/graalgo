@@ -77,7 +77,7 @@ entries by index. Shape: `{ "kind": "<kind>", "detail": { ... } }`.
 | `interface` | `empty`: bool, `methods`: [{`name`, `sig`: id, `implkey`: method-identity key, same computation as on `named`/`pointer` `methods` entries — the assertion implements check tests `implkey` inclusion}], `embedded`: [ids] |
 | `union` | `terms`: [{`tilde`: bool, `type`: id}] |
 | `typeparam` | `name`, `constraint`: type id |
-| `alias` | `name` (qualified), `rhs`: type id |
+| `alias` | `name` (qualified), `rhs`: type id — **no longer emitted since PKG-041**: type aliases canonicalize to the aliased type's entry (`types.Unalias` in `typeID`, the single choke point for wire type ids), so every spelling of one Go type (e.g. `os.PathError` = `fs.PathError`, or the universe alias `any` = `interface{}`) maps to a single wire id. In gc an alias IS the aliased type (one identity for `==` and `reflect`); minting per-spelling entries broke both. The backend keeps its `"alias"`-kind branches as dead-but-harmless fallbacks. |
 
 Recursive types are handled (the id is registered before the entry is
 described). All integer reference fields must satisfy `0 <= id < len(types)`;
