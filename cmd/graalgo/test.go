@@ -212,22 +212,12 @@ func importPathForDir(dir string) string {
 	if err != nil {
 		return dir
 	}
-	d := abs
-	for {
-		if modData, err := os.ReadFile(filepath.Join(d, "go.mod")); err == nil {
-			if module := parseModulePath(modData); module != "" {
-				rel, err := filepath.Rel(d, abs)
-				if err != nil || rel == "." {
-					return module
-				}
-				return module + "/" + filepath.ToSlash(rel)
-			}
+	if modRoot, module := moduleForDir(dir); module != "" {
+		rel, err := filepath.Rel(modRoot, abs)
+		if err != nil || rel == "." {
+			return module
 		}
-		parent := filepath.Dir(d)
-		if parent == d {
-			break
-		}
-		d = parent
+		return module + "/" + filepath.ToSlash(rel)
 	}
 	return abs
 }
