@@ -165,8 +165,9 @@ func TestSyncCompositeSupported(t *testing.T) {
 }
 
 // TestSyncMethodValueSupported: a method value on a sync primitive
-// (f := m.Lock) is supported (fix-linkname: exportPrimMethodValue lowers
-// it to a capturing funclit). Previously this was a WS H scope error.
+// (f := m.Lock) is supported via the general method-value path (the real
+// sync methods have funcdecls; 503608ea retired the synthetic overlay).
+// Previously this was a WS H scope error.
 func TestSyncMethodValueSupported(t *testing.T) {
 	src := "package main\n\nimport \"sync\"\n\nfunc main() {\n\tvar m sync.Mutex\n\tf := m.Lock\n\t_ = f\n}\n"
 	_, err := ExportFile(writeSyncProg(t, src))
@@ -231,10 +232,9 @@ func fieldsOf(n map[string]any) map[string]any {
 	return f
 }
 
-// Defer of a sync method desugars to defer of a funclit call (the frozen
-// buildDefer only understands funclit/ident/builtin). A value-typed ident
-// receiver is CAPTURED (address semantics: `defer m.Unlock()` uses &m, so a
-// reassigned m still unlocks the current object — verified against gc).
+// Defer of a sync method exports through the general call path with real
+// sync (503608ea retired the syncop desugar): the deferred call is a
+// standard call node and the frozen buildDefer handles it.
 func TestSyncDeferUnlockDesugars(t *testing.T) {
 	src := `package main
 
@@ -291,44 +291,9 @@ func mustNodeField(t *testing.T, n map[string]any, field string) map[string]any 
 	return m
 }
 
-// findGostmtBlock returns the first "block" node having a direct "gostmt"
-// child statement (the exportSyncGoStmt desugar shape), or nil.
-func findGostmtBlock(n any) map[string]any {
-	var rec func(n any) map[string]any
-	rec = func(n any) map[string]any {
-		switch v := n.(type) {
-		case map[string]any:
-			if v["kind"] == "block" {
-				if stmts, _ := fieldsOf(v)["stmts"].([]any); stmts != nil {
-					for _, s := range stmts {
-						if sm, ok := s.(map[string]any); ok && sm["kind"] == "gostmt" {
-							return v
-						}
-					}
-				}
-			}
-			for _, c := range v {
-				if r := rec(c); r != nil {
-					return r
-				}
-			}
-		case []any:
-			for _, c := range v {
-				if r := rec(c); r != nil {
-					return r
-				}
-			}
-		}
-		return nil
-	}
-	return rec(n)
-}
-
-// go m.Unlock() desugars to a block wrapping a zero-arg funclit spawn
-// (GoStatementNode's P2-M1 contract). With no args and a value-typed ident
-// receiver there is nothing to hoist, so the block holds just the spawn;
-// the receiver is captured by reference in the body (gc's &m address
-// semantics).
+// go m.Unlock() exports through the general go-statement path with real
+// sync (503608ea retired the syncop desugar): a gostmt wrapping the call
+// node, args hoisted at go time per the P3-M5 general rule.
 func TestSyncGoUnlockDesugars(t *testing.T) {
 	src := `package main
 
@@ -387,7 +352,7 @@ func main() {
 
 // Package-level `var m sync.Mutex` exports successfully with real sync
 // (503608ea). The zero value is a usable primitive.
-func TestSyncPackageVarImplicitSyncnew(t *testing.T) {
+func TestSyncPackageVarRealSync(t *testing.T) {
 	src := `package main
 
 import "sync"

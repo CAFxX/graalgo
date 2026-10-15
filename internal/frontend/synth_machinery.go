@@ -1226,24 +1226,6 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 					return err
 				}
 				init = x
-			} else {
-				// P3-M9: synthetic package `var x sync.Once` (no init)
-				// normalizes to an implicit syncnew — mirrors the user
-				// package path (export.go). Without it the frozen
-				// factory's struct zero (GoStruct) would be installed
-				// and method calls would CCE (GoStruct cannot be cast
-				// to GoOnce).
-				if v, ok := e.info.Defs[n].(*types.Var); ok {
-					if nt := syntheticPrimitiveNamed(v.Type()); nt != nil {
-						tid, err := e.typeID(v.Type())
-						if err != nil {
-							return err
-						}
-						init = e.node("syncnew", sv.vs, map[string]any{
-							"synctyp": syntheticOpTypeName(nt), "type": tid,
-						})
-					}
-				}
 			}
 			varInits = append(varInits, ginit{oid: sv.oids[i], init: init, expr: initExpr, pos: e.pos(n)})
 		}
@@ -1359,124 +1341,6 @@ func (e *exporter) exportSyntheticBodies(doc *Doc) error {
 		e.subst, e.substTypeIDs = savedSubst, savedSubstTypeIDs
 	}
 	return nil
-}
-
-// syncIntrinsicNames are the synthetic sync package intrinsics (P3-M9).
-// OnceFunc is the only one: it lowers to a closure capturing a fresh
-// sync.Once (see exportSyncOnceFunc). All other sync members are types
-// (Mutex, Once, ...) whose methods go through the syncop wire node.
-var syncIntrinsicNames = map[string]bool{
-	"OnceFunc": true,
-}
-
-// exportSyncIntrinsic lowers a call to a synthetic sync intrinsic into
-// wire nodes.
-func (e *exporter) exportSyncIntrinsic(c *ast.CallExpr, name string) (*Node, error) {
-	switch name {
-	case "OnceFunc":
-		return e.exportSyncOnceFunc(c)
-	}
-	return nil, scopeErrorf("sync.%s is not a recognized intrinsic", name)
-}
-
-// exportSyncOnceFunc lowers sync.OnceFunc(f) to the equivalent of:
-//
-//	__once_N := new(sync.Once)  // syncnew wire node
-//	__f_N := f                   // hoisted argument
-//	func() { __once_N.Do(__f_N) } // funclit capturing both
-//
-// The temporaries are appended to e.mrHoistPre as vardecl nodes, flushed
-// by exportStmt into the enclosing block (the multi-result hoist
-// precedent). The returned funclit node evaluates to the GoFunc closure.
-// This is a general frontend intrinsic, not x509-specific: any caller of
-// sync.OnceFunc gets true once-semantics via GoOnce.doOnce.
-func (e *exporter) exportSyncOnceFunc(c *ast.CallExpr) (*Node, error) {
-	if len(c.Args) != 1 {
-		return nil, scopeErrorf("sync.OnceFunc takes 1 argument")
-	}
-	args, err := e.exportCallArgs(c)
-	if err != nil {
-		return nil, err
-	}
-	fNode := args[0]
-	// Result type: func(), from the call's type.
-	retTid, err := e.callType(c)
-	if err != nil {
-		return nil, err
-	}
-	// The sync.Once named type, from the synthetic sync package.
-	syncPkg := syntheticSyncPackage()
-	onceObj := syncPkg.Scope().Lookup("Once")
-	onceTN, ok := onceObj.(*types.TypeName)
-	if !ok {
-		return nil, fmt.Errorf("gofrontend: synthetic sync.Once is not a type name")
-	}
-	onceNamed, ok := onceTN.Type().(*types.Named)
-	if !ok {
-		return nil, fmt.Errorf("gofrontend: synthetic sync.Once is not a named type")
-	}
-	onceTid, err := e.typeID(onceNamed)
-	if err != nil {
-		return nil, err
-	}
-	// Argument type, for the hoisted f temporary.
-	fType := e.info.Types[c.Args[0]].Type
-	if fType == nil {
-		return nil, fmt.Errorf("gofrontend: no type info for sync.OnceFunc argument")
-	}
-	fTid, err := e.typeID(fType)
-	if err != nil {
-		return nil, err
-	}
-
-	seq := e.syncGoSeq
-	e.syncGoSeq++
-
-	// Hoist f into a temporary so the closure captures a stable value.
-	fName := fmt.Sprintf("__oncefunc_f_%d", seq)
-	fVar := types.NewVar(token.NoPos, nil, fName, fType)
-	fID, err := e.defVar(fVar, false)
-	if err != nil {
-		return nil, err
-	}
-	e.mrHoistPre = append(e.mrHoistPre, e.node("vardecl", c, map[string]any{
-		"names": []string{fName}, "objs": []int{fID},
-		"define": true, "type": nil, "values": []*Node{fNode},
-	}))
-	fIdent := e.node("ident", c, map[string]any{
-		"name": fName, "obj": fID, "type": fTid,
-	})
-
-	// Fresh sync.Once via the syncnew wire node, hoisted into a temporary.
-	onceNode := e.node("syncnew", c, map[string]any{
-		"synctyp": syntheticOpTypeName(onceNamed), "type": onceTid,
-	})
-	onceName := fmt.Sprintf("__oncefunc_once_%d", seq)
-	onceVar := types.NewVar(token.NoPos, nil, onceName, onceNamed)
-	onceID, err := e.defVar(onceVar, false)
-	if err != nil {
-		return nil, err
-	}
-	e.mrHoistPre = append(e.mrHoistPre, e.node("vardecl", c, map[string]any{
-		"names": []string{onceName}, "objs": []int{onceID},
-		"define": true, "type": nil, "values": []*Node{onceNode},
-	}))
-	onceIdent := e.node("ident", c, map[string]any{
-		"name": onceName, "obj": onceID, "type": onceTid,
-	})
-
-	// Closure body: __once_N.Do(__f_N), via the syncop wire node.
-	// Do has no results; mirror exportSyncOpNodes' node shape.
-	doNode := e.node("syncop", c, map[string]any{
-		"op": "Do", "synctyp": syntheticOpTypeName(onceNamed),
-		"recv": onceIdent, "args": []*Node{fIdent}, "type": nil,
-	})
-	body := e.node("block", c, map[string]any{
-		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": doNode})},
-	})
-	return e.node("funclit", c, map[string]any{
-		"params": []*Node{}, "results": []*Node{}, "body": body, "type": retTid,
-	}), nil
 }
 
 // exportTimeIntrinsic lowers a call to a synthetic time intrinsic
@@ -1955,12 +1819,6 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		n, err := e.exportTimeIntrinsic(c, fn.Name())
 		return n, true, err
 	}
-	// RETIRED: sync now resolves from disk (real package). The OnceFunc
-	// intrinsic is disabled; real sync.OnceFunc compiles normally.
-	// if path == "sync" && syncIntrinsicNames[fn.Name()] {
-	// 	n, err := e.exportSyncIntrinsic(c, fn.Name())
-	// 	return n, true, err
-	// }
 	// P3-M7 (WS G, ADR-0007 D5): math intrinsics (bit conversions, Sqrt,
 	// FMA) lower to the "math*" wire nodes.
 	if path == "math" && mathIntrinsicNames[fn.Name()] {
