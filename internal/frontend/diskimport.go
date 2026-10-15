@@ -398,8 +398,7 @@ func resolvePkgTree(path string) (*syntheticPackage, error) {
 	if _, ok := syntheticSources[path]; ok {
 		return getSyntheticPackage(path), nil
 	}
-	switch path {
-	case "runtime", "fmt", "unsafe":
+	if isDedicatedSyntheticStub(path) {
 		return nil, nil
 	}
 	return getDiskPackage(path)
