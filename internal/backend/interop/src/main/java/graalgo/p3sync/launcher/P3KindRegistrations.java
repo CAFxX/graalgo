@@ -1,6 +1,7 @@
 package graalgo.p3sync.launcher;
 
 import graalgo.frontend.NodeFactory;
+import graalgo.frontend.WireKindRegistrar;
 import graalgo.iface.IfaceDispatchBuilder;
 import graalgo.p3builtin.nodes.ClearNode;
 import graalgo.p3builtin.nodes.GoMaxProcsNode;
@@ -56,11 +57,28 @@ import graalgo.sched.nodes.GoStatementNode;
  * {@code graalgo-run} launcher need these: real stdlib packages (e.g. fmt
  * via sync.Pool, reflect) emit these wire kinds, and the main launcher must
  * support them.
+ *
+ * <p>Implements {@link WireKindRegistrar} so the runtime launcher can
+ * discover this via {@link java.util.ServiceLoader} without a compile-time
+ * dependency on the interop module (which would be circular: interop needs
+ * the runtime module's classes).
  */
-public final class P3KindRegistrations {
-    private P3KindRegistrations() {}
+public final class P3KindRegistrations implements WireKindRegistrar {
+    /**
+     * Public for {@link java.util.ServiceLoader} instantiation.
+     */
+    public P3KindRegistrations() {}
 
-    public static void registerAll(NodeFactory factory) {
+    @Override
+    public void registerAll(NodeFactory factory) {
+        registerAllStatic(factory);
+    }
+
+    /**
+     * Static entry point for in-module callers. The {@link WireKindRegistrar}
+     * instance method above delegates here.
+     */
+    public static void registerAllStatic(NodeFactory factory) {
         // P3-M2b (WS D, ADR-0002): the sync wire kinds.
         factory.registerExprKind("syncnew", (node, ctx) -> SyncNewNode.build(node, ctx, factory));
         // fix-linkname (Caddy/godebug lane): the atomicaddr wire node

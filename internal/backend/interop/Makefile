@@ -30,6 +30,7 @@ CP := $(subst $(eval) ,:,$(strip $(LIB)))
 
 SRC_MAIN := $(shell find src/main/java -name '*.java')
 SRC_TEST := $(shell find src/test/java -name '*.java' 2>/dev/null)
+SRC_RES := $(shell find src/main/resources -type f 2>/dev/null)
 OUT_MAIN := out/classes
 OUT_TEST := out/test-classes
 
@@ -64,11 +65,13 @@ $(RUNTIME_CLASSES)/.built:
 	$(MAKE) -C $(RUNTIME) main
 
 main: $(TRUFFLE_CLASSES)/.built $(RUNTIME_CLASSES)/.built $(OUT_MAIN)/.built
-$(OUT_MAIN)/.built: $(SRC_MAIN)
+$(OUT_MAIN)/.built: $(SRC_MAIN) $(SRC_RES)
 	mkdir -p $(OUT_MAIN)
 	$(JAVAC) -version
 	$(JAVAC) $(JAVAC_FLAGS) -cp "$(RUNTIME_CLASSES):$(TRUFFLE_CLASSES):$(CP)" -processorpath "$(CP)" \
 		-d $(OUT_MAIN) $(SRC_MAIN)
+	@if [ -d src/main/resources ]; then \
+		cp -r src/main/resources/. $(OUT_MAIN)/; fi
 	touch $(OUT_MAIN)/.built
 
 # graalgo-sync-run --gmp=N file.go — interop (product) entry point.
