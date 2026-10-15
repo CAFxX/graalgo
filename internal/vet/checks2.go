@@ -175,9 +175,30 @@ func isWaitGroupAdd(pass *Pass, call *ast.CallExpr) bool {
 	return named.Obj().Pkg().Path() == "sync" && named.Obj().Name() == "WaitGroup"
 }
 
-// httpresponse checks for mistakes using http.ResponseWriter:
-// - Header().Set/Add/Del called after WriteHeader or Write (headers are ignored)
+// httpresponse checks for a common mistake using http.ResponseWriter:
+// deferring resp.Body.Close() before checking the error. If the HTTP call
+// fails, resp may be nil, causing a nil dereference when the deferred
+// Close runs.
+//
+//		resp, err := http.Get(url)
+//		defer resp.Body.Close() // BAD: before error check
+//		if err != nil {
+//			return err
+//		}
 func runHTTPResponse(pass *Pass) []Diagnostic {
+	// Fast path: skip if net/http is not imported.
+	hasHTTP := false
+	for _, f := range pass.Files {
+		for _, imp := range f.Imports {
+			if importPath(imp) == "net/http" {
+				hasHTTP = true
+				break
+			}
+		}
+	}
+	if !hasHTTP {
+		return nil
+	}
 	var out []Diagnostic
 	for _, f := range pass.Files {
 		for _, decl := range f.Decls {
@@ -185,154 +206,144 @@ func runHTTPResponse(pass *Pass) []Diagnostic {
 			if !ok || fn.Body == nil {
 				continue
 			}
-			// Find http.ResponseWriter parameters.
-			var rwNames []string
-			if fn.Type.Params != nil {
-				for _, param := range fn.Type.Params.List {
-					if isResponseWriter(pass, param.Type) {
-						for _, name := range param.Names {
-							rwNames = append(rwNames, name.Name)
-						}
-					}
-				}
-			}
-			if len(rwNames) == 0 {
-				continue
-			}
-			out = append(out, checkHTTPResponseInFunc(pass, fn.Body, rwNames)...)
+			out = append(out, checkHTTPResponseInFunc(pass, fn.Body)...)
 		}
 	}
 	return out
 }
 
-func isResponseWriter(pass *Pass, e ast.Expr) bool {
-	tv, ok := pass.Info.Types[e]
+// isHTTPClientCall reports whether call is http.Get/Post/Head or
+// (http.Client).Get/Post/Head etc.
+func isHTTPClientCall(pass *Pass, call *ast.CallExpr) bool {
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	name := sel.Sel.Name
+	if name != "Get" && name != "Post" && name != "PostForm" && name != "Head" {
+		return false
+	}
+	// Check if it's http.Get or client.Get.
+	if id, ok := sel.X.(*ast.Ident); ok && id.Name == "http" {
+		return true
+	}
+	// Method on *http.Client.
+	tv, ok := pass.Info.Types[sel.X]
 	if !ok || tv.Type == nil {
 		return false
 	}
 	t := tv.Type
-	named, ok := t.(*types.Named)
-	if !ok {
-		// Check if it's an interface with the right name.
-		if iface, ok := t.Underlying().(*types.Interface); ok {
-			_ = iface
-		}
-		return false
+	if p, ok := t.(*types.Pointer); ok {
+		t = p.Elem()
 	}
-	obj := named.Obj()
-	return obj != nil && obj.Pkg() != nil &&
-		obj.Pkg().Path() == "net/http" && obj.Name() == "ResponseWriter"
+	if named, ok := t.(*types.Named); ok && named.Obj() != nil &&
+		named.Obj().Pkg() != nil && named.Obj().Pkg().Path() == "net/http" &&
+		named.Obj().Name() == "Client" {
+		return true
+	}
+	return false
 }
 
-func checkHTTPResponseInFunc(pass *Pass, body *ast.BlockStmt, rwNames []string) []Diagnostic {
+func checkHTTPResponseInFunc(pass *Pass, body *ast.BlockStmt) []Diagnostic {
 	var out []Diagnostic
-	isRW := func(e ast.Expr) bool {
-		if id, ok := e.(*ast.Ident); ok {
-			for _, n := range rwNames {
-				if id.Name == n {
-					return true
-				}
-			}
+	// Walk statements looking for:
+	//   resp, err := http.Get(...)
+	//   defer resp.Body.Close()
+	// with no error check in between.
+	for i := 0; i+1 < len(body.List); i++ {
+		assign, ok := body.List[i].(*ast.AssignStmt)
+		if !ok || len(assign.Lhs) < 1 || len(assign.Rhs) != 1 {
+			continue
 		}
-		return false
-	}
-
-	// Track whether we've seen WriteHeader/Write on each writer.
-	// Simple flow-insensitive: if WriteHeader/Write appears before a
-	// Header().Set in source order, flag it.
-	type event struct {
-		pos    token.Position
-		writer string
-		kind   string // "write" or "headerSet"
-	}
-	var events []event
-
-	ast.Inspect(body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
+		call, ok := assign.Rhs[0].(*ast.CallExpr)
+		if !ok || !isHTTPClientCall(pass, call) {
+			continue
+		}
+		respIdent, ok := assign.Lhs[0].(*ast.Ident)
 		if !ok {
-			return true
+			continue
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
+		// Next statement should be defer resp.Body.Close().
+		def, ok := body.List[i+1].(*ast.DeferStmt)
 		if !ok {
-			return true
+			continue
 		}
-		// w.WriteHeader(...) or w.Write(...)
-		if (sel.Sel.Name == "WriteHeader" || sel.Sel.Name == "Write") && isRW(sel.X) {
-			if id, ok := sel.X.(*ast.Ident); ok {
-				events = append(events, event{pass.position(call), id.Name, "write"})
+		// Check if it's resp.Body.Close().
+		sel, ok := def.Call.Fun.(*ast.SelectorExpr)
+		if !ok || sel.Sel.Name != "Close" {
+			continue
+		}
+		inner, ok := sel.X.(*ast.SelectorExpr)
+		if !ok || inner.Sel.Name != "Body" {
+			continue
+		}
+		if id, ok := inner.X.(*ast.Ident); !ok || id.Name != respIdent.Name {
+			continue
+		}
+		out = append(out, Diagnostic{
+			pass.position(def),
+			"using " + respIdent.Name + " before checking for errors",
+		})
+	}
+	// Recurse into nested blocks.
+	for _, stmt := range body.List {
+		ast.Inspect(stmt, func(n ast.Node) bool {
+			if block, ok := n.(*ast.BlockStmt); ok && block != body {
+				out = append(out, checkHTTPResponseInFunc(pass, block)...)
+				return false
 			}
 			return true
-		}
-		// w.Header().Set/Add/Del(...)
-		if sel.Sel.Name == "Set" || sel.Sel.Name == "Add" || sel.Sel.Name == "Del" {
-			if inner, ok := sel.X.(*ast.CallExpr); ok {
-				if innerSel, ok := inner.Fun.(*ast.SelectorExpr); ok &&
-					innerSel.Sel.Name == "Header" && isRW(innerSel.X) {
-					if id, ok := innerSel.X.(*ast.Ident); ok {
-						events = append(events, event{pass.position(call), id.Name, "headerSet"})
-					}
-				}
-			}
-		}
-		return true
-	})
-
-	// Flag headerSet events that occur after a write event for the same writer.
-	wrote := make(map[string]bool)
-	for _, e := range events {
-		if e.kind == "write" {
-			wrote[e.writer] = true
-		} else if e.kind == "headerSet" && wrote[e.writer] {
-			out = append(out, Diagnostic{
-				e.pos,
-				"header Set after WriteHeader/Write: headers will be ignored",
-			})
-		}
+		})
 	}
 	return out
 }
 
-// defers reports common mistakes in defer statements:
-// - defer inside a loop (defers accumulate until function return)
+// defers reports a common mistake in defer statements: calling time.Since
+// in the deferred call's arguments. Arguments are evaluated immediately when
+// the defer statement executes, not when the deferred function runs, so
+// `defer fmt.Println(time.Since(start))` prints ~0. The fix is
+// `defer func() { fmt.Println(time.Since(start)) }()`.
 func runDefers(pass *Pass) []Diagnostic {
+	// Fast path: skip if time is not imported.
+	hasTime := false
+	for _, f := range pass.Files {
+		for _, imp := range f.Imports {
+			if importPath(imp) == "time" {
+				hasTime = true
+				break
+			}
+		}
+	}
+	if !hasTime {
+		return nil
+	}
 	var out []Diagnostic
 	for _, f := range pass.Files {
-		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
+		ast.Inspect(f, func(n ast.Node) bool {
+			ds, ok := n.(*ast.DeferStmt)
+			if !ok {
+				return true
 			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				// Find loops.
-				var loop ast.Node
-				switch n := n.(type) {
-				case *ast.ForStmt:
-					loop = n
-				case *ast.RangeStmt:
-					loop = n
+			// Inspect the deferred call for time.Since, but do not
+			// descend into func literals (those are properly deferred).
+			ast.Inspect(ds.Call, func(m ast.Node) bool {
+				if _, ok := m.(*ast.FuncLit); ok {
+					return false // prune
 				}
-				if loop == nil {
+				call, ok := m.(*ast.CallExpr)
+				if !ok {
 					return true
 				}
-				// Check for defer directly in loop body (not in a func literal).
-				var body *ast.BlockStmt
-				switch l := loop.(type) {
-				case *ast.ForStmt:
-					body = l.Body
-				case *ast.RangeStmt:
-					body = l.Body
-				}
-				for _, stmt := range body.List {
-					if ds, ok := stmt.(*ast.DeferStmt); ok {
-						out = append(out, Diagnostic{
-							pass.position(ds),
-							"defer in a loop: defers accumulate until the function returns",
-						})
-					}
+				if pass.isPkgFunc(call, "time", "Since") {
+					out = append(out, Diagnostic{
+						pass.position(call),
+						"call to time.Since is not deferred",
+					})
 				}
 				return true
 			})
-		}
+			return true
+		})
 	}
 	return out
 }

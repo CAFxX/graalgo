@@ -23,8 +23,8 @@ This package implements `go vet`-style static analyzers that run as part of
 | `shift` | Shifts that equal or exceed the width of the integer |
 | `ifaceassert` | Impossible interface-to-interface type assertions |
 | `waitgroup` | `sync.WaitGroup.Add` called from inside a new goroutine |
-| `httpresponse` | `Header().Set` after `WriteHeader`/`Write` (headers ignored) |
-| `defers` | `defer` inside a loop (defers accumulate until function return) |
+| `httpresponse` | `defer resp.Body.Close()` before checking error (nil dereference) |
+| `defers` | `time.Since` call not deferred (evaluated immediately) |
 | `loopclosure` | References to loop variables from nested functions (pre-1.22 semantics) |
 | `errorsas` | Second arg to `errors.As` must be pointer to error or interface |
 | `unmarshal` | Non-pointer values passed to `encoding/json.Unmarshal` etc. |
@@ -57,10 +57,6 @@ analysis), `framepointer` (requires assembly parser), `stdversion`
 
 ## Notes on behavior differences
 
-- `defers` and `httpresponse`: implemented per documented behavior
-  (defer-in-loop, header-after-write). The Go 1.27.1 `go vet` is
-  silent on the classic patterns; our implementations catch the
-  documented mistakes.
 - `loopclosure`: Go 1.22+ gives each iteration its own loop variables,
   so the classic bug is fixed. We flag only explicit `=` assignments
   to outer variables captured by closures.

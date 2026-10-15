@@ -238,18 +238,23 @@ func f() {
 func TestDefers(t *testing.T) {
 	src := `package main
 
-import "fmt"
+import (
+	"fmt"
+	"time"
+)
 
-func f() {
-	for i := 0; i < 3; i++ {
-		defer fmt.Println(i) // bad: defer in loop
-	}
-	defer fmt.Println("ok") // good: not in loop
+func f(start time.Time) {
+	defer fmt.Println(time.Since(start)) // bad: Since not deferred
+	defer func() { fmt.Println(time.Since(start)) }() // good: deferred
 }
 `
 	joined := runVetOnSrc(t, src)
-	if !strings.Contains(joined, "defer in a loop") {
+	if !strings.Contains(joined, "call to time.Since is not deferred") {
 		t.Errorf("expected defers diagnostic, got:\n%s", joined)
+	}
+	count := strings.Count(joined, "call to time.Since is not deferred")
+	if count != 1 {
+		t.Errorf("expected exactly 1 defers diagnostic, got %d:\n%s", count, joined)
 	}
 }
 
@@ -412,5 +417,41 @@ func f() {
 	}
 	if !strings.Contains(joined, "missing port") {
 		t.Errorf("expected hostport missing-port diagnostic, got:\n%s", joined)
+	}
+}
+
+func TestHTTPResponse(t *testing.T) {
+	src := `package main
+
+import (
+	"log"
+	"net/http"
+)
+
+func f(url string) {
+	resp, err := http.Get(url)
+	defer resp.Body.Close() // bad: before error check
+	if err != nil {
+		log.Fatal(err)
+	}
+	_ = resp
+}
+
+func g(url string) {
+	resp, err := http.Get(url)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close() // good: after error check
+	_ = resp
+}
+`
+	joined := runVetOnSrc(t, src)
+	if !strings.Contains(joined, "before checking for errors") {
+		t.Errorf("expected httpresponse diagnostic, got:\n%s", joined)
+	}
+	count := strings.Count(joined, "before checking for errors")
+	if count != 1 {
+		t.Errorf("expected exactly 1 httpresponse diagnostic, got %d:\n%s", count, joined)
 	}
 }
