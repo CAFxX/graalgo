@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -42,22 +41,20 @@ func main() {
 	}
 
 	// Stage 3.
-	docBytes, err := emit.Emit(cres, pres.Pkg, pres.Files)
+	doc, err := emit.Emit(cres, pres.Pkg, pres.Files)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 
-	// Validate the JSON structure.
-	var doc map[string]any
-	if err := json.Unmarshal(docBytes, &doc); err != nil {
-		t.Fatalf("invalid JSON: %v", err)
+	// Validate the in-memory program structure (no JSON involved).
+	if doc.Frontend != "v2" {
+		t.Fatalf("frontend = %q, want v2", doc.Frontend)
 	}
-	if doc["frontend"] != "v1" {
-		t.Fatalf("frontend = %v, want v1", doc["frontend"])
+	if name := doc.Package["name"]; name != "main" {
+		t.Fatalf("package name = %v, want main", name)
 	}
-	funcs, ok := doc["funcs"].([]any)
-	if !ok || len(funcs) != 1 {
-		t.Fatalf("funcs has %d entries, want 1", len(funcs))
+	if len(doc.Funcs) != 1 {
+		t.Fatalf("funcs has %d entries, want 1", len(doc.Funcs))
 	}
 	_ = token.NoPos
 }

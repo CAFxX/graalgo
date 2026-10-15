@@ -14,7 +14,7 @@ for the design.
       incdec, branch, if, for, range, ident, basiclit, binary, unary,
       paren, call, selector
 - [x] Driver CLI + hello-world smoke test (passes)
-- [x] End-to-end: hello-world Go → valid frontend/v1 JSON
+- [x] End-to-end: hello-world Go → in-memory program (no JSON wire format)
 - [x] Mechanical AST-node coverage matrix (`emit/coverage_test.go`):
       60 AST node types classified — 18 handled, 6 via go/types,
       8 structural, 3 non-Node (documented), 25 loudly rejected
@@ -29,7 +29,9 @@ for the design.
 
 ## Next
 
-- [ ] Differential test: v2 output vs v1 output on the corpus
+- [ ] Differential test: programs built via v2 vs gc on the corpus
+      (behavioral differentials; v2 emits no JSON, so there is no v1-JSON
+      output to compare against)
 - [ ] More node kinds: composite literals, struct/array/map/slice types,
       type assertions, type switches, go/defer, channels, interfaces
 - [ ] Method declarations (currently only functions)
@@ -40,6 +42,15 @@ for the design.
 
 ## Cutover criteria
 
-- v2 passes the differential corpus with zero drift vs v1
-- All v1 tests pass against v2 output
+- v2 passes the differential corpus with zero drift vs gc
+- v2's own suite (coverage matrix, negative tests, driver) is green
 - Independent review approves the cutover
+
+## 2026-10-15 — JSON removal correction
+
+- His 2026-10-15 correction: v2 must NOT emit frontend/v1 JSON. The
+  emitter's JSON output was removed; `Emit` now returns the in-memory
+  `*Document` directly (`encoding/json` no longer appears anywhere in v2).
+- Route: circular compilation of go/* remains primary (his 2026-10-15
+  order: "go is ideal (to reuse go/*) if we can circularly compile it
+  for inclusion in graalgo"); Java rewrite only if that proves infeasible.
