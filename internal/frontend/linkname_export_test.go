@@ -80,16 +80,15 @@ func main() {
 	if err != nil {
 		t.Fatalf("ExportFile with sync.Map ops: %v", err)
 	}
+	// Real sync (503608ea): Map methods are ordinary calls. The method
+	// names must appear in the export. (The imported real sync package's
+	// internals may contain syncop nodes for atomic ops — that's the
+	// legitimate atomic intrinsic.)
 	for _, op := range []string{"Store", "Load", "LoadOrStore", "LoadAndDelete",
 		"Swap", "CompareAndSwap", "CompareAndDelete", "Range", "Delete", "Clear"} {
-		if !strings.Contains(out, `"op": "`+op+`"`) &&
-			!strings.Contains(out, `"op":"`+op+`"`) {
-			t.Errorf("sync.Map.%s did not export a syncop node", op)
+		if !strings.Contains(out, op) {
+			t.Errorf("sync.Map.%s did not export", op)
 		}
-	}
-	if !strings.Contains(out, `"synctyp": "Map"`) &&
-		!strings.Contains(out, `"synctyp":"Map"`) {
-		t.Errorf("sync.Map ops did not use synctyp Map")
 	}
 }
 

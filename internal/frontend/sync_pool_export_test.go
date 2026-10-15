@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-// TestSyncPoolAccepted: Pool construction forms and Put/Get lower to
-// the additive syncnew/syncop wire nodes with synctyp "Pool".
+// TestSyncPoolAccepted: Pool construction and Put/Get export as normal
+// Go with the real sync package (503608ea).
 func TestSyncPoolAccepted(t *testing.T) {
 	src := `package main
 
@@ -41,13 +41,7 @@ func main() {
 	if err != nil {
 		t.Fatalf("ExportFile with sync.Pool: %v", err)
 	}
-	for _, want := range []string{
-		`"kind": "syncnew"`,
-		`"kind": "syncop"`,
-		`"synctyp": "Pool"`,
-		`"op": "Put"`,
-		`"op": "Get"`,
-	} {
+	for _, want := range []string{"Put", "Get"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("exported JSON missing %s", want)
 		}
@@ -55,8 +49,8 @@ func main() {
 }
 
 // TestSyncPoolNewField: the New func field — keyed literal, read,
-// write, and direct invocation — lowers to syncnew's newfunc and the
-// GetNew/SetNew/CallNew syncops.
+// write, and direct invocation — exports with the real sync package
+// (503608ea).
 func TestSyncPoolNewField(t *testing.T) {
 	src := `package main
 
@@ -77,20 +71,9 @@ func main() {
 	_ = q
 }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
 		t.Fatalf("ExportFile with sync.Pool New field: %v", err)
-	}
-	for _, want := range []string{
-		`"newfunc"`,
-		`"op": "GetNew"`,
-		`"op": "SetNew"`,
-		`"op": "CallNew"`,
-		`"synctyp": "Pool"`,
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("exported JSON missing %s", want)
-		}
 	}
 }
 
@@ -115,9 +98,8 @@ func TestSyncPoolLiteralScopeErrors(t *testing.T) {
 	}
 }
 
-// TestSyncPoolNewAssignScopeError: exotic assignment shapes touching
-// Pool.New (multi-target, op-assign) fail fast with the named P3-M11
-// scope error instead of a confusing backend error.
+// TestSyncPoolNewAssignScopeError: with real sync (503608ea), exotic
+// assignment shapes touching Pool.New are ordinary Go and succeed.
 func TestSyncPoolNewAssignScopeError(t *testing.T) {
 	cases := []string{
 		"var a any\n\ta, p.New = 1, func() any { return 2 }\n\t_ = a",
@@ -125,12 +107,8 @@ func TestSyncPoolNewAssignScopeError(t *testing.T) {
 	for _, body := range cases {
 		src := "package main\n\nimport \"sync\"\n\nfunc main() {\n\tvar p sync.Pool\n\t" + body + "\n\t_ = p\n}\n"
 		_, err := ExportFile(writeSyncProg(t, src))
-		if err == nil {
-			t.Errorf("%q: expected scope error, got success", body)
-			continue
-		}
-		if !strings.Contains(err.Error(), "P3-M11") {
-			t.Errorf("%q: error %q does not name P3-M11", body, err)
+		if err != nil {
+			t.Errorf("%q: expected success with real sync, got error: %v", body, err)
 		}
 	}
 }
