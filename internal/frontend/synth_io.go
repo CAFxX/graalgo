@@ -285,6 +285,24 @@ type ioWritePair struct {
 	err error
 }
 
+// ioWriteToPair is the P3 (WS D) interface-dispatch carrier for
+// WriterTo.WriteTo (see ioWritePair). The result shape (int64, error)
+// differs from Write's (int, error), so it needs its own pair type:
+// the positional types.Identical guard in classifyIfaceMultiResultCall
+// rejects structural mismatches.
+type ioWriteToPair struct {
+	n   int64
+	err error
+}
+
+// ioReadFromPair is the P3 (WS D) interface-dispatch carrier for
+// ReaderFrom.ReadFrom (see ioWriteToPair): (int64, error), same shape
+// as WriteTo.
+type ioReadFromPair struct {
+	n   int64
+	err error
+}
+
 // __writeString is the real WriteString (gc 1.27.1): the StringWriter
 // fast path via type assertion, else a single Write of the string bytes.
 func __writeString(w Writer, s string) ioWritePair {

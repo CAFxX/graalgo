@@ -434,13 +434,14 @@ func TestD1IfaceMultiResultStillFailFast(t *testing.T) {
 	// fail-fast (P2-2): a 3-result method on a user interface (generic
 	// WS-D scope error); a 2-result method whose name IS tabled but
 	// whose result types are NOT ((int, string) — exercises the
-	// types.Identical positional guard, not just the arity guard); and
-	// a 2-result *synthetic* method — io.ReaderFrom.ReadFrom, the
-	// exact DESIGN.md §6 example — which takes the M8
-	// multiResultSyntheticError path. (The review's sketch
-	// `var rf io.ReaderFrom = io.Discard` does not type-check: the
-	// synthetic Discard var is statically io.Writer. *bytes.Buffer
-	// implements io.ReaderFrom with a fail-fast body instead.)
+	// types.Identical positional guard, not just the arity guard).
+	//
+	// NOTE (P3, Gate-1 fix-iface-mr): io.WriterTo.WriteTo and
+	// io.ReaderFrom.ReadFrom were added to m8IfaceMultiResultMethods
+	// (bufio needs both for image/png). They no longer fail fast at
+	// export; concrete types without pair helpers fail loudly at
+	// runtime ("missing method" or the stub's scope panic), per the
+	// established M8 design.
 	cases := []struct {
 		name    string
 		src     string
@@ -482,27 +483,6 @@ func main() {
 			// types.Identical positional guard in
 			// classifyIfaceMultiResultCall — so this must keep the
 			// generic WS-D fail-fast, not just the arity guard.
-			wantErr: "WS D",
-		},
-		{
-			name: "2-result synthetic no-table method (io.ReaderFrom.ReadFrom)",
-			src: `package main
-
-import (
-	"bytes"
-	"io"
-	"strings"
-)
-
-func main() {
-	var rf io.ReaderFrom = bytes.NewBuffer(nil)
-	n, err := rf.ReadFrom(strings.NewReader("hi"))
-	println(n, err == nil)
-}
-`,
-			// The M8 multi-result scope error path was consolidated into the
-			// WS D fail-fast (the method still fails fast, just with the
-			// unified message).
 			wantErr: "WS D",
 		},
 	}
