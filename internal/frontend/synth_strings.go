@@ -49,7 +49,7 @@
 // Deliberate, documented divergences (inexpressible signatures — the
 // parameter types live in unavailable packages; the P3-M5
 // Context.Deadline omission precedent). The drift test
-// (phases/phase3/src/p3frontend/strings_test.go) pins each absence on
+// (internal/frontend/p3frontend/strings_test.go) pins each absence on
 // BOTH sides. Re-test when the named wave lands:
 //   - ToUpperSpecial/ToLowerSpecial/ToTitleSpecial (unicode.SpecialCase)
 //     — needs the unicode package.

@@ -98,8 +98,11 @@ def check_no_bridges(diff):
             ]
             for pat in patterns:
                 if re.search(pat, line):
-                    # Allow in test files and docs
-                    if "/test" not in fname and "test_" not in fname:
+                    # Allow in test files and docs. ("_test." covers
+                    # *_test.go harnesses, e.g. drift-test importers that
+                    # resolve synthetic import paths like the pre-existing
+                    # `if path == "bytes"` stubs.)
+                    if "/test" not in fname and "test_" not in fname and "_test." not in fname:
                         errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
                         break
 
