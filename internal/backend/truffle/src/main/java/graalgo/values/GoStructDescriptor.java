@@ -27,10 +27,13 @@ public final class GoStructDescriptor {
      * (null otherwise) — used by GoStruct.zero to pre-allocate struct array
      * elements (Go: new(T) gives zero-valued arrays, not null). Used by
      * GoStruct.zero to pre-allocate array fields (Go: new(T) gives
-     * zero-valued arrays, not null).
+     * zero-valued arrays, not null). structDesc is the nested struct
+     * descriptor for STRUCT-kind fields (null otherwise) — used by
+     * ABI size computation (structSizeBytes) for nested structs.
      */
     public record Field(String name, GoKind kind, boolean inLongs, int index, int arrayLen,
-                        GoKind arrayElemKind, GoStructDescriptor arrayElemDesc) {}
+                        GoKind arrayElemKind, GoStructDescriptor arrayElemDesc,
+                        GoStructDescriptor structDesc) {}
 
     private final String typeName;
     private final List<Field> fields;
@@ -66,14 +69,17 @@ public final class GoStructDescriptor {
      * fields (-1 for non-arrays); arrayElemKinds[i] is the element kind
      * (null for non-arrays); arrayElemDescs[i] is the element struct
      * descriptor for ARRAY-kind fields whose element kind is STRUCT
-     * (null otherwise).
+     * (null otherwise); structDescs[i] is the nested struct descriptor
+     * for STRUCT-kind fields (null otherwise).
      */
     public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
-            List<Integer> arrayLens, List<GoKind> arrayElemKinds, List<GoStructDescriptor> arrayElemDescs) {
+            List<Integer> arrayLens, List<GoKind> arrayElemKinds, List<GoStructDescriptor> arrayElemDescs,
+            List<GoStructDescriptor> structDescs) {
         if (names.size() != kinds.size() || names.size() != arrayLens.size()
-                || names.size() != arrayElemKinds.size() || names.size() != arrayElemDescs.size()) {
+                || names.size() != arrayElemKinds.size() || names.size() != arrayElemDescs.size()
+                || names.size() != structDescs.size()) {
             throw new IllegalArgumentException(
-                    "names/kinds/arrayLens/arrayElemKinds/arrayElemDescs length mismatch");
+                    "names/kinds/arrayLens/arrayElemKinds/arrayElemDescs/structDescs length mismatch");
         }
         java.util.ArrayList<Field> fields = new java.util.ArrayList<>(names.size());
         int longs = 0;
@@ -82,9 +88,23 @@ public final class GoStructDescriptor {
             GoKind k = kinds.get(i);
             boolean inLongs = k.isIntKind() || k.isFloatKind() || k == GoKind.BOOL;
             fields.add(new Field(names.get(i), k, inLongs, inLongs ? longs++ : objects++,
-                    arrayLens.get(i), arrayElemKinds.get(i), arrayElemDescs.get(i)));
+                    arrayLens.get(i), arrayElemKinds.get(i), arrayElemDescs.get(i), structDescs.get(i)));
         }
         return new GoStructDescriptor(typeName, fields);
+    }
+
+    /**
+     * Layout without struct descriptors (all null): nested struct fields
+     * have no descriptor (legacy behavior). Prefer the seven-argument
+     * overload when nested descriptors are available.
+     */
+    public static GoStructDescriptor layout(String typeName, List<String> names, List<GoKind> kinds,
+            List<Integer> arrayLens, List<GoKind> arrayElemKinds, List<GoStructDescriptor> arrayElemDescs) {
+        java.util.ArrayList<GoStructDescriptor> descs = new java.util.ArrayList<>(names.size());
+        for (int i = 0; i < names.size(); i++) {
+            descs.add(null);
+        }
+        return layout(typeName, names, kinds, arrayLens, arrayElemKinds, arrayElemDescs, descs);
     }
 
     /**
