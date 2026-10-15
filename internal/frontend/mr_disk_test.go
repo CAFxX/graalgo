@@ -11,7 +11,7 @@ package main
 // instance was protowire.ConsumeVarint's n:
 // wire.go:267:41: declared and not used: n
 //
-// Each test parses a snippet, runs transformDiskMultiResult, and
+// Each test parses a snippet, runs transformMultiResult, and
 // type-checks the rewritten AST, asserting zero errors. The pinned
 // behaviors:
 //  1. TestDiskMRPartiallyUsedNamedResults: the reported shape — only some
@@ -50,7 +50,7 @@ func transformAndCheckDiskMR(t *testing.T, src string) []error {
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	transformDiskMultiResult("example.com/p", []*ast.File{f})
+	transformMultiResult("example.com/p", []*ast.File{f})
 	conf := types.Config{Importer: importer.Default()}
 	var errs []error
 	conf.Error = func(e error) { errs = append(errs, e) }
@@ -215,21 +215,21 @@ func f2() (a, b, c int) {
 // decodeInto[T any] returning ([]byte, error), called with explicit
 // type arguments).
 //
-// Each test parses a snippet, runs transformDiskMultiResult, and
+// Each test parses a snippet, runs transformMultiResult, and
 // type-checks the rewritten AST, asserting zero errors — plus structural
 // assertions that the helper and pair type are generic (a type-check
 // alone would not catch a silently dropped [T any]).
 
-// transformDiskMR parses src, runs the transform, and returns the
+// transformMRForTest parses src, runs the transform, and returns the
 // rewritten file, the specs, and the type errors.
-func transformDiskMR(t *testing.T, src string) (*ast.File, []diskMRSpec, []error) {
+func transformMRForTest(t *testing.T, src string) (*ast.File, []mrSpec, []error) {
 	t.Helper()
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "p.go", src, 0)
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}
-	specs := transformDiskMultiResult("example.com/p", []*ast.File{f})
+	specs := transformMultiResult("example.com/p", []*ast.File{f})
 	conf := types.Config{Importer: importer.Default()}
 	var errs []error
 	conf.Error = func(e error) { errs = append(errs, e) }
@@ -247,11 +247,11 @@ func findFuncDecl(f *ast.File, name string) *ast.FuncDecl {
 	return nil
 }
 
-// checkDiskMRGenericClean asserts the transform type-checks and that the
+// checkMRGenericClean asserts the transform type-checks and that the
 // generated helper and pair type carry the type parameter list.
-func checkDiskMRGenericClean(t *testing.T, src, funcName, helperName, pairName string, wantTparams int) []diskMRSpec {
+func checkMRGenericClean(t *testing.T, src, funcName, helperName, pairName string, wantTparams int) []mrSpec {
 	t.Helper()
-	f, specs, errs := transformDiskMR(t, src)
+	f, specs, errs := transformMRForTest(t, src)
 	if len(errs) != 0 {
 		t.Fatalf("got %d type errors, want 0: %v", len(errs), errs)
 	}
@@ -311,7 +311,7 @@ func TestDiskMRGenericTwoResult(t *testing.T) {
 	// The reported shape: decodeInto[T any] returning ([]byte, error),
 	// called with explicit type arguments — the segmentio/encoding/json
 	// instance of GAP-GENERIC-MR.
-	checkDiskMRGenericClean(t, `package p
+	checkMRGenericClean(t, `package p
 
 func DecodeInto[T any](v []byte, dest *T) ([]byte, error) {
 	var zero T
@@ -332,7 +332,7 @@ func TestDiskMRGenericBareReturn(t *testing.T) {
 	// Named results + bare return in a generic function: the pair
 	// literal must carry explicit type arguments (go/types cannot infer
 	// them from the literal elements).
-	checkDiskMRGenericClean(t, `package p
+	checkMRGenericClean(t, `package p
 
 func First[T any](s []T) (v T, ok bool) {
 	if len(s) == 0 {
@@ -348,7 +348,7 @@ func First[T any](s []T) (v T, ok bool) {
 func TestDiskMRGenericRecursion(t *testing.T) {
 	// return F(args) inside F's own generic body: the recursive helper
 	// call must forward the type arguments explicitly.
-	checkDiskMRGenericClean(t, `package p
+	checkMRGenericClean(t, `package p
 
 func Strip[T any](s []T, n int) ([]T, int) {
 	if n <= 0 || len(s) == 0 {
@@ -361,7 +361,7 @@ func Strip[T any](s []T, n int) ([]T, int) {
 
 func TestDiskMRGenericTwoTypeParams(t *testing.T) {
 	// Two type parameters: IndexListExpr references on the pair literal.
-	checkDiskMRGenericClean(t, `package p
+	checkMRGenericClean(t, `package p
 
 func Zip[A, B any](a []A, b []B) ([]A, []B) {
 	return a, b
@@ -378,7 +378,7 @@ func TestDiskMRGenericVarHoist(t *testing.T) {
 	// var X = id(F[T](args)): the hoisted helper call must keep the
 	// explicit type arguments, and the outer call spreads the pair
 	// fields.
-	f, specs, errs := transformDiskMR(t, `package p
+	f, specs, errs := transformMRForTest(t, `package p
 
 func DecodeInto[T any](v []byte) ([]byte, T) {
 	var zero T
@@ -424,7 +424,7 @@ var X = id(DecodeInto[int]([]byte{1}))
 func TestDiskMRGenericMethod(t *testing.T) {
 	// A generic METHOD (own type params, non-generic receiver) on a disk
 	// type: the helper is generic over the method's type params.
-	checkDiskMRGenericClean(t, `package p
+	checkMRGenericClean(t, `package p
 
 type Box struct{ n int }
 
@@ -444,7 +444,7 @@ func TestDiskMRFuncValueNotRewrittenToHelper(t *testing.T) {
 	// there is no such helper. The call is kept for the export desugar
 	// via the two-value form. (Reported instance: segmentio's
 	// decodeFromString returning decode(d, b, p).)
-	f, specs, errs := transformDiskMR(t, `package p
+	f, specs, errs := transformMRForTest(t, `package p
 
 type decodeFunc func([]byte) ([]byte, error)
 
