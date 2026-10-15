@@ -189,11 +189,40 @@ public final class ValuesTest {
             throw new AssertionError("double free should trap");
         } catch (UnsafeHandles.UnsafeEscapeException expected) {
         }
+    }
+
+    public void testUnsafePointerToUintptrIdentityToken() {
+        // PKG-007: unsafe.Pointer → uintptr yields the handle as an integer
+        // identity token — never a raw address, never trapping.
+        UnsafeHandles h = new UnsafeHandles();
+        assertEq(0, GoConvert.unsafePointerToUintptr(0), "nil handle -> 0");
+        Object o1 = new Object();
+        Object o2 = new Object();
+        long hd1 = h.alloc(o1);
+        long hd2 = h.alloc(o2);
+        // Identity: the token IS the handle (stable across conversions).
+        assertEq(hd1, GoConvert.unsafePointerToUintptr(hd1), "token == handle");
+        assertEq(hd1, GoConvert.unsafePointerToUintptr(hd1), "token stable");
+        // Distinctness: distinct handles -> distinct tokens.
+        assertTrue(GoConvert.unsafePointerToUintptr(hd1)
+                != GoConvert.unsafePointerToUintptr(hd2), "distinct tokens");
+        // Non-nil tokens are non-zero (nil is the only 0).
+        assertTrue(GoConvert.unsafePointerToUintptr(hd1) != 0, "non-nil -> non-zero");
+        // The token is detached from the handle's lifetime (gc: the uintptr
+        // does not keep the object alive): freeing the handle leaves the
+        // already-escaped integer untouched — it just names a dead handle.
+        long tok = GoConvert.unsafePointerToUintptr(hd1);
+        h.free(hd1);
+        assertEq(hd1, tok, "escaped token survives free");
+        // But the dead handle still fails loud on resolution (no silent
+        // aliasing), and a fresh alloc never reuses the value.
         try {
-            GoConvert.unsafePointerToUintptr(hd);
-            throw new AssertionError("escaping conversion should trap");
+            h.get(hd1);
+            throw new AssertionError("use after free should trap");
         } catch (UnsafeHandles.UnsafeEscapeException expected) {
         }
+        long hd3 = h.alloc(new Object());
+        assertTrue(hd3 != hd1, "handle never reused after free");
     }
 
     public void testGoConvertFloatToInt() {

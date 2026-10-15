@@ -8,11 +8,15 @@ import java.util.Map;
  *
  * <p>An {@code unsafe.Pointer} value is an opaque handle ({@code long}) into
  * this table, never a raw address: there is no observable address anywhere
- * (GG-0015). Arithmetic on handles and any conversion that would let the
- * handle escape its referent's lifetime <em>trap</em> — see
- * {@link GoConvert#unsafePointerToUintptr} and the call sites WS D wires up.
- * Handles are never reused after {@link #free} (use-after-free fails loud,
- * never silently aliases a new referent).
+ * (GG-0015). The handle doubles as the {@code unsafe.Pointer → uintptr}
+ * identity token (PKG-007): {@link GoConvert#unsafePointerToUintptr}
+ * returns the handle itself, so the portable identity properties (nil → 0,
+ * stability, distinctness, equality-as-identity) hold without exposing an
+ * address. Arithmetic on handles and materializing a handle from an
+ * integer ({@code uintptr → unsafe.Pointer}) <em>trap</em> — a handle can
+ * never be fabricated from an integer, so the escaped token has no path
+ * back to a referent. Handles are never reused after {@link #free}
+ * (use-after-free fails loud, never silently aliases a new referent).
  */
 public final class UnsafeHandles {
     /** Thrown when unsafe.Pointer arithmetic or an escaping conversion traps. */
