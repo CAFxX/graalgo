@@ -1000,16 +1000,12 @@ public final class FmtScan {
                             convertString(verb).getBytes(StandardCharsets.UTF_8)));
                     break;
                 case SLICE:
-                    // gc: only (renamed) []byte. int[]-backed: the D5
+                    // gc: only (renamed) []byte. byte[]-backed: the D5
                     // representation of []byte.
                     if (isByteSlice(arg)) {
                         String s = convertString(verb);
                         byte[] bytes = s.getBytes(StandardCharsets.UTF_8);
-                        int[] arr = new int[bytes.length];
-                        for (int i = 0; i < bytes.length; i++) {
-                            arr[i] = bytes[i] & 0xFF;
-                        }
-                        ptr.setReferent(new GoSlice(arr, 0, arr.length, arr.length));
+                        ptr.setReferent(new GoSlice(bytes, 0, bytes.length, bytes.length));
                     } else {
                         error("can't scan type: " + arg.typeName());
                     }

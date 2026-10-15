@@ -131,15 +131,8 @@ public final class NewNode extends GoExprNode {
             }
             return arr;
         }
-        return switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> new int[len];
-            case INT64, UINT64, UNTYPED_INT -> new long[len];
-            case FLOAT32 -> new float[len];
-            case FLOAT64, UNTYPED_FLOAT -> new double[len];
-            case BOOL, UNTYPED_BOOL -> new boolean[len];
-            case COMPLEX64 -> new graalgo.values.GoComplex32[len];
-            case COMPLEX128, UNTYPED_COMPLEX -> new graalgo.values.GoComplex64[len];
-            default -> new Object[len];
-        };
+        // Single canonical allocator: Boxing.newArray owns the kind→backing
+        // mapping (D5).
+        return Boxing.newArray(elemKind, ultimateStructDesc, len);
     }
 }

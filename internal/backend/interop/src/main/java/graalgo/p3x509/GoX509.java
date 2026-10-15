@@ -493,15 +493,13 @@ public final class GoX509 {
 
     // ---- D5 boxing helpers ----
 
-    /** Converts Java byte[] to Go []byte (GoSlice with int[] backing). */
+    /** Converts Java byte[] to Go []byte (GoSlice with byte[] backing). */
     private static Object toGoBytes(byte[] bytes) {
         if (bytes == null) {
             return null;
         }
-        int[] arr = new int[bytes.length];
-        for (int i = 0; i < bytes.length; i++) {
-            arr[i] = bytes[i] & 0xFF;
-        }
+        // []byte is byte[]-backed (D5).
+        byte[] arr = bytes.clone();
         return new GoSlice(arr, 0, arr.length, arr.length);
     }
 
