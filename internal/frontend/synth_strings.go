@@ -2181,9 +2181,14 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		}
 	}
 
-	// Write appends p to b's buffer. Multi-result: not in M7 scope (WS D).
+	// Write appends p to b's buffer.
+	// PKG-031: implemented directly (was a fail-fast panic). The m7 desugar
+	// still rewrites direct calls to __builderWrite for efficiency, but
+	// interface dispatch (e.g., io.Writer) needs the real method.
 	func (b *Builder) Write(p []byte) (int, error) {
-		panic("strings.Builder.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		b.copyCheck()
+		b.buf = append(b.buf, p...)
+		return len(p), nil
 	}
 
 	// WriteByte appends the byte c to b's buffer. The returned error is always
@@ -2194,16 +2199,21 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		return nil
 	}
 
-	// WriteRune appends the UTF-8 encoding of r. Multi-result: not in M7 scope
-	// (WS D).
+	// WriteRune appends the UTF-8 encoding of r.
+	// PKG-031: implemented directly (was a fail-fast panic).
 	func (b *Builder) WriteRune(r rune) (int, error) {
-		panic("strings.Builder.WriteRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		b.copyCheck()
+		n := len(string(r))
+		b.buf = stringsAppendRune(b.buf, r)
+		return n, nil
 	}
 
-	// WriteString appends s to b's buffer. Multi-result: not in M7 scope
-	// (WS D).
+	// WriteString appends s to b's buffer.
+	// PKG-031: implemented directly (was a fail-fast panic).
 	func (b *Builder) WriteString(s string) (int, error) {
-		panic("strings.Builder.WriteString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+		b.copyCheck()
+		b.buf = append(b.buf, s...)
+		return len(s), nil
 	}
 
 	// P3-M10: WS D discharge of the three fail-fasts above via the m7
