@@ -187,10 +187,13 @@ public final class Intrinsics {
      * elements. Zero-size elements grow to exactly {@code newLen} cap.
      *
      * <p>One deliberate divergence, documented: for zero-size element
-     * types gc allocates no backing memory; this port allocates a
-     * zero-length Java array and reports {@code cap == newLen}. The
-     * observable (len, cap, elements) triple is identical; only the
-     * (unobservable in Phase 1) backing pointer differs.
+     * types gc allocates no backing memory ({@code zerobase}); this port
+     * allocates a Java backing array sized with the standard geometric
+     * growth policy (as 1-byte elements) and reports {@code cap == newLen}
+     * exactly as gc does. The observable (len, cap, elements) triple is
+     * identical; only the (unobservable in Phase 1) backing pointer
+     * differs, plus unobservable allocator pressure (gc allocates nothing
+     * here).
      */
     public static GoSlice growslice(GoSlice old, GoKind elemKind,
             graalgo.values.GoStructDescriptor elemDesc, int newLen,
@@ -201,8 +204,34 @@ public final class Intrinsics {
             throw new IllegalArgumentException("growslice: negative new length " + newLen);
         }
         if (elemSizeBytes == 0) {
-            // gc: slice{zerobase, newLen, newLen} — no backing allocation.
-            return new GoSlice(newTypedArray(elemKind, elemDesc, 0), 0, newLen, newLen);
+            // gc: slice{zerobase, newLen, newLen} — no backing allocation,
+            // cap grows to exactly newLen (never doubled). A zero-size type
+            // has exactly one value, so there is nothing to copy from the
+            // old backing and fresh zero slots are semantically identical
+            // (gc copies nothing either).
+            //
+            // Fast path: when the old backing array already has room for
+            // newLen elements, reuse it. Every slot holds the unique zero
+            // value, so no copy is needed and sharing is unobservable
+            // (stores write the zero value over the zero value). This
+            // keeps repeated appends amortized O(1): without it, every
+            // append would allocate and zero-initialize a fresh geometric
+            // array.
+            //
+            // Java still needs a real array behind every in-bounds element
+            // access: GoSlice requires len/cap <= backing length, and the
+            // append store loop indexes it directly. On the slow path the
+            // backing is sized with the standard geometric growth policy —
+            // as if elements were 1 byte. The reported cap stays exactly
+            // newLen per gc; the surplus backing slots are unobservable
+            // (every Go-visible index is < newLen <= backing length).
+            if (old != null
+                    && java.lang.reflect.Array.getLength(old.array()) >= newLen) {
+                return new GoSlice(old.array(), 0, newLen, newLen);
+            }
+            int allocCap = nextSliceCap(newLen, oldCap, 1, elemHasPointers);
+            Object array = newTypedArray(elemKind, elemDesc, allocCap);
+            return new GoSlice(array, 0, newLen, newLen);
         }
         int newCap = nextSliceCap(newLen, oldCap, elemSizeBytes, elemHasPointers);
         Object array = newTypedArray(elemKind, elemDesc, newCap);
