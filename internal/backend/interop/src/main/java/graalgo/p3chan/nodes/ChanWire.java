@@ -288,15 +288,14 @@ final class ChanWire {
 
     /** Fresh typed Java array for a Go array type (mirrors phase-1's D5 mapping). */
     private static Object newArray(GoKind ek, int len) {
-        return switch (ek.slotKind()) {
-            case Int -> new int[len];
-            case Long -> new long[len];
-            case Float -> new float[len];
-            case Double -> new double[len];
-            case Boolean -> new boolean[len];
-            case Object -> new Object[len];
-            default -> throw new FrontendException("no array carrier for kind " + ek);
-        };
+        // Single canonical allocator: Boxing.newArray owns the kind→backing
+        // mapping (D5). The old slotKind() switch collapsed sub-32-bit int
+        // kinds to Int and allocated int[] for them, which then crashed in
+        // Boxing.arrayGet's (byte[]) cast — see his 2026-10-15 int-storage
+        // verdict. Delegating also fixes complex arrays (old code returned
+        // Object[] of nulls; Boxing returns properly zero-filled typed
+        // arrays, since Go has no nil complex).
+        return graalgo.frontend.Boxing.newArray(ek, len);
     }
 
     /**
