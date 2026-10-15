@@ -209,6 +209,12 @@ public final class ReflectRefs {
         if (referent instanceof Cell c) {
             return c.value;
         }
+        // PKG-022: Value.Elem() on a pointer to a nil pointee interns the
+        // pointee's GoCell storage (there is no value to intern). Unwrap it
+        // here so denotedValue yields the live value (null for nil).
+        if (referent instanceof graalgo.values.GoCell gc) {
+            return gc.get();
+        }
         if (referent instanceof long[] a && a.length == 1) {
             return a[0];
         }

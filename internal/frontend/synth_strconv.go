@@ -59,7 +59,18 @@ package main
 // multi-result declarations (see above).
 const syntheticStrconvSource = `package strconv
 
-import "errors"
+// strconvError is a local string-based error type. The strconv package
+// must not import "errors": errors.As is implemented over reflect,
+// reflect imports strconv (StructTag unquoting), so a strconv→errors
+// import would close an import cycle (errors→reflect→strconv→errors)
+// and hang the overlay importer in infinite recursion. The observable
+// behavior is identical to errors.New (same Error() text, same ==
+// identity for the package vars); only the unobservable dynamic type
+// name differs, which no Go program can name (it is unexported in the
+// real stdlib too).
+type strconvError string
+
+func (e strconvError) Error() string { return string(e) }
 
 // ---------------------------------------------------------------------------
 // Bit-cast layer (replaces internal/strconv/deps.go's unsafe.Pointer).
@@ -3866,10 +3877,10 @@ func appendComplex(dst []byte, c complex128, fmt byte, prec, bitSize int) []byte
 // ---------------------------------------------------------------------------
 
 // ErrRange indicates that a value is out of range for the target type.
-var ErrRange = errors.New("value out of range")
+var ErrRange = strconvError("value out of range")
 
 // ErrSyntax indicates that a value does not have the right syntax for the target type.
-var ErrSyntax = errors.New("invalid syntax")
+var ErrSyntax = strconvError("invalid syntax")
 
 // A NumError records a failed conversion.
 type NumError struct {
@@ -3908,11 +3919,11 @@ func rangeError(fn, str string) *NumError {
 }
 
 func baseError(fn, str string, base int) *NumError {
-	return &NumError{fn, str, errors.New("invalid base " + Itoa(base))}
+	return &NumError{fn, str, strconvError("invalid base " + Itoa(base))}
 }
 
 func bitSizeError(fn, str string, bitSize int) *NumError {
-	return &NumError{fn, str, errors.New("invalid bit size " + Itoa(bitSize))}
+	return &NumError{fn, str, strconvError("invalid bit size " + Itoa(bitSize))}
 }
 
 // ParseBool returns the boolean value represented by the string.

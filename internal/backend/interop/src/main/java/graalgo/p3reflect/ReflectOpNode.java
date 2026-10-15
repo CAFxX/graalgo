@@ -691,19 +691,52 @@ public final class ReflectOpNode extends GoExprNode {
                 return ReflectValues.pack(desc, elemTok, h, flag);
             }
             case POINTER -> {
+                // The Go pointer P that v represents is nil iff:
+                // - the handle addresses a ReflectRefs.Cell: never nil
+                //   (&Cell is a non-nil pointer; from reflectNew);
+                // - the handle addresses a GoCell: P is the cell's content
+                //   (nil content = nil pointer; from Elem on a cell pointer);
+                // - otherwise P is the denoted D5 value: nil iff d5 is null
+                //   or a nil GoPointer.
+                Object storage = ReflectRefs.resolve(p.ptr());
+                boolean pIsNil;
+                if (storage instanceof Cell) {
+                    pIsNil = false;
+                } else if (storage instanceof graalgo.values.GoCell gc) {
+                    pIsNil = gc.get() == null;
+                } else if (d5 instanceof GoPointer gp) {
+                    pIsNil = gp.isNil();
+                } else {
+                    pIsNil = d5 == null;
+                }
+                if (pIsNil) {
+                    // The pointer itself is nil: Elem() is the zero Value (gc).
+                    return ReflectValues.zero(desc);
+                }
+                // P is non-nil: Elem() is the pointee Value (valid even when
+                // the pointee itself is nil — e.g. **T pointing to nil *T).
                 long h;
                 if (d5 instanceof GoPointer gp) {
-                    if (gp.referent() == null) {
+                    Object ref = gp.referent();
+                    if (ref == null && gp.isCellPointer()) {
+                        // Non-nil cell pointer to a nil value (e.g. &ppp where
+                        // ppp is a nil **int): Elem() is a VALID nil *T Value
+                        // (gc), not the zero Value. Address the cell storage
+                        // so Set() writes through; interning the null value
+                        // would lose the storage identity. PKG-022:
+                        // Value.Elem() on **T pointing to nil *T returned the
+                        // zero Value, breaking reflect-driven Set in errors.As
+                        // test setup (and any pointer-to-nil-pointer Elem).
+                        h = ReflectRefs.intern(gp.cell());
+                    } else if (ref == null) {
                         return ReflectValues.zero(desc);
+                    } else {
+                        h = ReflectRefs.intern(ref);
                     }
-                    h = ReflectRefs.intern(gp.referent());
-                } else if (d5 == null) {
-                    return ReflectValues.zero(desc);
                 } else {
-                    // reflectNew interns Cell(zero) and denotedValue unwraps
-                    // the Cell, so d5 is the raw value, not a GoPointer.
-                    // Keep the original handle: stores write through the
-                    // cell (setScalar/storeThroughRef handle Cell/FieldRef).
+                    // d5 is the raw pointee value (or null for a nil pointee
+                    // behind Cell storage): address the storage itself so
+                    // Set() writes through.
                     h = p.ptr();
                 }
                 long flag = ReflectValues.FLAG_ADDR | (p.flag() & ReflectValues.FLAG_RO);
@@ -874,6 +907,12 @@ public final class ReflectOpNode extends GoExprNode {
             c.value = d5src;
             return;
         }
+        // PKG-022: Elem() on a pointer to a nil pointee addresses the
+        // pointee's GoCell storage. Write through the cell.
+        if (ref instanceof graalgo.values.GoCell gc) {
+            gc.set(d5src);
+            return;
+        }
         TypeInfo t = ReflectTypes.table().info(dp.typ());
         if (t.kind != GoKind.STRUCT && t.kind != GoKind.ARRAY) {
             // Scalar (or other leaf) through an element/field ref: write
@@ -916,6 +955,12 @@ public final class ReflectOpNode extends GoExprNode {
         Object zero = zeroFor(p.typ());
         if (ref instanceof Cell c) {
             c.value = zero;
+            return;
+        }
+        // PKG-022: see reflectSet — Elem() on a pointer to a nil pointee
+        // addresses the pointee's GoCell storage.
+        if (ref instanceof graalgo.values.GoCell gc) {
+            gc.set(zero);
             return;
         }
         TypeInfo t = ReflectTypes.table().info(p.typ());
