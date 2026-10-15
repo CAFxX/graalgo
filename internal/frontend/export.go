@@ -2817,14 +2817,13 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 				if err != nil {
 					return nil, err
 				}
-				// MR-closure-var: link a package-level var initialized with
-				// a multi-result func lit to the lit's pair info, so call
-				// sites through the variable desugar.
-				if lit, ok := unparen(initExpr).(*ast.FuncLit); ok {
-					if mrInfo, ok := e.funcLitMRInfo[lit]; ok {
-						if vr, ok := e.info.Defs[n].(*types.Var); ok {
-							e.userMRVars[vr] = mrInfo
-						}
+				// MR-closure-var / PKG-035: link a package-level var
+				// initialized with a multi-result function value (func lit
+				// or named function) to its pair info, so call sites
+				// through the variable desugar.
+				if mrInfo := e.mrInfoForFuncValueInit(initExpr); mrInfo != nil {
+					if vr, ok := e.info.Defs[n].(*types.Var); ok {
+						e.userMRVars[vr] = mrInfo
 					}
 				}
 				// BUG-MODPROBE-010: multi-result calls in argument position
@@ -6912,28 +6911,27 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 				return nil, err
 			}
 			values = append(values, x)
-			// MR-closure-var: link a var declared with a multi-result
-			// func lit initializer to the lit's pair info.
-			if lit, ok := unparen(v).(*ast.FuncLit); ok {
-				if mrInfo, ok := e.funcLitMRInfo[lit]; ok {
-					// Single-valued lit: binds Names[i] when counts
-					// match, else the sole name.
-					var name *ast.Ident
-					if len(vs.Values) == len(vs.Names) {
-						// Find index of v in vs.Values.
-						for vi, vv := range vs.Values {
-							if vv == v {
-								name = vs.Names[vi]
-								break
-							}
+			// MR-closure-var / PKG-035: link a var declared with a
+			// multi-result function value initializer (func lit or named
+			// function) to its pair info.
+			if mrInfo := e.mrInfoForFuncValueInit(v); mrInfo != nil {
+				// Single-valued function value: binds Names[i] when counts
+				// match, else the sole name.
+				var name *ast.Ident
+				if len(vs.Values) == len(vs.Names) {
+					// Find index of v in vs.Values.
+					for vi, vv := range vs.Values {
+						if vv == v {
+							name = vs.Names[vi]
+							break
 						}
-					} else if len(vs.Names) == 1 {
-						name = vs.Names[0]
 					}
-					if name != nil {
-						if vr, ok := e.info.Defs[name].(*types.Var); ok {
-							e.userMRVars[vr] = mrInfo
-						}
+				} else if len(vs.Names) == 1 {
+					name = vs.Names[0]
+				}
+				if name != nil {
+					if vr, ok := e.info.Defs[name].(*types.Var); ok {
+						e.userMRVars[vr] = mrInfo
 					}
 				}
 			}
@@ -6999,28 +6997,83 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 		}
 		values = append(values, x)
 	}
-	// MR-closure-var: link variables assigned a multi-result func lit to
-	// the lit's pair info, so call sites through the variable desugar.
-	// A func lit is single-valued; in `x := func...` it binds LHS[0], and
-	// in `a, b := f(), func...` RHS[i] binds LHS[i].
-	e.linkFuncLitMRVars(s)
+	// MR-closure-var / PKG-035: link variables assigned a multi-result
+	// function value (func lit or named function) to the pair info, so
+	// call sites through the variable desugar. A function value is
+	// single-valued; in `x := f` it binds LHS[0], and in
+	// `a, b := g(), h` RHS[i] binds LHS[i].
+	e.linkFuncValueMRVars(s)
 	return e.node("vardecl", s, map[string]any{
 		"names": names, "objs": objs, "define": true, "type": nil, "values": values,
 	}), nil
 }
 
-// linkFuncLitMRVars registers *types.Var -> pair info for variables
-// initialized with a multi-result function literal (MR-closure-var).
-// Called after the RHS values are exported (so exportFuncLit has recorded
-// the lit's pair info in e.funcLitMRInfo).
-func (e *exporter) linkFuncLitMRVars(s *ast.AssignStmt) {
-	for i, rhs := range s.Rhs {
-		lit, ok := unparen(rhs).(*ast.FuncLit)
-		if !ok {
-			continue
+// mrInfoForFuncValueInit returns the pair info for a variable initializer
+// that is a multi-result function value, so the variable can be linked in
+// userMRVars and call sites through it desugar (PKG-035, P3-M10). It covers:
+//   - a multi-result function literal (the existing MR-closure-var case),
+//   - a named function in value position (F := two),
+//   - a package-qualified named function (var F ... = syscall.Accept),
+//   - an alias of an already-linked variable (G := F).
+//
+// The pair info comes from the func lit's recorded transform
+// (funcLitMRInfo), from the named function's pair plan
+// (mrPlanForFuncValue: userMRFuncs or the table classifiers), or from the
+// aliased variable's existing link. Returns nil when the initializer is
+// not a multi-result function value.
+func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
+	x = unparen(x)
+	if lit, ok := x.(*ast.FuncLit); ok {
+		if mrInfo, ok := e.funcLitMRInfo[lit]; ok {
+			return mrInfo
 		}
-		mrInfo, ok := e.funcLitMRInfo[lit]
-		if !ok {
+		return nil
+	}
+	var fn *types.Func
+	switch x := x.(type) {
+	case *ast.Ident:
+		if f, ok := e.info.Uses[x].(*types.Func); ok {
+			fn = f
+		} else if v, ok := e.info.Uses[x].(*types.Var); ok {
+			// Alias: G := F where F already holds a multi-result
+			// function value (linked earlier in export order). The same
+			// pair-returning value flows, so the same pair info applies.
+			if mrInfo, ok := e.userMRVars[v]; ok {
+				return mrInfo
+			}
+		}
+	case *ast.SelectorExpr:
+		// Package-qualified reference (pkg.Fn): X must be a package name.
+		if id, ok := x.X.(*ast.Ident); ok {
+			if _, ok := e.info.Uses[id].(*types.PkgName); ok {
+				fn, _ = e.info.Uses[x.Sel].(*types.Func)
+			}
+		}
+	}
+	if fn == nil {
+		return nil
+	}
+	plan := e.mrPlanForFuncValue(fn)
+	if plan == nil {
+		return nil
+	}
+	nt, ok := plan.tmpType.(*types.Named)
+	if !ok {
+		return nil
+	}
+	sig, _ := fn.Type().(*types.Signature)
+	return &userMRInfo{pairType: nt, pairFields: plan.pairFields, origSig: sig}
+}
+
+// linkFuncValueMRVars registers *types.Var -> pair info for variables
+// initialized with a multi-result function value (func lit or named
+// function, PKG-035 generalizing MR-closure-var). Called after the RHS
+// values are exported (so exportFuncLit has recorded the lit's pair info
+// in e.funcLitMRInfo).
+func (e *exporter) linkFuncValueMRVars(s *ast.AssignStmt) {
+	for i, rhs := range s.Rhs {
+		mrInfo := e.mrInfoForFuncValueInit(rhs)
+		if mrInfo == nil {
 			continue
 		}
 		// Find the LHS variable bound to this RHS.
