@@ -92,10 +92,14 @@ public final class IfaceMethodTables {
                 } else {
                     f = functions.get(ref.objId);
                     if (f == null) {
-                        throw new FrontendException("ifacemethod: method \"" + m.getKey()
+                        // Disk-MR stubs are skipped by the frontend (desugar
+                        // rewrites all calls to the __-helper); the method
+                        // table entry is vestigial. Skip instead of failing.
+                        System.err.println("warning: ifacemethod: method \"" + m.getKey()
                                 + "\" on dynamic type \"" + e.getKey()
                                 + "\" refers to unknown function object id " + ref.objId
-                                + " (WS D)");
+                                + " (skipped; likely a disk-MR stub)");
+                        continue;
                     }
                     embMethods = List.of();
                 }

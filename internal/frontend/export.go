@@ -2862,6 +2862,10 @@ func ExportFiles(paths []string) (string, error) {
 		if err != nil {
 			return "", err
 		}
+		if f == nil {
+			// Disk-MR stub: skipped by exportFuncDecl (desugar handles calls).
+			continue
+		}
 		doc.Funcs = append(doc.Funcs, f)
 		if fi.fd.Name.Name == "main" && fi.recv == nil {
 			hasMain = true
@@ -2871,6 +2875,9 @@ func ExportFiles(paths []string) (string, error) {
 		f, err := e.exportInstantiation(inst)
 		if err != nil {
 			return "", err
+		}
+		if f == nil {
+			continue
 		}
 		doc.Funcs = append(doc.Funcs, f)
 	}
@@ -5850,6 +5857,9 @@ func (e *exporter) drainMethodTablePending(doc *Doc) error {
 			f, err := e.exportInstantiation(inst)
 			if err != nil {
 				return err
+			}
+			if f == nil {
+				continue
 			}
 			doc.Funcs = append(doc.Funcs, f)
 		}

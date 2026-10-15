@@ -1331,6 +1331,10 @@ func (e *exporter) exportSyntheticBodies(doc *Doc) error {
 				e.subst, e.substTypeIDs = savedSubst, savedSubstTypeIDs
 				return err
 			}
+			if f == nil {
+				// Disk-MR stub: skipped by exportFuncDecl.
+				continue
+			}
 			doc.Funcs = append(doc.Funcs, f)
 		}
 		e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
