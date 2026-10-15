@@ -29,11 +29,11 @@ produces an executable at `/tmp/mybin`.
 **Root cause:** `cmdBuild` passes all args directly to `resolveFiles`, which treats
 every arg as a file/package path. No flag parsing exists.
 
-**Fix:** Parse `-o` (and `-o=`) in `cmdBuild`. Since `graalgo build` currently does
-not emit binaries (documented divergence in DRIVER_AUDIT.md §4), the honest
-behavior is to accept `-o` and either (a) implement binary emission, or (b) emit
-a clear "not yet supported" error naming the flag. Silently treating it as a
-filename is the worst option.
+**Fix:** Parse `-o` (and `-o=`) in `cmdBuild`. Binary emission is now
+implemented (build-executable lane): `graalgo build` validates the program
+through the frontend gate and emits an executable artifact — a
+self-contained launcher script ([internal/driver/artifact.go](internal/driver/artifact.go))
+that runs the program through the graalgo backend.
 
 ### 2. `graalgo build -ldflags` — BROKEN
 
@@ -152,8 +152,8 @@ silently ignored.
 ## Fix priority
 
 **Driver lane (this lane) — DONE:**
-1. ✅ Parse `-o` in `cmdBuild` — accepted, clear "binary emission not yet
-   supported" error (exit 1) instead of "no such file or directory: -o"
+1. ✅ Parse `-o` in `cmdBuild` — accepted; binary emission implemented by the
+   build-executable lane (executable launcher artifact via internal/driver)
 2. ✅ Parse `-ldflags` in `cmdBuild`/`cmdRun` — accepted, clear "not yet
    supported" error (exit 1)
 3. ✅ Accept `-count` in `cmdTest` — parsed and honored (runs tests n times);
@@ -169,5 +169,4 @@ silently ignored.
 - Test caching (result cache)
 - `-ldflags -X` backend support (inject string variables at link time)
 - `-cover` backend instrumentation
-- `graalgo build` binary emission (Phase-4 architecture decision)
 - Cross-compilation semantics for JVM backend

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/CAFxX/graalgo/internal/driver"
 	"github.com/CAFxX/graalgo/internal/vet"
 )
 
@@ -176,22 +177,21 @@ func parseBuildFlags(args []string) (buildFlags, error) {
 
 // cmdBuild implements `graalgo build [build flags] [packages]`.
 //
-// Validates that the named packages translate through the frontend.
-// Unlike go build, no binary is produced: the Truffle backend JIT-compiles
-// at run time, so "build" is a frontend-correctness gate.
-//
-// The -o flag is accepted for compatibility but currently rejected with a
-// clear error: binary emission is a Phase-4 architecture item, not a
-// silently-ignored flag.
+// The named packages are validated through the frontend (the compile
+// gate), then packaged into an executable artifact: a self-contained
+// launcher script that runs the program through the graalgo backend.
+// Like `go build`, _test.go files are ignored and the artifact defaults
+// to the current directory's base name (or the first .go file's base
+// name) unless -o names the output.
 func cmdBuild(root string, args []string) int {
 	bf, err := parseBuildFlags(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
 	}
-	if bf.output != "" {
-		fmt.Fprintf(os.Stderr, "graalgo build: -o %s: binary emission not yet supported (frontend-check only)\n", bf.output)
-		return 1
+	if bf.output == "-" {
+		fmt.Fprintf(os.Stderr, "graalgo build: -o - is not supported: the artifact is a launcher script\n")
+		return 2
 	}
 	if bf.ldflags != "" {
 		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
@@ -200,16 +200,39 @@ func cmdBuild(root string, args []string) int {
 	files, err := resolveFiles(bf.pkgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
-		return 1
+		return 2
 	}
-	failed := false
+	// _test.go files are not part of the package build, like `go build`.
+	var pkgFiles []string
 	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
-			fmt.Fprintf(os.Stderr, "graalgo build: %s: build failed\n", f)
-			failed = true
+		if !strings.HasSuffix(f, "_test.go") {
+			pkgFiles = append(pkgFiles, f)
 		}
 	}
-	if failed {
+	if len(pkgFiles) == 0 {
+		fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
+		return 1
+	}
+	// Frontend gate: the program must translate cleanly.
+	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
+		return 1
+	}
+	out, err := driver.DefaultOutputName(bf.output, bf.pkgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+		return 2
+	}
+	progFiles := make([]driver.ProgramFile, 0, len(pkgFiles))
+	for _, f := range pkgFiles {
+		progFiles = append(progFiles, driver.ProgramFile{Name: filepath.Base(f), Path: f})
+	}
+	if err := driver.Emit(driver.Artifact{
+		OutputPath:  out,
+		GraalgoRoot: root,
+		Files:       progFiles,
+	}); err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 1
 	}
 	return 0

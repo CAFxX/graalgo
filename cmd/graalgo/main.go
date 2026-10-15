@@ -105,15 +105,16 @@ Compile and run the Go program in package, or the single file if given.
 The program arguments follow the package or file.
 `)
 	case "build":
-		fmt.Printf(`usage: graalgo build [build flags] [packages]
+		fmt.Printf(`usage: graalgo build [-o output] [packages]
 
-Compile the named packages. With no package arguments, builds the
-package in the current directory. Unlike go build, graalgo build
-validates the frontend translation; it does not produce a binary
-(the Truffle backend is JIT-compiled at run time).
+Compile the named packages and emit an executable artifact: a
+self-contained launcher that runs the program through the graalgo
+backend. With no package arguments, builds the package in the current
+directory. The default artifact name mirrors go build (the directory or
+first file base name); -o names the output explicitly.
 
 Flags:
-	-o file		output binary path (not yet supported)
+	-o file		output artifact path
 	-ldflags=flags	linker flags (not yet supported)
 	-tags=tags	build tags
 `)
