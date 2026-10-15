@@ -721,6 +721,17 @@ func syntheticFmtPackage() *types.Package {
 	insert("Sprintf", types.NewTuple(format, a), types.NewTuple(strRes))
 	insert("Sprintln", types.NewTuple(a), types.NewTuple(strRes))
 	insert("Errorf", types.NewTuple(format, a), types.NewTuple(errResOnly))
+	// Gate-1 #4: the F-family (Fprint/Fprintf/Fprintln, gc 1.27.1 exact
+	// signatures). The backend's FmtCallNode executes them (writes to the
+	// io.Writer first arg via GoMethodDispatch); the exporter treats them
+	// like the Print variants (statement position, results discarded).
+	// The w parameter uses the synthetic io package's Writer type (io
+	// does not import fmt — no init cycle).
+	ioWriter := getSyntheticPackage("io").pkg.Scope().Lookup("Writer").Type()
+	w := param("w", ioWriter)
+	insert("Fprint", types.NewTuple(w, a), types.NewTuple(n, errRes))
+	insert("Fprintf", types.NewTuple(w, format, a), types.NewTuple(n, errRes))
+	insert("Fprintln", types.NewTuple(w, a), types.NewTuple(n, errRes))
 	// P3-M9 (wave 3): the State/Scanner/Formatter interfaces (gc 1.27.1
 	// exact signatures). math/big's Int/Float Format/Scan methods are
 	// declared against them. Types only — the stub keeps just the seven
@@ -798,10 +809,12 @@ func syntheticFmtPackage() *types.Package {
 	return pkg
 }
 
-// fmtOverlayFuncs are the seven D4 symbols (PLAN.md D4).
+// fmtOverlayFuncs are the seven D4 symbols (PLAN.md D4) plus the F-family
+// (Gate-1 #4: Fprint/Fprintf/Fprintln, executed by the backend's FmtCallNode).
 var fmtOverlayFuncs = map[string]bool{
 	"Print": true, "Printf": true, "Println": true,
 	"Sprint": true, "Sprintf": true, "Sprintln": true, "Errorf": true,
+	"Fprint": true, "Fprintf": true, "Fprintln": true,
 }
 
 // syncPrimitiveNames are the four P3-M2b (WS D, ADR-0002) primitives bound
@@ -9392,10 +9405,12 @@ func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node,
 	}
 	// The Print variants return (int, error); Phase 1 supports them in
 	// statement position only (results discarded) — the wire type is null.
+	// The F-family (Fprint/Fprintf/Fprintln) is the same: the backend's
+	// FmtCallNode writes to the writer and discards (n, err).
 	// The Sprint variants and Errorf return a single value.
 	var typ any
 	switch name {
-	case "Print", "Printf", "Println":
+	case "Print", "Printf", "Println", "Fprint", "Fprintf", "Fprintln":
 		typ = nil
 	default:
 		typ, err = e.callType(c)
