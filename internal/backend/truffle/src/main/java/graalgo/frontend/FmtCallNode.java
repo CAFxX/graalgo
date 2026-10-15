@@ -137,25 +137,38 @@ public final class FmtCallNode extends GoExprNode {
                     elemKindChains[i], elemTypeNameChains[i],
                     keyKindChains[i], keyTypeNameChains[i]);
         }
+        return executeFmt(funcName, fargs);
+    }
+
+    /**
+     * Executes a fmt overlay call from pre-built arguments. Shared by
+     * {@link #executeObject} (direct calls) and {@link graalgo.runtime.DeferredCall}
+     * (deferred calls, M7) — a single dispatch site, no duplication.
+     *
+     * <p>Note: this is the Phase-1 fmt import overlay. The real Go fmt package
+     * is the destination; this Java reimplementation survives only until the
+     * real-fmt track retires the overlay (bridge-removal tracker).
+     */
+    public static Object executeFmt(String funcName, Fmt.Arg[] fargs) {
         return switch (funcName) {
             case "Sprint" -> Fmt.sprint(fargs);
-            case "Sprintf" -> Fmt.sprintf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Sprintf" -> Fmt.sprintf(fmtString(funcName, fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
             case "Sprintln" -> Fmt.sprintln(fargs);
-            case "Errorf" -> Fmt.errorf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Append" -> Fmt.append(sliceArg(fargs, 0),
+            case "Errorf" -> Fmt.errorf(fmtString(funcName, fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+            case "Append" -> Fmt.append(sliceArg(funcName, fargs, 0),
                     java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Appendf" -> Fmt.appendf(sliceArg(fargs, 0), fmtStringAt(fargs, 1),
+            case "Appendf" -> Fmt.appendf(sliceArg(funcName, fargs, 0), fmtStringAt(funcName, fargs, 1),
                     java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
-            case "Appendln" -> Fmt.appendln(sliceArg(fargs, 0),
+            case "Appendln" -> Fmt.appendln(sliceArg(funcName, fargs, 0),
                     java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "FormatString" -> Fmt.formatString(fargs[0], runeArg(fargs, 1));
+            case "FormatString" -> Fmt.formatString(fargs[0], runeArg(funcName, fargs, 1));
             // Print/Printf/Println in statement position: discard results.
             case "Print" -> {
                 Fmt.print(fargs);
                 yield GoString.EMPTY;
             }
             case "Printf" -> {
-                Fmt.printf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+                Fmt.printf(fmtString(funcName, fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
                 yield GoString.EMPTY;
             }
             case "Println" -> {
@@ -166,16 +179,16 @@ public final class FmtCallNode extends GoExprNode {
             // (first arg). Format via the S-family, then dispatch Write
             // through GoMethodDispatch. Statement position: discard (n, err).
             case "Fprint" -> {
-                fprintTo(fargs[0], Fmt.sprint(java.util.Arrays.copyOfRange(fargs, 1, fargs.length)));
+                fprintTo(funcName, fargs[0], Fmt.sprint(java.util.Arrays.copyOfRange(fargs, 1, fargs.length)));
                 yield GoString.EMPTY;
             }
             case "Fprintf" -> {
-                fprintTo(fargs[0], Fmt.sprintf(fmtString(fargs),
+                fprintTo(funcName, fargs[0], Fmt.sprintf(fmtString(funcName, fargs),
                         java.util.Arrays.copyOfRange(fargs, 2, fargs.length)));
                 yield GoString.EMPTY;
             }
             case "Fprintln" -> {
-                fprintTo(fargs[0], Fmt.sprintln(java.util.Arrays.copyOfRange(fargs, 1, fargs.length)));
+                fprintTo(funcName, fargs[0], Fmt.sprintln(java.util.Arrays.copyOfRange(fargs, 1, fargs.length)));
                 yield GoString.EMPTY;
             }
             // P3-M10 (fix-fmt-funcs): the scan family — statement position
@@ -185,7 +198,7 @@ public final class FmtCallNode extends GoExprNode {
                 yield GoString.EMPTY;
             }
             case "Sscanf" -> {
-                FmtScan.sscanf(fargs[0], fmtStringAt(fargs, 1),
+                FmtScan.sscanf(fargs[0], fmtStringAt(funcName, fargs, 1),
                         java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
                 yield GoString.EMPTY;
             }
@@ -198,7 +211,7 @@ public final class FmtCallNode extends GoExprNode {
                 yield GoString.EMPTY;
             }
             case "Fscanf" -> {
-                FmtScan.fscanf(fargs[0], fmtStringAt(fargs, 1),
+                FmtScan.fscanf(fargs[0], fmtStringAt(funcName, fargs, 1),
                         java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
                 yield GoString.EMPTY;
             }
@@ -211,7 +224,7 @@ public final class FmtCallNode extends GoExprNode {
                 yield GoString.EMPTY;
             }
             case "Scanf" -> {
-                FmtScan.scanfStdin(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
+                FmtScan.scanfStdin(fmtString(funcName, fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
                 yield GoString.EMPTY;
             }
             case "Scanln" -> {
@@ -229,11 +242,11 @@ public final class FmtCallNode extends GoExprNode {
         return 0L;
     }
 
-    private String fmtString(Fmt.Arg[] fargs) {
-        return fmtStringAt(fargs, 0);
+    private static String fmtString(String funcName, Fmt.Arg[] fargs) {
+        return fmtStringAt(funcName, fargs, 0);
     }
 
-    private String fmtStringAt(Fmt.Arg[] fargs, int at) {
+    private static String fmtStringAt(String funcName, Fmt.Arg[] fargs, int at) {
         if (fargs.length <= at) {
             throw new FrontendException(funcName + " requires a format string");
         }
@@ -244,7 +257,7 @@ public final class FmtCallNode extends GoExprNode {
         return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
     }
 
-    private graalgo.values.GoSlice sliceArg(Fmt.Arg[] fargs, int at) {
+    private static graalgo.values.GoSlice sliceArg(String funcName, Fmt.Arg[] fargs, int at) {
         if (fargs.length <= at) {
             throw new FrontendException(funcName + " requires a []byte argument");
         }
@@ -262,7 +275,7 @@ public final class FmtCallNode extends GoExprNode {
     // io.Writer via GoMethodDispatch. The writer is fargs[0] (interface
     // value); Write takes []byte and returns the (n, err) pair, which
     // we discard in statement position.
-    private void fprintTo(Fmt.Arg writer, GoString s) {
+    private static void fprintTo(String funcName, Fmt.Arg writer, GoString s) {
         Fmt.GoMethodDispatch d = Fmt.goMethodDispatch();
         if (d == null) {
             throw new FrontendException("fmt." + funcName + ": no Go method dispatch installed (needs the phase-3 launcher)");
@@ -273,7 +286,7 @@ public final class FmtCallNode extends GoExprNode {
         d.call(writer, "Write", new Object[]{slice});
     }
 
-    private int runeArg(Fmt.Arg[] fargs, int at) {
+    private static int runeArg(String funcName, Fmt.Arg[] fargs, int at) {
         if (fargs.length <= at) {
             throw new FrontendException(funcName + " requires a rune argument");
         }

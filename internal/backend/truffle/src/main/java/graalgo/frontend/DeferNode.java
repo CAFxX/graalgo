@@ -3,6 +3,7 @@ package graalgo.frontend;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.DeferredCall;
+import graalgo.runtime.Fmt;
 import graalgo.runtime.GoroutineState;
 import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
@@ -71,23 +72,37 @@ public final class DeferNode extends GoStmtNode {
         this.argKinds = fmtCall.argKinds();
     }
 
+    /**
+     * Builds the {@link Fmt.Arg} array for a deferred fmt call from the
+     * already-evaluated argument values plus the FmtCallNode's static type
+     * metadata. Called at defer time (Go's call-time evaluation); the array
+     * is captured in the DeferredCall and replayed at return/unwind time.
+     */
+    private static Fmt.Arg[] buildFmtArgs(FmtCallNode fmtCall, Object[] argVals) {
+        Fmt.Arg[] fargs = new Fmt.Arg[argVals.length];
+        for (int i = 0; i < argVals.length; i++) {
+            fargs[i] = new Fmt.Arg(argVals[i], fmtCall.argKinds()[i], fmtCall.argTypeNames()[i],
+                    fmtCall.argKeyKinds()[i], fmtCall.argKeyTypeNames()[i],
+                    fmtCall.argElemKinds()[i], fmtCall.argElemTypeNames()[i],
+                    fmtCall.argElemKindChains()[i], fmtCall.argElemTypeNameChains()[i],
+                    fmtCall.argKeyKindChains()[i], fmtCall.argKeyTypeNameChains()[i]);
+        }
+        return fargs;
+    }
+
     @Override
     public void executeVoid(VirtualFrame frame) {
         DeferredCall dc;
         if (fmtCall != null) {
             // Fmt overlay call: evaluate arguments now (Go's call-time
-            // evaluation), capture values plus static type metadata; the
-            // formatting replays when the deferred call runs.
+            // evaluation), build the Fmt.Arg array now; the formatting
+            // replays via FmtCallNode.executeFmt when the deferred call runs.
             GoExprNode[] fargs = fmtCall.fmtArgs();
             Object[] argVals = new Object[fargs.length];
             for (int i = 0; i < fargs.length; i++) {
                 argVals[i] = FmtCallNode.readArg(fargs[i], frame);
             }
-            dc = DeferredCall.fmtCall(fmtCall.funcName(), argVals, fmtCall.argKinds(),
-                    fmtCall.argTypeNames(), fmtCall.argElemKinds(), fmtCall.argElemTypeNames(),
-                    fmtCall.argElemKindChains(), fmtCall.argElemTypeNameChains(),
-                    fmtCall.argKeyKinds(), fmtCall.argKeyTypeNames(),
-                    fmtCall.argKeyKindChains(), fmtCall.argKeyTypeNameChains());
+            dc = DeferredCall.fmtCall(fmtCall.funcName(), buildFmtArgs(fmtCall, argVals));
         } else {
             Object[] argVals = new Object[args.length];
             for (int i = 0; i < args.length; i++) {
