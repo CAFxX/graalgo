@@ -116,7 +116,7 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 
 | kind | fields |
 |---|---|
-| `funcdecl` | `name`, `sig`: type id, `params`: [param nodes], `body`: block node — or, for a `//go:linkname`-bound function (P3-M4, WS C, ADR-0004; first emitted by gofrontend 0.5.0): `name`, `sig`, `params`, `results` (optional), `linkname`: str (the target symbol) and NO `body` field; the factory builds a `LinknameRootNode` dispatching by symbol name instead of a Go body |
+| `funcdecl` | `name`, `sig`: type id, `params`: [param nodes], `body`: block node, `pkgpath`: str (the declaring package's import path — additive since the fix-linkname change; cross-package `//go:linkname` resolution binds every compiled function under `pkgpath.name`, so the backend can resolve Go→Go linknames without re-deriving the path) — or, for a `//go:linkname`-bound function (P3-M4, WS C, ADR-0004; first emitted by gofrontend 0.5.0): `name`, `sig`, `params`, `results` (optional), `linkname`: str (the target symbol) and NO `body` field; the factory builds a `LinknameRootNode` dispatching by symbol name instead of a Go body |
 | `param` | `name`, `obj`: object id, `type`: type id |
 | `block` | `stmts`: [stmt nodes] |
 | `vardecl` | `names`: [str], `objs`: [object ids] (parallel to `names`), `define`: bool (`true` for `:=`), `type`: type id or null, `values`: [expr nodes] |
