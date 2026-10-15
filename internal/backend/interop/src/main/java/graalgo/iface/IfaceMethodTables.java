@@ -8,6 +8,7 @@ import java.util.Map;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.Json;
 import graalgo.frontend.TypeTable;
+import graalgo.p3log.P3Log;
 import graalgo.values.GoFunc;
 
 /**
@@ -95,7 +96,8 @@ public final class IfaceMethodTables {
                         // Disk-MR stubs are skipped by the frontend (desugar
                         // rewrites all calls to the __-helper); the method
                         // table entry is vestigial. Skip instead of failing.
-                        System.err.println("warning: ifacemethod: method \"" + m.getKey()
+                        P3Log.warn(IfaceMethodTables.class,
+                                "ifacemethod: method \"" + m.getKey()
                                 + "\" on dynamic type \"" + e.getKey()
                                 + "\" refers to unknown function object id " + ref.objId
                                 + " (skipped; likely a disk-MR stub)");
