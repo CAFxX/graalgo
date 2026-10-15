@@ -715,11 +715,35 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 			recvVarName = "__recv"
 		}
 		recvTypeExpr = recvType
-		// Prepend receiver param.
+		// Prepend receiver param. If the original params are all
+		// unnamed, the prepended named receiver would create a mixed
+		// named/anonymous list (a go/types error). In that case,
+		// assign synthetic names to the unnamed params — the body
+		// cannot reference unnamed params, so this is safe.
+		// NOTE (real-net lane, 2026-10-15): general fix for disk
+		// packages with unnamed params (e.g. net's methods).
+		paramList := fd.Type.Params.List
+		hasNamed := false
+		for _, p := range paramList {
+			if len(p.Names) > 0 {
+				hasNamed = true
+				break
+			}
+		}
+		if !hasNamed && len(paramList) > 0 {
+			named := make([]*ast.Field, len(paramList))
+			for i, p := range paramList {
+				named[i] = &ast.Field{
+					Names: []*ast.Ident{ast.NewIdent(fmt.Sprintf("__arg%d", i))},
+					Type:  p.Type,
+				}
+			}
+			paramList = named
+		}
 		helperParams = &ast.FieldList{
 			List: append([]*ast.Field{
 				{Names: []*ast.Ident{ast.NewIdent(recvVarName)}, Type: rv.Type},
-			}, fd.Type.Params.List...),
+			}, paramList...),
 		}
 	} else {
 		helperParams = fd.Type.Params

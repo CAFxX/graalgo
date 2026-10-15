@@ -280,7 +280,13 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// P3-driver-harden (jsonlib lane): the GRAALGO_BUILD_TAGS env var
 	// (space-separated) adds extra build tags, e.g. purego to select
 	// pure-Go fallbacks over assembly stubs (segmentio/asm).
+	// NOTE (real-net lane, 2026-10-15): cgo is always disabled. graalgo
+	// is a Truffle interpreter and cannot process cgo (import "C")
+	// files. This mirrors CGO_ENABLED=0: packages select their
+	// non-cgo variants (e.g. net's cgo_stub.go over cgo_linux.go).
+	// This is general — it applies uniformly to all disk packages.
 	ctxt := build.Default
+	ctxt.CgoEnabled = false
 	if tags := os.Getenv("GRAALGO_BUILD_TAGS"); tags != "" {
 		ctxt.BuildTags = append(append([]string{}, ctxt.BuildTags...), strings.Fields(tags)...)
 	}
