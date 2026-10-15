@@ -1075,6 +1075,14 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			}
 			e.synthFuncIDs[sp.path+"."+obj.Name()] = fi
 			g.fis = append(g.fis, fi)
+			// GENERAL (not table-driven): synthetic multi-result functions
+			// with real Go source (e.g., strings.Cut) get pair-transformed
+			// via the userMRFuncs mechanism. Register here so call sites
+			// in importing packages classify correctly. registerUserMRFunc
+			// is idempotent and skips table-driven/single-result/bodyless.
+			if _, rerr := e.registerUserMRFunc(fi); rerr != nil {
+				return rerr
+			}
 			// Defer defFunc to pass 2 (see above).
 			funcEntries = append(funcEntries, &synthFuncEntry{obj: obj, fi: fi})
 		}

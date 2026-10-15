@@ -89,8 +89,9 @@ func main() {
 		}
 	}
 	// Multi-result declarations are skipped at export (WS D).
+	// Note: Cut, CutPrefix, CutSuffix, CutLast now have real implementations
+	// and are pair-transformed via the general userMRFuncs mechanism.
 	for _, absent := range []string{
-		"Cut", "CutPrefix", "CutSuffix", "CutLast",
 		"Read", "Write", "ReadByte", "ReadRune", "ReadBytes", "ReadString",
 		"Peek", "WriteString", "WriteRune", "ReadFrom", "WriteTo", "Seek", "ReadAt",
 	} {
@@ -102,21 +103,14 @@ func main() {
 
 // TestSyntheticBytesCutFailsFast verifies user calls to multi-result
 // bytes members fail with the named M7 scope error.
+// Note: Cut, CutPrefix, CutSuffix, CutLast now work via the general
+// userMRFuncs mechanism and are not in this test.
 func TestSyntheticBytesCutFailsFast(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
 		want string
 	}{
-		{"Cut", `package main
-
-import "bytes"
-
-func main() {
-	before, after, found := bytes.Cut([]byte("a,b"), []byte(","))
-	println(string(before), string(after), found)
-}
-`, "bytes.Cut"},
 		{"Buffer.Read", `package main
 
 import "bytes"

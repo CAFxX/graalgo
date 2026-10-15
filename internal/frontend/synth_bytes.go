@@ -9808,10 +9808,13 @@ func Clone(b []byte) []byte {
 //
 // Cut returns slices of the original slice s, not copies.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, real implementation (pair-transformed
+// via the general userMRFuncs mechanism).
 func Cut(s, sep []byte) (before, after []byte, found bool) {
-	panic("bytes.Cut: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	if i := Index(s, sep); i >= 0 {
+		return s[:i], s[i+len(sep):], true
+	}
+	return s, nil, false
 }
 
 // CutLast slices s around the last instance of sep,
@@ -9821,10 +9824,13 @@ func Cut(s, sep []byte) (before, after []byte, found bool) {
 //
 // CutLast returns slices of the original slice s, not copies.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, real implementation (pair-transformed
+// via the general userMRFuncs mechanism).
 func CutLast(s, sep []byte) (before, after []byte, found bool) {
-	panic("bytes.CutLast: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	if i := LastIndex(s, sep); i >= 0 {
+		return s[:i], s[i+len(sep):], true
+	}
+	return s, nil, false
 }
 
 // CutPrefix returns s without the provided leading prefix byte slice
@@ -9834,10 +9840,13 @@ func CutLast(s, sep []byte) (before, after []byte, found bool) {
 //
 // CutPrefix returns slices of the original slice s, not copies.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, real implementation (pair-transformed
+// via the general userMRFuncs mechanism).
 func CutPrefix(s, prefix []byte) (after []byte, found bool) {
-	panic("bytes.CutPrefix: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	if !HasPrefix(s, prefix) {
+		return s, false
+	}
+	return s[len(prefix):], true
 }
 
 // CutSuffix returns s without the provided ending suffix byte slice
@@ -9847,10 +9856,13 @@ func CutPrefix(s, prefix []byte) (after []byte, found bool) {
 //
 // CutSuffix returns slices of the original slice s, not copies.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// M7 scope: exact gc 1.27.1 signature, real implementation (pair-transformed
+// via the general userMRFuncs mechanism).
 func CutSuffix(s, suffix []byte) (before []byte, found bool) {
-	panic("bytes.CutSuffix: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	if !HasSuffix(s, suffix) {
+		return s, false
+	}
+	return s[:len(s)-len(suffix)], true
 }
 
 // ---------------------------------------------------------------------------
