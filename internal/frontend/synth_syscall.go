@@ -993,6 +993,23 @@ const (
 	RTM_GETTCLASS                    = 0x2a
 	RTM_GETTFILTER                   = 0x2e
 	RTM_MAX                          = 0x4f
+	// NOTE (real-net lane, 2026-10-15): IFA/IFLA netlink attribute
+	// constants required by the real net package (interface_linux.go).
+	// From gc 1.27.1 syscall/ztypes_linux_amd64.go.
+	IFA_UNSPEC                       = 0x0
+	IFA_ADDRESS                      = 0x1
+	IFA_LOCAL                        = 0x2
+	IFA_LABEL                        = 0x3
+	IFA_BROADCAST                    = 0x4
+	IFA_ANYCAST                      = 0x5
+	IFA_CACHEINFO                    = 0x6
+	IFA_MULTICAST                    = 0x7
+	IFLA_UNSPEC                      = 0x0
+	IFLA_ADDRESS                     = 0x1
+	IFLA_BROADCAST                   = 0x2
+	IFLA_IFNAME                      = 0x3
+	IFLA_MTU                         = 0x4
+	IFLA_LINK                        = 0x5
 	RTM_NEWACTION                    = 0x30
 	RTM_NEWADDR                      = 0x14
 	RTM_NEWADDRLABEL                 = 0x48
@@ -2070,6 +2087,88 @@ type InotifyEvent struct {
 	Name   [0]uint8
 }
 
+// NOTE (real-net lane, 2026-10-15): netlink types required by the real
+// net package (interface_linux.go). These are struct definitions for
+// type-checking; actual netlink operations go through the netpoller.
+type NlMsghdr struct {
+	Len   uint32
+	Type  uint16
+	Flags uint16
+	Seq   uint32
+	Pid   uint32
+}
+
+type RtAttr struct {
+	Len  uint16
+	Type uint16
+}
+
+type IfInfomsg struct {
+	Family     uint8
+	X__ifi_pad uint8
+	Type       uint16
+	Index      int32
+	Flags      uint32
+	Change     uint32
+}
+
+type IfAddrmsg struct {
+	Family    uint8
+	Prefixlen uint8
+	Flags     uint8
+	Scope     uint8
+	Index     uint32
+}
+
+type NetlinkMessage struct {
+	Header NlMsghdr
+	Data   []byte
+}
+
+type NetlinkRouteAttr struct {
+	Attr  RtAttr
+	Value []byte
+}
+
+const failNetlink = "syscall.Netlink*: no graalgo intrinsic; netlink operations via netpoller, Phase 4"
+
+func NetlinkRIB(proto, family int) ([]byte, error) {
+	panic(failNetlink)
+}
+
+func ParseNetlinkMessage(b []byte) ([]NetlinkMessage, error) {
+	panic(failNetlink)
+}
+
+func ParseNetlinkRouteAttr(m *NetlinkMessage) ([]NetlinkRouteAttr, error) {
+	panic(failNetlink)
+}
+
+// NOTE (real-net lane, 2026-10-15): multicast request structs required by
+// the real net package (via poll.FD.Setsockopt*). Verbatim from gc 1.27.1.
+type IPMreq struct {
+	Multiaddr [4]byte
+	Interface [4]byte
+}
+
+type IPMreqn struct {
+	Multiaddr [4]byte
+	Address   [4]byte
+	Ifindex   int32
+}
+
+type IPv6Mreq struct {
+	Multiaddr [16]byte
+	Interface uint32
+}
+
+// NOTE (real-net lane, 2026-10-15): Linger struct required by the real
+// net package (sockopt_posix.go). From gc 1.27.1.
+type Linger struct {
+	Onoff  int32
+	Linger int32
+}
+
 type WaitStatus uint32
 
 // Wait status is 7 bits at bottom, either 0 (exited),
@@ -3132,6 +3231,14 @@ func __accept(fd int) acceptTriple {
 	panic(failAccept)
 }
 
+const failAccept4 = "syscall.Accept4: no graalgo intrinsic; re-test: net package bring-up"
+
+// NOTE (real-net lane, 2026-10-15): Accept4 is required by
+// internal/poll (hook_cloexec.go), which is required by the real net.
+func Accept4(fd int, flags int) (nfd int, sa Sockaddr, err error) {
+	panic(failAccept4)
+}
+
 const failGetsockoptInt = "syscall.GetsockoptInt: no graalgo intrinsic; re-test: net package bring-up"
 
 func GetsockoptInt(fd, level, opt int) (value int, err error) {
@@ -3140,6 +3247,20 @@ func GetsockoptInt(fd, level, opt int) (value int, err error) {
 
 func __getsockoptint(fd, level, opt int) intErrorPair {
 	panic(failGetsockoptInt)
+}
+
+const failGetsockname = "syscall.Getsockname: no graalgo intrinsic; re-test: net package bring-up"
+
+// NOTE (real-net lane, 2026-10-15): Getsockname/Getpeername required by
+// the real net package (fd_unix.go).
+func Getsockname(fd int) (sa Sockaddr, err error) {
+	panic(failGetsockname)
+}
+
+const failGetpeername = "syscall.Getpeername: no graalgo intrinsic; re-test: net package bring-up"
+
+func Getpeername(fd int) (sa Sockaddr, err error) {
+	panic(failGetpeername)
 }
 
 const failRecvmsg = "syscall.Recvmsg: no graalgo intrinsic; re-test: net package bring-up"
@@ -3252,6 +3373,34 @@ const failChmod = "syscall.Chmod: no graalgo intrinsic; use os; re-test: fd-doma
 
 func Chmod(path string, mode uint32) (err error) {
 	panic(failChmod)
+}
+
+const failFaccessat = "syscall.Faccessat: no graalgo intrinsic; re-test: fd-domain unification, Phase 4/Panama"
+
+// Faccessat is required by internal/syscall/unix (used by net). It is a
+// panic stub: the real net only takes its function value at package init
+// (var faccessat = syscall.Faccessat); actual calls go through Eaccess
+// which is not in net's basic Dial/Listen path.
+func Faccessat(dirfd int, path string, mode uint32, flags int) (err error) {
+	panic(failFaccessat)
+}
+
+const failFchmodat = "syscall.Fchmodat: no graalgo intrinsic; re-test: fd-domain unification, Phase 4/Panama"
+
+func Fchmodat(dirfd int, path string, mode uint32, flags int) error {
+	panic(failFchmodat)
+}
+
+const failFstatat = "syscall.Fstatat: no graalgo intrinsic; re-test: fd-domain unification, Phase 4/Panama"
+
+func Fstatat(fd int, path string, stat *Stat_t, flags int) error {
+	panic(failFstatat)
+}
+
+const failOpenat = "syscall.Openat: no graalgo intrinsic; re-test: fd-domain unification, Phase 4/Panama"
+
+func Openat(dirfd int, path string, flags int, mode uint32) (fd int, err error) {
+	panic(failOpenat)
 }
 
 const failChown = "syscall.Chown: no graalgo intrinsic; use os; re-test: fd-domain unification, Phase 4/Panama"
