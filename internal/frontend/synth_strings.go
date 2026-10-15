@@ -54,8 +54,9 @@
 //   - ToUpperSpecial/ToLowerSpecial/ToTitleSpecial (unicode.SpecialCase)
 //     — needs the unicode package.
 //   - Replacer.WriteString, Reader.WriteTo (io.Writer) — needs io.
-//   - Lines, SplitSeq, SplitAfterSeq, FieldsSeq, FieldsFuncSeq
-//     (iter.Seq[string]) — needs iter.
+//   - Lines, SplitAfterSeq, FieldsSeq, FieldsFuncSeq
+//     (iter.Seq[string]) — needs iter (SplitSeq has landed; the rest
+//     follow the same pattern when needed).
 package main
 
 // syntheticStringsSource is the P3-M7 synthetic `strings` package.
@@ -67,6 +68,7 @@ const syntheticStringsSource = `package strings
 import (
 	"errors"
 	"io"
+	"iter"
 )
 
 // maxInt is the maximum int value, as in the real package.
@@ -1319,6 +1321,39 @@ func stringsAppendRune(b []byte, r rune) []byte {
 	// SplitAfter slices s into all substrings after each instance of sep.
 	func SplitAfter(s, sep string) []string {
 		return stringsGenSplit(s, sep, len(sep), -1)
+	}
+
+	// SplitSeq returns an iterator over all substrings of s separated by sep.
+	// The iterator yields the same strings that would be returned by [Split](s, sep),
+	// but without constructing the slice.
+	// It returns a single-use iterator.
+	// (real-nethttp: real net/http/internal/http2 ranges over SplitSeq;
+	// the iter import it needs is now available.)
+	func SplitSeq(s, sep string) iter.Seq[string] {
+		return func(yield func(string) bool) {
+			if len(sep) == 0 {
+				for len(s) > 0 {
+					size := stringsDecodeRune(s).size
+					if !yield(s[:size]) {
+						return
+					}
+					s = s[size:]
+				}
+				return
+			}
+			for {
+				i := Index(s, sep)
+				if i < 0 {
+					break
+				}
+				frag := s[:i]
+				if !yield(frag) {
+					return
+				}
+				s = s[i+len(sep):]
+			}
+			yield(s)
+		}
 	}
 
 	// stringsFieldSpan records a [start, end) slice of s (package level:
