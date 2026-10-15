@@ -162,3 +162,165 @@ func TestBlank(t *testing.T) {}
 		t.Errorf("driver dropped a blank import:\n%s", src)
 	}
 }
+
+// TestDotSelfImportDropped is the regression test for PKG-002: an
+// external test file (package foo_test) dot-importing the package under
+// test must not produce a dot-import in the driver — the package's own
+// declarations are inlined at top level, so the dot-import would
+// redeclare every one of them.
+func TestDotSelfImportDropped(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/dotself\n\ngo 1.21\n")
+	writeFile(t, root, "dot.go", "package dotself\n\nconst UpperCase = 1\n\nfunc Shout(s string) string { return s }\n")
+	writeFile(t, root, "dot_test.go", `package dotself_test
+
+import (
+	. "example.com/dotself"
+	"testing"
+)
+
+func TestDot(t *testing.T) {
+	if Shout("x") == "" || UpperCase != 1 {
+		t.Fatal("bad")
+	}
+}
+`)
+	testFile := filepath.Join(root, "dot_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "dot.go")})
+	if strings.Contains(src, `. "example.com/dotself"`) {
+		t.Errorf("driver kept the dot self-import:\n%s", src)
+	}
+	// The package's own declarations are inlined and the test's
+	// unqualified references survive.
+	if !strings.Contains(src, "const UpperCase = 1") {
+		t.Errorf("driver lost the inlined declaration:\n%s", src)
+	}
+	if !strings.Contains(src, `Shout("x")`) {
+		t.Errorf("driver lost the test body:\n%s", src)
+	}
+}
+
+// TestBlankSelfImportDropped covers the blank form of PKG-002: a blank
+// self-import is redundant (the inlined inits already run) and must be
+// dropped.
+func TestBlankSelfImportDropped(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/blankself\n\ngo 1.21\n")
+	writeFile(t, root, "b.go", "package blankself\n")
+	writeFile(t, root, "b_test.go", `package blankself_test
+
+import (
+	_ "example.com/blankself"
+	"testing"
+)
+
+func TestBlankSelf(t *testing.T) {}
+`)
+	testFile := filepath.Join(root, "b_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "b.go")})
+	if strings.Contains(src, `_ "example.com/blankself"`) {
+		t.Errorf("driver kept the blank self-import:\n%s", src)
+	}
+}
+
+// TestQualifiedSelfImportKept pins the other half of the PKG-002 design:
+// a plain (qualified) self-import is kept, because external test files
+// may reference the package's exported API through the qualifier.
+func TestQualifiedSelfImportKept(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/qualself\n\ngo 1.21\n")
+	writeFile(t, root, "q.go", "package qualself\n\nfunc Hello() string { return \"hi\" }\n")
+	writeFile(t, root, "q_test.go", `package qualself_test
+
+import (
+	"example.com/qualself"
+	"testing"
+)
+
+func TestQual(t *testing.T) {
+	if qualself.Hello() != "hi" {
+		t.Fatal("bad")
+	}
+}
+`)
+	testFile := filepath.Join(root, "q_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "q.go")})
+	if !strings.Contains(src, `"example.com/qualself"`) {
+		t.Errorf("driver dropped the qualified self-import:\n%s", src)
+	}
+}
+
+// TestBuildExcludedFileIgnoredForPkgName is the regression test for
+// PKG-003: packageNameInDir must honor build constraints. A generator
+// file that sorts before the real sources (package main, //go:build
+// ignore — like sort's gen_sort_variants.go) must not determine the
+// import's package name; otherwise the pruner drops the import as
+// unreferenced and the driver fails with "undefined: <pkg>".
+func TestBuildExcludedFileIgnoredForPkgName(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/genignored\n\ngo 1.21\n")
+	sub := filepath.Join(root, "sortlike")
+	writeFile(t, sub, "agen_main.go", "//go:build ignore\n\npackage main\n\nfunc main() {}\n")
+	writeFile(t, sub, "sortlike.go", "package sortlike\n\nfunc SortInts(x []int) {}\n")
+	writeFile(t, root, "u.go", "package genignored\n")
+	writeFile(t, root, "u_test.go", `package genignored
+
+import (
+	"example.com/genignored/sortlike"
+	"testing"
+)
+
+func TestUsesIt(t *testing.T) {
+	sortlike.SortInts(nil)
+}
+`)
+	if got := resolveImportPkgName(root, "example.com/genignored/sortlike"); got != "sortlike" {
+		t.Fatalf("resolveImportPkgName = %q, want sortlike", got)
+	}
+	testFile := filepath.Join(root, "u_test.go")
+	tests, err := discoverTests(testFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: testFile, tests: tests}},
+		[]string{filepath.Join(root, "u.go")})
+	if !strings.Contains(src, `"example.com/genignored/sortlike"`) {
+		t.Errorf("driver dropped the import whose name was misresolved:\n%s", src)
+	}
+}
+
+// TestIsSelfImportShortPath covers self-import detection when there is
+// no module context at all: a package under a (fake) GOROOT whose test
+// files import it by its short path. Detection must work purely by
+// resolved source directory.
+func TestIsSelfImportShortPath(t *testing.T) {
+	fake := t.TempDir()
+	writeFile(t, fake, "src/mypkg/mypkg.go", "package mypkg\n")
+	t.Setenv("GOROOT", fake)
+	dir := filepath.Join(fake, "src", "mypkg")
+	if !isSelfImport(dir, "mypkg") {
+		t.Errorf("isSelfImport(mypkg dir, \"mypkg\") = false, want true")
+	}
+	if isSelfImport(dir, "otherpkg") {
+		t.Errorf("isSelfImport(mypkg dir, \"otherpkg\") = true, want false")
+	}
+}
