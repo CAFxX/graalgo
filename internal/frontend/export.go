@@ -10817,6 +10817,22 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 					}
 					return tid, nil
 				}
+				// WS G (real-fmt2): disk-package multi-result functions
+				// (e.g. fmt.Println) are transformed to __-helper + stub
+				// shape. The call is redirected to the helper (which
+				// returns the pair), so the call type is the pair type,
+				// not the original tuple.
+				if hfi, ok := e.mrHelperFi(fn); ok {
+					if sig, ok := hfi.obj.Type().(*types.Signature); ok {
+						if res := sig.Results(); res.Len() == 1 {
+							tid, err := e.typeID(res.At(0).Type())
+							if err != nil {
+								return nil, err
+							}
+							return tid, nil
+						}
+					}
+				}
 				// P3-M9: synthetic multi-result methods (bytes.Buffer.Read,
 				// etc.) fail fast with the named milestone scope error, not
 				// the generic WS D message — the test pins the attribution.
