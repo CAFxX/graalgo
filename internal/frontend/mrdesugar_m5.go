@@ -151,6 +151,53 @@ type m7MultiResultFunc struct {
 	// multi-result signature's result order positionally)
 }
 
+// hasStaticMREntry reports whether (pkgPath, name, recvType) has an entry
+// in the static Appendix-M desugar tables. The mechanical transform
+// (transformMultiResult) skips such functions: they are served by
+// hand-written __-helpers whose names need not match the transform's
+// __F convention (e.g. io.Pipe → __pipe), and generating a second
+// helper would conflict.
+func hasStaticMREntry(pkgPath, name, recvType string) bool {
+	for _, mf := range m7MultiResultFuncs {
+		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	for _, mf := range ioMultiResultFuncs {
+		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	for _, mf := range osMultiResultFuncs {
+		if (mf.pkgPath == pkgPath || mf.helperPkg == pkgPath) && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	for _, mf := range m8MultiResultFuncs {
+		if (mf.pkgPath == pkgPath || mf.helperPkg == pkgPath) && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	for _, mf := range m9MultiResultFuncs {
+		if (mf.pkgPath == pkgPath || mf.helperPkg == pkgPath) && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	return false
+}
+
+// hasStaticIfaceMREntry reports whether method is in the static
+// interface-dispatch table (m8IfaceMultiResultMethods), matched by method
+// name as the classifier does.
+func hasStaticIfaceMREntry(method string) bool {
+	for _, m := range m8IfaceMultiResultMethods {
+		if m.method == method {
+			return true
+		}
+	}
+	return false
+}
+
 // m7MultiResultFuncs is the desugar table for the encoding/* packages
 // (extended P3-M8 to reflect, P3-M9 to math/bits — the mechanism is
 // package-path-keyed, so entries for any synthetic package work).
@@ -1226,9 +1273,10 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"crypto/internal/fips140/ecdsa", "ScalarBaseMult", "__mrPointIfaceScalarBaseMultPair", []string{"v0", "v1"}},
 	// P3-M9 (ecdsa-blockers): fmt.State.Precision/Width interface methods.
 	// The synthetic math/big Format methods call s.Precision()/s.Width();
-	// the pair types live in math/big (see synth_math_big.go). These are
-	// never dispatched at runtime (FmtCallNode formats directly); the
-	// entries exist so the frontend can classify the calls.
+	// the pair types live in math/big (see synth_math_big.go). The
+	// entries exist so the frontend can classify the calls; runtime
+	// dispatch is normal itab dispatch (fmt.State comes from the real
+	// GOROOT fmt since the real-fmt lane).
 	{"math/big", "Precision", "fmtPrecisionPair", []string{"prec", "ok"}},
 	{"math/big", "Width", "fmtWidthPair", []string{"wid", "ok"}},
 	// P3-M9 (WS D): crypto/elliptic.unmarshaler interface (2-result).
@@ -1259,10 +1307,6 @@ type mrPlan struct {
 	kind       mrKind
 	helperPkg  string // "context" or "time"
 	helperName string // "__withCancel", "__deadlineOf", ...
-	// WS G (P3-M9): disk-package multi-result (transformDiskMultiResult).
-	// The helper lives in a disk-built package, resolved via
-	// getDiskPackage, not getSyntheticPackage.
-	isDisk bool
 	// tmpType is the helper's single result type (the __p5mr_N temp).
 	tmpType types.Type
 	// For mrWithCancel/mrWithDeadline: the second extraction is a
@@ -1275,9 +1319,6 @@ type mrPlan struct {
 	// For mrTrivialFwd: index of the forwarded function-typed parameter
 	// in the method's explicit parameter list (receiver excluded).
 	fwdParamIdx int
-	// For mrFmtF: the S-family variant ("Sprint", "Sprintf", "Sprintln")
-	// used to format before the io.Writer.Write.
-	fmtVariant string
 	// For mrRuntimeStack: which intrinsic wire node desugarRuntimeStack
 	// builds (rtStackCaller/rtStackFramesNext/rtStackFuncFileLine).
 	rtStackOp rtStackOpKind
@@ -1350,9 +1391,6 @@ func targsFromRecv(recv types.Type) []types.Type {
 }
 
 func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
-	// P4 (driver-harden): dot-imported fmt F-family (Fprint/Fprintf/
-	// Fprintln called as bare idents). Detected structurally via the
-	// func's package path.
 	// P3-M9 (WS D): user-defined package-level multi-result functions
 	// called as `foo()` (Ident, not SelectorExpr).
 	if id, ok := c.Fun.(*ast.Ident); ok {
@@ -1391,7 +1429,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 					return plan
 				}
 				// WS G (P3-M9): disk-package multi-result (dynamic table).
-				if plan := classifyDiskMultiResultCall(pkgPath, obj, targs); plan != nil {
+				if plan := classifyTransformedMRCall(pkgPath, obj, targs); plan != nil {
 					return plan
 				}
 			}
@@ -1448,13 +1486,9 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				return plan
 			}
 			// WS G (P3-M9): disk-package multi-result (dynamic table).
-			if plan := classifyDiskMultiResultCall(pn.Imported().Path(), fn, targs); plan != nil {
+			if plan := classifyTransformedMRCall(pn.Imported().Path(), fn, targs); plan != nil {
 				return plan
 			}
-			// P4 (driver-harden): the fmt F-family (Fprint/Fprintf/
-			// Fprintln). Detected structurally: package "fmt", one of
-			// the three names, resolving to the overlay stub with a
-			// 2-result signature.
 			switch pn.Imported().Path() {
 			case "context":
 				switch fn.Name() {
@@ -1612,7 +1646,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				return plan
 			}
 			// WS G (P3-M9): disk-package multi-result methods (dynamic table).
-			if plan := classifyDiskMultiResultCall(f.Pkg().Path(), f, mtargs); plan != nil {
+			if plan := classifyTransformedMRCall(f.Pkg().Path(), f, mtargs); plan != nil {
 				return plan
 			}
 			// P3-M8 (WS D): multi-result calls on interface values
@@ -1627,7 +1661,7 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				}
 				// WS G (P3-M9, BUG-MODPROBE-005): disk-package
 				// interface methods with multi-result.
-				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
+				if plan := e.classifyTransformedIfaceMRCall(selection); plan != nil {
 					return plan
 				}
 			}
@@ -2430,10 +2464,10 @@ func multiResultHelperFor(pkgPath, name, recvType string) (helperPkg, helperName
 		}
 	}
 	// WS G (P3-M9, BUG-MODPROBE-005): disk-package multi-result methods
-	// (dynamic diskMRSpecs table). This wires the itab for interface
+	// (dynamic mrSpecs table). This wires the itab for interface
 	// dispatch of disk interface methods: the concrete type's
 	// pair-returning __-helper becomes the itab target.
-	if spec := lookupDiskMR(pkgPath, name, recvType); spec != nil && spec.helper != "" {
+	if spec := lookupMRSpec(pkgPath, name, recvType); spec != nil && spec.helper != "" {
 		return spec.pkgPath, spec.helper, true
 	}
 	return "", "", false
@@ -2717,7 +2751,7 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	if err != nil {
 		return nil, err
 	}
-	args, preStmts, err := e.multiResultHelperArgs(c, plan)
+	args, preStmts, err := e.multiResultHelperArgs(c, plan, helperFn)
 	if err != nil {
 		return nil, err
 	}
@@ -2899,18 +2933,13 @@ func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan
 }
 
 // multiResultHelper resolves a desugar plan's __-helper to its
-// *types.Func in the synthetic package scope.
+// *types.Func in the owning package's scope (synthetic or disk-built).
 func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
-	var sp *syntheticPackage
-	if plan.isDisk {
-		// WS G (P3-M9): disk-built package (transformDiskMultiResult).
-		var err error
-		sp, err = getDiskPackage(plan.helperPkg)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		sp = getSyntheticPackage(plan.helperPkg)
+	// The helper's package may be synthetic or disk-built (the
+	// transform runs on both); mrOwnerPackage resolves either.
+	sp, err := mrOwnerPackage(plan.helperPkg)
+	if err != nil {
+		return nil, err
 	}
 	// P3-M8b: import the synthetic package so its helpers are registered
 	// in funcByObj (idempotent). Without this, synthHelperCallNode fails
@@ -2930,7 +2959,14 @@ func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 // expressions: the original call's args, except for the Deadline method
 // where the receiver becomes the argument; the receiver is prepended
 // when the plan sets prependRecv.
-func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node, []*Node, error) {
+//
+// helperFn is the __-helper being called: its signature (parameters
+// identical to the original function's — the MR transform only rewrites
+// results) drives variadic packing, mirroring exportCallArgsPacked.
+// Without this, a variadic multi-result call like fmt.Println("hello")
+// passes the raw args to the helper's []any parameter instead of the
+// packed slice (real-fmt2: backend has no variadic adaptation).
+func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan, helperFn *types.Func) ([]*Node, []*Node, error) {
 	// Helper call args: the original call's args, except for the
 	// Deadline method where the receiver becomes the argument.
 	var argExprs []ast.Expr
@@ -2963,7 +2999,21 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 				// Per Go spec, a multi-valued call as an argument must be
 				// the sole argument (besides the prepended receiver).
 				// The type checker guarantees this for valid Go.
-				innerArgs, innerPre, err := e.multiResultHelperArgs(inner, innerPlan)
+				//
+				// The inner __-helper is resolved before its args:
+				// multiResultHelperArgs needs the helper's signature for
+				// variadic packing. mrUser goes through the normal
+				// exportCall path (no helper) and mrIfaceMethod fails
+				// fast below, so neither needs the helper here.
+				var innerHelperFn *types.Func
+				if innerPlan.kind != mrUser && innerPlan.kind != mrIfaceMethod {
+					var err error
+					innerHelperFn, err = e.multiResultHelper(innerPlan)
+					if err != nil {
+						return nil, nil, err
+					}
+				}
+				innerArgs, innerPre, err := e.multiResultHelperArgs(inner, innerPlan, innerHelperFn)
 				if err != nil {
 					return nil, nil, err
 				}
@@ -2994,11 +3044,7 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 					// multi-result calls are not yet supported.
 					return nil, nil, scopeErrorf("nested interface multi-result call in argument position is not supported in frontend/v1 scope (WS D)")
 				} else {
-					helperFn, err := e.multiResultHelper(innerPlan)
-					if err != nil {
-						return nil, nil, err
-					}
-					innerCallNode, innerTmpName, innerTmpID, innerTmpTid, err = e.synthHelperCall(inner, helperFn, innerPlan.tmpType, innerArgs)
+					innerCallNode, innerTmpName, innerTmpID, innerTmpTid, err = e.synthHelperCall(inner, innerHelperFn, innerPlan.tmpType, innerArgs)
 					if err != nil {
 						return nil, nil, err
 					}
@@ -3025,7 +3071,51 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 		}
 		args = append(args, x)
 	}
+	args, err := e.packHelperVariadicArgs(c, plan, helperFn, args)
+	if err != nil {
+		return nil, nil, err
+	}
 	return args, preStmts, nil
+}
+
+// packHelperVariadicArgs packs trailing args into a slice literal for a
+// variadic __-helper call, mirroring packVariadicArgs. The helper keeps the
+// original function's parameter list (the MR transform only rewrites
+// results), so the same packing applies. Spread calls (f(s...)) pass the
+// slice directly and need no packing. prependRecv helpers are
+// package-level funcs whose Params() include the prepended receiver, so no
+// arg offset is needed (unlike method values where Params() excludes
+// Recv()). Generic helpers are instantiated with the call-site type args
+// first, mirroring synthHelperCallNode; a template whose params cannot be
+// resolved is left unpacked (never worse than before).
+func (e *exporter) packHelperVariadicArgs(c *ast.CallExpr, plan *mrPlan, helperFn *types.Func, args []*Node) ([]*Node, error) {
+	_ = plan
+	if helperFn == nil {
+		return args, nil
+	}
+	sig, ok := helperFn.Type().(*types.Signature)
+	if !ok || !sig.Variadic() || c.Ellipsis.IsValid() {
+		return args, nil
+	}
+	if fi, ok := e.funcByObj[helperFn]; ok && fi.isTemplate {
+		targs, err := e.helperCallTargs(c)
+		if err != nil {
+			return nil, err
+		}
+		if len(targs) > 0 {
+			instSig, err := types.Instantiate(nil, sig, targs, true)
+			if err != nil {
+				return nil, err
+			}
+			if is, ok := instSig.(*types.Signature); ok {
+				sig = is
+			}
+		}
+	}
+	if sig.Params().Len() == 0 {
+		return args, nil
+	}
+	return e.packVariadicArgs(c, sig, args)
 }
 
 // hoistMRCallArg hoists a multi-result call in argument position (f(g()))
@@ -3118,16 +3208,18 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 		return []*Node{x}, nil, nil
 	} else {
 		// Synthetic/disk MR: export args (with nested hoisting), then
-		// build the __-helper call.
-		innerArgs, innerPre, err := e.multiResultHelperArgs(inner, plan)
-		if err != nil {
-			return nil, nil, err
-		}
-		preStmts = append(preStmts, innerPre...)
+		// build the __-helper call. The helper is resolved before its
+		// args: multiResultHelperArgs needs the helper's signature for
+		// variadic packing.
 		helperFn, err := e.multiResultHelper(plan)
 		if err != nil {
 			return nil, nil, err
 		}
+		innerArgs, innerPre, err := e.multiResultHelperArgs(inner, plan, helperFn)
+		if err != nil {
+			return nil, nil, err
+		}
+		preStmts = append(preStmts, innerPre...)
 		callNode, tmpName, tmpID, tmpTid, err = e.synthHelperCall(inner, helperFn, plan.tmpType, innerArgs)
 		if err != nil {
 			return nil, nil, err
@@ -3205,7 +3297,7 @@ func (e *exporter) registerUserMRFunc(fi *funcDeclInfo) (*userMRInfo, error) {
 					recvType = nt.Obj().Name()
 				}
 			}
-			if lookupDiskMR(fi.obj.Pkg().Path(), name, recvType) != nil {
+			if lookupMRSpec(fi.obj.Pkg().Path(), name, recvType) != nil {
 				return nil, nil
 			}
 		}
@@ -3257,7 +3349,7 @@ func (e *exporter) exportBareMultiResultCall(s *ast.ExprStmt, c *ast.CallExpr, p
 	if err != nil {
 		return nil, err
 	}
-	args, preStmts, err := e.multiResultHelperArgs(c, plan)
+	args, preStmts, err := e.multiResultHelperArgs(c, plan, helperFn)
 	if err != nil {
 		return nil, err
 	}
