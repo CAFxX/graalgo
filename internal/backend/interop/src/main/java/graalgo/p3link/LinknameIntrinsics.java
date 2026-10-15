@@ -67,6 +67,7 @@ public final class LinknameIntrinsics {
         // intrinsics, and Go bindings would leak into this run.
         Linknames.clear();
         GoDebug.clear();
+        SyncRuntime.clear();
         // Go → intrinsic: the M4 gc-symbol table. D5 argument types:
         // fastrandn takes an int32 (Integer).
         Linknames.register("runtime.fastrand", args -> Intrinsics.fastrand(), 0);
@@ -125,6 +126,30 @@ public final class LinknameIntrinsics {
         // emits them as linknames (pkgpath.name); the backend implements
         // them here with scheduler-aware blocking.
         registerSyncIntrinsics();
+        // real-sync lane (PKG-012): the remaining bodyless decls of the
+        // real sync (and sync/atomic) packages that gc's runtime provides
+        // via //go:linkname — pool-cleanup registration, P pinning, the
+        // notifyList ticket lock, and sync.throw/fatal. Same mechanism as
+        // registerSyncIntrinsics: the gc symbol table, implemented by
+        // SyncRuntime with gc-faithful semantics (see its javadoc for the
+        // JVM adaptations).
+        registerSyncRuntimeIntrinsics();
+        // real-sync lane (PKG-012 follow-up): internal/synctest's
+        // //go:linkname stubs, provided by gc's runtime
+        // (src/runtime/synctest.go). The real sync.WaitGroup calls
+        // IsInBubble/Associate/Disassociate/IsAssociated; without these
+        // any WaitGroup use fails at link time. graalgo implements no
+        // synctest bubbles — see Synctest for the honest no-bubble
+        // semantics.
+        registerSynctestIntrinsics();
+        // real-sync lane (PKG-012 follow-up): internal/sync's
+        // //go:linkname stubs, provided by gc's runtime
+        // (src/runtime/sema.go, src/runtime/proc.go, src/runtime/panic.go).
+        // sync.Mutex embeds isync.Mutex, so any contended Mutex needs
+        // these (runtime_canSpin is only reached on the slow path — an
+        // uncontended Lock/Unlock never calls it, which is why the gap
+        // stayed hidden until now).
+        registerInternalSyncIntrinsics();
     }
 
     /**
@@ -229,6 +254,200 @@ public final class LinknameIntrinsics {
             GoSemaphore.acquireWaitGroup(new AddressIntCell(addr));
             return null;
         }, 2);
+    }
+
+    /**
+     * Runtime provider surface for the real {@code sync} and
+     * {@code sync/atomic} packages (PKG-012, real-sync lane).
+     *
+     * <p>In gc, the bodyless declarations in {@code sync/runtime.go} and
+     * {@code sync/pool.go} (plus {@code sync/atomic/value.go}'s
+     * {@code runtime_procPin}/{@code runtime_procUnpin}) are provided by
+     * the runtime via {@code //go:linkname} ({@code src/runtime/sema.go},
+     * {@code src/runtime/mgc.go}, {@code src/runtime/proc.go},
+     * {@code src/runtime/panic.go} in go1.27.1). The frontend emits each
+     * as a linkname call with symbol {@code <pkgpath>.<name>} (e.g.
+     * {@code "sync.runtime_registerPoolCleanup"}); they dispatch here.
+     * Semantics live in {@link SyncRuntime} — this method is only the gc
+     * symbol table, following the {@link #registerSyncIntrinsics} pattern.
+     *
+     * <p>D5 argument types: {@code uint32}/{@code uintptr}/{@code int} as
+     * Number; {@code func()} as {@link GoFunc}; {@code string} as
+     * {@link GoString}; {@code *notifyList} as {@link GoPointer} (D5:
+     * pointers are opaque Java references — SyncRuntime keys by storage
+     * identity); {@code unsafe.Pointer} as a Long (address). Each target
+     * adapts explicitly.
+     */
+    private static void registerSyncRuntimeIntrinsics() {
+        // sync.runtime_registerPoolCleanup(cleanup func()): called once by
+        // sync.init(). gc stores it and runs it at every GC (clearpools);
+        // graalgo stores it without auto-invoking (no STW hook on the JVM
+        // — see SyncRuntime's javadoc). The Pool contract permits never
+        // evicting, so this is behavior-preserving.
+        Linknames.register("sync.runtime_registerPoolCleanup", args -> {
+            if (!(args[0] instanceof GoFunc f)) {
+                throw new FrontendException(
+                        "sync.runtime_registerPoolCleanup: expected a func argument");
+            }
+            SyncRuntime.registerPoolCleanup(f);
+            return null;
+        }, 1);
+        // P pinning. gc's runtime provides both spellings from the same
+        // procPin/procUnpin (src/runtime/proc.go).
+        Linknames.register("sync.runtime_procPin",
+                args -> (long) SyncRuntime.procPin(), 0);
+        Linknames.register("sync.runtime_procUnpin", args -> {
+            SyncRuntime.procUnpin();
+            return null;
+        }, 0);
+        Linknames.register("sync/atomic.runtime_procPin",
+                args -> (long) SyncRuntime.procPin(), 0);
+        Linknames.register("sync/atomic.runtime_procUnpin", args -> {
+            SyncRuntime.procUnpin();
+            return null;
+        }, 0);
+        // The notifyList ticket lock behind sync.Cond. The *notifyList
+        // arrives as a GoPointer (D5: pointers are opaque Java
+        // references); SyncRuntime keys state by its storage identity.
+        Linknames.register("sync.runtime_notifyListAdd", args ->
+                SyncRuntime.notifyListAdd(args[0]), 1);
+        Linknames.register("sync.runtime_notifyListWait", args -> {
+            SyncRuntime.notifyListWait(args[0], ((Number) args[1]).intValue());
+            return null;
+        }, 2);
+        Linknames.register("sync.runtime_notifyListNotifyOne", args -> {
+            SyncRuntime.notifyListNotifyOne(args[0]);
+            return null;
+        }, 1);
+        Linknames.register("sync.runtime_notifyListNotifyAll", args -> {
+            SyncRuntime.notifyListNotifyAll(args[0]);
+            return null;
+        }, 1);
+        // Called by sync.init(): the frontend constant-folds the
+        // unsafe.Sizeof argument via go/types.
+        Linknames.register("sync.runtime_notifyListCheck", args -> {
+            SyncRuntime.notifyListCheck(((Number) args[0]).longValue());
+            return null;
+        }, 1);
+        // gc's runtime.throw / runtime.fatal (src/runtime/panic.go).
+        Linknames.register("sync.throw", args -> {
+            SyncRuntime.syncThrow(args[0]);
+            return null;
+        }, 1);
+        Linknames.register("sync.fatal", args -> {
+            SyncRuntime.syncFatal(args[0]);
+            return null;
+        }, 1);
+    }
+
+    /**
+     * Runtime provider for {@code internal/sync}'s {@code //go:linkname}
+     * stubs (PKG-012 follow-up, real-sync lane).
+     *
+     * <p>{@code sync.Mutex} embeds {@code isync.Mutex}
+     * ({@code src/internal/sync/mutex.go}), whose slow path calls
+     * {@code runtime_canSpin}/{@code runtime_doSpin} and
+     * {@code runtime_SemacquireMutex}/{@code runtime_Semrelease}; gc's
+     * runtime provides all of these plus {@code runtime_nanotime},
+     * {@code throw}, and {@code fatal} via {@code //go:linkname}
+     * ({@code src/runtime/sema.go}, {@code src/runtime/proc.go},
+     * {@code src/runtime/panic.go} in go1.27.1). The frontend emits each
+     * as a linkname call with symbol {@code "internal/sync.<name>"}; they
+     * dispatch here. Semantics live in {@link SyncRuntime} (semaphores
+     * reuse {@link GoSemaphore}; nanotime reuses {@link Timers}).
+     *
+     * <p>D5 argument types: {@code *uint32} arrives as a Long (address);
+     * {@code int} as Number; {@code string} as {@link GoString}.
+     */
+    private static void registerInternalSyncIntrinsics() {
+        // SemacquireMutex/Semrelease: identical semaphore semantics to
+        // the sync spellings (only profiling/wait-reason differ in gc).
+        Linknames.register("internal/sync.runtime_SemacquireMutex", args -> {
+            long addr = ((Number) args[0]).longValue();
+            GoSemaphore.acquire(new AddressIntCell(addr));
+            return null;
+        }, 3);
+        Linknames.register("internal/sync.runtime_Semrelease", args -> {
+            long addr = ((Number) args[0]).longValue();
+            GoSemaphore.release(new AddressIntCell(addr));
+            return null;
+        }, 3);
+        // Cooperative spinning for sync.Mutex's slow path.
+        Linknames.register("internal/sync.runtime_canSpin", args ->
+                SyncRuntime.canSpin(((Number) args[0]).intValue()), 1);
+        Linknames.register("internal/sync.runtime_doSpin", args -> {
+            SyncRuntime.doSpin();
+            return null;
+        }, 0);
+        // The internal/sync spelling of the nanotime intrinsic.
+        Linknames.register("internal/sync.runtime_nanotime",
+                args -> Timers.nanotime(), 0);
+        // gc's runtime.throw / runtime.fatal (src/runtime/panic.go).
+        Linknames.register("internal/sync.throw", args -> {
+            SyncRuntime.syncThrow(args[0]);
+            return null;
+        }, 1);
+        Linknames.register("internal/sync.fatal", args -> {
+            SyncRuntime.syncFatal(args[0]);
+            return null;
+        }, 1);
+    }
+
+    /** Adapts a D5-boxed Go pointer/unsafe.Pointer argument to a raw address. */
+    private static long addrArg(Object arg, String symbol) {
+        if (!(arg instanceof Number n)) {
+            throw new FrontendException(symbol + ": expected a pointer argument");
+        }
+        return n.longValue();
+    }
+
+    /**
+     * Runtime provider for {@code internal/synctest}'s
+     * {@code //go:linkname} stubs (PKG-012 follow-up, real-sync lane).
+     *
+     * <p>The real {@code sync.WaitGroup} (go1.27.1
+     * {@code src/sync/waitgroup.go}) calls {@code synctest.IsInBubble},
+     * {@code synctest.Associate}, {@code synctest.Disassociate}, and
+     * {@code synctest.IsAssociated}; gc's runtime provides all nine
+     * stubs in {@code src/internal/synctest/synctest.go} via
+     * {@code //go:linkname} from {@code src/runtime/synctest.go}. The
+     * frontend emits each as a linkname call with symbol
+     * {@code "internal/synctest.<name>"}; they dispatch here. Semantics
+     * live in {@link Synctest} — graalgo implements no synctest bubbles,
+     * so every entry is the honest no-bubble answer (see its javadoc).
+     *
+     * <p>D5 argument types: {@code unsafe.Pointer} arrives as a Long
+     * (address); {@code func()} as {@link GoFunc}; {@code any} boxed.
+     */
+    private static void registerSynctestIntrinsics() {
+        Linknames.register("internal/synctest.IsInBubble",
+                args -> Synctest.isInBubble(), 0);
+        Linknames.register("internal/synctest.associate", args ->
+                Synctest.associate(addrArg(args[0], "internal/synctest.associate")), 1);
+        Linknames.register("internal/synctest.disassociate", args -> {
+            Synctest.disassociate(addrArg(args[0], "internal/synctest.disassociate"));
+            return null;
+        }, 1);
+        Linknames.register("internal/synctest.isAssociated", args ->
+                Synctest.isAssociated(addrArg(args[0], "internal/synctest.isAssociated")), 1);
+        Linknames.register("internal/synctest.acquire",
+                args -> Synctest.acquire(), 0);
+        Linknames.register("internal/synctest.release", args -> {
+            Synctest.release(args[0]);
+            return null;
+        }, 1);
+        Linknames.register("internal/synctest.inBubble", args -> {
+            Synctest.inBubble(args[0], args[1]);
+            return null;
+        }, 2);
+        Linknames.register("internal/synctest.Run", args -> {
+            Synctest.run(args[0]);
+            return null;
+        }, 1);
+        Linknames.register("internal/synctest.Wait", args -> {
+            Synctest.waitForBubble();
+            return null;
+        }, 0);
     }
 
     /**
