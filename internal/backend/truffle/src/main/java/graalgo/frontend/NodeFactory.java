@@ -1915,8 +1915,7 @@ public final class NodeFactory {
     }
 
     /** Manufactures a fresh Java object for a sync primitive type name. */
-    private static Object newSyncPrimitive(String prim) {
-        return switch (prim) {
+    static Object newSyncPrimitive(String prim) {        return switch (prim) {
             case "Mutex" -> new graalgo.runtime.sync.GoMutex();
             case "RWMutex" -> new graalgo.runtime.sync.GoRWMutex();
             case "WaitGroup" -> new graalgo.runtime.sync.GoWaitGroup();
@@ -4278,6 +4277,15 @@ public final class NodeFactory {
                     yield ConstNode.ofObject(kind, graalgo.values.GoComplex64.ZERO);
                 }
                 if (kind == GoKind.STRUCT) {
+                    // NEW-P0-3: atomic.Pointer/Value get a fresh AtomicReference
+                    // cell per evaluation (the value model; method calls route
+                    // to syncop). Other sync primitives (Mutex, Pool, ...) keep
+                    // the GoStruct zero — their real methods operate on struct
+                    // fields, not opaque cells.
+                    String prim = syncPrimitiveName(ctx, typeId, path);
+                    if ("atomic.Pointer".equals(prim) || "atomic.Value".equals(prim)) {
+                        yield new SyncPrimitiveZeroNode(prim);
+                    }
                     // Fresh per evaluation (M4, WS E): a shared template
                     // would alias nested values across executions.
                     yield new StructZeroNode(structZeroTemplate(ctx, typeId, path));

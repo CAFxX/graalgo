@@ -8129,6 +8129,16 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// (direct exportCall positions fail fast with the named scope
 		// error below).
 		if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodVal {
+			// NEW-P0-3: sync/atomic.Pointer[T]/Value methods route to
+			// syncop (the AtomicReference value model; the real methods'
+			// &x.v is incoherent with the cell representation).
+			if synctyp, ok := atomicCellMethodType(selection); ok {
+				n, err := e.exportAtomicCellMethod(c, sel, selection, synctyp)
+				if err != nil {
+					return nil, err
+				}
+				return n, nil
+			}
 			if mname, isRt := runtimeStackMethod(selection); isRt {
 				switch mname {
 				case "Name", "Entry":
@@ -8630,6 +8640,84 @@ func (e *exporter) exportAtomicWordOp(c *ast.CallExpr, name string) (*Node, bool
 	return e.node("syncop", c, map[string]any{
 		"op": desc.op, "synctyp": desc.synctyp, "recv": recv, "args": args, "type": typ,
 	}), true, nil
+}
+
+// atomicCellMethodType reports whether selection is a method on
+// sync/atomic.Pointer[T] or sync/atomic.Value — the AtomicReference value
+// model (NEW-P0-3). Returns the syncop synctyp. Generic instantiations
+// (Pointer[T]) match by base name; a pointer receiver is deref'd for the
+// check.
+func atomicCellMethodType(selection *types.Selection) (string, bool) {
+	recv := selection.Recv()
+	if pt, ok := recv.(*types.Pointer); ok {
+		recv = pt.Elem()
+	}
+	nt, ok := recv.(*types.Named)
+	if !ok || nt.Obj() == nil || nt.Obj().Pkg() == nil {
+		return "", false
+	}
+	if nt.Obj().Pkg().Path() != "sync/atomic" {
+		return "", false
+	}
+	switch nt.Obj().Name() {
+	case "Pointer":
+		return "atomic.Pointer", true
+	case "Value":
+		return "atomic.Value", true
+	}
+	return "", false
+}
+
+// exportAtomicCellMethod lowers a method call on a sync/atomic.Pointer[T]
+// or sync/atomic.Value receiver to a syncop wire node (NEW-P0-3).
+//
+// The AtomicReference value model (syncPrimitiveName -> newSyncPrimitive)
+// is incoherent with the real (*Pointer[T]) methods, whose bodies do
+// &x.v — a field access the opaque cell cannot serve. Routing the four
+// ops (Load/Store/Swap/CompareAndSwap) to the existing AtomicOpNode
+// machinery (the same syncop nodes the package-level word ops use)
+// completes the model. This is type-based, not callsite-based: every
+// Pointer[T]/Value method call routes here, wherever the receiver came
+// from (var, struct field, make() element, new()).
+func (e *exporter) exportAtomicCellMethod(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, synctyp string) (*Node, error) {
+	op := selection.Obj().Name()
+	switch op {
+	case "Load", "Store", "Swap", "CompareAndSwap":
+	default:
+		return nil, scopeErrorf("sync/atomic %s.%s is not supported in frontend/v1 scope", synctyp, op)
+	}
+	recv, err := e.exportExpr(sel.X)
+	if err != nil {
+		return nil, err
+	}
+	// Explicit pointer receiver (q := new(atomic.Pointer[T]); q.Store(...)):
+	// sel.X has *Pointer[T] type; deref to the cell. (The implicit &
+	// on addressable values needs no adjustment: the Go value IS the
+	// cell, ADR-0002 D1.)
+	if tv, ok := e.info.Types[sel.X]; ok && tv.Type != nil {
+		if pt, isPtr := tv.Type.(*types.Pointer); isPtr {
+			elemTid, err := e.typeID(pt.Elem())
+			if err != nil {
+				return nil, err
+			}
+			recv = e.node("deref", sel.X, map[string]any{"x": recv, "type": elemTid})
+		}
+	}
+	var args []*Node = []*Node{}
+	for _, a := range c.Args {
+		x, err := e.exportExpr(a)
+		if err != nil {
+			return nil, err
+		}
+		args = append(args, x)
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("syncop", c, map[string]any{
+		"op": op, "synctyp": synctyp, "recv": recv, "args": args, "type": typ,
+	}), nil
 }
 
 // exportAtomicStorePointerStmt lowers a bare-statement

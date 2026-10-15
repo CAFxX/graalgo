@@ -11,9 +11,11 @@ import (
 )
 
 // TestAtomicPointerValueAccepted: Pointer[T] instantiations and Value
-// export as normal Go types and method calls (real sync/atomic package,
-// 503608ea). Previously these lowered to syncnew/syncop wire nodes under
-// the synthetic atomic package.
+// export as named types; their Load/Store/Swap/CompareAndSwap methods
+// lower to syncop wire nodes (NEW-P0-3), not regular calls — the
+// AtomicReference value model is incoherent with the real methods'
+// &x.v bodies. The typed wrappers (Int64 etc.) keep their method-call
+// form (their real methods work via the atomicaddr interception).
 func TestAtomicPointerValueAccepted(t *testing.T) {
 	src := `package main
 
@@ -54,10 +56,20 @@ func main() {
 	if !strings.Contains(out, `sync/atomic.Pointer[string]`) {
 		t.Errorf("exported JSON missing sync/atomic.Pointer[string]")
 	}
-	// The method names must appear as call targets.
-	for _, want := range []string{"Load", "Store", "Swap", "CompareAndSwap"} {
+	// Pointer/Value methods lower to syncop nodes (NEW-P0-3), not
+	// regular method calls: the op and synctyp must appear together.
+	// (JSON is pretty-printed; allow the space after the colon.)
+	for _, want := range []string{
+		`"synctyp": "atomic.Pointer"`,
+		`"synctyp": "atomic.Value"`,
+	} {
 		if !strings.Contains(out, want) {
-			t.Errorf("exported JSON missing method %s", want)
+			t.Errorf("exported JSON missing syncop with %s", want)
+		}
+	}
+	for _, op := range []string{`"op": "Load"`, `"op": "Store"`, `"op": "Swap"`, `"op": "CompareAndSwap"`} {
+		if !strings.Contains(out, op) {
+			t.Errorf("exported JSON missing syncop %s", op)
 		}
 	}
 }
