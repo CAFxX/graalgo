@@ -9,6 +9,7 @@ import graalgo.frontend.TypeTable;
 import graalgo.iface.IfaceItab;
 import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTarget;
+import graalgo.p3log.P3Log;
 import graalgo.runtime.GoCalls;
 import graalgo.values.GoFunc;
 import graalgo.values.GoInterface;
@@ -1002,7 +1003,8 @@ public final class ReflectTypes {
             if (func == null) {
                 // Disk-MR stubs are skipped by the frontend; the method is
                 // not available via reflect. Skip instead of failing.
-                System.err.println("warning: " + path + ": reflect: method \"" + name
+                P3Log.warn(ReflectTypes.class,
+                        path + ": reflect: method \"" + name
                         + "\" refers to unknown function object id " + objId
                         + " (skipped; likely a disk-MR stub)");
                 continue;
