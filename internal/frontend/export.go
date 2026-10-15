@@ -6380,10 +6380,28 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		fields["results"] = results
 	}
 	if symbol == "" {
-		// No //go:linkname: assembly-implemented (or otherwise
-		// bodyless) function. Mark unimplemented; the backend panics
-		// if called. The multi-result WS D restriction does not
-		// apply: no body is built.
+		// No //go:linkname: check if this is a runtime-provided function
+		// (Go pattern: package P declares `func runtime_X(...)`, and the
+		// runtime package provides it via //go:linkname). These are not
+		// assembly — they're intrinsics that the backend must implement.
+		// Emit as a linkname so the backend dispatches to the Java
+		// intrinsic instead of panicking on "unimplemented".
+		if fi.obj != nil && fi.obj.Name() != "" {
+			funcName := fi.obj.Name()
+			if len(funcName) > 8 && funcName[:8] == "runtime_" && pkgPath != "runtime" {
+				// Runtime-provided intrinsic: symbol is pkgpath.name
+				// (e.g., "sync.runtime_Semacquire"). The backend's
+				// Linknames.dispatch will fail fast if no intrinsic
+				// is registered for the symbol.
+				symbol = pkgPath + "." + funcName
+			}
+		}
+	}
+	if symbol == "" {
+		// No //go:linkname and not a runtime-provided intrinsic:
+		// assembly-implemented (or otherwise bodyless) function.
+		// Mark unimplemented; the backend panics if called. The
+		// multi-result WS D restriction does not apply: no body is built.
 		fields["unimplemented"] = true
 		// ASM Phase 1: a multi-result unimplemented function still
 		// needs a userMRFuncs entry so its callers get the pair
