@@ -469,6 +469,16 @@ public final class ReflectTypes {
             case "signature" -> new TypeInfo(-1, GoKind.FUNC, "", "", -1, -1,
                     null, null, 0, null, List.of(), List.of(),
                     List.of(), List.of(), false, List.of(), "", id);
+            case "typeparam" -> {
+                // A generic type parameter (e.g. T in func F[T any](x T)).
+                // The frontend emits these for unsubstituted generic
+                // signatures. Size/align are unknown at the shell stage;
+                // buildInfo resolves them from the constraint.
+                String pname = d.string("name", path);
+                yield new TypeInfo(-1, GoKind.TYPEPARAM, pname, "", -1, -1,
+                        null, null, 0, null, List.of(), List.of(),
+                        List.of(), List.of(), false, List.of(), "", id);
+            }
             default -> throw new FrontendException(path + ": reflect: unsupported type kind " + kind);
         };
     }
@@ -697,6 +707,11 @@ public final class ReflectTypes {
             // P3-M8 fix: aliases resolve to their RHS for key purposes.
             case "alias" -> keyOf(table, types, shells, (int) d.longInt("rhs", path),
                     functions, funcdeclSig);
+            // Type parameters are keyed by name + constraint: two params
+            // with the same name but different constraints are distinct.
+            case "typeparam" -> "typeparam:" + d.string("name", path) + ":"
+                    + keyOf(table, types, shells, (int) d.longInt("constraint", path),
+                            functions, funcdeclSig);
             default -> throw new FrontendException(path + ": reflect: key of " + kind);
         };
     }
@@ -922,6 +937,20 @@ public final class ReflectTypes {
                         rhs.arrayLen, rhs.chanDir, rhs.fields, rhs.methods,
                         rhs.ins, rhs.outs, rhs.variadic,
                         rhs.interfaceMethods, rhs.basicName, id);
+            }
+            case "typeparam" -> {
+                // A generic type parameter behaves like its constraint:
+                // the constraint defines the method set and the layout.
+                // The kind stays TYPEPARAM (distinguishable from the
+                // constraint itself) and the name is the parameter name.
+                int constraintId = (int) d.longInt("constraint", path);
+                TypeInfo c = infoOrShell(table, types, shells, constraintId, functions, funcdeclSig);
+                String pname = d.string("name", path);
+                yield new TypeInfo(tok, GoKind.TYPEPARAM, pname, "",
+                        c.size, c.align, c.elem, c.key,
+                        c.arrayLen, c.chanDir, c.fields, c.methods,
+                        c.ins, c.outs, c.variadic,
+                        c.interfaceMethods, c.basicName, id);
             }
             default -> throw new FrontendException(path + ": reflect: build of " + kind);
         };
