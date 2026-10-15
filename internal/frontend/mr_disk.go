@@ -48,10 +48,9 @@ type mrSpec struct {
 }
 
 var (
-	mrSpecsMu    sync.Mutex
-	mrSpecs []mrSpec
+	mrSpecsMu sync.Mutex
+	mrSpecs   []mrSpec
 )
-
 
 // transformMultiResult rewrites multi-result FuncDecls in files to the
 // __-helper + stub shape. Must run after parsing, before type-checking.
@@ -972,7 +971,6 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	// the three new decls; the caller splices them in.
 	return spec, pairDecl, helperDecl, stubDecl
 }
-
 
 // recvBaseName extracts the base type name from a receiver type expr.
 func recvBaseName(e ast.Expr) string {
