@@ -6285,6 +6285,15 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		}
 	}
 	if fd.Body == nil {
+		// real-reflect (Phase 1): internal/abi FuncPCABI0/FuncPCABIInternal
+		// are gc compile intrinsics declared bodyless. Emit a funcdecl
+		// whose body is the "abifuncpc" wire node, so the function table
+		// stays dense and value-position uses work through the normal
+		// func-value path. Call sites are still intercepted directly
+		// (see exportAbiFuncPCIntrinsic).
+		if fi.obj != nil && isAbiFuncPCIntrinsicFunc(fi.obj) {
+			return e.exportAbiFuncPCDecl(fi)
+		}
 		// P3-M4 (WS C, ADR-0004 D1): a bodyless function carrying
 		// //go:linkname binds to an intrinsic by symbol name.
 		return e.exportLinknameDecl(fi)
@@ -9320,6 +9329,14 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if isAliasIntrinsicFunc(fn) {
 		return e.exportAliasIntrinsic(c, fn.Name())
 	}
+	// real-reflect (Phase 1): internal/abi FuncPCABI0/FuncPCABIInternal are
+	// gc compile intrinsics declared bodyless. Lower to the "abifuncpc"
+	// wire node (opaque stable func id). Intercepted before the funcByObj
+	// lookup; the declarations emit a synthesized intrinsic body (see
+	// exportAbiFuncPCDecl).
+	if isAbiFuncPCIntrinsicFunc(fn) {
+		return e.exportAbiFuncPCIntrinsic(c, fn.Name())
+	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
 	// time.ParseDuration.
@@ -9495,7 +9512,16 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 		return false
 	case *ast.SelectorExpr:
 		// x.f is addressable if x is addressable.
-		return isAddressable(x.X, info)
+		if isAddressable(x.X, info) {
+			return true
+		}
+		// real-reflect (Phase 1): &(*T)(unsafe.Pointer(p)).f — the
+		// descriptor-downcast pattern used throughout internal/abi
+		// (Type.Uncommon) and reflect. The unsafe.Pointer<->*T casts
+		// reinterpret (not copy) the memory p points to — the handle
+		// model round-trips the same storage (unsafefromptr/
+		// unsafetooptr) — so the field selection addresses real storage.
+		return isUnsafeReinterpret(x.X, info)
 	case *ast.IndexExpr:
 		// s[i] is addressable if s is a slice, array, or pointer to array
 		// (not a map or string). P3-M9: arrays were missing — &powers[i]
@@ -9521,6 +9547,32 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 	default:
 		return false
 	}
+}
+
+// isUnsafeReinterpret reports whether x is a conversion of the form
+// (*T)(unsafe.Pointer(y)) where T is a struct type: a reinterpretation of
+// y's memory, not a copy. The unsafe.Pointer<->*T casts round-trip the
+// same storage in the handle model (unsafefromptr/unsafetooptr), so a
+// field selected through such a cast addresses real storage — the
+// descriptor-downcast pattern (&(*structTypeUncommon)(unsafe.Pointer(t)).u)
+// used by internal/abi (Type.Uncommon) and reflect.
+func isUnsafeReinterpret(x ast.Expr, info *types.Info) bool {
+	call, ok := x.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return false
+	}
+	// The target must be a pointer-to-struct type (a conversion, not a
+	// call — a call target's type is a *types.Signature).
+	dst, ok := types.Unalias(info.TypeOf(call.Fun)).(*types.Pointer)
+	if !ok {
+		return false
+	}
+	if _, ok := types.Unalias(dst.Elem()).Underlying().(*types.Struct); !ok {
+		return false
+	}
+	// The source must be unsafe.Pointer.
+	src := info.TypeOf(call.Args[0])
+	return src != nil && types.Unalias(src) == types.Typ[types.UnsafePointer]
 }
 
 func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, recv *Node) (*Node, error) {

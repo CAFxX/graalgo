@@ -27,7 +27,24 @@ comes from real reflect).
       `__abi_FuncPCABI0` / `__abi_FuncPCABIInternal` returning opaque stable
       func ids (used by reflect/makefunc.go, map.go race hooks, type.go
       embeddedIfaceMethStub).
-- [ ] Provide the two FuncPC* intrinsics (frontend + runtime).
+- [x] Provide the two FuncPC* intrinsics (frontend + runtime) — 2026-10-15:
+      frontend intercepts calls (`exportAbiFuncPCIntrinsic` → `abifuncpc`
+      wire node); bodyless decls emit a synthesized funcdecl whose body is
+      the wire node (dense func table, value position via normal func-value
+      path); backend `AbiFuncPCNode` (p3abi) returns `FuncIds` registry ids
+      (target-keyed, stable, non-zero; nil → 0). Verified: stability,
+      distinctness, nil→0, value position, closure entry-PC semantics.
+      Differential vs gc 1.27.1: probe (internal/abi FuncPCABIInternal on
+      top-level func, closures, method value, value position) byte-identical
+      2026-10-15. NOTE: gc panics on a nil func arg; graalgo returns 0 —
+      deliberate, unreachable from real reflect (which never passes nil).
+- [x] `&(*T)(unsafe.Pointer(t)).u` descriptor-downcast addressability
+      (Type.Uncommon): `isAddressable` extended — unsafe.Pointer↔*T casts
+      reinterpret (not copy), consistent with unsafefromptr/unsafetooptr.
+- [x] Backend `ReflectTypes.readMethods` cycle fix: promoted-method wrapper
+      signature now built from the WIRE signature, not `funcType.ins` —
+      `func(t *Type) int` while building `*Type` is a true cycle and the
+      shell has empty ins/outs (was: subList(1,0) crash).
 
 ### Phase 2: Type descriptor bridge
 - [x] Runtime hook: construct `abi.Type` from graalgo's wire type table (via ReflectTypes)

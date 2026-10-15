@@ -1580,6 +1580,105 @@ func (e *exporter) exportAliasIntrinsic(c *ast.CallExpr, name string) (*Node, er
 	}), nil
 }
 
+// abiFuncPCIntrinsicNames are the internal/abi FuncPC* compile intrinsics
+// (real-reflect Phase 1). The real internal/abi package declares them
+// bodyless: gc implements them as compile intrinsics (asm on gccgo). They
+// return the entry PC of a func value; graalgo has no PCs, so calls lower
+// to the "abifuncpc" wire node, which returns an opaque stable func id
+// (the FuncIds registry, resolvable back to the GoFunc by the Phase-4
+// reflectcall linkname). The declarations emit a synthesized intrinsic
+// body (see exportAbiFuncPCDecl); call sites are intercepted directly
+// (see exportAbiFuncPCIntrinsic).
+var abiFuncPCIntrinsicNames = map[string]bool{
+	"FuncPCABI0":        true,
+	"FuncPCABIInternal": true,
+}
+
+// isAbiFuncPCIntrinsicFunc reports whether fn is an internal/abi FuncPC*
+// compile intrinsic.
+func isAbiFuncPCIntrinsicFunc(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == "internal/abi" && abiFuncPCIntrinsicNames[fn.Name()]
+}
+
+// exportAbiFuncPCIntrinsic lowers a call to abi.FuncPCABI0/FuncPCABIInternal
+// into the "abifuncpc" wire node. Fields: "kind" (the intrinsic name),
+// "arg" (the func value, as any), "type" (result uintptr type id).
+func (e *exporter) exportAbiFuncPCIntrinsic(c *ast.CallExpr, name string) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.abiFuncPCNode(c, name, args)
+}
+
+// abiFuncPCNode builds the "abifuncpc" wire node from already-exported
+// args. Split out of exportAbiFuncPCIntrinsic so the declaration emitter
+// (exportAbiFuncPCDecl) can synthesize the intrinsic body without an
+// *ast.CallExpr.
+func (e *exporter) abiFuncPCNode(pos ast.Node, name string, args []*Node) (*Node, error) {
+	if len(args) != 1 {
+		return nil, scopeErrorf("abi.%s takes 1 argument", name)
+	}
+	typ, err := e.typeID(types.Typ[types.Uintptr])
+	if err != nil {
+		return nil, err
+	}
+	return e.node("abifuncpc", pos, map[string]any{
+		"kind": name, "arg": args[0], "type": typ,
+	}), nil
+}
+
+// exportAbiFuncPCDecl emits the declaration of an internal/abi FuncPC*
+// compile intrinsic (real-reflect Phase 1) as a funcdecl whose body is the
+// "abifuncpc" wire node applied to the single param:
+//
+//	func FuncPCABI0(f any) uintptr { return <abifuncpc>(f) }
+//
+// The signature is fixed (func(any) uintptr), so no multi-result or
+// receiver machinery is needed. The dense function table entry keeps the
+// backend's funcs array well-formed, and value-position uses lower through
+// the normal M6 func-value path (calling the value executes the intrinsic
+// body, matching gc semantics).
+func (e *exporter) exportAbiFuncPCDecl(fi *funcDeclInfo) (*Node, error) {
+	fd := fi.fd
+	params, err := e.exportSignatureVars(fd, fi.sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	if len(params) != 1 {
+		return nil, scopeErrorf("abi.%s must take exactly 1 parameter", fi.obj.Name())
+	}
+	p0 := params[0]
+	oid, _ := p0.Fields["obj"].(int)
+	tid, _ := p0.Fields["type"].(int)
+	pname, _ := p0.Fields["name"].(string)
+	call, err := e.abiFuncPCNode(fd, fi.obj.Name(), []*Node{
+		e.node("ident", fd, map[string]any{"name": pname, "obj": oid, "type": tid}),
+	})
+	if err != nil {
+		return nil, err
+	}
+	results, err := e.exportSignatureVars(fd, fi.sig.Results())
+	if err != nil {
+		return nil, err
+	}
+	body := e.node("block", fd, map[string]any{
+		"stmts": []*Node{e.node("return", fd, map[string]any{"results": []*Node{call}})},
+	})
+	sig, err := e.freshSigID(nil, fi.sig.Params(), fi.sig.Results(), false)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params, "body": body,
+		"pkgpath": funcPkgPath(e, fi),
+	}
+	if len(results) > 0 {
+		fields["results"] = results
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
 // exportTimeOp lowers (*time.Timer).Stop/Reset and (*time.Ticker).Stop/
 // Reset method calls (ADR-0005 D1) into the "timeop" wire node.
 func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named) (*Node, error) {
