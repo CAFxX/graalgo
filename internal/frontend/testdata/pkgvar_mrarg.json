@@ -1034,7 +1034,7 @@
     },
     {
       "kind": "func",
-      "name": "asType",
+      "name": "__asType",
       "type": 18,
       "param": false,
       "instof": 0,
