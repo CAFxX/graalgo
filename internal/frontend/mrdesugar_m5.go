@@ -974,17 +974,6 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	{"crypto/rsa", "fipsPublicKey", "", "__mrfipsPublicKey", "", "__mrfipsPublicKeyPair", []string{"v0", "v1"}},
 	{"crypto/rsa", "precompute", "PrivateKey", "__mrPrivateKey_precompute", "", "__mrPrivateKey_precomputePair", []string{"v0", "v1"}},
 	{"crypto/rsa", "precomputeLegacy", "PrivateKey", "__mrPrivateKey_precomputeLegacy", "", "__mrPrivateKey_precomputeLegacyPair", []string{"v0", "v1"}},
-	// P3-M9: crypto/x509 multi-result functions (Java delegation via graalgo.x509.* intrinsics).
-	{"crypto/x509", "ParseCertificate", "", "__mrParseCertificate", "", "__mrParseCertificatePair", []string{"v0", "v1"}},
-	{"crypto/x509", "ParsePKIXPublicKey", "", "__mrParsePKIXPublicKey", "", "__mrParsePKIXPublicKeyPair", []string{"v0", "v1"}},
-	{"crypto/x509", "ParsePKCS1PublicKey", "", "__mrParsePKCS1PublicKey", "", "__mrParsePKCS1PublicKeyPair", []string{"v0", "v1"}},
-	// P3-M9 (x509/TLS lane): private-key parsing, Verify.
-	{"crypto/x509", "ParsePKCS8PrivateKey", "", "__mrParsePKCS8PrivateKey", "", "__mrParsePKCS8PrivateKeyPair", []string{"v0", "v1"}},
-	{"crypto/x509", "ParsePKCS1PrivateKey", "", "__mrParsePKCS1PrivateKey", "", "__mrParsePKCS1PrivateKeyPair", []string{"v0", "v1"}},
-	{"crypto/x509", "ParseECPrivateKey", "", "__mrParseECPrivateKey", "", "__mrParseECPrivateKeyPair", []string{"v0", "v1"}},
-	{"crypto/x509", "Verify", "Certificate", "__mrVerify", "", "__mrVerifyPair", []string{"v0", "v1"}},
-	{"crypto/x509", "parsePrivateKeyDescriptor", "", "__mrParsePrivateKeyDescriptor", "", "__mrParsePrivateKeyDescriptorPair", []string{"v0", "v1"}},
-	{"crypto/x509", "hashFromSigAlg", "", "__mrHashFromSigAlg", "", "__mrHashFromSigAlgPair", []string{"v0", "v1"}},
 	// P3-M9 (x509/TLS lane): crypto/tls multi-result functions.
 	{"crypto/tls", "X509KeyPair", "", "__mrX509KeyPair", "", "__mrX509KeyPairPair", []string{"v0", "v1"}},
 	{"crypto/tls", "LoadX509KeyPair", "", "__mrLoadX509KeyPair", "", "__mrLoadX509KeyPairPair", []string{"v0", "v1"}},

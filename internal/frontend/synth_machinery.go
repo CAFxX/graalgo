@@ -176,10 +176,6 @@ var syntheticSources = map[string]string{
 	"crypto/internal/fips140/rsa":                syntheticCryptoFips140RsaSource,
 	"golang.org/x/crypto/cryptobyte":             syntheticCryptobyteSource,
 	"golang.org/x/crypto/cryptobyte/asn1":        syntheticCryptobyteAsn1Source,
-	// P3-M9 (tier-5): synthetic crypto/x509 package (Java delegation via
-	// graalgo.x509.* intrinsics; sources committed in ed9bc19).
-	"crypto/x509":      syntheticCryptoX509Source,
-	"crypto/x509/pkix": syntheticCryptoX509PkixSource,
 	// P3-M9 (tier-5): synthetic crypto/tls package (SSLEngine delegation
 	// via graalgo.tls.* intrinsics; source in synth_crypto_tls.go).
 	"crypto/tls": syntheticCryptoTlsSource,
@@ -1846,7 +1842,6 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		path != "crypto/elliptic" && path != "crypto/ecdh" && path != "crypto/dsa" &&
 		path != "crypto/ecdsa" && path != "crypto/ed25519" && path != "crypto/rsa" &&
 		path != "crypto/hkdf" && path != "crypto/pbkdf2" &&
-		path != "crypto/x509" && path != "crypto/x509/pkix" &&
 		path != "crypto/tls" &&
 		path != "golang.org/x/crypto/cryptobyte" &&
 		path != "golang.org/x/crypto/cryptobyte/asn1" &&

@@ -617,8 +617,16 @@ func tparamNamesOf(ft *ast.FuncType) []string {
 	if ft == nil || ft.TypeParams == nil {
 		return nil
 	}
+	return tparamNamesOfList(ft.TypeParams)
+}
+
+// tparamNamesOfList extracts type parameter names from a FieldList.
+func tparamNamesOfList(fl *ast.FieldList) []string {
+	if fl == nil {
+		return nil
+	}
 	var out []string
-	for _, fld := range ft.TypeParams.List {
+	for _, fld := range fl.List {
 		for _, n := range fld.Names {
 			out = append(out, n.Name)
 		}
@@ -645,6 +653,32 @@ func genericRef(name string, tparamNames []string) ast.Expr {
 		}
 		return idx
 	}
+}
+
+// receiverTypeParams extracts the type parameter list from the declaration
+// of a method's receiver base type. For example, given receiver
+// *nameConstraintsSet[T, V], it finds "type nameConstraintsSet[T ...] struct"
+// in the file and returns its TypeParams (with constraints). Returns nil if
+// the receiver is not a generic type or the declaration is not found.
+func receiverTypeParams(file *ast.File, recvType ast.Expr) *ast.FieldList {
+	base := recvBaseName(recvType)
+	if base == "" {
+		return nil
+	}
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != base {
+				continue
+			}
+			return ts.TypeParams
+		}
+	}
+	return nil
 }
 
 // transformMRFunc transforms one multi-result FuncDecl.
@@ -674,7 +708,26 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 	// keeps fd.Type (which owns the list); the pair and helper share the
 	// node. go/types gives each declaration its own scope and
 	// type-parameter objects, so the sharing is sound.
+	//
+	// For methods on generic types (e.g. func (nc *nameConstraintsSet[T, V])
+	// search(...)), the method's own TypeParams is nil — T and V come from
+	// the receiver's type declaration. Extract them from the TypeSpec so
+	// the helper and pair type-check. Receiver type params precede the
+	// function's own in scope.
 	tparams := fd.Type.TypeParams
+	if fd.Recv != nil && len(fd.Recv.List) > 0 {
+		if recvTparams := receiverTypeParams(file, fd.Recv.List[0].Type); recvTparams != nil {
+			if tparams == nil {
+				tparams = recvTparams
+			} else {
+				// Combine: receiver params first, then function's own.
+				combined := &ast.FieldList{}
+				combined.List = append(combined.List, recvTparams.List...)
+				combined.List = append(combined.List, tparams.List...)
+				tparams = combined
+			}
+		}
+	}
 
 	// Pair struct: type __F_pair[T ...] struct { f1 T1; f2 T2 }.
 	pairDecl := &ast.GenDecl{
@@ -779,8 +832,9 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 			Results: &ast.FieldList{
 				// GAP-GENERIC-MR: the pair type is generic exactly when
 				// the function is; reference it with explicit type
-				// arguments.
-				List: []*ast.Field{{Type: genericRef(pairType, tparamNamesOf(fd.Type))}},
+				// arguments (including receiver type params for generic
+				// methods).
+				List: []*ast.Field{{Type: genericRef(pairType, tparamNamesOfList(tparams))}},
 			},
 		},
 		Body: rewrittenBody,
@@ -1590,6 +1644,7 @@ func isFailFastStub(fd *ast.FuncDecl) bool {
 	}
 	return strings.Contains(lit.Value, "not in M") && strings.Contains(lit.Value, "scope")
 }
+
 // pairTypeExpr builds the pair composite-literal type: __Pair for the
 // non-generic case, __Pair[T, ...] for the generic case.
 func (ctx *mrRewriteCtx) pairTypeExpr() ast.Expr {

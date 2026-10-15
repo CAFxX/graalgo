@@ -1526,7 +1526,6 @@ func ExportFiles(paths []string) (string, error) {
 	needCryptoRsa := false
 	needCryptoHkdf := false
 	needCryptoPbkdf2 := false
-	needCryptoX509 := false
 	needCryptoTls := false
 	needCryptobyte := false
 	needCryptobyteAsn1 := false
@@ -1705,8 +1704,6 @@ func ExportFiles(paths []string) (string, error) {
 				needCryptoHkdf = true
 			case "crypto/pbkdf2":
 				needCryptoPbkdf2 = true
-			case "crypto/x509":
-				needCryptoX509 = true
 			case "crypto/tls":
 				needCryptoTls = true
 			case "golang.org/x/crypto/cryptobyte":
@@ -2530,7 +2527,7 @@ func ExportFiles(paths []string) (string, error) {
 	// P3-M9 (tier-5): asymmetric crypto. The public packages form a
 	// dependency closure over the internal fips140/* packages; import
 	// the full closure when any of them is needed (idempotent).
-	if needCryptoElliptic || needCryptoEcdh || needCryptoDsa || needCryptoEcdsa || needCryptoEd25519 || needCryptoRsa || needCryptoHkdf || needCryptoPbkdf2 || needCryptoX509 || needCryptoTls || needCryptobyte || needCryptobyteAsn1 {
+	if needCryptoElliptic || needCryptoEcdh || needCryptoDsa || needCryptoEcdsa || needCryptoEd25519 || needCryptoRsa || needCryptoHkdf || needCryptoPbkdf2 || needCryptoTls || needCryptobyte || needCryptobyteAsn1 {
 		for _, p := range []string{
 			// P3-M9 (tier-5b): the synthetic sources' own imports, in
 			// TOPOLOGICAL order — package-level var initializers (e.g.
@@ -2610,10 +2607,6 @@ func ExportFiles(paths []string) (string, error) {
 			"io/fs",
 			"syscall",
 			"os",
-			// P3-M9 (tier-5): synthetic crypto/x509 (Java delegation via
-			// graalgo.x509.* intrinsics). pkix first (x509 imports it).
-			"crypto/x509/pkix",
-			"crypto/x509",
 			// P3-M9 (tier-5): synthetic crypto/tls (SSLEngine delegation
 			// via graalgo.tls.* intrinsics; imports crypto/x509).
 			"crypto/tls",
@@ -11380,11 +11373,12 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 				p == "crypto/elliptic" || p == "crypto/ecdh" || p == "crypto/dsa" ||
 				p == "crypto/ecdsa" || p == "crypto/ed25519" || p == "crypto/rsa" ||
 				p == "crypto/hkdf" || p == "crypto/pbkdf2" ||
-				// P3-M9 (tier-5): synthetic crypto/x509 + crypto/tls
-				// qualified idents in expression position (x509.ExtKeyUsageServerAuth,
-				// tls.VersionTLS13, ...); the call path (exportSyntheticPkgCall)
-				// already routes these packages.
-				p == "crypto/x509" || p == "crypto/x509/pkix" || p == "crypto/tls" ||
+				// P3-M9 (tier-5): synthetic crypto/tls qualified idents in
+				// expression position (tls.VersionTLS13, ...); the call path
+				// (exportSyntheticPkgCall) already routes these packages.
+				// crypto/x509 now resolves from disk via the general WS G
+				// path below.
+				p == "crypto/tls" ||
 				p == "golang.org/x/crypto/cryptobyte" ||
 				p == "golang.org/x/crypto/cryptobyte/asn1" ||
 				p == "crypto/internal/fips140" || p == "crypto/internal/fips140/check" ||

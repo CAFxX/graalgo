@@ -25,4 +25,16 @@ func CAST(name string, f func() error) {}
 // PCT performs the FIPS pairwise-consistency-test hook. No-op here.
 func PCT(name string, f func() error) {}
 
+// Name returns the module name, matching the real package.
+func Name() string {
+	return "Go Cryptographic Module"
+}
+
+// Version returns the formal version. The real package returns "latest"
+// when not building against a frozen module with GOFIPS140; graalgo
+// never does, so this matches.
+func Version() string {
+	return "latest"
+}
+
 `
