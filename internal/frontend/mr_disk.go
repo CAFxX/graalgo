@@ -770,6 +770,11 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 				{Names: []*ast.Ident{ast.NewIdent(recvVarName)}, Type: rv.Type},
 			}, fd.Type.Params.List...),
 		}
+		// FIX: Go requires a parameter list to be consistently named or
+		// anonymous. The prepended receiver always has a name, but the
+		// original params may be anonymous (e.g. func (d *T) Read([]byte)).
+		// Give synthetic names to anonymous params so the helper type-checks.
+		helperParams = nameAnonymousParams(helperParams)
 	} else {
 		helperParams = fd.Type.Params
 	}
@@ -902,6 +907,41 @@ func recvBaseName(e ast.Expr) string {
 			return ""
 		}
 	}
+}
+
+// nameAnonymousParams ensures a FieldList is consistently named, as Go
+// requires. If the list mixes named and anonymous parameters (e.g. after
+// prepending a named receiver to anonymous params), the anonymous ones get
+// synthetic __argN names. The helper is synthetic, so these names are never
+// referenced by user code — the original body cannot name anonymous params.
+func nameAnonymousParams(fl *ast.FieldList) *ast.FieldList {
+	if fl == nil {
+		return fl
+	}
+	var named, anonymous bool
+	for _, field := range fl.List {
+		if len(field.Names) > 0 {
+			named = true
+		} else {
+			anonymous = true
+		}
+	}
+	if !named || !anonymous {
+		return fl // already consistent
+	}
+	// Mixed: name the anonymous fields. Copy the list to avoid mutating
+	// the original AST nodes' sharing.
+	out := &ast.FieldList{List: make([]*ast.Field, len(fl.List))}
+	arg := 0
+	for i, field := range fl.List {
+		nf := *field // shallow copy
+		if len(nf.Names) == 0 {
+			nf.Names = []*ast.Ident{ast.NewIdent(fmt.Sprintf("__arg%d", arg))}
+			arg++
+		}
+		out.List[i] = &nf
+	}
+	return out
 }
 
 // usedNamedResults reports which of fd's named result variables the
