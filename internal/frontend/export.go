@@ -5005,6 +5005,15 @@ type methodCall struct {
 	// direct methods. The caller (methodRefNode) rewrites the receiver
 	// expression by walking this path, mirroring methodTableEntries.
 	recvPath []int
+	// recvAddrOf marks a promoted pointer-receiver method reached via a
+	// value-embedded field (fix-purego-wsd): the method lives only in
+	// methodset(*Recv), and the call relies on Go's implicit & of the
+	// receiver expression (x.M() → (&x).M()), which is valid when the
+	// receiver is addressable. The caller wraps the receiver in an
+	// "addrof" wire node before walking recvPath; the downstream
+	// implicitAddrOf then handles the embedded field's own pointer
+	// receiver. False for the direct and ordinary promoted cases.
+	recvAddrOf bool
 	// ifaceFallback is set when devirtualization fails (the type
 	// parameter's concrete type is not a named type) but the method can
 	// be dispatched via the constraint interface (WS H F-bounded
@@ -5232,6 +5241,7 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 		return nil, fmt.Errorf("gofrontend: ambiguous selector %s on %s: no candidate chosen", mname, rn.Obj().Name())
 	}
 	var msel *types.Selection
+	var recvAddrOf bool
 	ms := types.NewMethodSet(selection.Recv())
 	for i := 0; i < ms.Len(); i++ {
 		if s := ms.At(i); s.Obj().Name() == mname {
@@ -5244,17 +5254,29 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 		// type: a pointer-receiver method promoted via a VALUE-embedded
 		// field is absent from methodset(Recv) — it lives only in
 		// methodset(*Recv), and the call relies on gc's implicit & of
-		// the embedded field. That implicit & is out of WS D scope, so
-		// fail fast with the named scope error (consistent with the
-		// direct-method path in methodRefNode) — never a confusing
-		// "not found" for a method that exists.
+		// the receiver expression. When the receiver is addressable
+		// that implicit & is valid Go (x.M() → (&x).M()); resolve via
+		// the pointer method set and mark recvAddrOf so the caller
+		// takes the address before walking recvPath (fix-purego-wsd:
+		// poly1305's h.mac.Sum, text/scanner's String). A
+		// non-addressable receiver keeps the named WS D scope error —
+		// never a confusing "not found" for a method that exists.
+		var pmsel *types.Selection
 		pms := types.NewMethodSet(types.NewPointer(selection.Recv()))
 		for i := 0; i < pms.Len(); i++ {
 			if s := pms.At(i); s.Obj().Name() == mname {
-				return nil, scopeErrorf("method call %s needs an implicit address-of or deref on the receiver (WS D)", mname)
+				pmsel = s
+				break
 			}
 		}
-		return notFound()
+		if pmsel == nil {
+			return notFound()
+		}
+		if !isAddressable(sel.X, e.info) {
+			return nil, scopeErrorf("method call %s needs an implicit address-of or deref on the receiver (WS D)", mname)
+		}
+		msel = pmsel
+		recvAddrOf = true
 	}
 	index := msel.Index()
 	if len(index) < 2 {
@@ -5278,7 +5300,7 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 			if msel := types.NewMethodSet(fieldType).Lookup(e.pkg, mname); msel == nil {
 				return notFound()
 			}
-			return &methodCall{ifaceFallback: fieldType, subst: subst, recvPath: path}, nil
+			return &methodCall{ifaceFallback: fieldType, subst: subst, recvPath: path, recvAddrOf: recvAddrOf}, nil
 		}
 	}
 	dn := derefNamed(fieldType)
@@ -5293,7 +5315,7 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 	// the outer one: bindRecvParams binds the declaring origin's type
 	// parameters from the walked type's arguments.
 	if !fi.isTemplate {
-		return &methodCall{decl: fi, subst: subst, recvPath: path}, nil
+		return &methodCall{decl: fi, subst: subst, recvPath: path, recvAddrOf: recvAddrOf}, nil
 	}
 	bind := make(map[*types.TypeParam]types.Type)
 	var rawTargs []types.Type
@@ -5327,7 +5349,7 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 		return nil, fmt.Errorf("gofrontend: unbound type parameter in instantiation of method %s", mname)
 	}
 	return &methodCall{decl: fi, subst: sub, key: key, name: name, needsInst: true,
-		rawTargsForEmit: rawTargs, recvPath: path}, nil
+		rawTargsForEmit: rawTargs, recvPath: path, recvAddrOf: recvAddrOf}, nil
 }
 
 // enumerateInstantiations computes the full monomorphization fixpoint: every
@@ -9769,11 +9791,24 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	// with a "selector" wire node — the factory's SelectorNode walks
 	// selpath with pointer auto-deref at every level, exactly like a
 	// field selection — and check the declared receiver against the
-	// ADAPTED type, not the outer one. A promoted pointer-receiver
-	// method via a value-embedded field (or value receiver via a
-	// pointer-embedded field) still fails fast below with the WS D scope
-	// error: the adaptation never invents an implicit &/*.
+	// ADAPTED type, not the outer one.
+	// fix-purego-wsd: a promoted pointer-receiver method via a
+	// value-embedded field on an addressable receiver (mc.recvAddrOf)
+	// takes the receiver's address implicitly per Go spec (x.M() →
+	// (&x).M()) before walking recvPath. The "addrof" wire node is the
+	// same shape implicitAddrOf emits below; the backend's buildAddrOf
+	// already handles addrof-of-selector via buildFieldAddr.
 	recvType := xt.Type
+	if mc.recvAddrOf {
+		tid, err := e.typeID(types.NewPointer(recvType))
+		if err != nil {
+			return nil, err
+		}
+		recv = e.node("addrof", sel.X, map[string]any{
+			"x": recv, "type": tid,
+		})
+		recvType = types.NewPointer(recvType)
+	}
 	if len(mc.recvPath) > 0 {
 		adapted := embeddedFieldType(selection.Recv(), mc.recvPath)
 		if adapted == nil {
