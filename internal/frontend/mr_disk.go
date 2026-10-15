@@ -1549,22 +1549,25 @@ func (w *mrUseWalker) walkLitElem(e ast.Expr, kk, childKK mrKeyKind) {
 //   - return F(args)     -> __t := __F(args); return __Pair{__t.f1, __t.f2}
 //     (F multi-result; spliced as two statements)
 func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string, mrNames map[string]bool, fd *ast.FuncDecl, recvType, recvVar string, tparamNames []string) *ast.BlockStmt {
-	// Named result names for bare return.
+	// Named result names (and their types) for bare return.
 	var namedResults []string
+	var namedResultTypes []ast.Expr
 	if fd.Type.Results != nil {
 		for _, fld := range fd.Type.Results.List {
 			for _, n := range fld.Names {
 				namedResults = append(namedResults, n.Name)
+				namedResultTypes = append(namedResultTypes, fld.Type)
 			}
 		}
 	}
 	ctx := &mrRewriteCtx{
-		pairType:     pairType,
-		pairFields:   pairFields,
-		namedResults: namedResults,
-		mrNames:      mrNames,
-		recvType:     recvType,
-		recvVar:      recvVar,
+		pairType:         pairType,
+		pairFields:       pairFields,
+		namedResults:     namedResults,
+		namedResultTypes: namedResultTypes,
+		mrNames:          mrNames,
+		recvType:         recvType,
+		recvVar:          recvVar,
 		// GAP-GENERIC-MR: explicit type arguments for the pair literal
 		// and recursive helper calls (go/types cannot infer them).
 		// The names are resolved by the caller: for methods on generic
@@ -1585,6 +1588,9 @@ type mrRewriteCtx struct {
 	pairType     string
 	pairFields   []string
 	namedResults []string
+	// namedResultTypes parallels namedResults: the declared type of each
+	// named result (blank results need their type for the zero value).
+	namedResultTypes []ast.Expr
 	mrNames      map[string]bool
 	recvType     string
 	recvVar      string
@@ -1822,6 +1828,19 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 		}
 		args := make([]ast.Expr, len(namedResults))
 		for i, n := range namedResults {
+			if n == "_" {
+				// Blank-named result: `_` is not a value. gc semantics:
+				// a blank result is always its zero value at a bare
+				// return (assignments to it are discards). *new(T) is
+				// the zero value for any type T.
+				args[i] = &ast.StarExpr{
+					X: &ast.CallExpr{
+						Fun:  ast.NewIdent("new"),
+						Args: []ast.Expr{ctx.namedResultTypes[i]},
+					},
+				}
+				continue
+			}
 			args[i] = ast.NewIdent(n)
 		}
 		return []ast.Stmt{mkPair(args)}
