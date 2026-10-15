@@ -38,6 +38,7 @@ package net
 import _ "unsafe" // for go:linkname
 import "context"
 import "errors"
+import "internal/poll"
 import "io"
 import "strconv"
 import "strings"
@@ -87,6 +88,17 @@ func (e *timeoutError) Error() string   { return "i/o timeout" }
 func (e *timeoutError) Timeout() bool   { return true }
 func (e *timeoutError) Temporary() bool { return true }
 var errDeadlineExceeded = &timeoutError{}
+
+// errClosed exists just so that the docs for ErrClosed don't mention
+// the internal package poll (gc 1.27.1, src/net/net.go).
+var errClosed = poll.ErrNetClosing
+
+// ErrClosed is the error returned by an I/O call on a network
+// connection that has already been closed, or that is closed by
+// another goroutine before the I/O is completed. This may be wrapped
+// in another error, and should normally be tested using
+// errors.Is(err, net.ErrClosed).
+var ErrClosed error = errClosed
 
 func (e *timeoutError) Is(target error) bool {
 	return target == errDeadlineExceeded
