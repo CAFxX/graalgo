@@ -549,4 +549,59 @@ public final class SchedulerCoreTest {
             SchedulerCore.install(null);
         }
     }
+
+    // ---------- yieldCurrent (PKG-040: runtime.Gosched) ----------
+
+    /**
+     * PKG-040: {@code yieldCurrent()} really yields the processor. The
+     * scheduler runs with a single in-flight slot and a one-hour quantum
+     * (so no preemptive quantum expiry can interleave — the quantum
+     * deadline {@code nanoTime + 3.6e12} cannot overflow), which makes
+     * execution effectively cooperative: the only way a second goroutine
+     * runs is a voluntary yield.
+     *
+     * <p>The spinner is confirmed running (it holds the only slot) before
+     * the peer is spawned; the spinner then spins on
+     * {@code yieldCurrent()} until it observes the peer's write. With a
+     * working yield each iteration parks and re-queues the spinner behind
+     * the peer, the peer runs, and the spinner observes it. If the yield
+     * were a no-op the spinner would hold the slot forever and the await
+     * would time out.
+     *
+     * <p>Red-green: fails (30s timeout) with the yield call stubbed out;
+     * passes with the real {@code yieldCurrent}. Verified by fault
+     * injection on {@code GoschedNode.executeVoid}.
+     */
+    public void testGoschedYields() throws Exception {
+        SchedulerCore sched = new SchedulerCore(1, TimeUnit.HOURS.toNanos(1));
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            AtomicLong spins = new AtomicLong();
+            AtomicBoolean peerRan = new AtomicBoolean(false);
+            CountDownLatch spinnerDone = new CountDownLatch(1);
+            sched.spawn(() -> {
+                while (!peerRan.get()) {
+                    sched.yieldCurrent();
+                    spins.incrementAndGet();
+                }
+                spinnerDone.countDown();
+            });
+            // Wait until the spinner is confirmed running: it holds the
+            // only in-flight slot from here on.
+            long spinDeadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (spins.get() < 100 && System.nanoTime() < spinDeadline) {
+                Thread.sleep(1);
+            }
+            assertTrue(spins.get() >= 100, "spinner started and holds the slot");
+            // The peer can only be admitted when the spinner yields.
+            sched.spawn(() -> peerRan.set(true));
+            assertTrue(spinnerDone.await(30, TimeUnit.SECONDS),
+                    "spinner observed the peer: yield admitted it");
+            assertTrue(peerRan.get(), "peer ran");
+            sched.awaitQuiescence();
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
 }

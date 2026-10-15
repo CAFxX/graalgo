@@ -477,3 +477,48 @@ func TestRuntimeViewCompleteness(t *testing.T) {
 			sig.Params().Len(), sig.Results().Len())
 	}
 }
+
+// TestRuntimeGoschedExport: runtime.Gosched() lowers to the additive
+// "runtimegosched" statement wire node. Red-green: this fails before the
+// overlay declares Gosched (`undefined: runtime.Gosched`, the PKG-040 iter
+// failure) and passes after.
+func TestRuntimeGoschedExport(t *testing.T) {
+	src := `package main
+
+import "runtime"
+
+func main() {
+	runtime.Gosched()
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with runtime.Gosched: %v", err)
+	}
+	if !strings.Contains(out, `"kind": "runtimegosched"`) {
+		t.Errorf("exported JSON missing \"kind\": \"runtimegosched\"")
+	}
+}
+
+// TestRuntimeGoschedDeferGoExport: `defer runtime.Gosched()` and
+// `go runtime.Gosched()` desugar through a funclit (the "runtimegosched"
+// wire node is a statement, not a call, so it cannot ride the defer/
+// gostmt call slot directly). The funclit body must carry the wire node.
+func TestRuntimeGoschedDeferGoExport(t *testing.T) {
+	src := `package main
+
+import "runtime"
+
+func main() {
+	defer runtime.Gosched()
+	go runtime.Gosched()
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with defer/go runtime.Gosched: %v", err)
+	}
+	if n := strings.Count(out, `"kind": "runtimegosched"`); n != 2 {
+		t.Errorf("exported JSON has %d runtimegosched nodes, want 2 (defer + go)", n)
+	}
+}
