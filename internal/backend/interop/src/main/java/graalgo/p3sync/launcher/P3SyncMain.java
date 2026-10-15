@@ -410,9 +410,18 @@ public final class P3SyncMain {
         // P3-M8 (wave 2, R6): initialize the os surface's process-wide
         // state (virtual cwd, env overlay, stdio cookies, argv) BEFORE
         // Go initialization runs — os.Args[i] must already be visible
-        // to package-var initializers. os.Args[0] is the input-file path.
+        // to package-var initializers.
+        //
+        // os.Args[0] parity (gc): under `go run`, argv[0] is always an
+        // absolute path (the compiled temp binary). Graalgo produces no
+        // binary artifact; the honest equivalent is the absolute,
+        // normalized path of the program entry point (the first input
+        // file). A relative argv[0] matches gc in no scenario, so the
+        // launcher resolves it here — the single choke point for all
+        // entry paths (`graalgo run`, `graalgo test`, direct
+        // graalgo-sync-run, diffharness).
         String[] goArgv = new String[goArgs.size() + 1];
-        goArgv[0] = files.get(0);
+        goArgv[0] = Paths.get(files.get(0)).toAbsolutePath().normalize().toString();
         for (int i = 0; i < goArgs.size(); i++) {
             goArgv[i + 1] = goArgs.get(i);
         }

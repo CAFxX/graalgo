@@ -263,7 +263,10 @@ public final class GoOs {
     /**
      * (Re)initializes all GoOs state for one program run. Called by the
      * launcher after {@code LinknameIntrinsics.install} and before Go
-     * initialization. {@code argv[0]} is the input-file path (R6).
+     * initialization. {@code argv[0]} is the absolute, normalized path of
+     * the program entry point (gc parity: argv[0] is absolute under
+     * `go run`; graalgo has no binary artifact, so the entry-point file
+     * path is the honest equivalent).
      *
      * <p>A static initializer seeds the same state with an empty argv so
      * the intrinsics are usable even if a caller builds (but never runs
