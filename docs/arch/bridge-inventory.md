@@ -183,6 +183,32 @@ deliverable until the design lands.
   then delete the synthetic intrinsics.
 - **Phase:** 4.
 
+## Adjudicated non-bridges
+
+Mechanical gate ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py))
+false positives: additions the gate flags by pattern that an independent
+reviewer adjudicated as real implementations, not bridges. Each entry names
+the commit, the reviewer verdict, and the narrowly-scoped allowlist in the
+gate script (`ADJUDICATED_WIRE_NODES` / `ADJUDICATED_REGISTRATIONS`). Do NOT
+extend these entries or add new ones without a fresh independent review.
+
+- **2026-10-16 — `runtimenumgoroutine` wire node + `runtime.NumGoroutine`
+  overlay declaration (PKG-023, commit `1d4e7964`).** The gate flags two
+  added lines in [internal/frontend/export.go](../../internal/frontend/export.go):
+  the additive `"runtimenumgoroutine"` wire node and
+  `addFunc("NumGoroutine", ...)`. Independent review: CLEAN, no veto —
+  adjudicated a mechanical false positive (first overlay addition since the
+  gate landed). This is a real implementation following the `runtimenumcpu`
+  precedent: the frontend declares `NumGoroutine() int` in the synthetic
+  `runtime` package and lowers calls to the additive wire node; the backend
+  [NumGoroutineNode.java](../../internal/backend/interop/src/main/java/graalgo/p3builtin/nodes/NumGoroutineNode.java)
+  implements it on the scheduler's live-goroutine counter
+  ([SchedulerCore.numGoroutines()](../../internal/backend/runtime/src/main/java/graalgo/sched/SchedulerCore.java)),
+  verified by `SchedulerCoreTest.testNumGoroutines` and
+  `TestRuntimeNumGoroutineExport`. Not a bridge: no synthetic stdlib logic,
+  no name-keyed special case — the same mechanism as the grandfathered
+  `runtimenumcpu`.
+
 ## Retired
 
 Entries move here when the bridge is gone (same change that removes the
