@@ -40,6 +40,39 @@ import "sync"
 import "syscall"
 import "time"
 
+// NOTE (real-net lane, 2026-10-15): String is required by the real net
+// package (rawconn.go: Network() poll.String). Verbatim from gc 1.27.1
+// internal/poll/fd.go.
+type String string
+
+// NOTE (real-net lane, 2026-10-15): hook variables and error types
+// required by the real net package. Verbatim from gc 1.27.1
+// internal/poll/hook_unix.go, hook_cloexec.go, fd.go, sendfile*.go.
+// These are test hooks; the synthetic poll's FD methods don't use them,
+// but net references them.
+var CloseFunc func(int) error = syscall.Close
+var AcceptFunc func(int) (int, syscall.Sockaddr, error) = syscall.Accept
+var Accept4Func func(int, int) (int, syscall.Sockaddr, error) = syscall.Accept4
+
+type DeadlineExceededError struct{}
+
+func (e *DeadlineExceededError) Error() string   { return "i/o timeout" }
+func (e *DeadlineExceededError) Timeout() bool   { return true }
+func (e *DeadlineExceededError) Temporary() bool { return true }
+
+var TestHookDidWritev = func(wrote int) {}
+var TestHookDidSendFile = func(dstFD *FD, src uintptr, written int64, err error, handled bool) {}
+
+const failPollSpliceSendfile = "poll.Splice/SendFile: no graalgo intrinsic; splice/sendfile not in net's basic path, Phase 4"
+
+func Splice(dst, src *FD, remain int64) (written int64, handled bool, err error) {
+	panic(failPollSpliceSendfile)
+}
+
+func SendFile(dstFD *FD, src uintptr, size int64) (n int64, err error, handled bool) {
+	panic(failPollSpliceSendfile)
+}
+
 // ---------------------------------------------------------------------------
 // Linkname intrinsics (net-fork-contract.md): symbols internal/poll.*,
 // bound by graalgo.p3net.GoNetpoll. All params/results are int64/uintptr
@@ -235,9 +268,16 @@ func IsPollDescriptor(fd uintptr) bool {
 
 // FD is the synthetic poll file descriptor: a socket cookie plus its
 // pollDesc. Only Sysfd is set by the owner before Init.
+// NOTE (real-net lane, 2026-10-15): Sysfd changed from uintptr to int,
+// and IsStream/ZeroReadIsEOF added, to match the real poll.FD layout
+// (gc 1.27.1 internal/poll/fd_unix.go). The real net package sets these
+// fields in struct literals (fd_unix.go).
 type FD struct {
-	Sysfd uintptr
+	Sysfd int
 	pd    pollDesc
+
+	IsStream      bool
+	ZeroReadIsEOF bool
 
 	mu     sync.Mutex
 	closed bool
@@ -256,7 +296,11 @@ func (fd *FD) decref() {}
 
 // Init registers the socket cookie with the netpoller. The fork calls
 // this before bind/listen/connect (net-fork-contract.md call order).
-func (fd *FD) Init() error {
+// NOTE (real-net lane, 2026-10-15): signature changed to match the real
+// poll.FD.Init(net string, pollable bool) (gc 1.27.1). The net/pollable
+// args are accepted for API compatibility; the synthetic poll ignores
+// them (cookie model).
+func (fd *FD) Init(net string, pollable bool) error {
 	return fd.pd.init(fd)
 }
 
@@ -283,6 +327,54 @@ func (fd *FD) ClosePoll() {
 	fd.mu.Unlock()
 	fd.pd.close()
 }
+
+// ---------------------------------------------------------------------------
+// Real-net compatibility: poll.FD methods required by the real net package
+// (fd_posix.go, sock_posix.go, etc.). These are stubs: the real net's
+// socket operations go through these methods, but the synthetic poll's
+// FD is cookie-based (for the synthetic net). The real net needs a
+// full poll.FD reimplementation backed by GoNet — that is a separate
+// backend task (Phase 4). These stubs allow the real net to TYPE-CHECK;
+// calling them panics with a clear message.
+// NOTE (real-net lane, 2026-10-15).
+// ---------------------------------------------------------------------------
+
+const failPollFD = "poll.FD method: not implemented; real net requires GoNet-backed poll.FD, Phase 4"
+
+func (fd *FD) Close() error { panic(failPollFD) }
+func (fd *FD) Read(p []byte) (int, error) { panic(failPollFD) }
+func (fd *FD) Write(p []byte) (int, error) { panic(failPollFD) }
+func (fd *FD) Accept() (int, syscall.Sockaddr, string, error) { panic(failPollFD) }
+func (fd *FD) Dup() (int, string, error) { panic(failPollFD) }
+func (fd *FD) Shutdown(how int) error { panic(failPollFD) }
+func (fd *FD) GetsockoptInt(level, name int) (int, error) { panic(failPollFD) }
+func (fd *FD) SetsockoptInt(level, name, value int) error { panic(failPollFD) }
+func (fd *FD) SetsockoptLinger(level, name int, l *syscall.Linger) error { panic(failPollFD) }
+func (fd *FD) SetsockoptByte(level, name int, value byte) error { panic(failPollFD) }
+func (fd *FD) SetsockoptInet4Addr(level, name int, value [4]byte) error { panic(failPollFD) }
+func (fd *FD) SetsockoptIPMreq(level, name int, value *syscall.IPMreq) error { panic(failPollFD) }
+func (fd *FD) SetsockoptIPMreqn(level, name int, value *syscall.IPMreqn) error { panic(failPollFD) }
+func (fd *FD) SetsockoptIPv6Mreq(level, name int, value *syscall.IPv6Mreq) error { panic(failPollFD) }
+func (fd *FD) ReadFrom(p []byte) (int, syscall.Sockaddr, error) { panic(failPollFD) }
+func (fd *FD) ReadFromInet4(p []byte, from *syscall.SockaddrInet4) (int, error) { panic(failPollFD) }
+func (fd *FD) ReadFromInet6(p []byte, from *syscall.SockaddrInet6) (int, error) { panic(failPollFD) }
+func (fd *FD) WriteTo(p []byte, sa syscall.Sockaddr) (int, error) { panic(failPollFD) }
+func (fd *FD) WriteToInet4(p []byte, sa *syscall.SockaddrInet4) (int, error) { panic(failPollFD) }
+func (fd *FD) WriteToInet6(p []byte, sa *syscall.SockaddrInet6) (int, error) { panic(failPollFD) }
+func (fd *FD) ReadMsg(p []byte, oob []byte, flags int) (int, int, int, syscall.Sockaddr, error) { panic(failPollFD) }
+func (fd *FD) ReadMsgInet4(p []byte, oob []byte, flags int, sa4 *syscall.SockaddrInet4) (int, int, int, error) { panic(failPollFD) }
+func (fd *FD) ReadMsgInet6(p []byte, oob []byte, flags int, sa6 *syscall.SockaddrInet6) (int, int, int, error) { panic(failPollFD) }
+func (fd *FD) WriteMsg(p []byte, oob []byte, sa syscall.Sockaddr) (int, int, error) { panic(failPollFD) }
+func (fd *FD) WriteMsgInet4(p []byte, oob []byte, sa *syscall.SockaddrInet4) (int, int, error) { panic(failPollFD) }
+func (fd *FD) WriteMsgInet6(p []byte, oob []byte, sa *syscall.SockaddrInet6) (int, int, error) { panic(failPollFD) }
+func (fd *FD) Destroy() error { panic(failPollFD) }
+func (fd *FD) RawControl(f func(uintptr)) error { panic(failPollFD) }
+func (fd *FD) RawRead(f func(uintptr) bool) error { panic(failPollFD) }
+func (fd *FD) RawWrite(f func(uintptr) bool) error { panic(failPollFD) }
+func (fd *FD) Writev(v *[][]byte) (int64, error) { panic(failPollFD) }
+func (fd *FD) ReadLock() error { panic(failPollFD) }
+func (fd *FD) ReadUnlock() { panic(failPollFD) }
+func (fd *FD) WriteOnce(p []byte) (int, error) { panic(failPollFD) }
 
 // ---------------------------------------------------------------------------
 // Errors and errno helpers (from gc errno_unix.go / fd.go, unix half).

@@ -73,6 +73,11 @@ public final class LinknameIntrinsics {
         Linknames.register("runtime.fastrandn",
                 args -> Intrinsics.fastrandn(((Number) args[0]).intValue()), 1);
         Linknames.register("runtime.nanotime", args -> Timers.nanotime(), 0);
+        // NOTE (real-net lane, 2026-10-15): runtime.rand is used by the
+        // real net package (dnsclient.go: //go:linkname runtime_rand
+        // runtime.rand). It returns a uint64; fastrand64 provides it.
+        // This is a general runtime symbol, not net-specific.
+        Linknames.register("runtime.rand", args -> Intrinsics.fastrand64(), 0);
         // Intrinsic → Go helper by symbol name. D5: name arrives as
         // GoString; the single any-typed argument passes through boxed.
         Linknames.register("graalgo.runtime.Linknames.callGo", args -> {

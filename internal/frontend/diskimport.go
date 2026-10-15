@@ -290,7 +290,13 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// never invoked because graalgo's runtime does not call
 	// internal/cpu.Initialize and the cpu.X86 feature flags stay zero,
 	// forcing callers onto their generic paths.
+	// NOTE (real-net lane, 2026-10-15): cgo is always disabled. graalgo
+	// is a Truffle interpreter and cannot process cgo (import "C")
+	// files. This mirrors CGO_ENABLED=0: packages select their
+	// non-cgo variants (e.g. net's cgo_stub.go over cgo_linux.go).
+	// This is general — it applies uniformly to all disk packages.
 	ctxt := build.Default
+	ctxt.CgoEnabled = false
 	ctxt.BuildTags = append(append([]string{"purego"}, ctxt.BuildTags...), strings.Fields(os.Getenv("GRAALGO_BUILD_TAGS"))...)
 	bp, err := ctxt.ImportDir(dir, 0)
 	if err != nil {

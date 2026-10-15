@@ -1198,11 +1198,13 @@ var DeadlineExceeded error = &ctxErrorString{s: "context deadline exceeded"}
 
 // Context is the gc 1.27.1 interface (method set identical).
 type Context interface {
-	// NB: Deadline() omitted (P3-M5, ADR-0005): v1 cannot emit multi-result
-	// methods (WS D), and M5 scope does not need Context.Deadline() — all
-	// call sites are desugared via __deadlineOf (Appendix M) or out of scope.
-	// This is a deliberate, documented divergence from gc's interface.
-	// Re-test when WS D lands.
+	// NOTE (real-net lane, 2026-10-15): Deadline() restored. It was
+	// omitted under P3-M5/WS D (v1 could not emit multi-result
+	// methods). WS D has since landed via the general multi-result
+	// mechanisms (registerUserMRFunc, transformDiskMultiResult), so
+	// the restriction is lifted. The real net package calls
+	// ctx.Deadline() (dial.go).
+	Deadline() (deadline time.Time, ok bool)
 	Done() <-chan struct{}
 	Err() error
 	Value(key any) any
