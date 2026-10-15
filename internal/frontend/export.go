@@ -5648,7 +5648,7 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 				// fail fast at the call site (WS D) — they are not in methodIndex
 				// (skipped during synthetic import) and must not be resolved here.
 				// The named M7 scope error is reported during main export.
-				if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+				if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) {
 					continue
 				}
 				mc, err := e.resolveMethodCall(sel, selection, typeList(inst.TypeArgs), nil)
@@ -5672,7 +5672,7 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 		// fips140/ecdh.GenerateKey) are skipped during synthetic import
 		// (never in funcByObj); the Appendix M desugar intercepts call
 		// sites via the table. Skip them here too.
-		if isMultiResultSynthetic(fn) {
+		if e.isMultiResultSyntheticFailFast(fn) {
 			continue
 		}
 		fi, ok := e.funcByObj[fn]
@@ -5743,7 +5743,7 @@ func (e *exporter) scanRoots(info *types.Info, files []*ast.File, tmplFuncs []*f
 		// P3-M7: synthetic multi-result methods (bytes.Buffer.Read, etc.)
 		// fail fast at the call site (WS D) — they are not in methodIndex
 		// (skipped during synthetic import) and must not be resolved here.
-		if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+		if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) {
 			continue
 		}
 		// mrRuntimeStack: the synthetic runtime stack-inspection methods
@@ -6175,7 +6175,7 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 			}
 			// P3-M9 (tier-5b): synthetic multi-result funcs are not in
 			// funcByObj (skipped during import); the desugar handles them.
-			if isMultiResultSynthetic(fn) {
+			if e.isMultiResultSyntheticFailFast(fn) {
 				return true
 			}
 			fi, ok := e.funcByObj[fn]
@@ -6417,7 +6417,12 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	var mrInfo *userMRInfo
 	sigParams := fi.sig.Params()
 	sigResults := fi.sig.Results()
-	if len(results) > 1 && !fi.isTemplate && fi.synthPkg == nil {
+	// P3-M9 (WS D): user-defined multi-result functions are transformed
+	// to pair-returning form. Synthetic packages are included unless
+	// table-driven (Gate-1 #2: regexp/syntax etc. have real Go source
+	// with no static table coverage). Generic templates are skipped.
+	synthTableDriven := fi.synthPkg != nil && isTableDrivenMR(fi)
+	if len(results) > 1 && !fi.isTemplate && !synthTableDriven {
 		// P3-M9 (WS D): user-defined multi-result functions are transformed
 		// to pair-returning form. Synthetic packages are excluded (they use
 		// the table-driven mechanism). Generic templates are skipped.
@@ -8842,7 +8847,7 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// through to exportMethodCall, which routes through
 			// resolveMethodCall's WS H ifacemethod fallback (now
 			// multi-result capable via the pair plan).
-			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+			if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) {
 				if _, isTP := selection.Recv().(*types.TypeParam); !isTP {
 					return nil, multiResultSyntheticError(f)
 				}
@@ -9443,7 +9448,7 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
 	// time.ParseDuration.
-	if isMultiResultSynthetic(fn) {
+	if e.isMultiResultSyntheticFailFast(fn) {
 		return nil, multiResultSyntheticError(fn)
 	}
 	fi, ok := e.funcByObj[fn]
@@ -10818,7 +10823,7 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 			pairPlan = e.classifyDiskIfaceMultiResultCall(selection)
 		}
 		if pairPlan == nil {
-			if f, ok := selection.Obj().(*types.Func); ok && isMultiResultSynthetic(f) {
+			if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) {
 				return nil, multiResultSyntheticError(f)
 			}
 			return nil, scopeErrorf("interface method %s has %d results; at most one result is supported in frontend/v1 scope (WS D)",
@@ -11133,7 +11138,7 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 				// P3-M9: synthetic multi-result methods (bytes.Buffer.Read,
 				// etc.) fail fast with the named milestone scope error, not
 				// the generic WS D message — the test pins the attribution.
-				if isMultiResultSynthetic(fn) {
+				if e.isMultiResultSyntheticFailFast(fn) {
 					return nil, multiResultSyntheticError(fn)
 				}
 			}
