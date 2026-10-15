@@ -31,7 +31,8 @@ Range resolution (first wins):
   2. $GATE_BASE_SHA               (CI: ${{ github.event.before }} on push to
                                    master — the TRUE push range, not just the
                                    tip commit)
-  3. origin/master..HEAD           (lane worktree: commits not yet on master)
+  3. <remote>/master..HEAD        (lane worktree: commits not yet on master;
+                                   tries origin, main, upstream in order)
 
 The check NEVER passes vacuously: an unresolvable range (bad SHA, all-zero
 SHA, no origin/master) is a loud failure, never a skip. A resolved range
@@ -96,14 +97,17 @@ def resolve_range():
             return None
         return base, "HEAD", "$GATE_BASE_SHA..HEAD (push range)"
 
-    rc, _, _ = run(["git", "rev-parse", "--verify", "origin/master"])
-    if rc != 0:
-        print("REVIEW-GATE CHECK FAILED:")
-        print("  could not determine any range to inspect: no --range, no")
-        print("  GATE_BASE_SHA, and no origin/master (shallow checkout?).")
-        print("  Refusing to pass vacuously.")
-        return None
-    return "origin/master", "HEAD", "origin/master..HEAD"
+    for remote in ("origin", "main", "upstream"):
+        ref = f"{remote}/master"
+        rc, _, _ = run(["git", "rev-parse", "--verify", ref])
+        if rc == 0:
+            return ref, "HEAD", f"{ref}..HEAD"
+    print("REVIEW-GATE CHECK FAILED:")
+    print("  could not determine any range to inspect: no --range, no")
+    print("  GATE_BASE_SHA, and no origin/master, main/master, or")
+    print("  upstream/master (shallow checkout?).")
+    print("  Refusing to pass vacuously.")
+    return None
 
 
 def trailer_block(body):

@@ -61,7 +61,7 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   range, not just the tip commit). Before reporting done, run
   [check_review_trailers.py](.github/scripts/check_review_trailers.py)
   (`python3 .github/scripts/check_review_trailers.py`, defaults to
-  `origin/master..HEAD`) — it is expected to FAIL until the review lands;
+  `<remote>/master..HEAD`, trying origin/main/upstream) — it is expected to FAIL until the review lands;
   after a clean review, add the trailer to each commit with a
   trailer-only amend, re-run the checker, and push.
 - Every commit is pushed immediately after landing, and CI is watched to
