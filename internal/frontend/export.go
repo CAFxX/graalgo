@@ -346,6 +346,8 @@ func syntheticRuntimePackage() *types.Package {
 type overlayImporter struct{}
 
 func (overlayImporter) Import(path string) (*types.Package, error) {
+	// The 5 packages with dedicated synthetic constructors (not in
+	// syntheticSources).
 	switch path {
 	case "runtime":
 		return syntheticRuntimePackage(), nil
@@ -355,328 +357,15 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return syntheticSyncPackage(), nil
 	case "sync/atomic":
 		return syntheticAtomicPackage(), nil
-	case "time":
-		return getSyntheticPackage("time").pkg, nil
-	case "context":
-		return getSyntheticPackage("context").pkg, nil
-	case "errors":
-		return getSyntheticPackage("errors").pkg, nil
-	case "sort":
-		return getSyntheticPackage("sort").pkg, nil
-	case "math":
-		return getSyntheticPackage("math").pkg, nil
-	// P3-M9 (tier1c): synthetic math/bits package (real-Go source in
-	// synth_mathbits.go).
-	case "math/bits":
-		return getSyntheticPackage("math/bits").pkg, nil
-	// P3-M9 (tier1c): synthetic math/cmplx package (real-Go source in
-	// synth_mathcmplx.go).
-	case "math/cmplx":
-		return getSyntheticPackage("math/cmplx").pkg, nil
-	// P3-M9 (wave 3): synthetic math/big + its synthetic dependencies
-	// math/rand (minimal port) and internal/byteorder (vendored).
-	// math/big is the G-c hard gate for the asymmetric-crypto tier.
-	case "math/big":
-		return getSyntheticPackage("math/big").pkg, nil
-	case "math/rand":
-		return getSyntheticPackage("math/rand").pkg, nil
-	case "math/rand/v2":
-		return getSyntheticPackage("math/rand/v2").pkg, nil
-	case "bufio":
-		return getSyntheticPackage("bufio").pkg, nil
-	case "path":
-		return getSyntheticPackage("path").pkg, nil
-	case "text/scanner":
-		return getSyntheticPackage("text/scanner").pkg, nil
-	case "regexp/syntax":
-		return getSyntheticPackage("regexp/syntax").pkg, nil
-	case "internal/byteorder":
-		return getSyntheticPackage("internal/byteorder").pkg, nil
-	case "strings":
-		return getSyntheticPackage("strings").pkg, nil
-	case "bytes":
-		return getSyntheticPackage("bytes").pkg, nil
-	case "encoding/xml":
-		return getSyntheticPackage("encoding/xml").pkg, nil
-	case "strconv":
-		return getSyntheticPackage("strconv").pkg, nil
-	case "encoding/json":
-		return getSyntheticPackage("encoding/json").pkg, nil
-	case "encoding/csv":
-		return getSyntheticPackage("encoding/csv").pkg, nil
-	case "encoding/gob":
-		return getSyntheticPackage("encoding/gob").pkg, nil
-	case "encoding/base32":
-		return getSyntheticPackage("encoding/base32").pkg, nil
-	case "encoding/base64":
-		return getSyntheticPackage("encoding/base64").pkg, nil
-	case "encoding/hex":
-		return getSyntheticPackage("encoding/hex").pkg, nil
-	case "encoding/binary":
-		return getSyntheticPackage("encoding/binary").pkg, nil
-	case "encoding/ascii85":
-		return getSyntheticPackage("encoding/ascii85").pkg, nil
-	case "encoding/pem":
-		return getSyntheticPackage("encoding/pem").pkg, nil
-	case "encoding/asn1":
-		return getSyntheticPackage("encoding/asn1").pkg, nil
-	case "encoding":
-		return getSyntheticPackage("encoding").pkg, nil
-	case "io":
-		return getSyntheticPackage("io").pkg, nil
-	// P3-M8 (wave 2): synthetic syscall package (Errno vocabulary +
-	// scalar services; real-Go source in synth_syscall.go).
-	case "syscall":
-		return getSyntheticPackage("syscall").pkg, nil
-	// P3-M8 (wave 2): the synthetic os package (real-Go source in
-	// synth_os.go) and the minimal synthetic io/fs core (synth_iofs.go).
-	case "os":
-		return getSyntheticPackage("os").pkg, nil
-	case "io/fs":
-		return getSyntheticPackage("io/fs").pkg, nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
-	// P3-M8 (wave 2): synthetic reflect package (real-Go source in
-	// synth_reflect.go). The reflect source imports the synthetic iter
-	// and internal/reflectlite packages, so they need overlay cases too.
-	case "reflect":
-		return getSyntheticPackage("reflect").pkg, nil
-	case "iter":
-		return getSyntheticPackage("iter").pkg, nil
-	case "internal/reflectlite":
-		return getSyntheticPackage("internal/reflectlite").pkg, nil
-	// P3-M8 (wave 2): synthetic crypto packages (real-Go sources in
-	// synth_crypto*.go). The crypto sources import the synthetic hash
-	// package, so it needs an overlay case too.
-	case "hash":
-		return getSyntheticPackage("hash").pkg, nil
-	case "crypto":
-		return getSyntheticPackage("crypto").pkg, nil
-	case "crypto/aes":
-		return getSyntheticPackage("crypto/aes").pkg, nil
-	case "crypto/cipher":
-		return getSyntheticPackage("crypto/cipher").pkg, nil
-	case "crypto/des":
-		return getSyntheticPackage("crypto/des").pkg, nil
-	case "crypto/hmac":
-		return getSyntheticPackage("crypto/hmac").pkg, nil
-	case "crypto/md5":
-		return getSyntheticPackage("crypto/md5").pkg, nil
-	case "crypto/rand":
-		return getSyntheticPackage("crypto/rand").pkg, nil
-	case "crypto/rc4":
-		return getSyntheticPackage("crypto/rc4").pkg, nil
-	case "crypto/sha1":
-		return getSyntheticPackage("crypto/sha1").pkg, nil
-	case "crypto/sha256":
-		return getSyntheticPackage("crypto/sha256").pkg, nil
-	case "crypto/sha3":
-		return getSyntheticPackage("crypto/sha3").pkg, nil
-	case "crypto/sha512":
-		return getSyntheticPackage("crypto/sha512").pkg, nil
-	case "crypto/subtle":
-		return getSyntheticPackage("crypto/subtle").pkg, nil
-	// P3-M9 (tier-5): asymmetric crypto (synth_crypto_*.go) + internal
-	// fips140/* deps (synthetic-only; the user allow-list below only
-	// opens the 8 public packages + cryptobyte).
-	case "crypto/elliptic":
-		return getSyntheticPackage("crypto/elliptic").pkg, nil
-	case "crypto/ecdh":
-		return getSyntheticPackage("crypto/ecdh").pkg, nil
-	case "crypto/dsa":
-		return getSyntheticPackage("crypto/dsa").pkg, nil
-	case "crypto/ecdsa":
-		return getSyntheticPackage("crypto/ecdsa").pkg, nil
-	case "crypto/ed25519":
-		return getSyntheticPackage("crypto/ed25519").pkg, nil
-	case "crypto/rsa":
-		return getSyntheticPackage("crypto/rsa").pkg, nil
-	case "crypto/hkdf":
-		return getSyntheticPackage("crypto/hkdf").pkg, nil
-	case "crypto/pbkdf2":
-		return getSyntheticPackage("crypto/pbkdf2").pkg, nil
-	case "crypto/internal/fips140":
-		return getSyntheticPackage("crypto/internal/fips140").pkg, nil
-	case "crypto/internal/fips140/check":
-		return getSyntheticPackage("crypto/internal/fips140/check").pkg, nil
-	case "crypto/internal/fips140/alias":
-		return getSyntheticPackage("crypto/internal/fips140/alias").pkg, nil
-	case "crypto/internal/fips140only":
-		return getSyntheticPackage("crypto/internal/fips140only").pkg, nil
-	case "crypto/internal/fips140cache":
-		return getSyntheticPackage("crypto/internal/fips140cache").pkg, nil
-	case "crypto/internal/fips140hash":
-		return getSyntheticPackage("crypto/internal/fips140hash").pkg, nil
-	case "crypto/internal/fips140/drbg":
-		return getSyntheticPackage("crypto/internal/fips140/drbg").pkg, nil
-	case "crypto/internal/rand":
-		return getSyntheticPackage("crypto/internal/rand").pkg, nil
-	case "crypto/internal/boring/bbig":
-		return getSyntheticPackage("crypto/internal/boring/bbig").pkg, nil
-	case "crypto/internal/boring":
-		return getSyntheticPackage("crypto/internal/boring").pkg, nil
-	case "crypto/internal/constanttime":
-		return getSyntheticPackage("crypto/internal/constanttime").pkg, nil
-	case "crypto/internal/fips140deps/byteorder":
-		return getSyntheticPackage("crypto/internal/fips140deps/byteorder").pkg, nil
-	case "crypto/internal/fips140/nistec/fiat":
-		return getSyntheticPackage("crypto/internal/fips140/nistec/fiat").pkg, nil
-	case "crypto/internal/fips140/nistec":
-		return getSyntheticPackage("crypto/internal/fips140/nistec").pkg, nil
-	case "crypto/internal/fips140/edwards25519/field":
-		return getSyntheticPackage("crypto/internal/fips140/edwards25519/field").pkg, nil
-	case "crypto/internal/fips140/edwards25519":
-		return getSyntheticPackage("crypto/internal/fips140/edwards25519").pkg, nil
-	case "crypto/internal/fips140/bigmod":
-		return getSyntheticPackage("crypto/internal/fips140/bigmod").pkg, nil
-	case "crypto/internal/fips140/subtle":
-		return getSyntheticPackage("crypto/internal/fips140/subtle").pkg, nil
-	case "crypto/internal/fips140/sha256":
-		return getSyntheticPackage("crypto/internal/fips140/sha256").pkg, nil
-	case "crypto/internal/fips140/sha512":
-		return getSyntheticPackage("crypto/internal/fips140/sha512").pkg, nil
-	case "crypto/internal/fips140/sha3":
-		return getSyntheticPackage("crypto/internal/fips140/sha3").pkg, nil
-	case "crypto/internal/fips140/hmac":
-		return getSyntheticPackage("crypto/internal/fips140/hmac").pkg, nil
-	case "crypto/internal/fips140/hkdf":
-		return getSyntheticPackage("crypto/internal/fips140/hkdf").pkg, nil
-	case "crypto/internal/fips140/pbkdf2":
-		return getSyntheticPackage("crypto/internal/fips140/pbkdf2").pkg, nil
-	case "crypto/internal/fips140/ecdh":
-		return getSyntheticPackage("crypto/internal/fips140/ecdh").pkg, nil
-	case "crypto/internal/fips140/ecdsa":
-		return getSyntheticPackage("crypto/internal/fips140/ecdsa").pkg, nil
-	case "crypto/internal/fips140/ed25519":
-		return getSyntheticPackage("crypto/internal/fips140/ed25519").pkg, nil
-	case "crypto/internal/fips140/rsa":
-		return getSyntheticPackage("crypto/internal/fips140/rsa").pkg, nil
-	case "golang.org/x/crypto/cryptobyte":
-		return getSyntheticPackage("golang.org/x/crypto/cryptobyte").pkg, nil
-	case "golang.org/x/crypto/cryptobyte/asn1":
-		return getSyntheticPackage("golang.org/x/crypto/cryptobyte/asn1").pkg, nil
-	// P3-M9 (tier-1d): synthetic unique/structs packages (real-Go sources
-	// in synth_unique.go / synth_structs.go).
-	case "unique":
-		return getSyntheticPackage("unique").pkg, nil
-	case "structs":
-		return getSyntheticPackage("structs").pkg, nil
-	// P3-M9 (tier-1d): synthetic internal/bytealg (synthetic-only, like
-	// internal/reflectlite — user imports of internal/* are not admitted
-	// by the import allow-list below).
-	case "internal/bytealg":
-		return getSyntheticPackage("internal/bytealg").pkg, nil
-	// P3-M9: synthetic flag, testing, testing/quick, testing/iotest
-	// packages (real-Go sources in synth_flag.go / synth_testing.go /
-	// synth_testing_quick.go / synth_testing_iotest.go).
-	case "flag":
-		return getSyntheticPackage("flag").pkg, nil
-	case "testing":
-		return getSyntheticPackage("testing").pkg, nil
-	case "testing/quick":
-		return getSyntheticPackage("testing/quick").pkg, nil
-	case "testing/iotest":
-		return getSyntheticPackage("testing/iotest").pkg, nil
-	// P3-M9 (wave 3, tier-1a worker): synthetic cmp/slices/maps/unicode
-	// packages (real-Go sources in synth_cmp.go, synth_slices.go,
-	// synth_maps.go, synth_unicode*.go). slices imports synthetic cmp
-	// and iter; maps imports synthetic iter; the unicode packages are
-	// self-contained.
-	case "cmp":
-		return getSyntheticPackage("cmp").pkg, nil
-	case "slices":
-		return getSyntheticPackage("slices").pkg, nil
-	case "maps":
-		return getSyntheticPackage("maps").pkg, nil
-	case "unicode":
-		return getSyntheticPackage("unicode").pkg, nil
-	case "unicode/utf8":
-		return getSyntheticPackage("unicode/utf8").pkg, nil
-	case "unicode/utf16":
-		return getSyntheticPackage("unicode/utf16").pkg, nil
-	// P3-M9 (wave 3, tier-1b worker): synthetic container/* and hash/*
-	// packages (real-Go sources in synth_container_*.go /
-	// synth_hash_*.go). container/heap imports the synthetic sort
-	// package; hash/* import the synthetic hash and errors packages;
-	// hash/maphash additionally imports synthetic crypto/rand (MakeSeed
-	// entropy) and math (Float64bits intrinsics for the generic
-	// WriteComparable float cases).
-	case "container/heap":
-		return getSyntheticPackage("container/heap").pkg, nil
-	case "container/list":
-		return getSyntheticPackage("container/list").pkg, nil
-	case "container/ring":
-		return getSyntheticPackage("container/ring").pkg, nil
-	case "hash/adler32":
-		return getSyntheticPackage("hash/adler32").pkg, nil
-	case "hash/crc32":
-		return getSyntheticPackage("hash/crc32").pkg, nil
-	case "hash/crc64":
-		return getSyntheticPackage("hash/crc64").pkg, nil
-	case "hash/fnv":
-		return getSyntheticPackage("hash/fnv").pkg, nil
-	case "hash/maphash":
-		return getSyntheticPackage("hash/maphash").pkg, nil
-	// P3-M9 (tier-4: net): synthetic net packages (real-Go sources in
-	// synth_net.go / synth_netip.go / synth_neturl.go / synth_textproto.go /
-	// synth_poll.go / synth_nettrace.go / synth_singleflight.go). The
-	// internal/* packages are synthetic-only (not in the user allow-list).
-	case "net":
-		return getSyntheticPackage("net").pkg, nil
-	case "net/netip":
-		return getSyntheticPackage("net/netip").pkg, nil
-	case "net/url":
-		return getSyntheticPackage("net/url").pkg, nil
-	case "net/textproto":
-		return getSyntheticPackage("net/textproto").pkg, nil
-	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest
-	// (real-Go sources in synth_net_http.go / synth_net_http_httptest.go).
-	// The client delegates to java.net.http.HttpClient via the
-	// graalgo.http.client.do intrinsic; the server is Go-implemented.
-	case "net/http":
-		return getSyntheticPackage("net/http").pkg, nil
-	case "net/http/httptest":
-		return getSyntheticPackage("net/http/httptest").pkg, nil
-	case "internal/poll":
-		return getSyntheticPackage("internal/poll").pkg, nil
-	case "internal/nettrace":
-		return getSyntheticPackage("internal/nettrace").pkg, nil
-	case "internal/singleflight":
-		return getSyntheticPackage("internal/singleflight").pkg, nil
-	// P3-M9 (tier-5: compress): synthetic compress/* packages (real-Go
-	// sources in synth_compress_{flate,gzip,zlib,lzw,bzip2}.go).
-	case "compress/flate":
-		return getSyntheticPackage("compress/flate").pkg, nil
-	case "compress/gzip":
-		return getSyntheticPackage("compress/gzip").pkg, nil
-	case "compress/zlib":
-		return getSyntheticPackage("compress/zlib").pkg, nil
-	case "compress/lzw":
-		return getSyntheticPackage("compress/lzw").pkg, nil
-	case "compress/bzip2":
-		return getSyntheticPackage("compress/bzip2").pkg, nil
-	// P3-M9 (tier-5: archive/mime): synthetic archive/* and mime/*
-	// packages (real-Go sources in synth_archive_{tar,zip}.go,
-	// synth_mime*.go, generated by gen_synth_archive_mime.py).
-	case "archive/tar":
-		return getSyntheticPackage("archive/tar").pkg, nil
-	case "archive/zip":
-		return getSyntheticPackage("archive/zip").pkg, nil
-	case "mime":
-		return getSyntheticPackage("mime").pkg, nil
-	case "mime/multipart":
-		return getSyntheticPackage("mime/multipart").pkg, nil
-	case "mime/quotedprintable":
-		return getSyntheticPackage("mime/quotedprintable").pkg, nil
-	// P3-M9 (tier-5): synthetic crypto/x509 packages (real-Go sources in
-	// synth_crypto_x509.go / synth_crypto_x509_pkix.go, Java delegation
-	// via graalgo.x509.* intrinsics).
-	case "crypto/x509":
-		return getSyntheticPackage("crypto/x509").pkg, nil
-	case "crypto/x509/pkix":
-		return getSyntheticPackage("crypto/x509/pkix").pkg, nil
-	case "crypto/tls":
-		return getSyntheticPackage("crypto/tls").pkg, nil
+	}
+	// General (hunt-special-cases): any package with a synthetic source
+	// resolves via getSyntheticPackage — no per-package switch needed.
+	// This replaces the 300+ line per-package switch; new synthetic
+	// packages work automatically when added to syntheticSources.
+	if _, ok := syntheticSources[path]; ok {
+		return getSyntheticPackage(path).pkg, nil
 	}
 	// WS G (P3-M9, module-probe lane): third-party imports resolve from
 	// local disk (module cache/GOPATH) through the general overlay. A path
@@ -1413,131 +1102,70 @@ func ExportFile(path string) (string, error) {
 
 // needsOverlayImporter reports whether import path p must resolve
 // through the synthetic/disk overlay importer (WS G).
+//
+// General mechanism (hunt-special-cases): instead of a per-package
+// allow-list, admit:
+// 1. The 5 packages with dedicated synthetic constructors (not in
+//    syntheticSources): runtime, fmt, sync, sync/atomic, unsafe.
+// 2. Any package with a synthetic source (syntheticSources map) —
+//    including future additions, no allow-list update needed.
+// 3. Disk-importable third-party packages.
+//
+// Internal packages (internal/*, crypto/internal/*) have synthetic
+// sources but are NOT user-importable; they are excluded here and in
+// checkImportAllowed.
 func needsOverlayImporter(p string) bool {
-	return p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
-		p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "iter" ||
-		p == "crypto" || p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" ||
-		// P3-M9 (tier-5): asymmetric crypto public packages +
-		// cryptobyte (internal fips140/* stay synthetic-only).
-		p == "crypto/elliptic" || p == "crypto/ecdh" || p == "crypto/dsa" || p == "crypto/ecdsa" || p == "crypto/ed25519" || p == "crypto/rsa" || p == "crypto/hkdf" || p == "crypto/pbkdf2" ||
-		p == "crypto/x509" || p == "crypto/x509/pkix" || p == "crypto/tls" ||
-		p == "golang.org/x/crypto/cryptobyte" || p == "golang.org/x/crypto/cryptobyte/asn1" ||
-		p == "cmp" || p == "slices" || p == "maps" || p == "unicode" || p == "unicode/utf8" || p == "unicode/utf16" ||
-		// P3-M9 (tier1c): "math/bits" likewise.
-		// P3-M9 (wave 3): "math/big" + "math/rand" likewise.
-		// P3-M9: "flag", "testing", "testing/quick", "testing/iotest" likewise.
-		p == "math/bits" || p == "math/big" || p == "math/rand" || p == "math/rand/v2" || p == "math/cmplx" || p == "bufio" || p == "path" || p == "text/scanner" || p == "regexp/syntax" ||
-		p == "flag" || p == "testing" || p == "testing/quick" || p == "testing/iotest" ||
-		// P3-M9 (tier-1d): "unique" and "structs" likewise.
-		// P3-M9 (wave 3, tier-1b): "container/heap", "container/list",
-		// "container/ring", "hash/adler32", "hash/crc32", "hash/crc64",
-		// "hash/fnv", "hash/maphash" likewise (without this, a program
-		// importing only these packages keeps failImporter and the
-		// import fails at type-check).
-		p == "unique" || p == "structs" ||
-		p == "container/heap" || p == "container/list" || p == "container/ring" ||
-		p == "hash/adler32" || p == "hash/crc32" || p == "hash/crc64" || p == "hash/fnv" || p == "hash/maphash" ||
-		// P3-M9 (tier-5: compress): "compress/flate", "compress/gzip",
-		// "compress/zlib", "compress/lzw", "compress/bzip2" likewise.
-		p == "compress/flate" || p == "compress/gzip" || p == "compress/zlib" ||
-		p == "compress/lzw" || p == "compress/bzip2" ||
-		// P3-M9 (tier-5: archive/mime): "archive/tar", "archive/zip",
-		// "mime", "mime/multipart", "mime/quotedprintable" likewise.
-		p == "archive/tar" || p == "archive/zip" ||
-		p == "mime" || p == "mime/multipart" || p == "mime/quotedprintable" ||
-		// WS G (P3-M9, module-probe lane): a disk-resolvable third-party
-		// import also needs the overlay importer (its default case
-		// builds the package from the module cache/GOPATH).
-		isDiskImportable(p)
+	// The 5 dedicated-constructor packages.
+	if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" {
+		return true
+	}
+	// General: any non-internal synthetic source.
+	if _, ok := syntheticSources[p]; ok {
+		if strings.HasPrefix(p, "internal/") || strings.HasPrefix(p, "crypto/internal/") {
+			return false
+		}
+		return true
+	}
+	// WS G (P3-M9, module-probe lane): a disk-resolvable third-party
+	// import also needs the overlay importer (its default case
+	// builds the package from the module cache/GOPATH).
+	return isDiskImportable(p)
 }
 
 // checkImportAllowed validates one import against the frontend/v1 import
-// overlay allow-list (WS G): synthetic, disk-importable, or scope error.
+// overlay (WS G): synthetic, disk-importable, or scope error.
+//
+// General mechanism (hunt-special-cases): instead of a per-package
+// allow-list, admit:
+// 1. The 5 packages with dedicated synthetic constructors: runtime, fmt,
+//    sync, sync/atomic, unsafe.
+// 2. Any package with a synthetic source (syntheticSources map) except
+//    internal packages (internal/*, crypto/internal/*) which stay
+//    synthetic-only.
+// 3. Disk-importable third-party packages.
+// Every other import is a scope error.
 func checkImportAllowed(imp *ast.ImportSpec) error {
 	path := strings.Trim(imp.Path.Value, "\"`")
-	// M5 (WS F): the single import "runtime" is allowed — resolved by
-	// overlayImporter to a synthetic package exposing runtime.Goexit.
-	// M6 (WS H): the import "fmt" is allowed — resolved by
-	// overlayImporter to the D4 fmt stub (seven pure functions).
-	// P3-M2b (WS D, ADR-0002): the import "sync" is allowed — resolved
-	// by overlayImporter to the synthetic sync package (the four
-	// Phase-2-bound primitives).
-	// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
-	// allowed — resolved by overlayImporter to the synthetic packages
-	// (real-Go sources with clock/timer intrinsics).
-	// P3-M4 (WS C, ADR-0004): the import "sync/atomic" is allowed —
-	// resolved by overlayImporter to the synthetic sync/atomic package
-	// (typed wrappers Int64/Uint64/Int32/Uint32/Bool/Uintptr).
-	// P3-M4 (WS C, ADR-0004): the import "unsafe" is allowed — resolved
-	// by overlayImporter to an empty synthetic package. Only the blank
-	// form (`import _ "unsafe"`, required by //go:linkname directives)
-	// is useful: selections on unsafe.* fail as undefined.
-	// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
-	// allowed — resolved by overlayImporter to the synthetic packages
-	// (real-Go sources; see synth_time_context.go).
-	// P3-M7 (wave 1): the imports "errors", "sort", "bytes", "math" are
-	// allowed — resolved by overlayImporter to the synthetic packages
-	// (real-Go sources; see synth_errors.go / synth_sort.go /
-	// synth_bytes.go / synth_math.go).
-	// P3-M7 (wave 1): the 8 encoding/* primitive packages
-	// (encoding/base32, encoding/base64, encoding/hex, encoding/binary,
-	// encoding/ascii85, encoding/pem, encoding/asn1, encoding) are
-	// allowed — resolved by overlayImporter to the synthetic packages
-	// (real-Go sources; see synth_base32.go etc.).
-	// P3-M8 (wave 2): the import "io" is allowed — resolved by
-	// overlayImporter to the synthetic package (real-Go source; see
-	// synth_io.go).
-	// Every other import is still a scope error (WS G import overlay).
-	// P3-M8 (wave 2): "syscall", "reflect", and crypto/* likewise.
-	// P3-M8 (wave 2): "hash" and "iter" (synthetic support packages).
-	if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
-		path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "syscall" && path != "os" && path != "io/fs" && path != "reflect" && path != "hash" && path != "iter" &&
-		path != "crypto" && path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" && path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" && path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" &&
-		// P3-M9 (tier-5): asymmetric crypto public packages +
-		// cryptobyte (internal fips140/* stay synthetic-only).
-		path != "crypto/elliptic" && path != "crypto/ecdh" && path != "crypto/dsa" && path != "crypto/ecdsa" && path != "crypto/ed25519" && path != "crypto/rsa" && path != "crypto/hkdf" && path != "crypto/pbkdf2" &&
-		path != "crypto/x509" && path != "crypto/x509/pkix" && path != "crypto/tls" &&
-		path != "golang.org/x/crypto/cryptobyte" && path != "golang.org/x/crypto/cryptobyte/asn1" &&
-		path != "cmp" && path != "slices" && path != "maps" && path != "unicode" && path != "unicode/utf8" && path != "unicode/utf16" &&
-		// P3-M9 (tier1c): "math/bits" likewise.
-		// P3-M9 (wave 3): "math/big" + "math/rand" likewise (the G-c
-		// hard gate). "internal/byteorder" is synthetic-internal only
-		// (imported by math/big's sources, never by user programs).
-		// P3-M9: "flag", "testing", "testing/quick", "testing/iotest"
-		// likewise (the go-test trial prerequisite packages).
-		path != "math/bits" && path != "math/big" && path != "math/rand" && path != "math/rand/v2" && path != "math/cmplx" && path != "bufio" && path != "path" && path != "text/scanner" && path != "regexp/syntax" &&
-		path != "flag" && path != "testing" && path != "testing/quick" && path != "testing/iotest" &&
-		// P3-M9 (wave 3, tier-1b): "container/heap", "container/list",
-		// "container/ring", "hash/adler32", "hash/crc32", "hash/crc64",
-		// "hash/fnv", "hash/maphash" likewise.
-		path != "container/heap" && path != "container/list" && path != "container/ring" &&
-		path != "hash/adler32" && path != "hash/crc32" && path != "hash/crc64" && path != "hash/fnv" && path != "hash/maphash" &&
-		// P3-M9 (tier-1d): "unique" and "structs" likewise (internal/*
-		// stay synthetic-only: user imports are not admitted).
-		// P3-M9 (tier-4: net): "net", "net/netip", "net/url",
-		// "net/textproto" likewise (internal/poll, internal/nettrace,
-		// internal/singleflight stay synthetic-only).
-		// P3-M9 (tier-5: net/http): "net/http", "net/http/httptest"
-		// likewise.
-		path != "unique" && path != "structs" &&
-		path != "net" && path != "net/netip" && path != "net/url" && path != "net/textproto" &&
-		path != "net/http" && path != "net/http/httptest" &&
-		// P3-M9 (tier-5: compress): "compress/flate", "compress/gzip",
-		// "compress/zlib", "compress/lzw", "compress/bzip2" likewise.
-		path != "compress/flate" && path != "compress/gzip" && path != "compress/zlib" &&
-		path != "compress/lzw" && path != "compress/bzip2" &&
-		// P3-M9 (tier-5: archive/mime): "archive/tar", "archive/zip",
-		// "mime", "mime/multipart", "mime/quotedprintable" likewise.
-		path != "archive/tar" && path != "archive/zip" &&
-		path != "mime" && path != "mime/multipart" && path != "mime/quotedprintable" &&
-		// WS G (P3-M9, module-probe lane): third-party imports resolve
-		// from local disk (module cache/GOPATH) through the general
-		// import overlay; only truly unresolvable paths stay a scope
-		// error.
-		!isDiskImportable(path) {
-		return fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
+	// The 5 dedicated-constructor packages.
+	if path == "runtime" || path == "fmt" || path == "sync" || path == "sync/atomic" || path == "unsafe" {
+		return nil
 	}
-	return nil
+	// General: any non-internal synthetic source.
+	if _, ok := syntheticSources[path]; ok {
+		if strings.HasPrefix(path, "internal/") || strings.HasPrefix(path, "crypto/internal/") {
+			// Synthetic-only: user imports not admitted.
+		} else {
+			return nil
+		}
+	}
+	// WS G (P3-M9, module-probe lane): third-party imports resolve
+	// from local disk (module cache/GOPATH) through the general
+	// import overlay; only truly unresolvable paths stay a scope
+	// error.
+	if isDiskImportable(path) {
+		return nil
+	}
+	return fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 }
 
 // ExportFiles type-checks the Go source files at paths — all files of one
