@@ -4941,6 +4941,81 @@ func (e *exporter) findMethodByName(recvObj types.Object, mname string) *funcDec
 	return nil
 }
 
+// indexDiskMethodOnDemand indexes a single method from a disk-imported
+// package on demand, when methodIndex lookup misses. This handles the case
+// where a synthetic package (e.g. synthetic io) calls methods on a real
+// disk package type (e.g. sync.Mutex.Lock) but the disk package was never
+// fully imported (to avoid output bloat).
+//
+// Returns the funcDeclInfo if found and indexed, nil otherwise.
+func (e *exporter) indexDiskMethodOnDemand(recvObj types.Object, mname string) *funcDeclInfo {
+	tn, ok := recvObj.(*types.TypeName)
+	if !ok {
+		return nil
+	}
+	pkg := tn.Pkg()
+	if pkg == nil {
+		return nil
+	}
+	pkgPath := pkg.Path()
+	// Only for disk-importable packages (not synthetic, not the 3 stubs).
+	if _, ok := syntheticSources[pkgPath]; ok {
+		return nil
+	}
+	if pkgPath == "runtime" || pkgPath == "fmt" || pkgPath == "unsafe" {
+		return nil
+	}
+	if !isDiskImportable(pkgPath) {
+		return nil
+	}
+	sp, err := getDiskPackage(pkgPath)
+	if err != nil {
+		return nil
+	}
+	// Find the method declaration in the package's AST files.
+	for _, file := range sp.files {
+		for _, decl := range file.Decls {
+			d, ok := decl.(*ast.FuncDecl)
+			if !ok || d.Recv == nil || d.Name.Name != mname {
+				continue
+			}
+			obj, ok := sp.info.Defs[d.Name].(*types.Func)
+			if !ok {
+				continue
+			}
+			// Verify the receiver type matches.
+			sig, ok := obj.Type().(*types.Signature)
+			if !ok || sig.Recv() == nil {
+				continue
+			}
+			rn := derefNamed(sig.Recv().Type())
+			if rn == nil || rn.Obj().Pkg() == nil {
+				continue
+			}
+			if rn.Obj().Pkg().Path() != pkgPath || rn.Obj().Name() != tn.Name() {
+				continue
+			}
+			// Skip multi-result methods (WS D).
+			if sig.Results().Len() > 1 {
+				continue
+			}
+			fi := &funcDeclInfo{
+				fd:       d,
+				obj:      obj,
+				sig:      sig,
+				recv:     sig.Recv(),
+				file:     file,
+				synthPkg: sp,
+			}
+			fi.isTemplate = sig.TypeParams().Len() > 0 || rn.Origin().TypeParams().Len() > 0
+			key := methodKey{rn.Obj(), mname}
+			e.methodIndex[key] = fi
+			return fi
+		}
+	}
+	return nil
+}
+
 // derefNamed strips one pointer layer and reports the named type, if any.
 func derefNamed(t types.Type) *types.Named {
 	if p, ok := t.(*types.Pointer); ok {
@@ -5206,6 +5281,17 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 			// name, same method name. This is O(n) but only on miss.
 			fi = e.findMethodByName(rn.Obj(), mname)
 			ok = fi != nil
+		}
+		if !ok {
+			// fix-sync-tests: on-demand disk method indexing. If the
+			// receiver type is from a disk-imported package (e.g. real
+			// sync.Mutex used by synthetic io), its methods may not be
+			// in methodIndex yet. Index them on demand from the cached
+			// disk package, then retry the lookup. This avoids eagerly
+			// importing entire disk packages (which bloats output).
+			if fi = e.indexDiskMethodOnDemand(rn.Obj(), mname); fi != nil {
+				ok = true
+			}
 		}
 		if !ok {
 			// GAP-6: methodIndex holds only direct methods; the method
