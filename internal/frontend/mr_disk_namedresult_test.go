@@ -1,7 +1,7 @@
 package main
 
 // P3-M9 (driver-harden, go-cmp lane): regression tests for the
-// transformDiskMultiResult named-result fix. A multi-result function whose
+// transformMultiResult named-result fix. A multi-result function whose
 // named results are not all referenced in the body is legal Go (named
 // results need not be used), but the old transform declared every named
 // result as a local in the __-helper, producing "declared and not used"
@@ -18,7 +18,7 @@ import (
 	"testing"
 )
 
-// checkMRTransform parses src, runs transformDiskMultiResult, and
+// checkMRTransform parses src, runs transformMultiResult, and
 // type-checks the result, returning the type-check error (if any).
 func checkMRTransform(t *testing.T, src string) error {
 	t.Helper()
@@ -27,7 +27,7 @@ func checkMRTransform(t *testing.T, src string) error {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	transformDiskMultiResult("p", []*ast.File{f})
+	transformMultiResult("p", []*ast.File{f})
 	conf := types.Config{Importer: importer.Default()}
 	_, err = conf.Check("p", fset, []*ast.File{f}, nil)
 	return err
@@ -134,7 +134,7 @@ func onePassPrefix() (prefix string, complete bool, pc uint32) {
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	transformDiskMultiResult("p", []*ast.File{f})
+	transformMultiResult("p", []*ast.File{f})
 	for _, decl := range f.Decls {
 		fd, ok := decl.(*ast.FuncDecl)
 		if !ok || !strings.HasPrefix(fd.Name.Name, "__") {
