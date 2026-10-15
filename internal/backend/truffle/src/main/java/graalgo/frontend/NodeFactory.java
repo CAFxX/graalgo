@@ -244,6 +244,9 @@ public final class NodeFactory {
             Map<String, GoKind> kindsByName, Map<Integer, GoFunc> functions) {}
 
     private final Source source;
+    /** One Truffle Source per input file; position "file" indices select
+     * among them (frontend/v1 wire format). source is sources[0]. */
+    private final Source[] sources;
     private final Map<String, ExprBuilder> exprBuilders = new LinkedHashMap<>();
     private final Map<String, StmtBuilder> stmtBuilders = new LinkedHashMap<>();
     private final List<TypeDecoder> typeDecoders = new ArrayList<>();
@@ -307,7 +310,16 @@ public final class NodeFactory {
     private final Map<Integer, GoFunc> funcTable = new LinkedHashMap<>();
 
     public NodeFactory(Source source) {
-        this.source = source;
+        this(new Source[]{source});
+    }
+
+    /** Multi-file constructor: sources[i] backs position file index i. */
+    public NodeFactory(Source[] sources) {
+        if (sources == null || sources.length == 0) {
+            throw new IllegalArgumentException("NodeFactory requires at least one Source");
+        }
+        this.source = sources[0];
+        this.sources = sources;
         registerExprKind("ident", this::buildIdent);
         registerExprKind("basiclit", this::buildBasicLit);
         registerExprKind("binary", this::buildBinary);
@@ -792,11 +804,18 @@ public final class NodeFactory {
     private SourceSection sectionFor(Json.Object node, String kind) {
         Json.Object pos = node.object("pos", kind);
         String p = kind + ".pos";
+        int fileIdx = pos.intValue("file", p);
         int line = pos.intValue("line", p);
         int col = pos.intValue("col", p);
         int len = pos.intValue("len", p);
+        // Multi-file: the position's file index selects the Source. Clamp
+        // defensively; synthetic nodes carry file 0.
+        Source src = source;
+        if (fileIdx >= 0 && fileIdx < sources.length) {
+            src = sources[fileIdx];
+        }
         try {
-            return source.createSection(line, col, len);
+            return src.createSection(line, col, len);
         } catch (IllegalArgumentException outOfRange) {
             // P3-M5 (WS E; ADR-0005 §D5 documented exception): synthesized
             // nodes (e.g. from the synthetic time/context packages) may
@@ -806,9 +825,9 @@ public final class NodeFactory {
             // valid line — instead of failing the build. In-range
             // positions take the identical path as before (additive,
             // behavior-preserving).
-            int lineCount = Math.max(source.getLineCount(), 1);
+            int lineCount = Math.max(src.getLineCount(), 1);
             int clamped = Math.min(Math.max(line, 1), lineCount);
-            return source.createSection(clamped, 1, 0);
+            return src.createSection(clamped, 1, 0);
         }
     }
 
