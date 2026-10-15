@@ -27,15 +27,39 @@ Related: [Makefile](../Makefile) (root build entry point),
   module imports it (Go `internal` convention); everything user-facing flows
   through [cmd/graalgo/](../cmd/graalgo/).
   - [frontend/](../internal/frontend/) — Go source → IR. Moved here from
-    `phases/phase1/frontend/` (code lane 2, 2026-10-13); currently a single
-    Go package (the `gofrontend` tool). The package split below is a
-    follow-up refactor lane (blocked by an exporter/desugar import cycle).
-    - [parser/](../internal/frontend/parser/) — future home: the gofrontend
-      JSON consumer (`export.go`).
-    - [types/](../internal/frontend/types/) — future home: type checking,
-      type tables.
-    - [desugar/](../internal/frontend/desugar/) — future home: multi-result
-      lowering, generics instantiation, synthetic package construction.
+    `phases/phase1/frontend/` (code lane 2, 2026-10-13). The main Go module
+    (own `go.mod`, `package main`) is the `gofrontend` tool:
+    [main.go](../internal/frontend/main.go),
+    [export.go](../internal/frontend/export.go) (AST → wire emission),
+    [diskimport.go](../internal/frontend/diskimport.go) and
+    [mr_disk.go](../internal/frontend/mr_disk.go) (real-stdlib disk imports),
+    [mrdesugar_m5.go](../internal/frontend/mrdesugar_m5.go) (multi-result
+    lowering), the [`synth_*.go`](../internal/frontend/) synthetic stdlib
+    implementations, the `gen_synth_*.py` generators, and the Go test suite.
+    Built by [build.sh](../internal/frontend/build.sh); see
+    [README.md](../internal/frontend/README.md) and
+    [VENDORING.md](../internal/frontend/VENDORING.md). Sibling trees in the
+    same directory:
+    - [p3frontend/](../internal/frontend/p3frontend/) — separate module (own
+      `go.mod`): the phase-3 importer/loader
+      ([loader.go](../internal/frontend/p3frontend/loader.go),
+      [importer.go](../internal/frontend/p3frontend/importer.go),
+      [flatten.go](../internal/frontend/p3frontend/flatten.go),
+      [export.go](../internal/frontend/p3frontend/export.go),
+      [asm.go](../internal/frontend/p3frontend/asm.go)) with its own test
+      suite.
+    - [go/](../internal/frontend/go/) — vendored pristine go1.27.1
+      `src/go/*`; load-bearing via the `build.sh` overlay, intentional per
+      [VENDORING.md](../internal/frontend/VENDORING.md).
+    - [javatest/](../internal/frontend/javatest/) — `NodeFactoryTest.java`
+      plus `golden_*`/`bad*` fixtures (Java wire-format tests living under
+      the Go module dir).
+    - [tools/](../internal/frontend/tools/) — `probe/` and
+      `validate_frontend_v1.py` (wire-format validation).
+    - [parser/](../internal/frontend/parser/),
+      [types/](../internal/frontend/types/),
+      [desugar/](../internal/frontend/desugar/) — empty placeholders for the
+      planned package split (blocked by an exporter/desugar import cycle).
   - The IR is the `frontend/v1` JSON wire format: specified in
     [docs/arch/frontend-v1.md](arch/frontend-v1.md), produced by
     [gofrontend](../internal/frontend/) (validated by
@@ -46,18 +70,33 @@ Related: [Makefile](../Makefile) (root build entry point),
     landed here in the Phase-4 restructure (lane 3); each module has its own
     `Makefile` (plain `javac`, `-Werror`). The runtime module compiles the
     joint round first (its sources plus the truffle module's — the two form
-    a compile cycle), then the truffle module compiles the 8 frozen stubs
-    against it, then interop builds against both; root `make build` drives
-    the three in that dependency order.
+    a compile cycle), then the truffle module compiles the 8 same-FQN
+    shadow classes against it, then interop builds against both; root
+    `make build` drives the three in that dependency order.
     - [truffle/](../internal/backend/truffle/) — Truffle AST node
       implementations (the compiled program):
       [src/main/java/](../internal/backend/truffle/src/main/java/) holds
-      `graalgo.{nodes,values,frontend}` from `phases/phase1` plus the 8
-      frozen phase-1 stubs (`graalgo/runtime/` × 7,
-      `graalgo/safepoint/Safepoint`); the Truffle jars live in
-      [lib/](../internal/backend/truffle/lib/); the launchers
-      [graalgo-run](../internal/backend/graalgo-run) and
+      `graalgo.{nodes,values,frontend}` from `phases/phase1` plus 8
+      same-FQN shadow classes
+      ([graalgo/runtime/](../internal/backend/truffle/src/main/java/graalgo/runtime/)
+      × 7, [graalgo/safepoint/](../internal/backend/truffle/src/main/java/graalgo/safepoint/)).
+      The runtime module's phase-2 implementations shadow these at load
+      (runtime classes precede truffle classes on the launcher classpaths
+      — the same-FQN overlay mechanism). Five are frozen stubs (`Netpoll`,
+      `ChanOps`, `Scheduler`, `GcInterop` throw
+      `UnsupportedOperationException`; `Safepoint` is a no-op); three are
+      full forked implementations with documented deltas (`Panic`: the
+      panicnil knob; `GoroutineState`: `ThreadLocal` vthread-scoped holder
+      lookup; `Timers`: real `nanotime`, stubbed sleep/timer-heap). The
+      Truffle jars live in [lib/](../internal/backend/truffle/lib/); the
+      launchers [graalgo-run](../internal/backend/graalgo-run) and
       [graalgo-sync-run](../internal/backend/graalgo-sync-run) sit alongside.
+    - [fast-cycle/](../internal/backend/fast-cycle/) — fast debug cycle:
+      [FastCycleDaemon.java](../internal/backend/fast-cycle/FastCycleDaemon.java)
+      plus the [`fast-cycle`](../internal/backend/fast-cycle/fast-cycle)
+      wrapper script; wired into the root Makefile `fast-*` targets
+      (`fast-build`, `fast-run`, `fast-test`, `fast-watch`). See
+      [README.md](../internal/backend/fast-cycle/README.md).
     - [runtime/](../internal/backend/runtime/) — the Go runtime on the JVM:
       scheduler, netpoller, maps, channels, synchronization:
       [src/main/java/](../internal/backend/runtime/src/main/java/) holds
@@ -79,9 +118,11 @@ Related: [Makefile](../Makefile) (root build entry point),
       (shared diagnostic logging for launch-time warnings; backed by
       `java.util.logging` — raw `System.err` printing is rejected by the
       interop `check` gate).
-  - [driver/](../internal/driver/) — build orchestration: module-aware
-    builds, build caching (toolexec-equivalent), package resolution. This is
-    what makes `graalgo build` a drop-in for `go build` in Phase 4.
+  - [driver/](../internal/driver/) — artifact emission for `graalgo build`:
+    takes the frontend-validated wire JSON and produces a real executable
+    binary that embeds it
+    ([artifact.go](../internal/driver/artifact.go),
+    [artifact_test.go](../internal/driver/artifact_test.go)).
   - [vet/](../internal/vet/) — static analyzers for `graalgo vet`:
     `go vet`-style checks (printf, unreachable, copylocks, etc.) implemented
     against the parsed AST and type information.
@@ -117,10 +158,32 @@ Related: [Makefile](../Makefile) (root build entry point),
     [docs/dev/adr/](../docs/dev/adr/)).
   - [spec/](../docs/spec/) — language conformance notes (the research-era
     [spec/](spec/) content, curated).
+- [tools/](../tools/) — developer tooling (not the product):
+  [stdlib-fork/](../tools/stdlib-fork/) and
+  [stdlib-linkdiff/](../tools/stdlib-linkdiff/) (stdlib fork/linkname
+  tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
+  [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
+  [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
+  [torture/](../tools/torture/) (scheduler torture),
+  [godebug-diff/](../tools/godebug-diff/),
+  [mutation/](../tools/mutation/), [gate1/](../tools/gate1/),
+  [req/](../tools/req/) (requirements CLI), and
+  [precommit-check.sh](../tools/precommit-check.sh) (mechanical pre-commit
+  guard).
+- [requirements/](../requirements/) — live requirements registry
+  (`GG-*.yaml`); the [req](../tools/req/) CLI walks up to find it. Moves
+  deferred (see the old → new mapping).
+- [research/](../research/) — active research tracks:
+  [phase5-opt-survey/](../research/phase5-opt-survey/) (Phase-5 work).
+  Finished studies are archived under
+  [docs/arch/research/](arch/research/).
 
 > Migration complete (2026-10-14): the `phases/` directories have been
-> removed. All active code, docs, and tooling now live in the new layout.
-> Historical phase documents are archived under [docs/arch/phases/](arch/phases/).
+> removed from the tracked tree. All active code, docs, and tooling now
+> live in the new layout. Historical phase documents are archived under
+> [docs/arch/phases/](arch/phases/). Gitignored local build debris (e.g.
+> stale `phases/*/out/` on a developer's disk) is not part of the repo and
+> is safe to delete.
 
 ## Old → new mapping
 
@@ -133,7 +196,7 @@ new locations.
 | `phases/phase1/frontend/` | [internal/frontend/](../internal/frontend/) |
 | `phases/phase1/src/main/java/{nodes,values,frontend}/` | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) |
 | `phases/phase1/src/main/java/{runtime,launcher,safepoint}/` | [internal/backend/runtime/src/main/java/](../internal/backend/runtime/src/main/java/) |
-| the 8 frozen phase-1 stubs (`graalgo/runtime/` × 7, `graalgo/safepoint/Safepoint`) | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) (compile with the phase-1 module; shadowed at load by the phase-2 replacements) |
+| the 8 same-FQN shadow classes (`graalgo/runtime/` × 7, `graalgo/safepoint/Safepoint`) | [internal/backend/truffle/src/main/java/](../internal/backend/truffle/src/main/java/) (compile with the phase-1 module; shadowed at load by the runtime module's phase-2 implementations — 5 frozen stubs + 3 forked overlays) |
 | `phases/phase2/src/main/java/{sched,jfr,runtime,safepoint}/` | [internal/backend/runtime/src/main/java/](../internal/backend/runtime/src/main/java/) (scheduler keeps package `graalgo.sched`) |
 | `phases/phase3/src/main/java/{iface,p3*}/` | [internal/backend/interop/src/main/java/](../internal/backend/interop/src/main/java/) |
 | `phases/phase1/lib/` (Truffle jars) | [internal/backend/truffle/lib/](../internal/backend/truffle/lib/) |
@@ -156,7 +219,7 @@ new locations.
 | `spec/` | removed 2026-10-14 — was outline drafts and rework scratch, not curated spec content (which lives in [docs/spec/](../docs/spec/)) |
 | `hidden_files/` | removed — evidence lives in commit messages |
 | `phases/*/out/`, `*.err`, compiled binaries | removed — build artifacts, covered by [.gitignore](../.gitignore) |
-| `phases/` (all) | **removed 2026-10-14** — migration complete, zero files remain |
+| `phases/` (all) | **removed 2026-10-14** — migration complete, zero tracked files remain |
 
 ## Principles
 
