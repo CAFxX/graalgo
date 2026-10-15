@@ -25,9 +25,9 @@ package main
 // fd_poll_runtime.go): 0 = no error, 1 = closing, 2 = timeout,
 // 3 = not pollable.
 //
-// Error identity: ErrDeadlineExceeded is a dedicated type with
-// Timeout()==true (gc: poll.deadlineExceededError). The synthetic net
-// package converts it to its own timeoutError (which additionally
+// Error identity: ErrDeadlineExceeded is &DeadlineExceededError{} exactly
+// as in gc 1.27.1 internal/poll/fd.go, with Timeout()==true. The synthetic
+// net package converts it to its own timeoutError (which additionally
 // Is-matches os.ErrDeadlineExceeded) before wrapping in *net.OpError.
 //
 // Only frontend/v1-supported constructs (no generics, no reflect, no
@@ -46,12 +46,19 @@ import "time"
 type String string
 
 // TEMPORARY: synthetic until ASM backend (his 2026-10-15 order).
-// Hook variables and error types required by the real net package.
-// Verbatim from gc 1.27.1 internal/poll.
+// Hook variables required by the real net package (rawconn.go).
+// SEMANTIC DIVERGENCE from gc 1.27.1 internal/poll/fd.go (NOT verbatim):
+// the synthetic syscall.Close/Accept/Accept4 these point at are fail-fast
+// panics until the ASM backend provides real fd syscalls. The variables
+// exist only for source compatibility with net/rawconn.go — calling through
+// them panics. Do not treat them as working hooks.
 var CloseFunc func(int) error = syscall.Close
 var AcceptFunc func(int) (int, syscall.Sockaddr, error) = syscall.Accept
 var Accept4Func func(int, int) (int, syscall.Sockaddr, error) = syscall.Accept4
 
+// DeadlineExceededError is returned by poll waits that exceed their
+// deadline. Verbatim from gc 1.27.1 internal/poll/fd.go; backs
+// ErrDeadlineExceeded exactly as in gc.
 type DeadlineExceededError struct{}
 
 func (e *DeadlineExceededError) Error() string   { return "i/o timeout" }
@@ -382,18 +389,15 @@ var (
 	ErrNotPollable = errors.New("not pollable")
 )
 
-// pollTimeoutError is the synthetic internal/poll deadline-exceeded
-// error (gc: poll.deadlineExceededError). Timeout()==true, like gc. The
-// synthetic net package converts it to its own timeoutError (which
-// Is-matches os.ErrDeadlineExceeded) before wrapping in *net.OpError.
-type pollTimeoutError struct{}
-
-func (pollTimeoutError) Error() string   { return "i/o timeout" }
-func (pollTimeoutError) Timeout() bool   { return true }
-func (pollTimeoutError) Temporary() bool { return true }
-
 // ErrDeadlineExceeded is returned when a poll wait exceeds its deadline.
-var ErrDeadlineExceeded error = pollTimeoutError{}
+// Exactly gc 1.27.1 internal/poll/fd.go:
+//
+//	var ErrDeadlineExceeded error = &DeadlineExceededError{}
+//
+// (The synthetic net package converts it to its own timeoutError, which
+// additionally Is-matches os.ErrDeadlineExceeded, before wrapping in
+// *net.OpError.) A single error type — no synthetic duplicate.
+var ErrDeadlineExceeded error = &DeadlineExceededError{}
 
 // DupCloseOnExec (gc 1.27.1, src/internal/poll/fd_unix.go:658):
 // duplicates fd with close-on-exec flag set. Not yet implemented as a

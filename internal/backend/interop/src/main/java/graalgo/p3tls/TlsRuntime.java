@@ -525,6 +525,43 @@ public final class TlsRuntime {
     }
 
     /**
+     * Shuts down the write side of the connection: transitions the engine
+     * to closeOutbound and drains the resulting close_notify alert bytes.
+     * The caller writes the returned bytes to the network and must not
+     * write further application data afterwards.
+     * Returns null on a bad handle or engine error.
+     * graalgo.tls.closeWrite(handle) -> bytes | null
+     */
+    public static Object closeWrite(Object handleArg) {
+        SSLEngine engine = ENGINES.get(num(handleArg));
+        if (engine == null) {
+            return null;
+        }
+        try {
+            engine.closeOutbound();
+            java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+            ByteBuffer src = ByteBuffer.allocate(0);
+            for (int i = 0; i < 20; i++) {
+                ByteBuffer dst = ByteBuffer.allocate(NET_BUF);
+                SSLEngineResult res = engine.wrap(src, dst);
+                dst.flip();
+                byte[] chunk = new byte[dst.remaining()];
+                dst.get(chunk);
+                out.write(chunk, 0, chunk.length);
+                if (chunk.length == 0) {
+                    break;
+                }
+                if (res.getStatus() == SSLEngineResult.Status.CLOSED) {
+                    break;
+                }
+            }
+            return toGoBytes(out.toByteArray());
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
      * Unwraps TLS records into application data.
      * Returns app bytes (may be empty); null if the peer closed or on error.
      * graalgo.tls.unwrap(handle, netData) -> appdata | null
