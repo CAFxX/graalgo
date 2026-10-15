@@ -45,10 +45,6 @@
     {
       "program": "42_json",
       "reason": "backend-specific: encoding/json.Marshal not in synthetic json scope"
-    },
-    {
-      "program": "43_range_over_func",
-      "reason": "backend-specific: range-over-func iterators not supported"
     }
   ],
   "format": "graalgo-behavior-snapshot/v1",
@@ -406,6 +402,17 @@
       "stdin": "",
       "stdout": "worker stopped, counted to true\n",
       "timedOut": false
+    },
+    {
+      "name": "43_range_over_func",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "55\n0 1 4 9 16 \n0=v0 1=v1 2=v2 3=v3 \n6\n0 4 16 \nv0 v1 \n",
+      "stderr": ""
     },
     {
       "args": [],
