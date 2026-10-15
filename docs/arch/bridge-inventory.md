@@ -115,6 +115,17 @@ deliverable until the design lands.
   `frontend-rewrite` (frontend-v2) replaces this machinery entirely
   (Phase 4).
 - **Phase:** 1 (reflect/time/math predicates) → 2 (shrink) → 3 (delete).
+- **Note (2026-10-16, PKG-023 independent review + PKG-038):** completing
+  the *declared view* of the already-inventoried dedicated stubs
+  (`syntheticRuntimePackage` in [export.go](../../internal/frontend/export.go),
+  `syntheticFmtPackage`, `syntheticUnsafePackage`) is NOT a new bridge.
+  The mechanical gate flags `addFunc(` lines in `export.go`, but the
+  overlay's existence is grandfathered by this entry — extending its
+  declared API surface toward gc's documented API adds no new bridge
+  machinery (no new synth files, no new wire nodes, no new
+  package-name-keyed branches). The PKG-023 reviewer judged the flag a
+  mechanical false positive, not a veto; the same judgment covers the
+  PKG-038 runtime-view completion.
 
 ### B-4. 142 generated `synth_*.go` + 12 `p3frontend` mirrors (synthetic stdlib)
 

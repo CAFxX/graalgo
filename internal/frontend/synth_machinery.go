@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"go/types"
+	"math"
 	"strings"
 	"sync"
 )
@@ -1865,6 +1867,20 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 				oid, ok = e.synthVarIDs[key]
 			}
 		}
+		if !ok && isDedicatedSyntheticStub(pkgName.Imported().Path()) {
+			// PKG-038: dedicated synthetic stubs (runtime/fmt/unsafe)
+			// declare vars directly in their constructor — no synthetic
+			// source, so no synthVarIDs entry. Materialize the var as a
+			// real doc global on first qualified use, through the same
+			// synthGlobals machinery the source-based synthetic packages
+			// use (assembled into doc.Globals after all exports).
+			var err error
+			oid, err = e.materializeStubVar(pkgName.Imported().Path(), obj)
+			if err != nil {
+				return nil, err
+			}
+			ok = true
+		}
 		if !ok {
 			return nil, scopeErrorf("gofrontend: synthetic package var %s.%s missing from object table",
 				pkgName.Name(), obj.Name())
@@ -1921,6 +1937,63 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 		return nil, scopeErrorf("selector %s.%s is not supported in frontend/v1 scope (M5)",
 			pkgName.Name(), x.Sel.Name)
 	}
+}
+
+// stubVarInit registers the gc-exact initializer for every var declared
+// by a dedicated synthetic stub package (runtime/fmt/unsafe), keyed by
+// package path + "." + var name. A stub var with no registered
+// initializer fails loud at materialization: silently zero-initializing
+// would diverge from gc's documented default.
+var stubVarInit = map[string]func(e *exporter) (*Node, error){
+	// gc 1.27.1, src/runtime/mprof.go:870: var MemProfileRate int = 512 * 1024.
+	// Emitted as a folded "basiclit" const node (the foldedConst shape),
+	// so the backend's generic global initializer handles it unchanged.
+	"runtime.MemProfileRate": func(e *exporter) (*Node, error) {
+		t, err := e.typeID(types.Typ[types.Int])
+		if err != nil {
+			return nil, err
+		}
+		v := constant.MakeInt64(512 * 1024)
+		f32, _ := constant.Float32Val(v)
+		f64, _ := constant.Float64Val(v)
+		return &Node{Kind: "basiclit", Fields: map[string]any{
+			"value": "", "const": v.ExactString(), "type": t,
+			"f32bits": int32(math.Float32bits(f32)),
+			"f64bits": int64(math.Float64bits(f64)),
+		}}, nil
+	},
+}
+
+// materializeStubVar allocates an object id for a dedicated-stub package
+// var and appends its gc-exact initializer to e.synthGlobals (assembled
+// into doc.Globals after all exports, like source-based synthetic
+// globals). Idempotent per package path + var name: the stub constructor
+// rebuilds the *types.Var on every import, so the key is path-qualified,
+// not pointer-qualified (the synthVarIDs precedent). The registration in
+// e.synthVarIDs makes later qualified uses share the one cell.
+func (e *exporter) materializeStubVar(path string, v *types.Var) (int, error) {
+	key := path + "." + v.Name()
+	if e.synthVarIDs == nil {
+		e.synthVarIDs = make(map[string]int)
+	}
+	if oid, ok := e.synthVarIDs[key]; ok {
+		return oid, nil
+	}
+	initFn, ok := stubVarInit[key]
+	if !ok {
+		return 0, scopeErrorf("gofrontend: stub package var %s has no registered initializer", key)
+	}
+	oid, err := e.defVar(v, false)
+	if err != nil {
+		return 0, err
+	}
+	init, err := initFn(e)
+	if err != nil {
+		return 0, err
+	}
+	e.synthGlobals = append(e.synthGlobals, GlobalEnt{Obj: oid, Init: init})
+	e.synthVarIDs[key] = oid
+	return oid, nil
 }
 
 // isTimeIntrinsicFunc reports whether fn is a synthetic time intrinsic.
