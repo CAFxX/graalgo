@@ -683,52 +683,19 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 	// uses: a named result that the body never references is legal Go
 	// (named results need not be used), but declaring it as an unused
 	// local is a type error ("declared and not used").
+	// The helper's signature drops the named results (it returns the pair
+	// type instead), so any named result the body still references must be
+	// declared as a local. Declare ONLY the results the body genuinely
+	// needs: usedNamedResults is scope-aware — a bare return reads every
+	// named result; otherwise a reference counts only if it resolves to
+	// the result variable itself (shadowing := re-declarations,
+	// declaration positions, struct field names, labels, selectors, and
+	// bare returns inside nested func literals are not uses). Declaring
+	// an unreferenced name trips go/types' "declared and not used" on
+	// the rewritten AST (e.g. protowire.ConsumeVarint's n). Analyzed on
+	// the original body, before rewriteMRReturns reshapes it.
+	usedNames := usedNamedResults(fd)
 	rewrittenBody := rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName)
-	// Collect named result names.
-	var resultNames []string
-	if fd.Type.Results != nil {
-		for _, fld := range fd.Type.Results.List {
-			for _, n := range fld.Names {
-				resultNames = append(resultNames, n.Name)
-			}
-		}
-	}
-	// Names the body actually reads: referenced idents, or all of them
-	// when there is a bare return (which reads every named result).
-	// A SelectorExpr's Sel is a field/method name, not a variable
-	// reference — re.prefix does not read a named result named prefix.
-	usedNames := map[string]bool{}
-	hasBareReturn := false
-	if len(resultNames) > 0 {
-		nameSet := map[string]bool{}
-		for _, n := range resultNames {
-			nameSet[n] = true
-		}
-		// A SelectorExpr's Sel is a field/method name, not a variable
-		// reference — re.prefix does not read a named result named
-		// prefix. Collect Sel idents first, then exclude them.
-		selIdents := map[*ast.Ident]bool{}
-		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			if se, ok := n.(*ast.SelectorExpr); ok {
-				selIdents[se.Sel] = true
-			}
-			return true
-		})
-		ast.Inspect(fd.Body, func(n ast.Node) bool {
-			if rs, ok := n.(*ast.ReturnStmt); ok && len(rs.Results) == 0 {
-				hasBareReturn = true
-			}
-			if id, ok := n.(*ast.Ident); ok && nameSet[id.Name] && !selIdents[id] {
-				usedNames[id.Name] = true
-			}
-			return true
-		})
-		if hasBareReturn {
-			for _, n := range resultNames {
-				usedNames[n] = true
-			}
-		}
-	}
 	var namedDecls []ast.Stmt
 	if len(usedNames) > 0 && fd.Type.Results != nil {
 		for _, fld := range fd.Type.Results.List {
@@ -818,6 +785,605 @@ func recvBaseName(e ast.Expr) string {
 			return ""
 		}
 	}
+}
+
+// usedNamedResults reports which of fd's named result variables the
+// pair-returning helper body needs as locals. A bare return in fd's body
+// reads every named result (rewriteMRReturns expands it to
+// return Pair{v, n, ...}), so all of them are needed. Otherwise only the
+// result names genuinely referenced by the body are needed: a reference
+// counts only if it resolves to the result variable itself — a shadowing
+// re-declaration (v := 5), a declaration-position occurrence (var v int),
+// a struct field name, a label, or a selector is not a use. Blank result
+// names (_) can never be referenced and are never reported.
+func usedNamedResults(fd *ast.FuncDecl) map[string]bool {
+	used := map[string]bool{}
+	if fd.Type.Results == nil {
+		return used
+	}
+	var names []string
+	for _, fld := range fd.Type.Results.List {
+		for _, n := range fld.Names {
+			if n.Name != "_" {
+				names = append(names, n.Name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return used
+	}
+	if hasBareReturn(fd.Body) {
+		for _, n := range names {
+			used[n] = true
+		}
+		return used
+	}
+	w := &mrUseWalker{
+		results: map[string]bool{},
+		used:    used,
+		scope:   &mrScope{names: map[string]bool{}},
+	}
+	for _, n := range names {
+		w.results[n] = true
+		w.scope.names[n] = true
+	}
+	// The receiver and params share the function scope with the results;
+	// recording them keeps resolution correct (they can never collide
+	// with result names in valid Go).
+	if fd.Recv != nil {
+		for _, fld := range fd.Recv.List {
+			for _, n := range fld.Names {
+				w.scope.names[n.Name] = true
+			}
+		}
+	}
+	if fd.Type.Params != nil {
+		for _, fld := range fd.Type.Params.List {
+			for _, n := range fld.Names {
+				w.scope.names[n.Name] = true
+			}
+		}
+	}
+	w.walkBlock(fd.Body)
+	return used
+}
+
+// hasBareReturn reports whether body contains a bare `return` statement.
+// Function literals are not descended into: a bare return inside one
+// belongs to the literal and does not read the enclosing named results.
+func hasBareReturn(body *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch n := n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.ReturnStmt:
+			if len(n.Results) == 0 {
+				found = true
+				return false
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// mrScope is one lexical scope in the mrUseWalker name-resolution walk.
+// The outermost scope (parent == nil) is the function scope holding the
+// receiver, params, and named results.
+type mrScope struct {
+	parent *mrScope
+	names  map[string]bool
+}
+
+// mrUseWalker determines which named result variables a function body
+// genuinely references, with scope-aware name resolution.
+type mrUseWalker struct {
+	results map[string]bool // named result names of interest
+	used    map[string]bool // result names found genuinely referenced
+	scope   *mrScope        // innermost scope
+}
+
+func (w *mrUseWalker) push() {
+	w.scope = &mrScope{parent: w.scope, names: map[string]bool{}}
+}
+
+func (w *mrUseWalker) pop() {
+	w.scope = w.scope.parent
+}
+
+// declare binds name in the current (innermost) scope.
+func (w *mrUseWalker) declare(name string) {
+	if name == "_" || name == "" {
+		return
+	}
+	w.scope.names[name] = true
+}
+
+// useIdent records a use of id if it resolves to a named result: the
+// innermost scope binding the name must be the function scope, where the
+// results live. A use resolving to any shadowing inner binding is not a
+// use of the result.
+func (w *mrUseWalker) useIdent(id *ast.Ident) {
+	name := id.Name
+	if name == "_" || name == "" || !w.results[name] {
+		return
+	}
+	for s := w.scope; s != nil; s = s.parent {
+		if s.names[name] {
+			if s.parent == nil {
+				w.used[name] = true
+			}
+			return
+		}
+	}
+}
+
+// declareOrUse implements := semantics for one LHS target: an identifier
+// already bound in the current scope is a re-assignment (a use);
+// otherwise it declares a new variable, shadowing any outer binding (not
+// a use of the result). Non-identifier targets (a[i], s.f) are walked for
+// uses.
+func (w *mrUseWalker) declareOrUse(e ast.Expr) {
+	if id, ok := e.(*ast.Ident); ok {
+		if id.Name == "_" || id.Name == "" {
+			return
+		}
+		if w.scope.names[id.Name] {
+			w.useIdent(id)
+		} else {
+			w.declare(id.Name)
+		}
+		return
+	}
+	w.walkExpr(e)
+}
+
+func (w *mrUseWalker) walkBlock(b *ast.BlockStmt) {
+	w.push()
+	for _, s := range b.List {
+		w.walkStmt(s)
+	}
+	w.pop()
+}
+
+func (w *mrUseWalker) walkStmt(s ast.Stmt) {
+	switch s := s.(type) {
+	case *ast.DeclStmt:
+		w.walkDecl(s.Decl)
+	case *ast.EmptyStmt:
+		// nothing
+	case *ast.LabeledStmt:
+		// Labels live in a separate namespace; only the statement matters.
+		w.walkStmt(s.Stmt)
+	case *ast.ExprStmt:
+		w.walkExpr(s.X)
+	case *ast.SendStmt:
+		w.walkExpr(s.Chan)
+		w.walkExpr(s.Value)
+	case *ast.IncDecStmt:
+		w.walkExpr(s.X)
+	case *ast.AssignStmt:
+		w.walkAssign(s)
+	case *ast.GoStmt:
+		w.walkExpr(s.Call)
+	case *ast.DeferStmt:
+		w.walkExpr(s.Call)
+	case *ast.ReturnStmt:
+		for _, e := range s.Results {
+			w.walkExpr(e)
+		}
+	case *ast.BranchStmt:
+		// break/continue/goto/fallthrough: label only, no variable use.
+	case *ast.BlockStmt:
+		w.walkBlock(s)
+	case *ast.IfStmt:
+		w.push()
+		if s.Init != nil {
+			w.walkStmt(s.Init)
+		}
+		if s.Cond != nil {
+			w.walkExpr(s.Cond)
+		}
+		w.walkBlock(s.Body)
+		if s.Else != nil {
+			w.walkStmt(s.Else)
+		}
+		w.pop()
+	case *ast.ForStmt:
+		w.push()
+		if s.Init != nil {
+			w.walkStmt(s.Init)
+		}
+		if s.Cond != nil {
+			w.walkExpr(s.Cond)
+		}
+		if s.Post != nil {
+			w.walkStmt(s.Post)
+		}
+		w.walkBlock(s.Body)
+		w.pop()
+	case *ast.RangeStmt:
+		w.push()
+		w.walkExpr(s.X)
+		if s.Tok == token.DEFINE {
+			if s.Key != nil {
+				w.declareOrUse(s.Key)
+			}
+			if s.Value != nil {
+				w.declareOrUse(s.Value)
+			}
+		} else {
+			if s.Key != nil {
+				w.walkExpr(s.Key)
+			}
+			if s.Value != nil {
+				w.walkExpr(s.Value)
+			}
+		}
+		w.walkBlock(s.Body)
+		w.pop()
+	case *ast.SwitchStmt:
+		w.push()
+		if s.Init != nil {
+			w.walkStmt(s.Init)
+		}
+		if s.Tag != nil {
+			w.walkExpr(s.Tag)
+		}
+		w.walkCaseClauses(s.Body)
+		w.pop()
+	case *ast.TypeSwitchStmt:
+		w.push()
+		if s.Init != nil {
+			w.walkStmt(s.Init)
+		}
+		w.walkTypeSwitchGuard(s.Assign)
+		w.walkCaseClauses(s.Body)
+		w.pop()
+	case *ast.SelectStmt:
+		if s.Body != nil {
+			for _, cc := range s.Body.List {
+				ccc, ok := cc.(*ast.CommClause)
+				if !ok {
+					continue
+				}
+				w.push()
+				if ccc.Comm != nil {
+					w.walkStmt(ccc.Comm)
+				}
+				for _, st := range ccc.Body {
+					w.walkStmt(st)
+				}
+				w.pop()
+			}
+		}
+	}
+}
+
+func (w *mrUseWalker) walkCaseClauses(body *ast.BlockStmt) {
+	if body == nil {
+		return
+	}
+	for _, cc := range body.List {
+		ccc, ok := cc.(*ast.CaseClause)
+		if !ok {
+			continue
+		}
+		w.push()
+		for _, e := range ccc.List {
+			w.walkExpr(e)
+		}
+		for _, st := range ccc.Body {
+			w.walkStmt(st)
+		}
+		w.pop()
+	}
+}
+
+// walkTypeSwitchGuard walks `x := y.(type)` or `y.(type)`: the RHS is
+// evaluated first, then x (if present) is declared in the switch scope.
+func (w *mrUseWalker) walkTypeSwitchGuard(a ast.Stmt) {
+	if as, ok := a.(*ast.AssignStmt); ok {
+		for _, e := range as.Rhs {
+			w.walkExpr(e)
+		}
+		for _, e := range as.Lhs {
+			w.declareOrUse(e)
+		}
+		return
+	}
+	w.walkStmt(a)
+}
+
+// walkAssign walks an assignment. The RHS is evaluated before any LHS
+// declaration takes effect (x, y := y, x reads the outer bindings).
+func (w *mrUseWalker) walkAssign(s *ast.AssignStmt) {
+	for _, e := range s.Rhs {
+		w.walkExpr(e)
+	}
+	if s.Tok == token.DEFINE {
+		for _, e := range s.Lhs {
+			w.declareOrUse(e)
+		}
+		return
+	}
+	for _, e := range s.Lhs {
+		w.walkExpr(e)
+	}
+}
+
+func (w *mrUseWalker) walkDecl(d ast.Decl) {
+	gd, ok := d.(*ast.GenDecl)
+	if !ok {
+		return
+	}
+	for _, spec := range gd.Specs {
+		switch spec := spec.(type) {
+		case *ast.ValueSpec:
+			// var x = x: the RHS reads the outer binding, so walk
+			// values before declaring the names.
+			for _, e := range spec.Values {
+				w.walkExpr(e)
+			}
+			if spec.Type != nil {
+				w.walkType(spec.Type)
+			}
+			for _, n := range spec.Names {
+				w.declare(n.Name)
+			}
+		case *ast.TypeSpec:
+			// The name is in scope inside its own definition
+			// (type T *T) and inside its type parameters.
+			w.declare(spec.Name.Name)
+			if spec.TypeParams != nil {
+				w.push()
+				for _, fld := range spec.TypeParams.List {
+					for _, n := range fld.Names {
+						w.declare(n.Name)
+					}
+				}
+				if spec.Type != nil {
+					w.walkType(spec.Type)
+				}
+				w.pop()
+			} else if spec.Type != nil {
+				w.walkType(spec.Type)
+			}
+		case *ast.ImportSpec:
+			// no variable bindings
+		}
+	}
+}
+
+func (w *mrUseWalker) walkType(e ast.Expr) {
+	switch e := e.(type) {
+	case *ast.Ident:
+		w.useIdent(e)
+	case *ast.ParenExpr:
+		w.walkType(e.X)
+	case *ast.StarExpr:
+		w.walkType(e.X)
+	case *ast.ArrayType:
+		if e.Len != nil {
+			w.walkExpr(e.Len)
+		}
+		w.walkType(e.Elt)
+	case *ast.MapType:
+		w.walkType(e.Key)
+		w.walkType(e.Value)
+	case *ast.ChanType:
+		w.walkType(e.Value)
+	case *ast.IndexExpr:
+		w.walkType(e.X)
+		w.walkType(e.Index)
+	case *ast.IndexListExpr:
+		w.walkType(e.X)
+		for _, ix := range e.Indices {
+			w.walkType(ix)
+		}
+	case *ast.StructType:
+		w.walkFieldList(e.Fields, false)
+	case *ast.InterfaceType:
+		w.walkFieldList(e.Methods, true)
+	case *ast.FuncType:
+		w.walkFuncType(e)
+	}
+}
+
+// walkFieldList walks a struct field list or interface method list.
+// Field and method names are never variable uses; embedded types are.
+func (w *mrUseWalker) walkFieldList(fl *ast.FieldList, iface bool) {
+	if fl == nil {
+		return
+	}
+	for _, f := range fl.List {
+		if len(f.Names) == 0 {
+			w.walkType(f.Type)
+			continue
+		}
+		if iface {
+			if ft, ok := f.Type.(*ast.FuncType); ok {
+				w.walkFuncType(ft)
+			} else {
+				w.walkType(f.Type)
+			}
+			continue
+		}
+		w.walkType(f.Type)
+	}
+}
+
+func (w *mrUseWalker) walkFuncType(ft *ast.FuncType) {
+	w.push()
+	if ft.Params != nil {
+		for _, f := range ft.Params.List {
+			for _, n := range f.Names {
+				w.declare(n.Name)
+			}
+		}
+		for _, f := range ft.Params.List {
+			w.walkType(f.Type)
+		}
+	}
+	if ft.Results != nil {
+		for _, f := range ft.Results.List {
+			for _, n := range f.Names {
+				w.declare(n.Name)
+			}
+		}
+		for _, f := range ft.Results.List {
+			w.walkType(f.Type)
+		}
+	}
+	w.pop()
+}
+
+func (w *mrUseWalker) walkExpr(e ast.Expr) {
+	switch e := e.(type) {
+	case *ast.Ident:
+		w.useIdent(e)
+	case *ast.Ellipsis:
+		w.walkExpr(e.Elt)
+	case *ast.BasicLit:
+		// nothing
+	case *ast.FuncLit:
+		w.walkFuncType(e.Type)
+		w.walkBlock(e.Body)
+	case *ast.CompositeLit:
+		w.walkCompositeLit(e, mrKeyField)
+	case *ast.ParenExpr:
+		w.walkExpr(e.X)
+	case *ast.SelectorExpr:
+		// Sel is a field/method name, not a variable.
+		w.walkExpr(e.X)
+	case *ast.IndexExpr:
+		w.walkExpr(e.X)
+		w.walkExpr(e.Index)
+	case *ast.IndexListExpr:
+		w.walkExpr(e.X)
+		for _, ix := range e.Indices {
+			w.walkExpr(ix)
+		}
+	case *ast.SliceExpr:
+		w.walkExpr(e.X)
+		if e.Low != nil {
+			w.walkExpr(e.Low)
+		}
+		if e.High != nil {
+			w.walkExpr(e.High)
+		}
+		if e.Max != nil {
+			w.walkExpr(e.Max)
+		}
+	case *ast.TypeAssertExpr:
+		w.walkExpr(e.X)
+		if e.Type != nil {
+			w.walkType(e.Type)
+		}
+	case *ast.CallExpr:
+		w.walkExpr(e.Fun)
+		for _, a := range e.Args {
+			w.walkExpr(a)
+		}
+	case *ast.StarExpr:
+		w.walkExpr(e.X)
+	case *ast.UnaryExpr:
+		w.walkExpr(e.X)
+	case *ast.BinaryExpr:
+		w.walkExpr(e.X)
+		w.walkExpr(e.Y)
+	case *ast.KeyValueExpr:
+		// A bare KeyValueExpr outside a composite literal cannot occur
+		// in valid Go; treat conservatively as uses.
+		w.walkExpr(e.Key)
+		w.walkExpr(e.Value)
+	}
+}
+
+// mrKeyKind classifies composite-literal keys for the use walk.
+type mrKeyKind int
+
+const (
+	mrKeyField mrKeyKind = iota // struct field name: not a variable use
+	mrKeyUse                    // map key: a variable use
+	mrKeyIndex                  // array/slice index: a constant, never an identifier use
+)
+
+// mrKeyKindOfType classifies the keys of a composite literal by its type
+// syntax: map keys are variable uses, struct field names are not.
+func mrKeyKindOfType(t ast.Expr) mrKeyKind {
+	for {
+		p, ok := t.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		t = p.X
+	}
+	switch t.(type) {
+	case *ast.MapType:
+		return mrKeyUse
+	case *ast.ArrayType:
+		return mrKeyIndex
+	default:
+		return mrKeyField
+	}
+}
+
+// mrElemKeyKind returns the key kind for composite literals nested in
+// element position (array elements, map values) of type t.
+func mrElemKeyKind(t ast.Expr) mrKeyKind {
+	for {
+		p, ok := t.(*ast.ParenExpr)
+		if !ok {
+			break
+		}
+		t = p.X
+	}
+	switch tt := t.(type) {
+	case *ast.MapType:
+		return mrKeyKindOfType(tt.Value)
+	case *ast.ArrayType:
+		return mrKeyKindOfType(tt.Elt)
+	default:
+		return mrKeyField
+	}
+}
+
+func (w *mrUseWalker) walkCompositeLit(lit *ast.CompositeLit, kk mrKeyKind) {
+	childKK := kk
+	if lit.Type != nil {
+		kk = mrKeyKindOfType(lit.Type)
+		childKK = mrElemKeyKind(lit.Type)
+		w.walkType(lit.Type)
+	}
+	for _, e := range lit.Elts {
+		w.walkLitElem(e, kk, childKK)
+	}
+}
+
+func (w *mrUseWalker) walkLitElem(e ast.Expr, kk, childKK mrKeyKind) {
+	if kv, ok := e.(*ast.KeyValueExpr); ok {
+		if kk == mrKeyUse {
+			w.walkExpr(kv.Key)
+		}
+		// Otherwise the key is a struct field name or an array index:
+		// not a variable use.
+		if inner, ok := kv.Value.(*ast.CompositeLit); ok {
+			w.walkCompositeLit(inner, childKK)
+		} else {
+			w.walkExpr(kv.Value)
+		}
+		return
+	}
+	if inner, ok := e.(*ast.CompositeLit); ok {
+		w.walkCompositeLit(inner, childKK)
+		return
+	}
+	w.walkExpr(e)
 }
 
 // rewriteMRReturns rewrites return statements in a multi-result body to
