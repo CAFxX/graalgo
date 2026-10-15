@@ -52,19 +52,6 @@ var (
 	mrSpecs []mrSpec
 )
 
-// transformTargetCollides reports whether transforming fd would generate
-// a helper or pair-type name that already exists as a top-level
-// declaration (a hand-written __-helper). Mirrors transformMRFunc's
-// naming: __F / __FPair for funcs, __Recv_F / __Recv_FPair for methods.
-func transformTargetCollides(fd *ast.FuncDecl, existing map[string]bool) bool {
-	prefix := fd.Name.Name
-	if fd.Recv != nil && len(fd.Recv.List) > 0 {
-		if rt := recvBaseName(fd.Recv.List[0].Type); rt != "" {
-			prefix = rt + "_" + fd.Name.Name
-		}
-	}
-	return existing["__"+prefix] || existing["__"+prefix+"Pair"]
-}
 
 // transformMultiResult rewrites multi-result FuncDecls in files to the
 // __-helper + stub shape. Must run after parsing, before type-checking.
@@ -766,7 +753,7 @@ func genericRef(name string, tparamNames []string) ast.Expr {
 }
 
 // transformMRFunc transforms one multi-result FuncDecl.
-func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrNames map[string]bool) (diskMRSpec, *ast.GenDecl, *ast.FuncDecl, *ast.FuncDecl) {
+func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrNames map[string]bool) (mrSpec, *ast.GenDecl, *ast.FuncDecl, *ast.FuncDecl) {
 	name := fd.Name.Name
 	// Blank result names (`_ T`) cannot be declared, guarded, or
 	// returned by name (`_ = _` and `Pair{_, _}` are illegal). Rename
