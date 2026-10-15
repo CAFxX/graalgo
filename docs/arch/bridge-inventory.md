@@ -43,19 +43,19 @@ deliverable until the design lands.
 
 ## Active bridges
 
-### B-1. `FmtCallNode` + `graalgo.runtime.Fmt`/`FmtScan` (Java reimplementations of `fmt`)
+### B-1. `graalgo.runtime.Fmt`/`FmtScan` (Java reimplementations of `fmt`)
 
-- **What:** [FmtCallNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/FmtCallNode.java)
-  is a custom wire node matching ~25 hardcoded `fmt.*` names
-  (`Print`/`Printf`/`Sprint`/`Errorf`/Append/Scan families/`FormatString`);
-  it delegates to
+- **What:**
   [graalgo/runtime/](../../internal/backend/runtime/src/main/java/graalgo/runtime/)
   `Fmt`/`FmtScan` — Java reimplementations of stdlib `fmt` formatting and
-  scanning logic.
+  scanning logic. (The `FmtCallNode` custom wire node and the `fmtcall`
+  import overlay were deleted 2026-10-15 — real `fmt` now resolves from
+  disk; only the Java reimplementations remain, used by `BuiltinPrint`,
+  `PanicRendering`, `GoErrors`, and interop.)
 - **Why:** the real `fmt` sources did not compile under graalgo, so
   formatting was reimplemented in Java behind a name-keyed node.
 - **Root-cause fix:** make the real `fmt` package compile (fix the
-  compiler/runtime properly), then delete the node and the Java
+  compiler/runtime properly), then delete the Java
   reimplementations. In flight: worktrees `real-fmt2` and `real-fmt-rebase`
   ("Retire synthetic fmt package — real fmt now compiles").
 - **Phase:** 1.
