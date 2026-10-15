@@ -176,52 +176,17 @@ func shDQuote(s string) string {
 	return r.Replace(s)
 }
 
-// BuildRequest is the parsed form of `graalgo build` arguments.
-type BuildRequest struct {
-	// OutputPath is the -o flag value, or "" if not given.
-	OutputPath string
-	// Packages are the remaining file/directory arguments.
-	Packages []string
-}
-
-// ParseBuildArgs splits `graalgo build` arguments into the -o flag and the
-// package operands. Only -o is interpreted; every other flag is rejected so
-// a misspelled flag cannot silently change the build.
-func ParseBuildArgs(args []string) (BuildRequest, error) {
-	var req BuildRequest
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		switch {
-		case a == "-o" && i+1 < len(args):
-			i++
-			req.OutputPath = args[i]
-		case strings.HasPrefix(a, "-o="):
-			req.OutputPath = strings.TrimPrefix(a, "-o=")
-		case strings.HasPrefix(a, "-"):
-			return req, fmt.Errorf("unknown flag %q", a)
-		default:
-			req.Packages = append(req.Packages, a)
-		}
-	}
-	if req.OutputPath == "" {
-		return req, nil
-	}
-	if req.OutputPath == "-" {
-		return req, fmt.Errorf("-o - is not supported: the artifact is a launcher script")
-	}
-	return req, nil
-}
-
 // DefaultOutputName derives the artifact path when -o is not given,
-// mirroring `go build`: the base name of the first .go file (minus the
-// extension), the base name of the named directory, or the base name of the
-// current directory when no operands are given.
-func (r BuildRequest) DefaultOutputName() (string, error) {
-	if r.OutputPath != "" {
-		return r.OutputPath, nil
+// mirroring `go build`: the -o value if set, otherwise the base name of
+// the first .go file (minus the extension), the base name of the named
+// directory, or the base name of the current directory when no operands
+// are given.
+func DefaultOutputName(output string, pkgs []string) (string, error) {
+	if output != "" {
+		return output, nil
 	}
-	if len(r.Packages) > 0 {
-		first := r.Packages[0]
+	if len(pkgs) > 0 {
+		first := pkgs[0]
 		if strings.HasSuffix(first, ".go") {
 			return strings.TrimSuffix(filepath.Base(first), ".go"), nil
 		}

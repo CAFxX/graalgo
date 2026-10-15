@@ -175,54 +175,20 @@ func TestShQuote(t *testing.T) {
 	}
 }
 
-func TestParseBuildArgs(t *testing.T) {
-	req, err := ParseBuildArgs([]string{"-o", "out", "pkg/"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if req.OutputPath != "out" || len(req.Packages) != 1 || req.Packages[0] != "pkg/" {
-		t.Errorf("ParseBuildArgs = %+v", req)
-	}
-	req, err = ParseBuildArgs([]string{"-o=bin/prog", "a.go", "b.go"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if req.OutputPath != "bin/prog" || len(req.Packages) != 2 {
-		t.Errorf("ParseBuildArgs -o= form = %+v", req)
-	}
-	if _, err := ParseBuildArgs([]string{"-race"}); err == nil {
-		t.Errorf("ParseBuildArgs accepted unknown flag -race")
-	}
-	if _, err := ParseBuildArgs([]string{"-o", "-"}); err == nil {
-		t.Errorf("ParseBuildArgs accepted -o -")
-	}
-	req, err = ParseBuildArgs(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if req.OutputPath != "" || len(req.Packages) != 0 {
-		t.Errorf("ParseBuildArgs(nil) = %+v", req)
-	}
-}
-
 func TestDefaultOutputName(t *testing.T) {
 	// Explicit -o wins.
-	req := BuildRequest{OutputPath: "custom"}
-	if got, err := req.DefaultOutputName(); err != nil || got != "custom" {
+	if got, err := DefaultOutputName("custom", nil); err != nil || got != "custom" {
 		t.Errorf("explicit -o: got %q, %v", got, err)
 	}
 	// First .go file: base name minus extension.
-	req = BuildRequest{Packages: []string{"hello.go"}}
-	if got, err := req.DefaultOutputName(); err != nil || got != "hello" {
+	if got, err := DefaultOutputName("", []string{"hello.go"}); err != nil || got != "hello" {
 		t.Errorf("file operand: got %q, %v", got, err)
 	}
-	req = BuildRequest{Packages: []string{"/tmp/x/myprog.go"}}
-	if got, err := req.DefaultOutputName(); err != nil || got != "myprog" {
+	if got, err := DefaultOutputName("", []string{"/tmp/x/myprog.go"}); err != nil || got != "myprog" {
 		t.Errorf("file path operand: got %q, %v", got, err)
 	}
 	// Directory operand: base of the directory.
-	req = BuildRequest{Packages: []string{"./mydir/"}}
-	if got, err := req.DefaultOutputName(); err != nil || got != "mydir" {
+	if got, err := DefaultOutputName("", []string{"./mydir/"}); err != nil || got != "mydir" {
 		t.Errorf("dir operand: got %q, %v", got, err)
 	}
 	// No operands: base of the current directory.
@@ -239,8 +205,7 @@ func TestDefaultOutputName(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = os.Chdir(cwd) }()
-	req = BuildRequest{}
-	if got, err := req.DefaultOutputName(); err != nil || got != "coolproj" {
+	if got, err := DefaultOutputName("", nil); err != nil || got != "coolproj" {
 		t.Errorf("no operands: got %q, %v", got, err)
 	}
 }
