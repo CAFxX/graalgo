@@ -140,7 +140,8 @@ func TestEmitBinaryRuns(t *testing.T) {
 	wireCopy := filepath.Join(tmpDir, "wire-copy.json")
 	backendScript := "#!/usr/bin/env bash\n" +
 		"printf '%s\\n' \"$@\" > " + argsFile + "\n" +
-		"cp \"$2\" " + wireCopy + "\n" + // $2 is the --wire-input path
+		"wire=\"${1#--wire-input=}\"\n" + // $1 is --wire-input=PATH
+		"cp \"$wire\" " + wireCopy + "\n" +
 		"exit 0\n"
 	backendPath := filepath.Join(backendDir, "graalgo-sync-run")
 	if err := os.WriteFile(backendPath, []byte(backendScript), 0o755); err != nil {
@@ -170,11 +171,13 @@ func TestEmitBinaryRuns(t *testing.T) {
 		t.Fatalf("backend was not invoked (no args file): %v", err)
 	}
 	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
-	if len(args) < 4 {
-		t.Fatalf("backend args = %v, want at least [--wire-input FILE -- argv0 ...]", args)
+	if len(args) < 5 {
+		t.Fatalf("backend args = %v, want at least [--wire-input=FILE -- argv0 ...]", args)
 	}
-	if args[0] != "--wire-input" {
-		t.Errorf("args[0] = %q, want --wire-input", args[0])
+	// P3SyncMain only accepts the --wire-input=FILE form.
+	wirePath, ok := strings.CutPrefix(args[0], "--wire-input=")
+	if !ok || wirePath == "" {
+		t.Errorf("args[0] = %q, want --wire-input=FILE", args[0])
 	}
 	// The backend copied the wire file before the launcher cleaned up.
 	wireData, err := os.ReadFile(wireCopy)
@@ -183,15 +186,15 @@ func TestEmitBinaryRuns(t *testing.T) {
 	} else if string(wireData) != string(wireJSON) {
 		t.Errorf("wire-input content mismatch: got %q, want %q", wireData, wireJSON)
 	}
-	if args[2] != "--" {
-		t.Errorf("args[2] = %q, want --", args[2])
+	if args[1] != "--" {
+		t.Errorf("args[1] = %q, want --", args[1])
 	}
 	// argv[0] for the program should be the artifact's absolute path.
-	if !filepath.IsAbs(args[3]) {
-		t.Errorf("program argv[0] = %q, want absolute path", args[3])
+	if !filepath.IsAbs(args[2]) {
+		t.Errorf("program argv[0] = %q, want absolute path", args[2])
 	}
 	// User args forwarded.
-	if len(args) < 6 || args[4] != "hello" || args[5] != "world" {
+	if len(args) < 5 || args[3] != "hello" || args[4] != "world" {
 		t.Errorf("user args not forwarded: %v", args)
 	}
 }
@@ -201,4 +204,100 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// TestEmitByteIdenticalToGCBuild checks that Emit's artifact is
+// byte-identical to a direct gc (`go build`) of the same launcher inputs.
+// Together with TestEmitRelativeOutputPath this pins the P0-11 contract:
+// the -o path only chooses WHERE the binary lands, never WHAT is built.
+func TestEmitByteIdenticalToGCBuild(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	wire := []byte(`{"frontend":"v1","functions":[]}`)
+	a := Artifact{OutputPath: "prog", GraalgoRoot: "/opt/graalgo", WireJSON: wire}
+	if err := Emit(a); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+	emitBin, err := os.ReadFile(filepath.Join(dir, "prog"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Reference: assemble the identical build inputs and compile them
+	// with a plain `go build`, the way a gc user would.
+	refDir := t.TempDir()
+	if err := assembleBuildDir(refDir, a); err != nil {
+		t.Fatalf("assembleBuildDir: %v", err)
+	}
+	refBinPath := filepath.Join(refDir, "refbin")
+	cmd := exec.Command(findGoBinary(), "build", "-trimpath", "-o", refBinPath, ".")
+	cmd.Dir = refDir
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("reference gc build: %v\n%s", err, stderr.String())
+	}
+	refBin, err := os.ReadFile(refBinPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !bytes.Equal(emitBin, refBin) {
+		t.Errorf("Emit artifact (%d bytes) is not byte-identical to a direct gc build (%d bytes) of the same inputs",
+			len(emitBin), len(refBin))
+	}
+}
+
+// TestEmitRelativeOutputPath is a regression test for the 2026-10-15
+// independent review finding P0-11: Emit passed a relative OutputPath
+// straight to `go build -o` (run with cmd.Dir = the temp build dir) and
+// to os.Chmod (resolved in the caller's cwd), so the binary landed
+// inside the temp dir and Chmod failed with "no such file or directory".
+// `graalgo build` without an absolute -o could never succeed.
+func TestEmitRelativeOutputPath(t *testing.T) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(cwd) }()
+
+	// The default `graalgo build` output name (DefaultOutputName) is a
+	// bare relative name like this one.
+	err = Emit(Artifact{
+		OutputPath:  "prog",
+		GraalgoRoot: "/opt/graalgo",
+		WireJSON:    []byte(`{"frontend":"v1","functions":[]}`),
+	})
+	if err != nil {
+		t.Fatalf("Emit with relative output path: %v", err)
+	}
+
+	got := filepath.Join(dir, "prog")
+	fi, err := os.Stat(got)
+	if err != nil {
+		t.Fatalf("expected artifact at %s: %v", got, err)
+	}
+	if fi.Mode()&0o111 == 0 {
+		t.Errorf("artifact %s is not executable (mode %v)", got, fi.Mode())
+	}
+	data, err := os.ReadFile(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+		t.Errorf("artifact is not an ELF binary (first bytes: %q)", data[:min(32, len(data))])
+	}
 }

@@ -11,11 +11,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Artifact describes the executable artifact `graalgo build` emits.
 type Artifact struct {
-	// OutputPath is where the artifact binary is written.
+	// OutputPath is where the artifact binary is written. A relative
+	// path is resolved against the caller's working directory (mirroring
+	// `go build -o`), never against the temp build dir Emit uses.
 	OutputPath string
 	// GraalgoRoot is the graalgo installation the artifact runs against.
 	// It is baked into the artifact at build time; GRAALGO_HOME set at
@@ -51,15 +54,15 @@ func Emit(a Artifact) error {
 		return fmt.Errorf("no graalgo root")
 	}
 
-	// Compress the JSON. Frontend output can be large (100MB+ for big
-	// programs); JSON compresses well with gzip.
-	var compressed bytes.Buffer
-	gz := gzip.NewWriter(&compressed)
-	if _, err := gz.Write(a.WireJSON); err != nil {
-		return fmt.Errorf("cannot compress frontend output: %v", err)
-	}
-	if err := gz.Close(); err != nil {
-		return fmt.Errorf("cannot compress frontend output: %v", err)
+	// Resolve the output path against the caller's working directory
+	// BEFORE switching to the temp build dir: `go build -o` below runs
+	// with cmd.Dir = tmpDir, and os.Chmod resolves against the caller's
+	// cwd, so a relative path must be absolutized first or the binary
+	// lands inside the temp dir and the chmod fails with
+	// "no such file or directory" (review P0-11, 2026-10-15).
+	outPath, err := filepath.Abs(a.OutputPath)
+	if err != nil {
+		return fmt.Errorf("cannot resolve output path %q: %v", a.OutputPath, err)
 	}
 
 	// Set up a temp build dir with the launcher source and the payload.
@@ -69,29 +72,18 @@ func Emit(a Artifact) error {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	// Write the compressed payload for //go:embed.
-	payloadPath := filepath.Join(tmpDir, "wire.json.gz")
-	if err := os.WriteFile(payloadPath, compressed.Bytes(), 0o644); err != nil {
-		return fmt.Errorf("cannot write payload: %v", err)
+	if err := assembleBuildDir(tmpDir, a); err != nil {
+		return err
 	}
 
-	// Generate the launcher source.
-	src := fmt.Sprintf(launcherTemplate, a.GraalgoRoot)
-	srcPath := filepath.Join(tmpDir, "launcher.go")
-	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
-		return fmt.Errorf("cannot write launcher source: %v", err)
-	}
-
-	// Minimal go.mod so `go build` works in module mode. The launcher has
-	// no external dependencies (stdlib only).
-	goMod := "module graalgo-artifact\n\ngo 1.21\n"
-	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0o644); err != nil {
-		return fmt.Errorf("cannot write go.mod: %v", err)
-	}
-
-	// Compile the launcher to a real binary.
+	// Compile the launcher to a real binary. outPath is absolute (see
+	// above), so the binary lands at the caller's location even though
+	// `go build` runs with cmd.Dir = tmpDir. -trimpath keeps the build
+	// reproducible (no temp-dir paths leak into the binary), so the
+	// artifact is byte-identical to a direct `go build` of the same
+	// inputs.
 	goBin := findGoBinary()
-	cmd := exec.Command(goBin, "build", "-o", a.OutputPath, ".")
+	cmd := exec.Command(goBin, "build", "-trimpath", "-o", outPath, ".")
 	cmd.Dir = tmpDir
 	// Don't inherit GOFLAGS that might break the build; keep it hermetic.
 	cmd.Env = append(os.Environ(), "GOFLAGS=")
@@ -102,8 +94,52 @@ func Emit(a Artifact) error {
 	}
 
 	// go build sets the executable bit, but ensure it (umask-safe).
-	if err := os.Chmod(a.OutputPath, 0o755); err != nil {
-		return fmt.Errorf("cannot chmod %s: %v", a.OutputPath, err)
+	if err := os.Chmod(outPath, 0o755); err != nil {
+		return fmt.Errorf("cannot chmod %s: %v", outPath, err)
+	}
+	return nil
+}
+
+// assembleBuildDir writes the launcher build inputs into dir: the
+// gzip-compressed frontend payload (for //go:embed), the generated
+// launcher source, and a minimal go.mod. Everything written here is
+// deterministic for a given Artifact (the payload's gzip ModTime is
+// pinned to the epoch), so compiling the dir with `go build -trimpath`
+// always yields a byte-identical binary.
+func assembleBuildDir(dir string, a Artifact) error {
+	// Compress the JSON. Frontend output can be large (100MB+ for big
+	// programs); JSON compresses well with gzip.
+	var compressed bytes.Buffer
+	gz := gzip.NewWriter(&compressed)
+	// Pin the payload timestamp: Go's gzip zero-ModTime default is
+	// already stable, but say it explicitly so the artifact build never
+	// depends on a library default.
+	gz.Header.ModTime = time.Unix(0, 0)
+	if _, err := gz.Write(a.WireJSON); err != nil {
+		return fmt.Errorf("cannot compress frontend output: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		return fmt.Errorf("cannot compress frontend output: %v", err)
+	}
+
+	// Write the compressed payload for //go:embed.
+	payloadPath := filepath.Join(dir, "wire.json.gz")
+	if err := os.WriteFile(payloadPath, compressed.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("cannot write payload: %v", err)
+	}
+
+	// Generate the launcher source.
+	src := fmt.Sprintf(launcherTemplate, a.GraalgoRoot)
+	srcPath := filepath.Join(dir, "launcher.go")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		return fmt.Errorf("cannot write launcher source: %v", err)
+	}
+
+	// Minimal go.mod so `go build` works in module mode. The launcher has
+	// no external dependencies (stdlib only).
+	goMod := "module graalgo-artifact\n\ngo 1.21\n"
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		return fmt.Errorf("cannot write go.mod: %v", err)
 	}
 	return nil
 }
@@ -183,12 +219,14 @@ func run() int {
 	}
 
 	// argv[0] for the Go program is the artifact's own absolute path,
-	// matching `+"`go build`"+` binaries.
+	// matching ` + "`go build`" + ` binaries.
 	argv0, err := filepath.Abs(os.Args[0])
 	if err != nil {
 		argv0 = os.Args[0]
 	}
-	args := []string{"--wire-input", tmpName, "--", argv0}
+	// P3SyncMain only accepts the --wire-input=FILE form (see its usage
+	// text); the space-separated form is rejected as an unknown flag.
+	args := []string{"--wire-input=" + tmpName, "--", argv0}
 	args = append(args, os.Args[1:]...)
 
 	cmd := exec.Command(runner, args...)
