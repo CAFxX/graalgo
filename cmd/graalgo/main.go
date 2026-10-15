@@ -190,18 +190,19 @@ func isGraalgoRoot(dir string) bool {
 	return err == nil && !info.IsDir()
 }
 
-// graalgoRunEnv invokes internal/backend/graalgo-sync-run with the given
-// args and extra environment variables, wiring stdio through. Returns the
-// process exit code.
-func graalgoRunEnv(root string, args []string, extraEnv []string) int {
+// graalgoRun invokes internal/backend/graalgo-sync-run with the given args,
+// wiring stdio through. Returns the process exit code.
+//
+// NOTE: privilege-conferring signals (e.g. PKG-001's test-package-dir)
+// travel as explicit argv flags, never environment variables: env is
+// inherited by every child process, so a user-exported variable would
+// confer privilege on commands that never asked for it (`graalgo run`).
+func graalgoRun(root string, args []string) int {
 	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
 	cmd := exec.Command(runner, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
-	if len(extraEnv) > 0 {
-		cmd.Env = append(os.Environ(), extraEnv...)
-	}
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
@@ -210,12 +211,6 @@ func graalgoRunEnv(root string, args []string, extraEnv []string) int {
 		return 1
 	}
 	return 0
-}
-
-// graalgoRun invokes internal/backend/graalgo-sync-run with the given args,
-// wiring stdio through. Returns the process exit code.
-func graalgoRun(root string, args []string) int {
-	return graalgoRunEnv(root, args, nil)
 }
 
 // graalgoRunProgram invokes the backend for `graalgo run` and emulates

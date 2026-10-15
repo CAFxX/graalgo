@@ -116,6 +116,12 @@ public final class P3SyncMain {
         int gmp = 0; // 0 = default (carriers)
         boolean check = false;
         boolean dumpPolymorphism = false;
+        // PKG-001: package dir whose internal-visibility privileges a
+        // synthesized `graalgo test` driver compiles with. Explicit argv
+        // flag (per-invocation, non-inheritable), never an environment
+        // variable: a user-exported value must not confer privilege on
+        // commands that never asked for it.
+        String testPackageDir = null;
         java.util.List<String> files = new java.util.ArrayList<>();
         // P3-M8 (wave 2, R6): program argv. Everything after a bare
         // "--" is the Go program's argv (os.Args); the first element is
@@ -141,6 +147,13 @@ public final class P3SyncMain {
                 }
                 if (gmp < 1) {
                     return usageError("--gmp must be >= 1");
+                }
+                continue;
+            }
+            if (a.startsWith("--test-package-dir=")) {
+                testPackageDir = a.substring("--test-package-dir=".length());
+                if (testPackageDir.isEmpty()) {
+                    return usageError("--test-package-dir must not be empty");
                 }
                 continue;
             }
@@ -182,7 +195,7 @@ public final class P3SyncMain {
 
         final String json;
         try {
-            json = runGofrontend(paths);
+            json = runGofrontend(paths, testPackageDir);
         } catch (GofrontendException e) {
             // gofrontend's stderr is the deterministic build log the harness records.
             // M10 (self-attack F11): a gofrontend killed by a signal leaves an
@@ -547,8 +560,12 @@ public final class P3SyncMain {
      * document can never deadlock against a buffered stderr. (Mirrors
      * Phase-2 {@code SchedMain.runGofrontend}; duplicated because that
      * method is private.)
+     *
+     * @param testPackageDir package dir for gofrontend's
+     *     {@code --test-package-dir} flag (PKG-001), or null for an
+     *     ordinary compile with no test-driver privilege.
      */
-    private static String runGofrontend(java.util.List<Path> goFiles) throws IOException, GofrontendException {
+    private static String runGofrontend(java.util.List<Path> goFiles, String testPackageDir) throws IOException, GofrontendException {
         // P3-M9: run gofrontend with stdout to a temp file, not a pipe.
         // Piping 200MB+ through Process.getInputStream() hangs (gofrontend
         // blocks on write while the reader blocks on read — pipe buffer
@@ -559,6 +576,9 @@ public final class P3SyncMain {
         try {
             java.util.List<String> cmd = new java.util.ArrayList<>();
             cmd.add(graalgo.launcher.ToolPaths.gofrontend().toString());
+            if (testPackageDir != null) {
+                cmd.add("--test-package-dir=" + testPackageDir);
+            }
             for (Path p : goFiles) {
                 cmd.add(p.toString());
             }
@@ -597,11 +617,13 @@ public final class P3SyncMain {
 
     private static void usage() {
         System.err.println(
-                "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] file.go [file.go...] [-- args...]");
+                "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] [--test-package-dir=DIR] file.go [file.go...] [-- args...]");
         System.err.println(
                 "  --            program argv follow (os.Args[0] is the absolute input-file path)");
         System.err.println("  --gmp=N   in-flight cap (default: carriers); effective cap = min(gmp, carriers)");
         System.err.println("  --check   build only, do not execute");
         System.err.println("  --dump-polymorphism  M9: dump per-site itab-identity histograms to stderr");
+        System.err.println("  --test-package-dir=DIR  PKG-001: package dir whose internal-visibility");
+        System.err.println("      privileges a synthesized `graalgo test` driver compiles with");
     }
 }
