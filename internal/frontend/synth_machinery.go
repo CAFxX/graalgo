@@ -91,11 +91,13 @@ var syntheticSources = map[string]string{
 	"os":    syntheticOsSource,
 	"io/fs": syntheticIoFsSource,
 	// P3-M8 (wave 2): synthetic reflect package (real-Go source in
-	// synth_reflect.go). The wire type table carries field offsets/tags,
-	// method tables, and signatures; the runtime GoRType table is built
-	// from it (phases/phase3 p3reflect). internal/reflectlite is a pure
-	// adapter; iter is the minimal generic sequence declarations.
-	"reflect":              syntheticReflectSource,
+	// synth_reflect.go). RETIRED: real reflect now compiles from GOROOT
+	// via the disk importer (real-reflect lane). The wire type table
+	// carries field offsets/tags, method tables, and signatures; the
+	// runtime GoRType table is built from it (phases/phase3 p3reflect).
+	// internal/reflectlite is a pure adapter; iter is the minimal generic
+	// sequence declarations.
+	// "reflect": syntheticReflectSource, // RETIRED - uses disk importer
 	"internal/reflectlite": syntheticReflectliteSource,
 	"iter":                 syntheticIterSource,
 	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_structs.go,
