@@ -8830,6 +8830,14 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				if n, handled, err := e.exportSyntheticPkgCall(c, sel, pkgName); handled {
 					return n, err
 				}
+				// GENERAL (fix-make-unknown): package-level function call from
+				// an imported package (synthetic or disk, e.g.
+				// godebug.New). If the selector denotes a *types.Func (not
+				// a method), route to exportFuncCall which handles the
+				// funcByObj/synthFuncIDs lookup.
+				if fn, ok := e.info.Uses[sel.Sel].(*types.Func); ok {
+					return e.exportFuncCall(c, sel.Sel, fn)
+				}
 			}
 		}
 		// Stack-inspection methods: (*Func).Name/(*Func).Entry are

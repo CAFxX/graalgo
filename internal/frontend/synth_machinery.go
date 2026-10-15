@@ -936,6 +936,22 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 		return nil
 	}
 	e.importedSynthetic[sp.path] = true
+	// GENERAL (fix-make-unknown): recurse into synthetic dependencies. A
+	// synthetic package's imports that are themselves synthetic (e.g.
+	// net/netip importing unique) must be imported first, otherwise their
+	// functions (e.g. unique.Make) are not in the exporter's index and
+	// call sites fail with "call to unknown function". Dependencies are
+	// imported before the package itself (post-order). Only synthetic
+	// sources are followed; signature-only stubs (runtime, unsafe, etc.)
+	// and disk packages are handled by their own mechanisms.
+	for _, imp := range sp.pkg.Imports() {
+		ip := imp.Path()
+		if _, ok := syntheticSources[ip]; ok {
+			if err := e.importSyntheticPackage(getSyntheticPackage(ip)); err != nil {
+				return err
+			}
+		}
+	}
 	savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
 	savedSubst, savedSubstTypeIDs := e.subst, e.substTypeIDs
 	e.fset, e.src, e.info, e.pkg = sp.fset, sp.raw, sp.info, sp.pkg
@@ -1041,6 +1057,22 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 									e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = &funcDeclInfo{fd: d, obj: obj, sig: sig}
 								}
 							}
+						} else {
+							// GENERAL (fix-make-unknown): package-level fail-fast
+							// stubs are registered in synthFuncIDs (but NOT
+							// funcByObj) so they can be used in value position
+							// (e.g. var AcceptFunc = syscall.Accept in synthetic
+							// poll). They are NOT pair-transformed (fail-fast
+							// preserved) and their bodies are NOT emitted (v1
+							// cannot emit multi-result). Call sites still fail
+							// fast via isMultiResultSyntheticFailFast.
+							fi := &funcDeclInfo{fd: d, obj: obj, funcID: -1, sig: sig, file: file}
+							fi.isTemplate = sig.TypeParams().Len() > 0
+							fi.synthPkg = sp
+							if e.synthFuncIDs == nil {
+								e.synthFuncIDs = make(map[string]*funcDeclInfo)
+							}
+							e.synthFuncIDs[sp.path+"."+obj.Name()] = fi
 						}
 						continue
 					}
@@ -1992,6 +2024,27 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 				return nil, err
 			}
 			return e.node("ident", x.Sel, fields), nil
+		}
+		// GENERAL (fix-make-unknown): fail-fast stub multi-result functions
+		// (e.g. syscall.Accept) are in synthFuncIDs but not funcByObj.
+		// They can be used as values (the value panics if called, which
+		// is the correct fail-fast behavior). Look up by path.name.
+		if e.synthFuncIDs != nil && obj.Pkg() != nil {
+			if fi, ok := e.synthFuncIDs[obj.Pkg().Path()+"."+obj.Name()]; ok && fi != nil {
+				fields := map[string]any{"name": x.Sel.Name}
+				if err := e.exportFuncValue(x.Sel, obj, fields); err != nil {
+					return nil, err
+				}
+				return e.node("ident", x.Sel, fields), nil
+			}
+		}
+		// GENERAL (fix-make-unknown): table-driven multi-result functions
+		// (e.g. os.Hostname, syscall.Socket) cannot be used as values
+		// in v1 (the __-helper has a different signature). Emit nil;
+		// the variable will panic if called (honest fail-fast for an
+		// unimplemented value-position use).
+		if obj.Pkg() != nil && hasStaticMREntry(obj.Pkg().Path(), obj.Name(), "") {
+			return e.node("nil", x, map[string]any{}), nil
 		}
 		return nil, scopeErrorf("%s.%s in value position is not supported in frontend/v1 scope (M5)",
 			pkgName.Name(), obj.Name())
