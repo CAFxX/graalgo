@@ -17,12 +17,50 @@ import (
 	"go/types"
 )
 
+// syntheticReflectStub builds the minimal synthetic "reflect" package the
+// P3-M8 json synthetic source imports: the Type/Value/StructField named
+// types with the shapes the source uses (Type.String for jsonTypeString,
+// StructField.Name for UnmarshalFieldError.Error). Only the "reflect.X"
+// rendering matters for the drift comparison. Shared by the mirror and
+// the drift test's importer so both sides type-check identically.
+func syntheticReflectStub() *types.Package {
+	pkg := types.NewPackage("reflect", "reflect")
+	stringT := types.Typ[types.String]
+	// Type as a named interface (nillable like the real reflect.Type;
+	// jsonTypeString compares t == nil) with String() string.
+	typeName := types.NewTypeName(token.NoPos, pkg, "Type", nil)
+	strMethod := types.NewFunc(token.NoPos, pkg, "String",
+		types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(),
+			types.NewTuple(types.NewParam(token.NoPos, pkg, "", stringT)),
+			false))
+	types.NewNamed(typeName,
+		types.NewInterfaceType([]*types.Func{strMethod}, nil).Complete(), nil)
+	pkg.Scope().Insert(typeName)
+	// Value (opaque for the drift comparison: field type only).
+	valueName := types.NewTypeName(token.NoPos, pkg, "Value", nil)
+	types.NewNamed(valueName, types.NewStruct(nil, nil), nil)
+	pkg.Scope().Insert(valueName)
+	// StructField with Name string (read by UnmarshalFieldError.Error).
+	sfName := types.NewTypeName(token.NoPos, pkg, "StructField", nil)
+	types.NewNamed(sfName, types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, pkg, "Name", stringT, false),
+	}, nil), nil)
+	pkg.Scope().Insert(sfName)
+	pkg.MarkComplete()
+	return pkg
+}
+
 // syntheticJsonPackage mirrors the P3-M7 synthetic "encoding/json".
 func syntheticJsonPackage() *types.Package {
 	pkg := types.NewPackage("encoding/json", "json")
 	bytesPkg := types.NewPackage("bytes", "bytes")
 	bytesBufferName := types.NewTypeName(token.NoPos, bytesPkg, "Buffer", nil)
 	bytesBuffer := types.NewNamed(bytesBufferName, types.NewStruct(nil, nil), nil)
+	reflectPkg := syntheticReflectStub()
+	reflectType := reflectPkg.Scope().Lookup("Type").(*types.TypeName).Type()
+	reflectValue := reflectPkg.Scope().Lookup("Value").(*types.TypeName).Type()
+	reflectStructField := reflectPkg.Scope().Lookup("StructField").(*types.TypeName).Type()
 	intT := types.Typ[types.Int]
 	int64T := types.Typ[types.Int64]
 	stringT := types.Typ[types.String]
@@ -56,11 +94,19 @@ func syntheticJsonPackage() *types.Package {
 
 	// InvalidUnmarshalError
 	invalidUnmarshalErrorName := types.NewTypeName(token.NoPos, pkg, "InvalidUnmarshalError", nil)
-	invalidUnmarshalError := types.NewNamed(invalidUnmarshalErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Type", stringT, false)}, nil), nil)
+	invalidUnmarshalError := types.NewNamed(invalidUnmarshalErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Type", reflectType, false)}, nil), nil)
+
+	// InvalidUTF8Error
+	invalidUTF8ErrorName := types.NewTypeName(token.NoPos, pkg, "InvalidUTF8Error", nil)
+	invalidUTF8Error := types.NewNamed(invalidUTF8ErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "S", stringT, false)}, nil), nil)
 
 	// Marshaler
 	marshalerName := types.NewTypeName(token.NoPos, pkg, "Marshaler", nil)
 	types.NewNamed(marshalerName, types.NewInterfaceType([]*types.Func{types.NewFunc(token.NoPos, pkg, "MarshalJSON", types.NewSignatureType(nil, nil, nil, types.NewTuple(), types.NewTuple(newParam("", types.NewSlice(byteT)), newParam("", errorT)), false))}, nil).Complete(), nil)
+
+	// MarshalerError
+	marshalerErrorName := types.NewTypeName(token.NoPos, pkg, "MarshalerError", nil)
+	marshalerError := types.NewNamed(marshalerErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Type", reflectType, false), types.NewField(token.NoPos, pkg, "Err", errorT, false)}, nil), nil)
 
 	// Number
 	numberName := types.NewTypeName(token.NoPos, pkg, "Number", nil)
@@ -80,7 +126,11 @@ func syntheticJsonPackage() *types.Package {
 
 	// UnmarshalTypeError
 	unmarshalTypeErrorName := types.NewTypeName(token.NoPos, pkg, "UnmarshalTypeError", nil)
-	unmarshalTypeError := types.NewNamed(unmarshalTypeErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Value", stringT, false), types.NewField(token.NoPos, pkg, "Type", stringT, false), types.NewField(token.NoPos, pkg, "Offset", int64T, false), types.NewField(token.NoPos, pkg, "Struct", stringT, false), types.NewField(token.NoPos, pkg, "Field", stringT, false)}, nil), nil)
+	unmarshalTypeError := types.NewNamed(unmarshalTypeErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Value", stringT, false), types.NewField(token.NoPos, pkg, "Type", reflectType, false), types.NewField(token.NoPos, pkg, "Offset", int64T, false), types.NewField(token.NoPos, pkg, "Struct", stringT, false), types.NewField(token.NoPos, pkg, "Field", stringT, false)}, nil), nil)
+
+	// UnmarshalFieldError
+	unmarshalFieldErrorName := types.NewTypeName(token.NoPos, pkg, "UnmarshalFieldError", nil)
+	unmarshalFieldError := types.NewNamed(unmarshalFieldErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Key", stringT, false), types.NewField(token.NoPos, pkg, "Type", reflectType, false), types.NewField(token.NoPos, pkg, "Field", reflectStructField, false)}, nil), nil)
 
 	// Unmarshaler
 	unmarshalerName := types.NewTypeName(token.NoPos, pkg, "Unmarshaler", nil)
@@ -88,12 +138,12 @@ func syntheticJsonPackage() *types.Package {
 
 	// UnsupportedValueError
 	unsupportedValueErrorName := types.NewTypeName(token.NoPos, pkg, "UnsupportedValueError", nil)
-	unsupportedValueError := types.NewNamed(unsupportedValueErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Str", stringT, false)}, nil), nil)
+	unsupportedValueError := types.NewNamed(unsupportedValueErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Value", reflectValue, false), types.NewField(token.NoPos, pkg, "Str", stringT, false)}, nil), nil)
 
 	// UnsupportedTypeError (P3-M10: was missing from the mirror; the
 	// phase-1 source gained it in P3-M8)
 	unsupportedTypeErrorName := types.NewTypeName(token.NoPos, pkg, "UnsupportedTypeError", nil)
-	unsupportedTypeError := types.NewNamed(unsupportedTypeErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "typ", stringT, false)}, nil), nil)
+	unsupportedTypeError := types.NewNamed(unsupportedTypeErrorName, types.NewStruct([]*types.Var{types.NewField(token.NoPos, pkg, "Type", reflectType, false)}, nil), nil)
 
 	// jsonReader (unexported; referenced by exported signatures).
 	jsonReaderName := types.NewTypeName(token.NoPos, pkg, "jsonReader", nil)
@@ -117,7 +167,12 @@ func syntheticJsonPackage() *types.Package {
 	encoder.AddMethod(types.NewFunc(token.NoPos, pkg, "Encode", types.NewSignatureType(newParam("", types.NewPointer(encoder)), nil, nil, types.NewTuple(newParam("v", anyT)), types.NewTuple(newParam("", errorT)), false)))
 	pkg.Scope().Insert(invalidUnmarshalErrorName)
 	invalidUnmarshalError.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", types.NewPointer(invalidUnmarshalError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
+	pkg.Scope().Insert(invalidUTF8ErrorName)
+	invalidUTF8Error.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", types.NewPointer(invalidUTF8Error)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
 	pkg.Scope().Insert(marshalerName)
+	pkg.Scope().Insert(marshalerErrorName)
+	marshalerError.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", types.NewPointer(marshalerError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
+	marshalerError.AddMethod(types.NewFunc(token.NoPos, pkg, "Unwrap", types.NewSignatureType(newParam("", types.NewPointer(marshalerError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", errorT)), false)))
 	pkg.Scope().Insert(numberName)
 	number.AddMethod(types.NewFunc(token.NoPos, pkg, "String", types.NewSignatureType(newParam("", number), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
 	number.AddMethod(types.NewFunc(token.NoPos, pkg, "Float64", types.NewSignatureType(newParam("", number), nil, nil, types.NewTuple(), types.NewTuple(newParam("", float64T), newParam("", errorT)), false)))
@@ -130,6 +185,8 @@ func syntheticJsonPackage() *types.Package {
 	pkg.Scope().Insert(tokenTName)
 	pkg.Scope().Insert(unmarshalTypeErrorName)
 	unmarshalTypeError.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", types.NewPointer(unmarshalTypeError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
+	pkg.Scope().Insert(unmarshalFieldErrorName)
+	unmarshalFieldError.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", types.NewPointer(unmarshalFieldError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
 	pkg.Scope().Insert(unmarshalerName)
 	pkg.Scope().Insert(unsupportedValueErrorName)
 	unsupportedValueError.AddMethod(types.NewFunc(token.NoPos, pkg, "Error", types.NewSignatureType(newParam("", types.NewPointer(unsupportedValueError)), nil, nil, types.NewTuple(), types.NewTuple(newParam("", stringT)), false)))
@@ -139,6 +196,10 @@ func syntheticJsonPackage() *types.Package {
 	pkg.Scope().Insert(jsonWriterName)
 
 	// ---- Functions, vars, consts ----
+	// Compact func(dst *bytes.Buffer, src []byte) error
+	insertFunc("Compact", []*types.Var{newParam("dst", types.NewPointer(bytesBuffer)), newParam("src", types.NewSlice(byteT))}, []*types.Var{newParam("", errorT)}, false)
+	// HTMLEscape func(dst *bytes.Buffer, src []byte)
+	insertFunc("HTMLEscape", []*types.Var{newParam("dst", types.NewPointer(bytesBuffer)), newParam("src", types.NewSlice(byteT))}, []*types.Var{}, false)
 	// Indent func(dst *bytes.Buffer, src []byte, prefix string, indent string) error
 	insertFunc("Indent", []*types.Var{newParam("dst", types.NewPointer(bytesBuffer)), newParam("src", types.NewSlice(byteT)), newParam("prefix", stringT), newParam("indent", stringT)}, []*types.Var{newParam("", errorT)}, false)
 	// Marshal func(v any) ([]byte, error)

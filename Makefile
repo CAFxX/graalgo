@@ -98,7 +98,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-p3frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-ci
 
@@ -135,6 +135,26 @@ check:
 # `make test` (see header comment).
 test-ci: build
 	$(MAKE) -C internal/backend/truffle smoke-test
+
+# p3frontend drift tests: the phase-3 importer/loader module's own test
+# suite, including the synthetic-surface drift tests that the
+# internal/frontend/synth_*.go omission comments pin on. Runs `go vet`
+# and `go test` in the p3frontend module. Needs the gofrontend binary
+# (built by `generate`); the tests resolve it via GRAALGO_GOFRONTEND or
+# the <repo>/internal/frontend/gofrontend fallback (export.go).
+#
+# NOT in `all` yet: 4 pre-existing failures need owner fixes first
+# (all fail on master too, never ran in CI):
+#   TestSyncExportDir, TestSyncScopeErrorParity — real-sync exporter
+#     semantics (sync lowering / M2 scope errors); route to the sync
+#     owner or review-d2-vettest (sync test infra).
+#   TestTwoPackageDifferential, TestEmbeddedFieldRebinding — the
+#     differential runner points at the removed phases/phase2 tree;
+#     rewire graalgoRun() to internal/backend/graalgo-run; route to
+#     review-t2-testinfra (test infra) or the backend owner.
+# Add test-p3frontend to `all` once those are green.
+test-p3frontend: generate
+	cd internal/frontend/p3frontend && $(GO) vet ./... && $(GO) test ./...
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
