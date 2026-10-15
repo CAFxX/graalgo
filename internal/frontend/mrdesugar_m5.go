@@ -3077,8 +3077,24 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 				var innerCallNode *Node
 				var innerTmpName string
 				var innerTmpID, innerTmpTid int
-				if innerPlan.kind == mrUser {
-					innerCallNode, err = e.exportCall(inner)
+				if innerPlan.kind == mrUser || innerPlan.kind == mrIfaceMethod {
+					if innerPlan.kind == mrUser {
+						innerCallNode, err = e.exportCall(inner)
+					} else {
+						// General interface MR: build the ifacemethod
+						// dispatch node (yields the pair, like the
+						// assignment path in desugarIfaceMultiResult).
+						var sel *ast.SelectorExpr
+						var ok bool
+						if sel, ok = inner.Fun.(*ast.SelectorExpr); !ok {
+							return nil, nil, fmt.Errorf("gofrontend: iface-multi-result call has non-selector fun %T", inner.Fun)
+						}
+						selection, ok := e.info.Selections[sel]
+						if !ok {
+							return nil, nil, fmt.Errorf("gofrontend: no selection for iface-multi-result call")
+						}
+						innerCallNode, err = e.exportIfaceMethodCall(inner, sel, selection)
+					}
 					if err != nil {
 						return nil, nil, err
 					}
@@ -3094,11 +3110,6 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 						return nil, nil, err
 					}
 					innerTmpTid = resTid
-				} else if innerPlan.kind == mrIfaceMethod {
-					// Interface method: use the ifacemethod dispatch.
-					// For now, fail with a clear error — nested interface
-					// multi-result calls are not yet supported.
-					return nil, nil, scopeErrorf("nested interface multi-result call in argument position is not supported in frontend/v1 scope (WS D)")
 				} else {
 					helperFn, err := e.multiResultHelper(innerPlan)
 					if err != nil {
@@ -3146,11 +3157,26 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 	var callNode *Node
 	var tmpName string
 	var tmpID, tmpTid int
-	if plan.kind == mrUser {
+	if plan.kind == mrUser || plan.kind == mrIfaceMethod {
 		// User-defined MR: export the call normally (pair-valued).
 		// Its args are hoisted recursively via exportCallArgs.
+		// Interface MR: build the ifacemethod dispatch node (yields the
+		// pair, like the assignment path in desugarIfaceMultiResult).
 		var err error
-		callNode, err = e.exportCall(inner)
+		if plan.kind == mrUser {
+			callNode, err = e.exportCall(inner)
+		} else {
+			var sel *ast.SelectorExpr
+			var ok bool
+			if sel, ok = inner.Fun.(*ast.SelectorExpr); !ok {
+				return nil, nil, fmt.Errorf("gofrontend: iface-multi-result call has non-selector fun %T", inner.Fun)
+			}
+			selection, ok := e.info.Selections[sel]
+			if !ok {
+				return nil, nil, fmt.Errorf("gofrontend: no selection for iface-multi-result call")
+			}
+			callNode, err = e.exportIfaceMethodCall(inner, sel, selection)
+		}
 		if err != nil {
 			return nil, nil, err
 		}
@@ -3200,10 +3226,6 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 			return nil, nil, err
 		}
 		tmpTid = pairTid
-	} else if plan.kind == mrIfaceMethod {
-		// Interface MR calls in argument position are not yet supported
-		// (same limitation as nested interface MR in multiResultHelperArgs).
-		return nil, nil, scopeErrorf("interface multi-result call in argument position is not supported in frontend/v1 scope (WS D)")
 	} else if plan.kind == mrTrivialFwd {
 		// Trivial-forwarder stub in argument position: f(x.M(...))
 		// becomes f(fwdFn()) where fwdFn is Args[fwdParamIdx].
