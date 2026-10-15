@@ -3,7 +3,6 @@ package graalgo.frontend;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.DeferredCall;
-import graalgo.runtime.Fmt;
 import graalgo.runtime.GoroutineState;
 import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
@@ -17,12 +16,9 @@ import graalgo.values.GoKind;
  * goroutine's {@link graalgo.runtime.DeferChain}, and continues. The call
  * runs LIFO when the surrounding function returns, panics, or goexits.
  *
- * <p>Three forms: deferring a function value (a {@code funclit} or func-typed
- * variable), deferring a builtin call ({@code println}, {@code panic},
- * {@code recover} — the latter two for gc-exact unwind interplay), and
- * deferring a {@code fmt} overlay call (M7 — e.g. {@code defer
- * fmt.Println(x)}; the FmtCallNode's arguments are evaluated now, the
- * formatting replays at return/unwind time).
+ * <p>Two forms: deferring a function value (a {@code funclit} or func-typed
+ * variable) and deferring a builtin call ({@code println}, {@code panic},
+ * {@code recover} — the latter two for gc-exact unwind interplay).
  */
 public final class DeferNode extends GoStmtNode {
     @Child private GoExprNode fn;
@@ -30,8 +26,6 @@ public final class DeferNode extends GoStmtNode {
     /** Builtin name for deferred builtins; null for function values. */
     private final String builtinName;
     private final GoKind[] argKinds;
-    /** Non-null only for a deferred {@code fmt} overlay call (M7). */
-    @Child private FmtCallNode fmtCall;
     /**
      * M9 (P1-2): enclosing funcdecl's object id for probe site disambiguation
      * (see FuncValueCallNode). Set by the factory; -1 when unknown.
@@ -64,73 +58,35 @@ public final class DeferNode extends GoStmtNode {
         this.argKinds = argKinds;
     }
 
-    /** A deferred {@code fmt} overlay call (M7). */
-    public DeferNode(FmtCallNode fmtCall) {
-        this.fmtCall = fmtCall;
-        this.args = fmtCall.fmtArgs();
-        this.builtinName = null;
-        this.argKinds = fmtCall.argKinds();
-    }
-
-    /**
-     * Builds the {@link Fmt.Arg} array for a deferred fmt call from the
-     * already-evaluated argument values plus the FmtCallNode's static type
-     * metadata. Called at defer time (Go's call-time evaluation); the array
-     * is captured in the DeferredCall and replayed at return/unwind time.
-     */
-    private static Fmt.Arg[] buildFmtArgs(FmtCallNode fmtCall, Object[] argVals) {
-        Fmt.Arg[] fargs = new Fmt.Arg[argVals.length];
-        for (int i = 0; i < argVals.length; i++) {
-            fargs[i] = new Fmt.Arg(argVals[i], fmtCall.argKinds()[i], fmtCall.argTypeNames()[i],
-                    fmtCall.argKeyKinds()[i], fmtCall.argKeyTypeNames()[i],
-                    fmtCall.argElemKinds()[i], fmtCall.argElemTypeNames()[i],
-                    fmtCall.argElemKindChains()[i], fmtCall.argElemTypeNameChains()[i],
-                    fmtCall.argKeyKindChains()[i], fmtCall.argKeyTypeNameChains()[i]);
-        }
-        return fargs;
-    }
-
     @Override
     public void executeVoid(VirtualFrame frame) {
         DeferredCall dc;
-        if (fmtCall != null) {
-            // Fmt overlay call: evaluate arguments now (Go's call-time
-            // evaluation), build the Fmt.Arg array now; the formatting
-            // replays via FmtCallNode.executeFmt when the deferred call runs.
-            GoExprNode[] fargs = fmtCall.fmtArgs();
-            Object[] argVals = new Object[fargs.length];
-            for (int i = 0; i < fargs.length; i++) {
-                argVals[i] = FmtCallNode.readArg(fargs[i], frame);
-            }
-            dc = DeferredCall.fmtCall(fmtCall.funcName(), buildFmtArgs(fmtCall, argVals));
+        Object[] argVals = new Object[args.length];
+        for (int i = 0; i < args.length; i++) {
+            argVals[i] = Boxing.box(args[i].kind(), args[i], frame);
+        }
+        if (builtinName != null) {
+            dc = DeferredCall.builtin(builtinName, argVals, argKinds);
+            // P3-M4 remediation (P1-2): a deferred panic(x) throws at
+            // unwind time; the site is the defer statement (gc's line).
+            dc.setCallSite(this);
         } else {
-            Object[] argVals = new Object[args.length];
-            for (int i = 0; i < args.length; i++) {
-                argVals[i] = Boxing.box(args[i].kind(), args[i], frame);
+            GoFunc f = (GoFunc) fn.executeObject(frame);
+            if (f == null) {
+                // Deferring a nil func value: gc panics at defer time with
+                // the nil-dereference panic.
+                graalgo.runtime.Panic.throwPanic(graalgo.runtime.GoErrors.nilDereference(), null, null, this);
             }
-            if (builtinName != null) {
-                dc = DeferredCall.builtin(builtinName, argVals, argKinds);
-                // P3-M4 remediation (P1-2): a deferred panic(x) throws at
-                // unwind time; the site is the defer statement (gc's line).
-                dc.setCallSite(this);
-            } else {
-                GoFunc f = (GoFunc) fn.executeObject(frame);
-                if (f == null) {
-                    // Deferring a nil func value: gc panics at defer time with
-                    // the nil-dereference panic.
-                    graalgo.runtime.Panic.throwPanic(graalgo.runtime.GoErrors.nilDereference(), null, null, this);
+            dc = DeferredCall.func(f, argVals);
+            // M9 (P1-2): attach the probe site so the deferred invocation
+            // is recorded in the polymorphism histogram.
+            if (CallSiteProbes.isEnabled()) {
+                CallSiteProbes.Site site = probeSite;
+                if (site == null) {
+                    site = CallSiteProbes.registerSite(siteName());
+                    probeSite = site;
                 }
-                dc = DeferredCall.func(f, argVals);
-                // M9 (P1-2): attach the probe site so the deferred invocation
-                // is recorded in the polymorphism histogram.
-                if (CallSiteProbes.isEnabled()) {
-                    CallSiteProbes.Site site = probeSite;
-                    if (site == null) {
-                        site = CallSiteProbes.registerSite(siteName());
-                        probeSite = site;
-                    }
-                    dc.setProbeSite(site);
-                }
+                dc.setProbeSite(site);
             }
         }
         GoroutineState.current().deferChain().push(dc);
