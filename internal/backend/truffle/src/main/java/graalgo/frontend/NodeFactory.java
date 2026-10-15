@@ -3549,6 +3549,21 @@ public final class NodeFactory {
             nec.add(GoTypeStrings.of(ctx, ceId));
             curId = ceId;
         }
+        // bug-041: if the terminal type (after nested maps) is an array or
+        // slice, append its element chain so map values that are arrays or
+        // slices carry their element kinds for nested fmt printing.
+        // e.g. map[int][2]int: the walk above breaks immediately (elem is
+        // array, not map), yielding an empty chain; the nested [2]int value
+        // then gets a null elemKind which printSlice defaults to UINT8,
+        // crashing with [J->[B on the actual long[] backing (int is 64-bit).
+        // Appending walkElemChain gives [INT64], the kind-driven element type.
+        Json.Object termEntry = underlyingEntry(ctx, curId, apath);
+        String termKind = termEntry.string("kind", apath);
+        if ("array".equals(termKind) || "slice".equals(termKind)) {
+            ChainWalk ew = walkElemChain(curId, ctx, apath);
+            kec.addAll(ew.kinds());
+            nec.addAll(ew.names());
+        }
         return new MapChainWalk(java.util.List.copyOf(kkc), java.util.List.copyOf(knc),
                 java.util.List.copyOf(kec), java.util.List.copyOf(nec));
     }
