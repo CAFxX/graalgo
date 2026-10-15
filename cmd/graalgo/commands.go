@@ -36,30 +36,48 @@ func cmdRun(root string, args []string) int {
 	target := rest[0]
 	progArgs := rest[1:]
 
-	// Single file: run it directly. Program args are separated from the
-	// launcher's own flags by "--" (the launcher treats every bare
-	// "-..." before "--" as its own flag).
+	// One or more explicit .go files: `graalgo run a.go [b.go...]`.
+	// Leading .go arguments are program files (like `go run`); the rest
+	// are program arguments.
 	if strings.HasSuffix(target, ".go") {
-		runArgs := []string{target, "--"}
+		var progFiles []string
+		i := 0
+		for i < len(rest) && strings.HasSuffix(rest[i], ".go") {
+			progFiles = append(progFiles, rest[i])
+			i++
+		}
+		progArgs = rest[i:]
+		// Program args are separated from the launcher's own flags by
+		// "--" (the launcher treats every bare "-..." before "--" as
+		// its own flag).
+		runArgs := append(append([]string{}, progFiles...), "--")
 		runArgs = append(runArgs, progArgs...)
 		return graalgoRunProgram(root, runArgs)
 	}
 
 	// Package (directory or import path): find its main package files.
+	// _test.go files are excluded, like `go run` (they're not part of
+	// the package build).
 	files, err := resolveFiles([]string{target})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
 		return 1
 	}
-	// For a package, concatenate: the backend handles one file; for
-	// multi-file packages we check each file then run the first.
-	// (Full package support: run the package's main files in order.)
+	var pkgFiles []string
 	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
-			return code
+		if !strings.HasSuffix(f, "_test.go") {
+			pkgFiles = append(pkgFiles, f)
 		}
 	}
-	runArgs := []string{files[0], "--"}
+	if len(pkgFiles) == 0 {
+		fmt.Fprintf(os.Stderr, "graalgo run: no non-test Go files in %s\n", target)
+		return 1
+	}
+	// The backend compiles all package files together as one unit.
+	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+		return code
+	}
+	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)
 	return graalgoRunProgram(root, runArgs)
 }
