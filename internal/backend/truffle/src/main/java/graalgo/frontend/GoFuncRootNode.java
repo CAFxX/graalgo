@@ -2,15 +2,18 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.frame.FrameSlotTypeException;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.SourceSection;
 import graalgo.runtime.DeferChain;
+import graalgo.runtime.DeferredCall;
 import graalgo.runtime.Goexit;
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.PanicException;
 import graalgo.safepoint.Safepoint;
+import java.util.List;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 
@@ -57,6 +60,12 @@ public final class GoFuncRootNode extends RootNode {
      * {@link GoFunc#boxCells()}. Null when the literal captures none.
      */
     private final int[] snapSlots;
+    /**
+     * PKG-039: frame slot holding this function's range-over-func defer
+     * stash, or -1 when the function contains no range-over-func (see
+     * {@link RangeFuncNode}).
+     */
+    private final int rangeStashSlot;
 
     public GoFuncRootNode(FrameDescriptor descriptor, GoStmtNode body,
                           int closureSlot, int[] paramSlots, GoKind[] paramKinds,
@@ -75,6 +84,22 @@ public final class GoFuncRootNode extends RootNode {
                           int closureSlot, int[] paramSlots, GoKind[] paramKinds,
                           int resultSlot, GoKind resultKind, String funcName, int[] snapSlots,
                           boolean resultBoxed) {
+        this(descriptor, body, closureSlot, paramSlots, paramKinds, resultSlot, resultKind,
+                funcName, snapSlots, resultBoxed, -1);
+    }
+
+    /**
+     * Full constructor.
+     *
+     * @param rangeStashSlot PKG-039: frame slot holding this function's
+     *                       range-over-func defer stash (a
+     *                       {@code List<DeferredCall>}), or -1 when the
+     *                       function contains no range-over-func.
+     */
+    public GoFuncRootNode(FrameDescriptor descriptor, GoStmtNode body,
+                          int closureSlot, int[] paramSlots, GoKind[] paramKinds,
+                          int resultSlot, GoKind resultKind, String funcName, int[] snapSlots,
+                          boolean resultBoxed, int rangeStashSlot) {
         super((TruffleLanguage<?>) null, descriptor);
         this.body = body;
         this.closureSlot = closureSlot;
@@ -85,6 +110,7 @@ public final class GoFuncRootNode extends RootNode {
         this.resultBoxed = resultBoxed;
         this.funcName = funcName;
         this.snapSlots = snapSlots;
+        this.rangeStashSlot = rangeStashSlot;
     }
 
     /**
@@ -193,16 +219,24 @@ public final class GoFuncRootNode extends RootNode {
                 body.executeVoid(frame);
             } catch (GoReturn r) {
                 if (chain != null) {
+                    adoptRangeDefers(chain, frame, mark);
                     chain.unwindReturning(mark);
                 }
                 return readResult(frame, resultSlot, resultKind, r.value, resultBoxed);
             }
             if (chain != null) {
+                adoptRangeDefers(chain, frame, mark);
                 chain.unwindReturning(mark);
             }
             return readResult(frame, resultSlot, resultKind, null, resultBoxed);
         } catch (PanicException p) {
-            PanicException rest = chain != null ? chain.unwindPanicking(mark, p) : p;
+            PanicException rest;
+            if (chain != null) {
+                adoptRangeDefers(chain, frame, mark);
+                rest = chain.unwindPanicking(mark, p);
+            } else {
+                rest = p;
+            }
             if (rest != null) {
                 throw rest;
             }
@@ -210,6 +244,7 @@ public final class GoFuncRootNode extends RootNode {
             return readResult(frame, resultSlot, resultKind, null, resultBoxed);
         } catch (Goexit g) {
             if (chain != null) {
+                adoptRangeDefers(chain, frame, mark);
                 chain.unwindGoexiting(mark);
             }
             throw g;
@@ -217,6 +252,29 @@ public final class GoFuncRootNode extends RootNode {
             if (state != null && head != null) {
                 state.popGoStack(head.frame);
             }
+        }
+    }
+
+    /**
+     * PKG-039: merges this function's range-over-func defer stash back
+     * into the chain before unwinding (gc's {@code deferrangefunc}).
+     * No-op when the function contains no range-over-func or no body
+     * defer was stashed.
+     */
+    private void adoptRangeDefers(DeferChain chain, VirtualFrame frame, int mark) {
+        if (rangeStashSlot < 0) {
+            return;
+        }
+        Object cur;
+        try {
+            cur = frame.getObject(rangeStashSlot);
+        } catch (FrameSlotTypeException e) {
+            return; // stash slot never initialized: no range executed
+        }
+        if (cur instanceof List<?> stash) {
+            @SuppressWarnings("unchecked")
+            List<DeferredCall> calls = (List<DeferredCall>) stash;
+            chain.adoptRangeDefers(mark, calls);
         }
     }
 

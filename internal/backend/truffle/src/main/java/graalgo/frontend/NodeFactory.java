@@ -109,6 +109,13 @@ public final class NodeFactory {
          * builders. Null when no label applies.
          */
         public String pendingLabel;
+        /**
+         * PKG-039: frame slot holding the range-over-func defer stash (a
+         * {@code List<DeferredCall>} in push order; gc's
+         * {@code deferrangefunc}). Allocated on first range-over-func in
+         * this function; -1 when the function has none.
+         */
+        public int rangeStashSlot = -1;
         /** Canonical struct descriptors per type-table id (M4, WS E). */
         public final Map<Integer, GoStructDescriptor> structDescs = new HashMap<>();
         /** Struct field type ids parallel to descriptor fields (M4, WS E). */
@@ -630,7 +637,7 @@ public final class NodeFactory {
                     body = new BlockNode(seq.toArray(new GoStmtNode[0]));
                 }
                 mainDescriptor = ctx.frames.build();
-                mainRoot = new GoRootNode(mainDescriptor, body);
+                mainRoot = new GoRootNode(mainDescriptor, body, ctx.rangeStashSlot);
                 mainRoot.setSourceSection(sectionFor(fn, "funcdecl"));
                 mainSlots = Map.copyOf(ctx.slotsByName);
                 mainKinds = Map.copyOf(ctx.kindsByName);
@@ -778,7 +785,7 @@ public final class NodeFactory {
                 : new BlockNode(entryStmts.toArray(new GoStmtNode[0]));
         GoFuncRootNode root = new GoFuncRootNode(ctx.frames.build(), entry, closureSlot,
                 paramSlots, paramKinds, resultSlot, resultKind, funcName, null,
-                ctx.resultBoxed);
+                ctx.resultBoxed, ctx.rangeStashSlot);
         root.setSourceSection(sectionFor(fn, "funcdecl"));
         return root;
     }
@@ -4181,7 +4188,7 @@ public final class NodeFactory {
             }
             root = new GoFuncRootNode(frames.build(), entry, closureSlot,
                     paramSlots, paramKinds, fctx.resultSlot, fctx.resultKind, fctx.funcName,
-                    snapSlots, fctx.resultBoxed);
+                    snapSlots, fctx.resultBoxed, fctx.rangeStashSlot);
             root.setSourceSection(sectionFor(node, "funclit"));
             RootCallTarget target = root.getCallTarget();
             // Does the body capture? The hasCapture flag is set when CapReadNode
@@ -5410,6 +5417,82 @@ public final class NodeFactory {
         return entry;
     }
 
+    /**
+     * PKG-039: Go 1.23 range-over-func. Resolves the sequence type's
+     * signature ({@code func(yield func(K[, V]) bool)}) and returns the
+     * yield function's parameter kinds (0, 1, or 2). The frontend
+     * type-checks the shape; the checks here are defensive.
+     */
+    private GoKind[] rangeFuncYieldKinds(Json.Object seqDetail, BuildCtx ctx, String path) {
+        Json.Array seqParams = seqDetail.array("params", path);
+        if (seqParams.size() != 1) {
+            throw new FrontendException(path + ": cannot range over function with "
+                    + seqParams.size() + " parameters (want func(yield func(...) bool))");
+        }
+        if (seqDetail.array("results", path).size() != 0) {
+            throw new FrontendException(path + ": cannot range over function with results"
+                    + " (want func(yield func(...) bool))");
+        }
+        int yieldTid = ((Json.Object) seqParams.get(0)).intValue("type", path);
+        Json.Object yieldEntry = underlyingEntry(ctx, yieldTid, path);
+        if (!"signature".equals(yieldEntry.string("kind", path))) {
+            throw new FrontendException(path + ": cannot range over function whose"
+                    + " parameter is not a function type");
+        }
+        Json.Object yieldDetail = yieldEntry.object("detail", path);
+        Json.Array yieldParams = yieldDetail.array("params", path);
+        if (yieldParams.size() > 2) {
+            throw new FrontendException(path + ": cannot range over function whose yield"
+                    + " takes " + yieldParams.size() + " parameters (want 0-2)");
+        }
+        Json.Array yieldResults = yieldDetail.array("results", path);
+        if (yieldResults.size() != 1
+                || kindOf(ctx, ((Json.Object) yieldResults.get(0)).intValue("type", path), path)
+                        != GoKind.BOOL) {
+            throw new FrontendException(path + ": cannot range over function whose yield"
+                    + " does not return bool");
+        }
+        GoKind[] kinds = new GoKind[yieldParams.size()];
+        for (int i = 0; i < kinds.length; i++) {
+            kinds[i] = kindOf(ctx,
+                    ((Json.Object) yieldParams.get(i)).intValue("type", path), path);
+        }
+        return kinds;
+    }
+
+    /**
+     * PKG-039: builds the range-over-func statement: a {@link RangeFuncNode}
+     * that initializes the iterator state, calls the sequence value with
+     * the synthesized yield closure, and checks for iterator misuse after
+     * the call. See {@link RangeFuncNode} for the semantics.
+     */
+    private GoStmtNode buildRangeFunc(BuildCtx ctx, String label, GoExprNode rangeX,
+                                      GoStmtNode body,
+                                      int keySlot, GoKind keyKind, boolean keyBoxed, boolean define,
+                                      int valSlot, GoKind valKind, boolean valBoxed, boolean valDefine) {
+        int stateSlot = ctx.frames.addSlot(FrameSlotKind.Object, "rangefuncstate$", null);
+        // PKG-039: one defer-stash slot per function (gc's deferrangefunc).
+        if (ctx.rangeStashSlot < 0) {
+            ctx.rangeStashSlot = ctx.frames.addSlot(FrameSlotKind.Object, "rangefuncstash$", null);
+        }
+        RangeFuncNode.YieldRoot yieldRoot = new RangeFuncNode.YieldRoot(
+                FrameDescriptor.newBuilder().build(),
+                body, stateSlot,
+                keySlot, keyKind, keyBoxed, define,
+                valSlot, valKind, valBoxed, valDefine,
+                label, ctx.rangeStashSlot);
+        RootCallTarget yieldTarget = yieldRoot.getCallTarget();
+        // The yield closure captures the enclosing frame (iteration
+        // variables, locals) via FuncLitNode's materialization.
+        GoExprNode yieldLit = new FuncLitNode(yieldTarget, true);
+        // A call with no results: the dummy kind is discarded by
+        // ExprStmtNode (same convention as callResultKind's void case).
+        GoStmtNode doCall = new ExprStmtNode(new FuncValueCallNode(
+                rangeX, new GoExprNode[] { yieldLit }, GoKind.INTERFACE, false, ctx.funcObjId));
+        return new RangeFuncNode(
+                new RangeFuncNode.InitState(stateSlot), doCall, new RangeFuncNode.PostCall(stateSlot));
+    }
+
     private GoStmtNode buildRange(Json.Object node, BuildCtx ctx) {
         Json.Object f = fieldsOf(node, "range");
         String path = "range.fields";
@@ -5425,6 +5508,7 @@ public final class NodeFactory {
         Json.Object detail = underlyingEntry(ctx, xtid, path).object("detail", path);
         GoKind keyKind;
         GoKind valKind;
+        GoKind[] funcYieldKinds = null; // PKG-039: set only for range-over-func
         boolean isIntRange = xk.isIntKind();
         // P3-M9 (WS E): range over *[N]T (pointer to array) — dereference
         // the pointer, then range over the array.
@@ -5452,6 +5536,14 @@ public final class NodeFactory {
             case MAP -> {
                 keyKind = kindOf(ctx, detail.intValue("key", path), path);
                 valKind = kindOf(ctx, detail.intValue("elem", path), path);
+            }
+            case FUNC -> {
+                // PKG-039: Go 1.23 range-over-func. The sequence type is
+                // func(yield func(K[, V]) bool); the iteration variable
+                // kinds come from the yield function's parameters.
+                funcYieldKinds = rangeFuncYieldKinds(detail, ctx, path);
+                keyKind = funcYieldKinds.length > 0 ? funcYieldKinds[0] : GoKind.INT64;
+                valKind = funcYieldKinds.length > 1 ? funcYieldKinds[1] : GoKind.INT64;
             }
             default -> {
                 // P3-M9 (WS E): Go 1.22+ integer ranges: for i := range n.
@@ -5483,6 +5575,23 @@ public final class NodeFactory {
         boolean keyBoxed = keyOid >= 0 && ctx.boxed.contains(keyOid);
         boolean valBoxed = valOid >= 0 && ctx.boxed.contains(valOid);
         GoStmtNode body = buildStmt(f.object("body", path), ctx);
+        if (xk == GoKind.FUNC) {
+            // PKG-039: Go 1.23 range-over-func takes the call-a-sequence
+            // path (RangeFuncNode), not the RepeatingNode path below.
+            // The frontend type-checks the variable count against the
+            // yield arity; the checks below are defensive.
+            if (keySlot >= 0 && funcYieldKinds.length < 1) {
+                throw new FrontendException(path + ": range over func() with no yield"
+                        + " parameters declares an iteration variable");
+            }
+            if (valSlot >= 0 && funcYieldKinds.length < 2) {
+                throw new FrontendException(path + ": range over func(func(K) bool)"
+                        + " declares two iteration variables");
+            }
+            return buildRangeFunc(ctx, label, rangeX, body,
+                    keySlot, keyKind, keyBoxed, define,
+                    valSlot, valKind, valBoxed, define);
+        }
         // M10, F-1: per-invocation range iteration state lives in frame
         // slots, never in node fields (the node object is shared by every
         // goroutine executing the same compiled function). Allocate hidden

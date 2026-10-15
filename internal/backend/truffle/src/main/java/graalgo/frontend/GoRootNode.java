@@ -2,15 +2,18 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.TruffleLanguage;
 import com.oracle.truffle.api.frame.FrameDescriptor;
+import com.oracle.truffle.api.frame.FrameSlotTypeException;
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import com.oracle.truffle.api.nodes.RootNode;
 import com.oracle.truffle.api.source.SourceSection;
 import graalgo.runtime.DeferChain;
+import graalgo.runtime.DeferredCall;
 import graalgo.runtime.Goexit;
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.PanicException;
 import graalgo.safepoint.Safepoint;
+import java.util.List;
 
 /**
  * Root node for a compiled {@code func main}.
@@ -33,10 +36,26 @@ import graalgo.safepoint.Safepoint;
 public final class GoRootNode extends RootNode {
     @Child private GoStmtNode body;
     private SourceSection sourceSection;
+    /**
+     * PKG-039: frame slot holding main's range-over-func defer stash, or
+     * -1 when main contains no range-over-func (see
+     * {@link RangeFuncNode}).
+     */
+    private final int rangeStashSlot;
 
     public GoRootNode(FrameDescriptor descriptor, GoStmtNode body) {
+        this(descriptor, body, -1);
+    }
+
+    /**
+     * @param rangeStashSlot PKG-039: frame slot holding main's
+     *                       range-over-func defer stash, or -1 when main
+     *                       contains no range-over-func.
+     */
+    public GoRootNode(FrameDescriptor descriptor, GoStmtNode body, int rangeStashSlot) {
         super((TruffleLanguage<?>) null, descriptor);
         this.body = body;
+        this.rangeStashSlot = rangeStashSlot;
     }
 
     @Override
@@ -51,12 +70,15 @@ public final class GoRootNode extends RootNode {
             try {
                 body.executeVoid(frame);
             } catch (GoReturn r) {
+                adoptRangeDefers(chain, frame, mark);
                 chain.unwindReturning(mark);
                 return r.value;
             }
+            adoptRangeDefers(chain, frame, mark);
             chain.unwindReturning(mark);
             return 0L;
         } catch (PanicException p) {
+            adoptRangeDefers(chain, frame, mark);
             PanicException rest = chain.unwindPanicking(mark, p);
             if (rest != null) {
                 throw rest;
@@ -64,11 +86,34 @@ public final class GoRootNode extends RootNode {
             // Recovered at main level: resume after the chain.
             return 0L;
         } catch (Goexit g) {
+            adoptRangeDefers(chain, frame, mark);
             chain.unwindGoexiting(mark);
             throw g;
         } finally {
             state.popGoStack(head.frame);
             GoroutineState.restore(prev);
+        }
+    }
+
+    /**
+     * PKG-039: merges main's range-over-func defer stash back into the
+     * chain before unwinding (gc's {@code deferrangefunc}). No-op when
+     * main contains no range-over-func or no body defer was stashed.
+     */
+    private void adoptRangeDefers(DeferChain chain, VirtualFrame frame, int mark) {
+        if (rangeStashSlot < 0) {
+            return;
+        }
+        Object cur;
+        try {
+            cur = frame.getObject(rangeStashSlot);
+        } catch (FrameSlotTypeException e) {
+            return; // stash slot never initialized: no range executed
+        }
+        if (cur instanceof List<?> stash) {
+            @SuppressWarnings("unchecked")
+            List<DeferredCall> calls = (List<DeferredCall>) stash;
+            chain.adoptRangeDefers(mark, calls);
         }
     }
 
