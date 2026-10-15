@@ -103,12 +103,16 @@ over a visited set plus an explicit stack.
 - `"sync"` → synthetic package with the exact P3-M2b signatures
   (ADR-0002): `Mutex`/`RWMutex`/`WaitGroup`/`Once` with pointer-receiver
   methods (`Lock/Unlock`, `RLock/RUnlock`, `Add(int)/Done/Wait`,
-  `Do(func())`) plus the defined-but-out-of-scope `TryLock`/`TryRLock`/
-  `RLocker`/`WaitGroup.Go`. The mirror is pinned by
-  `TestSyncSyntheticSignatures`/`TestSyncMethodSetComplete`; the frozen
-  exporter (not p3frontend) lowers the calls to `syncnew`/`syncop` wire
-  nodes and raises the named `not in M2 scope` errors
-  (`TestSyncScopeErrorParity`).
+  `Do(func())`) plus `TryLock`/`TryRLock`/`RLocker`/`WaitGroup.Go`.
+  The mirror is pinned by
+  `TestSyncSyntheticSignatures`/`TestSyncMethodSetComplete` and serves
+  only the local type-check/flatten: the merged source keeps the
+  `import "sync"` spec, and the frozen exporter resolves it to the real
+  package from disk and compiles the calls ordinarily (503608ea retired
+  the `syncnew`/`syncop` desugar and the named `not in M2 scope`
+  errors). `TestSyncExportDir`/`TestSyncScopeParity` pin that the
+  p3frontend path and the frozen exporter agree on the real-sync
+  surface.
 - `"errors"` → synthetic package with the exact gc 1.27.1 signatures
   (P3-M7 wave-1): real-Go `New`/`Is`/`Unwrap`/`Join`/`AsType`; `As`
   keeps its exact signature with a fail-fast body (needs `reflect`).
@@ -272,7 +276,8 @@ per SPEC §3.2) is P3-M6 work; M1 must not invent its own vendored copy.
   (`main` + two-file `helper` with linux-tagged and windows-excluded
   files; `main` also carries a `T` colliding with `helper.T` and a
   package-level `Counter` shadowing `helper.Counter`) — a built gc binary
-  vs `graalgo-run --gmp=1` on the merged file: byte-identical stdout,
+  vs [`graalgo-run`](../../backend/graalgo-run) (with `GOMAXPROCS=1`) on
+  the merged file: byte-identical stdout,
   same exit code; panic variant → identical `panic:` line (stacks differ
   by design — JVM Unsafe warnings on stderr), exit 2.
 - `TestNoLanguagePinning` (`verifies: GG-0013`): `//go:build go1.27`

@@ -78,20 +78,33 @@ func copyDir(t *testing.T, src string) string {
 
 func goTool(t *testing.T) string {
 	t.Helper()
+	// The Makefile and CI export GO (the 1.27.1 toolchain under test);
+	// fall back to the local toolchain install.
+	if p := os.Getenv("GO"); p != "" {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("GO=%q not found: %v", p, err)
+		}
+		return p
+	}
 	p := filepath.Join(os.Getenv("HOME"), "tools", "go", "bin", "go")
 	if _, err := os.Stat(p); err != nil {
-		t.Fatalf("go toolchain not found at %s", p)
+		t.Fatalf("go toolchain not found at %s (and $GO unset)", p)
 	}
 	return p
 }
 
-// graalgoRun executes the merged single-file program with the Phase-2
-// launcher (make -s run ARGS="--gmp=1 <file>"); -s keeps make's own echo
-// out of stdout so it stays byte-comparable with gc's.
+// graalgoRun executes the merged single-file program with the backend
+// launcher wrapper (internal/backend/graalgo-run), which passes through
+// to graalgo.launcher.Main. GOMAXPROCS=1 keeps the guest single-threaded
+// — the same determinism intent the removed phase-2 launcher's --gmp=1
+// flag served, and the same env the p3 diffharness sets for its graalgo
+// backend. Requires `make build` at the repo root (out/classes must
+// exist); `make all` ordering satisfies this before test-p3frontend.
 func graalgoRun(t *testing.T, mergedPath string) cmdResult {
 	t.Helper()
-	phase2 := filepath.Join(repoRoot(t), "phases", "phase2")
-	return runCommand(t, phase2, "make", "-s", "run", "ARGS=--gmp=1 "+mergedPath)
+	t.Setenv("GOMAXPROCS", "1")
+	runner := filepath.Join(repoRoot(t), "internal", "backend", "graalgo-run")
+	return runCommand(t, "", runner, mergedPath)
 }
 
 // normalizeDoc unmarshals a frontend/v1 document and normalizes the

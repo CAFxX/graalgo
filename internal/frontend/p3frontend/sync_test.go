@@ -265,7 +265,11 @@ func TestSyncResolveImportSynthetic(t *testing.T) {
 // TestSyncExportDir: a single-file program importing "sync" compiles
 // through ExportDir — loader (synthetic), importer (mirrored
 // signatures), flattener (import spec kept), and the frozen gofrontend
-// binary (syncnew/syncop nodes in the document).
+// binary. Since 503608ea the binary resolves "sync" to the real package
+// from disk and compiles the calls ordinarily (the synthetic syncop
+// desugar is retired): the method names appear as call targets in the
+// document, exactly as the frozen exporter's own TestSyncImportAccepted
+// pins them for ExportFile — and no syncnew/syncop wire node is emitted.
 func TestSyncExportDir(t *testing.T) {
 	dir := t.TempDir()
 	src := `package main
@@ -295,14 +299,21 @@ func main() {
 	if err != nil {
 		t.Fatalf("ExportDir with import \"sync\": %v", err)
 	}
+	// Real-sync lowering (503608ea): the method names appear as call
+	// targets in the document, as TestSyncImportAccepted pins for
+	// ExportFile directly.
 	for _, want := range []string{
-		`"kind": "syncnew"`, `"kind": "syncop"`,
-		`"op": "Lock"`, `"op": "Unlock"`,
-		`"op": "Add"`, `"op": "Done"`, `"op": "Wait"`, `"op": "Do"`,
-		`"synctyp": "Mutex"`, `"synctyp": "WaitGroup"`, `"synctyp": "Once"`,
+		"Lock", "Unlock", "Add", "Done", "Wait", "Do",
 	} {
 		if !strings.Contains(doc, want) {
-			t.Errorf("ExportDir doc missing %s", want)
+			t.Errorf("ExportDir doc missing method %s", want)
+		}
+	}
+	// The retired synthetic desugar must stay retired: no syncnew/syncop
+	// wire nodes for ordinary sync calls through the p3frontend path.
+	for _, gone := range []string{`"kind": "syncnew"`, `"kind": "syncop"`} {
+		if strings.Contains(doc, gone) {
+			t.Errorf("ExportDir doc contains retired %s wire node", gone)
 		}
 	}
 	// The merged source kept the import spec (flatten.go kept-import path).
@@ -315,20 +326,27 @@ func main() {
 	}
 }
 
-// TestSyncScopeErrorParity: out-of-scope sync surface fails through the
-// full ExportDir path with the same named M2 scope errors the frozen
-// exporter produces (the mirrored signatures must agree).
-func TestSyncScopeErrorParity(t *testing.T) {
+// TestSyncScopeParity: the extended real-sync surface exports successfully
+// through the full ExportDir path — the same verdict the frozen exporter
+// gives (its TestSyncScopeErrors/TestSyncCompositeSupported pin success
+// for ExportFile). Under the retired synthetic sync package these were
+// named "not in M2 scope" errors; the parity target moved with 503608ea,
+// and this test pins the new agreement: the p3frontend path and the
+// frozen exporter accept the same surface.
+func TestSyncScopeParity(t *testing.T) {
 	cases := map[string]string{
-		"m.TryLock()":                    "not in M2 scope",
-		"rw.RLocker()":                   "not in M2 scope",
-		"type T struct { mu sync.Once }": "not in M2 scope",
+		"m.TryLock()":                    "TryLock",
+		"rw.RLocker()":                   "RLocker",
+		"type T struct { mu sync.Once }": `"name": "sync.Once"`,
 	}
 	for body, want := range cases {
 		dir := t.TempDir()
 		var src string
 		if strings.HasPrefix(body, "type ") {
-			src = "package main\n\nimport \"sync\"\n\n" + body + "\n\nfunc main() {}\n"
+			// Instantiate the type: the exporter must carry the field's
+			// named type (like TestSyncCompositeSupported's struct-field
+			// cases), not just accept the declaration.
+			src = "package main\n\nimport \"sync\"\n\n" + body + "\n\nfunc main() {\n\t_ = T{}\n}\n"
 		} else {
 			src = "package main\n\nimport \"sync\"\n\nfunc main() {\n\tvar m sync.Mutex\n\tvar rw sync.RWMutex\n\t_ = m\n\t_ = rw\n\t" + body + "\n}\n"
 		}
@@ -339,13 +357,13 @@ func TestSyncScopeErrorParity(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "main.go"), formatted, 0644); err != nil {
 			t.Fatal(err)
 		}
-		_, err = ExportDir(dir)
-		if err == nil {
-			t.Errorf("%s: expected scope error, got success", body)
+		doc, err := ExportDir(dir)
+		if err != nil {
+			t.Errorf("%s: ExportDir failed, want success (real sync): %v", body, err)
 			continue
 		}
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: error %q does not contain %q", body, err, want)
+		if !strings.Contains(doc, want) {
+			t.Errorf("%s: ExportDir doc missing %q", body, want)
 		}
 	}
 }

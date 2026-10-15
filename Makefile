@@ -100,7 +100,7 @@ GO ?= $(HOME)/tools/go/bin/go
 
 .PHONY: all generate gen-synth build check test-ci test-p3frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-ci
+all: generate build snapshot-check check test-ci test-p3frontend
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -141,20 +141,14 @@ test-ci: build
 # internal/frontend/synth_*.go omission comments pin on. Runs `go vet`
 # and `go test` in the p3frontend module. Needs the gofrontend binary
 # (built by `generate`); the tests resolve it via GRAALGO_GOFRONTEND or
-# the <repo>/internal/frontend/gofrontend fallback (export.go).
-#
-# NOT in `all` yet: 4 pre-existing failures need owner fixes first
-# (all fail on master too, never ran in CI):
-#   TestSyncExportDir, TestSyncScopeErrorParity — real-sync exporter
-#     semantics (sync lowering / M2 scope errors); route to the sync
-#     owner or review-d2-vettest (sync test infra).
-#   TestTwoPackageDifferential, TestEmbeddedFieldRebinding — the
-#     differential runner points at the removed phases/phase2 tree;
-#     rewire graalgoRun() to internal/backend/graalgo-run; route to
-#     review-t2-testinfra (test infra) or the backend owner.
-# Add test-p3frontend to `all` once those are green.
+# the <repo>/internal/frontend/gofrontend fallback (export.go). The
+# differential tests additionally need the backend built (`make build` —
+# satisfied by `all` ordering, since test-p3frontend runs last) and run
+# the merged programs through internal/backend/graalgo-run; they resolve
+# the go toolchain via $GO (exported below so CI's setup-go toolchain is
+# used; the test falls back to ~/tools/go/bin/go when $GO is unset).
 test-p3frontend: generate
-	cd internal/frontend/p3frontend && $(GO) vet ./... && $(GO) test ./...
+	cd internal/frontend/p3frontend && GO="$(GO)" $(GO) vet ./... && GO="$(GO)" $(GO) test ./...
 
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
