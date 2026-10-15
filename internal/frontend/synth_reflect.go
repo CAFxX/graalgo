@@ -46,7 +46,6 @@ const syntheticReflectSource = `
 package reflect
 
 import (
-	"errors"
 	"iter"
 	"strconv"
 	"unsafe"
@@ -533,6 +532,15 @@ type reflectValuePair struct {
 	err error
 }
 
+// fieldByIndexError is a local string-based error type. The reflect
+// package must not import "errors": errors.As is implemented over
+// reflect, so a reflect→errors import would be an import cycle
+// (the real stdlib breaks the same cycle via internal/reflectlite,
+// which — unlike reflect — does not import errors).
+type fieldByIndexError string
+
+func (e fieldByIndexError) Error() string { return string(e) }
+
 func __reflectFieldByIndexErr(v Value, index []int) reflectValuePair {
 	if len(index) == 1 {
 		return reflectValuePair{v.Field(index[0]), nil}
@@ -544,7 +552,7 @@ func __reflectFieldByIndexErr(v Value, index []int) reflectValuePair {
 		if i > 0 {
 			if v.Kind() == Pointer && v.Type().Elem().Kind() == Struct {
 				if v.IsNil() {
-					return reflectValuePair{Value{}, errors.New("reflect: indirection through nil pointer to embedded struct field " + v.Type().Elem().String())}
+					return reflectValuePair{Value{}, fieldByIndexError("reflect: indirection through nil pointer to embedded struct field " + v.Type().Elem().String())}
 				}
 				v = v.Elem()
 			}
