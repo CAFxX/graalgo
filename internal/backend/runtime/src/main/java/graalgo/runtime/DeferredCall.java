@@ -2,11 +2,10 @@ package graalgo.runtime;
 
 import com.oracle.truffle.api.nodes.Node;
 
+import graalgo.frontend.FmtCallNode;
 import graalgo.values.CallSiteProbes;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
-import graalgo.values.GoSlice;
-import graalgo.values.GoString;
 
 /**
  * A deferred call: the function value plus its already-evaluated arguments,
@@ -35,42 +34,21 @@ public final class DeferredCall {
     private final Object[] args;
     private final GoKind[] argKinds;
     private final String builtinName;
-    // FMT-kind metadata: the overlay function name plus per-argument static
-    // type metadata (parallel to FmtCallNode's fields). argVals are the
-    // already-evaluated argument values, captured at defer time.
+    // FMT-kind: the overlay function name plus the pre-built Fmt.Arg array
+    // (values evaluated at defer time, metadata from FmtCallNode). The
+    // formatting replays via FmtCallNode.executeFmt at return/unwind time.
     private final String fmtFunc;
-    private final String[] fmtTypeNames;
-    private final GoKind[] fmtElemKinds;
-    private final String[] fmtElemTypeNames;
-    private final java.util.List<GoKind>[] fmtElemKindChains;
-    private final java.util.List<String>[] fmtElemTypeNameChains;
-    private final GoKind[] fmtKeyKinds;
-    private final String[] fmtKeyTypeNames;
-    private final java.util.List<GoKind>[] fmtKeyKindChains;
-    private final java.util.List<String>[] fmtKeyTypeNameChains;
+    private final Fmt.Arg[] fmtArgs;
 
     private DeferredCall(Kind kind, GoFunc func, Object[] args, GoKind[] argKinds, String builtinName,
-            String fmtFunc, String[] fmtTypeNames, GoKind[] fmtElemKinds, String[] fmtElemTypeNames,
-            java.util.List<GoKind>[] fmtElemKindChains,
-            java.util.List<String>[] fmtElemTypeNameChains,
-            GoKind[] fmtKeyKinds, String[] fmtKeyTypeNames,
-            java.util.List<GoKind>[] fmtKeyKindChains,
-            java.util.List<String>[] fmtKeyTypeNameChains) {
+            String fmtFunc, Fmt.Arg[] fmtArgs) {
         this.kind = kind;
         this.func = func;
         this.args = args;
         this.argKinds = argKinds;
         this.builtinName = builtinName;
         this.fmtFunc = fmtFunc;
-        this.fmtTypeNames = fmtTypeNames;
-        this.fmtElemKinds = fmtElemKinds;
-        this.fmtElemTypeNames = fmtElemTypeNames;
-        this.fmtElemKindChains = fmtElemKindChains;
-        this.fmtElemTypeNameChains = fmtElemTypeNameChains;
-        this.fmtKeyKinds = fmtKeyKinds;
-        this.fmtKeyTypeNames = fmtKeyTypeNames;
-        this.fmtKeyKindChains = fmtKeyKindChains;
-        this.fmtKeyTypeNameChains = fmtKeyTypeNameChains;
+        this.fmtArgs = fmtArgs;
     }
 
     /**
@@ -101,25 +79,22 @@ public final class DeferredCall {
 
     /** A deferred function-value call. */
     public static DeferredCall func(GoFunc func, Object[] args) {
-        return new DeferredCall(Kind.FUNC, func, args, null, null, null, null, null, null, null, null, null, null, null, null);
+        return new DeferredCall(Kind.FUNC, func, args, null, null, null, null);
     }
 
     /** A deferred builtin call ({@code println}, {@code print}, {@code panic}, {@code recover}). */
     public static DeferredCall builtin(String name, Object[] args, GoKind[] argKinds) {
-        return new DeferredCall(Kind.BUILTIN, null, args, argKinds, name, null, null, null, null, null, null, null, null, null, null);
+        return new DeferredCall(Kind.BUILTIN, null, args, argKinds, name, null, null);
     }
 
-    /** A deferred {@code fmt} overlay call (M7): values captured at defer time. */
-    public static DeferredCall fmtCall(String funcName, Object[] argVals, GoKind[] argKinds,
-            String[] typeNames, GoKind[] elemKinds, String[] elemTypeNames,
-            java.util.List<GoKind>[] elemKindChains,
-            java.util.List<String>[] elemTypeNameChains,
-            GoKind[] keyKinds, String[] keyTypeNames,
-            java.util.List<GoKind>[] keyKindChains,
-            java.util.List<String>[] keyTypeNameChains) {
-        return new DeferredCall(Kind.FMT, null, argVals, argKinds, null, funcName, typeNames,
-                elemKinds, elemTypeNames, elemKindChains, elemTypeNameChains, keyKinds, keyTypeNames,
-                keyKindChains, keyTypeNameChains);
+    /**
+     * A deferred {@code fmt} overlay call (M7). The {@code Fmt.Arg} array is
+     * built at defer time (values evaluated, metadata attached); the
+     * formatting replays via {@link FmtCallNode#executeFmt} at return/unwind
+     * time. Results are discarded (defer is statement position).
+     */
+    public static DeferredCall fmtCall(String funcName, Fmt.Arg[] fargs) {
+        return new DeferredCall(Kind.FMT, null, null, null, null, funcName, fargs);
     }
 
     public Kind kind() {
@@ -139,7 +114,9 @@ public final class DeferredCall {
                 GoCalls.invoke(func, args);
             }
             case BUILTIN -> invokeBuiltin();
-            case FMT -> invokeFmt();
+            // FMT: replay via the shared FmtCallNode dispatch; results are
+            // discarded (defer is statement position).
+            case FMT -> FmtCallNode.executeFmt(fmtFunc, fmtArgs);
         }
     }
 
@@ -159,96 +136,5 @@ public final class DeferredCall {
             out[i] = new BuiltinPrint.Arg(argKinds[i], args[i]);
         }
         return out;
-    }
-
-    /**
-     * Replays a deferred {@code fmt} overlay call from the values captured
-     * at defer time. Mirrors FmtCallNode's dispatch; Sprint-variant results
-     * are discarded (defer is statement position).
-     */
-    private void invokeFmt() {
-        Fmt.Arg[] fargs = new Fmt.Arg[args.length];
-        for (int i = 0; i < args.length; i++) {
-            fargs[i] = new Fmt.Arg(args[i], argKinds[i], fmtTypeNames[i],
-                    fmtKeyKinds[i], fmtKeyTypeNames[i], fmtElemKinds[i], fmtElemTypeNames[i],
-                    fmtElemKindChains[i], fmtElemTypeNameChains[i],
-                    fmtKeyKindChains[i], fmtKeyTypeNameChains[i]);
-        }
-        switch (fmtFunc) {
-            case "Print" -> Fmt.print(fargs);
-            case "Printf" -> Fmt.printf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Println" -> Fmt.println(fargs);
-            case "Sprint" -> Fmt.sprint(fargs);
-            case "Sprintf" -> Fmt.sprintf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Sprintln" -> Fmt.sprintln(fargs);
-            case "Errorf" -> Fmt.errorf(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Append" -> Fmt.append(sliceArg(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Appendf" -> Fmt.appendf(sliceArg(fargs), fmtStringAt(fargs, 1),
-                    java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
-            case "Appendln" -> Fmt.appendln(sliceArg(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "FormatString" -> Fmt.formatString(fargs[0], intArg(fargs, 1));
-            case "Sscan" -> FmtScan.sscan(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Sscanf" -> FmtScan.sscanf(fargs[0], fmtStringAt(fargs, 1),
-                    java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
-            case "Sscanln" -> FmtScan.sscanln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Fscan" -> FmtScan.fscan(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Fscanf" -> FmtScan.fscanf(fargs[0], fmtStringAt(fargs, 1),
-                    java.util.Arrays.copyOfRange(fargs, 2, fargs.length));
-            case "Fscanln" -> FmtScan.fscanln(fargs[0], java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Scan" -> FmtScan.scanStdin(fargs);
-            case "Scanf" -> FmtScan.scanfStdin(fmtString(fargs), java.util.Arrays.copyOfRange(fargs, 1, fargs.length));
-            case "Scanln" -> FmtScan.scanlnStdin(fargs);
-            default -> throw new IllegalStateException("unknown fmt function: " + fmtFunc);
-        }
-    }
-
-    private String fmtStringAt(Fmt.Arg[] fargs, int at) {
-        if (fargs.length <= at) {
-            throw new IllegalStateException(fmtFunc + " requires a format string");
-        }
-        Object v = fargs[at].value();
-        if (!(v instanceof GoString gs)) {
-            throw new IllegalStateException(fmtFunc + " format is not a string");
-        }
-        return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
-    }
-
-    private GoSlice sliceArg(Fmt.Arg[] fargs) {
-        if (fargs.length == 0) {
-            throw new IllegalStateException(fmtFunc + " requires a []byte argument");
-        }
-        Object v = fargs[0].value();
-        if (v == null) {
-            return null;
-        }
-        if (!(v instanceof GoSlice gs)) {
-            throw new IllegalStateException(fmtFunc + " []byte argument is not a slice");
-        }
-        return gs;
-    }
-
-    private int intArg(Fmt.Arg[] fargs, int at) {
-        if (fargs.length <= at) {
-            throw new IllegalStateException(fmtFunc + " requires an integer argument");
-        }
-        Object v = fargs[at].value();
-        if (v instanceof Integer i) {
-            return i;
-        }
-        if (v instanceof Long l) {
-            return l.intValue();
-        }
-        throw new IllegalStateException(fmtFunc + " integer argument has wrong type");
-    }
-
-    private String fmtString(Fmt.Arg[] fargs) {
-        if (fargs.length == 0) {
-            throw new IllegalStateException(fmtFunc + " requires a format string");
-        }
-        Object v = fargs[0].value();
-        if (!(v instanceof GoString gs)) {
-            throw new IllegalStateException(fmtFunc + " format is not a string");
-        }
-        return new String(gs.bytes(), java.nio.charset.StandardCharsets.UTF_8);
     }
 }
