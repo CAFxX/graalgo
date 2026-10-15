@@ -124,7 +124,7 @@ public final class IfaceDispatchNodeTest {
 
     private IfaceDispatchNode node(GoExprNode recv, GoExprNode[] args, List<String> methodNames,
             int ifaceId) {
-        return IfaceDispatchNodeGen.create(recv, args, "M", methodNames, ifaceId,
+        return new IfaceDispatchNode(recv, args, "M", methodNames, ifaceId,
                 GoKind.INT64, -1);
     }
 

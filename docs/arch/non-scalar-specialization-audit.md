@@ -22,34 +22,23 @@ The Graal compiler constant-folds the switch on the final field. The
 on the runtime type would add polymorphic-cache overhead for a site that is
 already monomorphic by construction. **No change.**
 
-## Finding 2: IfaceDispatchNode hand-rolled PIC → DSL (DONE)
+## Finding 2: IfaceDispatchNode hand-rolled PIC → DSL (REVERTED)
 
 `IfaceDispatchNode` (interface method dispatch) had a hand-rolled polymorphic
 inline cache: volatile `pic0/pic1/pic2` slots, identity comparison on itab,
 synchronized `lookupPicMiss`, and a `HashMap` megamorphic fallback.
 
-This is exactly what the Truffle DSL generates. Converted to:
+A DSL conversion was attempted but **reverted**: the Truffle DSL processor
+cannot handle a node that mixes DSL `@Specialization` methods with the
+manually-implemented `execute*` methods inherited from `GoExprNode`. The
+processor requires all execute methods to follow the DSL pattern.
 
-```java
-@Specialization(limit = "3", guards = "descriptorOf(gi) == cachedDescriptor")
-Object doCached(VirtualFrame frame, GoInterface gi,
-        @Cached("descriptorOf(gi)") Object cachedDescriptor,
-        @Cached("itabForDescriptor(cachedDescriptor)") IfaceItab cachedItab,
-        @Cached("targetForItab(cachedItab)") IfaceMethodTarget cachedTarget) {
-    return invokeWithTarget(frame, gi, cachedTarget);
+The hand-rolled PIC is correct and all 13 `IfaceDispatchNodeTest` tests pass,
+including the probe recording, transition counting, and toString semantics.
+The hand-rolled version is retained.
 }
 
-@Fallback
-Object doMegamorphic(VirtualFrame frame, GoInterface gi) {
-    megamorphicTransitions.incrementAndGet();
-    ...
-}
-```
-
-The guard keys on receiver descriptor identity (cheap field read); the itab
-and target are derived once per specialization via `@Cached`. The full
-dispatch body (embedded redispatch, receiver handling, `GoCalls.invoke`) is
-unchanged in `invokeWithTarget`.
+The hand-rolled version is retained.
 
 ## Finding 3: GoEquality — static utility, out of scope for DSL
 
