@@ -106,16 +106,53 @@ public final class SyncStressTest {
         }
     }
 
-    /** Unlock of an unlocked mutex panics (gc parity). */
+    /**
+     * Unlock of an unlocked mutex is a Go panic (gc: exit 2 with a Go
+     * stack), not a scheduler "internal error". The panic value is the
+     * gc message string.
+     */
     public void testMutexUnlockOfUnlockedPanics() {
-        GoMutex mu = new GoMutex();
-        boolean panicked = false;
+        SchedulerCore sched = newScheduler(1);
         try {
-            mu.unlock();
-        } catch (IllegalStateException e) {
-            panicked = true;
+            GoMutex mu = new GoMutex();
+            boolean panicked = false;
+            try {
+                mu.unlock();
+            } catch (graalgo.runtime.PanicException pe) {
+                panicked = true;
+                assertTrue(pe.goValue().toString().contains("sync: unlock of unlocked mutex"),
+                        "panic message gc-parity, got: " + pe.goValue());
+            }
+            assertTrue(panicked, "unlock of unlocked mutex must be a Go panic");
+        } finally {
+            SchedulerCore.install(null);
         }
-        assertTrue(panicked, "unlock of unlocked mutex must panic");
+    }
+
+    /**
+     * RUnlock/Unlock of an unlocked RWMutex are Go panics (gc parity).
+     */
+    public void testRWMutexUnlockOfUnlockedPanics() {
+        SchedulerCore sched = newScheduler(1);
+        try {
+            GoRWMutex mu = new GoRWMutex();
+            boolean rPanicked = false;
+            try {
+                mu.rUnlock();
+            } catch (graalgo.runtime.PanicException pe) {
+                rPanicked = pe.goValue().toString().contains("sync: RUnlock of unlocked RWMutex");
+            }
+            assertTrue(rPanicked, "RUnlock of unlocked RWMutex must be a Go panic");
+            boolean wPanicked = false;
+            try {
+                mu.unlock();
+            } catch (graalgo.runtime.PanicException pe) {
+                wPanicked = pe.goValue().toString().contains("sync: Unlock of unlocked RWMutex");
+            }
+            assertTrue(wPanicked, "Unlock of unlocked RWMutex must be a Go panic");
+        } finally {
+            SchedulerCore.install(null);
+        }
     }
 
     /**
@@ -205,16 +242,21 @@ public final class SyncStressTest {
         }
     }
 
-    /** WaitGroup negative counter panics. */
+    /** WaitGroup negative counter is a Go panic (gc parity). */
     public void testWaitGroupNegativePanics() {
-        GoWaitGroup wg = new GoWaitGroup();
-        boolean panicked = false;
+        SchedulerCore sched = newScheduler(1);
         try {
-            wg.add(-1);
-        } catch (IllegalStateException e) {
-            panicked = true;
+            GoWaitGroup wg = new GoWaitGroup();
+            boolean panicked = false;
+            try {
+                wg.add(-1);
+            } catch (graalgo.runtime.PanicException pe) {
+                panicked = pe.goValue().toString().contains("sync: negative WaitGroup counter");
+            }
+            assertTrue(panicked, "negative WaitGroup counter must be a Go panic");
+        } finally {
+            SchedulerCore.install(null);
         }
-        assertTrue(panicked, "negative WaitGroup counter must panic");
     }
 
     /** Zero-counter await returns immediately (no park). */

@@ -99,6 +99,36 @@ public final class SchedulerCore {
     private final Object quiescenceLock = new Object();
 
     /**
+     * Process-halt latch (review 2026-10-15, P0-9): gc terminates the
+     * program when the main goroutine returns and on the first uncaught
+     * panic, without waiting for other goroutines. {@code -1} = no halt
+     * requested; otherwise the process exit code the launcher must use.
+     * The first request wins: a peer panicking as main returns races
+     * exactly like gc's "main returned, game over" vs "panic kills the
+     * process".
+     */
+    private final AtomicInteger haltCode = new AtomicInteger(-1);
+
+    /**
+     * Requests process halt with the given exit code (first request
+     * wins; later requests are ignored). Wakes any
+     * {@link #awaitQuiescenceOrHalt} waiter. Safe to call from any
+     * goroutine thread; the launcher reads {@link #haltCode}.
+     */
+    public void requestHalt(int exitCode) {
+        if (haltCode.compareAndSet(-1, exitCode)) {
+            synchronized (quiescenceLock) {
+                quiescenceLock.notifyAll();
+            }
+        }
+    }
+
+    /** The requested halt exit code, or -1 if no halt was requested. */
+    public int haltCode() {
+        return haltCode.get();
+    }
+
+    /**
      * @param gomaxprocs requested GOMAXPROCS (clamped to &ge;1)
      * @param quantumNanos quantum per admission, nanoseconds
      */
@@ -440,6 +470,13 @@ public final class SchedulerCore {
         graalgo.sched.GoroutineHandle h = currentHandle.get();
         long gid = h != null ? h.id : 1;
         System.err.print(graalgo.runtime.Intrinsics.renderGoStack(gid, pe.stackTop(), throwSec));
+        // P0-9 (review 2026-10-15): gc dies at the panic — it does not
+        // wait for the remaining goroutines to finish. Halt promptly
+        // (exit 2); the traceback above is already printed, and further
+        // panics racing in still print via this same path (first halt
+        // request wins, so a returning main still yields exit 0 iff it
+        // won the race).
+        requestHalt(2);
     }
 
     private void recordCrash(String what, Throwable t) {
@@ -546,5 +583,39 @@ public final class SchedulerCore {
                 quiescenceLock.wait();
             }
         }
+    }
+
+    /**
+     * Blocks until every spawned goroutine has finished OR a halt was
+     * requested (main goroutine returned / called Goexit, or an uncaught
+     * Go panic was recorded). This is the launcher's wait (P0-9):
+     * unlike {@link #awaitQuiescence} it returns early on halt instead
+     * of draining every goroutine. Tests and spikes that need the full
+     * drain keep using {@code awaitQuiescence}, whose contract is
+     * unchanged.
+     */
+    public void awaitQuiescenceOrHalt() throws InterruptedException {
+        synchronized (quiescenceLock) {
+            while (liveGoroutines.get() != 0 && haltCode.get() < 0) {
+                quiescenceLock.wait();
+            }
+        }
+    }
+
+    /**
+     * The installed scheduler when the calling thread is one of its
+     * goroutine threads, or null otherwise (no scheduler installed, or
+     * a plain launcher/test thread). Blocking-syscall bracketing
+     * ({@code ioEnter}/{@code ioExit}) uses this: off-scheduler callers
+     * hold no in-flight slot, so there is nothing to release and the
+     * bracket is skipped (rather than fail-fasting in
+     * {@code requireHandle}).
+     */
+    public static SchedulerCore currentOrNull() {
+        SchedulerCore sc = installed;
+        if (sc == null || sc.currentHandle.get() == null) {
+            return null;
+        }
+        return sc;
     }
 }

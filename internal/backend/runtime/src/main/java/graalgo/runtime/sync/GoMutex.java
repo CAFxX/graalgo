@@ -1,7 +1,9 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.Panic;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
+import graalgo.values.GoString;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
@@ -50,7 +52,7 @@ public final class GoMutex {
         GoroutineHandle next;
         synchronized (this) {
             if (!locked) {
-                throw new IllegalStateException("sync: unlock of unlocked mutex");
+                Panic.throwPanic(GoString.fromUtf8("sync: unlock of unlocked mutex"));
             }
             next = waiters.pollFirst();
             if (next == null) {

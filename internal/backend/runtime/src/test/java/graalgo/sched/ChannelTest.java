@@ -1,5 +1,7 @@
 package graalgo.sched;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -578,6 +580,62 @@ public final class ChannelTest {
         });
         assertEquals("send on closed channel", panicVal.get(),
                 "select send-on-closed panics");
+    }
+
+    /**
+     * P0-8 regression (review 2026-10-15): a send case whose channel is
+     * closed in the poll -&gt; block gap must panic "send on closed
+     * channel", not park forever. The close is timed to land after the
+     * poll observed the channel open but before the block-phase sweep
+     * re-checks it: the doomed case sits at index 0 (polled first) and
+     * 30000 never-ready cases stretch the poll so the 1ms-delayed close
+     * lands squarely in the gap. Pre-fix, the sweep-set poison was
+     * discarded at the park and the select hung — the watchdog below
+     * fails the test instead of hanging the suite. Every interleaving
+     * panics post-fix (pre-poll close: poll-phase panic; post-sweep
+     * close: close() poisons the parked waiter), so the test is
+     * deterministic green. verifies: GG-0017
+     */
+    public void testSelectSendOnClosedRacingBlockPanics() throws Exception {
+        for (int iter = 0; iter < 30; iter++) {
+            AtomicReference<String> outcome = new AtomicReference<>();
+            CountDownLatch done = new CountDownLatch(1);
+            withScheduler(2, () -> {
+                GoChan doomed = new GoChan(0, 0L);
+                ChanOps.SelectCase[] cases = new ChanOps.SelectCase[30001];
+                cases[0] = new ChanOps.SelectCase(doomed, true, 1L);
+                for (int i = 1; i < cases.length; i++) {
+                    cases[i] = new ChanOps.SelectCase(new GoChan(0, 0L), true, 1L);
+                }
+                // Closer first (admitted first): sleeps 1ms so the
+                // select's poll sees the channel open, then closes it
+                // mid-poll — inside the poll -> block gap.
+                sched.spawn(() -> {
+                    try {
+                        Thread.sleep(1);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                    }
+                    ChanOps.close(doomed);
+                });
+                sched.spawn(() -> {
+                    try {
+                        ChanOps.selectGo(cases);
+                        outcome.set("NO_PANIC");
+                    } catch (PanicException pe) {
+                        outcome.set(pe.goValue().toString());
+                    } catch (Throwable t) {
+                        outcome.set("WRONG: " + t);
+                    } finally {
+                        done.countDown();
+                    }
+                });
+                assertTrue(done.await(20, TimeUnit.SECONDS),
+                        "select hung: sweep-observed send-on-closed poison discarded (P0-8)");
+            });
+            assertEquals("send on closed channel", outcome.get(),
+                    "racing close must panic (iter " + iter + ")");
+        }
     }
 
     // ---------- stress ----------

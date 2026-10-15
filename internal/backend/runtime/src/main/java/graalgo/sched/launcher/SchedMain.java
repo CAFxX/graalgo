@@ -22,8 +22,12 @@ import graalgo.sched.nodes.GoStatementNode;
  * contract) but executes {@code main} on the user-space scheduler
  * (P2-D1): a {@link SchedulerCore} is installed, the drainer started,
  * {@code main} spawned as the first goroutine, and the launcher thread
- * blocks until quiescence. The {@code "gostmt"} wire kind is registered
- * on the factory via the public {@code registerStmtKind} hook.
+ * blocks until the halt latch fires (main goroutine returned, or an
+ * uncaught Go panic was recorded) or quiescence — whichever comes
+ * first (P0-9: Go spec — "when [main] returns, the program exits";
+ * gc does not drain the remaining goroutines). The {@code "gostmt"}
+ * wire kind is registered on the factory via the public
+ * {@code registerStmtKind} hook.
  *
  * <p>Exit codes match Phase 1: 0 ok, 1 usage/input, 2 build failure or
  * uncaught Go panic (gc parity).
@@ -150,7 +154,6 @@ public final class SchedMain {
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
-        final int[] exitCode = {EXIT_OK};
         try {
             sched.spawn(() -> {
                 VirtualFrame frame = Truffle.getRuntime()
@@ -158,17 +161,22 @@ public final class SchedMain {
                 try {
                     program.root().execute(frame);
                 } catch (graalgo.runtime.Goexit g) {
-                    // Main called Goexit: Go fatal deadlock iff no other
-                    // goroutine is live; otherwise main just dies.
-                    if (sched.runnableCount() > 1) {
-                        return;
-                    }
-                    System.err.println(
-                            "fatal error: all goroutines are asleep - deadlock!");
-                    exitCode[0] = EXIT_PANIC;
+                    // Main called Goexit: gc terminates the program when
+                    // the main goroutine dies, exit 0 — even with peers
+                    // still running. (The old "fatal deadlock iff alone"
+                    // branch was a divergence: gc exits 0 here.)
                 }
+                // P0-9 (review 2026-10-15): Go spec — "when [main]
+                // returns, the program exits". Halt immediately; the
+                // remaining goroutines are abandoned like gc abandons
+                // them. A PanicException skips this line (it propagates
+                // to spawn's catch: recordPanic prints the traceback and
+                // halts with EXIT_PANIC).
+                sched.requestHalt(EXIT_OK);
             });
-            sched.awaitQuiescence();
+            // Exit-on-main-return / prompt fatal panic: return as soon as
+            // the halt latch fires instead of draining every goroutine.
+            sched.awaitQuiescenceOrHalt();
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             System.err.println("graalgo-run: interrupted while awaiting quiescence");
@@ -176,13 +184,17 @@ public final class SchedMain {
         } finally {
             SchedulerCore.install(prev);
         }
+        int halt = sched.haltCode();
+        if (halt >= 0) {
+            return halt;
+        }
         if (sched.panicked()) {
             return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
         }
         if (sched.crashed()) {
             return EXIT_INPUT_ERROR; // internal error, already reported on stderr
         }
-        return exitCode[0];
+        return EXIT_OK;
     }
 
     /**

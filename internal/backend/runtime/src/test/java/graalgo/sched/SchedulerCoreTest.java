@@ -507,4 +507,84 @@ public final class SchedulerCoreTest {
             SchedulerCore.install(null);
         }
     }
+
+    // ---------- process-halt latch (P0-9) ----------
+
+    /**
+     * Exit-on-main-return: a main-like goroutine that returns while a
+     * peer is parked forever must release the launcher promptly with
+     * halt code 0 (gc: "when [main] returns, the program exits" — peers
+     * are abandoned, not drained). verifies: GG-0017
+     */
+    public void testHaltOnMainReturn() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            // A peer that never finishes (gc: abandoned at process exit).
+            sched.spawn(() -> sched.parkCurrent(null));
+            // "main": returns immediately, requesting halt like SchedMain.
+            sched.spawn(() -> sched.requestHalt(0));
+            long t0 = System.nanoTime();
+            sched.awaitQuiescenceOrHalt();
+            long dtMs = (System.nanoTime() - t0) / 1_000_000;
+            assertEquals(0, sched.haltCode(), "halt code 0 on main return");
+            assertTrue(dtMs < 5000,
+                    "halt returned promptly despite parked peer, dtMs=" + dtMs);
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * Prompt fatal panic: an uncaught Go panic in a peer must release
+     * the launcher promptly with halt code 2, even with a goroutine
+     * parked forever (gc dies at the panic; it does not drain first).
+     * verifies: GG-0017
+     */
+    public void testHaltOnUncaughtPanic() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            // A peer that never finishes: gc would abandon it at panic death.
+            sched.spawn(() -> sched.parkCurrent(null));
+            sched.spawn(() -> {
+                throw new graalgo.runtime.PanicException("boom", null, "string", null);
+            });
+            long t0 = System.nanoTime();
+            sched.awaitQuiescenceOrHalt();
+            long dtMs = (System.nanoTime() - t0) / 1_000_000;
+            assertTrue(sched.panicked(), "panic recorded");
+            assertEquals(2, sched.haltCode(), "halt code 2 on uncaught panic");
+            assertTrue(dtMs < 5000,
+                    "halt returned promptly despite parked peer, dtMs=" + dtMs);
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * Halt-latch basics: unset initially (-1), first request wins, and a
+     * halted await returns immediately even with live goroutines.
+     */
+    public void testHaltFirstRequestWins() throws Exception {
+        SchedulerCore sched = new SchedulerCore(1, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            assertEquals(-1, sched.haltCode(), "no halt initially");
+            sched.requestHalt(0);
+            assertEquals(0, sched.haltCode(), "halt 0 recorded");
+            sched.requestHalt(2);
+            assertEquals(0, sched.haltCode(), "first halt request wins");
+            sched.spawn(() -> sched.parkCurrent(null));
+            long t0 = System.nanoTime();
+            sched.awaitQuiescenceOrHalt();
+            long dtMs = (System.nanoTime() - t0) / 1_000_000;
+            assertTrue(dtMs < 5000, "halted await returns promptly, dtMs=" + dtMs);
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
 }

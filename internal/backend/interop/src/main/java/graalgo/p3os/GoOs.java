@@ -43,6 +43,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
+import graalgo.sched.SchedulerCore;
 import graalgo.values.GoSlice;
 import graalgo.values.GoString;
 
@@ -167,6 +168,50 @@ public final class GoOs {
     // ------------------------------------------------------------------
     // Process-wide state (reset by init).
     // ------------------------------------------------------------------
+
+    // ------------------------------------------------------------------
+    // Blocking-I/O slot discipline (GG-0018; review 2026-10-15 P1-R4-2).
+    //
+    // Every channel read/write below that can block (pipes, stdio, slow
+    // files) runs bracketed by SchedulerCore.ioEnter/ioExit when called
+    // on a scheduler goroutine thread: the in-flight slot is released
+    // across the block so a peer can be admitted. Without the bracket, a
+    // goroutine blocked in read(2) keeps its slot and --gmp=1 stalls the
+    // whole program (gc releases the M via entersyscall). Off-scheduler
+    // callers (unit tests, launcher threads) skip the bracket: no slot
+    // accounting exists there.
+    //
+    // Audit of the remaining syscall surface (exemptions):
+    // - Sockets (KIND_SOCKET): never block a goroutine — GoNet uses
+    //   non-blocking NIO channels driven by the dedicated netpoller
+    //   thread (GoNetpoll); goroutines park scheduler-aware.
+    // - TlsRuntime: in-memory SSLEngine only; transport is GoNet.
+    // - Metadata syscalls (stat, readlink, readdir, ...): do not block.
+    // - open(): regular file/dir open does not block. KNOWN EXEMPTION:
+    //   opening a FIFO for reading blocks until a writer appears; FIFO
+    //   open is outside the supported surface (no mkfifo intrinsic).
+    // ------------------------------------------------------------------
+
+    /**
+     * Enters blocking I/O when on a scheduler goroutine thread, else
+     * returns null. Pairs with {@link #ioExitBracketed}: pass the
+     * returned value to it in a finally block. Zero-allocation on the
+     * hot path (no lambda, no boxing).
+     */
+    private static SchedulerCore ioEnterBracketed() {
+        SchedulerCore sched = SchedulerCore.currentOrNull();
+        if (sched != null) {
+            sched.ioEnter();
+        }
+        return sched;
+    }
+
+    /** Leaves blocking I/O entered via {@link #ioEnterBracketed} (no-op for null). */
+    private static void ioExitBracketed(SchedulerCore sched) {
+        if (sched != null) {
+            sched.ioExit();
+        }
+    }
 
     private abstract static class Handle {
         final int kind;
@@ -689,6 +734,7 @@ public final class GoOs {
         if (!(ch.ch instanceof ReadableByteChannel)) {
             return -EBADF;
         }
+        SchedulerCore io = ioEnterBracketed();
         try {
             int n = ((ReadableByteChannel) ch.ch).read(bb);
             if (n < 0) {
@@ -698,6 +744,8 @@ public final class GoOs {
             return (long) n + 1;
         } catch (IOException e) {
             return -errno(e);
+        } finally {
+            ioExitBracketed(io);
         }
     }
 
@@ -715,6 +763,7 @@ public final class GoOs {
             return -EBADF;
         }
         WritableByteChannel wch = (WritableByteChannel) ch.ch;
+        SchedulerCore io = ioEnterBracketed();
         try {
             int n = wch.write(bb);
             return (long) n + 1;
@@ -732,6 +781,8 @@ public final class GoOs {
                 return -EPIPE;
             }
             return -errno(e);
+        } finally {
+            ioExitBracketed(io);
         }
     }
 
@@ -771,6 +822,7 @@ public final class GoOs {
             return -EBADF;
         }
         ByteBuffer bb = goBuf(bArg);
+        SchedulerCore io = ioEnterBracketed();
         try {
             int n = fc.read(bb, num(posArg));
             if (n < 0) {
@@ -782,6 +834,8 @@ public final class GoOs {
             return -errno(e);
         } catch (IllegalArgumentException e) {
             return -EINVAL;
+        } finally {
+            ioExitBracketed(io);
         }
     }
 
@@ -796,6 +850,7 @@ public final class GoOs {
         }
         ByteBuffer bb = goBuf(bArg);
         long pos = num(posArg);
+        SchedulerCore io = ioEnterBracketed();
         try {
             int n = fc.write(bb, pos);
             return (long) n + 1;
@@ -807,6 +862,8 @@ public final class GoOs {
             return -errno(e);
         } catch (IllegalArgumentException e) {
             return -EINVAL;
+        } finally {
+            ioExitBracketed(io);
         }
     }
 

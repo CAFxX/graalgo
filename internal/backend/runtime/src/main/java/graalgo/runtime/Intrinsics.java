@@ -73,7 +73,9 @@ public final class Intrinsics {
      * Element equality is Java {@link Object#equals} on the canonical boxed
      * form (records and {@link graalgo.values.GoString} implement value
      * equality); primitive-typed arrays are compared elementwise with the
-     * matching primitive equality.
+     * matching primitive equality. Bounds are checked like
+     * {@link #memmove}; violations throw
+     * {@link IndexOutOfBoundsException} (callers translate to Go panics).
      */
     public static boolean memequal(Object a, int aOff, Object b, int bOff, int n) {
         if (n < 0) {
@@ -84,6 +86,14 @@ public final class Intrinsics {
         if (!ca.equals(cb)) {
             throw new IllegalArgumentException(
                     "memequal: component type mismatch " + ca + " vs " + cb);
+        }
+        int aLen = java.lang.reflect.Array.getLength(a);
+        int bLen = java.lang.reflect.Array.getLength(b);
+        if (aOff < 0 || bOff < 0 || aOff + n > aLen || bOff + n > bLen) {
+            throw new IndexOutOfBoundsException(
+                    "memequal: range [" + aOff + "," + (aOff + n) + ") / ["
+                    + bOff + "," + (bOff + n) + ") on arrays of length "
+                    + aLen + "/" + bLen);
         }
         if (ca == byte.class) {
             byte[] x = (byte[]) a, y = (byte[]) b;

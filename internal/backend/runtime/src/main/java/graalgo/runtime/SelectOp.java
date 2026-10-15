@@ -236,6 +236,18 @@ public final class SelectOp {
                 cleanup(mine);
                 return immediate;
             }
+            // P0-8 (review 2026-10-15): the sweep observed a send on a
+            // closed channel (the close raced the poll -> block gap). A
+            // case that completed in the sweep, or a waker that won the
+            // claim in the gap, keeps priority (documented model above);
+            // otherwise gc panics "send on closed channel" — parking here
+            // would silently discard the poison (nothing enqueued on the
+            // closed channel can ever wake us; no deadlock detector would
+            // fire on it).
+            if (poison && immediate == null && !claimedByOther) {
+                cleanup(mine);
+                Panic.throwPanic(GoStrings.of("send on closed channel"));
+            }
             if (claimedByOther) {
                 // Winner's unpark is in flight: this park returns
                 // immediately. (mine holds earlier enqueues; cleaned up.)
