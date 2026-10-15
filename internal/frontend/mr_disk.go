@@ -986,6 +986,83 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	return spec, pairDecl, helperDecl, stubDecl
 }
 
+// receiverTypeParams lifts the type parameter list (with constraints)
+// from the declaration of a method's receiver base type, for methods on
+// generic instantiated types (e.g. func (c *Cache[K, V]) Get). Returns
+// the type's TypeParams node and the argument names from the receiver
+// expression. Returns (nil, nil) when the receiver is not a generic
+// instantiation with plain identifier arguments, the arity mismatches,
+// or the declaration is not found in the file — the caller then leaves
+// the method untransformed-safe (no tparams to propagate).
+func receiverTypeParams(file *ast.File, recvType ast.Expr) (*ast.FieldList, []string) {
+	e := recvType
+	for {
+		if s, ok := e.(*ast.StarExpr); ok {
+			e = s.X
+			continue
+		}
+		break
+	}
+	var args []ast.Expr
+	var base *ast.Ident
+	switch t := e.(type) {
+	case *ast.IndexExpr:
+		base, _ = t.X.(*ast.Ident)
+		args = []ast.Expr{t.Index}
+	case *ast.IndexListExpr:
+		base, _ = t.X.(*ast.Ident)
+		args = t.Indices
+	default:
+		return nil, nil
+	}
+	if base == nil {
+		return nil, nil
+	}
+	names := make([]string, 0, len(args))
+	for _, a := range args {
+		id, ok := a.(*ast.Ident)
+		if !ok {
+			return nil, nil
+		}
+		names = append(names, id.Name)
+	}
+	for _, decl := range file.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.TYPE {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			ts, ok := spec.(*ast.TypeSpec)
+			if !ok || ts.Name.Name != base.Name {
+				continue
+			}
+			if ts.TypeParams == nil || len(ts.TypeParams.List) == 0 {
+				return nil, nil
+			}
+			if len(tparamNamesOfTypeParams(ts.TypeParams)) != len(names) {
+				return nil, nil
+			}
+			return ts.TypeParams, names
+		}
+	}
+	return nil, nil
+}
+
+// tparamNamesOfTypeParams returns the names declared by a type parameter
+// list (the shared logic behind tparamNamesOf, which takes a FuncType).
+func tparamNamesOfTypeParams(tpl *ast.FieldList) []string {
+	if tpl == nil {
+		return nil
+	}
+	var out []string
+	for _, fld := range tpl.List {
+		for _, n := range fld.Names {
+			out = append(out, n.Name)
+		}
+	}
+	return out
+}
+
 // recvBaseName extracts the base type name from a receiver type expr.func recvBaseName(e ast.Expr) string {
 	for {
 		switch t := e.(type) {
