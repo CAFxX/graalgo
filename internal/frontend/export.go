@@ -446,6 +446,10 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 		return getSyntheticPackage("iter").pkg, nil
 	case "internal/reflectlite":
 		return getSyntheticPackage("internal/reflectlite").pkg, nil
+	// real-reflect (Phase 3): synthetic internal/cpu (synth_cpu.go) —
+	// feature detection is assembly; all bits stay false (portable paths).
+	case "internal/cpu":
+		return getSyntheticPackage("internal/cpu").pkg, nil
 	// P3-M8 (wave 2): synthetic crypto packages (real-Go sources in
 	// synth_crypto*.go). The crypto sources import the synthetic hash
 	// package, so it needs an overlay case too.
@@ -6334,6 +6338,30 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		if fi.obj != nil && isAbiFuncPCIntrinsicFunc(fi.obj) {
 			return e.exportAbiFuncPCDecl(fi)
 		}
+		// real-reflect (Phase 3): a bodyless declaration in an imported
+		// (synthetic/disk) package is always a gc-backend/asm/linkname
+		// implementation — gc itself would fail to link it without the
+		// backend. internal/abi FuncPC* intrinsics keep their dedicated
+		// wire node (above); //go:linkname declarations keep theirs
+		// (below); every other bodyless imported declaration (runtime/sys
+		// intrinsics like GetCallerPC, //go:noescape asm stubs like
+		// maps.memHashAES, plain stubs like
+		// maps.checkMasksAndShiftsAlignment) emits a funcdecl whose body
+		// is a fail-fast trap (see exportIntrinsicTrapDecl). Scoped to
+		// imported declarations (fi.synthPkg != nil); user code keeps the
+		// historical "without body" scope error via exportLinknameDecl.
+		if fi.obj != nil && fi.synthPkg != nil {
+			if symbol, lerr := linknameDirective(fd, funcPkgPath(e, fi)); lerr != nil {
+				return nil, lerr
+			} else if symbol != "" && (fi.isTemplate || fi.sig.Results().Len() <= 1) {
+				return e.exportLinknameDecl(fi)
+			}
+			// Multi-result linkname stubs in imported packages (reflect's
+			// badlinkname.go: "Do not call them in this package") cannot
+			// use the linkname wire shape (frontend/v1: at most one
+			// result). The fail-fast trap is unreachable in practice.
+			return e.exportIntrinsicTrapDecl(fi)
+		}
 		// P3-M4 (WS C, ADR-0004 D1): a bodyless function carrying
 		// //go:linkname binds to an intrinsic by symbol name.
 		return e.exportLinknameDecl(fi)
@@ -8584,6 +8612,17 @@ func (e *exporter) exportIdent(id *ast.Ident) (*Node, error) {
 func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[string]any) error {
 	fi, ok := e.funcByObj[obj]
 	if !ok {
+		// real-reflect (Phase 3): a disk multi-result stub
+		// (transformDiskMultiResult) in value position — e.g.
+		// abi.FuncPCABIInternal(runtime_mapaccess2) in internal/runtime/maps.
+		// The stub is skipped at import (never in funcByObj); the
+		// __-helper carries the real body. Resolve to the helper, mirroring
+		// the call-position redirect (GAP-GENERIC-MR).
+		if hfi, ok2 := e.diskMRHelperFi(obj); ok2 {
+			fi, ok = hfi, true
+		}
+	}
+	if !ok {
 		return fmt.Errorf("gofrontend: unknown function %s", obj.Name())
 	}
 	if fi.recv != nil {
@@ -9060,22 +9099,28 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// whose type is a signature, not a composite type target.
 			// Export the fun expression and emit a plain call node
 			// (mirrors the func-valued variable branch below).
-			if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
-				fun, err := e.exportExpr(c.Fun)
-				if err != nil {
-					return nil, err
+			// real-reflect (Phase 3): a CONVERSION to a func type, e.g.
+			// (func())(nil) in reflect.FuncOf, has a Signature-typed
+			// Fun too — but the Fun is a TYPE (IsType), not a value, so
+			// it must take the conversion path below, not the call path.
+			if !tv.IsType() {
+				if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
+					fun, err := e.exportExpr(c.Fun)
+					if err != nil {
+						return nil, err
+					}
+					args, err := e.exportCallArgsPacked(c, sig)
+					if err != nil {
+						return nil, err
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("call", c, map[string]any{
+						"fun": fun, "args": args, "type": typ,
+					}), nil
 				}
-				args, err := e.exportCallArgsPacked(c, sig)
-				if err != nil {
-					return nil, err
-				}
-				typ, err := e.callType(c)
-				if err != nil {
-					return nil, err
-				}
-				return e.node("call", c, map[string]any{
-					"fun": fun, "args": args, "type": typ,
-				}), nil
 			}
 			if len(c.Args) != 1 {
 				return nil, fmt.Errorf("gofrontend: conversion has %d arguments (want 1)", len(c.Args))
@@ -9671,6 +9716,9 @@ func (e *exporter) implicitDeref(sel *ast.SelectorExpr, recv **Node, recvType *t
 // field selectors of addressable values, and composite literals (via &T{}).
 func isAddressable(x ast.Expr, info *types.Info) bool {
 	switch x := x.(type) {
+	case *ast.ParenExpr:
+		// (x) is addressable iff x is — parentheses are transparent.
+		return isAddressable(x.X, info)
 	case *ast.Ident:
 		// Variables are addressable; constants, builtins, and nil are not.
 		if obj := info.ObjectOf(x); obj != nil {
@@ -9682,6 +9730,18 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 		// x.f is addressable if x is addressable.
 		if isAddressable(x.X, info) {
 			return true
+		}
+		// p.f where p has pointer type is shorthand for (*p).f; a
+		// pointer indirection is always addressable, so the selected
+		// field is addressable regardless of whether p itself is.
+		// Covers type assertions to pointer types, e.g.
+		// &mt.(*rtype).t in reflect (method.go) — the assertion is not
+		// itself an addressable expression, but its pointer-typed
+		// result selects an addressable field.
+		if t := info.TypeOf(x.X); t != nil {
+			if _, ok := types.Unalias(t).(*types.Pointer); ok {
+				return true
+			}
 		}
 		// real-reflect (Phase 1): &(*T)(unsafe.Pointer(p)).f — the
 		// descriptor-downcast pattern used throughout internal/abi
@@ -10142,6 +10202,13 @@ func embeddedFieldType(t types.Type, path []int) types.Type {
 				t = n.Underlying()
 				continue
 			}
+			// real-reflect (Phase 3): aliases are transparent for field
+			// walking (e.g. reflect.funcType = abi.FuncType — the
+			// receiver of promoted Common/Kind calls in makefunc.go).
+			if a, ok := t.(*types.Alias); ok {
+				t = a.Rhs()
+				continue
+			}
 			break
 		}
 		st, ok := t.(*types.Struct)
@@ -10166,6 +10233,12 @@ func embeddedFieldName(t types.Type, path []int) string {
 			}
 			if n, ok := t.(*types.Named); ok {
 				t = n.Underlying()
+				continue
+			}
+			// real-reflect (Phase 3): aliases are transparent for field
+			// walking — mirrors embeddedFieldType.
+			if a, ok := t.(*types.Alias); ok {
+				t = a.Rhs()
 				continue
 			}
 			break
@@ -11690,7 +11763,11 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 				// P3-M9 (tier-1d): unique/structs consts/vars (none today;
 				// future-proof) and synthetic-only internal/bytealg
 				// (MaxBruteForce/MaxLen, referenced from synthetic sources).
+				// real-reflect (Phase 3): synthetic internal/cpu vars
+				// (cpu.X86, cpu.ARM64, ... feature structs, referenced
+				// from internal/runtime/maps AlgInit).
 				p == "unique" || p == "structs" || p == "internal/bytealg" ||
+				p == "internal/cpu" ||
 				// P3-M9 (wave 3, tier-1b): container/* + hash/* consts/vars
 				// (crc32.IEEE, crc64.ECMA, fnv offsets, ...).
 				// P3-M9 (wave 3, tier-5b): compress/* consts/vars
