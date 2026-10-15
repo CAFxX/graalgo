@@ -151,6 +151,78 @@ type m7MultiResultFunc struct {
 	// multi-result signature's result order positionally)
 }
 
+// hasStaticMREntry reports whether (pkgPath, name, recvType) has an entry
+// in the static Appendix-M desugar tables. The mechanical transform
+// (transformMultiResult) skips such functions: they are served by
+// hand-written __-helpers whose names need not match the transform's
+// __F convention (e.g. io.Pipe → __pipe), and generating a second
+// helper would conflict.
+func hasStaticMREntry(pkgPath, name, recvType string) bool {
+	// M5 functions (context.WithCancel etc., runtime.Caller,
+	// time.ParseDuration) have hand-written __-helpers and fail-fast
+	// bodies; the mechanical transform must not rewrite them.
+	if recvType == "" {
+		switch pkgPath {
+		case "context":
+			if name == "WithCancel" || name == "WithCancelCause" ||
+				name == "WithDeadline" || name == "WithTimeout" {
+				return true
+			}
+		case "runtime":
+			if name == "Caller" {
+				return true
+			}
+		case "time":
+			if name == "ParseDuration" {
+				return true
+			}
+		}
+	} else {
+		// context.Deadline method (mrDeadline)
+		if pkgPath == "context" && name == "Deadline" {
+			return true
+		}
+	}
+	for _, mf := range m7MultiResultFuncs {
+		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	for _, mf := range ioMultiResultFuncs {
+		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	for _, mf := range osMultiResultFuncs {
+		if (mf.pkgPath == pkgPath || mf.helperPkg == pkgPath) && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	for _, mf := range m8MultiResultFuncs {
+		if (mf.pkgPath == pkgPath || mf.helperPkg == pkgPath) && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	for _, mf := range m9MultiResultFuncs {
+		if (mf.pkgPath == pkgPath || mf.helperPkg == pkgPath) && mf.name == name && mf.recvType == recvType {
+			return true
+		}
+	}
+	return false
+}
+
+// hasStaticIfaceMREntry reports whether method is in the static
+// interface-dispatch table (m8IfaceMultiResultMethods), matched by method
+// name as the classifier does.
+func hasStaticIfaceMREntry(method string) bool {
+	for _, m := range m8IfaceMultiResultMethods {
+		if m.method == method {
+			return true
+		}
+	}
+	return false
+}
+
 // m7MultiResultFuncs is the desugar table for the encoding/* packages
 // (extended P3-M8 to reflect, P3-M9 to math/bits — the mechanism is
 // package-path-keyed, so entries for any synthetic package work).

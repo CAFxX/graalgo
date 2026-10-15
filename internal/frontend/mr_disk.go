@@ -25,6 +25,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 	"sync"
 )
 
@@ -65,11 +66,58 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	if len(mrNames) == 0 {
 		return nil
 	}
+	// Collision guard: collect every existing top-level name BEFORE the
+	// transform runs. A FuncDecl whose generated helper (__F) or pair
+	// type (__FPair) name already exists is skipped — those packages
+	// carry hand-written __-helpers served by the static Appendix-M
+	// tables, and generating a second __F would be a redeclaration.
+	existing := map[string]bool{}
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				existing[d.Name.Name] = true
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					switch s := spec.(type) {
+					case *ast.TypeSpec:
+						existing[s.Name.Name] = true
+					case *ast.ValueSpec:
+						for _, n := range s.Names {
+							existing[n.Name] = true
+						}
+					}
+				}
+			}
+		}
+	}
 	for _, f := range files {
 		var newDecls []ast.Decl
 		for _, decl := range f.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
 			if !ok || fd.Body == nil || numResults(fd) <= 1 {
+				newDecls = append(newDecls, decl)
+				continue
+			}
+			if transformTargetCollides(fd, existing) {
+				newDecls = append(newDecls, decl)
+				continue
+			}
+			// Skip functions served by the static Appendix-M tables
+			// (hand-written __-helpers with ad-hoc names).
+			recvType := ""
+			if fd.Recv != nil && len(fd.Recv.List) > 0 {
+				recvType = recvBaseName(fd.Recv.List[0].Type)
+			}
+			if hasStaticMREntry(pkgPath, fd.Name.Name, recvType) {
+				newDecls = append(newDecls, decl)
+				continue
+			}
+			// Skip synthetic fail-fast stubs: a body that is a single
+			// panic("... not in M{5,7,...} scope ...") must be preserved.
+			// The mechanical transform would replace the fail-fast with
+			// a working __-helper, breaking the fail-fast contract.
+			if isFailFastStub(fd) {
 				newDecls = append(newDecls, decl)
 				continue
 			}
@@ -1499,6 +1547,49 @@ func locallyBoundNames(fd *ast.FuncDecl) map[string]bool {
 	return bound
 }
 
+// transformTargetCollides reports whether transforming fd would generate
+// a helper or pair-type name that already exists as a top-level
+// declaration (a hand-written __-helper). Mirrors transformMRFunc's
+// naming: __F / __FPair for funcs, __Recv_F / __Recv_FPair for methods.
+func transformTargetCollides(fd *ast.FuncDecl, existing map[string]bool) bool {
+	prefix := fd.Name.Name
+	if fd.Recv != nil && len(fd.Recv.List) > 0 {
+		if rt := recvBaseName(fd.Recv.List[0].Type); rt != "" {
+			prefix = rt + "_" + fd.Name.Name
+		}
+	}
+	return existing["__"+prefix] || existing["__"+prefix+"Pair"]
+}
+
+// isFailFastStub reports whether fd's body is a synthetic fail-fast stub:
+// a single panic statement with "not in M{2,4,5,7,...} scope" in the message.
+// Such bodies must be preserved by the MR transform; rewriting them would
+// replace the fail-fast with a working helper.
+func isFailFastStub(fd *ast.FuncDecl) bool {
+	if fd.Body == nil || len(fd.Body.List) != 1 {
+		return false
+	}
+	stmt, ok := fd.Body.List[0].(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	call, ok := stmt.X.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	fn, ok := call.Fun.(*ast.Ident)
+	if !ok || fn.Name != "panic" {
+		return false
+	}
+	if len(call.Args) != 1 {
+		return false
+	}
+	lit, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return false
+	}
+	return strings.Contains(lit.Value, "not in M") && strings.Contains(lit.Value, "scope")
+}
 // pairTypeExpr builds the pair composite-literal type: __Pair for the
 // non-generic case, __Pair[T, ...] for the generic case.
 func (ctx *mrRewriteCtx) pairTypeExpr() ast.Expr {
