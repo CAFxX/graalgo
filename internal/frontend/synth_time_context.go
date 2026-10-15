@@ -1198,11 +1198,10 @@ var DeadlineExceeded error = &ctxErrorString{s: "context deadline exceeded"}
 
 // Context is the gc 1.27.1 interface (method set identical).
 type Context interface {
-	// NB: Deadline() omitted (P3-M5, ADR-0005): v1 cannot emit multi-result
-	// methods (WS D), and M5 scope does not need Context.Deadline() — all
-	// call sites are desugared via __deadlineOf (Appendix M) or out of scope.
-	// This is a deliberate, documented divergence from gc's interface.
-	// Re-test when WS D lands.
+	// Deadline() restored (P4): the general interface multi-result mechanism
+	// (046afc86) now supports multi-result interface methods. This removes
+	// the P3-M5 deliberate divergence.
+	Deadline() (deadline time.Time, ok bool)
 	Done() <-chan struct{}
 	Err() error
 	Value(key any) any

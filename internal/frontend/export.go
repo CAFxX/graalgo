@@ -1493,9 +1493,8 @@ func ExportFiles(paths []string) (string, error) {
 	needZlib := false
 	needLzw := false
 	needBzip2 := false
-	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
-	needNetHttp := false
-	needNetHttpHttptest := false
+	// P4 bridge-removal: net/http and net/http/httptest are REAL now
+	// (resolved via disk overlay); no synthetic flags needed.
 	// P3-M9 (tier-4: net): synthetic net package (Dial/Listen/TCP/UDP).
 	needNet := false
 	needByteorder := false
@@ -1916,32 +1915,9 @@ func ExportFiles(paths []string) (string, error) {
 				needTime = true
 				// syscall NOT imported: pre-existing io/fs export issue.
 				// Errno constants are defined locally in the net source.
-			// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
-			// net/http imports bufio, bytes, errors, io, net, net/textproto,
-			// net/url, strconv, strings, sync, time. The client delegates to
-			// java.net.http.HttpClient via the graalgo.http.client.do intrinsic.
-			// httptest imports bytes, io, net, net/http, net/url, strings, sync.
-			case "net/http":
-				needNetHttp = true
-				needNet = true
-				needBufio = true
-				needBytes = true
-				needErrors = true
-				needIo = true
-				needStrconv = true
-				needStrings = true
-				needTime = true
-				// net, net/textproto, net/url resolve via the overlay importer
-			case "net/http/httptest":
-				needNetHttpHttptest = true
-				needNetHttp = true
-				needBufio = true
-				needBytes = true
-				needErrors = true
-				needIo = true
-				needStrconv = true
-				needStrings = true
-				needTime = true
+			// P4 bridge-removal: net/http and net/http/httptest are REAL now.
+			// They resolve from GOROOT via the general disk overlay (default
+			// case below). The synthetic sources are retired.
 			default:
 				// WS G (P3-M9, module-probe lane): any other import that
 				// survived the ExportFile gate is a disk-resolvable third-party
@@ -2105,24 +2081,9 @@ func ExportFiles(paths []string) (string, error) {
 	// P3-M10: importSyntheticPackage does not recurse into imports, so
 	// the block lists net/http's full transitive closure explicitly
 	// (topological order, leaves first) — cf. the needCryptoRand block.
-	// Without net/url et al., method resolution fails with
-	// "gofrontend: method X not found on Y" for any program importing
-	// net/http.
-	if needNetHttp {
-		for _, p := range []string{"errors", "io", "strconv", "bytes", "strings", "time",
-			"bufio", "cmp", "iter", "internal/bytealg", "internal/byteorder",
-			"math", "math/bits", "unique", "slices", "net/netip",
-			"net/textproto", "net/url", "net", "net/http"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
-				return "", err
-			}
-		}
-	}
-	if needNetHttpHttptest {
-		if err := e.importSyntheticPackage(getSyntheticPackage("net/http/httptest")); err != nil {
-			return "", err
-		}
-	}
+	// P4 bridge-removal: net/http is REAL now; it resolves via the general
+	// disk overlay (default case in the import switch above). No synthetic
+	// import needed.
 	// P3-M9 (tier1c): synthetic path.
 	if needPath {
 		if err := e.importSyntheticPackage(getSyntheticPackage("path")); err != nil {

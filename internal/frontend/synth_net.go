@@ -72,9 +72,9 @@ type Conn interface {
 	Close() error
 	LocalAddr() Addr
 	RemoteAddr() Addr
-	SetDeadline(t interface{}) error
-	SetReadDeadline(t interface{}) error
-	SetWriteDeadline(t interface{}) error
+	SetDeadline(t time.Time) error
+	SetReadDeadline(t time.Time) error
+	SetWriteDeadline(t time.Time) error
 }
 
 // timeoutError is the local deadline-exceeded error with Timeout()==true.
@@ -714,14 +714,14 @@ func (p *pipeConn) Close() error {
 func (p *pipeConn) LocalAddr() Addr { return &pipeAddr{} }
 func (p *pipeConn) RemoteAddr() Addr { return &pipeAddr{} }
 
-func (p *pipeConn) SetDeadline(t interface{}) error {
+func (p *pipeConn) SetDeadline(t time.Time) error {
 	if err := p.SetReadDeadline(t); err != nil {
 		return err
 	}
 	return p.SetWriteDeadline(t)
 }
 
-func (p *pipeConn) SetReadDeadline(t interface{}) error {
+func (p *pipeConn) SetReadDeadline(t time.Time) error {
 	tt, ok := t.(time.Time)
 	if !ok {
 		return &OpError{Op: "setdeadline", Net: "pipe", Err: errors.New("net: deadline must be time.Time")}
@@ -732,7 +732,7 @@ func (p *pipeConn) SetReadDeadline(t interface{}) error {
 	return nil
 }
 
-func (p *pipeConn) SetWriteDeadline(t interface{}) error {
+func (p *pipeConn) SetWriteDeadline(t time.Time) error {
 	tt, ok := t.(time.Time)
 	if !ok {
 		return &OpError{Op: "setdeadline", Net: "pipe", Err: errors.New("net: deadline must be time.Time")}
@@ -768,9 +768,9 @@ type PacketConn interface {
 	WriteTo(b []byte, addr Addr) (n int, err error)
 	Close() error
 	LocalAddr() Addr
-	SetDeadline(t interface{}) error
-	SetReadDeadline(t interface{}) error
-	SetWriteDeadline(t interface{}) error
+	SetDeadline(t time.Time) error
+	SetReadDeadline(t time.Time) error
+	SetWriteDeadline(t time.Time) error
 }
 
 // IPAddr represents the address of an IP end point.
@@ -1243,9 +1243,9 @@ func (c *TCPConn) Write(b []byte) (int, error) {
 func (c *TCPConn) Close() error                       { return c.fd.close() }
 func (c *TCPConn) LocalAddr() Addr                    { return c.fd.laddr }
 func (c *TCPConn) RemoteAddr() Addr                   { return c.fd.raddr }
-func (c *TCPConn) SetDeadline(t interface{}) error    { return c.fd.setDeadline(t, 'r'+'w') }
-func (c *TCPConn) SetReadDeadline(t interface{}) error  { return c.fd.setDeadline(t, 'r') }
-func (c *TCPConn) SetWriteDeadline(t interface{}) error { return c.fd.setDeadline(t, 'w') }
+func (c *TCPConn) SetDeadline(t time.Time) error    { return c.fd.setDeadline(t, 'r'+'w') }
+func (c *TCPConn) SetReadDeadline(t time.Time) error  { return c.fd.setDeadline(t, 'r') }
+func (c *TCPConn) SetWriteDeadline(t time.Time) error { return c.fd.setDeadline(t, 'w') }
 
 func (fd *netFD) setDeadline(t interface{}, mode int) error {
 	tt, ok := t.(time.Time)
@@ -1575,9 +1575,9 @@ func (c *UDPConn) WriteTo(b []byte, addr Addr) (int, error) {
 
 func (c *UDPConn) Close() error                     { return c.fd.close() }
 func (c *UDPConn) LocalAddr() Addr                  { return c.fd.laddr }
-func (c *UDPConn) SetDeadline(t interface{}) error   { return c.fd.setDeadline(t, 'r'+'w') }
-func (c *UDPConn) SetReadDeadline(t interface{}) error  { return c.fd.setDeadline(t, 'r') }
-func (c *UDPConn) SetWriteDeadline(t interface{}) error { return c.fd.setDeadline(t, 'w') }
+func (c *UDPConn) SetDeadline(t time.Time) error   { return c.fd.setDeadline(t, 'r'+'w') }
+func (c *UDPConn) SetReadDeadline(t time.Time) error  { return c.fd.setDeadline(t, 'r') }
+func (c *UDPConn) SetWriteDeadline(t time.Time) error { return c.fd.setDeadline(t, 'w') }
 
 type readFromPair struct {
 	n    int
