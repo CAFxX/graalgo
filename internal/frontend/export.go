@@ -6304,6 +6304,26 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		// if called. The multi-result WS D restriction does not
 		// apply: no body is built.
 		fields["unimplemented"] = true
+		// ASM Phase 1: a multi-result unimplemented function still
+		// needs a userMRFuncs entry so its callers get the pair
+		// transform and compile. The stub panics if invoked, so the
+		// pair is never constructed at runtime — but callers like
+		// internal/cpu.doinit (which multi-assigns cpuid results)
+		// must type-check. This is general: any bodyless function
+		// with N>1 results gets it automatically.
+		if fi.sig != nil && fi.sig.Results().Len() > 1 && fi.obj != nil {
+			if _, ok := e.userMRFuncs[fi.obj]; !ok {
+				pairType, fieldNames, err := e.synthesizeUserPairType(fi)
+				if err != nil {
+					return nil, err
+				}
+				e.userMRFuncs[fi.obj] = &userMRInfo{
+					pairType:   pairType,
+					pairFields: fieldNames,
+					origSig:    fi.sig,
+				}
+			}
+		}
 	} else {
 		if len(results) > 1 {
 			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
