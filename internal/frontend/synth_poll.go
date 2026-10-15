@@ -336,4 +336,12 @@ func (pollTimeoutError) Temporary() bool { return true }
 
 // ErrDeadlineExceeded is returned when a poll wait exceeds its deadline.
 var ErrDeadlineExceeded error = pollTimeoutError{}
+
+// DupCloseOnExec (gc 1.27.1, src/internal/poll/fd_unix.go:658):
+// duplicates fd with close-on-exec flag set. Not yet implemented as a
+// graalgo intrinsic; panics honestly if called (re-test when the fd-domain
+// unification lands, Phase 4/Panama).
+func DupCloseOnExec(fd int) (int, string, error) {
+	panic("poll.DupCloseOnExec: no graalgo intrinsic; re-test: fd-domain unification, Phase 4/Panama")
+}
 `
