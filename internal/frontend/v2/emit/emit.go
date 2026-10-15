@@ -1,15 +1,14 @@
 // Package emit implements stage 3 of the frontend/v2 pipeline: typed AST
-// → frontend/v1 JSON.
+// → in-memory backend program.
 //
-// The output conforms to docs/arch/frontend-v1.md. One AST node kind maps
-// to one emit function — no monolith. There is no desugaring of stdlib
-// calls, no package-name special cases, and no synthetic packages. What
-// the source says is what the IR says.
+// There is no JSON wire format: v2 constructs the program representation
+// directly in memory (his 2026-10-15 order: "that should obviously skip
+// the json"). One AST node kind maps to one emit function — no monolith.
+// There is no desugaring of stdlib calls, no package-name special cases,
+// and no synthetic packages. What the source says is what the IR says.
 package emit
 
 import (
-	"bytes"
-	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/token"
@@ -18,15 +17,16 @@ import (
 	"graalgo-frontend-v2/checker"
 )
 
-// Document is the top-level frontend/v1 JSON structure.
+// Document is the top-level in-memory v2 program representation. It is
+// never serialized: there is no JSON wire format in v2.
 type Document struct {
-	Frontend  string         `json:"frontend"`
-	Generator map[string]any `json:"generator"`
-	Package   map[string]any `json:"package"`
-	Types     []any          `json:"types"`
-	Objects   []any          `json:"objects"`
-	Funcs     []any          `json:"funcs"`
-	Globals   []any          `json:"globals"`
+	Frontend  string
+	Generator map[string]any
+	Package   map[string]any
+	Types     []any
+	Objects   []any
+	Funcs     []any
+	Globals   []any
 }
 
 // Emitter holds the state for one emission.
@@ -43,8 +43,10 @@ type Emitter struct {
 	objects []any
 }
 
-// Emit runs stage 3 and returns the frontend/v1 JSON document.
-func Emit(cr *checker.Result, pkg *ast.Package, files []string) ([]byte, error) {
+// Emit runs stage 3 and returns the in-memory program document. The
+// document is consumed directly by the backend via the Go→Java API;
+// it is never serialized to JSON.
+func Emit(cr *checker.Result, pkg *ast.Package, files []string) (*Document, error) {
 	e := &Emitter{
 		fset:    cr.Fset,
 		info:    cr,
@@ -52,20 +54,7 @@ func Emit(cr *checker.Result, pkg *ast.Package, files []string) ([]byte, error) 
 		typeIDs: make(map[types.Type]int),
 		objIDs:  make(map[types.Object]int),
 	}
-	doc, err := e.emitDocument(pkg)
-	if err != nil {
-		return nil, err
-	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	// Sorted keys: encoding/json marshals map keys in sorted order, and
-	// we use map[string]any for objects throughout, so the output is
-	// deterministic. Arrays preserve emission order.
-	if err := enc.Encode(doc); err != nil {
-		return nil, fmt.Errorf("emit: json encode: %v", err)
-	}
-	return buf.Bytes(), nil
+	return e.emitDocument(pkg)
 }
 
 func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
@@ -107,7 +96,7 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		baseNames[i] = fileBase(f)
 	}
 	return &Document{
-		Frontend: "v1",
+		Frontend: "v2",
 		Generator: map[string]any{
 			"tool":    "gofrontend-v2",
 			"version": "0.1.0",

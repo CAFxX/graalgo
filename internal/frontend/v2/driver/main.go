@@ -1,9 +1,10 @@
 // Command gofrontend-v2: the frontend/v2 pipeline driver.
 //
 // Usage: gofrontend-v2 <file.go> [file.go...]
-// Emits the frontend/v1 JSON document to stdout, like v1's gofrontend,
-// but through the clean parser → checker → emitter pipeline with no
-// synthetic packages, no special cases, and no desugaring workarounds.
+// Runs the clean parser → checker → emitter pipeline with no synthetic
+// packages, no special cases, and no desugaring workarounds, and prints
+// a summary of the resulting in-memory program. There is no JSON wire
+// format: the emitter hands the program to the backend directly.
 package main
 
 import (
@@ -45,5 +46,6 @@ func main() {
 		os.Exit(2)
 	}
 	_ = token.NoPos
-	os.Stdout.Write(doc)
+	fmt.Printf("package %s: %d funcs, %d types, %d objects\n",
+		doc.Package["name"], len(doc.Funcs), len(doc.Types), len(doc.Objects))
 }

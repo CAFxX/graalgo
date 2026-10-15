@@ -1,6 +1,6 @@
 // Node emitters: one function per AST node kind.
 //
-// Each emitter takes the typed AST node and returns its frontend/v1 JSON
+// Each emitter takes the typed AST node and returns its in-memory
 // representation: { "kind", "pos", "fields" }. Emitters never synthesize
 // code, never special-case packages, and never desugar stdlib calls.
 package emit
@@ -13,7 +13,7 @@ import (
 	"go/types"
 )
 
-// node is the wire representation of one AST node.
+// node is the in-memory representation of one AST node.
 func (e *Emitter) node(kind string, n ast.Node, fields map[string]any) map[string]any {
 	return map[string]any{
 		"kind":   kind,

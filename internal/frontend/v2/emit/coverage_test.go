@@ -10,9 +10,8 @@
 // emitter explicitly handles it or rejects it.
 //
 // His 2026-10-15 order: full Go 1.27 syntax from the start, including
-// generics. "That should obviously skip the json" — v2 targets backend
-// nodes directly (currently via the v1 JSON as an intermediate; the JSON
-// is a temporary scaffold, not the destination).
+// generics. "That should obviously skip the json" — v2 constructs the
+// in-memory program directly; there is no JSON wire format.
 package emit
 
 import (
