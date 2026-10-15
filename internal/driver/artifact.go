@@ -4,176 +4,229 @@
 package driver
 
 import (
-	"archive/tar"
-	"encoding/base64"
+	"bytes"
+	"compress/gzip"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 )
-
-// ProgramFile is one Go source file of the program being built.
-// Name is the base name the backend sees; Path is where the source is read
-// from at build time. The backend compiles the files as one unit, exactly
-// like `graalgo run` does, so every Name must be unique.
-type ProgramFile struct {
-	Name string
-	Path string
-}
 
 // Artifact describes the executable artifact `graalgo build` emits.
 type Artifact struct {
-	// OutputPath is where the artifact script is written.
+	// OutputPath is where the artifact binary is written.
 	OutputPath string
 	// GraalgoRoot is the graalgo installation the artifact runs against.
 	// It is baked into the artifact at build time; GRAALGO_HOME set at
 	// run time takes precedence.
 	GraalgoRoot string
-	// Files are the program's Go source files, embedded into the artifact
-	// so it stays runnable if the original sources move or disappear.
-	Files []ProgramFile
+	// WireJSON is the frontend/v1 JSON output to embed in the artifact.
+	// It is produced by running the frontend at build time (via
+	// `graalgo-sync-run --emit-wire`), so the artifact does not re-run
+	// the frontend on every execution.
+	WireJSON []byte
 }
 
 // Emit writes the executable artifact described by a. The artifact is a
-// self-contained shell launcher: it unpacks the embedded program sources
-// into a temporary directory and execs the graalgo backend on them,
-// forwarding its own arguments to the program. It is executable and can be
-// run directly, like a binary produced by `go build`.
+// real binary (not a shell script): a small Go launcher that embeds the
+// frontend output and, at run time, feeds it to the graalgo backend via
+// `--wire-input`, forwarding its own arguments to the program.
 //
-// The build step validates the program first (the caller runs the frontend
-// gate before Emit); Emit itself only packages. The backend re-runs the
-// frontend at execution time — the Truffle backend JIT-compiles, so there
-// is no ahead-of-time machine code to embed. A future optimization is to
-// embed the frontend wire output and teach the backend a wire-input mode,
-// skipping the frontend re-run per execution.
+// Unlike `go build`, which produces a native binary via AOT compilation,
+// graalgo's backend is a Truffle JIT on the JVM. A true native binary
+// requires GraalVM native-image with Truffle runtime compilation
+// (Phase 5 work; see docs/arch/research/T6-optimization-inventory.md).
+// Until then, the artifact is a launcher binary that skips the frontend
+// re-run by embedding its output — a proper executable, not a bash
+// wrapper around unpacked sources.
 func Emit(a Artifact) error {
 	if a.OutputPath == "" {
 		return fmt.Errorf("no output path")
 	}
-	if len(a.Files) == 0 {
-		return fmt.Errorf("no program files")
+	if len(a.WireJSON) == 0 {
+		return fmt.Errorf("no frontend output to embed")
 	}
-	seen := make(map[string]string, len(a.Files))
-	for _, f := range a.Files {
-		if f.Name == "" || f.Path == "" {
-			return fmt.Errorf("program file with empty name or path")
-		}
-		if prev, dup := seen[f.Name]; dup {
-			return fmt.Errorf("duplicate file name %q (%q and %q)", f.Name, prev, f.Path)
-		}
-		seen[f.Name] = f.Path
-		if _, err := os.Stat(f.Path); err != nil {
-			return fmt.Errorf("cannot read %s: %v", f.Path, err)
-		}
+	if a.GraalgoRoot == "" {
+		return fmt.Errorf("no graalgo root")
 	}
 
-	tarBytes, err := buildTar(a.Files)
+	// Compress the JSON. Frontend output can be large (100MB+ for big
+	// programs); JSON compresses well with gzip.
+	var compressed bytes.Buffer
+	gz := gzip.NewWriter(&compressed)
+	if _, err := gz.Write(a.WireJSON); err != nil {
+		return fmt.Errorf("cannot compress frontend output: %v", err)
+	}
+	if err := gz.Close(); err != nil {
+		return fmt.Errorf("cannot compress frontend output: %v", err)
+	}
+
+	// Set up a temp build dir with the launcher source and the payload.
+	tmpDir, err := os.MkdirTemp("", "graalgo-build-*")
 	if err != nil {
-		return err
+		return fmt.Errorf("cannot create temp dir: %v", err)
 	}
-	script := renderLauncher(filepath.Base(a.OutputPath), a.GraalgoRoot, a.Files, tarBytes)
+	defer os.RemoveAll(tmpDir)
 
-	if err := os.WriteFile(a.OutputPath, []byte(script), 0o755); err != nil {
-		return fmt.Errorf("cannot write %s: %v", a.OutputPath, err)
+	// Write the compressed payload for //go:embed.
+	payloadPath := filepath.Join(tmpDir, "wire.json.gz")
+	if err := os.WriteFile(payloadPath, compressed.Bytes(), 0o644); err != nil {
+		return fmt.Errorf("cannot write payload: %v", err)
 	}
-	// WriteFile's mode is subject to umask; ensure the artifact is runnable.
+
+	// Generate the launcher source.
+	src := fmt.Sprintf(launcherTemplate, a.GraalgoRoot)
+	srcPath := filepath.Join(tmpDir, "launcher.go")
+	if err := os.WriteFile(srcPath, []byte(src), 0o644); err != nil {
+		return fmt.Errorf("cannot write launcher source: %v", err)
+	}
+
+	// Minimal go.mod so `go build` works in module mode. The launcher has
+	// no external dependencies (stdlib only).
+	goMod := "module graalgo-artifact\n\ngo 1.21\n"
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte(goMod), 0o644); err != nil {
+		return fmt.Errorf("cannot write go.mod: %v", err)
+	}
+
+	// Compile the launcher to a real binary.
+	goBin := findGoBinary()
+	cmd := exec.Command(goBin, "build", "-o", a.OutputPath, ".")
+	cmd.Dir = tmpDir
+	// Don't inherit GOFLAGS that might break the build; keep it hermetic.
+	cmd.Env = append(os.Environ(), "GOFLAGS=")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("cannot compile artifact binary: %v\n%s", err, stderr.String())
+	}
+
+	// go build sets the executable bit, but ensure it (umask-safe).
 	if err := os.Chmod(a.OutputPath, 0o755); err != nil {
 		return fmt.Errorf("cannot chmod %s: %v", a.OutputPath, err)
 	}
 	return nil
 }
 
-// buildTar packs the program files into a tar archive keyed by base name.
-// ModTime is fixed so repeated builds of the same sources are byte-identical.
-func buildTar(files []ProgramFile) ([]byte, error) {
-	var sb strings.Builder
-	tw := tar.NewWriter(&sb)
-	for _, f := range files {
-		src, err := os.ReadFile(f.Path)
-		if err != nil {
-			return nil, fmt.Errorf("cannot read %s: %v", f.Path, err)
-		}
-		hdr := &tar.Header{
-			Name:    f.Name,
-			Mode:    0o644,
-			Size:    int64(len(src)),
-			ModTime: time.Unix(0, 0).UTC(),
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return nil, fmt.Errorf("cannot pack %s: %v", f.Name, err)
-		}
-		if _, err := tw.Write(src); err != nil {
-			return nil, fmt.Errorf("cannot pack %s: %v", f.Name, err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		return nil, fmt.Errorf("cannot finish archive: %v", err)
-	}
-	return []byte(sb.String()), nil
+// launcherTemplate is the Go source for the artifact binary. The
+// frontend output is embedded via //go:embed from wire.json.gz (written
+// alongside this file at build time). %s is the graalgo root baked in
+// at build time.
+const launcherTemplate = `// Code generated by graalgo build. DO NOT EDIT.
+package main
+
+import (
+	"bytes"
+	"compress/gzip"
+	_ "embed"
+	"fmt"
+	"io"
+	"os"
+	"os/exec"
+	"path/filepath"
+)
+
+//go:embed wire.json.gz
+var wireGz []byte
+
+// graalgoRoot is the installation this artifact was built against.
+// GRAALGO_HOME at run time takes precedence.
+const graalgoRoot = "%s"
+
+func main() {
+	os.Exit(run())
 }
 
-// renderLauncher fills the artifact script template. payload is the
-// base64-encoded tar of the program sources.
-func renderLauncher(name, graalgoRoot string, files []ProgramFile, tarBytes []byte) string {
-	names := make([]string, len(files))
-	for i, f := range files {
-		names[i] = shQuote(f.Name)
+func run() int {
+	// Decompress the embedded frontend output.
+	gr, err := gzip.NewReader(bytes.NewReader(wireGz))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "artifact: cannot decompress embedded program: %%v\n", err)
+		return 1
 	}
-	return fmt.Sprintf(`#!/usr/bin/env bash
-# %s — executable artifact produced by `+"`graalgo build`"+`.
-#
-# Self-contained launcher: unpacks the embedded Go program sources into a
-# temporary directory and runs them through the graalgo backend, forwarding
-# any arguments to the program.
-#
-# The backend is located via GRAALGO_HOME, falling back to the graalgo
-# installation this artifact was built against.
-set -euo pipefail
-GRAALGO_ROOT="${GRAALGO_HOME:-%s}"
-RUNNER="$GRAALGO_ROOT/internal/backend/graalgo-sync-run"
-if [ ! -x "$RUNNER" ]; then
-    echo "%s: cannot find graalgo backend at $RUNNER (set GRAALGO_HOME)" >&2
-    exit 1
-fi
-WORK="$(mktemp -d)"
-trap 'rm -rf "$WORK"' EXIT
-base64 -d > "$WORK/program.tar" <<'GRAALGO_PAYLOAD_EOF'
-%s
-GRAALGO_PAYLOAD_EOF
-tar -xf "$WORK/program.tar" -C "$WORK"
-ARGS=()
-for f in %s; do
-    ARGS+=("$WORK/$f")
-done
-exec "$RUNNER" "${ARGS[@]}" -- "$@"
-`, name, shDQuote(graalgoRoot), name, wrapBase64(tarBytes), strings.Join(names, " "))
-}
-
-// wrapBase64 encodes b in the base64 alphabet, wrapped at 76 columns. The
-// alphabet never contains '_', so no encoded line can match or contain the
-// heredoc delimiter GRAALGO_PAYLOAD_EOF.
-func wrapBase64(b []byte) string {
-	enc := base64.StdEncoding.EncodeToString(b)
-	var sb strings.Builder
-	for len(enc) > 76 {
-		sb.WriteString(enc[:76])
-		sb.WriteByte('\n')
-		enc = enc[76:]
+	wireJSON, err := io.ReadAll(gr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "artifact: cannot decompress embedded program: %%v\n", err)
+		return 1
 	}
-	sb.WriteString(enc)
-	return sb.String()
-}
+	gr.Close()
 
-// shQuote single-quotes s for shell.
-func shQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
+	// Write the JSON to a temp file for the backend's --wire-input.
+	tmp, err := os.CreateTemp("", "graalgo-wire-*.json")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "artifact: cannot create temp file: %%v\n", err)
+		return 1
+	}
+	tmpName := tmp.Name()
+	// Remove the temp file when we exit; the backend reads it before we do.
+	defer os.Remove(tmpName)
+	if _, err := tmp.Write(wireJSON); err != nil {
+		fmt.Fprintf(os.Stderr, "artifact: cannot write frontend output: %%v\n", err)
+		return 1
+	}
+	if err := tmp.Close(); err != nil {
+		fmt.Fprintf(os.Stderr, "artifact: cannot write frontend output: %%v\n", err)
+		return 1
+	}
+	// Clear the in-memory copy; it can be large.
+	wireJSON = nil
 
-// shDQuote escapes s for use inside double quotes in shell.
-func shDQuote(s string) string {
-	r := strings.NewReplacer(`\`, `\\`, `"`, `\"`, `$`, `\$`, "`", "\\`")
-	return r.Replace(s)
+	// Locate the backend. GRAALGO_HOME wins; fall back to the baked-in root.
+	root := os.Getenv("GRAALGO_HOME")
+	if root == "" {
+		root = graalgoRoot
+	}
+	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
+	if fi, err := os.Stat(runner); err != nil || fi.Mode()&0o111 == 0 {
+		fmt.Fprintf(os.Stderr, "artifact: cannot find graalgo backend at %%s (set GRAALGO_HOME)\n", runner)
+		return 1
+	}
+
+	// argv[0] for the Go program is the artifact's own absolute path,
+	// matching `+"`go build`"+` binaries.
+	argv0, err := filepath.Abs(os.Args[0])
+	if err != nil {
+		argv0 = os.Args[0]
+	}
+	args := []string{"--wire-input", tmpName, "--", argv0}
+	args = append(args, os.Args[1:]...)
+
+	cmd := exec.Command(runner, args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			return ee.ExitCode()
+		}
+		fmt.Fprintf(os.Stderr, "artifact: %%v\n", err)
+		return 1
+	}
+	return 0
+}
+`
+
+// findGoBinary locates the Go toolchain for compiling the artifact
+// launcher. It prefers the toolchain that built the driver itself
+// (via GOROOT), then PATH, then the well-known install location.
+func findGoBinary() string {
+	// If the driver was built with a specific GOROOT, use its go binary.
+	if goroot := os.Getenv("GOROOT"); goroot != "" {
+		cand := filepath.Join(goroot, "bin", "go")
+		if fi, err := os.Stat(cand); err == nil && fi.Mode()&0o111 != 0 {
+			return cand
+		}
+	}
+	if p, err := exec.LookPath("go"); err == nil {
+		return p
+	}
+	// Well-known install location used by this project's toolchain.
+	cand := filepath.Join(os.Getenv("HOME"), "tools", "go", "bin", "go")
+	if fi, err := os.Stat(cand); err == nil && fi.Mode()&0o111 != 0 {
+		return cand
+	}
+	// Last resort: let exec fail with a clear message.
+	return "go"
 }
 
 // DefaultOutputName derives the artifact path when -o is not given,
