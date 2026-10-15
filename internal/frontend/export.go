@@ -10673,11 +10673,23 @@ func (e *exporter) exportIndex(x *ast.IndexExpr, commaOk bool) (*Node, error) {
 	var t int
 	var err error
 	if commaOk {
-		mt, ok := e.info.Types[x.X].Type.Underlying().(*types.Map)
-		if !ok {
-			return nil, fmt.Errorf("gofrontend: comma-ok index on non-map type %v", e.info.Types[x.X].Type)
+		// PKG-024: take the value type from the two-valued tuple go/types
+		// records on the index expression itself, instead of re-deriving
+		// it through the operand's underlying type. Underlying() is not
+		// authoritative here: for a type parameter constrained by
+		// ~map[K]V it yields the constraint interface (~map[K]V), not a
+		// *types.Map, so the old check rejected valid code
+		// (`v, ok := m2[k]` in maps.Equal). The tuple is authoritative:
+		// the program has already type-checked, so a comma-ok index in
+		// this position is necessarily on a map — whether via a plain
+		// map type, a defined type with a map underlying type, a generic
+		// instantiation, or a type parameter with a map core type.
+		tv, ok := e.info.Types[x]
+		tup, isTup := tv.Type.(*types.Tuple)
+		if !ok || !isTup || tup.Len() != 2 {
+			return nil, fmt.Errorf("gofrontend: comma-ok index without two-valued type info (operand type %v)", e.info.Types[x.X].Type)
 		}
-		if t, err = e.typeID(mt.Elem()); err != nil {
+		if t, err = e.typeID(tup.At(0).Type()); err != nil {
 			return nil, err
 		}
 	} else {
