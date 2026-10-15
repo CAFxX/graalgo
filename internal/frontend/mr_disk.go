@@ -922,15 +922,22 @@ func usedNamedResults(fd *ast.FuncDecl, shadowed map[string]bool) map[string]boo
 		return true
 	})
 	hasBareReturn := false
+	// Pass 1: bare returns. Do not descend into func literals — a bare
+	// return inside one belongs to the literal, not the outer function.
 	ast.Inspect(fd.Body, func(n ast.Node) bool {
-		// A bare return inside a func literal belongs to the literal,
-		// not the outer function — do not descend.
 		if _, ok := n.(*ast.FuncLit); ok {
 			return false
 		}
 		if rs, ok := n.(*ast.ReturnStmt); ok && len(rs.Results) == 0 {
 			hasBareReturn = true
 		}
+		return true
+	})
+	// Pass 2: ident uses. Descend everywhere, including into func
+	// literals — a named result assigned in a defer/go closure (e.g.
+	// ok = ... in testify's getLen) is a genuine use that requires the
+	// helper to declare the local.
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
 		if id, ok := n.(*ast.Ident); ok && nameSet[id.Name] && !selIdents[id] && !declIdents[id] {
 			used[id.Name] = true
 		}
