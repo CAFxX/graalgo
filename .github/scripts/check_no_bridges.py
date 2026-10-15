@@ -29,6 +29,27 @@ import re
 import subprocess
 import sys
 
+# Adjudicated real implementations (NOT bridges): additions the mechanical
+# checks below flag by pattern, but an independent reviewer cleared as
+# genuine implementations. Narrowly scoped to the exact adjudicated symbols —
+# do NOT broaden an entry or add one without a fresh independent review.
+# Inventory record: docs/arch/bridge-inventory.md ("Adjudicated non-bridges").
+ADJUDICATED_WIRE_NODES = {
+    # (file substring, wire node kind)
+    # PKG-023 (commit 1d4e7964, 2026-10-16; independent review CLEAN, no
+    # veto): "runtimenumgoroutine" is a real implementation following the
+    # runtimenumcpu precedent (backend NumGoroutineNode on the scheduler's
+    # live-goroutine counter), not a new bridge.
+    ("internal/frontend/export.go", "runtimenumgoroutine"),
+}
+ADJUDICATED_REGISTRATIONS = {
+    # (file substring, addFunc'd symbol name)
+    # PKG-023 (commit 1d4e7964, 2026-10-16; independent review CLEAN, no
+    # veto): addFunc("NumGoroutine", ...) declares genuine stdlib surface in
+    # the synthetic runtime package; the backend implements it for real.
+    ("internal/frontend/export.go", "NumGoroutine"),
+}
+
 def get_diff():
     """Get the diff of added lines, plus a label naming the diff source.
 
@@ -135,6 +156,10 @@ def check_no_bridges(diff):
             node_kind = m.group(1)
             # Flag runtime*/fmt*/sync*/etc. node kinds (stdlib-specific)
             if re.match(r'^(runtime|fmt|sync|os|net)[a-z]', node_kind):
+                # Adjudicated real implementations are not bridges.
+                if any(f_sub in fname and nk == node_kind
+                       for f_sub, nk in ADJUDICATED_WIRE_NODES):
+                    continue
                 errors.append(f"SUSPICIOUS WIRE NODE in {fname}: {node_kind}")
 
     # 5. New synthetic function registrations
@@ -144,6 +169,11 @@ def check_no_bridges(diff):
         if re.search(r'addFunc\s*\(|synthetic.*Package\s*\(|registerSynthetic', line):
             # Allow in existing synth files (grandfathered), flag in new contexts
             if "synth_" not in fname:
+                # Adjudicated real implementations are not bridges.
+                m = re.search(r'addFunc\s*\(\s*"([^"]+)"', line)
+                if m and any(f_sub in fname and sym == m.group(1)
+                             for f_sub, sym in ADJUDICATED_REGISTRATIONS):
+                    continue
                 errors.append(f"SYNTHETIC REGISTRATION in {fname}: {line.strip()[:80]}")
 
     return errors
