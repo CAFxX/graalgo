@@ -72,8 +72,8 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   documenting what unblocks the real sources (see
   [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) §Principles).
 - Synthetic stdlib packages are honest workarounds, not destinations: each
-  one under [stdlib/synthetic/](stdlib/synthetic/) states why it is
-  synthetic and what root-cause fix retires it.
+  implementation (in [internal/frontend/](internal/frontend/) as `synth_*.go`)
+  states why it is synthetic and what root-cause fix retires it.
 
 ## 5. No-debris rule
 
