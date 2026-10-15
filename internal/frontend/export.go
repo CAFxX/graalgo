@@ -1380,6 +1380,9 @@ func ExportFiles(paths []string) (string, error) {
 		// P3-M9 (WS D): user-defined multi-result functions transformed
 		// to pair-returning form.
 		userMRFuncs: make(map[*types.Func]*userMRInfo),
+		// P4 (WS D, general interface MR): user-defined multi-result
+		// interface methods.
+		userIfaceMRPairs: make(map[string]*userMRInfo),
 		// MR-closure-var: multi-result closures held in variables.
 		userMRVars: make(map[*types.Var]*userMRInfo),
 		// MR-closure-var: func lit -> pair info side channel.
@@ -3482,6 +3485,16 @@ type exporter struct {
 	// automatic: any user-defined 2+ result function gets a synthesized
 	// pair struct.
 	userMRFuncs map[*types.Func]*userMRInfo
+	// P4 (WS D, general interface MR): user-defined multi-result interface
+	// methods. Maps "pkgPath.IfaceName.MethodName" -> pair info for
+	// call-site desugar. Unlike the m8IfaceMultiResultMethods whitelist
+	// (synthetic packages) and the disk MR table (disk packages), this is
+	// automatic: any interface method with 2+ results gets a synthesized
+	// pair struct on first use. The itab dispatches to the concrete
+	// type's pair-returning __-helper; field extraction uses the f0, f1,
+	// ... names from synthesizePairTypeForSig, matching the concrete
+	// helper's pair.
+	userIfaceMRPairs map[string]*userMRInfo
 	// MR-closure-var: user-defined multi-result function literals assigned
 	// to variables, transformed to pair-returning form. Maps the
 	// *types.Var holding the closure -> pair info for call-site desugar.
@@ -10882,6 +10895,13 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 		if pairPlan == nil {
 			pairPlan = e.classifyDiskIfaceMultiResultCall(selection)
 		}
+		// P4 (WS D, general interface MR): user-defined (or otherwise
+		// unlisted) interfaces with multi-result methods. Synthesizes
+		// the interface pair type on first use; the itab dispatches to
+		// the concrete type's pair-returning __-helper.
+		if pairPlan == nil {
+			pairPlan = e.classifyUserIfaceMultiResultCall(selection)
+		}
 		if pairPlan == nil {
 			if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) {
 				return nil, multiResultSyntheticError(f)
@@ -10988,6 +11008,11 @@ func (e *exporter) exportIfaceFallbackCall(c *ast.CallExpr, sel *ast.SelectorExp
 	var pairPlan *mrPlan
 	if sig.Results().Len() > 1 {
 		pairPlan = e.classifyIfaceFallbackMultiResultCall(selection)
+		// P4 (WS D, general interface MR): fall back to the general
+		// user-interface classifier when the whitelist misses.
+		if pairPlan == nil {
+			pairPlan = e.classifyUserIfaceMultiResultCall(selection)
+		}
 		if pairPlan == nil {
 			return nil, scopeErrorf("method %s via type-parameter constraint has %d results; at most one result is supported in frontend/v1 scope (WS D)",
 				mname, sig.Results().Len())

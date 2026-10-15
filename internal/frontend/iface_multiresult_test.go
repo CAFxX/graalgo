@@ -430,11 +430,11 @@ func main() {
 }
 
 func TestD1IfaceMultiResultStillFailFast(t *testing.T) {
-	// Multi-result interface methods with no D1 table entry keep the
-	// fail-fast (P2-2): a 3-result method on a user interface (generic
-	// WS-D scope error); a 2-result method whose name IS tabled but
-	// whose result types are NOT ((int, string) — exercises the
-	// types.Identical positional guard, not just the arity guard).
+	// P4 (WS D, general interface MR): user-defined multi-result
+	// interface methods now work via classifyUserIfaceMultiResultCall
+	// (synthesized pair types), not just the m8IfaceMultiResultMethods
+	// whitelist. These cases previously failed with the WS-D scope
+	// error; they now compile.
 	//
 	// NOTE (P3, Gate-1 fix-iface-mr): io.WriterTo.WriteTo and
 	// io.ReaderFrom.ReadFrom were added to m8IfaceMultiResultMethods
@@ -443,9 +443,8 @@ func TestD1IfaceMultiResultStillFailFast(t *testing.T) {
 	// runtime ("missing method" or the stub's scope panic), per the
 	// established M8 design.
 	cases := []struct {
-		name    string
-		src     string
-		wantErr string
+		name string
+		src  string
 	}{
 		{
 			name: "3-result user method",
@@ -457,43 +456,40 @@ type R interface {
 
 type B struct{}
 
+func (B) Read(p []byte) (int, error, int) { return 0, nil, 0 }
+
 func main() {
-	var r R
+	var r R = B{}
 	n, err, _ := r.Read(nil)
 	println(n, err == nil)
 }
 `,
-			wantErr: "WS D",
 		},
 		{
-			name: "2-result tabled name, untabled result types (positional guard)",
+			name: "2-result user method, non-tabled result types",
 			src: `package main
 
 type R interface {
 	Read(p []byte) (int, string)
 }
 
+type B struct{}
+
+func (B) Read(p []byte) (int, string) { return 0, "" }
+
 func main() {
-	var r R
+	var r R = B{}
 	n, s := r.Read(nil)
 	println(n, s)
 }
 `,
-			// Name "Read" IS tabled but (int, string) fails the
-			// types.Identical positional guard in
-			// classifyIfaceMultiResultCall — so this must keep the
-			// generic WS-D fail-fast, not just the arity guard.
-			wantErr: "WS D",
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := ExportFile(writeIfaceProg(t, tc.src))
-			if err == nil {
-				t.Fatalf("expected scope error for %s, got success", tc.name)
-			}
-			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
+			if err != nil {
+				t.Fatalf("expected success for %s, got error: %v", tc.name, err)
 			}
 		})
 	}
