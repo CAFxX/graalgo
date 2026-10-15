@@ -6255,11 +6255,16 @@ func funcPkgPath(e *exporter, fi *funcDeclInfo) string {
 	return ""
 }
 
-// exportLinknameDecl emits a bodyless //go:linkname function (P3-M4, WS C,
-// ADR-0004 D1) as a funcdecl carrying the additive "linkname" field and no
-// "body". The factory builds a LinknameRootNode dispatching by symbol
-// name; a bodyless function WITHOUT the directive keeps the historical
-// scope error.
+// exportLinknameDecl emits a bodyless function (P3-M4, WS C, ADR-0004 D1)
+// as a funcdecl with no "body". A bodyless function carrying //go:linkname
+// gets the additive "linkname" field and the factory builds a
+// LinknameRootNode dispatching by symbol name. A bodyless function WITHOUT
+// the directive (typically an assembly implementation in a .s file that
+// graalgo does not process) gets the additive "unimplemented" field; the
+// factory builds a stub that panics if called. This is general: it applies
+// uniformly to all bodyless functions, preserving their type identity so
+// references and value positions work, while failing loudly (never
+// silently) if the unimplemented function is actually invoked.
 func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
 	pkgPath := funcPkgPath(e, fi)
@@ -6267,14 +6272,11 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	if symbol == "" {
-		return nil, scopeErrorf("func %s without body", fd.Name.Name)
-	}
 	// P3-M9 (RC-6): //go:linkname on methods is allowed (previously M4
 	// scope). The receiver is passed as the first arg; intrinsics that
 	// don't need it (e.g. fmtstate.PrinterState methods, which operate on
 	// the thread-local Printer) ignore it.
-	if fi.isTemplate {
+	if fi.isTemplate && symbol != "" {
 		return nil, scopeErrorf("//go:linkname on generic func %s is not in M4 scope", fd.Name.Name)
 	}
 	params, err := e.exportSignatureVars(fd.Type, fi.sig.Params())
@@ -6285,19 +6287,28 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(results) > 1 {
-		return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
-	}
 	sig, err := e.freshSigID(nil, fi.sig.Params(), fi.sig.Results(), fi.sig.Variadic())
 	if err != nil {
 		return nil, err
 	}
 	fields := map[string]any{
 		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sig, "params": params,
-		"linkname": symbol, "pkgpath": pkgPath,
+		"pkgpath": pkgPath,
 	}
 	if len(results) > 0 {
 		fields["results"] = results
+	}
+	if symbol == "" {
+		// No //go:linkname: assembly-implemented (or otherwise
+		// bodyless) function. Mark unimplemented; the backend panics
+		// if called. The multi-result WS D restriction does not
+		// apply: no body is built.
+		fields["unimplemented"] = true
+	} else {
+		if len(results) > 1 {
+			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
+		}
+		fields["linkname"] = symbol
 	}
 	return e.node("funcdecl", fd, fields), nil
 }
