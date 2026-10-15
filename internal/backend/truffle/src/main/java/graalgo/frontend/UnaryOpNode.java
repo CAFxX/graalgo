@@ -6,8 +6,8 @@ import graalgo.values.GoKind;
 
 /**
  * Unary operation with exact Go semantics: {@code -x}, {@code ^x} on
- * int/uint kinds (truncated to the width), {@code -x} on floats,
- * {@code !x} on bools, {@code +x} (identity).
+ * int/uint kinds (truncated to the width), {@code -x} on floats and
+ * complex kinds, {@code !x} on bools, {@code +x} (identity).
  *
  * <p>Go restricts {@code !} to booleans and {@code ^} to integers
  * (go/types enforces this); the constructor rejects anything else loud.
@@ -34,10 +34,11 @@ public final class UnaryOpNode extends GoExprNode {
     public UnaryOpNode(Op op, GoKind kind, GoExprNode child) {
         super(kind);
         boolean ok = switch (op) {
-            case NEG -> kind.isIntKind() || kind.isFloatKind();
+            // PKG-026: Go allows -x/+x on complex (go/types rejects ^x/!x there).
+            case NEG -> kind.isIntKind() || kind.isFloatKind() || kind.isComplexKind();
             case NOT -> kind.isIntKind();
             case LOGNOT -> kind == GoKind.BOOL;
-            case POS -> kind.isIntKind() || kind.isFloatKind();
+            case POS -> kind.isIntKind() || kind.isFloatKind() || kind.isComplexKind();
         };
         if (!ok) {
             throw new IllegalArgumentException("illegal unary op/kind combination: " + op + " on " + kind);
@@ -145,5 +146,28 @@ public final class UnaryOpNode extends GoExprNode {
             return !child.executeBoolean(frame);
         }
         throw new UnsupportedOperationException("not a boolean unary op: " + op);
+    }
+
+    /**
+     * Complex {@code -x}/{@code +x} (PKG-026): complex values travel as
+     * objects ({@code GoComplex32}/{@code GoComplex64}); the carrier is
+     * preserved, reading components generically as for
+     * {@link BinaryOpNode}.
+     */
+    @Override
+    public Object executeObject(VirtualFrame frame) {
+        if (kind().isComplexKind() && (op == Op.NEG || op == Op.POS)) {
+            Object v = child.executeObject(frame);
+            if (v instanceof graalgo.values.GoComplex32 c) {
+                return op == Op.NEG ? new graalgo.values.GoComplex32(-c.re(), -c.im()) : c;
+            }
+            if (v instanceof graalgo.values.GoComplex64 c) {
+                return op == Op.NEG ? new graalgo.values.GoComplex64(-c.re(), -c.im()) : c;
+            }
+            throw new FrontendException(
+                    "complex unary op on non-complex value " + v + " (PKG-026)");
+        }
+        throw new UnsupportedOperationException(
+                "not an object unary op: " + op + " on " + kind());
     }
 }

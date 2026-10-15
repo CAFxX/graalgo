@@ -5,6 +5,8 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.Source;
 import graalgo.launcher.Main;
 import graalgo.launcher.ToolPaths;
+import graalgo.values.GoComplex32;
+import graalgo.values.GoComplex64;
 import graalgo.values.GoKind;
 import graalgo.values.GoString;
 import java.nio.charset.StandardCharsets;
@@ -84,6 +86,9 @@ public final class ArithmeticCorpusTest {
     public void testAr15Compare() throws Exception { checkProgram("ar15_compare"); }
     public void testAr16BoolLogic() throws Exception { checkProgram("ar16_bool_logic"); }
     public void testAr17ShiftsWidths() throws Exception { checkProgram("ar17_shifts_widths"); }
+    // PKG-026: complex arithmetic (add/sub/mul/div on complex64/complex128,
+    // negation, untyped-constant operands, complex64->complex128 widening).
+    public void testAr18Complex() throws Exception { checkProgram("ar18_complex"); }
 
     /**
      * Runs one corpus program through both backends and asserts every
@@ -129,6 +134,7 @@ public final class ArithmeticCorpusTest {
         List<String> lines = Files.readAllLines(src, StandardCharsets.UTF_8);
         boolean needMath = false;
         boolean needHex = false;
+        boolean needStrconv = false;
         List<String> dump = new ArrayList<>(vars.size());
         for (int i = 0; i < vars.size(); i++) {
             String v = vars.get(i);
@@ -145,6 +151,23 @@ public final class ArithmeticCorpusTest {
                     needHex = true;
                     dump.add("hex.EncodeToString([]byte(" + v + "))");
                 }
+                // PKG-026: one token per complex var — hex(re):hex(im) of the
+                // component bits (builtin println would format floats lossily
+                // and would split re/im across tokens).
+                case COMPLEX64 -> {
+                    needMath = true;
+                    needStrconv = true;
+                    dump.add("strconv.FormatUint(uint64(math.Float32bits(real(" + v
+                            + "))), 16) + \":\" + strconv.FormatUint(uint64(math.Float32bits(imag(" + v
+                            + "))), 16)");
+                }
+                case COMPLEX128 -> {
+                    needMath = true;
+                    needStrconv = true;
+                    dump.add("strconv.FormatUint(math.Float64bits(real(" + v
+                            + ")), 16) + \":\" + strconv.FormatUint(math.Float64bits(imag(" + v
+                            + ")), 16)");
+                }
                 default -> dump.add(v);
             }
         }
@@ -160,6 +183,9 @@ public final class ArithmeticCorpusTest {
                 }
                 if (needHex) {
                     out.add("import \"encoding/hex\"");
+                }
+                if (needStrconv) {
+                    out.add("import \"strconv\"");
                 }
             }
         }
@@ -235,6 +261,17 @@ public final class ArithmeticCorpusTest {
                 case BOOL, UNTYPED_BOOL -> Boolean.toString(frame.getBoolean(slot));
                 case STRING, UNTYPED_STRING ->
                         HexFormat.of().formatHex(((GoString) frame.getObject(slot)).bytes());
+                // PKG-026: hex(re):hex(im), mirroring the oracle encoding above.
+                case COMPLEX64 -> {
+                    GoComplex32 c = (GoComplex32) frame.getObject(slot);
+                    yield Integer.toUnsignedString(Float.floatToIntBits(c.re()), 16)
+                            + ":" + Integer.toUnsignedString(Float.floatToIntBits(c.im()), 16);
+                }
+                case COMPLEX128 -> {
+                    GoComplex64 c = (GoComplex64) frame.getObject(slot);
+                    yield Long.toUnsignedString(Double.doubleToLongBits(c.re()), 16)
+                            + ":" + Long.toUnsignedString(Double.doubleToLongBits(c.im()), 16);
+                }
                 default -> throw new AssertionError(
                         "cannot observe kind " + kinds.get(i) + " (only scalars/strings in M3)");
             });
