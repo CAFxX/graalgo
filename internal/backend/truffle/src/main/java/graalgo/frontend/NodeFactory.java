@@ -5233,6 +5233,10 @@ public final class NodeFactory {
         return switch (kind) {
             case FLOAT32 -> ConstNode.ofFloat(kind, Float.floatToIntBits(1f), 0L);
             case FLOAT64, UNTYPED_FLOAT -> ConstNode.ofFloat(kind, 0, Double.doubleToLongBits(1d));
+            // PKG-026: ++/-- on complex adds 1+0i (desugar paths build
+            // BinaryOpNode(ADD, kind, x, oneNode(kind))).
+            case COMPLEX64 -> ConstNode.ofObject(kind, new graalgo.values.GoComplex32(1f, 0f));
+            case COMPLEX128 -> ConstNode.ofObject(kind, new graalgo.values.GoComplex64(1d, 0d));
             default -> ConstNode.ofInt(kind, 1L);
         };
     }

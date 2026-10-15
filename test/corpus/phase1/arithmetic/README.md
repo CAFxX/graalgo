@@ -11,6 +11,15 @@ and by `gofrontend` → `NodeFactory`.
   wraparound, division edge cases (`minint/-1` wraps, no trap).
 - `float32`/`float64`: arithmetic, `0.1+0.2` precision, `16777217`
   round-half-even, `±Inf` propagation, underflow-to-zero.
+- `complex64`/`complex128` (PKG-026, `ar18`): `+ - * /`, unary `-`,
+  untyped-constant operands (`c * 2`, `1 + c`, `c / 2.5`), `complex64`
+  from `float32` parts, `complex128(c)` widening, `++`/`--`/`+=`/`-=`.
+  Semantics are gc's,
+  not the naive formulas: `*` on `complex64` widens to `float64`
+  ("minimize cancellation error"), `/` is Smith-1962 robust division
+  (`runtime.complex128div`, with C99 `Inf`/`NaN` edge corrections) —
+  verified bit-exact against stock gc, including overflow/underflow
+  divisors where the naive formula diverges.
 - All conversion pairs: int↔uint (all widths, sign/zero extension,
   truncation), int/uint↔float32/64 (correct rounding, `uint64→float64`
   precision loss, truncation toward zero, gc's out-of-range mirrors),
@@ -43,10 +52,12 @@ single stderr line positionally, per the variable's Go kind:
 | uint widths | `println(v)` | unsigned decimal |
 | float32 | `println(math.Float32bits(v))` | uint → IEEE bits |
 | float64 | `println(math.Float64bits(v))` | ulong → IEEE bits |
+| complex64 | `println(strconv.FormatUint(uint64(math.Float32bits(real(v))),16)+":"+strconv.FormatUint(uint64(math.Float32bits(imag(v))),16))` | `hex(re):hex(im)` |
+| complex128 | `println(strconv.FormatUint(math.Float64bits(real(v)),16)+":"+strconv.FormatUint(math.Float64bits(imag(v)),16))` | `hex(re):hex(im)` |
 | bool | `println(v)` | `true`/`false` |
 | string | `println(hex.EncodeToString([]byte(v)))` | hex → bytes |
 
-`import "math"` / `import "encoding/hex"` are injected into the **oracle
+`import "math"` / `import "encoding/hex"` / `import "strconv"` are injected into the **oracle
 copy only** (the corpus files stay import-free, in frontend scope).
 Bit-exact float comparison needs the real bits — Go's builtin `println`
 formats floats lossily (`println(0.1+0.2)` prints `0.3`), so it cannot be
