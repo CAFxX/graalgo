@@ -18,6 +18,7 @@ import graalgo.iface.IfaceMethodTable;
 import graalgo.iface.IfaceMethodTables;
 import graalgo.p3builtin.nodes.ClearNode;
 import graalgo.p3builtin.nodes.GoMaxProcsNode;
+import graalgo.p3builtin.nodes.GoschedNode;
 import graalgo.p3builtin.nodes.MinMaxNode;
 import graalgo.p3builtin.nodes.NumCPUNode;
 import graalgo.p3chan.nodes.ChanCloseNode;
@@ -362,6 +363,10 @@ public final class P3SyncMain {
             // P4 (driver-harden): runtime.GOMAXPROCS(n) (same rationale).
             factory.registerExprKind("runtimegomaxprocs",
                     (node, ctx) -> GoMaxProcsNode.build(node, ctx, factory));
+            // PKG-040: runtime.Gosched() — the "runtimegosched" statement
+            // wire node (Gosched returns no value); the backend yields via
+            // SchedulerCore.yieldCurrent.
+            factory.registerStmtKind("runtimegosched", GoschedNode::build);
             // Stack-inspection family (synthetic runtime package):
             // runtime.Callers/Caller/CallersFrames/FuncForPC and the
             // Frames/Func methods. Public extension hooks — no Phase-1/

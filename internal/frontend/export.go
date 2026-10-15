@@ -220,6 +220,8 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // graalgo.rtstack):
 //   - Goexit (M5, WS F), the build constants GOARCH/GOOS and NumCPU
 //     (P4 driver-harden), GOMAXPROCS (P4 driver-harden),
+//     Gosched (PKG-040: real yield via the scheduler's voluntary-yield
+//     primitive),
 //   - the P2-M4 GC-interop surface (SetFinalizer/KeepAlive/GC, ADR-0002 D4),
 //   - the stack-inspection family: Callers, CallersFrames, Caller,
 //     FuncForPC, and the Frames/Frame/Func types with their methods.
@@ -283,6 +285,17 @@ func syntheticRuntimePackage() *types.Package {
 	// value; the backend tracks it as a no-op cell (no real scheduler
 	// tuning on the JVM) but the call must type-check and round-trip.
 	addFunc("GOMAXPROCS", tuple(param("n", intTyp)), tuple(param("", intTyp)))
+	// PKG-040: Gosched (gc 1.27.1, src/runtime/proc.go: "Gosched yields
+	// the processor, allowing other goroutines to run. It does not
+	// suspend the current goroutine, so execution resumes automatically").
+	// Implemented for real: the backend's "runtimegosched" wire node
+	// calls the scheduler's voluntary-yield primitive (see
+	// graalgo.sched.SchedulerCore.yieldCurrent), which re-queues the
+	// current goroutine through the same run lane as quantum expiry.
+	// Upstream test files (e.g. iter/pull_test.go) call it in
+	// goroutine-leak-detection helpers, so it is genuine stdlib surface,
+	// not harness-only.
+	addFunc("Gosched", nil, nil)
 	// P2-M4 (GC interop, ADR-0002 D4): the Go-observable GC surface.
 	// Signatures match gc's runtime package exactly; the Java side is
 	// graalgo.runtime.GcInterop (Phase-1 stub, Phase-2 real).
@@ -6469,6 +6482,12 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 		if err != nil {
 			return nil, err
 		}
+		// PKG-040: runtime.Gosched() exports as the "runtimegosched"
+		// STATEMENT wire node (it returns no value); like "chanclose"
+		// it is returned unwrapped, never inside "exprstmt".
+		if x.Kind == "runtimegosched" {
+			return x, nil
+		}
 		return e.node("exprstmt", s, map[string]any{"x": x}), nil
 	case *ast.ReturnStmt:
 		// BUG-MODPROBE-010 (generalized): a multi-result call in return
@@ -6566,6 +6585,59 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 	}
 }
 
+// isGoschedCall reports whether x is a call to runtime.Gosched (resolved
+// against the synthetic runtime overlay package, not merely named
+// "runtime" — the exportCall interception's package check, mirrored here
+// for the statement-position interceptions below).
+func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
+	c, ok := unparen(x).(*ast.CallExpr)
+	if !ok {
+		return nil, false
+	}
+	sel, ok := unwrapSelector(c.Fun)
+	if !ok {
+		return nil, false
+	}
+	pkgIdent, ok := sel.X.(*ast.Ident)
+	if !ok || pkgIdent.Name != "runtime" {
+		return nil, false
+	}
+	obj, ok := info.Uses[sel.Sel].(*types.Func)
+	if !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+		return nil, false
+	}
+	if sel.Sel.Name != "Gosched" {
+		return nil, false
+	}
+	return c, true
+}
+
+// exportGoschedDeferGo desugars `defer runtime.Gosched()` /
+// `go runtime.Gosched()` through a synthesized zero-arg funclit: the
+// defer/gostmt wire nodes carry call nodes, and a bare "runtimegosched"
+// statement node is not a call (the exportCloseDeferGo precedent, with no
+// args to hoist — Gosched takes none).
+func (e *exporter) exportGoschedDeferGo(s ast.Stmt, c *ast.CallExpr, isDefer bool) (*Node, error) {
+	gosched, err := e.exportCall(c)
+	if err != nil {
+		return nil, err
+	}
+	if gosched.Kind != "runtimegosched" {
+		return nil, fmt.Errorf("gofrontend: exportGoschedDeferGo: expected runtimegosched, got %q", gosched.Kind)
+	}
+	body := e.node("block", c, map[string]any{"stmts": []*Node{gosched}})
+	funclit := e.node("funclit", c, map[string]any{
+		"params": []*Node{}, "results": []*Node{}, "body": body,
+	})
+	call := e.node("call", c, map[string]any{
+		"fun": funclit, "args": []*Node{}, "type": nil,
+	})
+	if isDefer {
+		return e.node("defer", s, map[string]any{"call": call}), nil
+	}
+	return e.node("gostmt", s, map[string]any{"call": call}), nil
+}
+
 // exportDeferStmt exports `defer f(args)` (M5, WS F). The deferred call is
 // exported as a call node; the call/args evaluation timing (evaluate now,
 // invoke at return/unwind) is the factory's job.
@@ -6574,6 +6646,11 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 	// funclit (defer-time channel evaluation, close at return time).
 	if c, ok := isCloseCall(e.info, s.Call); ok {
 		return e.exportCloseDeferGo(s, c, true)
+	}
+	// PKG-040: `defer runtime.Gosched()` desugars through a funclit (the
+	// "runtimegosched" wire node is a statement, not a call).
+	if c, ok := isGoschedCall(e.info, s.Call); ok {
+		return e.exportGoschedDeferGo(s, c, true)
 	}
 	call, err := e.exportCall(s.Call)
 	if err != nil {
@@ -6610,6 +6687,11 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	// funclit with the channel hoisted (go-time evaluation).
 	if c, ok := isCloseCall(e.info, s.Call); ok {
 		return e.exportCloseDeferGo(s, c, false)
+	}
+	// PKG-040: `go runtime.Gosched()` desugars through a funclit (the
+	// "runtimegosched" wire node is a statement, not a call).
+	if c, ok := isGoschedCall(e.info, s.Call); ok {
+		return e.exportGoschedDeferGo(s, c, false)
 	}
 	call, err := e.exportCall(s.Call)
 	if err != nil {
@@ -7932,6 +8014,22 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
 			}
 			return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
+		}
+		// PKG-040: runtime.Gosched() — yields the processor, allowing
+		// other goroutines to run (gc src/runtime/proc.go). Emitted as
+		// the additive "runtimegosched" STATEMENT wire node (Gosched
+		// returns no value, so it is never an expression); the backend
+		// implements it via SchedulerCore.yieldCurrent. Statement
+		// positions (ExprStmt, defer, go) unwrap it — see exportStmt and
+		// exportGoschedDeferGo.
+		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "runtime" && sel.Sel.Name == "Gosched" {
+			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+				return nil, scopeErrorf("runtime.Gosched did not resolve to the overlay package")
+			}
+			if len(c.Args) != 0 {
+				return nil, fmt.Errorf("gofrontend: runtime.Gosched takes no arguments")
+			}
+			return e.node("runtimegosched", c, map[string]any{}), nil
 		}
 		// P3-M9 (driver-harden, go-cmp lane) note: runtime.FuncForPC was
 		// once rewritten to a panic ("no PC-to-function table"). The
