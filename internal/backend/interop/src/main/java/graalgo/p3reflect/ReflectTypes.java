@@ -1026,13 +1026,39 @@ public final class ReflectTypes {
                 // The func type's receiver must be the OUTER type (what
                 // reflect passes), not the embedded type. Rebuild with the
                 // receiver TypeInfo prepended.
+                //
+                // The ins/outs/variadic come from the WIRE signature
+                // (sigId), not from funcType.ins/outs: funcType may be a
+                // cycle-cut shell (tok == -1, empty ins/outs) when the
+                // method's signature references the type under construction
+                // (e.g. func(t *Type) int while building *Type — the
+                // internal/abi descriptor cycle). The wire params[0] is the
+                // declared receiver (dropped here); helper-mapped methods
+                // use the prependRecv convention so params[0] is likewise
+                // the receiver.
                 List<TypeInfo> wrapperIns = new ArrayList<>();
                 wrapperIns.add(receiver);
-                wrapperIns.addAll(funcType.ins.subList(1, funcType.ins.size()));
+                List<TypeInfo> wrapperOuts = new ArrayList<>();
+                String sigPath = "types[" + sigId + "]";
+                Json.Object sigDetail = types.entry(sigId, sigPath).object("detail", sigPath);
+                Json.Array sigParams = sigDetail.array("params", sigPath);
+                for (int pi = 1; pi < sigParams.size(); pi++) {
+                    wrapperIns.add(infoOrShell(table, types, shells,
+                            (int) arrObj(sigParams, pi, sigPath).longInt("type", sigPath),
+                            functions, funcdeclSig));
+                }
+                Json.Array sigResults = sigDetail.array("results", sigPath);
+                for (int ri = 0; ri < sigResults.size(); ri++) {
+                    wrapperOuts.add(infoOrShell(table, types, shells,
+                            (int) arrObj(sigResults, ri, sigPath).longInt("type", sigPath),
+                            functions, funcdeclSig));
+                }
+                Json.Value sigVar = sigDetail.opt("variadic");
+                boolean wrapperVariadic = sigVar instanceof Json.Bool b && b.value();
                 int wrapperTok = table.byTok.size();
                 effectiveFuncType = new TypeInfo(wrapperTok, GoKind.FUNC, "", "", 8, 8,
                         null, null, 0, null, List.of(), List.of(),
-                        List.copyOf(wrapperIns), funcType.outs, funcType.variadic,
+                        List.copyOf(wrapperIns), List.copyOf(wrapperOuts), wrapperVariadic,
                         List.of(), "", funcType.wireId);
                 table.byTok.add(effectiveFuncType);
             }
