@@ -1183,70 +1183,178 @@ func ExportFile(path string) (string, error) {
 	return ExportFiles([]string{path})
 }
 
-// needsOverlayImporter reports whether import path p must resolve
-// through the synthetic/disk overlay importer (WS G).
-//
-// General mechanism (hunt-special-cases): instead of a per-package
-// allow-list, admit:
-//  1. The 5 packages with dedicated synthetic constructors (not in
-//     syntheticSources): runtime, fmt, sync, sync/atomic, unsafe.
-//  2. Any package with a synthetic source (syntheticSources map) —
-//     including future additions, no allow-list update needed.
-//  3. Disk-importable third-party packages.
-//
-// Internal packages (internal/*, crypto/internal/*) have synthetic
-// sources but are NOT user-importable; they are excluded here and in
-// checkImportAllowed.
-func needsOverlayImporter(p string) bool {
-	// The 3 dedicated-constructor packages (sync and sync/atomic now resolve from disk).
-	if p == "runtime" || p == "fmt" || p == "unsafe" {
-		return true
+// testPackageDirEnv is the environment variable through which `graalgo
+// test` declares which package a synthesized test driver belongs to. The
+// driver is written to a temp file, so its own directory is meaningless;
+// the variable carries the package under test because the driver IS that
+// package's test binary (white-box, exactly like `go test`), and its
+// imports resolve with the package's own privileges.
+const testPackageDirEnv = "GRAALGO_TEST_PACKAGE_DIR"
+
+// importingDir returns the directory the frontend treats as the location
+// of the package being compiled, for Go's internal-visibility rule
+// (internalImportVisible). Defaults to the input files' directory; the
+// test-driver override above takes precedence.
+func importingDir(paths []string) string {
+	if d := os.Getenv(testPackageDirEnv); d != "" {
+		return absDir(d)
 	}
-	// General: any non-internal synthetic source.
-	if _, ok := syntheticSources[p]; ok {
-		if strings.HasPrefix(p, "internal/") || strings.HasPrefix(p, "crypto/internal/") {
-			return false
-		}
-		return true
+	if len(paths) > 0 {
+		return absDir(filepath.Dir(paths[0]))
 	}
-	// WS G (P3-M9, module-probe lane): a disk-resolvable third-party
-	// import also needs the overlay importer (its default case
-	// builds the package from the module cache/GOPATH).
-	return isDiskImportable(p)
+	return ""
 }
 
-// checkImportAllowed validates one import against the frontend/v1 import
-// overlay (WS G): synthetic, disk-importable, or scope error.
+func absDir(d string) string {
+	if abs, err := filepath.Abs(d); err == nil {
+		return abs
+	}
+	return d
+}
+
+// isInternalPath reports whether importPath contains an "internal" path
+// element — the general form of Go's internal-visibility rule (not just
+// the stdlib's internal/* and crypto/internal/* prefixes).
+func isInternalPath(importPath string) bool {
+	for _, e := range strings.Split(importPath, "/") {
+		if e == "internal" {
+			return true
+		}
+	}
+	return false
+}
+
+// internalVisibilityRoot returns the directory rooting the visibility of
+// an internal import path: the directory containing the "internal" path
+// element in the package's resolved source tree. Go's rule: a/b/internal/c
+// is importable only from packages within a/b.
 //
-// General mechanism (hunt-special-cases): instead of a per-package
-// allow-list, admit:
-//  1. The 5 packages with dedicated synthetic constructors: runtime, fmt,
-//     sync, sync/atomic, unsafe.
-//  2. Any package with a synthetic source (syntheticSources map) except
-//     internal packages (internal/*, crypto/internal/*) which stay
-//     synthetic-only.
-//  3. Disk-importable third-party packages.
+// Resolution follows the importer's own order, so an admitted import
+// resolves exactly where the gate says it does:
+//   - synthetic-internal packages stand in for their real stdlib location
+//     under the toolchain GOROOT (the sources they were generated from);
+//   - anything else resolves from disk via resolveDiskPackageDir.
+//
+// ok=false when no source location can be determined (e.g. synthetic-only
+// packages with no real counterpart); callers fail closed (deny), which
+// preserves the current behavior.
+func internalVisibilityRoot(importPath string) (root string, ok bool) {
+	elems := strings.Split(importPath, "/")
+	idx := -1
+	for i, e := range elems {
+		if e == "internal" {
+			idx = i // last "internal" element, matching cmd/go
+		}
+	}
+	if idx < 0 {
+		return "", false
+	}
+	var srcDir string
+	if _, isSynthetic := syntheticSources[importPath]; isSynthetic {
+		goroot := runtime.GOROOT()
+		if goroot == "" {
+			return "", false
+		}
+		srcDir = filepath.Join(goroot, "src", filepath.FromSlash(importPath))
+	} else if d, err := resolveDiskPackageDir(importPath); err == nil {
+		srcDir = d
+	} else {
+		return "", false
+	}
+	if st, err := os.Stat(srcDir); err != nil || !st.IsDir() {
+		return "", false
+	}
+	// Strip the trailing "/internal/..." elements to get the root.
+	root = srcDir
+	for i := idx; i < len(elems); i++ {
+		root = filepath.Dir(root)
+	}
+	return root, true
+}
+
+// dirWithin reports whether dir is at or under root, resolving symlinks
+// on both sides (GOROOT is commonly a symlink, e.g. ~/tools/go ->
+// go-1.27.1, while package dirs are spelled through the link).
+func dirWithin(dir, root string) bool {
+	resolve := func(d string) string {
+		if r, err := filepath.EvalSymlinks(d); err == nil {
+			return r
+		}
+		return d
+	}
+	dir, root = resolve(dir), resolve(root)
+	return dir == root || strings.HasPrefix(dir, root+string(filepath.Separator))
+}
+
+// internalImportVisible applies Go's internal-visibility rule: an internal
+// import path is visible from importingDir iff importingDir is at or
+// under the internal package's visibility root. Unresolvable roots deny
+// (fail closed).
+func internalImportVisible(importPath, importingDir string) bool {
+	if importingDir == "" {
+		return false
+	}
+	root, ok := internalVisibilityRoot(importPath)
+	if !ok {
+		return false
+	}
+	return dirWithin(importingDir, root)
+}
+
+// importAdmitted is the single frontend/v1 import gate (WS G), shared by
+// checkImportAllowed and needsOverlayImporter. General mechanism
+// (hunt-special-cases): instead of a per-package allow-list, admit:
+//  1. The packages with dedicated synthetic constructors (not in
+//     syntheticSources): runtime, fmt, unsafe.
+//  2. Any package with a synthetic source (syntheticSources map) —
+//     including future additions, no allow-list update needed — except
+//     internal packages, which follow Go's internal-visibility rule.
+//  3. Internal packages (any path with an "internal" element) visible
+//     from the importing package under Go's internal-visibility rule:
+//     e.g. the `graalgo test` driver for a stdlib package compiles as
+//     the package itself, so its internal/* imports resolve. Ordinary
+//     user code stays rejected.
+//  4. Disk-importable third-party packages.
 //
 // Every other import is a scope error.
-func checkImportAllowed(imp *ast.ImportSpec) error {
-	path := strings.Trim(imp.Path.Value, "\"`")
-	// The 3 dedicated-constructor packages (sync and sync/atomic now resolve from disk).
+func importAdmitted(path, importingDir string) bool {
+	// The dedicated-constructor packages (sync and sync/atomic now resolve from disk).
 	if path == "runtime" || path == "fmt" || path == "unsafe" {
-		return nil
+		return true
 	}
-	// General: any non-internal synthetic source.
 	if _, ok := syntheticSources[path]; ok {
-		if strings.HasPrefix(path, "internal/") || strings.HasPrefix(path, "crypto/internal/") {
-			// Synthetic-only: user imports not admitted.
-		} else {
-			return nil
+		// Synthetic-internal packages (internal/*, crypto/internal/*):
+		// admitted only where Go's internal-visibility rule admits them.
+		if isInternalPath(path) {
+			return internalImportVisible(path, importingDir)
 		}
+		return true
+	}
+	// Non-synthetic internal packages visible under Go's rule (resolved
+	// from disk, same as the importer resolves them).
+	if isInternalPath(path) && internalImportVisible(path, importingDir) {
+		return true
 	}
 	// WS G (P3-M9, module-probe lane): third-party imports resolve
 	// from local disk (module cache/GOPATH) through the general
 	// import overlay; only truly unresolvable paths stay a scope
 	// error.
-	if isDiskImportable(path) {
+	return isDiskImportable(path)
+}
+
+// needsOverlayImporter reports whether import path p must resolve
+// through the synthetic/disk overlay importer (WS G). It mirrors the
+// import gate exactly: every admitted import resolves through the
+// overlay, so the importer is needed exactly when the gate admits.
+func needsOverlayImporter(p string, importingDir string) bool {
+	return importAdmitted(p, importingDir)
+}
+
+// checkImportAllowed validates one import against the frontend/v1 import
+// overlay (WS G): admitted (see importAdmitted), or scope error.
+func checkImportAllowed(imp *ast.ImportSpec, importingDir string) error {
+	path := strings.Trim(imp.Path.Value, "\"`")
+	if importAdmitted(path, importingDir) {
 		return nil
 	}
 	return fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
@@ -1293,9 +1401,12 @@ func ExportFiles(paths []string) (string, error) {
 		files = append(files, file)
 		srcs = append(srcs, src)
 	}
+	// The test driver is the package's own test binary: resolve imports
+	// with the package's privileges (Go's internal-visibility rule).
+	idir := importingDir(paths)
 	for _, file := range files {
 		for _, imp := range file.Imports {
-			if err := checkImportAllowed(imp); err != nil {
+			if err := checkImportAllowed(imp, idir); err != nil {
 				return "", err
 			}
 		}
@@ -1330,7 +1441,7 @@ func ExportFiles(paths []string) (string, error) {
 	// "iter", and the crypto/* packages likewise.
 	for _, file := range files {
 		for _, imp := range file.Imports {
-			if needsOverlayImporter(strings.Trim(imp.Path.Value, "\"`")) {
+			if needsOverlayImporter(strings.Trim(imp.Path.Value, "\"`"), idir) {
 				conf.Importer = overlayImporter{}
 			}
 		}
