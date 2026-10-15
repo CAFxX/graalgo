@@ -270,11 +270,15 @@ var syntheticSources = map[string]string{
 	"testing/quick":  syntheticTestingQuickSource,
 	"testing/iotest": syntheticTestingIotestSource,
 	// P3-M9 (tier-4: net): synthetic net packages (real-Go sources in
-	// synth_net.go / synth_netip.go / synth_neturl.go / synth_textproto.go /
-	// synth_poll.go / synth_nettrace.go / synth_singleflight.go). net
-	// imports net/netip, internal/poll; url imports net/netip. The
-	// internal/* packages are synthetic-only (not in the user allow-list).
-	"net":                   syntheticNetSource,
+	// synth_netip.go / synth_neturl.go / synth_textproto.go /
+	// synth_poll.go / synth_nettrace.go / synth_singleflight.go).
+	// NOTE (real-net lane, 2026-10-15): the real "net" package now
+	// compiles from GOROOT via the general disk-import mechanism
+	// (buildDiskPackage + transformDiskMultiResult). It was removed from
+	// the synthetic overlay per the no-bridges order: the synthetic net's
+	// SetDeadline(t interface{}) shim broke gc-exact net.Conn
+	// implementations. url imports net/netip. The internal/* packages are
+	// synthetic-only (not in the user allow-list).
 	"net/netip":             syntheticNetipSource,
 	"net/url":               syntheticNeturlSource,
 	"net/textproto":         syntheticTextprotoSource,

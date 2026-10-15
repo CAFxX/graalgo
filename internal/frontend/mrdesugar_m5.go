@@ -995,13 +995,11 @@ var m8MultiResultFuncs = []osMultiResultFunc{
 	// listener type implements net.Listener; the stub panics and calls
 	// rewrite to __listenerAccept).
 	{"crypto/tls", "Accept", "listener", "__listenerAccept", "", "__listenerAcceptPair", []string{"c", "err"}},
-	// P3-M9 (x509/TLS lane, legs-verify-fix): (*net.TCPListener).Accept
-	// itab wiring. __listenerAccept calls l.Listener.Accept() — an
-	// interface dispatch whose dynamic type is *net.TCPListener; without
-	// this entry multiResultHelperFor misses it and the dispatch fails
-	// with 'missing method "Accept" for dynamic type "*net.TCPListener"'
-	// (01_handshake legs red in legs-nilmap-fix and legs-verify-fix).
-	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "", "acceptPair", []string{"c", "err"}},
+	// NOTE (real-net lane, 2026-10-15): the {"net", "Accept",
+	// "TCPListener", ...} entry was removed. The real "net" package now
+	// compiles from GOROOT via the general disk-import mechanism; its
+	// multi-result methods are pair-transformed by the general
+	// registerUserMRFunc mechanism.
 	// P3-M9 (x509/TLS lane): (*Conn).Read/Write concrete methods.
 	{"crypto/tls", "Read", "Conn", "__tlsConnRead", "", "__tlsConnReadPair", []string{"n", "err"}},
 	{"crypto/tls", "Write", "Conn", "__tlsConnWrite", "", "__tlsConnWritePair", []string{"n", "err"}},
@@ -1138,40 +1136,11 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	// net/url: methods (prependRecv).
 	{"net/url", "Password", "Userinfo", "__userinfoPassword", "", "passwordPair", []string{"s", "ok"}},
 	{"net/url", "Parse", "URL", "__urlParsePub", "", "parseURLPair", []string{"u", "err"}},
-	// net: package-level funcs (socket path; __-helpers in synth_net.go).
-	{"net", "Pipe", "", "__pipe", "", "pipePair", []string{"c1", "c2"}},
-	{"net", "Dial", "", "__dial", "", "dialPair", []string{"c", "err"}},
-	{"net", "DialTimeout", "", "__dialTimeout", "", "dialPair", []string{"c", "err"}},
-	{"net", "Listen", "", "__listen", "", "listenPair", []string{"l", "err"}},
-	{"net", "ListenPacket", "", "__listenPacket", "", "listenPacketPair", []string{"c", "err"}},
-	{"net", "ResolveIPAddr", "", "__resolveIPAddr", "", "resolveIPAddrPair", []string{"ip", "err"}},
-	{"net", "ResolveTCPAddr", "", "__resolveTCPAddr", "", "resolveTCPAddrPair", []string{"addr", "err"}},
-	{"net", "ResolveUDPAddr", "", "__resolveUDPAddr", "", "resolveUDPAddrPair", []string{"addr", "err"}},
-	{"net", "ParseCIDR", "", "__parseCIDR", "", "parseCIDRPair", []string{"ip", "ipnet", "err"}},
-	{"net", "ParseMAC", "", "__parseMAC", "", "parseMACPair", []string{"hw", "err"}},
-	{"net", "SplitHostPort", "", "__splitHostPort", "", "splitHostPortPair", []string{"host", "port", "err"}},
-	{"net", "Size", "IPMask", "__ipMaskSize", "", "maskSizePair", []string{"ones", "bits"}},
-	// net: interface enumeration (P3-M9 module-probe lane).
-	{"net", "Interfaces", "", "__interfaces", "", "interfacesPair", []string{"ifs", "err"}},
-	// net: methods on TCPListener / Conn (prependRecv).
-	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "", "acceptPair", []string{"c", "err"}},
-	// P3-M9 (x509/TLS lane): (*Dialer).Dial (prependRecv). The method body
-	// calls the 2-result package-level Dial/DialTimeout, which cannot
-	// appear in return position under WS D, so it desugars to __dialerDial.
-	{"net", "Dial", "Dialer", "__dialerDial", "", "dialPair", []string{"c", "err"}},
-	{"net", "Read", "TCPConn", "__tcpConnRead", "", "readPair", []string{"n", "err"}},
-	{"net", "Write", "TCPConn", "__tcpConnWrite", "", "writePair", []string{"n", "err"}},
-	{"net", "Read", "UDPConn", "__udpConnRead", "", "readPair", []string{"n", "err"}},
-	{"net", "Write", "UDPConn", "__udpConnWrite", "", "writePair", []string{"n", "err"}},
-	{"net", "ReadFrom", "UDPConn", "__udpConnReadFrom", "", "readFromPair", []string{"n", "addr", "err"}},
-	{"net", "WriteTo", "UDPConn", "__udpConnWriteTo", "", "writePair", []string{"n", "err"}},
-	// net: methods on pipeConn (net.Pipe; prependRecv). The itab maps
-	// these to the pair-returning __-helpers so interface dispatch
-	// (net.Conn) works — without entries the methods stay out of the
-	// table and dispatch fails fast with "missing method" (wave3
-	// net/00_pipe red, 2026-10-12).
-	{"net", "Read", "pipeConn", "__pipeRead", "", "__pipeReadPair", []string{"n", "err"}},
-	{"net", "Write", "pipeConn", "__pipeWrite", "", "__pipeWritePair", []string{"n", "err"}},
+	// NOTE (real-net lane, 2026-10-15): the "net" entries were removed.
+	// The real "net" package now compiles from GOROOT via the general
+	// disk-import mechanism (buildDiskPackage + transformDiskMultiResult);
+	// its multi-result functions are pair-transformed by the general
+	// registerUserMRFunc mechanism, not by table-driven desugaring.
 }
 
 // ioMultiResultFuncs is the desugar table for the synthetic io package's
@@ -1307,16 +1276,11 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// concrete nistCurve helpers. Pair types live in synthetic elliptic.
 	{"crypto/elliptic", "Unmarshal", "__mrUnmarshalPair", []string{"x", "y"}},
 	{"crypto/elliptic", "UnmarshalCompressed", "__mrUnmarshalCompressedPair", []string{"x", "y"}},
-	// P3-M9 (tier-4: net): net.Listener.Accept, net.PacketConn.WriteTo,
-	// net.PacketConn.ReadFrom. The corpus calls these on interface values
-	// (ln.Accept(), pc.WriteTo(...)); without entries the export fails
-	// fast with "interface method Accept/WriteTo has 2 results" (wave3
-	// net/02 + net/04 red, 2026-10-12). Pair types live in synthetic
-	// net; field names/types are positionally identical to the methods'
-	// results (checked by classifyIfaceMultiResultCall).
-	{"net", "Accept", "acceptPair", []string{"c", "err"}},
-	{"net", "WriteTo", "writePair", []string{"n", "err"}},
-	{"net", "ReadFrom", "readFromPair", []string{"n", "addr", "err"}},
+	// NOTE (real-net lane, 2026-10-15): the {"net", "Accept"/"WriteTo"/
+	// "ReadFrom", ...} entries were removed. The real "net" package now
+	// compiles from GOROOT via the general disk-import mechanism
+	// (transformDiskMultiResult + classifyDiskIfaceMultiResultCall);
+	// interface multi-result methods are handled generally, not by table.
 	// P3-M10 (tier-5: net/http): RoundTripper.RoundTrip, dispatched via
 	// the itab to the concrete transport's pair-returning __-helper
 	// (wired via the m7MultiResultFuncs entry + methodTableEntries).
