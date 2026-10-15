@@ -6,12 +6,12 @@ package graalgo.safepoint;
  * <p>Frozen signature: {@code graalgo.safepoint.poll()}. The AST inserts
  * calls at function entries ({@code GoRootNode}) and loop back-edges
  * (WS E); the Phase-1 implementation is a no-op. Phase 2 gives it
- * semantics (thread suspension for GC).
+ * semantics (scheduler quantum check).
  */
 public final class Safepoint {
     private Safepoint() {}
 
-    /** Phase-1: no-op. Phase 2: the GC safepoint. */
+    /** Phase-1: no-op. Phase 2: scheduler quantum check. */
     public static void poll() {
         // Intentionally empty in Phase 1.
     }
