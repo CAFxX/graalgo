@@ -4,9 +4,14 @@
 // go/* packages (see VENDORING.md) and emits the frontend/v1 typed-AST JSON
 // document (see ../docs/frontend-v1.md) to stdout.
 //
-// Usage: gofrontend <file.go> [file.go...]
+// Usage: gofrontend [--test-package-dir=DIR] <file.go> [file.go...]
 // All files must declare the same package. They are type-checked together,
 // so cross-file references resolve.
+// --test-package-dir=DIR declares the package a synthesized `graalgo test`
+// driver belongs to (passed only by `graalgo test` via the backend
+// launcher); the import gate applies Go's internal-visibility rule with
+// that package's privileges. Never read from the environment: a
+// user-exported variable must not confer the privilege.
 // Exit codes: 0 success, 1 usage error, 2 frontend error (details on stderr).
 //
 // Validation mode: gofrontend --check-synthetic <import-path>
@@ -22,21 +27,38 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 )
 
 const toolVersion = "0.7.0"
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintf(os.Stderr, "usage: gofrontend <file.go> [file.go...] | gofrontend --check-synthetic <import-path>\n")
+	// PKG-001: `graalgo test` passes --test-package-dir=DIR (via the
+	// backend launcher) declaring which package a synthesized test
+	// driver belongs to; the import gate then applies Go's
+	// internal-visibility rule with that package's privileges. The flag
+	// is extracted from argv here and threaded in-process to
+	// ExportFiles — it is never read from the environment, so a
+	// user-exported variable cannot confer the privilege.
+	var testPackageDir string
+	var rest []string
+	for _, a := range os.Args[1:] {
+		if strings.HasPrefix(a, testPackageDirFlag) {
+			testPackageDir = strings.TrimPrefix(a, testPackageDirFlag)
+			continue
+		}
+		rest = append(rest, a)
+	}
+	if len(rest) < 1 {
+		fmt.Fprintf(os.Stderr, "usage: gofrontend [--test-package-dir=DIR] <file.go> [file.go...] | gofrontend --check-synthetic <import-path>\n")
 		os.Exit(1)
 	}
-	if os.Args[1] == "--check-synthetic" {
-		if len(os.Args) != 3 {
+	if rest[0] == "--check-synthetic" {
+		if len(rest) != 2 {
 			fmt.Fprintf(os.Stderr, "usage: gofrontend --check-synthetic <import-path>\n")
 			os.Exit(1)
 		}
-		path := os.Args[2]
+		path := rest[1]
 		if _, ok := syntheticSources[path]; !ok {
 			fmt.Fprintf(os.Stderr, "gofrontend: --check-synthetic: no synthetic source for %q\n", path)
 			os.Exit(2)
@@ -55,7 +77,7 @@ func main() {
 		}()
 		return
 	}
-	out, err := ExportFiles(os.Args[1:])
+	out, err := ExportFiles(rest, testPackageDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "gofrontend: %v\n", err)
 		os.Exit(2)
