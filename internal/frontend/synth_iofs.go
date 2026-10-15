@@ -44,6 +44,16 @@ func (e *PathError) Error() string { return e.Op + " " + e.Path + ": " + e.Err.E
 
 func (e *PathError) Unwrap() error { return e.Err }
 
+// Timeout reports whether this error represents a timeout.
+// (gc 1.27.1: present on the real PathError; required so *PathError
+// satisfies interfaces embedding Timeout() bool, e.g. os timeout
+// checks and errors.As targets. PKG-022: its absence made the
+// interface-implements check fail at runtime.)
+func (e *PathError) Timeout() bool {
+	t, ok := e.Err.(interface{ Timeout() bool })
+	return ok && t.Timeout()
+}
+
 // FileInfo describes a file and is returned by Stat and Lstat.
 type FileInfo interface {
 	Name() string       // base name of the file
@@ -1095,4 +1105,3 @@ func __fsLstat(fsys FS, name string) fsLstatPair {
 	panic("fs.__fsLstat: not in M8 scope (multi-result interface dispatch needs WS D; re-test when it lands)")
 }
 `
-

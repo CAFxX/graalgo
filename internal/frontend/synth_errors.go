@@ -1,24 +1,27 @@
 // P3-M7 (wave 1): synthetic `errors` package.
 //
 // REAL Go source, embedded as text and type-checked on demand with the
-// overlay importer (no imports — the package is self-contained). The
-// resulting *types.Package is what overlayImporter.Import("errors")
+// overlay importer (imports: "reflect" → the P3-M7 synthetic package).
+// The resulting *types.Package is what overlayImporter.Import("errors")
 // returns, so the user's type-check and the synthetic source's own
 // type-check share identical *types.Func/*types.TypeName objects; the
 // exporter then emits the synthetic declarations' bodies into the same
 // wire document (shared type/object tables) via exportSyntheticPackages.
 //
 // Exact gc 1.27.1 public API signatures (errors.go, wrap.go, join.go).
-// Only frontend/v1-supported constructs (no reflect, no unsafe):
-// New, Is, Unwrap, Join, AsType are real Go; As cannot be implemented
-// without reflect, so it keeps its exact gc signature with a fail-fast
-// body — fail fast, NEVER silent. Re-test when reflect lands.
+// New, Is, Unwrap, Join, As, AsType are real Go, faithful ports of the
+// gc 1.27.1 sources: As uses the synthetic reflect package (the
+// __reflect_* intrinsics it needs — valueof, typeof, tKind, tElem,
+// tImplements, tAssignableTo, elem, set, isnil — are implemented in
+// p3reflect), exactly as the real errors package uses internal/reflectlite.
 package main
 
 // syntheticErrorsSource is the P3-M7 synthetic `errors` package: exact
 // gc 1.27.1 signatures for the full public API; real implementations for
-// New/Is/Unwrap/Join/AsType; fail-fast body for As (needs reflect).
+// New/Is/Unwrap/Join/As/AsType.
 const syntheticErrorsSource = `package errors
+
+import "reflect"
 
 // New returns an error that formats as the given text.
 // Each call to New returns a distinct error value even if the text is identical.
@@ -161,14 +164,59 @@ func errorsIs(err, target error, targetComparable bool) bool {
 // As panics if target is not a non-nil pointer to either a type that implements
 // error, or to any interface type.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body. A real
-// implementation needs reflect (arbitrary *T target validation and
-// setting) — unavailable to v1 synthetic packages: the synthetic
-// reflect package's Implements/AssignableTo/Set are still fail-fast
-// intrinsics. Re-test when the reflect runtime lands.
+// Faithful port of gc 1.27.1's errors.As (wrap.go), using the synthetic
+// reflect package where the real source uses internal/reflectlite.
 func As(err error, target any) bool {
-	panic("errors.As: not in M7 scope (needs reflect; re-test when reflect lands)")
+	if err == nil {
+		return false
+	}
+	if target == nil {
+		panic("errors: target cannot be nil")
+	}
+	val := reflect.ValueOf(target)
+	typ := val.Type()
+	if typ.Kind() != reflect.Ptr || val.IsNil() {
+		panic("errors: target must be a non-nil pointer")
+	}
+	targetType := typ.Elem()
+	if targetType.Kind() != reflect.Interface && !targetType.Implements(errorType) {
+		panic("errors: *target must be interface or implement error")
+	}
+	return as(err, target, val, targetType)
 }
+
+func as(err error, target any, targetVal reflect.Value, targetType reflect.Type) bool {
+	for {
+		if reflect.TypeOf(err).AssignableTo(targetType) {
+			targetVal.Elem().Set(reflect.ValueOf(err))
+			return true
+		}
+		if x, ok := err.(errorAsser); ok && x.As(target) {
+			return true
+		}
+		switch x := err.(type) {
+		case unwrapper:
+			err = x.Unwrap()
+			if err == nil {
+				return false
+			}
+		case multiUnwrapper:
+			for _, err := range x.Unwrap() {
+				if err == nil {
+					continue
+				}
+				if as(err, target, targetVal, targetType) {
+					return true
+				}
+			}
+			return false
+		default:
+			return false
+		}
+	}
+}
+
+var errorType = reflect.TypeOf((*error)(nil)).Elem()
 
 // errorAsser is the As(any) bool method set. gc asserts against the
 // anonymous interface{ As(any) bool }; named here — identical semantics,
