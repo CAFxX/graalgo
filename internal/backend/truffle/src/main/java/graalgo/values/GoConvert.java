@@ -143,11 +143,39 @@ public final class GoConvert {
     }
 
     /**
-     * The {@code unsafe.Pointer → uintptr} conversion traps: letting the
-     * handle escape as an integer is exactly the escape D5 forbids.
+     * Go {@code unsafe.Pointer → uintptr} (PKG-007): yields the handle
+     * itself as an integer <em>identity token</em>.
+     *
+     * <p>D5 has no observable address (GG-0015), but it does have an
+     * identity: {@link UnsafeHandles} interning (P3-M10) assigns the same
+     * handle to the same storage location, never reuses a handle value,
+     * and reserves 0 for the nil pointer — and {@code ==} on
+     * {@code unsafe.Pointer} already compares handles. The conversion
+     * surfaces that existing identity as an integer, so the portable
+     * properties gc code depends on hold:
+     * <ul>
+     *   <li>nil {@code unsafe.Pointer} (handle 0) → 0;</li>
+     *   <li>stability: the same referent converts to the same integer
+     *       across conversions (while the handle is live);</li>
+     *   <li>distinctness: distinct live referents → distinct integers;</li>
+     *   <li>equality parity: {@code uintptr(p) == uintptr(q)} iff
+     *       {@code p == q}, matching gc's address equality on every
+     *       representable case.</li>
+     * </ul>
+     *
+     * <p>What the token is <em>not</em>: a memory address. No path leads
+     * from the integer back to a referent — {@code uintptr →
+     * unsafe.Pointer} still traps (a handle can never be materialized
+     * from an integer; that would defeat the table's allocation
+     * discipline) and {@code unsafe.Add} still traps (no byte arithmetic).
+     * The token is an opaque comparable value: it can be compared,
+     * hashed, stored, and printed, but never dereferenced. Lifetime
+     * mirrors gc's own rule: the integer does not keep the referent alive
+     * (the table's strong reference is tied to the handle, not the
+     * escaped integer), and laundering it back through a pointer
+     * conversion fails loud instead of silently aliasing.
      */
     public static long unsafePointerToUintptr(long handle) {
-        throw new UnsafeHandles.UnsafeEscapeException(
-                "unsafe.Pointer → uintptr conversion traps (D5: unsafe.Pointer never escapes as an integer)");
+        return handle;
     }
 }

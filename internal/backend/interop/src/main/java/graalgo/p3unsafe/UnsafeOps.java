@@ -43,8 +43,12 @@ import graalgo.values.UnsafeHandles;
  * shapes the handle model cannot represent panic with an
  * {@code "unsafe.<op>: ..."} message (intentional, documented divergence —
  * gc would silently reinterpret); D5 traps ({@link #addTrap},
- * {@link #fromUintTrap}) throw {@link UnsafeHandles.UnsafeEscapeException},
- * like the existing {@code unsafe.Pointer → uintptr} trap.
+ * {@link #fromUintTrap}) throw {@link UnsafeHandles.UnsafeEscapeException}.
+ * The {@code unsafe.Pointer → uintptr} direction does <em>not</em> trap:
+ * it yields the handle as an integer identity token (PKG-007; see
+ * {@link graalgo.values.GoConvert#unsafePointerToUintptr}) — the token is
+ * opaque and comparable but never materializes back into a handle, so the
+ * traps above keep holding.
  */
 public final class UnsafeOps {
     private UnsafeOps() {}
