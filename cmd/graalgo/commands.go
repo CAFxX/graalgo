@@ -18,17 +18,45 @@ func cmdRun(root string, args []string) int {
 	// Split flags from the file/package and program args. The first
 	// non-flag argument is the file or package; everything after it is
 	// program arguments.
-	var flags []string
+	var flagArgs []string
 	var rest []string
-	for i, a := range args {
-		if strings.HasPrefix(a, "-") && len(rest) == 0 {
-			flags = append(flags, a)
-			continue
+	i := 0
+	for ; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") || len(rest) > 0 {
+			rest = args[i:]
+			break
 		}
-		rest = args[i:]
-		break
+		flagArgs = append(flagArgs, a)
+		// Consume the flag's value too, so `-ldflags -X=...` doesn't
+		// leak the value into the program args.
+		name, _, hasVal := strings.Cut(a, "=")
+		if !hasVal && (name == "-ldflags" || name == "-o" || name == "-tags") && i+1 < len(args) {
+			i++
+			flagArgs = append(flagArgs, args[i])
+		}
 	}
-	_ = flags // build flags accepted but currently unused
+	if i >= len(args) {
+		rest = nil
+	}
+	// Validate build flags (reject unknown ones; -ldflags needs backend).
+	if len(flagArgs) > 0 {
+		bf, err := parseBuildFlags(flagArgs)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo run: %v\n", err)
+			return 2
+		}
+		if bf.ldflags != "" {
+			fmt.Fprintf(os.Stderr, "graalgo run: -ldflags: not yet supported\n")
+			return 1
+		}
+		// -o is meaningless for `run` (no binary produced); reject
+		// clearly rather than silently ignoring.
+		if bf.output != "" {
+			fmt.Fprintf(os.Stderr, "graalgo run: -o: not supported for run\n")
+			return 1
+		}
+	}
 
 	if len(rest) == 0 {
 		fmt.Fprintf(os.Stderr, "graalgo run: no Go files listed\n")
@@ -84,13 +112,92 @@ func cmdRun(root string, args []string) int {
 	return graalgoRunProgram(root, runArgs)
 }
 
-// cmdBuild implements `graalgo build [packages]`.
+// buildFlags holds the parsed `go build` flags that the driver recognizes.
+// Unrecognized flags are rejected; recognized-but-unsupported flags produce
+// a clear "not yet supported" error naming the flag.
+type buildFlags struct {
+	output  string   // -o: output binary path
+	ldflags string   // -ldflags: linker flags (forwarded; -X needs backend)
+	tags    string   // -tags: build tags (accepted; backend honors via go/build)
+	pkgs    []string // remaining package/file args
+}
+
+// parseBuildFlags separates build flags from package args, following `go`
+// flag conventions: -flag value, -flag=value, and boolean flags.
+func parseBuildFlags(args []string) (buildFlags, error) {
+	var bf buildFlags
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if !strings.HasPrefix(a, "-") || a == "-" {
+			bf.pkgs = append(bf.pkgs, a)
+			continue
+		}
+		// Split -flag=value.
+		name, val, hasVal := strings.Cut(a, "=")
+		next := func() (string, error) {
+			if hasVal {
+				return val, nil
+			}
+			if i+1 >= len(args) {
+				return "", fmt.Errorf("flag %s: missing argument", name)
+			}
+			i++
+			return args[i], nil
+		}
+		switch name {
+		case "-o":
+			v, err := next()
+			if err != nil {
+				return bf, err
+			}
+			bf.output = v
+		case "-ldflags":
+			v, err := next()
+			if err != nil {
+				return bf, err
+			}
+			bf.ldflags = v
+		case "-tags":
+			v, err := next()
+			if err != nil {
+				return bf, err
+			}
+			bf.tags = v
+		case "-a", "-x", "-work", "-n":
+			// Accepted and ignored: -a (rebuild all) is a no-op without
+			// a build cache; -x/-work/-n are go-command diagnostics that
+			// have no meaning for the Truffle backend.
+		default:
+			return bf, fmt.Errorf("unknown flag %q", a)
+		}
+	}
+	return bf, nil
+}
+
+// cmdBuild implements `graalgo build [build flags] [packages]`.
 //
 // Validates that the named packages translate through the frontend.
 // Unlike go build, no binary is produced: the Truffle backend JIT-compiles
 // at run time, so "build" is a frontend-correctness gate.
+//
+// The -o flag is accepted for compatibility but currently rejected with a
+// clear error: binary emission is a Phase-4 architecture item, not a
+// silently-ignored flag.
 func cmdBuild(root string, args []string) int {
-	files, err := resolveFiles(args)
+	bf, err := parseBuildFlags(args)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
+		return 2
+	}
+	if bf.output != "" {
+		fmt.Fprintf(os.Stderr, "graalgo build: -o %s: binary emission not yet supported (frontend-check only)\n", bf.output)
+		return 1
+	}
+	if bf.ldflags != "" {
+		fmt.Fprintf(os.Stderr, "graalgo build: -ldflags: not yet supported\n")
+		return 1
+	}
+	files, err := resolveFiles(bf.pkgs)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 1

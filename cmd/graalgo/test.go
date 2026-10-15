@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -21,26 +22,64 @@ import (
 // conformance suite (test/differential/) remains the arbiter for
 // graalgo-vs-gc behavior parity.
 func cmdTest(root string, args []string) int {
-	// Separate test flags from package args. We accept -run and -v.
+	// Separate test flags from package args. We accept -run, -v, -count,
+	// and -cover (the last two for compatibility; see below).
 	var runFilter string
 	var verbose bool
+	var count int = 1
+	var cover bool
 	var pkgs []string
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
 		case a == "-v":
 			verbose = true
+		case a == "-h" || a == "-help" || a == "--help":
+			fmt.Printf(`usage: graalgo test [build/test flags] [packages]
+
+Test the named packages. Runs each package's tests through the
+graalgo backend and reports pass/fail.
+
+Flags:
+	-v		verbose output
+	-run=regexp	run only tests matching regexp
+	-count=n		run tests n times (n=1 disables caching; graalgo
+			has no test cache, so every run is fresh)
+	-cover		enable coverage (not yet supported)
+`)
+			return 0
 		case a == "-run" && i+1 < len(args):
 			i++
 			runFilter = args[i]
 		case strings.HasPrefix(a, "-run="):
 			runFilter = strings.TrimPrefix(a, "-run=")
+		case a == "-count" && i+1 < len(args):
+			i++
+			n, err := parseCount(args[i])
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
+				return 2
+			}
+			count = n
+		case strings.HasPrefix(a, "-count="):
+			n, err := parseCount(strings.TrimPrefix(a, "-count="))
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "graalgo test: %v\n", err)
+				return 2
+			}
+			count = n
+		case a == "-cover":
+			cover = true
 		case strings.HasPrefix(a, "-"):
 			fmt.Fprintf(os.Stderr, "graalgo test: unknown flag %q\n", a)
 			return 2
 		default:
 			pkgs = append(pkgs, a)
 		}
+	}
+	if cover {
+		fmt.Fprintf(os.Stderr, "graalgo test: -cover: coverage not yet supported\n")
+		return 1
 	}
 
 	// Resolve package dirs.
@@ -61,17 +100,31 @@ func cmdTest(root string, args []string) int {
 		}
 	}
 
-	runner := newTestRunner(root, verbose, runRe)
+	runner := newTestRunner(root, verbose, runRe, count)
 	failed := false
 	for _, dir := range dirs {
-		if !runner.runPackage(dir) {
-			failed = true
+		// -count=n: run the package's tests n times, like `go test`.
+		// A failure in any iteration fails the package.
+		for iter := 0; iter < count; iter++ {
+			if !runner.runPackage(dir) {
+				failed = true
+				break
+			}
 		}
 	}
 	if failed {
 		return 1
 	}
 	return 0
+}
+
+// parseCount parses a -count=n value. Like `go test`, n must be >= 1.
+func parseCount(s string) (int, error) {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 1 {
+		return 0, fmt.Errorf("invalid -count %q: must be a positive integer", s)
+	}
+	return n, nil
 }
 
 // resolveTestDirs turns package arguments into directories to test.
@@ -106,10 +159,11 @@ type testRunner struct {
 	root    string
 	verbose bool
 	runRe   *regexp.Regexp
+	count   int
 }
 
-func newTestRunner(root string, verbose bool, runRe *regexp.Regexp) *testRunner {
-	return &testRunner{root: root, verbose: verbose, runRe: runRe}
+func newTestRunner(root string, verbose bool, runRe *regexp.Regexp, count int) *testRunner {
+	return &testRunner{root: root, verbose: verbose, runRe: runRe, count: count}
 }
 
 // runPackage discovers and runs the tests in one directory.
