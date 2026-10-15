@@ -1078,11 +1078,11 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 						}
 						// Package-level fail-fast stubs are NOT registered for
 						// value-position use. A fail-fast stub used as a value
-						// (e.g. var f = syscall.Accept) is a compile-time error:
-						// v1 cannot represent the multi-result signature, and
-						// emitting nil or a panic-on-call value would be silently
-						// wrong. The error is raised at the use site in
-						// exportSyntheticQualified.
+						// (e.g. var f = time.ParseDuration) is a compile-time
+						// error: there is no pair form to serve as the value,
+						// and emitting nil or a panic-on-call value would be
+						// silently wrong. The error is raised at the use site
+						// in exportSyntheticQualified.
 						continue
 					}
 					// Not table-driven: fall through to normal processing.
@@ -1226,6 +1226,15 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 					return err
 				}
 				init = x
+				// PKG-035: link vars initialized with a multi-result
+				// function value (e.g. var AcceptFunc ... =
+				// syscall.Accept) to their pair info, so same-package
+				// call sites through the variable desugar.
+				if mrInfo := e.mrInfoForFuncValueInit(initExpr); mrInfo != nil {
+					if vr, ok := e.info.Defs[n].(*types.Var); ok {
+						e.userMRVars[vr] = mrInfo
+					}
+				}
 			}
 			varInits = append(varInits, ginit{oid: sv.oids[i], init: init, expr: initExpr, pos: e.pos(n)})
 		}
@@ -1896,10 +1905,46 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 			}
 			return e.node("ident", x.Sel, fields), nil
 		}
-		// Fail-fast stub multi-result functions (e.g. syscall.Accept) cannot
-		// be used as values in v1. The v1 wire format cannot represent the
-		// multi-result signature, so there is no honest value to emit.
-		// This is a compile-time error, not a nil or panic-on-call value.
+		// P3-M10 (PKG-035): a table-driven multi-result function in value
+		// position (e.g. var AcceptFunc ... = syscall.Accept) lowers to
+		// its pair-returning __-helper — the same implementation a direct
+		// call desugars to, so calling the value behaves exactly like the
+		// direct call. This is the general mechanism for multi-result
+		// function values: the value is always the pair form (cf. the
+		// MR-closure-var invariant), and call sites through a variable
+		// holding it desugar via the pair info linked at the variable's
+		// definition (userMRVars). Fail-fast stubs (no __-helper) keep
+		// the honest compile-time error below.
+		if plan := e.mrPlanForFuncValue(obj); plan != nil {
+			if plan.kind == mrUser {
+				// Pair-transformed function: the value is the transformed
+				// funcdecl itself (same as the M6 path above).
+				fields := map[string]any{"name": x.Sel.Name}
+				if err := e.exportFuncValue(x.Sel, obj, fields); err != nil {
+					return nil, err
+				}
+				return e.node("ident", x.Sel, fields), nil
+			}
+			helperFn, err := e.multiResultHelper(plan)
+			if err != nil {
+				return nil, err
+			}
+			fi, ok := e.funcByObj[helperFn]
+			if !ok {
+				return nil, fmt.Errorf("gofrontend: synthetic helper %s not in funcByObj", helperFn.Name())
+			}
+			sigID, err := e.typeID(helperFn.Type())
+			if err != nil {
+				return nil, err
+			}
+			return e.node("ident", x.Sel, map[string]any{
+				"name": helperFn.Name(), "obj": fi.funcID, "type": sigID,
+			}), nil
+		}
+		// Fail-fast stub multi-result functions (e.g. time.ParseDuration)
+		// cannot be used as values in v1: there is no __-helper to serve
+		// as the pair form, so there is no honest value to emit. This is
+		// a compile-time error, not a nil or panic-on-call value.
 		if e.synthFuncIDs != nil && obj.Pkg() != nil {
 			if _, ok := e.synthFuncIDs[obj.Pkg().Path()+"."+obj.Name()]; ok {
 				return nil, scopeErrorf("%s.%s is a fail-fast stub and cannot be used in value position in frontend/v1 scope",
