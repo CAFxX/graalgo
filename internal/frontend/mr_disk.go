@@ -32,6 +32,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"strings"
 	"sync"
 )
 
@@ -130,6 +131,14 @@ func transformMultiResult(pkgPath string, files []*ast.File) []mrSpec {
 				recvType = recvBaseName(fd.Recv.List[0].Type)
 			}
 			if hasStaticMREntry(pkgPath, fd.Name.Name, recvType) {
+				newDecls = append(newDecls, decl)
+				continue
+			}
+			// Skip synthetic fail-fast stubs: a body that is a single
+			// panic("... not in M{5,7,...} scope ...") must be preserved.
+			// The mechanical transform would replace the fail-fast with
+			// a working __-helper, breaking the fail-fast contract.
+			if isFailFastStub(fd) {
 				newDecls = append(newDecls, decl)
 				continue
 			}
@@ -834,6 +843,23 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 	// nothing reads — a spurious "declared and not used" on real
 	// stdlib sources. The `_ =` guard makes every declaration used by
 	// construction, so shadowing can no longer break type-checking.
+	// Names bound at the top level of the body (via :=, var, range)
+	// shadow the named results: declaring a local for a shadowed result
+	// would conflict with the shadowing binding ("no new variables on
+	// left side of :="). Compute before rewriteMRReturns (which
+	// introduces its own __t := bindings). Skip shadowed names;
+	// references to them in the body resolve to the shadowing binding,
+	// not the result. Only top-level bindings shadow — nested-block
+	// bindings do not hide the result at function scope.
+	//
+	// Use-analysis: declare only results that are actually used (assigned
+	// via =, read, or needed for bare return). A result shadowed at top
+	// level is never used (references resolve to the shadowing binding).
+	// LHS of := is a declaration, not a use. This pins the wire shape
+	// (TestMRTransformHelperOmitsUnusedName) while remaining sound for
+	// real stdlib (fmt's parseArgNumber).
+	bodyBound := topLevelBodyBoundNames(fd)
+	usedNames := usedNamedResults(fd, bodyBound)
 	rewrittenBody := rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName, tparamNames)
 	var namedDecls []ast.Stmt
 	if fd.Type.Results != nil {
@@ -842,15 +868,24 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 			if len(fld.Names) == 0 {
 				continue
 			}
+			var keep []*ast.Ident
+			for _, n := range fld.Names {
+				if usedNames[n.Name] {
+					keep = append(keep, n)
+				}
+			}
+			if len(keep) == 0 {
+				continue
+			}
 			namedDecls = append(namedDecls, &ast.DeclStmt{
 				Decl: &ast.GenDecl{
 					Tok: token.VAR,
 					Specs: []ast.Spec{
-						&ast.ValueSpec{Names: fld.Names, Type: fld.Type},
+						&ast.ValueSpec{Names: keep, Type: fld.Type},
 					},
 				},
 			})
-			for _, n := range fld.Names {
+			for _, n := range keep {
 				guardNames = append(guardNames, ast.NewIdent(n.Name))
 			}
 		}
@@ -1121,6 +1156,162 @@ func locallyBoundNames(fd *ast.FuncDecl) map[string]bool {
 		}
 		return true
 	})
+	return bound
+}
+
+// isFailFastStub reports whether fd's body is a synthetic fail-fast stub:
+// a single panic statement with "not in M{2,4,5,7,...} scope" in the message.
+// Such bodies must be preserved by the MR transform; rewriting them would
+// replace the fail-fast with a working helper.
+func isFailFastStub(fd *ast.FuncDecl) bool {
+	if fd.Body == nil || len(fd.Body.List) != 1 {
+		return false
+	}
+	stmt, ok := fd.Body.List[0].(*ast.ExprStmt)
+	if !ok {
+		return false
+	}
+	call, ok := stmt.X.(*ast.CallExpr)
+	if !ok {
+		return false
+	}
+	fn, ok := call.Fun.(*ast.Ident)
+	if !ok || fn.Name != "panic" {
+		return false
+	}
+	if len(call.Args) != 1 {
+		return false
+	}
+	lit, ok := call.Args[0].(*ast.BasicLit)
+	if !ok || lit.Kind != token.STRING {
+		return false
+	}
+	return strings.Contains(lit.Value, "not in M") && strings.Contains(lit.Value, "scope")
+}
+
+// usedNamedResults returns the set of named result names that are actually
+// used in the function body (and thus need locals after the MR transform).
+// A result is used if: (1) it's assigned via = (not :=), (2) it's read,
+// or (3) there's a bare return. Names shadowed at the top level (in
+// shadowed) are never used — references resolve to the shadowing binding.
+// LHS of := is a declaration, not a use.
+func usedNamedResults(fd *ast.FuncDecl, shadowed map[string]bool) map[string]bool {
+	used := map[string]bool{}
+	if fd.Type.Results == nil || fd.Body == nil {
+		return used
+	}
+	var resultNames []string
+	nameSet := map[string]bool{}
+	for _, fld := range fd.Type.Results.List {
+		for _, n := range fld.Names {
+			// Skip shadowed names entirely.
+			if shadowed[n.Name] {
+				continue
+			}
+			resultNames = append(resultNames, n.Name)
+			nameSet[n.Name] = true
+		}
+	}
+	if len(resultNames) == 0 {
+		return used
+	}
+	// Collect idents that are declarations (LHS of :=, var names) so we
+	// don't count them as uses.
+	declIdents := map[*ast.Ident]bool{}
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.AssignStmt:
+			if n.Tok == token.DEFINE {
+				for _, e := range n.Lhs {
+					if id, ok := unparen(e).(*ast.Ident); ok {
+						declIdents[id] = true
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, id := range n.Names {
+				declIdents[id] = true
+			}
+		}
+		return true
+	})
+	// A SelectorExpr's Sel is a field/method name, not a variable reference.
+	selIdents := map[*ast.Ident]bool{}
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		if se, ok := n.(*ast.SelectorExpr); ok {
+			selIdents[se.Sel] = true
+		}
+		return true
+	})
+	hasBareReturn := false
+	ast.Inspect(fd.Body, func(n ast.Node) bool {
+		if rs, ok := n.(*ast.ReturnStmt); ok && len(rs.Results) == 0 {
+			hasBareReturn = true
+		}
+		if id, ok := n.(*ast.Ident); ok && nameSet[id.Name] && !selIdents[id] && !declIdents[id] {
+			used[id.Name] = true
+		}
+		return true
+	})
+	if hasBareReturn {
+		for _, n := range resultNames {
+			used[n] = true
+		}
+	}
+	return used
+}
+
+// topLevelBodyBoundNames returns the names bound by :=, var, or range at
+// the TOP LEVEL of the function body (direct statements, not nested
+// blocks). A top-level binding shadows a named result (they're in the
+// same scope), so the result must not be declared as a local. Bindings in
+// nested blocks do NOT shadow at function scope — the result is still
+// visible and must be declared.
+//
+// Only single-variable := (e.g. `v := 5`) counts as shadowing. A
+// multi-variable := like `n, err := f()` where err is a named result is
+// LEGAL Go: err is assigned (not shadowed) because n is new. Treating it
+// as shadowing would break valid code (e.g. fmt's readByte).
+func topLevelBodyBoundNames(fd *ast.FuncDecl) map[string]bool {
+	bound := map[string]bool{}
+	if fd.Body == nil {
+		return bound
+	}
+	for _, stmt := range fd.Body.List {
+		switch n := stmt.(type) {
+		case *ast.AssignStmt:
+			if n.Tok == token.DEFINE && len(n.Lhs) == 1 {
+				// Single-variable := : if the name matches a named
+				// result, it's shadowing (in the transform's view;
+				// in real Go this would be "no new variables" error,
+				// but the test uses it to verify shadowing handling).
+				if id, ok := unparen(n.Lhs[0]).(*ast.Ident); ok {
+					bound[id.Name] = true
+				}
+			}
+		case *ast.DeclStmt:
+			if gd, ok := n.Decl.(*ast.GenDecl); ok && gd.Tok == token.VAR {
+				for _, spec := range gd.Specs {
+					if vs, ok := spec.(*ast.ValueSpec); ok {
+						for _, id := range vs.Names {
+							bound[id.Name] = true
+						}
+					}
+				}
+			}
+		case *ast.RangeStmt:
+			if n.Tok == token.DEFINE {
+				for _, e := range []ast.Expr{n.Key, n.Value} {
+					if e == nil {
+						continue
+					}
+					if id, ok := unparen(e).(*ast.Ident); ok {
+						bound[id.Name] = true
+					}
+				}
+			}
+		}
+	}
 	return bound
 }
 

@@ -105,15 +105,15 @@ func TestSyncScopeErrors(t *testing.T) {
 }
 
 // TestSyncCompositeScopeErrors: sync primitives in factory-zero positions
-// (struct fields, array/slice elements, map keys/elements) fail fast.
+// (array/slice elements, map keys/elements) fail fast. Struct fields are
+// deliberately allowed since 933fd93f (driver-harden-gocmp): the factory's
+// fieldZeroTemplate manufactures a usable Java primitive object.
 func TestSyncCompositeScopeErrors(t *testing.T) {
 	cases := map[string]string{
-		"type T struct { mu sync.Mutex }":   "not in M2 scope",
-		"var s []sync.Mutex":                "not in M2 scope",
-		"var a [2]sync.WaitGroup":           "not in M2 scope",
-		"var mm map[string]sync.Mutex":      "not in M2 scope",
-		"var mk map[sync.Mutex]int":         "not in M2 scope",
-		"var st struct { mu sync.RWMutex }": "not in M2 scope",
+		"var s []sync.Mutex":           "not in M2 scope",
+		"var a [2]sync.WaitGroup":      "not in M2 scope",
+		"var mm map[string]sync.Mutex": "not in M2 scope",
+		"var mk map[sync.Mutex]int":    "not in M2 scope",
 	}
 	for decl, want := range cases {
 		src := "package main\n\nimport \"sync\"\n\n" + decl + "\n\nfunc main() {}\n"

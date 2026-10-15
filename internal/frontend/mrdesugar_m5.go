@@ -158,6 +158,31 @@ type m7MultiResultFunc struct {
 // __F convention (e.g. io.Pipe → __pipe), and generating a second
 // helper would conflict.
 func hasStaticMREntry(pkgPath, name, recvType string) bool {
+	// M5 functions (context.WithCancel etc., runtime.Caller,
+	// time.ParseDuration) have hand-written __-helpers and fail-fast
+	// bodies; the mechanical transform must not rewrite them.
+	if recvType == "" {
+		switch pkgPath {
+		case "context":
+			if name == "WithCancel" || name == "WithCancelCause" ||
+				name == "WithDeadline" || name == "WithTimeout" {
+				return true
+			}
+		case "runtime":
+			if name == "Caller" {
+				return true
+			}
+		case "time":
+			if name == "ParseDuration" {
+				return true
+			}
+		}
+	} else {
+		// context.Deadline method (mrDeadline)
+		if pkgPath == "context" && name == "Deadline" {
+			return true
+		}
+	}
 	for _, mf := range m7MultiResultFuncs {
 		if mf.pkgPath == pkgPath && mf.name == name && mf.recvType == recvType {
 			return true
