@@ -6488,10 +6488,47 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Multi-result instantiations (e.g. generic shortFloat[F] in
+	// internal/strconv with 2 results): apply the pair transform, same
+	// as exportFuncDecl does for non-generic multi-result functions.
+	// The instantiation's results are rewritten to a single pair-typed
+	// result; return statements in the body are rewritten by the
+	// currentMR mechanism (set below).
+	var instMRInfo *userMRInfo
 	if len(results) > 1 {
-		return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", inst.name, len(results))
+		// Build a funcDeclInfo for the instantiation (not a template)
+		// so registerUserMRFunc will process it.
+		instFi := &funcDeclInfo{
+			obj:      inst.decl.obj,
+			sig:      inst.decl.sig,
+			fd:       fd,
+			synthPkg: inst.decl.synthPkg,
+			recv:     inst.decl.recv,
+			// isTemplate is false for the instantiation
+		}
+		var rerr error
+		instMRInfo, rerr = e.registerUserMRFunc(instFi)
+		if rerr != nil {
+			return nil, rerr
+		}
+		if instMRInfo == nil {
+			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", inst.name, len(results))
+		}
+		// New signature: single pair result.
+		pairVar := types.NewParam(token.NoPos, e.pkg, "", instMRInfo.pairType)
+		pairResult, err := e.exportParamVar(fd.Type, pairVar)
+		if err != nil {
+			return nil, err
+		}
+		results = []*Node{pairResult}
+	}
+	// Set the current transform so return statements are rewritten.
+	prevMR := e.currentMR
+	if instMRInfo != nil {
+		e.currentMR = instMRInfo
 	}
 	body, err := e.exportBlock(fd.Body)
+	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
 	}
