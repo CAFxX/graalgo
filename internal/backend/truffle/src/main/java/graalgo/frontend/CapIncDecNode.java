@@ -18,7 +18,7 @@ public final class CapIncDecNode extends GoStmtNode {
     private final long delta;
 
     public CapIncDecNode(GoKind kind, int depth, int slot, int closureSlot, long delta) {
-        if (!kind.isIntKind() && !kind.isFloatKind()) {
+        if (!kind.isIntKind() && !kind.isFloatKind() && !kind.isComplexKind()) {
             throw new IllegalArgumentException("++/-- requires a numeric kind, got " + kind);
         }
         this.kind = kind;
@@ -49,6 +49,18 @@ public final class CapIncDecNode extends GoStmtNode {
     @Override
     public void executeVoid(VirtualFrame frame) {
         MaterializedFrame f = targetFrame(frame);
+        // PKG-026: complex ++/-- adds delta to the real part (mirrors IncDecNode).
+        if (kind.isComplexKind()) {
+            Object v = f.getObject(slot);
+            if (v instanceof graalgo.values.GoComplex32 c) {
+                f.setObject(slot, new graalgo.values.GoComplex32(c.re() + (float) delta, c.im()));
+            } else if (v instanceof graalgo.values.GoComplex64 c) {
+                f.setObject(slot, new graalgo.values.GoComplex64(c.re() + delta, c.im()));
+            } else {
+                throw new FrontendException("++/-- on non-complex value " + v + " (PKG-026)");
+            }
+            return;
+        }
         switch (kind.slotKind()) {
             case Int -> f.setInt(slot, extendInt(f.getInt(slot) + (int) delta, kind));
             case Long -> f.setLong(slot, f.getLong(slot) + delta);
