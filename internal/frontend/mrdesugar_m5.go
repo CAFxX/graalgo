@@ -2507,6 +2507,73 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 	return nil
 }
 
+// classifyUserIfaceMultiResultCall is the general (non-whitelist,
+// non-disk) classifier for multi-result interface method calls (P4 WS D).
+// It handles user-defined interfaces (and any other interface not covered
+// by m8IfaceMultiResultMethods or the disk MR table) by synthesizing a
+// pair type on first use, cached in userIfaceMRPairs.
+//
+// The pair uses f0, f1, ... field names (via synthesizePairTypeForSig),
+// matching the concrete helper's pair synthesized by registerUserMRFunc.
+// The itab dispatches the interface method to the concrete type's
+// pair-returning __-helper (wired via methodTableEntries when the
+// concrete method is in userMRFuncs); field extraction proceeds by name,
+// exactly like the concrete Appendix M desugar.
+//
+// Returns nil when the selection is not a multi-result interface method.
+func (e *exporter) classifyUserIfaceMultiResultCall(selection *types.Selection) *mrPlan {
+	if selection.Kind() != types.MethodVal {
+		return nil
+	}
+	f, ok := selection.Obj().(*types.Func)
+	if !ok {
+		return nil
+	}
+	sig, ok := f.Type().(*types.Signature)
+	if !ok || sig.Results().Len() < 2 {
+		return nil
+	}
+	// The receiver of an interface-declared method is the declaring
+	// interface's named type.
+	recv := sig.Recv()
+	if recv == nil {
+		return nil
+	}
+	nt, ok := recv.Type().(*types.Named)
+	if !ok || nt.Obj() == nil {
+		return nil
+	}
+	pkgPath := ""
+	ifaceName := nt.Obj().Name()
+	if f.Pkg() != nil {
+		pkgPath = f.Pkg().Path()
+	}
+	key := pkgPath + "." + ifaceName + "." + f.Name()
+	if mrInfo, ok := e.userIfaceMRPairs[key]; ok {
+		return &mrPlan{
+			kind: mrIfaceMethod, helperPkg: pkgPath,
+			tmpType: mrInfo.pairType, pairFields: mrInfo.pairFields,
+		}
+	}
+	// Synthesize the interface pair type. The name is unique per
+	// (package, interface, method).
+	nameHint := fmt.Sprintf("__wsd_ifacepair_%s_%s", ifaceName, f.Name())
+	pairType, fieldNames, err := e.synthesizePairTypeForSig(sig, nameHint)
+	if err != nil {
+		return nil
+	}
+	mrInfo := &userMRInfo{
+		pairType:   pairType,
+		pairFields: fieldNames,
+		origSig:    sig,
+	}
+	e.userIfaceMRPairs[key] = mrInfo
+	return &mrPlan{
+		kind: mrIfaceMethod, helperPkg: pkgPath,
+		tmpType: pairType, pairFields: fieldNames,
+	}
+}
+
 // multiResultHelperFor maps a multi-result (package path, method name,
 // receiver type name) to its pair-returning __-helper's package and name,
 // unioned over the m7/os/m8/io/m9 desugar tables. It is the exporter's view
