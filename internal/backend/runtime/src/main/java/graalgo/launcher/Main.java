@@ -5,7 +5,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.Source;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
-import graalgo.p3sync.launcher.P3KindRegistrations;
+import graalgo.frontend.WireKindRegistrar;
 import graalgo.values.GoKind;
 import java.io.IOException;
 import java.io.InputStream;
@@ -15,6 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.Map;
+import java.util.ServiceLoader;
 
 /**
  * graalgo-run: the Phase-1 launcher (PLAN.md §5 CLI contract).
@@ -162,9 +163,15 @@ public final class Main {
         try {
             NodeFactory factory = new NodeFactory(source);
             // Real stdlib packages (e.g. fmt via sync.Pool, reflect) emit
-            // Phase-3 wire kinds; the main launcher registers all of them
-            // via the shared helper (same as the sync launcher).
-            P3KindRegistrations.registerAll(factory);
+            // Phase-3 wire kinds. The providers live in modules this
+            // launcher cannot depend on at compile time (they build after
+            // this module), so they are discovered via ServiceLoader
+            // (graalgo.frontend.WireKindRegistrar). If none is on the
+            // classpath, the launcher keeps the pre-provider behavior.
+            for (WireKindRegistrar registrar
+                    : ServiceLoader.load(WireKindRegistrar.class)) {
+                registrar.registerAll(factory);
+            }
             program = factory.buildProgram(json);
         } catch (FrontendException e) {
             // M9 acceptance: scope errors (program uses constructs outside

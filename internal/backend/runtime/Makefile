@@ -36,10 +36,8 @@ JAVA  := $(GRAALVM_HOME)/bin/java
 
 TRUFFLE := ../truffle
 TRUFFLE_CLASSES := $(TRUFFLE)/out/classes
-INTEROP := ../interop
-INTEROP_CLASSES := $(INTEROP)/out/classes
 LIB := $(wildcard $(TRUFFLE)/lib/*.jar)
-CP := $(INTEROP_CLASSES):$(subst $(eval) ,:,$(strip $(LIB)))
+CP := $(subst $(eval) ,:,$(strip $(LIB)))
 
 # The 8 frozen phase-1 stubs, as paths relative to a src/main/java root.
 # Historical artifacts of the GG-0020 interface freeze: they compile in the
