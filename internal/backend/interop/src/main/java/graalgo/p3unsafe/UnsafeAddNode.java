@@ -1,15 +1,22 @@
 package graalgo.p3unsafe;
 
+import java.nio.charset.StandardCharsets;
+
 import com.oracle.truffle.api.frame.VirtualFrame;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
+import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
+import graalgo.values.GoString;
+import graalgo.values.UnsafeHandles;
 
 /**
  * {@code unsafe.Add(ptr, len)} (P3-M8): the {@code "unsafeadd"} wire node.
  * Always traps (D5/GG-0015): handles admit no byte arithmetic. Both
- * operands still evaluate, matching gc's argument evaluation order.
+ * operands still evaluate, matching gc's argument evaluation order. The
+ * trap surfaces as a Go panic carrying the documented message — never a
+ * host-side internal-error crash (P1-3, review-r1).
  */
 public final class UnsafeAddNode extends GoExprNode {
     @Child private GoExprNode ptrChild;
@@ -25,7 +32,16 @@ public final class UnsafeAddNode extends GoExprNode {
     public long executeLong(VirtualFrame frame) {
         ptrChild.executeLong(frame);
         lenChild.executeLong(frame);
-        UnsafeOps.addTrap();
+        try {
+            UnsafeOps.addTrap();
+        } catch (UnsafeHandles.UnsafeEscapeException e) {
+            // P1-3 (review-r1): convert the trap to a Go panic carrying the
+            // documented message, never a host-side internal-error crash.
+            // The value must be a D5 GoString, not a Java String —
+            // PanicRendering renders Java Strings as "(?) 0xADDR" (P3-M4).
+            Panic.throwPanic(new GoString(e.getMessage().getBytes(StandardCharsets.UTF_8)),
+                    null, null, this);
+        }
         throw new AssertionError("unreachable");
     }
 

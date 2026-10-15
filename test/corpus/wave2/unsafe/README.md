@@ -44,7 +44,8 @@ compile error, exactly like gc. No AST pre-pass; no size tables.
 
 8. [`03a_add_trap`](03a_add_trap.go) / [`03c_uintptr2ptr_trap`](03c_uintptr2ptr_trap.go) —
    the two remaining D5 traps, each with a `.panic` file pinning the exact first
-   stderr line (`UnsafeEscapeException`, exit 1). gc implements both,
+   stderr line (a Go panic carrying the documented message, exit 2 — never
+   a host-side internal-error crash, P1-3 review-r1). gc implements both,
    so the gc leg exits 0: the exit code differs BY DESIGN. The `.panic`
    line and (empty) stdout are the assertions. Runner gap (see handoff):
    `run_wave.sh` compares exit codes unconditionally; these need a

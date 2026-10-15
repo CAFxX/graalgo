@@ -43,7 +43,11 @@ import graalgo.values.UnsafeHandles;
  * shapes the handle model cannot represent panic with an
  * {@code "unsafe.<op>: ..."} message (intentional, documented divergence —
  * gc would silently reinterpret); D5 traps ({@link #addTrap},
- * {@link #fromUintTrap}) throw {@link UnsafeHandles.UnsafeEscapeException}.
+ * {@link #fromUintTrap}) throw {@link UnsafeHandles.UnsafeEscapeException},
+ * which the {@code "unsafeadd"}/{@code "unsafefromuint"} wire nodes catch
+ * and rethrow via {@code Panic.throwPanic} — the user sees a Go panic
+ * carrying the documented message, never a host-side internal-error crash
+ * (P1-3, review-r1).
  * The {@code unsafe.Pointer → uintptr} direction does <em>not</em> trap:
  * it yields the handle as an integer identity token (PKG-007; see
  * {@link graalgo.values.GoConvert#unsafePointerToUintptr}) — the token is
