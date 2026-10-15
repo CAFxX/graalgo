@@ -97,9 +97,10 @@ public final class AppendNode extends GoExprNode {
                 }
                 Object arr = out.array();
                 int base = out.offset() + (s == null ? 0 : s.len());
-                int[] intArr = (int[]) arr;
+                // String spread into []byte: the backing is byte[] (D5).
+                byte[] byteArr = (byte[]) arr;
                 for (int i = 0; i < n; i++) {
-                    intArr[base + i] = bytes[i] & 0xFF;
+                    byteArr[base + i] = bytes[i];
                 }
                 return out;
             } else {
@@ -198,13 +199,14 @@ public final class AppendNode extends GoExprNode {
     private void store(Object arr, int idx, Object v) {
         // M7: readElem returns Integer for all Int slot kinds (executeInt);
         // the old (Byte)/(Short) casts assumed boxed small types and threw
-        // ClassCastException. Convert via Number instead.
+        // ClassCastException. Convert via Number instead. Backing width
+        // follows the kind's bit-width (D5): byte[]/short[]/int[].
         switch (elemKind) {
-            case INT8 -> ((int[]) arr)[idx] = ((Number) v).byteValue();
-            case INT16 -> ((int[]) arr)[idx] = ((Number) v).shortValue();
+            case INT8 -> ((byte[]) arr)[idx] = ((Number) v).byteValue();
+            case UINT8 -> ((byte[]) arr)[idx] = (byte) (((Number) v).intValue() & 0xFF);
+            case INT16 -> ((short[]) arr)[idx] = ((Number) v).shortValue();
+            case UINT16 -> ((short[]) arr)[idx] = (short) (((Number) v).intValue() & 0xFFFF);
             case INT32 -> ((int[]) arr)[idx] = ((Number) v).intValue();
-            case UINT8 -> ((int[]) arr)[idx] = ((Number) v).intValue() & 0xFF;
-            case UINT16 -> ((int[]) arr)[idx] = ((Number) v).intValue() & 0xFFFF;
             case UINT32 -> ((int[]) arr)[idx] = ((Number) v).intValue();
             case INT64 -> ((long[]) arr)[idx] = ((Number) v).longValue();
             case UINT64 -> ((long[]) arr)[idx] = ((Number) v).longValue();

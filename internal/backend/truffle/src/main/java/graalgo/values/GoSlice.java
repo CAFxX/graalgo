@@ -4,6 +4,7 @@ package graalgo.values;
  * A Go slice value: a descriptor into a backing array (D5).
  *
  * <p>{@code array} is the typed Java array backing the slice (e.g.
+ * {@code byte[]} for {@code []uint8}, {@code short[]} for {@code []int16},
  * {@code int[]} for {@code []int32}, {@code long[]} for {@code []int64},
  * {@code Object[]} for reference element types); {@code offset} is the
  * start index within it; {@code len}/{@code cap} are the Go length and

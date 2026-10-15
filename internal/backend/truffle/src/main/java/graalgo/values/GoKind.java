@@ -6,7 +6,8 @@ import com.oracle.truffle.api.frame.FrameSlotKind;
  * The Go value kinds relevant to Phase 1, per PLAN.md D5 (value-model Java
  * mapping).
  *
- * <p>Mapping: int8/16/32 + uint8/16/32 → {@code int}; int64/uint64/int/uint/
+ * <p>Mapping: int8/uint8 → {@code byte[]}, int16/uint16 → {@code short[]},
+ * int32/uint32 → {@code int}; int64/uint64/int/uint/
  * uintptr → {@code long}; float32 → {@code float}; float64 → {@code double};
  * bool → {@code boolean}; string → {@link GoString}; slice → {@link GoSlice};
  * array → typed Java array; struct → {@link GoStruct}; map → {@link GoMap};
@@ -47,7 +48,16 @@ public enum GoKind {
     INTERFACE(false, 0),
     FUNC(false, 0),
     CHAN(false, 0),
-    UNSAFE_POINTER(false, 0);
+    UNSAFE_POINTER(false, 0),
+    /**
+     * A generic type parameter (e.g. {@code T} in {@code func F[T any](x T)}).
+     * Type parameters appear in the type table when generic declarations are
+     * exported (the frontend emits them for unsubstituted signatures). At
+     * runtime they behave like their constraint: the method set and layout
+     * come from the constraint type. Instantiated uses are substituted with
+     * concrete types before reaching the backend.
+     */
+    TYPEPARAM(false, 0);
 
     private final boolean signed;
     private final int bits;

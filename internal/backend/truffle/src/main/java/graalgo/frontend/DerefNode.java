@@ -39,6 +39,11 @@ public final class DerefNode extends GoExprNode {
             // Long-carried value: decode per the node's kind.
             return Boxing.fromLongBits(kind(), l.longValue());
         }
+        if (o == null && kind() == GoKind.UNSAFE_POINTER) {
+            // Nil unsafe.Pointer referent: the zero value is address 0,
+            // not Java null (cf. SelectorNode.read).
+            return Long.valueOf(0);
+        }
         return o;
     }
 

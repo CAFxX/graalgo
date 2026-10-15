@@ -195,4 +195,163 @@ public void testInvalidTypeWireEntryFailsLoud() {
         assertTrue(d == ReflectTypes.descriptorForTok(named.tok),
                 "descriptorForTok is not canonical across calls");
     }
+
+    /**
+     * PKG-010: a {@code typeparam} wire entry (a type parameter in a
+     * template position — e.g. the {@code [0]*T} field of the
+     * {@code sync/atomic.Pointer[T]} template, whose exporter describes
+     * the template's underlying struct) must build into an opaque
+     * placeholder, not fail the whole table install with
+     * "reflect: unsupported type kind typeparam".
+     *
+     * <p>A type parameter has no runtime type identity: at runtime every
+     * value of the parameter's type carries its *instantiated* type (the
+     * frontend monomorphizes generics), so the placeholder is null-kind
+     * with unknown size/align, and its canonical key can never collide
+     * with a concrete type's token.
+     */
+    public void testTypeparamBuildsOpaquePlaceholder() {
+        String doc = """
+                {"types": [
+                  {"kind": "named", "detail": {
+                     "name": "sync/atomic.Pointer[T]", "pkgpath": "sync/atomic",
+                     "underlying": 1, "methods": []}},
+                  {"kind": "struct", "detail": {"fields": [
+                     {"name": "_", "type": 2, "tag": "", "offset": 0}]}},
+                  {"kind": "array", "detail": {"elem": 3, "len": 0}},
+                  {"kind": "pointer", "detail": {"elem": 4, "methods": []}},
+                  {"kind": "typeparam", "detail": {"name": "T", "constraint": 5}},
+                  {"kind": "interface", "detail": {"embedded": [], "empty": true, "methods": []}}
+                ]}
+                """;
+        // Before the fix this threw:
+        // "types[4]: reflect: unsupported type kind typeparam".
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+
+        ReflectTypes.TypeInfo tp = null;
+        ReflectTypes.TypeInfo anyIface = null;
+        for (ReflectTypes.TypeInfo ti : table.byTok) {
+            if (ti == null) {
+                continue;
+            }
+            if (ti.kind == null) {
+                assertTrue(tp == null, "two null-kind TypeInfos built for one typeparam");
+                tp = ti;
+            } else if (ti.kind == GoKind.INTERFACE && ti.wireId == 5) {
+                anyIface = ti;
+            }
+        }
+        assertTrue(tp != null, "no placeholder TypeInfo built for the typeparam entry");
+        assertTrue(tp.wireId == 4, "placeholder wireId should be 4, got " + tp.wireId);
+        assertTrue(tp.size == -1 && tp.align == -1,
+                "placeholder size/align should be unknown (-1/-1), got "
+                        + tp.size + "/" + tp.align);
+        // No fabricated kind: kindOrdinal reports Invalid(0) for null kind.
+        assertTrue(ReflectTypes.kindOrdinal(tp) == 0,
+                "kindOrdinal of a typeparam should be 0 (Invalid), got "
+                        + ReflectTypes.kindOrdinal(tp));
+        // The placeholder must never share a token with a concrete type —
+        // in particular not with its own constraint.
+        assertTrue(anyIface != null, "no TypeInfo built for the any constraint");
+        assertTrue(anyIface.tok != tp.tok,
+                "typeparam placeholder shares a token with its constraint");
+    }
+
+    /**
+     * PKG-010: typeparam canonical keys are structural (name + constraint
+     * key) under a "typeparam:" prefix no concrete kind uses. Two wire
+     * ids for the same parameter shape share one token; a different
+     * parameter name mints a different token.
+     */
+    public void testTypeparamKeysAreCanonical() {
+        String doc = """
+                {"types": [
+                  {"kind": "typeparam", "detail": {"name": "T", "constraint": 2}},
+                  {"kind": "typeparam", "detail": {"name": "T", "constraint": 2}},
+                  {"kind": "interface", "detail": {"embedded": [], "empty": true, "methods": []}},
+                  {"kind": "typeparam", "detail": {"name": "U", "constraint": 2}}
+                ]}
+                """;
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+
+        java.util.List<ReflectTypes.TypeInfo> placeholders = new java.util.ArrayList<>();
+        for (ReflectTypes.TypeInfo ti : table.byTok) {
+            if (ti != null && ti.kind == null) {
+                placeholders.add(ti);
+            }
+        }
+        assertTrue(placeholders.size() == 2,
+                "expected 2 canonical typeparam tokens (T shared, U distinct), got "
+                        + placeholders.size());
+        assertTrue(placeholders.get(0).tok != placeholders.get(1).tok,
+                "distinct typeparams T and U share a token");
+    }
+
+    /**
+     * PKG-010: rendering a typeparam placeholder as a type string must
+     * fail loud (a type parameter must never be observed at runtime — any
+     * observation means the frontend leaked a template type into
+     * executable code), never fabricate a type string. Cf. the P1-4
+     * "invalid type" rule: fail loud, never launder into a fake kind.
+     */
+    public void testTypeparamStringFailsLoud() {
+        String doc = """
+                {"types": [
+                  {"kind": "typeparam", "detail": {"name": "T", "constraint": 1}},
+                  {"kind": "interface", "detail": {"embedded": [], "empty": true, "methods": []}}
+                ]}
+                """;
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        ReflectTypes.Table table = ReflectTypes.table();
+        ReflectTypes.TypeInfo tp = null;
+        for (ReflectTypes.TypeInfo ti : table.byTok) {
+            if (ti != null && ti.kind == null) {
+                tp = ti;
+            }
+        }
+        assertTrue(tp != null, "no placeholder TypeInfo built for the typeparam entry");
+        try {
+            ReflectTypes.typeString(tp.tok);
+        } catch (IllegalStateException e) {
+            assertTrue(e.getMessage().contains("types[" + tp.wireId + "]"),
+                    "unexpected message: " + e.getMessage());
+            return;
+        }
+        throw new AssertionError("expected IllegalStateException from typeString on a typeparam");
+    }
+
+    /**
+     * PKG-010: an F-bounded constraint cycle in the wire graph (typeparam
+     * T constrained by an unnamed interface whose method signature
+     * mentions T — legal Go, e.g. {@code W[T interface{ Get() T }]}) must
+     * terminate key canonicalization. The re-entrancy guard cuts the
+     * cycle with the parameter's own name as back-reference, mirroring
+     * the frontend exporter's typeparamIDs memo-before-describe.
+     */
+    public void testTypeparamCyclicConstraintTerminates() {
+        String doc = """
+                {"types": [
+                  {"kind": "typeparam", "detail": {"name": "T", "constraint": 1}},
+                  {"kind": "interface", "detail": {"methods": [
+                     {"name": "Get", "sig": 2}]}},
+                  {"kind": "signature", "detail": {
+                     "params": [], "results": [{"name": "", "type": 0}], "variadic": false}}
+                ]}
+                """;
+        long t0 = System.nanoTime();
+        ReflectTypes.install(parseDoc(doc), Map.of());
+        double secs = (System.nanoTime() - t0) / 1e9;
+        assertTrue(secs < 20.0,
+                "install with a cyclic typeparam constraint took " + secs + "s (key recursion diverged?)");
+        ReflectTypes.Table table = ReflectTypes.table();
+        boolean found = false;
+        for (ReflectTypes.TypeInfo ti : table.byTok) {
+            if (ti != null && ti.kind == null && ti.wireId == 0) {
+                found = true;
+            }
+        }
+        assertTrue(found, "no placeholder TypeInfo built for the cyclic-constraint typeparam");
+    }
 }

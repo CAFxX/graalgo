@@ -90,6 +90,13 @@ public final class SelectorNode extends GoExprNode {
             // Longs-carried field: decode per the node's kind.
             return Boxing.fromLongBits(kind(), l.longValue());
         }
+        if (o == null && kind() == graalgo.values.GoKind.UNSAFE_POINTER) {
+            // Nil unsafe.Pointer field: the zero value is address 0, not
+            // Java null. (UNSAFE_POINTER has Long slot kind but struct
+            // fields live in the objects array; a nil field reads as null
+            // and must decode to 0L for executeLong/executeInt callers.)
+            return Long.valueOf(0);
+        }
         return o;
     }
 

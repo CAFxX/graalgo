@@ -185,19 +185,20 @@ public final class ReflectValues {
     // ------------------------------------------------------------------
 
     public static Object newArray(GoKind elemKind, int len) {
-        return switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> new int[len];
-            case INT64, UINT64 -> new long[len];
-            case FLOAT32 -> new float[len];
-            case FLOAT64 -> new double[len];
-            case BOOL -> new boolean[len];
-            default -> new Object[len];
-        };
+        // Single canonical allocator: Boxing.newArray owns the kind→backing
+        // mapping (D5). This wrapper exists for call-site continuity only.
+        return graalgo.frontend.Boxing.newArray(elemKind, len);
     }
 
     public static Object arrayGet(Object array, GoKind elemKind, int i) {
         return switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> Integer.valueOf(((int[]) array)[i]);
+            // Narrow backing stores (D5): sign-extend on load, zero-extend
+            // for unsigned kinds. Mirrors Boxing.arrayGet.
+            case INT8 -> Integer.valueOf(((byte[]) array)[i]);
+            case UINT8 -> Integer.valueOf(((byte[]) array)[i] & 0xFF);
+            case INT16 -> Integer.valueOf(((short[]) array)[i]);
+            case UINT16 -> Integer.valueOf(((short[]) array)[i] & 0xFFFF);
+            case INT32, UINT32 -> Integer.valueOf(((int[]) array)[i]);
             case INT64, UINT64 -> Long.valueOf(((long[]) array)[i]);
             case FLOAT32 -> Float.valueOf(((float[]) array)[i]);
             case FLOAT64 -> Double.valueOf(((double[]) array)[i]);
@@ -208,7 +209,11 @@ public final class ReflectValues {
 
     public static void arraySet(Object array, GoKind elemKind, int i, Object boxed) {
         switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> ((int[]) array)[i] = ((Integer) boxed).intValue();
+            // Narrowing conversion preserves the low bits; reads re-extend
+            // per signedness. Mirrors Boxing.arraySet.
+            case INT8, UINT8 -> ((byte[]) array)[i] = ((Integer) boxed).byteValue();
+            case INT16, UINT16 -> ((short[]) array)[i] = ((Integer) boxed).shortValue();
+            case INT32, UINT32 -> ((int[]) array)[i] = ((Integer) boxed).intValue();
             case INT64, UINT64 -> ((long[]) array)[i] = ((Long) boxed).longValue();
             case FLOAT32 -> ((float[]) array)[i] = ((Float) boxed).floatValue();
             case FLOAT64 -> ((double[]) array)[i] = ((Double) boxed).doubleValue();

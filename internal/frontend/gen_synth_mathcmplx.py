@@ -21,9 +21,33 @@
 #     package is registered, and its Mul64/Add64 2-target calls desugar
 #     via the m7MultiResultFuncs entries (blank targets supported).
 #  5. Everything else is carried verbatim.
+import os
 import re
+import subprocess
 
-GOROOT = "/home/hatch/tools/go/src/math/cmplx"
+# --- P1-R1-2 portability prologue: GOROOT and OUTDIR are environment-driven
+# so the generator is CI-runnable and never writes outside the repo.
+#   GRAALGO_GOROOT   Go installation whose gc 1.27.1 sources are read
+#                    (default: `go env GOROOT`).
+#   GEN_SYNTH_OUTDIR directory for the generated file(s) (default: this
+#                    script's directory, i.e. in-place regeneration).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+def _graalgo_goroot():
+    g = os.environ.get("GRAALGO_GOROOT")
+    if g:
+        return g
+    try:
+        return subprocess.run(["go", "env", "GOROOT"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except Exception as e:
+        raise SystemExit(
+            "gen_synth: cannot determine GOROOT; set GRAALGO_GOROOT (%s)" % e)
+
+OUTDIR = os.environ.get("GEN_SYNTH_OUTDIR", _HERE)
+
+GOROOT = os.path.join(_graalgo_goroot(), "src", "math", "cmplx")
+
 FILES = ["abs.go", "conj.go", "isinf.go", "isnan.go", "phase.go",
          "polar.go", "rect.go", "exp.go", "log.go", "pow.go", "sin.go",
          "sqrt.go", "tan.go", "asin.go"]
@@ -182,7 +206,7 @@ def main():
             src = src.replace(POLAR_OLD, POLAR_NEW)
         parts.append(src.rstrip() + "\n\n")
     out = "".join(parts).rstrip() + "\n`\n"
-    with open("/home/hatch/workspace/graalgo-m9/phases/phase1/frontend/synth_mathcmplx.go", "w") as f:
+    with open(os.path.join(OUTDIR, "synth_mathcmplx.go"), "w") as f:
         f.write(out)
     print("wrote synth_mathcmplx.go", len(out), "bytes")
 

@@ -21,6 +21,13 @@ import graalgo.values.GoKind;
 public final class FuncValueCallNode extends GoExprNode {
     @Child private GoExprNode fn;
     @Children private final GoExprNode[] args;
+    /**
+     * Per-call-site dispatch (Truffle DSL inline cache): monomorphic and
+     * low-polymorphic sites get inlinable {@code DirectCallNode}s;
+     * megamorphic sites fall back to {@code GoCalls.invoke} (today's
+     * behavior, unchanged).
+     */
+    @Child private CallDispatchNode dispatch;
     /** True when built from a {@code methodref} call: args[0] is the receiver. */
     private final boolean isMethodCall;
     /**
@@ -49,6 +56,7 @@ public final class FuncValueCallNode extends GoExprNode {
         this.args = args;
         this.isMethodCall = isMethodCall;
         this.enclosingFuncObj = enclosingFuncObj;
+        this.dispatch = CallDispatchNodeGen.create();
     }
 
     private String siteName() {
@@ -89,7 +97,10 @@ public final class FuncValueCallNode extends GoExprNode {
         }
         Object[] argVals = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
-            argVals[i] = Boxing.box(args[i].kind(), args[i], frame);
+            // Go value semantics: array/struct arguments are copied at the
+            // call site (copyForAssign); slices/maps/pointers stay shared.
+            argVals[i] = Boxing.copyForAssign(args[i].kind(),
+                    Boxing.box(args[i].kind(), args[i], frame));
         }
         // recover() is only non-nil when called directly by a deferred
         // function: clear the flag for nested calls, restore afterwards.
@@ -107,7 +118,9 @@ public final class FuncValueCallNode extends GoExprNode {
             if (callState != null) {
                 callState.updateTopFrameSection(getSourceSection());
             }
-            return GoCalls.invoke(f, argVals);
+            // DSL inline-cache dispatch (monomorphic → DirectCallNode,
+            // megamorphic → GoCalls.invoke fallback, unchanged behavior).
+            return dispatch.executeCall(f, argVals);
         } finally {
             if (state != null) {
                 state.setRecoverAllowed(prev);

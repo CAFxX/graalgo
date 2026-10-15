@@ -169,10 +169,11 @@ public final class Boxing {
 
     /**
      * Allocates a fresh typed Java array for {@code len} elements of the
-     * given element kind (D5 array mapping): int/uint ≤32→{@code int[]},
-     * 64-bit→{@code long[]}, {@code float32}→{@code float[]},
-     * {@code float64}→{@code double[]}, {@code bool}→{@code boolean[]},
-     * {@code complex64}→{@code GoComplex32[]},
+     * given element kind (D5 array mapping): the backing store width follows
+     * the kind's own bit-width — 8-bit int/uint→{@code byte[]},
+     * 16-bit→{@code short[]}, 32-bit→{@code int[]}, 64-bit→{@code long[]},
+     * {@code float32}→{@code float[]}, {@code float64}→{@code double[]},
+     * {@code bool}→{@code boolean[]}, {@code complex64}→{@code GoComplex32[]},
      * {@code complex128}→{@code GoComplex64[]}, everything
      * else→{@code Object[]}. For STRUCT elements, each slot is
      * pre-initialized to the zero-valued GoStruct (Go's array zero value
@@ -185,7 +186,9 @@ public final class Boxing {
      */
     public static Object newArray(GoKind elemKind, GoStructDescriptor elemDesc, int len) {
         return switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> new int[len];
+            case INT8, UINT8 -> new byte[len];
+            case INT16, UINT16 -> new short[len];
+            case INT32, UINT32 -> new int[len];
             case INT64, UINT64, UNTYPED_INT -> new long[len];
             case FLOAT32 -> new float[len];
             case FLOAT64, UNTYPED_FLOAT -> new double[len];
@@ -226,7 +229,13 @@ public final class Boxing {
     /** Reads one array element in canonical boxed form. */
     static Object arrayGet(Object array, GoKind elemKind, int i) {
         return switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> Integer.valueOf(((int[]) array)[i]);
+            // Narrow backing stores: Java widens byte/short→int with sign
+            // extension; unsigned kinds mask to zero-extend.
+            case INT8 -> Integer.valueOf(((byte[]) array)[i]);
+            case UINT8 -> Integer.valueOf(((byte[]) array)[i] & 0xFF);
+            case INT16 -> Integer.valueOf(((short[]) array)[i]);
+            case UINT16 -> Integer.valueOf(((short[]) array)[i] & 0xFFFF);
+            case INT32, UINT32 -> Integer.valueOf(((int[]) array)[i]);
             case INT64, UINT64, UNTYPED_INT -> Long.valueOf(((long[]) array)[i]);
             case FLOAT32 -> Float.valueOf(((float[]) array)[i]);
             case FLOAT64, UNTYPED_FLOAT -> Double.valueOf(((double[]) array)[i]);
@@ -238,7 +247,11 @@ public final class Boxing {
     /** Writes one canonical-boxed element into a typed Java array. */
     static void arraySet(Object array, GoKind elemKind, int i, Object boxed) {
         switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> ((int[]) array)[i] = ((Integer) boxed).intValue();
+            // Narrowing conversion preserves the low bits; reads re-extend
+            // per signedness (see arrayGet).
+            case INT8, UINT8 -> ((byte[]) array)[i] = ((Integer) boxed).byteValue();
+            case INT16, UINT16 -> ((short[]) array)[i] = ((Integer) boxed).shortValue();
+            case INT32, UINT32 -> ((int[]) array)[i] = ((Integer) boxed).intValue();
             case INT64, UINT64, UNTYPED_INT -> ((long[]) array)[i] = ((Long) boxed).longValue();
             case FLOAT32 -> ((float[]) array)[i] = ((Float) boxed).floatValue();
             case FLOAT64, UNTYPED_FLOAT -> ((double[]) array)[i] = ((Double) boxed).doubleValue();

@@ -56,6 +56,14 @@ public final class GoBox implements GoCell {
     }
 
     @Override
+    public boolean sameStorageAs(GoCell other) {
+        // Each boxed variable owns exactly one GoBox for its lifetime
+        // (loop iterations get fresh boxes, matching gc's per-iteration
+        // variables), so object identity is storage identity here.
+        return this == other;
+    }
+
+    @Override
     public String toString() {
         return "GoBox{" + value + "}";
     }

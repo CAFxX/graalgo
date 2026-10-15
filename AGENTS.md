@@ -25,8 +25,7 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   upgrade or a deliberately re-baselined behavior change, then commit the
   result. Never run to make a red check green.
 - Per-package Go tests: `go test ./...` inside the package's own module
-  directory (frontend modules live under the old `phases/` paths until the
-  code-move lanes land — see [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md)).
+  directory (see [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md)).
 - Differential harness: [test/differential/run.sh](test/differential/run.sh)
   (moved here from `tools/diffharness/` with the test-reorganization lane,
   2026-10-13).
@@ -73,7 +72,12 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) §Principles).
 - Synthetic stdlib packages are honest workarounds, not destinations: each
   implementation (in [internal/frontend/](internal/frontend/) as `synth_*.go`)
-  states why it is synthetic and what root-cause fix retires it.
+  states why it is synthetic and what root-cause fix retires it. The full
+  bridge inventory — every grandfathered bridge, its root-cause fix, and the
+  phased removal order — lives in
+  [docs/arch/bridge-inventory.md](docs/arch/bridge-inventory.md); the
+  no-bridges gate ([.github/scripts/check_no_bridges.py](.github/scripts/check_no_bridges.py))
+  grandfathers exactly what is inventoried there.
 
 ## 5. No-debris rule
 

@@ -942,6 +942,43 @@ public final class NodeFactory {
     }
 
     /**
+     * ABI size in bytes of an array type (P3 bug-042): {@code len * elemSize},
+     * recursing for nested arrays. Used by append's growslice math — arrays
+     * are NOT zero-size types, so growslice must not take its zero-size fast
+     * path (which skips copying old elements) for them.
+     */
+    private static long arraySizeBytes(BuildCtx ctx, int typeId, String path) {
+        int[] info = arrayInfo(ctx, typeId, path);
+        if (info[0] < 0) {
+            throw new FrontendException(path + ": arraySizeBytes on non-array type");
+        }
+        int len = info[0];
+        int elemId = info[1];
+        GoKind elemKind = kindOf(ctx, elemId, path);
+        long elemSize;
+        if (elemKind == GoKind.ARRAY) {
+            elemSize = arraySizeBytes(ctx, elemId, path);
+        } else if (elemKind == GoKind.STRUCT) {
+            elemSize = graalgo.runtime.Intrinsics.structSizeBytes(
+                    structDescriptorFor(ctx, elemId, path));
+        } else {
+            elemSize = graalgo.runtime.Intrinsics.elemSizeBytes(elemKind);
+            if (elemSize == 0) {
+                // Slice/map/interface/string/pointer kinds: use Go ABI sizes.
+                // (elemSizeBytes returns 0 for these by design.)
+                elemSize = switch (elemKind) {
+                    case SLICE -> 24;
+                    case STRING -> 16;
+                    case MAP, POINTER, FUNC, CHAN, UNSAFE_POINTER, INTERFACE -> 8;
+                    default -> throw new FrontendException(path
+                            + ": arraySizeBytes: unsupported element kind " + elemKind);
+                };
+            }
+        }
+        return (long) len * elemSize;
+    }
+
+    /**
      * Alias resolution over a bare type table (P3-M7R2): overload for
      * naming helpers that don't have a {@link BuildCtx}. Public for the
      * phase-3 {@code DescriptorNames} replica.
@@ -3512,6 +3549,21 @@ public final class NodeFactory {
             nec.add(GoTypeStrings.of(ctx, ceId));
             curId = ceId;
         }
+        // bug-041: if the terminal type (after nested maps) is an array or
+        // slice, append its element chain so map values that are arrays or
+        // slices carry their element kinds for nested fmt printing.
+        // e.g. map[int][2]int: the walk above breaks immediately (elem is
+        // array, not map), yielding an empty chain; the nested [2]int value
+        // then gets a null elemKind which printSlice defaults to UINT8,
+        // crashing with [J->[B on the actual long[] backing (int is 64-bit).
+        // Appending walkElemChain gives [INT64], the kind-driven element type.
+        Json.Object termEntry = underlyingEntry(ctx, curId, apath);
+        String termKind = termEntry.string("kind", apath);
+        if ("array".equals(termKind) || "slice".equals(termKind)) {
+            ChainWalk ew = walkElemChain(curId, ctx, apath);
+            kec.addAll(ew.kinds());
+            nec.addAll(ew.names());
+        }
         return new MapChainWalk(java.util.List.copyOf(kkc), java.util.List.copyOf(knc),
                 java.util.List.copyOf(kec), java.util.List.copyOf(nec));
     }
@@ -3897,11 +3949,17 @@ public final class NodeFactory {
         // growslice math (elemSizeBytes(STRUCT) is 0 by design).
         // P3-M9: struct elements also need their descriptor so growslice
         // can zero-initialize new slots.
+        // P3 bug-042: array elements need their ABI size too —
+        // elemSizeBytes(ARRAY) is 0, which made growslice take its
+        // zero-size fast path (skipping the old-element copy) for
+        // non-zero-size array types, losing appended-to elements.
         long elemSizeBytes = 0;
         graalgo.values.GoStructDescriptor elemDesc = null;
         if (elemKind == GoKind.STRUCT) {
             elemDesc = structDescriptorFor(ctx, elemId, path);
             elemSizeBytes = graalgo.runtime.Intrinsics.structSizeBytes(elemDesc);
+        } else if (elemKind == GoKind.ARRAY) {
+            elemSizeBytes = arraySizeBytes(ctx, elemId, path);
         }
         return new AppendNode(args[0], elemKind, elems, ellipsis, elemSizeBytes, elemDesc);
     }
