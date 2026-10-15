@@ -40,6 +40,9 @@ public final class IfaceTestRunner {
         // PKG-012 remediation F1 (2026-10-15): sync.Cond notifyList state
         // isolation — identity-keyed, never structural.
         TESTS.add(graalgo.p3link.CondIsolationTest.class);
+        // NEW-P1-1 (2026-10-15 review): P-id checkout pool behind
+        // sync.runtime_procPin — distinct ids for concurrent pins.
+        TESTS.add(graalgo.p3link.ProcPinCheckoutTest.class);
     }
 
     private IfaceTestRunner() {}
