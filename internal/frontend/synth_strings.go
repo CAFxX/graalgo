@@ -1550,20 +1550,32 @@ func stringsAppendRune(b []byte, r rune) []byte {
 				chunkMax = len(s)
 			}
 		}
-		b := &Builder{}
-		b.Grow(n)
-		b.writeString(s)
-		for b.Len() < n {
-			chunk := n - b.Len()
-			if b.Len() < chunk {
-				chunk = b.Len()
-			}
-			if chunkMax < chunk {
+		// O(n) doubling copy. Do NOT use Builder here: Builder.String()
+		// is O(n) in the synthetic package (it copies via string(buf);
+		// real Go uses unsafe for O(1)), so the classic
+		// b.writeString(b.String()[:chunk]) loop is O(n^2). Instead copy
+		// directly within a single backing array.
+		buf := make([]byte, n)
+		copied := copy(buf, s)
+		srcLen := len(s)
+		for copied < n {
+			chunk := srcLen
+			if chunk > chunkMax {
 				chunk = chunkMax
 			}
-			b.writeString(b.String()[:chunk])
+			if chunk > n-copied {
+				chunk = n - copied
+			}
+			copy(buf[copied:], buf[:chunk])
+			copied += chunk
+			if srcLen < chunkMax {
+				srcLen *= 2
+				if srcLen > chunkMax {
+					srcLen = chunkMax
+				}
+			}
 		}
-		return b.String()
+		return string(buf)
 	}
 
 	// ToUpper returns s with all Unicode letters mapped to upper case.
