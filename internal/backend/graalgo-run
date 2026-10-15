@@ -8,7 +8,9 @@
 #
 # Classpath order is load-bearing: runtime/out/classes comes FIRST so the
 # runtime module's same-FQN replacements shadow the truffle module's frozen
-# phase-1 stubs.
+# phase-1 stubs. interop/out/classes is included so the main launcher can
+# resolve the sync wire nodes (SyncNewNode) needed by real stdlib packages
+# such as fmt (which uses sync.Pool).
 set -euo pipefail
 HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
@@ -19,7 +21,7 @@ GRAALVM_HOME="${GRAALVM_HOME:-$HOME/tools/graalvm-jdk-25}"
 if [ -z "${GRAALGO_GOFRONTEND:-}" ] && [ -x "$HERE/../frontend/gofrontend" ]; then
   export GRAALGO_GOFRONTEND="$HERE/../frontend/gofrontend"
 fi
-CP="$HERE/runtime/out/classes:$HERE/truffle/out/classes"
+CP="$HERE/runtime/out/classes:$HERE/interop/out/classes:$HERE/truffle/out/classes"
 for jar in "$HERE"/truffle/lib/*.jar; do
   CP="$CP:$jar"
 done

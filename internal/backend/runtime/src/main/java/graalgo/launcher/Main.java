@@ -5,6 +5,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.source.Source;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
+import graalgo.p3sync.launcher.P3KindRegistrations;
 import graalgo.values.GoKind;
 import java.io.IOException;
 import java.io.InputStream;
@@ -159,7 +160,12 @@ public final class Main {
         Source source = Source.newBuilder("go", srcText, p.getFileName().toString()).build();
         final NodeFactory.Program program;
         try {
-            program = new NodeFactory(source).buildProgram(json);
+            NodeFactory factory = new NodeFactory(source);
+            // Real stdlib packages (e.g. fmt via sync.Pool, reflect) emit
+            // Phase-3 wire kinds; the main launcher registers all of them
+            // via the shared helper (same as the sync launcher).
+            P3KindRegistrations.registerAll(factory);
+            program = factory.buildProgram(json);
         } catch (FrontendException e) {
             // M9 acceptance: scope errors (program uses constructs outside
             // frontend/v1 scope) are the program's fault → EXIT_BUILD_FAILURE.
