@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/printer"
 	"go/token"
@@ -434,6 +435,17 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			if imp.Name != nil {
 				name = imp.Name.Name
 			}
+			if (name == "." || name == "_") && isSelfImport(dir, path) {
+				// The driver's body inlines the package under test's
+				// own declarations at top level, so importing the
+				// package itself again is wrong: a dot self-import
+				// redeclares every inlined name (PKG-002), and a blank
+				// one is redundant (the inlined inits already run).
+				// Plain or explicitly-named self-imports are kept:
+				// external test files may reference the package's
+				// exported API through the qualifier.
+				continue
+			}
 			if _, ok := imports[path]; !ok {
 				imports[path] = name
 			}
@@ -723,6 +735,38 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	return tmp.Name(), nil
 }
 
+// isSelfImport reports whether importPath denotes the package under
+// test (dir) itself. Detection is by resolved source directory, which
+// works without module context — e.g. unicode's external test files
+// import ". \"unicode\"" while the enclosing module path is
+// "std/unicode" — with a textual import-path comparison as backup.
+func isSelfImport(dir, importPath string) bool {
+	if importPathForDir(dir) == importPath {
+		return true
+	}
+	d, err := importDirForPath(dir, importPath)
+	if err != nil {
+		return false
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	absD, err := filepath.Abs(d)
+	if err != nil {
+		return false
+	}
+	// Resolve symlinks: GOROOT and dir itself may be reached through
+	// different spellings of the same directory.
+	if resolved, err := filepath.EvalSymlinks(absDir); err == nil {
+		absDir = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(absD); err == nil {
+		absD = resolved
+	}
+	return absD == absDir
+}
+
 // pathBase returns the last element of an import path.
 func pathBase(p string) string {
 	if i := strings.LastIndex(p, "/"); i >= 0 {
@@ -913,24 +957,36 @@ func escapeModulePath(p string) string {
 }
 
 // packageNameInDir returns the declared package name of the Go package in
-// directory d, parsing only the package clause of one source file.
+// directory d. Resolution goes through go/build so that files excluded
+// from the build are never mistaken for the package's own sources: the
+// old first-.go-file heuristic picked sort's gen_sort_variants.go —
+// package main with //go:build ignore — and reported "main" for import
+// "sort", which made the import pruner drop "sort" as unreferenced
+// (PKG-003).
 func packageNameInDir(d string) (string, error) {
+	if pkg, err := build.Default.ImportDir(d, 0); err == nil && pkg.Name != "" {
+		return pkg.Name, nil
+	}
+	// Fallback for directories go/build cannot import: parse the package
+	// clause of one source file, preferring a non-test file. An external
+	// test file's package foo_test clause means the importable name foo.
 	entries, err := os.ReadDir(d)
 	if err != nil {
 		return "", err
 	}
 	var fallback string
+	fallbackIsTest := true
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") {
 			continue
 		}
+		isTest := strings.HasSuffix(name, "_test.go")
 		if fallback == "" {
-			fallback = name
+			fallback, fallbackIsTest = name, isTest
 		}
-		// Prefer a non-test file; the package clause is identical either way.
-		if !strings.HasSuffix(name, "_test.go") {
-			fallback = name
+		if !isTest {
+			fallback, fallbackIsTest = name, false
 			break
 		}
 	}
@@ -942,7 +998,11 @@ func packageNameInDir(d string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return f.Name.Name, nil
+	name := f.Name.Name
+	if fallbackIsTest {
+		name = strings.TrimSuffix(name, "_test")
+	}
+	return name, nil
 }
 
 // printDecl prints a single AST declaration to the builder.
