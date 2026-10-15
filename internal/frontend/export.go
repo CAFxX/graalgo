@@ -7652,15 +7652,33 @@ func stmtOwner(s ast.Stmt) string {
 
 // exportVarGenDecl handles `var` declarations (GenDecl form).
 func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
-	names := []string{}
-	objs := []int{}
-	var typ any
-	values := make([]*Node, 0)
+	// A `var (...)` block with multiple specs emits one vardecl per spec
+	// (the backend requires values/objs length match; specs with no init
+	// have empty values).
+	var decls []*Node
 	for _, spec := range gd.Specs {
 		vs, ok := spec.(*ast.ValueSpec)
 		if !ok {
 			return nil, scopeErrorf("non-value var spec %T is not supported in frontend/v1 scope", spec)
 		}
+		d, err := e.exportVarSpec(vs)
+		if err != nil {
+			return nil, err
+		}
+		decls = append(decls, d)
+	}
+	if len(decls) == 1 {
+		return decls[0], nil
+	}
+	return e.node("block", gd, map[string]any{"stmts": decls}), nil
+}
+
+// exportVarSpec exports a single *ast.ValueSpec as a vardecl node.
+func (e *exporter) exportVarSpec(vs *ast.ValueSpec) (*Node, error) {
+	names := []string{}
+	objs := []int{}
+	var typ any
+	values := make([]*Node, 0)
 		var typeTid int
 		var typeIsSync *types.Named
 		var typeIsTimer *types.Named
@@ -7736,8 +7754,7 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 				}))
 			}
 		}
-	}
-	return e.node("vardecl", gd, map[string]any{
+	return e.node("vardecl", vs, map[string]any{
 		"names": names, "objs": objs, "define": false, "type": typ, "values": values,
 	}), nil
 }
@@ -9125,9 +9142,22 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			if len(c.Args) != 1 {
 				return nil, fmt.Errorf("gofrontend: conversion has %d arguments (want 1)", len(c.Args))
 			}
-			x, err := e.exportExpr(c.Args[0])
-			if err != nil {
-				return nil, err
+			// `T(nil)` — the nil must be typed as T, not as the empty
+			// interface (the default nil export). Otherwise the backend
+			// sees INTERFACE -> T (illegal).
+			var x *Node
+			if id, ok := c.Args[0].(*ast.Ident); ok && id.Name == "nil" {
+				to, err := e.typeID(tv.Type)
+				if err != nil {
+					return nil, err
+				}
+				x = e.node("nil", id, map[string]any{"type": to})
+			} else {
+				var err error
+				x, err = e.exportExpr(c.Args[0])
+				if err != nil {
+					return nil, err
+				}
 			}
 			to, err := e.typeID(tv.Type)
 			if err != nil {
@@ -11218,9 +11248,21 @@ func (e *exporter) exportTypeConversion(c *ast.CallExpr, tn *types.TypeName) (*N
 		return nil, fmt.Errorf("gofrontend: conversion to %s has %d arguments (want 1)",
 			tn.Name(), len(c.Args))
 	}
-	x, err := e.exportExpr(c.Args[0])
-	if err != nil {
-		return nil, err
+	// `T(nil)` — the nil must be typed as T, not as the empty interface
+	// (the default nil export).
+	var x *Node
+	if id, ok := c.Args[0].(*ast.Ident); ok && id.Name == "nil" {
+		to, err := e.typeID(tn.Type())
+		if err != nil {
+			return nil, err
+		}
+		x = e.node("nil", id, map[string]any{"type": to})
+	} else {
+		var err error
+		x, err = e.exportExpr(c.Args[0])
+		if err != nil {
+			return nil, err
+		}
 	}
 	to, err := e.typeID(tn.Type())
 	if err != nil {
