@@ -722,10 +722,7 @@ func (p *pipeConn) SetDeadline(t time.Time) error {
 }
 
 func (p *pipeConn) SetReadDeadline(t time.Time) error {
-	tt, ok := t.(time.Time)
-	if !ok {
-		return &OpError{Op: "setdeadline", Net: "pipe", Err: errors.New("net: deadline must be time.Time")}
-	}
+	tt := t
 	<-p.st.mu
 	p.rdDeadline = tt
 	p.st.mu <- struct{}{}
@@ -733,10 +730,7 @@ func (p *pipeConn) SetReadDeadline(t time.Time) error {
 }
 
 func (p *pipeConn) SetWriteDeadline(t time.Time) error {
-	tt, ok := t.(time.Time)
-	if !ok {
-		return &OpError{Op: "setdeadline", Net: "pipe", Err: errors.New("net: deadline must be time.Time")}
-	}
+	tt := t
 	<-p.st.mu
 	p.wrDeadline = tt
 	p.st.mu <- struct{}{}
@@ -1248,10 +1242,7 @@ func (c *TCPConn) SetReadDeadline(t time.Time) error  { return c.fd.setDeadline(
 func (c *TCPConn) SetWriteDeadline(t time.Time) error { return c.fd.setDeadline(t, 'w') }
 
 func (fd *netFD) setDeadline(t interface{}, mode int) error {
-	tt, ok := t.(time.Time)
-	if !ok {
-		return &OpError{Op: "setdeadline", Net: fd.net, Err: errors.New("net: deadline must be time.Time")}
-	}
+	tt := t
 	var d int64
 	if !tt.IsZero() {
 		d = int64(time.Until(tt))
