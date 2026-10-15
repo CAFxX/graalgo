@@ -3429,6 +3429,7 @@ public final class NodeFactory {
         return out;
     }
 
+    /**
      * Builtin call wiring (M6, WS H — integration of the WS G intrinsic
      * surface): {@code panic}/{@code recover} (M5, WS F), {@code print}/
      * {@code println}, {@code len}, {@code cap}, {@code make}, {@code new},
