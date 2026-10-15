@@ -4340,7 +4340,37 @@ func (e *exporter) describeType(t types.Type) (TypeEnt, error) {
 				"exported": f.Exported(), "pkgpath": pkgPath,
 			})
 		}
-		return mk("struct", map[string]any{"fields": fields}), nil
+		detail := map[string]any{"fields": fields}
+		// PKG-036: an anonymous struct can carry promoted methods — via
+		// embedded fields, including embedded interfaces — and be boxed
+		// into an interface. Without a "methods" list the launcher
+		// installs no method table for it and dispatch dies fatally
+		// with 'no method table installed for dynamic type'. Populate
+		// the table exactly like the named/pointer cases:
+		// types.NewMethodSet covers promotion at any depth. A struct
+		// with no embedded fields provably has an empty method set
+		// (anonymous structs declare no methods of their own), so
+		// plain structs keep the old wire shape.
+		hasEmbedded := false
+		for i := 0; i < t.NumFields(); i++ {
+			if t.Field(i).Embedded() {
+				hasEmbedded = true
+				break
+			}
+		}
+		if hasEmbedded {
+			methods, tmplSkipped, err := e.methodTableEntries(t)
+			if err != nil {
+				return TypeEnt{}, err
+			}
+			detail["methods"] = methods
+			if tmplSkipped {
+				// P3-M3 remediation (R1 P1-2): same marker as the
+				// named/pointer cases.
+				detail["templateMethodsSkipped"] = true
+			}
+		}
+		return mk("struct", detail), nil
 	case *types.Signature:
 		// P3-M9 (generics, funcs): skip generic function template signatures.
 		// A signature with type params (e.g., func Sign[P Point[P]]) is a
@@ -9800,7 +9830,7 @@ func embeddedFieldName(t types.Type, path []int) string {
 // see the call site.
 func (e *exporter) recomputeMethodTables() error {
 	for id, t := range e.typeList {
-		switch t.(type) {
+		switch t := t.(type) {
 		case *types.Named, *types.Pointer:
 			methods, tmplSkipped, err := e.methodTableEntries(t)
 			if err != nil {
@@ -9810,6 +9840,32 @@ func (e *exporter) recomputeMethodTables() error {
 			// P3-M3 remediation (R1 P1-2): keep the
 			// "templateMethodsSkipped" marker in sync — the recompute
 			// pass is authoritative (funcByObj is populated here).
+			if tmplSkipped {
+				e.types[id].Detail["templateMethodsSkipped"] = true
+			} else {
+				delete(e.types[id].Detail, "templateMethodsSkipped")
+			}
+		case *types.Struct:
+			// PKG-036: struct entries with embedded fields carry a
+			// "methods" list (see describeType) — refresh them
+			// alongside named/pointer entries once all bodies are
+			// exported (funcByObj is populated here). Structs without
+			// embedded fields carry no list and are left untouched.
+			hasEmbedded := false
+			for i := 0; i < t.NumFields(); i++ {
+				if t.Field(i).Embedded() {
+					hasEmbedded = true
+					break
+				}
+			}
+			if !hasEmbedded {
+				continue
+			}
+			methods, tmplSkipped, err := e.methodTableEntries(t)
+			if err != nil {
+				return err
+			}
+			e.types[id].Detail["methods"] = methods
 			if tmplSkipped {
 				e.types[id].Detail["templateMethodsSkipped"] = true
 			} else {

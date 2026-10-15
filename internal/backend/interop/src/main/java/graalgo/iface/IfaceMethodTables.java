@@ -24,10 +24,13 @@ import graalgo.values.GoFunc;
  * pointer entries key by the factory's structural descriptor name — all
  * via {@link DescriptorNames}, which mirrors the factory's
  * {@code typeDescriptorFor} naming (see its javadoc for the recorded
- * ADR-0003 D5 deviation). Method entries are {@code {"name": ..., "obj": ...,
- * "index": [...]}} ({@code "recv"} is informational only;
- * {@code "index"} is the receiver adaptation path, empty for direct
- * methods).
+ * ADR-0003 D5 deviation). Struct entries (anonymous structs with
+ * promoted methods, PKG-036 — e.g. {@code struct{ Reader io.Reader }})
+ * key by the factory's structural descriptor name as well, the same
+ * name the factory mints at box sites. Method entries are {@code
+ * {"name": ..., "obj": ..., "index": [...]}} ({@code "recv"} is
+ * informational only; {@code "index"} is the receiver adaptation path,
+ * empty for direct methods).
  *
  * <p>Fail-fast: a method entry without a name/obj, or an obj id absent
  * from {@code Program.functions()}, is a {@link FrontendException} naming
@@ -52,7 +55,12 @@ public final class IfaceMethodTables {
             String path = "types[" + id + "]";
             Json.Object entry = types.entry(id, path);
             String kind = entry.string("kind", path);
-            if (!"named".equals(kind) && !"pointer".equals(kind)) {
+            // PKG-036: struct entries (anonymous structs with promoted
+            // methods, e.g. struct{ Reader io.Reader }) carry "methods"
+            // lists like named/pointer entries and must be installed —
+            // otherwise dispatch on a boxed struct dies fatally with
+            // "no method table installed for dynamic type".
+            if (!"named".equals(kind) && !"pointer".equals(kind) && !"struct".equals(kind)) {
                 continue;
             }
             String descName = DescriptorNames.descriptorName(types, id);
