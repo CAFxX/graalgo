@@ -35,15 +35,25 @@ public final class MakeNode extends GoExprNode {
      * struct elements; null for non-struct kinds.
      */
     private final graalgo.values.GoStructDescriptor elemDesc;
+    /**
+     * Recursive zero template for struct elements (NEW-P0-3): makeslice
+     * instantiates one fresh copy per backing slot, so nested
+     * sync-primitive cells (e.g. {@code atomic.Pointer} fields) get
+     * valid, distinct backings. Null for non-struct kinds (or when the
+     * factory could not build one — then the descriptor-only zero
+     * applies).
+     */
+    private final Object elemZeroTemplate;
 
     /** Slice form. */
     public MakeNode(GoKind elemKind, GoExprNode lenChild, GoExprNode capChild,
-            graalgo.values.GoStructDescriptor elemDesc) {
+            graalgo.values.GoStructDescriptor elemDesc, Object elemZeroTemplate) {
         super(GoKind.SLICE);
         this.elemKind = elemKind;
         this.lenChild = lenChild;
         this.capChild = capChild;
         this.elemDesc = elemDesc;
+        this.elemZeroTemplate = elemZeroTemplate;
         this.isMap = false;
         this.mapHint = -1;
     }
@@ -57,6 +67,7 @@ public final class MakeNode extends GoExprNode {
         this.isMap = true;
         this.mapHint = mapHint;
         this.elemDesc = null;
+        this.elemZeroTemplate = null;
     }
 
     @Override
@@ -70,6 +81,6 @@ public final class MakeNode extends GoExprNode {
             // gc: "makeslice: len out of range" panic.
             Panic.throwPanic("makeslice: len out of range", null, null, this);
         }
-        return Intrinsics.makeslice(elemKind, elemDesc, (int) len, (int) cap);
+        return Intrinsics.makeslice(elemKind, elemDesc, elemZeroTemplate, (int) len, (int) cap);
     }
 }

@@ -3837,11 +3837,19 @@ public final class NodeFactory {
                 // can zero-initialize (Go's make([]T, n) zero-initializes;
                 // null slots NPE on s[i].field access).
                 graalgo.values.GoStructDescriptor elemDesc = null;
+                // NEW-P0-3: the recursive zero template — makeslice
+                // instantiates one fresh copy per slot, so nested
+                // sync-primitive cells (e.g. atomic.Pointer fields) get
+                // valid, distinct backings. The descriptor-only zero
+                // leaves them null.
+                Object elemZeroTemplate = null;
                 if (elemKind == GoKind.STRUCT) {
                     int elemTid = entry.object("detail", path).intValue("elem", path);
                     elemDesc = structDescriptorFor(ctx, elemTid, path);
+                    elemZeroTemplate = zeroTemplateFor(GoKind.STRUCT, elemTid, ctx, path);
                 }
-                return new MakeNode(elemKind, args[0], args.length == 2 ? args[1] : null, elemDesc);
+                return new MakeNode(elemKind, args[0], args.length == 2 ? args[1] : null, elemDesc,
+                        elemZeroTemplate);
             }
             case "map" -> {
                 // The size hint is semantically invisible (GoMap grows
@@ -3955,13 +3963,18 @@ public final class NodeFactory {
         // non-zero-size array types, losing appended-to elements.
         long elemSizeBytes = 0;
         graalgo.values.GoStructDescriptor elemDesc = null;
+        // NEW-P0-3: recursive zero template for struct elements (same
+        // init rule as make() — fresh per new backing slot).
+        Object elemZeroTemplate = null;
         if (elemKind == GoKind.STRUCT) {
             elemDesc = structDescriptorFor(ctx, elemId, path);
             elemSizeBytes = graalgo.runtime.Intrinsics.structSizeBytes(elemDesc);
+            elemZeroTemplate = zeroTemplateFor(GoKind.STRUCT, elemId, ctx, path);
         } else if (elemKind == GoKind.ARRAY) {
             elemSizeBytes = arraySizeBytes(ctx, elemId, path);
         }
-        return new AppendNode(args[0], elemKind, elems, ellipsis, elemSizeBytes, elemDesc);
+        return new AppendNode(args[0], elemKind, elems, ellipsis, elemSizeBytes, elemDesc,
+                elemZeroTemplate);
     }
 
     /**

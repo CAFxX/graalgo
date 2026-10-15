@@ -175,10 +175,19 @@ public final class Intrinsics {
      * elements, the backing array is zero-initialized (see
      * {@link #newTypedArray}); the element descriptor may be null for
      * non-struct kinds.
+     *
+     * <p>{@code elemZeroTemplate} is the build-time recursive zero
+     * template for struct elements (see
+     * {@code NodeFactory.zeroTemplateFor}); when non-null, each backing
+     * slot is a fresh instantiation of it
+     * ({@link graalgo.frontend.Boxing#freshZeroCopy}), so nested
+     * sync-primitive cells (e.g. {@code atomic.Pointer} fields inside
+     * {@code poolLocal}) get valid, distinct backings. Null selects the
+     * legacy descriptor-only zero.
      */
     public static GoSlice makeslice(GoKind elemKind, graalgo.values.GoStructDescriptor elemDesc,
-            int len, int cap) {
-        Object array = newTypedArray(elemKind, elemDesc, cap);
+            Object elemZeroTemplate, int len, int cap) {
+        Object array = newBackingArray(elemKind, elemDesc, elemZeroTemplate, cap);
         return new GoSlice(array, 0, len, cap);
     }
 
@@ -205,7 +214,7 @@ public final class Intrinsics {
      * here).
      */
     public static GoSlice growslice(GoSlice old, GoKind elemKind,
-            graalgo.values.GoStructDescriptor elemDesc, int newLen,
+            graalgo.values.GoStructDescriptor elemDesc, Object elemZeroTemplate, int newLen,
             long elemSizeBytes, boolean elemHasPointers) {
         int oldLen = old == null ? 0 : old.len();
         int oldCap = old == null ? 0 : old.cap();
@@ -248,11 +257,11 @@ public final class Intrinsics {
                 return new GoSlice(old.array(), 0, newLen, newLen);
             }
             int allocCap = nextSliceCap(newLen, oldCap, 1, elemHasPointers);
-            Object array = newTypedArray(elemKind, elemDesc, allocCap);
+            Object array = newBackingArray(elemKind, elemDesc, elemZeroTemplate, allocCap);
             return new GoSlice(array, 0, newLen, newLen);
         }
         int newCap = nextSliceCap(newLen, oldCap, elemSizeBytes, elemHasPointers);
-        Object array = newTypedArray(elemKind, elemDesc, newCap);
+        Object array = newBackingArray(elemKind, elemDesc, elemZeroTemplate, newCap);
         if (old != null && oldLen > 0) {
             memmove(array, 0, old.array(), old.offset(), oldLen);
         }
@@ -394,6 +403,25 @@ public final class Intrinsics {
         return graalgo.frontend.Boxing.newArray(elemKind, elemDesc, len);
     }
 
+    /**
+     * Backing array for slice allocation/growth. When a struct element
+     * zero template is supplied, each slot is a fresh instantiation of
+     * it ({@link graalgo.frontend.Boxing#freshZeroCopy}) — the general
+     * zero-value rule, so nested sync-primitive cells get valid distinct
+     * backings. Otherwise the descriptor-only zero (legacy).
+     */
+    private static Object newBackingArray(GoKind elemKind,
+            graalgo.values.GoStructDescriptor elemDesc, Object elemZeroTemplate, int len) {
+        if (elemKind == GoKind.STRUCT && elemZeroTemplate != null) {
+            Object[] arr = new Object[len];
+            for (int i = 0; i < len; i++) {
+                arr[i] = graalgo.frontend.Boxing.freshZeroCopy(elemZeroTemplate);
+            }
+            return arr;
+        }
+        return newTypedArray(elemKind, elemDesc, len);
+    }
+
     // ------------------------------------------------------------------
     // Map operations (REAL — thin over the Phase-1 GoMap).
     // ------------------------------------------------------------------
@@ -481,7 +509,7 @@ public final class Intrinsics {
      */
     public static GoSlice growslice(GoSlice old, GoKind elemKind, int additional) {
         int oldLen = old == null ? 0 : old.len();
-        return growslice(old, elemKind, null, oldLen + additional,
+        return growslice(old, elemKind, null, null, oldLen + additional,
                 elemSizeBytes(elemKind), elemHasPointers(elemKind));
     }
 

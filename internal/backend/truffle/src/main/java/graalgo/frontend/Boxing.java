@@ -323,17 +323,26 @@ public final class Boxing {
     /**
      * Fresh copy of a zero-value template (struct/array): templates are
      * built once per type at build time and must never be shared between
-     * evaluations. Array copying goes through
-     * {@link graalgo.values.GoStruct#deepCopyArray} — the single canonical
-     * recursive array copier (struct elements deep-copied, nested arrays
-     * recursed).
+     * evaluations. Unlike {@link graalgo.values.GoStruct#deepCopy} (Go
+     * <em>assignment</em> semantics), this is the <em>zero-value</em>
+     * instantiation rule: sync-primitive cells are opaque Java objects
+     * (ADR-0002 D1 — the Go value IS the Java object), so every cell at
+     * every nesting depth gets a fresh zero instance. A shared cell would
+     * let operations through one zero value be observed through another
+     * (e.g. two {@code poolChain} zeros sharing one {@code head}
+     * {@code AtomicReference}, or two {@code make([]poolLocal, n)}
+     * elements sharing one chain).
+     *
+     * <p>Public: the runtime module's slice allocator
+     * ({@code Intrinsics.makeslice}/{@code growslice}) instantiates
+     * element zero templates through this.
      */
-    static Object freshZeroCopy(Object template) {
+    public static Object freshZeroCopy(Object template) {
         if (template instanceof GoStruct gs) {
-            return gs.deepCopy();
+            return freshZeroStruct(gs);
         }
         if (template != null && template.getClass().isArray()) {
-            return GoStruct.deepCopyArray(template);
+            return freshZeroArray(template);
         }
         // P3-M9 (driver-harden, go-cmp lane): sync primitives are opaque
         // Java objects; the template must not be shared — each use gets a
@@ -370,5 +379,45 @@ public final class Boxing {
             return new java.util.concurrent.atomic.AtomicReference<>();
         }
         return template; // immutable (GoString.EMPTY) or null
+    }
+
+    /**
+     * Recursive zero-value instantiation for a struct template: the
+     * carrier is rebuilt field by field, each object field going through
+     * {@link #freshZeroCopy} so nested sync-primitive cells (at any depth)
+     * are freshened. Longs-carried scalar fields are copied as-is (they
+     * are immutable values in the zero template).
+     */
+    private static GoStruct freshZeroStruct(GoStruct template) {
+        GoStructDescriptor desc = template.descriptor();
+        GoStruct out = template.copy(); // shallow carrier copy (ctor clones)
+        for (int i = 0; i < desc.fields().size(); i++) {
+            GoStructDescriptor.Field f = desc.field(i);
+            if (!f.inLongs()) {
+                out.setObject(i, freshZeroCopy(out.getObject(i)));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Recursive zero-value instantiation for an array template: a new
+     * array whose elements are {@link #freshZeroCopy} instances of the
+     * template's elements. Primitive backing arrays hold immutable
+     * zeros and are copied verbatim.
+     */
+    private static Object freshZeroArray(Object template) {
+        int n = java.lang.reflect.Array.getLength(template);
+        Class<?> ct = template.getClass().getComponentType();
+        Object out = java.lang.reflect.Array.newInstance(ct, n);
+        if (out instanceof Object[] oa) {
+            Object[] src = (Object[]) template;
+            for (int i = 0; i < n; i++) {
+                oa[i] = freshZeroCopy(src[i]);
+            }
+        } else {
+            System.arraycopy(template, 0, out, 0, n);
+        }
+        return out;
     }
 }

@@ -35,23 +35,36 @@ public final class AppendNode extends GoExprNode {
      * new struct slots; null for non-struct kinds.
      */
     private final graalgo.values.GoStructDescriptor elemDesc;
+    /**
+     * Recursive zero template for struct elements (NEW-P0-3): growslice
+     * instantiates fresh copies for new backing slots, so nested
+     * sync-primitive cells get valid, distinct backings. Null for
+     * non-struct kinds.
+     */
+    private final Object elemZeroTemplate;
 
     public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren) {
-        this(sliceChild, elemKind, elemChildren, false, 0, null);
+        this(sliceChild, elemKind, elemChildren, false, 0, null, null);
     }
 
     public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren,
             boolean ellipsis) {
-        this(sliceChild, elemKind, elemChildren, ellipsis, 0, null);
+        this(sliceChild, elemKind, elemChildren, ellipsis, 0, null, null);
     }
 
     public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren,
             boolean ellipsis, long elemSizeBytes) {
-        this(sliceChild, elemKind, elemChildren, ellipsis, elemSizeBytes, null);
+        this(sliceChild, elemKind, elemChildren, ellipsis, elemSizeBytes, null, null);
     }
 
     public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren,
             boolean ellipsis, long elemSizeBytes, graalgo.values.GoStructDescriptor elemDesc) {
+        this(sliceChild, elemKind, elemChildren, ellipsis, elemSizeBytes, elemDesc, null);
+    }
+
+    public AppendNode(GoExprNode sliceChild, GoKind elemKind, GoExprNode[] elemChildren,
+            boolean ellipsis, long elemSizeBytes, graalgo.values.GoStructDescriptor elemDesc,
+            Object elemZeroTemplate) {
         super(GoKind.SLICE);
         this.sliceChild = sliceChild;
         this.elemKind = elemKind;
@@ -59,6 +72,7 @@ public final class AppendNode extends GoExprNode {
         this.ellipsis = ellipsis;
         this.elemSizeBytes = elemSizeBytes;
         this.elemDesc = elemDesc;
+        this.elemZeroTemplate = elemZeroTemplate;
     }
 
     /** Effective element size for growslice: the struct ABI size when
@@ -92,7 +106,7 @@ public final class AppendNode extends GoExprNode {
                     out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
                 } else {
                     int newLen1 = (s == null ? 0 : s.len()) + n;
-                    out = Intrinsics.growslice(s, elemKind, elemDesc, newLen1, effectiveElemSize(),
+                    out = Intrinsics.growslice(s, elemKind, elemDesc, elemZeroTemplate, newLen1, effectiveElemSize(),
                             Intrinsics.elemHasPointers(elemKind));
                 }
                 Object arr = out.array();
@@ -117,7 +131,7 @@ public final class AppendNode extends GoExprNode {
                     out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
                 } else {
                     int newLen1 = (s == null ? 0 : s.len()) + n;
-                    out = Intrinsics.growslice(s, elemKind, elemDesc, newLen1, effectiveElemSize(),
+                    out = Intrinsics.growslice(s, elemKind, elemDesc, elemZeroTemplate, newLen1, effectiveElemSize(),
                             Intrinsics.elemHasPointers(elemKind));
                 }
                 Object arr = out.array();
@@ -170,7 +184,7 @@ public final class AppendNode extends GoExprNode {
             out = new GoSlice(s.array(), s.offset(), s.len() + n, s.cap());
         } else {
             int newLen2 = (s == null ? 0 : s.len()) + n;
-            out = Intrinsics.growslice(s, elemKind, elemDesc, newLen2, effectiveElemSize(),
+            out = Intrinsics.growslice(s, elemKind, elemDesc, elemZeroTemplate, newLen2, effectiveElemSize(),
                     Intrinsics.elemHasPointers(elemKind));
         }
         Object arr = out.array();

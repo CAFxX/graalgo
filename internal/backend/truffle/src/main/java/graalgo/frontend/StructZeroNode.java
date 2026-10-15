@@ -20,6 +20,9 @@ public final class StructZeroNode extends GoExprNode {
 
     @Override
     public Object executeObject(VirtualFrame frame) {
-        return template.deepCopy();
+        // NEW-P0-3: freshZeroCopy, not deepCopy — nested sync-primitive
+        // cells (e.g. atomic.Pointer fields) must be freshened per
+        // evaluation; deepCopy shares them with the template.
+        return Boxing.freshZeroCopy(template);
     }
 }

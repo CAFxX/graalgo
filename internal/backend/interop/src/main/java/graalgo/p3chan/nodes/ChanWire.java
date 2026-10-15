@@ -278,7 +278,10 @@ final class ChanWire {
             for (int i = 0; i < len; i++) {
                 objs[i] = switch (ek) {
                     case ARRAY -> arrayZeroTemplate(ctx, elemTid, path);
-                    case STRUCT -> structZeroTemplate(ctx, elemTid, path).deepCopy();
+                    // NEW-P0-3: freshZeroCopy, not deepCopy — nested
+                    // sync-primitive cells must be freshened per slot.
+                    case STRUCT -> graalgo.frontend.Boxing.freshZeroCopy(
+                            structZeroTemplate(ctx, elemTid, path));
                     default -> GoString.EMPTY;
                 };
             }
