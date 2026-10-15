@@ -1,12 +1,12 @@
 package main
 
-// WS G (P3-M9, module-probe lane): multi-result transformation for disk
-// packages.
+// Multi-result transformation for disk AND synthetic packages
+// (real-fmt2 lane: generalized from the WS G disk-only transform).
 //
 // The v1 frontend cannot emit multi-result functions (WS D). Synthetic
-// packages handle this via hand-written __-helpers + the Appendix-M
-// desugar table. For disk (third-party) packages we generate the same
-// shape mechanically:
+// packages historically handled this via hand-written __-helpers + the
+// Appendix-M desugar table; disk (third-party) packages get the same
+// shape generated mechanically. The transform now runs on both:
 //
 //   - For each multi-result FuncDecl F (func or method), generate:
 //     type __F_pair struct { f1 T1; f2 T2 }   // f1..fN for N results
@@ -17,7 +17,14 @@ package main
 //   - After type-checking, the stubs are removed from the AST so the
 //     exporter never sees them (it cannot emit multi-result bodies).
 //
-// This is general: any disk package with multi-result functions works,
+// Collision rule: a FuncDecl whose generated helper (__F) or pair type
+// (__FPair) name already exists as a top-level declaration is SKIPPED.
+// Those are the packages with hand-written __-helpers, whose calls keep
+// flowing through the static Appendix-M tables (checked before the
+// dynamic table). This keeps the mechanical transform from clobbering
+// hand-written helpers.
+//
+// This is general: any package with multi-result functions works,
 // not just the module that exposed the gap.
 
 import (
@@ -29,8 +36,8 @@ import (
 	"sync"
 )
 
-// diskMRSpec describes one transformed multi-result function.
-type diskMRSpec struct {
+// mrSpec describes one transformed multi-result function.
+type mrSpec struct {
 	pkgPath    string
 	name       string // original name ("Parse")
 	recvType   string // "" for funcs, receiver base name for methods
@@ -41,15 +48,29 @@ type diskMRSpec struct {
 }
 
 var (
-	diskMRMu    sync.Mutex
-	diskMRSpecs []diskMRSpec
+	mrSpecsMu    sync.Mutex
+	mrSpecs []mrSpec
 )
 
-// transformDiskMultiResult rewrites multi-result FuncDecls in files to the
+// transformTargetCollides reports whether transforming fd would generate
+// a helper or pair-type name that already exists as a top-level
+// declaration (a hand-written __-helper). Mirrors transformMRFunc's
+// naming: __F / __FPair for funcs, __Recv_F / __Recv_FPair for methods.
+func transformTargetCollides(fd *ast.FuncDecl, existing map[string]bool) bool {
+	prefix := fd.Name.Name
+	if fd.Recv != nil && len(fd.Recv.List) > 0 {
+		if rt := recvBaseName(fd.Recv.List[0].Type); rt != "" {
+			prefix = rt + "_" + fd.Name.Name
+		}
+	}
+	return existing["__"+prefix] || existing["__"+prefix+"Pair"]
+}
+
+// transformMultiResult rewrites multi-result FuncDecls in files to the
 // __-helper + stub shape. Must run after parsing, before type-checking.
 // Returns the specs for desugar registration (after type-check).
-func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
-	var specs []diskMRSpec
+func transformMultiResult(pkgPath string, files []*ast.File) []mrSpec {
+	var specs []mrSpec
 	// Collect multi-result funcs first (needed for return-call rewriting).
 	mrNames := map[string]bool{}
 	for _, f := range files {
@@ -129,7 +150,7 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	}
 	// BUG-MODPROBE-005: interface method specs with multi-result.
 	// Generate a pair type per (interface, method) and register a spec
-	// so interface dispatch (classifyDiskIfaceMultiResultCall) can
+	// so interface dispatch (classifyTransformedIfaceMRCall) can
 	// desugar calls through the interface. The interface declaration
 	// itself is left unchanged (like synthetic io.Reader); only call
 	// sites are desugared. The itab maps the interface method to each
@@ -162,6 +183,11 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 					}
 					rtypes := resultTypesFL(ft.Results)
 					for _, mname := range m.Names {
+						// Skip methods served by the static
+						// interface-dispatch table.
+						if hasStaticIfaceMREntry(mname.Name) {
+							continue
+						}
 						pairType := fmt.Sprintf("__%s_%sPair", ifaceName, mname.Name)
 						pairFields := make([]string, len(rtypes))
 						for i := range rtypes {
@@ -190,7 +216,7 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 							},
 						}
 						f.Decls = append(f.Decls, pairDecl)
-						specs = append(specs, diskMRSpec{
+						specs = append(specs, mrSpec{
 							pkgPath:  pkgPath,
 							name:     mname.Name,
 							recvType: ifaceName,
@@ -247,7 +273,7 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	}
 	// GAP-GENERIC-MR: index the package-level specs by name for the
 	// hoists below (shared by both).
-	specByName := map[string]*diskMRSpec{}
+	specByName := map[string]*mrSpec{}
 	for i := range specs {
 		s := &specs[i]
 		if s.recvType == "" && s.helper != "" {
@@ -304,8 +330,9 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				// (GAP-GENERIC-MR: F[T](args) -> __F[T](args)).
 				tmpName := fmt.Sprintf("__mr_hoist_%d", len(hoisted))
 				helperCall := &ast.CallExpr{
-					Fun:  mrHelperFunForCall(inner.Fun, innerName),
-					Args: inner.Args,
+					Fun:      mrHelperFunForCall(inner.Fun, innerName),
+					Args:     inner.Args,
+					Ellipsis: inner.Ellipsis,
 				}
 				hoisted = append(hoisted, &ast.GenDecl{
 					Tok: token.VAR,
@@ -387,7 +414,7 @@ func mrHelperFunForCall(fun ast.Expr, innerName string) ast.Expr {
 
 // hoistNestedMRInBlock hoists multi-result calls in argument position
 // throughout a block, inserting temp assignments before the statement.
-func hoistNestedMRInBlock(b *ast.BlockStmt, specByName map[string]*diskMRSpec, counter *int) {
+func hoistNestedMRInBlock(b *ast.BlockStmt, specByName map[string]*mrSpec, counter *int) {
 	var out []ast.Stmt
 	for _, stmt := range b.List {
 		var pre []ast.Stmt
@@ -400,7 +427,7 @@ func hoistNestedMRInBlock(b *ast.BlockStmt, specByName map[string]*diskMRSpec, c
 
 // hoistNestedMRInStmt rewrites one statement, collecting hoisted
 // temporaries in pre.
-func hoistNestedMRInStmt(s ast.Stmt, specByName map[string]*diskMRSpec, counter *int, pre *[]ast.Stmt) ast.Stmt {
+func hoistNestedMRInStmt(s ast.Stmt, specByName map[string]*mrSpec, counter *int, pre *[]ast.Stmt) ast.Stmt {
 	switch stmt := s.(type) {
 	case *ast.ReturnStmt:
 		for i, e := range stmt.Results {
@@ -513,7 +540,7 @@ func hoistNestedMRInStmt(s ast.Stmt, specByName map[string]*diskMRSpec, counter 
 // hoistNestedMRExpr rewrites an expression, hoisting direct
 // multi-result calls in argument position to temps. Returns the
 // rewritten expression; hoisted statements accumulate in pre.
-func hoistNestedMRExpr(e ast.Expr, specByName map[string]*diskMRSpec, counter *int, pre *[]ast.Stmt) ast.Expr {
+func hoistNestedMRExpr(e ast.Expr, specByName map[string]*mrSpec, counter *int, pre *[]ast.Stmt) ast.Expr {
 	call, ok := e.(*ast.CallExpr)
 	if !ok {
 		return e
@@ -542,8 +569,9 @@ func hoistNestedMRExpr(e ast.Expr, specByName map[string]*diskMRSpec, counter *i
 					tmpName := fmt.Sprintf("__mr_arg_%d", *counter)
 					*counter++
 					helperCall := &ast.CallExpr{
-						Fun:  ast.NewIdent(spec.helper),
-						Args: inner.Args,
+						Fun:      ast.NewIdent(spec.helper),
+						Args:     inner.Args,
+						Ellipsis: inner.Ellipsis,
 					}
 					*pre = append(*pre, &ast.AssignStmt{
 						Lhs: []ast.Expr{ast.NewIdent(tmpName)},
@@ -611,6 +639,57 @@ func resultTypesFL(results *ast.FieldList) []ast.Expr {
 	return out
 }
 
+// ensureNamedParams assigns fresh names to unnamed fields in fl,
+// avoiding collisions with bound. Used when the transform prepends a
+// named receiver to possibly-unnamed params.
+func ensureNamedParams(fl *ast.FieldList, bound map[string]bool) {
+	if fl == nil {
+		return
+	}
+	n := 0
+	for _, fld := range fl.List {
+		if len(fld.Names) > 0 {
+			continue
+		}
+		for {
+			cand := fmt.Sprintf("__arg%d", n)
+			n++
+			if !bound[cand] {
+				fld.Names = []*ast.Ident{ast.NewIdent(cand)}
+				bound[cand] = true
+				break
+			}
+		}
+	}
+}
+
+// renameBlankResults renames blank (`_`) result names in fd to fresh
+// identifiers, avoiding collisions with names already bound in fd.
+// See transformMRFunc for why.
+func renameBlankResults(fd *ast.FuncDecl) {
+	if fd.Type.Results == nil {
+		return
+	}
+	bound := locallyBoundNames(fd)
+	n := 0
+	for _, fld := range fd.Type.Results.List {
+		for _, name := range fld.Names {
+			if name.Name != "_" {
+				continue
+			}
+			for {
+				cand := fmt.Sprintf("__mrblank%d", n)
+				n++
+				if !bound[cand] {
+					name.Name = cand
+					bound[cand] = true
+					break
+				}
+			}
+		}
+	}
+}
+
 // tparamNamesOf returns the type parameter names declared by a FuncType,
 // or nil for a non-generic function.
 func tparamNamesOf(ft *ast.FuncType) []string {
@@ -648,8 +727,15 @@ func genericRef(name string, tparamNames []string) ast.Expr {
 }
 
 // transformMRFunc transforms one multi-result FuncDecl.
-func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames map[string]bool) (diskMRSpec, *ast.GenDecl, *ast.FuncDecl, *ast.FuncDecl) {
+func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames map[string]bool) (mrSpec, *ast.GenDecl, *ast.FuncDecl, *ast.FuncDecl) {
 	name := fd.Name.Name
+	// Blank result names (`_ T`) cannot be declared, guarded, or
+	// returned by name (`_ = _` and `Pair{_, _}` are illegal). Rename
+	// them to fresh identifiers up front; the body cannot reference
+	// `_` by name, so the rename is semantics-preserving and every
+	// downstream step (named decls, guards, bare-return rewrite) just
+	// works.
+	renameBlankResults(fd)
 	recvType := ""
 	if fd.Recv != nil && len(fd.Recv.List) > 0 {
 		recvType = recvBaseName(fd.Recv.List[0].Type)
@@ -674,7 +760,21 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 	// keeps fd.Type (which owns the list); the pair and helper share the
 	// node. go/types gives each declaration its own scope and
 	// type-parameter objects, so the sharing is sound.
+	//
+	// Methods on a generic instantiated type (func (c *Cache[K, V]) Get)
+	// reference the TYPE's parameters, which fd.Type.TypeParams does not
+	// contain (methods cannot declare their own). Without lifting, the
+	// generated helper and pair struct reference K, V undeclared
+	// ("undefined: V"). Lift the parameter list, constraints included,
+	// from the receiver type's declaration in the same file.
 	tparams := fd.Type.TypeParams
+	tparamNames := tparamNamesOf(fd.Type)
+	if len(tparamNames) == 0 && fd.Recv != nil && len(fd.Recv.List) > 0 {
+		if rtp, names := receiverTypeParams(file, fd.Recv.List[0].Type); rtp != nil {
+			tparams = rtp
+			tparamNames = names
+		}
+	}
 
 	// Pair struct: type __F_pair[T ...] struct { f1 T1; f2 T2 }.
 	pairDecl := &ast.GenDecl{
@@ -721,51 +821,56 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 				{Names: []*ast.Ident{ast.NewIdent(recvVarName)}, Type: rv.Type},
 			}, fd.Type.Params.List...),
 		}
+		// The prepended receiver is named; if the original params are
+		// unnamed (e.g. Read([]byte)), the list would mix named and
+		// anonymous — illegal. Name the unnamed params freshly (the
+		// body cannot reference them by name, so this is safe).
+		ensureNamedParams(helperParams, locallyBoundNames(fd))
 	} else {
 		helperParams = fd.Type.Params
 	}
 	_ = recvTypeExpr
-	// If the original had named results AND a bare return, declare
-	// them as locals (the body references them; the pair return no
-	// longer defines them). Declare ONLY the names the body actually
-	// uses: a named result that the body never references is legal Go
+	// If the original had named results, declare them as locals (the
+	// body references them; the pair return no longer defines them).
+	// Declare ALL of them unconditionally, each guarded by `_ = name`:
+	// a named result that the body never references is legal Go
 	// (named results need not be used), but declaring it as an unused
-	// local is a type error ("declared and not used").
-	// The helper's signature drops the named results (it returns the pair
-	// type instead), so any named result the body still references must be
-	// declared as a local. Declare ONLY the results the body genuinely
-	// needs: usedNamedResults is scope-aware — a bare return reads every
-	// named result; otherwise a reference counts only if it resolves to
-	// the result variable itself (shadowing := re-declarations,
-	// declaration positions, struct field names, labels, selectors, and
-	// bare returns inside nested func literals are not uses). Declaring
-	// an unreferenced name trips go/types' "declared and not used" on
-	// the rewritten AST (e.g. protowire.ConsumeVarint's n). Analyzed on
-	// the original body, before rewriteMRReturns reshapes it.
-	usedNames := usedNamedResults(fd)
-	rewrittenBody := rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName)
+	// local is a type error ("declared and not used"). The old
+	// use-analysis was unsound in the other direction too: a read of a
+	// name SHADOWED by an inner := (e.g. fmt's parseArgNumber: the
+	// `width, ok, newi := parsenum(...)` read of the inner ok) was
+	// counted as a read of the named result, declaring a local that
+	// nothing reads — a spurious "declared and not used" on real
+	// stdlib sources. The `_ =` guard makes every declaration used by
+	// construction, so shadowing can no longer break type-checking.
+	rewrittenBody := rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName, tparamNames)
 	var namedDecls []ast.Stmt
-	if len(usedNames) > 0 && fd.Type.Results != nil {
+	if fd.Type.Results != nil {
+		var guardNames []*ast.Ident
 		for _, fld := range fd.Type.Results.List {
 			if len(fld.Names) == 0 {
 				continue
 			}
-			var keep []*ast.Ident
-			for _, n := range fld.Names {
-				if usedNames[n.Name] {
-					keep = append(keep, n)
-				}
-			}
-			if len(keep) > 0 {
-				namedDecls = append(namedDecls, &ast.DeclStmt{
-					Decl: &ast.GenDecl{
-						Tok: token.VAR,
-						Specs: []ast.Spec{
-							&ast.ValueSpec{Names: keep, Type: fld.Type},
-						},
+			namedDecls = append(namedDecls, &ast.DeclStmt{
+				Decl: &ast.GenDecl{
+					Tok: token.VAR,
+					Specs: []ast.Spec{
+						&ast.ValueSpec{Names: fld.Names, Type: fld.Type},
 					},
-				})
+				},
+			})
+			for _, n := range fld.Names {
+				guardNames = append(guardNames, ast.NewIdent(n.Name))
 			}
+		}
+		// One `_ = name` per name: `_ = a, b, c` is illegal (1 variable,
+		// 3 values), but a blank assignment per name is always legal.
+		for _, g := range guardNames {
+			namedDecls = append(namedDecls, &ast.AssignStmt{
+				Lhs: []ast.Expr{ast.NewIdent("_")},
+				Tok: token.ASSIGN,
+				Rhs: []ast.Expr{g},
+			})
 		}
 	}
 	if len(namedDecls) > 0 {
@@ -778,9 +883,10 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 			Params:     helperParams,
 			Results: &ast.FieldList{
 				// GAP-GENERIC-MR: the pair type is generic exactly when
-				// the function is; reference it with explicit type
-				// arguments.
-				List: []*ast.Field{{Type: genericRef(pairType, tparamNamesOf(fd.Type))}},
+				// the function is (including lifted receiver type params
+				// for methods on generic types); reference it with
+				// explicit type arguments.
+				List: []*ast.Field{{Type: genericRef(pairType, tparamNames)}},
 			},
 		},
 		Body: rewrittenBody,
@@ -803,7 +909,7 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 		},
 	}
 
-	spec := diskMRSpec{
+	spec := mrSpec{
 		pkgPath:    pkgPath,
 		name:       name,
 		recvType:   recvType,
@@ -817,8 +923,7 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 	return spec, pairDecl, helperDecl, stubDecl
 }
 
-// recvBaseName extracts the base type name from a receiver type expr.
-func recvBaseName(e ast.Expr) string {
+// recvBaseName extracts the base type name from a receiver type expr.func recvBaseName(e ast.Expr) string {
 	for {
 		switch t := e.(type) {
 		case *ast.StarExpr:
@@ -1440,7 +1545,7 @@ func (w *mrUseWalker) walkLitElem(e ast.Expr, kk, childKK mrKeyKind) {
 //   - return             -> return __Pair{n1, n2} (named results)
 //   - return F(args)     -> __t := __F(args); return __Pair{__t.f1, __t.f2}
 //     (F multi-result; spliced as two statements)
-func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string, mrNames map[string]bool, fd *ast.FuncDecl, recvType, recvVar string) *ast.BlockStmt {
+func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string, mrNames map[string]bool, fd *ast.FuncDecl, recvType, recvVar string, tparamNames []string) *ast.BlockStmt {
 	// Named result names for bare return.
 	var namedResults []string
 	if fd.Type.Results != nil {
@@ -1459,7 +1564,9 @@ func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string,
 		recvVar:      recvVar,
 		// GAP-GENERIC-MR: explicit type arguments for the pair literal
 		// and recursive helper calls (go/types cannot infer them).
-		tparamNames: tparamNamesOf(fd.Type),
+		// tparamNames carries the lifted receiver type parameters for
+		// methods on generic types.
+		tparamNames: tparamNames,
 		funcName:    fd.Name.Name,
 		// Names bound as locals (receiver, params, var/:=): a
 		// return-position call to such a name is a func value, not a
@@ -1776,8 +1883,9 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 				}
 				tmp := ast.NewIdent("__mr_tmp")
 				helperCall := &ast.CallExpr{
-					Fun:  helperFun,
-					Args: call.Args,
+					Fun:      helperFun,
+					Args:     call.Args,
+					Ellipsis: call.Ellipsis,
 				}
 				assign := &ast.AssignStmt{
 					Lhs: []ast.Expr{tmp},
@@ -1819,8 +1927,8 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 	}
 }
 
-// removeDiskMRStubs removes stub FuncDecls from files after type-checking.
-func removeDiskMRStubs(files []*ast.File, specs []diskMRSpec) {
+// removeMRStubs removes stub FuncDecls from files after type-checking.
+func removeMRStubs(files []*ast.File, specs []mrSpec) {
 	stubSet := map[*ast.FuncDecl]bool{}
 	for _, s := range specs {
 		stubSet[s.stub] = true
@@ -1837,19 +1945,19 @@ func removeDiskMRStubs(files []*ast.File, specs []diskMRSpec) {
 	}
 }
 
-// registerDiskMRSpecs adds specs to the dynamic desugar table.
-func registerDiskMRSpecs(specs []diskMRSpec) {
-	diskMRMu.Lock()
-	diskMRSpecs = append(diskMRSpecs, specs...)
-	diskMRMu.Unlock()
+// registerMRSpecs adds specs to the dynamic desugar table.
+func registerMRSpecs(specs []mrSpec) {
+	mrSpecsMu.Lock()
+	mrSpecs = append(mrSpecs, specs...)
+	mrSpecsMu.Unlock()
 }
 
-// lookupDiskMR finds a dynamic desugar entry.
-func lookupDiskMR(pkgPath, name, recvType string) *diskMRSpec {
-	diskMRMu.Lock()
-	defer diskMRMu.Unlock()
-	for i := range diskMRSpecs {
-		s := &diskMRSpecs[i]
+// lookupMRSpec finds a dynamic desugar entry.
+func lookupMRSpec(pkgPath, name, recvType string) *mrSpec {
+	mrSpecsMu.Lock()
+	defer mrSpecsMu.Unlock()
+	for i := range mrSpecs {
+		s := &mrSpecs[i]
 		if s.pkgPath == pkgPath && s.name == name && s.recvType == recvType {
 			return s
 		}
@@ -1857,12 +1965,23 @@ func lookupDiskMR(pkgPath, name, recvType string) *diskMRSpec {
 	return nil
 }
 
-// diskMRHelperFi maps a disk multi-result stub *types.Func to its
+// mrOwnerPackage resolves the *syntheticPackage owning a multi-result
+// transformed package, whether synthetic (built by buildSyntheticPackage)
+// or disk-built (built by buildDiskPackage). The transform runs on both,
+// so every lookup keyed on a transformed package must resolve both.
+func mrOwnerPackage(pkgPath string) (*syntheticPackage, error) {
+	if _, ok := syntheticSources[pkgPath]; ok {
+		return getSyntheticPackage(pkgPath), nil
+	}
+	return getDiskPackage(pkgPath)
+}
+
+// mrHelperFi maps a transformed multi-result stub *types.Func to its
 // __-helper's funcDeclInfo, for generic-instantiation enumeration
 // (scanRoots, GAP-GENERIC-MR). The stub is skipped at synthetic import
 // (never in funcByObj); the helper carries the real body. Returns
-// ok=false when fn is not a disk multi-result stub with a helper.
-func (e *exporter) diskMRHelperFi(fn *types.Func) (*funcDeclInfo, bool) {
+// ok=false when fn is not a transformed multi-result stub with a helper.
+func (e *exporter) mrHelperFi(fn *types.Func) (*funcDeclInfo, bool) {
 	if fn == nil || fn.Pkg() == nil {
 		return nil, false
 	}
@@ -1880,7 +1999,7 @@ func (e *exporter) diskMRHelperFi(fn *types.Func) (*funcDeclInfo, bool) {
 			recvName = nt.Obj().Name()
 		}
 	}
-	spec := lookupDiskMR(fn.Pkg().Path(), fn.Name(), recvName)
+	spec := lookupMRSpec(fn.Pkg().Path(), fn.Name(), recvName)
 	if spec == nil || spec.helper == "" {
 		return nil, false
 	}
@@ -1893,7 +2012,7 @@ func (e *exporter) diskMRHelperFi(fn *types.Func) (*funcDeclInfo, bool) {
 			return fi, true
 		}
 	}
-	if sp, err := getDiskPackage(fn.Pkg().Path()); err == nil && sp != nil {
+	if sp, err := mrOwnerPackage(fn.Pkg().Path()); err == nil && sp != nil {
 		if obj, ok := sp.pkg.Scope().Lookup(spec.helper).(*types.Func); ok {
 			if fi, ok := e.funcByObj[obj]; ok {
 				return fi, true
@@ -1903,8 +2022,8 @@ func (e *exporter) diskMRHelperFi(fn *types.Func) (*funcDeclInfo, bool) {
 	return nil, false
 }
 
-// diskMRPairType returns the *types.Named pair type from the disk package.
-func diskMRPairType(sp *syntheticPackage, spec *diskMRSpec) *types.Named {
+// mrPairType returns the *types.Named pair type from the transformed package.
+func mrPairType(sp *syntheticPackage, spec *mrSpec) *types.Named {
 	obj := sp.pkg.Scope().Lookup(spec.pairType)
 	if obj == nil {
 		return nil
@@ -1913,11 +2032,11 @@ func diskMRPairType(sp *syntheticPackage, spec *diskMRSpec) *types.Named {
 	return tn
 }
 
-// classifyDiskMultiResultCall desugars multi-result calls to disk-package
-// functions transformed by transformDiskMultiResult. Mirrors
+// classifyTransformedMRCall desugars multi-result calls to functions
+// transformed by transformMultiResult (synthetic or disk-built). Mirrors
 // classifyM9MultiResultCall but consults the dynamic table and resolves
-// the pair type from the disk-built package.
-func classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+// the pair type from the owning package.
+func classifyTransformedMRCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil
 	}
@@ -1935,12 +2054,12 @@ func classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.T
 			recvName = nt.Obj().Name()
 		}
 	}
-	spec := lookupDiskMR(pkgPath, fn.Name(), recvName)
+	spec := lookupMRSpec(pkgPath, fn.Name(), recvName)
 	if spec == nil {
 		return nil
 	}
 	// BUG-MODPROBE-005: interface specs (helper == "") are only
-	// reachable via classifyDiskIfaceMultiResultCall (the interface
+	// reachable via classifyTransformedIfaceMRCall (the interface
 	// dispatch path). A concrete-position desugar must never match
 	// them — there is no helper to call.
 	if spec.helper == "" {
@@ -1949,11 +2068,11 @@ func classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.T
 	if sig.Results().Len() != len(spec.pairFields) {
 		return nil
 	}
-	sp, err := getDiskPackage(pkgPath)
+	sp, err := mrOwnerPackage(pkgPath)
 	if err != nil {
 		return nil
 	}
-	nt := diskMRPairType(sp, spec)
+	nt := mrPairType(sp, spec)
 	if nt == nil {
 		return nil
 	}
@@ -1965,7 +2084,6 @@ func classifyDiskMultiResultCall(pkgPath string, fn *types.Func, targs []types.T
 		tmpType:     nt,
 		pairFields:  spec.pairFields,
 		prependRecv: recvName != "",
-		isDisk:      true,
 	}
 }
 
@@ -1983,17 +2101,17 @@ func mrCallName(call *ast.CallExpr) string {
 	return ""
 }
 
-// classifyDiskIfaceMultiResultCall recognizes WS G (P3-M9) multi-result
+// classifyTransformedIfaceMRCall recognizes WS G (P3-M9) multi-result
 // calls on interface values whose method is a disk-package interface
-// method registered by transformDiskMultiResult (BUG-MODPROBE-005). It
+// method registered by transformMultiResult (BUG-MODPROBE-005). It
 // mirrors classifyIfaceMultiResultCall but consults the dynamic
-// diskMRSpecs table instead of m8IfaceMultiResultMethods. The itab maps
+// mrSpecs table instead of m8IfaceMultiResultMethods. The itab maps
 // the interface method to each concrete type's pair-returning __-helper
 // (wired via multiResultHelperFunc's disk fallback), so the node yields
 // the pair and field extraction proceeds like the concrete Appendix M
 // desugar. Returns nil when the method is not a registered disk
 // interface method.
-func (e *exporter) classifyDiskIfaceMultiResultCall(selection *types.Selection) *mrPlan {
+func (e *exporter) classifyTransformedIfaceMRCall(selection *types.Selection) *mrPlan {
 	if selection.Kind() != types.MethodVal {
 		return nil
 	}
@@ -2019,7 +2137,7 @@ func (e *exporter) classifyDiskIfaceMultiResultCall(selection *types.Selection) 
 	if !ok || nt.Obj() == nil {
 		return nil
 	}
-	spec := lookupDiskMR(pkgPath, f.Name(), nt.Obj().Name())
+	spec := lookupMRSpec(pkgPath, f.Name(), nt.Obj().Name())
 	if spec == nil {
 		return nil
 	}
@@ -2030,7 +2148,7 @@ func (e *exporter) classifyDiskIfaceMultiResultCall(selection *types.Selection) 
 	if err != nil {
 		return nil
 	}
-	pt := diskMRPairType(sp, spec)
+	pt := mrPairType(sp, spec)
 	if pt == nil {
 		return nil
 	}

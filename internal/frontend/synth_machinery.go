@@ -281,11 +281,6 @@ var syntheticSources = map[string]string{
 	"internal/poll":         syntheticPollSource,
 	"internal/nettrace":     syntheticNettraceSource,
 	"internal/singleflight": syntheticSingleflightSource,
-	// P3-M9 (RC-6): synthetic internal/graalgo/fmtstate package (real-Go
-	// source in synth_fmtstate.go): the fmt.State implementation used by
-	// Fmt.handleMethods for fmt.Formatter dispatch. Synthetic-only (not in
-	// the user import allow-list).
-	"internal/graalgo/fmtstate": syntheticFmtstateSource,
 	// P3-M9 (tier-5: compress): synthetic compress/* packages (real-Go
 	// sources in synth_compress_{flate,gzip,zlib,lzw,bzip2}.go, generated
 	// by gen_synth_compress.py from gc 1.27.1). gzip/zlib import the
@@ -854,10 +849,17 @@ func buildSyntheticPackage(path string) *syntheticPackage {
 		Instances:  make(map[*ast.Ident]types.Instance),
 	}
 	conf := types.Config{Importer: overlayImporter{}}
+	// Multi-result: rewrite multi-result FuncDecls to the __-helper +
+	// stub shape BEFORE type-checking (the same mechanical transform
+	// disk packages get). Functions with static Appendix-M table
+	// entries are skipped by the transform itself (hasStaticMREntry);
+	// the static tables serve them.
+	mrSpecs := transformMultiResult(path, []*ast.File{file})
 	pkg, err := conf.Check(path, fset, []*ast.File{file}, info)
 	if err != nil {
 		panic("gofrontend: synthetic " + path + " type error: " + err.Error())
 	}
+	registerMRSpecs(mrSpecs)
 	return &syntheticPackage{
 		path: path, src: src, pkg: pkg,
 		files: []*ast.File{file}, info: info, fset: fset,
@@ -1211,7 +1213,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	for _, fi := range g.fis {
 		depFuncs[fi.obj] = fi.fd
 	}
-	// P3-M9 (BUG-MODPROBE-009): the disk multi-result transformation
+	// P3-M9 (BUG-MODPROBE-009): the multi-result transformation
 	// splits F into a __F helper (real body) + F stub (panic body), and
 	// the stub is skipped from g.fis above. But package-var initializers
 	// reference the STUB name, so orderVarInits' transitive scan would
@@ -1220,8 +1222,8 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	// reaches via xtob). Map each stub's func object to its helper's
 	// body so the dependency analysis follows the real implementation.
 	// Interface-method specs have no helper/stub and are skipped.
-	for i := range diskMRSpecs {
-		spec := &diskMRSpecs[i]
+	for i := range mrSpecs {
+		spec := &mrSpecs[i]
 		if spec.pkgPath != sp.path || spec.helper == "" || spec.stub == nil {
 			continue
 		}
