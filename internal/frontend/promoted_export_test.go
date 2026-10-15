@@ -5,8 +5,10 @@ package main
 // the declaring method, with the receiver adapted along go/types'
 // Selection.Index() path (a "selector" wire node, mirroring exportSelector
 // and the P3-M3 method-table "index" path). Ambiguous selectors never
-// resolve; implicit &/* adaptation stays a WS D scope error; direct-method
-// calls are byte-identical to before (no selector on the receiver).
+// resolve; implicit &/* on non-addressable receivers stays a WS D scope
+// error; addressable receivers take the implicit & per Go spec
+// (fix-purego-wsd); direct-method calls are byte-identical to before
+// (no selector on the receiver).
 //
 // Red-green: every success case fails before the GAP-6 change with
 // "gofrontend: method M not found on Outer" (the receiver adaptation in
@@ -245,10 +247,13 @@ func main() {
 	}
 }
 
-// TestPromotedCallPointerRecvViaValueEmbedFailsFast: a pointer-receiver
-// method promoted via a VALUE-embedded field needs gc's implicit & on the
-// field; the adaptation must not invent it — WS D scope error, named.
-func TestPromotedCallPointerRecvViaValueEmbedFailsFast(t *testing.T) {
+// TestPromotedCallPointerRecvViaValueEmbedAddrOf: a pointer-receiver
+// method promoted via a VALUE-embedded field on an ADDRESSABLE receiver
+// takes the receiver's address implicitly per Go spec (x.M() → (&x).M()).
+// fix-purego-wsd: this is valid Go (poly1305's h.mac.Sum); the exporter
+// emits an "addrof" wire node before walking recvPath.
+// Red-green: fails before the fix with the WS D scope error.
+func TestPromotedCallPointerRecvViaValueEmbedAddrOf(t *testing.T) {
 	const src = `package main
 
 type Buf struct{ n int }
@@ -262,12 +267,45 @@ func main() {
 	println(v.Write())
 }
 `
+	doc, err := ExportFile(writeIfaceProg(t, src))
+	if err != nil {
+		t.Fatalf("addressable promoted pointer-receiver call failed: %v", err)
+	}
+	d := decodeExport(t, doc)
+	// The receiver must be wrapped in addrof before the recvPath adaptation.
+	mr := singleMethodRef(t, d)
+	recv := methodRefRecv(t, mr)
+	if recv["kind"] != "addrof" {
+		t.Fatalf("want addrof receiver for implicit &, got %v", recv["kind"])
+	}
+}
+
+// TestPromotedCallPointerRecvViaValueEmbedNonAddrFailsFast: the same
+// promoted pointer-receiver method on a NON-addressable receiver (a
+// composite literal) is rejected by go/types itself ("cannot call pointer
+// method"), before the exporter runs — matching gc. The exporter's
+// isAddressable guard in resolvePromotedMethodCall is defensive: it keeps
+// the named WS D scope error for any non-addressable shape go/types
+// might accept, never inventing an & where Go forbids it.
+func TestPromotedCallPointerRecvViaValueEmbedNonAddrFailsFast(t *testing.T) {
+	const src = `package main
+
+type Buf struct{ n int }
+
+func (b *Buf) Write() int { return b.n }
+
+type V struct{ Buf }
+
+func main() {
+	println(V{Buf{n: 1}}.Write())
+}
+`
 	_, err := ExportFile(writeIfaceProg(t, src))
 	if err == nil {
-		t.Fatal("expected WS D scope error (implicit address-of), got success")
+		t.Fatal("expected type error (cannot call pointer method on non-addressable V), got success")
 	}
-	if !strings.Contains(err.Error(), "implicit address-of or deref") {
-		t.Fatalf("error %q does not name the WS D implicit &/* scope error", err)
+	if !strings.Contains(err.Error(), "cannot call pointer method") {
+		t.Fatalf("error %q does not match gc's rejection of pointer method on non-addressable value", err)
 	}
 }
 
