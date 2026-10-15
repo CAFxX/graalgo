@@ -4,6 +4,9 @@
 **Goal:** Replace the bodge-y v1 frontend with a clean parser → AST → IR
 pipeline. No synthetic packages, no package-name special cases, no stdlib-call
 desugaring, no import overlay.
+**Scope:** The new frontend accepts **ALL Go syntax from the start** — the
+complete Go 1.27 language, including generics (type parameters, instantiation,
+constraints), not a subset. If `go/parser` accepts it, v2 handles it.
 **IR contract:** Unchanged. v2 emits the same `frontend/v1` JSON wire format
 specified in [frontend-v1.md](frontend-v1.md), consumed by
 `graalgo.frontend.NodeFactory`. The backend does not change.
@@ -56,6 +59,11 @@ reaches differential parity on the corpus.
 - Walks the typed AST and emits `frontend/v1` JSON.
 - **One node type → one emit function.** No 12k-line monolith. The emitter
   is organized by AST node kind, each in its own file.
+- **Full Go 1.27 syntax from the start.** Every AST node kind that
+  `go/parser` produces must have an emitter — including generics
+  (`TypeSpec` with type params, `IndexListExpr`, instantiations),
+  all statement types, all expression types, all declarations. No subset.
+  If a node kind is unhandled, that is a compile error, not a silent skip.
 - **No desugaring of stdlib calls.** If the source says `fmt.Fprint`, the IR
   says `fmt.Fprint`. If the backend cannot handle it, fix the backend.
 - **Legitimate lowerings only**: language-level desugaring that `go/types`
