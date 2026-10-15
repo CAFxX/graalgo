@@ -523,6 +523,29 @@ public final class SchedulerCore {
         return liveGoroutines.get();
     }
 
+    /**
+     * Number of goroutines that currently exist, for
+     * {@code runtime.NumGoroutine} (gc: "returns the number of goroutines
+     * that currently exist", {@code src/runtime/debug.go}).
+     *
+     * <p>Definition (graalgo): a goroutine exists from the moment
+     * {@link #spawn} returns (the count increments immediately after the
+     * vthread starts) until its body completes (the count decrements in
+     * the vthread's {@code finally} block, before the EXIT token is
+     * offered). Blocked/parked goroutines — channel waits, mutexes,
+     * timers, scheduler parks — count, exactly like gc, which counts
+     * waiting goroutines. The main goroutine counts: launchers run main
+     * via {@code spawn}, so a fresh program observes 1, like gc.
+     *
+     * <p>The only window the count misses is the instant between
+     * {@code vthread.start()} and the increment; no "created but not
+     * started" goroutine is observable to Go code, matching gc where a
+     * goroutine exists from {@code newproc} on.
+     */
+    public int numGoroutines() {
+        return liveGoroutines.get();
+    }
+
     /** Highest in-flight count observed by the drainer. */
     public int maxInflightObserved() {
         return drainer.maxInflightObserved();

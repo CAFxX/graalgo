@@ -7,6 +7,7 @@ import graalgo.p3builtin.nodes.ClearNode;
 import graalgo.p3builtin.nodes.GoMaxProcsNode;
 import graalgo.p3builtin.nodes.MinMaxNode;
 import graalgo.p3builtin.nodes.NumCPUNode;
+import graalgo.p3builtin.nodes.NumGoroutineNode;
 import graalgo.p3chan.nodes.ChanCloseNode;
 import graalgo.p3chan.nodes.ChanLenCapNode;
 import graalgo.p3chan.nodes.ChanRecvNode;
@@ -139,6 +140,7 @@ public final class P3KindRegistrations implements WireKindRegistrar {
         factory.registerExprKind("clear",
                 (node, ctx) -> ClearNode.build(node, ctx, factory));
         factory.registerExprKind("runtimenumcpu", NumCPUNode::build);
+        factory.registerExprKind("runtimenumgoroutine", NumGoroutineNode::build);
         factory.registerExprKind("runtimegomaxprocs",
                 (node, ctx) -> GoMaxProcsNode.build(node, ctx, factory));
         // Stack-inspection family (synthetic runtime package).
