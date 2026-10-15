@@ -399,7 +399,7 @@ func resolvePkgTree(path string) (*syntheticPackage, error) {
 		return getSyntheticPackage(path), nil
 	}
 	switch path {
-	case "runtime", "fmt", "unsafe":
+	case "runtime", "unsafe":
 		return nil, nil
 	}
 	return getDiskPackage(path)
