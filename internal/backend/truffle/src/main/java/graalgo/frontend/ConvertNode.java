@@ -271,10 +271,8 @@ public final class ConvertNode extends GoExprNode {
     private graalgo.values.GoSlice stringToSlice(graalgo.values.GoString s) {
         byte[] bytes = s.bytes();
         if (sliceElemKind == GoKind.UINT8) {
-            int[] arr = new int[bytes.length];
-            for (int i = 0; i < bytes.length; i++) {
-                arr[i] = bytes[i] & 0xFF;
-            }
+            // []byte is byte[]-backed (D5).
+            byte[] arr = bytes.clone();
             return new graalgo.values.GoSlice(arr, 0, arr.length, arr.length);
         } else { // INT32 (rune)
             // bug-005: Go's []rune(string) decodes with utf8.DecodeRuneInString

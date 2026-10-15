@@ -185,14 +185,9 @@ public final class ReflectValues {
     // ------------------------------------------------------------------
 
     public static Object newArray(GoKind elemKind, int len) {
-        return switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> new int[len];
-            case INT64, UINT64 -> new long[len];
-            case FLOAT32 -> new float[len];
-            case FLOAT64 -> new double[len];
-            case BOOL -> new boolean[len];
-            default -> new Object[len];
-        };
+        // Single canonical allocator: Boxing.newArray owns the kind→backing
+        // mapping (D5). This wrapper exists for call-site continuity only.
+        return graalgo.frontend.Boxing.newArray(elemKind, len);
     }
 
     public static Object arrayGet(Object array, GoKind elemKind, int i) {

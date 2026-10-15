@@ -183,10 +183,8 @@ public final class TlsRuntime {
         if (b == null) {
             return null;
         }
-        int[] arr = new int[b.length];
-        for (int i = 0; i < b.length; i++) {
-            arr[i] = b[i] & 0xFF;
-        }
+        // []byte is byte[]-backed (D5).
+        byte[] arr = b.clone();
         return new GoSlice(arr, 0, arr.length, arr.length);
     }
 

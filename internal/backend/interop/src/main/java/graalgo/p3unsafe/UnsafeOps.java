@@ -66,7 +66,9 @@ public final class UnsafeOps {
      */
     static Class<?> expectedArrayClass(GoKind elemKind) {
         return switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> int[].class;
+            case INT8, UINT8 -> byte[].class;
+            case INT16, UINT16 -> short[].class;
+            case INT32, UINT32 -> int[].class;
             case INT64, UINT64, UNTYPED_INT -> long[].class;
             case FLOAT32 -> float[].class;
             case FLOAT64, UNTYPED_FLOAT -> double[].class;
