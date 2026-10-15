@@ -177,3 +177,26 @@ func main() {
 		t.Fatalf("ExportFile with runtime.Frame fields: %v", err)
 	}
 }
+
+// TestRuntimeNumGoroutineExport: runtime.NumGoroutine lowers to the
+// additive "runtimenumgoroutine" wire node. Red-green: this fails before
+// the overlay declares NumGoroutine (`undefined: runtime.NumGoroutine`,
+// the PKG-023 iter failure) and passes after.
+func TestRuntimeNumGoroutineExport(t *testing.T) {
+	src := `package main
+
+import "runtime"
+
+func main() {
+	n := runtime.NumGoroutine()
+	_ = n
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with runtime.NumGoroutine: %v", err)
+	}
+	if !strings.Contains(out, `"kind": "runtimenumgoroutine"`) {
+		t.Errorf("exported JSON missing \"kind\": \"runtimenumgoroutine\"")
+	}
+}
