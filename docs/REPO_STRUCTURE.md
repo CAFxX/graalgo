@@ -70,7 +70,11 @@ Related: [Makefile](../Makefile) (root build entry point),
       [`graalgo.rtstack`](../internal/backend/interop/src/main/java/graalgo/rtstack/)
       (the synthetic `runtime` package's stack-inspection intrinsics:
       `Callers`/`Caller`/`CallersFrames`/`FuncForPC` and the
-      `Frames`/`Func` methods).
+      `Frames`/`Func` methods) plus
+      [`graalgo.p3log`](../internal/backend/interop/src/main/java/graalgo/p3log/)
+      (shared diagnostic logging for launch-time warnings; backed by
+      `java.util.logging` — raw `System.err` printing is rejected by the
+      interop `check` gate).
   - [driver/](../internal/driver/) — build orchestration: module-aware
     builds, build caching (toolexec-equivalent), package resolution. This is
     what makes `graalgo build` a drop-in for `go build` in Phase 4.
