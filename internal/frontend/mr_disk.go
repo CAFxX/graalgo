@@ -756,7 +756,12 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 			var keep []*ast.Ident
 			for _, n := range fld.Names {
 				if usedNames[n.Name] {
-					keep = append(keep, n)
+					// Fresh ident: reusing n would share its *ast.Object
+					// with the stub's named result (the stub reuses
+					// fd.Type), and go/types then misattributes uses —
+					// notably references from inside closures — as
+					// "declared and not used".
+					keep = append(keep, ast.NewIdent(n.Name))
 				}
 			}
 			if len(keep) > 0 {
@@ -768,6 +773,18 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 						},
 					},
 				})
+				// Mark each declared name as used: a named result that
+				// is only assigned (e.g. in a defer closure) but never
+				// read would trip go/types' "declared and not used" as
+				// a local variable. The blank assignment is a no-op
+				// that satisfies the use check.
+				for _, n := range keep {
+					namedDecls = append(namedDecls, &ast.AssignStmt{
+						Lhs: []ast.Expr{ast.NewIdent("_")},
+						Tok: token.ASSIGN,
+						Rhs: []ast.Expr{ast.NewIdent(n.Name)},
+					})
+				}
 			}
 		}
 	}
