@@ -73,6 +73,10 @@ public final class GoEquality {
             // Array map keys (e.g. [16]byte UUID keys).
             return java.util.Arrays.equals(ba2, bb2);
         }
+        if (a instanceof short[] sa2 && b instanceof short[] sb2) {
+            // Array map keys (e.g. [8]int16 keys).
+            return java.util.Arrays.equals(sa2, sb2);
+        }
         if (a instanceof int[] ia2 && b instanceof int[] ib2) {
             return java.util.Arrays.equals(ia2, ib2);
         }
@@ -187,6 +191,9 @@ public final class GoEquality {
         }
         if (key instanceof byte[] ba) {
             return java.util.Arrays.hashCode(ba);
+        }
+        if (key instanceof short[] sa) {
+            return java.util.Arrays.hashCode(sa);
         }
         if (key instanceof int[] ia) {
             return java.util.Arrays.hashCode(ia);

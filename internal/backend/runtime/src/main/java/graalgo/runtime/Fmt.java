@@ -1809,17 +1809,13 @@ public final class Fmt {
                     return new byte[0];
                 }
                 byte[] out = new byte[s.len()];
-                Object arr = s.array();
-                for (int i = 0; i < s.len(); i++) {
-                    out[i] = (byte) ((int[]) arr)[s.offset() + i];
-                }
+                // []byte is byte[]-backed (D5).
+                System.arraycopy((byte[]) s.array(), s.offset(), out, 0, s.len());
                 return out;
             }
             int n = java.lang.reflect.Array.getLength(v);
             byte[] out = new byte[n];
-            for (int i = 0; i < n; i++) {
-                out[i] = (byte) ((int[]) v)[i];
-            }
+            System.arraycopy((byte[]) v, 0, out, 0, n);
             return out;
         }
 
@@ -1906,8 +1902,13 @@ public final class Fmt {
         private static Object boxArrayElement(Object array, GoKind elemKind, int i) {
             // M7: canonical boxing is Integer for all ≤32-bit int kinds
             // (Boxing.box); Byte/Short would break the printValue switch.
+            // Backing width follows the kind's bit-width (D5).
             return switch (elemKind) {
-                case INT8, UINT8, INT16, UINT16, INT32, UINT32 -> Integer.valueOf(((int[]) array)[i]);
+                case INT8 -> Integer.valueOf(((byte[]) array)[i]);
+                case UINT8 -> Integer.valueOf(((byte[]) array)[i] & 0xFF);
+                case INT16 -> Integer.valueOf(((short[]) array)[i]);
+                case UINT16 -> Integer.valueOf(((short[]) array)[i] & 0xFFFF);
+                case INT32, UINT32 -> Integer.valueOf(((int[]) array)[i]);
                 case INT64, UINT64 -> Long.valueOf(((long[]) array)[i]);
                 case FLOAT32 -> Float.valueOf(((float[]) array)[i]);
                 case FLOAT64 -> Double.valueOf(((double[]) array)[i]);

@@ -6,7 +6,8 @@ import com.oracle.truffle.api.frame.FrameSlotKind;
  * The Go value kinds relevant to Phase 1, per PLAN.md D5 (value-model Java
  * mapping).
  *
- * <p>Mapping: int8/16/32 + uint8/16/32 → {@code int}; int64/uint64/int/uint/
+ * <p>Mapping: int8/uint8 → {@code byte[]}, int16/uint16 → {@code short[]},
+ * int32/uint32 → {@code int}; int64/uint64/int/uint/
  * uintptr → {@code long}; float32 → {@code float}; float64 → {@code double};
  * bool → {@code boolean}; string → {@link GoString}; slice → {@link GoSlice};
  * array → typed Java array; struct → {@link GoStruct}; map → {@link GoMap};

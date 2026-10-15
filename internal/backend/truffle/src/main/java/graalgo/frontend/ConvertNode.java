@@ -303,16 +303,16 @@ public final class ConvertNode extends GoExprNode {
         if (s == null) {
             return graalgo.values.GoString.EMPTY;
         }
-        int[] arr = (int[]) s.array();
+        Object raw = s.array();
         int offset = s.offset();
         int len = s.len();
         if (sliceElemKind == GoKind.UINT8) {
+            // []byte is byte[]-backed (D5): direct copy.
             byte[] bytes = new byte[len];
-            for (int i = 0; i < len; i++) {
-                bytes[i] = (byte) arr[offset + i];
-            }
+            System.arraycopy((byte[]) raw, offset, bytes, 0, len);
             return new graalgo.values.GoString(bytes);
         } else { // INT32 (rune)
+            int[] arr = (int[]) raw;
             StringBuilder sb = new StringBuilder(len);
             for (int i = 0; i < len; i++) {
                 int cp = arr[offset + i];

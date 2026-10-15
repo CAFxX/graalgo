@@ -242,11 +242,8 @@ public final class FmtMethodDispatch implements Fmt.GoMethodDispatch {
                 Object res = GoCalls.invoke((GoFunc) f, new Object[]{Integer.valueOf(r)});
                 return Boolean.TRUE.equals(res);
             });
-            // int[]-backed: the D5 representation of []byte.
-            int[] arr = new int[tok.length];
-            for (int i = 0; i < tok.length; i++) {
-                arr[i] = tok[i] & 0xFF;
-            }
+            // byte[]-backed: the D5 representation of []byte.
+            byte[] arr = tok.clone();
             return makePair(new GoSlice(arr, 0, arr.length, arr.length), null);
         });
         // Width() (wid int, ok bool)
