@@ -280,10 +280,18 @@ func buildDiskPackage(importPath string) (*syntheticPackage, error) {
 	// P3-driver-harden (jsonlib lane): the GRAALGO_BUILD_TAGS env var
 	// (space-separated) adds extra build tags, e.g. purego to select
 	// pure-Go fallbacks over assembly stubs (segmentio/asm).
+	// ASM Phase 1 (pure-Go fallback selection): graalgo cannot process Go
+	// assembly (.s files), so the purego tag is always on. This selects
+	// pure-Go fallbacks (*_generic.go, `|| purego`) over assembly
+	// declarations (`!purego`) using Go's own general mechanism for "no
+	// assembly" — upstream-validated, no per-package lists. Bodyless
+	// functions with no pure-Go fallback (e.g. internal/cpu.cpuid) get
+	// the general "unimplemented" marker (exportLinknameDecl); they are
+	// never invoked because graalgo's runtime does not call
+	// internal/cpu.Initialize and the cpu.X86 feature flags stay zero,
+	// forcing callers onto their generic paths.
 	ctxt := build.Default
-	if tags := os.Getenv("GRAALGO_BUILD_TAGS"); tags != "" {
-		ctxt.BuildTags = append(append([]string{}, ctxt.BuildTags...), strings.Fields(tags)...)
-	}
+	ctxt.BuildTags = append(append([]string{"purego"}, ctxt.BuildTags...), strings.Fields(os.Getenv("GRAALGO_BUILD_TAGS"))...)
 	bp, err := ctxt.ImportDir(dir, 0)
 	if err != nil {
 		return nil, fmt.Errorf("gofrontend: cannot load package %q from %s: %w", importPath, dir, err)
