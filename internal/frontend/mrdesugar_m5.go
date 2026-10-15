@@ -1194,6 +1194,8 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 	// calls the 2-result package-level Dial/DialTimeout, which cannot
 	// appear in return position under WS D, so it desugars to __dialerDial.
 	{"net", "Dial", "Dialer", "__dialerDial", "", "dialPair", []string{"c", "err"}},
+	// real-nethttp: (*Dialer).DialContext (needed by crypto/tls.Dialer).
+	{"net", "DialContext", "Dialer", "__dialerDialContext", "", "dialPair", []string{"c", "err"}},
 	{"net", "Read", "TCPConn", "__tcpConnRead", "", "readPair", []string{"n", "err"}},
 	{"net", "Write", "TCPConn", "__tcpConnWrite", "", "writePair", []string{"n", "err"}},
 	{"net", "Read", "UDPConn", "__udpConnRead", "", "readPair", []string{"n", "err"}},

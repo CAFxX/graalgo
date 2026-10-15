@@ -36,6 +36,7 @@ const syntheticNetSource = `// Copyright 2009 The Go Authors. All rights reserve
 package net
 
 import _ "unsafe" // for go:linkname
+import "context"
 import "errors"
 import "io"
 import "strconv"
@@ -1410,6 +1411,24 @@ type Dialer struct {
 // Dial connects to the address on the named network.
 func (d *Dialer) Dial(network, address string) (Conn, error) {
 	panic("net.Dialer.Dial: unreachable (Appendix-M desugar did not fire)")
+}
+
+// DialContext connects to the address on the named network using the
+// provided context. (real-nethttp: needed by crypto/tls.Dialer.)
+func (d *Dialer) DialContext(ctx context.Context, network, address string) (Conn, error) {
+	panic("net.Dialer.DialContext: unreachable (Appendix-M desugar did not fire)")
+}
+
+// __dialerDialContext is the Appendix M desugar target behind
+// (*Dialer).DialContext: the real body, returning the dialPair.
+func __dialerDialContext(d *Dialer, ctx context.Context, network, address string) dialPair {
+	// Context cancellation is not wired to the dial timeout in this
+	// synthetic implementation; the context is accepted for API
+	// compatibility. A nil context is equivalent to context.Background.
+	if d.Timeout != 0 {
+		return __dialTimeout(network, address, d.Timeout)
+	}
+	return __dial(network, address)
 }
 
 // __dialerDial is the Appendix M desugar target behind (*Dialer).Dial:

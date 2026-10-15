@@ -1109,6 +1109,8 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		// P3-M9: synthetic package funcs by (path, name) for cross-package
 		// generic instantiations.
 		synthFuncIDs: make(map[string]*funcDeclInfo),
+		// real-nethttp: linkname stub -> provider aliases.
+		linknameAlias: make(map[*types.Func]*funcDeclInfo),
 		sizes:        types.SizesFor("gc", "amd64"),
 		// P3-M8: track imported synthetic packages for idempotency.
 		importedSynthetic: make(map[string]bool),
@@ -3081,6 +3083,13 @@ type exporter struct {
 	// isolation issue as vars; used when resolving generic instantiations
 	// from importing packages (e.g., slices.SortFunc from flate).
 	synthFuncIDs map[string]*funcDeclInfo
+	// real-nethttp: //go:linkname consumer stubs (bodyless funcdecls with a
+	// two-field symbol like net/textproto.readMIMEHeader) alias to their
+	// provider funcdecls. Calls to the stub are rewritten to direct calls
+	// to the provider, so multi-result providers work through the normal
+	// pair-returning convention. General mechanism: any linkname whose
+	// symbol resolves via synthFuncIDs gets an alias.
+	linknameAlias map[*types.Func]*funcDeclInfo
 	sizes        types.Sizes
 	// M6 (WS H): active type-parameter substitution while exporting a
 	// monomorphized instantiation body (nil outside instantiations). See
@@ -6361,6 +6370,21 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
 		}
 		fields["linkname"] = symbol
+		// real-nethttp: if the linkname symbol resolves to a compiled
+		// funcdecl (via synthFuncIDs), alias the stub to the provider so
+		// calls lower to a direct provider call. This makes multi-result
+		// linkname targets (e.g. net/textproto.readMIMEHeader) work through
+		// the normal pair-returning convention. The symbol is either
+		// pkgpath.name (two-field form) or a bare name (single-field form,
+		// which is a provider declaration, not a consumer).
+		if strings.Contains(symbol, ".") {
+			if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
+				if e.linknameAlias == nil {
+					e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
+				}
+				e.linknameAlias[fi.obj] = providerFi
+			}
+		}
 	}
 	return e.node("funcdecl", fd, fields), nil
 }
@@ -9262,6 +9286,13 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	if isAbiFuncPCIntrinsicFunc(fn) {
 		return e.exportAbiFuncPCIntrinsic(c, fn.Name())
 	}
+	// real-nethttp: //go:linkname consumer stubs alias to their provider.
+	// A call to the stub lowers to a direct call to the provider funcdecl,
+	// so multi-result linkname targets use the normal pair-returning
+	// convention. Intercepted before the funcByObj lookup.
+	if providerFi, ok := e.linknameAlias[fn]; ok && providerFi != nil {
+		fn = providerFi.obj
+	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
 	// time.ParseDuration.
@@ -10843,6 +10874,11 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 			// to pair-returning form. The go/types type is still the
 			// original tuple, but the emitted function returns the pair.
 			if fn := e.calledFunc(c); fn != nil {
+				// real-nethttp: resolve linkname stub aliases to the provider
+				// so the provider's pair type is used.
+				if providerFi, ok := e.linknameAlias[fn]; ok && providerFi != nil {
+					fn = providerFi.obj
+				}
 				if mrInfo, ok := e.userMRFuncs[fn]; ok {
 					tid, err := e.typeID(mrInfo.pairType)
 					if err != nil {
