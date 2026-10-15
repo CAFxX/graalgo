@@ -5,6 +5,7 @@ import (
 	"go/build"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -48,7 +49,18 @@ func cmdTest(root string, args []string) int {
 		return 1
 	}
 
-	runner := newTestRunner(root, verbose, runFilter)
+	// Compile the -run filter as a regex, matching `go test` semantics.
+	// An invalid regex is a hard error, like `go test`.
+	var runRe *regexp.Regexp
+	if runFilter != "" {
+		runRe, err = regexp.Compile(runFilter)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "graalgo test: invalid -run regexp %q: %v\n", runFilter, err)
+			return 1
+		}
+	}
+
+	runner := newTestRunner(root, verbose, runRe)
 	failed := false
 	for _, dir := range dirs {
 		if !runner.runPackage(dir) {
@@ -90,13 +102,13 @@ func resolveTestDirs(pkgs []string) ([]string, error) {
 }
 
 type testRunner struct {
-	root      string
-	verbose   bool
-	runFilter string
+	root    string
+	verbose bool
+	runRe   *regexp.Regexp
 }
 
-func newTestRunner(root string, verbose bool, runFilter string) *testRunner {
-	return &testRunner{root: root, verbose: verbose, runFilter: runFilter}
+func newTestRunner(root string, verbose bool, runRe *regexp.Regexp) *testRunner {
+	return &testRunner{root: root, verbose: verbose, runRe: runRe}
 }
 
 // runPackage discovers and runs the tests in one directory.
@@ -182,10 +194,10 @@ func (r *testRunner) runTestFile(dir, testFile string, srcFiles []string) bool {
 		return true
 	}
 
-	// Apply -run filter.
+	// Apply -run filter (regex, like `go test`).
 	var selected []string
 	for _, t := range tests {
-		if r.runFilter == "" || strings.Contains(t, r.runFilter) {
+		if r.runRe == nil || r.runRe.MatchString(t) {
 			selected = append(selected, t)
 		}
 	}
