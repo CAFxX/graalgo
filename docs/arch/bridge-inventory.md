@@ -52,12 +52,22 @@ deliverable until the design lands.
   [graalgo/runtime/](../../internal/backend/runtime/src/main/java/graalgo/runtime/)
   `Fmt`/`FmtScan` — Java reimplementations of stdlib `fmt` formatting and
   scanning logic.
+  - **Frontend half (P1-N2, review-n1):** in
+    [internal/frontend/export.go](../../internal/frontend/export.go),
+    `exportCall` dispatches on the *identifier spelling*
+    (`pkgIdent.Name == "fmt"`) to `exportFmtCall`, which emits the
+    `"fmtcall"` wire node for the ten D4 overlay functions
+    (`fmtOverlayFuncs`) — instead of routing through the general
+    package-level call path. The spelling check (not the resolved package
+    path) is the name-keyed special case.
 - **Why:** the real `fmt` sources did not compile under graalgo, so
   formatting was reimplemented in Java behind a name-keyed node.
 - **Root-cause fix:** make the real `fmt` package compile (fix the
   compiler/runtime properly), then delete the node and the Java
   reimplementations. In flight: worktrees `real-fmt2` and `real-fmt-rebase`
-  ("Retire synthetic fmt package — real fmt now compiles").
+  ("Retire synthetic fmt package — real fmt now compiles") — `real-fmt2`
+  already removes the frontend dispatch (`exportFmtCall` deleted there);
+  retire this entry when that lands on master.
 - **Phase:** 1.
 
 ### B-2. `NodeFactory.syncPrimitiveName` (name-keyed sync lowering)

@@ -413,16 +413,29 @@ func syntheticRuntimePackage() *types.Package {
 
 type overlayImporter struct{}
 
+// dedicatedSyntheticStubs maps the three import paths with dedicated
+// synthetic constructors (not in syntheticSources) to their builders.
+// sync and sync/atomic now resolve from disk (real packages).
+var dedicatedSyntheticStubs = map[string]func() *types.Package{
+	"runtime": syntheticRuntimePackage,
+	"fmt":     syntheticFmtPackage,
+	"unsafe":  syntheticUnsafePackage,
+}
+
+// isDedicatedSyntheticStub reports whether path is one of the three
+// packages with dedicated synthetic constructors (signature-only stubs,
+// not in syntheticSources). Single predicate for the triad (P2-F4,
+// review-n1) — do not re-enumerate the three names at call sites.
+func isDedicatedSyntheticStub(path string) bool {
+	_, ok := dedicatedSyntheticStubs[path]
+	return ok
+}
+
 func (overlayImporter) Import(path string) (*types.Package, error) {
 	// The 3 packages with dedicated synthetic constructors (not in
 	// syntheticSources). sync and sync/atomic now resolve from disk (real packages).
-	switch path {
-	case "runtime":
-		return syntheticRuntimePackage(), nil
-	case "fmt":
-		return syntheticFmtPackage(), nil
-	case "unsafe":
-		return syntheticUnsafePackage(), nil
+	if isDedicatedSyntheticStub(path) {
+		return dedicatedSyntheticStubs[path](), nil
 	}
 	// General (hunt-special-cases): any package with a synthetic source
 	// resolves via getSyntheticPackage — no per-package switch needed.
@@ -751,7 +764,7 @@ func internalImportVisible(importPath, importingDir string) bool {
 // Every other import is a scope error.
 func importAdmitted(path, importingDir string) bool {
 	// The dedicated-constructor packages (sync and sync/atomic now resolve from disk).
-	if path == "runtime" || path == "fmt" || path == "unsafe" {
+	if isDedicatedSyntheticStub(path) {
 		return true
 	}
 	if _, ok := syntheticSources[path]; ok {
@@ -4333,7 +4346,7 @@ func (e *exporter) indexDiskMethodOnDemand(recvObj types.Object, mname string) *
 	if _, ok := syntheticSources[pkgPath]; ok {
 		return nil
 	}
-	if pkgPath == "runtime" || pkgPath == "fmt" || pkgPath == "unsafe" {
+	if isDedicatedSyntheticStub(pkgPath) {
 		return nil
 	}
 	if !isDiskImportable(pkgPath) {
@@ -10777,77 +10790,24 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 			}
 		}
 	}
-	// P3-M5 (WS E, ADR-0005): qualified identifiers time.X / context.X in
-	// expression position (time.Second consts, context.Canceled vars).
-	// P3-M7 (wave 1): errors/sort/bytes/math/strings consts/vars likewise,
-	// plus the 8 encoding/* primitives' consts/vars (base64.StdEncoding,
-	// binary.LittleEndian, hex.ErrLength, asn1.TagNull, ...).
-	// P3-M8 (wave 2): syscall/os/io/fs/reflect/hash/crypto/crypto/*
-	// consts/vars likewise (syscall.EINVAL, reflect.Int, ...).
-	// P3-M9 (wave 3, tier-1a worker): cmp/slices/maps/unicode consts/vars
-	// likewise (utf8.RuneError, unicode.Categories, ...).
+	// P3-M5 (WS E, ADR-0005): qualified identifiers pkg.X in expression
+	// position (time.Second consts, context.Canceled vars, crc32.IEEE,
+	// tls.VersionTLS13, ...).
+	// Registry-driven (P1-N3, review-n1): every package with a synthetic
+	// source resolves through the overlay importer, so qualified
+	// const/var idents lower through exportSyntheticQualified. This
+	// replaces the hand-maintained 115-name chain, which had drifted: 18
+	// syntheticSources entries were missing from it (net, net/http,
+	// net/http/httptest, net/netip, net/textproto, net/url, archive/tar,
+	// archive/zip, mime, mime/multipart, mime/quotedprintable,
+	// internal/reflectlite, iter, internal/byteorder, internal/poll,
+	// internal/nettrace, internal/singleflight,
+	// internal/graalgo/fmtstate).
 	// Method expressions (time.Duration.String) have a SelectorExpr X and
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
-			if p := pkgName.Imported().Path(); p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "math/bits" || p == "math/big" || p == "math/cmplx" || p == "math/rand" || p == "math/rand/v2" || p == "bufio" || p == "path" || p == "text/scanner" || p == "regexp/syntax" || p == "strings" ||
-				p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/xml" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "crypto" ||
-				p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" ||
-				p == "cmp" || p == "slices" || p == "maps" || p == "unicode" || p == "unicode/utf8" || p == "unicode/utf16" ||
-				p == "flag" || p == "testing" || p == "testing/quick" || p == "testing/iotest" ||
-				// P3-M9 (tier-1d): unique/structs consts/vars (none today;
-				// future-proof) and synthetic-only internal/bytealg
-				// (MaxBruteForce/MaxLen, referenced from synthetic sources).
-				p == "unique" || p == "structs" || p == "internal/bytealg" ||
-				// P3-M9 (wave 3, tier-1b): container/* + hash/* consts/vars
-				// (crc32.IEEE, crc64.ECMA, fnv offsets, ...).
-				// P3-M9 (wave 3, tier-5b): compress/* consts/vars
-				// (lzw.LSB/MSB, flate/gzip/zlib level consts).
-				// P3-M9 (tier-5): asymmetric-crypto consts/vars/funcs
-				// (elliptic, ecdh, dsa, ecdsa, ed25519, rsa, hkdf, pbkdf2
-				// plus the internal fips140/* deps and cryptobyte that the
-				// synthetic sources reference as qualified idents —
-				// without this, e.g. nistec.NewP256Point falls through to
-				// exportExpr(x.X) and fails `identifier "nistec" denotes
-				// *types.PkgName`).
-				p == "container/heap" || p == "container/list" || p == "container/ring" ||
-				p == "hash/adler32" || p == "hash/crc32" || p == "hash/crc64" ||
-				p == "hash/fnv" || p == "hash/maphash" ||
-				p == "compress/flate" || p == "compress/gzip" || p == "compress/zlib" ||
-				p == "compress/lzw" || p == "compress/bzip2" ||
-				p == "crypto/elliptic" || p == "crypto/ecdh" || p == "crypto/dsa" ||
-				p == "crypto/ecdsa" || p == "crypto/ed25519" || p == "crypto/rsa" ||
-				p == "crypto/hkdf" || p == "crypto/pbkdf2" ||
-				// P3-M9 (tier-5): synthetic crypto/x509 + crypto/tls
-				// qualified idents in expression position (x509.ExtKeyUsageServerAuth,
-				// tls.VersionTLS13, ...); the call path (exportSyntheticPkgCall)
-				// already routes these packages.
-				p == "crypto/x509" || p == "crypto/x509/pkix" || p == "crypto/tls" ||
-				p == "golang.org/x/crypto/cryptobyte" ||
-				p == "golang.org/x/crypto/cryptobyte/asn1" ||
-				p == "crypto/internal/fips140" || p == "crypto/internal/fips140/check" ||
-				p == "crypto/internal/fips140/alias" || p == "crypto/internal/fips140only" ||
-				p == "crypto/internal/fips140cache" || p == "crypto/internal/fips140hash" ||
-				p == "crypto/internal/fips140/drbg" || p == "crypto/internal/rand" ||
-				p == "crypto/internal/boring/bbig" || p == "crypto/internal/boring" ||
-				p == "crypto/internal/constanttime" ||
-				p == "crypto/internal/fips140deps/byteorder" ||
-				p == "crypto/internal/fips140/nistec/fiat" ||
-				p == "crypto/internal/fips140/nistec" ||
-				p == "crypto/internal/fips140/edwards25519/field" ||
-				p == "crypto/internal/fips140/edwards25519" ||
-				p == "crypto/internal/fips140/bigmod" ||
-				p == "crypto/internal/fips140/subtle" ||
-				p == "crypto/internal/fips140/sha256" ||
-				p == "crypto/internal/fips140/sha512" ||
-				p == "crypto/internal/fips140/sha3" ||
-				p == "crypto/internal/fips140/hmac" ||
-				p == "crypto/internal/fips140/hkdf" ||
-				p == "crypto/internal/fips140/pbkdf2" ||
-				p == "crypto/internal/fips140/ecdh" ||
-				p == "crypto/internal/fips140/ecdsa" ||
-				p == "crypto/internal/fips140/ed25519" ||
-				p == "crypto/internal/fips140/rsa" {
+			if _, ok := syntheticSources[pkgName.Imported().Path()]; ok {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
 				}
