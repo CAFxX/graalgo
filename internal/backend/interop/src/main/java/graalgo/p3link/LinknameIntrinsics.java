@@ -20,6 +20,7 @@ import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Linknames;
 import graalgo.runtime.GoDebug;
 import graalgo.runtime.Timers;
+import graalgo.runtime.sync.GoSemaphore;
 import graalgo.values.GoFunc;
 import graalgo.values.GoString;
 
@@ -117,6 +118,13 @@ public final class LinknameIntrinsics {
         // (runtime.write, godebug setUpdate/registerMetric/
         // setNewIncNonDefault).
         registerGodebugIntrinsics();
+        // real-sync lane: runtime semaphore intrinsics for the real
+        // sync package's runtime_Semacquire/runtime_Semrelease (and
+        // variants). These are declared bodyless in sync/runtime.go;
+        // gc's runtime provides them via //go:linkname. The frontend
+        // emits them as linknames (pkgpath.name); the backend implements
+        // them here with scheduler-aware blocking.
+        registerSyncIntrinsics();
     }
 
     /**
@@ -166,6 +174,61 @@ public final class LinknameIntrinsics {
             GoDebug.setNewIncNonDefault(f);
             return null;
         }, 1);
+    }
+
+    /**
+     * Runtime semaphore intrinsics for the real {@code sync} package
+     * (real-sync lane).
+     *
+     * <p>The real {@code sync} package (go-1.27.1, sync/runtime.go)
+     * declares bodyless functions like {@code func runtime_Semacquire(s
+     * *uint32)}; gc's runtime provides them via {@code //go:linkname}
+     * (src/runtime/sema.go). The frontend emits these as linknames
+     * with symbol {@code pkgpath.name} (e.g.,
+     * {@code "sync.runtime_Semacquire"}); they dispatch here.
+     *
+     * <p>D5 argument types: the {@code *uint32} arrives as a Long
+     * (address); booleans as Boolean/Long; ints as Long/Integer.
+     * Each target adapts explicitly.
+     */
+    private static void registerSyncIntrinsics() {
+        // sync.runtime_Semacquire(s *uint32): wait until *s > 0, then
+        // atomically decrement.
+        Linknames.register("sync.runtime_Semacquire", args -> {
+            long addr = ((Number) args[0]).longValue();
+            GoSemaphore.acquire(new AddressIntCell(addr));
+            return null;
+        }, 1);
+        // sync.runtime_Semrelease(s *uint32, handoff bool, skipframes int):
+        // atomically increment *s, wake one waiter if any. The handoff
+        // and skipframes args affect profiling/tracing only; the
+        // semaphore semantics are identical.
+        Linknames.register("sync.runtime_Semrelease", args -> {
+            long addr = ((Number) args[0]).longValue();
+            GoSemaphore.release(new AddressIntCell(addr));
+            return null;
+        }, 3);
+        // sync.runtime_SemacquireRWMutexR(s *uint32, lifo bool, skipframes int)
+        // sync.runtime_SemacquireRWMutex(s *uint32, lifo bool, skipframes int)
+        // Functionally identical to Semacquire; lifo/skipframes affect
+        // queueing order and profiling only.
+        Linknames.register("sync.runtime_SemacquireRWMutexR", args -> {
+            long addr = ((Number) args[0]).longValue();
+            GoSemaphore.acquire(new AddressIntCell(addr));
+            return null;
+        }, 3);
+        Linknames.register("sync.runtime_SemacquireRWMutex", args -> {
+            long addr = ((Number) args[0]).longValue();
+            GoSemaphore.acquire(new AddressIntCell(addr));
+            return null;
+        }, 3);
+        // sync.runtime_SemacquireWaitGroup(s *uint32, synctestDurable bool):
+        // like Semacquire, for WaitGroup.Wait.
+        Linknames.register("sync.runtime_SemacquireWaitGroup", args -> {
+            long addr = ((Number) args[0]).longValue();
+            GoSemaphore.acquireWaitGroup(new AddressIntCell(addr));
+            return null;
+        }, 2);
     }
 
     /**
