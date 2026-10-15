@@ -35,7 +35,10 @@ reaches differential parity on the corpus.
 
 ### Stage 1 — Parse (`v2/parser/`)
 
-- Wraps `go/parser` (standard library). No custom lexer, no custom grammar.
+- Uses `go/parser` (standard library) via **circular compilation**: graalgo
+  compiles the `go/*` packages (parser, ast, token, etc.) itself, then uses
+  them. No Java reimplementation of the Go parser — less code to maintain.
+  (His 2026-10-15 order: prefer the circular route.)
 - Input: list of `.go` files (same package). Output: `*ast.Package` + `*token.FileSet`.
 - Handles build constraints via `go/build` (GOOS/GOARCH, build tags) — the
   same mechanism v1's `diskimport.go` uses, minus the synthetic overlay.
@@ -43,7 +46,9 @@ reaches differential parity on the corpus.
 
 ### Stage 2 — Check (`v2/checker/`)
 
-- Wraps `go/types` (standard library). No custom type system.
+- Uses `go/types` (standard library) via **circular compilation** (same as
+  Stage 1 — graalgo compiles `go/types` itself). No custom type system,
+  no Java reimplementation.
 - **Importer**: resolves imports from the real GOROOT and module cache.
   No synthetic packages. No overlay. If a package cannot be found on disk,
   that is a compile error — not a signal to synthesize a fake.
