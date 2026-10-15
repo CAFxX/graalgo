@@ -1,6 +1,6 @@
 // 10_args: os.Args from the launcher (R6). The runner passes the
 // fixture args after "--". Only args[1:] are printed — argv[0] is the
-// input-file path under graalgo and the built binary under gc.
+// absolute input-file path under graalgo and the built binary under gc.
 package main
 
 import (
