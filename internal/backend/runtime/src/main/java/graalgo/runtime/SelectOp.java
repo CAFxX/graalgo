@@ -115,6 +115,17 @@ public final class SelectOp {
         claim.compareAndSet(SELF_CLAIM, UNCLAIMED);
     }
 
+    /**
+     * True while the selecting goroutine holds the claim for its
+     * block-phase sweep (transient per-iteration SELF_CLAIM, or a
+     * completed immediate case not yet returned). Used by
+     * {@link GoChan#close()} to distinguish "select still sweeping"
+     * from "select already decided" when a waiter's claim attempt fails.
+     */
+    boolean isSweepActive() {
+        return claim.get() == SELF_CLAIM;
+    }
+
     /** Called by close() when it poisons a blocked select send case. */
     void setPoison(int caseIndex) {
         this.resultIndex = caseIndex;
@@ -276,6 +287,17 @@ public final class SelectOp {
                 JfrEvents.channelBlock(sched.currentGoroutine(), -1, ChannelOp.SELECT);
                 sched.parkCurrent(null, ParkReason.SELECT);
                 throw new IllegalStateException("unreachable: empty select woke");
+            }
+            // A close() that raced the sweep may have poisoned this op
+            // without winning the claim (its waiter-accept failed on the
+            // sweep's transient SELF_CLAIM, so the waiter was dropped):
+            // nothing enqueued on the closed channel can ever wake us, so
+            // parking here would hang forever where gc panics. Check
+            // before parking. (The P0-8 sweep-flag check above covers a
+            // close the sweep itself observed; this covers one it didn't.)
+            if (resultPoison) {
+                cleanup(mine);
+                Panic.throwPanic(GoStrings.of("send on closed channel"));
             }
             // Scheduler-aware park. A waker that claimed us before we park
             // has its UNPARK stashed by the drainer — no wakeup lost.

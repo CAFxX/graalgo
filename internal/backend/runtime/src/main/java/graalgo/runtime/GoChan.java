@@ -382,15 +382,30 @@ public class GoChan implements ChanOps.Chan {
                 if (s instanceof SendWaiter sw) {
                     sw.panicOnWake = true;
                     sched.unpark(sw.handle);
-                } else if (s.accept()) {
-                    // Select send case on a channel being closed: poison.
-                    // The select panics on resume ("send on closed
-                    // channel"); see SelectOp. A select that already
-                    // completed via another case fails accept() and is
-                    // simply dropped here.
+                } else {
+                    // Select send-case waiter.
                     SelectOp.SelectCaseWaiter sw = (SelectOp.SelectCaseWaiter) s;
-                    sw.op.setPoison(sw.caseIndex);
-                    sched.unpark(sw.handle);
+                    if (s.accept()) {
+                        // Won the claim: poison. The select panics on
+                        // resume ("send on closed channel"); see SelectOp.
+                        sw.op.setPoison(sw.caseIndex);
+                        sched.unpark(sw.handle);
+                    } else if (sw.op.isSweepActive()) {
+                        // accept() lost to the sweep's transient
+                        // SELF_CLAIM (not to a decided select): the
+                        // selecting goroutine is mid-sweep and has not
+                        // completed. Silently dropping the waiter here
+                        // would park it forever on the now-closed channel
+                        // (P0-8 race: nothing enqueued on the closed
+                        // channel can wake it). Record the poison so the
+                        // sweep panics before parking. No unpark: the
+                        // goroutine has not parked yet, and a stray unpark
+                        // could spuriously wake a later unrelated park.
+                        sw.op.setPoison(sw.caseIndex);
+                    }
+                    // else: another waker won the claim — the select
+                    // already completed via another case; drop this
+                    // waiter (previous behavior).
                 }
             }
             sendWaiters.clear();
