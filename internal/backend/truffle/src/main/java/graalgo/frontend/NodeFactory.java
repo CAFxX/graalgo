@@ -942,6 +942,43 @@ public final class NodeFactory {
     }
 
     /**
+     * ABI size in bytes of an array type (P3 bug-042): {@code len * elemSize},
+     * recursing for nested arrays. Used by append's growslice math — arrays
+     * are NOT zero-size types, so growslice must not take its zero-size fast
+     * path (which skips copying old elements) for them.
+     */
+    private static long arraySizeBytes(BuildCtx ctx, int typeId, String path) {
+        int[] info = arrayInfo(ctx, typeId, path);
+        if (info[0] < 0) {
+            throw new FrontendException(path + ": arraySizeBytes on non-array type");
+        }
+        int len = info[0];
+        int elemId = info[1];
+        GoKind elemKind = kindOf(ctx, elemId, path);
+        long elemSize;
+        if (elemKind == GoKind.ARRAY) {
+            elemSize = arraySizeBytes(ctx, elemId, path);
+        } else if (elemKind == GoKind.STRUCT) {
+            elemSize = graalgo.runtime.Intrinsics.structSizeBytes(
+                    structDescriptorFor(ctx, elemId, path));
+        } else {
+            elemSize = graalgo.runtime.Intrinsics.elemSizeBytes(elemKind);
+            if (elemSize == 0) {
+                // Slice/map/interface/string/pointer kinds: use Go ABI sizes.
+                // (elemSizeBytes returns 0 for these by design.)
+                elemSize = switch (elemKind) {
+                    case SLICE -> 24;
+                    case STRING -> 16;
+                    case MAP, POINTER, FUNC, CHAN, UNSAFE_POINTER, INTERFACE -> 8;
+                    default -> throw new FrontendException(path
+                            + ": arraySizeBytes: unsupported element kind " + elemKind);
+                };
+            }
+        }
+        return (long) len * elemSize;
+    }
+
+    /**
      * Alias resolution over a bare type table (P3-M7R2): overload for
      * naming helpers that don't have a {@link BuildCtx}. Public for the
      * phase-3 {@code DescriptorNames} replica.
@@ -3897,11 +3934,17 @@ public final class NodeFactory {
         // growslice math (elemSizeBytes(STRUCT) is 0 by design).
         // P3-M9: struct elements also need their descriptor so growslice
         // can zero-initialize new slots.
+        // P3 bug-042: array elements need their ABI size too —
+        // elemSizeBytes(ARRAY) is 0, which made growslice take its
+        // zero-size fast path (skipping the old-element copy) for
+        // non-zero-size array types, losing appended-to elements.
         long elemSizeBytes = 0;
         graalgo.values.GoStructDescriptor elemDesc = null;
         if (elemKind == GoKind.STRUCT) {
             elemDesc = structDescriptorFor(ctx, elemId, path);
             elemSizeBytes = graalgo.runtime.Intrinsics.structSizeBytes(elemDesc);
+        } else if (elemKind == GoKind.ARRAY) {
+            elemSizeBytes = arraySizeBytes(ctx, elemId, path);
         }
         return new AppendNode(args[0], elemKind, elems, ellipsis, elemSizeBytes, elemDesc);
     }
