@@ -6041,9 +6041,6 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Save the original results (with named result vars) before the
-	// multi-result transform below replaces them with the pair.
-	origResults := results
 	// P3-M9 (WS D): user-defined multi-result functions are automatically
 	// transformed to pair-returning form. Synthesize a pair struct type,
 	// change the signature to return it, and transform `return a, b` in
@@ -6101,25 +6098,9 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	// names, define them as locals at the start of the body so assignments
 	// to named results work. The `return` packs them into the pair.
 	if mrInfo != nil {
-		var namedDecls []*Node
-		for _, r := range origResults {
-			name, _ := r.Fields["name"].(string)
-			if name == "" {
-				continue
-			}
-			oid, _ := r.Fields["obj"].(int)
-			tid, _ := r.Fields["type"].(int)
-			// Define as a local var (no initializer; zero value).
-			namedDecls = append(namedDecls, e.node("vardecl", fd.Type, map[string]any{
-				"names": []string{name}, "objs": []int{oid},
-				"define": true, "type": tid, "values": []*Node{},
-			}))
-		}
-		if len(namedDecls) > 0 {
-			stmts := body.Fields["stmts"].([]*Node)
-			body = e.node("block", fd.Body, map[string]any{
-				"stmts": append(namedDecls, stmts...),
-			})
+		body, err = e.prependMRNamedResultDecls(fd.Type, fd.Body, fi.sig, body)
+		if err != nil {
+			return nil, err
 		}
 	}
 	fields := map[string]any{
@@ -6132,6 +6113,52 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 		fields["results"] = results
 	}
 	return e.node("funcdecl", fd, fields), nil
+}
+
+// prependMRNamedResultDecls declares the named results of a pair-transformed
+// user multi-result function as locals at the start of body, so assignments
+// to named results — and a bare `return`, which the ReturnStmt case packs
+// into the pair — resolve to real frame slots. Unnamed and blank results are
+// skipped: they have no name to reference, and a bare return yields zeros
+// for them (the keyed pair literal leaves those fields unset and the backend
+// fills fresh zero values, matching gc). The obj ids come from the
+// already-exported signature vars, so uses inside the body (exported earlier
+// against the same *types.Var objects) share the slots. Shared by
+// exportFuncDecl, exportFuncLit, and the generic-instantiation path: all
+// three apply the pair transform and all three must declare the locals.
+func (e *exporter) prependMRNamedResultDecls(varPos, blockPos ast.Node, sig *types.Signature, body *Node) (*Node, error) {
+	var namedDecls []*Node
+	sigResults := sig.Results()
+	for i := 0; i < sigResults.Len(); i++ {
+		rv := sigResults.At(i)
+		name := rv.Name()
+		if name == "" || name == "_" {
+			continue
+		}
+		oid, ok := e.objIDs[rv]
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: named result %q has no obj id (exporter bug)", name)
+		}
+		tid, err := e.typeID(rv.Type())
+		if err != nil {
+			return nil, err
+		}
+		// Define as a local var (no initializer; zero value).
+		namedDecls = append(namedDecls, e.node("vardecl", varPos, map[string]any{
+			"names": []string{name}, "objs": []int{oid},
+			"define": true, "type": tid, "values": []*Node{},
+		}))
+	}
+	if len(namedDecls) == 0 {
+		return body, nil
+	}
+	stmts, ok := body.Fields["stmts"].([]*Node)
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: MR function body has no stmts (exporter bug)")
+	}
+	return e.node("block", blockPos, map[string]any{
+		"stmts": append(namedDecls, stmts...),
+	}), nil
 }
 
 // linknameDirective scans fd's doc comment for gc's //go:linkname
@@ -6450,6 +6477,14 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Like exportFuncDecl: a transformed instantiation's named results are
+	// locals so assignments and bare returns resolve to real frame slots.
+	if mrInfo != nil {
+		body, err = e.prependMRNamedResultDecls(fd.Type, fd.Body, mrInfo.origSig, body)
+		if err != nil {
+			return nil, err
+		}
+	}
 	fields := map[string]any{
 		"name": inst.name, "obj": inst.instID, "instof": inst.decl.funcID,
 		"typeargs": inst.targIDs, "sig": inst.sigID, "params": params, "body": body,
@@ -6713,6 +6748,54 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 				"fieldkeys": mr.pairFields,
 			})
 			return e.node("return", s, map[string]any{"results": []*Node{pairNode}}), nil
+		}
+		// PKG-034: in a transformed user multi-result function, a bare
+		// `return` must pack the named results into the pair: `return`
+		// becomes `return Pair{f0: n, f1: err}`. Without this the zeroed
+		// pair slot was returned and every named result read back as its
+		// zero value (encoding/* streaming Write/Decode returned 0 /
+		// empty). Unnamed and blank result positions are omitted from the
+		// keyed literal; the backend fills them with fresh zero values,
+		// matching gc (a bare return yields zeros for results with no
+		// name to assign through). When no result is named, fall through
+		// to the plain bare return — the zeroed pair slot already holds
+		// the correct all-zero value.
+		if e.currentMR != nil && len(results) == 0 {
+			mr := e.currentMR
+			pairTypeID, err := e.typeID(mr.pairType)
+			if err != nil {
+				return nil, err
+			}
+			var keys []string
+			var vals []*Node
+			sigResults := mr.origSig.Results()
+			for i := 0; i < sigResults.Len(); i++ {
+				rv := sigResults.At(i)
+				if rv.Name() == "" || rv.Name() == "_" {
+					continue
+				}
+				oid, ok := e.objIDs[rv]
+				if !ok {
+					return nil, fmt.Errorf("gofrontend: named result %q has no obj id (exporter bug)", rv.Name())
+				}
+				tid, err := e.typeID(rv.Type())
+				if err != nil {
+					return nil, err
+				}
+				keys = append(keys, mr.pairFields[i])
+				vals = append(vals, e.node("ident", s, map[string]any{
+					"name": rv.Name(), "obj": oid, "type": tid,
+				}))
+			}
+			if len(vals) > 0 {
+				pairNode := e.node("complit", s, map[string]any{
+					"type":      pairTypeID,
+					"keyed":     true,
+					"values":    vals,
+					"fieldkeys": keys,
+				})
+				return e.node("return", s, map[string]any{"results": []*Node{pairNode}}), nil
+			}
 		}
 		return e.node("return", s, map[string]any{"results": results}), nil
 	case *ast.IncDecStmt:
@@ -10833,15 +10916,29 @@ func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 		results = []*Node{pairResult}
 		sigForType = types.NewSignatureType(nil, nil, nil, sig.Params(), pairResults, sig.Variadic())
 	}
-	// Transform `return a, b` into pair construction while exporting the body.
+	// Transform `return a, b` (and bare `return`) into pair construction
+	// while exporting the body. A literal without the transform is a fresh
+	// function: the outer pair transform must not leak into its returns —
+	// a bare `return` inside would otherwise pack the outer function's
+	// named results into a pair where the literal's single result belongs.
 	prevMR := e.currentMR
 	if mrInfo != nil {
 		e.currentMR = mrInfo
+	} else {
+		e.currentMR = nil
 	}
 	body, err := e.exportBlock(l.Body)
 	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
+	}
+	// Like exportFuncDecl: a transformed literal's named results are locals
+	// so assignments and bare returns resolve to real frame slots.
+	if mrInfo != nil {
+		body, err = e.prependMRNamedResultDecls(l.Type, l.Body, sig, body)
+		if err != nil {
+			return nil, err
+		}
 	}
 	// M7: the literal's signature type id, so the factory can box the
 	// function value into an interface (boxInterface needs the dynamic
