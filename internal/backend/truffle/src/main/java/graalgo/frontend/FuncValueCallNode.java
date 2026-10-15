@@ -97,7 +97,10 @@ public final class FuncValueCallNode extends GoExprNode {
         }
         Object[] argVals = new Object[args.length];
         for (int i = 0; i < args.length; i++) {
-            argVals[i] = Boxing.box(args[i].kind(), args[i], frame);
+            // Go value semantics: array/struct arguments are copied at the
+            // call site (copyForAssign); slices/maps/pointers stay shared.
+            argVals[i] = Boxing.copyForAssign(args[i].kind(),
+                    Boxing.box(args[i].kind(), args[i], frame));
         }
         // recover() is only non-nil when called directly by a deferred
         // function: clear the flag for nested calls, restore afterwards.

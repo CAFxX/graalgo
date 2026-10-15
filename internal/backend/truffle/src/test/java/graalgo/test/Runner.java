@@ -35,6 +35,7 @@ public final class Runner {
         TESTS.add(graalgo.frontend.SectionClampTest.class);
         TESTS.add(graalgo.frontend.WrapInterfaceTest.class);
         TESTS.add(graalgo.frontend.BoxingArrayStorageTest.class);
+        TESTS.add(graalgo.frontend.ArrayValueSemanticsTest.class);
     }
 
     public static void main(String[] args) {

@@ -106,7 +106,10 @@ public final class DeferNode extends GoStmtNode {
         } else {
             Object[] argVals = new Object[args.length];
             for (int i = 0; i < args.length; i++) {
-                argVals[i] = Boxing.box(args[i].kind(), args[i], frame);
+                // Go evaluates and copies defer arguments at the defer
+                // statement (value semantics for arrays/structs).
+                argVals[i] = Boxing.copyForAssign(args[i].kind(),
+                        Boxing.box(args[i].kind(), args[i], frame));
             }
             if (builtinName != null) {
                 dc = DeferredCall.builtin(builtinName, argVals, argKinds);
