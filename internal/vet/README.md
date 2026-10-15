@@ -18,6 +18,27 @@ This package implements `go vet`-style static analyzers that run as part of
 | `lostcancel` | `context.WithCancel/WithTimeout/WithDeadline` cancel func never called |
 | `composites` | Unkeyed composite literals for imported types |
 | `tests` | `TestXxx` functions without `*testing.T` parameter, bad `TestMain` signature |
+| `structtag` | Struct field tags must conform to `reflect.StructTag.Get` (malformed pairs, duplicate keys) |
+| `assign` | Useless self-assignments (`x = x`) |
+| `shift` | Shifts that equal or exceed the width of the integer |
+| `ifaceassert` | Impossible interface-to-interface type assertions |
+| `waitgroup` | `sync.WaitGroup.Add` called from inside a new goroutine |
+| `httpresponse` | `Header().Set` after `WriteHeader`/`Write` (headers ignored) |
+| `defers` | `defer` inside a loop (defers accumulate until function return) |
+| `loopclosure` | References to loop variables from nested functions (pre-1.22 semantics) |
+| `errorsas` | Second arg to `errors.As` must be pointer to error or interface |
+| `unmarshal` | Non-pointer values passed to `encoding/json.Unmarshal` etc. |
+| `unusedresult` | Discarded results of pure functions (`fmt.Sprintf`, `strings.Replace`, etc.) |
+| `timeformat` | `2006-02-01` instead of `2006-01-02` in time layouts |
+| `appends` | Discarded `append` results |
+| `slog` | Invalid `log/slog` calls (odd args, non-string keys) |
+| `stdmethods` | Well-known methods (`String`, `Error`, `Read`, `Write`) with wrong signatures |
+| `testinggoroutine` | `(*testing.T).Fatal` etc. from non-test goroutines |
+| `unsafeptr` | Invalid `uintptr` to `unsafe.Pointer` conversions |
+| `sigchanyzer` | `signal.Notify` with unbuffered channel |
+| `hostport` | `net.Dial` with concatenated or port-less addresses |
+| `directive` | Unknown `//go:` directives |
+| `buildtag` | Malformed `// +build` lines |
 
 ## Design
 
@@ -30,8 +51,16 @@ This package implements `go vet`-style static analyzers that run as part of
 ## Not yet implemented
 
 The following `go vet` analyzers are not yet implemented:
-`appends`, `asmdecl`, `assign`, `buildtag`, `cgocall`, `defers`, `directive`,
-`errorsas`, `framepointer`, `hostport`, `httpresponse`, `ifaceassert`,
-`loopclosure`, `shift`, `sigchanyzer`, `slog`, `stdmethods`, `stdversion`,
-`structtag`, `testinggoroutine`, `timeformat`, `unmarshal`, `unsafeptr`,
-`unusedresult`, `waitgroup`.
+`asmdecl` (requires assembly parser), `cgocall` (requires cgo pointer
+analysis), `framepointer` (requires assembly parser), `stdversion`
+(requires stdlib symbol version database).
+
+## Notes on behavior differences
+
+- `defers` and `httpresponse`: implemented per documented behavior
+  (defer-in-loop, header-after-write). The Go 1.27.1 `go vet` is
+  silent on the classic patterns; our implementations catch the
+  documented mistakes.
+- `loopclosure`: Go 1.22+ gives each iteration its own loop variables,
+  so the classic bug is fixed. We flag only explicit `=` assignments
+  to outer variables captured by closures.
