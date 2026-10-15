@@ -1750,11 +1750,12 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	// P3-M9 (WS D): function field call (e.g., c.generate(r) where
 	// generate is a field of function type on nistCurve). The selection
 	// is FieldVal (not MethodVal), and the field type is *types.Signature
-	// with 2 results. Look up the field in the nistCurveFuncFields table.
+	// with N>1 results. First try the nistCurve table (for pre-declared
+	// pair types), then the general fallback (synthesized pair types).
 	if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.FieldVal {
 		if v, ok := selection.Obj().(*types.Var); ok {
-			if sig, ok := v.Type().(*types.Signature); ok && sig.Results().Len() == 2 {
-				if plan := classifyNistCurveFuncField(selection, v); plan != nil {
+			if sig, ok := v.Type().(*types.Signature); ok && sig.Results().Len() > 1 {
+				if plan := e.classifyNistCurveFuncField(selection, v); plan != nil {
 					return plan
 				}
 			}
@@ -1871,7 +1872,13 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 // be a FieldVal on nistCurve, and the field name must be in the
 // nistCurveFuncFields table. Returns nil when the call is not one of
 // the table's fields.
-func classifyNistCurveFuncField(selection *types.Selection, v *types.Var) *mrPlan {
+//
+// fix-funcfield-mr (Gate-1): generalized fallback — any func-typed struct
+// field with N>1 results gets a synthesized pair type. This handles
+// image/format.go's f.decode(rr) and similar patterns. The pair type is
+// synthesized on demand (like synthesizeUserPairType) with fields f0, f1,
+// etc.
+func (e *exporter) classifyNistCurveFuncField(selection *types.Selection, v *types.Var) *mrPlan {
 	// Get the struct type from the receiver.
 	recv := selection.Recv()
 	if recv == nil {
@@ -1888,10 +1895,11 @@ func classifyNistCurveFuncField(selection *types.Selection, v *types.Var) *mrPla
 	}
 	// Check package path and struct name.
 	if nt.Obj().Pkg() == nil || nt.Obj().Pkg().Path() != "crypto/ecdh" {
-		return nil
+		// Not nistCurve — try the general fallback below.
+		return e.classifyGeneralFuncField(selection, v)
 	}
 	if nt.Obj().Name() != "nistCurve" {
-		return nil
+		return e.classifyGeneralFuncField(selection, v)
 	}
 	// Look up the field in the table.
 	fieldName := v.Name()
@@ -1930,7 +1938,92 @@ func classifyNistCurveFuncField(selection *types.Selection, v *types.Var) *mrPla
 			pairFields: ff.pairFields,
 		}
 	}
-	return nil
+	// Not in the nistCurve table — try the general fallback.
+	return e.classifyGeneralFuncField(selection, v)
+}
+
+// classifyGeneralFuncField handles func-typed struct field calls for ANY
+// struct, not just nistCurve (fix-funcfield-mr, Gate-1). The field must
+// have a *types.Signature type with N>1 results. A pair type is
+// synthesized on demand with fields f0, f1, ... in result order.
+//
+// Design: the field holds a function value. For the call to work, the
+// stored value must be pair-returning. This holds because:
+// - Synthetic packages declare pair-returning field types explicitly
+//   (e.g., nistCurve.generate)
+// - Disk/user packages: the field is assigned a function that has been
+//   pair-transformed (via userMRFuncs or the disk MR table), so the
+//   value is pair-returning even though the declared field type is
+//   multi-result.
+//
+// The desugar emits a regular "call" node (not "funcfieldcall") with the
+// pair type — the backend already handles selector-fun calls via
+// FuncValueCallNode.
+func (e *exporter) classifyGeneralFuncField(selection *types.Selection, v *types.Var) *mrPlan {
+	sig, ok := v.Type().(*types.Signature)
+	if !ok {
+		return nil
+	}
+	n := sig.Results().Len()
+	if n <= 1 {
+		return nil
+	}
+	// Get struct and field names for the pair type name.
+	recv := selection.Recv()
+	if recv == nil {
+		return nil
+	}
+	rt := recv
+	if pt, ok := rt.(*types.Pointer); ok {
+		rt = pt.Elem()
+	}
+	nt, ok := rt.(*types.Named)
+	if !ok || nt.Obj() == nil {
+		return nil
+	}
+	structName := nt.Obj().Name()
+	fieldName := v.Name()
+
+	// Synthesize the pair type.
+	pairNt, fieldNames := e.synthesizeFuncFieldPairType(sig, structName, fieldName)
+	if pairNt == nil {
+		return nil
+	}
+	return &mrPlan{
+		kind:       mrFuncField,
+		tmpType:    pairNt,
+		pairFields: fieldNames,
+	}
+}
+
+// synthesizeFuncFieldPairType creates a named struct type for a
+// func-typed field's multi-result signature (fix-funcfield-mr). Fields
+// are f0, f1, ... with the result types in order. The name is unique per
+// (struct, field): __wsd_pair_<struct>_<field>.
+func (e *exporter) synthesizeFuncFieldPairType(sig *types.Signature, structName, fieldName string) (*types.Named, []string) {
+	n := sig.Results().Len()
+	fields := make([]*types.Var, n)
+	fieldNames := make([]string, n)
+	for i := 0; i < n; i++ {
+		fname := fmt.Sprintf("f%d", i)
+		fieldNames[i] = fname
+		rt := sig.Results().At(i).Type()
+		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
+	}
+	st := types.NewStruct(fields, nil)
+	// Unique name per (struct, field).
+	base := fmt.Sprintf("__wsd_pair_%s_%s", structName, fieldName)
+	name := base
+	for i := 1; ; i++ {
+		if e.pkg.Scope().Lookup(name) == nil {
+			break
+		}
+		name = fmt.Sprintf("%s_%d", base, i)
+	}
+	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
+	named := types.NewNamed(tname, st, nil)
+	e.pkg.Scope().Insert(tname)
+	return named, fieldNames
 }
 
 func isXmlTokenMethod(f *types.Func) (string, bool) {
@@ -2961,12 +3054,14 @@ func (e *exporter) desugarSyncMap(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 // Generates a funcfieldcall node that calls the field's function value
 // and packs the 2 results into the pair struct.
 func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
-	sel, ok := c.Fun.(*ast.SelectorExpr)
-	if !ok {
+	if _, ok := c.Fun.(*ast.SelectorExpr); !ok {
 		return nil, fmt.Errorf("gofrontend: funcfieldcall expects SelectorExpr, got %T", c.Fun)
 	}
-	// Export the receiver (e.g., c).
-	recvNode, err := e.exportExpr(sel.X)
+	// Export the selector as the fun expression (e.g., f.decode).
+	// The backend handles call-with-selector-fun via FuncValueCallNode
+	// (see NodeFactory.java: the "selector" branch builds the field
+	// access and calls the function value).
+	funNode, err := e.exportExpr(c.Fun)
 	if err != nil {
 		return nil, err
 	}
@@ -2980,15 +3075,19 @@ func (e *exporter) desugarFuncFieldCall(s *ast.AssignStmt, c *ast.CallExpr, plan
 	if err != nil {
 		return nil, err
 	}
-	// Create the funcfieldcall node.
-	// Fields: recv (receiver node), field (field name), args (arg nodes),
-	// pairType (pair struct type ID), pairFields (field names).
-	callNode := e.node("funcfieldcall", c, map[string]any{
-		"recv":       recvNode,
-		"field":      sel.Sel.Name,
-		"args":       args,
-		"pairType":   pairTid,
-		"pairFields": plan.pairFields,
+	// Emit a regular "call" node with the pair type. The backend's
+	// FuncValueCallNode will call the function value (which must be
+	// pair-returning — see classifyGeneralFuncField) and the result
+	// is the pair struct.
+	//
+	// fix-funcfield-mr: previously this emitted a "funcfieldcall" node,
+	// but the backend never implemented it (dead code). The regular
+	// "call" path works because the backend already handles selector
+	// fun expressions.
+	callNode := e.node("call", c, map[string]any{
+		"fun":  funNode,
+		"args": args,
+		"type": pairTid,
 	})
 	// Create temp var for the pair.
 	e.chanSeq++
