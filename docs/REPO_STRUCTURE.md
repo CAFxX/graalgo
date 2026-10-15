@@ -74,6 +74,9 @@ Related: [Makefile](../Makefile) (root build entry point),
   - [driver/](../internal/driver/) — build orchestration: module-aware
     builds, build caching (toolexec-equivalent), package resolution. This is
     what makes `graalgo build` a drop-in for `go build` in Phase 4.
+  - [vet/](../internal/vet/) — static analyzers for `graalgo vet`:
+    `go vet`-style checks (printf, unreachable, copylocks, etc.) implemented
+    against the parsed AST and type information.
 - [stdlib/](../stdlib/) — Go standard library support.
   - [synthetic/](../stdlib/synthetic/) — synthetic package implementations.
     Every package documents **why** it is synthetic and **what unblocks the
