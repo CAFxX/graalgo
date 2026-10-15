@@ -1,9 +1,7 @@
 package driver
 
 import (
-	"archive/tar"
-	"encoding/base64"
-	"io"
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,76 +9,18 @@ import (
 	"testing"
 )
 
-func writeSrc(t *testing.T, dir, name, content string) string {
-	t.Helper()
-	p := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
-
-// extractPayload pulls the base64 tar payload out of a rendered artifact
-// script and returns the name->content map from the tar.
-func extractPayload(t *testing.T, script string) map[string]string {
-	t.Helper()
-	lines := strings.Split(script, "\n")
-	var b64 []string
-	inPayload := false
-	for _, l := range lines {
-		if !inPayload {
-			if strings.Contains(l, "<<'GRAALGO_PAYLOAD_EOF'") {
-				inPayload = true
-			}
-			continue
-		}
-		if l == "GRAALGO_PAYLOAD_EOF" {
-			break
-		}
-		b64 = append(b64, l)
-	}
-	if !inPayload {
-		t.Fatal("no payload heredoc found in artifact script")
-	}
-	raw, err := base64.StdEncoding.DecodeString(strings.Join(b64, ""))
-	if err != nil {
-		t.Fatalf("payload is not valid base64: %v", err)
-	}
-	tr := tar.NewReader(strings.NewReader(string(raw)))
-	got := map[string]string{}
-	for {
-		hdr, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			t.Fatalf("cannot read payload tar: %v", err)
-		}
-		body, err := io.ReadAll(tr)
-		if err != nil {
-			t.Fatal(err)
-		}
-		got[hdr.Name] = string(body)
-	}
-	return got
-}
-
-func TestEmitRoundTrip(t *testing.T) {
-	dir := t.TempDir()
-	mainPath := writeSrc(t, dir, "main.go", "package main\n\nfunc main() {}\n")
-	utilPath := writeSrc(t, dir, "util.go", "package main\n\nfunc helper() int { return 42 }\n")
+// TestEmitProducesBinary verifies that Emit produces a real executable
+// binary (not a shell script) embedding the frontend output.
+func TestEmitProducesBinary(t *testing.T) {
+	// Minimal fake frontend JSON. Emit does not validate the content;
+	// it only packages it.
+	wireJSON := []byte(`{"frontend":"v1","functions":[]}`)
 
 	out := filepath.Join(t.TempDir(), "prog")
 	err := Emit(Artifact{
 		OutputPath:  out,
 		GraalgoRoot: "/opt/graalgo",
-		Files: []ProgramFile{
-			{Name: "main.go", Path: mainPath},
-			{Name: "util.go", Path: utilPath},
-		},
+		WireJSON:    wireJSON,
 	})
 	if err != nil {
 		t.Fatalf("Emit: %v", err)
@@ -94,84 +34,50 @@ func TestEmitRoundTrip(t *testing.T) {
 		t.Errorf("artifact %s is not executable (mode %v)", out, fi.Mode())
 	}
 
-	script, err := os.ReadFile(out)
+	data, err := os.ReadFile(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := string(script)
-	if !strings.HasPrefix(s, "#!/usr/bin/env bash") {
-		t.Errorf("artifact missing bash shebang")
+	// Must be an ELF binary, not a shell script.
+	if !bytes.HasPrefix(data, []byte("\x7fELF")) {
+		t.Errorf("artifact is not an ELF binary (first bytes: %q)", data[:min(32, len(data))])
 	}
-	if !strings.Contains(s, "/opt/graalgo") {
+	if bytes.HasPrefix(data, []byte("#!")) {
+		t.Errorf("artifact is a script (shebang), not a binary")
+	}
+	// The graalgo root must be baked into the binary.
+	if !bytes.Contains(data, []byte("/opt/graalgo")) {
 		t.Errorf("artifact does not bake in the graalgo root")
 	}
-	if !strings.Contains(s, "GRAALGO_HOME") {
-		t.Errorf("artifact does not honor GRAALGO_HOME override")
+	// The launcher must honor GRAALGO_HOME (check the string is present
+	// in the binary; the actual env-var logic is exercised at run time).
+	if !bytes.Contains(data, []byte("GRAALGO_HOME")) {
+		t.Errorf("artifact does not reference GRAALGO_HOME")
 	}
-	// The script must be syntactically valid bash.
-	if out, err := exec.Command("bash", "-n", out).CombinedOutput(); err != nil {
-		t.Errorf("bash -n failed on artifact: %v\n%s", err, out)
-	}
-
-	payload := extractPayload(t, s)
-	if len(payload) != 2 {
-		t.Fatalf("payload has %d files, want 2", len(payload))
-	}
-	for name, path := range map[string]string{"main.go": mainPath, "util.go": utilPath} {
-		want, _ := os.ReadFile(path)
-		if payload[name] != string(want) {
-			t.Errorf("payload %s mismatch", name)
-		}
+	// The launcher must use --wire-input (not re-run the frontend).
+	if !bytes.Contains(data, []byte("--wire-input")) {
+		t.Errorf("artifact does not use --wire-input")
 	}
 }
 
-func TestEmitDuplicateBaseName(t *testing.T) {
-	dir := t.TempDir()
-	a := writeSrc(t, dir, "a.go", "package main\n")
-	sub := filepath.Join(dir, "sub")
-	b := writeSrc(t, sub, "a.go", "package main\n")
-	err := Emit(Artifact{
-		OutputPath:  filepath.Join(t.TempDir(), "prog"),
-		GraalgoRoot: "/opt/graalgo",
-		Files: []ProgramFile{
-			{Name: "a.go", Path: a},
-			{Name: "a.go", Path: b},
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "duplicate") {
-		t.Errorf("Emit with duplicate base names = %v, want duplicate error", err)
+func TestEmitNoOutput(t *testing.T) {
+	err := Emit(Artifact{GraalgoRoot: "/x", WireJSON: []byte("{}")})
+	if err == nil || !strings.Contains(err.Error(), "output") {
+		t.Errorf("Emit with no output path = %v, want output error", err)
 	}
 }
 
-func TestEmitNoFiles(t *testing.T) {
+func TestEmitNoWireJSON(t *testing.T) {
 	err := Emit(Artifact{OutputPath: filepath.Join(t.TempDir(), "prog"), GraalgoRoot: "/x"})
-	if err == nil {
-		t.Errorf("Emit with no files succeeded, want error")
+	if err == nil || !strings.Contains(err.Error(), "frontend output") {
+		t.Errorf("Emit with no wire JSON = %v, want frontend output error", err)
 	}
 }
 
-func TestShQuote(t *testing.T) {
-	cases := map[string]string{
-		"simple":     "'simple'",
-		"with space": "'with space'",
-		"o'clock":    "'o'\\''clock'",
-	}
-	for in, want := range cases {
-		if got := shQuote(in); got != want {
-			t.Errorf("shQuote(%q) = %q, want %q", in, got, want)
-		}
-	}
-
-	dcases := map[string]string{
-		"simple":  "simple",
-		"o'clock": "o'clock", // single quotes need no escaping in "..."
-		// input: a"b\c$d`e
-		"a\"b\\c$d`e": "a\\\"b\\\\c\\$d\\`e",
-	}
-	for in, want := range dcases {
-		if got := shDQuote(in); got != want {
-			t.Errorf("shDQuote(%q) = %q, want %q", in, got, want)
-		}
+func TestEmitNoRoot(t *testing.T) {
+	err := Emit(Artifact{OutputPath: filepath.Join(t.TempDir(), "prog"), WireJSON: []byte("{}")})
+	if err == nil || !strings.Contains(err.Error(), "graalgo root") {
+		t.Errorf("Emit with no graalgo root = %v, want root error", err)
 	}
 }
 
@@ -208,4 +114,91 @@ func TestDefaultOutputName(t *testing.T) {
 	if got, err := DefaultOutputName("", nil); err != nil || got != "coolproj" {
 		t.Errorf("no operands: got %q, %v", got, err)
 	}
+}
+
+// TestEmitBinaryRuns is a smoke test that the produced binary actually
+// executes. It uses a fake backend script that records its arguments,
+// verifying the launcher passes --wire-input correctly. This does not
+// require a real graalgo backend.
+func TestEmitBinaryRuns(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping binary execution test in short mode")
+	}
+
+	tmpDir := t.TempDir()
+
+	// Fake backend: a script that writes its args to a file, copies the
+	// wire-input file aside (the launcher deletes it on exit), and exits 0.
+	// We fake GRAALGO_HOME to point at a dir containing
+	// internal/backend/graalgo-sync-run.
+	fakeRoot := filepath.Join(tmpDir, "fake-root")
+	backendDir := filepath.Join(fakeRoot, "internal", "backend")
+	if err := os.MkdirAll(backendDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	argsFile := filepath.Join(tmpDir, "args.txt")
+	wireCopy := filepath.Join(tmpDir, "wire-copy.json")
+	backendScript := "#!/usr/bin/env bash\n" +
+		"printf '%s\\n' \"$@\" > " + argsFile + "\n" +
+		"cp \"$2\" " + wireCopy + "\n" + // $2 is the --wire-input path
+		"exit 0\n"
+	backendPath := filepath.Join(backendDir, "graalgo-sync-run")
+	if err := os.WriteFile(backendPath, []byte(backendScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	wireJSON := []byte(`{"frontend":"v1"}`)
+	out := filepath.Join(tmpDir, "prog")
+	if err := Emit(Artifact{
+		OutputPath:  out,
+		GraalgoRoot: "/nonexistent-baked-in",
+		WireJSON:    wireJSON,
+	}); err != nil {
+		t.Fatalf("Emit: %v", err)
+	}
+
+	// Run the artifact with GRAALGO_HOME pointing at the fake root.
+	cmd := exec.Command(out, "hello", "world")
+	cmd.Env = append(os.Environ(), "GRAALGO_HOME="+fakeRoot)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("artifact run failed: %v\n%s", err, out)
+	}
+
+	// Verify the backend received --wire-input with a real JSON file.
+	argsData, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatalf("backend was not invoked (no args file): %v", err)
+	}
+	args := strings.Split(strings.TrimSpace(string(argsData)), "\n")
+	if len(args) < 4 {
+		t.Fatalf("backend args = %v, want at least [--wire-input FILE -- argv0 ...]", args)
+	}
+	if args[0] != "--wire-input" {
+		t.Errorf("args[0] = %q, want --wire-input", args[0])
+	}
+	// The backend copied the wire file before the launcher cleaned up.
+	wireData, err := os.ReadFile(wireCopy)
+	if err != nil {
+		t.Errorf("cannot read preserved wire-input copy: %v", err)
+	} else if string(wireData) != string(wireJSON) {
+		t.Errorf("wire-input content mismatch: got %q, want %q", wireData, wireJSON)
+	}
+	if args[2] != "--" {
+		t.Errorf("args[2] = %q, want --", args[2])
+	}
+	// argv[0] for the program should be the artifact's absolute path.
+	if !filepath.IsAbs(args[3]) {
+		t.Errorf("program argv[0] = %q, want absolute path", args[3])
+	}
+	// User args forwarded.
+	if len(args) < 6 || args[4] != "hello" || args[5] != "world" {
+		t.Errorf("user args not forwarded: %v", args)
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
