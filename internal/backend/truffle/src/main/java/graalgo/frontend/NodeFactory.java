@@ -1897,84 +1897,16 @@ public final class NodeFactory {
             // WS G: a complex field's zero value is (0+0i), not nil.
             case COMPLEX64 -> graalgo.values.GoComplex32.ZERO;
             case COMPLEX128, UNTYPED_COMPLEX -> graalgo.values.GoComplex64.ZERO;
-            // P3-M9 (driver-harden, go-cmp lane): sync primitive fields get
-            // usable Java primitive objects, not empty structs. Each
-            // evaluation gets its own instance (the template is copied
-            // per use via Boxing.freshZeroCopy for the non-pool cases;
-            // pools are freshened in arrayZeroTemplate/deepCopyArray).
+            // PKG-012: sync primitives are real Go structs now (503608ea
+            // retired the synthetic overlay); their methods run as Go code
+            // and expect GoStruct values, not Java objects. The
+            // newSyncPrimitive interception is obsolete — removed.
             case STRUCT -> {
-                String prim = syncPrimitiveName(ctx, fieldTypeId, path);
-                if (prim != null) {
-                    yield newSyncPrimitive(prim);
-                }
                 yield structZeroTemplate(ctx, fieldTypeId, path);
             }
             case ARRAY -> arrayZeroTemplate(ctx, fieldTypeId, path);
             default -> null;
         };
-    }
-
-    /** Manufactures a fresh Java object for a sync primitive type name. */
-    private static Object newSyncPrimitive(String prim) {
-        return switch (prim) {
-            case "Mutex" -> new graalgo.runtime.sync.GoMutex();
-            case "RWMutex" -> new graalgo.runtime.sync.GoRWMutex();
-            case "WaitGroup" -> new graalgo.runtime.sync.GoWaitGroup();
-            case "Once" -> new graalgo.runtime.sync.GoOnce();
-            case "Pool" -> new GoPool();
-            // fix-linkname: sync.Map.
-            case "Map" -> new graalgo.runtime.sync.GoSyncMap();
-            // fix-linkname: sync/atomic wrapper cells (struct fields).
-            case "atomic.Int64", "atomic.Uint64", "atomic.Uintptr" ->
-                new graalgo.runtime.sync.GoAtomicInt64();
-            case "atomic.Int32", "atomic.Uint32", "atomic.Bool" ->
-                new graalgo.runtime.sync.GoAtomicInt32();
-            case "atomic.Pointer", "atomic.Value" ->
-                new java.util.concurrent.atomic.AtomicReference<>();
-            default -> throw new IllegalArgumentException("unknown sync primitive " + prim);
-        };
-    }
-
-    /**
-     * Whether the type-table id denotes one of the synthetic sync/atomic
-     * primitive named types (resolving aliases). Returns the primitive
-     * name ("Mutex", ..., "Map", "atomic.Int64", ..., "atomic.Pointer",
-     * "atomic.Value") or null. Generic instantiations (e.g.
-     * {@code sync/atomic.Pointer[T]}) match by their base name.
-     */
-    private static String syncPrimitiveName(BuildCtx ctx, int typeId, String path) {
-        int rid = resolveAlias(ctx, typeId, path);
-        Json.Object entry = ctx.types.entry(rid, path);
-        if (!"named".equals(entry.string("kind", path))) {
-            return null;
-        }
-        String name = entry.object("detail", path).string("name", path);
-        if (name == null) {
-            return null;
-        }
-        if (name.startsWith("sync.")) {
-            String base = name.substring(5);
-            switch (base) {
-                case "Mutex", "RWMutex", "WaitGroup", "Once", "Pool",
-                     // fix-linkname: sync.Map.
-                     "Map":
-                    return base;
-            }
-        }
-        if (name.startsWith("sync/atomic.")) {
-            String base = name.substring(12);
-            // Strip generic instantiation suffix: Pointer[T] -> Pointer.
-            int br = base.indexOf('[');
-            if (br >= 0) {
-                base = base.substring(0, br);
-            }
-            switch (base) {
-                case "Int64", "Uint64", "Uintptr", "Int32", "Uint32", "Bool",
-                     "Pointer", "Value":
-                    return "atomic." + base;
-            }
-        }
-        return null;
     }
 
     private static Object arrayZeroTemplate(BuildCtx ctx, int arrayTypeId, String path) {
@@ -5732,12 +5664,7 @@ public final class NodeFactory {
     /** Zero-value template for a composite literal element/field type. */
     private Object zeroTemplateFor(GoKind kind, int typeId, BuildCtx ctx, String path) {
         if (kind == GoKind.STRUCT) {
-            // fix-linkname: sync primitive fields get usable Java objects,
-            // not empty structs (mirrors fieldZeroTemplate).
-            String prim = syncPrimitiveName(ctx, typeId, path);
-            if (prim != null) {
-                return newSyncPrimitive(prim);
-            }
+            // PKG-012: no sync-primitive interception (see fieldZeroTemplate).
             return structZeroTemplate(ctx, typeId, path);
         }
         if (kind == GoKind.ARRAY) {
@@ -5763,15 +5690,10 @@ public final class NodeFactory {
             for (int i = 0; i < len; i++) {
                 objs[i] = switch (ek) {
                     case ARRAY -> zeroArrayFor(elemTid, ctx, path);
-                    // P3-M9 (driver-harden, go-cmp lane): sync primitive
-                    // slots get fresh instances (never shared templates).
-                    case STRUCT -> {
-                        String prim = syncPrimitiveName(ctx, elemTid, path);
-                        if (prim != null) {
-                            yield newSyncPrimitive(prim);
-                        }
-                        yield Boxing.freshZeroCopy(structZeroTemplate(ctx, elemTid, path));
-                    }
+                    // PKG-012: no sync-primitive interception (see
+                    // fieldZeroTemplate); structs get fresh zero copies.
+                    case STRUCT ->
+                        Boxing.freshZeroCopy(structZeroTemplate(ctx, elemTid, path));
                     default -> GoString.EMPTY;
                 };
             }

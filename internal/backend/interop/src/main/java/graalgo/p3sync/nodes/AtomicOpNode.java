@@ -151,6 +151,14 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Uintptr.Load" -> Atomics.loadUintptr(cell64(frame));
             case "atomic.Uintptr.Add" -> Atomics.addUintptr(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.Swap" -> Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
+            // 32-bit ops: widen to long (GoExprNode contract: numeric nodes
+            // implement both executeInt and executeLong).
+            case "atomic.Int32.Load" -> Atomics.loadInt32(cell32(frame));
+            case "atomic.Int32.Add" -> Atomics.addInt32(cell32(frame), args[0].executeInt(frame));
+            case "atomic.Int32.Swap" -> Atomics.swapInt32(cell32(frame), args[0].executeInt(frame));
+            case "atomic.Uint32.Load" -> Integer.toUnsignedLong(Atomics.loadInt32(cell32(frame)));
+            case "atomic.Uint32.Add" -> Integer.toUnsignedLong(Atomics.addInt32(cell32(frame), args[0].executeInt(frame)));
+            case "atomic.Uint32.Swap" -> Integer.toUnsignedLong(Atomics.swapInt32(cell32(frame), args[0].executeInt(frame)));
             default -> throw new FrontendException(
                     "atomic op " + atomicType + "." + op + " is not a long op");
         };
@@ -165,6 +173,18 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Uint32.Load" -> Atomics.loadInt32(cell32(frame));
             case "atomic.Uint32.Add" -> Atomics.addInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Uint32.Swap" -> Atomics.swapInt32(cell32(frame), args[0].executeInt(frame));
+            // 64-bit ops: narrow to int (GoExprNode contract; narrowing is
+            // lossy but executeInt is only called when the static type is
+            // 32-bit, which cannot happen for 64-bit ops in valid programs).
+            case "atomic.Int64.Load" -> (int) Atomics.loadInt64(cell64(frame));
+            case "atomic.Int64.Add" -> (int) Atomics.addInt64(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Int64.Swap" -> (int) Atomics.swapInt64(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Uint64.Load" -> (int) Atomics.loadInt64(cell64(frame));
+            case "atomic.Uint64.Add" -> (int) Atomics.addInt64(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Uint64.Swap" -> (int) Atomics.swapInt64(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Uintptr.Load" -> (int) Atomics.loadUintptr(cell64(frame));
+            case "atomic.Uintptr.Add" -> (int) Atomics.addUintptr(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Uintptr.Swap" -> (int) Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
             default -> throw new FrontendException(
                     "atomic op " + atomicType + "." + op + " is not an int op");
         };

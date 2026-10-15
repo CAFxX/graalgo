@@ -62,4 +62,14 @@ public final class GoFieldCell implements GoCell {
         // one, matching gc) and the same field index.
         return other instanceof GoFieldCell f && struct == f.struct && fieldIndex == f.fieldIndex;
     }
+
+    @Override
+    public boolean equals(Object o) {
+        return o instanceof GoCell c && sameStorageAs(c);
+    }
+
+    @Override
+    public int hashCode() {
+        return System.identityHashCode(struct) * 31 + fieldIndex;
+    }
 }

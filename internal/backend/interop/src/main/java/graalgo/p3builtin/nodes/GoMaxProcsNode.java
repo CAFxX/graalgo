@@ -1,13 +1,12 @@
 package graalgo.p3builtin.nodes;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 import com.oracle.truffle.api.frame.VirtualFrame;
 
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.GoExprNode;
 import graalgo.frontend.Json;
 import graalgo.frontend.NodeFactory;
+import graalgo.runtime.GoMaxProcs;
 import graalgo.values.GoKind;
 
 /**
@@ -28,9 +27,15 @@ import graalgo.values.GoKind;
  */
 public final class GoMaxProcsNode extends GoExprNode {
 
-    /** The current GOMAXPROCS value; initialized to the host CPU count. */
-    private static final AtomicInteger CURRENT =
-            new AtomicInteger(Runtime.getRuntime().availableProcessors());
+    /**
+     * The current GOMAXPROCS value (PKG-012: {@code sync.runtime_procPin}
+     * needs the same value {@code pool.go}'s {@code pinSlow} sizes its
+     * {@code local} slice with). Single source of truth lives in
+     * {@link GoMaxProcs} (runtime module; interop builds against runtime).
+     */
+    public static int current() {
+        return GoMaxProcs.current();
+    }
 
     @Child private GoExprNode n;
 
@@ -43,9 +48,9 @@ public final class GoMaxProcsNode extends GoExprNode {
     public long executeLong(VirtualFrame frame) {
         int want = (int) n.executeLong(frame);
         if (want > 0) {
-            return CURRENT.getAndSet(want);
+            return GoMaxProcs.set(want);
         }
-        return CURRENT.get();
+        return GoMaxProcs.current();
     }
 
     /**

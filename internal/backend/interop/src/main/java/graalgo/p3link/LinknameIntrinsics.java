@@ -20,8 +20,12 @@ import graalgo.runtime.Intrinsics;
 import graalgo.runtime.Linknames;
 import graalgo.runtime.GoDebug;
 import graalgo.runtime.Timers;
+import graalgo.runtime.sync.GoNotifyList;
+import graalgo.runtime.sync.GoPoolCleanup;
+import graalgo.runtime.sync.GoProcPin;
 import graalgo.runtime.sync.GoSemaphore;
 import graalgo.values.GoFunc;
+import graalgo.values.GoPointer;
 import graalgo.values.GoString;
 
 /**
@@ -67,11 +71,13 @@ public final class LinknameIntrinsics {
         // intrinsics, and Go bindings would leak into this run.
         Linknames.clear();
         GoDebug.clear();
+        GoPoolCleanup.clear();
+        GoNotifyList.clear();
         // Go → intrinsic: the M4 gc-symbol table. D5 argument types:
         // fastrandn takes an int32 (Integer).
         Linknames.register("runtime.fastrand", args -> Intrinsics.fastrand(), 0);
         Linknames.register("runtime.fastrandn",
-                args -> Intrinsics.fastrandn(((Number) args[0]).intValue()), 1);
+                args -> Intrinsics.fastrandn(intArg(args, 0, "runtime.fastrandn")), 1);
         Linknames.register("runtime.nanotime", args -> Timers.nanotime(), 0);
         // Intrinsic → Go helper by symbol name. D5: name arrives as
         // GoString; the single any-typed argument passes through boxed.
@@ -191,12 +197,54 @@ public final class LinknameIntrinsics {
      * (address); booleans as Boolean/Long; ints as Long/Integer.
      * Each target adapts explicitly.
      */
+    /**
+     * Adapts a {@code *uint32} linkname argument to an {@link IntCell}.
+     * The address may arrive as a D5-boxed Long (address) or as a
+     * {@link GoPointer} (e.g. a struct field address from real Go code).
+     */
+    /**
+     * Safely converts a linkname arg to int, failing fast with a clear
+     * message (not NPE) if null.
+     */
+    private static int intArg(Object[] args, int idx, String symbol) {
+        Object a = args[idx];
+        if (!(a instanceof Number n)) {
+            throw new FrontendException(symbol + ": arg[" + idx + "] expected Number, got "
+                    + (a == null ? "null" : a.getClass().getName()));
+        }
+        return n.intValue();
+    }
+
+    /**
+     * Safely converts a linkname arg to long, failing fast with a clear
+     * message (not NPE) if null.
+     */
+    private static long longArg(Object[] args, int idx, String symbol) {
+        Object a = args[idx];
+        if (!(a instanceof Number n)) {
+            throw new FrontendException(symbol + ": arg[" + idx + "] expected Number, got "
+                    + (a == null ? "null" : a.getClass().getName()));
+        }
+        return n.longValue();
+    }
+
+    private static graalgo.runtime.sync.IntCell intCellFor(Object arg) {
+        if (arg instanceof GoPointer gp) {
+            return new graalgo.runtime.sync.GoPointerCell32(gp);
+        }
+        if (arg instanceof Number n) {
+            return new AddressIntCell(n.longValue());
+        }
+        throw new FrontendException(
+                "intCellFor: expected *uint32 as Long or GoPointer, got "
+                        + (arg == null ? "null" : arg.getClass().getName()));
+    }
+
     private static void registerSyncIntrinsics() {
         // sync.runtime_Semacquire(s *uint32): wait until *s > 0, then
         // atomically decrement.
         Linknames.register("sync.runtime_Semacquire", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.acquire(new AddressIntCell(addr));
+            GoSemaphore.acquire(intCellFor(args[0]));
             return null;
         }, 1);
         // sync.runtime_Semrelease(s *uint32, handoff bool, skipframes int):
@@ -204,8 +252,7 @@ public final class LinknameIntrinsics {
         // and skipframes args affect profiling/tracing only; the
         // semaphore semantics are identical.
         Linknames.register("sync.runtime_Semrelease", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.release(new AddressIntCell(addr));
+            GoSemaphore.release(intCellFor(args[0]));
             return null;
         }, 3);
         // sync.runtime_SemacquireRWMutexR(s *uint32, lifo bool, skipframes int)
@@ -213,22 +260,116 @@ public final class LinknameIntrinsics {
         // Functionally identical to Semacquire; lifo/skipframes affect
         // queueing order and profiling only.
         Linknames.register("sync.runtime_SemacquireRWMutexR", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.acquire(new AddressIntCell(addr));
+            GoSemaphore.acquire(intCellFor(args[0]));
             return null;
         }, 3);
         Linknames.register("sync.runtime_SemacquireRWMutex", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.acquire(new AddressIntCell(addr));
+            GoSemaphore.acquire(intCellFor(args[0]));
             return null;
         }, 3);
         // sync.runtime_SemacquireWaitGroup(s *uint32, synctestDurable bool):
         // like Semacquire, for WaitGroup.Wait.
         Linknames.register("sync.runtime_SemacquireWaitGroup", args -> {
-            long addr = ((Number) args[0]).longValue();
-            GoSemaphore.acquireWaitGroup(new AddressIntCell(addr));
+            GoSemaphore.acquireWaitGroup(intCellFor(args[0]));
             return null;
         }, 2);
+        // PKG-012 (sync.Pool): the pool's init, pin/unpin, and random-drop
+        // intrinsics (go1.27.1, sync/pool.go). The real sync.Pool methods
+        // run as Go code and reach these via //go:linkname.
+        //
+        // sync.runtime_registerPoolCleanup(cleanup func()): called once by
+        // sync.init(); gc stores it and the GC invokes it at the start of
+        // every STW pause. Here GoPoolCleanup stores it and invokes it on
+        // JVM GC notifications (the JVM GC is the Go GC, ADR-0002 D4).
+        Linknames.register("sync.runtime_registerPoolCleanup", args -> {
+            GoPoolCleanup.register(args[0]);
+            return null;
+        }, 1);
+        // sync.runtime_procPin() int: pins the goroutine to a shard id in
+        // [0, GOMAXPROCS) for Pool's per-P local array.
+        Linknames.register("sync.runtime_procPin", args -> (long) GoProcPin.pin(), 0);
+        // sync.runtime_procUnpin(): releases the pin (no-op on the JVM —
+        // GoProcPin javadoc).
+        Linknames.register("sync.runtime_procUnpin", args -> {
+            GoProcPin.unpin();
+            return null;
+        }, 0);
+        // runtime.randn(n int32) int32 (linked as runtime_randn from
+        // pool.go): the race-detector drop path in Pool.Put. gc's Lemire
+        // multiply-shift, identical to Intrinsics.fastrandn.
+        Linknames.register("runtime.randn", args ->
+                (long) Intrinsics.fastrandn(intArg(args, 0, "runtime.randn")), 1);
+        // PKG-012 (sync.Cond): the notifyList intrinsics (go1.27.1,
+        // sync/runtime.go + sync/cond.go). sync.Cond runs as real Go code;
+        // GoNotifyList implements gc's ticket-based notification list
+        // (runtime/sema.go) with scheduler-aware parking.
+        //
+        // sync.runtime_notifyListCheck(size uintptr): layout agreement
+        // check, run by sync.init().
+        Linknames.register("sync.runtime_notifyListCheck", args -> {
+            GoNotifyList.check(intArg(args, 0, "sync.runtime_notifyListCheck"));
+            return null;
+        }, 1);
+        // sync.runtime_notifyListAdd(l *notifyList) uint32: issues a ticket.
+        Linknames.register("sync.runtime_notifyListAdd", args -> {
+            long addr = longArg(args, 0, "sync.runtime_notifyListAdd");
+            return (long) GoNotifyList.add(addr);
+        }, 1);
+        // sync.runtime_notifyListWait(l *notifyList, t uint32): parks until
+        // ticket t is notified.
+        Linknames.register("sync.runtime_notifyListWait", args -> {
+            long addr = longArg(args, 0, "sync.runtime_notifyListWait");
+            int ticket = intArg(args, 1, "sync.runtime_notifyListWait");
+            GoNotifyList.waitForNotify(addr, ticket);
+            return null;
+        }, 2);
+        // sync.runtime_notifyListNotifyOne(l *notifyList): wakes one waiter.
+        Linknames.register("sync.runtime_notifyListNotifyOne", args -> {
+            long addr = longArg(args, 0, "sync.runtime_notifyListNotifyOne");
+            GoNotifyList.notifyOne(addr);
+            return null;
+        }, 1);
+        // sync.runtime_notifyListNotifyAll(l *notifyList): wakes all waiters.
+        Linknames.register("sync.runtime_notifyListNotifyAll", args -> {
+            long addr = longArg(args, 0, "sync.runtime_notifyListNotifyAll");
+            GoNotifyList.notifyAll(addr);
+            return null;
+        }, 1);
+        // PKG-012 (sync.WaitGroup): internal/synctest.IsInBubble() bool.
+        // sync.WaitGroup.Add/Wait call this unconditionally (go1.27.1,
+        // sync/waitgroup.go); graalgo does not implement synctest
+        // (GoSemaphore javadoc), so it always reports "not in a bubble".
+        // The Associate/Disassociate/IsAssociated linknames are only
+        // reached when IsInBubble is true, hence unreachable here.
+        Linknames.register("internal/synctest.IsInBubble", args -> false, 0);
+        // PKG-012 (sync.Mutex via internal/sync): the internal/sync
+        // runtime linknames (go1.27.1, internal/sync/runtime.go). sync.Mutex
+        // delegates to internal/sync.Mutex, which uses these.
+        //
+        // internal/sync.runtime_SemacquireMutex(s *uint32, lifo bool,
+        // skipframes int): like sync.runtime_Semacquire. The *uint32 may
+        // arrive as a D5 Long address or as a GoPointer (field address);
+        // intCellFor handles both.
+        Linknames.register("internal/sync.runtime_SemacquireMutex", args -> {
+            GoSemaphore.acquire(intCellFor(args[0]));
+            return null;
+        }, 3);
+        // internal/sync.runtime_Semrelease(s *uint32, handoff bool,
+        // skipframes int): like sync.runtime_Semrelease.
+        Linknames.register("internal/sync.runtime_Semrelease", args -> {
+            GoSemaphore.release(intCellFor(args[0]));
+            return null;
+        }, 3);
+        // internal/sync.runtime_canSpin(i int) bool: reports whether
+        // spinning makes sense. graalgo parks via the scheduler; spinning
+        // would burn carrier threads — always false (take the slow path).
+        Linknames.register("internal/sync.runtime_canSpin", args -> false, 1);
+        // internal/sync.runtime_doSpin(): active spin hint. No-op —
+        // canSpin is always false, so this is unreachable in practice.
+        Linknames.register("internal/sync.runtime_doSpin", args -> null, 0);
+        // internal/sync.runtime_nanotime() int64: same as runtime.nanotime.
+        Linknames.register("internal/sync.runtime_nanotime",
+                args -> Timers.nanotime(), 0);
     }
 
     /**

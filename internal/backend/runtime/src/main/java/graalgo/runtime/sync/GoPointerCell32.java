@@ -84,4 +84,26 @@ public final class GoPointerCell32 implements IntCell {
             return next;
         }
     }
+
+    @Override
+    public boolean equals(Object o) {
+        if (!(o instanceof GoPointerCell32 other)) {
+            return false;
+        }
+        // The GoPointer is allocated fresh on every &x evaluation; equality
+        // is by the underlying storage (GoFieldCell.sameStorageAs), not
+        // pointer identity.
+        graalgo.values.GoCell c1 = ptr.cell();
+        graalgo.values.GoCell c2 = other.ptr.cell();
+        if (c1 == null || c2 == null) {
+            return ptr == other.ptr;
+        }
+        return c1.equals(c2);
+    }
+
+    @Override
+    public int hashCode() {
+        graalgo.values.GoCell c = ptr.cell();
+        return c == null ? System.identityHashCode(ptr) : c.hashCode();
+    }
 }
