@@ -247,6 +247,17 @@ func IsAbs(path string) bool {
 }
 
 // Dir returns all but the last element of path, typically the path's directory.
+// Split splits path immediately following the final slash, separating it
+// into a directory and file name component. If there is no slash in path,
+// Split returns an empty dir and file set to path.
+// The returned values have the property that path = dir+file.
+//
+// (Appendix M: 2-target call sites desugar to __pathSplit; every other
+// position fails fast. Body never runs.)
+func Split(path string) (dir, file string) {
+	panic("path: Split: not in M9 scope (multi-result calls need the M9 desugar; re-test when WS D lands)")
+}
+
 // After dropping the final element using [Split], the path is Cleaned and trailing
 // slashes are removed.
 // If the path is empty, Dir returns ".".

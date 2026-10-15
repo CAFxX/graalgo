@@ -63,8 +63,22 @@ def main():
     src = strip_imports(src)
     src = src.replace("bytealg.LastIndexByteString", "strings.LastIndexByte")
     src = src.replace("`", "'")
-    # Remove Split (replaced by helper).
-    src = re.sub(r"^func Split\(.*?^}\n", "", src, count=1, flags=re.M | re.S)
+    # Replace Split with a fail-fast stub (exact gc signature for
+    # type-checking; 2-target call sites desugar to __pathSplit via the
+    # Appendix-M table in mrdesugar_m5.go; every other position fails fast).
+    src = re.sub(
+        r"^func Split\(.*?^}\n",
+        "// Split splits path immediately following the final slash, separating it\n"
+        "// into a directory and file name component. If there is no slash in path,\n"
+        "// Split returns an empty dir and file set to path.\n"
+        "// The returned values have the property that path = dir+file.\n"
+        "//\n"
+        "// (Appendix M: 2-target call sites desugar to __pathSplit; every other\n"
+        "// position fails fast. Body never runs.)\n"
+        "func Split(path string) (dir, file string) {\n"
+        "\tpanic(\"path: Split: not in M9 scope (multi-result calls need the M9 desugar; re-test when WS D lands)\")\n"
+        "}\n",
+        src, count=1, flags=re.M | re.S)
     # Rewrite Dir's internal Split call.
     src = src.replace(
         "\tdir, _ := Split(path)\n\treturn Clean(dir)",
