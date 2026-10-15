@@ -991,7 +991,8 @@ func tparamNamesOfTypeParams(tpl *ast.FieldList) []string {
 	return out
 }
 
-// recvBaseName extracts the base type name from a receiver type expr.func recvBaseName(e ast.Expr) string {
+// recvBaseName extracts the base type name from a receiver type expr.
+func recvBaseName(e ast.Expr) string {
 	for {
 		switch t := e.(type) {
 		case *ast.StarExpr:

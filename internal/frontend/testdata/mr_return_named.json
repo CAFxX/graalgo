@@ -16891,6 +16891,7 @@
             }
           }
         ],
+        "pkgpath": "main",
         "results": [
           {
             "kind": "param",
@@ -17172,6 +17173,7 @@
         "name": "namedResults",
         "obj": 1,
         "params": [],
+        "pkgpath": "main",
         "results": [
           {
             "kind": "param",
@@ -17900,6 +17902,7 @@
         "name": "main",
         "obj": 2,
         "params": [],
+        "pkgpath": "main",
         "sig": 304
       }
     },
@@ -18596,6 +18599,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -18810,6 +18814,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -18993,6 +18998,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -19114,6 +19120,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -19277,6 +19284,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -20077,6 +20085,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -21146,6 +21155,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -23226,6 +23236,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -25235,6 +25246,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -29915,6 +29927,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -30616,6 +30629,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -31220,6 +31234,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -31757,6 +31772,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -32581,6 +32597,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -33194,6 +33211,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -34689,6 +34707,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -38796,6 +38815,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -39802,6 +39822,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -41745,6 +41766,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -42929,6 +42951,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -44188,6 +44211,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -47042,6 +47066,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -47382,6 +47407,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -48110,6 +48136,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -48876,6 +48903,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -49502,6 +49530,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -51393,6 +51422,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -51936,6 +51966,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -52482,6 +52513,7 @@
         "name": "jsonBuildPow5",
         "obj": 31,
         "params": [],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -53028,6 +53060,7 @@
         "name": "jsonBuildPow2",
         "obj": 32,
         "params": [],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -54149,6 +54182,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -55797,6 +55831,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -58022,6 +58057,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -62560,6 +62596,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -64047,6 +64084,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -64290,6 +64328,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -64592,6 +64631,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -68565,6 +68605,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -68674,6 +68715,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -68919,6 +68961,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -69202,6 +69245,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -69338,6 +69382,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -69537,6 +69582,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -69746,6 +69792,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -69915,6 +69962,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -70177,6 +70225,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -70286,6 +70335,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -70624,6 +70674,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -70731,6 +70782,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -71132,6 +71184,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -74128,6 +74181,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -74297,6 +74351,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -74404,6 +74459,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -74741,6 +74797,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -76432,6 +76489,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -76735,6 +76793,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -77101,6 +77160,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "sig": 422
       }
     },
@@ -78785,6 +78845,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -82879,6 +82940,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -85203,6 +85265,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -87817,6 +87880,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -90378,6 +90442,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -95685,6 +95750,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -96344,6 +96410,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -98126,6 +98193,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -98549,6 +98617,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -99167,6 +99236,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -104784,6 +104854,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -104937,6 +105008,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -105372,6 +105444,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -105807,6 +105880,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -107464,6 +107538,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -107600,6 +107675,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -108002,6 +108078,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -108494,6 +108571,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -116712,6 +116790,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -116851,6 +116930,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -116990,6 +117070,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -117159,6 +117240,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -117705,6 +117787,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -118430,6 +118513,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -120258,6 +120342,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -121306,6 +121391,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -124627,6 +124713,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -129290,6 +129377,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -129401,6 +129489,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -129528,6 +129617,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "sig": 565
       }
     },
@@ -129647,6 +129737,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -136056,6 +136147,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -136299,6 +136391,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -137419,6 +137512,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -137528,6 +137622,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -137649,6 +137744,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -137770,6 +137866,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -137897,6 +137994,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -138039,6 +138137,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "sig": 593
       }
     },
@@ -138243,6 +138342,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "sig": 595
       }
     },
@@ -138362,6 +138462,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -138910,6 +139011,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -139076,6 +139178,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -139212,6 +139315,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "results": [
           {
             "kind": "param",
@@ -139348,6 +139452,7 @@
             }
           }
         ],
+        "pkgpath": "encoding/json",
         "sig": 604
       }
     }

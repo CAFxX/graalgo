@@ -280,10 +280,18 @@
     {
       "kind": "signature",
       "detail": {
+        "params": [],
+        "results": [],
+        "variadic": false
+      }
+    },
+    {
+      "kind": "signature",
+      "detail": {
         "params": [
           {
             "name": "errs",
-            "type": 19
+            "type": 20
           }
         ],
         "results": [
@@ -321,7 +329,7 @@
         "results": [
           {
             "name": "",
-            "type": 22
+            "type": 23
           }
         ],
         "variadic": false
@@ -347,7 +355,7 @@
         "methods": [],
         "name": "main.__wsd_pair_parseLen",
         "pkgpath": "main",
-        "underlying": 25
+        "underlying": 26
       }
     },
     {
@@ -387,7 +395,7 @@
         "results": [
           {
             "name": "",
-            "type": 24
+            "type": 25
           }
         ],
         "variadic": false
@@ -452,7 +460,7 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 32,
+        "elem": 33,
         "methods": [
           {
             "addrOf": false,
@@ -471,7 +479,7 @@
         "methods": [],
         "name": "errors.errorString",
         "pkgpath": "errors",
-        "underlying": 33
+        "underlying": 34
       }
     },
     {
@@ -493,7 +501,7 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 32,
+        "elem": 33,
         "methods": [
           {
             "addrOf": false,
@@ -512,7 +520,7 @@
         "params": [
           {
             "name": "e",
-            "type": 34
+            "type": 35
           }
         ],
         "results": [
@@ -548,7 +556,7 @@
         "methods": [],
         "name": "errors.unwrapper",
         "pkgpath": "errors",
-        "underlying": 38
+        "underlying": 39
       }
     },
     {
@@ -560,7 +568,7 @@
           {
             "implkey": "Unwrap\u0000func()(named:error)",
             "name": "Unwrap",
-            "sig": 39
+            "sig": 40
           }
         ]
       }
@@ -658,7 +666,7 @@
         "methods": [],
         "name": "errors.errorIsser",
         "pkgpath": "errors",
-        "underlying": 45
+        "underlying": 46
       }
     },
     {
@@ -670,7 +678,7 @@
           {
             "implkey": "Is\u0000func(named:error)(basic:1)",
             "name": "Is",
-            "sig": 46
+            "sig": 47
           }
         ]
       }
@@ -699,7 +707,7 @@
         "methods": [],
         "name": "errors.multiUnwrapper",
         "pkgpath": "errors",
-        "underlying": 48
+        "underlying": 49
       }
     },
     {
@@ -711,7 +719,7 @@
           {
             "implkey": "Unwrap\u0000func()(slice(named:error))",
             "name": "Unwrap",
-            "sig": 49
+            "sig": 50
           }
         ]
       }
@@ -723,7 +731,7 @@
         "results": [
           {
             "name": "",
-            "type": 50
+            "type": 51
           }
         ],
         "variadic": false
@@ -763,7 +771,7 @@
         "params": [
           {
             "name": "errs",
-            "type": 19
+            "type": 20
           }
         ],
         "results": [
@@ -778,14 +786,14 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 54,
+        "elem": 55,
         "methods": [
           {
             "addrOf": false,
             "implkey": "Error\u0000func()(basic:17)",
             "index": [],
             "name": "Error",
-            "obj": 12,
+            "obj": 13,
             "recv": "pointer"
           },
           {
@@ -793,7 +801,7 @@
             "implkey": "Unwrap\u0000func()(slice(named:error))",
             "index": [],
             "name": "Unwrap",
-            "obj": 13,
+            "obj": 14,
             "recv": "pointer"
           }
         ]
@@ -805,7 +813,7 @@
         "methods": [],
         "name": "errors.joinError",
         "pkgpath": "errors",
-        "underlying": 55
+        "underlying": 56
       }
     },
     {
@@ -819,7 +827,7 @@
             "offset": 0,
             "pkgpath": "errors",
             "tag": "",
-            "type": 56
+            "type": 57
           }
         ]
       }
@@ -839,14 +847,14 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 54,
+        "elem": 55,
         "methods": [
           {
             "addrOf": false,
             "implkey": "Error\u0000func()(basic:17)",
             "index": [],
             "name": "Error",
-            "obj": 12,
+            "obj": 13,
             "recv": "pointer"
           },
           {
@@ -854,7 +862,7 @@
             "implkey": "Unwrap\u0000func()(slice(named:error))",
             "index": [],
             "name": "Unwrap",
-            "obj": 13,
+            "obj": 14,
             "recv": "pointer"
           }
         ]
@@ -866,7 +874,7 @@
         "params": [
           {
             "name": "e",
-            "type": 58
+            "type": 59
           }
         ],
         "results": [
@@ -881,7 +889,7 @@
     {
       "kind": "slice",
       "detail": {
-        "elem": 61
+        "elem": 62
       }
     },
     {
@@ -895,14 +903,14 @@
     {
       "kind": "pointer",
       "detail": {
-        "elem": 54,
+        "elem": 55,
         "methods": [
           {
             "addrOf": false,
             "implkey": "Error\u0000func()(basic:17)",
             "index": [],
             "name": "Error",
-            "obj": 12,
+            "obj": 13,
             "recv": "pointer"
           },
           {
@@ -910,7 +918,7 @@
             "implkey": "Unwrap\u0000func()(slice(named:error))",
             "index": [],
             "name": "Unwrap",
-            "obj": 13,
+            "obj": 14,
             "recv": "pointer"
           }
         ]
@@ -922,13 +930,13 @@
         "params": [
           {
             "name": "e",
-            "type": 62
+            "type": 63
           }
         ],
         "results": [
           {
             "name": "",
-            "type": 22
+            "type": 23
           }
         ],
         "variadic": false
@@ -1026,7 +1034,7 @@
     },
     {
       "kind": "func",
-      "name": "Join",
+      "name": "__asType",
       "type": 18,
       "param": false,
       "instof": 0,
@@ -1034,15 +1042,15 @@
     },
     {
       "kind": "func",
-      "name": "Error",
-      "type": 20,
+      "name": "Join",
+      "type": 19,
       "param": false,
       "instof": 0,
       "typeargs": null
     },
     {
       "kind": "func",
-      "name": "Unwrap",
+      "name": "Error",
       "type": 21,
       "param": false,
       "instof": 0,
@@ -1050,8 +1058,16 @@
     },
     {
       "kind": "func",
+      "name": "Unwrap",
+      "type": 22,
+      "param": false,
+      "instof": 0,
+      "typeargs": null
+    },
+    {
+      "kind": "func",
       "name": "__asTypePub",
-      "type": 23,
+      "type": 24,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1067,7 +1083,7 @@
     {
       "kind": "var",
       "name": "__p5mr_1",
-      "type": 24,
+      "type": 25,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1099,7 +1115,7 @@
     {
       "kind": "var",
       "name": "",
-      "type": 24,
+      "type": 25,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1147,7 +1163,7 @@
     {
       "kind": "var",
       "name": "e",
-      "type": 34,
+      "type": 35,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1179,7 +1195,7 @@
     {
       "kind": "var",
       "name": "u",
-      "type": 37,
+      "type": 38,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1267,7 +1283,7 @@
     {
       "kind": "var",
       "name": "x",
-      "type": 44,
+      "type": 45,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1283,7 +1299,7 @@
     {
       "kind": "var",
       "name": "x",
-      "type": 37,
+      "type": 38,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1291,7 +1307,7 @@
     {
       "kind": "var",
       "name": "x",
-      "type": 47,
+      "type": 48,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1339,7 +1355,7 @@
     {
       "kind": "var",
       "name": "errs",
-      "type": 19,
+      "type": 20,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1371,7 +1387,7 @@
     {
       "kind": "var",
       "name": "e",
-      "type": 53,
+      "type": 54,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1387,7 +1403,7 @@
     {
       "kind": "var",
       "name": "e",
-      "type": 58,
+      "type": 59,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1403,7 +1419,7 @@
     {
       "kind": "var",
       "name": "b",
-      "type": 60,
+      "type": 61,
       "param": false,
       "instof": 0,
       "typeargs": null
@@ -1419,7 +1435,7 @@
     {
       "kind": "var",
       "name": "e",
-      "type": 62,
+      "type": 63,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1427,7 +1443,7 @@
     {
       "kind": "var",
       "name": "",
-      "type": 22,
+      "type": 23,
       "param": true,
       "instof": 0,
       "typeargs": null
@@ -1476,7 +1492,7 @@
                     },
                     "fields": {
                       "op": "==",
-                      "type": 27,
+                      "type": 28,
                       "x": {
                         "kind": "ident",
                         "pos": {
@@ -1488,7 +1504,7 @@
                         },
                         "fields": {
                           "name": "s",
-                          "obj": 17,
+                          "obj": 18,
                           "type": 2
                         }
                       },
@@ -1549,7 +1565,7 @@
                                     "f1"
                                   ],
                                   "keyed": true,
-                                  "type": 24,
+                                  "type": 25,
                                   "values": [
                                     {
                                       "kind": "basiclit",
@@ -1651,7 +1667,7 @@
                           "f1"
                         ],
                         "keyed": true,
-                        "type": 24,
+                        "type": 25,
                         "values": [
                           {
                             "kind": "call",
@@ -1675,7 +1691,7 @@
                                   },
                                   "fields": {
                                     "name": "s",
-                                    "obj": 17,
+                                    "obj": 18,
                                     "type": 2
                                   }
                                 }
@@ -1734,11 +1750,12 @@
             },
             "fields": {
               "name": "s",
-              "obj": 17,
+              "obj": 18,
               "type": 2
             }
           }
         ],
+        "pkgpath": "main",
         "results": [
           {
             "kind": "param",
@@ -1751,12 +1768,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 20,
-              "type": 24
+              "obj": 21,
+              "type": 25
             }
           }
         ],
-        "sig": 26
+        "sig": 27
       }
     },
     {
@@ -1801,7 +1818,7 @@
                     },
                     "fields": {
                       "op": "!=",
-                      "type": 27,
+                      "type": 28,
                       "x": {
                         "kind": "ident",
                         "pos": {
@@ -1813,7 +1830,7 @@
                         },
                         "fields": {
                           "name": "err",
-                          "obj": 22,
+                          "obj": 23,
                           "type": 3
                         }
                       },
@@ -1877,7 +1894,7 @@
                                     },
                                     "fields": {
                                       "name": "err",
-                                      "obj": 22,
+                                      "obj": 23,
                                       "type": 3
                                     }
                                   }
@@ -1929,7 +1946,7 @@
                       },
                       "fields": {
                         "name": "v",
-                        "obj": 21,
+                        "obj": 22,
                         "type": 0
                       }
                     }
@@ -1953,7 +1970,7 @@
             },
             "fields": {
               "name": "v",
-              "obj": 21,
+              "obj": 22,
               "type": 0
             }
           },
@@ -1968,11 +1985,12 @@
             },
             "fields": {
               "name": "err",
-              "obj": 22,
+              "obj": 23,
               "type": 3
             }
           }
         ],
+        "pkgpath": "main",
         "results": [
           {
             "kind": "param",
@@ -1985,12 +2003,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 23,
+              "obj": 24,
               "type": 0
             }
           }
         ],
-        "sig": 28
+        "sig": 29
       }
     },
     {
@@ -2093,7 +2111,8 @@
         "name": "main",
         "obj": 3,
         "params": [],
-        "sig": 29
+        "pkgpath": "main",
+        "sig": 30
       }
     },
     {
@@ -2139,7 +2158,7 @@
                       },
                       "fields": {
                         "keyed": false,
-                        "type": 31,
+                        "type": 32,
                         "values": [
                           {
                             "kind": "ident",
@@ -2152,7 +2171,7 @@
                             },
                             "fields": {
                               "name": "text",
-                              "obj": 24,
+                              "obj": 25,
                               "type": 2
                             }
                           }
@@ -2179,11 +2198,12 @@
             },
             "fields": {
               "name": "text",
-              "obj": 24,
+              "obj": 25,
               "type": 2
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -2196,12 +2216,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 25,
+              "obj": 26,
               "type": 3
             }
           }
         ],
-        "sig": 30
+        "sig": 31
       }
     },
     {
@@ -2262,8 +2282,8 @@
                           },
                           "fields": {
                             "name": "e",
-                            "obj": 26,
-                            "type": 34
+                            "obj": 27,
+                            "type": 35
                           }
                         }
                       }
@@ -2288,11 +2308,12 @@
             },
             "fields": {
               "name": "e",
-              "obj": 26,
-              "type": 34
+              "obj": 27,
+              "type": 35
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -2305,12 +2326,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 27,
+              "obj": 28,
               "type": 2
             }
           }
         ],
-        "sig": 35
+        "sig": 36
       }
     },
     {
@@ -2355,7 +2376,7 @@
                     },
                     "fields": {
                       "op": "==",
-                      "type": 27,
+                      "type": 28,
                       "x": {
                         "kind": "ident",
                         "pos": {
@@ -2367,7 +2388,7 @@
                         },
                         "fields": {
                           "name": "err",
-                          "obj": 28,
+                          "obj": 29,
                           "type": 3
                         }
                       },
@@ -2447,8 +2468,8 @@
                     "ok"
                   ],
                   "objs": [
-                    30,
-                    31
+                    31,
+                    32
                   ],
                   "type": null,
                   "values": [
@@ -2463,7 +2484,7 @@
                       },
                       "fields": {
                         "commaOk": true,
-                        "type": 37,
+                        "type": 38,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -2475,7 +2496,7 @@
                           },
                           "fields": {
                             "name": "err",
-                            "obj": 28,
+                            "obj": 29,
                             "type": 3
                           }
                         }
@@ -2517,7 +2538,7 @@
                         },
                         "fields": {
                           "name": "ok",
-                          "obj": 31,
+                          "obj": 32,
                           "type": 12
                         }
                       }
@@ -2590,7 +2611,7 @@
                       },
                       "fields": {
                         "args": [],
-                        "iface": 38,
+                        "iface": 39,
                         "method": "Unwrap",
                         "recv": {
                           "kind": "ident",
@@ -2603,11 +2624,11 @@
                           },
                           "fields": {
                             "name": "u",
-                            "obj": 30,
-                            "type": 37
+                            "obj": 31,
+                            "type": 38
                           }
                         },
-                        "sig": 39,
+                        "sig": 40,
                         "type": 3
                       }
                     }
@@ -2631,11 +2652,12 @@
             },
             "fields": {
               "name": "err",
-              "obj": 28,
+              "obj": 29,
               "type": 3
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -2648,12 +2670,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 29,
+              "obj": 30,
               "type": 3
             }
           }
         ],
-        "sig": 36
+        "sig": 37
       }
     },
     {
@@ -2698,7 +2720,7 @@
                     },
                     "fields": {
                       "op": "||",
-                      "type": 27,
+                      "type": 28,
                       "x": {
                         "kind": "binary",
                         "pos": {
@@ -2710,7 +2732,7 @@
                         },
                         "fields": {
                           "op": "==",
-                          "type": 27,
+                          "type": 28,
                           "x": {
                             "kind": "ident",
                             "pos": {
@@ -2722,7 +2744,7 @@
                             },
                             "fields": {
                               "name": "err",
-                              "obj": 32,
+                              "obj": 33,
                               "type": 3
                             }
                           },
@@ -2752,7 +2774,7 @@
                         },
                         "fields": {
                           "op": "==",
-                          "type": 27,
+                          "type": 28,
                           "x": {
                             "kind": "ident",
                             "pos": {
@@ -2764,7 +2786,7 @@
                             },
                             "fields": {
                               "name": "target",
-                              "obj": 33,
+                              "obj": 34,
                               "type": 3
                             }
                           },
@@ -2832,7 +2854,7 @@
                                     },
                                     "fields": {
                                       "name": "err",
-                                      "obj": 32,
+                                      "obj": 33,
                                       "type": 3
                                     }
                                   },
@@ -2847,7 +2869,7 @@
                                     },
                                     "fields": {
                                       "name": "target",
-                                      "obj": 33,
+                                      "obj": 34,
                                       "type": 3
                                     }
                                   }
@@ -2894,7 +2916,7 @@
                             },
                             "fields": {
                               "name": "err",
-                              "obj": 32,
+                              "obj": 33,
                               "type": 3
                             }
                           },
@@ -2909,7 +2931,7 @@
                             },
                             "fields": {
                               "name": "target",
-                              "obj": 33,
+                              "obj": 34,
                               "type": 3
                             }
                           },
@@ -2935,7 +2957,7 @@
                                   },
                                   "fields": {
                                     "name": "target",
-                                    "obj": 33,
+                                    "obj": 34,
                                     "type": 3
                                   }
                                 }
@@ -2997,7 +3019,7 @@
             },
             "fields": {
               "name": "err",
-              "obj": 32,
+              "obj": 33,
               "type": 3
             }
           },
@@ -3012,11 +3034,12 @@
             },
             "fields": {
               "name": "target",
-              "obj": 33,
+              "obj": 34,
               "type": 3
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -3029,12 +3052,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 34,
+              "obj": 35,
               "type": 12
             }
           }
         ],
-        "sig": 40
+        "sig": 41
       }
     },
     {
@@ -3121,7 +3144,7 @@
                                       },
                                       "fields": {
                                         "op": "!=",
-                                        "type": 27,
+                                        "type": 28,
                                         "x": {
                                           "kind": "call",
                                           "pos": {
@@ -3201,7 +3224,7 @@
                                                   },
                                                   "fields": {
                                                     "name": "ok",
-                                                    "obj": 36,
+                                                    "obj": 37,
                                                     "type": 12
                                                   }
                                                 }
@@ -3236,7 +3259,7 @@
                           },
                           "params": [],
                           "results": [],
-                          "type": 42
+                          "type": 43
                         }
                       },
                       "type": null
@@ -3278,7 +3301,7 @@
                           },
                           "fields": {
                             "name": "target",
-                            "obj": 35,
+                            "obj": 36,
                             "type": 3
                           }
                         },
@@ -3293,7 +3316,7 @@
                           },
                           "fields": {
                             "name": "target",
-                            "obj": 35,
+                            "obj": 36,
                             "type": 3
                           }
                         }
@@ -3319,11 +3342,12 @@
             },
             "fields": {
               "name": "target",
-              "obj": 35,
+              "obj": 36,
               "type": 3
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -3336,12 +3360,12 @@
             },
             "fields": {
               "name": "ok",
-              "obj": 36,
+              "obj": 37,
               "type": 12
             }
           }
         ],
-        "sig": 41
+        "sig": 42
       }
     },
     {
@@ -3407,7 +3431,7 @@
                               },
                               "fields": {
                                 "op": "==",
-                                "type": 27,
+                                "type": 28,
                                 "x": {
                                   "kind": "ident",
                                   "pos": {
@@ -3419,7 +3443,7 @@
                                   },
                                   "fields": {
                                     "name": "err",
-                                    "obj": 37,
+                                    "obj": 38,
                                     "type": 3
                                   }
                                 },
@@ -3518,7 +3542,7 @@
                                   },
                                   "fields": {
                                     "name": "targetComparable",
-                                    "obj": 39,
+                                    "obj": 40,
                                     "type": 12
                                   }
                                 },
@@ -3545,7 +3569,7 @@
                                       },
                                       "fields": {
                                         "name": "err",
-                                        "obj": 37,
+                                        "obj": 38,
                                         "type": 3
                                       }
                                     },
@@ -3560,7 +3584,7 @@
                                       },
                                       "fields": {
                                         "name": "target",
-                                        "obj": 38,
+                                        "obj": 39,
                                         "type": 3
                                       }
                                     }
@@ -3648,7 +3672,7 @@
                                   },
                                   "fields": {
                                     "name": "ok",
-                                    "obj": 42,
+                                    "obj": 43,
                                     "type": 12
                                   }
                                 },
@@ -3674,12 +3698,12 @@
                                         },
                                         "fields": {
                                           "name": "target",
-                                          "obj": 38,
+                                          "obj": 39,
                                           "type": 3
                                         }
                                       }
                                     ],
-                                    "iface": 45,
+                                    "iface": 46,
                                     "method": "Is",
                                     "recv": {
                                       "kind": "ident",
@@ -3692,11 +3716,11 @@
                                       },
                                       "fields": {
                                         "name": "x",
-                                        "obj": 41,
-                                        "type": 44
+                                        "obj": 42,
+                                        "type": 45
                                       }
                                     },
-                                    "sig": 46,
+                                    "sig": 47,
                                     "type": 12
                                   }
                                 }
@@ -3719,8 +3743,8 @@
                                   "ok"
                                 ],
                                 "objs": [
-                                  41,
-                                  42
+                                  42,
+                                  43
                                 ],
                                 "type": null,
                                 "values": [
@@ -3735,7 +3759,7 @@
                                     },
                                     "fields": {
                                       "commaOk": true,
-                                      "type": 44,
+                                      "type": 45,
                                       "x": {
                                         "kind": "ident",
                                         "pos": {
@@ -3747,7 +3771,7 @@
                                         },
                                         "fields": {
                                           "name": "err",
-                                          "obj": 37,
+                                          "obj": 38,
                                           "type": 3
                                         }
                                       }
@@ -3822,8 +3846,8 @@
                                   "len": 76
                                 },
                                 "fields": {
-                                  "bindobj": 43,
-                                  "bindtype": 37,
+                                  "bindobj": 44,
+                                  "bindtype": 38,
                                   "body": {
                                     "kind": "block",
                                     "pos": {
@@ -3857,7 +3881,7 @@
                                                 },
                                                 "fields": {
                                                   "name": "err",
-                                                  "obj": 37,
+                                                  "obj": 38,
                                                   "type": 3
                                                 }
                                               }
@@ -3874,7 +3898,7 @@
                                                 },
                                                 "fields": {
                                                   "args": [],
-                                                  "iface": 38,
+                                                  "iface": 39,
                                                   "method": "Unwrap",
                                                   "recv": {
                                                     "kind": "ident",
@@ -3887,11 +3911,11 @@
                                                     },
                                                     "fields": {
                                                       "name": "x",
-                                                      "obj": 43,
-                                                      "type": 37
+                                                      "obj": 44,
+                                                      "type": 38
                                                     }
                                                   },
-                                                  "sig": 39,
+                                                  "sig": 40,
                                                   "type": 3
                                                 }
                                               }
@@ -3920,7 +3944,7 @@
                                               },
                                               "fields": {
                                                 "op": "==",
-                                                "type": 27,
+                                                "type": 28,
                                                 "x": {
                                                   "kind": "ident",
                                                   "pos": {
@@ -3932,7 +3956,7 @@
                                                   },
                                                   "fields": {
                                                     "name": "err",
-                                                    "obj": 37,
+                                                    "obj": 38,
                                                     "type": 3
                                                   }
                                                 },
@@ -4004,7 +4028,7 @@
                                   "default": false,
                                   "nilcase": false,
                                   "types": [
-                                    37
+                                    38
                                   ]
                                 }
                               },
@@ -4018,8 +4042,8 @@
                                   "len": 149
                                 },
                                 "fields": {
-                                  "bindobj": 44,
-                                  "bindtype": 47,
+                                  "bindobj": 45,
+                                  "bindtype": 48,
                                   "body": {
                                     "kind": "block",
                                     "pos": {
@@ -4084,7 +4108,7 @@
                                                               },
                                                               "fields": {
                                                                 "name": "err",
-                                                                "obj": 45,
+                                                                "obj": 46,
                                                                 "type": 3
                                                               }
                                                             },
@@ -4099,7 +4123,7 @@
                                                               },
                                                               "fields": {
                                                                 "name": "target",
-                                                                "obj": 38,
+                                                                "obj": 39,
                                                                 "type": 3
                                                               }
                                                             },
@@ -4114,7 +4138,7 @@
                                                               },
                                                               "fields": {
                                                                 "name": "targetComparable",
-                                                                "obj": 39,
+                                                                "obj": 40,
                                                                 "type": 12
                                                               }
                                                             }
@@ -4189,7 +4213,7 @@
                                             },
                                             "define": true,
                                             "key": null,
-                                            "value": 45,
+                                            "value": 46,
                                             "x": {
                                               "kind": "ifacemethod",
                                               "pos": {
@@ -4201,7 +4225,7 @@
                                               },
                                               "fields": {
                                                 "args": [],
-                                                "iface": 48,
+                                                "iface": 49,
                                                 "method": "Unwrap",
                                                 "recv": {
                                                   "kind": "ident",
@@ -4214,12 +4238,12 @@
                                                   },
                                                   "fields": {
                                                     "name": "x",
-                                                    "obj": 44,
-                                                    "type": 47
+                                                    "obj": 45,
+                                                    "type": 48
                                                   }
                                                 },
-                                                "sig": 49,
-                                                "type": 50
+                                                "sig": 50,
+                                                "type": 51
                                               }
                                             }
                                           }
@@ -4259,7 +4283,7 @@
                                   "default": false,
                                   "nilcase": false,
                                   "types": [
-                                    47
+                                    48
                                   ]
                                 }
                               },
@@ -4273,7 +4297,7 @@
                                   "len": 24
                                 },
                                 "fields": {
-                                  "bindobj": 46,
+                                  "bindobj": 47,
                                   "bindtype": 3,
                                   "body": {
                                     "kind": "block",
@@ -4336,7 +4360,7 @@
                               },
                               "fields": {
                                 "name": "err",
-                                "obj": 37,
+                                "obj": 38,
                                 "type": 3
                               }
                             }
@@ -4367,21 +4391,6 @@
             },
             "fields": {
               "name": "err",
-              "obj": 37,
-              "type": 3
-            }
-          },
-          {
-            "kind": "param",
-            "pos": {
-              "file": 0,
-              "line": 92,
-              "col": 1,
-              "off": 2983,
-              "len": 60
-            },
-            "fields": {
-              "name": "target",
               "obj": 38,
               "type": 3
             }
@@ -4396,12 +4405,28 @@
               "len": 60
             },
             "fields": {
-              "name": "targetComparable",
+              "name": "target",
               "obj": 39,
+              "type": 3
+            }
+          },
+          {
+            "kind": "param",
+            "pos": {
+              "file": 0,
+              "line": 92,
+              "col": 1,
+              "off": 2983,
+              "len": 60
+            },
+            "fields": {
+              "name": "targetComparable",
+              "obj": 40,
               "type": 12
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -4414,12 +4439,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 40,
+              "obj": 41,
               "type": 12
             }
           }
         ],
-        "sig": 43
+        "sig": 44
       }
     },
     {
@@ -4518,7 +4543,7 @@
             },
             "fields": {
               "name": "err",
-              "obj": 47,
+              "obj": 48,
               "type": 3
             }
           },
@@ -4533,11 +4558,12 @@
             },
             "fields": {
               "name": "target",
-              "obj": 48,
+              "obj": 49,
               "type": 16
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -4550,12 +4576,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 49,
+              "obj": 50,
               "type": 12
             }
           }
         ],
-        "sig": 51
+        "sig": 52
       }
     },
     {
@@ -4594,7 +4620,7 @@
                     "n"
                   ],
                   "objs": [
-                    52
+                    53
                   ],
                   "type": null,
                   "values": [
@@ -4660,7 +4686,7 @@
                               },
                               "fields": {
                                 "op": "!=",
-                                "type": 27,
+                                "type": 28,
                                 "x": {
                                   "kind": "ident",
                                   "pos": {
@@ -4672,7 +4698,7 @@
                                   },
                                   "fields": {
                                     "name": "err",
-                                    "obj": 53,
+                                    "obj": 54,
                                     "type": 3
                                   }
                                 },
@@ -4726,7 +4752,7 @@
                                         },
                                         "fields": {
                                           "name": "n",
-                                          "obj": 52,
+                                          "obj": 53,
                                           "type": 0
                                         }
                                       }
@@ -4742,7 +4768,7 @@
                   },
                   "define": true,
                   "key": null,
-                  "value": 53,
+                  "value": 54,
                   "x": {
                     "kind": "ident",
                     "pos": {
@@ -4754,8 +4780,8 @@
                     },
                     "fields": {
                       "name": "errs",
-                      "obj": 50,
-                      "type": 19
+                      "obj": 51,
+                      "type": 20
                     }
                   }
                 }
@@ -4781,7 +4807,7 @@
                     },
                     "fields": {
                       "op": "==",
-                      "type": 27,
+                      "type": 28,
                       "x": {
                         "kind": "ident",
                         "pos": {
@@ -4793,7 +4819,7 @@
                         },
                         "fields": {
                           "name": "n",
-                          "obj": 52,
+                          "obj": 53,
                           "type": 0
                         }
                       },
@@ -4876,7 +4902,7 @@
                     "e"
                   ],
                   "objs": [
-                    54
+                    55
                   ],
                   "type": null,
                   "values": [
@@ -4894,7 +4920,7 @@
                           "errs"
                         ],
                         "keyed": true,
-                        "type": 53,
+                        "type": 54,
                         "values": [
                           {
                             "kind": "call",
@@ -4935,7 +4961,7 @@
                                   },
                                   "fields": {
                                     "name": "n",
-                                    "obj": 52,
+                                    "obj": 53,
                                     "type": 0
                                   }
                                 }
@@ -4955,7 +4981,7 @@
                                   "name": "make"
                                 }
                               },
-                              "type": 57
+                              "type": 58
                             }
                           }
                         ]
@@ -5006,7 +5032,7 @@
                               },
                               "fields": {
                                 "op": "!=",
-                                "type": 27,
+                                "type": 28,
                                 "x": {
                                   "kind": "ident",
                                   "pos": {
@@ -5018,7 +5044,7 @@
                                   },
                                   "fields": {
                                     "name": "err",
-                                    "obj": 55,
+                                    "obj": 56,
                                     "type": 3
                                   }
                                 },
@@ -5075,7 +5101,7 @@
                                             "selpath": [
                                               0
                                             ],
-                                            "type": 56,
+                                            "type": 57,
                                             "x": {
                                               "kind": "ident",
                                               "pos": {
@@ -5087,8 +5113,8 @@
                                               },
                                               "fields": {
                                                 "name": "e",
-                                                "obj": 54,
-                                                "type": 53
+                                                "obj": 55,
+                                                "type": 54
                                               }
                                             }
                                           }
@@ -5120,7 +5146,7 @@
                                                   "selpath": [
                                                     0
                                                   ],
-                                                  "type": 56,
+                                                  "type": 57,
                                                   "x": {
                                                     "kind": "ident",
                                                     "pos": {
@@ -5132,8 +5158,8 @@
                                                     },
                                                     "fields": {
                                                       "name": "e",
-                                                      "obj": 54,
-                                                      "type": 53
+                                                      "obj": 55,
+                                                      "type": 54
                                                     }
                                                   }
                                                 }
@@ -5149,7 +5175,7 @@
                                                 },
                                                 "fields": {
                                                   "name": "err",
-                                                  "obj": 55,
+                                                  "obj": 56,
                                                   "type": 3
                                                 }
                                               }
@@ -5169,7 +5195,7 @@
                                                 "name": "append"
                                               }
                                             },
-                                            "type": 56
+                                            "type": 57
                                           }
                                         }
                                       ],
@@ -5186,7 +5212,7 @@
                   },
                   "define": true,
                   "key": null,
-                  "value": 55,
+                  "value": 56,
                   "x": {
                     "kind": "ident",
                     "pos": {
@@ -5198,8 +5224,8 @@
                     },
                     "fields": {
                       "name": "errs",
-                      "obj": 50,
-                      "type": 19
+                      "obj": 51,
+                      "type": 20
                     }
                   }
                 }
@@ -5226,8 +5252,8 @@
                       },
                       "fields": {
                         "name": "e",
-                        "obj": 54,
-                        "type": 53
+                        "obj": 55,
+                        "type": 54
                       }
                     }
                   ]
@@ -5237,7 +5263,7 @@
           }
         },
         "name": "Join",
-        "obj": 11,
+        "obj": 12,
         "params": [
           {
             "kind": "param",
@@ -5250,11 +5276,12 @@
             },
             "fields": {
               "name": "errs",
-              "obj": 50,
-              "type": 19
+              "obj": 51,
+              "type": 20
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -5267,12 +5294,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 51,
+              "obj": 52,
               "type": 3
             }
           }
         ],
-        "sig": 52
+        "sig": 53
       }
     },
     {
@@ -5317,7 +5344,7 @@
                     },
                     "fields": {
                       "op": "==",
-                      "type": 27,
+                      "type": 28,
                       "x": {
                         "kind": "call",
                         "pos": {
@@ -5343,7 +5370,7 @@
                                 "selpath": [
                                   0
                                 ],
-                                "type": 56,
+                                "type": 57,
                                 "x": {
                                   "kind": "ident",
                                   "pos": {
@@ -5355,8 +5382,8 @@
                                   },
                                   "fields": {
                                     "name": "e",
-                                    "obj": 56,
-                                    "type": 58
+                                    "obj": 57,
+                                    "type": 59
                                   }
                                 }
                               }
@@ -5479,7 +5506,7 @@
                                           "selpath": [
                                             0
                                           ],
-                                          "type": 56,
+                                          "type": 57,
                                           "x": {
                                             "kind": "ident",
                                             "pos": {
@@ -5491,8 +5518,8 @@
                                             },
                                             "fields": {
                                               "name": "e",
-                                              "obj": 56,
-                                              "type": 58
+                                              "obj": 57,
+                                              "type": 59
                                             }
                                           }
                                         }
@@ -5526,7 +5553,7 @@
                     "b"
                   ],
                   "objs": [
-                    58
+                    59
                   ],
                   "type": null,
                   "values": [
@@ -5541,8 +5568,8 @@
                       },
                       "fields": {
                         "from": 2,
-                        "to": 60,
-                        "type": 60,
+                        "to": 61,
+                        "type": 61,
                         "x": {
                           "kind": "ifacemethod",
                           "pos": {
@@ -5599,7 +5626,7 @@
                                     "selpath": [
                                       0
                                     ],
-                                    "type": 56,
+                                    "type": 57,
                                     "x": {
                                       "kind": "ident",
                                       "pos": {
@@ -5611,8 +5638,8 @@
                                       },
                                       "fields": {
                                         "name": "e",
-                                        "obj": 56,
-                                        "type": 58
+                                        "obj": 57,
+                                        "type": 59
                                       }
                                     }
                                   }
@@ -5671,8 +5698,8 @@
                                 },
                                 "fields": {
                                   "name": "b",
-                                  "obj": 58,
-                                  "type": 60
+                                  "obj": 59,
+                                  "type": 61
                                 }
                               }
                             ],
@@ -5699,8 +5726,8 @@
                                       },
                                       "fields": {
                                         "name": "b",
-                                        "obj": 58,
-                                        "type": 60
+                                        "obj": 59,
+                                        "type": 61
                                       }
                                     },
                                     {
@@ -5716,7 +5743,7 @@
                                         "const": "10",
                                         "f32bits": 1092616192,
                                         "f64bits": 4621819117588971520,
-                                        "type": 61,
+                                        "type": 62,
                                         "value": "'\\n'"
                                       }
                                     }
@@ -5736,7 +5763,7 @@
                                       "name": "append"
                                     }
                                   },
-                                  "type": 60
+                                  "type": 61
                                 }
                               }
                             ],
@@ -5765,8 +5792,8 @@
                                 },
                                 "fields": {
                                   "name": "b",
-                                  "obj": 58,
-                                  "type": 60
+                                  "obj": 59,
+                                  "type": 61
                                 }
                               }
                             ],
@@ -5793,8 +5820,8 @@
                                       },
                                       "fields": {
                                         "name": "b",
-                                        "obj": 58,
-                                        "type": 60
+                                        "obj": 59,
+                                        "type": 61
                                       }
                                     },
                                     {
@@ -5821,7 +5848,7 @@
                                           },
                                           "fields": {
                                             "name": "err",
-                                            "obj": 59,
+                                            "obj": 60,
                                             "type": 3
                                           }
                                         },
@@ -5846,7 +5873,7 @@
                                       "name": "append"
                                     }
                                   },
-                                  "type": 60
+                                  "type": 61
                                 }
                               }
                             ],
@@ -5858,7 +5885,7 @@
                   },
                   "define": true,
                   "key": null,
-                  "value": 59,
+                  "value": 60,
                   "x": {
                     "kind": "sliceexpr",
                     "pos": {
@@ -5888,7 +5915,7 @@
                         }
                       },
                       "max": null,
-                      "type": 56,
+                      "type": 57,
                       "x": {
                         "kind": "selector",
                         "pos": {
@@ -5903,7 +5930,7 @@
                           "selpath": [
                             0
                           ],
-                          "type": 56,
+                          "type": 57,
                           "x": {
                             "kind": "ident",
                             "pos": {
@@ -5915,8 +5942,8 @@
                             },
                             "fields": {
                               "name": "e",
-                              "obj": 56,
-                              "type": 58
+                              "obj": 57,
+                              "type": 59
                             }
                           }
                         }
@@ -5946,7 +5973,7 @@
                         "len": 9
                       },
                       "fields": {
-                        "from": 60,
+                        "from": 61,
                         "to": 2,
                         "type": 2,
                         "x": {
@@ -5960,8 +5987,8 @@
                           },
                           "fields": {
                             "name": "b",
-                            "obj": 58,
-                            "type": 60
+                            "obj": 59,
+                            "type": 61
                           }
                         }
                       }
@@ -5973,7 +6000,7 @@
           }
         },
         "name": "Error",
-        "obj": 12,
+        "obj": 13,
         "params": [
           {
             "kind": "param",
@@ -5986,11 +6013,12 @@
             },
             "fields": {
               "name": "e",
-              "obj": 56,
-              "type": 58
+              "obj": 57,
+              "type": 59
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -6003,12 +6031,12 @@
             },
             "fields": {
               "name": "",
-              "obj": 57,
+              "obj": 58,
               "type": 2
             }
           }
         ],
-        "sig": 59
+        "sig": 60
       }
     },
     {
@@ -6057,7 +6085,7 @@
                         "selpath": [
                           0
                         ],
-                        "type": 56,
+                        "type": 57,
                         "x": {
                           "kind": "ident",
                           "pos": {
@@ -6069,8 +6097,8 @@
                           },
                           "fields": {
                             "name": "e",
-                            "obj": 60,
-                            "type": 62
+                            "obj": 61,
+                            "type": 63
                           }
                         }
                       }
@@ -6082,7 +6110,7 @@
           }
         },
         "name": "Unwrap",
-        "obj": 13,
+        "obj": 14,
         "params": [
           {
             "kind": "param",
@@ -6095,11 +6123,12 @@
             },
             "fields": {
               "name": "e",
-              "obj": 60,
-              "type": 62
+              "obj": 61,
+              "type": 63
             }
           }
         ],
+        "pkgpath": "errors",
         "results": [
           {
             "kind": "param",
@@ -6112,18 +6141,18 @@
             },
             "fields": {
               "name": "",
-              "obj": 61,
-              "type": 22
+              "obj": 62,
+              "type": 23
             }
           }
         ],
-        "sig": 63
+        "sig": 64
       }
     }
   ],
   "globals": [
     {
-      "obj": 15,
+      "obj": 16,
       "init": {
         "kind": "call",
         "pos": {
@@ -6179,7 +6208,7 @@
       }
     },
     {
-      "obj": 16,
+      "obj": 17,
       "init": {
         "kind": "call",
         "pos": {
@@ -6223,7 +6252,7 @@
               "type": 1
             }
           },
-          "type": 24
+          "type": 25
         }
       },
       "pos": {
@@ -6273,8 +6302,8 @@
                   },
                   "fields": {
                     "name": "__p5mr_1",
-                    "obj": 16,
-                    "type": 24
+                    "obj": 17,
+                    "type": 25
                   }
                 }
               }
@@ -6305,8 +6334,8 @@
                   },
                   "fields": {
                     "name": "__p5mr_1",
-                    "obj": 16,
-                    "type": 24
+                    "obj": 17,
+                    "type": 25
                   }
                 }
               }
