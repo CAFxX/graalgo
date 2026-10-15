@@ -36,6 +36,11 @@ jobs:
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The no-bridges gate diffs HEAD~1...HEAD on direct master pushes
+          # (wt.py integrate + push, no PR) — a shallow checkout has no
+          # HEAD~1 and the gate would fail loudly instead of inspecting.
+          fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)
         run: python3 .github/scripts/check_no_bridges.py

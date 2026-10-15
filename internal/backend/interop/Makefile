@@ -45,12 +45,10 @@ P3FRONTEND := ../../frontend/p3frontend
 STDLIB_FORK := ../../../tools/stdlib-fork
 
 JAVA_FLAGS := --enable-native-access=ALL-UNNAMED -Xss32m
-# BRIDGE (frontend lane): end-to-end tests run P3SyncMain in-process and
-# resolve gofrontend via ToolPaths' walk-up, which no longer reaches
-# phases/phase1/frontend from the new class locations. Export the current
-# build location until the frontend lane moves it to internal/frontend/
-# (the walk-up then finds it unaided; a stale env var is skipped via the
-# isExecutable check).
+# gofrontend location: ToolPaths' walk-up reaches internal/frontend/ unaided;
+# the explicit export is a harmless redundancy (a stale env var is skipped
+# via the isExecutable check). (Retired 2026-10-15: was a "# BRIDGE (frontend
+# lane)" comment awaiting the code-move that already landed.)
 export GRAALGO_GOFRONTEND := $(CURDIR)/../../../internal/frontend/gofrontend
 JAVAC_FLAGS := -Xlint:deprecation -Werror
 

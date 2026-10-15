@@ -72,7 +72,12 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md) §Principles).
 - Synthetic stdlib packages are honest workarounds, not destinations: each
   implementation (in [internal/frontend/](internal/frontend/) as `synth_*.go`)
-  states why it is synthetic and what root-cause fix retires it.
+  states why it is synthetic and what root-cause fix retires it. The full
+  bridge inventory — every grandfathered bridge, its root-cause fix, and the
+  phased removal order — lives in
+  [docs/arch/bridge-inventory.md](docs/arch/bridge-inventory.md); the
+  no-bridges gate ([.github/scripts/check_no_bridges.py](.github/scripts/check_no_bridges.py))
+  grandfathers exactly what is inventoried there.
 
 ## 5. No-debris rule
 
