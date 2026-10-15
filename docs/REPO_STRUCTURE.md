@@ -36,8 +36,12 @@ Related: [Makefile](../Makefile) (root build entry point),
       type tables.
     - [desugar/](../internal/frontend/desugar/) — future home: multi-result
       lowering, generics instantiation, synthetic package construction.
-  - [ir/](../internal/ir/) — the intermediate representation: JSON schema and
-    AST node definitions shared by frontend and backend.
+  - The IR is the `frontend/v1` JSON wire format: specified in
+    [docs/arch/frontend-v1.md](arch/frontend-v1.md), produced by
+    [gofrontend](../internal/frontend/) (validated by
+    [internal/frontend/tools/validate_frontend_v1.py](../internal/frontend/tools/validate_frontend_v1.py)),
+    consumed by `graalgo.frontend.NodeFactory` in the backend. There is no
+    separate IR package — the format is the contract.
   - [backend/](../internal/backend/) — IR → Truffle nodes. The Java backend
     landed here in the Phase-4 restructure (lane 3); each module has its own
     `Makefile` (plain `javac`, `-Werror`). The runtime module compiles the
@@ -82,9 +86,12 @@ Related: [Makefile](../Makefile) (root build entry point),
     `go vet`-style checks (printf, unreachable, copylocks, etc.) implemented
     against the parsed AST and type information.
 - [stdlib/](../stdlib/) — Go standard library support.
-  - [synthetic/](../stdlib/synthetic/) — synthetic package implementations.
-    Every package documents **why** it is synthetic and **what unblocks the
-    real one** (root cause in graalgo to fix instead).
+  - Synthetic package implementations live in
+    [internal/frontend/](../internal/frontend/) (`synth_*.go`, `package main`
+    — part of the `gofrontend` binary, not separable packages). Each one
+    documents **why** it is synthetic and **what unblocks the real one**
+    (root cause in graalgo to fix instead). They are being systematically
+    removed per the no-bridges order; see the bridge-removal tracker.
   - [patches/](../stdlib/patches/) — minimal diffs against upstream
     [go/](https://go.dev/dl/) sources. Empty where the real sources compile
     unmodified.
@@ -160,10 +167,10 @@ new locations.
 3. **No research debris ships.** Experiment logs, wave reports, scratch
    files → commit messages or deleted. If it does not serve the tool, it does
    not stay in the tree.
-4. **Stdlib honesty.** Every package under
-   [stdlib/synthetic/](../stdlib/synthetic/) names the root cause that keeps
+4. **Stdlib honesty.** Every synthetic package implementation (in
+   [internal/frontend/](../internal/frontend/) as `synth_*.go`) names the root cause that keeps
    the real stdlib source from compiling, and what fixes it. A synthetic
-   package without that note is a placeholder and gets treated as one.
+   without that note is a placeholder and gets treated as one.
 5. **Tests prove the tool.** [test/](../test/) is organized by what each
    suite proves (corpus programs, differential comparison, end-to-end
    modules), never by authorship.
