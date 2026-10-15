@@ -1180,24 +1180,32 @@ func syntheticCompositeScopeError(nt *types.Named, position string) error {
 // ExportFile type-checks the single Go source file at path and returns the
 // frontend/v1 JSON document.
 func ExportFile(path string) (string, error) {
-	return ExportFiles([]string{path})
+	return ExportFiles([]string{path}, "")
 }
 
-// testPackageDirEnv is the environment variable through which `graalgo
+// testPackageDirFlag is the explicit argv flag through which `graalgo
 // test` declares which package a synthesized test driver belongs to. The
 // driver is written to a temp file, so its own directory is meaningless;
-// the variable carries the package under test because the driver IS that
+// the flag carries the package under test because the driver IS that
 // package's test binary (white-box, exactly like `go test`), and its
 // imports resolve with the package's own privileges.
-const testPackageDirEnv = "GRAALGO_TEST_PACKAGE_DIR"
+//
+// The signal is deliberately a per-invocation argv flag, never an
+// environment variable: env is inherited by every child process, so a
+// user-exported variable would confer the privilege on commands that
+// never asked for it (`GRAALGO_TEST_PACKAGE_DIR=$GOROOT/src graalgo run`
+// must stay rejected). Only `graalgo test` passes the flag, on the
+// backend invocation for its own driver, and nothing in the frontend
+// reads the environment for it.
+const testPackageDirFlag = "--test-package-dir="
 
 // importingDir returns the directory the frontend treats as the location
 // of the package being compiled, for Go's internal-visibility rule
 // (internalImportVisible). Defaults to the input files' directory; the
-// test-driver override above takes precedence.
-func importingDir(paths []string) string {
-	if d := os.Getenv(testPackageDirEnv); d != "" {
-		return absDir(d)
+// test-driver flag above takes precedence.
+func importingDir(paths []string, testPackageDir string) string {
+	if testPackageDir != "" {
+		return absDir(testPackageDir)
 	}
 	if len(paths) > 0 {
 		return absDir(filepath.Dir(paths[0]))
@@ -1290,6 +1298,14 @@ func dirWithin(dir, root string) bool {
 // import path is visible from importingDir iff importingDir is at or
 // under the internal package's visibility root. Unresolvable roots deny
 // (fail closed).
+//
+// Known divergence from cmd/go, documented rather than special-cased:
+// gc additionally denies crypto/internal/fips140/* importing top-level
+// internal/* ("crypto/internal/fips140 can only see crypto/internal,
+// never top-of-tree internal", src/cmd/go/internal/load/pkg.go), while
+// the pure path-prefix rule applied here admits it (any dir under
+// $GOROOT/src is within the visibility root of internal/*). The general
+// rule stands: no per-package carve-outs in the import gate.
 func internalImportVisible(importPath, importingDir string) bool {
 	if importingDir == "" {
 		return false
@@ -1367,7 +1383,11 @@ func checkImportAllowed(imp *ast.ImportSpec, importingDir string) error {
 // (go/types conf.Check over []*ast.File), so cross-file references
 // resolve. All files must declare the same package name. Position "file"
 // indices in the document index into the paths order.
-func ExportFiles(paths []string) (string, error) {
+//
+// testPackageDir is the `graalgo test` driver override
+// (testPackageDirFlag): the package dir whose internal-visibility
+// privileges the import gate applies. Empty for ordinary compiles.
+func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	if len(paths) == 0 {
 		return "", fmt.Errorf("gofrontend: no input files")
 	}
@@ -1403,7 +1423,7 @@ func ExportFiles(paths []string) (string, error) {
 	}
 	// The test driver is the package's own test binary: resolve imports
 	// with the package's privileges (Go's internal-visibility rule).
-	idir := importingDir(paths)
+	idir := importingDir(paths, testPackageDir)
 	for _, file := range files {
 		for _, imp := range file.Imports {
 			if err := checkImportAllowed(imp, idir); err != nil {
