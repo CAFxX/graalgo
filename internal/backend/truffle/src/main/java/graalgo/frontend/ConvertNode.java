@@ -271,10 +271,8 @@ public final class ConvertNode extends GoExprNode {
     private graalgo.values.GoSlice stringToSlice(graalgo.values.GoString s) {
         byte[] bytes = s.bytes();
         if (sliceElemKind == GoKind.UINT8) {
-            int[] arr = new int[bytes.length];
-            for (int i = 0; i < bytes.length; i++) {
-                arr[i] = bytes[i] & 0xFF;
-            }
+            // []byte is byte[]-backed (D5).
+            byte[] arr = bytes.clone();
             return new graalgo.values.GoSlice(arr, 0, arr.length, arr.length);
         } else { // INT32 (rune)
             // bug-005: Go's []rune(string) decodes with utf8.DecodeRuneInString
@@ -303,16 +301,16 @@ public final class ConvertNode extends GoExprNode {
         if (s == null) {
             return graalgo.values.GoString.EMPTY;
         }
-        int[] arr = (int[]) s.array();
+        Object raw = s.array();
         int offset = s.offset();
         int len = s.len();
         if (sliceElemKind == GoKind.UINT8) {
+            // []byte is byte[]-backed (D5): direct copy.
             byte[] bytes = new byte[len];
-            for (int i = 0; i < len; i++) {
-                bytes[i] = (byte) arr[offset + i];
-            }
+            System.arraycopy((byte[]) raw, offset, bytes, 0, len);
             return new graalgo.values.GoString(bytes);
         } else { // INT32 (rune)
+            int[] arr = (int[]) raw;
             StringBuilder sb = new StringBuilder(len);
             for (int i = 0; i < len; i++) {
                 int cp = arr[offset + i];

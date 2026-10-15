@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"go/ast"
+	"go/build"
 	"go/parser"
 	"go/printer"
 	"go/token"
@@ -417,11 +418,49 @@ func rewriteTestCalls(fn *ast.FuncDecl, fset *token.FileSet) {
 // a single PASS/FAIL summary and per-test === RUN / --- PASS lines in
 // file order. Verbosity is baked into the driver at synthesis time.
 func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, verbose bool) (string, error) {
-	// Collect imports from all inlined files (deduplicated). The backend
+	// Import collection preserves every distinct (name, path) form: a
+	// package can be imported plain in one test file and dot-imported
+	// in another (unicode does exactly this), and collapsing to one
+	// form would leave the other's references undefined. The backend
 	// resolves imports via its own import machinery (the same path
 	// `graalgo run` uses for packages), so we preserve them instead of
 	// stripping — stripping breaks references like hash.Hash.
-	imports := make(map[string]string) // path -> name ("" for default)
+	type importSpec struct {
+		name string // "" for default, "." / "_" / explicit otherwise
+		path string
+	}
+	var importList []importSpec
+	seenImport := make(map[importSpec]bool)
+	addImport := func(name, path string) {
+		s := importSpec{name, path}
+		if !seenImport[s] {
+			seenImport[s] = true
+			importList = append(importList, s)
+		}
+	}
+
+	// usedQualifiers records the package qualifiers actually referenced
+	// by inlined declarations (AST-based: a SelectorExpr whose X is a
+	// bare identifier). Mentions inside comments or string literals do
+	// not count — the old substring check was fooled by the driver's
+	// own "// --- from X ---" comments and by test failure messages.
+	usedQualifiers := make(map[string]bool)
+	noteQualifiers := func(d ast.Decl) {
+		ast.Inspect(d, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok {
+					usedQualifiers[id.Name] = true
+				}
+			}
+			return true
+		})
+	}
+
+	// inlineSrc reports whether the package's own sources are inlined
+	// into the driver. It is set after the test files are parsed (their
+	// package clauses decide), and gates both import collection and
+	// source parsing below.
+	inlineSrc := true
 	collectImports := func(f *ast.File) {
 		for _, imp := range f.Imports {
 			path := strings.Trim(imp.Path.Value, "\"")
@@ -434,9 +473,18 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			if imp.Name != nil {
 				name = imp.Name.Name
 			}
-			if _, ok := imports[path]; !ok {
-				imports[path] = name
+			if inlineSrc && (name == "." || name == "_") && isSelfImport(dir, path) {
+				// The driver's body inlines the package under test's
+				// own declarations at top level, so importing the
+				// package itself again is wrong: a dot self-import
+				// redeclares every inlined name (PKG-002), and a blank
+				// one is redundant (the inlined inits already run).
+				// Plain or explicitly-named self-imports are kept:
+				// external test files may reference the package's
+				// exported API through the qualifier.
+				continue
 			}
+			addImport(name, path)
 		}
 	}
 
@@ -445,25 +493,18 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		f    *ast.File
 		fset *token.FileSet
 	}
-	var units []srcUnit
-	for _, sf := range srcFiles {
-		sfset := token.NewFileSet()
-		sfAST, err := parser.ParseFile(sfset, sf, nil, 0)
-		if err != nil {
-			continue
-		}
-		collectImports(sfAST)
-		units = append(units, srcUnit{sf, sfAST, sfset})
-	}
 
 	// Parse each test file with its own FileSet (positions feed the
-	// file:line rewriting in rewriteTestCalls).
+	// file:line rewriting in rewriteTestCalls). Test files are parsed
+	// before the package's own sources: their package clauses decide
+	// whether the sources are inlined at all (see inlineSrc below).
 	type testUnit struct {
 		srcUnit
 		tests   map[string]bool
 		ordered []string
 	}
 	var testUnits []testUnit
+	var testPkgNames []string
 	selectedFiles := make(map[string]bool)
 	for _, ft := range ftList {
 		selectedFiles[ft.file] = true
@@ -472,7 +513,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		if err != nil {
 			return "", fmt.Errorf("parse %s: %w", ft.file, err)
 		}
-		collectImports(tf)
+		testPkgNames = append(testPkgNames, tf.Name.Name)
 		testSet := make(map[string]bool)
 		for _, t := range ft.tests {
 			testSet[t] = true
@@ -493,24 +534,61 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		if err != nil {
 			continue
 		}
-		collectImports(sibAST)
+		testPkgNames = append(testPkgNames, sibAST.Name.Name)
 		sibUnits = append(sibUnits, srcUnit{sib, sibAST, sibSet})
 	}
 
+	// The package's own sources are inlined only when some test file
+	// needs white-box access — i.e. is declared in the package itself.
+	// Otherwise the tests exercise the real imported package: nothing
+	// is inlined, so a dot-import of the package under test cannot
+	// redeclare anything (PKG-002), and the package's types keep their
+	// identity where other packages' APIs mention them (e.g. strings
+	// functions taking unicode.SpecialCase). When the declared package
+	// name cannot be determined, inline conservatively.
+	if pkgName, err := packageNameInDir(dir); err == nil {
+		inlineSrc = false
+		for _, n := range testPkgNames {
+			if n == pkgName {
+				inlineSrc = true
+				break
+			}
+		}
+	}
+
+	for _, tu := range testUnits {
+		collectImports(tu.f)
+	}
+	for _, u := range sibUnits {
+		collectImports(u.f)
+	}
+
+	var units []srcUnit
+	if inlineSrc {
+		for _, sf := range srcFiles {
+			sfset := token.NewFileSet()
+			sfAST, err := parser.ParseFile(sfset, sf, nil, 0)
+			if err != nil {
+				continue
+			}
+			collectImports(sfAST)
+			units = append(units, srcUnit{sf, sfAST, sfset})
+		}
+	}
+
 	// The generated main uses time and os directly.
-	if _, ok := imports["time"]; !ok {
-		imports["time"] = ""
-	}
-	if _, ok := imports["os"]; !ok {
-		imports["os"] = ""
-	}
+	addImport("", "time")
+	addImport("", "os")
+	usedQualifiers["time"] = true
+	usedQualifiers["os"] = true
 
 	// Build the body first; imports are pruned against it below.
 	var body strings.Builder
 
 	// Inline non-test source files (package clause stripped): funcs plus
 	// type/var/const declarations. Skip imports (emitted separately) and
-	// the main function (we generate our own).
+	// the main function (we generate our own). Skipped entirely when no
+	// test file needs white-box access (see inlineSrc above).
 	for _, u := range units {
 		body.WriteString(fmt.Sprintf("\n// --- from %s ---\n", filepath.Base(u.path)))
 		for _, decl := range u.f.Decls {
@@ -520,12 +598,14 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 					continue
 				}
 				printDecl(&body, u.fset, d)
+				noteQualifiers(d)
 				body.WriteString("\n")
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {
 					continue
 				}
 				printDecl(&body, u.fset, d)
+				noteQualifiers(d)
 				body.WriteString("\n")
 			}
 		}
@@ -552,12 +632,14 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				rewriteParam(d)
 				rewriteTestCalls(d, tu.fset)
 				printDecl(&body, tu.fset, d)
+				noteQualifiers(d)
 				body.WriteString("\n")
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {
 					continue
 				}
 				printDecl(&body, tu.fset, d)
+				noteQualifiers(d)
 				body.WriteString("\n")
 			}
 		}
@@ -579,12 +661,14 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				rewriteParam(d)
 				rewriteTestCalls(d, u.fset)
 				printDecl(&body, u.fset, d)
+				noteQualifiers(d)
 				body.WriteString("\n")
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {
 					continue
 				}
 				printDecl(&body, u.fset, d)
+				noteQualifiers(d)
 				body.WriteString("\n")
 			}
 		}
@@ -661,47 +745,54 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 
 	// Prune imports not referenced in the body. Helpers from sibling
 	// files pull in imports this driver's tests may not use — Go
-	// rejects unused imports. The local package name comes from the
-	// import spec when explicit; otherwise it is the package's DECLARED
-	// name, resolved from its source directory — not the last path
-	// element. Those differ for parent-module imports with a major-version
-	// suffix (github.com/caddyserver/caddy/v2 declares package caddy),
-	// for stdlib v2 paths (math/rand/v2 declares package rand), and for
+	// Prune imports not referenced by the inlined declarations. Helpers
+	// from sibling files pull in imports this driver's tests may not use
+	// — Go rejects unused imports. A reference is a real package
+	// qualifier observed in an inlined declaration (see noteQualifiers),
+	// not a substring: mentions in comments or string literals do not
+	// count. The local package name comes from the import spec when
+	// explicit; otherwise it is the package's DECLARED name, resolved
+	// from its source directory — not the last path element. Those
+	// differ for parent-module imports with a major-version suffix
+	// (github.com/caddyserver/caddy/v2 declares package caddy), for
+	// stdlib v2 paths (math/rand/v2 declares package rand), and for
 	// third-party renames (gopkg.in/yaml.v2 declares package yaml).
 	// Guessing from the path prunes the import and the driver fails with
 	// "undefined: <name>".
 	var sb strings.Builder
 	sb.WriteString("package main\n\n")
-	if len(imports) > 0 {
-		var paths []string
-		for p := range imports {
-			paths = append(paths, p)
-		}
-		sort.Strings(paths)
-		var kept []string
-		for _, p := range paths {
-			name := imports[p]
-			if name == "_" || name == "." {
+	if len(importList) > 0 {
+		ordered := make([]importSpec, len(importList))
+		copy(ordered, importList)
+		sort.Slice(ordered, func(i, j int) bool {
+			if ordered[i].path != ordered[j].path {
+				return ordered[i].path < ordered[j].path
+			}
+			return ordered[i].name < ordered[j].name
+		})
+		var kept []importSpec
+		for _, s := range ordered {
+			if s.name == "_" || s.name == "." {
 				// Side-effect and dot imports are never referenced by
 				// package name, but dropping them changes semantics.
-				kept = append(kept, p)
+				kept = append(kept, s)
 				continue
 			}
-			pkgName := name
-			if pkgName == "" {
-				pkgName = resolveImportPkgName(dir, p)
+			local := s.name
+			if local == "" {
+				local = resolveImportPkgName(dir, s.path)
 			}
-			if pkgName != "" && strings.Contains(bodyStr, pkgName+".") {
-				kept = append(kept, p)
+			if local != "" && usedQualifiers[local] {
+				kept = append(kept, s)
 			}
 		}
 		if len(kept) > 0 {
 			sb.WriteString("import (\n")
-			for _, p := range kept {
-				if name := imports[p]; name != "" {
-					sb.WriteString(fmt.Sprintf("\t%s %q\n", name, p))
+			for _, s := range kept {
+				if s.name != "" {
+					sb.WriteString(fmt.Sprintf("\t%s %q\n", s.name, s.path))
 				} else {
-					sb.WriteString(fmt.Sprintf("\t%q\n", p))
+					sb.WriteString(fmt.Sprintf("\t%q\n", s.path))
 				}
 			}
 			sb.WriteString(")\n")
@@ -721,6 +812,38 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 	tmp.Close()
 	return tmp.Name(), nil
+}
+
+// isSelfImport reports whether importPath denotes the package under
+// test (dir) itself. Detection is by resolved source directory, which
+// works without module context — e.g. unicode's external test files
+// import ". \"unicode\"" while the enclosing module path is
+// "std/unicode" — with a textual import-path comparison as backup.
+func isSelfImport(dir, importPath string) bool {
+	if importPathForDir(dir) == importPath {
+		return true
+	}
+	d, err := importDirForPath(dir, importPath)
+	if err != nil {
+		return false
+	}
+	absDir, err := filepath.Abs(dir)
+	if err != nil {
+		return false
+	}
+	absD, err := filepath.Abs(d)
+	if err != nil {
+		return false
+	}
+	// Resolve symlinks: GOROOT and dir itself may be reached through
+	// different spellings of the same directory.
+	if resolved, err := filepath.EvalSymlinks(absDir); err == nil {
+		absDir = resolved
+	}
+	if resolved, err := filepath.EvalSymlinks(absD); err == nil {
+		absD = resolved
+	}
+	return absD == absDir
 }
 
 // pathBase returns the last element of an import path.
@@ -913,24 +1036,36 @@ func escapeModulePath(p string) string {
 }
 
 // packageNameInDir returns the declared package name of the Go package in
-// directory d, parsing only the package clause of one source file.
+// directory d. Resolution goes through go/build so that files excluded
+// from the build are never mistaken for the package's own sources: the
+// old first-.go-file heuristic picked sort's gen_sort_variants.go —
+// package main with //go:build ignore — and reported "main" for import
+// "sort", which made the import pruner drop "sort" as unreferenced
+// (PKG-003).
 func packageNameInDir(d string) (string, error) {
+	if pkg, err := build.Default.ImportDir(d, 0); err == nil && pkg.Name != "" {
+		return pkg.Name, nil
+	}
+	// Fallback for directories go/build cannot import: parse the package
+	// clause of one source file, preferring a non-test file. An external
+	// test file's package foo_test clause means the importable name foo.
 	entries, err := os.ReadDir(d)
 	if err != nil {
 		return "", err
 	}
 	var fallback string
+	fallbackIsTest := true
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasSuffix(name, ".go") {
 			continue
 		}
+		isTest := strings.HasSuffix(name, "_test.go")
 		if fallback == "" {
-			fallback = name
+			fallback, fallbackIsTest = name, isTest
 		}
-		// Prefer a non-test file; the package clause is identical either way.
-		if !strings.HasSuffix(name, "_test.go") {
-			fallback = name
+		if !isTest {
+			fallback, fallbackIsTest = name, false
 			break
 		}
 	}
@@ -942,7 +1077,11 @@ func packageNameInDir(d string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return f.Name.Name, nil
+	name := f.Name.Name
+	if fallbackIsTest {
+		name = strings.TrimSuffix(name, "_test")
+	}
+	return name, nil
 }
 
 // printDecl prints a single AST declaration to the builder.

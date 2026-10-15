@@ -43,10 +43,59 @@
 #  3. rand.go / pcg.go / exp.go / normal.go / zipf.go carried verbatim
 #     (pcg.go imports the synthetic internal/byteorder, vendored by the
 #     mathbig worker).
+import os
 import re
+import subprocess
 
-GOROOT = "/home/hatch/tools/go/src/math/rand/v2"
-CHACHA = "/home/hatch/tools/go/src/internal/chacha8rand"
+# --- P1-R1-2 portability prologue: GOROOT and OUTDIR are environment-driven
+# so the generator is CI-runnable and never writes outside the repo.
+#   GRAALGO_GOROOT   Go installation whose gc 1.27.1 sources are read
+#                    (default: `go env GOROOT`).
+#   GEN_SYNTH_OUTDIR directory for the generated file(s) (default: this
+#                    script's directory, i.e. in-place regeneration).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+def _graalgo_goroot():
+    g = os.environ.get("GRAALGO_GOROOT")
+    if g:
+        return g
+    try:
+        return subprocess.run(["go", "env", "GOROOT"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except Exception as e:
+        raise SystemExit(
+            "gen_synth: cannot determine GOROOT; set GRAALGO_GOROOT (%s)" % e)
+
+OUTDIR = os.environ.get("GEN_SYNTH_OUTDIR", _HERE)
+
+GOROOT = os.path.join(_graalgo_goroot(), "src", "math", "rand", "v2")
+
+CHACHA = os.path.join(_graalgo_goroot(), "src", "internal", "chacha8rand")
+
+# P3-M9 (tier-5b): minimal ChaCha8 stub for crypto/ecdsa signLegacy, appended
+# verbatim to the generated file (the full ChaCha8 was dropped per Deviation 2
+# in the header; signLegacy only serves non-standard curves).
+CHACHA8_POSTLUDE = '''\
+// P3-M9 (tier-5b): minimal ChaCha8 for crypto/ecdsa signLegacy.
+// The full ChaCha8 was dropped (see Deviation 2 header). signLegacy is
+// only used for non-standard curves; standard curves (P-256/384/521)
+// use signFIPS. This fail-fasts honestly if called.
+
+// ChaCha8 is a ChaCha8-based random number generator (stub).
+type ChaCha8 struct {
+\tseed [32]byte
+}
+
+// NewChaCha8 returns a new ChaCha8 (stub: fail-fast on use).
+func NewChaCha8(seed [32]byte) *ChaCha8 {
+\treturn &ChaCha8{seed: seed}
+}
+
+// Read fail-fasts: ChaCha8 not vendored.
+func (c *ChaCha8) Read(p []byte) (n int, err error) {
+\tpanic("math/rand/v2: ChaCha8.Read not implemented (P3-M9 tier-5b scope-limit: non-standard ECDSA curves); re-test when ChaCha8 lands")
+}
+'''
 
 HEADER = '''// P3-M9 (tier1c): synthetic `math/rand/v2` package (FULL port).
 //
@@ -681,8 +730,8 @@ def main():
             lines.insert(last_import_idx + 1, "")
             lines.insert(last_import_idx + 2, helpers.rstrip())
             out = '\n'.join(lines)
-    out = out.rstrip() + "\n`\n"
-    with open("/home/hatch/workspace/graalgo-m9/phases/phase1/frontend/synth_mathrandv2.go", "w") as f:
+    out = out.rstrip() + "\n\n" + CHACHA8_POSTLUDE.rstrip() + "\n`\n"
+    with open(os.path.join(OUTDIR, "synth_mathrandv2.go"), "w") as f:
         f.write(out)
     print("wrote synth_mathrandv2.go", len(out), "bytes")
 

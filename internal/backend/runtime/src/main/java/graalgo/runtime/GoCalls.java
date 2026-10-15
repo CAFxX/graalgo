@@ -16,17 +16,19 @@ public final class GoCalls {
     private GoCalls() {}
 
     /**
-     * Invokes a Go function value with already-evaluated arguments.
+     * Builds the callee argument array for a Go function value call.
      *
-     * @param fn   the function value (non-null; a nil func value is a Go
-     *             panic — callers check first).
-     * @param args the call arguments in D5 mapping.
-     * @return the call's single result, or null for void calls.
+     * <p>Calling convention: the callee's {@link RootCallTarget} is invoked
+     * with the {@link GoFunc} itself as the first argument, followed by the
+     * call arguments. A method value binds its receiver in boundArgs;
+     * it is prepended so the callee sees [fn, receiver, ...args], exactly
+     * as for a direct methodref call (P3-M9, WS H).
+     *
+     * @param fn   the function value (non-null)
+     * @param args the call arguments in D5 mapping
+     * @return the full argument array for {@code fn.target().call(...)}
      */
-    public static Object invoke(GoFunc fn, Object[] args) {
-        // P3-M9 (WS H): a method value binds its receiver in boundArgs;
-        // prepend it so the callee sees [fn, receiver, ...args], exactly
-        // as for a direct methodref call.
+    public static Object[] callArgs(GoFunc fn, Object[] args) {
         Object[] bound = fn.boundArgs();
         int prefix = bound == null ? 0 : bound.length;
         Object[] callArgs = new Object[args.length + prefix + 1];
@@ -35,7 +37,19 @@ public final class GoCalls {
             System.arraycopy(bound, 0, callArgs, 1, bound.length);
         }
         System.arraycopy(args, 0, callArgs, 1 + prefix, args.length);
-        return fn.target().call(callArgs);
+        return callArgs;
+    }
+
+    /**
+     * Invokes a Go function value with already-evaluated arguments.
+     *
+     * @param fn   the function value (non-null; a nil func value is a Go
+     *             panic — callers check first).
+     * @param args the call arguments in D5 mapping.
+     * @return the call's single result, or null for void calls.
+     */
+    public static Object invoke(GoFunc fn, Object[] args) {
+        return fn.target().call(callArgs(fn, args));
     }
 
     /**

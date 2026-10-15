@@ -18,7 +18,7 @@ a Java object (or unboxed primitive) in its D5 carrier:
 | interface | `GoInterface{(descriptor,data),itab}` |
 | func | `GoFunc{RootCallTarget,Frame}` |
 | pointer | opaque Java reference |
-| unsafe.Pointer | handle-table entry (`UnsafeHandles`; traps on escape) |
+| unsafe.Pointer | handle-table entry (`UnsafeHandles`); the `→ uintptr` conversion yields the handle as an integer identity token (nil → 0, stable, distinct per referent); arithmetic and `uintptr →` materialization trap |
 
 ## Classes
 
@@ -38,8 +38,11 @@ a Java object (or unboxed primitive) in its D5 carrier:
 - `GoInterface` — `(descriptor, data)` + immutable itab (D6: itab
   speculation needs no Assumptions); `NIL` is the nil interface value.
 - `GoFunc` — `RootCallTarget` + captured (materialized) closure frame.
-- `UnsafeHandles` — the `unsafe.Pointer` handle table; arithmetic on
-  handles and escaping conversions trap (`UnsafeEscapeException`).
+- `UnsafeHandles` — the `unsafe.Pointer` handle table. Arithmetic on
+  handles and materializing a handle from an integer trap
+  (`UnsafeEscapeException`); the `unsafe.Pointer → uintptr` conversion
+  yields the handle itself as an opaque integer identity token — never a
+  raw address, never dereferenceable (PKG-007).
 - `GoEquality` — Go `==` over carriers + consistent hashes.
 - `GoConvert` — the non-bit-trivial conversion matrix. Integer↔integer is
   pure truncation/extension (in `ConvertNode`); float→int out-of-range
@@ -54,7 +57,10 @@ a Java object (or unboxed primitive) in its D5 carrier:
 ## Notes
 
 - There is no observable address anywhere (GG-0015): pointers are opaque
-  references, `unsafe.Pointer` is a handle.
+  references, `unsafe.Pointer` is a handle. The `→ uintptr` conversion
+  yields the handle as an integer identity token, not an address — it
+  carries identity (nil → 0, stability, distinctness) and no path back to
+  a referent.
 - `GoMap` iteration order is unspecified (as in Go); deterministic
   iteration is not provided.
 - Composite construction (composite literals, indexing, selectors) and

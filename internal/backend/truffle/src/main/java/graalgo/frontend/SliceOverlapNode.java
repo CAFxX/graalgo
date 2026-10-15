@@ -9,11 +9,13 @@ import graalgo.values.GoSlice;
  * {@code InexactOverlap} intrinsics (P3-M9, unsafe patterns).
  *
  * <p>The real stdlib implements these via
- * {@code uintptr(unsafe.Pointer(...))} address comparisons, which trap
- * under D5 (GG-0016: unsafe.Pointer never escapes as an integer). This
- * node implements the overlap detection directly on the {@link GoSlice}
- * values: two slices overlap iff they share the same backing array object
- * and their {@code [offset, offset+len)} ranges intersect.
+ * {@code uintptr(unsafe.Pointer(...))} address arithmetic, which is
+ * meaningless on D5 identity tokens (GG-0015/GG-0016: handles are not
+ * addresses and admit no byte arithmetic — the token carries identity
+ * only). This node implements the overlap detection directly on the
+ * {@link GoSlice} values: two slices overlap iff they share the same
+ * backing array object and their {@code [offset, offset+len)} ranges
+ * intersect.
  *
  * <p>For {@code InexactOverlap}, additionally returns false when
  * {@code &x[0] == &y[0]} (same start address), per the stdlib spec.

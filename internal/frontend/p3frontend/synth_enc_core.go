@@ -85,44 +85,45 @@ func encShared() *encodingSharedTypes {
 	}
 }
 
+// ioStreamingIfaces builds the minimal synthetic "io" package (P3-M8) for
+// the encoding/* streaming signatures: the Writer/Reader/WriteCloser named
+// interfaces with exact gc 1.27.1 method sets. Only the "io.X" rendering
+// matters for the drift comparison.
+func ioStreamingIfaces() (writer, reader, writeCloser *types.Named) {
+	pkg := types.NewPackage("io", "io")
+	byteSliceT := types.NewSlice(types.Typ[types.Byte])
+	intT := types.Typ[types.Int]
+	errT := types.Universe.Lookup("error").Type()
+	newParam := func(name string, t types.Type) *types.Var {
+		return types.NewParam(token.NoPos, pkg, name, t)
+	}
+	newMethod := func(name string, params, results []*types.Var) *types.Func {
+		sig := types.NewSignatureType(nil, nil, nil,
+			types.NewTuple(params...), types.NewTuple(results...), false)
+		return types.NewFunc(token.NoPos, pkg, name, sig)
+	}
+	write := newMethod("Write",
+		[]*types.Var{newParam("p", byteSliceT)},
+		[]*types.Var{newParam("n", intT), newParam("err", errT)})
+	read := newMethod("Read",
+		[]*types.Var{newParam("p", byteSliceT)},
+		[]*types.Var{newParam("n", intT), newParam("err", errT)})
+	close := newMethod("Close", nil,
+		[]*types.Var{newParam("err", errT)})
+	mk := func(name string, methods []*types.Func) *types.Named {
+		tn := types.NewTypeName(token.NoPos, pkg, name, nil)
+		pkg.Scope().Insert(tn)
+		return types.NewNamed(tn, types.NewInterfaceType(methods, nil).Complete(), nil)
+	}
+	writer = mk("Writer", []*types.Func{write})
+	reader = mk("Reader", []*types.Func{read})
+	writeCloser = mk("WriteCloser", []*types.Func{write, close})
+	pkg.MarkComplete()
+	return writer, reader, writeCloser
+}
+
 // syntheticBase32Package mirrors the P3-M7 synthetic "encoding/base32".
 func syntheticBase32Package() *types.Package {
-	// ioStreamingIfaces builds the minimal synthetic "io" package (P3-M8)
-	// for the base32 streaming signatures: the Writer/Reader/WriteCloser
-	// named interfaces with exact gc 1.27.1 method sets. Only the
-	// "io.X" rendering matters for the drift comparison.
-	ioStreamingIfaces := func() (writer, reader, writeCloser *types.Named) {
-		pkg := types.NewPackage("io", "io")
-		byteSliceT := types.NewSlice(types.Typ[types.Byte])
-		intT := types.Typ[types.Int]
-		errT := types.Universe.Lookup("error").Type()
-		newParam := func(name string, t types.Type) *types.Var {
-			return types.NewParam(token.NoPos, pkg, name, t)
-		}
-		newMethod := func(name string, params, results []*types.Var) *types.Func {
-			sig := types.NewSignatureType(nil, nil, nil,
-				types.NewTuple(params...), types.NewTuple(results...), false)
-			return types.NewFunc(token.NoPos, pkg, name, sig)
-		}
-		write := newMethod("Write",
-			[]*types.Var{newParam("p", byteSliceT)},
-			[]*types.Var{newParam("n", intT), newParam("err", errT)})
-		read := newMethod("Read",
-			[]*types.Var{newParam("p", byteSliceT)},
-			[]*types.Var{newParam("n", intT), newParam("err", errT)})
-		close := newMethod("Close", nil,
-			[]*types.Var{newParam("err", errT)})
-		mk := func(name string, methods []*types.Func) *types.Named {
-			tn := types.NewTypeName(token.NoPos, pkg, name, nil)
-			pkg.Scope().Insert(tn)
-			return types.NewNamed(tn, types.NewInterfaceType(methods, nil).Complete(), nil)
-		}
-		writer = mk("Writer", []*types.Func{write})
-		reader = mk("Reader", []*types.Func{read})
-		writeCloser = mk("WriteCloser", []*types.Func{write, close})
-		pkg.MarkComplete()
-		return writer, reader, writeCloser
-	}
 	pkg := types.NewPackage("encoding/base32", "base32")
 	h := newEncCoreHelpers(pkg)
 	st := encShared()
@@ -282,6 +283,16 @@ func syntheticBase64Package() *types.Package {
 		runeT, constantValue('=')))
 	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "NoPadding",
 		runeT, constantValue(-1)))
+
+	// P3-M8: streaming API (exact gc 1.27.1 signatures; the encoder/decoder
+	// types are unexported, their Read/Write/Close fail fast — WS D).
+	ioWriter, ioReader, ioWriteCloser := ioStreamingIfaces()
+	h.insertFunc("NewEncoder",
+		[]*types.Var{h.param("enc", encPtr), h.param("w", ioWriter)},
+		[]*types.Var{h.param("", ioWriteCloser)}, false)
+	h.insertFunc("NewDecoder",
+		[]*types.Var{h.param("enc", encPtr), h.param("r", ioReader)},
+		[]*types.Var{h.param("", ioReader)}, false)
 
 	// Vars: StdEncoding, URLEncoding, RawStdEncoding, RawURLEncoding.
 	for _, v := range []string{"StdEncoding", "URLEncoding", "RawStdEncoding", "RawURLEncoding"} {

@@ -116,6 +116,24 @@ public final class P3SyncMain {
         int gmp = 0; // 0 = default (carriers)
         boolean check = false;
         boolean dumpPolymorphism = false;
+        // PKG-001: package dir whose internal-visibility privileges a
+        // synthesized `graalgo test` driver compiles with. Explicit argv
+        // flag (per-invocation, non-inheritable), never an environment
+        // variable: a user-exported value must not confer privilege on
+        // commands that never asked for it.
+        String testPackageDir = null;
+        // Phase 4 (build-artifact): path to a file containing pre-generated
+        // frontend/v1 JSON. When present, the JSON is read directly instead
+        // of running gofrontend on source files. This is how `graalgo build`
+        // artifacts avoid re-running the frontend on every execution: the
+        // frontend runs once at build time, and the artifact embeds its
+        // output.
+        String wireInput = null;
+        // Phase 4 (build-artifact): when set, write the frontend JSON to
+        // this file and exit (implies --check). This is how `graalgo build`
+        // captures the frontend output at build time for embedding in the
+        // artifact.
+        String emitWire = null;
         java.util.List<String> files = new java.util.ArrayList<>();
         // P3-M8 (wave 2, R6): program argv. Everything after a bare
         // "--" is the Go program's argv (os.Args); the first element is
@@ -144,6 +162,27 @@ public final class P3SyncMain {
                 }
                 continue;
             }
+            if (a.startsWith("--test-package-dir=")) {
+                testPackageDir = a.substring("--test-package-dir=".length());
+                if (testPackageDir.isEmpty()) {
+                    return usageError("--test-package-dir must not be empty");
+                }
+                continue;
+            }
+            if (a.startsWith("--wire-input=")) {
+                wireInput = a.substring("--wire-input=".length());
+                if (wireInput.isEmpty()) {
+                    return usageError("--wire-input must not be empty");
+                }
+                continue;
+            }
+            if (a.startsWith("--emit-wire=")) {
+                emitWire = a.substring("--emit-wire=".length());
+                if (emitWire.isEmpty()) {
+                    return usageError("--emit-wire must not be empty");
+                }
+                continue;
+            }
             switch (a) {
                 case "--" -> dashdash = true;
                 case "--check" -> check = true;
@@ -164,8 +203,11 @@ public final class P3SyncMain {
                 }
             }
         }
-        if (files.isEmpty()) {
+        if (files.isEmpty() && wireInput == null) {
             return usageError("no input file");
+        }
+        if (!files.isEmpty() && wireInput != null) {
+            return usageError("--wire-input cannot be combined with input files");
         }
         if (gmp == 0) {
             gmp = Runtime.getRuntime().availableProcessors();
@@ -181,8 +223,16 @@ public final class P3SyncMain {
         }
 
         final String json;
-        try {
-            json = runGofrontend(paths);
+        if (wireInput != null) {
+            // Pre-generated frontend output: read directly, skipping gofrontend.
+            try {
+                json = Files.readString(Paths.get(wireInput), StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                System.err.println("graalgo-sync-run: cannot read --wire-input file: " + e.getMessage());
+                return EXIT_INPUT_ERROR;
+            }
+        } else try {
+            json = runGofrontend(paths, testPackageDir);
         } catch (GofrontendException e) {
             // gofrontend's stderr is the deterministic build log the harness records.
             // M10 (self-attack F11): a gofrontend killed by a signal leaves an
@@ -198,6 +248,19 @@ public final class P3SyncMain {
         } catch (IOException e) {
             System.err.println("graalgo-sync-run: cannot launch gofrontend: " + e.getMessage());
             return EXIT_INPUT_ERROR;
+        }
+
+        // Phase 4 (build-artifact): dump the frontend JSON and exit.
+        // Used by `graalgo build` to capture the frontend output at build
+        // time for embedding in the artifact.
+        if (emitWire != null) {
+            try {
+                Files.writeString(Paths.get(emitWire), json, StandardCharsets.UTF_8);
+            } catch (IOException e) {
+                System.err.println("graalgo-sync-run: cannot write --emit-wire file: " + e.getMessage());
+                return EXIT_INPUT_ERROR;
+            }
+            return EXIT_OK;
         }
 
         // Build one Truffle Source per input file; the frontend's position
@@ -534,8 +597,12 @@ public final class P3SyncMain {
      * document can never deadlock against a buffered stderr. (Mirrors
      * Phase-2 {@code SchedMain.runGofrontend}; duplicated because that
      * method is private.)
+     *
+     * @param testPackageDir package dir for gofrontend's
+     *     {@code --test-package-dir} flag (PKG-001), or null for an
+     *     ordinary compile with no test-driver privilege.
      */
-    private static String runGofrontend(java.util.List<Path> goFiles) throws IOException, GofrontendException {
+    private static String runGofrontend(java.util.List<Path> goFiles, String testPackageDir) throws IOException, GofrontendException {
         // P3-M9: run gofrontend with stdout to a temp file, not a pipe.
         // Piping 200MB+ through Process.getInputStream() hangs (gofrontend
         // blocks on write while the reader blocks on read — pipe buffer
@@ -546,6 +613,9 @@ public final class P3SyncMain {
         try {
             java.util.List<String> cmd = new java.util.ArrayList<>();
             cmd.add(graalgo.launcher.ToolPaths.gofrontend().toString());
+            if (testPackageDir != null) {
+                cmd.add("--test-package-dir=" + testPackageDir);
+            }
             for (Path p : goFiles) {
                 cmd.add(p.toString());
             }
@@ -584,11 +654,17 @@ public final class P3SyncMain {
 
     private static void usage() {
         System.err.println(
-                "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] file.go [file.go...] [-- args...]");
+                "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] [--test-package-dir=DIR] [--wire-input=FILE] [--emit-wire=FILE] file.go [file.go...] [-- args...]");
         System.err.println(
                 "  --            program argv follow (os.Args[0] is the absolute input-file path)");
         System.err.println("  --gmp=N   in-flight cap (default: carriers); effective cap = min(gmp, carriers)");
         System.err.println("  --check   build only, do not execute");
         System.err.println("  --dump-polymorphism  M9: dump per-site itab-identity histograms to stderr");
+        System.err.println("  --test-package-dir=DIR  PKG-001: package dir whose internal-visibility");
+        System.err.println("      privileges a synthesized `graalgo test` driver compiles with");
+        System.err.println("  --wire-input=FILE  read pre-generated frontend/v1 JSON instead of running");
+        System.err.println("      gofrontend (used by `graalgo build` artifacts; cannot combine with files)");
+        System.err.println("  --emit-wire=FILE  write the frontend/v1 JSON to FILE and exit (implies --check;");
+        System.err.println("      used by `graalgo build` to capture the frontend output at build time)");
     }
 }

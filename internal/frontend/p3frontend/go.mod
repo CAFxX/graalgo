@@ -12,4 +12,4 @@ go 1.27
 // of the binary dependency is DESIGN.md §8, not this file.
 require graalgo-frontend v0.0.0
 
-replace graalgo-frontend => ../../../../internal/frontend
+replace graalgo-frontend => ../../../internal/frontend

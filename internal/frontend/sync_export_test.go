@@ -1,11 +1,10 @@
 package main
 
-// P3-M2b (WS D, ADR-0002): exporter tests for the synthetic `sync` package.
-// Red-green: these fail before the exporter change (import "sync" is a
-// WS G scope error) and pass after.
+// Exporter tests for the `sync` package (real, from disk since 503608ea).
+// Previously these tested the synthetic sync package; now they verify the
+// real package exports correctly.
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +22,12 @@ func writeSyncProg(t *testing.T, src string) string {
 }
 
 // TestSyncImportAccepted: import "sync" exports; construction and method
-// calls lower to the additive syncnew/syncop wire nodes.
+// calls lower to normal method calls (real sync package, 503608ea).
+// Previously these lowered to additive syncnew/syncop wire nodes under the
+// synthetic sync package; now they compile as ordinary Go. Note: the
+// imported real sync package's internals may still contain syncop nodes
+// (for atomic ops with no Go bodies) — that's the legitimate atomic
+// intrinsic, not the retired synthetic sync API.
 func TestSyncImportAccepted(t *testing.T) {
 	src := `package main
 
@@ -58,48 +62,31 @@ func main() {
 	if err != nil {
 		t.Fatalf("ExportFile with import \"sync\": %v", err)
 	}
-	for _, want := range []string{
-		`"kind": "syncnew"`,
-		`"kind": "syncop"`,
-		`"op": "Lock"`,
-		`"op": "Unlock"`,
-		`"op": "RLock"`,
-		`"op": "RUnlock"`,
-		`"op": "Add"`,
-		`"op": "Done"`,
-		`"op": "Wait"`,
-		`"op": "Do"`,
-		`"synctyp": "Mutex"`,
-		`"synctyp": "RWMutex"`,
-		`"synctyp": "WaitGroup"`,
-		`"synctyp": "Once"`,
-	} {
+	// The method names must appear as call targets in the export.
+	for _, want := range []string{"Lock", "Unlock", "RLock", "RUnlock", "Add", "Done", "Wait", "Do"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("exported JSON missing %s", want)
+			t.Errorf("exported JSON missing method %s", want)
 		}
 	}
 }
 
-// TestSyncScopeErrors: out-of-M2-scope sync surface fails fast with a
-// named "not in M2 scope" error — never silently.
+// TestSyncScopeErrors: with real sync (503608ea), the extended sync
+// surface is in scope — TryLock/TryRLock/RLocker/WaitGroup.Go all export
+// successfully. (Previously these were "not in M2 scope" errors under the
+// synthetic sync package; the real package supports them.)
 func TestSyncScopeErrors(t *testing.T) {
-	cases := map[string]string{
-		// TryLock/TryRLock/RLocker/WaitGroup.Go: defined, out of scope.
-		"m.TryLock()":     "not in M2 scope",
-		"rw.TryLock()":    "not in M2 scope",
-		"rw.TryRLock()":   "not in M2 scope",
-		"rw.RLocker()":    "not in M2 scope",
-		"wg.Go(func(){})": "not in M2 scope",
+	cases := []string{
+		"m.TryLock()",
+		"rw.TryLock()",
+		"rw.TryRLock()",
+		"_ = rw.RLocker()",
+		"wg.Go(func(){})",
 	}
-	for body, want := range cases {
+	for _, body := range cases {
 		src := "package main\n\nimport \"sync\"\n\nfunc main() {\n\tvar m sync.Mutex\n\tvar rw sync.RWMutex\n\tvar wg sync.WaitGroup\n\t_ = m\n\t_ = rw\n\t_ = wg\n\t" + body + "\n}\n"
 		_, err := ExportFile(writeSyncProg(t, src))
-		if err == nil {
-			t.Errorf("%s: expected scope error, got success", body)
-			continue
-		}
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: error %q does not contain %q", body, err, want)
+		if err != nil {
+			t.Errorf("%s: expected success with real sync, got error: %v", body, err)
 		}
 	}
 }
@@ -159,43 +146,33 @@ func TestSyncCompositeSupported(t *testing.T) {
 			}
 		})
 	}
-	// Positions that still fail fast: slice elements and map keys/elements
-	// zero through the factory to an unusable empty struct (export.go:
-	// syntheticCompositeScopeError). Non-Pool array elements stay scoped
-	// too — a conservative frontend gate even though the backend could
-	// manufacture per-slot zeros there. [N]sync.Pool is the deliberate
-	// exception: the factory manufactures a distinct GoPool per slot
-	// (NodeFactory.zeroArrayFor), which regexp's matchPool needs.
-	stillScoped := map[string]string{
-		"var s []sync.Mutex":           "not in M2 scope",
-		"var a [2]sync.WaitGroup":      "not in M2 scope",
-		"var mm map[string]sync.Mutex": "not in M2 scope",
-		"var mk map[sync.Mutex]int":    "not in M2 scope",
+	// With real sync (503608ea), composite positions work — the scope
+	// restriction was for the synthetic package. Slices, arrays, and maps
+	// of sync primitives are ordinary Go types now.
+	compositeOk := []string{
+		"var s []sync.Mutex",
+		"var a [2]sync.WaitGroup",
+		"var mm map[string]sync.Mutex",
+		"var mk map[sync.Mutex]int",
 	}
-	for decl, want := range stillScoped {
+	for _, decl := range compositeOk {
 		src := "package main\n\nimport \"sync\"\n\n" + decl + "\n\nfunc main() {}\n"
 		_, err := ExportFile(writeSyncProg(t, src))
-		if err == nil {
-			t.Errorf("%s: expected scope error, got success", decl)
-			continue
-		}
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: error %q does not contain %q", decl, err, want)
+		if err != nil {
+			t.Errorf("%s: expected success with real sync, got error: %v", decl, err)
 		}
 	}
 }
 
 // TestSyncMethodValueSupported: a method value on a sync primitive
-// (f := m.Lock) is supported (fix-linkname: exportPrimMethodValue lowers
-// it to a capturing funclit). Previously this was a WS H scope error.
+// (f := m.Lock) is supported via the general method-value path (the real
+// sync methods have funcdecls; 503608ea retired the synthetic overlay).
+// Previously this was a WS H scope error.
 func TestSyncMethodValueSupported(t *testing.T) {
 	src := "package main\n\nimport \"sync\"\n\nfunc main() {\n\tvar m sync.Mutex\n\tf := m.Lock\n\t_ = f\n}\n"
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
 		t.Fatalf("method value on sync.Mutex should be supported, got: %v", err)
-	}
-	if !strings.Contains(out, "__primrecv_") {
-		t.Errorf("method value did not lower to a capturing funclit")
 	}
 }
 
@@ -227,7 +204,6 @@ func main() {
 	}
 }
 
-
 // findKind walks the decoded export JSON and returns the first node with the
 // given kind, or nil.
 func findKind(n any, kind string) map[string]any {
@@ -256,10 +232,9 @@ func fieldsOf(n map[string]any) map[string]any {
 	return f
 }
 
-// Defer of a sync method desugars to defer of a funclit call (the frozen
-// buildDefer only understands funclit/ident/builtin). A value-typed ident
-// receiver is CAPTURED (address semantics: `defer m.Unlock()` uses &m, so a
-// reassigned m still unlocks the current object — verified against gc).
+// Defer of a sync method exports through the general call path with real
+// sync (503608ea retired the syncop desugar): the deferred call is a
+// standard call node and the frozen buildDefer handles it.
 func TestSyncDeferUnlockDesugars(t *testing.T) {
 	src := `package main
 
@@ -272,49 +247,14 @@ func main() {
 	gMu.Lock()
 }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
-		t.Fatalf("ExportFile: %v", err)
-	}
-	var doc any
-	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatalf("export is not JSON: %v", err)
-	}
-	deferNode := findKind(doc, "defer")
-	if deferNode == nil {
-		t.Fatal("no defer node in export")
-	}
-	call := fieldsOf(deferNode)["call"].(map[string]any)
-	if call["kind"] != "call" {
-		t.Fatalf("defer call kind = %v, want call", call["kind"])
-	}
-	cf := fieldsOf(call)
-	fun := cf["fun"].(map[string]any)
-	if fun["kind"] != "funclit" {
-		t.Fatalf("defer fun kind = %v, want funclit", fun["kind"])
-	}
-	ff := fieldsOf(fun)
-	// Value-typed ident receiver is captured: no params, no outer args.
-	if params, _ := ff["params"].([]any); len(params) != 0 {
-		t.Fatalf("funclit params = %d, want 0 (receiver captured)", len(params))
-	}
-	if args, _ := cf["args"].([]any); len(args) != 0 {
-		t.Fatalf("defer call args = %d, want 0 (receiver captured)", len(args))
-	}
-	body := ff["body"].(map[string]any)
-	stmts, _ := fieldsOf(body)["stmts"].([]any)
-	x := fieldsOf(stmts[0].(map[string]any))["x"].(map[string]any)
-	if x["kind"] != "syncop" || fieldsOf(x)["op"] != "Unlock" {
-		t.Fatalf("funclit body = %v %v, want syncop Unlock", x["kind"], fieldsOf(x)["op"])
-	}
-	recv := fieldsOf(x)["recv"].(map[string]any)
-	if recv["kind"] != "ident" || fieldsOf(recv)["name"] != "gMu" {
-		t.Fatalf("syncop recv = %v %v, want captured ident gMu", recv["kind"], fieldsOf(recv)["name"])
+		t.Fatalf("ExportFile with defer gMu.Unlock(): %v", err)
 	}
 }
 
-// Defer of a sync method with arguments: args are params (evaluated at
-// defer time); a pointer-typed receiver is also a param.
+// Defer of a sync method with arguments: exports successfully with
+// real sync (503608ea).
 func TestSyncDeferArgsAreParams(t *testing.T) {
 	src := `package main
 
@@ -331,29 +271,9 @@ func main() {
 	wg.Wait()
 }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
-		t.Fatalf("ExportFile: %v", err)
-	}
-	var doc any
-	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatalf("export is not JSON: %v", err)
-	}
-	deferNode := findKind(doc, "defer")
-	if deferNode == nil {
-		t.Fatal("no defer node in export")
-	}
-	call := mustNodeField(t, deferNode, "call")
-	cf := fieldsOf(call)
-	fun := mustNodeField(t, call, "fun")
-	ff := fieldsOf(fun)
-	params, _ := ff["params"].([]any)
-	// wg is value-typed ident -> captured; n -> one param.
-	if len(params) != 1 {
-		t.Fatalf("funclit params = %d, want 1 (the arg n)", len(params))
-	}
-	if args, _ := cf["args"].([]any); len(args) != 1 {
-		t.Fatalf("defer call args = %d, want 1 (n evaluated at defer time)", len(args))
+		t.Fatalf("ExportFile with defer wg.Add(n): %v", err)
 	}
 }
 
@@ -371,44 +291,9 @@ func mustNodeField(t *testing.T, n map[string]any, field string) map[string]any 
 	return m
 }
 
-// findGostmtBlock returns the first "block" node having a direct "gostmt"
-// child statement (the exportSyncGoStmt desugar shape), or nil.
-func findGostmtBlock(n any) map[string]any {
-	var rec func(n any) map[string]any
-	rec = func(n any) map[string]any {
-		switch v := n.(type) {
-		case map[string]any:
-			if v["kind"] == "block" {
-				if stmts, _ := fieldsOf(v)["stmts"].([]any); stmts != nil {
-					for _, s := range stmts {
-						if sm, ok := s.(map[string]any); ok && sm["kind"] == "gostmt" {
-							return v
-						}
-					}
-				}
-			}
-			for _, c := range v {
-				if r := rec(c); r != nil {
-					return r
-				}
-			}
-		case []any:
-			for _, c := range v {
-				if r := rec(c); r != nil {
-					return r
-				}
-			}
-		}
-		return nil
-	}
-	return rec(n)
-}
-
-// go m.Unlock() desugars to a block wrapping a zero-arg funclit spawn
-// (GoStatementNode's P2-M1 contract). With no args and a value-typed ident
-// receiver there is nothing to hoist, so the block holds just the spawn;
-// the receiver is captured by reference in the body (gc's &m address
-// semantics).
+// go m.Unlock() exports through the general go-statement path with real
+// sync (503608ea retired the syncop desugar): a gostmt wrapping the call
+// node, args hoisted at go time per the P3-M5 general rule.
 func TestSyncGoUnlockDesugars(t *testing.T) {
 	src := `package main
 
@@ -421,51 +306,13 @@ func main() {
 	go gMu.Unlock()
 }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
-		t.Fatalf("ExportFile: %v", err)
-	}
-	var doc any
-	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatalf("export is not JSON: %v", err)
-	}
-	blk := findGostmtBlock(doc)
-	if blk == nil {
-		t.Fatal("no block wrapping a gostmt in export")
-	}
-	stmts, _ := fieldsOf(blk)["stmts"].([]any)
-	if len(stmts) != 1 {
-		t.Fatalf("block stmts = %d, want 1 (no hoists for zero-arg go)", len(stmts))
-	}
-	goNode, _ := stmts[0].(map[string]any)
-	if goNode["kind"] != "gostmt" {
-		t.Fatalf("block stmt kind = %v, want gostmt", goNode["kind"])
-	}
-	call := fieldsOf(goNode)["call"].(map[string]any)
-	cf := fieldsOf(call)
-	fun := cf["fun"].(map[string]any)
-	if fun["kind"] != "funclit" {
-		t.Fatalf("gostmt fun kind = %v, want funclit", fun["kind"])
-	}
-	if args, _ := cf["args"].([]any); len(args) != 0 {
-		t.Fatalf("gostmt call args = %d, want 0", len(args))
-	}
-	body := fieldsOf(fun)["body"].(map[string]any)
-	bstmts, _ := fieldsOf(body)["stmts"].([]any)
-	x := fieldsOf(bstmts[0].(map[string]any))["x"].(map[string]any)
-	if x["kind"] != "syncop" || fieldsOf(x)["op"] != "Unlock" {
-		t.Fatalf("spawned body = %v %v, want syncop Unlock", x["kind"], fieldsOf(x)["op"])
-	}
-	recv := fieldsOf(x)["recv"].(map[string]any)
-	if recv["kind"] != "ident" || fieldsOf(recv)["name"] != "gMu" {
-		t.Fatalf("syncop recv = %v %v, want captured ident gMu", recv["kind"], fieldsOf(recv)["name"])
+		t.Fatalf("ExportFile with go gMu.Unlock(): %v", err)
 	}
 }
 
-// go wg.Add(n): the argument is hoisted into a synthetic temporary at
-// go-statement time (Go spec evaluation timing); the zero-arg spawn's body
-// references the temporary, and the temporary's value expression is the
-// original argument. The value-typed ident receiver stays captured.
+// go wg.Add(n): exports successfully with real sync (503608ea).
 func TestSyncGoArgsHoisted(t *testing.T) {
 	src := `package main
 
@@ -478,81 +325,14 @@ func main() {
 	wg.Wait()
 }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
-		t.Fatalf("ExportFile: %v", err)
-	}
-	var doc any
-	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatalf("export is not JSON: %v", err)
-	}
-	blk := findGostmtBlock(doc)
-	if blk == nil {
-		t.Fatal("no block wrapping a gostmt in export")
-	}
-	stmts, _ := fieldsOf(blk)["stmts"].([]any)
-	if len(stmts) != 2 {
-		t.Fatalf("block stmts = %d, want 2 (vardecl hoist + gostmt)", len(stmts))
-	}
-	vd, _ := stmts[0].(map[string]any)
-	if vd["kind"] != "vardecl" {
-		t.Fatalf("block stmt 0 kind = %v, want vardecl", vd["kind"])
-	}
-	vf := fieldsOf(vd)
-	names, _ := vf["names"].([]any)
-	if len(names) != 1 || names[0] != "__sync_go_arg0_0" {
-		t.Fatalf("vardecl names = %v, want [__sync_go_arg0_0]", names)
-	}
-	if vf["define"] != true {
-		t.Fatalf("vardecl define = %v, want true", vf["define"])
-	}
-	values, _ := vf["values"].([]any)
-	if len(values) != 1 {
-		t.Fatalf("vardecl values = %d, want 1", len(values))
-	}
-	val0, _ := values[0].(map[string]any)
-	if val0["kind"] != "ident" || fieldsOf(val0)["name"] != "n" {
-		t.Fatalf("hoist value = %v %v, want ident n", val0["kind"], fieldsOf(val0)["name"])
-	}
-	objs, _ := vf["objs"].([]any)
-	if len(objs) != 1 {
-		t.Fatalf("vardecl objs = %d, want 1", len(objs))
-	}
-	goNode, _ := stmts[1].(map[string]any)
-	call := fieldsOf(goNode)["call"].(map[string]any)
-	cf := fieldsOf(call)
-	if args, _ := cf["args"].([]any); len(args) != 0 {
-		t.Fatalf("gostmt call args = %d, want 0 (zero-arg spawn contract)", len(args))
-	}
-	fun := cf["fun"].(map[string]any)
-	body := fieldsOf(fun)["body"].(map[string]any)
-	bstmts, _ := fieldsOf(body)["stmts"].([]any)
-	x := fieldsOf(bstmts[0].(map[string]any))["x"].(map[string]any)
-	if x["kind"] != "syncop" || fieldsOf(x)["op"] != "Add" {
-		t.Fatalf("spawned body = %v %v, want syncop Add", x["kind"], fieldsOf(x)["op"])
-	}
-	xf := fieldsOf(x)
-	bargs, _ := xf["args"].([]any)
-	if len(bargs) != 1 {
-		t.Fatalf("syncop args = %d, want 1", len(bargs))
-	}
-	barg0, _ := bargs[0].(map[string]any)
-	bf := fieldsOf(barg0)
-	if barg0["kind"] != "ident" || bf["name"] != "__sync_go_arg0_0" {
-		t.Fatalf("syncop arg = %v %v, want ident __sync_go_arg0_0", barg0["kind"], bf["name"])
-	}
-	if bf["obj"] != objs[0] {
-		t.Fatalf("syncop arg obj = %v, want the hoisted temporary %v", bf["obj"], objs[0])
-	}
-	recv := xf["recv"].(map[string]any)
-	if recv["kind"] != "ident" || fieldsOf(recv)["name"] != "wg" {
-		t.Fatalf("syncop recv = %v %v, want captured ident wg", recv["kind"], fieldsOf(recv)["name"])
+		t.Fatalf("ExportFile with go wg.Add(n): %v", err)
 	}
 }
 
-// go pm.Unlock() with a pointer-typed receiver: the receiver is hoisted
-// into a __sync_go_recv temporary evaluated at go-statement time (same
-// evaluation-timing rule as the args).
+// go pm.Unlock() with a pointer-typed receiver: exports successfully
+// with real sync (503608ea).
 func TestSyncGoPointerRecvHoisted(t *testing.T) {
 	src := `package main
 
@@ -564,46 +344,15 @@ func main() {
 	go pm.Unlock()
 }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
-		t.Fatalf("ExportFile: %v", err)
-	}
-	var doc any
-	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatalf("export is not JSON: %v", err)
-	}
-	blk := findGostmtBlock(doc)
-	if blk == nil {
-		t.Fatal("no block wrapping a gostmt in export")
-	}
-	stmts, _ := fieldsOf(blk)["stmts"].([]any)
-	if len(stmts) != 2 {
-		t.Fatalf("block stmts = %d, want 2 (vardecl hoist + gostmt)", len(stmts))
-	}
-	vd, _ := stmts[0].(map[string]any)
-	names, _ := fieldsOf(vd)["names"].([]any)
-	if len(names) != 1 || names[0] != "__sync_go_recv0_0" {
-		t.Fatalf("vardecl names = %v, want [__sync_go_recv0_0]", names)
-	}
-	goNode, _ := stmts[1].(map[string]any)
-	call := fieldsOf(goNode)["call"].(map[string]any)
-	fun := fieldsOf(call)["fun"].(map[string]any)
-	body := fieldsOf(fun)["body"].(map[string]any)
-	bstmts, _ := fieldsOf(body)["stmts"].([]any)
-	x := fieldsOf(bstmts[0].(map[string]any))["x"].(map[string]any)
-	recv := fieldsOf(x)["recv"].(map[string]any)
-	if recv["kind"] != "ident" || fieldsOf(recv)["name"] != "__sync_go_recv0_0" {
-		t.Fatalf("syncop recv = %v %v, want ident __sync_go_recv0_0", recv["kind"], fieldsOf(recv)["name"])
-	}
-	if fieldsOf(recv)["obj"] != fieldsOf(vd)["objs"].([]any)[0] {
-		t.Fatal("syncop recv obj does not match the hoisted temporary")
+		t.Fatalf("ExportFile with go pm.Unlock(): %v", err)
 	}
 }
 
-// Package-level `var m sync.Mutex` (no init) must carry the implicit
-// syncnew in the globals entry — otherwise the frozen factory installs
-// its struct zero (GoStruct) and every method call CCEs at runtime.
-func TestSyncPackageVarImplicitSyncnew(t *testing.T) {
+// Package-level `var m sync.Mutex` exports successfully with real sync
+// (503608ea). The zero value is a usable primitive.
+func TestSyncPackageVarRealSync(t *testing.T) {
 	src := `package main
 
 import "sync"
@@ -613,33 +362,15 @@ var gWg sync.WaitGroup
 
 func main() { gMu.Lock(); gMu.Unlock() }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
-		t.Fatalf("ExportFile: %v", err)
-	}
-	var doc any
-	if err := json.Unmarshal([]byte(out), &doc); err != nil {
-		t.Fatalf("export is not JSON: %v", err)
-	}
-	globals, _ := doc.(map[string]any)["globals"].([]any)
-	if len(globals) != 2 {
-		t.Fatalf("globals = %d entries, want 2", len(globals))
-	}
-	for i, g := range globals {
-		init := g.(map[string]any)["init"]
-		if init == nil {
-			t.Fatalf("globals[%d] init is null, want implicit syncnew", i)
-		}
-		if init.(map[string]any)["kind"] != "syncnew" {
-			t.Fatalf("globals[%d] init kind = %v, want syncnew", i, init.(map[string]any)["kind"])
-		}
+		t.Fatalf("ExportFile with package-level sync vars: %v", err)
 	}
 }
 
-// TestSyncOnceFunc: sync.OnceFunc(f) lowers to a funclit capturing a
-// fresh sync.Once; the closure body is once.Do(f) via the syncop wire
-// node. Red-green: fails before the OnceFunc intrinsic ("call to unknown
-// function OnceFunc"), passes after.
+// TestSyncOnceFunc: sync.OnceFunc(f) compiles with the real sync
+// package (503608ea disabled the intrinsic; the real implementation
+// is used).
 func TestSyncOnceFunc(t *testing.T) {
 	src := `package main
 
@@ -653,20 +384,9 @@ func main() {
 	_ = called
 }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
 		t.Fatalf("ExportFile with sync.OnceFunc: %v", err)
-	}
-	for _, want := range []string{
-		`"kind": "funclit"`,
-		`"kind": "syncnew"`,
-		`"kind": "syncop"`,
-		`"op": "Do"`,
-		`"synctyp": "Once"`,
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("exported JSON missing %s", want)
-		}
 	}
 }
 
@@ -684,5 +404,32 @@ func main() {
 	_, err := ExportFile(writeSyncProg(t, src))
 	if err == nil {
 		t.Fatalf("ExportFile with sync.OnceFunc(): want arity error, got nil")
+	}
+}
+
+// TestSyntheticDiskDepMethodsResolved (PKG-008): a synthetic package may
+// import a disk package (synthetic io imports the real sync; mime/multipart
+// imports path/filepath). The disk dependency's methods must be merged into
+// methodIndex/funcByObj when the synthetic package is imported — otherwise
+// method calls in the synthetic package's own body fail with
+// "gofrontend: method X not found on Y". The failing method varied run to
+// run (Lock vs Unlock vs Do): scanRoots resolves every MethodVal selection
+// in the imported bodies while iterating info.Selections, a Go map.
+// This test imports bytes, whose transitive synthetic dependency io calls
+// sync.Mutex.Lock/Unlock and sync.Once.Do in its body; pre-fix the export
+// failed deterministically (only the method name varied).
+func TestSyntheticDiskDepMethodsResolved(t *testing.T) {
+	src := `package main
+
+import "bytes"
+
+func main() {
+	var b bytes.Buffer
+	b.WriteString("hi")
+	println(b.String())
+}
+`
+	if _, err := ExportFile(writeSyncProg(t, src)); err != nil {
+		t.Fatalf("ExportFile with synthetic bytes (disk sync dep via io): %v", err)
 	}
 }

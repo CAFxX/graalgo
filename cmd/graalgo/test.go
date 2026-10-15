@@ -237,7 +237,18 @@ func (r *testRunner) runPackage(dir string) bool {
 			return false
 		}
 		defer os.Remove(driver)
-		if code := graalgoRun(r.root, []string{driver}); code != 0 {
+		// The driver is the package's own test binary (white-box, like
+		// `go test`): pass the package dir as an explicit argv flag so
+		// the frontend applies Go's internal-visibility rule with the
+		// package's own privileges (e.g. stdlib internal/* imports). A
+		// flag is per-invocation and non-inheritable: unlike an
+		// environment variable, a user-exported value cannot confer
+		// privilege on `graalgo run`/`build`/`vet`.
+		absDir, err := filepath.Abs(dir)
+		if err != nil {
+			absDir = dir
+		}
+		if code := graalgoRun(r.root, []string{"--test-package-dir=" + absDir, driver}); code != 0 {
 			ok = false
 		}
 	} else if r.verbose {

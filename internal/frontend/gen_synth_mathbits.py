@@ -22,9 +22,33 @@
 # Re-run: python3 gen_synth_mathbits.py > /dev/null (writes
 # phases/phase1/frontend/synth_mathbits.go in place). The script lives
 # next to the generated file; it is NOT shipped in corpus runs.
+import os
 import re, sys
+import subprocess
 
-GOROOT = "/home/hatch/tools/go/src/math/bits"
+# --- P1-R1-2 portability prologue: GOROOT and OUTDIR are environment-driven
+# so the generator is CI-runnable and never writes outside the repo.
+#   GRAALGO_GOROOT   Go installation whose gc 1.27.1 sources are read
+#                    (default: `go env GOROOT`).
+#   GEN_SYNTH_OUTDIR directory for the generated file(s) (default: this
+#                    script's directory, i.e. in-place regeneration).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+def _graalgo_goroot():
+    g = os.environ.get("GRAALGO_GOROOT")
+    if g:
+        return g
+    try:
+        return subprocess.run(["go", "env", "GOROOT"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except Exception as e:
+        raise SystemExit(
+            "gen_synth: cannot determine GOROOT; set GRAALGO_GOROOT (%s)" % e)
+
+OUTDIR = os.environ.get("GEN_SYNTH_OUTDIR", _HERE)
+
+GOROOT = os.path.join(_graalgo_goroot(), "src", "math", "bits")
+
 
 with open(f"{GOROOT}/bits.go") as f:
     bits_go = f.read()
@@ -306,7 +330,7 @@ def main():
     assert "b0 := x >> 24" in body
 
     src = HEADER + body.rstrip() + "\n\n" + emit_multiresult() + tables.rstrip() + "\n`\n"
-    with open("/home/hatch/workspace/graalgo-m9/phases/phase1/frontend/synth_mathbits.go", "w") as f:
+    with open(os.path.join(OUTDIR, "synth_mathbits.go"), "w") as f:
         f.write(src)
     print("wrote synth_mathbits.go", len(src), "bytes")
 

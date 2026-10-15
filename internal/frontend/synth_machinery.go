@@ -943,15 +943,33 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	// net/netip importing unique) must be imported first, otherwise their
 	// functions (e.g. unique.Make) are not in the exporter's index and
 	// call sites fail with "call to unknown function". Dependencies are
-	// imported before the package itself (post-order). Only synthetic
-	// sources are followed; signature-only stubs (runtime, unsafe, etc.)
-	// and disk packages are handled by their own mechanisms.
+	// imported before the package itself (post-order).
+	// GENERAL (fix-disk-sync-methods): the same holds for DISK imports of
+	// synthetic packages (e.g. synthetic io importing the real sync, or
+	// mime/multipart importing path/filepath). Without the merge, the
+	// disk package's methods never join methodIndex/funcByObj, and method
+	// calls in the synthetic package's own body — resolved by scanRoots
+	// (every MethodVal selection) and exportSyntheticBodies — fail with
+	// "gofrontend: method X not found on Y". importPkgTree merges the
+	// disk closure dependencies-first; it is idempotent, handles mixed
+	// synthetic/disk closures via resolvePkgTree, and maps the
+	// signature-only stubs (runtime, fmt, unsafe) to (nil, nil) so they
+	// are skipped. The old "handled by their own mechanisms" assumption
+	// was wrong: needDisk/importPkgTree only covers the user program's
+	// direct imports, never disk packages reachable solely through
+	// synthetic packages. Every synthetic package type-checks through the
+	// same overlay importer at build time, so each import here is known
+	// to resolve (synthetic, stub, or disk) — no new failure modes.
 	for _, imp := range sp.pkg.Imports() {
 		ip := imp.Path()
 		if _, ok := syntheticSources[ip]; ok {
 			if err := e.importSyntheticPackage(getSyntheticPackage(ip)); err != nil {
 				return err
 			}
+			continue
+		}
+		if err := e.importPkgTree(ip); err != nil {
+			return err
 		}
 	}
 	savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
@@ -1059,23 +1077,14 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 									e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = &funcDeclInfo{fd: d, obj: obj, sig: sig}
 								}
 							}
-						} else {
-							// GENERAL (fix-make-unknown): package-level fail-fast
-							// stubs are registered in synthFuncIDs (but NOT
-							// funcByObj) so they can be used in value position
-							// (e.g. var AcceptFunc = syscall.Accept in synthetic
-							// poll). They are NOT pair-transformed (fail-fast
-							// preserved) and their bodies are NOT emitted (v1
-							// cannot emit multi-result). Call sites still fail
-							// fast via isMultiResultSyntheticFailFast.
-							fi := &funcDeclInfo{fd: d, obj: obj, funcID: -1, sig: sig, file: file}
-							fi.isTemplate = sig.TypeParams().Len() > 0
-							fi.synthPkg = sp
-							if e.synthFuncIDs == nil {
-								e.synthFuncIDs = make(map[string]*funcDeclInfo)
-							}
-							e.synthFuncIDs[sp.path+"."+obj.Name()] = fi
 						}
+						// Package-level fail-fast stubs are NOT registered for
+						// value-position use. A fail-fast stub used as a value
+						// (e.g. var f = syscall.Accept) is a compile-time error:
+						// v1 cannot represent the multi-result signature, and
+						// emitting nil or a panic-on-call value would be silently
+						// wrong. The error is raised at the use site in
+						// exportSyntheticQualified.
 						continue
 					}
 					// Not table-driven: fall through to normal processing.
@@ -1219,24 +1228,6 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 					return err
 				}
 				init = x
-			} else {
-				// P3-M9: synthetic package `var x sync.Once` (no init)
-				// normalizes to an implicit syncnew — mirrors the user
-				// package path (export.go). Without it the frozen
-				// factory's struct zero (GoStruct) would be installed
-				// and method calls would CCE (GoStruct cannot be cast
-				// to GoOnce).
-				if v, ok := e.info.Defs[n].(*types.Var); ok {
-					if nt := syntheticPrimitiveNamed(v.Type()); nt != nil {
-						tid, err := e.typeID(v.Type())
-						if err != nil {
-							return err
-						}
-						init = e.node("syncnew", sv.vs, map[string]any{
-							"synctyp": syntheticOpTypeName(nt), "type": tid,
-						})
-					}
-				}
 			}
 			varInits = append(varInits, ginit{oid: sv.oids[i], init: init, expr: initExpr, pos: e.pos(n)})
 		}
@@ -1342,130 +1333,16 @@ func (e *exporter) exportSyntheticBodies(doc *Doc) error {
 				e.subst, e.substTypeIDs = savedSubst, savedSubstTypeIDs
 				return err
 			}
+			if f == nil {
+				// Disk-MR stub: skipped by exportFuncDecl.
+				continue
+			}
 			doc.Funcs = append(doc.Funcs, f)
 		}
 		e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
 		e.subst, e.substTypeIDs = savedSubst, savedSubstTypeIDs
 	}
 	return nil
-}
-
-// syncIntrinsicNames are the synthetic sync package intrinsics (P3-M9).
-// OnceFunc is the only one: it lowers to a closure capturing a fresh
-// sync.Once (see exportSyncOnceFunc). All other sync members are types
-// (Mutex, Once, ...) whose methods go through the syncop wire node.
-var syncIntrinsicNames = map[string]bool{
-	"OnceFunc": true,
-}
-
-// exportSyncIntrinsic lowers a call to a synthetic sync intrinsic into
-// wire nodes.
-func (e *exporter) exportSyncIntrinsic(c *ast.CallExpr, name string) (*Node, error) {
-	switch name {
-	case "OnceFunc":
-		return e.exportSyncOnceFunc(c)
-	}
-	return nil, scopeErrorf("sync.%s is not a recognized intrinsic", name)
-}
-
-// exportSyncOnceFunc lowers sync.OnceFunc(f) to the equivalent of:
-//
-//	__once_N := new(sync.Once)  // syncnew wire node
-//	__f_N := f                   // hoisted argument
-//	func() { __once_N.Do(__f_N) } // funclit capturing both
-//
-// The temporaries are appended to e.mrHoistPre as vardecl nodes, flushed
-// by exportStmt into the enclosing block (the multi-result hoist
-// precedent). The returned funclit node evaluates to the GoFunc closure.
-// This is a general frontend intrinsic, not x509-specific: any caller of
-// sync.OnceFunc gets true once-semantics via GoOnce.doOnce.
-func (e *exporter) exportSyncOnceFunc(c *ast.CallExpr) (*Node, error) {
-	if len(c.Args) != 1 {
-		return nil, scopeErrorf("sync.OnceFunc takes 1 argument")
-	}
-	args, err := e.exportCallArgs(c)
-	if err != nil {
-		return nil, err
-	}
-	fNode := args[0]
-	// Result type: func(), from the call's type.
-	retTid, err := e.callType(c)
-	if err != nil {
-		return nil, err
-	}
-	// The sync.Once named type, from the synthetic sync package.
-	syncPkg := syntheticSyncPackage()
-	onceObj := syncPkg.Scope().Lookup("Once")
-	onceTN, ok := onceObj.(*types.TypeName)
-	if !ok {
-		return nil, fmt.Errorf("gofrontend: synthetic sync.Once is not a type name")
-	}
-	onceNamed, ok := onceTN.Type().(*types.Named)
-	if !ok {
-		return nil, fmt.Errorf("gofrontend: synthetic sync.Once is not a named type")
-	}
-	onceTid, err := e.typeID(onceNamed)
-	if err != nil {
-		return nil, err
-	}
-	// Argument type, for the hoisted f temporary.
-	fType := e.info.Types[c.Args[0]].Type
-	if fType == nil {
-		return nil, fmt.Errorf("gofrontend: no type info for sync.OnceFunc argument")
-	}
-	fTid, err := e.typeID(fType)
-	if err != nil {
-		return nil, err
-	}
-
-	seq := e.syncGoSeq
-	e.syncGoSeq++
-
-	// Hoist f into a temporary so the closure captures a stable value.
-	fName := fmt.Sprintf("__oncefunc_f_%d", seq)
-	fVar := types.NewVar(token.NoPos, nil, fName, fType)
-	fID, err := e.defVar(fVar, false)
-	if err != nil {
-		return nil, err
-	}
-	e.mrHoistPre = append(e.mrHoistPre, e.node("vardecl", c, map[string]any{
-		"names": []string{fName}, "objs": []int{fID},
-		"define": true, "type": nil, "values": []*Node{fNode},
-	}))
-	fIdent := e.node("ident", c, map[string]any{
-		"name": fName, "obj": fID, "type": fTid,
-	})
-
-	// Fresh sync.Once via the syncnew wire node, hoisted into a temporary.
-	onceNode := e.node("syncnew", c, map[string]any{
-		"synctyp": syntheticOpTypeName(onceNamed), "type": onceTid,
-	})
-	onceName := fmt.Sprintf("__oncefunc_once_%d", seq)
-	onceVar := types.NewVar(token.NoPos, nil, onceName, onceNamed)
-	onceID, err := e.defVar(onceVar, false)
-	if err != nil {
-		return nil, err
-	}
-	e.mrHoistPre = append(e.mrHoistPre, e.node("vardecl", c, map[string]any{
-		"names": []string{onceName}, "objs": []int{onceID},
-		"define": true, "type": nil, "values": []*Node{onceNode},
-	}))
-	onceIdent := e.node("ident", c, map[string]any{
-		"name": onceName, "obj": onceID, "type": onceTid,
-	})
-
-	// Closure body: __once_N.Do(__f_N), via the syncop wire node.
-	// Do has no results; mirror exportSyncOpNodes' node shape.
-	doNode := e.node("syncop", c, map[string]any{
-		"op": "Do", "synctyp": syntheticOpTypeName(onceNamed),
-		"recv": onceIdent, "args": []*Node{fIdent}, "type": nil,
-	})
-	body := e.node("block", c, map[string]any{
-		"stmts": []*Node{e.node("exprstmt", c, map[string]any{"x": doNode})},
-	})
-	return e.node("funclit", c, map[string]any{
-		"params": []*Node{}, "results": []*Node{}, "body": body, "type": retTid,
-	}), nil
 }
 
 // exportTimeIntrinsic lowers a call to a synthetic time intrinsic
@@ -1944,12 +1821,6 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		n, err := e.exportTimeIntrinsic(c, fn.Name())
 		return n, true, err
 	}
-	// RETIRED: sync now resolves from disk (real package). The OnceFunc
-	// intrinsic is disabled; real sync.OnceFunc compiles normally.
-	// if path == "sync" && syncIntrinsicNames[fn.Name()] {
-	// 	n, err := e.exportSyncIntrinsic(c, fn.Name())
-	// 	return n, true, err
-	// }
 	// P3-M7 (WS G, ADR-0007 D5): math intrinsics (bit conversions, Sqrt,
 	// FMA) lower to the "math*" wire nodes.
 	if path == "math" && mathIntrinsicNames[fn.Name()] {
@@ -2038,26 +1909,24 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 			}
 			return e.node("ident", x.Sel, fields), nil
 		}
-		// GENERAL (fix-make-unknown): fail-fast stub multi-result functions
-		// (e.g. syscall.Accept) are in synthFuncIDs but not funcByObj.
-		// They can be used as values (the value panics if called, which
-		// is the correct fail-fast behavior). Look up by path.name.
+		// Fail-fast stub multi-result functions (e.g. syscall.Accept) cannot
+		// be used as values in v1. The v1 wire format cannot represent the
+		// multi-result signature, so there is no honest value to emit.
+		// This is a compile-time error, not a nil or panic-on-call value.
 		if e.synthFuncIDs != nil && obj.Pkg() != nil {
-			if fi, ok := e.synthFuncIDs[obj.Pkg().Path()+"."+obj.Name()]; ok && fi != nil {
-				fields := map[string]any{"name": x.Sel.Name}
-				if err := e.exportFuncValue(x.Sel, obj, fields); err != nil {
-					return nil, err
-				}
-				return e.node("ident", x.Sel, fields), nil
+			if _, ok := e.synthFuncIDs[obj.Pkg().Path()+"."+obj.Name()]; ok {
+				return nil, scopeErrorf("%s.%s is a fail-fast stub and cannot be used in value position in frontend/v1 scope",
+					pkgName.Name(), obj.Name())
 			}
 		}
-		// GENERAL (fix-make-unknown): table-driven multi-result functions
-		// (e.g. os.Hostname, syscall.Socket) cannot be used as values
-		// in v1 (the __-helper has a different signature). Emit nil;
-		// the variable will panic if called (honest fail-fast for an
-		// unimplemented value-position use).
+		// Table-driven multi-result functions (e.g. os.Hostname,
+		// syscall.Socket) cannot be used as values in v1 (the __-helper has
+		// a different signature). This is a compile-time error, not nil:
+		// emitting nil would be silently wrong and panic with a confusing
+		// nil dereference at runtime.
 		if obj.Pkg() != nil && hasStaticMREntry(obj.Pkg().Path(), obj.Name(), "") {
-			return e.node("nil", x, map[string]any{}), nil
+			return nil, scopeErrorf("%s.%s in value position is not supported in frontend/v1 scope (M5): multi-result function values require v2",
+				pkgName.Name(), obj.Name())
 		}
 		return nil, scopeErrorf("%s.%s in value position is not supported in frontend/v1 scope (M5)",
 			pkgName.Name(), obj.Name())

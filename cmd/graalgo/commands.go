@@ -178,8 +178,8 @@ func parseBuildFlags(args []string) (buildFlags, error) {
 // cmdBuild implements `graalgo build [build flags] [packages]`.
 //
 // The named packages are validated through the frontend (the compile
-// gate), then packaged into an executable artifact: a self-contained
-// launcher script that runs the program through the graalgo backend.
+// gate), then packaged into an executable artifact: a real binary that
+// embeds the frontend output and runs it through the graalgo backend.
 // Like `go build`, _test.go files are ignored and the artifact defaults
 // to the current directory's base name (or the first .go file's base
 // name) unless -o names the output.
@@ -190,7 +190,7 @@ func cmdBuild(root string, args []string) int {
 		return 2
 	}
 	if bf.output == "-" {
-		fmt.Fprintf(os.Stderr, "graalgo build: -o - is not supported: the artifact is a launcher script\n")
+		fmt.Fprintf(os.Stderr, "graalgo build: -o - is not supported: the artifact is a binary\n")
 		return 2
 	}
 	if bf.ldflags != "" {
@@ -213,9 +213,25 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: no non-test Go files\n")
 		return 1
 	}
-	// Frontend gate: the program must translate cleanly.
-	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
+	// Frontend gate: run the frontend once, capturing its output for the
+	// artifact. This both validates the program and produces the IR that
+	// the artifact embeds, so the artifact never re-runs the frontend.
+	wireFile, err := os.CreateTemp("", "graalgo-wire-*.json")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo build: cannot create temp file: %v\n", err)
+		return 1
+	}
+	wirePath := wireFile.Name()
+	wireFile.Close()
+	defer os.Remove(wirePath)
+	emitArgs := append([]string{"--emit-wire=" + wirePath, "--check"}, pkgFiles...)
+	if code := graalgoRun(root, emitArgs); code != 0 {
 		fmt.Fprintf(os.Stderr, "graalgo build: build failed\n")
+		return 1
+	}
+	wireJSON, err := os.ReadFile(wirePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo build: cannot read frontend output: %v\n", err)
 		return 1
 	}
 	out, err := driver.DefaultOutputName(bf.output, bf.pkgs)
@@ -223,14 +239,10 @@ func cmdBuild(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 2
 	}
-	progFiles := make([]driver.ProgramFile, 0, len(pkgFiles))
-	for _, f := range pkgFiles {
-		progFiles = append(progFiles, driver.ProgramFile{Name: filepath.Base(f), Path: f})
-	}
 	if err := driver.Emit(driver.Artifact{
 		OutputPath:  out,
 		GraalgoRoot: root,
-		Files:       progFiles,
+		WireJSON:    wireJSON,
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "graalgo build: %v\n", err)
 		return 1

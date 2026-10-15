@@ -31,6 +31,22 @@ public final class GoFieldCell implements GoCell {
         this.inLongs = struct.descriptor().field(fieldIndex).inLongs();
     }
 
+    /**
+     * The struct value that was the field owner's value when {@code &}
+     * was evaluated. Two evaluations of {@code &s.f} on the same struct
+     * value yield distinct cells over the same struct — the pair
+     * (ownerStruct, fieldIndex) is the cell's stable storage identity
+     * (used e.g. by the sync notifyList intrinsic to key per-Cond state).
+     */
+    public GoStruct ownerStruct() {
+        return struct;
+    }
+
+    /** The field index within {@link #ownerStruct()}. */
+    public int fieldIndex() {
+        return fieldIndex;
+    }
+
     @Override
     public Object get() {
         return inLongs
@@ -51,5 +67,15 @@ public final class GoFieldCell implements GoCell {
     @Override
     public String toString() {
         return "GoFieldCell{field=" + fieldIndex + " of " + struct + "}";
+    }
+
+    @Override
+    public boolean sameStorageAs(GoCell other) {
+        // A GoFieldCell is allocated fresh on every &s.f evaluation, so
+        // two cells address the same storage iff they were taken over the
+        // same struct value (object identity: a reassigned owner variable
+        // holds a new struct, and the old cell keeps pointing at the old
+        // one, matching gc) and the same field index.
+        return other instanceof GoFieldCell f && struct == f.struct && fieldIndex == f.fieldIndex;
     }
 }

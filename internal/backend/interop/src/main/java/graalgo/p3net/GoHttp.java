@@ -124,14 +124,11 @@ public final class GoHttp {
     }
 
     /**
-     * Converts a Java byte[] to a Go []byte (GoSlice with int[] backing,
+     * Converts a Java byte[] to a Go []byte (GoSlice with byte[] backing,
      * D5 canonical form).
      */
     private static GoSlice goByteSlice(byte[] bytes) {
-        int[] arr = new int[bytes.length];
-        for (int i = 0; i < bytes.length; i++) {
-            arr[i] = bytes[i] & 0xFF;
-        }
+        byte[] arr = bytes.clone();
         return new GoSlice(arr, 0, arr.length, arr.length);
     }
 

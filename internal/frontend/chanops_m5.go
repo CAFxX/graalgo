@@ -129,7 +129,7 @@ func (e *exporter) exportCloseDeferGo(s ast.Stmt, c *ast.CallExpr, isDefer bool)
 		return e.node("defer", s, map[string]any{"call": call}), nil
 	}
 	// `go close(ch)`: a plain "gostmt" call does not evaluate args in the
-	// spawning goroutine (cf. exportSyncGoStmt), so the channel is hoisted
+	// spawning goroutine, so the channel is hoisted
 	// into a temp first — Go evaluates the function value and parameters
 	// in the calling goroutine.
 	e.chanSeq++

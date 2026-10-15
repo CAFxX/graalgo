@@ -168,13 +168,12 @@ public final class TlsRuntime {
         }
         if (o instanceof GoSlice) {
             GoSlice gs = (GoSlice) o;
-            int[] arr = (int[]) gs.array();
+            // []byte is byte[]-backed (D5).
+            byte[] arr = (byte[]) gs.array();
             int off = gs.offset();
             int len = gs.len();
             byte[] out = new byte[len];
-            for (int i = 0; i < len; i++) {
-                out[i] = (byte) arr[off + i];
-            }
+            System.arraycopy(arr, off, out, 0, len);
             return out;
         }
         throw new IllegalArgumentException("expected GoSlice, got " + o.getClass());
@@ -184,10 +183,8 @@ public final class TlsRuntime {
         if (b == null) {
             return null;
         }
-        int[] arr = new int[b.length];
-        for (int i = 0; i < b.length; i++) {
-            arr[i] = b[i] & 0xFF;
-        }
+        // []byte is byte[]-backed (D5).
+        byte[] arr = b.clone();
         return new GoSlice(arr, 0, arr.length, arr.length);
     }
 

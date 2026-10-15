@@ -149,6 +149,11 @@ type m7MultiResultFunc struct {
 	pairType   string   // pair/triple struct type name
 	pairFields []string // field names in result order (must match the
 	// multi-result signature's result order positionally)
+	// ifaceFallback: the method may be selected through an interface
+	// (no receiver recorded); classifyM7MultiResultCall retries such
+	// receiver-less selections against entries with this flag set
+	// (P2-F3, review-n1 — table-driven instead of package-name-keyed).
+	ifaceFallback bool
 }
 
 // hasStaticMREntry reports whether (pkgPath, name, recvType) has an entry
@@ -157,29 +162,54 @@ type m7MultiResultFunc struct {
 // hand-written __-helpers whose names need not match the transform's
 // __F convention (e.g. io.Pipe → __pipe), and generating a second
 // helper would conflict.
+// m5StaticMREntry is one M5-era multi-result function with a hand-written
+// __-helper (or wire-node desugar) that the mechanical multi-result
+// transform must skip.
+type m5StaticMREntry struct {
+	pkgPath  string // synthetic package path
+	name     string // function/method name
+	recvType string // receiver named type ("" = package-level function)
+	anyRecv  bool   // match any non-empty receiver — for retained WS D
+	// method entries like context.Deadline
+}
+
+// m5StaticMREntries is the table-driven replacement for the former
+// package-path switch in hasStaticMREntry (P2-F2, review-n1): the M5-era
+// functions (context.WithCancel etc., runtime.Caller, time.ParseDuration,
+// context.Deadline) have hand-written __-helpers and fail-fast bodies; the
+// mechanical transform must not rewrite them.
+// NOTE: these live in their own table, NOT in m7MultiResultFuncs etc.:
+// those tables drive classify*, which runs BEFORE the M5 classifier, so
+// adding M5 functions there would misclassify their call sites (mrM7
+// instead of the M5 kinds mrWithCancel/mrParseDur/...).
+var m5StaticMREntries = []m5StaticMREntry{
+	{"context", "WithCancel", "", false},
+	{"context", "WithCancelCause", "", false},
+	{"context", "WithDeadline", "", false},
+	{"context", "WithTimeout", "", false},
+	{"runtime", "Caller", "", false},
+	{"time", "ParseDuration", "", false},
+	// context.Deadline method (mrDeadline) — retained for WS D; the
+	// synthetic Context interface omits Deadline so no call site
+	// type-checks, but the transform must still skip it.
+	{"context", "Deadline", "", true},
+}
+
 func hasStaticMREntry(pkgPath, name, recvType string) bool {
 	// M5 functions (context.WithCancel etc., runtime.Caller,
 	// time.ParseDuration) have hand-written __-helpers and fail-fast
 	// bodies; the mechanical transform must not rewrite them.
-	if recvType == "" {
-		switch pkgPath {
-		case "context":
-			if name == "WithCancel" || name == "WithCancelCause" ||
-				name == "WithDeadline" || name == "WithTimeout" {
-				return true
-			}
-		case "runtime":
-			if name == "Caller" {
-				return true
-			}
-		case "time":
-			if name == "ParseDuration" {
-				return true
-			}
+	for _, me := range m5StaticMREntries {
+		if me.pkgPath != pkgPath || me.name != name {
+			continue
 		}
-	} else {
-		// context.Deadline method (mrDeadline)
-		if pkgPath == "context" && name == "Deadline" {
+		if me.anyRecv {
+			if recvType != "" {
+				return true
+			}
+			continue
+		}
+		if me.recvType == recvType {
 			return true
 		}
 	}
@@ -235,383 +265,383 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// errors: AsType[E error] (P4 — was M7 fail-fast). The pair struct
 	// and helper are generic; the desugar instantiates both with the
 	// call's type argument (instantiatePairType + helperCallTargs).
-	{"errors", "AsType", "", "__asTypePub", "asTypePair", []string{"v", "ok"}},
+	{"errors", "AsType", "", "__asTypePub", "asTypePair", []string{"v", "ok"}, false},
 	// bytes: methods on *Reader (P3-M9 WS D: v1 cannot emit 2-result methods).
-	{"bytes", "Read", "Reader", "__bytesReaderRead", "__bytesReadPair", []string{"n", "err"}},
+	{"bytes", "Read", "Reader", "__bytesReaderRead", "__bytesReadPair", []string{"n", "err"}, false},
 	// bytes: methods on *Buffer (P3-M9 WS D: v1 cannot emit 2-result methods).
-	{"bytes", "Write", "Buffer", "__bytesBufferWrite", "__bytesWritePair", []string{"n", "err"}},
+	{"bytes", "Write", "Buffer", "__bytesBufferWrite", "__bytesWritePair", []string{"n", "err"}, false},
 	// bytes: Buffer.WriteString (P3-M10 WS D discharge; needed by
 	// net/url.URL.String and the net/http response writer, hence by any
 	// program importing net/http).
-	{"bytes", "WriteString", "Buffer", "__bytesBufferWriteString", "__bytesWriteStringPair", []string{"n", "err"}},
+	{"bytes", "WriteString", "Buffer", "__bytesBufferWriteString", "__bytesWriteStringPair", []string{"n", "err"}, false},
 	// encoding/base32: methods on *Encoding.
-	{"encoding/base32", "Decode", "Encoding", "__base32Decode", "base32DecodePair", []string{"n", "err"}},
-	{"encoding/base32", "DecodeString", "Encoding", "__base32DecodeString", "base32DecodeStringPair", []string{"b", "err"}},
-	{"encoding/base32", "AppendDecode", "Encoding", "__base32AppendDecode", "base32DecodeStringPair", []string{"b", "err"}},
+	{"encoding/base32", "Decode", "Encoding", "__base32Decode", "base32DecodePair", []string{"n", "err"}, false},
+	{"encoding/base32", "DecodeString", "Encoding", "__base32DecodeString", "base32DecodeStringPair", []string{"b", "err"}, false},
+	{"encoding/base32", "AppendDecode", "Encoding", "__base32AppendDecode", "base32DecodeStringPair", []string{"b", "err"}, false},
 	// encoding/base64: methods on *Encoding.
-	{"encoding/base64", "Decode", "Encoding", "__base64Decode", "base64DecodePair", []string{"n", "err"}},
-	{"encoding/base64", "DecodeString", "Encoding", "__base64DecodeString", "base64DecodeStringPair", []string{"b", "err"}},
-	{"encoding/base64", "AppendDecode", "Encoding", "__base64AppendDecode", "base64DecodeStringPair", []string{"b", "err"}},
+	{"encoding/base64", "Decode", "Encoding", "__base64Decode", "base64DecodePair", []string{"n", "err"}, false},
+	{"encoding/base64", "DecodeString", "Encoding", "__base64DecodeString", "base64DecodeStringPair", []string{"b", "err"}, false},
+	{"encoding/base64", "AppendDecode", "Encoding", "__base64AppendDecode", "base64DecodeStringPair", []string{"b", "err"}, false},
 	// encoding/base64: streaming encoder/decoder methods (Gate-1 #4).
-	{"encoding/base64", "Write", "encoder", "__encoderWrite", "base64EncoderWritePair", []string{"n", "err"}},
-	{"encoding/base64", "Read", "decoder", "__decoderRead", "base64DecoderReadPair", []string{"n", "err"}},
-	{"encoding/base64", "Read", "newlineFilteringReader", "__newlineFilteringReaderRead", "base64NewlineFilteringReaderReadPair", []string{"n", "err"}},
+	{"encoding/base64", "Write", "encoder", "__encoderWrite", "base64EncoderWritePair", []string{"n", "err"}, false},
+	{"encoding/base64", "Read", "decoder", "__decoderRead", "base64DecoderReadPair", []string{"n", "err"}, false},
+	{"encoding/base64", "Read", "newlineFilteringReader", "__newlineFilteringReaderRead", "base64NewlineFilteringReaderReadPair", []string{"n", "err"}, false},
 	// io/fs: ReadLink/Lstat (Gate-1 #4).
-	{"io/fs", "ReadLink", "", "__fsReadLink", "fsReadLinkPair", []string{"s", "err"}},
-	{"io/fs", "Lstat", "", "__fsLstat", "fsLstatPair", []string{"fi", "err"}},
+	{"io/fs", "ReadLink", "", "__fsReadLink", "fsReadLinkPair", []string{"s", "err"}, false},
+	{"io/fs", "Lstat", "", "__fsLstat", "fsLstatPair", []string{"fi", "err"}, false},
 	// encoding/hex: package-level funcs.
-	{"encoding/hex", "Decode", "", "__hexDecode", "hexDecodePair", []string{"n", "err"}},
-	{"encoding/hex", "DecodeString", "", "__hexDecodeString", "hexDecodeStringPair", []string{"b", "err"}},
-	{"encoding/hex", "AppendDecode", "", "__hexAppendDecode", "hexDecodeStringPair", []string{"b", "err"}},
+	{"encoding/hex", "Decode", "", "__hexDecode", "hexDecodePair", []string{"n", "err"}, false},
+	{"encoding/hex", "DecodeString", "", "__hexDecodeString", "hexDecodeStringPair", []string{"b", "err"}, false},
+	{"encoding/hex", "AppendDecode", "", "__hexAppendDecode", "hexDecodeStringPair", []string{"b", "err"}, false},
 	// encoding/binary: package-level funcs.
-	{"encoding/binary", "Uvarint", "", "__binaryUvarint", "binaryUvarintPair", []string{"x", "n"}},
-	{"encoding/binary", "Varint", "", "__binaryVarint", "binaryVarintPair", []string{"x", "n"}},
+	{"encoding/binary", "Uvarint", "", "__binaryUvarint", "binaryUvarintPair", []string{"x", "n"}, false},
+	{"encoding/binary", "Varint", "", "__binaryVarint", "binaryVarintPair", []string{"x", "n"}, false},
 	// encoding/ascii85: package-level func, 3 results.
-	{"encoding/ascii85", "Decode", "", "__ascii85Decode", "ascii85DecodeTriple", []string{"ndst", "nsrc", "err"}},
+	{"encoding/ascii85", "Decode", "", "__ascii85Decode", "ascii85DecodeTriple", []string{"ndst", "nsrc", "err"}, false},
 	// encoding/pem: package-level func.
-	{"encoding/pem", "Decode", "", "__pemDecode", "pemDecodePair", []string{"p", "rest"}},
+	{"encoding/pem", "Decode", "", "__pemDecode", "pemDecodePair", []string{"p", "rest"}, false},
 	// encoding/asn1: package-level func. The __-helper implements the
 	// scalar cases in real Go and fails fast (needs reflect) for composite
 	// types — the desugar applies, the reflect limit moves into the helper.
 	// (Unmarshal is NOT desugared: decoding stores through the recipient
 	// pointer, which v1 cannot express — WS D — so it fails fast at every
 	// call site via isMultiResultSynthetic.)
-	{"encoding/asn1", "Marshal", "", "__asn1Marshal", "asn1MarshalPair", []string{"b", "err"}},
+	{"encoding/asn1", "Marshal", "", "__asn1Marshal", "asn1MarshalPair", []string{"b", "err"}, false},
 	// strconv: package-level funcs. The Pub helpers are the public-shape
 	// single-result forms (gc-compatible error mapping via toError);
 	// ParseFloat's helper is __parseFloat (no Pub variant — its error
 	// mapping is internal to __parseFloat).
-	{"strconv", "ParseBool", "", "__parseBoolPub", "parseBoolPair", []string{"v", "err"}},
-	{"strconv", "ParseInt", "", "__parseIntPub", "parseIntPair", []string{"v", "err"}},
-	{"strconv", "ParseUint", "", "__parseUintPub", "parseUintPair", []string{"v", "err"}},
-	{"strconv", "Atoi", "", "__atoiPub", "atoiPair", []string{"v", "err"}},
-	{"strconv", "ParseFloat", "", "__parseFloat", "parseFloatPair", []string{"v", "err"}},
-	{"strconv", "ParseComplex", "", "__parseComplexPub", "parseComplexPair", []string{"v", "err"}},
-	{"strconv", "Unquote", "", "__unquotePub", "unquotePair", []string{"v", "err"}},
-	{"strconv", "QuotedPrefix", "", "__quotedPrefix", "quotedPrefixPair", []string{"v", "err"}},
+	{"strconv", "ParseBool", "", "__parseBoolPub", "parseBoolPair", []string{"v", "err"}, false},
+	{"strconv", "ParseInt", "", "__parseIntPub", "parseIntPair", []string{"v", "err"}, false},
+	{"strconv", "ParseUint", "", "__parseUintPub", "parseUintPair", []string{"v", "err"}, false},
+	{"strconv", "Atoi", "", "__atoiPub", "atoiPair", []string{"v", "err"}, false},
+	{"strconv", "ParseFloat", "", "__parseFloat", "parseFloatPair", []string{"v", "err"}, false},
+	{"strconv", "ParseComplex", "", "__parseComplexPub", "parseComplexPair", []string{"v", "err"}, false},
+	{"strconv", "Unquote", "", "__unquotePub", "unquotePair", []string{"v", "err"}, false},
+	{"strconv", "QuotedPrefix", "", "__quotedPrefix", "quotedPrefixPair", []string{"v", "err"}, false},
 	// UnquoteChar is the 4-result entry (value, multibyte, tail, err) —
 	// the desugar supports N-ary via pairFields.
-	{"strconv", "UnquoteChar", "", "__unquoteChar", "unquoteCharPair", []string{"value", "multibyte", "tail", "err"}},
+	{"strconv", "UnquoteChar", "", "__unquoteChar", "unquoteCharPair", []string{"value", "multibyte", "tail", "err"}, false},
 	// encoding/json: package-level funcs plus methods on *Decoder,
 	// Number, and RawMessage (prependRecv passes the receiver as the
 	// helper's first argument).
-	{"encoding/json", "Marshal", "", "__marshal", "marshalPair", []string{"data", "err"}},
-	{"encoding/json", "MarshalIndent", "", "__marshalIndent", "marshalIndentPair", []string{"data", "err"}},
-	{"encoding/json", "Token", "Decoder", "__decoderToken", "decoderTokenPair", []string{"tok", "err"}},
-	{"encoding/json", "Float64", "Number", "__numberFloat64", "numberFloat64Pair", []string{"f", "err"}},
-	{"encoding/json", "Int64", "Number", "__numberInt64", "numberInt64Pair", []string{"i", "err"}},
-	{"encoding/json", "MarshalJSON", "RawMessage", "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}},
+	{"encoding/json", "Marshal", "", "__marshal", "marshalPair", []string{"data", "err"}, false},
+	{"encoding/json", "MarshalIndent", "", "__marshalIndent", "marshalIndentPair", []string{"data", "err"}, false},
+	{"encoding/json", "Token", "Decoder", "__decoderToken", "decoderTokenPair", []string{"tok", "err"}, false},
+	{"encoding/json", "Float64", "Number", "__numberFloat64", "numberFloat64Pair", []string{"f", "err"}, false},
+	{"encoding/json", "Int64", "Number", "__numberInt64", "numberInt64Pair", []string{"i", "err"}, false},
+	{"encoding/json", "MarshalJSON", "RawMessage", "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}, false},
 	// P3-M8 (wave 2): synthetic io (synth_io.go). Only the members with
 	// real single-result __-helpers are desugared — see the SCOPE NOTE in
 	// the patch header; everything else fails at export via
 	// isMultiResultSynthetic. prependRecv applies (all have receivers).
-	{"io", "Pipe", "", "__pipe", "pipePair", []string{"r", "w"}},
-	{"io", "Read", "PipeReader", "__pipeReaderRead", "pipeReaderReadPair", []string{"n", "err"}},
-	{"io", "Write", "PipeWriter", "__pipeWriterWrite", "pipeWriterWritePair", []string{"n", "err"}},
-	{"io", "Seek", "SectionReader", "__sectionReaderSeek", "sectionReaderSeekPair", []string{"n", "err"}},
-	{"io", "Outer", "SectionReader", "__sectionReaderOuter", "sectionReaderOuterTriple", []string{"r", "off", "n"}},
-	{"io", "Seek", "OffsetWriter", "__offsetWriterSeek", "offsetWriterSeekPair", []string{"n", "err"}},
+	{"io", "Pipe", "", "__pipe", "pipePair", []string{"r", "w"}, false},
+	{"io", "Read", "PipeReader", "__pipeReaderRead", "pipeReaderReadPair", []string{"n", "err"}, false},
+	{"io", "Write", "PipeWriter", "__pipeWriterWrite", "pipeWriterWritePair", []string{"n", "err"}, false},
+	{"io", "Seek", "SectionReader", "__sectionReaderSeek", "sectionReaderSeekPair", []string{"n", "err"}, false},
+	{"io", "Outer", "SectionReader", "__sectionReaderOuter", "sectionReaderOuterTriple", []string{"r", "off", "n"}, false},
+	{"io", "Seek", "OffsetWriter", "__offsetWriterSeek", "offsetWriterSeekPair", []string{"n", "err"}, false},
 	// P3-M8 (wave 2): strings.Reader methods discharged from their M7
 	// fail-fast (patch 06, synth_strings.go). They need only io.EOF and
 	// the io.Seek* consts — no interface dispatch — so their __-helpers
 	// are real. strings.Reader.WriteTo stays fail-fast (needs w.Write).
-	{"strings", "Read", "Reader", "__stringsReaderRead", "stringsReaderReadPair", []string{"n", "err"}},
-	{"strings", "ReadAt", "Reader", "__stringsReaderReadAt", "stringsReaderReadAtPair", []string{"n", "err"}},
-	{"strings", "ReadByte", "Reader", "__stringsReaderReadByte", "stringsReaderReadBytePair", []string{"b", "err"}},
-	{"strings", "ReadRune", "Reader", "__stringsReaderReadRune", "stringsReaderReadRuneTriple", []string{"ch", "size", "err"}},
-	{"strings", "Seek", "Reader", "__stringsReaderSeek", "stringsReaderSeekPair", []string{"n", "err"}},
+	{"strings", "Read", "Reader", "__stringsReaderRead", "stringsReaderReadPair", []string{"n", "err"}, false},
+	{"strings", "ReadAt", "Reader", "__stringsReaderReadAt", "stringsReaderReadAtPair", []string{"n", "err"}, false},
+	{"strings", "ReadByte", "Reader", "__stringsReaderReadByte", "stringsReaderReadBytePair", []string{"b", "err"}, false},
+	{"strings", "ReadRune", "Reader", "__stringsReaderReadRune", "stringsReaderReadRuneTriple", []string{"ch", "size", "err"}, false},
+	{"strings", "Seek", "Reader", "__stringsReaderSeek", "stringsReaderSeekPair", []string{"n", "err"}, false},
 	// strings: Builder.Write/WriteString/WriteRune (P3-M10 WS D
 	// discharge of the M7 fail-fasts; needed by url.Values.Encode,
 	// hence by any program importing net/http).
-	{"strings", "Write", "Builder", "__builderWrite", "__builderWritePair", []string{"n", "err"}},
-	{"strings", "WriteString", "Builder", "__builderWriteString", "__builderWriteStringPair", []string{"n", "err"}},
-	{"strings", "WriteRune", "Builder", "__builderWriteRune", "__builderWriteRunePair", []string{"n", "err"}},
+	{"strings", "Write", "Builder", "__builderWrite", "__builderWritePair", []string{"n", "err"}, false},
+	{"strings", "WriteString", "Builder", "__builderWriteString", "__builderWriteStringPair", []string{"n", "err"}, false},
+	{"strings", "WriteRune", "Builder", "__builderWriteRune", "__builderWriteRunePair", []string{"n", "err"}, false},
 	// P3-M8 (wave 2): synthetic syscall package (synth_syscall.go).
 	// The multi-result members keep exact gc signatures with fail-fast
 	// bodies; the __-helpers return pair structs (real implementations
 	// for Getenv/Getgroups/Getwd, exact-message panics for the rest).
-	{"syscall", "Open", "", "__open", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Read", "", "__read", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Write", "", "__write", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Pread", "", "__pread", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Pwrite", "", "__pwrite", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Seek", "", "__seek", "int64ErrorPair", []string{"v", "err"}},
-	{"syscall", "Readlink", "", "__readlink", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Mmap", "", "__mmap", "bytesErrorPair", []string{"v", "err"}},
-	{"syscall", "StartProcess", "", "__startprocess", "startProcessTriple", []string{"pid", "handle", "err"}},
-	{"syscall", "ForkExec", "", "__forkexec", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Wait4", "", "__wait4", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Socket", "", "__socket", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Accept", "", "__accept", "acceptTriple", []string{"fd", "sa", "err"}},
-	{"syscall", "GetsockoptInt", "", "__getsockoptint", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Recvmsg", "", "__recvmsg", "recvmsgTuple", []string{"n", "oobn", "recvflags", "from", "err"}},
-	{"syscall", "EpollCreate", "", "__epollcreate", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "EpollCreate1", "", "__epollcreate1", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "EpollWait", "", "__epollwait", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "InotifyInit", "", "__inotifyinit", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "InotifyAddWatch", "", "__inotifyaddwatch", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "InotifyRmWatch", "", "__inotifyrmwatch", "intErrorPair", []string{"v", "err"}},
-	{"syscall", "Getenv", "", "__getenv", "getenvPair", []string{"value", "found"}},
-	{"syscall", "Getgroups", "", "__getgroups", "gidsErrorPair", []string{"gids", "err"}},
-	{"syscall", "Getwd", "", "__getwd", "stringErrorPair", []string{"v", "err"}},
-	{"syscall", "ByteSliceFromString", "", "__byteSliceFromString", "bytesErrorPair", []string{"v", "err"}},
-	{"syscall", "BytePtrFromString", "", "__bytePtrFromString", "bytePtrErrorPair", []string{"p", "err"}},
-	{"syscall", "Syscall", "", "__syscall", "syscallTriple", []string{"r1", "r2", "err"}},
-	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}},
-	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}},
-	{"syscall", "RawSyscall6", "", "__rawsyscall6", "syscallTriple", []string{"r1", "r2", "err"}},
+	{"syscall", "Open", "", "__open", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Read", "", "__read", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Write", "", "__write", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Pread", "", "__pread", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Pwrite", "", "__pwrite", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Seek", "", "__seek", "int64ErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Readlink", "", "__readlink", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Mmap", "", "__mmap", "bytesErrorPair", []string{"v", "err"}, false},
+	{"syscall", "StartProcess", "", "__startprocess", "startProcessTriple", []string{"pid", "handle", "err"}, false},
+	{"syscall", "ForkExec", "", "__forkexec", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Wait4", "", "__wait4", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Socket", "", "__socket", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Accept", "", "__accept", "acceptTriple", []string{"fd", "sa", "err"}, false},
+	{"syscall", "GetsockoptInt", "", "__getsockoptint", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Recvmsg", "", "__recvmsg", "recvmsgTuple", []string{"n", "oobn", "recvflags", "from", "err"}, false},
+	{"syscall", "EpollCreate", "", "__epollcreate", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "EpollCreate1", "", "__epollcreate1", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "EpollWait", "", "__epollwait", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "InotifyInit", "", "__inotifyinit", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "InotifyAddWatch", "", "__inotifyaddwatch", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "InotifyRmWatch", "", "__inotifyrmwatch", "intErrorPair", []string{"v", "err"}, false},
+	{"syscall", "Getenv", "", "__getenv", "getenvPair", []string{"value", "found"}, false},
+	{"syscall", "Getgroups", "", "__getgroups", "gidsErrorPair", []string{"gids", "err"}, false},
+	{"syscall", "Getwd", "", "__getwd", "stringErrorPair", []string{"v", "err"}, false},
+	{"syscall", "ByteSliceFromString", "", "__byteSliceFromString", "bytesErrorPair", []string{"v", "err"}, false},
+	{"syscall", "BytePtrFromString", "", "__bytePtrFromString", "bytePtrErrorPair", []string{"p", "err"}, false},
+	{"syscall", "Syscall", "", "__syscall", "syscallTriple", []string{"r1", "r2", "err"}, false},
+	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}, false},
+	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
+	{"syscall", "RawSyscall6", "", "__rawsyscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
 	// P3-M8 (wave 2, reflect): multi-result members desugared via the
 	// single-result __-helpers. Select is package-level; the Value methods
 	// are on the Value struct; the Type methods are on rtype but usually
 	// called via the Type interface (the classify function retries with
 	// recvType="rtype" for reflect interface methods); StructTag.Lookup is
 	// on the named string type StructTag.
-	{"reflect", "Select", "", "__reflectSelect", "reflectSelectTriple", []string{"chosen", "recv", "recvOK"}},
-	{"reflect", "FieldByIndexErr", "Value", "__reflectFieldByIndexErr", "reflectValuePair", []string{"v", "err"}},
-	{"reflect", "TryRecv", "Value", "__reflectTryRecv", "reflectValueBoolPair", []string{"x", "ok"}},
-	{"reflect", "MethodByName", "rtype", "__reflectTMethodByName", "reflectMethodPair", []string{"m", "ok"}},
-	{"reflect", "FieldByName", "rtype", "__reflectTFieldByName", "reflectStructFieldPair", []string{"f", "ok"}},
-	{"reflect", "FieldByNameFunc", "rtype", "__reflectTFieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}},
-	{"reflect", "Lookup", "StructTag", "__reflect_taglookup", "reflectTagPair", []string{"value", "ok"}},
+	{"reflect", "Select", "", "__reflectSelect", "reflectSelectTriple", []string{"chosen", "recv", "recvOK"}, false},
+	{"reflect", "FieldByIndexErr", "Value", "__reflectFieldByIndexErr", "reflectValuePair", []string{"v", "err"}, false},
+	{"reflect", "TryRecv", "Value", "__reflectTryRecv", "reflectValueBoolPair", []string{"x", "ok"}, false},
+	{"reflect", "MethodByName", "rtype", "__reflectTMethodByName", "reflectMethodPair", []string{"m", "ok"}, true},
+	{"reflect", "FieldByName", "rtype", "__reflectTFieldByName", "reflectStructFieldPair", []string{"f", "ok"}, true},
+	{"reflect", "FieldByNameFunc", "rtype", "__reflectTFieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}, true},
+	{"reflect", "Lookup", "StructTag", "__reflect_taglookup", "reflectTagPair", []string{"value", "ok"}, false},
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
 	// P3-M9 (tier1c): math/bits multi-result functions (Add/Sub/Mul/Div
 	// + 32/64 variants). Pair field names match the gc result names in
 	// order (see synth_mathbits.go).
-	{"math/bits", "Add", "", "__bitsAdd", "bitsAddPair", []string{"sum", "carryOut"}},
-	{"math/bits", "Add32", "", "__bitsAdd32", "bitsAdd32Pair", []string{"sum", "carryOut"}},
-	{"math/bits", "Add64", "", "__bitsAdd64", "bitsAdd64Pair", []string{"sum", "carryOut"}},
-	{"math/bits", "Sub", "", "__bitsSub", "bitsSubPair", []string{"diff", "borrowOut"}},
-	{"math/bits", "Sub32", "", "__bitsSub32", "bitsSub32Pair", []string{"diff", "borrowOut"}},
-	{"math/bits", "Sub64", "", "__bitsSub64", "bitsSub64Pair", []string{"diff", "borrowOut"}},
-	{"math/bits", "Mul", "", "__bitsMul", "bitsMulPair", []string{"hi", "lo"}},
-	{"math/bits", "Mul32", "", "__bitsMul32", "bitsMul32Pair", []string{"hi", "lo"}},
-	{"math/bits", "Mul64", "", "__bitsMul64", "bitsMul64Pair", []string{"hi", "lo"}},
-	{"math/bits", "Div", "", "__bitsDiv", "bitsDivPair", []string{"quo", "rem"}},
-	{"math/bits", "Div32", "", "__bitsDiv32", "bitsDiv32Pair", []string{"quo", "rem"}},
-	{"math/bits", "Div64", "", "__bitsDiv64", "bitsDiv64Pair", []string{"quo", "rem"}},
+	{"math/bits", "Add", "", "__bitsAdd", "bitsAddPair", []string{"sum", "carryOut"}, false},
+	{"math/bits", "Add32", "", "__bitsAdd32", "bitsAdd32Pair", []string{"sum", "carryOut"}, false},
+	{"math/bits", "Add64", "", "__bitsAdd64", "bitsAdd64Pair", []string{"sum", "carryOut"}, false},
+	{"math/bits", "Sub", "", "__bitsSub", "bitsSubPair", []string{"diff", "borrowOut"}, false},
+	{"math/bits", "Sub32", "", "__bitsSub32", "bitsSub32Pair", []string{"diff", "borrowOut"}, false},
+	{"math/bits", "Sub64", "", "__bitsSub64", "bitsSub64Pair", []string{"diff", "borrowOut"}, false},
+	{"math/bits", "Mul", "", "__bitsMul", "bitsMulPair", []string{"hi", "lo"}, false},
+	{"math/bits", "Mul32", "", "__bitsMul32", "bitsMul32Pair", []string{"hi", "lo"}, false},
+	{"math/bits", "Mul64", "", "__bitsMul64", "bitsMul64Pair", []string{"hi", "lo"}, false},
+	{"math/bits", "Div", "", "__bitsDiv", "bitsDivPair", []string{"quo", "rem"}, false},
+	{"math/bits", "Div32", "", "__bitsDiv32", "bitsDiv32Pair", []string{"quo", "rem"}, false},
+	{"math/bits", "Div64", "", "__bitsDiv64", "bitsDiv64Pair", []string{"quo", "rem"}, false},
 	// P3-M9 (tier1c): math.Sincos desugars to the existing __sincos
 	// helper (used internally by the Bessel functions; Sin(x)/Cos(x)
 	// each bit-exact, and Sincos == (Sin, Cos) bit-wise: 0 mismatches
 	// over 100010 adversarial+random inputs vs gc 1.27.1). Needed by
 	// the synthetic math/cmplx package (Rect/Exp/Pow/Sin/Cos).
-	{"math", "Sincos", "", "__sincos", "__sincosPair", []string{"sin", "cos"}},
-	{"math", "Frexp", "", "__frexp", "__frexpPair", []string{"frac", "exp"}}, // P3-M9 math/big
+	{"math", "Sincos", "", "__sincos", "__sincosPair", []string{"sin", "cos"}, false},
+	{"math", "Frexp", "", "__frexp", "__frexpPair", []string{"frac", "exp"}, false}, // P3-M9 math/big
 	// P3-M9 (tier1c): math/cmplx.Polar desugars to the __cmplxPolar helper
 	// (Appendix M; pair fields match the gc result names in order).
-	{"math/cmplx", "Polar", "", "__cmplxPolar", "cmplxPolarPair", []string{"r", "theta"}},
+	{"math/cmplx", "Polar", "", "__cmplxPolar", "cmplxPolarPair", []string{"r", "theta"}, false},
 	// P3-M9 (wave 3, math/big): 47 multi-result funcs/methods. Each has a
-	{"math/big", "AppendText", "Float", "__mrFloat_AppendText", "__mrFloat_AppendTextPair", []string{"v0", "v1"}},
-	{"math/big", "AppendText", "Int", "__mrInt_AppendText", "__mrInt_AppendTextPair", []string{"text", "err"}},
-	{"math/big", "AppendText", "Rat", "__mrRat_AppendText", "__mrRat_AppendTextPair", []string{"v0", "v1"}},
-	{"math/big", "DivMod", "Int", "__mrInt_DivMod", "__mrInt_DivModPair", []string{"v0", "v1"}},
-	{"math/big", "Divide", "Int", "__mrInt_Divide", "__mrInt_DividePair", []string{"v0", "v1"}},
-	{"math/big", "Float32", "Float", "__mrFloat_Float32", "__mrFloat_Float32Pair", []string{"v0", "v1"}},
-	{"math/big", "Float32", "Rat", "__mrRat_Float32", "__mrRat_Float32Pair", []string{"f", "exact"}},
-	{"math/big", "Float64", "Float", "__mrFloat_Float64", "__mrFloat_Float64Pair", []string{"v0", "v1"}},
-	{"math/big", "Float64", "Int", "__mrInt_Float64", "__mrInt_Float64Pair", []string{"v0", "v1"}},
-	{"math/big", "Float64", "Rat", "__mrRat_Float64", "__mrRat_Float64Pair", []string{"f", "exact"}},
-	{"math/big", "FloatPrec", "Rat", "__mrRat_FloatPrec", "__mrRat_FloatPrecPair", []string{"n", "exact"}},
-	{"math/big", "GobEncode", "Float", "__mrFloat_GobEncode", "__mrFloat_GobEncodePair", []string{"v0", "v1"}},
-	{"math/big", "GobEncode", "Int", "__mrInt_GobEncode", "__mrInt_GobEncodePair", []string{"v0", "v1"}},
-	{"math/big", "GobEncode", "Rat", "__mrRat_GobEncode", "__mrRat_GobEncodePair", []string{"v0", "v1"}},
-	{"math/big", "Int", "Float", "__mrFloat_Int", "__mrFloat_IntPair", []string{"v0", "v1"}},
-	{"math/big", "Int64", "Float", "__mrFloat_Int64", "__mrFloat_Int64Pair", []string{"v0", "v1"}},
-	{"math/big", "MarshalJSON", "Int", "__mrInt_MarshalJSON", "__mrInt_MarshalJSONPair", []string{"v0", "v1"}},
-	{"math/big", "MarshalText", "Float", "__mrFloat_MarshalText", "__mrFloat_MarshalTextPair", []string{"text", "err"}},
-	{"math/big", "MarshalText", "Int", "__mrInt_MarshalText", "__mrInt_MarshalTextPair", []string{"text", "err"}},
-	{"math/big", "MarshalText", "Rat", "__mrRat_MarshalText", "__mrRat_MarshalTextPair", []string{"text", "err"}},
-	{"math/big", "Parse", "Float", "__mrFloat_Parse", "__mrFloat_ParsePair", []string{"f", "b", "err"}},
-	{"math/big", "ParseFloat", "", "__mrParseFloat", "__mrParseFloatPair", []string{"f", "b", "err"}},
-	{"math/big", "QuoRem", "Int", "__mrInt_QuoRem", "__mrInt_QuoRemPair", []string{"v0", "v1"}},
-	{"math/big", "Rat", "Float", "__mrFloat_Rat", "__mrFloat_RatPair", []string{"v0", "v1"}},
-	{"math/big", "ReadByte", "byteReader", "__mrbyteReader_ReadByte", "__mrbyteReader_ReadBytePair", []string{"v0", "v1"}},
-	{"math/big", "SetString", "Float", "__mrFloat_SetString", "__mrFloat_SetStringPair", []string{"v0", "v1"}},
-	{"math/big", "SetString", "Int", "__mrInt_SetString", "__mrInt_SetStringPair", []string{"v0", "v1"}},
-	{"math/big", "SetString", "Rat", "__mrRat_SetString", "__mrRat_SetStringPair", []string{"v0", "v1"}},
-	{"math/big", "Uint64", "Float", "__mrFloat_Uint64", "__mrFloat_Uint64Pair", []string{"v0", "v1"}},
-	{"math/big", "div", "nat", "__mrnat_div", "__mrnat_divPair", []string{"q", "r"}},
-	{"math/big", "divLarge", "nat", "__mrnat_divLarge", "__mrnat_divLargePair", []string{"q", "r"}},
-	{"math/big", "divW", "nat", "__mrnat_divW", "__mrnat_divWPair", []string{"q", "r"}},
-	{"math/big", "divWW", "", "__mrdivWW", "__mrdivWWPair", []string{"q", "r"}},
-	{"math/big", "euclidUpdate", "", "__mreuclidUpdate", "__mreuclidUpdatePair", []string{"nA", "nB", "nr", "nUa", "nUb"}},
-	{"math/big", "isPow2", "nat", "__mrnat_isPow2", "__mrnat_isPow2Pair", []string{"v0", "v1"}},
-	{"math/big", "lehmerSimulate", "", "__mrlehmerSimulate", "__mrlehmerSimulatePair", []string{"u0", "u1", "v0", "v1", "even"}},
-	{"math/big", "maxPow", "", "__mrmaxPow", "__mrmaxPowPair", []string{"p", "n"}},
-	{"math/big", "mulAddWWW_g", "", "__mrmulAddWWW_g", "__mrmulAddWWW_gPair", []string{"z1", "z0"}},
-	{"math/big", "mulWW", "", "__mrmulWW", "__mrmulWWPair", []string{"z1", "z0"}},
-	{"math/big", "quotToFloat32", "", "__mrquotToFloat32", "__mrquotToFloat32Pair", []string{"f", "exact"}},
-	{"math/big", "quotToFloat64", "", "__mrquotToFloat64", "__mrquotToFloat64Pair", []string{"f", "exact"}},
-	{"math/big", "scan", "Float", "__mrFloat_scan", "__mrFloat_scanPair", []string{"f", "b", "err"}},
-	{"math/big", "scan", "Int", "__mrInt_scan", "__mrInt_scanPair", []string{"v0", "v1", "v2"}},
-	{"math/big", "scan", "nat", "__mrnat_scan", "__mrnat_scanPair", []string{"res", "b", "count", "err"}},
-	{"math/big", "scanExponent", "", "__mrscanExponent", "__mrscanExponentPair", []string{"exp", "base", "err"}},
-	{"math/big", "scanSign", "", "__mrscanSign", "__mrscanSignPair", []string{"neg", "err"}},
-	{"math/big", "setFromScanner", "Int", "__mrInt_setFromScanner", "__mrInt_setFromScannerPair", []string{"v0", "v1"}},
+	{"math/big", "AppendText", "Float", "__mrFloat_AppendText", "__mrFloat_AppendTextPair", []string{"v0", "v1"}, false},
+	{"math/big", "AppendText", "Int", "__mrInt_AppendText", "__mrInt_AppendTextPair", []string{"text", "err"}, false},
+	{"math/big", "AppendText", "Rat", "__mrRat_AppendText", "__mrRat_AppendTextPair", []string{"v0", "v1"}, false},
+	{"math/big", "DivMod", "Int", "__mrInt_DivMod", "__mrInt_DivModPair", []string{"v0", "v1"}, false},
+	{"math/big", "Divide", "Int", "__mrInt_Divide", "__mrInt_DividePair", []string{"v0", "v1"}, false},
+	{"math/big", "Float32", "Float", "__mrFloat_Float32", "__mrFloat_Float32Pair", []string{"v0", "v1"}, false},
+	{"math/big", "Float32", "Rat", "__mrRat_Float32", "__mrRat_Float32Pair", []string{"f", "exact"}, false},
+	{"math/big", "Float64", "Float", "__mrFloat_Float64", "__mrFloat_Float64Pair", []string{"v0", "v1"}, false},
+	{"math/big", "Float64", "Int", "__mrInt_Float64", "__mrInt_Float64Pair", []string{"v0", "v1"}, false},
+	{"math/big", "Float64", "Rat", "__mrRat_Float64", "__mrRat_Float64Pair", []string{"f", "exact"}, false},
+	{"math/big", "FloatPrec", "Rat", "__mrRat_FloatPrec", "__mrRat_FloatPrecPair", []string{"n", "exact"}, false},
+	{"math/big", "GobEncode", "Float", "__mrFloat_GobEncode", "__mrFloat_GobEncodePair", []string{"v0", "v1"}, false},
+	{"math/big", "GobEncode", "Int", "__mrInt_GobEncode", "__mrInt_GobEncodePair", []string{"v0", "v1"}, false},
+	{"math/big", "GobEncode", "Rat", "__mrRat_GobEncode", "__mrRat_GobEncodePair", []string{"v0", "v1"}, false},
+	{"math/big", "Int", "Float", "__mrFloat_Int", "__mrFloat_IntPair", []string{"v0", "v1"}, false},
+	{"math/big", "Int64", "Float", "__mrFloat_Int64", "__mrFloat_Int64Pair", []string{"v0", "v1"}, false},
+	{"math/big", "MarshalJSON", "Int", "__mrInt_MarshalJSON", "__mrInt_MarshalJSONPair", []string{"v0", "v1"}, false},
+	{"math/big", "MarshalText", "Float", "__mrFloat_MarshalText", "__mrFloat_MarshalTextPair", []string{"text", "err"}, false},
+	{"math/big", "MarshalText", "Int", "__mrInt_MarshalText", "__mrInt_MarshalTextPair", []string{"text", "err"}, false},
+	{"math/big", "MarshalText", "Rat", "__mrRat_MarshalText", "__mrRat_MarshalTextPair", []string{"text", "err"}, false},
+	{"math/big", "Parse", "Float", "__mrFloat_Parse", "__mrFloat_ParsePair", []string{"f", "b", "err"}, false},
+	{"math/big", "ParseFloat", "", "__mrParseFloat", "__mrParseFloatPair", []string{"f", "b", "err"}, false},
+	{"math/big", "QuoRem", "Int", "__mrInt_QuoRem", "__mrInt_QuoRemPair", []string{"v0", "v1"}, false},
+	{"math/big", "Rat", "Float", "__mrFloat_Rat", "__mrFloat_RatPair", []string{"v0", "v1"}, false},
+	{"math/big", "ReadByte", "byteReader", "__mrbyteReader_ReadByte", "__mrbyteReader_ReadBytePair", []string{"v0", "v1"}, false},
+	{"math/big", "SetString", "Float", "__mrFloat_SetString", "__mrFloat_SetStringPair", []string{"v0", "v1"}, false},
+	{"math/big", "SetString", "Int", "__mrInt_SetString", "__mrInt_SetStringPair", []string{"v0", "v1"}, false},
+	{"math/big", "SetString", "Rat", "__mrRat_SetString", "__mrRat_SetStringPair", []string{"v0", "v1"}, false},
+	{"math/big", "Uint64", "Float", "__mrFloat_Uint64", "__mrFloat_Uint64Pair", []string{"v0", "v1"}, false},
+	{"math/big", "div", "nat", "__mrnat_div", "__mrnat_divPair", []string{"q", "r"}, false},
+	{"math/big", "divLarge", "nat", "__mrnat_divLarge", "__mrnat_divLargePair", []string{"q", "r"}, false},
+	{"math/big", "divW", "nat", "__mrnat_divW", "__mrnat_divWPair", []string{"q", "r"}, false},
+	{"math/big", "divWW", "", "__mrdivWW", "__mrdivWWPair", []string{"q", "r"}, false},
+	{"math/big", "euclidUpdate", "", "__mreuclidUpdate", "__mreuclidUpdatePair", []string{"nA", "nB", "nr", "nUa", "nUb"}, false},
+	{"math/big", "isPow2", "nat", "__mrnat_isPow2", "__mrnat_isPow2Pair", []string{"v0", "v1"}, false},
+	{"math/big", "lehmerSimulate", "", "__mrlehmerSimulate", "__mrlehmerSimulatePair", []string{"u0", "u1", "v0", "v1", "even"}, false},
+	{"math/big", "maxPow", "", "__mrmaxPow", "__mrmaxPowPair", []string{"p", "n"}, false},
+	{"math/big", "mulAddWWW_g", "", "__mrmulAddWWW_g", "__mrmulAddWWW_gPair", []string{"z1", "z0"}, false},
+	{"math/big", "mulWW", "", "__mrmulWW", "__mrmulWWPair", []string{"z1", "z0"}, false},
+	{"math/big", "quotToFloat32", "", "__mrquotToFloat32", "__mrquotToFloat32Pair", []string{"f", "exact"}, false},
+	{"math/big", "quotToFloat64", "", "__mrquotToFloat64", "__mrquotToFloat64Pair", []string{"f", "exact"}, false},
+	{"math/big", "scan", "Float", "__mrFloat_scan", "__mrFloat_scanPair", []string{"f", "b", "err"}, false},
+	{"math/big", "scan", "Int", "__mrInt_scan", "__mrInt_scanPair", []string{"v0", "v1", "v2"}, false},
+	{"math/big", "scan", "nat", "__mrnat_scan", "__mrnat_scanPair", []string{"res", "b", "count", "err"}, false},
+	{"math/big", "scanExponent", "", "__mrscanExponent", "__mrscanExponentPair", []string{"exp", "base", "err"}, false},
+	{"math/big", "scanSign", "", "__mrscanSign", "__mrscanSignPair", []string{"neg", "err"}, false},
+	{"math/big", "setFromScanner", "Int", "__mrInt_setFromScanner", "__mrInt_setFromScannerPair", []string{"v0", "v1"}, false},
 	// P3-M9 (tier1c): bufio multi-result methods (Appendix M; pair fields
 	// match the gc result names in order; see synth_bufio.go).
-	{"bufio", "Read", "Reader", "__bufioReaderRead", "__bufioReaderReadPair", []string{"n", "err"}},
-	{"bufio", "Peek", "Reader", "__bufioReaderPeek", "__bufioReaderPeekPair", []string{"b", "err"}},
-	{"bufio", "Discard", "Reader", "__bufioReaderDiscard", "__bufioReaderDiscardPair", []string{"discarded", "err"}},
-	{"bufio", "ReadByte", "Reader", "__bufioReaderReadByte", "__bufioReaderReadBytePair", []string{"c", "err"}},
-	{"bufio", "ReadSlice", "Reader", "__bufioReaderReadSlice", "__bufioReaderReadSlicePair", []string{"line", "err"}},
-	{"bufio", "ReadBytes", "Reader", "__bufioReaderReadBytes", "__bufioReaderReadBytesPair", []string{"b", "err"}},
-	{"bufio", "ReadString", "Reader", "__bufioReaderReadString", "__bufioReaderReadStringPair", []string{"s", "err"}},
-	{"bufio", "Write", "Writer", "__bufioWriterWrite", "__bufioWriterWritePair", []string{"n", "err"}},
-	{"bufio", "WriteString", "Writer", "__bufioWriterWriteString", "__bufioWriterWriteStringPair", []string{"n", "err"}},
+	{"bufio", "Read", "Reader", "__bufioReaderRead", "__bufioReaderReadPair", []string{"n", "err"}, false},
+	{"bufio", "Peek", "Reader", "__bufioReaderPeek", "__bufioReaderPeekPair", []string{"b", "err"}, false},
+	{"bufio", "Discard", "Reader", "__bufioReaderDiscard", "__bufioReaderDiscardPair", []string{"discarded", "err"}, false},
+	{"bufio", "ReadByte", "Reader", "__bufioReaderReadByte", "__bufioReaderReadBytePair", []string{"c", "err"}, false},
+	{"bufio", "ReadSlice", "Reader", "__bufioReaderReadSlice", "__bufioReaderReadSlicePair", []string{"line", "err"}, false},
+	{"bufio", "ReadBytes", "Reader", "__bufioReaderReadBytes", "__bufioReaderReadBytesPair", []string{"b", "err"}, false},
+	{"bufio", "ReadString", "Reader", "__bufioReaderReadString", "__bufioReaderReadStringPair", []string{"s", "err"}, false},
+	{"bufio", "Write", "Writer", "__bufioWriterWrite", "__bufioWriterWritePair", []string{"n", "err"}, false},
+	{"bufio", "WriteString", "Writer", "__bufioWriterWriteString", "__bufioWriterWriteStringPair", []string{"n", "err"}, false},
 	// P3-M9 (tier-5b): bufio.ScanLines (Appendix M; the 3-result split
 	// function — package-level, so recvType is ""; see synth_bufio.go).
-	{"bufio", "ScanLines", "", "__bufioScanLines", "__bufioScanLinesPair", []string{"advance", "token", "err"}},
+	{"bufio", "ScanLines", "", "__bufioScanLines", "__bufioScanLinesPair", []string{"advance", "token", "err"}, false},
 	// P3-M9 (tier1c): math/rand.Read (Appendix M).
-	{"math/rand", "Read", "Rand", "__randRead", "__randReadPair", []string{"n", "err"}},
+	{"math/rand", "Read", "Rand", "__randRead", "__randReadPair", []string{"n", "err"}, false},
 	// P3-M9 (tier1c): path.Split (Appendix M).
-	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}},
+	{"path", "Split", "", "__pathSplit", "pathSplitPair", []string{"dir", "file"}, false},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/flate (Appendix M).
-	{"compress/flate", "findMatch", "compressor", "__flateCompressorfindMatch", "__flateCompressorfindMatchPair", []string{"length", "offset", "ok"}},
-	{"compress/flate", "tryBetterMatchAtEnd", "compressor", "__flateCompressortryBetterMatchAtEnd", "__flateCompressortryBetterMatchAtEndPair", []string{"newLen", "newOff"}},
-	{"compress/flate", "write", "compressor", "__flateCompressorwrite", "__flateCompressorwritePair", []string{"n", "err"}},
-	{"compress/flate", "NewWriter", "", "__flateNewWriter", "__flateNewWriterPair", []string{"w", "err"}},
-	{"compress/flate", "NewWriterDict", "", "__flateNewWriterDict", "__flateNewWriterDictPair", []string{"w", "err"}},
-	{"compress/flate", "Write", "Writer", "__flateWriterWrite", "__flateWriterWritePair", []string{"n", "err"}},
-	{"compress/flate", "Read", "decompressor", "__flateDecompressorRead", "__flateDecompressorReadPair", []string{"n", "err"}},
-	{"compress/flate", "huffSym", "decompressor", "__flateDecompressorhuffSym", "__flateDecompressorhuffSymPair", []string{"sym", "err"}},
-	{"compress/flate", "headerSize", "huffmanBitWriter", "__flateHuffmanBitWriterheaderSize", "__flateHuffmanBitWriterheaderSizePair", []string{"size", "numCodegens"}},
-	{"compress/flate", "dynamicSize", "huffmanBitWriter", "__flateHuffmanBitWriterdynamicSize", "__flateHuffmanBitWriterdynamicSizePair", []string{"size", "numCodegens"}},
-	{"compress/flate", "storedSize", "huffmanBitWriter", "__flateHuffmanBitWriterstoredSize", "__flateHuffmanBitWriterstoredSizePair", []string{"size", "ok"}},
-	{"compress/flate", "indexTokens", "huffmanBitWriter", "__flateHuffmanBitWriterindexTokens", "__flateHuffmanBitWriterindexTokensPair", []string{"numLiterals", "numOffsets"}},
+	{"compress/flate", "findMatch", "compressor", "__flateCompressorfindMatch", "__flateCompressorfindMatchPair", []string{"length", "offset", "ok"}, false},
+	{"compress/flate", "tryBetterMatchAtEnd", "compressor", "__flateCompressortryBetterMatchAtEnd", "__flateCompressortryBetterMatchAtEndPair", []string{"newLen", "newOff"}, false},
+	{"compress/flate", "write", "compressor", "__flateCompressorwrite", "__flateCompressorwritePair", []string{"n", "err"}, false},
+	{"compress/flate", "NewWriter", "", "__flateNewWriter", "__flateNewWriterPair", []string{"w", "err"}, false},
+	{"compress/flate", "NewWriterDict", "", "__flateNewWriterDict", "__flateNewWriterDictPair", []string{"w", "err"}, false},
+	{"compress/flate", "Write", "Writer", "__flateWriterWrite", "__flateWriterWritePair", []string{"n", "err"}, false},
+	{"compress/flate", "Read", "decompressor", "__flateDecompressorRead", "__flateDecompressorReadPair", []string{"n", "err"}, false},
+	{"compress/flate", "huffSym", "decompressor", "__flateDecompressorhuffSym", "__flateDecompressorhuffSymPair", []string{"sym", "err"}, false},
+	{"compress/flate", "headerSize", "huffmanBitWriter", "__flateHuffmanBitWriterheaderSize", "__flateHuffmanBitWriterheaderSizePair", []string{"size", "numCodegens"}, false},
+	{"compress/flate", "dynamicSize", "huffmanBitWriter", "__flateHuffmanBitWriterdynamicSize", "__flateHuffmanBitWriterdynamicSizePair", []string{"size", "numCodegens"}, false},
+	{"compress/flate", "storedSize", "huffmanBitWriter", "__flateHuffmanBitWriterstoredSize", "__flateHuffmanBitWriterstoredSizePair", []string{"size", "ok"}, false},
+	{"compress/flate", "indexTokens", "huffmanBitWriter", "__flateHuffmanBitWriterindexTokens", "__flateHuffmanBitWriterindexTokensPair", []string{"numLiterals", "numOffsets"}, false},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/gzip (Appendix M).
-	{"compress/gzip", "NewReader", "", "__gzipNewReader", "__gzipNewReaderPair", []string{"r", "err"}},
-	{"compress/gzip", "readString", "Reader", "__gzipReaderreadString", "__gzipReaderreadStringPair", []string{"s", "err"}},
-	{"compress/gzip", "readHeader", "Reader", "__gzipReaderreadHeader", "__gzipReaderreadHeaderPair", []string{"hdr", "err"}},
-	{"compress/gzip", "Read", "Reader", "__gzipReaderRead", "__gzipReaderReadPair", []string{"n", "err"}},
-	{"compress/gzip", "NewWriterLevel", "", "__gzipNewWriterLevel", "__gzipNewWriterLevelPair", []string{"w", "err"}},
-	{"compress/gzip", "Write", "Writer", "__gzipWriterWrite", "__gzipWriterWritePair", []string{"n", "err"}},
+	{"compress/gzip", "NewReader", "", "__gzipNewReader", "__gzipNewReaderPair", []string{"r", "err"}, false},
+	{"compress/gzip", "readString", "Reader", "__gzipReaderreadString", "__gzipReaderreadStringPair", []string{"s", "err"}, false},
+	{"compress/gzip", "readHeader", "Reader", "__gzipReaderreadHeader", "__gzipReaderreadHeaderPair", []string{"hdr", "err"}, false},
+	{"compress/gzip", "Read", "Reader", "__gzipReaderRead", "__gzipReaderReadPair", []string{"n", "err"}, false},
+	{"compress/gzip", "NewWriterLevel", "", "__gzipNewWriterLevel", "__gzipNewWriterLevelPair", []string{"w", "err"}, false},
+	{"compress/gzip", "Write", "Writer", "__gzipWriterWrite", "__gzipWriterWritePair", []string{"n", "err"}, false},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/zlib (Appendix M).
-	{"compress/zlib", "NewReader", "", "__zlibNewReader", "__zlibNewReaderPair", []string{"r", "err"}},
-	{"compress/zlib", "NewReaderDict", "", "__zlibNewReaderDict", "__zlibNewReaderDictPair", []string{"r", "err"}},
-	{"compress/zlib", "Read", "reader", "__zlibReaderRead", "__zlibReaderReadPair", []string{"n", "err"}},
-	{"compress/zlib", "NewWriterLevel", "", "__zlibNewWriterLevel", "__zlibNewWriterLevelPair", []string{"w", "err"}},
-	{"compress/zlib", "NewWriterLevelDict", "", "__zlibNewWriterLevelDict", "__zlibNewWriterLevelDictPair", []string{"w", "err"}},
-	{"compress/zlib", "Write", "Writer", "__zlibWriterWrite", "__zlibWriterWritePair", []string{"n", "err"}},
+	{"compress/zlib", "NewReader", "", "__zlibNewReader", "__zlibNewReaderPair", []string{"r", "err"}, false},
+	{"compress/zlib", "NewReaderDict", "", "__zlibNewReaderDict", "__zlibNewReaderDictPair", []string{"r", "err"}, false},
+	{"compress/zlib", "Read", "reader", "__zlibReaderRead", "__zlibReaderReadPair", []string{"n", "err"}, false},
+	{"compress/zlib", "NewWriterLevel", "", "__zlibNewWriterLevel", "__zlibNewWriterLevelPair", []string{"w", "err"}, false},
+	{"compress/zlib", "NewWriterLevelDict", "", "__zlibNewWriterLevelDict", "__zlibNewWriterLevelDictPair", []string{"w", "err"}, false},
+	{"compress/zlib", "Write", "Writer", "__zlibWriterWrite", "__zlibWriterWritePair", []string{"n", "err"}, false},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/lzw (Appendix M).
-	{"compress/lzw", "readLSB", "Reader", "__lzwReaderreadLSB", "__lzwReaderreadLSBPair", []string{"code", "err"}},
-	{"compress/lzw", "readMSB", "Reader", "__lzwReaderreadMSB", "__lzwReaderreadMSBPair", []string{"code", "err"}},
-	{"compress/lzw", "Read", "Reader", "__lzwReaderRead", "__lzwReaderReadPair", []string{"n", "err"}},
-	{"compress/lzw", "Write", "Writer", "__lzwWriterWrite", "__lzwWriterWritePair", []string{"n", "err"}},
+	{"compress/lzw", "readLSB", "Reader", "__lzwReaderreadLSB", "__lzwReaderreadLSBPair", []string{"code", "err"}, false},
+	{"compress/lzw", "readMSB", "Reader", "__lzwReaderreadMSB", "__lzwReaderreadMSBPair", []string{"code", "err"}, false},
+	{"compress/lzw", "Read", "Reader", "__lzwReaderRead", "__lzwReaderReadPair", []string{"n", "err"}, false},
+	{"compress/lzw", "Write", "Writer", "__lzwWriterWrite", "__lzwWriterWritePair", []string{"n", "err"}, false},
 	// P3-M9 (tier-5: compress): synthetic compress/compress/bzip2 (Appendix M).
-	{"compress/bzip2", "Read", "reader", "__bzip2ReaderRead", "__bzip2ReaderReadPair", []string{"n", "err"}},
-	{"compress/bzip2", "read", "reader", "__bzip2Readerread", "__bzip2ReaderreadPair", []string{"n", "err"}},
-	{"compress/bzip2", "newHuffmanTree", "", "__bzip2NewHuffmanTree", "__bzip2NewHuffmanTreePair", []string{"t", "err"}},
-	{"compress/bzip2", "buildHuffmanNode", "", "__bzip2BuildHuffmanNode", "__bzip2BuildHuffmanNodePair", []string{"nodeIndex", "err"}},
+	{"compress/bzip2", "Read", "reader", "__bzip2ReaderRead", "__bzip2ReaderReadPair", []string{"n", "err"}, false},
+	{"compress/bzip2", "read", "reader", "__bzip2Readerread", "__bzip2ReaderreadPair", []string{"n", "err"}, false},
+	{"compress/bzip2", "newHuffmanTree", "", "__bzip2NewHuffmanTree", "__bzip2NewHuffmanTreePair", []string{"t", "err"}, false},
+	{"compress/bzip2", "buildHuffmanNode", "", "__bzip2BuildHuffmanNode", "__bzip2BuildHuffmanNodePair", []string{"nodeIndex", "err"}, false},
 	// P3-M9 (tier-5: archive/mime): synthetic archive/* and mime/* (Appendix M).
-	{"archive/tar", "allowedFormats", "Header", "__tarHeaderallowedFormats", "__tarHeaderallowedFormatsPair", []string{"format", "paxHdrs", "err"}},
-	{"archive/tar", "FileInfoHeader", "", "__tarFileInfoHeader", "__tarFileInfoHeaderPair", []string{"f0", "f1"}},
-	{"archive/tar", "computeChecksum", "block", "__tarblockcomputeChecksum", "__tarblockcomputeChecksumPair", []string{"f0", "signed"}},
-	{"archive/tar", "Next", "Reader", "__tarReaderNext", "__tarReaderNextPair", []string{"f0", "f1"}},
-	{"archive/tar", "next", "Reader", "__tarReadernext", "__tarReadernextPair", []string{"f0", "f1"}},
-	{"archive/tar", "readGNUSparsePAXHeaders", "Reader", "__tarReaderreadGNUSparsePAXHeaders", "__tarReaderreadGNUSparsePAXHeadersPair", []string{"f0", "f1"}},
-	{"archive/tar", "parsePAX", "", "__tarparsePAX", "__tarparsePAXPair", []string{"f0", "f1"}},
-	{"archive/tar", "readHeader", "Reader", "__tarReaderreadHeader", "__tarReaderreadHeaderPair", []string{"f0", "f1", "f2"}},
-	{"archive/tar", "readOldGNUSparseMap", "Reader", "__tarReaderreadOldGNUSparseMap", "__tarReaderreadOldGNUSparseMapPair", []string{"f0", "f1"}},
-	{"archive/tar", "readGNUSparseMap1x0", "", "__tarreadGNUSparseMap1x0", "__tarreadGNUSparseMap1x0Pair", []string{"f0", "f1"}},
-	{"archive/tar", "readGNUSparseMap0x1", "", "__tarreadGNUSparseMap0x1", "__tarreadGNUSparseMap0x1Pair", []string{"f0", "f1"}},
-	{"archive/tar", "appendSparseEntry", "", "__tarappendSparseEntry", "__tarappendSparseEntryPair", []string{"f0", "f1"}},
-	{"archive/tar", "Read", "Reader", "__tarReaderRead", "__tarReaderReadPair", []string{"f0", "f1"}},
-	{"archive/tar", "writeTo", "Reader", "__tarReaderwriteTo", "__tarReaderwriteToPair", []string{"f0", "f1"}},
-	{"archive/tar", "Read", "regFileReader", "__tarregFileReaderRead", "__tarregFileReaderReadPair", []string{"n", "err"}},
-	{"archive/tar", "WriteTo", "regFileReader", "__tarregFileReaderWriteTo", "__tarregFileReaderWriteToPair", []string{"f0", "f1"}},
-	{"archive/tar", "Read", "sparseFileReader", "__tarsparseFileReaderRead", "__tarsparseFileReaderReadPair", []string{"n", "err"}},
-	{"archive/tar", "WriteTo", "sparseFileReader", "__tarsparseFileReaderWriteTo", "__tarsparseFileReaderWriteToPair", []string{"n", "err"}},
-	{"archive/tar", "mustReadFull", "", "__tarmustReadFull", "__tarmustReadFullPair", []string{"f0", "f1"}},
-	{"archive/tar", "tryReadFull", "", "__tartryReadFull", "__tartryReadFullPair", []string{"n", "err"}},
-	{"archive/tar", "readSpecialFile", "", "__tarreadSpecialFile", "__tarreadSpecialFilePair", []string{"f0", "f1"}},
-	{"archive/tar", "splitUSTARPath", "", "__tarsplitUSTARPath", "__tarsplitUSTARPathPair", []string{"f0", "suffix", "ok"}},
-	{"archive/tar", "Write", "Writer", "__tarWriterWrite", "__tarWriterWritePair", []string{"f0", "f1"}},
-	{"archive/tar", "readFrom", "Writer", "__tarWriterreadFrom", "__tarWriterreadFromPair", []string{"f0", "f1"}},
-	{"archive/tar", "Write", "regFileWriter", "__tarregFileWriterWrite", "__tarregFileWriterWritePair", []string{"n", "err"}},
-	{"archive/tar", "ReadFrom", "regFileWriter", "__tarregFileWriterReadFrom", "__tarregFileWriterReadFromPair", []string{"f0", "f1"}},
-	{"archive/tar", "Write", "sparseFileWriter", "__tarsparseFileWriterWrite", "__tarsparseFileWriterWritePair", []string{"n", "err"}},
-	{"archive/tar", "ReadFrom", "sparseFileWriter", "__tarsparseFileWriterReadFrom", "__tarsparseFileWriterReadFromPair", []string{"n", "err"}},
-	{"archive/tar", "parsePAXTime", "", "__tarparsePAXTime", "__tarparsePAXTimePair", []string{"f0", "f1"}},
-	{"archive/tar", "parsePAXRecord", "", "__tarparsePAXRecord", "__tarparsePAXRecordPair", []string{"f0", "f1", "r", "err"}},
-	{"archive/tar", "formatPAXRecord", "", "__tarformatPAXRecord", "__tarformatPAXRecordPair", []string{"f0", "f1"}},
-	{"archive/zip", "OpenReader", "", "__zipOpenReader", "__zipOpenReaderPair", []string{"f0", "f1"}},
-	{"archive/zip", "NewReader", "", "__zipNewReader", "__zipNewReaderPair", []string{"f0", "f1"}},
-	{"archive/zip", "DataOffset", "File", "__zipFileDataOffset", "__zipFileDataOffsetPair", []string{"offset", "err"}},
-	{"archive/zip", "Open", "File", "__zipFileOpen", "__zipFileOpenPair", []string{"f0", "f1"}},
-	{"archive/zip", "OpenRaw", "File", "__zipFileOpenRaw", "__zipFileOpenRawPair", []string{"f0", "f1"}},
-	{"archive/zip", "Read", "dirReader", "__zipdirReaderRead", "__zipdirReaderReadPair", []string{"f0", "f1"}},
-	{"archive/zip", "Stat", "checksumReader", "__zipchecksumReaderStat", "__zipchecksumReaderStatPair", []string{"f0", "f1"}},
-	{"archive/zip", "Read", "checksumReader", "__zipchecksumReaderRead", "__zipchecksumReaderReadPair", []string{"n", "err"}},
-	{"archive/zip", "Close", "checksumReader", "__zipchecksumReaderClose", "__zipchecksumReaderClosePair", []string{"f0", "f1"}},
-	{"archive/zip", "readDirectoryEnd", "", "__zipreadDirectoryEnd", "__zipreadDirectoryEndPair", []string{"dir", "baseOffset", "err"}},
-	{"archive/zip", "findDirectory64End", "", "__zipfindDirectory64End", "__zipfindDirectory64EndPair", []string{"f0", "f1"}},
-	{"archive/zip", "stat", "fileListEntry", "__zipfileListEntrystat", "__zipfileListEntrystatPair", []string{"f0", "f1"}},
-	{"archive/zip", "Open", "Reader", "__zipReaderOpen", "__zipReaderOpenPair", []string{"f0", "f1"}},
-	{"archive/zip", "split", "", "__zipsplit", "__zipsplitPair", []string{"f0", "elem", "isDir"}},
-	{"archive/zip", "Close", "openDir", "__zipopenDirClose", "__zipopenDirClosePair", []string{"f0", "f1"}},
-	{"archive/zip", "ReadDir", "openDir", "__zipopenDirReadDir", "__zipopenDirReadDirPair", []string{"f0", "f1"}},
-	{"archive/zip", "Create", "Writer", "__zipWriterCreate", "__zipWriterCreatePair", []string{"f0", "f1"}},
-	{"archive/zip", "detectUTF8", "", "__zipdetectUTF8", "__zipdetectUTF8Pair", []string{"f0", "require"}},
-	{"archive/zip", "CreateHeader", "Writer", "__zipWriterCreateHeader", "__zipWriterCreateHeaderPair", []string{"f0", "f1"}},
-	{"archive/zip", "CreateRaw", "Writer", "__zipWriterCreateRaw", "__zipWriterCreateRawPair", []string{"f0", "f1"}},
-	{"archive/zip", "Write", "fileWriter", "__zipfileWriterWrite", "__zipfileWriterWritePair", []string{"f0", "f1"}},
-	{"archive/zip", "Write", "countWriter", "__zipcountWriterWrite", "__zipcountWriterWritePair", []string{"f0", "f1"}},
-	{"archive/zip", "FileInfoHeader", "", "__zipFileInfoHeader", "__zipFileInfoHeaderPair", []string{"f0", "f1"}},
-	{"archive/zip", "timeToMsDosTime", "", "__ziptimeToMsDosTime", "__ziptimeToMsDosTimePair", []string{"fDate", "fTime"}},
-	{"archive/zip", "Write", "pooledFlateWriter", "__zippooledFlateWriterWrite", "__zippooledFlateWriterWritePair", []string{"n", "err"}},
-	{"archive/zip", "Read", "pooledFlateReader", "__zippooledFlateReaderRead", "__zippooledFlateReaderReadPair", []string{"n", "err"}},
-	{"mime", "ParseMediaType", "", "__mimeParseMediaType", "__mimeParseMediaTypePair", []string{"mediatype", "params", "err"}},
-	{"mime", "decode2231Enc", "", "__mimedecode2231Enc", "__mimedecode2231EncPair", []string{"f0", "f1"}},
-	{"mime", "consumeToken", "", "__mimeconsumeToken", "__mimeconsumeTokenPair", []string{"f0", "rest"}},
-	{"mime", "consumeValue", "", "__mimeconsumeValue", "__mimeconsumeValuePair", []string{"f0", "rest"}},
-	{"mime", "consumeMediaParam", "", "__mimeconsumeMediaParam", "__mimeconsumeMediaParamPair", []string{"f0", "f1", "rest"}},
-	{"mime", "percentHexUnescape", "", "__mimepercentHexUnescape", "__mimepercentHexUnescapePair", []string{"f0", "f1"}},
-	{"mime", "Decode", "WordDecoder", "__mimeWordDecoderDecode", "__mimeWordDecoderDecodePair", []string{"f0", "f1"}},
-	{"mime", "DecodeHeader", "WordDecoder", "__mimeWordDecoderDecodeHeader", "__mimeWordDecoderDecodeHeaderPair", []string{"f0", "f1"}},
-	{"mime", "decode", "", "__mimedecode", "__mimedecodePair", []string{"f0", "f1"}},
-	{"mime", "qDecode", "", "__mimeqDecode", "__mimeqDecodePair", []string{"f0", "f1"}},
-	{"mime", "readHexByte", "", "__mimereadHexByte", "__mimereadHexBytePair", []string{"f0", "f1"}},
-	{"mime", "fromHex", "", "__mimefromHex", "__mimefromHexPair", []string{"f0", "f1"}},
-	{"mime/multipart", "Read", "stickyErrorReader", "__mpstickyErrorReaderRead", "__mpstickyErrorReaderReadPair", []string{"n", "_"}},
-	{"mime/multipart", "newPart", "", "__mpnewPart", "__mpnewPartPair", []string{"f0", "f1"}},
-	{"mime/multipart", "Read", "Part", "__mpPartRead", "__mpPartReadPair", []string{"n", "err"}},
-	{"mime/multipart", "Read", "partReader", "__mppartReaderRead", "__mppartReaderReadPair", []string{"f0", "f1"}},
-	{"mime/multipart", "scanUntilBoundary", "", "__mpscanUntilBoundary", "__mpscanUntilBoundaryPair", []string{"f0", "f1"}},
-	{"mime/multipart", "NextPart", "Reader", "__mpReaderNextPart", "__mpReaderNextPartPair", []string{"f0", "f1"}},
-	{"mime/multipart", "NextRawPart", "Reader", "__mpReaderNextRawPart", "__mpReaderNextRawPartPair", []string{"f0", "f1"}},
-	{"mime/multipart", "nextPart", "Reader", "__mpReadernextPart", "__mpReadernextPartPair", []string{"f0", "f1"}},
-	{"mime/multipart", "CreatePart", "Writer", "__mpWriterCreatePart", "__mpWriterCreatePartPair", []string{"f0", "f1"}},
-	{"mime/multipart", "CreateFormFile", "Writer", "__mpWriterCreateFormFile", "__mpWriterCreateFormFilePair", []string{"f0", "f1"}},
-	{"mime/multipart", "CreateFormField", "Writer", "__mpWriterCreateFormField", "__mpWriterCreateFormFieldPair", []string{"f0", "f1"}},
-	{"mime/multipart", "Write", "part", "__mppartWrite", "__mppartWritePair", []string{"n", "err"}},
-	{"mime/quotedprintable", "fromHex", "", "__qpfromHex", "__qpfromHexPair", []string{"f0", "f1"}},
-	{"mime/quotedprintable", "readHexByte", "", "__qpreadHexByte", "__qpreadHexBytePair", []string{"b", "err"}},
-	{"mime/quotedprintable", "Read", "Reader", "__qpReaderRead", "__qpReaderReadPair", []string{"n", "err"}},
-	{"mime/quotedprintable", "Write", "Writer", "__qpWriterWrite", "__qpWriterWritePair", []string{"n", "err"}},
+	{"archive/tar", "allowedFormats", "Header", "__tarHeaderallowedFormats", "__tarHeaderallowedFormatsPair", []string{"format", "paxHdrs", "err"}, false},
+	{"archive/tar", "FileInfoHeader", "", "__tarFileInfoHeader", "__tarFileInfoHeaderPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "computeChecksum", "block", "__tarblockcomputeChecksum", "__tarblockcomputeChecksumPair", []string{"f0", "signed"}, false},
+	{"archive/tar", "Next", "Reader", "__tarReaderNext", "__tarReaderNextPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "next", "Reader", "__tarReadernext", "__tarReadernextPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "readGNUSparsePAXHeaders", "Reader", "__tarReaderreadGNUSparsePAXHeaders", "__tarReaderreadGNUSparsePAXHeadersPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "parsePAX", "", "__tarparsePAX", "__tarparsePAXPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "readHeader", "Reader", "__tarReaderreadHeader", "__tarReaderreadHeaderPair", []string{"f0", "f1", "f2"}, false},
+	{"archive/tar", "readOldGNUSparseMap", "Reader", "__tarReaderreadOldGNUSparseMap", "__tarReaderreadOldGNUSparseMapPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "readGNUSparseMap1x0", "", "__tarreadGNUSparseMap1x0", "__tarreadGNUSparseMap1x0Pair", []string{"f0", "f1"}, false},
+	{"archive/tar", "readGNUSparseMap0x1", "", "__tarreadGNUSparseMap0x1", "__tarreadGNUSparseMap0x1Pair", []string{"f0", "f1"}, false},
+	{"archive/tar", "appendSparseEntry", "", "__tarappendSparseEntry", "__tarappendSparseEntryPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "Read", "Reader", "__tarReaderRead", "__tarReaderReadPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "writeTo", "Reader", "__tarReaderwriteTo", "__tarReaderwriteToPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "Read", "regFileReader", "__tarregFileReaderRead", "__tarregFileReaderReadPair", []string{"n", "err"}, false},
+	{"archive/tar", "WriteTo", "regFileReader", "__tarregFileReaderWriteTo", "__tarregFileReaderWriteToPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "Read", "sparseFileReader", "__tarsparseFileReaderRead", "__tarsparseFileReaderReadPair", []string{"n", "err"}, false},
+	{"archive/tar", "WriteTo", "sparseFileReader", "__tarsparseFileReaderWriteTo", "__tarsparseFileReaderWriteToPair", []string{"n", "err"}, false},
+	{"archive/tar", "mustReadFull", "", "__tarmustReadFull", "__tarmustReadFullPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "tryReadFull", "", "__tartryReadFull", "__tartryReadFullPair", []string{"n", "err"}, false},
+	{"archive/tar", "readSpecialFile", "", "__tarreadSpecialFile", "__tarreadSpecialFilePair", []string{"f0", "f1"}, false},
+	{"archive/tar", "splitUSTARPath", "", "__tarsplitUSTARPath", "__tarsplitUSTARPathPair", []string{"f0", "suffix", "ok"}, false},
+	{"archive/tar", "Write", "Writer", "__tarWriterWrite", "__tarWriterWritePair", []string{"f0", "f1"}, false},
+	{"archive/tar", "readFrom", "Writer", "__tarWriterreadFrom", "__tarWriterreadFromPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "Write", "regFileWriter", "__tarregFileWriterWrite", "__tarregFileWriterWritePair", []string{"n", "err"}, false},
+	{"archive/tar", "ReadFrom", "regFileWriter", "__tarregFileWriterReadFrom", "__tarregFileWriterReadFromPair", []string{"f0", "f1"}, false},
+	{"archive/tar", "Write", "sparseFileWriter", "__tarsparseFileWriterWrite", "__tarsparseFileWriterWritePair", []string{"n", "err"}, false},
+	{"archive/tar", "ReadFrom", "sparseFileWriter", "__tarsparseFileWriterReadFrom", "__tarsparseFileWriterReadFromPair", []string{"n", "err"}, false},
+	{"archive/tar", "parsePAXTime", "", "__tarparsePAXTime", "__tarparsePAXTimePair", []string{"f0", "f1"}, false},
+	{"archive/tar", "parsePAXRecord", "", "__tarparsePAXRecord", "__tarparsePAXRecordPair", []string{"f0", "f1", "r", "err"}, false},
+	{"archive/tar", "formatPAXRecord", "", "__tarformatPAXRecord", "__tarformatPAXRecordPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "OpenReader", "", "__zipOpenReader", "__zipOpenReaderPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "NewReader", "", "__zipNewReader", "__zipNewReaderPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "DataOffset", "File", "__zipFileDataOffset", "__zipFileDataOffsetPair", []string{"offset", "err"}, false},
+	{"archive/zip", "Open", "File", "__zipFileOpen", "__zipFileOpenPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "OpenRaw", "File", "__zipFileOpenRaw", "__zipFileOpenRawPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Read", "dirReader", "__zipdirReaderRead", "__zipdirReaderReadPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Stat", "checksumReader", "__zipchecksumReaderStat", "__zipchecksumReaderStatPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Read", "checksumReader", "__zipchecksumReaderRead", "__zipchecksumReaderReadPair", []string{"n", "err"}, false},
+	{"archive/zip", "Close", "checksumReader", "__zipchecksumReaderClose", "__zipchecksumReaderClosePair", []string{"f0", "f1"}, false},
+	{"archive/zip", "readDirectoryEnd", "", "__zipreadDirectoryEnd", "__zipreadDirectoryEndPair", []string{"dir", "baseOffset", "err"}, false},
+	{"archive/zip", "findDirectory64End", "", "__zipfindDirectory64End", "__zipfindDirectory64EndPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "stat", "fileListEntry", "__zipfileListEntrystat", "__zipfileListEntrystatPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Open", "Reader", "__zipReaderOpen", "__zipReaderOpenPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "split", "", "__zipsplit", "__zipsplitPair", []string{"f0", "elem", "isDir"}, false},
+	{"archive/zip", "Close", "openDir", "__zipopenDirClose", "__zipopenDirClosePair", []string{"f0", "f1"}, false},
+	{"archive/zip", "ReadDir", "openDir", "__zipopenDirReadDir", "__zipopenDirReadDirPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Create", "Writer", "__zipWriterCreate", "__zipWriterCreatePair", []string{"f0", "f1"}, false},
+	{"archive/zip", "detectUTF8", "", "__zipdetectUTF8", "__zipdetectUTF8Pair", []string{"f0", "require"}, false},
+	{"archive/zip", "CreateHeader", "Writer", "__zipWriterCreateHeader", "__zipWriterCreateHeaderPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "CreateRaw", "Writer", "__zipWriterCreateRaw", "__zipWriterCreateRawPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Write", "fileWriter", "__zipfileWriterWrite", "__zipfileWriterWritePair", []string{"f0", "f1"}, false},
+	{"archive/zip", "Write", "countWriter", "__zipcountWriterWrite", "__zipcountWriterWritePair", []string{"f0", "f1"}, false},
+	{"archive/zip", "FileInfoHeader", "", "__zipFileInfoHeader", "__zipFileInfoHeaderPair", []string{"f0", "f1"}, false},
+	{"archive/zip", "timeToMsDosTime", "", "__ziptimeToMsDosTime", "__ziptimeToMsDosTimePair", []string{"fDate", "fTime"}, false},
+	{"archive/zip", "Write", "pooledFlateWriter", "__zippooledFlateWriterWrite", "__zippooledFlateWriterWritePair", []string{"n", "err"}, false},
+	{"archive/zip", "Read", "pooledFlateReader", "__zippooledFlateReaderRead", "__zippooledFlateReaderReadPair", []string{"n", "err"}, false},
+	{"mime", "ParseMediaType", "", "__mimeParseMediaType", "__mimeParseMediaTypePair", []string{"mediatype", "params", "err"}, false},
+	{"mime", "decode2231Enc", "", "__mimedecode2231Enc", "__mimedecode2231EncPair", []string{"f0", "f1"}, false},
+	{"mime", "consumeToken", "", "__mimeconsumeToken", "__mimeconsumeTokenPair", []string{"f0", "rest"}, false},
+	{"mime", "consumeValue", "", "__mimeconsumeValue", "__mimeconsumeValuePair", []string{"f0", "rest"}, false},
+	{"mime", "consumeMediaParam", "", "__mimeconsumeMediaParam", "__mimeconsumeMediaParamPair", []string{"f0", "f1", "rest"}, false},
+	{"mime", "percentHexUnescape", "", "__mimepercentHexUnescape", "__mimepercentHexUnescapePair", []string{"f0", "f1"}, false},
+	{"mime", "Decode", "WordDecoder", "__mimeWordDecoderDecode", "__mimeWordDecoderDecodePair", []string{"f0", "f1"}, false},
+	{"mime", "DecodeHeader", "WordDecoder", "__mimeWordDecoderDecodeHeader", "__mimeWordDecoderDecodeHeaderPair", []string{"f0", "f1"}, false},
+	{"mime", "decode", "", "__mimedecode", "__mimedecodePair", []string{"f0", "f1"}, false},
+	{"mime", "qDecode", "", "__mimeqDecode", "__mimeqDecodePair", []string{"f0", "f1"}, false},
+	{"mime", "readHexByte", "", "__mimereadHexByte", "__mimereadHexBytePair", []string{"f0", "f1"}, false},
+	{"mime", "fromHex", "", "__mimefromHex", "__mimefromHexPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "Read", "stickyErrorReader", "__mpstickyErrorReaderRead", "__mpstickyErrorReaderReadPair", []string{"n", "_"}, false},
+	{"mime/multipart", "newPart", "", "__mpnewPart", "__mpnewPartPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "Read", "Part", "__mpPartRead", "__mpPartReadPair", []string{"n", "err"}, false},
+	{"mime/multipart", "Read", "partReader", "__mppartReaderRead", "__mppartReaderReadPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "scanUntilBoundary", "", "__mpscanUntilBoundary", "__mpscanUntilBoundaryPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "NextPart", "Reader", "__mpReaderNextPart", "__mpReaderNextPartPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "NextRawPart", "Reader", "__mpReaderNextRawPart", "__mpReaderNextRawPartPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "nextPart", "Reader", "__mpReadernextPart", "__mpReadernextPartPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "CreatePart", "Writer", "__mpWriterCreatePart", "__mpWriterCreatePartPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "CreateFormFile", "Writer", "__mpWriterCreateFormFile", "__mpWriterCreateFormFilePair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "CreateFormField", "Writer", "__mpWriterCreateFormField", "__mpWriterCreateFormFieldPair", []string{"f0", "f1"}, false},
+	{"mime/multipart", "Write", "part", "__mppartWrite", "__mppartWritePair", []string{"n", "err"}, false},
+	{"mime/quotedprintable", "fromHex", "", "__qpfromHex", "__qpfromHexPair", []string{"f0", "f1"}, false},
+	{"mime/quotedprintable", "readHexByte", "", "__qpreadHexByte", "__qpreadHexBytePair", []string{"b", "err"}, false},
+	{"mime/quotedprintable", "Read", "Reader", "__qpReaderRead", "__qpReaderReadPair", []string{"n", "err"}, false},
+	{"mime/quotedprintable", "Write", "Writer", "__qpWriterWrite", "__qpWriterWritePair", []string{"n", "err"}, false},
 	// net/http: package-level funcs (P3-M10 — the M9 net/http drop
 	// omitted these; without them any program importing net/http fails
 	// with the WS D multi-result scope error at the first client call).
-	{"net/http", "NewRequest", "", "__newRequest", "__newRequestPair", []string{"req", "err"}},
-	{"net/http", "ReadRequest", "", "__readRequest", "__readRequestPair", []string{"req", "err"}},
-	{"net/http", "readLine", "", "__readLine", "__readLinePair", []string{"line", "err"}},
-	{"net/http", "readMIMEHeader", "", "__readMIMEHeader", "__readMIMEHeaderPair", []string{"hdr", "err"}},
-	{"net/http", "ReadResponse", "", "__readResponse", "__readResponsePair", []string{"resp", "err"}},
-	{"net/http", "Get", "", "__httpGet", "__clientDoPair", []string{"resp", "err"}},
-	{"net/http", "Head", "", "__httpHead", "__clientDoPair", []string{"resp", "err"}},
-	{"net/http", "Post", "", "__httpPost", "__clientDoPair", []string{"resp", "err"}},
-	{"net/http", "PostForm", "", "__httpPostForm", "__clientDoPair", []string{"resp", "err"}},
+	{"net/http", "NewRequest", "", "__newRequest", "__newRequestPair", []string{"req", "err"}, false},
+	{"net/http", "ReadRequest", "", "__readRequest", "__readRequestPair", []string{"req", "err"}, false},
+	{"net/http", "readLine", "", "__readLine", "__readLinePair", []string{"line", "err"}, false},
+	{"net/http", "readMIMEHeader", "", "__readMIMEHeader", "__readMIMEHeaderPair", []string{"hdr", "err"}, false},
+	{"net/http", "ReadResponse", "", "__readResponse", "__readResponsePair", []string{"resp", "err"}, false},
+	{"net/http", "Get", "", "__httpGet", "__clientDoPair", []string{"resp", "err"}, false},
+	{"net/http", "Head", "", "__httpHead", "__clientDoPair", []string{"resp", "err"}, false},
+	{"net/http", "Post", "", "__httpPost", "__clientDoPair", []string{"resp", "err"}, false},
+	{"net/http", "PostForm", "", "__httpPostForm", "__clientDoPair", []string{"resp", "err"}, false},
 	// net/http: methods.
-	{"net/http", "Do", "Client", "__clientDo", "__clientDoPair", []string{"resp", "err"}},
-	{"net/http", "Handler", "ServeMux", "__muxHandler", "__muxHandlerPair", []string{"h", "pattern"}},
-	{"net/http", "RoundTrip", "Transport", "__transportRoundTrip", "__clientDoPair", []string{"resp", "err"}},
-	{"net/http", "Read", "chunkedReader", "__chunkedRead", "__chunkedReadPair", []string{"n", "err"}},
-	{"net/http", "Read", "limitedReadCloser", "__limitedReadCloserRead", "__limitedReadCloserReadPair", []string{"n", "err"}},
-	{"net/http", "Write", "responseWriter", "__responseWriterWrite", "__responseWriterWritePair", []string{"n", "err"}},
-	{"net/http", "Hijack", "responseWriter", "__rwHijack", "__rwHijackPair", []string{"c", "rw", "err"}},
+	{"net/http", "Do", "Client", "__clientDo", "__clientDoPair", []string{"resp", "err"}, false},
+	{"net/http", "Handler", "ServeMux", "__muxHandler", "__muxHandlerPair", []string{"h", "pattern"}, false},
+	{"net/http", "RoundTrip", "Transport", "__transportRoundTrip", "__clientDoPair", []string{"resp", "err"}, false},
+	{"net/http", "Read", "chunkedReader", "__chunkedRead", "__chunkedReadPair", []string{"n", "err"}, false},
+	{"net/http", "Read", "limitedReadCloser", "__limitedReadCloserRead", "__limitedReadCloserReadPair", []string{"n", "err"}, false},
+	{"net/http", "Write", "responseWriter", "__responseWriterWrite", "__responseWriterWritePair", []string{"n", "err"}, false},
+	{"net/http", "Hijack", "responseWriter", "__rwHijack", "__rwHijackPair", []string{"c", "rw", "err"}, false},
 	// net/http/httptest: methods.
-	{"net/http/httptest", "Write", "ResponseRecorder", "__recorderWrite", "__recorderWritePair", []string{"n", "err"}},
+	{"net/http/httptest", "Write", "ResponseRecorder", "__recorderWrite", "__recorderWritePair", []string{"n", "err"}, false},
 }
 
 // m8MultiResultFuncs is the desugar table for the crypto/* packages (P3-M8).
@@ -1183,16 +1213,16 @@ var m9MultiResultFuncs = []m9MultiResultFunc{
 // CopyBuffer maps to __copyBufferChecked (which keeps gc's empty-buffer
 // panic); Copy maps to __copy and CopyN to __copyN.
 var ioMultiResultFuncs = []m7MultiResultFunc{
-	{"io", "WriteString", "", "__writeString", "ioWritePair", []string{"n", "err"}},
-	{"io", "ReadAtLeast", "", "__readAtLeast", "readAtLeastPair", []string{"n", "err"}},
-	{"io", "ReadFull", "", "__readFull", "readFullPair", []string{"n", "err"}},
-	{"io", "Copy", "", "__copy", "copyPair", []string{"written", "err"}},
-	{"io", "CopyN", "", "__copyN", "copyNPair", []string{"written", "err"}},
-	{"io", "CopyBuffer", "", "__copyBufferChecked", "copyBufferPair", []string{"written", "err"}},
-	{"io", "ReadAll", "", "__readAll", "readAllPair", []string{"b", "err"}},
-	{"io", "Read", "LimitedReader", "__limitedReaderRead", "limitedReaderReadPair", []string{"n", "err"}},
-	{"io", "Write", "discard", "__discardWrite", "ioWritePair", []string{"n", "err"}},
-	{"io", "WriteString", "discard", "__discardWriteString", "ioWritePair", []string{"n", "err"}},
+	{"io", "WriteString", "", "__writeString", "ioWritePair", []string{"n", "err"}, false},
+	{"io", "ReadAtLeast", "", "__readAtLeast", "readAtLeastPair", []string{"n", "err"}, false},
+	{"io", "ReadFull", "", "__readFull", "readFullPair", []string{"n", "err"}, false},
+	{"io", "Copy", "", "__copy", "copyPair", []string{"written", "err"}, false},
+	{"io", "CopyN", "", "__copyN", "copyNPair", []string{"written", "err"}, false},
+	{"io", "CopyBuffer", "", "__copyBufferChecked", "copyBufferPair", []string{"written", "err"}, false},
+	{"io", "ReadAll", "", "__readAll", "readAllPair", []string{"b", "err"}, false},
+	{"io", "Read", "LimitedReader", "__limitedReaderRead", "limitedReaderReadPair", []string{"n", "err"}, false},
+	{"io", "Write", "discard", "__discardWrite", "ioWritePair", []string{"n", "err"}, false},
+	{"io", "WriteString", "discard", "__discardWriteString", "ioWritePair", []string{"n", "err"}, false},
 	// NOTE (P3-M9): the testing/iotest and testing entries added in 139a681
 	// are intentionally absent. They referenced __-helpers and pair types
 	// that were never defined in any synthetic source, so
@@ -2004,9 +2034,11 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 	// P3-M8 (wave 2, reflect): the Type interface's multi-result methods
 	// (MethodByName, FieldByName, FieldByNameFunc) are usually called via
 	// the Type interface, where the selected method has no receiver. Retry
-	// such reflect interface methods against the rtype entries.
-	if recvName == "" && pkgPath == "reflect" {
-		if plan := classifyM7MultiResultCallRtype(pkgPath, fn, targs); plan != nil {
+	// such receiver-less selections against the table entries marked
+	// ifaceFallback (their recvType names the concrete type). Table-driven,
+	// not package-name-keyed (P2-F3, review-n1).
+	if recvName == "" {
+		if plan := classifyM7MultiResultCallIfaceFallback(pkgPath, fn, targs); plan != nil {
 			return plan
 		}
 	}
@@ -2739,15 +2771,19 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	return fi, true
 }
 
-// classifyM7MultiResultCallRtype retries a reflect interface method
-// against the rtype entries (P3-M8 wave 2).
-func classifyM7MultiResultCallRtype(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
+// classifyM7MultiResultCallIfaceFallback retries a receiver-less
+// (interface-selected) method against the m7 table entries marked
+// ifaceFallback, whose recvType names the concrete type (P3-M8 wave 2:
+// reflect.Type's MethodByName/FieldByName/FieldByNameFunc selected via
+// the Type interface desugar through the rtype entries). Table-driven via
+// the entry flag, not package-name-keyed (P2-F3, review-n1).
+func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	sig, ok := fn.Type().(*types.Signature)
 	if !ok {
 		return nil
 	}
 	for _, mf := range m7MultiResultFuncs {
-		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != "rtype" {
+		if mf.pkgPath != pkgPath || mf.name != fn.Name() || !mf.ifaceFallback {
 			continue
 		}
 		if sig.Results().Len() != len(mf.pairFields) {
@@ -2767,7 +2803,7 @@ func classifyM7MultiResultCallRtype(pkgPath string, fn *types.Func, targs []type
 			kind: mrM7, helperPkg: mf.pkgPath,
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
-			prependRecv: true,
+			prependRecv: mf.recvType != "",
 		}
 	}
 	return nil

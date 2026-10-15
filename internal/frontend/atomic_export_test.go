@@ -11,8 +11,9 @@ import (
 )
 
 // TestAtomicPointerValueAccepted: Pointer[T] instantiations and Value
-// export; constructions lower to syncnew and method calls to syncop
-// wire nodes with the atomic.Pointer/atomic.Value synctyps.
+// export as normal Go types and method calls (real sync/atomic package,
+// 503608ea). Previously these lowered to syncnew/syncop wire nodes under
+// the synthetic atomic package.
 func TestAtomicPointerValueAccepted(t *testing.T) {
 	src := `package main
 
@@ -49,21 +50,14 @@ func main() {
 	if err != nil {
 		t.Fatalf("ExportFile with atomic.Pointer/atomic.Value: %v", err)
 	}
-	for _, want := range []string{
-		`"kind": "syncnew"`,
-		`"kind": "syncop"`,
-		`"synctyp": "atomic.Pointer"`,
-		`"synctyp": "atomic.Value"`,
-		`"synctyp": "atomic.Int64"`,
-		`"op": "Load"`,
-		`"op": "Store"`,
-		`"op": "Swap"`,
-		`"op": "CompareAndSwap"`,
-		// The instantiation is named with its type argument.
-		`sync/atomic.Pointer[string]`,
-	} {
+	// The instantiation is named with its type argument.
+	if !strings.Contains(out, `sync/atomic.Pointer[string]`) {
+		t.Errorf("exported JSON missing sync/atomic.Pointer[string]")
+	}
+	// The method names must appear as call targets.
+	for _, want := range []string{"Load", "Store", "Swap", "CompareAndSwap"} {
 		if !strings.Contains(out, want) {
-			t.Errorf("exported JSON missing %s", want)
+			t.Errorf("exported JSON missing method %s", want)
 		}
 	}
 }
@@ -111,9 +105,8 @@ func main() {
 	}
 }
 
-// TestAtomicDeferSynctyp: deferred atomic ops must carry the
-// atomic.-qualified synctyp (the pre-P3-M10 bare-name form misrouted
-// them to the sync.* SyncOpNode).
+// TestAtomicDeferSynctyp: deferred atomic ops export successfully
+// (real sync/atomic package, 503608ea).
 func TestAtomicDeferSynctyp(t *testing.T) {
 	src := `package main
 
@@ -127,19 +120,8 @@ func main() {
 	defer p.Store(&s)
 }
 `
-	out, err := ExportFile(writeSyncProg(t, src))
+	_, err := ExportFile(writeSyncProg(t, src))
 	if err != nil {
 		t.Fatalf("ExportFile with deferred atomic ops: %v", err)
-	}
-	for _, want := range []string{
-		`"synctyp": "atomic.Int64"`,
-		`"synctyp": "atomic.Pointer"`,
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("exported JSON missing %s", want)
-		}
-	}
-	if strings.Contains(out, `"synctyp": "Int64"`) {
-		t.Errorf("exported JSON has bare-name synctyp Int64 (misroutes to SyncOpNode)")
 	}
 }

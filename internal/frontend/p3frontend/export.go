@@ -84,9 +84,9 @@ func gofrontendPath() (string, error) {
 		return v, nil
 	}
 	if _, thisFile, _, ok := runtime.Caller(0); ok {
-		// thisFile = <repo>/phases/phase3/src/p3frontend/export.go
-		cand := filepath.Join(filepath.Dir(thisFile),
-			"..", "..", "..", "..", "phases", "phase1", "frontend", "gofrontend")
+		// thisFile = <repo>/internal/frontend/p3frontend/export.go, so
+		// one level up is <repo>/internal/frontend, the gofrontend home.
+		cand := filepath.Join(filepath.Dir(thisFile), "..", "gofrontend")
 		if isExecutable(cand) {
 			return cand, nil
 		}
