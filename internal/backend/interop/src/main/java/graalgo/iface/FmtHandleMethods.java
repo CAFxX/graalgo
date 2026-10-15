@@ -6,6 +6,7 @@ import com.oracle.truffle.api.nodes.RootNode;
 
 import graalgo.runtime.Fmt;
 import graalgo.runtime.GoCalls;
+import graalgo.runtime.Panic;
 import graalgo.values.GoFunc;
 import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
@@ -206,6 +207,27 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
         return false;
     }
 
+    /**
+     * Builds the itab for the synthetic {@code fmt.State} implementation.
+     *
+     * <p>Fail-loud: an itab lookup failure is an internal invariant
+     * violation (the interface method list was never installed), not a
+     * condition to continue from. It is raised as a Go panic — never
+     * swallowed into a null itab, which would silently push formatting
+     * down a wrong strategy (N4 review, 2026-10-15). Package-private for
+     * the regression test.
+     */
+    static IfaceItab stateItab(String descriptorName, String ifaceName) {
+        try {
+            return IfaceMethodTable.itabForIntrinsic(descriptorName, ifaceName);
+        } catch (RuntimeException e) {
+            Panic.throwPanic(GoString.fromUtf8(
+                    "fmt: internal error: cannot build itab for " + descriptorName
+                            + " as " + ifaceName + ": " + e.getMessage()));
+            throw new AssertionError("unreachable: Panic.throwPanic always throws");
+        }
+    }
+
     private boolean handleForType(Fmt.Printer printer, String descName, Object receiver, int verb, Fmt.Arg arg) {
         if (descName == null || receiver == null) {
             return false;
@@ -219,12 +241,13 @@ public final class FmtHandleMethods implements Fmt.FmtMethodHandler {
             // The GoInterface descriptor is the DYNAMIC TYPE. Use a
             // GoTypeDescriptor (the method table is keyed by name).
             GoTypeDescriptor stateTypeDesc = new GoTypeDescriptor(PRINTER_STATE_DESC, GoKind.STRUCT, false);
-            // Build the itab for (PrinterState, fmt.State).
-            Object itab = null;
-            try {
-                itab = IfaceMethodTable.itabForIntrinsic(PRINTER_STATE_DESC, FMT_STATE_DESC);
-            } catch (Exception e) {
-            }
+            // Build the itab for (PrinterState, fmt.State). This is an
+            // internal invariant — the itab must exist for the synthetic
+            // State value handed to user Format methods. A lookup failure
+            // is never swallowed: a null itab would silently push
+            // formatting down a wrong strategy with no error. Fail loud
+            // as a Go panic (N4 codebase review, 2026-10-15).
+            IfaceItab itab = stateItab(PRINTER_STATE_DESC, FMT_STATE_DESC);
             GoInterface stateIface = new GoInterface(stateTypeDesc, stateData, itab);
             Object[] callArgs = adaptReceiver(formatTarget, receiver, new Object[]{stateIface, (int) verb});
             if (callArgs == null) {

@@ -1095,6 +1095,13 @@ public final class Fmt {
                         if (handler.handle(this, arg, verb)) {
                             return;
                         }
+                    } catch (PanicException pe) {
+                        // Go panics are never swallowed by method dispatch:
+                        // internal invariant failures (e.g. the fmt.State
+                        // itab build in FmtHandleMethods.stateItab) must
+                        // reach the guest instead of silently falling back
+                        // to structural printing (N4 review, 2026-10-15).
+                        throw pe;
                     } catch (Exception e) {
                         // Method dispatch failed; fall through to structural.
                     }
