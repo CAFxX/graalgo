@@ -523,3 +523,48 @@ parseLoop:
 var errHex = error(nil)
 `)
 }
+
+func TestDiskMRGenericReceiverMethod(t *testing.T) {
+	// Methods cannot declare type parameters in Go; a method on a generic
+	// receiver uses the receiver type's parameters. The disk MR transform
+	// must propagate those to the generated pair struct and __-helper,
+	// or the rewritten AST fails with "undefined: V" (reported instance:
+	// internal/sync/hashtriemap.go:64 HashTrieMap[K, V].Load).
+	// (Failed pre-fix.)
+	checkDiskMRClean(t, `package p
+
+type Box[K comparable, V any] struct {
+	m map[K]V
+}
+
+func (b *Box[K, V]) Load(key K) (value V, ok bool) {
+	v, ok := b.m[key]
+	return v, ok
+}
+
+func (b *Box[K, V]) Store(key K, val V) {
+	b.m[key] = val
+}
+
+func (b *Box[K, V]) Swap(key K, val V) (old V, swapped bool) {
+	old, ok := b.m[key]
+	b.m[key] = val
+	return old, ok
+}
+`)
+}
+
+func TestDiskMRGenericReceiverMethodValueReceiver(t *testing.T) {
+	// Value (non-pointer) generic receiver: same propagation requirement.
+	checkDiskMRClean(t, `package p
+
+type Pair[A, B any] struct {
+	First  A
+	Second B
+}
+
+func (p Pair[A, B]) Split() (A, B) {
+	return p.First, p.Second
+}
+`)
+}

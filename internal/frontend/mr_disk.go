@@ -121,7 +121,7 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				newDecls = append(newDecls, decl)
 				continue
 			}
-			spec, pairDecl, helperDecl, stubDecl := transformMRFunc(pkgPath, f, fd, mrNames)
+			spec, pairDecl, helperDecl, stubDecl := transformMRFunc(pkgPath, files, fd, mrNames)
 			newDecls = append(newDecls, pairDecl, helperDecl, stubDecl)
 			specs = append(specs, spec)
 		}
@@ -617,13 +617,52 @@ func tparamNamesOf(ft *ast.FuncType) []string {
 	if ft == nil || ft.TypeParams == nil {
 		return nil
 	}
+	return tparamNamesOfFL(ft.TypeParams)
+}
+
+// tparamNamesOfFL returns the type parameter names declared by a
+// type parameter list (used for receiver-resolved lists, which do not
+// belong to a FuncType).
+func tparamNamesOfFL(fl *ast.FieldList) []string {
+	if fl == nil {
+		return nil
+	}
 	var out []string
-	for _, fld := range ft.TypeParams.List {
+	for _, fld := range fl.List {
 		for _, n := range fld.Names {
 			out = append(out, n.Name)
 		}
 	}
 	return out
+}
+
+// receiverTypeParams finds the type parameter list declared by the
+// named type for a method receiver's base type, searching all of the
+// package's files. Go methods cannot declare type parameters; a
+// method on a generic receiver (e.g. func (m *Box[K, V]) Load(...))
+// uses the receiver type's parameters. Returns nil when the base
+// type is not generic or its declaration is not found (e.g. the
+// receiver is a non-generic or imported type).
+func receiverTypeParams(files []*ast.File, base string) *ast.FieldList {
+	if base == "" {
+		return nil
+	}
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.TYPE {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				ts, ok := spec.(*ast.TypeSpec)
+				if !ok || ts.Name.Name != base {
+					continue
+				}
+				return ts.TypeParams
+			}
+		}
+	}
+	return nil
 }
 
 // genericRef builds a reference to a possibly-generic type or function:
@@ -648,7 +687,7 @@ func genericRef(name string, tparamNames []string) ast.Expr {
 }
 
 // transformMRFunc transforms one multi-result FuncDecl.
-func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames map[string]bool) (diskMRSpec, *ast.GenDecl, *ast.FuncDecl, *ast.FuncDecl) {
+func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrNames map[string]bool) (diskMRSpec, *ast.GenDecl, *ast.FuncDecl, *ast.FuncDecl) {
 	name := fd.Name.Name
 	recvType := ""
 	if fd.Recv != nil && len(fd.Recv.List) > 0 {
@@ -674,7 +713,17 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 	// keeps fd.Type (which owns the list); the pair and helper share the
 	// node. go/types gives each declaration its own scope and
 	// type-parameter objects, so the sharing is sound.
+	//
+	// Methods cannot declare their own type parameters in Go; a method
+	// on a generic receiver (e.g. func (m *Box[K, V]) Load(...))
+	// uses the receiver type's parameters. fd.Type.TypeParams is nil
+	// for methods, so resolve them from the receiver's named type
+	// declaration across the package's files.
 	tparams := fd.Type.TypeParams
+	if tparams == nil && recvType != "" {
+		tparams = receiverTypeParams(files, recvType)
+	}
+	tparamNames := tparamNamesOfFL(tparams)
 
 	// Pair struct: type __F_pair[T ...] struct { f1 T1; f2 T2 }.
 	pairDecl := &ast.GenDecl{
@@ -746,7 +795,7 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 	// bindings).
 	bodyBound := topLevelBodyBoundNames(fd)
 	usedNames := usedNamedResults(fd, bodyBound)
-	rewrittenBody := rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName)
+	rewrittenBody := rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName, tparamNames)
 	var namedDecls []ast.Stmt
 	if len(usedNames) > 0 && fd.Type.Results != nil {
 		for _, fld := range fd.Type.Results.List {
@@ -800,7 +849,7 @@ func transformMRFunc(pkgPath string, file *ast.File, fd *ast.FuncDecl, mrNames m
 				// GAP-GENERIC-MR: the pair type is generic exactly when
 				// the function is; reference it with explicit type
 				// arguments.
-				List: []*ast.Field{{Type: genericRef(pairType, tparamNamesOf(fd.Type))}},
+				List: []*ast.Field{{Type: genericRef(pairType, tparamNames)}},
 			},
 		},
 		Body: rewrittenBody,
@@ -1011,7 +1060,7 @@ func topLevelBodyBoundNames(fd *ast.FuncDecl) map[string]bool {
 //   - return             -> return __Pair{n1, n2} (named results)
 //   - return F(args)     -> __t := __F(args); return __Pair{__t.f1, __t.f2}
 //     (F multi-result; spliced as two statements)
-func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string, mrNames map[string]bool, fd *ast.FuncDecl, recvType, recvVar string) *ast.BlockStmt {
+func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string, mrNames map[string]bool, fd *ast.FuncDecl, recvType, recvVar string, tparamNames []string) *ast.BlockStmt {
 	// Named result names for bare return.
 	var namedResults []string
 	if fd.Type.Results != nil {
@@ -1030,7 +1079,9 @@ func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string,
 		recvVar:      recvVar,
 		// GAP-GENERIC-MR: explicit type arguments for the pair literal
 		// and recursive helper calls (go/types cannot infer them).
-		tparamNames: tparamNamesOf(fd.Type),
+		// The names are resolved by the caller: for methods on generic
+		// receivers they come from the receiver's type parameters.
+		tparamNames: tparamNames,
 		funcName:    fd.Name.Name,
 		// Names bound as locals (receiver, params, var/:=): a
 		// return-position call to such a name is a func value, not a
