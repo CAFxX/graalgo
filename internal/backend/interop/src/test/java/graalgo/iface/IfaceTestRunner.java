@@ -35,6 +35,8 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3reflect.ReflectTypesTest.class);
         // P3-M9 (RISK-M9-1/RISK-M9-2): netpoller + socket traps.
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
+        // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
+        TESTS.add(FmtStateItabTest.class);
     }
 
     private IfaceTestRunner() {}
