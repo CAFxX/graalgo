@@ -1904,18 +1904,25 @@ func ExportFiles(paths []string) (string, error) {
 				needCmp = true
 				needIo = true
 				needSlices = true
-			// P3-M9 (tier-4: net): synthetic net (Dial/Listen/TCP/UDP).
-			// net imports errors, internal/poll, io, strconv, strings,
-			// syscall, time.
+			// P3-M9 (tier-4: net): real net from GOROOT via the general
+			// disk-import mechanism (real-net lane, 2026-10-15). The
+			// synthetic net was removed per the no-bridges order.
+			// Real net imports (synthetic deps pre-imported in order):
+			// cmp, context, errors, internal/bytealg, io, io/fs, os,
+			// slices, sync, sync/atomic, syscall, time, unsafe,
+			// internal/poll, internal/singleflight, internal/nettrace.
 			case "net":
 				needNet = true
+				needCmp = true
+				needContext = true
 				needErrors = true
 				needIo = true
-				needStrconv = true
-				needStrings = true
+				needOs = true
+				needSlices = true
+				needSyscall = true
 				needTime = true
-				// syscall NOT imported: pre-existing io/fs export issue.
-				// Errno constants are defined locally in the net source.
+				needStrings = true
+				needStrconv = true
 			// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
 			// net/http imports bufio, bytes, errors, io, net, net/textproto,
 			// net/url, strconv, strings, sync, time. The client delegates to
@@ -2113,7 +2120,19 @@ func ExportFiles(paths []string) (string, error) {
 			"bufio", "cmp", "iter", "internal/bytealg", "internal/byteorder",
 			"math", "math/bits", "unique", "slices", "net/netip",
 			"net/textproto", "net/url", "net", "net/http"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			// NOTE (real-net lane, 2026-10-15): "net" is now a real
+			// disk package (GOROOT), not synthetic.
+			var sp *syntheticPackage
+			if p == "net" {
+				var derr error
+				sp, derr = getDiskPackage(p)
+				if derr != nil {
+					return "", derr
+				}
+			} else {
+				sp = getSyntheticPackage(p)
+			}
+			if err := e.importSyntheticPackage(sp); err != nil {
 				return "", err
 			}
 		}
@@ -2394,8 +2413,20 @@ func ExportFiles(paths []string) (string, error) {
 	// syscall, time (all handled by needX blocks above). The net package
 	// drives the netpoller via linknames (no internal/poll import: its
 	// FD struct contains sync.Mutex, rejected by the frontend M2 scope).
+	// NOTE (real-net lane, 2026-10-15): the real "net" package now
+	// compiles from GOROOT via the general disk-import mechanism. The
+	// synthetic net was removed per the no-bridges order. The real net
+	// imports net/netip (synthetic); it must be imported first so its
+	// functions (e.g. PrefixFrom) are in the exporter's index.
 	if needNet {
-		if err := e.importSyntheticPackage(getSyntheticPackage("net")); err != nil {
+		if err := e.importSyntheticPackage(getSyntheticPackage("net/netip")); err != nil {
+			return "", err
+		}
+		dp, derr := getDiskPackage("net")
+		if derr != nil {
+			return "", derr
+		}
+		if err := e.importSyntheticPackage(dp); err != nil {
 			return "", err
 		}
 	}
@@ -2601,8 +2632,10 @@ func ExportFiles(paths []string) (string, error) {
 			"crypto/rsa",
 			"crypto/hkdf",
 			"crypto/pbkdf2",
-			// P3-M9 (tier-5): synthetic net (x509/tls sources call net.Dialer
-			// methods; methods must be in methodIndex before those packages).
+			// P3-M9 (tier-5): real net from GOROOT (x509/tls sources call
+			// net.Dialer methods; methods must be in methodIndex before
+			// those packages). NOTE (real-net lane, 2026-10-15): was
+			// synthetic; now resolved via getDiskPackage below.
 			"net",
 			// P3-M9 (tier-5): the synthetic tls source imports "os"
 			// (LoadX509KeyPair reads cert/key files); os needs io/fs
@@ -2618,7 +2651,20 @@ func ExportFiles(paths []string) (string, error) {
 			// via graalgo.tls.* intrinsics; imports crypto/x509).
 			"crypto/tls",
 		} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			// NOTE (real-net lane, 2026-10-15): "net" is now a real
+			// disk package (GOROOT), not synthetic. getDiskPackage
+			// returns it in the same *syntheticPackage shape.
+			var sp *syntheticPackage
+			if p == "net" {
+				var derr error
+				sp, derr = getDiskPackage(p)
+				if derr != nil {
+					return "", derr
+				}
+			} else {
+				sp = getSyntheticPackage(p)
+			}
+			if err := e.importSyntheticPackage(sp); err != nil {
 				return "", err
 			}
 		}

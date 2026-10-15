@@ -38,6 +38,12 @@ type m9NetExpect struct {
 	pairFields []string
 }
 
+// NOTE (real-net lane, 2026-10-15): the 22 "net" entries were removed.
+// The real "net" package now compiles from GOROOT via the general
+// disk-import mechanism; its multi-result functions use the general
+// registerUserMRFunc mechanism, not table-driven desugaring. The
+// remaining 24 entries cover net/netip and net/url, which stay
+// synthetic.
 var m9NetTable = []m9NetExpect{
 	// net/netip: package-level funcs.
 	{"net/netip", "ParseAddr", "", "__parseAddr", "parseAddrPair", []string{"addr", "err"}},
@@ -70,35 +76,11 @@ var m9NetTable = []m9NetExpect{
 	// net/url: methods (prependRecv).
 	{"net/url", "Password", "Userinfo", "__userinfoPassword", "passwordPair", []string{"s", "ok"}},
 	{"net/url", "Parse", "URL", "__urlParsePub", "parseURLPair", []string{"u", "err"}},
-	// net: package-level funcs (socket path; __-helpers in synth_net.go).
-	{"net", "Pipe", "", "__pipe", "pipePair", []string{"c1", "c2"}},
-	{"net", "Dial", "", "__dial", "dialPair", []string{"c", "err"}},
-	{"net", "DialTimeout", "", "__dialTimeout", "dialPair", []string{"c", "err"}},
-	{"net", "Listen", "", "__listen", "listenPair", []string{"l", "err"}},
-	{"net", "ListenPacket", "", "__listenPacket", "listenPacketPair", []string{"c", "err"}},
-	{"net", "ResolveIPAddr", "", "__resolveIPAddr", "resolveIPAddrPair", []string{"ip", "err"}},
-	{"net", "ResolveTCPAddr", "", "__resolveTCPAddr", "resolveTCPAddrPair", []string{"addr", "err"}},
-	{"net", "ResolveUDPAddr", "", "__resolveUDPAddr", "resolveUDPAddrPair", []string{"addr", "err"}},
-	{"net", "ParseCIDR", "", "__parseCIDR", "parseCIDRPair", []string{"ip", "ipnet", "err"}},
-	{"net", "ParseMAC", "", "__parseMAC", "parseMACPair", []string{"hw", "err"}},
-	{"net", "SplitHostPort", "", "__splitHostPort", "splitHostPortPair", []string{"host", "port", "err"}},
-	{"net", "Size", "IPMask", "__ipMaskSize", "maskSizePair", []string{"ones", "bits"}},
-	// net: methods on TCPListener / Conn (prependRecv).
-	{"net", "Accept", "TCPListener", "__tcpListenerAccept", "acceptPair", []string{"c", "err"}},
-	{"net", "Read", "TCPConn", "__tcpConnRead", "readPair", []string{"n", "err"}},
-	{"net", "Write", "TCPConn", "__tcpConnWrite", "writePair", []string{"n", "err"}},
-	{"net", "Read", "UDPConn", "__udpConnRead", "readPair", []string{"n", "err"}},
-	{"net", "Write", "UDPConn", "__udpConnWrite", "writePair", []string{"n", "err"}},
-	{"net", "ReadFrom", "UDPConn", "__udpConnReadFrom", "readFromPair", []string{"n", "addr", "err"}},
-	{"net", "WriteTo", "UDPConn", "__udpConnWriteTo", "writePair", []string{"n", "err"}},
-	// net: methods on pipeConn (net.Pipe; prependRecv).
-	{"net", "Read", "pipeConn", "__pipeRead", "__pipeReadPair", []string{"n", "err"}},
-	{"net", "Write", "pipeConn", "__pipeWrite", "__pipeWritePair", []string{"n", "err"}},
 }
 
 func TestM9NetDesugarWiring(t *testing.T) {
-	if len(m9NetTable) != 46 {
-		t.Fatalf("m9NetTable has %d entries, want 46", len(m9NetTable))
+	if len(m9NetTable) != 24 {
+		t.Fatalf("m9NetTable has %d entries, want 24", len(m9NetTable))
 	}
 	for _, want := range m9NetTable {
 		name := want.pkgPath + "." + want.name
