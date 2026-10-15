@@ -439,22 +439,45 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 		}
 	}
 
-	// usedQualifiers records the package qualifiers actually referenced
-	// by inlined declarations (AST-based: a SelectorExpr whose X is a
-	// bare identifier). Mentions inside comments or string literals do
-	// not count — the old substring check was fooled by the driver's
-	// own "// --- from X ---" comments and by test failure messages.
-	usedQualifiers := make(map[string]bool)
-	noteQualifiers := func(d ast.Decl) {
-		ast.Inspect(d, func(n ast.Node) bool {
-			if sel, ok := n.(*ast.SelectorExpr); ok {
-				if id, ok := sel.X.(*ast.Ident); ok {
-					usedQualifiers[id.Name] = true
-				}
-			}
-			return true
-		})
+	// fileBindings records, for each parsed file whose declarations may
+	// be inlined, the file's own import bindings: local qualifier name
+	// -> import spec. The local name is the explicit name when the
+	// import declares one, otherwise the imported package's DECLARED
+	// name (resolveImportPkgName) — the identifier that file's own code
+	// actually uses. Resolving qualifier references through the
+	// importing file's bindings (the same rule Go name resolution uses
+	// per file) is what makes import pruning precise: two distinct
+	// imports that happen to share a local name — e.g. "internal/strconv"
+	// and "strconv" (PKG-021) — are told apart instead of being
+	// conflated by qualifier name.
+	fileBindings := make(map[*ast.File]map[string]importSpec)
+	bindingsFor := func(f *ast.File, name, path string) {
+		if name == "." || name == "_" {
+			return // dot/blank imports have no qualifier form
+		}
+		local := name
+		if local == "" {
+			local = resolveImportPkgName(dir, path)
+		}
+		m := fileBindings[f]
+		if m == nil {
+			m = make(map[string]importSpec)
+			fileBindings[f] = m
+		}
+		m[local] = importSpec{name, path}
 	}
+
+	// usedImports records the import specs actually referenced by
+	// inlined declarations, resolved per-file through fileBindings: a
+	// qualifier counts as a use of the spec its own file binds it to.
+	// The old name-keyed matching conflated distinct imports sharing a
+	// local name and kept imports no inlined declaration references —
+	// e.g. the plain "strconv" import collected from strconv's
+	// example_test.go (whose Example functions are never inlined) was
+	// kept because inlined sources reference the *different* import
+	// "internal/strconv" through the same qualifier, producing
+	// "strconv redeclared in this block" (PKG-021).
+	usedImports := make(map[importSpec]bool)
 
 	// inlineSrc reports whether the package's own sources are inlined
 	// into the driver. It is set after the test files are parsed (their
@@ -485,6 +508,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				continue
 			}
 			addImport(name, path)
+			bindingsFor(f, name, path)
 		}
 	}
 
@@ -545,8 +569,12 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// redeclare anything (PKG-002), and the package's types keep their
 	// identity where other packages' APIs mention them (e.g. strings
 	// functions taking unicode.SpecialCase). When the declared package
-	// name cannot be determined, inline conservatively.
-	if pkgName, err := packageNameInDir(dir); err == nil {
+	// name cannot be determined, inline conservatively. The package
+	// name is also kept for phase B, which partitions gathered
+	// declarations into the package under test and its external test
+	// package.
+	pkgName, pkgNameErr := packageNameInDir(dir)
+	if pkgNameErr == nil {
 		inlineSrc = false
 		for _, n := range testPkgNames {
 			if n == pkgName {
@@ -579,34 +607,96 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// The generated main uses time and os directly.
 	addImport("", "time")
 	addImport("", "os")
-	usedQualifiers["time"] = true
-	usedQualifiers["os"] = true
+	usedImports[importSpec{"", "time"}] = true
+	usedImports[importSpec{"", "os"}] = true
 
-	// Build the body first; imports are pruned against it below.
-	var body strings.Builder
+	// declNames returns the identifiers a top-level declaration binds
+	// in the package block: plain function names (methods live in their
+	// receiver's namespace; repeated init functions are legal and never
+	// collide), type names, and var/const names.
+	declNames := func(d ast.Decl) []string {
+		var names []string
+		switch t := d.(type) {
+		case *ast.FuncDecl:
+			if t.Recv == nil && t.Name.Name != "init" {
+				names = append(names, t.Name.Name)
+			}
+		case *ast.GenDecl:
+			for _, spec := range t.Specs {
+				switch s := spec.(type) {
+				case *ast.TypeSpec:
+					names = append(names, s.Name.Name)
+				case *ast.ValueSpec:
+					for _, n := range s.Names {
+						names = append(names, n.Name)
+					}
+				}
+			}
+		}
+		return names
+	}
+
+	// A gatheredDecl is one top-level declaration selected for inlining,
+	// with everything phases B/C need: the import bindings of the file
+	// it came from, the qualifier->spec references it makes (resolved
+	// through those bindings), whether it belongs to the external test
+	// package, and the package-block names it binds.
+	type gatheredDecl struct {
+		decl     ast.Decl
+		fset     *token.FileSet
+		bindings map[string]importSpec
+		quals    map[string]importSpec
+		ext      bool
+		names    []string
+	}
+	type bodyItem struct {
+		comment string // section marker when g == nil
+		g       *gatheredDecl
+	}
+	var items []bodyItem
+	gatherDecl := func(f *ast.File, fset *token.FileSet, decl ast.Decl) {
+		bindings := fileBindings[f]
+		quals := make(map[string]importSpec)
+		if len(bindings) > 0 {
+			ast.Inspect(decl, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok {
+					if id, ok := sel.X.(*ast.Ident); ok {
+						if spec, ok := bindings[id.Name]; ok {
+							quals[id.Name] = spec
+							usedImports[spec] = true
+						}
+					}
+				}
+				return true
+			})
+		}
+		ext := pkgNameErr == nil && f.Name.Name != pkgName
+		items = append(items, bodyItem{g: &gatheredDecl{decl, fset, bindings, quals, ext, declNames(decl)}})
+	}
+
+	// Phase A: gather the declarations to inline (no printing yet).
+	// Reference recording happens here so phase B can prune and
+	// disambiguate imports, and rename colliding external-test-package
+	// declarations, before anything is printed.
 
 	// Inline non-test source files (package clause stripped): funcs plus
 	// type/var/const declarations. Skip imports (emitted separately) and
 	// the main function (we generate our own). Skipped entirely when no
 	// test file needs white-box access (see inlineSrc above).
 	for _, u := range units {
-		body.WriteString(fmt.Sprintf("\n// --- from %s ---\n", filepath.Base(u.path)))
+		items = append(items, bodyItem{comment: fmt.Sprintf("\n// --- from %s ---\n", filepath.Base(u.path))})
 		for _, decl := range u.f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
 				if d.Name.Name == "main" && d.Recv == nil {
 					continue
 				}
-				printDecl(&body, u.fset, d)
-				noteQualifiers(d)
-				body.WriteString("\n")
+				gatherDecl(u.f, u.fset, d)
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {
 					continue
 				}
-				printDecl(&body, u.fset, d)
-				noteQualifiers(d)
-				body.WriteString("\n")
+				gatherDecl(u.f, u.fset, d)
 			}
 		}
 	}
@@ -615,7 +705,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// with position-capturing diagnostic calls) plus each file's own
 	// non-test helpers and declarations.
 	for _, tu := range testUnits {
-		body.WriteString(fmt.Sprintf("\n// --- tests from %s ---\n", filepath.Base(tu.path)))
+		items = append(items, bodyItem{comment: fmt.Sprintf("\n// --- tests from %s ---\n", filepath.Base(tu.path))})
 		for _, decl := range tu.f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
@@ -631,23 +721,19 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				}
 				rewriteParam(d)
 				rewriteTestCalls(d, tu.fset)
-				printDecl(&body, tu.fset, d)
-				noteQualifiers(d)
-				body.WriteString("\n")
+				gatherDecl(tu.f, tu.fset, d)
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {
 					continue
 				}
-				printDecl(&body, tu.fset, d)
-				noteQualifiers(d)
-				body.WriteString("\n")
+				gatherDecl(tu.f, tu.fset, d)
 			}
 		}
 	}
 
 	// Sibling test files: every non-entry-point declaration (helpers).
 	for _, u := range sibUnits {
-		body.WriteString(fmt.Sprintf("\n// --- helpers from %s ---\n", filepath.Base(u.path)))
+		items = append(items, bodyItem{comment: fmt.Sprintf("\n// --- helpers from %s ---\n", filepath.Base(u.path))})
 		for _, decl := range u.f.Decls {
 			switch d := decl.(type) {
 			case *ast.FuncDecl:
@@ -660,18 +746,590 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 				}
 				rewriteParam(d)
 				rewriteTestCalls(d, u.fset)
-				printDecl(&body, u.fset, d)
-				noteQualifiers(d)
-				body.WriteString("\n")
+				gatherDecl(u.f, u.fset, d)
 			case *ast.GenDecl:
 				if d.Tok == token.IMPORT {
 					continue
 				}
-				printDecl(&body, u.fset, d)
-				noteQualifiers(d)
-				body.WriteString("\n")
+				gatherDecl(u.f, u.fset, d)
 			}
 		}
+	}
+
+	// Phase B (imports): prune unreferenced imports and assign
+	// collision-free local names.
+	//
+	// Prune imports not referenced by the inlined declarations. Helpers
+	// from sibling files pull in imports this driver's tests may not use
+	// — Go rejects unused imports. A reference is a real package
+	// qualifier observed in an inlined declaration resolved through the
+	// declaration's own file import bindings (see fileBindings), not a
+	// substring: mentions in comments or string literals do not count.
+	// The local package name comes from the import spec when explicit;
+	// otherwise it is the package's DECLARED name, resolved from its
+	// source directory — not the last path element. Those differ for
+	// parent-module imports with a major-version suffix
+	// (github.com/caddyserver/caddy/v2 declares package caddy), for
+	// stdlib v2 paths (math/rand/v2 declares package rand), and for
+	// third-party renames (gopkg.in/yaml.v2 declares package yaml).
+	// Guessing from the path prunes the import and the driver fails with
+	// "undefined: <name>".
+	//
+	// Emission then gives every kept import a unique local name. Two
+	// kept imports can bind the same local name — distinct paths whose
+	// declared package names coincide, or an explicit name colliding
+	// with another import's name (PKG-021: "internal/strconv" and
+	// "strconv"). Emitting both would redeclare the name in the import
+	// block. The first (in path,name order) keeps the natural name; the
+	// rest are explicitly aliased to name2, name3, ... and every
+	// qualifier reference through the renamed import's file bindings is
+	// rewritten to the alias before printing, so emission can never
+	// redeclare.
+	var sb strings.Builder
+	sb.WriteString("package main\n\n")
+	emitName := make(map[importSpec]string)
+	if len(importList) > 0 {
+		ordered := make([]importSpec, len(importList))
+		copy(ordered, importList)
+		sort.Slice(ordered, func(i, j int) bool {
+			if ordered[i].path != ordered[j].path {
+				return ordered[i].path < ordered[j].path
+			}
+			return ordered[i].name < ordered[j].name
+		})
+		var kept []importSpec
+		for _, s := range ordered {
+			if s.name == "_" || s.name == "." {
+				// Side-effect and dot imports are never referenced by
+				// package name, but dropping them changes semantics.
+				kept = append(kept, s)
+				continue
+			}
+			if usedImports[s] {
+				kept = append(kept, s)
+			}
+		}
+		taken := make(map[string]bool)
+		for _, s := range kept {
+			if s.name == "." || s.name == "_" {
+				emitName[s] = s.name
+				continue
+			}
+			base := s.name
+			if base == "" {
+				base = resolveImportPkgName(dir, s.path)
+			}
+			name := base
+			for i := 2; taken[name]; i++ {
+				name = base + strconv.Itoa(i)
+			}
+			taken[name] = true
+			emitName[s] = name
+		}
+		if len(kept) > 0 {
+			sb.WriteString("import (\n")
+			for _, s := range kept {
+				name := emitName[s]
+				switch {
+				case s.name == "." || s.name == "_":
+					sb.WriteString(fmt.Sprintf("\t%s %q\n", s.name, s.path))
+				case s.name == "":
+					if name == resolveImportPkgName(dir, s.path) {
+						sb.WriteString(fmt.Sprintf("\t%q\n", s.path))
+					} else {
+						sb.WriteString(fmt.Sprintf("\t%s %q\n", name, s.path))
+					}
+				default:
+					sb.WriteString(fmt.Sprintf("\t%s %q\n", name, s.path))
+				}
+			}
+			sb.WriteString(")\n")
+		}
+	}
+
+	// Phase B (declarations): rename external-test-package declarations
+	// that collide with the package under test's.
+	//
+	// Under gc the package under test and its external test package are
+	// separate packages; the driver's single-file flattening merges
+	// them into one scope, so a top-level name bound in both redeclares
+	// (PKG-025: math's func acos vs the external test's var acos,
+	// math/bits' var overflowError vs const overflowError; PKG-030:
+	// bufio's const minReadBufferSize in both packages). The external
+	// test package yields: its colliding declarations are renamed to a
+	// unique name2/name3/... suffix and every bare-identifier reference
+	// resolving to them — within the external package's own contributed
+	// declarations — is rewritten (phase C). Collisions within one side
+	// are genuine and left to fail loudly, exactly as `go test` would
+	// reject them. No per-file exception is needed for dot-imports: an
+	// external file cannot both dot-import the package under test and
+	// declare the same exported name (gc rejects that), and a
+	// dot-import only brings exported names, so a colliding name's bare
+	// references in external declarations always mean the external
+	// package's own declaration.
+	whiteNames := make(map[string]bool)
+	extNames := make(map[string]bool)
+	for _, it := range items {
+		if it.g == nil {
+			continue
+		}
+		for _, n := range it.g.names {
+			if it.g.ext {
+				extNames[n] = true
+			} else {
+				whiteNames[n] = true
+			}
+		}
+	}
+	// Names the external test package must yield to: the package under
+	// test's declarations and the driver's own harness bindings (the
+	// generated main and the graalgoT shim).
+	protected := make(map[string]bool)
+	for n := range whiteNames {
+		protected[n] = true
+	}
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+		protected[n] = true
+	}
+	takenNames := make(map[string]bool)
+	for n := range protected {
+		takenNames[n] = true
+	}
+	for n := range extNames {
+		takenNames[n] = true
+	}
+	for _, n := range emitName {
+		takenNames[n] = true
+	}
+	eRenames := make(map[string]string)
+	renamed := make(map[string]bool)
+	for _, it := range items {
+		g := it.g
+		if g == nil || !g.ext {
+			continue
+		}
+		for _, n := range g.names {
+			if !protected[n] || renamed[n] {
+				continue
+			}
+			renamed[n] = true
+			newName := n
+			for i := 2; takenNames[newName]; i++ {
+				newName = n + strconv.Itoa(i)
+			}
+			takenNames[newName] = true
+			eRenames[n] = newName
+		}
+	}
+
+	// renameQualifiers rewrites the qualifier references of one gathered
+	// declaration to the imports' final emission names. Only qualifiers
+	// whose import was aliased (emission name != the file's local name)
+	// are touched; everything else prints unchanged.
+	renameQualifiers := func(g *gatheredDecl) {
+		if len(g.quals) == 0 {
+			return
+		}
+		renames := make(map[string]string)
+		for q, spec := range g.quals {
+			if n, ok := emitName[spec]; ok && n != q {
+				renames[q] = n
+			}
+		}
+		if len(renames) == 0 {
+			return
+		}
+		ast.Inspect(g.decl, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok {
+					if nn, ok := renames[id.Name]; ok {
+						id.Name = nn
+					}
+				}
+			}
+			return true
+		})
+	}
+
+	// rewriteExtRefs renames an external-test-package declaration's own
+	// bound names per eRenames and rewrites every bare-identifier
+	// reference resolving to them. The walk is scope-aware: parameters,
+	// results, and local declarations shadow the package-level name
+	// within their scope and are left alone, exactly as Go resolution
+	// would. Positions that can never denote the package-level
+	// declaration are skipped: selector operands (field/method
+	// namespace), struct field and method declarations, and labels. A
+	// selector on the file's own import name is a package qualifier
+	// owned by the import-alias pass, never the external declaration.
+	// Composite-literal keys are rewritten: a key that is really a
+	// field name then fails loudly ("unknown field") instead of
+	// silently rebinding to the package under test's declaration.
+	rewriteExtRefs := func(g *gatheredDecl) {
+		if len(eRenames) == 0 {
+			return
+		}
+		qualNames := make(map[string]bool)
+		for q := range g.bindings {
+			qualNames[q] = true
+		}
+		for _, n := range emitName {
+			qualNames[n] = true
+		}
+		renameRef := func(id *ast.Ident, shadowed map[string]bool) {
+			if id == nil {
+				return
+			}
+			newName, ok := eRenames[id.Name]
+			if !ok || shadowed[id.Name] {
+				return
+			}
+			id.Name = newName
+		}
+		extend := func(shadowed map[string]bool, names []string) map[string]bool {
+			if len(names) == 0 {
+				return shadowed
+			}
+			m := make(map[string]bool, len(shadowed)+len(names))
+			for k, v := range shadowed {
+				m[k] = v
+			}
+			for _, n := range names {
+				if n != "" && n != "_" {
+					m[n] = true
+				}
+			}
+			return m
+		}
+		identNames := func(ids []*ast.Ident) []string {
+			var out []string
+			for _, id := range ids {
+				out = append(out, id.Name)
+			}
+			return out
+		}
+		fieldNames := func(fl *ast.FieldList) []string {
+			var names []string
+			if fl == nil {
+				return names
+			}
+			for _, f := range fl.List {
+				names = append(names, identNames(f.Names)...)
+			}
+			return names
+		}
+		var walkExpr func(e ast.Expr, shadowed map[string]bool)
+		var walkStmt func(s ast.Stmt, shadowed map[string]bool) map[string]bool
+		// walkFieldTypes walks the types of a field list; the field
+		// names themselves are declarations in another namespace and
+		// are never references (embedded fields have no names: their
+		// type IS the reference).
+		walkFieldTypes := func(fl *ast.FieldList, shadowed map[string]bool) {
+			if fl == nil {
+				return
+			}
+			for _, f := range fl.List {
+				walkExpr(f.Type, shadowed)
+			}
+		}
+		walkExpr = func(e ast.Expr, shadowed map[string]bool) {
+			switch x := e.(type) {
+			case nil:
+			case *ast.Ident:
+				renameRef(x, shadowed)
+			case *ast.FuncLit:
+				sc := extend(shadowed, fieldNames(x.Type.Params))
+				sc = extend(sc, fieldNames(x.Type.Results))
+				sc = extend(sc, fieldNames(x.Type.TypeParams))
+				walkFieldTypes(x.Type.Params, shadowed)
+				walkFieldTypes(x.Type.Results, shadowed)
+				walkFieldTypes(x.Type.TypeParams, shadowed)
+				if x.Body != nil {
+					walkStmt(x.Body, sc)
+				}
+			case *ast.CompositeLit:
+				walkExpr(x.Type, shadowed)
+				for _, elt := range x.Elts {
+					walkExpr(elt, shadowed)
+				}
+			case *ast.ParenExpr:
+				walkExpr(x.X, shadowed)
+			case *ast.SelectorExpr:
+				if id, ok := x.X.(*ast.Ident); ok {
+					if !qualNames[id.Name] {
+						renameRef(id, shadowed)
+					}
+				} else {
+					walkExpr(x.X, shadowed)
+				}
+				// Sel is a field/method name: never a package reference.
+			case *ast.IndexExpr:
+				walkExpr(x.X, shadowed)
+				walkExpr(x.Index, shadowed)
+			case *ast.IndexListExpr:
+				walkExpr(x.X, shadowed)
+				for _, ix := range x.Indices {
+					walkExpr(ix, shadowed)
+				}
+			case *ast.SliceExpr:
+				walkExpr(x.X, shadowed)
+				walkExpr(x.Low, shadowed)
+				walkExpr(x.High, shadowed)
+				walkExpr(x.Max, shadowed)
+			case *ast.TypeAssertExpr:
+				walkExpr(x.X, shadowed)
+				walkExpr(x.Type, shadowed)
+			case *ast.CallExpr:
+				walkExpr(x.Fun, shadowed)
+				for _, a := range x.Args {
+					walkExpr(a, shadowed)
+				}
+			case *ast.StarExpr:
+				walkExpr(x.X, shadowed)
+			case *ast.UnaryExpr:
+				walkExpr(x.X, shadowed)
+			case *ast.BinaryExpr:
+				walkExpr(x.X, shadowed)
+				walkExpr(x.Y, shadowed)
+			case *ast.KeyValueExpr:
+				walkExpr(x.Key, shadowed)
+				walkExpr(x.Value, shadowed)
+			case *ast.ArrayType:
+				walkExpr(x.Len, shadowed)
+				walkExpr(x.Elt, shadowed)
+			case *ast.StructType:
+				walkFieldTypes(x.Fields, shadowed)
+			case *ast.FuncType:
+				walkFieldTypes(x.Params, shadowed)
+				walkFieldTypes(x.Results, shadowed)
+				walkFieldTypes(x.TypeParams, shadowed)
+			case *ast.InterfaceType:
+				walkFieldTypes(x.Methods, shadowed)
+			case *ast.MapType:
+				walkExpr(x.Key, shadowed)
+				walkExpr(x.Value, shadowed)
+			case *ast.ChanType:
+				walkExpr(x.Value, shadowed)
+			case *ast.Ellipsis:
+				walkExpr(x.Elt, shadowed)
+			}
+		}
+		walkStmt = func(s ast.Stmt, shadowed map[string]bool) map[string]bool {
+			switch x := s.(type) {
+			case nil:
+				return shadowed
+			case *ast.DeclStmt:
+				if gd, ok := x.Decl.(*ast.GenDecl); ok {
+					for _, spec := range gd.Specs {
+						switch sp := spec.(type) {
+						case *ast.ValueSpec:
+							// The initializer sees the outer scope.
+							walkExpr(sp.Type, shadowed)
+							for _, v := range sp.Values {
+								walkExpr(v, shadowed)
+							}
+							shadowed = extend(shadowed, identNames(sp.Names))
+						case *ast.TypeSpec:
+							sc := extend(shadowed, fieldNames(sp.TypeParams))
+							walkFieldTypes(sp.TypeParams, shadowed)
+							walkExpr(sp.Type, sc)
+							shadowed = extend(shadowed, []string{sp.Name.Name})
+						}
+					}
+				}
+				return shadowed
+			case *ast.ExprStmt:
+				walkExpr(x.X, shadowed)
+			case *ast.SendStmt:
+				walkExpr(x.Chan, shadowed)
+				walkExpr(x.Value, shadowed)
+			case *ast.IncDecStmt:
+				walkExpr(x.X, shadowed)
+			case *ast.AssignStmt:
+				if x.Tok == token.DEFINE {
+					for _, r := range x.Rhs {
+						walkExpr(r, shadowed)
+					}
+					var names []string
+					for _, l := range x.Lhs {
+						if id, ok := l.(*ast.Ident); ok {
+							names = append(names, id.Name)
+						} else {
+							walkExpr(l, shadowed)
+						}
+					}
+					return extend(shadowed, names)
+				}
+				for _, l := range x.Lhs {
+					walkExpr(l, shadowed)
+				}
+				for _, r := range x.Rhs {
+					walkExpr(r, shadowed)
+				}
+			case *ast.GoStmt:
+				walkExpr(x.Call, shadowed)
+			case *ast.DeferStmt:
+				walkExpr(x.Call, shadowed)
+			case *ast.ReturnStmt:
+				for _, r := range x.Results {
+					walkExpr(r, shadowed)
+				}
+			case *ast.BranchStmt:
+				// Label target: label namespace, never a package ref.
+			case *ast.IfStmt:
+				sc := shadowed
+				if x.Init != nil {
+					sc = walkStmt(x.Init, sc)
+				}
+				walkExpr(x.Cond, sc)
+				walkStmt(x.Body, sc)
+				if x.Else != nil {
+					walkStmt(x.Else, sc)
+				}
+			case *ast.CaseClause:
+				for _, e := range x.List {
+					walkExpr(e, shadowed)
+				}
+				sc := shadowed
+				for _, b := range x.Body {
+					sc = walkStmt(b, sc)
+				}
+			case *ast.SwitchStmt:
+				sc := shadowed
+				if x.Init != nil {
+					sc = walkStmt(x.Init, sc)
+				}
+				walkExpr(x.Tag, sc)
+				walkStmt(x.Body, sc)
+			case *ast.TypeSwitchStmt:
+				sc := shadowed
+				if x.Init != nil {
+					sc = walkStmt(x.Init, sc)
+				}
+				var guard []string
+				if as, ok := x.Assign.(*ast.AssignStmt); ok {
+					for _, l := range as.Lhs {
+						if id, ok := l.(*ast.Ident); ok {
+							guard = append(guard, id.Name)
+						}
+					}
+					if len(as.Rhs) == 1 {
+						if ta, ok := as.Rhs[0].(*ast.TypeAssertExpr); ok {
+							walkExpr(ta.X, sc)
+						}
+					}
+				} else if es, ok := x.Assign.(*ast.ExprStmt); ok {
+					walkExpr(es.X, sc)
+				}
+				walkStmt(x.Body, extend(sc, guard))
+			case *ast.SelectStmt:
+				walkStmt(x.Body, shadowed)
+			case *ast.CommClause:
+				sc := shadowed
+				if x.Comm != nil {
+					sc = walkStmt(x.Comm, sc)
+				}
+				for _, b := range x.Body {
+					sc = walkStmt(b, sc)
+				}
+			case *ast.ForStmt:
+				sc := shadowed
+				if x.Init != nil {
+					sc = walkStmt(x.Init, sc)
+				}
+				walkExpr(x.Cond, sc)
+				if x.Post != nil {
+					walkStmt(x.Post, sc)
+				}
+				walkStmt(x.Body, sc)
+			case *ast.RangeStmt:
+				walkExpr(x.X, shadowed)
+				sc := shadowed
+				if x.Tok == token.DEFINE {
+					var names []string
+					for _, kv := range []ast.Expr{x.Key, x.Value} {
+						if id, ok := kv.(*ast.Ident); ok {
+							names = append(names, id.Name)
+						} else {
+							walkExpr(kv, shadowed)
+						}
+					}
+					sc = extend(sc, names)
+				} else {
+					walkExpr(x.Key, shadowed)
+					walkExpr(x.Value, shadowed)
+				}
+				walkStmt(x.Body, sc)
+			case *ast.LabeledStmt:
+				// The label is in the label namespace; the statement
+				// keeps the ambient scope.
+				walkStmt(x.Stmt, shadowed)
+			case *ast.BlockStmt:
+				sc := shadowed
+				for _, b := range x.List {
+					sc = walkStmt(b, sc)
+				}
+				// Block scope does not leak.
+			}
+			return shadowed
+		}
+		top := make(map[string]bool)
+		switch d := g.decl.(type) {
+		case *ast.FuncDecl:
+			if d.Recv == nil {
+				renameRef(d.Name, top) // the binding itself
+			}
+			// The receiver's names shadow the body, but its type is
+			// resolved in the outer scope.
+			walkFieldTypes(d.Recv, top)
+			sc := extend(top, fieldNames(d.Recv))
+			if d.Type != nil {
+				walkFieldTypes(d.Type.Params, sc)
+				walkFieldTypes(d.Type.Results, sc)
+				walkFieldTypes(d.Type.TypeParams, sc)
+				sc = extend(sc, fieldNames(d.Type.Params))
+				sc = extend(sc, fieldNames(d.Type.Results))
+				sc = extend(sc, fieldNames(d.Type.TypeParams))
+			}
+			if d.Body != nil {
+				walkStmt(d.Body, sc)
+			}
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				switch sp := spec.(type) {
+				case *ast.ValueSpec:
+					for _, n := range sp.Names {
+						renameRef(n, top) // the bindings themselves
+					}
+					walkExpr(sp.Type, top)
+					for _, v := range sp.Values {
+						walkExpr(v, top)
+					}
+				case *ast.TypeSpec:
+					renameRef(sp.Name, top)
+					sc := extend(top, fieldNames(sp.TypeParams))
+					walkFieldTypes(sp.TypeParams, top)
+					walkExpr(sp.Type, sc)
+				}
+			}
+		}
+	}
+
+	// Phase C: print the gathered declarations. Qualifier references
+	// whose import was aliased are rewritten to the alias; renamed
+	// external-test-package declarations (and the references resolving
+	// to them) to their new names.
+	var body strings.Builder
+	for _, it := range items {
+		if it.g == nil {
+			body.WriteString(it.comment)
+			continue
+		}
+		renameQualifiers(it.g)
+		if it.g.ext {
+			rewriteExtRefs(it.g)
+		}
+		printDecl(&body, it.g.fset, it.g.decl)
+		body.WriteString("\n")
 	}
 
 	// Shim + main runner. Per-test output mirrors `go test -v`:
@@ -682,6 +1340,16 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	body.WriteString("\tfailed := 0\n")
 	for _, tu := range testUnits {
 		for _, t := range tu.ordered {
+			// If this test file's TestXxx was renamed by phase B (its
+			// name collided with the package under test's), call the
+			// renamed function — otherwise the driver would silently
+			// run the wrong package's test.
+			callName := t
+			if pkgNameErr == nil && tu.f.Name.Name != pkgName {
+				if nn, ok := eRenames[t]; ok {
+					callName = nn
+				}
+			}
 			body.WriteString("\t{\n")
 			body.WriteString(fmt.Sprintf("\t\ttt := &graalgoT{name: %q}\n", t))
 			if verbose {
@@ -702,7 +1370,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			body.WriteString("\t\t\t\t\t}\n")
 			body.WriteString("\t\t\t\t}\n")
 			body.WriteString("\t\t\t}()\n")
-			body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", t))
+			body.WriteString(fmt.Sprintf("\t\t\t%s(tt)\n", callName))
 			body.WriteString("\t\t}()\n")
 			body.WriteString("\t\tdur := \"(\" + fmtDur2(time.Since(t0)) + \")\"\n")
 			if verbose {
@@ -741,64 +1409,7 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	}
 	body.WriteString("}\n")
 
-	bodyStr := body.String()
-
-	// Prune imports not referenced in the body. Helpers from sibling
-	// files pull in imports this driver's tests may not use — Go
-	// Prune imports not referenced by the inlined declarations. Helpers
-	// from sibling files pull in imports this driver's tests may not use
-	// — Go rejects unused imports. A reference is a real package
-	// qualifier observed in an inlined declaration (see noteQualifiers),
-	// not a substring: mentions in comments or string literals do not
-	// count. The local package name comes from the import spec when
-	// explicit; otherwise it is the package's DECLARED name, resolved
-	// from its source directory — not the last path element. Those
-	// differ for parent-module imports with a major-version suffix
-	// (github.com/caddyserver/caddy/v2 declares package caddy), for
-	// stdlib v2 paths (math/rand/v2 declares package rand), and for
-	// third-party renames (gopkg.in/yaml.v2 declares package yaml).
-	// Guessing from the path prunes the import and the driver fails with
-	// "undefined: <name>".
-	var sb strings.Builder
-	sb.WriteString("package main\n\n")
-	if len(importList) > 0 {
-		ordered := make([]importSpec, len(importList))
-		copy(ordered, importList)
-		sort.Slice(ordered, func(i, j int) bool {
-			if ordered[i].path != ordered[j].path {
-				return ordered[i].path < ordered[j].path
-			}
-			return ordered[i].name < ordered[j].name
-		})
-		var kept []importSpec
-		for _, s := range ordered {
-			if s.name == "_" || s.name == "." {
-				// Side-effect and dot imports are never referenced by
-				// package name, but dropping them changes semantics.
-				kept = append(kept, s)
-				continue
-			}
-			local := s.name
-			if local == "" {
-				local = resolveImportPkgName(dir, s.path)
-			}
-			if local != "" && usedQualifiers[local] {
-				kept = append(kept, s)
-			}
-		}
-		if len(kept) > 0 {
-			sb.WriteString("import (\n")
-			for _, s := range kept {
-				if s.name != "" {
-					sb.WriteString(fmt.Sprintf("\t%s %q\n", s.name, s.path))
-				} else {
-					sb.WriteString(fmt.Sprintf("\t%q\n", s.path))
-				}
-			}
-			sb.WriteString(")\n")
-		}
-	}
-	sb.WriteString(bodyStr)
+	sb.WriteString(body.String())
 
 	// Write to a temp file.
 	tmp, err := os.CreateTemp("", "graalgo-test-*.go")

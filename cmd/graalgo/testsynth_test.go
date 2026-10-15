@@ -453,6 +453,395 @@ func TestDotDep(t *testing.T) {
 // no module context at all: a package under a (fake) GOROOT whose test
 // files import it by its short path. Detection must work purely by
 // resolved source directory.
+// TestImportCollisionUnusedPruned is the regression test for PKG-021:
+// two imports binding the same local name, only one of them used. The
+// package's own source imports "dep" (declared package name "dep") and
+// uses it; a sibling external test file contributing no inlined
+// declarations imports a *different* path under the explicit local name
+// "dep". The old name-keyed pruner kept both and emitted `dep` twice
+// ("dep redeclared in this block"); per-file resolution prunes the
+// unused one.
+func TestImportCollisionUnusedPruned(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/impcol\n\ngo 1.21\n")
+	writeFile(t, root, "dep/dep.go", "package dep\n\nfunc Who() string { return \"dep\" }\n")
+	writeFile(t, root, "other/other.go", "package dep\n\nfunc Other() string { return \"other\" }\n")
+	writeFile(t, root, "p.go", `package impcol
+
+import "example.com/impcol/dep"
+
+func Get() string { return dep.Who() }
+`)
+	writeFile(t, root, "p_test.go", `package impcol
+
+import "testing"
+
+func TestWhiteBox(t *testing.T) {
+	if Get() != "dep" {
+		t.Fatal("bad")
+	}
+}
+`)
+	writeFile(t, root, "e_test.go", `package impcol_test
+
+import (
+	dep "example.com/impcol/other"
+	"testing"
+)
+
+func ExampleNothing() {
+	_ = dep.Other()
+	// Output:
+}
+`)
+	tests, err := discoverTests(filepath.Join(root, "p_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: filepath.Join(root, "p_test.go"), tests: tests}},
+		[]string{filepath.Join(root, "p.go")})
+	if !strings.Contains(src, "\t\"example.com/impcol/dep\"\n") {
+		t.Errorf("driver dropped the used import:\n%s", src)
+	}
+	if strings.Contains(src, "example.com/impcol/other") {
+		t.Errorf("driver kept the unused colliding import:\n%s", src)
+	}
+}
+
+// TestGenuineImportCollisionAliased covers the residual PKG-021 class:
+// two imports binding the same local name that are BOTH genuinely used
+// (by inlined declarations from different files). Emission must give
+// the second a unique explicit alias and rewrite its files' qualifier
+// references; the first keeps the natural name.
+func TestGenuineImportCollisionAliased(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/aliascol\n\ngo 1.21\n")
+	writeFile(t, root, "x/foo/foo.go", "package foo\n\nfunc X() int { return 1 }\n")
+	writeFile(t, root, "y/foo/foo.go", "package foo\n\nfunc Y() int { return 2 }\n")
+	writeFile(t, root, "p.go", `package aliascol
+
+import "example.com/aliascol/x/foo"
+
+func GetX() int { return foo.X() }
+`)
+	writeFile(t, root, "w_test.go", `package aliascol
+
+import "testing"
+
+func TestWhiteBox(t *testing.T) {
+	if GetX() != 1 {
+		t.Fatal("bad")
+	}
+}
+`)
+	writeFile(t, root, "e_test.go", `package aliascol_test
+
+import (
+	"example.com/aliascol/y/foo"
+	"testing"
+)
+
+func TestExternal(t *testing.T) {
+	if foo.Y() != 2 {
+		t.Fatal("bad")
+	}
+}
+`)
+	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "w_test.go"), tests: testsW},
+			{file: filepath.Join(root, "e_test.go"), tests: testsE},
+		},
+		[]string{filepath.Join(root, "p.go")})
+	// x/foo sorts first and keeps the natural name...
+	if !strings.Contains(src, "\t\"example.com/aliascol/x/foo\"\n") {
+		t.Errorf("driver lost the first import's natural name:\n%s", src)
+	}
+	// ...y/foo is explicitly aliased...
+	if !strings.Contains(src, "\tfoo2 \"example.com/aliascol/y/foo\"\n") {
+		t.Errorf("driver did not alias the colliding import:\n%s", src)
+	}
+	// ...and its file's qualifier references are rewritten.
+	if !strings.Contains(src, "foo2.Y()") {
+		t.Errorf("driver did not rewrite the qualifier to the alias:\n%s", src)
+	}
+	if !strings.Contains(src, "foo.X()") {
+		t.Errorf("driver rewrote a qualifier it should have left alone:\n%s", src)
+	}
+}
+
+// TestExtDeclCollisionRenamed is the regression test for PKG-025 and
+// PKG-030: the package under test and its external test package each
+// declare the same top-level name (legal under gc — separate packages),
+// which the driver's single-file flattening would redeclare. The
+// external test package yields: its declaration is renamed to a unique
+// suffix and its references are rewritten; the package under test keeps
+// the pristine name.
+func TestExtDeclCollisionRenamed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/declcol\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", `package declcol
+
+const bufSize = 16
+
+func Fill(n int) int {
+	if n < bufSize {
+		return bufSize
+	}
+	return n
+}
+`)
+	writeFile(t, root, "w_test.go", `package declcol
+
+import "testing"
+
+func TestWhiteBox(t *testing.T) {
+	if Fill(4) != bufSize {
+		t.Fatal("bad")
+	}
+}
+`)
+	writeFile(t, root, "e_test.go", `package declcol_test
+
+import "testing"
+
+const bufSize = 32
+
+func helper() int { return bufSize }
+
+func TestExternal(t *testing.T) {
+	if helper() != bufSize {
+		t.Fatal("bad")
+	}
+}
+`)
+	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "w_test.go"), tests: testsW},
+			{file: filepath.Join(root, "e_test.go"), tests: testsE},
+		},
+		[]string{filepath.Join(root, "p.go")})
+	// The package under test keeps the pristine name...
+	if !strings.Contains(src, "const bufSize = 16") {
+		t.Errorf("driver lost the package's own declaration:\n%s", src)
+	}
+	// ...the external test package's is renamed...
+	if !strings.Contains(src, "const bufSize2 = 32") {
+		t.Errorf("driver did not rename the external colliding declaration:\n%s", src)
+	}
+	// ...and its references follow the rename while the package's own
+	// references keep the pristine name.
+	if !strings.Contains(src, "return bufSize2") || !strings.Contains(src, "helper() != bufSize2") {
+		t.Errorf("driver did not rewrite the external references:\n%s", src)
+	}
+	if !strings.Contains(src, "if n < bufSize {") {
+		t.Errorf("driver rewrote a reference it should have left alone:\n%s", src)
+	}
+}
+
+// TestExtDeclShadowedLocalUntouched pins the scope-awareness of the
+// external-declaration rewrite: a local variable shadowing the renamed
+// name keeps working — neither its declaration nor its uses are
+// renamed.
+func TestExtDeclShadowedLocalUntouched(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/declshadow\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", `package declshadow
+
+var level = 1
+
+func Level() int { return level }
+`)
+	writeFile(t, root, "w_test.go", `package declshadow
+
+import "testing"
+
+func TestWhiteBox(t *testing.T) {
+	if Level() != 1 {
+		t.Fatal("bad")
+	}
+}
+`)
+	writeFile(t, root, "e_test.go", `package declshadow_test
+
+import "testing"
+
+var level = 2
+
+func TestExternal(t *testing.T) {
+	level := 3
+	if level != 3 {
+		t.Fatal("bad")
+	}
+	if Level() != 1 {
+		t.Fatal("bad")
+	}
+}
+`)
+	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "w_test.go"), tests: testsW},
+			{file: filepath.Join(root, "e_test.go"), tests: testsE},
+		},
+		[]string{filepath.Join(root, "p.go")})
+	if !strings.Contains(src, "var level2 = 2") {
+		t.Errorf("driver did not rename the external declaration:\n%s", src)
+	}
+	// The shadowing local keeps its name and its uses.
+	if !strings.Contains(src, "level := 3") {
+		t.Errorf("driver renamed a shadowing local's declaration:\n%s", src)
+	}
+	if !strings.Contains(src, "if level != 3") {
+		t.Errorf("driver renamed a shadowing local's use:\n%s", src)
+	}
+}
+
+// TestExtTestFuncCollisionRenamed pins the call-site half of the
+// external-declaration rename: when the white-box and external test
+// packages declare the same TestXxx (legal under gc — separate
+// packages), the external one is renamed AND the generated main calls
+// the renamed function for the external file's entry. Calling the
+// pristine name would silently run the wrong package's test.
+func TestExtTestFuncCollisionRenamed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/testcol\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", "package testcol\n")
+	writeFile(t, root, "w_test.go", `package testcol
+
+import "testing"
+
+var wbRan = false
+
+func TestSame(t *testing.T) { wbRan = true }
+`)
+	writeFile(t, root, "e_test.go", `package testcol_test
+
+import "testing"
+
+var extRan = false
+
+func TestSame(t *testing.T) { extRan = true }
+`)
+	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "w_test.go"), tests: testsW},
+			{file: filepath.Join(root, "e_test.go"), tests: testsE},
+		},
+		[]string{filepath.Join(root, "p.go")})
+	if !strings.Contains(src, "func TestSame(t *graalgoT,)") {
+		t.Errorf("driver lost the white-box test's pristine name:\n%s", src)
+	}
+	if !strings.Contains(src, "func TestSame2(") {
+		t.Errorf("driver did not rename the external test function:\n%s", src)
+	}
+	// The external file's main entry calls the renamed function; the
+	// white-box entry calls the pristine one.
+	if strings.Count(src, "TestSame2(tt)") != 1 {
+		t.Errorf("driver does not call the renamed test exactly once:\n%s", src)
+	}
+	if strings.Count(src, "TestSame(tt)") != 1 {
+		t.Errorf("driver does not call the white-box test exactly once:\n%s", src)
+	}
+}
+
+// TestExtDeclMethodReceiverRewritten pins the receiver-type half of the
+// external-declaration rewrite: when the external test package declares
+// a type colliding with the package under test's, methods on the
+// external type keep pointing at the renamed type.
+func TestExtDeclMethodReceiverRewritten(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/declrecv\n\ngo 1.21\n")
+	writeFile(t, root, "p.go", `package declrecv
+
+type Box struct{ v int }
+
+func (b Box) Get() int { return b.v }
+`)
+	writeFile(t, root, "w_test.go", `package declrecv
+
+import "testing"
+
+func TestWhiteBox(t *testing.T) {
+	if (Box{v: 1}).Get() != 1 {
+		t.Fatal("bad")
+	}
+}
+`)
+	writeFile(t, root, "e_test.go", `package declrecv_test
+
+import "testing"
+
+type Box struct{ w int }
+
+func (b Box) Sum() int { return b.w }
+
+func TestExternal(t *testing.T) {
+	if (Box{w: 2}).Sum() != 2 {
+		t.Fatal("bad")
+	}
+}
+`)
+	testsW, err := discoverTests(filepath.Join(root, "w_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	testsE, err := discoverTests(filepath.Join(root, "e_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{
+			{file: filepath.Join(root, "w_test.go"), tests: testsW},
+			{file: filepath.Join(root, "e_test.go"), tests: testsE},
+		},
+		[]string{filepath.Join(root, "p.go")})
+	if !strings.Contains(src, "type Box struct{ v int }") {
+		t.Errorf("driver lost the package's own type:\n%s", src)
+	}
+	if !strings.Contains(src, "type Box2 struct{ w int }") {
+		t.Errorf("driver did not rename the external type:\n%s", src)
+	}
+	if !strings.Contains(src, "func (b Box2) Sum() int") {
+		t.Errorf("driver did not rewrite the method receiver type:\n%s", src)
+	}
+	if !strings.Contains(src, "func (b Box) Get() int") {
+		t.Errorf("driver rewrote the package's own method:\n%s", src)
+	}
+}
+
 func TestIsSelfImportShortPath(t *testing.T) {
 	fake := t.TempDir()
 	writeFile(t, fake, "src/mypkg/mypkg.go", "package mypkg\n")
