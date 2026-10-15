@@ -6261,6 +6261,14 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 				return true
 			}
 			fi, ok := e.funcByObj[fn]
+			if !ok {
+				// Fallback to (package path, func name) for functions
+				// from packages type-checked in isolation.
+				if e.synthFuncIDs != nil && fn.Pkg() != nil {
+					key := fn.Pkg().Path() + "." + fn.Name()
+					fi, ok = e.synthFuncIDs[key]
+				}
+			}
 			if !ok || !fi.isTemplate || fi.recv != nil {
 				return true
 			}
@@ -8535,6 +8543,16 @@ func (e *exporter) exportIdent(id *ast.Ident) (*Node, error) {
 // instantiation via info.Instances.
 func (e *exporter) exportFuncValue(id *ast.Ident, obj *types.Func, fields map[string]any) error {
 	fi, ok := e.funcByObj[obj]
+	if !ok {
+		// Fallback to (package path, func name) for functions from
+		// packages type-checked in isolation (synthetic or disk): the
+		// *types.Func pointer from the importing package differs from
+		// the one registered at import time.
+		if e.synthFuncIDs != nil && obj.Pkg() != nil {
+			key := obj.Pkg().Path() + "." + obj.Name()
+			fi, ok = e.synthFuncIDs[key]
+		}
+	}
 	if !ok {
 		return fmt.Errorf("gofrontend: unknown function %s", obj.Name())
 	}
