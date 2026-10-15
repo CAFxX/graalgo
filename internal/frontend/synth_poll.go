@@ -40,6 +40,37 @@ import "sync"
 import "syscall"
 import "time"
 
+// TEMPORARY: synthetic until ASM backend (his 2026-10-15 order).
+// String is required by the real net package (rawconn.go).
+// Verbatim from gc 1.27.1 internal/poll/fd.go.
+type String string
+
+// TEMPORARY: synthetic until ASM backend (his 2026-10-15 order).
+// Hook variables and error types required by the real net package.
+// Verbatim from gc 1.27.1 internal/poll.
+var CloseFunc func(int) error = syscall.Close
+var AcceptFunc func(int) (int, syscall.Sockaddr, error) = syscall.Accept
+var Accept4Func func(int, int) (int, syscall.Sockaddr, error) = syscall.Accept4
+
+type DeadlineExceededError struct{}
+
+func (e *DeadlineExceededError) Error() string   { return "i/o timeout" }
+func (e *DeadlineExceededError) Timeout() bool   { return true }
+func (e *DeadlineExceededError) Temporary() bool { return true }
+
+var TestHookDidWritev = func(wrote int) {}
+var TestHookDidSendFile = func(dstFD *FD, src uintptr, written int64, err error, handled bool) {}
+
+const failPollSpliceSendfile = "poll.Splice/SendFile: temporary until ASM backend (his 2026-10-15 order)"
+
+func Splice(dst, src *FD, remain int64) (written int64, handled bool, err error) {
+	panic(failPollSpliceSendfile)
+}
+
+func SendFile(dstFD *FD, src uintptr, size int64) (n int64, err error, handled bool) {
+	panic(failPollSpliceSendfile)
+}
+
 // ---------------------------------------------------------------------------
 // Linkname intrinsics (net-fork-contract.md): symbols internal/poll.*,
 // bound by graalgo.p3net.GoNetpoll. All params/results are int64/uintptr
@@ -235,9 +266,16 @@ func IsPollDescriptor(fd uintptr) bool {
 
 // FD is the synthetic poll file descriptor: a socket cookie plus its
 // pollDesc. Only Sysfd is set by the owner before Init.
+// TEMPORARY: synthetic until ASM backend (his 2026-10-15 order).
+// Sysfd changed from uintptr to int, and IsStream/ZeroReadIsEOF added,
+// to match the real poll.FD layout (gc 1.27.1 internal/poll/fd_unix.go).
+// The real net package sets these fields in struct literals.
 type FD struct {
-	Sysfd uintptr
+	Sysfd int
 	pd    pollDesc
+
+	IsStream      bool
+	ZeroReadIsEOF bool
 
 	mu     sync.Mutex
 	closed bool
@@ -256,7 +294,10 @@ func (fd *FD) decref() {}
 
 // Init registers the socket cookie with the netpoller. The fork calls
 // this before bind/listen/connect (net-fork-contract.md call order).
-func (fd *FD) Init() error {
+// TEMPORARY: synthetic until ASM backend (his 2026-10-15 order).
+// Signature changed to match the real poll.FD.Init(net string, pollable bool)
+// (gc 1.27.1). The net/pollable args are accepted for API compatibility.
+func (fd *FD) Init(net string, pollable bool) error {
 	return fd.pd.init(fd)
 }
 
@@ -283,6 +324,23 @@ func (fd *FD) ClosePoll() {
 	fd.mu.Unlock()
 	fd.pd.close()
 }
+
+// ---------------------------------------------------------------------------
+// TEMPORARY: synthetic until ASM backend (his 2026-10-15 order).
+// Real-net compatibility: poll.FD methods required by the real net package
+// (fd_posix.go, sock_posix.go, etc.). These are stubs: the real net's
+// socket operations go through these methods. Calling them panics with a
+// clear "temporary until ASM" message.
+// ---------------------------------------------------------------------------
+
+const failPollFD = "poll.FD method: temporary until ASM backend (his 2026-10-15 order)"
+
+func (fd *FD) Close() error { panic(failPollFD) }
+func (fd *FD) Read(p []byte) (int, error) { panic(failPollFD) }
+func (fd *FD) Write(p []byte) (int, error) { panic(failPollFD) }
+func (fd *FD) Accept() (int, syscall.Sockaddr, string, error) { panic(failPollFD) }
+func (fd *FD) Dup() (int, string, error) { panic(failPollFD) }
+func (fd *FD) Shutdown(how int) error { panic(failPollFD) }
 
 // ---------------------------------------------------------------------------
 // Errors and errno helpers (from gc errno_unix.go / fd.go, unix half).
