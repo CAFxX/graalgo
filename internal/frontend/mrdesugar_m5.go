@@ -1253,6 +1253,19 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// interfaces). Concrete *bufio.Reader has the m7 entry; the pair
 	// lives in synth_io.go.
 	{"io", "ReadByte", "ioByteReaderPair", []string{"c", "err"}},
+	// P3 (WS D, Gate-1): io.WriterTo.WriteTo and io.ReaderFrom.ReadFrom.
+	// bufio (a dependency of image/png and many others) calls both on
+	// interface values: r.WriteTo(w) on io.WriterTo in (*Reader).WriteTo,
+	// readerFrom.ReadFrom(r) on io.ReaderFrom in (*Writer).ReadFrom.
+	// The result shape (int64, error) differs from Write's (int, error),
+	// so they need their own pair types (ioWriteToPair, ioReadFromPair
+	// in synth_io.go); the net writePair/readFromPair entries do not
+	// match structurally (int vs int64, and 3-result for PacketConn).
+	// Matching stays structural on (method name, result count, positional
+	// result types) per classifyIfaceMultiResultCall, so user-declared
+	// interfaces with the same shape dispatch too.
+	{"io", "WriteTo", "ioWriteToPair", []string{"n", "err"}},
+	{"io", "ReadFrom", "ioReadFromPair", []string{"n", "err"}},
 	// P3-M8 (wave 2, reflect): the Type interface's multi-result methods.
 	// The itab maps each to the concrete rtype's pair-returning
 	// __-helper (wired via multiResultHelperFor/methodTableEntries); the
