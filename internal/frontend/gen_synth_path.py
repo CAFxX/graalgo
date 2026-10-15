@@ -1,9 +1,33 @@
 #!/usr/bin/env python3
 # P3-M9 (tier1c): generate synth_path.go (`path`) from gc 1.27.1's path.
 # See header for deviations.
+import os
 import re
+import subprocess
 
-GOROOT = "/home/hatch/tools/go/src/path"
+# --- P1-R1-2 portability prologue: GOROOT and OUTDIR are environment-driven
+# so the generator is CI-runnable and never writes outside the repo.
+#   GRAALGO_GOROOT   Go installation whose gc 1.27.1 sources are read
+#                    (default: `go env GOROOT`).
+#   GEN_SYNTH_OUTDIR directory for the generated file(s) (default: this
+#                    script's directory, i.e. in-place regeneration).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+def _graalgo_goroot():
+    g = os.environ.get("GRAALGO_GOROOT")
+    if g:
+        return g
+    try:
+        return subprocess.run(["go", "env", "GOROOT"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except Exception as e:
+        raise SystemExit(
+            "gen_synth: cannot determine GOROOT; set GRAALGO_GOROOT (%s)" % e)
+
+OUTDIR = os.environ.get("GEN_SYNTH_OUTDIR", _HERE)
+
+GOROOT = os.path.join(_graalgo_goroot(), "src", "path")
+
 
 HEADER = '''// P3-M9 (tier1c): synthetic `path` package.
 //
@@ -66,8 +90,9 @@ def main():
     # Replace Split with a fail-fast stub (exact gc signature for
     # type-checking; 2-target call sites desugar to __pathSplit via the
     # Appendix-M table in mrdesugar_m5.go; every other position fails fast).
-    src = re.sub(
-        r"^func Split\(.*?^}\n",
+    # The stub is emitted immediately before Dir's doc comment (not in gc's
+    # Split position between Clean and Join).
+    SPLIT_STUB = (
         "// Split splits path immediately following the final slash, separating it\n"
         "// into a directory and file name component. If there is no slash in path,\n"
         "// Split returns an empty dir and file set to path.\n"
@@ -77,16 +102,23 @@ def main():
         "// position fails fast. Body never runs.)\n"
         "func Split(path string) (dir, file string) {\n"
         "\tpanic(\"path: Split: not in M9 scope (multi-result calls need the M9 desugar; re-test when WS D lands)\")\n"
-        "}\n",
-        src, count=1, flags=re.M | re.S)
+        "}\n"
+    )
+    src = re.sub(r"^func Split\(.*?^}\n", "", src, count=1, flags=re.M | re.S)
     # Rewrite Dir's internal Split call.
     src = src.replace(
         "\tdir, _ := Split(path)\n\treturn Clean(dir)",
         "\t// P3-M9: Split -> __pathSplit (no multi-result calls in synthetic).\n\treturn Clean(__pathSplit(path).dir)",
     )
     parts.append(src.rstrip() + "\n\n")
-    out = "".join(parts).rstrip() + "\n`\n"
-    with open("/home/hatch/workspace/graalgo-m9/phases/phase1/frontend/synth_path.go", "w") as f:
+    out = "".join(parts)
+    # The Split stub sits immediately before Dir's doc comment (not in gc's
+    # Split position between Clean and Join).
+    anchor = "// After dropping the final element using [Split],"
+    assert out.count(anchor) == 1, "Dir doc anchor not found exactly once"
+    out = out.replace(anchor, SPLIT_STUB + "\n" + anchor)
+    out = out.rstrip() + "\n`\n"
+    with open(os.path.join(OUTDIR, "synth_path.go"), "w") as f:
         f.write(out)
     print("wrote synth_path.go", len(out), "bytes")
 
