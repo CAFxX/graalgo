@@ -704,15 +704,19 @@ func syntheticSyncPackage() *types.Package {
 		return types.NewTuple(v)
 	}
 
-	// Locker interface (sync.Locker): result type of RWMutex.RLocker only.
-	// Never callable in M2 (RLocker is out of scope); the interface just
-	// needs to exist for the signature to type-check.
-	locker := types.NewInterfaceType([]*types.Func{
+	// Locker interface (sync.Locker): gc 1.27.1 exact definition
+	// (verified against ~/tools/go/src/sync/mutex.go). Exported in
+	// package scope so user code can name sync.Locker (Caddy survey
+	// gap #38). Also the result type of RWMutex.RLocker.
+	lockerIface := types.NewInterfaceType([]*types.Func{
 		types.NewFunc(token.NoPos, pkg, "Lock",
 			types.NewSignatureType(nil, nil, nil, nil, nil, false)),
 		types.NewFunc(token.NoPos, pkg, "Unlock",
 			types.NewSignatureType(nil, nil, nil, nil, nil, false)),
 	}, nil).Complete()
+	lockerName := types.NewTypeName(token.NoPos, pkg, "Locker", nil)
+	pkg.Scope().Insert(lockerName)
+	locker := types.NewNamed(lockerName, lockerIface, nil)
 
 	newPrimitive := func(name string) *types.Named {
 		tname := types.NewTypeName(token.NoPos, pkg, name, nil)
@@ -783,6 +787,44 @@ func syntheticSyncPackage() *types.Package {
 	onceFuncSig := types.NewSignatureType(nil, nil, nil,
 		tuple(param("f", funcT)), tuple(param("", funcT)), false)
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "OnceFunc", onceFuncSig))
+
+	// Caddy survey gap #3 (Go 1.21+): OnceValue/OnceValues. gc 1.27.1
+	// exact signatures (verified against ~/tools/go/src/sync/oncefunc.go):
+	//   func OnceValue[T any](f func() T) func() T
+	//   func OnceValues[T1, T2 any](f func() (T1, T2)) func() (T1, T2)
+	// Note: OnceValues takes TWO type params [T1, T2].
+	onceValueT := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), anyT)
+	onceValueFuncT := types.NewSignatureType(nil, nil, nil, nil,
+		tuple(param("", onceValueT)), false) // func() T
+	onceValueSig := types.NewSignatureType(nil, nil, []*types.TypeParam{onceValueT},
+		tuple(param("f", onceValueFuncT)), tuple(param("", onceValueFuncT)), false)
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "OnceValue", onceValueSig))
+
+	onceValuesT1 := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T1", nil), anyT)
+	onceValuesT2 := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T2", nil), anyT)
+	onceValuesFuncT := types.NewSignatureType(nil, nil, nil, nil,
+		types.NewTuple(param("", onceValuesT1), param("", onceValuesT2)), false) // func() (T1, T2)
+	onceValuesSig := types.NewSignatureType(nil, nil, []*types.TypeParam{onceValuesT1, onceValuesT2},
+		tuple(param("f", onceValuesFuncT)), tuple(param("", onceValuesFuncT)), false)
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "OnceValues", onceValuesSig))
+
+	// Caddy survey gap #39: sync.Cond + NewCond. gc 1.27.1 exact shape
+	// (verified against ~/tools/go/src/sync/cond.go): Cond has exported
+	// field L Locker; noCopy/notify/checker are unexported and never
+	// materialize on the opaque Java value (ADR-0002 D1). Methods
+	// Wait/Signal/Broadcast have pointer receivers, like the real package.
+	// NewCond: func NewCond(l Locker) *Cond.
+	condName := types.NewTypeName(token.NoPos, pkg, "Cond", nil)
+	pkg.Scope().Insert(condName)
+	cond := types.NewNamed(condName, types.NewStruct([]*types.Var{
+		types.NewField(token.NoPos, pkg, "L", locker, true),
+	}, nil), nil)
+	addMethod(cond, "Wait", nil, nil)
+	addMethod(cond, "Signal", nil, nil)
+	addMethod(cond, "Broadcast", nil, nil)
+	newCondSig := types.NewSignatureType(nil, nil, nil,
+		tuple(param("l", locker)), tuple(param("", types.NewPointer(cond))), false)
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "NewCond", newCondSig))
 
 	// fix-linkname (Caddy/godebug lane): sync.Map. gc 1.27.1 exact method
 	// signatures (all pointer receivers; verified against
