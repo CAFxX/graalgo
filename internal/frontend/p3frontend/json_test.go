@@ -81,6 +81,13 @@ func phase1SyntheticJsonPackage(t *testing.T) *types.Package {
 				bytesPkg.MarkComplete()
 				return bytesPkg, nil
 			}
+			if path == "reflect" {
+				// Minimal stub (P3-M8): the synthetic json source uses
+				// reflect.Type (error struct fields, jsonTypeString),
+				// reflect.Value and reflect.StructField (error struct
+				// fields). Shared with the mirror so both sides agree.
+				return syntheticReflectStub(), nil
+			}
 			return nil, fmt.Errorf("unexpected synthetic import %q", path)
 		}),
 	}
