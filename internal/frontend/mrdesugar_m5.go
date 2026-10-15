@@ -125,6 +125,18 @@ const (
 	// extraction proceeds like mrM7. syncMapOp carries the method name
 	// for wire-node construction and arity checks.
 	mrSyncMap
+	// mrReflectTypelinks: reflect.compiledTypelinks (a //go:linknamestd
+	// bodyless function). Like mrRuntimeStack there is no __-helper:
+	// the desugar builds the "reflectop" wire node (op="typelinks")
+	// directly, and field extraction proceeds like mrM7. The backend
+	// materializes []*abi.Type from its type registry.
+	mrReflectTypelinks
+	// mrReflectRuntime: a bodyless //go:noescape runtime function in the
+	// reflect package (e.g. chanrecv). Like mrReflectTypelinks there is
+	// no __-helper: the desugar builds the mapped wire node (or a
+	// runtime trap if unimplemented) directly, and field extraction
+	// proceeds like mrM7. The op is carried in helperName.
+	mrReflectRuntime
 )
 
 // rtStackOpKind selects the intrinsic wire node for an mrRuntimeStack plan.
@@ -360,19 +372,6 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}},
 	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}},
 	{"syscall", "RawSyscall6", "", "__rawsyscall6", "syscallTriple", []string{"r1", "r2", "err"}},
-	// P3-M8 (wave 2, reflect): multi-result members desugared via the
-	// single-result __-helpers. Select is package-level; the Value methods
-	// are on the Value struct; the Type methods are on rtype but usually
-	// called via the Type interface (the classify function retries with
-	// recvType="rtype" for reflect interface methods); StructTag.Lookup is
-	// on the named string type StructTag.
-	{"reflect", "Select", "", "__reflectSelect", "reflectSelectTriple", []string{"chosen", "recv", "recvOK"}},
-	{"reflect", "FieldByIndexErr", "Value", "__reflectFieldByIndexErr", "reflectValuePair", []string{"v", "err"}},
-	{"reflect", "TryRecv", "Value", "__reflectTryRecv", "reflectValueBoolPair", []string{"x", "ok"}},
-	{"reflect", "MethodByName", "rtype", "__reflectTMethodByName", "reflectMethodPair", []string{"m", "ok"}},
-	{"reflect", "FieldByName", "rtype", "__reflectTFieldByName", "reflectStructFieldPair", []string{"f", "ok"}},
-	{"reflect", "FieldByNameFunc", "rtype", "__reflectTFieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}},
-	{"reflect", "Lookup", "StructTag", "__reflect_taglookup", "reflectTagPair", []string{"value", "ok"}},
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
@@ -1426,48 +1425,70 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	// func's package path.
 	// P3-M9 (WS D): user-defined package-level multi-result functions
 	// called as `foo()` (Ident, not SelectorExpr).
-	if id, ok := c.Fun.(*ast.Ident); ok {
-		if obj, ok := e.info.Uses[id].(*types.Func); ok {
-			if mrInfo, ok := e.userMRFuncs[obj]; ok {
-				return &mrPlan{
-					kind:       mrUser,
-					tmpType:    mrInfo.pairType,
-					pairFields: mrInfo.pairFields,
+	// real-reflect (Phase 3): the target may carry explicit type
+	// arguments (shortFloat[F](...) in internal/strconv) — unwrap
+	// index expressions to the called identifier.
+	if id := callTargetIdent(c.Fun); id != nil {
+		if _, isSel := unwrapSelector(c.Fun); !isSel {
+			if obj, ok := e.info.Uses[id].(*types.Func); ok {
+				if mrInfo, ok := e.userMRFuncs[obj]; ok {
+					return &mrPlan{
+						kind:       mrUser,
+						tmpType:    mrInfo.pairType,
+						pairFields: mrInfo.pairFields,
+					}
+				}
+				// P3-M9 (WS D): same-package Ident calls to synthetic
+				// multi-result functions (e.g. parseSignature in the
+				// synthetic crypto/ecdsa package, 3 results) desugar via
+				// the tables, like package-qualified calls. The
+				// multi-result stub is skipped at synthetic import; the
+				// __-helper carries the real implementation. N-result
+				// generally: the tables and desugarExtract are already
+				// arity-generic (want := len(plan.pairFields)).
+				if obj.Pkg() != nil {
+					pkgPath := obj.Pkg().Path()
+					targs := targsFromInstances(e, id)
+					// real-reflect (Phase 3): reflect.compiledTypelinks is
+					// a //go:linknamestd bodyless function; it desugars to
+					// the "reflectop" typelinks wire node (backend
+					// materializes []*abi.Type from its type registry).
+					if pkgPath == "reflect" && obj.Name() == "compiledTypelinks" {
+						if plan := e.classifyReflectTypelinks(obj); plan != nil {
+							return plan
+						}
+					}
+					// real-reflect (Phase 3): other bodyless //go:noescape
+					// runtime functions in reflect (e.g. chanrecv) desugar
+					// to their wire node (or a runtime trap).
+					if pkgPath == "reflect" && e.isBodylessFunc(obj) {
+						if plan := e.classifyReflectRuntime(obj); plan != nil {
+							return plan
+						}
+					}
+					if plan := classifyM7MultiResultCall(pkgPath, obj, targs); plan != nil {
+						return plan
+					}
+					if plan := classifyOsMultiResultCall(pkgPath, obj, targs); plan != nil {
+						return plan
+					}
+					if plan := classifyM8MultiResultCall(pkgPath, obj, targs); plan != nil {
+						return plan
+					}
+					if plan := classifyIoMultiResultCall(pkgPath, obj, targs); plan != nil {
+						return plan
+					}
+					if plan := classifyM9MultiResultCall(pkgPath, obj, targs); plan != nil {
+						return plan
+					}
+					// WS G (P3-M9): disk-package multi-result (dynamic table).
+					if plan := classifyDiskMultiResultCall(pkgPath, obj, targs); plan != nil {
+						return plan
+					}
 				}
 			}
-			// P3-M9 (WS D): same-package Ident calls to synthetic
-			// multi-result functions (e.g. parseSignature in the
-			// synthetic crypto/ecdsa package, 3 results) desugar via
-			// the tables, like package-qualified calls. The
-			// multi-result stub is skipped at synthetic import; the
-			// __-helper carries the real implementation. N-result
-			// generally: the tables and desugarExtract are already
-			// arity-generic (want := len(plan.pairFields)).
-			if obj.Pkg() != nil {
-				pkgPath := obj.Pkg().Path()
-				targs := targsFromInstances(e, id)
-				if plan := classifyM7MultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				if plan := classifyOsMultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				if plan := classifyM8MultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				if plan := classifyIoMultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				if plan := classifyM9MultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-				// WS G (P3-M9): disk-package multi-result (dynamic table).
-				if plan := classifyDiskMultiResultCall(pkgPath, obj, targs); plan != nil {
-					return plan
-				}
-			}
+			return nil
 		}
-		return nil
 	}
 	sel, ok := unwrapSelector(c.Fun)
 	if !ok {
@@ -1986,15 +2007,6 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 			recvName = nt.Obj().Name()
 		}
 	}
-	// P3-M8 (wave 2, reflect): the Type interface's multi-result methods
-	// (MethodByName, FieldByName, FieldByNameFunc) are usually called via
-	// the Type interface, where the selected method has no receiver. Retry
-	// such reflect interface methods against the rtype entries.
-	if recvName == "" && pkgPath == "reflect" {
-		if plan := classifyM7MultiResultCallRtype(pkgPath, fn, targs); plan != nil {
-			return plan
-		}
-	}
 	for _, mf := range m7MultiResultFuncs {
 		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != recvName {
 			continue
@@ -2090,6 +2102,168 @@ func classifyRuntimeStackMethod(f *types.Func, selection *types.Selection) *mrPl
 		}
 	}
 	return nil
+}
+
+// isBodylessFunc reports whether obj is a bodyless function declaration
+// (e.g. a //go:noescape or //go:linkname stub in an imported package).
+func (e *exporter) isBodylessFunc(obj *types.Func) bool {
+	fi, ok := e.funcByObj[obj]
+	if !ok || fi.fd == nil {
+		return false
+	}
+	return fi.fd.Body == nil
+}
+
+// classifyReflectTypelinks recognizes reflect.compiledTypelinks (a
+// //go:linknamestd bodyless function returning ([]*abi.Type,
+// [][]*abi.Type)). It returns an mrReflectTypelinks plan whose tmpType
+// is a synthetic pair struct {f1 []*abi.Type; f2 [][]*abi.Type};
+// desugarReflectTypelinks builds the "reflectop" typelinks wire node
+// directly (no __-helper exists), and field extraction proceeds like
+// mrM7. The backend materializes the slices from its type registry.
+func (e *exporter) classifyReflectTypelinks(obj *types.Func) *mrPlan {
+	sig, ok := obj.Type().(*types.Signature)
+	if !ok || sig.Results().Len() != 2 {
+		return nil
+	}
+	// Extract the abi.Type named type from the first result ([]*abi.Type).
+	r0 := sig.Results().At(0).Type()
+	s0, ok := r0.(*types.Slice)
+	if !ok {
+		return nil
+	}
+	p0, ok := s0.Elem().(*types.Pointer)
+	if !ok {
+		return nil
+	}
+	abiType, ok := types.Unalias(p0.Elem()).(*types.Named)
+	if !ok || abiType.Obj() == nil || abiType.Obj().Name() != "Type" ||
+		abiType.Obj().Pkg() == nil || abiType.Obj().Pkg().Path() != "internal/abi" {
+		return nil
+	}
+	// Synthetic pair struct type (named, for synthPairField).
+	pkg := obj.Pkg()
+	tn := types.NewTypeName(token.NoPos, pkg, "__reflect_typelinksPair", nil)
+	ptrToAbi := types.NewPointer(abiType)
+	slice1 := types.NewSlice(ptrToAbi)
+	slice2 := types.NewSlice(slice1)
+	fields := []*types.Var{
+		types.NewVar(token.NoPos, pkg, "f1", slice1),
+		types.NewVar(token.NoPos, pkg, "f2", slice2),
+	}
+	nt := types.NewNamed(tn, types.NewStruct(fields, nil), nil)
+	return &mrPlan{
+		kind:       mrReflectTypelinks,
+		tmpType:    nt,
+		pairFields: []string{"f1", "f2"},
+	}
+}
+
+// reflectRuntimeTrapOp maps a reflect runtime //go:noescape bodyless
+// function to its wire-node op. Functions not in the table trap at
+// runtime (fail-fast, not silent). The table grows as the backend
+// implements primitives; the trap is the safe default.
+func reflectRuntimeTrapOp(name string) (op string, ok bool) {
+	switch name {
+	case "compiledTypelinks":
+		return "typelinks", true
+	}
+	return "", false
+}
+
+// classifyReflectRuntime recognizes a bodyless //go:noescape runtime
+// function in the reflect package (e.g. chanrecv). It returns an
+// mrReflectRuntime plan whose tmpType is a synthetic pair struct built
+// from the result types; the desugar builds the mapped wire node (or a
+// runtime trap if unimplemented), and field extraction proceeds like
+// mrM7.
+func (e *exporter) classifyReflectRuntime(obj *types.Func) *mrPlan {
+	sig, ok := obj.Type().(*types.Signature)
+	if !ok || sig.Results().Len() == 0 {
+		return nil
+	}
+	op, ok := reflectRuntimeTrapOp(obj.Name())
+	if !ok {
+		op = "trap"
+	}
+	// Synthetic pair struct from the result types.
+	pkg := obj.Pkg()
+	tn := types.NewTypeName(token.NoPos, pkg, "__reflect_rtPair_"+obj.Name(), nil)
+	var fields []*types.Var
+	var names []string
+	for i := 0; i < sig.Results().Len(); i++ {
+		fname := fmt.Sprintf("f%d", i+1)
+		fields = append(fields, types.NewVar(token.NoPos, pkg, fname, sig.Results().At(i).Type()))
+		names = append(names, fname)
+	}
+	nt := types.NewNamed(tn, types.NewStruct(fields, nil), nil)
+	return &mrPlan{
+		kind:       mrReflectRuntime,
+		tmpType:    nt,
+		pairFields: names,
+		// The op is carried via helperName (repurposed; no helper exists).
+		helperName: op,
+	}
+}
+
+// desugarReflectTypelinks desugars first, rest := reflect.compiledTypelinks().
+// Like desugarRuntimeStack there is no __-helper: the "reflectop" wire node
+// (op="typelinks") is built directly with the pair-typed result; the
+// __p5mr_N temp declaration and field extraction then proceed exactly like
+// mrM7 via desugarExtract. The backend fills f1 with the materialized
+// []*abi.Type (all known types) and f2 with nil (no plugin modules).
+func (e *exporter) desugarReflectTypelinks(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	if len(c.Args) != 0 {
+		return nil, fmt.Errorf("gofrontend: reflect.compiledTypelinks takes no arguments")
+	}
+	tmpTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	call := e.node("reflectop", c, map[string]any{
+		"op":   "typelinks",
+		"args": []*Node{},
+		"type": tmpTid,
+	})
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, call, nil)
+}
+
+// desugarReflectRuntime desugars a call to a bodyless //go:noescape
+// runtime function in the reflect package (e.g. selected, ok :=
+// chanrecv(ch, nb, p)). Like desugarReflectTypelinks there is no
+// __-helper: the wire node (plan.helperName, "trap" if unimplemented)
+// is built directly with the pair-typed result; the __p5mr_N temp
+// declaration and field extraction then proceed exactly like mrM7 via
+// desugarExtract.
+func (e *exporter) desugarReflectRuntime(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	args, err := e.exportCallArgs(c)
+	if err != nil {
+		return nil, err
+	}
+	tmpTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	call := e.node("reflectop", c, map[string]any{
+		"op":   plan.helperName,
+		"args": args,
+		"type": tmpTid,
+	})
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, call, nil)
 }
 
 // classifySyncMapMethod recognizes the synthetic sync package's
@@ -2657,40 +2831,6 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 	return fi, true
 }
 
-// classifyM7MultiResultCallRtype retries a reflect interface method
-// against the rtype entries (P3-M8 wave 2).
-func classifyM7MultiResultCallRtype(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
-	sig, ok := fn.Type().(*types.Signature)
-	if !ok {
-		return nil
-	}
-	for _, mf := range m7MultiResultFuncs {
-		if mf.pkgPath != pkgPath || mf.name != fn.Name() || mf.recvType != "rtype" {
-			continue
-		}
-		if sig.Results().Len() != len(mf.pairFields) {
-			return nil
-		}
-		sp := getSyntheticPackage(mf.pkgPath)
-		obj := sp.pkg.Scope().Lookup(mf.pairType)
-		if obj == nil {
-			return nil
-		}
-		nt, _ := obj.Type().(*types.Named)
-		if nt == nil {
-			return nil
-		}
-		nt = instantiatePairType(nt, targs)
-		return &mrPlan{
-			kind: mrM7, helperPkg: mf.pkgPath,
-			helperName: mf.helper,
-			tmpType:    nt, pairFields: mf.pairFields,
-			prependRecv: true,
-		}
-	}
-	return nil
-}
-
 // isDeadlineMethod reports whether f is the synthetic context package's
 // Deadline method (2 results). The mrDeadline desugar path is retained
 // defense-in-depth for WS D (see the package header); in M5 it is
@@ -2812,6 +2952,16 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 	// "syncop" wire node directly (no __-helper exists).
 	if plan.kind == mrSyncMap {
 		return e.desugarSyncMap(s, c, plan, define)
+	}
+	// mrReflectTypelinks: reflect.compiledTypelinks builds the
+	// "reflectop" typelinks wire node directly (no __-helper exists).
+	if plan.kind == mrReflectTypelinks {
+		return e.desugarReflectTypelinks(s, c, plan, define)
+	}
+	// mrReflectRuntime: bodyless //go:noescape runtime functions build
+	// their wire node directly (no __-helper exists).
+	if plan.kind == mrReflectRuntime {
+		return e.desugarReflectRuntime(s, c, plan, define)
 	}
 	helperFn, err := e.multiResultHelper(plan)
 	if err != nil {
@@ -3496,7 +3646,7 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			return nil, err
 		}
 		extracts = []*Node{conv, mcall}
-	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField, mrRuntimeStack, mrSyncMap:
+	case mrDeadline, mrParseDur, mrXmlToken, mrM7, mrIfaceMethod, mrUser, mrFuncField, mrRuntimeStack, mrSyncMap, mrReflectTypelinks, mrReflectRuntime:
 		for i, field := range plan.pairFields {
 			sel, err := e.synthPairField(c, tmpName, tmpID, tmpTid, plan.tmpType, field, i)
 			if err != nil {
@@ -3515,8 +3665,10 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			// and index LHS (e.g., a[i], err = strconv.Atoi(s)) in the
 			// assignment case via exportAssignable. Define (:=) with a
 			// non-identifier lhs is invalid Go, so it still fails below.
+			// real-reflect (Phase 3): star LHS (e.g., *p, ok = chanrecv(...))
+			// also goes via exportAssignable in the assignment branch.
 			switch lhs.(type) {
-			case *ast.SelectorExpr, *ast.IndexExpr:
+			case *ast.SelectorExpr, *ast.IndexExpr, *ast.StarExpr:
 				// OK: handled by exportAssignable in the assignment branch.
 			default:
 				return nil, scopeErrorf("multi-result desugar with non-identifier lhs %T is not supported in frontend/v1 scope (WS D)", lhs)

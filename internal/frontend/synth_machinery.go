@@ -3,9 +3,11 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/parser"
 	"go/token"
 	"go/types"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -96,8 +98,13 @@ var syntheticSources = map[string]string{
 	// resolveDiskPackageDir admits the real package (the guard there
 	// rejects synthetic-overlay paths). internal/reflectlite is a pure
 	// adapter; iter is the minimal generic sequence declarations.
+	// internal/cpu is synthetic (synth_cpu.go): the feature detection is
+	// assembly with no portable equivalent, and the backend has no
+	// CPUID-gated assembly consumers, so all feature bits stay false and
+	// importers (internal/runtime/maps) take portable paths.
 	"internal/reflectlite": syntheticReflectliteSource,
 	"iter":                 syntheticIterSource,
+	"internal/cpu":         syntheticCpuSource,
 	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_structs.go,
 	// synth_bytealg.go). internal/bytealg is synthetic-only, like
 	// internal/reflectlite: user imports of internal/* are not admitted by
@@ -1736,7 +1743,102 @@ func (e *exporter) exportAbiFuncPCDecl(fi *funcDeclInfo) (*Node, error) {
 	return e.node("funcdecl", fd, fields), nil
 }
 
-// exportTimeOp lowers (*time.Timer).Stop/Reset and (*time.Ticker).Stop/
+// exportIntrinsicTrapDecl emits the declaration of a bodyless gc-backend
+// intrinsic from an imported package (real-reflect Phase 3) as a funcdecl
+// whose body is a runtime panic trap:
+//
+//	func GetCallerPC() uintptr { panic("<pkg>.GetCallerPC: not implemented on graalgo (gc backend intrinsic)") }
+//
+// Covered: internal/runtime/sys intrinsics (GetCallerPC, GetCallerSP, ...,
+// every in-tree call site is race-guarded) and //go:noescape asm stubs
+// (maps.memHashAES, ... — every in-tree call site is feature-guarded, e.g.
+// UseAeshash which is false with the synthetic internal/cpu). The traps
+// are unreachable in practice; an actual call fails fast and loud instead
+// of miscompiling. The dense function table entry keeps the backend's
+// funcs array well-formed, mirroring exportAbiFuncPCDecl. Scoped to
+// imported (synthetic/disk) declarations: user code keeps the historical
+// "without body" scope error.
+func (e *exporter) exportIntrinsicTrapDecl(fi *funcDeclInfo) (*Node, error) {
+	// real-reflect (Phase 3): multi-result stubs use a synthetic pair
+	// type as the single result (mirroring the disk MR transform); the
+	// call-site desugar (classifyReflectRuntime) builds the wire node
+	// directly with the pair-typed result. The backend v1 cannot build
+	// multi-result funcdecls, so the pair form is required.
+	sig := fi.sig
+	var pairType types.Type
+	if sig.Results().Len() > 1 {
+		// Build synthetic pair struct from result types.
+		pkg := fi.obj.Pkg()
+		tn := types.NewTypeName(token.NoPos, pkg, "__reflect_trapPair_"+fi.obj.Name(), nil)
+		var fields []*types.Var
+		for i := 0; i < sig.Results().Len(); i++ {
+			fname := fmt.Sprintf("f%d", i+1)
+			fields = append(fields, types.NewVar(token.NoPos, pkg, fname, sig.Results().At(i).Type()))
+		}
+		pairType = types.NewNamed(tn, types.NewStruct(fields, nil), nil)
+	}
+	fd := fi.fd
+	params, err := e.exportSignatureVars(fd, fi.sig.Params())
+	if err != nil {
+		return nil, err
+	}
+	// For multi-result, use the synthetic pair as the single result.
+	resultTuple := fi.sig.Results()
+	if pairType != nil {
+		pkg := fi.obj.Pkg()
+		pairVar := types.NewVar(token.NoPos, pkg, "", pairType)
+		resultTuple = types.NewTuple(pairVar)
+	}
+	results, err := e.exportSignatureVars(fd, resultTuple)
+	if err != nil {
+		return nil, err
+	}
+	msg := fmt.Sprintf("%s.%s: not implemented on graalgo (gc backend intrinsic)", funcPkgPath(e, fi), fi.obj.Name())
+	panicIdent := ast.NewIdent("panic")
+	// The synthetic call was never type-checked: register the universe
+	// panic builtin so exportCall resolves it.
+	if e.info.Uses == nil {
+		e.info.Uses = map[*ast.Ident]types.Object{}
+	}
+	e.info.Uses[panicIdent] = types.Universe.Lookup("panic")
+	msgLit := &ast.BasicLit{Kind: token.STRING, Value: strconv.Quote(msg)}
+	// The synthetic literal was never type-checked either: record its
+	// constant string type so the arg export finds type info.
+	if e.info.Types == nil {
+		e.info.Types = map[ast.Expr]types.TypeAndValue{}
+	}
+	e.info.Types[msgLit] = types.TypeAndValue{
+		Type:  types.Typ[types.String],
+		Value: constant.MakeString(msg),
+	}
+	panicCall := &ast.CallExpr{
+		Fun:  panicIdent,
+		Args: []ast.Expr{msgLit},
+	}
+	pcall, err := e.exportCall(panicCall)
+	if err != nil {
+		return nil, err
+	}
+	// The call is a statement: wrap in exprstmt (a bare "call" statement
+	// kind is not registered in the backend).
+	stmt := e.node("exprstmt", fd, map[string]any{"x": pcall})
+	body := e.node("block", fd, map[string]any{
+		"stmts": []*Node{stmt},
+	})
+	sigID, err := e.freshSigID(nil, fi.sig.Params(), resultTuple, false)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{
+		"name": fi.obj.Name(), "obj": fi.funcID, "sig": sigID, "params": params, "body": body,
+		"pkgpath": funcPkgPath(e, fi),
+	}
+	if len(results) > 0 {
+		fields["results"] = results
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
 // Reset method calls (ADR-0005 D1) into the "timeop" wire node.
 func (e *exporter) exportTimeOp(c *ast.CallExpr, sel *ast.SelectorExpr, nt *types.Named) (*Node, error) {
 	op := sel.Sel.Name
@@ -2058,7 +2160,11 @@ func isMultiResultSynthetic(fn *types.Func) bool {
 		p != "encoding/ascii85" && p != "encoding/pem" && p != "encoding/asn1" && p != "encoding" && p != "encoding/csv" && p != "encoding/gob" && p != "strconv" && p != "encoding/json" && p != "io" &&
 		// P3-M8 (wave 2): os + io/fs + syscall.
 		p != "os" && p != "io/fs" && p != "syscall" &&
-		p != "reflect" && p != "internal/reflectlite" && p != "iter" &&
+		// real-reflect (Phase 3): "reflect" is NOT synthetic — the real
+		// package compiles from GOROOT via the disk importer. Its
+		// multi-result functions desugar via the dynamic disk transform
+		// (classifyDiskMultiResultCall), not the synthetic tables.
+		p != "internal/reflectlite" && p != "iter" &&
 		// P3-M9 (tier-1d): leaf utilities unique/structs (+ synthetic-only
 		// internal/bytealg).
 		p != "unique" && p != "structs" && p != "internal/bytealg" &&
@@ -2154,7 +2260,7 @@ func multiResultSyntheticError(fn *types.Func) error {
 	}
 	if fn.Pkg().Path() == "io" || fn.Pkg().Path() == "os" || fn.Pkg().Path() == "io/fs" ||
 		fn.Pkg().Path() == "syscall" ||
-		fn.Pkg().Path() == "reflect" || fn.Pkg().Path() == "internal/reflectlite" || fn.Pkg().Path() == "iter" ||
+		fn.Pkg().Path() == "internal/reflectlite" || fn.Pkg().Path() == "iter" ||
 		fn.Pkg().Path() == "hash" || fn.Pkg().Path() == "crypto" ||
 		fn.Pkg().Path() == "crypto/aes" || fn.Pkg().Path() == "crypto/cipher" || fn.Pkg().Path() == "crypto/des" ||
 		fn.Pkg().Path() == "crypto/hmac" || fn.Pkg().Path() == "crypto/md5" || fn.Pkg().Path() == "crypto/rand" ||

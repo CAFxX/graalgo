@@ -48,6 +48,7 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"go/types"
 )
@@ -97,10 +98,21 @@ func (e *exporter) exportUnsafeIntrinsic(c *ast.CallExpr, b *types.Builtin) (*No
 	switch name {
 	case "Sizeof", "Alignof", "Offsetof":
 		tv, ok := e.info.Types[c]
-		if !ok || tv.Value == nil {
-			return nil, scopeErrorf("unsafe.%s: operand is not a constant expression in frontend/v1 scope (M8)", name)
+		if ok && tv.Value != nil {
+			return e.foldedConst(c, tv.Value)
 		}
-		return e.foldedConst(c, tv.Value)
+		// real-reflect (Phase 3): go/types cannot fold Sizeof/Alignof/
+		// Offsetof over a type parameter (e.g. 8*unsafe.Sizeof(F(0)) in
+		// generic internal/strconv uscale.shortFloat, reached through the
+		// real reflect dependency closure). Templates only export via
+		// monomorphized instantiations, so apply the active substitution
+		// and compute the size directly when the substituted type is
+		// concrete. A still-generic result is a genuine scope error.
+		v, err := e.unfoldedSizeValue(c, name)
+		if err != nil {
+			return nil, err
+		}
+		return e.foldedConst(c, v)
 	case "Slice", "SliceData", "String", "StringData", "Add":
 		if len(c.Args) != 2 && (name == "Slice" || name == "String" || name == "Add") {
 			return nil, scopeErrorf("unsafe.%s: wrong arity (M8)", name)
@@ -120,6 +132,102 @@ func (e *exporter) exportUnsafeIntrinsic(c *ast.CallExpr, b *types.Builtin) (*No
 	default:
 		return nil, scopeErrorf("unsafe.%s: unsupported intrinsic (M8)", name)
 	}
+}
+
+// unfoldedSizeValue computes the constant value of an unsafe.Sizeof,
+// unsafe.Alignof, or unsafe.Offsetof call that go/types could not fold
+// because the operand mentions a type parameter. The active instantiation
+// substitution (e.subst) is applied to the operand type first; the result
+// must be concrete (mentionsTypeParam is false) or the call is a genuine
+// scope error. The value is computed with e.sizes (gc/amd64, the same
+// layout go/types folds against), so the emitted constant is identical to
+// what gc would fold in the instantiated body.
+func (e *exporter) unfoldedSizeValue(c *ast.CallExpr, name string) (constant.Value, error) {
+	pos := "?"
+	if e.fset != nil {
+		pos = e.fset.Position(c.Pos()).String()
+	}
+	fail := func(format string, args ...any) (constant.Value, error) {
+		args = append(args, pos)
+		return nil, scopeErrorf("unsafe.%s: "+format+" at %s", append([]any{name}, args...)...)
+	}
+	if len(c.Args) != 1 {
+		return fail("wrong arity")
+	}
+	if e.sizes == nil {
+		return fail("no sizes configured")
+	}
+	substConcrete := func(t types.Type) (types.Type, error) {
+		t = e.substType(t)
+		if mentionsTypeParam(t) {
+			return nil, scopeErrorf("unsafe.%s: operand is not a constant expression in frontend/v1 scope (M8) at %s (type parameter not substituted)", name, pos)
+		}
+		return t, nil
+	}
+	switch name {
+	case "Sizeof", "Alignof":
+		atv, ok := e.info.Types[c.Args[0]]
+		if !ok || atv.Type == nil {
+			return fail("operand type not recorded")
+		}
+		t, err := substConcrete(atv.Type)
+		if err != nil {
+			return nil, err
+		}
+		var n int64
+		if name == "Sizeof" {
+			n = e.sizes.Sizeof(t)
+		} else {
+			n = e.sizes.Alignof(t)
+		}
+		if n < 0 {
+			return fail("type too large")
+		}
+		return constant.MakeInt64(n), nil
+	case "Offsetof":
+		// Operand is x.f; resolve x's struct type and the field index.
+		sel, ok := c.Args[0].(*ast.SelectorExpr)
+		if !ok {
+			return fail("operand is not a selector")
+		}
+		xtv, ok := e.info.Types[sel.X]
+		if !ok || xtv.Type == nil {
+			return fail("receiver type not recorded")
+		}
+		xt, err := substConcrete(xtv.Type)
+		if err != nil {
+			return nil, err
+		}
+		if p, ok := xt.(*types.Pointer); ok {
+			xt = p.Elem()
+		}
+		st, ok := types.Unalias(xt).(*types.Struct)
+		if !ok {
+			return fail("operand is not a struct")
+		}
+		selec, ok := e.info.Selections[sel]
+		if !ok {
+			return fail("field selection not recorded")
+		}
+		// types.Sizes.Offsetsof takes the field path as []*types.Var; walk
+		// the embedded-field index path from the selection.
+		var vars []*types.Var
+		cur := st
+		for _, i := range selec.Index() {
+			f := cur.Field(i)
+			vars = append(vars, f)
+			if s, ok := types.Unalias(f.Type()).(*types.Struct); ok {
+				cur = s
+			}
+		}
+		offs := e.sizes.Offsetsof(vars)
+		off := offs[len(offs)-1]
+		if off < 0 {
+			return fail("type too large")
+		}
+		return constant.MakeInt64(off), nil
+	}
+	return fail("unsupported")
 }
 
 // exportUnsafeRuntimeCall exports the argument expressions and builds the
