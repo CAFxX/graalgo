@@ -470,12 +470,22 @@ public final class ReflectTypes {
                     null, null, 0, null, List.of(), List.of(),
                     List.of(), List.of(), false, List.of(), "", id);
             case "typeparam" -> {
-                // A generic type parameter (e.g. T in func F[T any](x T)).
-                // The frontend emits these for unsubstituted generic
-                // signatures. Size/align are unknown at the shell stage;
-                // buildInfo resolves them from the constraint.
-                String pname = d.string("name", path);
-                yield new TypeInfo(-1, GoKind.TYPEPARAM, pname, "", -1, -1,
+                // A type parameter has no value representation: at runtime
+                // every value of the parameter's type carries its
+                // *instantiated* type (the frontend monomorphizes
+                // generics), so a typeparam wire entry only ever denotes
+                // a template position — e.g. the [0]*T field of the
+                // sync/atomic.Pointer[T] template — never an executable
+                // type. The shell is an opaque placeholder: null kind
+                // (not a GoKind; mirrors the unresolved named shell),
+                // unknown size/align. Canonical identity comes from
+                // canonicalKey's "typeparam:" key, which can never
+                // collide with a concrete type's key.
+                // (Adjudicated 2026-10-15: supersedes the constraint-transparent
+                // design — a constraint's layout is not the instantiated
+                // type's layout, so inheriting it would silently miscompile;
+                // fail loud instead per the P1-4 invalid-type rule.)
+                yield new TypeInfo(-1, null, "", "", -1, -1,
                         null, null, 0, null, List.of(), List.of(),
                         List.of(), List.of(), false, List.of(), "", id);
             }
@@ -561,7 +571,8 @@ public final class ReflectTypes {
             Json.Object entry = types.entry(i, path);
             Json.Object d = entry.object("detail", path);
             String kind = entry.string("kind", path);
-            String key = canonicalKey(table, types, shells, i, kind, d, functions, funcdeclSig, path);
+            String key = canonicalKey(table, types, shells, i, kind, d, functions, funcdeclSig, path,
+                    new HashSet<>());
             if (!table.keyToTok.containsKey(key)) {
                 long tok = table.byTok.size();
                 table.keyToTok.put(key, tok);
@@ -668,13 +679,15 @@ public final class ReflectTypes {
         Json.Object entry = types.entry(id, path);
         Json.Object d = entry.object("detail", path);
         String kind = entry.string("kind", path);
-        return canonicalKey(table, types, shells, id, kind, d, functions, funcdeclSig, path);
+        return canonicalKey(table, types, shells, id, kind, d, functions, funcdeclSig, path,
+                new HashSet<>());
     }
 
     /** Canonical structural key for one wire id. */
     private static String canonicalKey(Table table, TypeTable types, TypeInfo[] shells,
             int id, String kind, Json.Object d,
-            Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig, String path) {
+            Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig, String path,
+            Set<Integer> tpActive) {
         return switch (kind) {
             case "basic" -> "basic:" + d.string("name", path);
             case "named" -> {
@@ -686,49 +699,72 @@ public final class ReflectTypes {
             }
             case "array" -> "array:" + d.longInt("len", path) + ":"
                     + keyOf(table, types, shells, (int) d.longInt("elem", path),
-                            functions, funcdeclSig);
+                            functions, funcdeclSig, tpActive);
             case "slice" -> "slice:"
                     + keyOf(table, types, shells, (int) d.longInt("elem", path),
-                            functions, funcdeclSig);
+                            functions, funcdeclSig, tpActive);
             case "map" -> "map:"
                     + keyOf(table, types, shells, (int) d.longInt("key", path),
-                            functions, funcdeclSig)
+                            functions, funcdeclSig, tpActive)
                     + ":" + keyOf(table, types, shells, (int) d.longInt("elem", path),
-                            functions, funcdeclSig);
+                            functions, funcdeclSig, tpActive);
             case "pointer" -> "ptr:"
                     + keyOf(table, types, shells, (int) d.longInt("elem", path),
-                            functions, funcdeclSig);
+                            functions, funcdeclSig, tpActive);
             case "chan" -> "chan:" + d.string("dir", path) + ":"
                     + keyOf(table, types, shells, (int) d.longInt("elem", path),
-                            functions, funcdeclSig);
-            case "struct" -> structKey(table, types, shells, id, d, functions, funcdeclSig, path);
-            case "interface" -> interfaceKey(table, types, shells, id, d, functions, funcdeclSig, path);
-            case "signature" -> signatureKey(table, types, shells, id, d, functions, funcdeclSig, path);
+                            functions, funcdeclSig, tpActive);
+            case "struct" -> structKey(table, types, shells, id, d, functions, funcdeclSig, path, tpActive);
+            case "interface" -> interfaceKey(table, types, shells, id, d, functions, funcdeclSig, path, tpActive);
+            case "signature" -> signatureKey(table, types, shells, id, d, functions, funcdeclSig, path, tpActive);
             // P3-M8 fix: aliases resolve to their RHS for key purposes.
             case "alias" -> keyOf(table, types, shells, (int) d.longInt("rhs", path),
-                    functions, funcdeclSig);
-            // Type parameters are keyed by name + constraint: two params
-            // with the same name but different constraints are distinct.
-            case "typeparam" -> "typeparam:" + d.string("name", path) + ":"
-                    + keyOf(table, types, shells, (int) d.longInt("constraint", path),
-                            functions, funcdeclSig);
+                    functions, funcdeclSig, tpActive);
+            case "typeparam" -> {
+                // A type parameter's structural identity is the parameter
+                // itself (name) plus its constraint's type set. The
+                // "typeparam:" prefix keeps it out of every concrete
+                // type's key space, so a placeholder can never share a
+                // token with a real type. The constraint key is computed
+                // with a re-entrancy guard: an F-bounded constraint (e.g.
+                // T constrained by interface{ M() T }) refers back to the
+                // parameter, and without the guard the key recursion
+                // would not terminate — the same cycle the frontend's
+                // describeType survives via its typeparamIDs
+                // memo-before-describe.
+                // (Adjudicated 2026-10-15: keeps the "typeparam:" scheme;
+                // adds the cycle guard the other design lacked.)
+                String pname = d.string("name", path);
+                if (!tpActive.add(id)) {
+                    yield "typeparam<" + pname + ">";
+                }
+                try {
+                    yield "typeparam:" + pname + ":"
+                            + keyOf(table, types, shells,
+                                    (int) d.longInt("constraint", path),
+                                    functions, funcdeclSig, tpActive);
+                } finally {
+                    tpActive.remove(id);
+                }
+            }
             default -> throw new FrontendException(path + ": reflect: key of " + kind);
         };
     }
 
     private static String keyOf(Table table, TypeTable types, TypeInfo[] shells,
-            int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig) {
+            int id, Map<Integer, GoFunc> functions, Map<Integer, Integer> funcdeclSig,
+            Set<Integer> tpActive) {
         String path = "types[" + id + "]";
         Json.Object entry = types.entry(id, path);
         Json.Object d = entry.object("detail", path);
         String kind = entry.string("kind", path);
-        return canonicalKey(table, types, shells, id, kind, d, functions, funcdeclSig, path);
+        return canonicalKey(table, types, shells, id, kind, d, functions, funcdeclSig, path, tpActive);
     }
 
     /** Struct key: ordered field (name, tag, anonymous, type-key) list. */
     private static String structKey(Table table, TypeTable types, TypeInfo[] shells,
             int id, Json.Object d, Map<Integer, GoFunc> functions,
-            Map<Integer, Integer> funcdeclSig, String path) {
+            Map<Integer, Integer> funcdeclSig, String path, Set<Integer> tpActive) {
         Json.Array fields = d.array("fields", path);
         StringBuilder sb = new StringBuilder("struct{");
         for (int i = 0; i < fields.size(); i++) {
@@ -740,7 +776,7 @@ public final class ReflectTypes {
                     .append(f.string("tag", path)).append(',')
                     .append(isEmbedded(f)).append(',')
                     .append(keyOf(table, types, shells, (int) f.longInt("type", path),
-                            functions, funcdeclSig));
+                            functions, funcdeclSig, tpActive));
         }
         return sb.append('}').toString();
     }
@@ -748,7 +784,7 @@ public final class ReflectTypes {
     /** Interface key: ordered method (name, sig-key) list. */
     private static String interfaceKey(Table table, TypeTable types, TypeInfo[] shells,
             int id, Json.Object d, Map<Integer, GoFunc> functions,
-            Map<Integer, Integer> funcdeclSig, String path) {
+            Map<Integer, Integer> funcdeclSig, String path, Set<Integer> tpActive) {
         Json.Array methods = d.array("methods", path);
         StringBuilder sb = new StringBuilder("interface{");
         for (int i = 0; i < methods.size(); i++) {
@@ -758,7 +794,7 @@ public final class ReflectTypes {
             }
             sb.append(m.string("name", path)).append(',')
                     .append(keyOf(table, types, shells, (int) m.longInt("sig", path),
-                            functions, funcdeclSig));
+                            functions, funcdeclSig, tpActive));
         }
         return sb.append('}').toString();
     }
@@ -766,7 +802,7 @@ public final class ReflectTypes {
     /** Signature key: params/results type keys + variadic. */
     private static String signatureKey(Table table, TypeTable types, TypeInfo[] shells,
             int id, Json.Object d, Map<Integer, GoFunc> functions,
-            Map<Integer, Integer> funcdeclSig, String path) {
+            Map<Integer, Integer> funcdeclSig, String path, Set<Integer> tpActive) {
         StringBuilder sb = new StringBuilder("func(");
         Json.Array params = d.array("params", path);
         for (int i = 0; i < params.size(); i++) {
@@ -775,7 +811,7 @@ public final class ReflectTypes {
             }
             sb.append(keyOf(table, types, shells,
                     (int) arrObj(params, i, path).longInt("type", path),
-                    functions, funcdeclSig));
+                    functions, funcdeclSig, tpActive));
         }
         sb.append(")(");
         Json.Array results = d.array("results", path);
@@ -785,7 +821,7 @@ public final class ReflectTypes {
             }
             sb.append(keyOf(table, types, shells,
                     (int) arrObj(results, i, path).longInt("type", path),
-                    functions, funcdeclSig));
+                    functions, funcdeclSig, tpActive));
         }
         sb.append(')');
         Json.Value var = d.opt("variadic");
@@ -939,18 +975,21 @@ public final class ReflectTypes {
                         rhs.interfaceMethods, rhs.basicName, id);
             }
             case "typeparam" -> {
-                // A generic type parameter behaves like its constraint:
-                // the constraint defines the method set and the layout.
-                // The kind stays TYPEPARAM (distinguishable from the
-                // constraint itself) and the name is the parameter name.
-                int constraintId = (int) d.longInt("constraint", path);
-                TypeInfo c = infoOrShell(table, types, shells, constraintId, functions, funcdeclSig);
-                String pname = d.string("name", path);
-                yield new TypeInfo(tok, GoKind.TYPEPARAM, pname, "",
-                        c.size, c.align, c.elem, c.key,
-                        c.arrayLen, c.chanDir, c.fields, c.methods,
-                        c.ins, c.outs, c.variadic,
-                        c.interfaceMethods, c.basicName, id);
+                // Opaque placeholder for a type parameter in a template
+                // position (see the shell case): null kind, unknown
+                // size/align. kindOrdinal maps null kind to Invalid(0);
+                // typeString and descriptorForTok fail loud on it — a
+                // type parameter must never be observed at runtime (any
+                // observation means the frontend leaked a template type
+                // into executable code), so fabricating a kind here would
+                // be a silent miscompilation (cf. the P1-4 "invalid type"
+                // rule: fail loud, never launder into a fake kind).
+                // (Adjudicated 2026-10-15: supersedes the constraint-transparent
+                // design — inheriting the constraint's layout would silently
+                // use the wrong layout for instantiated types.)
+                yield new TypeInfo(tok, null, "", "", -1, -1,
+                        null, null, 0, null, List.of(), List.of(),
+                        List.of(), List.of(), false, List.of(), "", id);
             }
             default -> throw new FrontendException(path + ": reflect: build of " + kind);
         };
@@ -1390,6 +1429,14 @@ public final class ReflectTypes {
                 return "unsafe.Pointer";
             }
             return t.basicName;
+        }
+        if (t.kind == null) {
+            // A type parameter has no runtime type identity (see the
+            // "typeparam" cases in shell/buildInfo): rendering one means
+            // a template type leaked into a runtime-observable position.
+            // Fail loud with the wire id; never fabricate a type string.
+            throw new IllegalStateException(
+                    "reflect: String of type parameter (types[" + t.wireId + "])");
         }
         return switch (t.kind) {
             case BOOL -> "bool";
