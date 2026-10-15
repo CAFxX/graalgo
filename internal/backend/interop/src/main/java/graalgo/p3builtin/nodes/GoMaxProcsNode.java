@@ -32,6 +32,17 @@ public final class GoMaxProcsNode extends GoExprNode {
     private static final AtomicInteger CURRENT =
             new AtomicInteger(Runtime.getRuntime().availableProcessors());
 
+    /**
+     * Returns the current GOMAXPROCS value — the same value Go code
+     * observes through {@code runtime.GOMAXPROCS(0)}. Used by
+     * {@code graalgo.p3link.SyncRuntime#procPin} to keep the returned
+     * P-id inside {@code [0, GOMAXPROCS)}, the invariant real
+     * {@code sync.Pool.pinSlow} relies on when sizing its per-P array.
+     */
+    public static int current() {
+        return CURRENT.get();
+    }
+
     @Child private GoExprNode n;
 
     private GoMaxProcsNode(GoKind kind, GoExprNode n) {
