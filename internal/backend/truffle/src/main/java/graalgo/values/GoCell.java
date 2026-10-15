@@ -26,4 +26,18 @@ public interface GoCell {
 
     /** Stores a canonical boxed value. */
     void set(Object value);
+
+    /**
+     * Storage identity: true iff this cell and {@code other} address the
+     * same Go storage — the same variable, the same field of the same
+     * struct value, or the same element of the same backing array.
+     *
+     * <p>Two evaluations of {@code &s.f} (or {@code &s[i]}) produce
+     * distinct cell objects ({@link graalgo.frontend.GoFieldCell} is
+     * allocated fresh per evaluation), so Java object identity is the
+     * wrong equivalence: gc compares the addressed <em>storage</em>, and
+     * {@code p == q} on pointers must too (via
+     * {@link GoPointer#sameStorageAs}).
+     */
+    boolean sameStorageAs(GoCell other);
 }

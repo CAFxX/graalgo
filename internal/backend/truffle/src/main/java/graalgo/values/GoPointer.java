@@ -133,7 +133,12 @@ public final class GoPointer {
             return isNil() && o.isNil();
         }
         if (cell != null || o.cell != null) {
-            return cell == o.cell;
+            // PKG-011: cell identity is storage identity, not object
+            // identity — e.g. two evaluations of &s.f allocate distinct
+            // GoFieldCell objects over the same (struct, field). A cell
+            // pointer never addresses the same storage as a non-cell
+            // pointer (heap referent or array element).
+            return cell != null && o.cell != null && cell.sameStorageAs(o.cell);
         }
         if (isElemPtr || o.isElemPtr) {
             return isElemPtr && o.isElemPtr
