@@ -113,7 +113,11 @@ func TestSyntheticEnccoreM7(t *testing.T) {
 			"encoding/asn1",
 			"package main\nimport \"encoding/asn1\"\nfunc main() {\nb, _ := asn1.Marshal(42)\nprintln(len(b))\nprintln(asn1.TagInteger)\n}\n",
 			[]string{"__asn1Marshal"},
-			[]string{"Marshal", "MarshalWithParams", "Unmarshal", "UnmarshalWithParams"},
+			// Gate-1 #2: Marshal is table-driven (M7), so skipped.
+			// MarshalWithParams, Unmarshal, UnmarshalWithParams are NOT
+			// table-driven; they are now pair-transformed (present in
+			// wire doc) instead of skipped.
+			[]string{"Marshal"},
 		},
 		{
 			"encoding",
