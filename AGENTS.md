@@ -43,6 +43,27 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
 - Commit with **explicit pathspecs** — never bare `git commit` — when anyone
   else may have staged changes. On this shared tree, never `git stash`
   blindly: check `git status` for others' in-flight files first.
+- **Independent review before merge (his direct order, 2026-10-15):** before
+  ANYTHING merges to master, it MUST have a clean review from an independent
+  reviewer — a fresh subagent, NOT the agent that wrote the code — auditing
+  for bodges, bridges, hacks, workarounds, special cases, correctness, and
+  test coverage. The reviewer has veto power. The lane never integrates
+  itself; it reports branch + evidence, the coordinator spawns the reviewer,
+  and only on clean review does integration proceed. No exceptions, even for
+  "trivial" changes.
+- **Review gate (mechanical enforcement of the above):** integration is
+  fast-forward only, so review evidence lives on each commit as a git
+  trailer: `Reviewed-by: <reviewer-id>` (must differ from the author) or
+  `Review-record: <path-or-url>` (pointer to the recorded verdict); a
+  `Review-veto:` / `Vetoed-by:` trailer blocks the merge.
+  [review-gate.yml](.github/workflows/review-gate.yml) fails any master push
+  containing a commit without valid evidence (it inspects the true push
+  range, not just the tip commit). Before reporting done, run
+  [check_review_trailers.py](.github/scripts/check_review_trailers.py)
+  (`python3 .github/scripts/check_review_trailers.py`, defaults to
+  `origin/master..HEAD`) — it is expected to FAIL until the review lands;
+  after a clean review, add the trailer to each commit with a
+  trailer-only amend, re-run the checker, and push.
 - Every commit is pushed immediately after landing, and CI is watched to
   verdict (green or explained failure) before the lane is called done.
 

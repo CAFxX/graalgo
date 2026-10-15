@@ -43,6 +43,12 @@ jobs:
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)
+        # GATE_BASE_SHA makes the gate inspect the TRUE push range on direct
+        # master pushes (github.event.before..HEAD), not just the tip commit.
+        # On pull_request events origin/master...HEAD takes precedence, so PR
+        # behavior is unchanged.
+        env:
+          GATE_BASE_SHA: ${{ github.event.before }}
         run: python3 .github/scripts/check_no_bridges.py
 
       - name: Set up GraalVM JDK 25

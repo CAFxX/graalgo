@@ -14,17 +14,22 @@ docs/arch/bridge-inventory.md). This check only looks at ADDED lines in the diff
 
 Diff sources, in order:
   1. origin/master...HEAD  (PR / feature branch)
-  2. git diff HEAD         (uncommitted working-tree changes)
-  3. git diff --cached     (staged changes)
-  4. HEAD~1...HEAD         (direct master push: wt.py integrate + push, no PR —
-                           checkout lands exactly on origin/master, so 1-3 are
-                           all empty; inspect what the push itself introduced)
+  2. $GATE_BASE_SHA...HEAD (direct master push range; CI sets GATE_BASE_SHA
+     to github.event.before so a MULTI-commit push is fully inspected —
+     before this, only the tip commit (HEAD~1...HEAD) was checked)
+  3. git diff HEAD         (uncommitted working-tree changes)
+  4. git diff --cached     (staged changes)
+  5. HEAD~1...HEAD         (direct master push fallback: single-commit only;
+     wt.py integrate + push, no PR — checkout lands exactly on
+     origin/master, so 1-4 are all empty; inspect what the push itself
+     introduced)
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
 shallow checkout with no history), it fails loudly instead of skipping.
 CI must check out full history (fetch-depth: 0) for source 4 to resolve.
 """
 
+import os
 import re
 import subprocess
 import sys
@@ -35,11 +40,20 @@ def get_diff():
     Returns ("", "") when no diff could be determined — the caller must
     treat that as a loud failure, never a vacuous pass.
     """
-    # Try vs origin/master first (for PRs), fall back to working tree,
-    # then to the master-push delta. A shallow checkout (no HEAD~1)
-    # yields nothing from the last source — that is a failure, not a skip.
+    # Try vs origin/master first (for PRs), then the push range (for direct
+    # master pushes), then the working tree, then the single-commit
+    # master-push fallback. A shallow checkout (no HEAD~1) yields nothing
+    # from the last source — that is a failure, not a skip.
     candidates = [
         ("origin/master...HEAD", ["git", "diff", "origin/master...HEAD", "--", "."]),
+    ]
+    base = os.environ.get("GATE_BASE_SHA", "").strip()
+    if base and not re.fullmatch(r"0+", base):
+        candidates.append(
+            ("$GATE_BASE_SHA...HEAD (push range)",
+             ["git", "diff", f"{base}...HEAD", "--", "."]),
+        )
+    candidates += [
         ("working tree (unstaged)", ["git", "diff", "HEAD", "--", "."]),
         ("staged", ["git", "diff", "--cached", "--", "."]),
         ("HEAD~1...HEAD (master push)", ["git", "diff", "HEAD~1...HEAD", "--", "."]),

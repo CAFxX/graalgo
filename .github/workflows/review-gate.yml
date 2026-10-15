@@ -1,0 +1,33 @@
+# graalgo review gate — his direct order (2026-10-15): before ANYTHING merges
+# to master, it MUST have a clean review from an independent reviewer (a
+# fresh subagent, NOT the agent that wrote the code). Advisory brief text
+# failed to enforce this, so the enforcement is mechanical: every commit
+# pushed to master must carry a Reviewed-by: trailer (reviewer != author) or
+# a Review-record: pointer in its git trailer block; a Review-veto:/
+# Vetoed-by: trailer fails the push loudly.
+#
+# The gate inspects the TRUE push range (github.event.before..HEAD), not
+# just the tip commit — a multi-commit push is fully inspected.
+# Checker: .github/scripts/check_review_trailers.py
+name: review-gate
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  review-trailers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The gate diffs github.event.before..HEAD (the true push range);
+          # a shallow checkout has no base and the gate fails loudly
+          # instead of inspecting.
+          fetch-depth: 0
+
+      - name: Review-trailer gate (independent review before merge)
+        env:
+          GATE_BASE_SHA: ${{ github.event.before }}
+        run: python3 .github/scripts/check_review_trailers.py
