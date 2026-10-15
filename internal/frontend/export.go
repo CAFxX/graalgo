@@ -1395,108 +1395,184 @@ func syntheticCompositeScopeError(nt *types.Named, position string) error {
 // ExportFile type-checks the single Go source file at path and returns the
 // frontend/v1 JSON document.
 func ExportFile(path string) (string, error) {
-	fi, err := os.Stat(path)
-	if err != nil {
-		return "", fmt.Errorf("gofrontend: %v", err)
-	}
-	if fi.IsDir() {
-		return "", fmt.Errorf("gofrontend: package directories are not supported in frontend/v1 scope (WS G): %s", path)
-	}
-	src, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("gofrontend: %v", err)
-	}
+	return ExportFiles([]string{path})
+}
 
-	fset := token.NewFileSet()
-	// P3-M4 (WS C, ADR-0004): parser.ParseComments populates doc comments
-	// so //go:linkname directives are visible (fd.Doc).
-	file, err := parser.ParseFile(fset, path, src, parser.AllErrors|parser.ParseComments)
-	if err != nil {
-		return "", fmt.Errorf("gofrontend: parse error: %v", err)
+// needsOverlayImporter reports whether import path p must resolve
+// through the synthetic/disk overlay importer (WS G).
+func needsOverlayImporter(p string) bool {
+	return p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
+		p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "iter" ||
+		p == "crypto" || p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" ||
+		// P3-M9 (tier-5): asymmetric crypto public packages +
+		// cryptobyte (internal fips140/* stay synthetic-only).
+		p == "crypto/elliptic" || p == "crypto/ecdh" || p == "crypto/dsa" || p == "crypto/ecdsa" || p == "crypto/ed25519" || p == "crypto/rsa" || p == "crypto/hkdf" || p == "crypto/pbkdf2" ||
+		p == "crypto/x509" || p == "crypto/tls" ||
+		p == "golang.org/x/crypto/cryptobyte" || p == "golang.org/x/crypto/cryptobyte/asn1" ||
+		p == "cmp" || p == "slices" || p == "maps" || p == "unicode" || p == "unicode/utf8" || p == "unicode/utf16" ||
+		// P3-M9 (tier1c): "math/bits" likewise.
+		// P3-M9 (wave 3): "math/big" + "math/rand" likewise.
+		// P3-M9: "flag", "testing", "testing/quick", "testing/iotest" likewise.
+		p == "math/bits" || p == "math/big" || p == "math/rand" || p == "math/rand/v2" || p == "math/cmplx" || p == "bufio" || p == "path" || p == "text/scanner" || p == "regexp/syntax" ||
+		p == "flag" || p == "testing" || p == "testing/quick" || p == "testing/iotest" ||
+		// P3-M9 (tier-1d): "unique" and "structs" likewise.
+		// P3-M9 (wave 3, tier-1b): "container/heap", "container/list",
+		// "container/ring", "hash/adler32", "hash/crc32", "hash/crc64",
+		// "hash/fnv", "hash/maphash" likewise (without this, a program
+		// importing only these packages keeps failImporter and the
+		// import fails at type-check).
+		p == "unique" || p == "structs" ||
+		p == "container/heap" || p == "container/list" || p == "container/ring" ||
+		p == "hash/adler32" || p == "hash/crc32" || p == "hash/crc64" || p == "hash/fnv" || p == "hash/maphash" ||
+		// P3-M9 (tier-5: compress): "compress/flate", "compress/gzip",
+		// "compress/zlib", "compress/lzw", "compress/bzip2" likewise.
+		p == "compress/flate" || p == "compress/gzip" || p == "compress/zlib" ||
+		p == "compress/lzw" || p == "compress/bzip2" ||
+		// P3-M9 (tier-5: archive/mime): "archive/tar", "archive/zip",
+		// "mime", "mime/multipart", "mime/quotedprintable" likewise.
+		p == "archive/tar" || p == "archive/zip" ||
+		p == "mime" || p == "mime/multipart" || p == "mime/quotedprintable" ||
+		// WS G (P3-M9, module-probe lane): a disk-resolvable third-party
+		// import also needs the overlay importer (its default case
+		// builds the package from the module cache/GOPATH).
+		isDiskImportable(p)
+}
+
+// checkImportAllowed validates one import against the frontend/v1 import
+// overlay allow-list (WS G): synthetic, disk-importable, or scope error.
+func checkImportAllowed(imp *ast.ImportSpec) error {
+	path := strings.Trim(imp.Path.Value, "\"`")
+	// M5 (WS F): the single import "runtime" is allowed — resolved by
+	// overlayImporter to a synthetic package exposing runtime.Goexit.
+	// M6 (WS H): the import "fmt" is allowed — resolved by
+	// overlayImporter to the D4 fmt stub (seven pure functions).
+	// P3-M2b (WS D, ADR-0002): the import "sync" is allowed — resolved
+	// by overlayImporter to the synthetic sync package (the four
+	// Phase-2-bound primitives).
+	// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
+	// allowed — resolved by overlayImporter to the synthetic packages
+	// (real-Go sources with clock/timer intrinsics).
+	// P3-M4 (WS C, ADR-0004): the import "sync/atomic" is allowed —
+	// resolved by overlayImporter to the synthetic sync/atomic package
+	// (typed wrappers Int64/Uint64/Int32/Uint32/Bool/Uintptr).
+	// P3-M4 (WS C, ADR-0004): the import "unsafe" is allowed — resolved
+	// by overlayImporter to an empty synthetic package. Only the blank
+	// form (`import _ "unsafe"`, required by //go:linkname directives)
+	// is useful: selections on unsafe.* fail as undefined.
+	// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
+	// allowed — resolved by overlayImporter to the synthetic packages
+	// (real-Go sources; see synth_time_context.go).
+	// P3-M7 (wave 1): the imports "errors", "sort", "bytes", "math" are
+	// allowed — resolved by overlayImporter to the synthetic packages
+	// (real-Go sources; see synth_errors.go / synth_sort.go /
+	// synth_bytes.go / synth_math.go).
+	// P3-M7 (wave 1): the 8 encoding/* primitive packages
+	// (encoding/base32, encoding/base64, encoding/hex, encoding/binary,
+	// encoding/ascii85, encoding/pem, encoding/asn1, encoding) are
+	// allowed — resolved by overlayImporter to the synthetic packages
+	// (real-Go sources; see synth_base32.go etc.).
+	// P3-M8 (wave 2): the import "io" is allowed — resolved by
+	// overlayImporter to the synthetic package (real-Go source; see
+	// synth_io.go).
+	// Every other import is still a scope error (WS G import overlay).
+	// P3-M8 (wave 2): "syscall", "reflect", and crypto/* likewise.
+	// P3-M8 (wave 2): "hash" and "iter" (synthetic support packages).
+	if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
+		path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "syscall" && path != "os" && path != "io/fs" && path != "reflect" && path != "hash" && path != "iter" &&
+		path != "crypto" && path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" && path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" && path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" &&
+		// P3-M9 (tier-5): asymmetric crypto public packages +
+		// cryptobyte (internal fips140/* stay synthetic-only).
+		path != "crypto/elliptic" && path != "crypto/ecdh" && path != "crypto/dsa" && path != "crypto/ecdsa" && path != "crypto/ed25519" && path != "crypto/rsa" && path != "crypto/hkdf" && path != "crypto/pbkdf2" &&
+		path != "crypto/x509" && path != "crypto/tls" &&
+		path != "golang.org/x/crypto/cryptobyte" && path != "golang.org/x/crypto/cryptobyte/asn1" &&
+		path != "cmp" && path != "slices" && path != "maps" && path != "unicode" && path != "unicode/utf8" && path != "unicode/utf16" &&
+		// P3-M9 (tier1c): "math/bits" likewise.
+		// P3-M9 (wave 3): "math/big" + "math/rand" likewise (the G-c
+		// hard gate). "internal/byteorder" is synthetic-internal only
+		// (imported by math/big's sources, never by user programs).
+		// P3-M9: "flag", "testing", "testing/quick", "testing/iotest"
+		// likewise (the go-test trial prerequisite packages).
+		path != "math/bits" && path != "math/big" && path != "math/rand" && path != "math/rand/v2" && path != "math/cmplx" && path != "bufio" && path != "path" && path != "text/scanner" && path != "regexp/syntax" &&
+		path != "flag" && path != "testing" && path != "testing/quick" && path != "testing/iotest" &&
+		// P3-M9 (wave 3, tier-1b): "container/heap", "container/list",
+		// "container/ring", "hash/adler32", "hash/crc32", "hash/crc64",
+		// "hash/fnv", "hash/maphash" likewise.
+		path != "container/heap" && path != "container/list" && path != "container/ring" &&
+		path != "hash/adler32" && path != "hash/crc32" && path != "hash/crc64" && path != "hash/fnv" && path != "hash/maphash" &&
+		// P3-M9 (tier-1d): "unique" and "structs" likewise (internal/*
+		// stay synthetic-only: user imports are not admitted).
+		// P3-M9 (tier-4: net): "net", "net/netip", "net/url",
+		// "net/textproto" likewise (internal/poll, internal/nettrace,
+		// internal/singleflight stay synthetic-only).
+		// P3-M9 (tier-5: net/http): "net/http", "net/http/httptest"
+		// likewise.
+		path != "unique" && path != "structs" &&
+		path != "net" && path != "net/netip" && path != "net/url" && path != "net/textproto" &&
+		path != "net/http" && path != "net/http/httptest" &&
+		// P3-M9 (tier-5: compress): "compress/flate", "compress/gzip",
+		// "compress/zlib", "compress/lzw", "compress/bzip2" likewise.
+		path != "compress/flate" && path != "compress/gzip" && path != "compress/zlib" &&
+		path != "compress/lzw" && path != "compress/bzip2" &&
+		// P3-M9 (tier-5: archive/mime): "archive/tar", "archive/zip",
+		// "mime", "mime/multipart", "mime/quotedprintable" likewise.
+		path != "archive/tar" && path != "archive/zip" &&
+		path != "mime" && path != "mime/multipart" && path != "mime/quotedprintable" &&
+		// WS G (P3-M9, module-probe lane): third-party imports resolve
+		// from local disk (module cache/GOPATH) through the general
+		// import overlay; only truly unresolvable paths stay a scope
+		// error.
+		!isDiskImportable(path) {
+		return fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
 	}
-	for _, imp := range file.Imports {
-		path := strings.Trim(imp.Path.Value, "\"`")
-		// M5 (WS F): the single import "runtime" is allowed — resolved by
-		// overlayImporter to a synthetic package exposing runtime.Goexit.
-		// M6 (WS H): the import "fmt" is allowed — resolved by
-		// overlayImporter to the D4 fmt stub (seven pure functions).
-		// P3-M2b (WS D, ADR-0002): the import "sync" is allowed — resolved
-		// by overlayImporter to the synthetic sync package (the four
-		// Phase-2-bound primitives).
-		// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
-		// allowed — resolved by overlayImporter to the synthetic packages
-		// (real-Go sources with clock/timer intrinsics).
-		// P3-M4 (WS C, ADR-0004): the import "sync/atomic" is allowed —
-		// resolved by overlayImporter to the synthetic sync/atomic package
-		// (typed wrappers Int64/Uint64/Int32/Uint32/Bool/Uintptr).
-		// P3-M4 (WS C, ADR-0004): the import "unsafe" is allowed — resolved
-		// by overlayImporter to an empty synthetic package. Only the blank
-		// form (`import _ "unsafe"`, required by //go:linkname directives)
-		// is useful: selections on unsafe.* fail as undefined.
-		// P3-M5 (WS E, ADR-0005): the imports "time" and "context" are
-		// allowed — resolved by overlayImporter to the synthetic packages
-		// (real-Go sources; see synth_time_context.go).
-		// P3-M7 (wave 1): the imports "errors", "sort", "bytes", "math" are
-		// allowed — resolved by overlayImporter to the synthetic packages
-		// (real-Go sources; see synth_errors.go / synth_sort.go /
-		// synth_bytes.go / synth_math.go).
-		// P3-M7 (wave 1): the 8 encoding/* primitive packages
-		// (encoding/base32, encoding/base64, encoding/hex, encoding/binary,
-		// encoding/ascii85, encoding/pem, encoding/asn1, encoding) are
-		// allowed — resolved by overlayImporter to the synthetic packages
-		// (real-Go sources; see synth_base32.go etc.).
-		// P3-M8 (wave 2): the import "io" is allowed — resolved by
-		// overlayImporter to the synthetic package (real-Go source; see
-		// synth_io.go).
-		// Every other import is still a scope error (WS G import overlay).
-		// P3-M8 (wave 2): "syscall", "reflect", and crypto/* likewise.
-		// P3-M8 (wave 2): "hash" and "iter" (synthetic support packages).
-		if path != "runtime" && path != "fmt" && path != "sync" && path != "sync/atomic" && path != "unsafe" && path != "time" && path != "context" && path != "errors" && path != "sort" && path != "bytes" && path != "math" && path != "strings" && path != "encoding/xml" &&
-			path != "encoding/base32" && path != "encoding/base64" && path != "encoding/hex" && path != "encoding/binary" && path != "encoding/ascii85" && path != "encoding/pem" && path != "encoding/asn1" && path != "encoding" && path != "encoding/csv" && path != "encoding/gob" && path != "strconv" && path != "encoding/json" && path != "io" && path != "syscall" && path != "os" && path != "io/fs" && path != "reflect" && path != "hash" && path != "iter" &&
-			path != "crypto" && path != "crypto/aes" && path != "crypto/cipher" && path != "crypto/des" && path != "crypto/hmac" && path != "crypto/md5" && path != "crypto/rand" && path != "crypto/rc4" && path != "crypto/sha1" && path != "crypto/sha256" && path != "crypto/sha3" && path != "crypto/sha512" && path != "crypto/subtle" &&
-			// P3-M9 (tier-5): asymmetric crypto public packages +
-			// cryptobyte (internal fips140/* stay synthetic-only).
-			path != "crypto/elliptic" && path != "crypto/ecdh" && path != "crypto/dsa" && path != "crypto/ecdsa" && path != "crypto/ed25519" && path != "crypto/rsa" && path != "crypto/hkdf" && path != "crypto/pbkdf2" &&
-			path != "crypto/x509" && path != "crypto/tls" &&
-			path != "golang.org/x/crypto/cryptobyte" && path != "golang.org/x/crypto/cryptobyte/asn1" &&
-			path != "cmp" && path != "slices" && path != "maps" && path != "unicode" && path != "unicode/utf8" && path != "unicode/utf16" &&
-			// P3-M9 (tier1c): "math/bits" likewise.
-			// P3-M9 (wave 3): "math/big" + "math/rand" likewise (the G-c
-			// hard gate). "internal/byteorder" is synthetic-internal only
-			// (imported by math/big's sources, never by user programs).
-			// P3-M9: "flag", "testing", "testing/quick", "testing/iotest"
-			// likewise (the go-test trial prerequisite packages).
-			path != "math/bits" && path != "math/big" && path != "math/rand" && path != "math/rand/v2" && path != "math/cmplx" && path != "bufio" && path != "path" && path != "text/scanner" && path != "regexp/syntax" &&
-			path != "flag" && path != "testing" && path != "testing/quick" && path != "testing/iotest" &&
-			// P3-M9 (wave 3, tier-1b): "container/heap", "container/list",
-			// "container/ring", "hash/adler32", "hash/crc32", "hash/crc64",
-			// "hash/fnv", "hash/maphash" likewise.
-			path != "container/heap" && path != "container/list" && path != "container/ring" &&
-			path != "hash/adler32" && path != "hash/crc32" && path != "hash/crc64" && path != "hash/fnv" && path != "hash/maphash" &&
-			// P3-M9 (tier-1d): "unique" and "structs" likewise (internal/*
-			// stay synthetic-only: user imports are not admitted).
-			// P3-M9 (tier-4: net): "net", "net/netip", "net/url",
-			// "net/textproto" likewise (internal/poll, internal/nettrace,
-			// internal/singleflight stay synthetic-only).
-			// P3-M9 (tier-5: net/http): "net/http", "net/http/httptest"
-			// likewise.
-			path != "unique" && path != "structs" &&
-			path != "net" && path != "net/netip" && path != "net/url" && path != "net/textproto" &&
-			path != "net/http" && path != "net/http/httptest" &&
-			// P3-M9 (tier-5: compress): "compress/flate", "compress/gzip",
-			// "compress/zlib", "compress/lzw", "compress/bzip2" likewise.
-			path != "compress/flate" && path != "compress/gzip" && path != "compress/zlib" &&
-			path != "compress/lzw" && path != "compress/bzip2" &&
-			// P3-M9 (tier-5: archive/mime): "archive/tar", "archive/zip",
-			// "mime", "mime/multipart", "mime/quotedprintable" likewise.
-			path != "archive/tar" && path != "archive/zip" &&
-			path != "mime" && path != "mime/multipart" && path != "mime/quotedprintable" &&
-			// WS G (P3-M9, module-probe lane): third-party imports resolve
-			// from local disk (module cache/GOPATH) through the general
-			// import overlay; only truly unresolvable paths stay a scope
-			// error.
-			!isDiskImportable(path) {
-			return "", fmt.Errorf("gofrontend: import %s: imports are not supported in frontend/v1 scope (WS G import overlay)", imp.Path.Value)
+	return nil
+}
+
+// ExportFiles type-checks the Go source files at paths — all files of one
+// package — and returns the frontend/v1 JSON document.
+//
+// All files are parsed and type-checked together as a single package
+// (go/types conf.Check over []*ast.File), so cross-file references
+// resolve. All files must declare the same package name. Position "file"
+// indices in the document index into the paths order.
+func ExportFiles(paths []string) (string, error) {
+	if len(paths) == 0 {
+		return "", fmt.Errorf("gofrontend: no input files")
+	}
+	fset := token.NewFileSet()
+	files := make([]*ast.File, 0, len(paths))
+	srcs := make([][]byte, 0, len(paths))
+	pkgName := ""
+	for _, path := range paths {
+		fi, err := os.Stat(path)
+		if err != nil {
+			return "", fmt.Errorf("gofrontend: %v", err)
+		}
+		if fi.IsDir() {
+			return "", fmt.Errorf("gofrontend: package directories are not supported in frontend/v1 scope (WS G): %s", path)
+		}
+		src, err := os.ReadFile(path)
+		if err != nil {
+			return "", fmt.Errorf("gofrontend: %v", err)
+		}
+		// P3-M4 (WS C, ADR-0004): parser.ParseComments populates doc comments
+		// so //go:linkname directives are visible (fd.Doc).
+		file, err := parser.ParseFile(fset, path, src, parser.AllErrors|parser.ParseComments)
+		if err != nil {
+			return "", fmt.Errorf("gofrontend: parse error: %v", err)
+		}
+		if pkgName == "" {
+			pkgName = file.Name.Name
+		} else if file.Name.Name != pkgName {
+			return "", fmt.Errorf("gofrontend: %s declares package %s, expected %s", path, file.Name.Name, pkgName)
+		}
+		files = append(files, file)
+		srcs = append(srcs, src)
+	}
+	for _, file := range files {
+		for _, imp := range file.Imports {
+			if err := checkImportAllowed(imp); err != nil {
+				return "", err
+			}
 		}
 	}
 
@@ -1527,55 +1603,21 @@ func ExportFile(path string) (string, error) {
 	// here; re-test trigger: a program importing "strings" must export.)
 	// P3-M8 (wave 2): "io", "syscall", "os", "io/fs", "reflect", "hash",
 	// "iter", and the crypto/* packages likewise.
-	for _, imp := range file.Imports {
-		p := strings.Trim(imp.Path.Value, "\"`")
-		if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" || p == "time" || p == "context" || p == "errors" || p == "sort" || p == "bytes" || p == "math" || p == "strings" || p == "encoding/xml" ||
-			p == "encoding/base32" || p == "encoding/base64" || p == "encoding/hex" || p == "encoding/binary" || p == "encoding/ascii85" || p == "encoding/pem" || p == "encoding/asn1" || p == "encoding" || p == "encoding/csv" || p == "encoding/gob" || p == "strconv" || p == "encoding/json" || p == "io" || p == "syscall" || p == "os" || p == "io/fs" || p == "reflect" || p == "hash" || p == "iter" ||
-			p == "crypto" || p == "crypto/aes" || p == "crypto/cipher" || p == "crypto/des" || p == "crypto/hmac" || p == "crypto/md5" || p == "crypto/rand" || p == "crypto/rc4" || p == "crypto/sha1" || p == "crypto/sha256" || p == "crypto/sha3" || p == "crypto/sha512" || p == "crypto/subtle" ||
-			// P3-M9 (tier-5): asymmetric crypto public packages +
-			// cryptobyte (internal fips140/* stay synthetic-only).
-			p == "crypto/elliptic" || p == "crypto/ecdh" || p == "crypto/dsa" || p == "crypto/ecdsa" || p == "crypto/ed25519" || p == "crypto/rsa" || p == "crypto/hkdf" || p == "crypto/pbkdf2" ||
-			p == "crypto/x509" || p == "crypto/tls" ||
-			p == "golang.org/x/crypto/cryptobyte" || p == "golang.org/x/crypto/cryptobyte/asn1" ||
-			p == "cmp" || p == "slices" || p == "maps" || p == "unicode" || p == "unicode/utf8" || p == "unicode/utf16" ||
-			// P3-M9 (tier1c): "math/bits" likewise.
-			// P3-M9 (wave 3): "math/big" + "math/rand" likewise.
-			// P3-M9: "flag", "testing", "testing/quick", "testing/iotest" likewise.
-			p == "math/bits" || p == "math/big" || p == "math/rand" || p == "math/rand/v2" || p == "math/cmplx" || p == "bufio" || p == "path" || p == "text/scanner" || p == "regexp/syntax" ||
-			p == "flag" || p == "testing" || p == "testing/quick" || p == "testing/iotest" ||
-			// P3-M9 (tier-1d): "unique" and "structs" likewise.
-			// P3-M9 (wave 3, tier-1b): "container/heap", "container/list",
-			// "container/ring", "hash/adler32", "hash/crc32", "hash/crc64",
-			// "hash/fnv", "hash/maphash" likewise (without this, a program
-			// importing only these packages keeps failImporter and the
-			// import fails at type-check).
-			p == "unique" || p == "structs" ||
-			p == "container/heap" || p == "container/list" || p == "container/ring" ||
-			p == "hash/adler32" || p == "hash/crc32" || p == "hash/crc64" || p == "hash/fnv" || p == "hash/maphash" ||
-			// P3-M9 (tier-5: compress): "compress/flate", "compress/gzip",
-			// "compress/zlib", "compress/lzw", "compress/bzip2" likewise.
-			p == "compress/flate" || p == "compress/gzip" || p == "compress/zlib" ||
-			p == "compress/lzw" || p == "compress/bzip2" ||
-			// P3-M9 (tier-5: archive/mime): "archive/tar", "archive/zip",
-			// "mime", "mime/multipart", "mime/quotedprintable" likewise.
-			p == "archive/tar" || p == "archive/zip" ||
-			p == "mime" || p == "mime/multipart" || p == "mime/quotedprintable" ||
-			// WS G (P3-M9, module-probe lane): a disk-resolvable third-party
-			// import also needs the overlay importer (its default case
-			// builds the package from the module cache/GOPATH).
-			isDiskImportable(p) {
-			conf.Importer = overlayImporter{}
-			break
+	for _, file := range files {
+		for _, imp := range file.Imports {
+			if needsOverlayImporter(strings.Trim(imp.Path.Value, "\"`")) {
+				conf.Importer = overlayImporter{}
+			}
 		}
 	}
-	pkg, err := conf.Check("main", fset, []*ast.File{file}, info)
+	pkg, err := conf.Check(pkgName, fset, files, info)
 	if err != nil {
 		return "", fmt.Errorf("gofrontend: type error: %v", err)
 	}
 
 	e := &exporter{
 		fset:    fset,
-		src:     src,
+		src:     srcs[0], // fallback for single-file paths; multi-file uses srcByFile
 		info:    info,
 		pkg:     pkg,
 		typeIDs: make(map[types.Type]int),
@@ -1614,82 +1656,99 @@ func ExportFile(path string) (string, error) {
 		// to pair-returning form.
 		userMRFuncs: make(map[*types.Func]*userMRInfo),
 	}
+	// fileBases lists the input files in order; position "file" indices
+	// index into this array (frontend/v1 wire format).
+	fileBases := make([]string, 0, len(paths))
+	for _, p := range paths {
+		fileBases = append(fileBases, filepath.Base(p))
+	}
 	doc := Doc{
 		Frontend:  frontendVersion,
 		Generator: Generator{Tool: "gofrontend", Version: toolVersion, GoRoot: runtime.Version()},
-		Package:   Pkg{Name: file.Name.Name, Files: []string{filepath.Base(path)}, Lang: langVersion},
+		Package:   Pkg{Name: pkgName, Files: fileBases, Lang: langVersion},
 		Types:     []TypeEnt{},
 		Objects:   []ObjectEnt{},
 		Funcs:     []*Node{},
 	}
-	for _, decl := range file.Decls {
-		fd, ok := decl.(*ast.FuncDecl)
-		if !ok {
-			// M5 (WS F): the single allowed import ("runtime", for
-			// runtime.Goexit) is a GenDecl; it was validated above and
-			// carries no code to export. Type declarations are also
-			// GenDecls; v1 supports only struct types without methods
-			// (named types for panic rendering and type assertions).
-			if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.IMPORT {
-				continue
-			}
-			if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
-				for _, spec := range gd.Specs {
-					ts, ok := spec.(*ast.TypeSpec)
-					if !ok {
-						return "", scopeErrorf("package-level type spec %T is not supported (WS D)", spec)
-					}
-					tn, ok := e.info.Defs[ts.Name].(*types.TypeName)
-					if !ok {
-						return "", fmt.Errorf("gofrontend: type name %q has no *types.TypeName object", ts.Name.Name)
-					}
-					// P3-M9 (generics, Gap 2): skip generic template definitions.
-					// tn.Type() is the *types.Named (e.g., nistPoint[T]); the
-					// underlying interface/struct is e.info.Types[ts.Type].Type.
-					// Only the Named tells us if it's a generic template.
-					if named, ok := tn.Type().(*types.Named); ok {
-						if origin := named.Origin(); origin == named {
-							if tparams := origin.TypeParams(); tparams != nil && tparams.Len() > 0 {
-								if named.TypeArgs() == nil || named.TypeArgs().Len() == 0 {
-									continue
+	// Per-file source bytes and file-index maps for positions.
+	e.fileIndex = make(map[*token.File]int, len(files))
+	e.srcByFile = make(map[*token.File][]byte, len(files))
+	for i, file := range files {
+		if tf := fset.File(file.Pos()); tf != nil {
+			e.fileIndex[tf] = i
+			e.srcByFile[tf] = srcs[i]
+		}
+	}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				// M5 (WS F): the single allowed import ("runtime", for
+				// runtime.Goexit) is a GenDecl; it was validated above and
+				// carries no code to export. Type declarations are also
+				// GenDecls; v1 supports only struct types without methods
+				// (named types for panic rendering and type assertions).
+				if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.IMPORT {
+					continue
+				}
+				if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.TYPE {
+					for _, spec := range gd.Specs {
+						ts, ok := spec.(*ast.TypeSpec)
+						if !ok {
+							return "", scopeErrorf("package-level type spec %T is not supported (WS D)", spec)
+						}
+						tn, ok := e.info.Defs[ts.Name].(*types.TypeName)
+						if !ok {
+							return "", fmt.Errorf("gofrontend: type name %q has no *types.TypeName object", ts.Name.Name)
+						}
+						// P3-M9 (generics, Gap 2): skip generic template definitions.
+						// tn.Type() is the *types.Named (e.g., nistPoint[T]); the
+						// underlying interface/struct is e.info.Types[ts.Type].Type.
+						// Only the Named tells us if it's a generic template.
+						if named, ok := tn.Type().(*types.Named); ok {
+							if origin := named.Origin(); origin == named {
+								if tparams := origin.TypeParams(); tparams != nil && tparams.Len() > 0 {
+									if named.TypeArgs() == nil || named.TypeArgs().Len() == 0 {
+										continue
+									}
 								}
 							}
 						}
+						if _, err := e.typeID(e.info.Types[ts.Type].Type); err != nil {
+							return "", err
+						}
 					}
-					if _, err := e.typeID(e.info.Types[ts.Type].Type); err != nil {
+					continue
+				}
+				if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.CONST {
+					// M7: package-level constants need no codegen — every
+					// reference folds through go/types (the *types.Const case
+					// in exportIdent), which has already evaluated them
+					// (iota included). Validate the specs are value specs.
+					for _, spec := range gd.Specs {
+						if _, ok := spec.(*ast.ValueSpec); !ok {
+							return "", scopeErrorf("package-level const spec %T is not supported (M7)", spec)
+						}
+					}
+					continue
+				}
+				if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.VAR {
+					// M7: package-level vars become globals; initializers are
+					// exported after the declaration scan (dependency order).
+					if err := e.collectPackageVars(gd); err != nil {
 						return "", err
 					}
+					continue
 				}
-				continue
+				return "", scopeErrorf("package-level %T is not supported in frontend/v1 scope (WS G/H)", decl)
 			}
-			if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.CONST {
-				// M7: package-level constants need no codegen — every
-				// reference folds through go/types (the *types.Const case
-				// in exportIdent), which has already evaluated them
-				// (iota included). Validate the specs are value specs.
-				for _, spec := range gd.Specs {
-					if _, ok := spec.(*ast.ValueSpec); !ok {
-						return "", scopeErrorf("package-level const spec %T is not supported (M7)", spec)
-					}
-				}
-				continue
-			}
-			if gd, ok := decl.(*ast.GenDecl); ok && gd.Tok == token.VAR {
-				// M7: package-level vars become globals; initializers are
-				// exported after the declaration scan (dependency order).
-				if err := e.collectPackageVars(gd); err != nil {
-					return "", err
-				}
-				continue
-			}
-			return "", scopeErrorf("package-level %T is not supported in frontend/v1 scope (WS G/H)", decl)
+			_ = fd // collected below (M6, WS H)
 		}
-		_ = fd // collected below (M6, WS H)
 	}
 	// M6 (WS H): collect function/method declarations, enumerate
 	// monomorphized instantiations, then emit in source order (declared
 	// functions) followed by deterministic instantiation order.
-	funcs, funcByObj, methodIndex, err := e.collectFuncDecls(file)
+	funcs, funcByObj, methodIndex, err := e.collectFuncDecls(files)
 	if err != nil {
 		return "", err
 	}
@@ -1796,406 +1855,408 @@ func ExportFile(path string) (string, error) {
 	// P3-M9 (tier-1d): leaf utilities unique/structs.
 	needUnique := false
 	needStructs := false
-	for _, imp := range file.Imports {
-		switch strings.Trim(imp.Path.Value, "\"`") {
-		case "time":
-			needTime = true
-		case "context":
-			needTime, needContext = true, true
-		case "errors":
-			needErrors = true
-		case "sort":
-			needSort = true
-		case "bytes":
-			// bytes' ErrTooLarge initializer calls errors.New.
-			// NB: requires m7-errors-sort (integration dependency).
-			// P3-M9: synthetic bytes imports io (Reader/Writer, io.EOF).
-			needBytes = true
-			needErrors = true
-			needIo = true
-		case "math":
-			needMath = true
-		// P3-M9 (tier1c): synthetic math/bits (imports synthetic errors
-		// for the reconstructed overflow/divide sentinels).
-		case "math/bits":
-			needMathBits = true
-			needErrors = true
-		// P3-M9 (tier1c): synthetic math/cmplx (imports synthetic math
-		// and math/bits).
-		case "math/cmplx":
-			needMathCmplx = true
-			needMath = true
-			needMathBits = true
-			needErrors = true
-		case "strings":
-			needStrings = true
-			// P3-M8: the synthetic strings source imports errors (gc-exact
-			// errors.New in Reader.ReadAt/Seek) — bytes/strconv precedent.
-			needErrors = true
-			// P3-M8: strings also imports io (io.EOF in Reader.Read).
-			needIo = true
-		case "encoding/xml":
-			needXml = true
-		case "strconv":
-			// strconv's ErrRange/ErrSyntax initializers call errors.New.
-			needStrconv = true
-			needErrors = true
-		case "encoding/json":
-			needJson = true
-		case "encoding/csv":
-			needCsv = true
-			needErrors = true
-		case "encoding/gob":
-			needGob = true
-			needErrors = true
-		case "encoding/base32":
-			needBase32 = true
-		case "encoding/base64":
-			needBase64 = true
-		case "encoding/hex":
-			needHex = true
-		case "encoding/binary":
-			needBinary = true
-		case "encoding/ascii85":
-			needAscii85 = true
-		case "encoding/pem":
-			// pem's bodies reference base64.CorruptInputError and
-			// base64.StdEncoding (type conversion, package var, methods).
-			// NB: requires m7-wenc-core (integration dependency).
-			needPem = true
-			needBase64 = true
-		case "encoding/asn1":
-			needAsn1 = true
-		case "encoding":
-			needEncoding = true
-		case "io":
-			needIo = true
-		// P3-M8 (wave 2): a user import of "syscall" pulls in the
-		// synthetic package (synth_syscall.go).
-		case "syscall":
-			needSyscall = true
-		// P3-M8b: a user import of "os" pulls in the synthetic package
-		// (synth_os.go). Its source imports errors, io, io/fs, syscall,
-		// time; those are imported by the needOs block below in
-		// dependency order.
-		case "os":
-			needOs = true
-		// P3-M8 (wave 2): a user import of "io/fs" pulls in the minimal
-		// synthetic io/fs core (synth_iofs.go). Its Err* sentinel
-		// initializers call errors.New; the source also imports time.
-		case "io/fs":
-			needIoFs = true
-			needErrors = true
-			needTime = true
-		// P3-M8 (wave 2): a user import of "reflect" pulls in the
-		// synthetic package (synth_reflect.go). The source imports
-		// errors, iter, strconv (unsafe is a builtin surface, not a
-		// synthetic package).
-		case "reflect":
-			needReflect = true
-			needErrors = true
-			needStrconv = true
-		// P3-M8 (wave 2): a user import of "crypto/sha256" pulls in the
-		// synthetic package (synth_crypto_sha256.go). The source imports
-		// crypto, errors, hash; hash imports io; crypto imports hash, io,
-		// strconv.
-		case "crypto/sha256":
-			needCryptoSha256 = true
-			needErrors = true
-			needStrconv = true
-		// P3-M8b: a user import of any other synthetic crypto package
-		// pulls it in (synth_crypto*.go). Dependency chains are imported
-		// in the need-blocks below (importSyntheticPackage is idempotent).
-		case "crypto":
-			needCrypto = true
-		case "crypto/aes":
-			needCryptoAes = true
-		case "crypto/cipher":
-			needCryptoCipher = true
-		case "crypto/hmac":
-			needCryptoHmac = true
-		case "crypto/md5":
-			needCryptoMd5 = true
-		case "crypto/rand":
-			needCryptoRand = true
-		case "crypto/sha1":
-			needCryptoSha1 = true
-		case "crypto/sha3":
-			needCryptoSha3 = true
-		case "crypto/sha512":
-			needCryptoSha512 = true
-		case "crypto/subtle":
-			needCryptoSubtle = true
-		// P3-M9 (tier-5): asymmetric crypto public packages.
-		case "crypto/elliptic":
-			needCryptoElliptic = true
-		case "crypto/ecdh":
-			needCryptoEcdh = true
-		case "crypto/dsa":
-			needCryptoDsa = true
-		case "crypto/ecdsa":
-			needCryptoEcdsa = true
-		case "crypto/ed25519":
-			needCryptoEd25519 = true
-		case "crypto/rsa":
-			needCryptoRsa = true
-		case "crypto/hkdf":
-			needCryptoHkdf = true
-		case "crypto/pbkdf2":
-			needCryptoPbkdf2 = true
-		case "crypto/x509":
-			needCryptoX509 = true
-		case "crypto/tls":
-			needCryptoTls = true
-		case "golang.org/x/crypto/cryptobyte":
-			needCryptobyte = true
-		case "golang.org/x/crypto/cryptobyte/asn1":
-			needCryptobyteAsn1 = true
-		// P3-M8 (wave 2): direct user imports of the synthetic hash and
-		// iter support packages.
-		case "hash":
-			needHash = true
-			needErrors = true
-			needIo = true
-		case "iter":
-			needIter = true
-		// P3-M9 (wave 3, tier-1a worker): direct user imports of the
-		// synthetic cmp/slices/maps/unicode packages. slices pulls in
-		// cmp and iter (its source imports both); maps pulls in iter.
-		case "cmp":
-			needCmp = true
-		case "slices":
-			needSlices = true
-			needCmp = true
-			needIter = true
-		case "maps":
-			needMaps = true
-			needIter = true
-		case "unicode":
-			needUnicode = true
-		case "unicode/utf8":
-			needUnicodeUtf8 = true
-		case "unicode/utf16":
-			needUnicodeUtf16 = true
-		// P3-M9: a user import of "flag" pulls in the synthetic package
-		// (synth_flag.go). The source imports encoding, errors, io, os,
-		// reflect, sort, strconv, strings, time; the os chain (errors,
-		// time, io, io/fs, syscall, strconv) is imported by the needFlag
-		// block below in dependency order (importSyntheticPackage is
-		// idempotent, so overlap with other need-blocks is safe).
-		case "flag":
-			needFlag = true
-		// P3-M9: a user import of "testing" pulls in the synthetic package
-		// (synth_testing.go). The source imports flag plus bytes, context,
-		// errors, io, os, runtime (frozen), strconv, strings, sync,
-		// sync/atomic, time.
-		case "testing":
-			needTesting = true
-			needFlag = true
-		// P3-M9: a user import of "testing/quick" pulls in the synthetic
-		// package (synth_testing_quick.go). The source imports flag
-		// (-quickchecks), fmt, math, reflect, strings.
-		case "testing/quick":
-			needTestingQuick = true
-			needFlag = true
-		// P3-M9: a user import of "testing/iotest" pulls in the synthetic
-		// package (synth_testing_iotest.go). The source imports bytes,
-		// errors, fmt, io, os.
-		case "testing/iotest":
-			needTestingIotest = true
-		// P3-M9 (tier-1d): leaf utilities unique/structs.
-		case "unique":
-			needUnique = true
-		case "structs":
-			needStructs = true
-		// P3-M9 (wave 3): direct user imports of synthetic math/big /
-		// math/rand. math/big pulls its full synthetic dependency
-		// closure (bits/rand/byteorder + the M7/M8 packages it uses).
-		case "math/big":
-			needMathBig = true
-			needMathBits = true
-			needMathRand = true
-			needByteorder = true
-			needBytes = true
-			needErrors = true
-			needIo = true
-			needMath = true
-			needStrconv = true
-			needStrings = true
-		case "math/rand":
-			needMathRand = true
-			// P3-M9 (tier1c): the full math/rand port imports the
-			// synthetic math package (exp.go/normal.go/zipf.go).
-			needMath = true
-		case "math/rand/v2":
-			needMathRandV2 = true
-			// P3-M9 (tier1c): v2 imports synthetic math, math/bits and
-			// internal/byteorder.
-			needMath = true
-			needMathBits = true
-			needByteorder = true
-		case "bufio":
-			needBufio = true
-			// P3-M9 (tier1c): bufio imports bytes, errors, io, strings
-			// (all in overlay or synthetic).
-			needBytes = true
-			needErrors = true
-			needIo = true
-			needStrings = true
-		case "path":
-			needPath = true
-			// P3-M9 (tier1c): path imports strings (synthetic).
-			needStrings = true
-		case "text/scanner":
-			needTextScanner = true
-		case "regexp/syntax":
-			needRegexpSyntax = true
-		// P3-M9 (wave 3, tier-1b): direct user imports of the synthetic
-		// container/* and hash/* packages. container/heap pulls in sort;
-		// hash/* pull in hash (+errors/io via the needHash chain);
-		// maphash additionally pulls in crypto/rand and math.
-		case "container/heap":
-			needContainerHeap = true
-			needSort = true
-		case "container/list":
-			needContainerList = true
-		case "container/ring":
-			needContainerRing = true
-		case "hash/adler32":
-			needHashAdler32 = true
-			needHash = true
-			needErrors = true
-			needIo = true
-		case "hash/crc32":
-			needHashCrc32 = true
-			needHash = true
-			needErrors = true
-			needIo = true
-		case "hash/crc64":
-			needHashCrc64 = true
-			needHash = true
-			needErrors = true
-			needIo = true
-		case "hash/fnv":
-			needHashFnv = true
-			needHash = true
-			needErrors = true
-			needIo = true
-		case "hash/maphash":
-			needHashMaphash = true
-			needHash = true
-			needCryptoRand = true
-			needMath = true
-		// P3-M9 (tier-5: compress): synthetic compress/* packages.
-		// flate imports bufio/errors/fmt/io/math/math/bits/slices/
-		// strconv/sync; gzip adds compress/flate/hash/crc32/time;
-		// zlib adds compress/flate/hash/hash/adler32; lzw needs
-		// bufio/errors/fmt/io; bzip2 needs bufio/cmp/io/slices.
-		case "compress/flate":
-			needFlate = true
-			needBufio = true
-			needErrors = true
-			needIo = true
-			needMath = true
-			needMathBits = true
-			needSlices = true
-			needStrconv = true
-			// sync is a builtin stub (syntheticSyncPackage), always
-			// available via the overlay importer.
-		case "compress/gzip":
-			needGzip = true
-			needFlate = true
-			needBufio = true
-			needErrors = true
-			needIo = true
-			needTime = true
-			needHashCrc32 = true
-			needHash = true
-			// P3-M9: flate (via needFlate) needs math, math/bits, strconv.
-			needMath = true
-			needMathBits = true
-			needStrconv = true
-			// P3-M9: gzip imports encoding/binary (binary.LittleEndian).
-			needBinary = true
-		case "compress/zlib":
-			needZlib = true
-			needFlate = true
-			needBufio = true
-			needErrors = true
-			needIo = true
-			needHashAdler32 = true
-			needHash = true
-			// P3-M9: flate (via needFlate) needs math, math/bits, strconv.
-			needMath = true
-			needMathBits = true
-			needStrconv = true
-			// P3-M9: zlib imports encoding/binary (binary.LittleEndian).
-			needBinary = true
-		case "compress/lzw":
-			needLzw = true
-			needBufio = true
-			needErrors = true
-			needIo = true
-		case "compress/bzip2":
-			needBzip2 = true
-			needBufio = true
-			needCmp = true
-			needIo = true
-			needSlices = true
-		// P3-M9 (tier-4: net): synthetic net (Dial/Listen/TCP/UDP).
-		// net imports errors, internal/poll, io, strconv, strings,
-		// syscall, time.
-		case "net":
-			needNet = true
-			needErrors = true
-			needIo = true
-			needStrconv = true
-			needStrings = true
-			needTime = true
-			// syscall NOT imported: pre-existing io/fs export issue.
-			// Errno constants are defined locally in the net source.
-		// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
-		// net/http imports bufio, bytes, errors, io, net, net/textproto,
-		// net/url, strconv, strings, sync, time. The client delegates to
-		// java.net.http.HttpClient via the graalgo.http.client.do intrinsic.
-		// httptest imports bytes, io, net, net/http, net/url, strings, sync.
-		case "net/http":
-			needNetHttp = true
-			needNet = true
-			needBufio = true
-			needBytes = true
-			needErrors = true
-			needIo = true
-			needStrconv = true
-			needStrings = true
-			needTime = true
-			// net, net/textproto, net/url resolve via the overlay importer
-		case "net/http/httptest":
-			needNetHttpHttptest = true
-			needNetHttp = true
-			needBufio = true
-			needBytes = true
-			needErrors = true
-			needIo = true
-			needStrconv = true
-			needStrings = true
-			needTime = true
-		default:
-			// WS G (P3-M9, module-probe lane): any other import that
-			// survived the ExportFile gate is a disk-resolvable third-party
-			// package — import its transitive closure through the general
-			// overlay (dependencies first), after the synthetic direct
-			// imports below. Dedupe; importPkgTree is idempotent anyway.
-			p := strings.Trim(imp.Path.Value, "\"`")
-			dup := false
-			for _, q := range needDisk {
-				if q == p {
-					dup = true
-					break
+	for _, file := range files {
+		for _, imp := range file.Imports {
+			switch strings.Trim(imp.Path.Value, "\"`") {
+			case "time":
+				needTime = true
+			case "context":
+				needTime, needContext = true, true
+			case "errors":
+				needErrors = true
+			case "sort":
+				needSort = true
+			case "bytes":
+				// bytes' ErrTooLarge initializer calls errors.New.
+				// NB: requires m7-errors-sort (integration dependency).
+				// P3-M9: synthetic bytes imports io (Reader/Writer, io.EOF).
+				needBytes = true
+				needErrors = true
+				needIo = true
+			case "math":
+				needMath = true
+			// P3-M9 (tier1c): synthetic math/bits (imports synthetic errors
+			// for the reconstructed overflow/divide sentinels).
+			case "math/bits":
+				needMathBits = true
+				needErrors = true
+			// P3-M9 (tier1c): synthetic math/cmplx (imports synthetic math
+			// and math/bits).
+			case "math/cmplx":
+				needMathCmplx = true
+				needMath = true
+				needMathBits = true
+				needErrors = true
+			case "strings":
+				needStrings = true
+				// P3-M8: the synthetic strings source imports errors (gc-exact
+				// errors.New in Reader.ReadAt/Seek) — bytes/strconv precedent.
+				needErrors = true
+				// P3-M8: strings also imports io (io.EOF in Reader.Read).
+				needIo = true
+			case "encoding/xml":
+				needXml = true
+			case "strconv":
+				// strconv's ErrRange/ErrSyntax initializers call errors.New.
+				needStrconv = true
+				needErrors = true
+			case "encoding/json":
+				needJson = true
+			case "encoding/csv":
+				needCsv = true
+				needErrors = true
+			case "encoding/gob":
+				needGob = true
+				needErrors = true
+			case "encoding/base32":
+				needBase32 = true
+			case "encoding/base64":
+				needBase64 = true
+			case "encoding/hex":
+				needHex = true
+			case "encoding/binary":
+				needBinary = true
+			case "encoding/ascii85":
+				needAscii85 = true
+			case "encoding/pem":
+				// pem's bodies reference base64.CorruptInputError and
+				// base64.StdEncoding (type conversion, package var, methods).
+				// NB: requires m7-wenc-core (integration dependency).
+				needPem = true
+				needBase64 = true
+			case "encoding/asn1":
+				needAsn1 = true
+			case "encoding":
+				needEncoding = true
+			case "io":
+				needIo = true
+			// P3-M8 (wave 2): a user import of "syscall" pulls in the
+			// synthetic package (synth_syscall.go).
+			case "syscall":
+				needSyscall = true
+			// P3-M8b: a user import of "os" pulls in the synthetic package
+			// (synth_os.go). Its source imports errors, io, io/fs, syscall,
+			// time; those are imported by the needOs block below in
+			// dependency order.
+			case "os":
+				needOs = true
+			// P3-M8 (wave 2): a user import of "io/fs" pulls in the minimal
+			// synthetic io/fs core (synth_iofs.go). Its Err* sentinel
+			// initializers call errors.New; the source also imports time.
+			case "io/fs":
+				needIoFs = true
+				needErrors = true
+				needTime = true
+			// P3-M8 (wave 2): a user import of "reflect" pulls in the
+			// synthetic package (synth_reflect.go). The source imports
+			// errors, iter, strconv (unsafe is a builtin surface, not a
+			// synthetic package).
+			case "reflect":
+				needReflect = true
+				needErrors = true
+				needStrconv = true
+			// P3-M8 (wave 2): a user import of "crypto/sha256" pulls in the
+			// synthetic package (synth_crypto_sha256.go). The source imports
+			// crypto, errors, hash; hash imports io; crypto imports hash, io,
+			// strconv.
+			case "crypto/sha256":
+				needCryptoSha256 = true
+				needErrors = true
+				needStrconv = true
+			// P3-M8b: a user import of any other synthetic crypto package
+			// pulls it in (synth_crypto*.go). Dependency chains are imported
+			// in the need-blocks below (importSyntheticPackage is idempotent).
+			case "crypto":
+				needCrypto = true
+			case "crypto/aes":
+				needCryptoAes = true
+			case "crypto/cipher":
+				needCryptoCipher = true
+			case "crypto/hmac":
+				needCryptoHmac = true
+			case "crypto/md5":
+				needCryptoMd5 = true
+			case "crypto/rand":
+				needCryptoRand = true
+			case "crypto/sha1":
+				needCryptoSha1 = true
+			case "crypto/sha3":
+				needCryptoSha3 = true
+			case "crypto/sha512":
+				needCryptoSha512 = true
+			case "crypto/subtle":
+				needCryptoSubtle = true
+			// P3-M9 (tier-5): asymmetric crypto public packages.
+			case "crypto/elliptic":
+				needCryptoElliptic = true
+			case "crypto/ecdh":
+				needCryptoEcdh = true
+			case "crypto/dsa":
+				needCryptoDsa = true
+			case "crypto/ecdsa":
+				needCryptoEcdsa = true
+			case "crypto/ed25519":
+				needCryptoEd25519 = true
+			case "crypto/rsa":
+				needCryptoRsa = true
+			case "crypto/hkdf":
+				needCryptoHkdf = true
+			case "crypto/pbkdf2":
+				needCryptoPbkdf2 = true
+			case "crypto/x509":
+				needCryptoX509 = true
+			case "crypto/tls":
+				needCryptoTls = true
+			case "golang.org/x/crypto/cryptobyte":
+				needCryptobyte = true
+			case "golang.org/x/crypto/cryptobyte/asn1":
+				needCryptobyteAsn1 = true
+			// P3-M8 (wave 2): direct user imports of the synthetic hash and
+			// iter support packages.
+			case "hash":
+				needHash = true
+				needErrors = true
+				needIo = true
+			case "iter":
+				needIter = true
+			// P3-M9 (wave 3, tier-1a worker): direct user imports of the
+			// synthetic cmp/slices/maps/unicode packages. slices pulls in
+			// cmp and iter (its source imports both); maps pulls in iter.
+			case "cmp":
+				needCmp = true
+			case "slices":
+				needSlices = true
+				needCmp = true
+				needIter = true
+			case "maps":
+				needMaps = true
+				needIter = true
+			case "unicode":
+				needUnicode = true
+			case "unicode/utf8":
+				needUnicodeUtf8 = true
+			case "unicode/utf16":
+				needUnicodeUtf16 = true
+			// P3-M9: a user import of "flag" pulls in the synthetic package
+			// (synth_flag.go). The source imports encoding, errors, io, os,
+			// reflect, sort, strconv, strings, time; the os chain (errors,
+			// time, io, io/fs, syscall, strconv) is imported by the needFlag
+			// block below in dependency order (importSyntheticPackage is
+			// idempotent, so overlap with other need-blocks is safe).
+			case "flag":
+				needFlag = true
+			// P3-M9: a user import of "testing" pulls in the synthetic package
+			// (synth_testing.go). The source imports flag plus bytes, context,
+			// errors, io, os, runtime (frozen), strconv, strings, sync,
+			// sync/atomic, time.
+			case "testing":
+				needTesting = true
+				needFlag = true
+			// P3-M9: a user import of "testing/quick" pulls in the synthetic
+			// package (synth_testing_quick.go). The source imports flag
+			// (-quickchecks), fmt, math, reflect, strings.
+			case "testing/quick":
+				needTestingQuick = true
+				needFlag = true
+			// P3-M9: a user import of "testing/iotest" pulls in the synthetic
+			// package (synth_testing_iotest.go). The source imports bytes,
+			// errors, fmt, io, os.
+			case "testing/iotest":
+				needTestingIotest = true
+			// P3-M9 (tier-1d): leaf utilities unique/structs.
+			case "unique":
+				needUnique = true
+			case "structs":
+				needStructs = true
+			// P3-M9 (wave 3): direct user imports of synthetic math/big /
+			// math/rand. math/big pulls its full synthetic dependency
+			// closure (bits/rand/byteorder + the M7/M8 packages it uses).
+			case "math/big":
+				needMathBig = true
+				needMathBits = true
+				needMathRand = true
+				needByteorder = true
+				needBytes = true
+				needErrors = true
+				needIo = true
+				needMath = true
+				needStrconv = true
+				needStrings = true
+			case "math/rand":
+				needMathRand = true
+				// P3-M9 (tier1c): the full math/rand port imports the
+				// synthetic math package (exp.go/normal.go/zipf.go).
+				needMath = true
+			case "math/rand/v2":
+				needMathRandV2 = true
+				// P3-M9 (tier1c): v2 imports synthetic math, math/bits and
+				// internal/byteorder.
+				needMath = true
+				needMathBits = true
+				needByteorder = true
+			case "bufio":
+				needBufio = true
+				// P3-M9 (tier1c): bufio imports bytes, errors, io, strings
+				// (all in overlay or synthetic).
+				needBytes = true
+				needErrors = true
+				needIo = true
+				needStrings = true
+			case "path":
+				needPath = true
+				// P3-M9 (tier1c): path imports strings (synthetic).
+				needStrings = true
+			case "text/scanner":
+				needTextScanner = true
+			case "regexp/syntax":
+				needRegexpSyntax = true
+			// P3-M9 (wave 3, tier-1b): direct user imports of the synthetic
+			// container/* and hash/* packages. container/heap pulls in sort;
+			// hash/* pull in hash (+errors/io via the needHash chain);
+			// maphash additionally pulls in crypto/rand and math.
+			case "container/heap":
+				needContainerHeap = true
+				needSort = true
+			case "container/list":
+				needContainerList = true
+			case "container/ring":
+				needContainerRing = true
+			case "hash/adler32":
+				needHashAdler32 = true
+				needHash = true
+				needErrors = true
+				needIo = true
+			case "hash/crc32":
+				needHashCrc32 = true
+				needHash = true
+				needErrors = true
+				needIo = true
+			case "hash/crc64":
+				needHashCrc64 = true
+				needHash = true
+				needErrors = true
+				needIo = true
+			case "hash/fnv":
+				needHashFnv = true
+				needHash = true
+				needErrors = true
+				needIo = true
+			case "hash/maphash":
+				needHashMaphash = true
+				needHash = true
+				needCryptoRand = true
+				needMath = true
+			// P3-M9 (tier-5: compress): synthetic compress/* packages.
+			// flate imports bufio/errors/fmt/io/math/math/bits/slices/
+			// strconv/sync; gzip adds compress/flate/hash/crc32/time;
+			// zlib adds compress/flate/hash/hash/adler32; lzw needs
+			// bufio/errors/fmt/io; bzip2 needs bufio/cmp/io/slices.
+			case "compress/flate":
+				needFlate = true
+				needBufio = true
+				needErrors = true
+				needIo = true
+				needMath = true
+				needMathBits = true
+				needSlices = true
+				needStrconv = true
+				// sync is a builtin stub (syntheticSyncPackage), always
+				// available via the overlay importer.
+			case "compress/gzip":
+				needGzip = true
+				needFlate = true
+				needBufio = true
+				needErrors = true
+				needIo = true
+				needTime = true
+				needHashCrc32 = true
+				needHash = true
+				// P3-M9: flate (via needFlate) needs math, math/bits, strconv.
+				needMath = true
+				needMathBits = true
+				needStrconv = true
+				// P3-M9: gzip imports encoding/binary (binary.LittleEndian).
+				needBinary = true
+			case "compress/zlib":
+				needZlib = true
+				needFlate = true
+				needBufio = true
+				needErrors = true
+				needIo = true
+				needHashAdler32 = true
+				needHash = true
+				// P3-M9: flate (via needFlate) needs math, math/bits, strconv.
+				needMath = true
+				needMathBits = true
+				needStrconv = true
+				// P3-M9: zlib imports encoding/binary (binary.LittleEndian).
+				needBinary = true
+			case "compress/lzw":
+				needLzw = true
+				needBufio = true
+				needErrors = true
+				needIo = true
+			case "compress/bzip2":
+				needBzip2 = true
+				needBufio = true
+				needCmp = true
+				needIo = true
+				needSlices = true
+			// P3-M9 (tier-4: net): synthetic net (Dial/Listen/TCP/UDP).
+			// net imports errors, internal/poll, io, strconv, strings,
+			// syscall, time.
+			case "net":
+				needNet = true
+				needErrors = true
+				needIo = true
+				needStrconv = true
+				needStrings = true
+				needTime = true
+				// syscall NOT imported: pre-existing io/fs export issue.
+				// Errno constants are defined locally in the net source.
+			// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest.
+			// net/http imports bufio, bytes, errors, io, net, net/textproto,
+			// net/url, strconv, strings, sync, time. The client delegates to
+			// java.net.http.HttpClient via the graalgo.http.client.do intrinsic.
+			// httptest imports bytes, io, net, net/http, net/url, strings, sync.
+			case "net/http":
+				needNetHttp = true
+				needNet = true
+				needBufio = true
+				needBytes = true
+				needErrors = true
+				needIo = true
+				needStrconv = true
+				needStrings = true
+				needTime = true
+				// net, net/textproto, net/url resolve via the overlay importer
+			case "net/http/httptest":
+				needNetHttpHttptest = true
+				needNetHttp = true
+				needBufio = true
+				needBytes = true
+				needErrors = true
+				needIo = true
+				needStrconv = true
+				needStrings = true
+				needTime = true
+			default:
+				// WS G (P3-M9, module-probe lane): any other import that
+				// survived the ExportFile gate is a disk-resolvable third-party
+				// package — import its transitive closure through the general
+				// overlay (dependencies first), after the synthetic direct
+				// imports below. Dedupe; importPkgTree is idempotent anyway.
+				p := strings.Trim(imp.Path.Value, "\"`")
+				dup := false
+				for _, q := range needDisk {
+					if q == p {
+						dup = true
+						break
+					}
 				}
-			}
-			if !dup {
-				needDisk = append(needDisk, p)
+				if !dup {
+					needDisk = append(needDisk, p)
+				}
 			}
 		}
 	}
@@ -3007,7 +3068,7 @@ func ExportFile(path string) (string, error) {
 	if err := e.recomputeMethodTables(); err != nil {
 		return "", err
 	}
-	insts, err := e.enumerateInstantiations(file, funcs)
+	insts, err := e.enumerateInstantiations(files, funcs)
 	if err != nil {
 		return "", err
 	}
@@ -3563,8 +3624,13 @@ func (e *exporter) initCallEnt(fi *funcDeclInfo) (GlobalEnt, error) {
 type exporter struct {
 	fset     *token.FileSet
 	src      []byte // raw source bytes of the single input file (M8: rune-based positions)
-	info     *types.Info
-	pkg      *types.Package // the type-checked package (P3-M3: method-set lookup visibility)
+	// fileIndex maps each input file's *token.File to its index in the
+	// files order; srcByFile maps it to that file's source bytes.
+	// Multi-file packages need per-file bytes for e.pos() rune columns.
+	fileIndex map[*token.File]int
+	srcByFile map[*token.File][]byte
+	info       *types.Info
+	pkg        *types.Package // the type-checked package (P3-M3: method-set lookup visibility)
 	types    []TypeEnt
 	typeList []types.Type // parallel to types: the go/types type per id (P3-M3)
 	typeIDs  map[types.Type]int
@@ -3908,21 +3974,34 @@ func (e *exporter) pos(n ast.Node) *Pos {
 	s := e.fset.Position(n.Pos())
 	t := e.fset.Position(n.End())
 	col, length := s.Column, t.Offset-s.Offset
+	// Multi-file: the position's file index and that file's source bytes.
+	// Falls back to e.src (single-file or synthetic-package swap) when the
+	// maps are nil or the file isn't an input file.
+	fileIdx := 0
+	src := e.src
+	if tf := e.fset.File(n.Pos()); tf != nil {
+		if idx, ok := e.fileIndex[tf]; ok {
+			fileIdx = idx
+		}
+		if b, ok := e.srcByFile[tf]; ok {
+			src = b
+		}
+	}
 	// M8: Truffle Source.createSection(line, col, len) is char-based, but
 	// go/token positions are byte-based. For non-ASCII sources the byte
 	// length can exceed the char length, and createSection throws
 	// IllegalArgumentException ("charIndex out of range") — a hard crash on
 	// valid programs (found by the M8 fuzzer: fmt.Println("日本語")).
 	// Emit rune-based col/len; off stays a byte offset (NodeFactory ignores it).
-	if e.src != nil && s.IsValid() && t.IsValid() {
-		if f := e.fset.File(n.Pos()); f != nil && s.Offset <= t.Offset && t.Offset <= len(e.src) {
+	if src != nil && s.IsValid() && t.IsValid() {
+		if f := e.fset.File(n.Pos()); f != nil && s.Offset <= t.Offset && t.Offset <= len(src) {
 			if lo := f.Offset(f.LineStart(s.Line)); lo <= s.Offset {
-				col = utf8.RuneCount(e.src[lo:s.Offset]) + 1
+				col = utf8.RuneCount(src[lo:s.Offset]) + 1
 			}
-			length = utf8.RuneCount(e.src[s.Offset:t.Offset])
+			length = utf8.RuneCount(src[s.Offset:t.Offset])
 		}
 	}
-	return &Pos{File: 0, Line: s.Line, Col: col, Off: s.Offset, Len: length}
+	return &Pos{File: fileIdx, Line: s.Line, Col: col, Off: s.Offset, Len: length}
 }
 
 func (e *exporter) node(kind string, n ast.Node, fields map[string]any) *Node {
@@ -5060,43 +5139,45 @@ func callTargetIdent(fun ast.Expr) *ast.Ident {
 
 // collectFuncDecls walks the file's top-level declarations, registering
 // every function/method object and indexing method declarations.
-func (e *exporter) collectFuncDecls(file *ast.File) (funcs []*funcDeclInfo, funcByObj map[*types.Func]*funcDeclInfo, methodIndex map[methodKey]*funcDeclInfo, err error) {
+func (e *exporter) collectFuncDecls(files []*ast.File) (funcs []*funcDeclInfo, funcByObj map[*types.Func]*funcDeclInfo, methodIndex map[methodKey]*funcDeclInfo, err error) {
 	funcByObj = make(map[*types.Func]*funcDeclInfo)
 	methodIndex = make(map[methodKey]*funcDeclInfo)
-	for _, decl := range file.Decls {
-		fd, ok := decl.(*ast.FuncDecl)
-		if !ok {
-			continue
-		}
-		obj, ok := e.info.Defs[fd.Name].(*types.Func)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("gofrontend: %s has no *types.Func object", fd.Name.Name)
-		}
-		funcID, err := e.defFunc(obj)
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		sig, ok := obj.Type().(*types.Signature)
-		if !ok {
-			return nil, nil, nil, fmt.Errorf("gofrontend: %s has non-signature type %s", fd.Name.Name, obj.Type())
-		}
-		fi := &funcDeclInfo{fd: fd, obj: obj, funcID: funcID, sig: sig}
-		if fd.Recv != nil {
-			fi.recv = sig.Recv()
-			if fi.recv == nil {
-				return nil, nil, nil, fmt.Errorf("gofrontend: method %s has no receiver var", fd.Name.Name)
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
 			}
-			rn := derefNamed(fi.recv.Type())
-			if rn == nil {
-				return nil, nil, nil, scopeErrorf("method %s has non-named receiver type %s (WS D)", fd.Name.Name, fi.recv.Type())
+			obj, ok := e.info.Defs[fd.Name].(*types.Func)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("gofrontend: %s has no *types.Func object", fd.Name.Name)
 			}
-			methodIndex[methodKey{rn.Obj(), obj.Name()}] = fi
-			fi.isTemplate = sig.TypeParams().Len() > 0 || rn.Origin().TypeParams().Len() > 0
-		} else {
-			fi.isTemplate = sig.TypeParams().Len() > 0
+			funcID, err := e.defFunc(obj)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			sig, ok := obj.Type().(*types.Signature)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("gofrontend: %s has non-signature type %s", fd.Name.Name, obj.Type())
+			}
+			fi := &funcDeclInfo{fd: fd, obj: obj, funcID: funcID, sig: sig}
+			if fd.Recv != nil {
+				fi.recv = sig.Recv()
+				if fi.recv == nil {
+					return nil, nil, nil, fmt.Errorf("gofrontend: method %s has no receiver var", fd.Name.Name)
+				}
+				rn := derefNamed(fi.recv.Type())
+				if rn == nil {
+					return nil, nil, nil, scopeErrorf("method %s has non-named receiver type %s (WS D)", fd.Name.Name, fi.recv.Type())
+				}
+				methodIndex[methodKey{rn.Obj(), obj.Name()}] = fi
+				fi.isTemplate = sig.TypeParams().Len() > 0 || rn.Origin().TypeParams().Len() > 0
+			} else {
+				fi.isTemplate = sig.TypeParams().Len() > 0
+			}
+			funcs = append(funcs, fi)
+			funcByObj[obj] = fi
 		}
-		funcs = append(funcs, fi)
-		funcByObj[obj] = fi
 	}
 	return funcs, funcByObj, methodIndex, nil
 }
@@ -5984,8 +6065,8 @@ func (e *exporter) drainMethodTablePending(doc *Doc) error {
 	return nil
 }
 
-func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo) ([]*instantiation, error) {
-	// Roots are collected from the user file and from every imported
+func (e *exporter) enumerateInstantiations(files []*ast.File, funcs []*funcDeclInfo) ([]*instantiation, error) {
+	// Roots are collected from the user files and from every imported
 	// synthetic package's own body (see scanRoots).
 	seen := make(map[string]*instantiation)
 	// P3-M9: on-demand instantiations created during synthetic import
@@ -6004,7 +6085,7 @@ func (e *exporter) enumerateInstantiations(file *ast.File, funcs []*funcDeclInfo
 	}
 	newFuncInst := e.newFuncInstantiation
 
-	if err := e.scanRoots(e.info, []*ast.File{file}, funcs, enqueue, newFuncInst); err != nil {
+	if err := e.scanRoots(e.info, files, funcs, enqueue, newFuncInst); err != nil {
 		return nil, err
 	}
 	// P3-M9 (tier-5): synthetic packages root their own generic
@@ -6063,11 +6144,13 @@ func (e *exporter) findNested(inst *instantiation, enqueue func(*instantiation),
 	var savedSrc []byte
 	var savedInfo *types.Info
 	var savedPkg *types.Package
+	var savedFileIndex map[*token.File]int
+	var savedSrcByFile map[*token.File][]byte
 	if sp != nil {
-		savedFset, savedSrc, savedInfo, savedPkg = e.fset, e.src, e.info, e.pkg
-		e.fset, e.src, e.info, e.pkg = sp.fset, sp.srcForDecl(inst.decl.fd), sp.info, sp.pkg
+		savedFset, savedSrc, savedInfo, savedPkg, savedFileIndex, savedSrcByFile = e.fset, e.src, e.info, e.pkg, e.fileIndex, e.srcByFile
+		e.fset, e.src, e.info, e.pkg, e.fileIndex, e.srcByFile = sp.fset, sp.srcForDecl(inst.decl.fd), sp.info, sp.pkg, nil, nil
 		defer func() {
-			e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
+			e.fset, e.src, e.info, e.pkg, e.fileIndex, e.srcByFile = savedFset, savedSrc, savedInfo, savedPkg, savedFileIndex, savedSrcByFile
 		}()
 	}
 	subst := inst.subst
@@ -6579,9 +6662,11 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 	var savedSrc []byte
 	var savedInfo *types.Info
 	var savedPkg *types.Package
+	var savedFileIndex map[*token.File]int
+	var savedSrcByFile map[*token.File][]byte
 	if sp != nil {
-		savedFset, savedSrc, savedInfo, savedPkg = e.fset, e.src, e.info, e.pkg
-		e.fset, e.src, e.info, e.pkg = sp.fset, sp.srcForDecl(inst.decl.fd), sp.info, sp.pkg
+		savedFset, savedSrc, savedInfo, savedPkg, savedFileIndex, savedSrcByFile = e.fset, e.src, e.info, e.pkg, e.fileIndex, e.srcByFile
+		e.fset, e.src, e.info, e.pkg, e.fileIndex, e.srcByFile = sp.fset, sp.srcForDecl(inst.decl.fd), sp.info, sp.pkg, nil, nil
 	}
 	// Scope object ids and substitution to this instantiation.
 	savedObjs := e.objIDs
@@ -6607,7 +6692,7 @@ func (e *exporter) exportInstantiation(inst *instantiation) (*Node, error) {
 		e.subst = savedSubst
 		e.substTypeIDs = savedSubstTypes
 		if sp != nil {
-			e.fset, e.src, e.info, e.pkg = savedFset, savedSrc, savedInfo, savedPkg
+			e.fset, e.src, e.info, e.pkg, e.fileIndex, e.srcByFile = savedFset, savedSrc, savedInfo, savedPkg, savedFileIndex, savedSrcByFile
 		}
 	}()
 
