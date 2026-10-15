@@ -1057,23 +1057,14 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 									e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = &funcDeclInfo{fd: d, obj: obj, sig: sig}
 								}
 							}
-						} else {
-							// GENERAL (fix-make-unknown): package-level fail-fast
-							// stubs are registered in synthFuncIDs (but NOT
-							// funcByObj) so they can be used in value position
-							// (e.g. var AcceptFunc = syscall.Accept in synthetic
-							// poll). They are NOT pair-transformed (fail-fast
-							// preserved) and their bodies are NOT emitted (v1
-							// cannot emit multi-result). Call sites still fail
-							// fast via isMultiResultSyntheticFailFast.
-							fi := &funcDeclInfo{fd: d, obj: obj, funcID: -1, sig: sig, file: file}
-							fi.isTemplate = sig.TypeParams().Len() > 0
-							fi.synthPkg = sp
-							if e.synthFuncIDs == nil {
-								e.synthFuncIDs = make(map[string]*funcDeclInfo)
-							}
-							e.synthFuncIDs[sp.path+"."+obj.Name()] = fi
 						}
+						// Package-level fail-fast stubs are NOT registered for
+						// value-position use. A fail-fast stub used as a value
+						// (e.g. var f = syscall.Accept) is a compile-time error:
+						// v1 cannot represent the multi-result signature, and
+						// emitting nil or a panic-on-call value would be silently
+						// wrong. The error is raised at the use site in
+						// exportSyntheticQualified.
 						continue
 					}
 					// Not table-driven: fall through to normal processing.
@@ -2025,26 +2016,24 @@ func (e *exporter) exportSyntheticQualified(x *ast.SelectorExpr, pkgName *types.
 			}
 			return e.node("ident", x.Sel, fields), nil
 		}
-		// GENERAL (fix-make-unknown): fail-fast stub multi-result functions
-		// (e.g. syscall.Accept) are in synthFuncIDs but not funcByObj.
-		// They can be used as values (the value panics if called, which
-		// is the correct fail-fast behavior). Look up by path.name.
+		// Fail-fast stub multi-result functions (e.g. syscall.Accept) cannot
+		// be used as values in v1. The v1 wire format cannot represent the
+		// multi-result signature, so there is no honest value to emit.
+		// This is a compile-time error, not a nil or panic-on-call value.
 		if e.synthFuncIDs != nil && obj.Pkg() != nil {
-			if fi, ok := e.synthFuncIDs[obj.Pkg().Path()+"."+obj.Name()]; ok && fi != nil {
-				fields := map[string]any{"name": x.Sel.Name}
-				if err := e.exportFuncValue(x.Sel, obj, fields); err != nil {
-					return nil, err
-				}
-				return e.node("ident", x.Sel, fields), nil
+			if _, ok := e.synthFuncIDs[obj.Pkg().Path()+"."+obj.Name()]; ok {
+				return nil, scopeErrorf("%s.%s is a fail-fast stub and cannot be used in value position in frontend/v1 scope",
+					pkgName.Name(), obj.Name())
 			}
 		}
-		// GENERAL (fix-make-unknown): table-driven multi-result functions
-		// (e.g. os.Hostname, syscall.Socket) cannot be used as values
-		// in v1 (the __-helper has a different signature). Emit nil;
-		// the variable will panic if called (honest fail-fast for an
-		// unimplemented value-position use).
+		// Table-driven multi-result functions (e.g. os.Hostname,
+		// syscall.Socket) cannot be used as values in v1 (the __-helper has
+		// a different signature). This is a compile-time error, not nil:
+		// emitting nil would be silently wrong and panic with a confusing
+		// nil dereference at runtime.
 		if obj.Pkg() != nil && hasStaticMREntry(obj.Pkg().Path(), obj.Name(), "") {
-			return e.node("nil", x, map[string]any{}), nil
+			return nil, scopeErrorf("%s.%s in value position is not supported in frontend/v1 scope (M5): multi-result function values require v2",
+				pkgName.Name(), obj.Name())
 		}
 		return nil, scopeErrorf("%s.%s in value position is not supported in frontend/v1 scope (M5)",
 			pkgName.Name(), obj.Name())
