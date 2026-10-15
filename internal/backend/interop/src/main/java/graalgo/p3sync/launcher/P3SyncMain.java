@@ -119,7 +119,8 @@ public final class P3SyncMain {
         java.util.List<String> files = new java.util.ArrayList<>();
         // P3-M8 (wave 2, R6): program argv. Everything after a bare
         // "--" is the Go program's argv (os.Args); the first element is
-        // always the input-file path. Without "--", os.Args is just
+        // always the absolute input-file path (gc parity: argv[0] is
+        // absolute under `go run`). Without "--", os.Args is just
         // [input-file].
         boolean dashdash = false;
         java.util.List<String> goArgs = new java.util.ArrayList<>();
@@ -598,7 +599,7 @@ public final class P3SyncMain {
         System.err.println(
                 "usage: graalgo-sync-run [--gmp=N] [--check] [--dump-polymorphism] file.go [file.go...] [-- args...]");
         System.err.println(
-                "  --            program argv follow (os.Args[0] is always the input-file path)");
+                "  --            program argv follow (os.Args[0] is the absolute input-file path)");
         System.err.println("  --gmp=N   in-flight cap (default: carriers); effective cap = min(gmp, carriers)");
         System.err.println("  --check   build only, do not execute");
         System.err.println("  --dump-polymorphism  M9: dump per-site itab-identity histograms to stderr");
