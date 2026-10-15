@@ -1798,6 +1798,67 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	return nil
 }
 
+// mrPlanForFuncValue resolves the pair-desugar plan for a multi-result
+// named function used in value position (PKG-035, P3-M10): e.g.
+// var F func() (int, error) = two, or
+// var AcceptFunc func(int) (int, syscall.Sockaddr, error) = syscall.Accept.
+//
+// It mirrors the Ident branch of classifyMultiResultCall: user
+// pair-transformed functions first (userMRFuncs), then the table
+// classifiers (m7/os/m8/io/m9/disk). The returned plan's tmpType is the
+// pair struct and pairFields the extraction order, so the value can be
+// formed as the pair-returning implementation and call sites through a
+// variable linked to this plan desugar exactly like direct calls.
+//
+// Returns nil when fn is not a multi-result function with a pair form:
+// single-result functions need no plan; generic templates are excluded
+// (a value needs an instantiation, WS H); fail-fast stubs have no
+// __-helper and keep their honest compile-time error at the use site.
+func (e *exporter) mrPlanForFuncValue(fn *types.Func) *mrPlan {
+	if fn == nil {
+		return nil
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok || sig.Results().Len() <= 1 {
+		return nil
+	}
+	if sig.TypeParams() != nil && sig.TypeParams().Len() > 0 {
+		return nil
+	}
+	if mrInfo, ok := e.userMRFuncs[fn]; ok {
+		return &mrPlan{
+			kind:       mrUser,
+			tmpType:    mrInfo.pairType,
+			pairFields: mrInfo.pairFields,
+		}
+	}
+	if fn.Pkg() == nil {
+		return nil
+	}
+	pkgPath := fn.Pkg().Path()
+	// No call site, so no type arguments: targs is nil (generic
+	// templates were excluded above).
+	if plan := classifyM7MultiResultCall(pkgPath, fn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyOsMultiResultCall(pkgPath, fn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyM8MultiResultCall(pkgPath, fn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyIoMultiResultCall(pkgPath, fn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyM9MultiResultCall(pkgPath, fn, nil); plan != nil {
+		return plan
+	}
+	if plan := classifyDiskMultiResultCall(pkgPath, fn, nil); plan != nil {
+		return plan
+	}
+	return nil
+}
+
 // classifyTrivialForwarder recognizes a synthetic stub method whose body
 // is a trivial forwarder: a single `return p()` where p names a
 // function-typed parameter. Such stubs (e.g. a no-memoization cache whose
