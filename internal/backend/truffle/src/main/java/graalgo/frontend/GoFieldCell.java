@@ -52,4 +52,14 @@ public final class GoFieldCell implements GoCell {
     public String toString() {
         return "GoFieldCell{field=" + fieldIndex + " of " + struct + "}";
     }
+
+    @Override
+    public boolean sameStorageAs(GoCell other) {
+        // A GoFieldCell is allocated fresh on every &s.f evaluation, so
+        // two cells address the same storage iff they were taken over the
+        // same struct value (object identity: a reassigned owner variable
+        // holds a new struct, and the old cell keeps pointing at the old
+        // one, matching gc) and the same field index.
+        return other instanceof GoFieldCell f && struct == f.struct && fieldIndex == f.fieldIndex;
+    }
 }

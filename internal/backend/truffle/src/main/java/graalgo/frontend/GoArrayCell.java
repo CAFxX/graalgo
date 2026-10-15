@@ -40,4 +40,12 @@ public final class GoArrayCell implements GoCell {
     public String toString() {
         return "GoArrayCell{index=" + index + "}";
     }
+
+    @Override
+    public boolean sameStorageAs(GoCell other) {
+        // Same backing array object and same absolute element index address
+        // the same storage (a re-sliced or reassigned slice variable keeps
+        // pointing into the original backing array, matching gc).
+        return other instanceof GoArrayCell a && array == a.array && index == a.index;
+    }
 }
