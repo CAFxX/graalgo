@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/CAFxX/graalgo/internal/vet"
 )
 
 // cmdRun implements `graalgo run [build flags] <file.go|package> [args...]`.
@@ -108,9 +110,9 @@ func cmdBuild(root string, args []string) int {
 
 // cmdVet implements `graalgo vet [packages]`.
 //
-// Runs the frontend's static checks over the named packages. Currently
-// this is the frontend translation check; deeper vet analyses arrive
-// with the driver work.
+// Runs the frontend translation check (--check) over the named packages,
+// then runs the static analyzers in internal/vet and reports diagnostics
+// in the same style as `go vet`.
 func cmdVet(root string, args []string) int {
 	files, err := resolveFiles(args)
 	if err != nil {
@@ -124,6 +126,18 @@ func cmdVet(root string, args []string) int {
 		}
 	}
 	if failed {
+		return 1
+	}
+	// Run the analyzers over all files as one package.
+	ds, err := vet.Run(files)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
+		return 1
+	}
+	for _, d := range ds {
+		fmt.Printf("%s: %s\n", d.Pos, d.Message)
+	}
+	if len(ds) > 0 {
 		return 1
 	}
 	fmt.Println("vet: no issues found")
