@@ -39,6 +39,10 @@ This package implements `go vet`-style static analyzers that run as part of
 | `hostport` | `net.Dial` with concatenated or port-less addresses |
 | `directive` | Unknown `//go:` directives |
 | `buildtag` | Malformed `// +build` lines |
+| `asmdecl` | Mismatches between assembly files and Go declarations |
+| `cgocall` | Violations of the cgo pointer passing rules |
+| `framepointer` | Assembly that clobbers the frame pointer before saving it |
+| `stdversion` | Uses of standard library symbols too new for the go.mod version |
 
 ## Design
 
@@ -47,13 +51,11 @@ This package implements `go vet`-style static analyzers that run as part of
 - Type checking is best-effort: if `types.Config.Check` fails, analyzers
   still run on the AST with partial type info.
 - `Run(paths)` returns diagnostics sorted by source position.
-
-## Not yet implemented
-
-The following `go vet` analyzers are not yet implemented:
-`asmdecl` (requires assembly parser), `cgocall` (requires cgo pointer
-analysis), `framepointer` (requires assembly parser), `stdversion`
-(requires stdlib symbol version database).
+- `asmdecl` and `framepointer` discover `.s` files in the directories
+  containing the analyzed Go files.
+- `stdversion` reads the symbol introduction database from
+  `$GOROOT/api/go1*.txt` and the module version from the enclosing
+  `go.mod` (raised per-file by `//go:build go1.X` constraints).
 
 ## Notes on behavior differences
 
