@@ -252,6 +252,13 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"encoding/base64", "Decode", "Encoding", "__base64Decode", "base64DecodePair", []string{"n", "err"}},
 	{"encoding/base64", "DecodeString", "Encoding", "__base64DecodeString", "base64DecodeStringPair", []string{"b", "err"}},
 	{"encoding/base64", "AppendDecode", "Encoding", "__base64AppendDecode", "base64DecodeStringPair", []string{"b", "err"}},
+	// encoding/base64: streaming encoder/decoder methods (Gate-1 #4).
+	{"encoding/base64", "Write", "encoder", "__encoderWrite", "base64EncoderWritePair", []string{"n", "err"}},
+	{"encoding/base64", "Read", "decoder", "__decoderRead", "base64DecoderReadPair", []string{"n", "err"}},
+	{"encoding/base64", "Read", "newlineFilteringReader", "__newlineFilteringReaderRead", "base64NewlineFilteringReaderReadPair", []string{"n", "err"}},
+	// io/fs: ReadLink/Lstat (Gate-1 #4).
+	{"io/fs", "ReadLink", "", "__fsReadLink", "fsReadLinkPair", []string{"s", "err"}},
+	{"io/fs", "Lstat", "", "__fsLstat", "fsLstatPair", []string{"fi", "err"}},
 	// encoding/hex: package-level funcs.
 	{"encoding/hex", "Decode", "", "__hexDecode", "hexDecodePair", []string{"n", "err"}},
 	{"encoding/hex", "DecodeString", "", "__hexDecodeString", "hexDecodeStringPair", []string{"b", "err"}},

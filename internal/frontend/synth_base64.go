@@ -13,35 +13,31 @@
 // declarations with real bodies — WS D): Encode, EncodeToString,
 // EncodedLen, DecodedLen, AppendEncode, NewEncoding, WithPadding,
 // Strict, CorruptInputError.Error are real Go, adapted from the gc
-// 1.27.1 implementation (io-free; the streaming encoder/decoder types,
-// NewEncoder/NewDecoder and newlineFilteringReader are omitted — see
-// below). The strconv.IntSize/byteorder/slices helpers used by gc are
-// replaced with local equivalents (intSize64 const, manual big-endian
-// stores, base64Grow).
+// 1.27.1 implementation. The streaming encoder/decoder (NewEncoder,
+// NewDecoder, encoder, decoder, newlineFilteringReader) are real Go
+// over the synthetic Encode/decode core (io landed in P3-M8). The
+// strconv.IntSize/byteorder/slices helpers used by gc are replaced
+// with local equivalents (intSize64 const, manual big-endian stores,
+// base64Grow).
 //
-// Multi-result members (Decode, DecodeString, AppendDecode) keep exact
-// gc signatures with fail-fast bodies for type-checking; their real
-// implementations live in the single-result __base64Decode,
-// __base64DecodeString and __base64AppendDecode helpers, and the
-// exporter desugars N-target call sites to them (Appendix M pattern,
+// Multi-result members (Decode, DecodeString, AppendDecode,
+// (*encoder).Write, (*decoder).Read, (*newlineFilteringReader).Read)
+// keep exact gc signatures with fail-fast bodies for type-checking;
+// their real implementations live in the single-result __base64Decode,
+// __base64DecodeString, __base64AppendDecode, __encoderWrite,
+// __decoderRead, __newlineFilteringReaderRead helpers, and the exporter
+// desugars N-target call sites to them (Appendix M pattern,
 // mrdesugar_m7.go). Any other call position fails fast with the named
 // M7 scope error.
-//
-// Omitted (io is not in M7 scope — NOT OK per the wave-1 import rules,
-// so the exact gc signatures cannot even be declared):
-//   func NewEncoder(enc *Encoding, w io.Writer) io.WriteCloser
-//   func NewDecoder(enc *Encoding, r io.Reader) io.Reader
-// Re-test trigger: when io lands (P3-M8), declare these with exact gc
-// signatures and implement the streaming encoder/decoder over the
-// synthetic Encode/decode core. This omission is deliberate and loud —
-// never silent (the p3frontend drift test asserts the omission list).
 package main
 
 // syntheticBase64Source is the P3-M7 synthetic `encoding/base64`
 // package: exact gc 1.27.1 signatures for the in-scope API; real-Go
 // encode/decode core; fail-fast bodies for the multi-result members
-// (desugared) and the io-dependent streaming API (omitted).
+// (desugared).
 const syntheticBase64Source = `package base64
+
+import "io"
 
 // Encoding is a radix 64 encoding/decoding scheme, defined by a
 // 64-character alphabet.
@@ -591,5 +587,222 @@ func (enc *Encoding) AppendDecode(dst, src []byte) ([]byte, error) {
 // corresponding to n bytes of base64-encoded data.
 func (enc *Encoding) DecodedLen(n int) int {
 	return base64DecodedLen(n, enc.padChar)
+}
+
+// ---------------------------------------------------------------------------
+// Streaming encoder/decoder (gc 1.27.1, adapted to frontend/v1).
+// ---------------------------------------------------------------------------
+
+// encoder is the streaming base64 encoder (gc 1.27.1 base64.go).
+type encoder struct {
+	err  error
+	enc  *Encoding
+	w    io.Writer
+	buf  [3]byte // buffered data waiting to be encoded
+	nbuf int     // number of bytes in buf
+	out  [1024]byte // output buffer
+}
+
+// NewEncoder returns a new base64 stream encoder. Data written to
+// the returned writer will be encoded using enc and then written to w.
+// Base64 encodings operate in 4-byte blocks; when finished
+// writing, the caller must Close the returned encoder to flush any
+// partially written blocks.
+func NewEncoder(enc *Encoding, w io.Writer) io.WriteCloser {
+	return &encoder{enc: enc, w: w}
+}
+
+// base64EncoderWritePair is the Appendix-M single-result carrier for
+// (*encoder).Write.
+type base64EncoderWritePair struct {
+	n   int
+	err error
+}
+
+// Write writes p to the encoder. (Appendix M: 2-target call sites desugar
+// to __encoderWrite; every other position fails fast. Body never runs.)
+func (e *encoder) Write(p []byte) (n int, err error) {
+	panic("encoding/base64: encoder.Write: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+}
+
+func __encoderWrite(e *encoder, p []byte) base64EncoderWritePair {
+	if e.err != nil {
+		return base64EncoderWritePair{0, e.err}
+	}
+
+	var n int
+
+	// Leading fringe.
+	if e.nbuf > 0 {
+		var i int
+		for i = 0; i < len(p) && e.nbuf < 3; i++ {
+			e.buf[e.nbuf] = p[i]
+			e.nbuf++
+		}
+		n += i
+		p = p[i:]
+		if e.nbuf < 3 {
+			return base64EncoderWritePair{n, nil}
+		}
+		e.enc.Encode(e.out[:], e.buf[:])
+		_, werr := e.w.Write(e.out[:4])
+		if werr != nil {
+			e.err = werr
+			return base64EncoderWritePair{n, e.err}
+		}
+		e.nbuf = 0
+	}
+
+	// Large interior chunks.
+	for len(p) >= 3 {
+		nn := len(e.out) / 4 * 3
+		if nn > len(p) {
+			nn = len(p)
+			nn -= nn % 3
+		}
+		e.enc.Encode(e.out[:], p[:nn])
+		_, werr := e.w.Write(e.out[0 : nn/3*4])
+		if werr != nil {
+			e.err = werr
+			return base64EncoderWritePair{n, e.err}
+		}
+		n += nn
+		p = p[nn:]
+	}
+
+	// Trailing fringe.
+	copy(e.buf[:], p)
+	e.nbuf = len(p)
+	n += len(p)
+	return base64EncoderWritePair{n, nil}
+}
+
+// Close flushes any pending output from the encoder.
+// It is an error to call Write after calling Close.
+func (e *encoder) Close() error {
+	if e.err == nil && e.nbuf > 0 {
+		e.enc.Encode(e.out[:], e.buf[:e.nbuf])
+		_, werr := e.w.Write(e.out[:e.enc.EncodedLen(e.nbuf)])
+		e.err = werr
+		e.nbuf = 0
+	}
+	return e.err
+}
+
+// newlineFilteringReader wraps a reader, filtering newline characters.
+type newlineFilteringReader struct {
+	wrapped io.Reader
+}
+
+// base64NewlineFilteringReaderReadPair is the Appendix-M single-result
+// carrier for (*newlineFilteringReader).Read.
+type base64NewlineFilteringReaderReadPair struct {
+	n   int
+	err error
+}
+
+// Read reads from the filtering reader. (Appendix M: 2-target call sites
+// desugar to __newlineFilteringReaderRead; every other position fails
+// fast. Body never runs.)
+func (r *newlineFilteringReader) Read(p []byte) (n int, err error) {
+	panic("encoding/base64: newlineFilteringReader.Read: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+}
+
+func __newlineFilteringReaderRead(r *newlineFilteringReader, p []byte) base64NewlineFilteringReaderReadPair {
+	n, err := r.wrapped.Read(p)
+	for n > 0 {
+		offset := 0
+		for i, b := range p[:n] {
+			if b != '\r' && b != '\n' {
+				if i != offset {
+					p[offset] = b
+				}
+				offset++
+			}
+		}
+		if offset > 0 {
+			return base64NewlineFilteringReaderReadPair{offset, err}
+		}
+		n, err = r.wrapped.Read(p)
+	}
+	return base64NewlineFilteringReaderReadPair{n, err}
+}
+
+// decoder is the streaming base64 decoder (gc 1.27.1 base64.go).
+type decoder struct {
+	err     error
+	readErr error // error from r.Read
+	enc     *Encoding
+	r       io.Reader
+	buf     [1024]byte // leftover input
+	nbuf    int
+	out     []byte // leftover decoded output
+	outbuf  [1024 / 4 * 3]byte
+}
+
+// NewDecoder constructs a new base64 stream decoder.
+func NewDecoder(enc *Encoding, r io.Reader) io.Reader {
+	return &decoder{enc: enc, r: &newlineFilteringReader{r}}
+}
+
+// base64DecoderReadPair is the Appendix-M single-result carrier for
+// (*decoder).Read.
+type base64DecoderReadPair struct {
+	n   int
+	err error
+}
+
+// Read reads from the decoder. (Appendix M: 2-target call sites desugar
+// to __decoderRead; every other position fails fast. Body never runs.)
+func (d *decoder) Read(p []byte) (n int, err error) {
+	panic("encoding/base64: decoder.Read: not in M7 scope (multi-result calls need the M7 desugar; re-test when WS D lands)")
+}
+
+func __decoderRead(d *decoder, p []byte) base64DecoderReadPair {
+	// Drain leftover decoded output.
+	if len(d.out) > 0 {
+		n := copy(p, d.out)
+		d.out = d.out[n:]
+		if len(d.out) == 0 {
+			return base64DecoderReadPair{n, d.readErr}
+		}
+		return base64DecoderReadPair{n, nil}
+	}
+
+	if d.err != nil {
+		return base64DecoderReadPair{0, d.err}
+	}
+
+	// Refill the input buffer.
+	for d.nbuf < 4 && d.readErr == nil {
+		nn := len(d.buf) - d.nbuf
+		rn, rerr := d.r.Read(d.buf[d.nbuf : d.nbuf+nn])
+		d.nbuf += rn
+		d.readErr = rerr
+	}
+
+	if d.nbuf < 4 && d.readErr != nil {
+		if d.nbuf == 0 {
+			return base64DecoderReadPair{0, d.readErr}
+		}
+	}
+
+	// Decode a quantum.
+	qr := d.enc.decodeQuantum(d.outbuf[:], d.buf[:d.nbuf], 0)
+	d.nbuf -= qr.nsi
+	copy(d.buf[:], d.buf[qr.nsi:d.nbuf+qr.nsi])
+
+	if qr.err != nil {
+		d.err = qr.err
+	}
+
+	n := copy(p, d.outbuf[:qr.n])
+	if n < qr.n {
+		d.out = d.outbuf[n:qr.n]
+	}
+	if n == 0 && d.readErr != nil {
+		return base64DecoderReadPair{0, d.readErr}
+	}
+	return base64DecoderReadPair{n, nil}
 }
 `
