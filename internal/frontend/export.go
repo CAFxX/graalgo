@@ -223,7 +223,21 @@ func (failImporter) Import(path string) (*types.Package, error) {
 //     (PKG-023: real implementation over the scheduler's live count),
 //   - the P2-M4 GC-interop surface (SetFinalizer/KeepAlive/GC, ADR-0002 D4),
 //   - the stack-inspection family: Callers, CallersFrames, Caller,
-//     FuncForPC, and the Frames/Frame/Func types with their methods.
+//     FuncForPC, and the Frames/Frame/Func types with their methods,
+//   - PKG-038: the rest of gc 1.27.1's documented public API
+//     (`go doc -all runtime`): the Error interface (error +
+//     RuntimeError) with the TypeAssertionError/PanicNilError/Pinner/
+//     Cleanup/StackRecord/BlockProfileRecord/MemProfileRecord types and
+//     their gc-exact methods and fields, the Compiler const, the
+//     MemProfileRate var (materialized as a real doc global with gc's
+//     512*1024 default), and every documented function (AddCleanup,
+//     BlockProfile, Breakpoint, CPUProfile, GoroutineProfile, Gosched,
+//     LockOSThread, MemProfile, MutexProfile, NumCgoCall, ReadTrace,
+//     SetBlockProfileRate, SetCPUProfileRate, SetCgoTraceback,
+//     SetDefaultGOMAXPROCS, SetMutexProfileFraction, StartTrace,
+//     StopTrace, ThreadCreateProfile, UnlockOSThread). Functions without
+//     a backend intrinsic yet keep the honest "call to unknown function"
+//     export error; the view never reports "undefined" for documented API.
 //
 // The multi-result members (Caller, (*Frames).Next, (*Func).FileLine) keep
 // their exact multi-result signatures for type-checking; call sites
@@ -416,6 +430,138 @@ func syntheticRuntimePackage() *types.Package {
 	// trace into buf, returns bytes written.
 	addFunc("Stack", tuple(param("buf", byteSlice), param("all", boolTyp)),
 		tuple(param("", intTyp)))
+
+	// PKG-038: complete the view against gc 1.27.1's documented public
+	// API (enumerated via `go doc -all runtime`; every signature below
+	// verified against ~/tools/go/src/runtime/*.go). The view is the
+	// type-checking surface: each member user code may name is declared
+	// with a gc-exact signature. Members with backend intrinsics are
+	// wired in exportCall; the rest keep the pre-existing honest export
+	// error ("call to unknown function") — a call never degrades to
+	// "undefined".
+	//
+	// Types first (pure declarations; no backend support needed).
+	// Type Error (gc 1.27.1, src/runtime/error.go:26): the runtime-error
+	// interface — error plus the RuntimeError marker method.
+	errorIface := types.Universe.Lookup("error").Type()
+	errorNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Error", nil), nil, nil)
+	errorNamed.SetUnderlying(types.NewInterfaceType(
+		[]*types.Func{types.NewFunc(token.NoPos, pkg, "RuntimeError",
+			types.NewSignatureType(nil, nil, nil, nil, nil, false))},
+		[]types.Type{errorIface},
+	).Complete())
+	pkg.Scope().Insert(errorNamed.Obj())
+	// Type TypeAssertionError (gc: src/runtime/error.go:35). All fields
+	// are unexported, so the cross-package shape is opaque; the method
+	// set is gc-exact.
+	tae := newNamed("TypeAssertionError", types.NewStruct(nil, nil))
+	addMethod(tae, "Error", nil, tuple(param("", strTyp)))
+	addMethod(tae, "RuntimeError", nil, nil)
+	// Type PanicNilError (gc: src/runtime/panic.go:784). The _ [0]*T
+	// field is unexported, so the cross-package shape is opaque.
+	pne := newNamed("PanicNilError", types.NewStruct(nil, nil))
+	addMethod(pne, "Error", nil, tuple(param("", strTyp)))
+	addMethod(pne, "RuntimeError", nil, nil)
+	// Type Pinner (gc: src/runtime/pinner.go:34). Embeds unexported
+	// *pinner, so the cross-package shape is opaque.
+	pinner := newNamed("Pinner", types.NewStruct(nil, nil))
+	addMethod(pinner, "Pin", tuple(param("pointer", anyT)), nil)
+	addMethod(pinner, "Unpin", nil, nil)
+	// Type Cleanup (gc: src/runtime/mcleanup.go:208). Unexported fields,
+	// so the cross-package shape is opaque. Stop has a VALUE receiver
+	// (gc: func (c Cleanup) Stop()), unlike the pointer-receiver
+	// methods above.
+	cleanup := newNamed("Cleanup", types.NewStruct(nil, nil))
+	cleanup.AddMethod(types.NewFunc(token.NoPos, pkg, "Stop",
+		types.NewSignatureType(types.NewParam(token.NoPos, pkg, "", cleanup),
+			nil, nil, nil, nil, false)))
+	// Type StackRecord (gc: src/runtime/mprof.go:841): gc-exact fields.
+	stackRecord := newNamed("StackRecord", types.NewStruct([]*types.Var{
+		newField("Stack0", types.NewArray(uintptrTyp, 32)),
+	}, nil))
+	addMethod(stackRecord, "Stack", nil, tuple(param("", types.NewSlice(uintptrTyp))))
+	// Type BlockProfileRecord (gc: src/runtime/mprof.go:1040).
+	blockProfileRecord := newNamed("BlockProfileRecord", types.NewStruct([]*types.Var{
+		newField("Count", types.Typ[types.Int64]),
+		newField("Cycles", types.Typ[types.Int64]),
+		types.NewField(token.NoPos, pkg, "StackRecord", stackRecord, true),
+	}, nil))
+	// Type MemProfileRecord (gc: src/runtime/mprof.go:880).
+	memProfileRecord := newNamed("MemProfileRecord", types.NewStruct([]*types.Var{
+		newField("AllocBytes", types.Typ[types.Int64]),
+		newField("FreeBytes", types.Typ[types.Int64]),
+		newField("AllocObjects", types.Typ[types.Int64]),
+		newField("FreeObjects", types.Typ[types.Int64]),
+		newField("Stack0", types.NewArray(uintptrTyp, 32)),
+	}, nil))
+	addMethod(memProfileRecord, "InUseBytes", nil, tuple(param("", types.Typ[types.Int64])))
+	addMethod(memProfileRecord, "InUseObjects", nil, tuple(param("", types.Typ[types.Int64])))
+
+	// Const Compiler. gc reports "gc" and gccgo reports "gccgo": each
+	// implementation reports its own name, so the overlay reports
+	// "graalgo" (deliberate, documented deviation from gc's value).
+	pkg.Scope().Insert(types.NewConst(token.NoPos, pkg, "Compiler", strTyp,
+		constant.MakeString("graalgo")))
+	// Var MemProfileRate (gc: src/runtime/mprof.go:870). Materialized as
+	// a real doc global on first qualified use (see materializeStubVar);
+	// its gc-exact initializer is registered in stubVarInit.
+	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "MemProfileRate", intTyp))
+
+	// The remaining documented functions, gc-exact signatures. Calls
+	// lower through the general path to the honest "call to unknown
+	// function" export error until a backend intrinsic lands (the
+	// PKG-023 NumGoroutine precedent for adding the real thing).
+	// AddCleanup (gc: src/runtime/mcleanup.go:76):
+	// func AddCleanup[T, S any](ptr *T, cleanup func(S), arg S) Cleanup
+	tpT := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "T", nil), anyT)
+	tpS := types.NewTypeParam(types.NewTypeName(token.NoPos, pkg, "S", nil), anyT)
+	cleanupFnSig := types.NewSignatureType(nil, nil, nil,
+		tuple(param("arg", tpS)), nil, false)
+	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "AddCleanup",
+		types.NewSignatureType(nil, nil, []*types.TypeParam{tpT, tpS},
+			tuple(
+				param("ptr", types.NewPointer(tpT)),
+				param("cleanup", cleanupFnSig),
+				param("arg", tpS),
+			),
+			tuple(param("", cleanup)),
+			false)))
+	// The rest are non-generic; signatures verified against the gc
+	// sources cited per group above.
+	unsafePtrTyp := types.Typ[types.UnsafePointer]
+	int64Typ := types.Typ[types.Int64]
+	addFunc("BlockProfile", tuple(param("p", types.NewSlice(blockProfileRecord))),
+		tuple(param("n", intTyp), param("ok", boolTyp)))
+	addFunc("Breakpoint", nil, nil)
+	addFunc("CPUProfile", nil, tuple(param("", byteSlice)))
+	addFunc("GoroutineProfile", tuple(param("p", types.NewSlice(stackRecord))),
+		tuple(param("n", intTyp), param("ok", boolTyp)))
+	addFunc("Gosched", nil, nil)
+	addFunc("LockOSThread", nil, nil)
+	addFunc("MemProfile",
+		tuple(param("p", types.NewSlice(memProfileRecord)), param("inuseZero", boolTyp)),
+		tuple(param("n", intTyp), param("ok", boolTyp)))
+	addFunc("MutexProfile", tuple(param("p", types.NewSlice(blockProfileRecord))),
+		tuple(param("n", intTyp), param("ok", boolTyp)))
+	addFunc("NumCgoCall", nil, tuple(param("", int64Typ)))
+	addFunc("ReadTrace", nil, tuple(param("", byteSlice)))
+	addFunc("SetBlockProfileRate", tuple(param("rate", intTyp)), nil)
+	addFunc("SetCPUProfileRate", tuple(param("hz", intTyp)), nil)
+	addFunc("SetCgoTraceback",
+		tuple(
+			param("version", intTyp),
+			param("traceback", unsafePtrTyp),
+			param("context", unsafePtrTyp),
+			param("symbolizer", unsafePtrTyp),
+		), nil)
+	addFunc("SetDefaultGOMAXPROCS", nil, nil)
+	addFunc("SetMutexProfileFraction", tuple(param("rate", intTyp)),
+		tuple(param("", intTyp)))
+	addFunc("StartTrace", nil, tuple(param("", errorIface)))
+	addFunc("StopTrace", nil, nil)
+	addFunc("ThreadCreateProfile", tuple(param("p", types.NewSlice(stackRecord))),
+		tuple(param("n", intTyp), param("ok", boolTyp)))
+	addFunc("UnlockOSThread", nil, nil)
 
 	pkg.MarkComplete()
 	return pkg
@@ -10940,6 +11086,18 @@ func (e *exporter) exportSelector(x *ast.SelectorExpr) (*Node, error) {
 	// fall through to the normal path.
 	if ident, ok := x.X.(*ast.Ident); ok {
 		if pkgName, ok := e.info.Uses[ident].(*types.PkgName); ok {
+			// PKG-038: dedicated synthetic stubs (runtime/fmt/unsafe)
+			// declare their members in a constructor, not from source:
+			// route qualified const/var idents straight to
+			// exportSyntheticQualified. The old path reached it only via
+			// getDiskPackage below (type-checking the real package from
+			// disk and discarding it); the stub's own view is
+			// authoritative for its members.
+			if isDedicatedSyntheticStub(pkgName.Imported().Path()) {
+				if _, isSel := e.info.Selections[x]; !isSel {
+					return e.exportSyntheticQualified(x, pkgName)
+				}
+			}
 			if _, ok := syntheticSources[pkgName.Imported().Path()]; ok {
 				if _, isSel := e.info.Selections[x]; !isSel {
 					return e.exportSyntheticQualified(x, pkgName)
