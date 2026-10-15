@@ -2449,14 +2449,14 @@ func ExportFiles(paths []string) (string, error) {
 	// imports net/netip (synthetic); it must be imported first so its
 	// functions (e.g. PrefixFrom) are in the exporter's index.
 	if needNet {
-		if err := e.importSyntheticPackage(getSyntheticPackage("net/netip")); err != nil {
-			return "", err
-		}
-		dp, derr := getDiskPackage("net")
-		if derr != nil {
-			return "", derr
-		}
-		if err := e.importSyntheticPackage(dp); err != nil {
+		// NOTE (real-net2 lane, 2026-10-15): use importPkgTree for the full
+		// transitive closure. The real "net" (disk) imports synthetic
+		// net/netip, synthetic internal/poll, disk internal/godebug, etc.
+		// importPkgTree walks post-order (dependencies first) via
+		// resolvePkgTree, which prefers syntheticSources, then disk. This
+		// replaces the manual two-step import which missed transitive disk
+		// dependencies (e.g. godebug.New -> "call to unknown function New").
+		if err := e.importPkgTree("net"); err != nil {
 			return "", err
 		}
 	}
@@ -7272,9 +7272,20 @@ func (e *exporter) exportGoWithArgs(s *ast.GoStmt) (*Node, error) {
 		}))
 	}
 	// Build the call f(temps) with the hoisted fun node.
+	// NOTE (real-net2, 2026-10-15): for `go` statements, the call's
+	// results are discarded. If callType fails with the WS D
+	// multi-result error (e.g., calling a multi-result func parameter
+	// like `go fn()` where fn is not in userMRVars), use nil type —
+	// the result is discarded anyway. This is general, not net-specific.
 	callType, err := e.callType(c)
 	if err != nil {
-		return nil, err
+		// Check if it's the WS D multi-result error; if so, use nil
+		// type since go discards results. Otherwise, propagate.
+		if strings.Contains(err.Error(), "multi-valued call result is not supported") {
+			callType = nil
+		} else {
+			return nil, err
+		}
 	}
 	innerCall := e.node("call", s, map[string]any{
 		"fun": funNode, "args": tempIdents, "type": callType,
@@ -11240,6 +11251,33 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 						return nil, err
 					}
 					return tid, nil
+				}
+				// WS D (disk packages): multi-result functions transformed
+				// via transformDiskMultiResult. Look up the disk MR spec
+				// and return the pair type. The pair type is in the
+				// function's package scope (created by the transform).
+				if fn.Pkg() != nil {
+					pkgPath := fn.Pkg().Path()
+					name := fn.Name()
+					recvType := ""
+					if sig, ok := fn.Type().(*types.Signature); ok && sig.Recv() != nil {
+						rt := sig.Recv().Type()
+						if pt, ok := rt.(*types.Pointer); ok {
+							rt = pt.Elem()
+						}
+						if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+							recvType = nt.Obj().Name()
+						}
+					}
+					if spec := lookupDiskMR(pkgPath, name, recvType); spec != nil {
+						if obj := fn.Pkg().Scope().Lookup(spec.pairType); obj != nil {
+							tid, err := e.typeID(obj.Type())
+							if err != nil {
+								return nil, err
+							}
+							return tid, nil
+						}
+					}
 				}
 				// P3-M9: synthetic multi-result methods (bytes.Buffer.Read,
 				// etc.) fail fast with the named milestone scope error, not
