@@ -1910,14 +1910,12 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 		n, err := e.exportTimeIntrinsic(c, fn.Name())
 		return n, true, err
 	}
-	// P3-M9 (x509/TLS lane): sync.OnceFunc lowers to a closure capturing
-	// a fresh sync.Once; the closure body is once.Do(f) via the syncop
-	// wire node. The temporaries hoist via e.mrHoistPre (flushed by
-	// exportStmt), mirroring the go-statement sync-op pattern.
-	if path == "sync" && syncIntrinsicNames[fn.Name()] {
-		n, err := e.exportSyncIntrinsic(c, fn.Name())
-		return n, true, err
-	}
+	// RETIRED: sync now resolves from disk (real package). The OnceFunc
+	// intrinsic is disabled; real sync.OnceFunc compiles normally.
+	// if path == "sync" && syncIntrinsicNames[fn.Name()] {
+	// 	n, err := e.exportSyncIntrinsic(c, fn.Name())
+	// 	return n, true, err
+	// }
 	// P3-M7 (WS G, ADR-0007 D5): math intrinsics (bit conversions, Sqrt,
 	// FMA) lower to the "math*" wire nodes.
 	if path == "math" && mathIntrinsicNames[fn.Name()] {

@@ -407,17 +407,13 @@ func syntheticRuntimePackage() *types.Package {
 type overlayImporter struct{}
 
 func (overlayImporter) Import(path string) (*types.Package, error) {
-	// The 5 packages with dedicated synthetic constructors (not in
-	// syntheticSources).
+	// The 3 packages with dedicated synthetic constructors (not in
+	// syntheticSources). sync and sync/atomic now resolve from disk (real packages).
 	switch path {
 	case "runtime":
 		return syntheticRuntimePackage(), nil
 	case "fmt":
 		return syntheticFmtPackage(), nil
-	case "sync":
-		return syntheticSyncPackage(), nil
-	case "sync/atomic":
-		return syntheticAtomicPackage(), nil
 	case "unsafe":
 		return syntheticUnsafePackage(), nil
 	}
@@ -615,19 +611,12 @@ func isSyncPoolNamed(nt *types.Named) bool {
 
 // syncPrimitiveNamed reports whether t is exactly one of the synthetic
 // sync primitive named types (no pointer dereference).
+// RETIRED: sync now resolves from disk (real package). The synthetic
+// sync package is no longer created, so this always returns nil.
+// The syncop lowering is disabled; real sync methods compile normally
+// and use the runtime semaphore backend via linkname.
 func syncPrimitiveNamed(t types.Type) *types.Named {
-	nt, ok := t.(*types.Named)
-	if !ok {
-		return nil
-	}
-	obj := nt.Obj()
-	if obj == nil || obj.Pkg() == nil || obj.Pkg().Name() != "sync" {
-		return nil
-	}
-	if !syncPrimitiveNames[obj.Name()] {
-		return nil
-	}
-	return nt
+	return nil
 }
 
 // syncPrimitiveRecv is syncPrimitiveNamed after one pointer dereference,
@@ -900,19 +889,10 @@ var atomicOpsInScope = map[string]map[string]bool{
 
 // atomicPrimitiveNamed reports whether t is exactly one of the synthetic
 // sync/atomic wrapper named types (no pointer dereference).
+// RETIRED: sync/atomic now resolves from disk (real package). The synthetic
+// sync/atomic package is no longer created, so this always returns nil.
 func atomicPrimitiveNamed(t types.Type) *types.Named {
-	nt, ok := t.(*types.Named)
-	if !ok {
-		return nil
-	}
-	obj := nt.Obj()
-	if obj == nil || obj.Pkg() == nil || obj.Pkg().Path() != "sync/atomic" {
-		return nil
-	}
-	if !atomicPrimitiveNames[obj.Name()] {
-		return nil
-	}
-	return nt
+	return nil
 }
 
 // atomicPrimitiveRecv is atomicPrimitiveNamed after one pointer dereference,
@@ -1218,8 +1198,8 @@ func ExportFile(path string) (string, error) {
 // sources but are NOT user-importable; they are excluded here and in
 // checkImportAllowed.
 func needsOverlayImporter(p string) bool {
-	// The 5 dedicated-constructor packages.
-	if p == "runtime" || p == "fmt" || p == "sync" || p == "sync/atomic" || p == "unsafe" {
+	// The 3 dedicated-constructor packages (sync and sync/atomic now resolve from disk).
+	if p == "runtime" || p == "fmt" || p == "unsafe" {
 		return true
 	}
 	// General: any non-internal synthetic source.
@@ -1250,8 +1230,8 @@ func needsOverlayImporter(p string) bool {
 // Every other import is a scope error.
 func checkImportAllowed(imp *ast.ImportSpec) error {
 	path := strings.Trim(imp.Path.Value, "\"`")
-	// The 5 dedicated-constructor packages.
-	if path == "runtime" || path == "fmt" || path == "sync" || path == "sync/atomic" || path == "unsafe" {
+	// The 3 dedicated-constructor packages (sync and sync/atomic now resolve from disk).
+	if path == "runtime" || path == "fmt" || path == "unsafe" {
 		return nil
 	}
 	// General: any non-internal synthetic source.
