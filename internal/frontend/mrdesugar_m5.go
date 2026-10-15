@@ -1427,6 +1427,21 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	// P3-M9 (WS D): user-defined package-level multi-result functions
 	// called as `foo()` (Ident, not SelectorExpr).
 	if id, ok := c.Fun.(*ast.Ident); ok {
+		// MR-closure-var: call through a variable holding a multi-result
+		// closure (e.g. readModuleLine(elem) where readModuleLine :=
+		// func(...) (T, error) {...}). The variable was linked to the
+		// func lit's pair info at its definition; desugar via the pair
+		// exactly like a named user MR function.
+		if v, ok := e.info.Uses[id].(*types.Var); ok {
+			if mrInfo, ok := e.userMRVars[v]; ok {
+				return &mrPlan{
+					kind:       mrUser,
+					tmpType:    mrInfo.pairType,
+					pairFields: mrInfo.pairFields,
+				}
+			}
+			return nil
+		}
 		if obj, ok := e.info.Uses[id].(*types.Func); ok {
 			if mrInfo, ok := e.userMRFuncs[obj]; ok {
 				return &mrPlan{
@@ -3515,8 +3530,11 @@ func (e *exporter) desugarExtract(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 			// and index LHS (e.g., a[i], err = strconv.Atoi(s)) in the
 			// assignment case via exportAssignable. Define (:=) with a
 			// non-identifier lhs is invalid Go, so it still fails below.
+			// MR-closure-var: also allow dereference LHS (e.g.,
+			// *last, err = readModuleLine(elem)); exportAssignable
+			// handles *ast.StarExpr via exportDerefAssignable.
 			switch lhs.(type) {
-			case *ast.SelectorExpr, *ast.IndexExpr:
+			case *ast.SelectorExpr, *ast.IndexExpr, *ast.StarExpr:
 				// OK: handled by exportAssignable in the assignment branch.
 			default:
 				return nil, scopeErrorf("multi-result desugar with non-identifier lhs %T is not supported in frontend/v1 scope (WS D)", lhs)

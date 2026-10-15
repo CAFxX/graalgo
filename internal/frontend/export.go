@@ -1399,6 +1399,10 @@ func ExportFiles(paths []string) (string, error) {
 		// P3-M9 (WS D): user-defined multi-result functions transformed
 		// to pair-returning form.
 		userMRFuncs: make(map[*types.Func]*userMRInfo),
+		// MR-closure-var: multi-result closures held in variables.
+		userMRVars: make(map[*types.Var]*userMRInfo),
+		// MR-closure-var: func lit -> pair info side channel.
+		funcLitMRInfo: make(map[*ast.FuncLit]*userMRInfo),
 	}
 	// fileBases lists the input files in order; position "file" indices
 	// index into this array (frontend/v1 wire format).
@@ -3247,6 +3251,16 @@ func (e *exporter) exportPackageVars(funcs []*funcDeclInfo) ([]GlobalEnt, error)
 				if err != nil {
 					return nil, err
 				}
+				// MR-closure-var: link a package-level var initialized with
+				// a multi-result func lit to the lit's pair info, so call
+				// sites through the variable desugar.
+				if lit, ok := unparen(initExpr).(*ast.FuncLit); ok {
+					if mrInfo, ok := e.funcLitMRInfo[lit]; ok {
+						if vr, ok := e.info.Defs[n].(*types.Var); ok {
+							e.userMRVars[vr] = mrInfo
+						}
+					}
+				}
 				// BUG-MODPROBE-010: multi-result calls in argument position
 				// at package level (var x = f(g())) hoist the inner call to
 				// a synthesized package-level temp global. The
@@ -3484,6 +3498,16 @@ type exporter struct {
 	// automatic: any user-defined 2+ result function gets a synthesized
 	// pair struct.
 	userMRFuncs map[*types.Func]*userMRInfo
+	// MR-closure-var: user-defined multi-result function literals assigned
+	// to variables, transformed to pair-returning form. Maps the
+	// *types.Var holding the closure -> pair info for call-site desugar.
+	// Populated when a func lit with 2+ results is defined (via := or var);
+	// consulted by classifyMultiResultCall for Ident callees denoting Vars.
+	userMRVars map[*types.Var]*userMRInfo
+	// MR-closure-var: side channel from exportFuncLit to the defining
+	// statement. Maps a transformed *ast.FuncLit -> its pair info, so
+	// exportDefine/exportVarSpec can link the LHS variable(s).
+	funcLitMRInfo map[*ast.FuncLit]*userMRInfo
 	// P3-M9 (driver-harden): name-based fallback for synthetic MR funcs.
 	// Synthetic packages are type-checked separately from their callers,
 	// P3-M9 (WS D): the userMRInfo for the function whose body is
@@ -6054,17 +6078,6 @@ func (e *exporter) synthesizeUserPairType(fi *funcDeclInfo) (*types.Named, []str
 	if sig.TypeParams() != nil && sig.TypeParams().Len() > 0 {
 		return nil, nil, fmt.Errorf("gofrontend: synthesizeUserPairType called for generic template %s (should be skipped)", fi.obj.Name())
 	}
-	n := sig.Results().Len()
-	fields := make([]*types.Var, n)
-	fieldNames := make([]string, n)
-	for i := 0; i < n; i++ {
-		fname := fmt.Sprintf("f%d", i)
-		fieldNames[i] = fname
-		// Use the result variable's type; fall back to the tuple type.
-		rt := sig.Results().At(i).Type()
-		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
-	}
-	st := types.NewStruct(fields, nil)
 	// Unique name: __wsd_pair_<pkg>_<func> (methods include receiver).
 	name := fmt.Sprintf("__wsd_pair_%s", fi.obj.Name())
 	if fi.recv != nil {
@@ -6076,8 +6089,34 @@ func (e *exporter) synthesizeUserPairType(fi *funcDeclInfo) (*types.Named, []str
 			name = fmt.Sprintf("__wsd_pair_%s_%s", nt.Obj().Name(), fi.obj.Name())
 		}
 	}
+	return e.synthesizePairTypeForSig(sig, name)
+}
+
+// synthesizePairTypeForSig synthesizes the pair struct type for a
+// multi-result signature (general mechanism, not tied to *types.Func).
+// Used for function literals assigned to variables (MR-closure-var) as
+// well as named functions (via synthesizeUserPairType above). The nameHint
+// seeds the unique type name; collisions get a numeric suffix.
+func (e *exporter) synthesizePairTypeForSig(sig *types.Signature, nameHint string) (*types.Named, []string, error) {
+	if sig == nil || sig.Results().Len() <= 1 {
+		return nil, nil, fmt.Errorf("gofrontend: synthesizePairTypeForSig needs a multi-result signature")
+	}
+	if sig.TypeParams() != nil && sig.TypeParams().Len() > 0 {
+		return nil, nil, fmt.Errorf("gofrontend: synthesizePairTypeForSig called for generic signature (should be skipped)")
+	}
+	n := sig.Results().Len()
+	fields := make([]*types.Var, n)
+	fieldNames := make([]string, n)
+	for i := 0; i < n; i++ {
+		fname := fmt.Sprintf("f%d", i)
+		fieldNames[i] = fname
+		rt := sig.Results().At(i).Type()
+		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
+	}
+	st := types.NewStruct(fields, nil)
 	// Ensure uniqueness in case of collisions (e.g., generic instantiations).
-	base := name
+	base := nameHint
+	name := base
 	for i := 1; ; i++ {
 		if e.pkg.Scope().Lookup(name) == nil {
 			break
@@ -7429,6 +7468,31 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 				return nil, err
 			}
 			values = append(values, x)
+			// MR-closure-var: link a var declared with a multi-result
+			// func lit initializer to the lit's pair info.
+			if lit, ok := unparen(v).(*ast.FuncLit); ok {
+				if mrInfo, ok := e.funcLitMRInfo[lit]; ok {
+					// Single-valued lit: binds Names[i] when counts
+					// match, else the sole name.
+					var name *ast.Ident
+					if len(vs.Values) == len(vs.Names) {
+						// Find index of v in vs.Values.
+						for vi, vv := range vs.Values {
+							if vv == v {
+								name = vs.Names[vi]
+								break
+							}
+						}
+					} else if len(vs.Names) == 1 {
+						name = vs.Names[0]
+					}
+					if name != nil {
+						if vr, ok := e.info.Defs[name].(*types.Var); ok {
+							e.userMRVars[vr] = mrInfo
+						}
+					}
+				}
+			}
 		}
 		// P3-M2b (ADR-0002 D3): `var m sync.Mutex` (no init) normalizes to
 		// an implicit syncnew per name — gc's ready-to-use zero value. The
@@ -7503,9 +7567,47 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 		}
 		values = append(values, x)
 	}
+	// MR-closure-var: link variables assigned a multi-result func lit to
+	// the lit's pair info, so call sites through the variable desugar.
+	// A func lit is single-valued; in `x := func...` it binds LHS[0], and
+	// in `a, b := f(), func...` RHS[i] binds LHS[i].
+	e.linkFuncLitMRVars(s)
 	return e.node("vardecl", s, map[string]any{
 		"names": names, "objs": objs, "define": true, "type": nil, "values": values,
 	}), nil
+}
+
+// linkFuncLitMRVars registers *types.Var -> pair info for variables
+// initialized with a multi-result function literal (MR-closure-var).
+// Called after the RHS values are exported (so exportFuncLit has recorded
+// the lit's pair info in e.funcLitMRInfo).
+func (e *exporter) linkFuncLitMRVars(s *ast.AssignStmt) {
+	for i, rhs := range s.Rhs {
+		lit, ok := unparen(rhs).(*ast.FuncLit)
+		if !ok {
+			continue
+		}
+		mrInfo, ok := e.funcLitMRInfo[lit]
+		if !ok {
+			continue
+		}
+		// Find the LHS variable bound to this RHS.
+		var lhs ast.Expr
+		if len(s.Rhs) == 1 && len(s.Lhs) == 1 {
+			lhs = s.Lhs[0]
+		} else if i < len(s.Lhs) && len(s.Lhs) == len(s.Rhs) {
+			lhs = s.Lhs[i]
+		} else {
+			continue
+		}
+		id, ok := lhs.(*ast.Ident)
+		if !ok {
+			continue
+		}
+		if v, ok := e.info.ObjectOf(id).(*types.Var); ok {
+			e.userMRVars[v] = mrInfo
+		}
+	}
 }
 
 // exportAssign handles `=` and op-assignments. The lhs may be a plain
@@ -10967,6 +11069,21 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 					return nil, multiResultSyntheticError(fn)
 				}
 			}
+			// MR-closure-var: call through a variable holding a
+			// multi-result closure. The variable was linked to the func
+			// lit's pair info at its definition; the emitted value is
+			// pair-returning.
+			if id, ok := c.Fun.(*ast.Ident); ok {
+				if v, ok := e.info.Uses[id].(*types.Var); ok {
+					if mrInfo, ok := e.userMRVars[v]; ok {
+						tid, err := e.typeID(mrInfo.pairType)
+						if err != nil {
+							return nil, err
+						}
+						return tid, nil
+					}
+				}
+			}
 			return nil, scopeErrorf("multi-valued call result is not supported in frontend/v1 scope (WS D)")
 		}
 		tid, err := e.typeID(tv.Type)
@@ -11011,6 +11128,14 @@ func (e *exporter) calledFunc(c *ast.CallExpr) *types.Func {
 // are emitted as kind:"param" nodes (the funcdecl param schema:
 // name/obj/type), from the go/types signature tuple so unnamed
 // parameters/results are covered too.
+//
+// MR-closure-var: a function literal with 2+ results is transformed to
+// pair-returning form, exactly like a named user MR function (P3-M9 WS D):
+// a pair struct type is synthesized, `return a, b` in the body packs into
+// the pair (via e.currentMR), and the emitted signature returns the pair.
+// The pair info is recorded in e.funcLitMRInfo so the defining statement
+// (exportDefine/exportVarSpec) can link the assigned variable(s) for
+// call-site desugar via e.userMRVars.
 func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 	tv, ok := e.info.Types[l.Type]
 	if !ok || tv.Type == nil {
@@ -11031,14 +11156,45 @@ func (e *exporter) exportFuncLit(l *ast.FuncLit) (*Node, error) {
 	if l.Body == nil {
 		return nil, scopeErrorf("function literal without body")
 	}
+	// MR-closure-var: transform multi-result literals to pair-returning.
+	var mrInfo *userMRInfo
+	sigForType := tv.Type
+	if sig.Results().Len() > 1 && (sig.TypeParams() == nil || sig.TypeParams().Len() == 0) {
+		pairType, fieldNames, err := e.synthesizePairTypeForSig(sig, "__wsd_pair_lit")
+		if err != nil {
+			return nil, err
+		}
+		mrInfo = &userMRInfo{
+			pairType:   pairType,
+			pairFields: fieldNames,
+			origSig:    sig,
+		}
+		e.funcLitMRInfo[l] = mrInfo
+		// New signature: same params, single pair result.
+		pairVar := types.NewParam(token.NoPos, e.pkg, "", pairType)
+		pairResults := types.NewTuple(pairVar)
+		pairResult, err := e.exportParamVar(l.Type, pairVar)
+		if err != nil {
+			return nil, err
+		}
+		results = []*Node{pairResult}
+		sigForType = types.NewSignatureType(nil, nil, nil, sig.Params(), pairResults, sig.Variadic())
+	}
+	// Transform `return a, b` into pair construction while exporting the body.
+	prevMR := e.currentMR
+	if mrInfo != nil {
+		e.currentMR = mrInfo
+	}
 	body, err := e.exportBlock(l.Body)
+	e.currentMR = prevMR
 	if err != nil {
 		return nil, err
 	}
 	// M7: the literal's signature type id, so the factory can box the
 	// function value into an interface (boxInterface needs the dynamic
-	// type descriptor).
-	tid, err := e.typeID(tv.Type)
+	// type descriptor). For transformed literals this is the
+	// pair-returning signature.
+	tid, err := e.typeID(sigForType)
 	if err != nil {
 		return nil, err
 	}
