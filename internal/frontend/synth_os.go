@@ -327,6 +327,11 @@ var (
 
 // DevNull is the name of the operating system's "null device."
 const DevNull = "/dev/null"
+
+const (
+	PathSeparator     = '/' // OS-specific path separator
+	PathListSeparator = ':' // OS-specific path list separator
+)
 `
 const syntheticOsPart2 = `
 // ---------------------------------------------------------------------------
@@ -678,7 +683,7 @@ func baseName(path string) string {
 
 // IsPathSeparator reports whether c is a directory separator character.
 func IsPathSeparator(c uint8) bool {
-	return c == '/'
+	return PathSeparator == c
 }
 
 // ---------------------------------------------------------------------------

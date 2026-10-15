@@ -35,12 +35,10 @@ import (
 )
 
 // Separator and ListSeparator: gc derives these from os.PathSeparator /
-// os.PathListSeparator (both '/' and ':' on unix). The synthetic os
-// package does not export those constants in M8, so they are pinned here
-// for linux; the windows values arrive with GG-0023.
+// os.PathListSeparator.
 const (
-	Separator     = '/'
-	ListSeparator = ':'
+	Separator     = os.PathSeparator
+	ListSeparator = os.PathListSeparator
 )
 
 // ErrBadPattern indicates a malformed glob pattern.
