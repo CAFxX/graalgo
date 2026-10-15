@@ -11438,7 +11438,13 @@ func countScalars(l *ast.CompositeLit) int {
 // composite literal (as opposed to a map index expression).
 func (e *exporter) isStructLitKey(l *ast.CompositeLit, id *ast.Ident) bool {
 	if tv, ok := e.info.Types[l]; ok && tv.Type != nil {
-		if _, ok := tv.Type.Underlying().(*types.Struct); ok {
+		t := tv.Type
+		// Dereference pointers: []*T{{field: v}} has inner literals of
+		// type *T, whose Underlying() is the pointer itself, not the struct.
+		if p, ok := t.(*types.Pointer); ok {
+			t = p.Elem()
+		}
+		if _, ok := t.Underlying().(*types.Struct); ok {
 			return true
 		}
 	}
