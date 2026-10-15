@@ -144,11 +144,11 @@ public final class FmtVerbMatrixTest {
             case "string" ->
                 new Fmt.Arg(GoString.fromUtf8(val), GoKind.STRING, "string");
             case "bytes" -> {
-                int[] arr = new int[val.length() / 2];
+                byte[] arr = new byte[val.length() / 2];
                 for (int i = 0; i < arr.length; i++) {
-                    arr[i] = Integer.parseInt(val.substring(2 * i, 2 * i + 2), 16);
+                    arr[i] = (byte) Integer.parseInt(val.substring(2 * i, 2 * i + 2), 16);
                 }
-                // []byte backs onto int[] (Fmt.boxArrayElement/sliceBytes).
+                // []byte is byte[]-backed (D5; Fmt.boxArrayElement/sliceBytes).
                 // The type name is the alias "[]byte" (what gc prints).
                 yield new Fmt.Arg(new GoSlice(arr, 0, arr.length, arr.length),
                     GoKind.SLICE, "[]byte", null, null, GoKind.UINT8, "uint8");

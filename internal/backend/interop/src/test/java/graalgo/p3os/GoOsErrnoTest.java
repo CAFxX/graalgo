@@ -73,22 +73,19 @@ public final class GoOsErrnoTest {
     }
 
     private static GoSlice buf(int n) {
-        return new GoSlice(new int[n], 0, n, n);
+        return new GoSlice(new byte[n], 0, n, n);
     }
 
     private static GoSlice bytesBuf(byte[] data) {
-        int[] arr = new int[data.length];
-        for (int i = 0; i < data.length; i++) {
-            arr[i] = data[i] & 0xFF;
-        }
+        byte[] arr = data.clone();
         return new GoSlice(arr, 0, arr.length, arr.length);
     }
 
     private static byte[] sliceBytes(GoSlice gs) {
-        int[] arr = (int[]) gs.array();
+        byte[] arr = (byte[]) gs.array();
         byte[] out = new byte[gs.len()];
         for (int i = 0; i < gs.len(); i++) {
-            out[i] = (byte) arr[gs.offset() + i];
+            out[i] = arr[gs.offset() + i];
         }
         return out;
     }
