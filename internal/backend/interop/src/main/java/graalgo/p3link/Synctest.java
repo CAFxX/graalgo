@@ -25,9 +25,18 @@ import graalgo.values.GoString;
  *       the program never ran under {@code synctest.Run}.</li>
  *   <li>{@code associate} → {@code Unbubbled} (0),
  *       {@code isAssociated} → false, {@code disassociate} /
- *       {@code release} / {@code inBubble} → no-ops,
+ *       {@code release} → no-ops,
  *       {@code acquire} → nil: with no bubbles there is nothing to
- *       associate with.</li>
+ *       associate with. ({@code release} diverges from gc here: gc's
+ *       {@code synctest_release} is
+ *       {@code bubble.(*synctestBubble).decActive()}, whose type assertion
+ *       panics on a nil argument; the no-op is the honest answer when
+ *       {@link #acquire} can only yield nil.)</li>
+ *   <li>{@code inBubble} → Go panic: gc installs the bubble on the
+ *       goroutine and then runs {@code f}; with no bubbles to install,
+ *       running {@code f} would silently drop the bubble contract (fake
+ *       time, deadlock detection), so failing loud — like {@code Run} —
+ *       is the honest choice. Never a silent drop of {@code f}.</li>
  *   <li>{@code Wait} → Go panic {@code "goroutine is not in a bubble"}:
  *       this is exactly gc's behavior when called outside a bubble, and
  *       under graalgo every call is outside a bubble.</li>
@@ -67,15 +76,30 @@ public final class Synctest {
         return null;
     }
 
-    /** {@code internal/synctest.release} — no-op: {@link #acquire} yields nil. */
+    /**
+     * {@code internal/synctest.release} — no-op: {@link #acquire} yields nil,
+     * so there is never a bubble to release. Divergence from gc, documented:
+     * gc's {@code synctest_release} is
+     * {@code bubble.(*synctestBubble).decActive()}
+     * ({@code src/runtime/synctest.go}), whose type assertion panics when
+     * called with nil; we accept nil silently because a nil release is the
+     * only reachable outcome of our {@link #acquire}.
+     */
     public static void release(Object bubble) {
     }
 
     /**
-     * {@code internal/synctest.inBubble(bubble any, f func())} — no-op:
-     * gc only records the bubble on the goroutine; there is none here.
+     * {@code internal/synctest.inBubble(bubble any, f func())} — loud Go
+     * panic: gc installs {@code bubble} on the current goroutine and then
+     * runs {@code f}; with no bubbles to install, running {@code f} would
+     * silently drop synctest's fake-time and deadlock-detection semantics.
+     * Failing loud is the honest contract (same rationale as
+     * {@link #run}); bubble support is future work. Never a silent drop
+     * of {@code f}.
      */
     public static void inBubble(Object bubble, Object f) {
+        Panic.throwPanic(GoString.fromUtf8("synctest.inBubble: not implemented by graalgo"));
+        throw new AssertionError("unreachable: Panic.throwPanic returned");
     }
 
     /**

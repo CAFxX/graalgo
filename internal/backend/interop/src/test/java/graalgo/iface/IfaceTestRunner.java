@@ -37,6 +37,9 @@ public final class IfaceTestRunner {
         TESTS.add(graalgo.p3net.GoNetpollTest.class);
         // N4 review P1-N6 (2026-10-15): fmt.State itab lookup is fail-loud.
         TESTS.add(FmtStateItabTest.class);
+        // PKG-012 remediation F1 (2026-10-15): sync.Cond notifyList state
+        // isolation — identity-keyed, never structural.
+        TESTS.add(graalgo.p3link.CondIsolationTest.class);
     }
 
     private IfaceTestRunner() {}

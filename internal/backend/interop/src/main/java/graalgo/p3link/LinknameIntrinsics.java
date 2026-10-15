@@ -360,8 +360,16 @@ public final class LinknameIntrinsics {
      * {@code int} as Number; {@code string} as {@link GoString}.
      */
     private static void registerInternalSyncIntrinsics() {
-        // SemacquireMutex/Semrelease: identical semaphore semantics to
-        // the sync spellings (only profiling/wait-reason differ in gc).
+        // SemacquireMutex/Semrelease: same wakeup and mutual-exclusion
+        // semantics as the sync spellings (only profiling/wait-reason differ
+        // in gc), but NOT gc's lifo queueing: gc's semacquire(lifo=true) —
+        // which sync.Mutex passes via internal_sync_runtime_SemacquireMutex
+        // (src/runtime/sema.go) — enqueues the waiter at the queue head so
+        // the most recent waiter is served next, while GoSemaphore.acquire
+        // is FIFO. Ignoring lifo is correctness-safe (no waiter is ever lost
+        // or spuriously granted) but the fairness approximation differs from
+        // gc: under contention a mutex waiter can wait longer than it would
+        // under gc. Documented, not denied.
         Linknames.register("internal/sync.runtime_SemacquireMutex", args -> {
             long addr = ((Number) args[0]).longValue();
             GoSemaphore.acquire(new AddressIntCell(addr));

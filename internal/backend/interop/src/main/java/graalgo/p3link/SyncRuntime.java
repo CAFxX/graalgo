@@ -72,10 +72,20 @@ import graalgo.values.GoString;
  *       dense number reduced mod the current GOMAXPROCS, so the
  *       {@code pid < GOMAXPROCS(0)} invariant that
  *       {@code sync.Pool.pinSlow} relies on when sizing its per-P array
- *       always holds. Two threads may share an id — a poolLocal shard is
- *       just sharded storage, and sharing is race-safe under the Go
- *       memory model to the same degree as gc's per-P sharding under
- *       migration.</li>
+ *       always holds. Once more than GOMAXPROCS threads exist in a run,
+ *       two threads can hold congruent ids in pin sections
+ *       <em>concurrently</em> and share one {@code poolLocal} shard's
+ *       {@code private} slot without synchronization — a genuine Go data
+ *       race (gc's per-P exclusivity does not hold here). On the JVM the
+ *       consequence is bounded: aliased or dropped pooled objects (JVM
+ *       reference reads/writes are atomic, so no tearing or memory
+ *       unsafety; and {@code sync.Pool}'s contract permits dropping
+ *       entries), never a crash — but the sharing is not race-safe, only
+ *       rare in practice, because pin sections are a handful of
+ *       non-blocking array accesses. The principled fix is an id checkout
+ *       pool (GOMAXPROCS ids checked out per pin section, returned at
+ *       unpin, with a per-thread stack for nested pins); that is
+ *       follow-up work, not done here.</li>
  *   <li><b>notifyList</b> ({@code sync.runtime_notifyListAdd} /
  *       {@code Wait} / {@code NotifyOne} / {@code NotifyAll} /
  *       {@code Check}, the ticket lock behind {@code sync.Cond}):
@@ -113,8 +123,12 @@ import graalgo.values.GoString;
  *       Both are unrecoverable from Go code, as in gc.</li>
  *   <li><b>{@code internal/sync} mutex spinning</b>
  *       ({@code runtime_SemacquireMutex}/{@code runtime_Semrelease} —
- *       same semaphore semantics as the {@code sync} spellings, only the
- *       profiling/wait-reason differs;
+ *       same wakeup/mutual-exclusion semantics as the {@code sync}
+ *       spellings, only the profiling/wait-reason differs in gc; gc's
+ *       {@code lifo=true} queueing (most-recent waiter served next) is
+ *       NOT replicated — {@code GoSemaphore.acquire} is FIFO, a
+ *       correctness-safe fairness approximation, documented in
+ *       {@link LinknameIntrinsics};
  *       {@code runtime_canSpin}/{@code runtime_doSpin} — bounded
  *       cooperative spinning, adapted to the JVM's observables;
  *       {@code runtime_nanotime} — the {@code internal/sync} spelling of
@@ -225,8 +239,37 @@ public final class SyncRuntime {
      * (array, index) for element pointers, and the referent otherwise.
      * This matches gc: two evaluations of {@code &c.notify} address the
      * same notifyList.
+     *
+     * <p>The key compares by Java identity ({@code ==} on the storage
+     * object), never by structural equality: {@code GoStruct.equals} is
+     * structural (descriptor + field contents), so two distinct
+     * {@code sync.Cond} values with equal contents — the canonical
+     * {@code sync.NewCond(&mu)} sharing one {@code Mutex} — would
+     * otherwise map to the same {@link NotifyState}, and a
+     * {@code Signal} on one would wake the other's waiters (silent
+     * deterministic corruption). Copying a Cond after first use is
+     * forbidden by Go, so identity keys are strictly more correct than
+     * structural keys here.
      */
-    private record NotifyKey(Object storage, int index) {}
+    private static final class NotifyKey {
+        private final Object storage;
+        private final int index;
+
+        private NotifyKey(Object storage, int index) {
+            this.storage = storage;
+            this.index = index;
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            return o instanceof NotifyKey k && storage == k.storage && index == k.index;
+        }
+
+        @Override
+        public int hashCode() {
+            return System.identityHashCode(storage) * 31 + index;
+        }
+    }
 
     private static NotifyKey notifyKey(Object arg, String symbol) {
         if (!(arg instanceof GoPointer gp) || gp.isNil()) {
@@ -344,9 +387,14 @@ public final class SyncRuntime {
             wake = new ArrayList<>(s.waiters);
             s.waiters.clear();
         }
-        SchedulerCore sched = SchedulerCore.current();
-        for (Waiter w : wake) {
-            sched.unpark(w.handle());
+        // The scheduler entry point is only needed when there is someone to
+        // wake; with no waiters this stays scheduler-free (and matches the
+        // fast path above, which also avoids scheduler entry points).
+        if (!wake.isEmpty()) {
+            SchedulerCore sched = SchedulerCore.current();
+            for (Waiter w : wake) {
+                sched.unpark(w.handle());
+            }
         }
     }
 
