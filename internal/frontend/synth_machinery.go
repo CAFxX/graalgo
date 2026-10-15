@@ -1000,20 +1000,51 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 				// emitted via exportLinknameDecl — they bind to Java
 				// intrinsics, not Go bodies, so the multi-result emission
 				// limit doesn't apply. Fall through to normal processing.
+				// Gate-1 #2: synthetic functions NOT covered by static
+				// tables (e.g., regexp/syntax.leadingString) fall through
+				// to normal processing so they get the user pair-transform.
 				if d.Body == nil {
 					// Fall through to normal processing (do not continue).
 				} else {
+					// Check if table-driven: if yes, keep the skip behavior;
+					// if no, fall through for pair-transform.
+					recvType := ""
 					if d.Recv != nil {
-						recv := sig.Recv()
-						if recv != nil {
+						if recv := sig.Recv(); recv != nil {
 							if rn := derefNamed(recv.Type()); rn != nil {
-								// Dummy entry: the desugar intercepts all
-								// call sites, so this is never emitted.
-								e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = &funcDeclInfo{fd: d, obj: obj, sig: sig}
+								recvType = rn.Obj().Name()
 							}
 						}
 					}
-					continue
+					if hasStaticMREntry(sp.path, obj.Name(), recvType) {
+						if d.Recv != nil {
+							recv := sig.Recv()
+							if recv != nil {
+								if rn := derefNamed(recv.Type()); rn != nil {
+									// Dummy entry: the desugar intercepts all
+									// call sites, so this is never emitted.
+									e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = &funcDeclInfo{fd: d, obj: obj, sig: sig}
+								}
+							}
+						}
+						continue
+					}
+					// Gate-1 #2: fail-fast stubs must remain skipped.
+					// A body that is a single panic("... not in M{5,7,...}
+					// scope ...") must be preserved; the pair-transform
+					// would replace the fail-fast with a working helper.
+					if isFailFastStub(d) {
+						if d.Recv != nil {
+							recv := sig.Recv()
+							if recv != nil {
+								if rn := derefNamed(recv.Type()); rn != nil {
+									e.methodIndex[methodKey{rn.Obj(), obj.Name()}] = &funcDeclInfo{fd: d, obj: obj, sig: sig}
+								}
+							}
+						}
+						continue
+					}
+					// Not table-driven: fall through to normal processing.
 				}
 			}
 			// Pass 1: create fi and register in maps (defFunc deferred to
@@ -1231,6 +1262,24 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 // exportSyntheticBodies emits the imported synthetic funcdecls into
 // doc.Funcs (after the user's). State is swapped per package.
 func (e *exporter) exportSyntheticBodies(doc *Doc) error {
+	// Gate-1 #2: pre-register pair types for synthetic multi-result
+	// functions with real Go source and no table coverage (e.g.,
+	// regexp/syntax.leadingString). Without this, intra-package calls
+	// fail with "multi-valued call result is not supported" because the
+	// callee isn't in userMRFuncs when the caller is exported.
+	for _, g := range e.synthGroups {
+		for _, fi := range g.fis {
+			if fi.isTemplate || fi.synthPkg == nil {
+				continue
+			}
+			if isTableDrivenMR(fi) {
+				continue
+			}
+			if _, err := e.registerUserMRFunc(fi); err != nil {
+				return err
+			}
+		}
+	}
 	for _, g := range e.synthGroups {
 		savedFset, savedSrc, savedInfo, savedPkg := e.fset, e.src, e.info, e.pkg
 		savedSubst, savedSubstTypeIDs := e.subst, e.substTypeIDs
@@ -1876,7 +1925,8 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions
 	// (time.ParseDuration) fail fast (WS D; F4 precedent).
-	if isMultiResultSynthetic(fn) {
+	// Gate-1 #2: skip fail-fast for pair-transformed functions.
+	if e.isMultiResultSyntheticFailFast(fn) {
 		return nil, true, multiResultSyntheticError(fn)
 	}
 	// Real-Go package-level function: direct call via funcByObj (the
@@ -1976,6 +2026,20 @@ func isAliasIntrinsicFunc(fn *types.Func) bool {
 // the P3-M3 F4 fail-fast precedent): the declarations exist with exact gc
 // signatures for type-checking, but every call site fails fast with a
 // named scope error. Re-test when WS D lands multi-result calls.
+//
+// isMultiResultSyntheticFailFast is the exporter-aware wrapper: it returns
+// false for functions in userMRFuncs (pair-transformed, Gate-1 #2), even
+// if they are synthetic. Call sites should use this instead of
+// isMultiResultSynthetic directly.
+func (e *exporter) isMultiResultSyntheticFailFast(fn *types.Func) bool {
+	if fn == nil {
+		return false
+	}
+	if _, ok := e.userMRFuncs[fn]; ok {
+		return false // pair-transformed, not fail-fast
+	}
+	return isMultiResultSynthetic(fn)
+}
 func isMultiResultSynthetic(fn *types.Func) bool {
 	if fn == nil || fn.Pkg() == nil {
 		return false
