@@ -9,9 +9,33 @@
 #     Non-ASCII letters/digits are not recognized. Retest trigger: full
 #     unicode tables (tier1a).
 #  3. scanner.go carried verbatim otherwise. No multi-result functions.
+import os
 import re
+import subprocess
 
-GOROOT = "/home/hatch/tools/go/src/text/scanner"
+# --- P1-R1-2 portability prologue: GOROOT and OUTDIR are environment-driven
+# so the generator is CI-runnable and never writes outside the repo.
+#   GRAALGO_GOROOT   Go installation whose gc 1.27.1 sources are read
+#                    (default: `go env GOROOT`).
+#   GEN_SYNTH_OUTDIR directory for the generated file(s) (default: this
+#                    script's directory, i.e. in-place regeneration).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+def _graalgo_goroot():
+    g = os.environ.get("GRAALGO_GOROOT")
+    if g:
+        return g
+    try:
+        return subprocess.run(["go", "env", "GOROOT"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except Exception as e:
+        raise SystemExit(
+            "gen_synth: cannot determine GOROOT; set GRAALGO_GOROOT (%s)" % e)
+
+OUTDIR = os.environ.get("GEN_SYNTH_OUTDIR", _HERE)
+
+GOROOT = os.path.join(_graalgo_goroot(), "src", "text", "scanner")
+
 
 HEADER = '''// P3-M9 (tier1c): synthetic `text/scanner` package.
 //
@@ -131,7 +155,7 @@ def main():
     # Strip remaining backticks (in comments).
     src = src.replace("`", "'")
     out = HEADER + src.rstrip() + "\n`\n"
-    with open("/home/hatch/workspace/graalgo-m9/phases/phase1/frontend/synth_textscanner.go", "w") as f:
+    with open(os.path.join(OUTDIR, "synth_textscanner.go"), "w") as f:
         f.write(out)
     print("wrote synth_textscanner.go", len(out), "bytes")
 

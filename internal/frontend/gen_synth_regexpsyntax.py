@@ -19,9 +19,25 @@
 import os
 import re
 import glob
+import subprocess
 
-GOROOT = "/home/hatch/tools/go/src/regexp/syntax"
-OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+
+def _graalgo_goroot():
+    """Go installation whose gc 1.27.1 sources this generator reads
+    (P1-R1-2: environment-driven so the generator is CI-runnable)."""
+    g = os.environ.get("GRAALGO_GOROOT")
+    if g:
+        return g
+    try:
+        return subprocess.run(["go", "env", "GOROOT"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except Exception as e:
+        raise SystemExit(
+            "gen_synth: cannot determine GOROOT; set GRAALGO_GOROOT (%s)" % e)
+
+GOROOT = os.path.join(_graalgo_goroot(), "src", "regexp", "syntax")
+OUT = os.path.join(os.environ.get("GEN_SYNTH_OUTDIR",
+                               os.path.dirname(os.path.abspath(__file__))),
                    "synth_regexpsyntax.go")
 
 HEADER = '''// P3-M9 (tier1c): synthetic `regexp/syntax` package.

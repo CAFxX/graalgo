@@ -11,11 +11,34 @@
 #
 # DO NOT EDIT THE GENERATED FILES BY HAND (edit this generator and re-run).
 import re
+import subprocess
 import sys
 import os
+import tempfile
 
-GOROOT = "/home/hatch/tools/go-1.27.1"
-OUTDIR = "/home/hatch/workspace/graalgo-m9/phases/phase1/frontend"
+# --- P1-R1-2 portability prologue: GOROOT and OUTDIR are environment-driven
+# so the generator is CI-runnable and never writes outside the repo.
+#   GRAALGO_GOROOT   Go installation whose gc 1.27.1 sources are read
+#                    (default: `go env GOROOT`).
+#   GEN_SYNTH_OUTDIR directory for the generated file(s) (default: this
+#                    script's directory, i.e. in-place regeneration).
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+def _graalgo_goroot():
+    g = os.environ.get("GRAALGO_GOROOT")
+    if g:
+        return g
+    try:
+        return subprocess.run(["go", "env", "GOROOT"], capture_output=True,
+                              text=True, check=True).stdout.strip()
+    except Exception as e:
+        raise SystemExit(
+            "gen_synth: cannot determine GOROOT; set GRAALGO_GOROOT (%s)" % e)
+
+OUTDIR = os.environ.get("GEN_SYNTH_OUTDIR", _HERE)
+
+GOROOT = _graalgo_goroot()
+
 
 # ---------------------------------------------------------------------------
 # source surgery helpers (adapted from gen_synth_compress.py)
@@ -63,7 +86,9 @@ def extract_functions(src, src_path=None):
     
     try:
         result = subprocess.run(
-            ['/tmp/extract_decls', temp_path],
+            [os.environ.get("GEN_SYNTH_EXTRACT_DECLS",
+                      os.path.join(_HERE, "gen_synth_helper", "extract_decls", "extract_decls")),
+             temp_path],
             capture_output=True, text=True
         )
         if result.returncode != 0:
@@ -1177,7 +1202,8 @@ def main():
                 all_entries.append(f'    {{"{pkg}", "{method}", "", "{helper}", "{pair}", []string{{{fields_str}}}}},')
     
     # Write table entries to a file for manual insertion
-    entries_path = os.path.join(OUTDIR, 'archive_mime_table_entries.txt')
+    entries_path = os.path.join(os.environ.get("GEN_SYNTH_TMPDIR", tempfile.gettempdir()),
+                                     'archive_mime_table_entries.txt')
     with open(entries_path, 'w') as f:
         f.write('\n'.join(all_entries) + '\n')
     print(f"Wrote {len(all_entries)} table entries to {entries_path}", file=sys.stderr)
