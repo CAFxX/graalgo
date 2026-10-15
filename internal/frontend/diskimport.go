@@ -210,6 +210,15 @@ func resolveDiskPackageDir(importPath string) (string, error) {
 			if st, err := os.Stat(dir); err == nil && st.IsDir() {
 				return dir, nil
 			}
+			// P4 (real-nethttp): GOROOT vendor resolution. Stdlib packages
+			// import golang.org/x/* from GOROOT/src/vendor (e.g. net/http
+			// imports golang.org/x/net/http/httpguts). This is the general
+			// Go vendor mechanism for the standard library: a single
+			// vendor directory at GOROOT/src/vendor.
+			vdir := filepath.Join(goroot, "src", "vendor", importPath)
+			if st, err := os.Stat(vdir); err == nil && st.IsDir() {
+				return vdir, nil
+			}
 		}
 		return "", fmt.Errorf("%w: %q", errDiskNotFound, importPath)
 	}
