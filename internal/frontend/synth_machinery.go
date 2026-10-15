@@ -1939,6 +1939,17 @@ func (e *exporter) exportSyntheticPkgCall(c *ast.CallExpr, sel *ast.SelectorExpr
 	if e.isMultiResultSyntheticFailFast(fn) {
 		return nil, true, multiResultSyntheticError(fn)
 	}
+	// WS G (real-fmt2): multi-result disk-package functions (e.g.
+	// fmt.Println) are transformed to __-helper + stub shape by
+	// transformMultiResult; the stub is skipped at import (never in
+	// funcByObj). Redirect the call to the helper, which returns the
+	// pair. In statement/defer positions the pair is discarded, which
+	// is semantically correct; value positions are rewritten by the
+	// MR desugar (classifyTransformedMRCall) before reaching here.
+	if hfi, ok := e.mrHelperFi(fn); ok {
+		n, err := e.exportFuncCall(c, sel.Sel, hfi.obj)
+		return n, true, err
+	}
 	// Real-Go package-level function: direct call via funcByObj (the
 	// declaration was imported by importSyntheticPackage).
 	n, err := e.exportFuncCall(c, sel.Sel, fn)
