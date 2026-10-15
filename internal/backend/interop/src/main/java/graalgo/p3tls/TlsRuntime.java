@@ -168,13 +168,12 @@ public final class TlsRuntime {
         }
         if (o instanceof GoSlice) {
             GoSlice gs = (GoSlice) o;
-            int[] arr = (int[]) gs.array();
+            // []byte is byte[]-backed (D5).
+            byte[] arr = (byte[]) gs.array();
             int off = gs.offset();
             int len = gs.len();
             byte[] out = new byte[len];
-            for (int i = 0; i < len; i++) {
-                out[i] = (byte) arr[off + i];
-            }
+            System.arraycopy(arr, off, out, 0, len);
             return out;
         }
         throw new IllegalArgumentException("expected GoSlice, got " + o.getClass());

@@ -94,6 +94,15 @@ public final class Intrinsics {
             }
             return true;
         }
+        if (ca == short.class) {
+            short[] x = (short[]) a, y = (short[]) b;
+            for (int i = 0; i < n; i++) {
+                if (x[aOff + i] != y[bOff + i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
         if (ca == int.class) {
             int[] x = (int[]) a, y = (int[]) b;
             for (int i = 0; i < n; i++) {
@@ -362,43 +371,18 @@ public final class Intrinsics {
         return reqSize & ~(PAGE_SIZE - 1);
     }
 
-    /** Fresh zeroed typed array for slice backing (D5 array mapping). */
     /**
-     * Allocates a typed Java array for slice elements. For STRUCT elements,
-     * each slot is pre-initialized to the zero-valued GoStruct (Go's
-     * {@code make([]T, n)} zero-initializes; a null slot would NPE on
-     * {@code s[i].field} access). Complex elements are likewise
-     * pre-initialized to (0+0i) (WS G). Requires the element descriptor for
+     * Allocates a typed Java array for slice elements. Delegates to
+     * {@link graalgo.frontend.Boxing#newArray}, the single canonical D5
+     * allocator (backing width follows the kind's bit-width). For STRUCT
+     * elements, each slot is pre-initialized to the zero-valued GoStruct;
+     * complex elements to (0+0i). Requires the element descriptor for
      * struct kinds; may be null for non-struct kinds.
      */
     static Object newTypedArray(GoKind elemKind, graalgo.values.GoStructDescriptor elemDesc, int len) {
-        return switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> new int[len];
-            case INT64, UINT64, UNTYPED_INT -> new long[len];
-            case FLOAT32 -> new float[len];
-            case FLOAT64, UNTYPED_FLOAT -> new double[len];
-            case BOOL, UNTYPED_BOOL -> new boolean[len];
-            case COMPLEX64 -> {
-                graalgo.values.GoComplex32[] arr = new graalgo.values.GoComplex32[len];
-                java.util.Arrays.fill(arr, graalgo.values.GoComplex32.ZERO);
-                yield arr;
-            }
-            case COMPLEX128, UNTYPED_COMPLEX -> {
-                graalgo.values.GoComplex64[] arr = new graalgo.values.GoComplex64[len];
-                java.util.Arrays.fill(arr, graalgo.values.GoComplex64.ZERO);
-                yield arr;
-            }
-            case STRUCT -> {
-                Object[] arr = new Object[len];
-                if (elemDesc != null) {
-                    for (int i = 0; i < len; i++) {
-                        arr[i] = graalgo.values.GoStruct.zero(elemDesc);
-                    }
-                }
-                yield arr;
-            }
-            default -> new Object[len];
-        };
+        // Single canonical allocator: Boxing.newArray owns the kind→backing
+        // mapping (D5). This wrapper exists for call-site continuity only.
+        return graalgo.frontend.Boxing.newArray(elemKind, elemDesc, len);
     }
 
     // ------------------------------------------------------------------
@@ -512,7 +496,17 @@ public final class Intrinsics {
     private static void memmove(Object dstArr, int dstOff, Object srcArr, int srcOff,
             int n, GoKind elemKind) {
         switch (elemKind) {
-            case INT8, INT16, INT32, UINT8, UINT16, UINT32 -> {
+            case INT8, UINT8 -> {
+                byte[] d = (byte[]) dstArr;
+                byte[] s = (byte[]) srcArr;
+                System.arraycopy(s, srcOff, d, dstOff, n);
+            }
+            case INT16, UINT16 -> {
+                short[] d = (short[]) dstArr;
+                short[] s = (short[]) srcArr;
+                System.arraycopy(s, srcOff, d, dstOff, n);
+            }
+            case INT32, UINT32 -> {
                 int[] d = (int[]) dstArr;
                 int[] s = (int[]) srcArr;
                 System.arraycopy(s, srcOff, d, dstOff, n);

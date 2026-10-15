@@ -39,15 +39,17 @@ public final class ClearNode extends GoExprNode {
             int off = gs.offset();
             int len = gs.len();
             // Zero the slice's elements. Backing arrays are typed
-            // (int[], long[], double[], Object[], etc. per D5).
-            if (arr instanceof int[] ia) {
+            // (byte[], short[], int[], long[], double[], Object[], etc. per D5).
+            if (arr instanceof byte[] ba) {
+                java.util.Arrays.fill(ba, off, off + len, (byte) 0);
+            } else if (arr instanceof short[] sa) {
+                java.util.Arrays.fill(sa, off, off + len, (short) 0);
+            } else if (arr instanceof int[] ia) {
                 java.util.Arrays.fill(ia, off, off + len, 0);
             } else if (arr instanceof long[] la) {
                 java.util.Arrays.fill(la, off, off + len, 0L);
             } else if (arr instanceof double[] da) {
                 java.util.Arrays.fill(da, off, off + len, 0.0);
-            } else if (arr instanceof byte[] ba) {
-                java.util.Arrays.fill(ba, off, off + len, (byte) 0);
             } else if (arr instanceof boolean[] bo) {
                 java.util.Arrays.fill(bo, off, off + len, false);
             } else if (arr instanceof Object[] oa) {

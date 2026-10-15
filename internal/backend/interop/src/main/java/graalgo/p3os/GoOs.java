@@ -445,7 +445,7 @@ public final class GoOs {
     /** A Go []byte as a ByteBuffer honoring the GoSlice offset/len (§2.1). */
     /**
      * Wraps a Go []byte slice as a ByteBuffer for channel I/O. D5 stores
-     * []byte in int[] backing arrays, so the bytes are copied to a fresh
+     * []byte in byte[] backing arrays, so the bytes are copied to a fresh
      * byte[]; for reads the caller must copy back via {@link #goBufBack}.
      */
     private static ByteBuffer goBuf(Object o) {
@@ -453,30 +453,26 @@ public final class GoOs {
             return ByteBuffer.allocate(0);
         }
         GoSlice gs = (GoSlice) o;
-        int[] arr = (int[]) gs.array();
+        byte[] arr = (byte[]) gs.array();
         int off = gs.offset();
         int len = gs.len();
         byte[] bytes = new byte[len];
-        for (int i = 0; i < len; i++) {
-            bytes[i] = (byte) arr[off + i];
-        }
+        System.arraycopy(arr, off, bytes, 0, len);
         return ByteBuffer.wrap(bytes);
     }
 
     /**
      * Copies bytes read into a {@link #goBuf} ByteBuffer back into the Go
-     * []byte's int[] backing array. n is the number of bytes read.
+     * []byte's byte[] backing array. n is the number of bytes read.
      */
     private static void goBufBack(Object o, ByteBuffer bb, int n) {
         if (o == null || n <= 0) {
             return;
         }
         GoSlice gs = (GoSlice) o;
-        int[] arr = (int[]) gs.array();
+        byte[] arr = (byte[]) gs.array();
         byte[] bytes = bb.array();
-        for (int i = 0; i < n; i++) {
-            arr[gs.offset() + i] = bytes[i] & 0xFF;
-        }
+        System.arraycopy(bytes, 0, arr, gs.offset(), n);
     }
 
     /**

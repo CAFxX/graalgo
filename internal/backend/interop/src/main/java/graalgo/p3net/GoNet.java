@@ -195,13 +195,12 @@ public final class GoNet {
             return ByteBuffer.allocate(0);
         }
         GoSlice gs = (GoSlice) o;
-        int[] arr = (int[]) gs.array();
+        // []byte is byte[]-backed (D5).
+        byte[] arr = (byte[]) gs.array();
         int off = gs.offset();
         int len = gs.len();
         byte[] bytes = new byte[len];
-        for (int i = 0; i < len; i++) {
-            bytes[i] = (byte) arr[off + i];
-        }
+        System.arraycopy(arr, off, bytes, 0, len);
         return ByteBuffer.wrap(bytes);
     }
 
@@ -211,11 +210,9 @@ public final class GoNet {
             return;
         }
         GoSlice gs = (GoSlice) o;
-        int[] arr = (int[]) gs.array();
+        byte[] arr = (byte[]) gs.array();
         byte[] bytes = bb.array();
-        for (int i = 0; i < n; i++) {
-            arr[gs.offset() + i] = bytes[i] & 0xFF;
-        }
+        System.arraycopy(bytes, 0, arr, gs.offset(), n);
     }
 
     /** Writes raw bytes into a Go []byte at its offset; returns bytes written or -1 if too small. */
@@ -227,10 +224,8 @@ public final class GoNet {
         if (gs.len() < src.length) {
             return -1;
         }
-        int[] arr = (int[]) gs.array();
-        for (int i = 0; i < src.length; i++) {
-            arr[gs.offset() + i] = src[i] & 0xFF;
-        }
+        byte[] arr = (byte[]) gs.array();
+        System.arraycopy(src, 0, arr, gs.offset(), src.length);
         return src.length;
     }
 
