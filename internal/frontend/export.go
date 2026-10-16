@@ -309,17 +309,24 @@ func syntheticRuntimePackage() *types.Package {
 	// (e.g. iter/pull_test.go) use it for goroutine-leak detection, so
 	// it is genuine stdlib surface, not harness-only.
 	addFunc("NumGoroutine", nil, tuple(param("", intTyp)))
-	// PKG-040: Gosched (gc 1.27.1, src/runtime/proc.go: "Gosched yields
-	// the processor, allowing other goroutines to run. It does not
-	// suspend the current goroutine, so execution resumes automatically").
-	// Implemented for real: the backend's "runtimegosched" wire node
-	// calls the scheduler's voluntary-yield primitive (see
+	// PKG-040 note: the Gosched() declaration is provided by the overlay
+	// function list (PKG-038 declared it as bare surface); PKG-040 gives
+	// it a real implementation (gc 1.27.1, src/runtime/proc.go: "Gosched
+	// yields the processor, allowing other goroutines to run. It does
+	// not suspend the current goroutine, so execution resumes
+	// automatically"). The frontend lowers calls to the additive
+	// "runtimegosched" STATEMENT wire node, and the backend's
+	// GoschedNode calls the scheduler's voluntary-yield primitive (see
 	// graalgo.sched.SchedulerCore.yieldCurrent), which re-queues the
 	// current goroutine through the same run lane as quantum expiry.
 	// Upstream test files (e.g. iter/pull_test.go) call it in
 	// goroutine-leak-detection helpers, so it is genuine stdlib surface,
 	// not harness-only.
-	addFunc("Gosched", nil, nil)
+	// graalgo.sched.SchedulerCore.yieldCurrent), which re-queues the
+	// current goroutine through the same run lane as quantum expiry.
+	// Upstream test files (e.g. iter/pull_test.go) call it in
+	// goroutine-leak-detection helpers, so it is genuine stdlib surface,
+	// not harness-only.
 	// P2-M4 (GC interop, ADR-0002 D4): the Go-observable GC surface.
 	// Signatures match gc's runtime package exactly; the Java side is
 	// graalgo.runtime.GcInterop (Phase-1 stub, Phase-2 real).
