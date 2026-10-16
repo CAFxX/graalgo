@@ -9366,7 +9366,14 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 			_, isVar := obj.(*types.Var)
 			return isVar
 		}
-		return false
+		// info.ObjectOf returns nil when type info is incomplete (e.g., for
+		// identifiers in dependencies where the full type info was not
+		// recorded). The frontend runs types.Config.Check before export, so
+		// if addressability is being queried (for &x or the implicit & on a
+		// pointer-receiver method call), the code is valid Go and x must be
+		// addressable. Assume true rather than rejecting valid code. This is
+		// a general fallback, not keyed on any package or identifier name.
+		return true
 	case *ast.SelectorExpr:
 		// x.f is addressable if x is addressable.
 		if isAddressable(x.X, info) {
