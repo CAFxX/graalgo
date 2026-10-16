@@ -20,10 +20,12 @@ deliverable until the design lands.
 ## Phased removal order
 
 - **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
-  packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
-  `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
+  packages via root-cause fixes: `fmt` (**retired 2026-10-16** via
+  `real-fmt2`, commit `a527063d` — the real `fmt` from GOROOT now compiles),
+  `crypto/x509` (worktree `real-x509`), `net`/`net/http`
   (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
-  B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
+  B-5 and the reflect/time/math name-keyed predicates in B-3 (B-1 already
+  retired).
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
@@ -232,14 +234,17 @@ Entries move here when the bridge is gone (same change that removes the
 code, per [AGENTS.md](../../AGENTS.md) §7).
 
 - **2026-10-16 — B-1 `FmtCallNode` + `graalgo.runtime.Fmt`/`FmtScan`
-  (Java reimplementations of `fmt`).** The real `fmt` package now compiles
-  from GOROOT via the general disk importer (real-fmt2 lane, master
-  `c2c0718c`): synthetic `fmt` registration removed from
-  `dedicatedSyntheticStubs`, `exportFmtCall`/`fmtOverlayFuncs` deleted from
-  the frontend, and 5,091 lines of Java (`Fmt.java`, `FmtScan.java`,
-  `FmtCallNode.java`, `FmtHandleMethods.java`, `FmtMethodDispatch.java` plus
-  tests) deleted. `fmt.Append`/`Appendf`/`Appendln` verified working from
-  the real package.
+  (Java reimplementations of `fmt`).** Retired by commit `a527063d`
+  ("real-fmt2: remove Java fmt implementation"): the real `fmt` package
+  from GOROOT now compiles via the general disk importer, so synthetic
+  `fmt` registration was removed from `dedicatedSyntheticStubs`, the
+  `"fmtcall"` wire node, the `exportFmtCall` frontend dispatch
+  (`fmtOverlayFuncs`), `FmtCallNode`, `Fmt`/`FmtScan`,
+  `FmtHandleMethods`/`FmtMethodDispatch` (5,091 lines of Java plus tests),
+  and the `DeferredCall` FMT kind were deleted. `fmt` calls route through
+  the general package-level call path; deferred `fmt` calls go through the
+  function-value path. `fmt.Append`/`Appendf`/`Appendln` verified working
+  from the real package.
 - **2026-10-15 — stale `# BRIDGE` self-labels in module Makefiles.** The
   comments in
   [internal/backend/interop/Makefile](../../internal/backend/interop/Makefile)
