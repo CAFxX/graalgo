@@ -27,6 +27,7 @@ public final class Runner {
         TESTS.add(graalgo.frontend.FrontendRobustnessTest.class);
         TESTS.add(graalgo.frontend.VarsCorpusTest.class);
         TESTS.add(graalgo.runtime.BuiltinsCorpusTest.class);
+        TESTS.add(graalgo.frontend.LenCapChanTest.class);
         TESTS.add(graalgo.runtime.SliceGrowthTest.class);
         TESTS.add(graalgo.frontend.TypeparamDifferentialTest.class);
         TESTS.add(graalgo.values.ValuesTest.class);
