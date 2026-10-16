@@ -14,6 +14,9 @@ spikes/05-cmdgo/probes/
 # built harness binary (rebuilt by tests from source)
 test/differential/diffharness
 
+# graalgo driver binary (built by `make graalgo`)
+/graalgo
+
 # fuzzer runtime state (journal, scratch programs, resume state)
 tools/fuzz/work/
 .gocache/
