@@ -8728,22 +8728,30 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// whose type is a signature, not a composite type target.
 			// Export the fun expression and emit a plain call node
 			// (mirrors the func-valued variable branch below).
-			if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
-				fun, err := e.exportExpr(c.Fun)
-				if err != nil {
-					return nil, err
+			// FIX (func-type conversion): only treat as a func value call
+			// when Fun denotes a VALUE, not a TYPE. A conversion like
+			// (func())(nil) has tv.IsType()==true and its type is a
+			// signature — it must fall through to the conversion handling
+			// below, not be exported as a call to a computed func value
+			// (which would pass the FuncType to exportExpr and fail).
+			if !tv.IsType() {
+				if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
+					fun, err := e.exportExpr(c.Fun)
+					if err != nil {
+						return nil, err
+					}
+					args, err := e.exportCallArgsPacked(c, sig)
+					if err != nil {
+						return nil, err
+					}
+					typ, err := e.callType(c)
+					if err != nil {
+						return nil, err
+					}
+					return e.node("call", c, map[string]any{
+						"fun": fun, "args": args, "type": typ,
+					}), nil
 				}
-				args, err := e.exportCallArgsPacked(c, sig)
-				if err != nil {
-					return nil, err
-				}
-				typ, err := e.callType(c)
-				if err != nil {
-					return nil, err
-				}
-				return e.node("call", c, map[string]any{
-					"fun": fun, "args": args, "type": typ,
-				}), nil
 			}
 			if len(c.Args) != 1 {
 				return nil, fmt.Errorf("gofrontend: conversion has %d arguments (want 1)", len(c.Args))
@@ -9436,6 +9444,10 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 			}
 		}
 		return false
+	case *ast.ParenExpr:
+		// (x) has the same addressability as x — parentheses are
+		// transparent (e.g. reflect's &(SliceOf(elem).(*rtype).t)).
+		return isAddressable(x.X, info)
 	default:
 		return false
 	}
