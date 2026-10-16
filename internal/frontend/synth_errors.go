@@ -1,7 +1,9 @@
 // P3-M7 (wave 1): synthetic `errors` package.
 //
 // REAL Go source, embedded as text and type-checked on demand with the
-// overlay importer (imports: "reflect" → the P3-M7 synthetic package).
+// overlay importer (imports: "internal/reflectlite" → the synthetic
+// reflectlite package, matching real Go's errors which uses
+// internal/reflectlite, not reflect).
 // The resulting *types.Package is what overlayImporter.Import("errors")
 // returns, so the user's type-check and the synthetic source's own
 // type-check share identical *types.Func/*types.TypeName objects; the
@@ -21,7 +23,7 @@ package main
 // New/Is/Unwrap/Join/As/AsType.
 const syntheticErrorsSource = `package errors
 
-import "reflect"
+import "internal/reflectlite"
 
 // New returns an error that formats as the given text.
 // Each call to New returns a distinct error value even if the text is identical.
@@ -173,22 +175,22 @@ func As(err error, target any) bool {
 	if target == nil {
 		panic("errors: target cannot be nil")
 	}
-	val := reflect.ValueOf(target)
+	val := reflectlite.ValueOf(target)
 	typ := val.Type()
-	if typ.Kind() != reflect.Ptr || val.IsNil() {
+	if typ.Kind() != reflectlite.Ptr || val.IsNil() {
 		panic("errors: target must be a non-nil pointer")
 	}
 	targetType := typ.Elem()
-	if targetType.Kind() != reflect.Interface && !targetType.Implements(errorType) {
+	if targetType.Kind() != reflectlite.Interface && !targetType.Implements(errorType) {
 		panic("errors: *target must be interface or implement error")
 	}
 	return as(err, target, val, targetType)
 }
 
-func as(err error, target any, targetVal reflect.Value, targetType reflect.Type) bool {
+func as(err error, target any, targetVal reflectlite.Value, targetType reflectlite.Type) bool {
 	for {
-		if reflect.TypeOf(err).AssignableTo(targetType) {
-			targetVal.Elem().Set(reflect.ValueOf(err))
+		if reflectlite.TypeOf(err).AssignableTo(targetType) {
+			targetVal.Elem().Set(reflectlite.ValueOf(err))
 			return true
 		}
 		if x, ok := err.(errorAsser); ok && x.As(target) {
@@ -216,7 +218,7 @@ func as(err error, target any, targetVal reflect.Value, targetType reflect.Type)
 	}
 }
 
-var errorType = reflect.TypeOf((*error)(nil)).Elem()
+var errorType = reflectlite.TypeOf((*error)(nil)).Elem()
 
 // errorAsser is the As(any) bool method set. gc asserts against the
 // anonymous interface{ As(any) bool }; named here — identical semantics,
