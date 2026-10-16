@@ -7159,15 +7159,22 @@ func stmtOwner(s ast.Stmt) string {
 
 // exportVarGenDecl handles `var` declarations (GenDecl form).
 func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
-	names := []string{}
-	objs := []int{}
-	var typ any
-	values := make([]*Node, 0)
+	// Each ValueSpec in the GenDecl gets its own vardecl node. A `var (...)`
+	// block with multiple specs (e.g., `var (a = 1; b int; c, d = f())`)
+	// cannot be merged into a single node: specs may have different types,
+	// and specs without initializers contribute names but no values, which
+	// would violate the values/objs length contract on the wire.
+	// (Fix for the reflect.StructOf var block: 8 names, 5 values.)
+	vardecls := make([]*Node, 0, len(gd.Specs))
 	for _, spec := range gd.Specs {
 		vs, ok := spec.(*ast.ValueSpec)
 		if !ok {
 			return nil, scopeErrorf("non-value var spec %T is not supported in frontend/v1 scope", spec)
 		}
+		names := []string{}
+		objs := []int{}
+		var typ any
+		values := make([]*Node, 0)
 		var typeIsTimer *types.Named
 		hasType := false
 		if vs.Type != nil {
@@ -7250,10 +7257,14 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		if hasType && typeIsTimer != nil {
 			return nil, timerScopeErrorf(typeIsTimer, "var declaration")
 		}
+		vardecls = append(vardecls, e.node("vardecl", vs, map[string]any{
+			"names": names, "objs": objs, "define": false, "type": typ, "values": values,
+		}))
 	}
-	return e.node("vardecl", gd, map[string]any{
-		"names": names, "objs": objs, "define": false, "type": typ, "values": values,
-	}), nil
+	if len(vardecls) == 1 {
+		return vardecls[0], nil
+	}
+	return e.node("block", gd, map[string]any{"stmts": vardecls}), nil
 }
 
 // exportDefine handles `:=` (short variable declarations).

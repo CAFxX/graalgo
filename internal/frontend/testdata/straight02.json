@@ -211,9 +211,9 @@
                 "pos": {
                   "file": 0,
                   "line": 8,
-                  "col": 2,
-                  "off": 272,
-                  "len": 14
+                  "col": 6,
+                  "off": 276,
+                  "len": 10
                 },
                 "fields": {
                   "define": false,
@@ -250,9 +250,9 @@
                 "pos": {
                   "file": 0,
                   "line": 9,
-                  "col": 2,
-                  "off": 288,
-                  "len": 9
+                  "col": 6,
+                  "off": 292,
+                  "len": 5
                 },
                 "fields": {
                   "define": false,
