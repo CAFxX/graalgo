@@ -158,16 +158,23 @@ func main() {
 	_ = px
 	p.Y = 10
 
-	// basiclit (all types)
+	// basiclit (all types, incl. every unsigned width: V2-1 regression —
+	// unsigned basics used to emit class "int", bool class "unknown")
 	var i8 int8 = 8
 	var i16 int16 = 16
 	var i32 int32 = 32
 	var i64 int64 = 64
 	var u uint = 1
+	var u8 uint8 = 2
+	var u16 uint16 = 3
+	var u32 uint32 = 4
+	var u64 uint64 = 5
+	var up uintptr = 6
+	var by byte = 7
 	var f32 float32 = 1.5
 	var c64 complex64 = 1 + 2i
 	var ch rune = 'a'
-	_, _, _, _, _, _, _, _ = i8, i16, i32, i64, u, f32, c64, ch
+	_, _, _, _, _, _, _, _, _, _, _, _, _, _, _ = i8, i16, i32, i64, u, u8, u16, u32, u64, up, by, f32, c64, ch, b
 
 	// return tested via add() above
 	_ = z

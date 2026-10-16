@@ -328,22 +328,27 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 }
 
 func basicClass(b *types.Basic) string {
-	switch b.Info() & types.IsNumeric {
-	case types.IsBoolean:
+	// NOTE: test the Info flags directly. go/types' IsNumeric mask does NOT
+	// contain IsUnsigned (nor IsBoolean/IsUntyped), so masking with it and
+	// switching on the masked value can never see unsigned types (V2-1) and
+	// silently misclassifies bool as well. Order matters: unsigned types
+	// carry both IsInteger and IsUnsigned, so IsUnsigned must win.
+	info := b.Info()
+	switch {
+	case info&types.IsBoolean != 0:
 		return "bool"
-	case types.IsInteger:
-		return "int"
-	case types.IsUnsigned:
+	case info&types.IsUnsigned != 0:
 		return "uint"
-	case types.IsFloat:
+	case info&types.IsInteger != 0:
+		return "int"
+	case info&types.IsFloat != 0:
 		return "float"
-	case types.IsComplex:
+	case info&types.IsComplex != 0:
 		return "complex"
-	}
-	if b.Info()&types.IsString != 0 {
+	case info&types.IsString != 0:
 		return "string"
 	}
-	if b.Info()&types.IsUntyped != 0 {
+	if info&types.IsUntyped != 0 {
 		return "untyped"
 	}
 	return "unknown"
