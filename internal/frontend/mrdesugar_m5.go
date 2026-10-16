@@ -261,6 +261,16 @@ func hasStaticIfaceMREntry(method string) bool {
 // source's __-helper and pair struct exactly (e.g. base32's AppendDecode
 // desugars through base32DecodeStringPair{b, err} — there is no
 // base32AppendPair).
+//
+// m7HelperPkgOverride maps a package path to the synthetic package
+// holding its M7 __-helpers and pair types. Used when a package was
+// retired from synthetic (e.g. reflect now uses the disk importer)
+// but the M7 desugaring still needs the helpers. The override package
+// must be registered in syntheticSources.
+var m7HelperPkgOverride = map[string]string{
+	"reflect": "reflect_m7",
+}
+
 var m7MultiResultFuncs = []m7MultiResultFunc{
 	// errors: AsType[E error] (P4 — was M7 fail-fast). The pair struct
 	// and helper are generic; the desugar instantiates both with the
@@ -2201,7 +2211,11 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
+		helperPkg := mf.pkgPath
+		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
+			helperPkg = override
+		}
+		sp := getSyntheticPackage(helperPkg)
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2212,7 +2226,7 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
-			kind: mrM7, helperPkg: mf.pkgPath,
+			kind: mrM7, helperPkg: helperPkg,
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
@@ -2519,7 +2533,11 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
+		helperPkg := mf.pkgPath
+		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
+			helperPkg = override
+		}
+		sp := getSyntheticPackage(helperPkg)
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2530,7 +2548,7 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
-			kind: mrM7, helperPkg: mf.pkgPath,
+			kind: mrM7, helperPkg: helperPkg,
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
@@ -2984,7 +3002,11 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
+		helperPkg := mf.pkgPath
+		if override, ok := m7HelperPkgOverride[mf.pkgPath]; ok {
+			helperPkg = override
+		}
+		sp := getSyntheticPackage(helperPkg)
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2995,7 +3017,7 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 		}
 		nt = instantiatePairType(nt, targs)
 		return &mrPlan{
-			kind: mrM7, helperPkg: mf.pkgPath,
+			kind: mrM7, helperPkg: helperPkg,
 			helperName: mf.helper,
 			tmpType:    nt, pairFields: mf.pairFields,
 			prependRecv: mf.recvType != "",
