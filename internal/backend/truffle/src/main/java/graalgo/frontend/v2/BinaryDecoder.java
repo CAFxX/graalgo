@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -21,15 +22,37 @@ import java.util.Map;
  *
  * <p>Format (all integers are unsigned varints, strings are UTF-8):
  * <pre>
- *   value := tag payload
- *   tag   := 0x00 (null) | 0x01 (bool) | 0x02 (int) | 0x03 (string)
- *          | 0x04 (list) | 0x05 (map)
+ *   document := magic version value
+ *   magic    := 0x67 0x32 0x62 0x69 ("g2bi": Go→Java binary interface)
+ *   version  := varint format version (currently 1)
+ *   value    := tag payload
+ *   tag      := 0x00 (null) | 0x01 (bool) | 0x02 (int) | 0x03 (string)
+ *              | 0x04 (list) | 0x05 (map)
+ *   int      := varint of the zigzag-encoded 64-bit pattern:
+ *               zz(x) = (x &lt;&lt; 1) ^ (x &gt;&gt; 63) on the bit pattern.
+ *               The Go encoder zigzag-encodes EVERY integer width
+ *               (int..int64, uint..uint64), so every TAG_INT is un-zigzagged
+ *               unconditionally here. Decoded values are the original 64-bit
+ *               patterns, surfaced as signed longs.
  * </pre>
+ *
+ * <p>The magic + version header lets the decoder reject version skew,
+ * truncation, or garbage input loudly instead of misdecoding it.
  *
  * <p>This is NOT JSON. The binary format is a proper Go→Java interface:
  * compact, schema-driven, and without the parsing overhead of JSON.
  */
 public final class BinaryDecoder {
+
+    /** Wire magic identifying the v2 Go→Java binary interface ("g2bi"). */
+    private static final byte[] MAGIC = {'g', '2', 'b', 'i'};
+
+    /**
+     * Current wire format version. Bump on any incompatible change, in
+     * lockstep with the Go encoder's formatVersion
+     * (internal/frontend/v2/encode/encode.go).
+     */
+    private static final long FORMAT_VERSION = 1;
 
     private static final int TAG_NULL = 0x00;
     private static final int TAG_BOOL = 0x01;
@@ -43,15 +66,49 @@ public final class BinaryDecoder {
     /**
      * Decodes a full binary document into a {@code Map<String, Object>}.
      * The top-level value must be a map (the Document).
+     *
+     * <p>Validates the magic + version header first: version skew,
+     * truncation, or garbage input fails loudly here instead of
+     * misdecoding.
      */
     @SuppressWarnings("unchecked")
     public static Map<String, Object> decodeDocument(byte[] data) throws IOException {
-        Object v = decodeValue(new DataInputStream(new ByteArrayInputStream(data)));
+        DataInputStream in = new DataInputStream(new ByteArrayInputStream(data));
+        byte[] magic = new byte[MAGIC.length];
+        try {
+            in.readFully(magic);
+        } catch (EOFException e) {
+            throw new IOException(
+                "v2 binary: truncated header (expected 4 magic bytes + version)", e);
+        }
+        if (!Arrays.equals(magic, MAGIC)) {
+            throw new IOException("v2 binary: bad magic " + hexBytes(magic)
+                + ", want \"g2bi\" — not a v2 binary document");
+        }
+        long version;
+        try {
+            version = readVarint(in);
+        } catch (EOFException e) {
+            throw new IOException("v2 binary: truncated header (missing version)", e);
+        }
+        if (version != FORMAT_VERSION) {
+            throw new IOException("v2 binary: unsupported format version " + version
+                + " (this decoder supports " + FORMAT_VERSION + ")");
+        }
+        Object v = decodeValue(in);
         if (!(v instanceof Map)) {
             throw new IOException("v2 binary: top-level must be a map, got " +
                 (v == null ? "null" : v.getClass().getSimpleName()));
         }
         return (Map<String, Object>) v;
+    }
+
+    private static String hexBytes(byte[] b) {
+        StringBuilder sb = new StringBuilder();
+        for (byte x : b) {
+            sb.append(String.format("%02x", x));
+        }
+        return sb.toString();
     }
 
     /**
@@ -133,7 +190,11 @@ public final class BinaryDecoder {
     }
 
     /**
-     * Reads a zigzag-encoded signed varint.
+     * Reads a zigzag-encoded 64-bit pattern (varint).
+     *
+     * <p>The Go encoder zigzag-encodes every integer width, so every
+     * TAG_INT is inverted here unconditionally. The result is the original
+     * 64-bit pattern as a signed long.
      */
     private static long readZigzagVarint(DataInputStream in) throws IOException {
         long n = readVarint(in);
