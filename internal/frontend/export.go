@@ -4895,13 +4895,24 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 		return &methodCall{decl: fi, subst: sub, key: key, name: name, needsInst: true,
 			rawTargsForEmit: rawTargs}, nil
 	}
-	// The receiver is not a named type: it must be a type parameter being
-	// instantiated (bound-method call on a type param, e.g. v.String() with
-	// v: T). Resolve the concrete type through the substitution and look
-	// the method up in its method set (devirtualized per instantiation).
+	// The receiver is not a named type. It may be:
+// 1. A type parameter being instantiated (bound-method call on a type param,
+//    e.g. v.String() with v: T). Resolve the concrete type through the
+//    substitution and look the method up in its method set (devirtualized
+//    per instantiation).
+// 2. An anonymous composite type (e.g. struct{sync.Mutex; m sync.Map}) with
+//    a promoted method from an embedded field. The method set of the
+//    composite type includes promoted methods; resolve via the same
+//    promoted-method path as named receivers (fix-ws-h-anon-receiver:
+//    general mechanism, not type-specific).
 	tp, ok := selection.Recv().(*types.TypeParam)
 	if !ok {
-		return nil, scopeErrorf("method call %s on non-named receiver %s (WS H)", mname, selection.Recv())
+		// Not a type parameter: try promoted-method resolution on the
+		// composite type's method set. This handles anonymous structs
+		// (and other composite types) with embedded fields whose methods
+		// are promoted. If the method is not in the method set,
+		// resolvePromotedMethodCall reports "method %s not found on %s".
+		return e.resolvePromotedMethodCall(sel, selection, nil, mname, methodTargs, subst)
 	}
 	if subst == nil {
 		return nil, fmt.Errorf("gofrontend: method call on type parameter %s outside generic context", tp.Obj().Name())
@@ -5027,15 +5038,24 @@ func (e *exporter) resolveMethodCall(sel *ast.SelectorExpr, selection *types.Sel
 // Anything unresolvable here reports the historical "method %s not found
 // on %s" error, so genuinely missing methods fail exactly as before.
 func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *types.Selection, rn *types.Named, mname string, methodTargs []types.Type, subst *typeSubst) (*methodCall, error) {
+	// recvName is for error messages: the named type's name when available,
+	// otherwise the receiver type string (e.g. for anonymous structs).
+	// rn may be nil when called for non-named receivers (fix-ws-h-anon-receiver).
+	recvName := func() string {
+		if rn != nil {
+			return rn.Obj().Name()
+		}
+		return selection.Recv().String()
+	}
 	notFound := func() (*methodCall, error) {
-		return nil, fmt.Errorf("gofrontend: method %s not found on %s", mname, rn.Obj().Name())
+		return nil, fmt.Errorf("gofrontend: method %s not found on %s", mname, recvName())
 	}
 	// Defensive: an ambiguous selector has no denoted method object.
 	// go/types rejects these during type-checking, so this is
 	// unreachable in practice — but resolving one would mean silently
 	// picking a candidate, which must never happen.
 	if selection.Obj() == nil {
-		return nil, fmt.Errorf("gofrontend: ambiguous selector %s on %s: no candidate chosen", mname, rn.Obj().Name())
+		return nil, fmt.Errorf("gofrontend: ambiguous selector %s on %s: no candidate chosen", mname, recvName())
 	}
 	var msel *types.Selection
 	var recvAddrOf bool
