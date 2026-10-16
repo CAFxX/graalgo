@@ -9553,6 +9553,23 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 				}
 			}
 		}
+		// PKG-082 (red-master root cause, general rule): field selection
+		// through a pointer-typed base. x.f where x has pointer-to-struct
+		// type is shorthand for (*x).f, and *p is always addressable — so
+		// the field is addressable even when x itself is not an
+		// addressable expression. This covers &f().N for calls returning
+		// a pointer (a call result is never addressable, but the field
+		// selected through the returned pointer is) and any other
+		// non-addressable pointer-typed base. Restricted to genuine
+		// field selections (types.FieldVal): method values (&p.M) are
+		// not addressable and must not pass this gate. Detected
+		// structurally via go/types, not keyed on any expression form —
+		// it subsumes the TypeAssertExpr path for field selections.
+		if sel, ok := info.Selections[x]; ok && sel.Kind() == types.FieldVal {
+			if _, isPtr := types.Unalias(info.TypeOf(x.X)).(*types.Pointer); isPtr {
+				return true
+			}
+		}
 		// real-reflect (Phase 1): &(*T)(unsafe.Pointer(p)).f — the
 		// descriptor-downcast pattern used throughout internal/abi
 		// (Type.Uncommon) and reflect. The unsafe.Pointer<->*T casts
