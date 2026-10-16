@@ -457,19 +457,6 @@ public final class P3SyncMain {
             // objID fails fast here. Installed on every build (even empty)
             // so a previous program's tables can never leak into this run.
             IfaceMethodTable.install(IfaceMethodTables.resolve(doc, program.functions()));
-            // P3-M9 (RC-6): install the fmt.handleMethods handler (Formatter/
-            // Stringer/error dispatch for fmt verbs) and the Java-implemented
-            // fmt.State methods.
-            graalgo.iface.FmtHandleMethods.install();
-            // P3-M10 (fix-fmt-funcs): install the Go method dispatcher for
-            // the fmt F*/scan/format families (Writer/Reader/ScanState
-            // method dispatch) and the Java-implemented fmt.ScanState
-            // methods.
-            graalgo.iface.FmtMethodDispatch.install();
-            // P3-M10 (fix-fmt-funcs): install the Go method dispatcher for
-            // the fmt F*/scan/format families (writer/reader/ScanState
-            // dispatch) and the Java-implemented fmt.ScanState methods.
-            graalgo.iface.FmtMethodDispatch.install();
             // P3-M8 (wave 2, reflect): install the GoRType table (canonical
             // per structural identity) and the unsafe handle table. Installed
             // on every build (even empty) so a previous program's tables can
