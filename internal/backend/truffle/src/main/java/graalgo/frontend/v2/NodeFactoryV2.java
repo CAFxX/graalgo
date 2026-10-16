@@ -69,6 +69,7 @@ public final class NodeFactoryV2 {
         }
 
         List<Object> funcs = getList(doc, "funcs", "document");
+        List<Object> types = getList(doc, "types", "document");
         List<V2Function> functions = new ArrayList<>();
         for (int i = 0; i < funcs.size(); i++) {
             Object f = funcs.get(i);
@@ -77,7 +78,7 @@ public final class NodeFactoryV2 {
             }
             @SuppressWarnings("unchecked")
             Map<String, Object> fnMap = (Map<String, Object>) f;
-            functions.add(buildFunction(fnMap, i));
+            functions.add(buildFunction(fnMap, i, types));
         }
 
         return new V2Program(functions);
@@ -87,7 +88,7 @@ public final class NodeFactoryV2 {
      * Builds a single function from its funcdecl node map.
      */
     @SuppressWarnings("unchecked")
-    private V2Function buildFunction(Map<String, Object> fnMap, int index) {
+    private V2Function buildFunction(Map<String, Object> fnMap, int index, List<Object> types) {
         String kind = getString(fnMap, "kind", "funcs[" + index + "]");
         if (!"funcdecl".equals(kind)) {
             throw new FrontendException(
@@ -100,7 +101,7 @@ public final class NodeFactoryV2 {
         Object bodyObj = fields.get("body");
         GoStmtNode body = null;
         if (bodyObj instanceof Map) {
-            body = buildStmt((Map<String, Object>) bodyObj, "funcdecl.fields.body");
+            body = buildStmt((Map<String, Object>) bodyObj, "funcdecl.fields.body", types);
         }
 
         return new V2Function(name, body);
@@ -110,7 +111,7 @@ public final class NodeFactoryV2 {
      * Builds a statement node from its map representation.
      */
     @SuppressWarnings("unchecked")
-    private GoStmtNode buildStmt(Map<String, Object> node, String where) {
+    private GoStmtNode buildStmt(Map<String, Object> node, String where, List<Object> types) {
         String kind = getString(node, "kind", where);
         Map<String, Object> fields = getMap(node, "fields", where + ".fields");
 
@@ -123,7 +124,7 @@ public final class NodeFactoryV2 {
                     if (!(s instanceof Map)) {
                         throw new FrontendException(where + ".stmts[" + i + "]: must be a map");
                     }
-                    built.add(buildStmt((Map<String, Object>) s, where + ".stmts[" + i + "]"));
+                    built.add(buildStmt((Map<String, Object>) s, where + ".stmts[" + i + "]", types));
                 }
                 return new BlockNode(built.toArray(new GoStmtNode[0]));
             }
@@ -132,7 +133,7 @@ public final class NodeFactoryV2 {
                 if (!(x instanceof Map)) {
                     throw new FrontendException(where + ": exprstmt.x must be a map");
                 }
-                GoExprNode expr = buildExpr((Map<String, Object>) x, where + ".x");
+                GoExprNode expr = buildExpr((Map<String, Object>) x, where + ".x", types);
                 return new ExprStmtNode(expr);
             }
             case "assign": {
@@ -155,21 +156,40 @@ public final class NodeFactoryV2 {
      * Builds an expression node from its map representation.
      */
     @SuppressWarnings("unchecked")
-    private GoExprNode buildExpr(Map<String, Object> node, String where) {
+    private GoExprNode buildExpr(Map<String, Object> node, String where, List<Object> types) {
         String kind = getString(node, "kind", where);
         Map<String, Object> fields = getMap(node, "fields", where + ".fields");
 
         switch (kind) {
             case "basiclit": {
                 String value = getString(fields, "value", where);
-                // MVP: handle integer literals. The v2 emitter includes
-                // the constant value; we parse it here.
+                // The emitter (internal/frontend/v2/emit/nodes.go: emitBasicLit)
+                // records the go/types-computed type of every literal, so the
+                // GoKind comes from the document's type table — the same
+                // general mechanism v1 uses (NodeFactory.buildBasicLit +
+                // kindOf → GoKind.fromBasic), never a hard-coded guess.
+                GoKind goKind = kindOf(types, getInt(fields, "type", where), where);
+                // Prefer the emitter's go/types-computed exact constant when
+                // present (canonical decimal text, like v1's "const" field);
+                // fall back to the source literal text (MVP).
+                Object constObj = fields.get("const");
+                String digits = (constObj instanceof String s) ? s : value;
                 try {
-                    long bits = Long.parseLong(value);
-                    return ConstNode.ofInt(GoKind.INT, bits);
+                    long bits = Long.parseLong(digits);
+                    return switch (goKind) {
+                        case INT8, INT16, INT32, INT64, UINT8, UINT16, UINT32, UINT64 ->
+                            ConstNode.ofInt(goKind, bits);
+                        // An untyped constant stays transparent: it assumes the
+                        // context type at the parent, exactly like v1's
+                        // UNTYPED_INT and go/types itself (GoKind javadoc).
+                        case UNTYPED_INT -> ConstNode.ofUntypedInt(bits, digits);
+                        default -> throw new FrontendException(
+                            where + ": basiclit of GoKind " + goKind
+                                + " not yet supported in v2 factory (MVP)");
+                    };
                 } catch (NumberFormatException e) {
                     throw new FrontendException(
-                        where + ": non-integer literal \"" + value + "\" not yet supported (MVP)");
+                        where + ": non-integer literal \"" + digits + "\" not yet supported (MVP)");
                 }
             }
             case "ident": {
@@ -191,6 +211,66 @@ public final class NodeFactoryV2 {
     }
 
     // --- Helpers for safe map access ---
+
+    private static int getInt(Map<String, Object> m, String key, String where) {
+        Object v = m.get(key);
+        if (!(v instanceof Long)) {
+            throw new FrontendException(where + ": \"" + key + "\" must be an int");
+        }
+        long l = (Long) v;
+        if (l < 0 || l > Integer.MAX_VALUE) {
+            throw new FrontendException(where + ": \"" + key + "\" out of int range");
+        }
+        return (int) l;
+    }
+
+    /**
+     * Resolves a type-table id to a {@link GoKind}. Mirrors v1's
+     * {@code NodeFactory.kindOf}: named types are resolved to their
+     * underlying type (bounded walk — a cycle fails fast, never hangs);
+     * basic entries go through {@link GoKind#fromBasic}, everything else
+     * through {@link GoKind#fromCompositeKind}. A general mechanism — no
+     * type-name special cases at the call sites.
+     */
+    @SuppressWarnings("unchecked")
+    private static GoKind kindOf(List<Object> types, int typeId, String where) {
+        if (typeId < 0 || typeId >= types.size()) {
+            throw new FrontendException(where + ": type id " + typeId + " out of range");
+        }
+        String path = where + ".types[" + typeId + "]";
+        // M10 (P1-3) analog: bounded chain walk; a cycle fails fast, never hangs.
+        for (int steps = 0; ; steps++) {
+            if (steps > 64) {
+                throw new FrontendException(path + ": type chain exceeds 64 steps (cyclic type graph?)");
+            }
+            Object entryObj = types.get(typeId);
+            if (!(entryObj instanceof Map)) {
+                throw new FrontendException(path + ": type table entry must be a map");
+            }
+            Map<String, Object> entry = (Map<String, Object>) entryObj;
+            String ek = getString(entry, "kind", path);
+            if ("named".equals(ek)) {
+                Map<String, Object> detail = getMap(entry, "detail", path);
+                typeId = getInt(detail, "underlying", path);
+                if (typeId < 0 || typeId >= types.size()) {
+                    throw new FrontendException(path + ": underlying type id " + typeId + " out of range");
+                }
+            } else {
+                break;
+            }
+        }
+        Map<String, Object> entry = (Map<String, Object>) types.get(typeId);
+        String k = getString(entry, "kind", path);
+        try {
+            if ("basic".equals(k)) {
+                Map<String, Object> detail = getMap(entry, "detail", path);
+                return GoKind.fromBasic(getString(detail, "name", path), getString(detail, "class", path));
+            }
+            return GoKind.fromCompositeKind(k);
+        } catch (IllegalArgumentException e) {
+            throw new FrontendException(path + ": " + e.getMessage());
+        }
+    }
 
     private static String getString(Map<String, Object> m, String key, String where) {
         Object v = m.get(key);
