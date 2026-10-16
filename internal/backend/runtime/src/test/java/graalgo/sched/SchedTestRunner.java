@@ -50,6 +50,7 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.runtime.TimerTest.class);
         TESTS.add(graalgo.runtime.FreezeGapTest.class);
         TESTS.add(graalgo.runtime.ZeroSizeSliceTest.class);
+        TESTS.add(graalgo.runtime.StructSizeNestedTest.class);
         TESTS.add(graalgo.runtime.PanicOverlayDriftTest.class);
         TESTS.add(graalgo.runtime.GcInteropTest.class);
         TESTS.add(graalgo.runtime.GcDifferentialTest.class);

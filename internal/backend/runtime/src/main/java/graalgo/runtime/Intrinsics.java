@@ -218,7 +218,7 @@ public final class Intrinsics {
             // never zero-size (even [0]T has identity); a zero elemSizeBytes
             // for ARRAY means the frontend failed to compute the ABI size.
             // Fail fast instead of silently dropping elements.
-            if (elemKind == graalgo.values.GoKind.ARRAY) {
+            if (elemKind == GoKind.ARRAY) {
                 throw new IllegalArgumentException(
                         "growslice: ARRAY element with elemSizeBytes=0 (frontend bug)");
             }
@@ -452,25 +452,75 @@ public final class Intrinsics {
      * The ABI size in bytes of a struct type (P3-M4, WS C): Go field
      * layout — fields in declaration order, each aligned to its natural
      * alignment, struct size rounded up to the max field alignment.
-     * Only flat structs with basic-kind fields are supported; nested
-     * structs/arrays fail fast (their sizes are not on the wire).
+     * Nested STRUCT-kind fields recurse into their nested descriptor
+     * (attached by the frontend); ARRAY-kind fields multiply the element
+     * size by the array length (element kinds limited to what the
+     * descriptor carries: basic kinds and STRUCT via arrayElemDesc).
+     * Anything else fails fast.
      */
     public static long structSizeBytes(graalgo.values.GoStructDescriptor desc) {
+        return structSizeAndAlign(desc)[0];
+    }
+
+    /**
+     * Returns {@code {size, alignment}} for the Go ABI layout of a struct
+     * descriptor: {@code size} is the padded struct size, {@code alignment}
+     * the struct's natural alignment (max field alignment, capped at 8).
+     */
+    private static long[] structSizeAndAlign(graalgo.values.GoStructDescriptor desc) {
         long offset = 0;
         long maxAlign = 1;
         for (graalgo.values.GoStructDescriptor.Field f : desc.fields()) {
-            long fieldSize = elemSizeBytes(f.kind());
-            if (fieldSize == 0) {
-                throw new graalgo.frontend.FrontendException("structSizeBytes: field \"" + f.name()
-                        + "\" has non-basic kind " + f.kind()
-                        + " (nested structs/arrays not in M4 scope)");
-            }
-            long align = Math.min(fieldSize, 8);
+            long[] sa = fieldSizeAndAlign(f);
+            long fieldSize = sa[0];
+            long align = sa[1];
             maxAlign = Math.max(maxAlign, align);
             offset = (offset + align - 1) / align * align;
             offset += fieldSize;
         }
-        return (offset + maxAlign - 1) / maxAlign * maxAlign;
+        return new long[]{(offset + maxAlign - 1) / maxAlign * maxAlign, maxAlign};
+    }
+
+    /** Returns {@code {size, alignment}} for one struct field. */
+    private static long[] fieldSizeAndAlign(graalgo.values.GoStructDescriptor.Field f) {
+        GoKind kind = f.kind();
+        long basic = elemSizeBytes(kind);
+        if (basic != 0) {
+            return new long[]{basic, Math.min(basic, 8)};
+        }
+        if (kind == GoKind.STRUCT) {
+            graalgo.values.GoStructDescriptor nested = f.structDesc();
+            if (nested == null) {
+                throw new graalgo.frontend.FrontendException("structSizeBytes: field \"" + f.name()
+                        + "\" has STRUCT kind but no nested descriptor");
+            }
+            return structSizeAndAlign(nested);
+        }
+        if (kind == GoKind.ARRAY) {
+            // Go aligns an array like its element type.
+            long[] esa = arrayElemSizeAndAlign(f);
+            if (f.arrayLen() < 0) {
+                throw new graalgo.frontend.FrontendException("structSizeBytes: field \"" + f.name()
+                        + "\" has ARRAY kind but no array length");
+            }
+            return new long[]{(long) f.arrayLen() * esa[0], esa[1]};
+        }
+        throw new graalgo.frontend.FrontendException("structSizeBytes: field \"" + f.name()
+                + "\" has non-basic kind " + kind + " (not in M4 scope)");
+    }
+
+    /** Returns {@code {size, alignment}} for an ARRAY-kind field's element. */
+    private static long[] arrayElemSizeAndAlign(graalgo.values.GoStructDescriptor.Field f) {
+        graalgo.values.GoKind ek = f.arrayElemKind();
+        long basic = ek == null ? 0 : elemSizeBytes(ek);
+        if (basic != 0) {
+            return new long[]{basic, Math.min(basic, 8)};
+        }
+        if (ek == GoKind.STRUCT && f.arrayElemDesc() != null) {
+            return structSizeAndAlign(f.arrayElemDesc());
+        }
+        throw new graalgo.frontend.FrontendException("structSizeBytes: field \"" + f.name()
+                + "\" has ARRAY kind with unsupported element kind " + ek);
     }
 
     /**

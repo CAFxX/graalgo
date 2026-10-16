@@ -1065,6 +1065,7 @@ public final class NodeFactory {
         List<Integer> arrayLens = new ArrayList<>(fields.size());
         List<graalgo.values.GoKind> arrayElemKinds = new ArrayList<>(fields.size());
         List<GoStructDescriptor> arrayElemDescs = new ArrayList<>(fields.size());
+        List<GoStructDescriptor> structDescs = new ArrayList<>(fields.size());
         int[] fieldTypeIds = new int[fields.size()];
         for (int i = 0; i < fields.size(); i++) {
             Json.Value fv = fields.get(i);
@@ -1087,6 +1088,14 @@ public final class NodeFactory {
             // itself); the visiting guard above fails fast otherwise.
             arrayElemDescs.add(elemKind == GoKind.STRUCT
                     ? structDescriptorFor(ctx, arrInfo[1], path) : null);
+            // Nested-struct scope (P3-M4 extension): STRUCT-kind fields
+            // carry their nested descriptor so Intrinsics.structSizeBytes
+            // can compute ABI sizes recursively. Same termination argument
+            // as above — direct value recursion is illegal Go, and the
+            // structDescVisiting guard fails fast on cyclic type graphs.
+            GoKind fieldKind = kinds.get(i);
+            structDescs.add(fieldKind == GoKind.STRUCT
+                    ? structDescriptorFor(ctx, ftid, path) : null);
         }
         // P3-M8b: canonicalize process-wide so descriptor identity == type
         // identity across BuildCtxs (functions/packages). The per-BuildCtx
@@ -1105,7 +1114,8 @@ public final class NodeFactory {
         // type. Element keys are structural (not type-id-based) so identical
         // anonymous structs still share across BuildCtxs.
         String key = (qname != null ? "N:" + qname : "S:") + "|" + names + "|" + kinds + "|" + arrayLens
-                + "|" + arrayElemKinds + "|" + elemDescKeys(arrayElemDescs);
+                + "|" + arrayElemKinds + "|" + elemDescKeys(arrayElemDescs)
+                + "|" + elemDescKeys(structDescs);
         GoStructDescriptor cd = STRUCT_DESCS.get(key);
         if (cd == null) {
             // P0-fmt: use the qualified name for named structs so %#v renders
@@ -1113,7 +1123,7 @@ public final class NodeFactory {
             // (rendered structurally via GoTypeStrings).
             GoStructDescriptor nd = GoStructDescriptor.layout(
                     qname != null ? qname : "struct#" + typeId, names, kinds, arrayLens,
-                    arrayElemKinds, arrayElemDescs);
+                    arrayElemKinds, arrayElemDescs, structDescs);
             GoStructDescriptor prev = STRUCT_DESCS.putIfAbsent(key, nd);
             cd = prev != null ? prev : nd;
         }
@@ -1146,6 +1156,9 @@ public final class NodeFactory {
                 if (f.arrayElemDesc() != null) {
                     sb.append(structLayoutKey(f.arrayElemDesc()));
                 }
+            }
+            if (f.kind() == GoKind.STRUCT && f.structDesc() != null) {
+                sb.append(structLayoutKey(f.structDesc()));
             }
             sb.append(';');
         }
