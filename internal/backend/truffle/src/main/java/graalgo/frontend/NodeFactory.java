@@ -4996,19 +4996,28 @@ public final class NodeFactory {
             if (l.isBlank) {
                 continue; // evaluated already; discarded
             }
-            if (!l.isIdent) {
-                throw new FrontendException(path + ": comma-ok target must be a variable (WS E)");
-            }
             GoExprNode v = i == 0
-                    ? maybeConvert(valueNode, l.kind, l.typeId, ctx, path)
+                    ? maybeConvert(valueNode, targetKind(l), targetTypeId(l), ctx, path)
                     : okNode; // bool: no conversion
             GoStmtNode w;
-            if (l.oid >= 0 && isBoxedTransitive(ctx, l.oid)) {
-                // M6: boxed comma-ok target — fresh cell on :=, cell write on =.
-                w = isDecl ? new BoxDeclNode(l.slot, l.kind, v)
-                        : new BoxWriteNode(l.kind, boxWriteSlot(ctx, l.oid, path), v);
+            if (l.isIdent) {
+                if (l.oid >= 0 && isBoxedTransitive(ctx, l.oid)) {
+                    // M6: boxed comma-ok target — fresh cell on :=, cell write on =.
+                    w = isDecl ? new BoxDeclNode(l.slot, l.kind, v)
+                            : new BoxWriteNode(l.kind, boxWriteSlot(ctx, l.oid, path), v);
+                } else {
+                    w = isDecl ? new VarDeclNode(l.slot, l.kind, v) : new AssignNode(l.slot, l.kind, v);
+                }
             } else {
-                w = isDecl ? new VarDeclNode(l.slot, l.kind, v) : new AssignNode(l.slot, l.kind, v);
+                // Comma-ok with a non-ident lvalue, e.g. `w.err, _ = x.(error)`
+                // (fmt/errors.go): `:=` cannot declare a selector/index/deref
+                // target (invalid Go, rejected by the type-checker before
+                // export), so fail fast there; `=` mirrors the plain
+                // assignment path via writeLvalue.
+                if (isDecl) {
+                    throw new FrontendException(path + ": comma-ok := target must be a variable (WS E)");
+                }
+                w = writeLvalue(l, v, ctx, path);
             }
             w.setSourceSection(sectionFor(stmtNode, "comma-ok"));
             prog.add(w);
