@@ -68,6 +68,9 @@ Coverage map:
 | 48  | range_over_func_edge | range-over-func exits: return/goto/labels,       |
 |     |                      | body-defer LIFO, `=` form, iterator-misuse       |
 |     |                      | panics (companion to 43)                         |
+| 49  | chan_len_cap         | R1-P1-1: len/cap on channels — occupancy tracks  |
+|     |                      | sends/recvs, cap is buffer capacity; nil and     |
+|     |                      | unbuffered channels report 0/0 (gc parity)       |
 
 Excluded by design (documented, not silent): map iteration order printed
 raw, wall-clock timings, `unsafe`, cgo, network/file-system effects,

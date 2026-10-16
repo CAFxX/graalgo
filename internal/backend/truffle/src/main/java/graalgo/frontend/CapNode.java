@@ -2,6 +2,7 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
+import graalgo.runtime.ChanOps;
 import graalgo.values.GoKind;
 import graalgo.values.GoSlice;
 
@@ -9,9 +10,10 @@ import graalgo.values.GoSlice;
 /**
  * The {@code cap} builtin (WS G; verifies GG-0020).
  *
- * <p>Returns the capacity of an array or slice as a Go {@code int} (INT64).
- * A channel argument is a Phase-2 scope error (no channels in Phase 1);
- * the factory rejects it before building this node.
+ * <p>Returns the capacity of an array, slice, or channel as a Go
+ * {@code int} (INT64). A channel argument dispatches to
+ * {@link ChanOps#cap} (DIV-M3-1: timer/ticker channels always report 0 via
+ * {@code TimerChan}; a nil channel reports 0, gc parity).
  */
 public final class CapNode extends GoExprNode {
     @Child private GoExprNode child;
@@ -22,9 +24,11 @@ public final class CapNode extends GoExprNode {
         this.child = child;
         this.argKind = child.kind();
         switch (argKind) {
-            case ARRAY, SLICE -> {}
+            // R1-P1-1: CHAN dispatches to ChanOps.cap (channels are
+            // implemented; the Phase-1 scope error was stale).
+            case ARRAY, SLICE, CHAN -> {}
             default -> throw new FrontendException(
-                    "cap of " + argKind + " is not implemented (WS G); channels are Phase 2");
+                    "cap of " + argKind + " is not implemented (WS G)");
         }
     }
 
@@ -36,6 +40,13 @@ public final class CapNode extends GoExprNode {
             case SLICE -> {
                 GoSlice s = (GoSlice) child.executeObject(frame);
                 yield s == null ? 0 : s.cap();
+            }
+            // R1-P1-1: cap(ch) — buffer capacity via the runtime module's
+            // ChanOps (call-through, never reimplemented). A nil channel
+            // is 0 (gc parity, same as ChanLenCapNode).
+            case CHAN -> {
+                Object o = child.executeObject(frame);
+                yield o == null ? 0 : ChanOps.cap((ChanOps.Chan) o);
             }
             default -> throw new IllegalStateException("unreachable: " + argKind);
         };
