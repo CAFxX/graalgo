@@ -39,8 +39,18 @@ type Emitter struct {
 	typeIDs map[types.Type]int
 	types   []any
 	// Object table: types.Object → id.
-	objIDs map[types.Object]int
+	objIDs  map[types.Object]int
 	objects []any
+	// Generics: templates registered in pass 1, instantiation cache, and
+	// the worklist of function bodies awaiting emission (runs to a
+	// fixpoint: emitting a body may request further instantiations).
+	templates map[*types.Func]*genericTemplate
+	instCache map[string]*types.Func
+	instCount map[*genericTemplate]int
+	worklist  []funcWork
+	// inst is the substitution environment active while emitting a
+	// generic instantiation body; nil otherwise.
+	inst *instContext
 }
 
 // Emit runs stage 3 and returns the in-memory program document. The
@@ -48,11 +58,14 @@ type Emitter struct {
 // it is never serialized to JSON.
 func Emit(cr *checker.Result, pkg *ast.Package, files []string) (*Document, error) {
 	e := &Emitter{
-		fset:    cr.Fset,
-		info:    cr,
-		files:   files,
-		typeIDs: make(map[types.Type]int),
-		objIDs:  make(map[types.Object]int),
+		fset:      cr.Fset,
+		info:      cr,
+		files:     files,
+		typeIDs:   make(map[types.Type]int),
+		objIDs:    make(map[types.Object]int),
+		templates: make(map[*types.Func]*genericTemplate),
+		instCache: make(map[string]*types.Func),
+		instCount: make(map[*genericTemplate]int),
 	}
 	return e.emitDocument(pkg)
 }
@@ -60,35 +73,58 @@ func Emit(cr *checker.Result, pkg *ast.Package, files []string) (*Document, erro
 func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// Emit order: types and objects are populated lazily as nodes are
 	// emitted (ids registered before description, so recursion works).
-	// We do two passes: first declare all top-level funcs and globals
-	// (assigning object ids), then emit bodies.
-	var funcs []any
+	// Pass 1 declares all top-level funcs and registers generic templates
+	// (assigning object ids); pass 2 emits bodies from a worklist that runs
+	// to a fixpoint, because emitting a body may request further generic
+	// instantiations.
 	for _, file := range pkg.Files {
 		for _, decl := range file.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
 			if !ok {
+				if gd, ok := decl.(*ast.GenDecl); ok {
+					if err := rejectGenericTypeDecl(gd); err != nil {
+						return nil, err
+					}
+				}
 				continue
 			}
 			obj := e.info.Info.Defs[fd.Name]
 			if obj == nil {
 				return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
 			}
-			e.declareObject(obj)
+			fn, ok := obj.(*types.Func)
+			if !ok {
+				return nil, fmt.Errorf("emit: %s is not a func", fd.Name.Name)
+			}
+			if fd.Recv != nil {
+				if isGenericRecv(e.info, fd) {
+					return nil, fmt.Errorf("emit: unsupported decl *ast.FuncDecl %s (generic methods are not yet supported)", fd.Name.Name)
+				}
+				// Non-generic methods keep existing behavior.
+			} else if isGenericFunc(fn) {
+				// Generic declarations are templates: registered, never
+				// emitted as funcdecls (they are not callable) and never
+				// entered in the object table, so the tables contain only
+				// concrete types.
+				if err := e.registerTemplate(fd, fn); err != nil {
+					return nil, err
+				}
+				continue
+			}
+			e.declareObject(fn)
+			e.worklist = append(e.worklist, funcWork{fd: fd, fn: fn})
 		}
 	}
 
-	for _, file := range pkg.Files {
-		for _, decl := range file.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			fn, err := e.emitFuncDecl(fd)
-			if err != nil {
-				return nil, err
-			}
-			funcs = append(funcs, fn)
+	var funcs []any
+	for len(e.worklist) > 0 {
+		w := e.worklist[0]
+		e.worklist = e.worklist[1:]
+		fnd, err := e.emitFuncWork(w)
+		if err != nil {
+			return nil, err
 		}
+		funcs = append(funcs, fnd)
 	}
 
 	baseNames := make([]string, len(e.files))
@@ -112,6 +148,27 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		Funcs:   funcs,
 		Globals: []any{},
 	}, nil
+}
+
+// emitFuncWork emits one function body from the worklist. For generic
+// instantiations it installs the substitution environment so type
+// parameters resolve to the concrete type arguments throughout the body.
+func (e *Emitter) emitFuncWork(w funcWork) (map[string]any, error) {
+	if w.tmpl == nil {
+		return e.emitFuncDecl(w.fd, w.fn)
+	}
+	prev := e.inst
+	e.inst = &instContext{
+		typeSubst: &typeSubst{
+			tparams:  w.tmpl.sig.TypeParams(),
+			targs:    w.targs,
+			memo:     w.memo,
+			typesMap: e.info.Info.Types,
+		},
+		objSubst: w.objSubst,
+	}
+	defer func() { e.inst = prev }()
+	return e.emitFuncDecl(w.fd, w.fn)
 }
 
 func fileBase(p string) string {
@@ -317,6 +374,15 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"empty":    tt.Empty(),
 				"methods":  []any{},
 				"embedded": []any{},
+			},
+		}
+	case *types.TypeParam:
+		// Type parameters reach the type table only via generic function
+		// templates (which are never emitted as callable funcdecls).
+		return map[string]any{
+			"kind": "typeparam",
+			"detail": map[string]any{
+				"name": tt.Obj().Name(),
 			},
 		}
 	default:

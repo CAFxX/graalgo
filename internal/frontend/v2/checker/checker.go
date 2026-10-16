@@ -49,6 +49,10 @@ func Check(fset *token.FileSet, pkg *ast.Package, conf *Config) (*Result, error)
 		Uses:       make(map[*ast.Ident]types.Object),
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
 		Scopes:     make(map[ast.Node]*types.Scope),
+		// Instances must be non-nil: go/types only records generic
+		// instantiations (explicit and inferred) when the map exists.
+		// The emitter relies on it to detect instantiation sites.
+		Instances: make(map[*ast.Ident]types.Instance),
 	}
 
 	// Real importer only. importer.Default() uses the compiled package

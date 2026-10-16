@@ -4,9 +4,15 @@
 **Goal:** Replace the bodge-y v1 frontend with a clean parser → AST → backend
 pipeline. No synthetic packages, no package-name special cases, no stdlib-call
 desugaring, no import overlay, no JSON wire format.
-**Scope:** The new frontend accepts **ALL Go syntax from the start** — the
-complete Go 1.27 language, including generics (type parameters, instantiation,
-constraints), not a subset. If `go/parser` accepts it, v2 handles it.
+**Scope:** The new frontend's *design goal* is the complete Go 1.27 language,
+including generics (type parameters, instantiation, constraints) — not a
+subset. If `go/parser` accepts it, v2 *aims to* handle it. The current
+implementation status is exactly what the mechanical coverage matrix says
+(`internal/frontend/v2/emit/coverage_test.go`): each AST node kind is
+handled, resolved via `go/types`, structural, or loudly rejected with an
+`unsupported` compile error. "Full Go 1.27" is the destination, not today's
+state — anything not yet handled is a compile error, never a silent skip.
+Generics strategy (monomorphization): [frontend-v2-generics.md](frontend-v2-generics.md).
 **No JSON:** v2 skips the `frontend/v1` JSON wire format entirely. It constructs
 backend nodes directly via a proper Go→Java API (not serialized JSON). The JSON
 was a bodge for passing data between processes; v2 is a proper pipeline.
@@ -64,11 +70,13 @@ reaches differential parity on the corpus.
 - Walks the typed AST and constructs backend nodes directly (no JSON).
 - **One node type → one emit function.** No 12k-line monolith. The emitter
   is organized by AST node kind, each in its own file.
-- **Full Go 1.27 syntax from the start.** Every AST node kind that
-  `go/parser` produces must have an emitter — including generics
-  (`TypeSpec` with type params, `IndexListExpr`, instantiations),
-  all statement types, all expression types, all declarations. No subset.
-  If a node kind is unhandled, that is a compile error, not a silent skip.
+- **Full Go 1.27 syntax as the design goal.** Every AST node kind that
+  `go/parser` produces must end up either handled by an emitter or loudly
+  rejected — including generics (`TypeSpec` with type params,
+  `IndexListExpr`, instantiations). The coverage matrix
+  (`emit/coverage_test.go`) is the source of truth for today's status; a
+  node kind that is neither handled nor rejected is a bug. If a node kind
+  is unhandled, that is a compile error, not a silent skip.
 - **No desugaring of stdlib calls.** If the source says `fmt.Fprint`, the IR
   says `fmt.Fprint`. If the backend cannot handle it, fix the backend.
 - **Legitimate lowerings only**: language-level desugaring that `go/types`
@@ -123,8 +131,13 @@ it *is* the frontend — just the next generation.
 ## 6. Open questions
 
 - **Generics**: v1 has extensive generic-instantiation machinery
-  (`mrdesugar_m5.go`, etc.). v2 should use `go/types`'s native generic
-  support and instantiate cleanly. Needs investigation.
+  (`mrdesugar_m5.go`, etc.). v2 monomorphizes at emit time using
+  `go/types`' native generic support (`Instances` records, constraint
+  checking at the check stage). Decided 2026-10-16 — see
+  [frontend-v2-generics.md](frontend-v2-generics.md). MVP: generic function
+  declaration + instantiation (explicit and inferred) end-to-end; generic
+  methods, generic types, and cross-package instantiation are loud
+  `unsupported` errors (tracked follow-ups in the design doc).
 - **Init order**: v1 handles `init()` and package-level var initialization
   order. v2 must preserve this (it's observable behavior).
 - **Cgo**: v1 punts. v2 punts too (documented limitation, not a bodge).

@@ -164,14 +164,6 @@ func main() {
 `,
 		want: "unsupported expr",
 	},
-	{
-		name: "IndexListExpr_generics",
-		src: `package main
-func id[T any](x T) T { return x }
-func main() { println(id[int](42)) }
-`,
-		want: "unsupported expr",
-	},
 }
 
 func TestNegativeCasesFailLoudly(t *testing.T) {

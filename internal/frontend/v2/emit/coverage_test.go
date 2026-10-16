@@ -2,15 +2,17 @@
 //
 // This test enumerates every concrete AST node type in go/ast via reflection
 // and verifies each one is either:
-//   (a) HANDLED — the emitter produces output for it, or
-//   (b) FAILS LOUDLY — the emitter returns an "unsupported" error.
+//
+//	(a) HANDLED — the emitter produces output for it, or
+//	(b) FAILS LOUDLY — the emitter returns an "unsupported" error.
 //
 // There is no silent (c): a node kind that is silently dropped or
 // mis-emitted. If go/ast gains a new node type, this test fails until the
 // emitter explicitly handles it or rejects it.
 //
 // His 2026-10-15 order: full Go 1.27 syntax from the start, including
-// generics. "That should obviously skip the json" — v2 constructs the
+// generics — that is the destination; the matrix below is today's state.
+// "That should obviously skip the json" — v2 constructs the
 // in-memory program directly; there is no JSON wire format.
 package emit
 
@@ -42,13 +44,18 @@ var handledNodes = map[string]bool{
 	"ReturnStmt": true,
 
 	// Expressions.
-	"BasicLit":     true,
-	"BinaryExpr":   true,
-	"CallExpr":     true,
-	"Ident":        true,
-	"ParenExpr":    true,
-	"SelectorExpr": true,
-	"UnaryExpr":    true,
+	"BasicLit":      true,
+	"BinaryExpr":    true,
+	"CallExpr":      true,
+	"CompositeLit":  true, // emitCompositeLit (incl. KeyValueExpr)
+	"Ident":         true,
+	"IndexExpr":     true, // emitIndex; generic instantiation via Instances
+	"IndexListExpr": true, // emitIndexList: multi-arg generic instantiation
+	"KeyValueExpr":  true, // inside CompositeLit
+	"ParenExpr":     true,
+	"SelectorExpr":  true,
+	"SliceExpr":     true,
+	"UnaryExpr":     true,
 
 	// Type expressions handled via go/types (not AST switch).
 	// These appear as types, not as standalone emitExpr cases:
@@ -93,24 +100,19 @@ var nonNodeTypes = map[string]string{
 // "unsupported" error. The negative test below proves each one fails.
 var loudlyRejected = map[string]bool{
 	// Statements not yet implemented.
-	"BadStmt":       true,
-	"DeferStmt":     true,
-	"EmptyStmt":     true,
-	"GoStmt":        true,
-	"LabeledStmt":   true,
-	"SelectStmt":    true,
-	"SendStmt":      true,
-	"SwitchStmt":    true,
+	"BadStmt":        true,
+	"DeferStmt":      true,
+	"EmptyStmt":      true,
+	"GoStmt":         true,
+	"LabeledStmt":    true,
+	"SelectStmt":     true,
+	"SendStmt":       true,
+	"SwitchStmt":     true,
 	"TypeSwitchStmt": true,
 	// Expressions not yet implemented.
 	"BadExpr":        true,
-	"CompositeLit":   true,
 	"Ellipsis":       true,
 	"FuncLit":        true,
-	"IndexExpr":      true,
-	"IndexListExpr":  true, // generics instantiation
-	"KeyValueExpr":   true,
-	"SliceExpr":      true,
 	"StarExpr":       true,
 	"TypeAssertExpr": true,
 	// Declarations not yet implemented.

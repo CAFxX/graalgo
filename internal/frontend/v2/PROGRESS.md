@@ -21,6 +21,36 @@ for the design.
 - [x] Negative tests (`emit/negative_test.go`): 17 unhandled constructs
       proven to fail loudly with "unsupported" (no silent drops)
 
+## 2026-10-16 — Generics MVP (lane v2-generics, review V2-17)
+
+- **Design**: [docs/arch/frontend-v2-generics.md](../../../docs/arch/frontend-v2-generics.md) —
+  monomorphization at emit time via `go/types` instantiation records.
+  Dictionary-passing rejected (backend has no type-param representation;
+  wire format stays unchanged).
+- **Implemented** (`emit/generics.go`): generic function declarations
+  registered as templates (never emitted as funcdecls); explicit
+  instantiation (`id[int]`, `pair[int,string]`) and inferred (`id(42)`)
+  via `types.Info.Instances`; total type-parameter substitution while
+  emitting instantiation bodies; canonical name mangling (`id[int]`);
+  dedup via instantiation cache; worklist fixpoint for nested generics;
+  loud `unsupported` for generic methods, generic type declarations,
+  cross-package instantiation; 256-instantiation safety valve.
+- **Checker fix**: `types.Info.Instances` map was nil so go/types recorded
+  nothing — now initialized (`checker/checker.go`).
+- **Tests**: `emit/generics_test.go` (10 tests: 7 positive incl. nested,
+  dedup, local substitution; 3 loud-failure), `encode/generics_test.go`
+  (wire round-trip: instantiations as plain funcdecls, no `typeparam`
+  leaks). Mutation check: substitution disabled → 5 tests fail.
+- **Coverage matrix**: `IndexListExpr` moved handled (was loudly-rejected);
+  stale `IndexExpr`/`CompositeLit`/`SliceExpr`/`KeyValueExpr` corrected from
+  loudly-rejected to handled (they were already emitted); the
+  `IndexListExpr_generics` negative case moved to the positive suite.
+- **Claim scoping**: "full Go 1.27" in `docs/arch/frontend-v2.md` corrected
+  to design-goal vs matrix-truth.
+- **Follow-ups** (in design doc §4): generic methods, generic named types,
+  cross-package instantiation, constraint-interface method calls,
+  stenciling.
+
 ## Master merge log
 
 - 2026-10-15 21:10 CEST: merged `704932ce` (PKG-012 sync intrinsics,

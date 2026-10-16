@@ -22,15 +22,7 @@ func (e *Emitter) node(kind string, n ast.Node, fields map[string]any) map[strin
 	}
 }
 
-func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
-	obj := e.info.Info.Defs[fd.Name]
-	if obj == nil {
-		return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
-	}
-	fn, ok := obj.(*types.Func)
-	if !ok {
-		return nil, fmt.Errorf("emit: %s is not a func", fd.Name.Name)
-	}
+func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl, fn *types.Func) (map[string]any, error) {
 	sig := e.typeID(fn.Type())
 
 	params := []any{}
@@ -41,6 +33,7 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 				if pobj == nil {
 					continue
 				}
+				pobj = e.resolveObj(pobj)
 				pid := e.declareParam(pobj)
 				params = append(params, e.node("param", name, map[string]any{
 					"name": name.Name,
@@ -131,6 +124,16 @@ func (e *Emitter) emitStmt(s ast.Stmt) (map[string]any, error) {
 }
 
 func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
+	// For :=, declare the defined objects BEFORE emitting the operands,
+	// so references resolve to the declared (and, under generic
+	// instantiation, substituted) objects.
+	if st.Tok == token.DEFINE {
+		for _, l := range st.Lhs {
+			if id, ok := l.(*ast.Ident); ok && id.Name != "_" {
+				e.declareLocal(id)
+			}
+		}
+	}
 	lhs := []any{}
 	for _, l := range st.Lhs {
 		ln, err := e.emitExpr(l)
@@ -146,16 +149,6 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 			return nil, err
 		}
 		rhs = append(rhs, rn)
-	}
-	// For :=, declare the defined objects.
-	if st.Tok == token.DEFINE {
-		for _, l := range st.Lhs {
-			if id, ok := l.(*ast.Ident); ok && id.Name != "_" {
-				if obj := e.info.Info.Defs[id]; obj != nil {
-					e.declareObject(obj)
-				}
-			}
-		}
 	}
 	return e.node("assign", st, map[string]any{
 		"tok": st.Tok.String(),
@@ -177,13 +170,13 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 		vs := spec.(*ast.ValueSpec)
 		if vs.Type != nil {
 			if tv, ok := e.info.Info.Types[vs.Type]; ok {
-				typ = e.typeID(tv.Type)
+				typ = e.substTypeID(tv.Type)
 			}
 		}
 		for _, name := range vs.Names {
 			names = append(names, name.Name)
-			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
+			if e.info.Info.Defs[name] != nil {
+				objs = append(objs, e.declareLocal(name))
 			} else {
 				objs = append(objs, -1)
 			}
@@ -286,15 +279,15 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 	var key, value any
 	if st.Key != nil {
 		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
-			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
+			if e.info.Info.Defs[id] != nil {
+				key = e.declareLocal(id)
 			}
 		}
 	}
 	if st.Value != nil {
 		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
-			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
+			if e.info.Info.Defs[id] != nil {
+				value = e.declareLocal(id)
 			}
 		}
 	}
@@ -350,6 +343,8 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		return e.emitCompositeLit(ex)
 	case *ast.IndexExpr:
 		return e.emitIndex(ex)
+	case *ast.IndexListExpr:
+		return e.emitIndexList(ex)
 	case *ast.SliceExpr:
 		return e.emitSlice(ex)
 	default:
@@ -361,7 +356,7 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 	var typ any
 	if c.Type != nil {
 		if tv, ok := e.info.Info.Types[c.Type]; ok {
-			typ = e.typeID(tv.Type)
+			typ = e.substTypeID(tv.Type)
 		}
 	}
 	elems := []any{}
@@ -399,12 +394,10 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 }
 
 func (e *Emitter) emitIndex(ix *ast.IndexExpr) (map[string]any, error) {
-	// Distinguish generic instantiation (id[int]) from index (s[0]).
-	// If X is a function (has a signature type), this is generics.
-	if tv, ok := e.info.Info.Types[ix.X]; ok && tv.Type != nil {
-		if _, isSig := tv.Type.(*types.Signature); isSig {
-			return nil, fmt.Errorf("emit: unsupported expr *ast.IndexExpr (generic instantiation)")
-		}
+	// Generic instantiation (id[int]): go/types records it in Instances.
+	// That record is authoritative — no syntax heuristic.
+	if id, inst, ok := e.instantiationOf(ix.X); ok {
+		return e.emitInstantiation(ix, id, inst)
 	}
 	x, err := e.emitExpr(ix.X)
 	if err != nil {
@@ -419,6 +412,16 @@ func (e *Emitter) emitIndex(ix *ast.IndexExpr) (map[string]any, error) {
 		"index": index,
 		"type":  e.exprType(ix),
 	}), nil
+}
+
+// emitIndexList handles multi-argument instantiation (pair[int,string]).
+// A non-instantiation IndexListExpr cannot occur in type-checked code, but
+// is rejected loudly rather than assumed.
+func (e *Emitter) emitIndexList(ix *ast.IndexListExpr) (map[string]any, error) {
+	if id, inst, ok := e.instantiationOf(ix.X); ok {
+		return e.emitInstantiation(ix, id, inst)
+	}
+	return nil, fmt.Errorf("emit: unsupported expr *ast.IndexListExpr (not a generic instantiation)")
 }
 
 func (e *Emitter) emitSlice(s *ast.SliceExpr) (map[string]any, error) {
@@ -472,6 +475,7 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 				"builtin": id.Name,
 			}), nil
 		}
+		obj = e.resolveObj(obj)
 		oid := e.declareObject(obj)
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
@@ -480,6 +484,7 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 		}), nil
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
+		obj = e.resolveObj(obj)
 		oid := e.declareObject(obj)
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
@@ -528,9 +533,22 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 	if c.Ellipsis.IsValid() {
 		return nil, fmt.Errorf("emit: unsupported expr *ast.Ellipsis (variadic spread)")
 	}
-	fun, err := e.emitExpr(c.Fun)
-	if err != nil {
-		return nil, err
+	var fun map[string]any
+	// Type-inferred generic instantiation: id(42). go/types records the
+	// inferred type arguments in Instances keyed by the identifier.
+	if id, inst, ok := e.instantiationOf(c.Fun); ok {
+		f, err := e.emitInstantiation(c.Fun, id, inst)
+		if err != nil {
+			return nil, err
+		}
+		fun = f
+	}
+	if fun == nil {
+		var err error
+		fun, err = e.emitExpr(c.Fun)
+		if err != nil {
+			return nil, err
+		}
 	}
 	args := []any{}
 	for _, a := range c.Args {
@@ -598,10 +616,11 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 	return nil, fmt.Errorf("emit: unresolved selector %v", s)
 }
 
-// exprType returns the type-table id for an expression's type.
+// exprType returns the type-table id for an expression's type, substituting
+// type parameters when inside a generic instantiation body.
 func (e *Emitter) exprType(x ast.Expr) any {
 	if tv, ok := e.info.Info.Types[x]; ok && tv.Type != nil {
-		return e.typeID(tv.Type)
+		return e.substTypeID(tv.Type)
 	}
 	return nil
 }
