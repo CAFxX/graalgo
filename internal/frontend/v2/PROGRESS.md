@@ -21,7 +21,16 @@ for the design.
 - [x] Negative tests (`emit/negative_test.go`): 17 unhandled constructs
       proven to fail loudly with "unsupported" (no silent drops)
 
-## 2026-10-16 — V2-12 deterministic emission
+## 2026-10-16 — V2-13 composite literals + index/slice (fresh lane)
+
+- [x] Coverage matrix updated: `CompositeLit`, `IndexExpr`, `KeyValueExpr`,
+      `SliceExpr` moved from "loudly rejected" to "handled" (22 handled,
+      21 rejected — was 18/25). The emitters already existed in nodes.go;
+      the matrix was outdated.
+- [x] Positive tests (`emit/literals_test.go`): 11 tests covering struct,
+      array, slice, map literals (incl. nested, empty, keyed); array/slice/
+      map index; slice expressions (incl. full 3-index form). All pass.
+- [x] `go test ./...` green across the v2 module.
 
 - [x] `emitDocument` no longer ranges over `pkg.Files` (a Go map): files
       are visited sorted by name, declarations sorted by source position —
