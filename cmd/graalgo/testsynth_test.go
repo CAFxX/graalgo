@@ -23,13 +23,14 @@ func writeFile(t *testing.T, dir, name, content string) {
 }
 
 // synthDriver runs synthesizeTestDriver on dir and returns the generated
-// driver source.
-func synthDriver(t *testing.T, dir string, ftList []fileTests, srcFiles []string) string {
+// driver source. Tags are the build tags from -tags (nil for platform
+// defaults).
+func synthDriver(t *testing.T, dir string, ftList []fileTests, srcFiles []string, tags []string) string {
 	t.Helper()
 	// Reset the package-name cache so temp-dir paths from other tests
 	// cannot leak in.
 	importPkgNameCache = map[string]string{}
-	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false)
+	driver, err := synthesizeTestDriver(dir, ftList, srcFiles, false, tags)
 	if err != nil {
 		t.Fatalf("synthesizeTestDriver: %v", err)
 	}
@@ -75,7 +76,7 @@ func TestParent(t *testing.T) {
 	}
 	src := synthDriver(t, sub,
 		[]fileTests{{file: testFile, tests: tests}},
-		[]string{filepath.Join(sub, "sub.go")})
+		[]string{filepath.Join(sub, "sub.go")}, nil)
 	if !strings.Contains(src, `"example.com/mod/v2"`) {
 		t.Errorf("driver dropped the parent-module import:\n%s", src)
 	}
@@ -129,7 +130,7 @@ func TestNotSelected(t *testing.T) {
 	// though it was collected from the same file.
 	src := synthDriver(t, root,
 		[]fileTests{{file: testFile, tests: []string{"TestUsed"}}},
-		[]string{filepath.Join(root, "a.go")})
+		[]string{filepath.Join(root, "a.go")}, nil)
 	if !strings.Contains(src, `"strings"`) {
 		t.Errorf("driver dropped a used import:\n%s", src)
 	}
@@ -160,7 +161,7 @@ func TestBlank(t *testing.T) {}
 	}
 	src := synthDriver(t, root,
 		[]fileTests{{file: testFile, tests: tests}},
-		[]string{filepath.Join(root, "a.go")})
+		[]string{filepath.Join(root, "a.go")}, nil)
 	if !strings.Contains(src, `_ "strings"`) {
 		t.Errorf("driver dropped a blank import:\n%s", src)
 	}
@@ -197,7 +198,7 @@ func TestDot(t *testing.T) {
 	}
 	src := synthDriver(t, root,
 		[]fileTests{{file: testFile, tests: tests}},
-		[]string{filepath.Join(root, "dot.go")})
+		[]string{filepath.Join(root, "dot.go")}, nil)
 	// The package's sources are not inlined...
 	if strings.Contains(src, "// --- from dot.go ---") {
 		t.Errorf("driver inlined sources no test file needs:\n%s", src)
@@ -257,7 +258,7 @@ func TestExternal(t *testing.T) {
 			{file: filepath.Join(root, "m_test.go"), tests: []string{"TestWhiteBox"}},
 			{file: filepath.Join(root, "e_test.go"), tests: []string{"TestExternal"}},
 		},
-		[]string{filepath.Join(root, "m.go")})
+		[]string{filepath.Join(root, "m.go")}, nil)
 	// White-box access needs the sources inlined...
 	if !strings.Contains(src, "const Answer = 42") {
 		t.Errorf("driver did not inline sources needed for white-box access:\n%s", src)
@@ -316,7 +317,7 @@ func TestB(t *testing.T) {
 			{file: filepath.Join(root, "a_test.go"), tests: testsA},
 			{file: filepath.Join(root, "b_test.go"), tests: testsB},
 		},
-		[]string{filepath.Join(root, "m.go")})
+		[]string{filepath.Join(root, "m.go")}, nil)
 	if !strings.Contains(src, `. "example.com/multiform"`) {
 		t.Errorf("driver dropped the dot self-import form:\n%s", src)
 	}
@@ -352,7 +353,7 @@ func TestQual(t *testing.T) {
 	}
 	src := synthDriver(t, root,
 		[]fileTests{{file: testFile, tests: tests}},
-		[]string{filepath.Join(root, "q.go")})
+		[]string{filepath.Join(root, "q.go")}, nil)
 	if !strings.Contains(src, `"example.com/qualself"`) {
 		t.Errorf("driver dropped the qualified self-import:\n%s", src)
 	}
@@ -392,7 +393,7 @@ func TestUsesIt(t *testing.T) {
 	}
 	src := synthDriver(t, root,
 		[]fileTests{{file: testFile, tests: tests}},
-		[]string{filepath.Join(root, "u.go")})
+		[]string{filepath.Join(root, "u.go")}, nil)
 	if !strings.Contains(src, `"example.com/genignored/sortlike"`) {
 		t.Errorf("driver dropped the import whose name was misresolved:\n%s", src)
 	}
@@ -440,7 +441,7 @@ func TestDotDep(t *testing.T) {
 	}
 	src := synthDriver(t, root,
 		[]fileTests{{file: testFile, tests: tests}},
-		[]string{filepath.Join(root, "a.go")})
+		[]string{filepath.Join(root, "a.go")}, nil)
 	if !strings.Contains(src, `. "example.com/dotany/dep"`) {
 		t.Errorf("driver dropped the dot-import of a non-self package:\n%s", src)
 	}
@@ -503,7 +504,7 @@ func ExampleNothing() {
 	}
 	src := synthDriver(t, root,
 		[]fileTests{{file: filepath.Join(root, "p_test.go"), tests: tests}},
-		[]string{filepath.Join(root, "p.go")})
+		[]string{filepath.Join(root, "p.go")}, nil)
 	if !strings.Contains(src, "\t\"example.com/impcol/dep\"\n") {
 		t.Errorf("driver dropped the used import:\n%s", src)
 	}
@@ -564,7 +565,7 @@ func TestExternal(t *testing.T) {
 			{file: filepath.Join(root, "w_test.go"), tests: testsW},
 			{file: filepath.Join(root, "e_test.go"), tests: testsE},
 		},
-		[]string{filepath.Join(root, "p.go")})
+		[]string{filepath.Join(root, "p.go")}, nil)
 	// x/foo sorts first and keeps the natural name...
 	if !strings.Contains(src, "\t\"example.com/aliascol/x/foo\"\n") {
 		t.Errorf("driver lost the first import's natural name:\n%s", src)
@@ -640,7 +641,7 @@ func TestExternal(t *testing.T) {
 			{file: filepath.Join(root, "w_test.go"), tests: testsW},
 			{file: filepath.Join(root, "e_test.go"), tests: testsE},
 		},
-		[]string{filepath.Join(root, "p.go")})
+		[]string{filepath.Join(root, "p.go")}, nil)
 	// The package under test keeps the pristine name...
 	if !strings.Contains(src, "const bufSize = 16") {
 		t.Errorf("driver lost the package's own declaration:\n%s", src)
@@ -711,7 +712,7 @@ func TestExternal(t *testing.T) {
 			{file: filepath.Join(root, "w_test.go"), tests: testsW},
 			{file: filepath.Join(root, "e_test.go"), tests: testsE},
 		},
-		[]string{filepath.Join(root, "p.go")})
+		[]string{filepath.Join(root, "p.go")}, nil)
 	if !strings.Contains(src, "var level2 = 2") {
 		t.Errorf("driver did not rename the external declaration:\n%s", src)
 	}
@@ -763,7 +764,7 @@ func TestSame(t *testing.T) { extRan = true }
 			{file: filepath.Join(root, "w_test.go"), tests: testsW},
 			{file: filepath.Join(root, "e_test.go"), tests: testsE},
 		},
-		[]string{filepath.Join(root, "p.go")})
+		[]string{filepath.Join(root, "p.go")}, nil)
 	if !strings.Contains(src, "func TestSame(t *graalgoT,)") {
 		t.Errorf("driver lost the white-box test's pristine name:\n%s", src)
 	}
@@ -830,7 +831,7 @@ func TestExternal(t *testing.T) {
 			{file: filepath.Join(root, "w_test.go"), tests: testsW},
 			{file: filepath.Join(root, "e_test.go"), tests: testsE},
 		},
-		[]string{filepath.Join(root, "p.go")})
+		[]string{filepath.Join(root, "p.go")}, nil)
 	if !strings.Contains(src, "type Box struct{ v int }") {
 		t.Errorf("driver lost the package's own type:\n%s", src)
 	}
@@ -905,7 +906,7 @@ var HasVX = hasVX
 	}
 	src := synthDriver(t, root,
 		[]fileTests{{file: testFile, tests: tests}},
-		[]string{filepath.Join(root, "p.go")})
+		[]string{filepath.Join(root, "p.go")}, nil)
 	if strings.Contains(src, "HasVX") {
 		t.Errorf("driver inlined the s390x-constrained sibling's helper on %s/%s:\n%s",
 			build.Default.GOOS, build.Default.GOARCH, src)
@@ -946,7 +947,7 @@ func TestB(t *testing.T) {
 	}
 	src := synthDriver(t, root,
 		[]fileTests{{file: filepath.Join(root, "b_test.go"), tests: testsB}},
-		[]string{filepath.Join(root, "p.go")})
+		[]string{filepath.Join(root, "p.go")}, nil)
 
 	// The generated driver must parse.
 	fset := token.NewFileSet()

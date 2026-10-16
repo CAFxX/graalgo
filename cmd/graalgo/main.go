@@ -24,6 +24,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
+	"unicode"
 )
 
 const version = "0.4.0"
@@ -231,6 +233,69 @@ func graalgoRunProgram(root string, args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// splitTags splits a -tags flag value the way `go` does: tags are
+// separated by commas and/or whitespace ("-tags tag,list").
+func splitTags(s string) []string {
+	return strings.FieldsFunc(s, func(r rune) bool {
+		return r == ',' || unicode.IsSpace(r)
+	})
+}
+
+// filterBuildableFiles drops files whose build constraints are not
+// satisfied under the given -tags value, like `go build -tags`. It is the
+// mechanism by which `graalgo build -tags` and `graalgo run -tags` honor
+// build tags: file selection is the only place the driver interprets
+// constraints (the backend compiles exactly the explicit file list it is
+// given, so excluding a file here excludes it from the build).
+//
+// Files are grouped by directory and each directory is resolved through
+// buildableGoFiles (go/build constraint evaluation). A file the build
+// package cannot account for (e.g. an explicitly named file that does not
+// exist yet) is kept, so the backend reports the real error — exactly as
+// the no-tags path does.
+func filterBuildableFiles(files []string, tags string) []string {
+	tagList := splitTags(tags)
+	if len(tagList) == 0 {
+		return files
+	}
+	dirs := make([]string, 0, len(files))
+	seen := make(map[string]bool)
+	for _, f := range files {
+		d := filepath.Dir(f)
+		if !seen[d] {
+			seen[d] = true
+			dirs = append(dirs, d)
+		}
+	}
+	keep := make(map[string]bool)
+	for _, d := range dirs {
+		for _, b := range buildableGoFiles(d, tagList) {
+			if abs, err := filepath.Abs(b); err == nil {
+				keep[abs] = true
+			}
+		}
+	}
+	var out []string
+	for _, f := range files {
+		abs, err := filepath.Abs(f)
+		if err != nil {
+			out = append(out, f) // unreachable in practice; keep defensively
+			continue
+		}
+		if keep[abs] {
+			out = append(out, f)
+			continue
+		}
+		if _, serr := os.Stat(abs); os.IsNotExist(serr) {
+			// Not on disk (e.g. a typo'd explicit file): keep it so
+			// the backend reports the real error, like the no-tags path.
+			out = append(out, f)
+		}
+		// Otherwise the file is excluded by build constraints: drop it.
+	}
+	return out
 }
 
 // resolveFiles turns package/file arguments into a list of .go files.
