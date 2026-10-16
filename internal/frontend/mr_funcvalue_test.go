@@ -28,6 +28,11 @@ package main
 //     compile-time error, exactly as before.
 
 import (
+	"go/ast"
+	"go/importer"
+	"go/parser"
+	"go/token"
+	"go/types"
 	"strings"
 	"testing"
 )
@@ -212,5 +217,122 @@ func main() {}
 	}
 	if !strings.Contains(err.Error(), "multi-result function values require v2") {
 		t.Fatalf("error = %q, want the M5 value-position scope error", err.Error())
+	}
+}
+
+// TestEtaExpandMRFuncValueSpecTrimsOnlyAliasedPair is the regression test
+// for the whole-ValueSpec removal bug in etaExpandMRFuncValues: given
+// `var lstat, answer = os.Lstat, 42`, the alias lstat -> os.Lstat must be
+// recorded while ONLY that (name, value) pair is dropped from the spec.
+// The old code queued the whole spec for removal, silently deleting the
+// sibling declaration `answer` (the exporter then emitted no vardecl for
+// it, leaving dangling references downstream).
+func TestEtaExpandMRFuncValueSpecTrimsOnlyAliasedPair(t *testing.T) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "p.go", `package p
+
+import "os"
+
+var lstat, answer = os.Lstat, 42
+`, 0)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	// Mirror the disk-import pipeline order: MR transform, type-check,
+	// then the eta-expansion pass.
+	transformDiskMultiResult("example.com/p", []*ast.File{f})
+	info := &types.Info{
+		Defs:       make(map[*ast.Ident]types.Object),
+		Uses:       make(map[*ast.Ident]types.Object),
+		Selections: make(map[*ast.SelectorExpr]*types.Selection),
+	}
+	conf := types.Config{Importer: importer.Default()}
+	pkg, err := conf.Check("example.com/p", fset, []*ast.File{f}, info)
+	if err != nil {
+		t.Fatalf("type error: %v", err)
+	}
+	_, aliases := etaExpandMRFuncValues([]*ast.File{f}, info, pkg)
+
+	// 1. The alias handling still works: lstat -> os.Lstat is recorded.
+	var lstatVar *types.Var
+	for id, obj := range info.Defs {
+		if v, ok := obj.(*types.Var); ok && id.Name == "lstat" {
+			lstatVar = v
+		}
+	}
+	if lstatVar == nil {
+		t.Fatal("no *types.Var for lstat in info.Defs")
+	}
+	aliased, ok := aliases[lstatVar]
+	if !ok {
+		t.Fatal("alias for lstat not recorded")
+	}
+	if aliased.Name() != "Lstat" || aliased.Pkg() == nil || aliased.Pkg().Path() != "os" {
+		t.Fatalf("alias target = %v, want os.Lstat", aliased)
+	}
+
+	// 2. The sibling declaration survives: exactly one var ValueSpec
+	// remains, declaring `answer` initialized to 42, with no mention of
+	// `lstat`.
+	var specs []*ast.ValueSpec
+	for _, decl := range f.Decls {
+		gd, ok := decl.(*ast.GenDecl)
+		if !ok || gd.Tok != token.VAR {
+			continue
+		}
+		for _, s := range gd.Specs {
+			if vs, ok := s.(*ast.ValueSpec); ok {
+				specs = append(specs, vs)
+			}
+		}
+	}
+	if len(specs) != 1 {
+		t.Fatalf("got %d var ValueSpecs, want 1 (the surviving sibling)", len(specs))
+	}
+	vs := specs[0]
+	if len(vs.Names) != 1 || vs.Names[0].Name != "answer" {
+		t.Fatalf("surviving spec names = %v, want [answer]", vs.Names)
+	}
+	if len(vs.Values) != 1 {
+		t.Fatalf("surviving spec has %d values, want 1", len(vs.Values))
+	}
+	lit, ok := vs.Values[0].(*ast.BasicLit)
+	if !ok || lit.Kind != token.INT || lit.Value != "42" {
+		t.Fatalf("surviving spec value = %#v, want INT 42", vs.Values[0])
+	}
+}
+
+// TestMRFuncValueSiblingDeclarationExports is the end-to-end companion:
+// the sibling of an aliased multi-result function value must still be
+// exported (as a package-level global). The aliased name's declaration
+// must be gone — it is served by the alias map, not by an export node.
+// (The alias var itself is unused here; the alias map is consumed by the
+// disk-import lane, which ExportFile does not wire.)
+func TestMRFuncValueSiblingDeclarationExports(t *testing.T) {
+	doc := exportFuncValueProg(t, `package main
+
+import "os"
+
+var lstat, answer = os.Lstat, 42
+
+func main() {
+	println(answer)
+}
+`)
+	init := findGlobalInitByName(t, doc, "answer")
+	if init["kind"] != "basiclit" {
+		t.Fatalf("answer initializer kind = %q, want basiclit", init["kind"])
+	}
+	if val := init["fields"].(map[string]any)["value"]; val != "42" {
+		t.Fatalf("answer initializer value = %v, want 42", val)
+	}
+	// The aliased name's declaration must be gone (it is served by the
+	// alias map, not by a global): no object named "lstat" may exist.
+	objects, _ := doc["objects"].([]any)
+	for _, o := range objects {
+		om, _ := o.(map[string]any)
+		if om["name"] == "lstat" {
+			t.Fatal(`aliased name "lstat" still has an exported object`)
+		}
 	}
 }

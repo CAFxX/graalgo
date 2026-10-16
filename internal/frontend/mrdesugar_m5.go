@@ -4051,8 +4051,16 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 	varLits := make(map[*types.Var]*ast.FuncLit)
 	aliases := make(map[*types.Var]*types.Func)
 	for _, f := range files {
-		// Collect ValueSpecs to remove (can't modify during Inspect).
-		var toRemove []*ast.ValueSpec
+		// Collect ValueSpecs to trim (can't modify during Inspect): each
+		// entry lists the value indices that alias a multi-result
+		// function. Only those (name, value) pairs are dropped from the
+		// spec — sibling declarations sharing the spec must survive.
+		type specTrim struct {
+			spec *ast.ValueSpec
+			drop []int // value indices whose name aliases a MR func
+		}
+		var trims []*specTrim
+		trimBySpec := make(map[*ast.ValueSpec]*specTrim)
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.ValueSpec:
@@ -4075,13 +4083,20 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 					if tp := sig.TypeParams(); tp != nil && tp.Len() > 0 {
 						continue
 					}
-					// Record alias and mark for removal.
+					// Record alias and mark only this (name, value)
+					// pair for removal — never sibling declarations.
 					if i < len(n.Names) {
 						if vr, ok := info.Defs[n.Names[i]].(*types.Var); ok {
 							aliases[vr] = obj
 						}
+						t, ok := trimBySpec[n]
+						if !ok {
+							t = &specTrim{spec: n}
+							trimBySpec[n] = t
+							trims = append(trims, t)
+						}
+						t.drop = append(t.drop, i)
 					}
-					toRemove = append(toRemove, n)
 				}
 			case *ast.AssignStmt:
 				if n.Tok != token.DEFINE {
@@ -4103,8 +4118,37 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 			}
 			return true
 		})
-		// Remove the marked ValueSpecs and rewrite lstat idents to os.Lstat.
-		// (Simplified: just remove; call-site rewriting via alias map.)
+		// Apply the trims: drop only the aliased (name, value) pairs
+		// from each ValueSpec. A spec whose every declared name is
+		// aliased is removed from its parent GenDecl wholesale, as
+		// before. Call-site rewriting goes through the alias map.
+		var toRemove []*ast.ValueSpec
+		for _, t := range trims {
+			vs := t.spec
+			if len(t.drop) >= len(vs.Names) {
+				toRemove = append(toRemove, vs)
+				continue
+			}
+			dropped := make(map[int]bool, len(t.drop))
+			for _, i := range t.drop {
+				dropped[i] = true
+			}
+			names := make([]*ast.Ident, 0, len(vs.Names)-len(t.drop))
+			for i, name := range vs.Names {
+				if !dropped[i] {
+					names = append(names, name)
+				}
+			}
+			values := make([]ast.Expr, 0, len(vs.Values)-len(t.drop))
+			for i, v := range vs.Values {
+				if !dropped[i] {
+					values = append(values, v)
+				}
+			}
+			vs.Names = names
+			vs.Values = values
+		}
+		// Remove the fully-aliased ValueSpecs.
 		for _, vs := range toRemove {
 			// Find and remove from parent GenDecl.
 			for _, decl := range f.Decls {
@@ -4117,26 +4161,6 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 					}
 				}
 			}
-		}
-		// Rewrite idents: replace `lstat` with `os.Lstat` (using aliases).
-		if len(aliases) > 0 {
-			ast.Inspect(f, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok {
-					if vr, ok := info.Uses[id].(*types.Var); ok {
-						if fn, ok := aliases[vr]; ok {
-							// Replace ident with selector expr pkg.F.
-							// We need the package name; use fn.Pkg().Name().
-							if fn.Pkg() != nil {
-								pkgIdent := ast.NewIdent(fn.Pkg().Name())
-								// Copy the selector from the original.
-								// (Simplified: just mark; full rewrite is complex.)
-								_ = pkgIdent
-							}
-						}
-					}
-				}
-				return true
-			})
 		}
 	}
 	return varLits, aliases
