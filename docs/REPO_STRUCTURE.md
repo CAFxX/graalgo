@@ -186,7 +186,10 @@ Related: [Makefile](../Makefile) (root build entry point),
 - [tools/](../tools/) — developer tooling (not the product):
   [stdlib-fork/](../tools/stdlib-fork/) and
   [stdlib-linkdiff/](../tools/stdlib-linkdiff/) (stdlib fork/linkname
-  tooling), [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
+  tooling), [stdlib-vendor/](../tools/stdlib-vendor/) (stdlib vendoring
+  pipeline: pins $GOROOT/src to an external directory and writes a
+  byte-deterministic manifest into tools/stdlib-fork/),
+  [run_stdlib_gate.sh](../tools/run_stdlib_gate.sh) and
   [stdlib-excl/](../tools/stdlib-excl/) (wave-corpus differential gates),
   [fuzz-soak/](../tools/fuzz-soak/) and [fuzz/](../tools/fuzz/) (fuzzing),
   [torture/](../tools/torture/) (scheduler torture),

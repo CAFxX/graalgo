@@ -1,4 +1,4 @@
-# Layer 4 — fuzz soak (phases/phase3/PLAN.md §5, GG-0037): generative
+# Layer 4 — fuzz soak (docs/arch/phases/phase3/PLAN.md §5, GG-0037): generative
 # differential fuzzing + native testing.F differential fuzzing, overnight
 # per release.
 #
@@ -6,7 +6,7 @@
 # Each run: seeded program generation + differential harness batches
 # (run_soak.sh) and the native testing.F targets with differential replay
 # (fuzz/run_fuzz_native.sh). Minimized divergences become permanent
-# regressions per SPEC §5.4 (phases/phase3/fuzzing/findings/).
+# regressions per SPEC §5.4 (tools/fuzz-soak/findings/).
 #
 # The continuous adversarial track reserves the same interface:
 # run_soak.sh --seeds A:B runs one bounded batch.
