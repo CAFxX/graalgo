@@ -722,14 +722,13 @@ func __csvRead(r *Reader) csvReadPair {
 // Read returns a partial record along with the parse error.
 // The partial record contains all fields read before the error.
 // If there is no data left to be read, Read returns nil, csvEOF.
-// If Reader.ReuseRecord is true, the returned slice may be shared
-// between multiple calls to Read.
-//
-// M7: the body is fail-fast; the exporter desugars 2-target call sites
-// (rec, err := r.Read()) to __csvRead (Appendix M pattern — v1 cannot
-// call multi-result functions, WS D). Every other position fails here.
+// Reader.Read keeps the exact gc 1.27.1 signature for type-checking;
+// the exporter desugars 2-target call sites (rec, err := r.Read()) to
+// __csvRead (Appendix M pattern — v1 cannot emit multi-result
+// functions). Every other position fails here. Body never runs in a
+// desugared position.
 func (r *Reader) Read() ([]string, error) {
-	panic("csv: Reader.Read is not in M7 scope as a direct call (only the rec, err := r.Read() 2-target form desugars; multi-result calls need WS D; re-test when it lands)")
+	panic("csv: Reader.Read: use __csvRead helper (WS D)")
 }
 
 // csvReadAllPair is the Appendix M single-result carrier for ReadAll.
@@ -756,15 +755,18 @@ func __csvReadAll(r *Reader) csvReadAllPair {
 	}
 }
 
+// ReadAll keeps the exact gc 1.27.1 signature for type-checking; the
+// exporter desugars 2-target call sites to __csvReadAll (Appendix M).
+// Every other position fails here. Body never runs in a desugared
+// position.
+//
 // ReadAll reads all the remaining records from r.
 // Each record is a slice of fields.
 // A successful call returns err == nil, not err == csvEOF. Because ReadAll is
 // defined to read until EOF, it does not treat end of data as an error to be
 // reported.
-//
-// M7: fail-fast body like Read; 2-target call sites desugar to __csvReadAll.
 func (r *Reader) ReadAll() ([][]string, error) {
-	panic("csv: Reader.ReadAll is not in M7 scope as a direct call (only the recs, err := r.ReadAll() 2-target form desugars; multi-result calls need WS D; re-test when it lands)")
+	panic("csv: Reader.ReadAll: use __csvReadAll helper (WS D)")
 }
 
 // csvFieldPosPair is the Appendix M single-result carrier for FieldPos.
@@ -782,16 +784,19 @@ func __csvFieldPos(r *Reader, field int) csvFieldPosPair {
 	return csvFieldPosPair{line: p.line, column: p.col}
 }
 
+// FieldPos keeps the exact gc 1.27.1 signature for type-checking; the
+// exporter desugars 2-target call sites to __csvFieldPos (Appendix M).
+// Every other position fails here. Body never runs in a desugared
+// position.
+//
 // FieldPos returns the line and column corresponding to
 // the start of the field with the given index in the slice most recently
 // returned by Reader.Read. Numbering of lines and columns starts at 1;
 // columns are counted in bytes, not runes.
 //
 // If this is called with an out-of-bounds index, it panics.
-//
-// M7: fail-fast body like Read; 2-target call sites desugar to __csvFieldPos.
 func (r *Reader) FieldPos(field int) (line, column int) {
-	panic("csv: Reader.FieldPos is not in M7 scope as a direct call (only the line, column := r.FieldPos(i) 2-target form desugars; multi-result calls need WS D; re-test when it lands)")
+	panic("csv: Reader.FieldPos: use __csvFieldPos helper (WS D)")
 }
 
 // InputOffset returns the input byte offset of the current reader

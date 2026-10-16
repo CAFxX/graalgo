@@ -69,6 +69,35 @@ var m7BytesBufferWriteStringTable = []m7StrconvJsonExpect{
 	{"bytes", "WriteString", "Buffer", "__bytesBufferWriteString", "__bytesWriteStringPair", []string{"n", "err"}},
 }
 
+// m7MechSweepTable pins every m7MultiResultFuncs entry added by the
+// mech-m7sweep lane (2026-10-16): the systematic retirement of the
+// "not in M7 scope (multi-result calls need WS D; re-test when it
+// lands)" fail-fast stubs now that WS D has landed. Each entry is
+// verified by checkM7DesugarWiring: exactly one table row, the
+// multi-result declaration in the synthetic package, the __-helper
+// with positional params, and the pair struct fields in result order.
+var m7MechSweepTable = []m7StrconvJsonExpect{
+	// encoding/csv: *Reader methods (helpers pre-existed; rows added).
+	{"encoding/csv", "Read", "Reader", "__csvRead", "csvReadPair", []string{"rec", "err"}},
+	{"encoding/csv", "ReadAll", "Reader", "__csvReadAll", "csvReadAllPair", []string{"recs", "err"}},
+	{"encoding/csv", "FieldPos", "Reader", "__csvFieldPos", "csvFieldPosPair", []string{"line", "column"}},
+}
+
+func TestM7MechSweepDesugarWiring(t *testing.T) {
+	if len(m7MechSweepTable) != 3 {
+		t.Fatalf("m7MechSweepTable has %d entries, want 3", len(m7MechSweepTable))
+	}
+	for _, want := range m7MechSweepTable {
+		name := want.pkgPath + "." + want.name
+		if want.recvType != "" {
+			name = want.pkgPath + "." + want.recvType + "." + want.name
+		}
+		t.Run(name, func(t *testing.T) {
+			checkM7DesugarWiring(t, want)
+		})
+	}
+}
+
 func TestM7StringsBuilderDesugarWiring(t *testing.T) {
 	if len(m7StringsBuilderTable) != 3 {
 		t.Fatalf("m7StringsBuilderTable has %d entries, want 3", len(m7StringsBuilderTable))

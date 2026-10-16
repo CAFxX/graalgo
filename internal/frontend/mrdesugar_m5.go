@@ -336,6 +336,12 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"encoding/json", "Float64", "Number", "__numberFloat64", "numberFloat64Pair", []string{"f", "err"}, false},
 	{"encoding/json", "Int64", "Number", "__numberInt64", "numberInt64Pair", []string{"i", "err"}, false},
 	{"encoding/json", "MarshalJSON", "RawMessage", "__rawMessageMarshalJSON", "rawMessageMarshalJSONPair", []string{"data", "err"}, false},
+	// encoding/csv: methods on *Reader (mech-m7sweep: WS D has landed,
+	// retiring the M7 fail-fast stubs; the __-helpers were already the
+	// real implementations, only the desugar rows were missing).
+	{"encoding/csv", "Read", "Reader", "__csvRead", "csvReadPair", []string{"rec", "err"}, false},
+	{"encoding/csv", "ReadAll", "Reader", "__csvReadAll", "csvReadAllPair", []string{"recs", "err"}, false},
+	{"encoding/csv", "FieldPos", "Reader", "__csvFieldPos", "csvFieldPosPair", []string{"line", "column"}, false},
 	// P3-M8 (wave 2): synthetic io (synth_io.go). Only the members with
 	// real single-result __-helpers are desugared — see the SCOPE NOTE in
 	// the patch header; everything else fails at export via
