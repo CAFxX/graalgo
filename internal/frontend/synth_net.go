@@ -2085,53 +2085,6 @@ const (
 	IPv6len = netIPv6len
 )
 
-// networkNumberAndMask returns the IP address and the IP mask of the
-// network defined by n, in the same length family. Ported from GOROOT
-// net/ip.go (required by real crypto/x509 from disk, which calls
-// (*net.IPNet).Contains; the synthetic net package is still present
-// until the real-net lane routes it via the disk importer).
-func networkNumberAndMask(n *IPNet) (ip IP, m IPMask) {
-	if ip = n.IP.To4(); ip == nil {
-		ip = n.IP
-		if len(ip) != netIPv6len {
-			return nil, nil
-		}
-	}
-	m = n.Mask
-	switch len(m) {
-	case netIPv4len:
-		if len(ip) != netIPv4len {
-			return nil, nil
-		}
-	case netIPv6len:
-		if len(ip) == netIPv4len {
-			m = m[12:]
-		}
-	default:
-		return nil, nil
-	}
-	return
-}
-
-// Contains reports whether the network includes ip.
-// Ported from GOROOT net/ip.go (see networkNumberAndMask above).
-func (n *IPNet) Contains(ip IP) bool {
-	nn, m := networkNumberAndMask(n)
-	if x := ip.To4(); x != nil {
-		ip = x
-	}
-	l := len(ip)
-	if l != len(nn) {
-		return false
-	}
-	for i := 0; i < l; i++ {
-		if nn[i]&m[i] != ip[i]&m[i] {
-			return false
-		}
-	}
-	return true
-}
-
 func (n *IPNet) String() string {
 	if n == nil {
 		return "<nil>"
