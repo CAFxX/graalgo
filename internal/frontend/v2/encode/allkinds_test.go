@@ -17,11 +17,6 @@ import (
 func TestEncodeAllKinds(t *testing.T) {
 	src := `package main
 
-type Point struct {
-	X int
-	Y int
-}
-
 func add(a, b int) int {
 	return a + b
 }
@@ -152,8 +147,14 @@ func main() {
 	c := cap(nums)
 	_ = c
 
-	// selector (field access)
-	p := Point{X: 1, Y: 2}
+	// selector (field access) — anonymous struct: this test must not use a
+	// top-level type declaration (V2-43: those fail loudly until the
+	// globals lane implements them). StructType is still exercised via
+	// go/types, plus compositelit/keyvalue/selector nodes.
+	p := struct {
+		X int
+		Y int
+	}{X: 1, Y: 2}
 	px := p.X
 	_ = px
 	p.Y = 10

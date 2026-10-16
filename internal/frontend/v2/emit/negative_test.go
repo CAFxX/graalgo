@@ -172,6 +172,34 @@ func main() { println(id[int](42)) }
 `,
 		want: "unsupported expr",
 	},
+	// V2-43: package-level var/const/type declarations were silently
+	// dropped (Globals hardcoded empty), miscompiling programs with
+	// package-level state. Until the globals lane implements them, each
+	// must fail loudly.
+	{
+		name: "TopLevelVar",
+		src: `package main
+var x = 1
+func main() { println(x) }
+`,
+		want: "unsupported top-level",
+	},
+	{
+		name: "TopLevelConst",
+		src: `package main
+const k = 2
+func main() { println(k) }
+`,
+		want: "unsupported top-level",
+	},
+	{
+		name: "TopLevelType",
+		src: `package main
+type T struct{ X int }
+func main() { var t T; println(t.X) }
+`,
+		want: "unsupported top-level",
+	},
 }
 
 func TestNegativeCasesFailLoudly(t *testing.T) {
@@ -203,5 +231,40 @@ func TestNegativeCasesFailLoudly(t *testing.T) {
 				t.Fatalf("%s: error %q looks like a crash, not a clean rejection", tc.name, err.Error())
 			}
 		})
+	}
+}
+
+// TestTopLevelImportStillEmits: import declarations are structural — the
+// checker resolves them; they are not emitted. The V2-43 loud failure for
+// package-level var/const/type declarations must not reject them.
+func TestTopLevelImportStillEmits(t *testing.T) {
+	src := `package main
+
+import "fmt"
+
+func main() {
+	fmt.Println("hi")
+}
+`
+	dir := t.TempDir()
+	fn := filepath.Join(dir, "imp.go")
+	if err := os.WriteFile(fn, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	pres, err := parser.ParseFiles([]string{fn})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	cres, err := checker.Check(pres.Fset, pres.Pkg, &checker.Config{GoVersion: "go1.27"})
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	doc, err := Emit(cres, pres.Pkg, pres.Files)
+	if err != nil {
+		t.Fatalf("emit with import: %v (imports must not be rejected)", err)
+	}
+	if len(doc.Funcs) != 1 {
+		t.Fatalf("funcs has %d entries, want 1", len(doc.Funcs))
 	}
 }

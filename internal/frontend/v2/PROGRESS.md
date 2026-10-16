@@ -84,3 +84,21 @@ for the design.
   graalgo compiles the v2 Go code (which uses go/parser, go/ast, go/types)
   to JVM bytecode, so it runs in-process and calls NodeFactoryV2 directly
   (no inter-process binary transfer).
+
+## 2026-10-16 — V2-43: package-level decls fail loudly (review remediation)
+
+- `emitDocument` silently dropped every non-`FuncDecl` top-level
+  declaration (`continue`) with `Document.Globals` hardcoded `[]any{}` —
+  a program with package-level state compiled to a program without it.
+- Fix (option b): package-level `var`/`const`/`type` declarations are now
+  loud errors (`emit: unsupported top-level <tok> declaration ...`) via a
+  `topFuncDecl` classifier in `emit/emit.go`. Imports stay structural
+  (checker-resolved, not emitted). Full global emission (vars, consts,
+  init order) remains future work — see "Next" above.
+- Regression tests in `emit/negative_test.go`: `TopLevelVar`,
+  `TopLevelConst`, `TopLevelType` (each proven to fail pre-fix by silent
+  acceptance) plus `TestTopLevelImportStillEmits` (imports not rejected).
+- `encode/allkinds_test.go` no longer relies on the silent drop: the
+  top-level `type Point struct` became an anonymous struct literal
+  (same node kinds exercised: struct type via go/types, compositelit,
+  keyvalue, selector).

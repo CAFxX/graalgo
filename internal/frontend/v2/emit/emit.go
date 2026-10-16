@@ -60,14 +60,25 @@ func Emit(cr *checker.Result, pkg *ast.Package, files []string) (*Document, erro
 func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// Emit order: types and objects are populated lazily as nodes are
 	// emitted (ids registered before description, so recursion works).
-	// We do two passes: first declare all top-level funcs and globals
-	// (assigning object ids), then emit bodies.
+	// We do two passes: first declare all top-level funcs (assigning
+	// object ids), then emit bodies.
+	//
+	// V2-43: these passes used to silently skip every non-func top-level
+	// declaration, so a program with package-level var/const/type
+	// declarations compiled to a program without them. Package-level
+	// globals (vars, consts, type declarations, init order) are future
+	// work (see PROGRESS.md "Next"); until they are implemented, any
+	// such declaration is a loud error, never a silent drop. Imports are
+	// structural — the checker resolves them; they are not emitted.
 	var funcs []any
 	for _, file := range pkg.Files {
 		for _, decl := range file.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
+			fd, err := topFuncDecl(decl)
+			if err != nil {
+				return nil, err
+			}
+			if fd == nil {
+				continue // import declaration: structural, not emitted
 			}
 			obj := e.info.Info.Defs[fd.Name]
 			if obj == nil {
@@ -79,9 +90,12 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 
 	for _, file := range pkg.Files {
 		for _, decl := range file.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
+			fd, err := topFuncDecl(decl)
+			if err != nil {
+				return nil, err
+			}
+			if fd == nil {
+				continue // import declaration: structural, not emitted
 			}
 			fn, err := e.emitFuncDecl(fd)
 			if err != nil {
@@ -110,8 +124,32 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		Types:   e.types,
 		Objects: e.objects,
 		Funcs:   funcs,
+		// Empty by construction: any program with package-level
+		// var/const/type declarations is rejected loudly above (V2-43), so
+		// a Document can never silently lack its globals. Populating this
+		// is the globals lane's job (PROGRESS.md "Next").
 		Globals: []any{},
 	}, nil
+}
+
+// topFuncDecl classifies one top-level declaration for emitDocument's two
+// passes. It returns the *ast.FuncDecl for function declarations, (nil,
+// nil) for import declarations (structural — resolved by the checker, not
+// emitted), and a loud error for anything else: package-level var, const,
+// and type declarations are not yet implemented (V2-43), and silently
+// dropping them would miscompile programs that have package-level state.
+func topFuncDecl(decl ast.Decl) (*ast.FuncDecl, error) {
+	switch d := decl.(type) {
+	case *ast.FuncDecl:
+		return d, nil
+	case *ast.GenDecl:
+		if d.Tok == token.IMPORT {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("emit: unsupported top-level %s declaration (package-level %ss not yet implemented)", d.Tok, d.Tok)
+	default:
+		return nil, fmt.Errorf("emit: unsupported top-level declaration %T", decl)
+	}
 }
 
 func fileBase(p string) string {
