@@ -2580,7 +2580,15 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		sp := getSyntheticPackage(m.pkgPath)
+		// The pair type may live in an override package (m7HelperPkgOverride):
+		// reflect retired from synthetic to the disk importer, but its M7
+		// __-helpers and pair types still live in the synthetic reflect_m7
+		// package. Same pattern as classifyM7MultiResultCall.
+		helperPkg := m.pkgPath
+		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
+			helperPkg = override
+		}
+		sp := getSyntheticPackage(helperPkg)
 		if sp == nil {
 			continue
 		}
@@ -2612,7 +2620,7 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 			continue
 		}
 		return &mrPlan{
-			kind: mrIfaceMethod, helperPkg: m.pkgPath,
+			kind: mrIfaceMethod, helperPkg: helperPkg,
 			tmpType: nt, pairFields: m.pairFields,
 		}
 	}
@@ -2648,7 +2656,15 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		sp := getSyntheticPackage(m.pkgPath)
+		// The pair type may live in an override package (m7HelperPkgOverride):
+		// reflect retired from synthetic to the disk importer, but its M7
+		// __-helpers and pair types still live in the synthetic reflect_m7
+		// package. Same pattern as classifyM7MultiResultCall.
+		helperPkg := m.pkgPath
+		if override, ok := m7HelperPkgOverride[m.pkgPath]; ok {
+			helperPkg = override
+		}
+		sp := getSyntheticPackage(helperPkg)
 		if sp == nil {
 			continue
 		}
@@ -2689,7 +2705,7 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 			continue
 		}
 		return &mrPlan{
-			kind: mrIfaceMethod, helperPkg: m.pkgPath,
+			kind: mrIfaceMethod, helperPkg: helperPkg,
 			tmpType: nt, pairFields: m.pairFields,
 		}
 	}
