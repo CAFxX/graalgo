@@ -1,12 +1,8 @@
 package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
-import com.oracle.truffle.api.nodes.Node;
-import graalgo.runtime.GoErrors;
-import graalgo.runtime.Panic;
 import graalgo.runtime.sync.IntCell;
 import graalgo.runtime.sync.LongCell;
-import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
@@ -65,25 +61,16 @@ public final class FieldAddrNode extends GoExprNode {
     }
 
     /**
-     * PKG-074: unwrap GoPointer (auto-deref) and GoInterface (extract
-     * underlying data) before struct field navigation. A GoInterface
-     * wrapping a struct must be unwrapped to the data, otherwise the
-     * GoStruct cast throws ClassCastException.
+     * Unwraps {@link GoPointer} (auto-deref) and {@link GoInterface}
+     * (underlying data) layers before struct field navigation.
+     *
+     * <p>P1-2: delegates to {@link SelectorNode#deref} instead of carrying
+     * a second copy of the unwrap logic — the two implementations drifted
+     * once already (PKG-074 fixed one level in both; the nested shape still
+     * crashed), so there is exactly one implementation now.
      */
     private Object unwrap(Object o) {
-        if (o instanceof GoPointer gp) {
-            if (gp.isNil()) {
-                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
-            }
-            return gp.referent();
-        }
-        if (o instanceof GoInterface gi) {
-            if (gi.isNil()) {
-                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
-            }
-            return gi.data();
-        }
-        return o;
+        return SelectorNode.deref(o, this);
     }
 
     /**

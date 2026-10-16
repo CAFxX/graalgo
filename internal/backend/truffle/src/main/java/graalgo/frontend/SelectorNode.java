@@ -69,28 +69,40 @@ public final class SelectorNode extends GoExprNode {
         return derefResult ? deref(o, site) : o;
     }
 
+    /**
+     * Peels every {@link GoPointer}/{@link GoInterface} wrapper layer until
+     * the underlying value is reached (P1-2: the single-level version from
+     * PKG-074 still crashed on {@code GoInterface(GoPointer(GoStruct))},
+     * which {@link InterfaceBoxNode} produces for {@code var i any = &s}).
+     * Nil at any layer is gc's nil-dereference panic, attributed to
+     * {@code site}.
+     */
     static Object deref(Object o, Node site) {
-        if (o == null) {
-            // Nil pointer (Java null): gc's nil-dereference panic.
-            Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
-        }
-        if (o instanceof GoPointer p) {
-            if (p.isNil()) {
+        while (true) {
+            if (o == null) {
+                // Nil pointer (Java null): gc's nil-dereference panic.
                 Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
             }
-            return p.referent();
-        }
-        if (o instanceof GoInterface gi) {
-            // PKG-074: a GoInterface wrapping a struct (e.g. from real
-            // reflect or interface-typed values) must be unwrapped to the
-            // underlying data before field selection. The data is the
-            // dynamic value in its D5 Java carrier.
-            if (gi.isNil()) {
-                Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
+            if (o instanceof GoPointer p) {
+                if (p.isNil()) {
+                    Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
+                }
+                o = p.referent();
+                continue;
             }
-            return gi.data();
+            if (o instanceof GoInterface gi) {
+                // PKG-074: a GoInterface wrapping a struct (e.g. from real
+                // reflect or interface-typed values) must be unwrapped to the
+                // underlying data before field selection. The data is the
+                // dynamic value in its D5 Java carrier.
+                if (gi.isNil()) {
+                    Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
+                }
+                o = gi.data();
+                continue;
+            }
+            return o;
         }
-        return o;
     }
 
     private Object read(VirtualFrame frame) {
