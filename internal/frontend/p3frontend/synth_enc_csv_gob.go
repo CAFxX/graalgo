@@ -143,6 +143,7 @@ func syntheticCsvPackage() *types.Package {
 		types.NewNamed(tn, types.NewStruct(p.fields, nil), nil)
 	}
 
+	pkg.MarkComplete()
 	return pkg
 }
 
@@ -193,5 +194,6 @@ func syntheticGobPackage() *types.Package {
 	pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, "RegisterName",
 		newSig(nil, tuple(newParam("name", stringT), newParam("value", anyT)), tuple())))
 
+	pkg.MarkComplete()
 	return pkg
 }

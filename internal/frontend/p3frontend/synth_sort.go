@@ -158,5 +158,6 @@ func syntheticSortPackage() *types.Package {
 		[]*types.Var{newParam("x", anyT), newParam("less", lessFunc)},
 		[]*types.Var{newParam("", boolT)})
 
+	pkg.MarkComplete()
 	return pkg
 }

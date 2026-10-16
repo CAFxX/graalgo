@@ -124,5 +124,6 @@ func syntheticStrconvPackage() *types.Package {
 	// UnquoteChar func(s string, quote byte) (value rune, multibyte bool, tail string, err error)
 	insertFunc("UnquoteChar", []*types.Var{newParam("s", stringT), newParam("quote", byteT)}, []*types.Var{newParam("value", runeT), newParam("multibyte", boolT), newParam("tail", stringT), newParam("err", errorT)}, false)
 
+	pkg.MarkComplete()
 	return pkg
 }

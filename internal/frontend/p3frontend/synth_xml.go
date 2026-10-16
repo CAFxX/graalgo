@@ -329,5 +329,6 @@ func syntheticXmlPackage() *types.Package {
 	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "HTMLEntity", types.NewMap(stringT, stringT)))
 	pkg.Scope().Insert(types.NewVar(token.NoPos, pkg, "HTMLAutoClose", types.NewSlice(stringT)))
 
+	pkg.MarkComplete()
 	return pkg
 }
