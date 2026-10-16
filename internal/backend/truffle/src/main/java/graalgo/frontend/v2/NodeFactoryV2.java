@@ -9,8 +9,10 @@ import graalgo.frontend.BinaryOpNode;
 import graalgo.frontend.BlockNode;
 import graalgo.frontend.BranchNode;
 import graalgo.frontend.CapNode;
+import graalgo.frontend.ClearNode;
 import graalgo.frontend.CompositeLitNode;
 import graalgo.frontend.ConstNode;
+import graalgo.frontend.CopyNode;
 import graalgo.frontend.DeleteNode;
 import graalgo.frontend.ExprStmtNode;
 import graalgo.frontend.ForRepeatingNode;
@@ -675,7 +677,7 @@ public final class NodeFactoryV2 {
 
         com.oracle.truffle.api.nodes.RepeatingNode repeating;
         switch (xkind) {
-            case INT, INT64, UNTYPED_INT -> {
+            case INT64, UNTYPED_INT -> {
                 int boundSlot = scope.frames.addSlot(FrameSlotKind.Long, "rangebound$", null);
                 int indexSlot = scope.frames.addSlot(FrameSlotKind.Long, "rangeindex$", null);
                 repeating = new RangeIntNode(x, body, keySlot, keyKind, keyBoxed, define,
@@ -851,13 +853,17 @@ public final class NodeFactoryV2 {
             }
             case "pkgref": {
                 // Package-qualified reference (e.g. fmt.Println).
-                // v2 does not yet load external packages; resolve
-                // same-package functions by name, fail clearly otherwise.
+                // External package loading is future work for v2: it requires
+                // (1) the Go emitter to include external package function info
+                // in the binary format, (2) a Java-side package loader (via
+                // disk importer or similar), and (3) cross-package function
+                // resolution. This is a multi-component feature, not a bug.
+                // Fail loudly rather than silently producing wrong code.
                 String pkg = getString(fields, "pkg", where);
                 String name = getString(fields, "name", where);
                 throw new FrontendException(
                     where + ": pkgref " + pkg + "." + name +
-                    " not yet supported in v2 (external packages are future work)");
+                    " not yet supported in v2 (external package loading is future work)");
             }
             case "compositelit": {
                 return buildCompositeLit(fields, where, scope);
@@ -1215,7 +1221,7 @@ public final class NodeFactoryV2 {
      * Builds a composite literal (e.g. []int{1,2,3}, Point{X:1}).
      */
     @SuppressWarnings("unchecked")
-    private static GoExprNode buildCompositeLit(Map<String, Object> fields, String where, V2Scope scope) {
+    private GoExprNode buildCompositeLit(Map<String, Object> fields, String where, V2Scope scope) {
         GoKind kind = goKindForTypeId(scope.types, fields.get("type"), where);
         List<Object> elems = getList(fields, "elems", where);
 
@@ -1272,7 +1278,7 @@ public final class NodeFactoryV2 {
 
         // Elem kind: from the type. For slices/arrays, get from detail.
         GoKind elemKind = GoKind.INTERFACE;
-        GoKind keyKind = GoKind.INT;
+        GoKind keyKind = GoKind.INT64;
         int arrayLen = -1;
 
         return new CompositeLitNode(
