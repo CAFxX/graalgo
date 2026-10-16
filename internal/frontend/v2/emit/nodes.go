@@ -31,7 +31,10 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: %s is not a func", fd.Name.Name)
 	}
-	sig := e.typeID(fn.Type())
+	sig, err := e.typeID(fn.Type())
+	if err != nil {
+		return nil, err
+	}
 
 	params := []any{}
 	if fd.Type.Params != nil {
@@ -41,11 +44,18 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 				if pobj == nil {
 					continue
 				}
-				pid := e.declareParam(pobj)
+				pid, err := e.declareParam(pobj)
+				if err != nil {
+					return nil, err
+				}
+				pt, err := e.typeID(pobj.Type())
+				if err != nil {
+					return nil, err
+				}
 				params = append(params, e.node("param", name, map[string]any{
 					"name": name.Name,
 					"obj":  pid,
-					"type": e.typeID(pobj.Type()),
+					"type": pt,
 				}))
 			}
 		}
@@ -152,7 +162,9 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 		for _, l := range st.Lhs {
 			if id, ok := l.(*ast.Ident); ok && id.Name != "_" {
 				if obj := e.info.Info.Defs[id]; obj != nil {
-					e.declareObject(obj)
+					if _, err := e.declareObject(obj); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -177,13 +189,21 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 		vs := spec.(*ast.ValueSpec)
 		if vs.Type != nil {
 			if tv, ok := e.info.Info.Types[vs.Type]; ok {
-				typ = e.typeID(tv.Type)
+				t, err := e.typeID(tv.Type)
+				if err != nil {
+					return nil, err
+				}
+				typ = t
 			}
 		}
 		for _, name := range vs.Names {
 			names = append(names, name.Name)
 			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				objs = append(objs, oid)
 			} else {
 				objs = append(objs, -1)
 			}
@@ -287,14 +307,22 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 	if st.Key != nil {
 		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
+				kid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				key = kid
 			}
 		}
 	}
 	if st.Value != nil {
 		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
+				vid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				value = vid
 			}
 		}
 	}
@@ -328,19 +356,27 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		if err != nil {
 			return nil, err
 		}
+		xt, err := e.exprType(x)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("unary", x, map[string]any{
 			"op":   ex.Op.String(),
 			"x":    xn,
-			"type": e.exprType(x),
+			"type": xt,
 		}), nil
 	case *ast.ParenExpr:
 		xn, err := e.emitExpr(ex.X)
 		if err != nil {
 			return nil, err
 		}
+		xt, err := e.exprType(x)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("paren", x, map[string]any{
 			"x":    xn,
-			"type": e.exprType(x),
+			"type": xt,
 		}), nil
 	case *ast.CallExpr:
 		return e.emitCall(ex)
@@ -361,7 +397,11 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 	var typ any
 	if c.Type != nil {
 		if tv, ok := e.info.Info.Types[c.Type]; ok {
-			typ = e.typeID(tv.Type)
+			t, err := e.typeID(tv.Type)
+			if err != nil {
+				return nil, err
+			}
+			typ = t
 		}
 	}
 	elems := []any{}
@@ -376,12 +416,18 @@ func (e *Emitter) emitCompositeLit(c *ast.CompositeLit) (map[string]any, error) 
 			if err != nil {
 				return nil, err
 			}
+			// KeyValueExpr never has a go/types entry; exprType keeps its
+			// null type by design (see exprType).
+			kvt, err := e.exprType(kv)
+			if err != nil {
+				return nil, err
+			}
 			elems = append(elems, map[string]any{
 				"kind": "keyvalue",
 				"fields": map[string]any{
 					"key":   kn,
 					"value": vn,
-					"type":  e.exprType(kv),
+					"type":  kvt,
 				},
 			})
 			continue
@@ -414,10 +460,14 @@ func (e *Emitter) emitIndex(ix *ast.IndexExpr) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	ixt, err := e.exprType(ix)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("index", ix, map[string]any{
 		"x":     x,
 		"index": index,
-		"type":  e.exprType(ix),
+		"type":  ixt,
 	}), nil
 }
 
@@ -448,12 +498,16 @@ func (e *Emitter) emitSlice(s *ast.SliceExpr) (map[string]any, error) {
 		}
 		max = mn
 	}
+	st, err := e.exprType(s)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("slice", s, map[string]any{
 		"x":    x,
 		"low":  low,
 		"high": high,
 		"max":  max,
-		"type": e.exprType(s),
+		"type": st,
 	}), nil
 }
 
@@ -472,19 +526,33 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 				"builtin": id.Name,
 			}), nil
 		}
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
+		ot, err := e.typeID(obj.Type())
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
-			"type": e.typeID(obj.Type()),
+			"type": ot,
 		}), nil
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
-		oid := e.declareObject(obj)
+		oid, err := e.declareObject(obj)
+		if err != nil {
+			return nil, err
+		}
+		ot, err := e.typeID(obj.Type())
+		if err != nil {
+			return nil, err
+		}
 		return e.node("ident", id, map[string]any{
 			"name": id.Name,
 			"obj":  oid,
-			"type": e.typeID(obj.Type()),
+			"type": ot,
 		}), nil
 	}
 	return nil, fmt.Errorf("emit: unresolved ident %s", id.Name)
@@ -495,9 +563,13 @@ func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
 	if !ok {
 		return nil, fmt.Errorf("emit: no type for basiclit %s", l.Value)
 	}
+	lt, err := e.typeID(tv.Type)
+	if err != nil {
+		return nil, err
+	}
 	fields := map[string]any{
 		"value": l.Value,
-		"type":  e.typeID(tv.Type),
+		"type":  lt,
 	}
 	if tv.Value != nil {
 		fields["const"] = tv.Value.ExactString()
@@ -515,11 +587,15 @@ func (e *Emitter) emitBinary(b *ast.BinaryExpr) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	bt, err := e.exprType(b)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("binary", b, map[string]any{
 		"op":   b.Op.String(),
 		"x":    x,
 		"y":    y,
-		"type": e.exprType(b),
+		"type": bt,
 	}), nil
 }
 
@@ -549,11 +625,15 @@ func (e *Emitter) emitCall(c *ast.CallExpr) (map[string]any, error) {
 			}
 		}
 	}
+	ct, err := e.exprType(c)
+	if err != nil {
+		return nil, err
+	}
 	return e.node("call", c, map[string]any{
 		"fun":      fun,
 		"args":     args,
 		"builtin":  builtin,
-		"type":     e.exprType(c),
+		"type":     ct,
 		"ellipsis": c.Ellipsis.IsValid(),
 	}), nil
 }
@@ -567,10 +647,14 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 			return nil, err
 		}
 		_ = sel
+		selt, err := e.exprType(s)
+		if err != nil {
+			return nil, err
+		}
 		return e.node("selector", s, map[string]any{
 			"x":    x,
 			"sel":  s.Sel.Name,
-			"type": e.exprType(s),
+			"type": selt,
 		}), nil
 	}
 	// Package-qualified identifier (e.g. fmt.Println).
@@ -583,14 +667,22 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 				}
 				var oid any
 				if target != nil {
-					oid = e.declareObject(target)
+					toid, err := e.declareObject(target)
+					if err != nil {
+						return nil, err
+					}
+					oid = toid
 				}
 				_ = pkgname
+				st, err := e.exprType(s)
+				if err != nil {
+					return nil, err
+				}
 				return e.node("pkgref", s, map[string]any{
 					"pkg":  id.Name,
 					"name": s.Sel.Name,
 					"obj":  oid,
-					"type": e.exprType(s),
+					"type": st,
 				}), nil
 			}
 		}
@@ -599,9 +691,25 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 }
 
 // exprType returns the type-table id for an expression's type.
-func (e *Emitter) exprType(x ast.Expr) any {
+//
+// It fails loudly when go/types recorded no type for the expression: a
+// missing type means the checker did not understand the expression, and
+// emitting a null type would silently corrupt the document.
+//
+// The one legitimate exception is *ast.KeyValueExpr: go/types never
+// records a type for a composite-literal element (it is a structural
+// node, not a typed expression — the key and value carry their own
+// types), so those nodes keep a null type by design.
+func (e *Emitter) exprType(x ast.Expr) (any, error) {
 	if tv, ok := e.info.Info.Types[x]; ok && tv.Type != nil {
-		return e.typeID(tv.Type)
+		id, err := e.typeID(tv.Type)
+		if err != nil {
+			return nil, err
+		}
+		return id, nil
 	}
-	return nil
+	if _, ok := x.(*ast.KeyValueExpr); ok {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("emit: no type recorded for expr %T", x)
 }

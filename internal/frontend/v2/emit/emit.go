@@ -78,7 +78,9 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		if obj == nil {
 			return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
 		}
-		e.declareObject(obj)
+		if _, err := e.declareObject(obj); err != nil {
+			return nil, err
+		}
 	}
 
 	for _, fd := range decls {
@@ -184,30 +186,44 @@ func runeCol(p token.Position) int {
 }
 
 // declareObject assigns an object id if not already assigned.
-func (e *Emitter) declareObject(obj types.Object) int {
+func (e *Emitter) declareObject(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, false)
 }
 
 // declareParam assigns an object id for a function parameter.
-func (e *Emitter) declareParam(obj types.Object) int {
+func (e *Emitter) declareParam(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, true)
 }
 
-func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) int {
+func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) (int, error) {
 	if id, ok := e.objIDs[obj]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.objects)
 	e.objIDs[obj] = id
 	// Placeholder; filled by describeObject below. Registered before
 	// description so recursive references work.
 	e.objects = append(e.objects, nil)
-	e.objects[id] = e.describeObject(obj, isParam)
-	return id
+	desc, err := e.describeObject(obj, isParam)
+	if err != nil {
+		return 0, err
+	}
+	e.objects[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any {
-	typ := e.typeID(obj.Type())
+// describeObject builds the object-table entry for obj.
+//
+// Every object kind the checker can produce must be handled explicitly:
+// the old default branch emitted every unknown object as a value-less
+// "var", silently dropping constants (e.g. `const k = 42`, `math.Pi`,
+// `true`) and type names (e.g. `time.Duration` in a conversion).
+// Anything still unhandled is a loud error, never a guess.
+func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any, error) {
+	typ, err := e.typeID(obj.Type())
+	if err != nil {
+		return nil, err
+	}
 	switch o := obj.(type) {
 	case *types.Var:
 		return map[string]any{
@@ -215,35 +231,54 @@ func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any 
 			"name":  o.Name(),
 			"type":  typ,
 			"param": isParam,
-		}
+		}, nil
 	case *types.Func:
 		return map[string]any{
 			"kind": "func",
 			"name": o.Name(),
 			"type": typ,
-		}
-	default:
+		}, nil
+	case *types.Const:
+		// Inline the constant value: uses of the constant refer to this
+		// object id, and the backend substitutes the recorded value.
+		// o.Val() is the constant's declared value (go/types guarantees
+		// it is non-nil for *types.Const).
 		return map[string]any{
-			"kind": "var",
+			"kind":  "const",
+			"name":  o.Name(),
+			"type":  typ,
+			"value": o.Val().ExactString(),
+		}, nil
+	case *types.TypeName:
+		// A type name in value position (e.g. the fun of the conversion
+		// time.Duration(x)) denotes a type reference.
+		return map[string]any{
+			"kind": "typename",
 			"name": o.Name(),
 			"type": typ,
-		}
+		}, nil
+	default:
+		return nil, fmt.Errorf("emit: unsupported object kind %T (%s)", obj, obj.Name())
 	}
 }
 
 // typeID assigns a type-table id, registering before describing (recursion).
-func (e *Emitter) typeID(t types.Type) int {
+func (e *Emitter) typeID(t types.Type) (int, error) {
 	if id, ok := e.typeIDs[t]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.types)
 	e.typeIDs[t] = id
 	e.types = append(e.types, nil) // placeholder for recursion
-	e.types[id] = e.describeType(t)
-	return id
+	desc, err := e.describeType(t)
+	if err != nil {
+		return 0, err
+	}
+	e.types[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeType(t types.Type) map[string]any {
+func (e *Emitter) describeType(t types.Type) (map[string]any, error) {
 	switch tt := t.(type) {
 	case *types.Basic:
 		class := basicClass(tt)
@@ -254,30 +289,50 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"class":   class,
 				"untyped": tt.Info()&types.IsUntyped != 0,
 			},
-		}
+		}, nil
 	case *types.Pointer:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "pointer",
-			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"elem": elem},
+		}, nil
 	case *types.Slice:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "slice",
-			"detail": map[string]any{"elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"elem": elem},
+		}, nil
 	case *types.Array:
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "array",
-			"detail": map[string]any{"len": tt.Len(), "elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"len": tt.Len(), "elem": elem},
+		}, nil
 	case *types.Map:
+		key, err := e.typeID(tt.Key())
+		if err != nil {
+			return nil, err
+		}
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "map",
 			"detail": map[string]any{
-				"key":  e.typeID(tt.Key()),
-				"elem": e.typeID(tt.Elem()),
+				"key":  key,
+				"elem": elem,
 			},
-		}
+		}, nil
 	case *types.Chan:
 		var dir string
 		switch tt.Dir() {
@@ -288,25 +343,37 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		case types.RecvOnly:
 			dir = "recv"
 		}
+		elem, err := e.typeID(tt.Elem())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind":   "chan",
-			"detail": map[string]any{"dir": dir, "elem": e.typeID(tt.Elem())},
-		}
+			"detail": map[string]any{"dir": dir, "elem": elem},
+		}, nil
 	case *types.Signature:
 		params := []any{}
 		for i := 0; i < tt.Params().Len(); i++ {
 			p := tt.Params().At(i)
+			pt, err := e.typeID(p.Type())
+			if err != nil {
+				return nil, err
+			}
 			params = append(params, map[string]any{
 				"name": p.Name(),
-				"type": e.typeID(p.Type()),
+				"type": pt,
 			})
 		}
 		results := []any{}
 		for i := 0; i < tt.Results().Len(); i++ {
 			r := tt.Results().At(i)
+			rt, err := e.typeID(r.Type())
+			if err != nil {
+				return nil, err
+			}
 			results = append(results, map[string]any{
 				"name": r.Name(),
-				"type": e.typeID(r.Type()),
+				"type": rt,
 			})
 		}
 		return map[string]any{
@@ -316,23 +383,31 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"results":  results,
 				"variadic": tt.Variadic(),
 			},
-		}
+		}, nil
 	case *types.Named:
+		underlying, err := e.typeID(tt.Underlying())
+		if err != nil {
+			return nil, err
+		}
 		return map[string]any{
 			"kind": "named",
 			"detail": map[string]any{
 				"name":       namedName(tt),
-				"underlying": e.typeID(tt.Underlying()),
+				"underlying": underlying,
 				"methods":    []any{},
 			},
-		}
+		}, nil
 	case *types.Struct:
 		fields := []any{}
 		for i := 0; i < tt.NumFields(); i++ {
 			f := tt.Field(i)
+			ft, err := e.typeID(f.Type())
+			if err != nil {
+				return nil, err
+			}
 			fields = append(fields, map[string]any{
 				"name":     f.Name(),
-				"type":     e.typeID(f.Type()),
+				"type":     ft,
 				"tag":      tt.Tag(i),
 				"embedded": f.Embedded(),
 				"offset":   0,
@@ -341,7 +416,7 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 		return map[string]any{
 			"kind":   "struct",
 			"detail": map[string]any{"fields": fields},
-		}
+		}, nil
 	case *types.Interface:
 		return map[string]any{
 			"kind": "interface",
@@ -350,12 +425,37 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"methods":  []any{},
 				"embedded": []any{},
 			},
+		}, nil
+	case *types.Alias:
+		// Aliases are transparent: `any` is interface{}, `byte` is uint8,
+		// `rune` is int32, and `type A = int` is int. Unaliasing loses
+		// nothing semantically significant (the alias name is not part of
+		// the type's meaning), so describe the actual type instead of
+		// failing or emitting a bogus "unknown". This is structural, not
+		// name-keyed: every alias is resolved the same way.
+		return e.describeType(types.Unalias(t))
+	case *types.Tuple:
+		// Tuples surface as the type of a call expression: go/types models
+		// a call's results as a tuple (empty for void calls like
+		// println(x)). Describe it structurally — element type ids, empty
+		// for no results — instead of a bogus "unknown".
+		elems := []any{}
+		for i := 0; i < tt.Len(); i++ {
+			et, err := e.typeID(tt.At(i).Type())
+			if err != nil {
+				return nil, err
+			}
+			elems = append(elems, et)
 		}
-	default:
 		return map[string]any{
-			"kind":   "basic",
-			"detail": map[string]any{"name": t.String(), "class": "unknown", "untyped": false},
-		}
+			"kind":   "tuple",
+			"detail": map[string]any{"elems": elems},
+		}, nil
+	default:
+		// No silent "basic"/"unknown" fallback: an unhandled type kind
+		// (type parameters, unions, aliases, ...) would be a lie in the
+		// type table. Fail loudly instead.
+		return nil, fmt.Errorf("emit: unsupported type kind %T (%s)", t, t.String())
 	}
 }
 

@@ -165,12 +165,27 @@ func main() {
 		want: "unsupported expr",
 	},
 	{
-		name: "IndexListExpr_generics",
+		name: "Generics_TypeParam",
 		src: `package main
 func id[T any](x T) T { return x }
 func main() { println(id[int](42)) }
 `,
-		want: "unsupported expr",
+		// The generic declaration fails before the instantiation is
+		// reached: type parameters have no type-table representation.
+		// (Previously this failed at the IndexListExpr instead.)
+		want: "unsupported type",
+	},
+	{
+		// *types.Nil (the universe nil object) is not a var, func, const,
+		// or type name: it must fail loudly, never become a value-less var.
+		name: "NilObject",
+		src: `package main
+func main() {
+	var n *int = nil
+	println(n)
+}
+`,
+		want: "unsupported object",
 	},
 }
 
