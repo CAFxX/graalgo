@@ -36,7 +36,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 GENERATORS = [
     ("gen_synth_archive_mime.py", ["synth_archive_tar.go", "synth_archive_zip.go",
                                    "synth_mime.go", "synth_mime_multipart.go",
-                                   "synth_mime_quotedprintable.go"]),
+                                   "synth_mime_quotedprintable.go",
+                                   # Table-entry fragment for manual insertion
+                                   # into m7MultiResultFuncs; drift-gated like
+                                   # the sources (P1-1: never lose it again).
+                                   "archive_mime_table_entries.txt"]),
     ("gen_synth_bufio.py", ["synth_bufio.go"]),
     ("gen_synth_compress.py", ["synth_compress_bzip2.go", "synth_compress_flate.go",
                                "synth_compress_gzip.go", "synth_compress_lzw.go",

@@ -59,7 +59,10 @@
 #     from gc 1.27.1 sources (the driver version-pins go1.27.1). Committed and
 #     drift-gated. Generator -> outputs:
 #       gen_synth_archive_mime.py -> synth_archive_tar.go, synth_archive_zip.go,
-#         synth_mime.go, synth_mime_multipart.go, synth_mime_quotedprintable.go
+#         synth_mime.go, synth_mime_multipart.go, synth_mime_quotedprintable.go,
+#         archive_mime_table_entries.txt (the m7MultiResultFuncs fragment for
+#         manual insertion; every entry must have a matching table row —
+#         enforced by TestArchiveMimeTableEntriesInserted)
 #       gen_synth_bufio.py        -> synth_bufio.go (+ gen_synth_adapt/ patch)
 #       gen_synth_compress.py     -> synth_compress_{bzip2,flate,gzip,lzw,zlib}.go
 #         (+ gen_synth_adapt/ patches)
@@ -78,6 +81,7 @@
 #     vendored, not generator outputs.)
 GENERATED := internal/frontend/gofrontend internal/frontend/overlay.json
 GENERATED_SYNTH := \
+	internal/frontend/archive_mime_table_entries.txt \
 	internal/frontend/synth_archive_tar.go \
 	internal/frontend/synth_archive_zip.go \
 	internal/frontend/synth_mime.go \

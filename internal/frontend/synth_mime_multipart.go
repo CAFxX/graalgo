@@ -931,7 +931,7 @@ func __mpFileHeaderOpen(fh *FileHeader) __mpFileHeaderOpenPair {
 		r := io.NewSectionReader(f, fh.tmpoff, fh.Size)
 		return __mpFileHeaderOpenPair{f0: sectionReadCloser{r, f}, f1: nil}
 	}
-	__mrtmp1 := __mpFileHeaderOpen(os, fh.tmpfile); return __mpFileHeaderOpenPair{__mrtmp1.f0, __mrtmp1.f1}
+	__mrtmp1_f0, __mrtmp1_f1 := os.Open(fh.tmpfile); return __mpFileHeaderOpenPair{f0: __mrtmp1_f0, f1: __mrtmp1_f1}
 }
 
 func (fh *FileHeader) Open() (File, error) {

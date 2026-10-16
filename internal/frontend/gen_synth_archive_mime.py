@@ -424,7 +424,23 @@ def extract_receiver(body, dot_pos):
     return body[start:end].strip(), start
 
 
-def rewrite_call_sites(body, mr_map):
+# Package qualifiers that must never be treated as same-package receivers
+# when rewriting multi-result call sites. A qualified call pkg.Fn(...) is a
+# foreign-package call even when the bare name Fn collides with a
+# same-package multi-result func (P1-1: `return os.Open(...)` inside
+# FileHeader.Open was rewritten to __mpFileHeaderOpen(os, ...), passing the
+# os package as a receiver value — a type error — because mr_map["Open"]
+# is the local FileHeader.Open helper). Per-file import sets extend this
+# (foreign_pkgs in process_package); the literal set covers stdlib packages
+# the import regex can miss.
+FOREIGN_PKG_NAMES = {'os', 'io', 'bytes', 'strings', 'fmt', 'errors', 'sort',
+                     'strconv', 'unicode', 'utf8', 'path', 'filepath', 'math',
+                     'time', 'sync', 'bufio', 'hash', 'crc32', 'crypto', 'rand',
+                     'encoding', 'base64', 'binary', 'maps', 'slices',
+                     'reflect', 'mime', 'quotedprintable', 'flate', 'fs',
+                     'net', 'url', 'context', 'regexp', 'syscall', 'runtime'}
+
+def rewrite_call_sites(body, mr_map, foreign_pkgs=frozenset()):
     """Rewrite calls to multi-result functions in a helper body."""
     if not mr_map:
         return body
@@ -494,9 +510,8 @@ def rewrite_call_sites(body, mr_map):
             if rd >= 0 and body[rd] == '.':
                 rc, rs = extract_receiver(body, rd)
                 # Skip if not a simple identifier, or if it's a package name
-                pkg_names = {'os', 'io', 'bytes', 'strings', 'fmt', 'errors', 'sort',
-                           'strconv', 'unicode', 'path', 'filepath', 'math', 'time',
-                           'sync', 'bufio', 'hash', 'crypto', 'encoding'}
+                # (P1-1: foreign_pkgs extends the literal set per file).
+                pkg_names = FOREIGN_PKG_NAMES | set(foreign_pkgs)
                 if re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', rc) and rc not in pkg_names:
                     recv, recv_start = rc, rs
                 else:
@@ -584,7 +599,7 @@ def make_helper_name(pkg_prefix, recv_type, name):
     recv_part = recv_type if recv_type else ''
     return f"__{pkg_prefix}{recv_part}{name}"
 
-def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
+def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix='', foreign_pkgs=frozenset()):
     """Rewrite return statements to return pair struct.
 
     - Skips function literals (their returns belong to the literal).
@@ -764,7 +779,17 @@ def rewrite_body_returns(body, pair_name, fields, mr_map=None, pkg_prefix=''):
                 if pend != -1 and v[pend+1:].strip() == '':
                     args = v[pstart+1:pend]
                     call_text = v[:pend+1]
-                    if mr_map and fname in mr_map:
+                    # P1-1: a package-qualified call (os.Open, io.ReadFull)
+                    # is foreign even when the bare name collides with a
+                    # same-package multi-result func in mr_map (mr_map["Open"]
+                    # is the local FileHeader.Open helper). Rewriting it with
+                    # the local helper passes the package as a receiver
+                    # value — a type error (synth_mime_multipart.go:934).
+                    # Leave foreign calls for the frontend's export-time
+                    # desugar, which resolves them through the right table.
+                    qual = dotted.split('.')[0] if '.' in dotted else ''
+                    foreign = qual in (FOREIGN_PKG_NAMES | set(foreign_pkgs))
+                    if mr_map and fname in mr_map and not foreign:
                         helper_name, callee_fields = mr_map[fname]
                         recv_prefix = ''
                         if '.' in dotted:
@@ -1029,7 +1054,11 @@ def process_package(pkg_path, cfg):
         src = strip_build_tags(src)
         src = strip_package(src)
         # Collect imports before stripping
-        all_imports.update(extract_imports(src))
+        file_imports = extract_imports(src)
+        all_imports.update(file_imports)
+        # Base names of imported packages: qualifiers that are foreign
+        # (P1-1: never rewrite pkg.Fn as a same-package multi-result call).
+        foreign_pkgs = {imp.split('/')[-1] for imp in file_imports}
         src = strip_imports(src)
         
         # Extract functions
@@ -1078,7 +1107,7 @@ def process_package(pkg_path, cfg):
                 
                 helper_sig = f"func {helper_name}({all_params}) {pair_name} {{\n"
                 # Rewrite body returns
-                rewritten_body = rewrite_body_returns(fn['body'], pair_name, list(zip(field_names, [r[1] for r in results])), mr_map=mr_map, pkg_prefix=pkg_prefix)
+                rewritten_body = rewrite_body_returns(fn['body'], pair_name, list(zip(field_names, [r[1] for r in results])), mr_map=mr_map, pkg_prefix=pkg_prefix, foreign_pkgs=foreign_pkgs)
                 # For named results, declare local variables if needed.
                 # Heuristic: bare return, or assigned (with =), compound assign,
                 # inc/dec, or multi-assign. Over-declaring causes "declared and
@@ -1137,7 +1166,8 @@ def process_package(pkg_path, cfg):
     
     # Rewrite call sites using pre-pass mr_map
     if mr_map:
-        full_src = rewrite_call_sites(full_src, mr_map)
+        all_foreign = {imp.split('/')[-1] for imp in all_imports}
+        full_src = rewrite_call_sites(full_src, mr_map, foreign_pkgs=all_foreign)
     
     # Prepend collected imports (exclude internal/ which we stub).
     # Only include imports actually referenced in code (not comments).
@@ -1207,9 +1237,15 @@ def main():
             else:
                 all_entries.append(f'    {{"{pkg}", "{method}", "", "{helper}", "{pair}", []string{{{fields_str}}}}},')
     
-    # Write table entries to a file for manual insertion
-    entries_path = os.path.join(os.environ.get("GEN_SYNTH_TMPDIR", tempfile.gettempdir()),
-                                     'archive_mime_table_entries.txt')
+    # Write table entries alongside the generated sources (a drift-gated
+    # repo artifact, copied by run_gen_synth.py like the synth_*.go files).
+    # Each entry must be inserted into m7MultiResultFuncs in mrdesugar_m5.go
+    # by hand; TestArchiveMimeTableEntriesInserted fails CI if any entry
+    # has no matching table row (P1-1: the manual insertion step was once
+    # silently skipped, leaving runtime panic stubs for FileHeader.Open
+    # and Reader.ReadForm). Never write this to a tmpdir: an ephemeral
+    # side-channel is how the insertion got lost.
+    entries_path = os.path.join(OUTDIR, 'archive_mime_table_entries.txt')
     with open(entries_path, 'w') as f:
         f.write('\n'.join(all_entries) + '\n')
     print(f"Wrote {len(all_entries)} table entries to {entries_path}", file=sys.stderr)
