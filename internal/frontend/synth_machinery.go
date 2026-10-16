@@ -1095,15 +1095,20 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 						}
 						continue
 					}
-					// Gate-1 #2: fail-fast stubs must not be pair-transformed.
-					// A body that is a single panic("... not in M{5,7,...}
-					// scope ...") must be preserved; the pair-transform
-					// would replace the fail-fast with a working helper.
-					// General (real-x509 lane): stubs ARE registered (so
-					// call sites link to the stub, which panics at runtime
-					// if invoked); skipPairTransform below prevents the
-					// pair-transform. The value-position error is raised
-					// at the use site in exportSyntheticQualified.
+					// Gate-1 #2: fail-fast stubs must not be pair-transformed
+					// and must not be registered. A body that is a single
+					// panic("... not in M{5,7,...} scope ...") must be
+					// preserved; the pair-transform would replace the
+					// fail-fast with a working helper, and registering the
+					// stub suppresses the named milestone scope error at
+					// call sites (isMultiResultSyntheticFailFast treats
+					// registered functions as handled, but a multi-result
+					// stub's call sites cannot be emitted under WS D — the
+					// named M7/M5 error is the honest signal, not the
+					// generic WS D error). Package-level stubs stay skipped
+					// (never in funcByObj/synthFuncIDs); methods keep a
+					// methodIndex dummy so method resolution succeeds and
+					// the call site fails fast with the named error.
 					if isFailFastStub(d) {
 						if d.Recv != nil {
 							recv := sig.Recv()
@@ -1113,18 +1118,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 								}
 							}
 						}
-					// General (real-x509 lane): fail-fast stubs ARE registered
-						// (so call sites link to the stub, which panics at
-						// runtime if invoked — the honest fail-fast
-						// behavior); skipPairTransform below prevents the
-						// pair-transform from replacing the panic body with
-						// a working helper. A stub used as a value (e.g.
-						// var f = time.ParseDuration) is a compile-time
-						// error: there is no pair form to serve as the
-						// value. That error is raised at the use site in
-						// exportSyntheticQualified via the synthFuncIDs
-						// entry registered below.
-						// Fall through to registration (do not continue).
+						continue
 					}
 					// Not table-driven, not a stub: fall through to normal
 					// processing.
@@ -1132,14 +1126,6 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			}
 			// Pass 1: create fi and register in maps (defFunc deferred to
 			// pass 2 below).
-			// General (real-x509 lane): fail-fast stubs are registered
-			// (so call sites link to them) but skip pair-transform below.
-			skipPairTransform := false
-			if sig.Results().Len() > 1 && d.Body != nil {
-				if isFailFastStub(d) {
-					skipPairTransform = true
-				}
-			}
 			fi := &funcDeclInfo{fd: d, obj: obj, funcID: -1, sig: sig, file: file}
 			if d.Recv != nil {
 				recv := sig.Recv()
@@ -1171,12 +1157,9 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			// via the userMRFuncs mechanism. Register here so call sites
 			// in importing packages classify correctly. registerUserMRFunc
 			// is idempotent and skips table-driven/single-result/bodyless.
-			// General (real-x509 lane): fail-fast stubs skip the
-			// pair-transform (their panic body must be preserved).
-			if !skipPairTransform {
-				if _, rerr := e.registerUserMRFunc(fi); rerr != nil {
-					return rerr
-				}
+			// (Fail-fast stubs never reach here — they are skipped above.)
+			if _, rerr := e.registerUserMRFunc(fi); rerr != nil {
+				return rerr
 			}
 			// Defer defFunc to pass 2 (see above).
 			funcEntries = append(funcEntries, &synthFuncEntry{obj: obj, fi: fi})

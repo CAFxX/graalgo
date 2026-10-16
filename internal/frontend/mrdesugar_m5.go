@@ -395,19 +395,14 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"syscall", "RawSyscall", "", "__rawsyscall", "syscallTriple", []string{"r1", "r2", "err"}, false},
 	{"syscall", "Syscall6", "", "__syscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
 	{"syscall", "RawSyscall6", "", "__rawsyscall6", "syscallTriple", []string{"r1", "r2", "err"}, false},
-	// P3-M8 (wave 2, reflect): multi-result members desugared via the
-	// single-result __-helpers. Select is package-level; the Value methods
-	// are on the Value struct; the Type methods are on rtype but usually
-	// called via the Type interface (the classify function retries with
-	// recvType="rtype" for reflect interface methods); StructTag.Lookup is
-	// on the named string type StructTag.
-	{"reflect", "Select", "", "__reflectSelect", "reflectSelectTriple", []string{"chosen", "recv", "recvOK"}, false},
-	{"reflect", "FieldByIndexErr", "Value", "__reflectFieldByIndexErr", "reflectValuePair", []string{"v", "err"}, false},
-	{"reflect", "TryRecv", "Value", "__reflectTryRecv", "reflectValueBoolPair", []string{"x", "ok"}, false},
-	{"reflect", "MethodByName", "rtype", "__reflectTMethodByName", "reflectMethodPair", []string{"m", "ok"}, true},
-	{"reflect", "FieldByName", "rtype", "__reflectTFieldByName", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "FieldByNameFunc", "rtype", "__reflectTFieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "Lookup", "StructTag", "__reflect_taglookup", "reflectTagPair", []string{"value", "ok"}, false},
+	// P3-M8 (wave 2, reflect): RETIRED by the real-reflect2 migration
+	// (2026-10-16) — reflect is now disk-imported from GOROOT, and the
+	// __-helpers/pair types these entries named (__reflectSelect,
+	// reflectSelectTriple, ...) existed only in the retired synthetic
+	// reflect source. transformDiskMultiResult now owns real reflect's
+	// multi-result functions (the static-table skip in the transform
+	// would otherwise leave them unhandled). Entries removed; the disk
+	// classifier (classifyDiskMultiResultCall) serves these calls.
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
@@ -2162,6 +2157,25 @@ func isXmlTokenMethod(f *types.Func) (string, bool) {
 // must match the table entry — a user type with the same method name
 // (e.g. a local Encoding.Decode) is never desugared. Returns nil when
 // the call is not one of the table's operations.
+
+// packageForMRTable resolves a desugar table's package path to the
+// *types.Package holding the table's pair types and helpers, whether the
+// package is synthetic (syntheticSources) or disk-built (real-*
+// migrations retire synthetic packages to disk imports). Returns nil
+// when the package cannot be resolved — the table entry is then stale
+// (e.g. m7 entries for synthetic reflect after the real-reflect2
+// migration) and the caller must skip it instead of panicking, letting
+// the disk multi-result classifier serve the call.
+func packageForMRTable(pkgPath string) *types.Package {
+	if _, ok := syntheticSources[pkgPath]; ok {
+		return getSyntheticPackage(pkgPath).pkg
+	}
+	if dp, err := getDiskPackage(pkgPath); err == nil && dp != nil {
+		return dp.pkg
+	}
+	return nil
+}
+
 func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Type) *mrPlan {
 	if fn == nil || fn.Pkg() == nil || fn.Pkg().Path() != pkgPath {
 		return nil
@@ -2201,8 +2215,11 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
-		obj := sp.pkg.Scope().Lookup(mf.pairType)
+		sp := packageForMRTable(mf.pkgPath)
+		if sp == nil {
+			continue
+		}
+		obj := sp.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
 		}
@@ -2519,8 +2536,11 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
-		obj := sp.pkg.Scope().Lookup(mf.pairType)
+		sp := packageForMRTable(mf.pkgPath)
+		if sp == nil {
+			continue
+		}
+		obj := sp.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
 		}
@@ -2984,8 +3004,11 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
-		obj := sp.pkg.Scope().Lookup(mf.pairType)
+		sp := packageForMRTable(mf.pkgPath)
+		if sp == nil {
+			continue
+		}
+		obj := sp.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
 		}
@@ -3662,11 +3685,11 @@ func (e *exporter) registerUserMRFunc(fi *funcDeclInfo) (*userMRInfo, error) {
 	if fi.sig == nil || fi.sig.Results().Len() <= 1 {
 		return nil, nil
 	}
-	if fi.fd != nil && fi.fd.Body == nil {
-		// Bodyless (//go:linkname): exportFuncDecl routes these to
-		// exportLinknameDecl before reaching registration.
-		return nil, nil
-	}
+	// Bodyless multi-result functions (//go:linkname stubs, assembly
+	// declarations) ARE registered: the pair type is synthesized from
+	// the signature, so callers exported before the callee's declaration
+	// still classify. Registration is idempotent; exportLinknameDecl's
+	// later registration is a no-op if the pre-pass already ran.
 	if fi.obj != nil && fi.obj.Pkg() != nil {
 		// WS G: disk-package multi-result stubs are skipped by
 		// exportFuncDecl (the desugar rewrites all calls to the
@@ -4023,14 +4046,17 @@ func (e *exporter) synthPairField(c *ast.CallExpr, tmpName string, tmpID, tmpTid
 func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Package) (map[*types.Var]*ast.FuncLit, map[*types.Var]*types.Func) {
 	// Returns (var->FuncLit map, var->Func alias map).
 	// For package-level `var x = pkg.F` where F is multi-result, we record
-	// the alias (x -> F) and REMOVE the declaration (to avoid the v1
-	// value-position limitation). Call sites through x are rewritten to
-	// pkg.F directly (real-x509 lane).
+	// the alias (x -> F) and KEEP the declaration. The declaration must
+	// not be removed: it is a user-visible global, and PKG-035's
+	// value-position machinery handles the initializer (table-driven
+	// functions lower to the pair-form __-helper ident; M5-static ones
+	// keep the honest compile-time error; disk-package ones desugar via
+	// the disk table). Removing it silently drops the global and swallows
+	// the M5 error. Call sites through x desugar via the userMRVars link
+	// (exportPackageVars ValueSpec case), with the alias map as fallback.
 	varLits := make(map[*types.Var]*ast.FuncLit)
 	aliases := make(map[*types.Var]*types.Func)
 	for _, f := range files {
-		// Collect ValueSpecs to remove (can't modify during Inspect).
-		var toRemove []*ast.ValueSpec
 		ast.Inspect(f, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.ValueSpec:
@@ -4053,13 +4079,12 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 					if tp := sig.TypeParams(); tp != nil && tp.Len() > 0 {
 						continue
 					}
-					// Record alias and mark for removal.
+					// Record alias; the declaration is kept (see above).
 					if i < len(n.Names) {
 						if vr, ok := info.Defs[n.Names[i]].(*types.Var); ok {
 							aliases[vr] = obj
 						}
 					}
-					toRemove = append(toRemove, n)
 				}
 			case *ast.AssignStmt:
 				if n.Tok != token.DEFINE {
@@ -4081,41 +4106,6 @@ func etaExpandMRFuncValues(files []*ast.File, info *types.Info, pkg *types.Packa
 			}
 			return true
 		})
-		// Remove the marked ValueSpecs and rewrite lstat idents to os.Lstat.
-		// (Simplified: just remove; call-site rewriting via alias map.)
-		for _, vs := range toRemove {
-			// Find and remove from parent GenDecl.
-			for _, decl := range f.Decls {
-				if gd, ok := decl.(*ast.GenDecl); ok {
-					for i, spec := range gd.Specs {
-						if spec == vs {
-							gd.Specs = append(gd.Specs[:i], gd.Specs[i+1:]...)
-							break
-						}
-					}
-				}
-			}
-		}
-		// Rewrite idents: replace `lstat` with `os.Lstat` (using aliases).
-		if len(aliases) > 0 {
-			ast.Inspect(f, func(n ast.Node) bool {
-				if id, ok := n.(*ast.Ident); ok {
-					if vr, ok := info.Uses[id].(*types.Var); ok {
-						if fn, ok := aliases[vr]; ok {
-							// Replace ident with selector expr pkg.F.
-							// We need the package name; use fn.Pkg().Name().
-							if fn.Pkg() != nil {
-								pkgIdent := ast.NewIdent(fn.Pkg().Name())
-								// Copy the selector from the original.
-								// (Simplified: just mark; full rewrite is complex.)
-								_ = pkgIdent
-							}
-						}
-					}
-				}
-				return true
-			})
-		}
 	}
 	return varLits, aliases
 }

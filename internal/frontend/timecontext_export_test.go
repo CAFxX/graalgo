@@ -99,9 +99,9 @@ func main() {
 // `d := time.ParseDuration(s)` is a go/types type error before the
 // exporter runs; only type-valid non-2-target positions are tested here:
 // statement and multi-arg spread. `ctx.Deadline()` is not covered here —
-// post-afc0dfb the synthetic Context interface omits Deadline, so an
-// interface-typed call is a type error, never a scope error; see
-// TestDeadlineNotCallableM5.)
+// post-P4 (cc0a78f4) it desugars via __deadlineOf like the other
+// operations (see TestDeadlineDesugarsM5), so there is no fail-fast
+// position left to pin for it.)
 func TestMultiResultFailFastKept(t *testing.T) {
 	progs := map[string]string{
 		"statement": `package main
@@ -135,20 +135,22 @@ func main() { time.ParseDuration("1s") }
 	}
 }
 
-// TestDeadlineNotCallableM5 verifies: GG-0017 — P3-M5 (afc0dfb
-// amendment, ADR-0005 Appendix M) `Context.Deadline()` is NOT callable
-// in M5. The synthetic Context interface deliberately omits Deadline
-// (v1 cannot emit multi-result methods, WS D), so a call on an
-// interface-typed value is a go/types type error — it never reaches the
-// exporter and never produces the M5 scope error. The exporter-side
-// `mrDeadline` desugar path is retained defense-in-depth for WS D (see
-// mrdesugar_m5.go); `__deadlineOf` remains for synthetic-internal use.
-func TestDeadlineNotCallableM5(t *testing.T) {
+// TestDeadlineDesugarsM5 verifies: P4 (cc0a78f4) restored Deadline() to
+// the synthetic Context interface, removing the P3-M5 deliberate
+// divergence (afc0dfb amendment: the interface omitted Deadline so calls
+// were go/types type errors). A ctx.Deadline() call now exports cleanly
+// and desugars to the __deadlineOf helper — the Appendix M mrDeadline
+// path, the same mechanism serving the other multi-result context
+// operations. This test replaces TestDeadlineNotCallableM5, which pinned
+// the pre-P4 divergence; the old expectation (type error) contradicts
+// the now-intended behavior.
+func TestDeadlineDesugarsM5(t *testing.T) {
 	src := `package main
 import "context"
 func main() {
 	ctx := context.Background()
-	ctx.Deadline()
+	d, ok := ctx.Deadline()
+	println(d.Unix(), ok)
 }
 `
 	dir := t.TempDir()
@@ -156,15 +158,23 @@ func main() {
 	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := ExportFile(p)
-	if err == nil {
-		t.Fatal("expected type error for ctx.Deadline(), got success")
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ctx.Deadline() should export cleanly post-P4, got: %v", err)
 	}
-	if strings.Contains(err.Error(), "not in M5 scope") {
-		t.Errorf("ctx.Deadline() must be a type error, not a scope error: %q", err)
+	doc := decodeExport(t, out)
+	found := false
+	for _, n := range findAllKind(doc, "call") {
+		fun, _ := n["fields"].(map[string]any)["fun"].(map[string]any)
+		if fun == nil || fun["kind"] != "ident" {
+			continue
+		}
+		if name, _ := fun["fields"].(map[string]any)["name"].(string); name == "__deadlineOf" {
+			found = true
+		}
 	}
-	if !strings.Contains(err.Error(), "Deadline") {
-		t.Errorf("expected the type error to name Deadline, got %q", err)
+	if !found {
+		t.Error("ctx.Deadline() did not desugar to a __deadlineOf helper call")
 	}
 }
 
@@ -173,9 +183,8 @@ func main() {
 // (WithCancel, WithCancelCause, WithDeadline, WithTimeout,
 // ParseDuration) in 2-target position lower to single-result helper
 // calls + extraction (no fail-fast), for both := and = forms.
-// (`ctx.Deadline()` is the 6th Appendix M operation but is not callable
-// in M5 — the synthetic Context interface omits it post-afc0dfb, so no
-// user call site can type-check; see TestDeadlineNotCallableM5.)
+// (`ctx.Deadline()` is the 6th Appendix M operation; post-P4 (cc0a78f4)
+// it desugars via __deadlineOf — see TestDeadlineDesugarsM5.)
 func TestMultiResultDesugarM5(t *testing.T) {
 	src := `package main
 
@@ -304,7 +313,8 @@ func main() {
 		t.Errorf("want >=4 methodref nodes (cancelFunc/cancelCauseFunc), got %d", methodrefs)
 	}
 	// Pair field selectors: d+err (ParseDuration) = 2. (Deadline's
-	// d+ok pair is not desugared — not callable in M5.)
+	// d+ok pair is desugared via __deadlineOf — see
+	// TestDeadlineDesugarsM5 — but this test's program never calls it.)
 	if selectors < 2 {
 		t.Errorf("want >=2 pair-field selectors, got %d", selectors)
 	}

@@ -55,6 +55,12 @@ func main() {
 		t.Fatal(err)
 	}
 	names := map[string]bool{}
+	// pkgPaths records the declaring package path per bare funcdecl name,
+	// so the multi-result absence check below can be scoped to the bytes
+	// package: transitively imported real packages (e.g. internal/race,
+	// via real sync) legitimately contribute same-named single-result
+	// funcdecls (internal/race.Read/Write), which must not trip the check.
+	pkgPaths := map[string]string{}
 	var walk func(v any)
 	walk = func(v any) {
 		switch v := v.(type) {
@@ -63,6 +69,9 @@ func main() {
 				if f, ok := v["fields"].(map[string]any); ok {
 					if n, ok := f["name"].(string); ok {
 						names[n] = true
+						if pp, ok := f["pkgpath"].(string); ok {
+							pkgPaths[n] = pp
+						}
 					}
 				}
 			}
@@ -88,14 +97,17 @@ func main() {
 			t.Errorf("wire doc missing funcdecl %q", want)
 		}
 	}
-	// Multi-result declarations are skipped at export (WS D).
+	// Multi-result declarations of the bytes package are skipped at export
+	// (WS D). The check is scoped to pkgpath "bytes": transitively
+	// imported real packages legitimately export same-named funcdecls
+	// (internal/race.Read/Write are single-result; they must not trip it).
 	// Note: Cut, CutPrefix, CutSuffix, CutLast now have real implementations
 	// and are pair-transformed via the general userMRFuncs mechanism.
 	for _, absent := range []string{
 		"Read", "Write", "ReadByte", "ReadRune", "ReadBytes", "ReadString",
 		"Peek", "WriteString", "WriteRune", "ReadFrom", "WriteTo", "Seek", "ReadAt",
 	} {
-		if names[absent] {
+		if names[absent] && pkgPaths[absent] == "bytes" {
 			t.Errorf("wire doc must not contain multi-result funcdecl %q", absent)
 		}
 	}

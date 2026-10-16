@@ -6261,27 +6261,72 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 			}
 		}
 	} else {
-		if len(results) > 1 {
-			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
+		// A consumer stub whose symbol resolves to a compiled provider
+		// lowers every call to a direct provider call (linknameAlias,
+		// wired into exportFuncCall and callType), so the multi-result
+		// WS D restriction does not apply — resolve the provider BEFORE
+		// the result-count check. Unresolvable multi-result stubs (e.g.
+		// reflect's badlinkname method aliases, which exist only for
+		// external linkname users and are never called in-tree) get the
+		// ASM Phase 1 treatment: a synthesized userMRFuncs pair entry so
+		// the declaration exports under the normal pair-returning
+		// convention instead of failing the whole export.
+		if providerFi := e.resolveLinknameProvider(symbol); providerFi != nil {
+			if e.linknameAlias == nil {
+				e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
+			}
+			e.linknameAlias[fi.obj] = providerFi
+		} else if len(results) > 1 {
+			if _, ok := e.userMRFuncs[fi.obj]; !ok {
+				pairType, fieldNames, err := e.synthesizeUserPairType(fi)
+				if err != nil {
+					return nil, err
+				}
+				e.userMRFuncs[fi.obj] = &userMRInfo{
+					pairType:   pairType,
+					pairFields: fieldNames,
+					origSig:    fi.sig,
+				}
+			}
 		}
 		fields["linkname"] = symbol
-		// real-nethttp: if the linkname symbol resolves to a compiled
-		// funcdecl (via synthFuncIDs), alias the stub to the provider so
-		// calls lower to a direct provider call. This makes multi-result
-		// linkname targets (e.g. net/textproto.readMIMEHeader) work through
-		// the normal pair-returning convention. The symbol is either
-		// pkgpath.name (two-field form) or a bare name (single-field form,
-		// which is a provider declaration, not a consumer).
-		if strings.Contains(symbol, ".") {
-			if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
-				if e.linknameAlias == nil {
-					e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
+	}
+	return e.node("funcdecl", fd, fields), nil
+}
+
+// resolveLinknameProvider maps a //go:linkname consumer symbol to the
+// provider's funcDeclInfo, or nil when the provider cannot be resolved to
+// a compiled funcdecl. Two symbol forms (general, never name-keyed):
+//   - pkgpath.name (package-level function): direct synthFuncIDs lookup
+//     (real-nethttp: net/textproto.readMIMEHeader).
+//   - pkgpath.(*Recv).Name / pkgpath.(Recv).Name (method): the provider
+//     method is rewritten by transformDiskMultiResult to a pair-returning
+//     __-helper; resolve through the disk-MR table to that helper's
+//     funcDeclInfo.
+// A bare name (single-field form) is a provider declaration, not a
+// consumer — never resolved here.
+func (e *exporter) resolveLinknameProvider(symbol string) *funcDeclInfo {
+	if !strings.Contains(symbol, ".") {
+		return nil
+	}
+	if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
+		return providerFi
+	}
+	if i := strings.Index(symbol, ".("); i >= 0 {
+		pkgPath := symbol[:i]
+		rest := symbol[i+2:] // "*Recv).Name" or "Recv).Name"
+		j := strings.Index(rest, ").")
+		if j >= 0 {
+			recv := strings.TrimPrefix(rest[:j], "*")
+			name := rest[j+2:]
+			if spec := lookupDiskMR(pkgPath, name, recv); spec != nil && spec.helper != "" {
+				if hfi, ok := e.synthFuncIDs[pkgPath+"."+spec.helper]; ok && hfi != nil {
+					return hfi
 				}
-				e.linknameAlias[fi.obj] = providerFi
 			}
 		}
 	}
-	return e.node("funcdecl", fd, fields), nil
+	return nil
 }
 
 // exportInstantiation emits one monomorphized instantiation: a funcdecl with
@@ -8709,12 +8754,20 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// M7: conversion with a composite type target, e.g. []byte("hi").
 		// The target is an *ast.ArrayType/*ast.MapType, not an identifier.
 		if tv, ok := e.info.Types[c.Fun]; ok && tv.Type != nil {
+			// A conversion T(x) whose target type is a func type (e.g.
+			// (func())(nil) in reflect) must not take the computed-func-
+			// value path below: the Fun denotes a type, not a value.
+			// go/types marks type expressions with IsType().
+			isTypeExpr := false
+			if ttv, ok := e.info.Types[unparen(c.Fun)]; ok {
+				isTypeExpr = ttv.IsType()
+			}
 			// P3-M8 (wave 2, reflect): call to a computed func value,
 			// e.g. reflect.Swapper(s)(0, 2) — c.Fun is a call expression
 			// whose type is a signature, not a composite type target.
 			// Export the fun expression and emit a plain call node
 			// (mirrors the func-valued variable branch below).
-			if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
+			if sig, ok := tv.Type.Underlying().(*types.Signature); ok && !isTypeExpr {
 				fun, err := e.exportExpr(c.Fun)
 				if err != nil {
 					return nil, err
@@ -9343,6 +9396,8 @@ func (e *exporter) implicitDeref(sel *ast.SelectorExpr, recv **Node, recvType *t
 // Addressable expressions: variables, pointer indirections, slice indexing,
 // field selectors of addressable values, and composite literals (via &T{}).
 func isAddressable(x ast.Expr, info *types.Info) bool {
+	// Parentheses don't affect addressability: &(x) addresses x.
+	x = unparen(x)
 	switch x := x.(type) {
 	case *ast.Ident:
 		// Variables are addressable; constants, builtins, and nil are not.
@@ -9355,6 +9410,14 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 		// x.f is addressable if x is addressable.
 		if isAddressable(x.X, info) {
 			return true
+		}
+		// x.f is addressable if x is a pointer (implicit dereference):
+		// e.g. &mt.(*rtype).t in reflect, where the type assertion
+		// yields *rtype. General: any pointer-typed x.
+		if tv, ok := info.Types[x.X]; ok && tv.Type != nil {
+			if _, isPtr := tv.Type.Underlying().(*types.Pointer); isPtr {
+				return true
+			}
 		}
 		// real-reflect (Phase 1): &(*T)(unsafe.Pointer(p)).f — the
 		// descriptor-downcast pattern used throughout internal/abi
