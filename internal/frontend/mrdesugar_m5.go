@@ -2040,6 +2040,72 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 	return nil
 }
 
+// hoistTrivialFwdOperands evaluates a trivial-forwarder call's receiver
+// and arguments left-to-right (gc call evaluation order), binding each to
+// a fresh temp, and returns the temp vardecl pre-statements plus an ident
+// node for the forwarded argument's temp (the inlined call's target).
+//
+// FE-3: inlining `return p()` must not drop the receiver or the
+// non-forwarded arguments — their effects (including panics) are part of
+// the call's semantics. Hoisting every operand to a temp preserves the
+// effects and their order; the inlined body then invokes the forwarded
+// temp, exactly as if the call's arguments had been bound to the stub's
+// parameters before executing `return p()`.
+//
+// The receiver is hoisted only for method calls (a MethodVal selection on
+// the unwrapped Fun); a plain function classified as a trivial forwarder
+// has no receiver. The check is structural — it inspects the call's type
+// information, never package or method names.
+func (e *exporter) hoistTrivialFwdOperands(c *ast.CallExpr, fwdParamIdx int) (preStmts []*Node, fun *Node, err error) {
+	hoist := func(x ast.Expr) (name string, obj, tid int, err error) {
+		v, err := e.exportExpr(x)
+		if err != nil {
+			return "", 0, 0, err
+		}
+		t := e.info.TypeOf(x)
+		if t == nil {
+			return "", 0, 0, fmt.Errorf("gofrontend: trivial-forwarder operand %T has no type", x)
+		}
+		e.chanSeq++
+		name = fmt.Sprintf("__trfwd_%d", e.chanSeq)
+		tmp := types.NewVar(token.NoPos, nil, name, t)
+		obj, err = e.defVar(tmp, false)
+		if err != nil {
+			return "", 0, 0, err
+		}
+		tid, err = e.typeID(t)
+		if err != nil {
+			return "", 0, 0, err
+		}
+		preStmts = append(preStmts, e.node("vardecl", c, map[string]any{
+			"names": []string{name}, "objs": []int{obj},
+			"define": true, "type": nil, "values": []*Node{v},
+		}))
+		return name, obj, tid, nil
+	}
+	// The receiver evaluates first.
+	if sel, ok := unwrapSelector(c.Fun); ok {
+		if msel, ok := e.info.Selections[sel]; ok && msel.Kind() == types.MethodVal {
+			if _, _, _, err := hoist(sel.X); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	var fwdName string
+	var fwdID, fwdTid int
+	for i, a := range c.Args {
+		name, obj, tid, err := hoist(a)
+		if err != nil {
+			return nil, nil, err
+		}
+		if i == fwdParamIdx {
+			fwdName, fwdID, fwdTid = name, obj, tid
+		}
+	}
+	fun = e.node("ident", c, map[string]any{"name": fwdName, "obj": fwdID, "type": fwdTid})
+	return preStmts, fun, nil
+}
+
 // classifyGeneralFuncField handles func-typed struct field calls for ANY
 // struct, not just nistCurve (fix-funcfield-mr, Gate-1). The field must
 // have a *types.Signature type with N>1 results. A pair type is
@@ -3059,27 +3125,66 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 		if plan.fwdParamIdx < 0 || plan.fwdParamIdx >= len(c.Args) {
 			return nil, fmt.Errorf("gofrontend: trivial-forwarder arg index %d out of range (%d args)", plan.fwdParamIdx, len(c.Args))
 		}
-		// Build fwdFn() call: Fun is Args[fwdParamIdx], no args.
-		newCall := &ast.CallExpr{
-			Fun:    c.Args[plan.fwdParamIdx],
-			Lparen: c.Lparen,
-			Args:   []ast.Expr{},
-			Rparen: c.Rparen,
+		// FE-3: the receiver and every argument must be evaluated
+		// left-to-right (gc call evaluation order) even though the
+		// inlined body only invokes the forwarded parameter. The old
+		// code dropped them, silently skipping their effects (e.g. a
+		// panicking check function never ran). Hoist each operand to a
+		// temp; the inlined call invokes the forwarded arg's temp.
+		preStmts, fwdFun, err := e.hoistTrivialFwdOperands(c, plan.fwdParamIdx)
+		if err != nil {
+			return nil, err
 		}
-		// Build the assignment: v, err := newFn()
-		// Use the standard assignment export with the call as RHS.
-		newAssign := &ast.AssignStmt{
-			Lhs:    s.Lhs,
-			TokPos: s.TokPos,
-			Tok:    s.Tok,
-			Rhs:    []ast.Expr{newCall},
+		// Build fwdFn() call: Fun is the forwarded arg's temp ident, no
+		// args. "type" is nil: the call is synthesized (absent from
+		// go/types info), exactly like the old AST-built call whose
+		// callType returned nil.
+		callNode := e.node("call", c, map[string]any{
+			"fun": fwdFun, "args": []*Node{}, "type": nil,
+		})
+		// Build the assignment: v, err := fwdFn(). This mirrors
+		// exportDefine/exportAssign's vardecl/assign shapes (the old
+		// code routed a synthesized AST through those).
+		var assignNode *Node
+		if s.Tok == token.DEFINE {
+			names := make([]string, 0, len(s.Lhs))
+			objs := make([]int, 0, len(s.Lhs))
+			for _, lhs := range s.Lhs {
+				id, ok := lhs.(*ast.Ident)
+				if !ok {
+					return nil, scopeErrorf(":= with non-identifier lhs %T is not supported in frontend/v1 scope (WS D)", lhs)
+				}
+				// A redeclared variable (same block, same type, at
+				// least one new variable on the left) is recorded in
+				// Uses, not Defs, by go/types; ObjectOf covers both.
+				v, ok := e.info.ObjectOf(id).(*types.Var)
+				if !ok {
+					return nil, fmt.Errorf("gofrontend: := name %q does not denote a variable", id.Name)
+				}
+				oid, err := e.defVar(v, false)
+				if err != nil {
+					return nil, err
+				}
+				names = append(names, id.Name)
+				objs = append(objs, oid)
+			}
+			assignNode = e.node("vardecl", s, map[string]any{
+				"names": names, "objs": objs, "define": true, "type": nil, "values": []*Node{callNode},
+			})
+		} else {
+			lhs := make([]*Node, 0, len(s.Lhs))
+			for _, l := range s.Lhs {
+				x, err := e.exportAssignable(l)
+				if err != nil {
+					return nil, err
+				}
+				lhs = append(lhs, x)
+			}
+			assignNode = e.node("assign", s, map[string]any{
+				"tok": s.Tok.String(), "lhs": lhs, "rhs": []*Node{callNode},
+			})
 		}
-		// Export as a normal multi-value assignment (bypasses desugar
-		// recursion since newCall is not a classified multi-result).
-		if newAssign.Tok == token.DEFINE {
-			return e.exportDefine(newAssign)
-		}
-		return e.exportAssign(newAssign)
+		return e.node("block", s, map[string]any{"stmts": append(preStmts, assignNode)}), nil
 	}
 	// P3-M8 (WS D): an interface multi-result call (r.Read(buf)) desugars
 	// to the ifacemethod dispatch node itself — the itab maps the method
@@ -3542,21 +3647,22 @@ func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, [
 	} else if plan.kind == mrTrivialFwd {
 		// Trivial-forwarder stub in argument position: f(x.M(...))
 		// becomes f(fwdFn()) where fwdFn is Args[fwdParamIdx].
-		// fwdFn() is single-valued, so no hoisting needed.
+		// FE-3: the receiver and every argument are hoisted to temps
+		// (preStmts) in gc evaluation order — the old code dropped
+		// them, silently skipping their effects. The inlined call
+		// invokes the forwarded arg's temp.
 		if plan.fwdParamIdx < 0 || plan.fwdParamIdx >= len(inner.Args) {
 			return nil, nil, fmt.Errorf("gofrontend: trivial-forwarder arg index %d out of range (%d args)", plan.fwdParamIdx, len(inner.Args))
 		}
-		newCall := &ast.CallExpr{
-			Fun:    inner.Args[plan.fwdParamIdx],
-			Lparen: inner.Lparen,
-			Args:   []ast.Expr{},
-			Rparen: inner.Rparen,
-		}
-		x, err := e.exportExpr(newCall)
+		pre, fwdFun, err := e.hoistTrivialFwdOperands(inner, plan.fwdParamIdx)
 		if err != nil {
 			return nil, nil, err
 		}
-		return []*Node{x}, nil, nil
+		preStmts = append(preStmts, pre...)
+		x := e.node("call", inner, map[string]any{
+			"fun": fwdFun, "args": []*Node{}, "type": nil,
+		})
+		return []*Node{x}, preStmts, nil
 	} else {
 		// Synthetic/disk MR: export args (with nested hoisting), then
 		// build the __-helper call.
