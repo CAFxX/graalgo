@@ -1416,14 +1416,10 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 				needIoFs = true
 				needErrors = true
 				needTime = true
-			// P3-M8 (wave 2): a user import of "reflect" pulls in the
-			// synthetic package (synth_reflect.go). The source imports
-			// errors, iter, strconv (unsafe is a builtin surface, not a
-			// synthetic package).
+			// real-reflect: a user import of "reflect" resolves the real GOROOT
+			// package via the disk importer (synthetic reflect retired).
 			case "reflect":
 				needReflect = true
-				needErrors = true
-				needStrconv = true
 			// P3-M8 (wave 2): a user import of "crypto/sha256" pulls in the
 			// synthetic package (synth_crypto_sha256.go). The source imports
 			// crypto, errors, hash; hash imports io; crypto imports hash, io,
@@ -2103,17 +2099,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// source synthetic import graph is acyclic. Dependencies are
 	// imported before reflect itself (package-level initializers may
 	// call synthetic functions).
+	// real-reflect: the real reflect package compiles from GOROOT via the
+	// disk importer. importPkgTree merges its transitive closure
+	// dependencies-first through the existing overlay cases and the disk
+	// importer; idempotent via e.importedPkgTree.
 	if needReflect {
-		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
-			return "", err
-		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("strconv")); err != nil {
-			return "", err
-		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("iter")); err != nil {
-			return "", err
-		}
-		if err := e.importSyntheticPackage(getSyntheticPackage("reflect")); err != nil {
+		if err := e.importPkgTree("reflect"); err != nil {
 			return "", err
 		}
 	}
