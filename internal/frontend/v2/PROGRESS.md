@@ -54,3 +54,33 @@ for the design.
 - Route: circular compilation of go/* remains primary (his 2026-10-15
   order: "go is ideal (to reuse go/*) if we can circularly compile it
   for inclusion in graalgo"); Java rewrite only if that proves infeasible.
+
+## 2026-10-16 — Go→Java binary interface (lane restaff)
+
+- **Interface design**: The v2 `Document` is encoded to a compact binary
+  format (NOT JSON) for transfer to the Java backend. Format: type-tagged
+  values (null/bool/int/string/list/map), varint integers, length-prefixed
+  strings/collections. General: encodes the Document structure generically,
+  not hardcoded per node kind. See `encode/encode.go` for the spec.
+- **Go encoder** (`encode/`): `Encode(*Document) ([]byte, error)` walks the
+  `map[string]any` structure. Tested: hello-world encodes to 915 bytes,
+  round-trip type coverage. `encode/cmd/encode-demo` CLI for manual testing.
+- **Java decoder** (`internal/backend/truffle/.../graalgo/frontend/v2/`):
+  `BinaryDecoder.java` decodes binary to `Map<String,Object>`/`List`/`String`/
+  `Long`. `V2DecodeDemo.java` proves end-to-end: Go encodes, Java decodes
+  and prints structure. Tested: 915-byte hello-world binary decodes to
+  frontend=v2, package=main, 1 func, 3 types, 1 object.
+- **NodeFactoryV2** (`graalgo/frontend/v2/NodeFactoryV2.java`): Takes binary
+  bytes, decodes via `BinaryDecoder`, validates frontend=="v2", and builds
+  Truffle nodes. MVP implements: document validation, funcdecl extraction,
+  block/exprstmt/basiclit node construction (ConstNode, BlockNode,
+  ExprStmtNode). Complex kinds (assign, call, ident, etc.) fail loudly with
+  FrontendException — full implementation is next.
+- **End-to-end proven**: `go run ./encode/cmd/encode-demo hello.go hello.bin`
+  → `java graalgo.frontend.v2.V2DecodeDemo hello.bin` prints the decoded
+  structure. The binary interface works; no JSON involved.
+- **Next**: Full Truffle node construction in NodeFactoryV2 (assign with
+  frame slots, calls, idents, control flow). Then circular compilation:
+  graalgo compiles the v2 Go code (which uses go/parser, go/ast, go/types)
+  to JVM bytecode, so it runs in-process and calls NodeFactoryV2 directly
+  (no inter-process binary transfer).
