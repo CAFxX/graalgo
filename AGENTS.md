@@ -14,7 +14,15 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   all` regenerates any tracked file differently from what's committed, the
   build fails. **Push only after `make all` is green locally.**
 - `make check` — placeholder / debug-leftover / netpoller / exclusion-list
-  grep gates + gofrontend gofmt/vet/tests.
+  grep gates + gofrontend gofmt/vet/tests + the Go-side stub gate
+  ([.github/scripts/check_go_stub_gate.py](.github/scripts/check_go_stub_gate.py),
+  review MECH-1 2026-10-16): fails on fail-fast scope stubs
+  (`panic("…not in M<k> scope…")`, `panic("not implemented"`, `panic("TODO"`)
+  and placeholder markers (`FIXME`, graalgo-authored `TODO`) in
+  `internal/frontend/` — the vendored `go/` tree and `testdata/` dirs are
+  excluded, upstream-carried TODOs in generated `synth_*.go` are excluded.
+  Scope stubs are zero-tolerance (no allowlist); the single `TODO` allowlist
+  entry documents accepted v2 tech debt.
 - `make test` — the full differential suite (30+ minutes). Not per-push;
   for local verification and nightly runs. Invoke explicitly.
 - `make snapshot-check` — re-runs the differential corpus under graalgo and

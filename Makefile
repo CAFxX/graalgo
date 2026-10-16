@@ -135,6 +135,13 @@ check:
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
+	@echo "== Go-side stub gate (internal/frontend; review MECH-1, 2026-10-16) =="
+	@# The Java placeholder grep gates above scan only Java src/ trees; this
+	@# gate covers the Go sources: fails on fail-fast scope stubs
+	@# (panic("...not in M<k> scope..."), panic("not implemented"), panic("TODO"))
+	@# and placeholder markers (FIXME, graalgo-authored TODO) in
+	@# internal/frontend/ (vendored go/ tree and testdata/ dirs excluded).
+	python3 .github/scripts/check_go_stub_gate.py
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are
