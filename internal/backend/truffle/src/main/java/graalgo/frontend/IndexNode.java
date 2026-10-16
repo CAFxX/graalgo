@@ -2,6 +2,7 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
+import com.oracle.truffle.api.profiles.ConditionProfile;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
 import graalgo.values.GoKind;
@@ -32,6 +33,12 @@ public final class IndexNode extends GoExprNode {
      * value — GoStruct.zero would leave nested struct fields null (P3-M9).
      */
     private final Object zeroTemplate;
+    /**
+     * Profiles the bounds-check outcome. Out-of-bounds indices are rare
+     * (they panic); profiling the condition lets the Graal compiler
+     * optimize the common in-bounds path.
+     */
+    private final ConditionProfile boundsOkProfile = ConditionProfile.createBinaryProfile();
 
     public IndexNode(GoExprNode container, GoExprNode key,
                      GoKind containerKind, GoKind elemKind,
@@ -75,7 +82,7 @@ public final class IndexNode extends GoExprNode {
     private int checkedIndex(long idx, long len) {
         boolean signed = keyKind().isSigned();
         boolean bad = signed ? (idx < 0 || idx >= len) : Long.compareUnsigned(idx, len) >= 0;
-        if (bad) {
+        if (boundsOkProfile.profile(bad)) {
             Panic.throwPanic(GoErrors.indexOutOfRange(idx, len, signed), null, null, this);
         }
         return (int) idx;

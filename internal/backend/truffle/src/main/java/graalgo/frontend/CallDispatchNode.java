@@ -2,6 +2,7 @@ package graalgo.frontend;
 
 import com.oracle.truffle.api.RootCallTarget;
 import com.oracle.truffle.api.dsl.Cached;
+import com.oracle.truffle.api.dsl.GenerateUncached;
 import com.oracle.truffle.api.dsl.Specialization;
 import com.oracle.truffle.api.nodes.DirectCallNode;
 import com.oracle.truffle.api.nodes.Node;
@@ -27,6 +28,7 @@ import graalgo.values.GoFunc;
 // The node-object-inlining decision is deferred (matches the DslSmoke
 // convention); suppress the processor's candidacy hint at the source.
 @SuppressWarnings("truffle-inlining")
+@GenerateUncached
 public abstract class CallDispatchNode extends Node {
 
     /** Evaluates the call through this node's inline cache. */
