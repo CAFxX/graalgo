@@ -197,14 +197,25 @@ test-v2:
 # Gate 1: go test ./... trial harness (Phase-3 Gate 1).
 #   make gate1-pilot  — 5-package pilot (strconv, errors, sort, strings, bytes)
 #   make gate1 PKG=foo — single package trial
+#
+# gate1-pilot is a differential GATE, not a probe: run.py exits nonzero on
+# DIVERGE, and the target must fail when any package diverges. The loop runs
+# all packages before reporting (so one failure doesn't hide the rest), then
+# exits 1 if any package failed. Do NOT add `|| true` here — it makes the
+# gate unable to fail.
 GATE1_PKGS ?= strconv errors sort strings bytes
 gate1-pilot: build
-	@for pkg in $(GATE1_PKGS); do \
+	@failed=0; \
+	for pkg in $(GATE1_PKGS); do \
 		echo "=== gate1 $$pkg ==="; \
 		TMPDIR="$(CURDIR)/tools/gate1/.tmp" GOTMPDIR="$(CURDIR)/tools/gate1/.tmp" \
 		python3 tools/gate1/run.py $$pkg --out tools/gate1/.tmp/$$pkg \
-			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || true; \
-	done
+			--graalgo-run "$(CURDIR)/internal/backend/graalgo-run" || failed=1; \
+	done; \
+	if [ "$$failed" -ne 0 ]; then \
+		echo "Gate 1 pilot FAILED: see tools/gate1/.tmp/*/verdict.txt"; \
+		exit 1; \
+	fi
 	@echo "Gate 1 pilot complete. See tools/gate1/.tmp/*/verdict.txt"
 
 gate1: build
