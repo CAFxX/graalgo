@@ -21,6 +21,15 @@ for the design.
 - [x] Negative tests (`emit/negative_test.go`): 17 unhandled constructs
       proven to fail loudly with "unsupported" (no silent drops)
 
+## 2026-10-16 — V2-12 deterministic emission
+
+- [x] `emitDocument` no longer ranges over `pkg.Files` (a Go map): files
+      are visited sorted by name, declarations sorted by source position —
+      function order and type/object ids are stable run to run
+- [x] Regression test (`emit/determinism_test.go`): 25 repeated emissions
+      of a 3-file package are byte-identical (canonical JSON encoding);
+      proven to fail with the fix reverted
+
 ## Master merge log
 
 - 2026-10-15 21:10 CEST: merged `704932ce` (PKG-012 sync intrinsics,

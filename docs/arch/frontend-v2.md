@@ -62,6 +62,10 @@ reaches differential parity on the corpus.
 ### Stage 3 — Emit (`v2/emit/`)
 
 - Walks the typed AST and constructs backend nodes directly (no JSON).
+- **Deterministic emission order.** `pkg.Files` is a Go map; emission
+  visits files sorted by name and declarations sorted by source position,
+  so the same package always yields the same function order and
+  type/object ids (regression test: `emit/determinism_test.go`).
 - **One node type → one emit function.** No 12k-line monolith. The emitter
   is organized by AST node kind, each in its own file.
 - **Full Go 1.27 syntax from the start.** Every AST node kind that

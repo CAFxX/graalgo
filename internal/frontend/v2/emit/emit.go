@@ -13,6 +13,7 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"sort"
 
 	"graalgo-frontend-v2/checker"
 )
@@ -39,7 +40,7 @@ type Emitter struct {
 	typeIDs map[types.Type]int
 	types   []any
 	// Object table: types.Object → id.
-	objIDs map[types.Object]int
+	objIDs  map[types.Object]int
 	objects []any
 }
 
@@ -62,33 +63,30 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 	// emitted (ids registered before description, so recursion works).
 	// We do two passes: first declare all top-level funcs and globals
 	// (assigning object ids), then emit bodies.
+	//
+	// Deterministic emission order (V2-12): pkg.Files is a Go map, so
+	// ranging over it directly would make function order and type/object
+	// ids vary run to run. Files are visited sorted by name and
+	// declarations sorted by source position, so the same package always
+	// produces the same document — a prerequisite for reproducible builds
+	// and snapshot testing.
+	decls := sortedFuncDecls(pkg)
+
 	var funcs []any
-	for _, file := range pkg.Files {
-		for _, decl := range file.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			obj := e.info.Info.Defs[fd.Name]
-			if obj == nil {
-				return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
-			}
-			e.declareObject(obj)
+	for _, fd := range decls {
+		obj := e.info.Info.Defs[fd.Name]
+		if obj == nil {
+			return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
 		}
+		e.declareObject(obj)
 	}
 
-	for _, file := range pkg.Files {
-		for _, decl := range file.Decls {
-			fd, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			fn, err := e.emitFuncDecl(fd)
-			if err != nil {
-				return nil, err
-			}
-			funcs = append(funcs, fn)
+	for _, fd := range decls {
+		fn, err := e.emitFuncDecl(fd)
+		if err != nil {
+			return nil, err
 		}
+		funcs = append(funcs, fn)
 	}
 
 	baseNames := make([]string, len(e.files))
@@ -112,6 +110,40 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		Funcs:   funcs,
 		Globals: []any{},
 	}, nil
+}
+
+// sortedFuncDecls returns every top-level function declaration in the
+// package in deterministic order: files sorted by name, then declarations
+// sorted by source position. Non-function declarations are skipped, as in
+// the original emission loop. Sorting is structural — by filename and
+// token position — never keyed on any package, symbol, or test name.
+func sortedFuncDecls(pkg *ast.Package) []*ast.FuncDecl {
+	names := make([]string, 0, len(pkg.Files))
+	for name := range pkg.Files {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	var decls []*ast.FuncDecl
+	for _, name := range names {
+		file := pkg.Files[name]
+		var fds []*ast.FuncDecl
+		for _, d := range file.Decls {
+			fd, ok := d.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			fds = append(fds, fd)
+		}
+		// Positions from one *ast.File share the same FileSet base, so
+		// token.Pos comparison is a total source-position order within the
+		// file. go/parser already produces Decls in source order; this sort
+		// states the contract explicitly instead of relying on that
+		// implementation detail.
+		sort.SliceStable(fds, func(i, j int) bool { return fds[i].Pos() < fds[j].Pos() })
+		decls = append(decls, fds...)
+	}
+	return decls
 }
 
 func fileBase(p string) string {
