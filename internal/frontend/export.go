@@ -7277,7 +7277,7 @@ func (e *exporter) hoistGoMethodRecv(s *ast.GoStmt, c *ast.CallExpr, sel *ast.Se
 		"define": true, "type": nil, "values": []*Node{recvx},
 	}))
 	recvIdent := e.node("ident", s, map[string]any{"name": name, "obj": oid, "type": tid})
-	return e.methodRefNode(c, sel, selection, recvIdent)
+	return e.methodRefNode(c, sel, selection, recvIdent, sel.X)
 }
 
 // isMultiResultSyntheticFunc reports whether obj is one of the synthetic
@@ -7485,7 +7485,10 @@ func (e *exporter) exportDefine(s *ast.AssignStmt) (*Node, error) {
 //   - a multi-result function literal (the existing MR-closure-var case),
 //   - a named function in value position (F := two),
 //   - a package-qualified named function (var F ... = syscall.Accept),
-//   - an alias of an already-linked variable (G := F).
+//   - an alias of an already-linked variable (G := F),
+//   - a method value on a concrete type (mv := T{}.M; P4 general MR) —
+//     resolved via the selection, requiring the pair-transformed
+//     (mrUser) kind so the value genuinely yields the pair.
 //
 // The pair info comes from the func lit's recorded transform
 // (funcLitMRInfo), from the named function's pair plan
@@ -7518,6 +7521,24 @@ func (e *exporter) mrInfoForFuncValueInit(x ast.Expr) *userMRInfo {
 		if id, ok := x.X.(*ast.Ident); ok {
 			if _, ok := e.info.Uses[id].(*types.PkgName); ok {
 				fn, _ = e.info.Uses[x.Sel].(*types.Func)
+			}
+		}
+		// P4 (general MR): method value x.M on a concrete type (e.g.
+		// mv := T{}.M). Resolve the method via the selection. The value
+		// is the pair-returning implementation only for pair-transformed
+		// (mrUser) methods, so require that kind: a table-dispatched
+		// method's value does not yield the pair when called plainly, and
+		// linking it would miscompile silently — those keep the loud
+		// diagnostic at the call site. Interface method values keep
+		// their P3-M3 scope error at export.
+		if fn == nil {
+			if sel, ok := e.info.Selections[x]; ok && sel.Kind() == types.MethodVal &&
+				recvIface(sel.Recv()) == nil {
+				if f, ok := sel.Obj().(*types.Func); ok {
+					if plan := e.mrPlanForFuncValue(f); plan != nil && plan.kind == mrUser {
+						fn = f
+					}
+				}
 			}
 		}
 	}
@@ -9658,8 +9679,8 @@ func isUnsafeReinterpret(x ast.Expr, info *types.Info) bool {
 	return src != nil && types.Unalias(src) == types.Typ[types.UnsafePointer]
 }
 
-func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, recv *Node) (*Node, error) {
-	if selection.Kind() != types.MethodVal {
+func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, recv *Node, recvExpr ast.Expr) (*Node, error) {
+	if selection.Kind() != types.MethodVal && selection.Kind() != types.MethodExpr {
 		return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
 			sel.X, sel.Sel.Name)
 	}
@@ -9718,7 +9739,9 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	// The packing is applied at the exportCallArgs site below via
 	// exportCallArgsPacked.
 	declRecv := mc.decl.sig.Recv().Type()
-	xt, ok := e.info.Types[sel.X]
+	// P4 (general MR): for a method expression the receiver expression is
+	// the first call argument (recvExpr), not sel.X (the type).
+	xt, ok := e.info.Types[recvExpr]
 	if !ok || xt.Type == nil {
 		return nil, fmt.Errorf("gofrontend: no type info for method receiver")
 	}
@@ -9888,11 +9911,24 @@ func (e *exporter) methodValueNode(sel *ast.SelectorExpr, selection *types.Selec
 // declared receiver type after substitution — implicit &/* adjustments are
 // a scope error (WS D).
 func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection) (*Node, error) {
-	recv, err := e.exportExpr(sel.X)
+	// P4 (general MR): method expression T.M(recv, args...). sel.X is the
+	// receiver TYPE, not an expression — the receiver is the first call
+	// argument. (Interface method expressions fail fast in exportCall
+	// before reaching here.)
+	recvExpr := sel.X
+	argExprs := c.Args
+	if selection.Kind() == types.MethodExpr {
+		if len(c.Args) == 0 {
+			return nil, fmt.Errorf("gofrontend: method expression call without receiver argument")
+		}
+		recvExpr = c.Args[0]
+		argExprs = c.Args[1:]
+	}
+	recv, err := e.exportExpr(recvExpr)
 	if err != nil {
 		return nil, err
 	}
-	fun, err := e.methodRefNode(c, sel, selection, recv)
+	fun, err := e.methodRefNode(c, sel, selection, recv, recvExpr)
 	if err != nil {
 		return nil, err
 	}
@@ -9904,14 +9940,17 @@ func (e *exporter) exportMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr, sele
 	}
 	// P3-M9: pack variadic method args. The signature's Params() excludes
 	// the receiver (it's in Recv()), matching c.Args which excludes the
-	// receiver expression (sel.X is exported separately above).
+	// receiver expression (sel.X is exported separately above) — for a
+	// method expression, Args[0] is the receiver, so pack Args[1:].
 	var methodSig *types.Signature
 	if fn, ok := selection.Obj().(*types.Func); ok {
 		if sig, ok := fn.Type().(*types.Signature); ok {
 			methodSig = sig
 		}
 	}
-	args, err := e.exportCallArgsPacked(c, methodSig)
+	cc := *c
+	cc.Args = argExprs
+	args, err := e.exportCallArgsPacked(&cc, methodSig)
 	if err != nil {
 		return nil, err
 	}

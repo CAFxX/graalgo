@@ -1869,6 +1869,26 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 			}
 		}
 	}
+	// P4 (general MR): method expression T.M(recv, args...) on a concrete
+	// type. The receiver is Args[0]; desugar via the same mrUser mechanism
+	// as a direct method call — the transformed method itself returns the
+	// pair, and exportCall routes MethodExpr through exportMethodCall with
+	// the Args[0] receiver. Interface receivers keep the loud P3-M3
+	// fail-fast (dynamic dispatch deferred to call time is out of scope);
+	// non-mrUser plans (table-dispatched methods) are not plain-callable
+	// as values of the method expression, so they stay loud via the
+	// diagnostic instead of miscompiling.
+	if selection, ok := e.info.Selections[sel]; ok && selection.Kind() == types.MethodExpr {
+		if recvIface(selection.Recv()) != nil {
+			return nil
+		}
+		if f, ok := selection.Obj().(*types.Func); ok && f.Pkg() != nil {
+			if plan := e.mrPlanForFuncValue(f); plan != nil && plan.kind == mrUser {
+				return plan
+			}
+		}
+		return nil
+	}
 	// P3-M9 (WS D): function field call (e.g., f.decode(rr) where decode
 	// is a field of function type). The selection is FieldVal (not
 	// MethodVal), and the field type is *types.Signature with N>1 results.
