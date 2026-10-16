@@ -9270,6 +9270,31 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 // Used by exportGoWithArgs to hoist the receiver to go-statement time
 // (P3-M5 remediation, reviewer1 P2-3).
 
+// addrofNode wraps recv in an "addrof" wire node for an implicit
+// method-receiver address-of (x.M() → (&x).M(), P3-M9 WS D).
+// When recv is an index expression (arr[i], s[i]), the lvalue
+// {"array","index","type"} schema is emitted — identical to what explicit
+// &arr[i] emits — so the pointer addresses the element slot and writes
+// through it update the element. The operand-addressing {"x","type"}
+// schema would make buildAddrOf snapshot the element value, silently
+// losing receiver mutations for value-copied element types (scalars).
+func (e *exporter) addrofNode(pos ast.Node, recv *Node, tid int) *Node {
+	if recv.Kind == "index" {
+		if arrN, ok := recv.Fields["x"].(*Node); ok {
+			if idxN, ok := recv.Fields["index"].(*Node); ok {
+				return e.node("addrof", pos, map[string]any{
+					"array": arrN, "index": idxN, "type": tid,
+				})
+			}
+		}
+		// Unexpected index-node shape: fall through to the {"x","type"}
+		// form rather than dropping the address-of.
+	}
+	return e.node("addrof", pos, map[string]any{
+		"x": recv, "type": tid,
+	})
+}
+
 // implicitAddrOf implements Go's implicit address-of for method calls
 // (P3-M9, WS D). If the method's declared receiver is *T but the receiver
 // expression has type T and is addressable, wrap the receiver node in an
@@ -9302,10 +9327,7 @@ func (e *exporter) implicitAddrOf(sel *ast.SelectorExpr, recv **Node, recvType *
 	if err != nil {
 		return false
 	}
-	*recv = e.node("addrof", sel.X, map[string]any{
-		"x":    *recv,
-		"type": tid,
-	})
+	*recv = e.addrofNode(sel.X, *recv, tid)
 	*recvType = declRecv
 	return true
 }
@@ -9498,9 +9520,7 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 		if err != nil {
 			return nil, err
 		}
-		recv = e.node("addrof", sel.X, map[string]any{
-			"x": recv, "type": tid,
-		})
+		recv = e.addrofNode(sel.X, recv, tid)
 		recvType = types.NewPointer(recvType)
 	}
 	if len(mc.recvPath) > 0 {
