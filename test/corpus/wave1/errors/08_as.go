@@ -99,5 +99,21 @@ func main() {
 	}
 	fmt.Println("new-elem-set ok")
 
+	// Case 6: double-Elem on a reflect.New pointer (PKG-022 VETO-1).
+	// New(*errorT) is **errorT to a nil *errorT; the first Elem reuses
+	// the New cell handle (denoting the cell content, the nil *errorT);
+	// the second Elem must see the nil pointer and yield the zero Value
+	// (gc) — not a bogus valid Value.
+	ne2 := reflect.New(reflect.TypeOf(errP2))
+	d1 := ne2.Elem()
+	if !d1.IsValid() || !d1.IsNil() || !d1.CanSet() {
+		panic("New(*errorT).Elem should be valid, nil, settable")
+	}
+	d2 := d1.Elem()
+	if d2.IsValid() {
+		panic("New(*errorT).Elem().Elem() should be the zero Value")
+	}
+	fmt.Println("new-double-elem ok")
+
 	fmt.Println("PASS")
 }

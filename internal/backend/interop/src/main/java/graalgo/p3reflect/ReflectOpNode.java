@@ -687,13 +687,22 @@ public final class ReflectOpNode extends GoExprNode {
                         ((graalgo.values.GoInterface) d5).descriptor());
                 Object data = ((graalgo.values.GoInterface) d5).data();
                 long h = ReflectRefs.intern(data);
-                long flag = p.flag() & ReflectValues.FLAG_RO;
+                // gc: Elem sets flagIndir on the result (both branches).
+                long flag = ReflectValues.FLAG_INDIR | (p.flag() & ReflectValues.FLAG_RO);
                 return ReflectValues.pack(desc, elemTok, h, flag);
             }
             case POINTER -> {
                 // The Go pointer P that v represents is nil iff:
-                // - the handle addresses a ReflectRefs.Cell: never nil
-                //   (&Cell is a non-nil pointer; from reflectNew);
+                // - the handle addresses a ReflectRefs.Cell: provenance
+                //   decides. A Cell handle from reflectNew/reflectNewAt
+                //   (no FLAG_INDIR — gc's flagIndir) denotes &cell, a
+                //   non-nil pointer, so P is never nil. A Cell handle on an
+                //   Elem RESULT (FLAG_INDIR set) reuses the parent's handle
+                //   and denotes the cell's CONTENT (the pointee *T), which
+                //   may itself be nil. Without the INDIR bit the two
+                //   provenances are indistinguishable on the shared handle:
+                //   New(*T).Elem().Elem() returned a bogus valid Value
+                //   instead of gc's zero Value (PKG-022 VETO-1);
                 // - the handle addresses a GoCell: P is the cell's content
                 //   (nil content = nil pointer; from Elem on a cell pointer);
                 // - otherwise P is the denoted D5 value: nil iff d5 is null
@@ -701,7 +710,9 @@ public final class ReflectOpNode extends GoExprNode {
                 Object storage = ReflectRefs.resolve(p.ptr());
                 boolean pIsNil;
                 if (storage instanceof Cell) {
-                    pIsNil = false;
+                    pIsNil = ((p.flag() & ReflectValues.FLAG_INDIR) != 0)
+                            && (d5 == null
+                                || (d5 instanceof GoPointer gp2 && gp2.isNil()));
                 } else if (storage instanceof graalgo.values.GoCell gc) {
                     pIsNil = gc.get() == null;
                 } else if (d5 instanceof GoPointer gp) {
@@ -739,7 +750,10 @@ public final class ReflectOpNode extends GoExprNode {
                     // Set() writes through.
                     h = p.ptr();
                 }
-                long flag = ReflectValues.FLAG_ADDR | (p.flag() & ReflectValues.FLAG_RO);
+                // gc: Elem sets flagIndir on the result (provenance consumed
+                // by the Cell-handle nilness rule above).
+                long flag = ReflectValues.FLAG_INDIR | ReflectValues.FLAG_ADDR
+                        | (p.flag() & ReflectValues.FLAG_RO);
                 return ReflectValues.pack(desc, t.elem.tok, h, flag);
             }
             default -> throw new IllegalStateException("reflect: elem of " + t.kind);
