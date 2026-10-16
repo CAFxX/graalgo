@@ -2346,7 +2346,8 @@ public final class NodeFactory {
      */
     private static boolean isNillable(GoKind k) {
         return k == GoKind.POINTER || k == GoKind.SLICE || k == GoKind.MAP
-                || k == GoKind.FUNC || k == GoKind.INTERFACE || k == GoKind.UNSAFE_POINTER;
+                || k == GoKind.FUNC || k == GoKind.CHAN || k == GoKind.INTERFACE
+                || k == GoKind.UNSAFE_POINTER;
     }
 
     private int slotForObj(Json.Object fields, String kind, BuildCtx ctx) {

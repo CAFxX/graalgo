@@ -6234,32 +6234,35 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 			}
 		}
 	}
+	// A multi-result bodyless function needs a userMRFuncs entry so its
+	// callers get the pair transform and compile. This is general: ANY
+	// bodyless function with N>1 results gets it automatically, whether
+	// or not it carries //go:linkname. Real GOROOT packages imported
+	// from disk (e.g. reflect via the disk importer) may declare
+	// multi-result //go:linkname provider decls — see
+	// reflect/badlinkname.go, valid Go that gc accepts — which must
+	// export like any other bodyless declaration instead of hitting a
+	// WS D fail-fast. The wire results keep the original tuple; call
+	// sites consult userMRFuncs (see callType) and apply the pair
+	// transform.
+	if fi.sig != nil && fi.sig.Results().Len() > 1 && fi.obj != nil {
+		if _, ok := e.userMRFuncs[fi.obj]; !ok {
+			pairType, fieldNames, err := e.synthesizeUserPairType(fi)
+			if err != nil {
+				return nil, err
+			}
+			e.userMRFuncs[fi.obj] = &userMRInfo{
+				pairType:   pairType,
+				pairFields: fieldNames,
+				origSig:    fi.sig,
+			}
+		}
+	}
 	if symbol == "" {
 		// No //go:linkname and not a runtime-provided intrinsic:
 		// assembly-implemented (or otherwise bodyless) function.
-		// Mark unimplemented; the backend panics if called. The
-		// multi-result WS D restriction does not apply: no body is built.
+		// Mark unimplemented; the backend panics if called.
 		fields["unimplemented"] = true
-		// ASM Phase 1: a multi-result unimplemented function still
-		// needs a userMRFuncs entry so its callers get the pair
-		// transform and compile. The stub panics if invoked, so the
-		// pair is never constructed at runtime — but callers like
-		// internal/cpu.doinit (which multi-assigns cpuid results)
-		// must type-check. This is general: any bodyless function
-		// with N>1 results gets it automatically.
-		if fi.sig != nil && fi.sig.Results().Len() > 1 && fi.obj != nil {
-			if _, ok := e.userMRFuncs[fi.obj]; !ok {
-				pairType, fieldNames, err := e.synthesizeUserPairType(fi)
-				if err != nil {
-					return nil, err
-				}
-				e.userMRFuncs[fi.obj] = &userMRInfo{
-					pairType:   pairType,
-					pairFields: fieldNames,
-					origSig:    fi.sig,
-				}
-			}
-		}
 	} else {
 		fields["linkname"] = symbol
 		// real-nethttp: if the linkname symbol resolves to a compiled
@@ -7160,16 +7163,26 @@ func stmtOwner(s ast.Stmt) string {
 }
 
 // exportVarGenDecl handles `var` declarations (GenDecl form).
+//
+// A `var (...)` block lowers to one vardecl node per ValueSpec. Specs in a
+// block may mix initialized and uninitialized variables (e.g.
+// reflect.StructOf's `var ( hash = ...; size uintptr; ... )`), and the wire
+// vardecl requires names/objs/values to be positionally aligned — merging
+// specs into one node misaligns initializers and trips the backend's
+// values/objs length check. Per-spec lowering is semantics-preserving: a
+// var block is exactly equivalent to the sequence of its specs, each with
+// its own type and value alignment.
 func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
-	names := []string{}
-	objs := []int{}
-	var typ any
-	values := make([]*Node, 0)
+	var decls []*Node
 	for _, spec := range gd.Specs {
 		vs, ok := spec.(*ast.ValueSpec)
 		if !ok {
 			return nil, scopeErrorf("non-value var spec %T is not supported in frontend/v1 scope", spec)
 		}
+		names := []string{}
+		objs := []int{}
+		var typ any
+		values := make([]*Node, 0)
 		var typeIsTimer *types.Named
 		hasType := false
 		if vs.Type != nil {
@@ -7252,10 +7265,14 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		if hasType && typeIsTimer != nil {
 			return nil, timerScopeErrorf(typeIsTimer, "var declaration")
 		}
+		decls = append(decls, e.node("vardecl", gd, map[string]any{
+			"names": names, "objs": objs, "define": false, "type": typ, "values": values,
+		}))
 	}
-	return e.node("vardecl", gd, map[string]any{
-		"names": names, "objs": objs, "define": false, "type": typ, "values": values,
-	}), nil
+	if len(decls) == 1 {
+		return decls[0], nil
+	}
+	return e.node("block", gd, map[string]any{"stmts": decls}), nil
 }
 
 // exportDefine handles `:=` (short variable declarations).
@@ -8006,17 +8023,22 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 			// P3-M9: & on an addressable expression (ident, selector,
 			// index, deref) lowers to the "addrof" wire node (same as
 			// the implicit address-of for method calls). & on anything
-			// else stays a WS D scope error.
+			// else stays a WS D scope error. Parentheses are transparent
+			// (gc: &(x) is &(x)): unwrap before exporting so the backend
+			// sees the real operand kind (a "paren" wrapper would defeat
+			// buildAddrOf's field-addressing and yield a pointer to a
+			// copy instead of the field's storage).
 			if isAddressable(x.X, e.info) {
 				tid, err := e.exprType(x)
 				if err != nil {
 					return nil, err
 				}
+				ux := unparen(x.X)
 				// P3-M9: &arr[i] needs an element pointer (writes through
 				// *p must update arr[i], not a copy). Emit array/index
 				// separately; NodeFactory builds a GoPointer that
 				// reads/writes the array slot.
-				if idx, ok := x.X.(*ast.IndexExpr); ok {
+				if idx, ok := ux.(*ast.IndexExpr); ok {
 					arrN, err := e.exportExpr(idx.X)
 					if err != nil {
 						return nil, err
@@ -8029,7 +8051,7 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 						"array": arrN, "index": idxN, "type": tid,
 					}), nil
 				}
-				xn, err := e.exportExpr(x.X)
+				xn, err := e.exportExpr(ux)
 				if err != nil {
 					return nil, err
 				}
@@ -8730,7 +8752,11 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// whose type is a signature, not a composite type target.
 			// Export the fun expression and emit a plain call node
 			// (mirrors the func-valued variable branch below).
-			if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
+			// A type conversion to a func type, e.g. (func())(nil) in
+			// reflect.FuncOf, also has a signature-typed Fun — but the
+			// Fun denotes a TYPE (tv.IsValue() == false), not a value,
+			// so it falls through to the conversion path below.
+			if sig, ok := tv.Type.Underlying().(*types.Signature); ok && tv.IsValue() {
 				fun, err := e.exportExpr(c.Fun)
 				if err != nil {
 					return nil, err
@@ -8789,10 +8815,13 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// P3-M5 (WS E, ADR-0005 App M): the variable may have a NAMED
 		// func type (context.CancelFunc) — unwrap to the underlying
 		// signature.
+		// The unwrapped ident is not always the called entity: in
+		// ops[0](5) it denotes the slice, not the element. Only a var
+		// of func type takes this branch; anything else is a computed
+		// func-valued expression (handled generally below).
 		sig, ok := v.Type().Underlying().(*types.Signature)
 		if !ok {
-			return nil, scopeErrorf("call of non-function variable %s is not supported in frontend/v1 scope (WS D)",
-				funIdent.Name)
+			return e.exportComputedFuncCall(c)
 		}
 		fun, err := e.exportIdent(funIdent)
 		if err != nil {
@@ -9118,6 +9147,38 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 	}), true, nil
 }
 
+// exportComputedFuncCall exports a call whose Fun is a func-valued
+// expression rather than an identifier: e.g. ops[0](5) or m[k](x).
+// The fun expression is exported and a plain call node is emitted,
+// mirroring the func-valued variable branch (the factory builds a
+// func-value call node from any expression). General: any
+// single-result func-valued expression works; multi-result ones keep
+// the WS D scope error via callType.
+func (e *exporter) exportComputedFuncCall(c *ast.CallExpr) (*Node, error) {
+	tv, ok := e.info.Types[c.Fun]
+	if !ok || tv.Type == nil || !tv.IsValue() {
+		return nil, scopeErrorf("non-identifier call target %T is not supported in frontend/v1 scope (WS D)", c.Fun)
+	}
+	sig, ok := tv.Type.Underlying().(*types.Signature)
+	if !ok {
+		return nil, scopeErrorf("non-identifier call target %T is not supported in frontend/v1 scope (WS D)", c.Fun)
+	}
+	fun, err := e.exportExpr(c.Fun)
+	if err != nil {
+		return nil, err
+	}
+	args, err := e.exportCallArgsPacked(c, sig)
+	if err != nil {
+		return nil, err
+	}
+	typ, err := e.callType(c)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("call", c, map[string]any{
+		"fun": fun, "args": args, "type": typ,
+	}), nil
+}
 
 // exportFuncCall exports a call to a named top-level function (M6, WS H).
 // Generic functions resolve to their monomorphized instantiation via
@@ -9183,6 +9244,16 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// convention. Intercepted before the funcByObj lookup.
 	if providerFi, ok := e.linknameAlias[fn]; ok && providerFi != nil {
 		fn = providerFi.obj
+	}
+	// WS G (disk MR): the multi-result FuncDecl was rewritten at import
+	// to a pair-returning __-helper + panic stub, and the stub is never
+	// emitted. N-target assignments are intercepted by the Appendix-M
+	// desugar (classifyDiskMultiResultCall) before reaching here; any
+	// other call form (defer, go, or a bare statement — the only valid
+	// Go for a discarded multi-result call) lowers to a direct call of
+	// the __-helper. Intercepted before the funcByObj lookup.
+	if hfi, ok := e.diskMRHelperFi(fn); ok && hfi != nil {
+		fn = hfi.obj
 	}
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
@@ -9359,6 +9430,8 @@ func (e *exporter) implicitDeref(sel *ast.SelectorExpr, recv **Node, recvType *t
 // Addressable expressions: variables, pointer indirections, slice indexing,
 // field selectors of addressable values, and composite literals (via &T{}).
 func isAddressable(x ast.Expr, info *types.Info) bool {
+	// Parentheses never affect addressability (gc: &(x) is &(x)).
+	x = unparen(x)
 	switch x := x.(type) {
 	case *ast.Ident:
 		// Variables are addressable; constants, builtins, and nil are not.
@@ -9371,6 +9444,20 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 		// x.f is addressable if x is addressable.
 		if isAddressable(x.X, info) {
 			return true
+		}
+		// A field selected through a type assertion to a POINTER type
+		// is addressable: x.(P) with P a pointer yields the pointer
+		// itself (no copy), and selection through it is selection
+		// through a pointer. gc accepts &x.(P).f for pointer P and
+		// rejects &x.(T).f for non-pointer T (verified against gc
+		// 1.27.1). The descriptor-downcast pattern &mt.(*rtype).t in
+		// reflect's Method relies on this.
+		if ta, ok := x.X.(*ast.TypeAssertExpr); ok {
+			if tv, ok := info.Types[ta]; ok && tv.Type != nil {
+				if _, isPtr := types.Unalias(tv.Type).(*types.Pointer); isPtr {
+					return true
+				}
+			}
 		}
 		// real-reflect (Phase 1): &(*T)(unsafe.Pointer(p)).f — the
 		// descriptor-downcast pattern used throughout internal/abi
@@ -10791,6 +10878,16 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 				// so the provider's pair type is used.
 				if providerFi, ok := e.linknameAlias[fn]; ok && providerFi != nil {
 					fn = providerFi.obj
+				}
+				// WS G (disk MR): a discarded-result call to a disk-MR stub
+				// is redirected to the pair-returning __-helper (see
+				// exportFuncCall); the call's type is the helper's pair.
+				if hfi, ok := e.diskMRHelperFi(fn); ok && hfi != nil && hfi.sig != nil && hfi.sig.Results().Len() == 1 {
+					tid, err := e.typeID(hfi.sig.Results().At(0).Type())
+					if err != nil {
+						return nil, err
+					}
+					return tid, nil
 				}
 				if mrInfo, ok := e.userMRFuncs[fn]; ok {
 					tid, err := e.typeID(mrInfo.pairType)

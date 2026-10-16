@@ -401,13 +401,18 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// called via the Type interface (the classify function retries with
 	// recvType="rtype" for reflect interface methods); StructTag.Lookup is
 	// on the named string type StructTag.
-	{"reflect", "Select", "", "__reflectSelect", "reflectSelectTriple", []string{"chosen", "recv", "recvOK"}, false},
-	{"reflect", "FieldByIndexErr", "Value", "__reflectFieldByIndexErr", "reflectValuePair", []string{"v", "err"}, false},
-	{"reflect", "TryRecv", "Value", "__reflectTryRecv", "reflectValueBoolPair", []string{"x", "ok"}, false},
-	{"reflect", "MethodByName", "rtype", "__reflectTMethodByName", "reflectMethodPair", []string{"m", "ok"}, true},
-	{"reflect", "FieldByName", "rtype", "__reflectTFieldByName", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "FieldByNameFunc", "rtype", "__reflectTFieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "Lookup", "StructTag", "__reflect_taglookup", "reflectTagPair", []string{"value", "ok"}, false},
+	// NOTE (real-reflect): the reflect entries were retired with the
+	// synthetic reflect package (syntheticSources["reflect"] is retired;
+	// real reflect now compiles from GOROOT via the disk importer).
+	// Their __reflect_* helpers and reflect*Pair types existed only in
+	// the retired synthetic source, so every table hit panicked in
+	// getSyntheticPackage("reflect"). Real reflect's multi-result
+	// functions (Select, Value.FieldByIndexErr/TryRecv,
+	// (*rtype).MethodByName/FieldByName/FieldByNameFunc,
+	// StructTag.Lookup) have real bodies and go through the general
+	// userMR pair transform (registerUserMRFunc/exportFuncDecl) like any
+	// other function with real Go source; interface calls fall back to
+	// the general classifyUserIfaceMultiResultCall synthesis.
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
@@ -1287,9 +1292,10 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// __-helper (wired via multiResultHelperFor/methodTableEntries); the
 	// pair field names/types are positionally identical to the method's
 	// results (checked by classifyIfaceMultiResultCall).
-	{"reflect", "MethodByName", "reflectMethodPair", []string{"m", "ok"}},
-	{"reflect", "FieldByName", "reflectStructFieldPair", []string{"f", "ok"}},
-	{"reflect", "FieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}},
+	// NOTE (real-reflect): the reflect entries were retired with the
+	// synthetic reflect package (see the m7MultiResultFuncs note above).
+	// Interface calls to reflect.Type's multi-result methods fall back to
+	// the general classifyUserIfaceMultiResultCall pair synthesis.
 	// P3-M8b (wave 2, crypto): hash.Cloner.Clone and the
 	// encoding.BinaryMarshaler/BinaryAppender methods, dispatched on the
 	// hash.Cloner / encoding.BinaryMarshaler interfaces. The itab maps
@@ -3645,9 +3651,12 @@ func (e *exporter) registerUserMRPairs(funcs []*funcDeclInfo) error {
 // decision point for "does this func get a userMRFuncs entry", shared by
 // registerUserMRPairs (pre-pass) and exportFuncDecl, so the two can never
 // disagree. Returns (nil, nil) when fi must not be registered (synthetic
-// package func, generic template, at most one result, bodyless linkname
-// stub, or WS G disk-package multi-result stub — all cases exportFuncDecl
-// skips or rejects before reaching registration).
+// package func, generic template, at most one result, or WS G
+// disk-package multi-result stub — all cases exportFuncDecl skips or
+// rejects before reaching registration). Bodyless multi-result functions
+// (//go:linkname decls, //go:noescape decls, assembly stubs) ARE
+// registered: their callers may appear earlier in the file than the
+// declaration.
 func (e *exporter) registerUserMRFunc(fi *funcDeclInfo) (*userMRInfo, error) {
 	if fi == nil || fi.isTemplate {
 		return nil, nil
@@ -3663,9 +3672,20 @@ func (e *exporter) registerUserMRFunc(fi *funcDeclInfo) (*userMRInfo, error) {
 		return nil, nil
 	}
 	if fi.fd != nil && fi.fd.Body == nil {
-		// Bodyless (//go:linkname): exportFuncDecl routes these to
-		// exportLinknameDecl before reaching registration.
-		return nil, nil
+		// Bodyless (//go:linkname, //go:noescape, assembly stubs) with
+		// at most one result need no pair; multi-result bodyless decls
+		// fall through to pair synthesis below. exportFuncDecl routes
+		// bodyless decls to exportLinknameDecl, which registers the
+		// pair on declaration export — but declarations export in file
+		// order, so a caller earlier in the file (e.g. reflect's recv
+		// calling the bodyless chanrecv declared later) would
+		// otherwise fail with "multi-valued call result is not
+		// supported". Pre-registering here is idempotent with
+		// exportLinknameDecl's own guarded registration.
+		if fi.sig == nil || fi.sig.Results().Len() <= 1 {
+			return nil, nil
+		}
+		// Fall through to the WS G check and pair synthesis below.
 	}
 	if fi.obj != nil && fi.obj.Pkg() != nil {
 		// WS G: disk-package multi-result stubs are skipped by

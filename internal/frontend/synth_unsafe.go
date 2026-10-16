@@ -14,8 +14,11 @@
 //	Sizeof/Alignof/Offsetof                   (builtins: go/types folds them
 //	                                           to constants — no pre-pass,
 //	                                           no size tables; a non-constant
-//	                                           operand, e.g. over a type
-//	                                           parameter, is a scope error)
+//	                                           operand over an UNBOUND type
+//	                                           parameter is a scope error;
+//	                                           inside a generic instantiation
+//	                                           the substituted type is folded
+//	                                           via the gc/amd64 sizes)
 //	Slice/SliceData/String/StringData         (builtins: result types flow
 //	                                           from go/types; lowered to the
 //	                                           unsafe* wire nodes over the
@@ -48,6 +51,7 @@ package main
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/token"
 	"go/types"
 )
@@ -79,6 +83,57 @@ func syntheticUnsafePackage() *types.Package {
 	return pkg
 }
 
+// foldUnsafeSizeof folds unsafe.Sizeof/Alignof/Offsetof over a
+// substituted (generic-instantiation) operand type using the gc/amd64
+// sizes. Reports false when the operand still mentions a type parameter
+// (unbound) or the shape is unsupported — the caller keeps the scope
+// error. General: any generic function using these builtins on a type
+// parameter works once instantiated, matching gc.
+func (e *exporter) foldUnsafeSizeof(c *ast.CallExpr, name string) (*Node, bool) {
+	if len(c.Args) != 1 || e.sizes == nil {
+		return nil, false
+	}
+	at := e.substType(e.info.TypeOf(c.Args[0]))
+	if at == nil || mentionsTypeParam(at) {
+		return nil, false
+	}
+	var v int64
+	switch name {
+	case "Sizeof":
+		v = e.sizes.Sizeof(at)
+	case "Alignof":
+		v = e.sizes.Alignof(at)
+	case "Offsetof":
+		sel, ok := unparen(c.Args[0]).(*ast.SelectorExpr)
+		if !ok {
+			return nil, false
+		}
+		st, ok := types.Unalias(at).Underlying().(*types.Struct)
+		if !ok {
+			return nil, false
+		}
+		vars := make([]*types.Var, st.NumFields())
+		idx := -1
+		for i := 0; i < st.NumFields(); i++ {
+			vars[i] = st.Field(i)
+			if st.Field(i).Name() == sel.Sel.Name {
+				idx = i
+			}
+		}
+		if idx < 0 {
+			return nil, false
+		}
+		v = e.sizes.Offsetsof(vars)[idx]
+	default:
+		return nil, false
+	}
+	n, err := e.foldedConst(c, constant.MakeInt64(v))
+	if err != nil {
+		return nil, false
+	}
+	return n, true
+}
+
 // isUnsafeIntrinsic reports whether obj is one of the eight unsafe builtins.
 // Universe builtins (append, len, ...) have a nil Pkg; the unsafe ones carry
 // types.Unsafe (path "unsafe").
@@ -98,6 +153,16 @@ func (e *exporter) exportUnsafeIntrinsic(c *ast.CallExpr, b *types.Builtin) (*No
 	case "Sizeof", "Alignof", "Offsetof":
 		tv, ok := e.info.Types[c]
 		if !ok || tv.Value == nil {
+			// go/types folds Sizeof/Alignof/Offsetof only for concrete
+			// types. Inside a generic instantiation the operand may
+			// mention a type parameter (e.g. unsafe.Sizeof(F(0)) in
+			// internal/strconv.shortFloat[F]); the active substitution
+			// binds it to a concrete type, so fold via the substituted
+			// type using the gc/amd64 sizes. Unbound type params keep
+			// the scope error.
+			if n, ok := e.foldUnsafeSizeof(c, name); ok {
+				return n, nil
+			}
 			return nil, scopeErrorf("unsafe.%s: operand is not a constant expression in frontend/v1 scope (M8)", name)
 		}
 		return e.foldedConst(c, tv.Value)
