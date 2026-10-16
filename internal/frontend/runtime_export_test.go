@@ -427,7 +427,7 @@ func TestRuntimeViewCompleteness(t *testing.T) {
 	checkMethods("Cleanup", false, "Stop") // gc: func (c Cleanup) Stop()
 	checkMethods("Cleanup", true, "Stop")
 	checkMethods("StackRecord", true, "Stack")
-	checkMethods("MemProfileRecord", true, "InUseBytes", "InUseObjects")
+	checkMethods("MemProfileRecord", true, "InUseBytes", "InUseObjects", "Stack")
 
 	// gc-exact struct shapes.
 	fieldTypes := func(typeName string) []types.Type {
