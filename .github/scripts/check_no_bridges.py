@@ -357,7 +357,22 @@ def check_synthetic_ledger(diff, base_ref, repo_root):
     return errors, notes
 
 
-def check_no_bridges(diff):
+def _untracked_go_files(repo_root):
+    """Untracked .go files (repo-root-relative). `git diff` never shows them,
+    but they compile the moment they are committed — a local pre-commit gate
+    run must see the same content CI will."""
+    try:
+        r = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "--", "*.go"],
+            capture_output=True, text=True, timeout=30, cwd=repo_root)
+    except Exception:
+        return []
+    if r.returncode != 0:
+        return []
+    return [f for f in r.stdout.split("\n") if f.strip()]
+
+
+def check_no_bridges(diff, repo_root):
     errors = []
     added_lines = []
     current_file = None
@@ -389,6 +404,18 @@ def check_no_bridges(diff):
             prev_was_devnull = False
         elif line.startswith("--- "):
             prev_was_devnull = False
+    # Untracked .go files are new files too (invisible to git diff until
+    # committed); scan their full content as added lines.
+    for f in _untracked_go_files(repo_root):
+        new_go_files.add(f)
+        if "synth_" in f:
+            new_synth.add(f)
+        try:
+            with open(os.path.join(repo_root, f), encoding="utf-8") as fh:
+                for line in fh.read().split("\n"):
+                    added_lines.append((f, line))
+        except Exception:
+            pass
     for f in new_synth:
         errors.append(f"NEW SYNTHETIC FILE: {f} — synthetic stdlib packages are banned")
 
@@ -525,7 +552,7 @@ def main():
         return 1
 
     print(f"No-bridges check: inspecting added lines from {source}.")
-    errors = check_no_bridges(diff)
+    errors = check_no_bridges(diff, repo_root)
     ledger_errors, ledger_notes = check_synthetic_ledger(diff, base_ref, repo_root)
     errors = ledger_errors + errors
     for n in ledger_notes:
