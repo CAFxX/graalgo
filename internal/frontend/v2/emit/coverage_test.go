@@ -23,32 +23,50 @@ import (
 )
 
 // handledNodes is the set of concrete go/ast types the emitter supports.
-// Each entry must have a corresponding case in nodes.go or emit.go.
-// This list is checked mechanically against go/ast — it cannot drift.
+// Each entry must have a corresponding case in nodes.go, backlog.go, or
+// emit.go. This list is checked mechanically against go/ast — it cannot drift.
 var handledNodes = map[string]bool{
 	// Declarations (top-level).
 	"FuncDecl": true, // emitFuncDecl
 
 	// Statements.
-	"AssignStmt": true,
-	"BlockStmt":  true,
-	"BranchStmt": true,
-	"DeclStmt":   true, // var only; const/type decls fail loudly
-	"ExprStmt":   true,
-	"ForStmt":    true,
-	"IfStmt":     true,
-	"IncDecStmt": true,
-	"RangeStmt":  true,
-	"ReturnStmt": true,
+	"AssignStmt":     true,
+	"BlockStmt":      true,
+	"BranchStmt":     true,
+	"DeclStmt":       true, // var only; const/type decls fail loudly
+	"DeferStmt":      true, // V2-18: backlog.go emitGoDefer
+	"EmptyStmt":      true, // V2-18: backlog.go (emptystmt)
+	"ExprStmt":       true,
+	"ForStmt":        true,
+	"GoStmt":         true, // V2-18: backlog.go emitGoDefer
+	"IfStmt":         true,
+	"IncDecStmt":     true,
+	"LabeledStmt":    true, // V2-18: backlog.go emitLabeled
+	"RangeStmt":      true,
+	"ReturnStmt":     true,
+	"SendStmt":       true, // V2-18: backlog.go emitSend
+	"SwitchStmt":     true, // V2-18: backlog.go emitSwitch
+	"TypeSwitchStmt": true, // V2-18: backlog.go emitTypeSwitch
 
 	// Expressions.
-	"BasicLit":     true,
-	"BinaryExpr":   true,
-	"CallExpr":     true,
-	"Ident":        true,
-	"ParenExpr":    true,
-	"SelectorExpr": true,
-	"UnaryExpr":    true,
+	"BasicLit":       true,
+	"BinaryExpr":     true,
+	"CallExpr":       true,
+	"CompositeLit":   true, // emitCompositeLit (was misclassified as rejected)
+	"FuncLit":        true, // V2-18: backlog.go emitFuncLit
+	"Ident":          true,
+	"IndexExpr":      true, // emitIndex (was misclassified as rejected)
+	"KeyValueExpr":   true, // handled inline in emitCompositeLit (was misclassified)
+	"ParenExpr":      true,
+	"SelectorExpr":   true,
+	"SliceExpr":      true, // emitSlice (was misclassified as rejected)
+	"StarExpr":       true, // V2-18: deref node (nodes.go)
+	"TypeAssertExpr": true, // V2-18: typeassert node (nodes.go)
+	"UnaryExpr":      true, // &x and <-c become addrof/recv nodes (V2-18)
+
+	// Clauses are emitted inline by their enclosing statement emitter:
+	// CaseClause as "caseclause" maps by emitSwitch/emitTypeSwitch.
+	"CaseClause": true,
 
 	// Type expressions handled via go/types (not AST switch).
 	// These appear as types, not as standalone emitExpr cases:
@@ -56,8 +74,10 @@ var handledNodes = map[string]bool{
 	// are resolved through e.typeID(tv.Type) / e.exprType().
 }
 
-// typeExprNodes are AST type expressions that never reach emitExpr's switch
-// because they are handled via go/types type IDs. They are covered.
+// typeExprNodes are AST type expressions handled via go/types type IDs.
+// They are covered in type position through e.typeID(tv.Type) /
+// e.exprType(). V2-18: in expression position (e.g. make(chan int)) they
+// emit as "typeexpr" nodes carrying the type id (nodes.go).
 var typeExprNodes = map[string]bool{
 	"ArrayType":     true,
 	"ChanType":      true,
@@ -93,34 +113,19 @@ var nonNodeTypes = map[string]string{
 // "unsupported" error. The negative test below proves each one fails.
 var loudlyRejected = map[string]bool{
 	// Statements not yet implemented.
-	"BadStmt":       true,
-	"DeferStmt":     true,
-	"EmptyStmt":     true,
-	"GoStmt":        true,
-	"LabeledStmt":   true,
-	"SelectStmt":    true,
-	"SendStmt":      true,
-	"SwitchStmt":    true,
-	"TypeSwitchStmt": true,
+	"BadStmt":    true,
+	"SelectStmt": true, // channels are Phase 2; stays loudly rejected (tracked follow-up)
 	// Expressions not yet implemented.
-	"BadExpr":        true,
-	"CompositeLit":   true,
-	"Ellipsis":       true,
-	"FuncLit":        true,
-	"IndexExpr":      true,
-	"IndexListExpr":  true, // generics instantiation
-	"KeyValueExpr":   true,
-	"SliceExpr":      true,
-	"StarExpr":       true,
-	"TypeAssertExpr": true,
+	"BadExpr":       true,
+	"Ellipsis":      true, // variadic spread rejected inside emitCall
+	"IndexListExpr": true, // generics instantiation
 	// Declarations not yet implemented.
 	"BadDecl":   true,
 	"GenDecl":   true, // top-level; const/type/var handled selectively
 	"TypeSpec":  true,
 	"ValueSpec": true,
 	// Clauses (only appear inside switch/select).
-	"CaseClause": true,
-	"CommClause": true,
+	"CommClause": true, // select only; channels are Phase 2
 }
 
 // allASTNodes returns the sorted list of concrete struct type names in

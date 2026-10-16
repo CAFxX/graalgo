@@ -14,6 +14,8 @@ import graalgo.frontend.CompositeLitNode;
 import graalgo.frontend.ConstNode;
 import graalgo.frontend.CopyNode;
 import graalgo.frontend.DeleteNode;
+import graalgo.frontend.DerefNode;
+import graalgo.frontend.DerefWriteNode;
 import graalgo.frontend.ExprStmtNode;
 import graalgo.frontend.ForRepeatingNode;
 import graalgo.frontend.ForStmtNode;
@@ -25,6 +27,7 @@ import graalgo.frontend.GoStmtNode;
 import graalgo.frontend.IfNode;
 import graalgo.frontend.IncDecNode;
 import graalgo.frontend.IndexNode;
+import graalgo.frontend.LabeledStmtNode;
 import graalgo.frontend.LenNode;
 import graalgo.frontend.MakeNode;
 import graalgo.frontend.NewNode;
@@ -69,14 +72,22 @@ import java.util.Map;
  *   globals: [...]
  * </pre>
  *
- * <p>Node kinds from the v2 emitter (see {@code emit/nodes.go}):
- * funcdecl, block, exprstmt, return, assign, vardecl, if, for, range,
- * incdec, branch, ident, basiclit, binary, unary, paren, call, selector,
- * pkgref, param.
+ * <p>Node kinds from the v2 emitter (see {@code emit/nodes.go} and
+ * {@code emit/backlog.go}): funcdecl, block, emptystmt, exprstmt, return,
+ * assign, vardecl, if, for, range, incdec, branch, labeled, gostmt, defer,
+ * send, switch, typeswitch, ident, basiclit, binary, unary, paren, call,
+ * selector, pkgref, param, result, deref, addrof, recv, funclit,
+ * typeassert, typeexpr, compositelit, index, slice (caseclause/typecase
+ * appear inline inside switch/typeswitch).
  *
- * <p>All emitter kinds are implemented. The factory reuses the existing
- * Truffle node classes from {@code graalgo.frontend} (the same nodes v1
- * uses) — no new node types, no special cases.
+ * <p>Implemented here: the control-flow and expression nodes the emitter
+ * produces for constructs the v2 factory already supports. Constructs the
+ * factory cannot build yet (goroutines, deferred calls, switches,
+ * channels, closures, address-of, type assertions) fail loudly with an
+ * accurate message naming the missing machinery — never a generic
+ * "unsupported kind". The factory reuses the existing Truffle node classes
+ * from {@code graalgo.frontend} (the same nodes v1 uses) — no new node
+ * types, no special cases.
  */
 public final class NodeFactoryV2 {
 
@@ -433,14 +444,76 @@ public final class NodeFactoryV2 {
             }
             case "branch": {
                 String tok = getString(fields, "tok", where);
+                if ("goto".equals(tok)) {
+                    // V2-18: goto needs label-target dispatch (a scope-level
+                    // label registry); labeled break/continue work via the
+                    // signal machinery, goto does not yet.
+                    throw new FrontendException(where +
+                        ": goto is not yet supported in the v2 factory" +
+                        " (requires label-target dispatch; tracked follow-up)");
+                }
                 BranchNode.Op op = switch (tok) {
                     case "break" -> BranchNode.Op.BREAK;
                     case "continue" -> BranchNode.Op.CONTINUE;
-                    case "goto" -> BranchNode.Op.GOTO;
                     case "fallthrough" -> BranchNode.Op.FALLTHROUGH;
                     default -> throw new FrontendException(where + ": bad branch tok \"" + tok + "\"");
                 };
-                return new BranchNode(op, null);
+                String label = null;
+                Object labelObj = fields.get("label");
+                if (labelObj instanceof String s) {
+                    label = s;
+                }
+                return new BranchNode(op, label);
+            }
+            case "labeled": {
+                // V2-18: L: stmt. Labeled break/continue propagate through
+                // the signals the loop nodes already match by label.
+                String label = getString(fields, "label", where);
+                Object innerObj = fields.get("stmt");
+                if (!(innerObj instanceof Map)) {
+                    throw new FrontendException(where + ": labeled.stmt must be a map");
+                }
+                GoStmtNode inner = buildStmt((Map<String, Object>) innerObj, where + ".stmt", scope);
+                return new LabeledStmtNode(label, inner);
+            }
+            case "emptystmt": {
+                // V2-18: a stray semicolon is a no-op.
+                return new BlockNode(new GoStmtNode[0]);
+            }
+            case "gostmt": {
+                // V2-18: goroutine scheduling is not in the Truffle backend
+                // (the v1 factory also has no gostmt support).
+                throw new FrontendException(where +
+                    ": go statements require goroutine scheduling, which the Truffle" +
+                    " backend does not support yet (tracked follow-up)");
+            }
+            case "defer": {
+                // V2-18: defer needs deferred-call machinery (function
+                // values / RootCallTarget), not yet in the v2 factory.
+                throw new FrontendException(where +
+                    ": defer requires deferred-call machinery (function values)," +
+                    " not yet supported in the v2 factory (tracked follow-up)");
+            }
+            case "switch": {
+                // V2-18: needs SwitchNode wiring with runtime type
+                // descriptors for case comparison.
+                throw new FrontendException(where +
+                    ": switch requires SwitchNode wiring with type descriptors," +
+                    " not yet supported in the v2 factory (tracked follow-up)");
+            }
+            case "typeswitch": {
+                // V2-18: needs TypeSwitchNode wiring with runtime type
+                // descriptors and dynamic method sets.
+                throw new FrontendException(where +
+                    ": type switches require TypeSwitchNode wiring with type" +
+                    " descriptors, not yet supported in the v2 factory" +
+                    " (tracked follow-up)");
+            }
+            case "send": {
+                // V2-18: channels are Phase 2.
+                throw new FrontendException(where +
+                    ": channel send requires channel support (Phase 2)," +
+                    " not yet supported in the v2 factory");
             }
             default:
                 throw new FrontendException(
@@ -539,6 +612,16 @@ public final class NodeFactoryV2 {
                 GoKind fieldKind = goKindForTypeId(scope.types, lfields.get("type"), where);
                 int fieldIndex = findFieldIndex(scope.types, (Map<String, Object>) xObj, sel, where);
                 assigns.add(new SelectorWriteNode(obj, rhs, new int[]{fieldIndex}, fieldKind));
+            } else if ("deref".equals(lkind)) {
+                // V2-18: *p = value.
+                Map<String, Object> lfields = getMap(lmap, "fields", where + ".lhs.fields");
+                Object ptrObj = lfields.get("x");
+                if (!(ptrObj instanceof Map)) {
+                    throw new FrontendException(where + ".lhs[" + i + "]: deref.x must be a map");
+                }
+                GoExprNode ptr = buildExpr((Map<String, Object>) ptrObj, where + ".lhs[" + i + "].x", scope);
+                GoKind elemKind = goKindForTypeId(scope.types, lfields.get("type"), where);
+                assigns.add(new DerefWriteNode(ptr, rhs, elemKind));
             } else {
                 throw new FrontendException(where + ".lhs[" + i + "]: LHS kind \"" + lkind +
                     "\" not supported by v2 emitter");
@@ -709,7 +792,8 @@ public final class NodeFactoryV2 {
                     startedSlot, bytesSlot, posSlot);
             }
             default -> throw new FrontendException(
-                where + ": range over " + xkind + " not yet supported in v2");
+                where + ": range over channel requires channel support (Phase 2)," +
+                " not yet supported in the v2 factory");
         }
         GoLoopNode loop = new GoLoopNode(repeating);
         return new RangeStmtNode(null, loop);
@@ -906,6 +990,43 @@ public final class NodeFactoryV2 {
                 GoKind containerKind = goKindForTypeId(scope.types, xfields.get("type"), where + ".x");
                 GoKind nodeKind = goKindForTypeId(scope.types, fields.get("type"), where);
                 return new SliceExprNode(x, lo, hi, max, containerKind, nodeKind);
+            }
+            case "deref": {
+                // V2-18: *p. DerefNode evaluates the pointer expression and
+                // panics on nil dereference, mirroring gc.
+                Object xObj = fields.get("x");
+                if (!(xObj instanceof Map)) {
+                    throw new FrontendException(where + ": deref.x must be a map");
+                }
+                GoExprNode ptr = buildExpr((Map<String, Object>) xObj, where + ".x", scope);
+                GoKind elemKind = goKindForTypeId(scope.types, fields.get("type"), where);
+                return new DerefNode(elemKind, ptr);
+            }
+            case "addrof": {
+                // V2-18: &x needs the variable's storage cell (address-taken
+                // analysis / boxed variables), not yet in the v2 factory.
+                throw new FrontendException(where +
+                    ": address-of requires boxed variable storage (address-taken" +
+                    " analysis), not yet supported in the v2 factory (tracked follow-up)");
+            }
+            case "recv": {
+                // V2-18: channels are Phase 2.
+                throw new FrontendException(where +
+                    ": channel receive requires channel support (Phase 2)," +
+                    " not yet supported in the v2 factory");
+            }
+            case "funclit": {
+                // V2-18: function literals need closure/RootCallTarget
+                // machinery, not yet in the v2 factory.
+                throw new FrontendException(where +
+                    ": function literals require closure machinery (RootCallTarget)," +
+                    " not yet supported in the v2 factory (tracked follow-up)");
+            }
+            case "typeassert": {
+                // V2-18: needs runtime type descriptors for the asserted type.
+                throw new FrontendException(where +
+                    ": type assertions require runtime type descriptors," +
+                    " not yet supported in the v2 factory (tracked follow-up)");
             }
             default:
                 throw new FrontendException(

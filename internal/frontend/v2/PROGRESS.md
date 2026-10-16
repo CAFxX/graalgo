@@ -79,8 +79,40 @@ for the design.
 - **End-to-end proven**: `go run ./encode/cmd/encode-demo hello.go hello.bin`
   → `java graalgo.frontend.v2.V2DecodeDemo hello.bin` prints the decoded
   structure. The binary interface works; no JSON involved.
-- **Next**: Full Truffle node construction in NodeFactoryV2 (assign with
-  frame slots, calls, idents, control flow). Then circular compilation:
+## 2026-10-16 — V2-18 loud-rejection backlog cleared (emit side)
+
+- **Emitter now handles all 8 backlog constructs** (his 2026-10-16
+  directive: no loud failures for unimplemented kinds):
+  `EmptyStmt` → `emptystmt`; `*p` → `deref`, `&x` → `addrof`
+  (no longer smuggled as unary `"&"`); `<-c` → `recv`; `FuncLit` →
+  `funclit` (params + named results); `go`/`defer` → `gostmt`/`defer`;
+  `switch`/`type switch` → `switch`/`typeswitch` with `caseclause`/
+  `typecase` nodes; `ch <- v` → `send`; `x.(T)` → `typeassert`;
+  `L:` → `labeled`; branch labels carried on `branch`.
+  New emitters live in [emit/backlog.go](emit/backlog.go) (one function per
+  AST kind).
+- **Two gaps found and fixed along the way**: the checker never
+  initialized `types.Info.Implicits` (go/types silently skips recording
+  type-switch guard bindings when the map is nil), and type expressions in
+  value position (e.g. `make(chan int)`) now emit as `typeexpr` nodes.
+- **Coverage matrix updated**: 25 loudly-rejected → 11 (select,
+  generics, ellipsis, bad nodes, top-level const/type decls);
+  CompositeLit/IndexExpr/SliceExpr/KeyValueExpr reclassified as handled
+  (they were implemented but misclassified).
+- **Tests**: 13 positive tests in [emit/backlog_test.go](emit/backlog_test.go)
+  assert emitted node shapes (not just "no error"); negative tests for
+  implemented constructs removed. `go test ./...` green in the v2 module.
+- **Factory** ([NodeFactoryV2.java](../../../internal/backend/truffle/src/main/java/graalgo/frontend/v2/NodeFactoryV2.java)):
+  `emptystmt` (no-op), `labeled`, branch labels, `deref` reads, and `*p = v`
+  writes are implemented by reusing v1's Truffle nodes. The rest (`addrof`,
+  `funclit`, `gostmt`, `defer`, `switch`, `typeswitch`, `typeassert`,
+  `send`/`recv`, channel-range, `goto`) fail loudly with accurate messages
+  naming the missing machinery — tracked follow-ups, not silent gaps.
+- **Verification gap**: no JDK on the VM, so the Java factory changes are
+  uncompiled; the independent review must compile-check them.
+- **Next**: full Truffle node construction in NodeFactoryV2 for the new
+  node kinds (switch, funclit, defer, typeassert, ...). Then circular
+  compilation:
   graalgo compiles the v2 Go code (which uses go/parser, go/ast, go/types)
   to JVM bytecode, so it runs in-process and calls NodeFactoryV2 directly
   (no inter-process binary transfer).

@@ -49,6 +49,10 @@ func Check(fset *token.FileSet, pkg *ast.Package, conf *Config) (*Result, error)
 		Uses:       make(map[*ast.Ident]types.Object),
 		Selections: make(map[*ast.SelectorExpr]*types.Selection),
 		Scopes:     make(map[ast.Node]*types.Scope),
+		// V2-18: Implicits must be non-nil or go/types silently skips
+		// recording per-clause guard variables of type switches
+		// (Checker.recordImplicit checks m != nil).
+		Implicits: make(map[ast.Node]types.Object),
 	}
 
 	// Real importer only. importer.Default() uses the compiled package

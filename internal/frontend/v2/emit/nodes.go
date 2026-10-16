@@ -33,23 +33,7 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	}
 	sig := e.typeID(fn.Type())
 
-	params := []any{}
-	if fd.Type.Params != nil {
-		for _, field := range fd.Type.Params.List {
-			for _, name := range field.Names {
-				pobj := e.info.Info.Defs[name]
-				if pobj == nil {
-					continue
-				}
-				pid := e.declareParam(pobj)
-				params = append(params, e.node("param", name, map[string]any{
-					"name": name.Name,
-					"obj":  pid,
-					"type": e.typeID(pobj.Type()),
-				}))
-			}
-		}
-	}
+	params := e.emitSigVars(fd.Type.Params, true)
 
 	var body any
 	if fd.Body != nil {
@@ -104,6 +88,24 @@ func (e *Emitter) emitStmt(s ast.Stmt) (map[string]any, error) {
 			results = append(results, rn)
 		}
 		return e.node("return", s, map[string]any{"results": results}), nil
+	case *ast.EmptyStmt:
+		// V2-18: a stray semicolon must never fail a compile.
+		return e.node("emptystmt", s, map[string]any{}), nil
+	case *ast.GoStmt:
+		// V2-18: go f() emits faithfully; the factory decides support.
+		return e.emitGoDefer("gostmt", s, st.Call)
+	case *ast.DeferStmt:
+		// V2-18: defer f() emits faithfully; the factory decides support.
+		return e.emitGoDefer("defer", s, st.Call)
+	case *ast.SendStmt:
+		// V2-18: ch <- v emits faithfully; channels are the factory's call.
+		return e.emitSend(st)
+	case *ast.SwitchStmt:
+		return e.emitSwitch(st)
+	case *ast.TypeSwitchStmt:
+		return e.emitTypeSwitch(st)
+	case *ast.LabeledStmt:
+		return e.emitLabeled(st)
 	case *ast.AssignStmt:
 		return e.emitAssign(st)
 	case *ast.DeclStmt:
@@ -124,7 +126,15 @@ func (e *Emitter) emitStmt(s ast.Stmt) (map[string]any, error) {
 			"x":   x,
 		}), nil
 	case *ast.BranchStmt:
-		return e.node("branch", s, map[string]any{"tok": st.Tok.String()}), nil
+		// V2-18: carry the label so labeled break/continue/goto are faithful.
+		var label any
+		if st.Label != nil {
+			label = st.Label.Name
+		}
+		return e.node("branch", s, map[string]any{
+			"tok":   st.Tok.String(),
+			"label": label,
+		}), nil
 	default:
 		return nil, fmt.Errorf("emit: unsupported stmt %T", s)
 	}
@@ -323,7 +333,58 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		return e.emitBasicLit(ex)
 	case *ast.BinaryExpr:
 		return e.emitBinary(ex)
+	case *ast.StarExpr:
+		// V2-18: pointer dereference *p — a first-class node, not a rejection.
+		xn, err := e.emitExpr(ex.X)
+		if err != nil {
+			return nil, err
+		}
+		return e.node("deref", x, map[string]any{
+			"x":    xn,
+			"type": e.exprType(x),
+		}), nil
+	case *ast.FuncLit:
+		// V2-18: function literal.
+		return e.emitFuncLit(ex)
+	case *ast.TypeAssertExpr:
+		// V2-18: x.(T) — Type is nil for x.(type) outside a type switch,
+		// which the checker rejects before emission.
+		xn, err := e.emitExpr(ex.X)
+		if err != nil {
+			return nil, err
+		}
+		var typ any
+		if ex.Type != nil {
+			typ = e.exprType(ex.Type)
+		}
+		return e.node("typeassert", x, map[string]any{
+			"x":    xn,
+			"type": typ,
+		}), nil
 	case *ast.UnaryExpr:
+		// V2-18: &x (address-of) and <-c (receive) are first-class nodes,
+		// not generic unary ops — the factory used to fail on them
+		// confusingly via UnaryOpNode.Op.fromToken.
+		switch ex.Op {
+		case token.AND:
+			xn, err := e.emitExpr(ex.X)
+			if err != nil {
+				return nil, err
+			}
+			return e.node("addrof", x, map[string]any{
+				"x":    xn,
+				"type": e.exprType(x),
+			}), nil
+		case token.ARROW:
+			xn, err := e.emitExpr(ex.X)
+			if err != nil {
+				return nil, err
+			}
+			return e.node("recv", x, map[string]any{
+				"x":    xn,
+				"type": e.exprType(x),
+			}), nil
+		}
 		xn, err := e.emitExpr(ex.X)
 		if err != nil {
 			return nil, err
@@ -352,6 +413,13 @@ func (e *Emitter) emitExpr(x ast.Expr) (map[string]any, error) {
 		return e.emitIndex(ex)
 	case *ast.SliceExpr:
 		return e.emitSlice(ex)
+	case *ast.ChanType, *ast.ArrayType, *ast.MapType, *ast.StructType, *ast.FuncType, *ast.InterfaceType:
+		// V2-18: type expressions in expression position (e.g. the
+		// chan int in make(chan int, 1)). Faithful: carries the type id;
+		// what the backend does with it is the factory's call.
+		return e.node("typeexpr", x, map[string]any{
+			"type": e.exprType(x),
+		}), nil
 	default:
 		return nil, fmt.Errorf("emit: unsupported expr %T", x)
 	}

@@ -28,28 +28,6 @@ type negativeCase struct {
 
 var negativeCases = []negativeCase{
 	{
-		name: "DeferStmt",
-		src: `package main
-func main() { defer println("x") }
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "GoStmt",
-		src: `package main
-func main() { go println("x") }
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "SendStmt",
-		src: `package main
-func send(c chan int) { c <- 1 }
-func main() {}
-`,
-		want: "unsupported stmt",
-	},
-	{
 		name: "SelectStmt",
 		src: `package main
 func sel(c chan int) {
@@ -62,90 +40,6 @@ func sel(c chan int) {
 func main() {}
 `,
 		want: "unsupported stmt",
-	},
-	{
-		name: "SwitchStmt",
-		src: `package main
-func main() {
-	x := 1
-	switch x {
-	case 1:
-		println("one")
-	default:
-		println("other")
-	}
-}
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "TypeSwitchStmt",
-		src: `package main
-func main() {
-	var x any = 1
-	switch v := x.(type) {
-	case int:
-		println(v)
-	default:
-	}
-}
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "LabeledStmt",
-		src: `package main
-func main() {
-outer:
-	for i := 0; i < 3; i++ {
-		break outer
-	}
-}
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "EmptyStmt",
-		src: `package main
-func main() {
-	x := 1
-	;
-	println(x)
-}
-`,
-		want: "unsupported stmt",
-	},
-	{
-		name: "StarExpr",
-		src: `package main
-func main() {
-	x := 42
-	p := &x
-	println(*p)
-}
-`,
-		want: "unsupported expr",
-	},
-	{
-		name: "TypeAssertExpr",
-		src: `package main
-func main() {
-	var x any = 42
-	y := x.(int)
-	println(y)
-}
-`,
-		want: "unsupported expr",
-	},
-	{
-		name: "FuncLit",
-		src: `package main
-func main() {
-	f := func(x int) int { return x * 2 }
-	println(f(21))
-}
-`,
-		want: "unsupported expr",
 	},
 	{
 		name: "Ellipsis",
