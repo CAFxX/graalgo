@@ -17,8 +17,8 @@
 # against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.
-#   `make all` = generate + build + snapshot-check + check + test-ci
-#                + test-regression:
+#   `make all` = generate + build + snapshot-check + check + test-root
+#                + test-ci + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
@@ -31,6 +31,13 @@
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
 #               grep gates + the gofrontend gofmt/vet/tests gate
+#     test-root root-module Go unit tests (`go test` on ./cmd/...,
+#               ./internal/driver/..., ./internal/vet/...): the PKG-037
+#               regression test (TestSiblingBuildTaggedFileExcluded) and
+#               the driver/vet unit tests. Per-push (in `make all`): ~2 min
+#               cold, hermetic (temp dirs only — no network, no JVM, no
+#               graalgo binary). See the target's comment for why the scope
+#               is explicit and not `./...`.
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
 #     test-regression
 #               regression tests for fixed PKGs
@@ -104,9 +111,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-root test-ci test-regression test-p3frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-ci test-regression
+all: generate build snapshot-check check test-root test-ci test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -135,6 +142,35 @@ check:
 	$(MAKE) -C internal/backend/truffle check
 	$(MAKE) -C internal/backend/runtime check
 	$(MAKE) -C internal/backend/interop check
+
+# Root-module Go unit tests (R3-P1-3 wiring).
+#
+# DECISION (recorded, not implicit — the failure mode being fixed is
+# "implicit unwired"): per-push, wired into `make all` via `test-root`.
+# Measured 2026-10-16 on the dev VM: `go test -count=1 ./cmd/...`
+# ./internal/driver/... ./internal/vet/... = ~2 min cold (cmd/graalgo ~4s,
+# internal/driver ~28s, internal/vet ~90s — the vet analyzers type-check
+# against stdlib export data via go/importer, I/O-bound on a loaded box;
+# faster on CI runners). Hermetic: t.TempDir only, no network, no JVM, no
+# graalgo binary required — nothing here depends on backend state, so
+# there is no reason to relegate it to weekly.
+#
+# The package scope is explicit, NOT `go test ./...`, because ./... at the
+# root does not load: the differential-corpus fixture packages
+# (test/corpus/wave3/internal/*) import vendored GOROOT internals
+# (internal/bisect, ...) that the root module cannot resolve, and
+# docs/arch/... carries stale spike programs (some with their own _test.go
+# files) that are not maintained unit tests. internal/frontend is a
+# separate module (its `go test .` runs via internal/frontend/build.sh
+# inside `check`); tools/* and test/differential are separate modules too.
+# test/regression/* packages are graalgo-semantics tests that run through
+# the graalgo driver in `test-regression`, not under stock `go test`.
+#
+# -count=1: the gate must actually execute the tests, never report a cached
+# pass for changed code. No test is skipped to fit per-push: the full set
+# above runs, every push.
+test-root:
+	$(GO) test -count=1 ./cmd/... ./internal/driver/... ./internal/vet/...
 
 # CI-feasible tests: truffle module smoke tests (runtime + DSL processor).
 # Fast (<2 min) and dependency-free. The full differential corpora are

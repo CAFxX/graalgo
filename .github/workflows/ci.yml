@@ -1,11 +1,11 @@
 # graalgo CI — per project standing order (2026-10-12): runs `make all`
-# (regenerate generated artifacts + build + gates + fast tests +
-# snapshot-check, the M10 behavior-drift gate) and then
+# (regenerate generated artifacts + build + gates + root-module Go unit
+# tests + fast tests + snapshot-check, the M10 behavior-drift gate) and then
 # `git diff --exit-code`: if `make all` regenerates any tracked file
 # differently from what's committed, the build fails.
 #
 # SCOPE (see [Makefile](../../Makefile) header): per-push CI runs the fast subset
-# (generate/build/check/test-ci) plus the testing-strategy layers at their
+# (generate/build/check/test-root/test-ci) plus the testing-strategy layers at their
 # cadence (phases/phase3/PLAN.md §5):
 #   layer 1 (smoke):            per-commit  — diffharness smoke corpus,
 #                               mutation-validated oracle (this job)
@@ -66,7 +66,7 @@ jobs:
       - name: Export GO for the Makefiles
         run: echo "GO=$(which go)" >> "$GITHUB_ENV"
 
-      - name: make all (generate + build + check + fast tests)
+      - name: make all (generate + build + check + root-module unit tests + fast tests)
         run: make all
 
       - name: Fail on drift (generated files differ from committed)

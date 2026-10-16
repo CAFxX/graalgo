@@ -9,7 +9,9 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   `GO=~/tools/go/bin/go make ...`.
 - `make all` — the per-push gate: regenerate generated artifacts
   (`generate`), compile everything (`build`), verify behavior snapshots
-  (`snapshot-check`), run the grep/format gates (`check`), run the fast
+  (`snapshot-check`), run the grep/format gates (`check`), run the
+  root-module Go unit tests (`test-root`: `./cmd/...`,
+  `./internal/driver/...`, `./internal/vet/...`), run the fast
   in-JVM tests (`test-ci`). Then CI runs `git diff --exit-code`: if `make
   all` regenerates any tracked file differently from what's committed, the
   build fails. **Push only after `make all` is green locally.**
