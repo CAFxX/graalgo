@@ -35,12 +35,12 @@ public final class GoOnce {
         if (state.get() == DONE) {
             return;
         }
+        // RT-2: resolve the scheduler handle BEFORE the state transition.
+        // If the caller is not on a scheduler thread, current() throws here
+        // while state is still IDLE, so no caller can strand parked waiters
+        // behind a RUNNING state that will never become DONE.
+        SchedulerCore sched = SchedulerCore.current();
         if (state.compareAndSet(IDLE, RUNNING)) {
-            // P2-M10 reviewer P2-3: resolve the scheduler handle BEFORE the
-            // state transition. If the caller is not a scheduler goroutine,
-            // current() throws here — before state becomes DONE — instead of
-            // stranding parked waiters with state == DONE.
-            SchedulerCore sched = SchedulerCore.current();
             Throwable thrown = null;
             try {
                 action.run();

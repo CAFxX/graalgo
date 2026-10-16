@@ -266,4 +266,47 @@ public final class SyncStressTest {
             SchedulerCore.install(null);
         }
     }
+
+    /**
+     * RT-2 regression: a non-scheduler thread calling doOnce on an IDLE
+     * once must fail-fast BEFORE the state transition — it must not leave
+     * state stuck at RUNNING, stranding slow-path callers forever.
+     * Red-green: against the unfixed code, the first doOnce throws AFTER
+     * winning the CAS, state stays RUNNING, and the goroutine's doOnce
+     * parks forever (the await times out); against the fix, the throw
+     * happens before the CAS and the goroutine completes.
+     */
+    public void testOnceNonSchedulerThreadDoesNotStrandWaiters() throws Exception {
+        // The test thread is a non-scheduler thread; force that state
+        // regardless of what a previous (failed) test may have left behind.
+        SchedulerCore.install(null);
+        GoOnce once = new GoOnce();
+        boolean threw = false;
+        try {
+            once.doOnce(() -> {
+                throw new AssertionError("action must not run for a non-scheduler caller");
+            });
+        } catch (IllegalStateException expected) {
+            threw = true;
+        }
+        assertTrue(threw, "doOnce from a non-scheduler thread must throw");
+        assertTrue(!once.isDone(), "state must not be DONE after a failed doOnce");
+
+        SchedulerCore sched = newScheduler(4);
+        try {
+            AtomicInteger runs = new AtomicInteger(0);
+            CountDownLatch done = new CountDownLatch(1);
+            sched.spawn(() -> {
+                once.doOnce(runs::incrementAndGet);
+                done.countDown();
+            });
+            assertTrue(done.await(30, TimeUnit.SECONDS),
+                    "doOnce goroutine stranded: state stuck at RUNNING after a failed non-scheduler doOnce");
+            sched.awaitQuiescence();
+            assertEquals(1, runs.get(), "once action must run exactly once");
+            assertTrue(once.isDone(), "once must report done");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
 }
