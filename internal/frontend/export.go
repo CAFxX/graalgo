@@ -9391,9 +9391,9 @@ func isUnsafeReinterpret(x ast.Expr, info *types.Info) bool {
 	return src != nil && types.Unalias(src) == types.Typ[types.UnsafePointer]
 }
 
-func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, recv *Node) (*Node, error) {
+func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selection *types.Selection, recv *Node) (fun, adaptedRecv *Node, adaptedType types.Type, err error) {
 	if selection.Kind() != types.MethodVal {
-		return nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
+		return nil, nil, nil, scopeErrorf("selector call %s.%s is not supported in frontend/v1 scope (WS D)",
 			sel.X, sel.Sel.Name)
 	}
 	var mtargs []types.Type
@@ -9402,10 +9402,12 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	}
 	mc, err := e.resolveMethodCall(sel, selection, mtargs, e.subst)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	// P3-M9: synthetic method with no backend (panicMsg). Emit a runtime
 	// panic so the enclosing body exports; an actual call fails fast.
+	// No receiver adaptation applies (the receiver is dropped); the nil
+	// adapted receiver tells callers there is nothing to hoist (FE-2).
 	if mc.panicMsg != "" {
 		panicCall := &ast.CallExpr{
 			Fun: ast.NewIdent("panic"),
@@ -9413,7 +9415,12 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 				&ast.BasicLit{Kind: token.STRING, Value: `"` + mc.panicMsg + `"`},
 			},
 		}
-		return e.exportCall(panicCall)
+		fun, err = e.exportCall(panicCall)
+		return fun, nil, nil, err
+	}
+	xt, ok := e.info.Types[sel.X]
+	if !ok || xt.Type == nil {
+		return nil, nil, nil, fmt.Errorf("gofrontend: no type info for method receiver")
 	}
 	// P3-M9 (WS H, graalgo-wsh-fallback): ifacemethod fallback. When
 	// devirtualization fails (type parameter's concrete type is not a
@@ -9426,14 +9433,15 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 	// with a selector node, so dispatch happens on the field, not the
 	// outer struct.
 	if mc.ifaceFallback != nil {
+		adaptedType = xt.Type
 		if len(mc.recvPath) > 0 {
 			adapted := embeddedFieldType(selection.Recv(), mc.recvPath)
 			if adapted == nil {
-				return nil, fmt.Errorf("gofrontend: cannot adapt receiver for promoted interface method %s (exporter bug)", sel.Sel.Name)
+				return nil, nil, nil, fmt.Errorf("gofrontend: cannot adapt receiver for promoted interface method %s (exporter bug)", sel.Sel.Name)
 			}
 			tid, err := e.typeID(adapted)
 			if err != nil {
-				return nil, err
+				return nil, nil, nil, err
 			}
 			path := make([]any, len(mc.recvPath))
 			for i, v := range mc.recvPath {
@@ -9443,18 +9451,16 @@ func (e *exporter) methodRefNode(c *ast.CallExpr, sel *ast.SelectorExpr, selecti
 				"x": recv, "field": embeddedFieldName(selection.Recv(), mc.recvPath),
 				"selpath": path, "type": tid,
 			})
+			adaptedType = adapted
 		}
-		return e.exportIfaceFallbackCall(c, sel, selection, recv, mc.ifaceFallback)
+		fun, err = e.exportIfaceFallbackCall(c, sel, selection, recv, mc.ifaceFallback, adaptedType)
+		return fun, recv, adaptedType, err
 	}
 	// P3-M9: variadic method calls pack trailing args into a slice literal
 	// (the spread form passes the slice directly and needs no packing).
 	// The packing is applied at the exportCallArgs site below via
 	// exportCallArgsPacked.
 	declRecv := mc.decl.sig.Recv().Type()
-	xt, ok := e.info.Types[sel.X]
-	if !ok || xt.Type == nil {
-		return nil, fmt.Errorf("gofrontend: no type info for method receiver")
-	}
 	// GAP-6: a promoted method's declared receiver is the embedded type,
 	// not sel.X's type. Adapt the receiver expression by walking recvPath
 	// with a "selector" wire node — the factory's SelectorNode walks

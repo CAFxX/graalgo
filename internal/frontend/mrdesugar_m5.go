@@ -3349,16 +3349,28 @@ func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 // expressions: the original call's args, except for the Deadline method
 // where the receiver becomes the argument; the receiver is prepended
 // when the plan sets prependRecv.
+//
+// FE-2: Go evaluates a call's receiver before its arguments. A nested
+// multi-valued call in argument position is hoisted to a pre-statement
+// that executes before the helper call — which would run the argument
+// before the inlined receiver. The receiver is therefore exported first
+// (gc's order) but held back; when any argument hoists a pre-statement,
+// the receiver is hoisted to its own temp placed FIRST, preserving gc's
+// receiver-before-args order. Without nested hoists the receiver stays
+// inline (no behavior change).
 func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node, []*Node, error) {
-	// Helper call args: the original call's args, except for the
-	// Deadline method where the receiver becomes the argument.
+	// The receiver expression, held back from the arg loop so it can be
+	// hoisted ahead of nested pre-statements (FE-2). For the Deadline
+	// method the receiver becomes the (sole) argument; for prependRecv
+	// plans it is prepended to the helper's arguments.
+	var recvExpr ast.Expr
 	var argExprs []ast.Expr
 	if plan.kind == mrDeadline {
 		sel, ok := c.Fun.(*ast.SelectorExpr)
 		if !ok {
 			return nil, nil, fmt.Errorf("gofrontend: Deadline call has non-selector fun %T", c.Fun)
 		}
-		argExprs = []ast.Expr{sel.X}
+		recvExpr = sel.X
 	} else {
 		argExprs = c.Args
 	}
@@ -3367,9 +3379,19 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 		if !ok {
 			return nil, nil, fmt.Errorf("gofrontend: prependRecv call has non-selector fun %T", c.Fun)
 		}
-		argExprs = append([]ast.Expr{sel.X}, argExprs...)
+		recvExpr = sel.X
 	}
-	args := make([]*Node, 0, len(argExprs))
+	// Export the receiver first (gc's evaluation order), but hold the
+	// node back until the args are processed.
+	var recvNode *Node
+	if recvExpr != nil {
+		var err error
+		recvNode, err = e.exportExpr(recvExpr)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	args := make([]*Node, 0, len(argExprs)+1)
 	var preStmts []*Node
 	for _, a := range argExprs {
 		// P3-M9 (WS D): a multi-valued call in argument position, e.g.
@@ -3455,7 +3477,62 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 		}
 		args = append(args, x)
 	}
+	if recvNode != nil {
+		if len(preStmts) > 0 {
+			// FE-2: a nested multi-valued call hoisted a pre-statement;
+			// hoist the receiver to its own temp FIRST so it still
+			// evaluates before the hoisted argument (gc order).
+			xt, ok := e.info.Types[recvExpr]
+			if !ok || xt.Type == nil {
+				return nil, nil, fmt.Errorf("gofrontend: no type info for hoisted multi-result receiver")
+			}
+			var err error
+			recvNode, err = e.hoistMRReceiverTemp(c, recvNode, xt.Type, &preStmts, 0)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		args = append([]*Node{recvNode}, args...)
+	}
 	return args, preStmts, nil
+}
+
+// hoistMRReceiverTemp hoists an exported receiver node to a
+// __p5mr_recv_N temp (FE-2): it inserts the temp's vardecl into *pre at
+// position base (before the argument hoists recorded after base) and
+// returns the temp's ident node, which the caller installs as the call's
+// receiver.
+//
+// Go evaluates a call's receiver before its arguments; a nested
+// multi-valued call in argument position hoists to a pre-statement that
+// would otherwise execute before the inlined receiver. Callers pass the
+// ADAPTED receiver (post implicit addrof/selector) so addressability is
+// preserved: e.g. an adapted addrof(x) evaluates &x once into the temp,
+// never the address of a temp-held copy.
+func (e *exporter) hoistMRReceiverTemp(c *ast.CallExpr, recv *Node, recvType types.Type, pre *[]*Node, base int) (*Node, error) {
+	recvTid, err := e.typeID(recvType)
+	if err != nil {
+		return nil, err
+	}
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_recv_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, recvType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	vd := e.node("vardecl", c, map[string]any{
+		"names": []string{tmpName}, "objs": []int{tmpID},
+		"define": true, "type": nil, "values": []*Node{recv},
+	})
+	// Slice-insert at base (build a fresh slice; appending into the
+	// shared backing array would clobber e.mrHoistPre's tail).
+	np := make([]*Node, 0, len(*pre)+1)
+	np = append(np, (*pre)[:base]...)
+	np = append(np, vd)
+	np = append(np, (*pre)[base:]...)
+	*pre = np
+	return e.node("ident", c, map[string]any{"name": tmpName, "obj": tmpID, "type": recvTid}), nil
 }
 
 // hoistMRCallArg hoists a multi-result call in argument position (f(g()))
