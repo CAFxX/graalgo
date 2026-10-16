@@ -1,6 +1,7 @@
 package encode
 
 import (
+	"encoding/binary"
 	"os"
 	"path/filepath"
 	"testing"
@@ -201,8 +202,17 @@ func main() {
 	}
 	t.Logf("encoded %d bytes for all-kinds program", len(bin))
 
-	// Verify the binary starts with the map tag (not JSON).
-	if bin[0] != tagMap {
-		t.Fatalf("first byte = 0x%02x, want map tag 0x%02x", bin[0], tagMap)
+	// Verify the binary starts with the magic + version header, then the
+	// top-level map tag (not JSON: a JSON encoding would start with '{').
+	if string(bin[:len(formatMagic)]) != formatMagic {
+		t.Fatalf("missing magic header: first bytes = %x", bin[:min(4, len(bin))])
+	}
+	rest := bin[len(formatMagic):]
+	ver, n := binary.Uvarint(rest)
+	if n <= 0 || ver != formatVersion {
+		t.Fatalf("bad version header: %x", rest[:min(4, len(rest))])
+	}
+	if rest[n] != tagMap {
+		t.Fatalf("first value tag = 0x%02x, want map tag 0x%02x", rest[n], tagMap)
 	}
 }
