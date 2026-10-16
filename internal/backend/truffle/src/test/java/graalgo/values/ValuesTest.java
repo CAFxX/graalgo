@@ -323,4 +323,127 @@ public final class ValuesTest {
         } catch (IndexOutOfBoundsException expected) {
         }
     }
+
+    // P1-3: scalar complex equality. Distinct instances with equal
+    // components must compare equal (Go: complex(1,2)==complex(1,2)); a
+    // NaN part makes the value unequal to everything, including itself —
+    // even when both sides are the identical reference (Go semantics).
+    public void testGoEqualityComplexScalars() {
+        assertTrue(GoEquality.equal(new GoComplex64(1, 2), new GoComplex64(1, 2)),
+                "complex128 scalar equal values");
+        assertTrue(GoEquality.equal(new GoComplex32(1f, 2f), new GoComplex32(1f, 2f)),
+                "complex64 scalar equal values");
+        assertTrue(!GoEquality.equal(new GoComplex64(1, 2), new GoComplex64(1, 3)),
+                "complex128 scalar unequal values");
+        assertTrue(!GoEquality.equal(new GoComplex32(1f, 2f), new GoComplex32(3f, 2f)),
+                "complex64 scalar unequal values");
+        // NaN parts: never equal, even for the identical reference.
+        GoComplex64 nan64 = new GoComplex64(0, Double.NaN);
+        assertTrue(!GoEquality.equal(nan64, nan64), "complex128 NaN part, identical refs");
+        assertTrue(!GoEquality.equal(nan64, new GoComplex64(0, Double.NaN)),
+                "complex128 NaN part, distinct instances");
+        GoComplex32 nan32 = new GoComplex32(Float.NaN, 0f);
+        assertTrue(!GoEquality.equal(nan32, nan32), "complex64 NaN part, identical refs");
+        // Mixed carriers never equal.
+        assertTrue(!GoEquality.equal(new GoComplex64(1, 2), new GoComplex32(1f, 2f)),
+                "complex128 vs complex64");
+        assertTrue(!GoEquality.equal(new GoComplex64(1, 2), null), "complex vs null");
+        assertTrue(!GoEquality.equal(null, new GoComplex64(1, 2)), "null vs complex");
+        // -0.0 components compare equal (IEEE), and hash equal (P1-4).
+        assertTrue(GoEquality.equal(new GoComplex64(-0.0, 1), new GoComplex64(0.0, 1)),
+                "complex128 -0.0 component");
+        assertEq(GoEquality.hash(new GoComplex64(-0.0, 1)), GoEquality.hash(new GoComplex64(0.0, 1)),
+                "complex128 -0.0 hash");
+        assertTrue(GoEquality.equal(new GoComplex32(-0.0f, 1f), new GoComplex32(0.0f, 1f)),
+                "complex64 -0.0 component");
+        assertEq(GoEquality.hash(new GoComplex32(-0.0f, 1f)), GoEquality.hash(new GoComplex32(0.0f, 1f)),
+                "complex64 -0.0 hash");
+        // Hash consistency for equal scalar complexes.
+        assertEq(GoEquality.hash(new GoComplex64(1, 2)), GoEquality.hash(new GoComplex64(1, 2)),
+                "complex128 hash consistent");
+        assertEq(GoEquality.hash(new GoComplex32(1f, 2f)), GoEquality.hash(new GoComplex32(1f, 2f)),
+                "complex64 hash consistent");
+    }
+
+    // P1-3: interface-boxed complex equality — any(1+2i) == any(1+2i).
+    public void testGoEqualityInterfaceBoxedComplex() {
+        Object desc = new Object();
+        Object itab = new Object();
+        GoInterface l = new GoInterface(desc, new GoComplex64(1, 2), itab);
+        GoInterface r = new GoInterface(desc, new GoComplex64(1, 2), itab);
+        assertTrue(GoEquality.equal(l, r), "any(complex128(1,2)) == any(complex128(1,2))");
+        GoInterface l32 = new GoInterface(desc, new GoComplex32(1f, 2f), itab);
+        GoInterface r32 = new GoInterface(desc, new GoComplex32(3f, 2f), itab);
+        assertTrue(!GoEquality.equal(l32, r32), "any(complex64) unequal values");
+    }
+
+    // P1-3: structs with complex fields compare field-wise.
+    public void testGoEqualityStructWithComplexField() {
+        GoStructDescriptor d = GoStructDescriptor.layout("C",
+                List.of("c", "n"), List.of(GoKind.COMPLEX128, GoKind.INT64));
+        GoStruct s1 = GoStruct.zero(d);
+        s1.setObject(0, new GoComplex64(1, 2));
+        s1.setLong(1, 7);
+        GoStruct s2 = GoStruct.zero(d);
+        s2.setObject(0, new GoComplex64(1, 2));
+        s2.setLong(1, 7);
+        assertTrue(GoEquality.equal(s1, s2), "struct with complex128 field, equal values");
+        assertEq(GoEquality.hash(s1), GoEquality.hash(s2), "struct with complex field hash");
+        GoStruct s3 = GoStruct.zero(d);
+        s3.setObject(0, new GoComplex64(9, 9));
+        s3.setLong(1, 7);
+        assertTrue(!GoEquality.equal(s1, s3), "struct with complex128 field, unequal values");
+    }
+
+    // P1-4: -0.0 hashes as +0.0 (gc f64hash/f32hash normalize), so equal
+    // keys hash equal and map lookups hit in both directions.
+    public void testGoEqualityNegativeZeroHash() {
+        assertTrue(GoEquality.equal(-0.0, 0.0), "-0.0 == +0.0");
+        assertEq(GoEquality.hash(-0.0), GoEquality.hash(0.0), "double -0.0 hash");
+        assertTrue(GoEquality.equal(-0.0f, 0.0f), "-0.0f == +0.0f");
+        assertEq(GoEquality.hash(-0.0f), GoEquality.hash(0.0f), "float -0.0 hash");
+        assertTrue(GoEquality.equal(new double[]{-0.0}, new double[]{0.0}), "double[] -0.0");
+        assertEq(GoEquality.hash(new double[]{-0.0}), GoEquality.hash(new double[]{0.0}),
+                "double[] -0.0 hash");
+        assertTrue(GoEquality.equal(new float[]{-0.0f}, new float[]{0.0f}), "float[] -0.0");
+        assertEq(GoEquality.hash(new float[]{-0.0f}), GoEquality.hash(new float[]{0.0f}),
+                "float[] -0.0 hash");
+        GoComplex64[] ca = {new GoComplex64(-0.0, 1)};
+        GoComplex64[] cb = {new GoComplex64(0.0, 1)};
+        assertTrue(GoEquality.equal(ca, cb), "GoComplex64[] -0.0 component");
+        assertEq(GoEquality.hash(ca), GoEquality.hash(cb), "GoComplex64[] -0.0 hash");
+        GoComplex32[] fa = {new GoComplex32(-0.0f, 1f)};
+        GoComplex32[] fb = {new GoComplex32(0.0f, 1f)};
+        assertTrue(GoEquality.equal(fa, fb), "GoComplex32[] -0.0 component");
+        assertEq(GoEquality.hash(fa), GoEquality.hash(fb), "GoComplex32[] -0.0 hash");
+        // Map round-trip in both directions (Go: hit).
+        GoMap m = new GoMap();
+        m.put(-0.0, 1L);
+        assertEq(1L, (Long) m.get(0.0), "m[-0.0]=1; m[0.0] hits");
+        GoMap m2 = new GoMap();
+        m2.put(0.0, 2L);
+        assertEq(2L, (Long) m2.get(-0.0), "m[0.0]=2; m[-0.0] hits");
+        // Scalar complex map keys round-trip.
+        GoMap cm = new GoMap();
+        cm.put(new GoComplex64(3, 4), 42L);
+        assertEq(42L, (Long) cm.get(new GoComplex64(3, 4)), "complex128 map key round-trip");
+    }
+
+    // P1-4: GoStruct.hashCode normalizes -0.0 in longs-carried float fields.
+    public void testGoStructHashNegativeZeroFloatField() {
+        GoStructDescriptor d = GoStructDescriptor.layout("F",
+                List.of("f"), List.of(GoKind.FLOAT64));
+        GoStruct s1 = GoStruct.zero(d);
+        s1.setLong(0, Double.doubleToLongBits(-0.0));
+        GoStruct s2 = GoStruct.zero(d);
+        s2.setLong(0, Double.doubleToLongBits(0.0));
+        assertEq(s1.hashCode(), s2.hashCode(), "struct float64 field -0.0 hash");
+        GoStructDescriptor d32 = GoStructDescriptor.layout("F32",
+                List.of("f"), List.of(GoKind.FLOAT32));
+        GoStruct t1 = GoStruct.zero(d32);
+        t1.setLong(0, Float.floatToIntBits(-0.0f));
+        GoStruct t2 = GoStruct.zero(d32);
+        t2.setLong(0, Float.floatToIntBits(0.0f));
+        assertEq(t1.hashCode(), t2.hashCode(), "struct float32 field -0.0 hash");
+    }
 }
