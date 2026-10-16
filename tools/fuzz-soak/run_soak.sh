@@ -8,10 +8,10 @@
 # Minimized divergences become permanent regressions per SPEC §5.4 (filed
 # under phases/phase3/fuzzing/findings/ with a minimized reproducer).
 #
-# This is the OVERNIGHT slot. The CONTINUOUS adversarial track reserves the
-# same interface: `run_soak.sh --seeds A:B` runs one bounded batch (used by
-# the continuous track's scheduler); the scheduled GHA workflow
-# (.github/workflows/fuzz-soak.yml) runs the overnight soak per release.
+# Exit codes: 0 = soak complete with no divergences; 1 = soak complete but
+# divergences were found (reported in soak-report.json); 2 = usage/error.
+# The batch loop continues on per-batch failures by design — every batch
+# runs, and a divergence anywhere fails the run at the final tally.
 #
 # Usage:
 #   run_soak.sh --hours H --out DIR     overnight soak, ~H hours of batches
@@ -133,4 +133,8 @@ rep = {"batches": len(glob.glob(os.path.join(out, "batch-*"))),
        "diverged_total": total_div}
 json.dump(rep, open(os.path.join(out, "soak-report.json"), "w"), indent=2)
 print(f"soak report: {rep}")
+if total_div > 0:
+    print(f"FAIL: {total_div} diverged programs found")
+    sys.exit(1)
+print("OK: no divergences")
 EOF
