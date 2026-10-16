@@ -1,0 +1,4 @@
+# Per-run harness output (run.sh): generated mutants + machine-readable
+# reports. Never committed — per repo AGENTS.md, per-run evidence belongs
+# in commit messages, not the tree.
+test-results/

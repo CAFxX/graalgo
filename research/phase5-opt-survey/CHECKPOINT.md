@@ -239,3 +239,15 @@ Queue ([SURVEY.md](SURVEY.md) §6 "Wave-6 queue (prioritized)"): T3 standing tri
 - Wave 6 fully synthesized: 77 active ranked (SURV-001…078 minus struck SURV-077), tiers 7/39/17/14; [SURVEY.md](SURVEY.md) §1–§7 updated; §6 carries the wave-7 queue; all wave-6 track files durable in the survey dir.
 - Open threads for wave 7: JEP 544 direct re-verification (403-blocked in wave 6); re-armed #157943 trip conditions; SURV-075 Stage-0 execution decision (program owner); standing T3/T4 watches.
 - Registry `graalgo-opt-survey` stays `active` (survey runs indefinitely until owner STOP or Phase 5 begins); heartbeating continues.
+
+## Research data: survey input dumps
+
+[.t4-wave2-cache/](.t4-wave2-cache/) (62 files, ~6 MB) holds the raw
+GitHub API response dumps behind the T4 wave-2 golang/go issue sweep —
+paged search results (`perf-compruntime-open-p{1..5}.json`,
+`prop-closed-p1.json`, `perf-compruntime-open-titles.txt`) plus
+individually fetched issue/comment bodies (`issue-*.json`,
+`comments-*.json`). Query-to-file mapping:
+[track-4-wave2-tracker.md](track-4-wave2-tracker.md) §1 "API sweep log".
+Keep — this is the survey's evidence, never edit by hand; refreshed by
+re-running the sweep, not by re-fetches.
