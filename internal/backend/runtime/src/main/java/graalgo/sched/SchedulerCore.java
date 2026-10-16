@@ -346,9 +346,15 @@ public final class SchedulerCore {
      * <p>Failure discipline (Go parity): an uncaught Go panic in
      * <em>any</em> goroutine is recorded and printed (the launcher exits
      * 2); {@code Goexit} kills just that goroutine; internal
-     * {@code RuntimeException}s and stack overflows are recorded loudly
-     * (the launcher exits 1).
+     * {@code RuntimeException}s, stack overflows, and — via the terminal
+     * {@code catch (Throwable)} (P0-3, 2026-10-16) — any other
+     * {@code Error} escaping a goroutine body are recorded loudly (the
+     * launcher exits 1).
      */
+    // "removal" is intentional and documented: the terminal catch chain
+    // deliberately names ThreadDeath (deprecated for removal) to rethrow
+    // it rather than recording a kill-thread as a crash — see below.
+    @SuppressWarnings("removal")
     public GoroutineHandle spawn(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
         long t = armPark(h);
@@ -382,6 +388,26 @@ public final class SchedulerCore {
                 }
             } catch (RuntimeException e) {
                 recordCrash("internal error", e);
+            } catch (Throwable thrown) {
+                // P0-3 (independent review 2026-10-16): Errors thrown by
+                // graalgo internals (AssertionError, LinkageError, ...)
+                // are internal bugs, not Go panics. Without this terminal
+                // clause they escaped to the vthread's default uncaught
+                // handler while the finally block still offered EXIT and
+                // decremented the goroutine count, so panicked()/crashed()
+                // stayed false and the launcher exited 0 on an internal
+                // failure — a silent wrong exit code on exactly the failure
+                // class (assertion violations) used to catch our own bugs.
+                // Placed AFTER the specific catches above so their handling
+                // (PanicException, Goexit, stack-overflow cascade) is
+                // preserved. ThreadDeath is rethrown, never recorded:
+                // Thread.stop()-driven kills (deprecated, unsupported on
+                // virtual threads) are external intent, not a crash, and
+                // recording one would lie about what happened.
+                if (thrown instanceof ThreadDeath td) {
+                    throw td;
+                }
+                recordCrash("internal error", thrown);
             } finally {
                 // P2-M6: every start gets an end, before the EXIT token.
                 JfrEvents.goroutineEnd(h, System.nanoTime() - h.startNanos);

@@ -484,6 +484,51 @@ public final class SchedulerCoreTest {
     }
 
     /**
+     * P0-3 (independent review 2026-10-16): an {@link AssertionError}
+     * thrown by graalgo internals inside a goroutine body is an internal
+     * bug, not a Go panic — it must be recorded as a crash (launcher
+     * exits 1), never escape to the vthread's uncaught handler while
+     * {@code panicked()}/{@code crashed()} stay false (launcher exits
+     * 0 — a silent wrong exit code on exactly the failure class used to
+     * catch our own bugs).
+     *
+     * <p>Red-green: fails if the spawn catch chain loses its terminal
+     * {@code catch (Throwable)} — the error escapes unrecorded and
+     * {@code crashed()} stays false.
+     */
+    public void testSpawnedAssertionErrorRecordedAsCrash() throws Exception {
+        assertErrorRecordedAsCrash(new AssertionError("test-only assertion"));
+    }
+
+    /**
+     * P0-3 companion: {@link LinkageError} (and other non-assertion
+     * {@link Error}s) is likewise internal-error discipline, not a Go
+     * panic.
+     */
+    public void testSpawnedLinkageErrorRecordedAsCrash() throws Exception {
+        assertErrorRecordedAsCrash(new LinkageError("test-only linkage"));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static <T extends Throwable> void sneakyThrow(Throwable t) throws T {
+        throw (T) t;
+    }
+
+    private void assertErrorRecordedAsCrash(Throwable bomb) throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> sneakyThrow(bomb));
+            sched.awaitQuiescence();
+            assertTrue(sched.crashed(), "Error escaping a goroutine body must record a crash");
+            assertTrue(!sched.panicked(), "an Error is not a Go panic");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
      * Voluntary yield via the quantum-park mechanism.
      * Reviewer2 P1-2: yieldCurrent() had zero coverage. With cap=1 and
      * quantum disabled, a goroutine that never yields would starve the
