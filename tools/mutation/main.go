@@ -79,13 +79,17 @@ func main() {
 		fmt.Printf("[%s] %s: %s (%s)\n", m.ID, verdict, m.Description, detail)
 	}
 
-	// Write report (R2#6: persist to hidden_files, not just /tmp)
+	// Write report (R2#6: persist for durability, not just the temp workdir)
 	report, _ := json.MarshalIndent(results, "", "  ")
 	os.WriteFile(filepath.Join(workdir, "report.json"), report, 0644)
 	fmt.Printf("\nreport: %s/report.json\n", workdir)
 
-	// Also copy to the repo's hidden_files for durability
-	persistDir := "/home/hatch/workspace/graalgo/phases/phase1/hidden_files/mutation"
+	// Also copy to a durable location OUTSIDE the repo tree. The old
+	// phases/phase1/hidden_files/mutation location died with the phases/
+	// deletion (2026-10-14), and hidden_files/ must never reappear
+	// (no-debris rule). GRAALGO_MUTATION_REPORTS overrides; default
+	// ~/workspace/graalgo-mutation-reports.
+	persistDir := mutationReportsDir()
 	os.MkdirAll(persistDir, 0755)
 	ts := time.Now().Format("20060102-150405")
 	persistPath := filepath.Join(persistDir, "report-"+ts+".json")
@@ -144,17 +148,21 @@ func runJavaMutant(repo, mdir string, m Mutant, mutated string) (string, string)
 		return "ERROR", err.Error()
 	}
 
-	// Compile single file against out/classes
+	// Compile single file against the backend classes. Classpath mirrors
+	// the truffle Makefile's run classpath (runtime/out/classes first so
+	// the same-FQN replacements shadow the truffle stubs): the runtime
+	// module's joint round compiles the truffle sources.
 	overlayClasses := filepath.Join(mdir, "classes")
 	os.MkdirAll(overlayClasses, 0755)
-	phase1 := filepath.Join(repo, "phases/phase1")
-	cp := fmt.Sprintf("%s/out/classes:%s", phase1, jarCP(phase1))
+	be := backendDir(repo)
+	cp := fmt.Sprintf("%s/runtime/out/classes:%s/truffle/out/classes:%s",
+		be, be, jarCP(be))
 	cmd := exec.Command(javaBin(),
 		"-Xlint:deprecation", "-Werror",
 		"-cp", cp,
 		"-d", overlayClasses,
 		overlaySrc)
-	cmd.Dir = phase1
+	cmd.Dir = filepath.Join(be, "truffle")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "ERROR", fmt.Sprintf("javac: %v\n%s", err, out)
 	}
@@ -194,19 +202,24 @@ func runGoMutant(repo, mdir string, m Mutant, mutated string) (string, string) {
 }
 
 func runTestSuite(repo, mdir string, extraEnv map[string]string) (string, string) {
-	phase1 := filepath.Join(repo, "phases/phase1")
-	// Build classpath: overlay (if any) : out/test : out/classes : jars
+	// Test classpath mirrors the truffle Makefile's test target:
+	// overlay (mutant) : truffle/out/test-classes : runtime/out/classes :
+	// truffle/out/classes : jars. The runtime module's joint round holds
+	// the real classes; truffle/out/classes holds only the 8 frozen stubs,
+	// shadowed by the replacements in runtime/out/classes.
+	be := backendDir(repo)
 	cp := ""
 	if ov, ok := extraEnv["CLASSPATH_OVERLAY"]; ok {
 		cp = ov + ":"
 	}
-	cp += fmt.Sprintf("%s/out/test:%s/out/classes:%s", phase1, phase1, jarCP(phase1))
+	cp += fmt.Sprintf("%s/truffle/out/test-classes:%s/runtime/out/classes:%s/truffle/out/classes:%s",
+		be, be, be, jarCP(be))
 
 	// R1#5: pass the Makefile's JAVA_FLAGS (-Xss32m for the deep-recursion test).
 	cmd := exec.Command(javaRunBin(),
 		"--enable-native-access=ALL-UNNAMED", "-Xss32m",
 		"-cp", cp, "graalgo.test.Runner")
-	cmd.Dir = phase1
+	cmd.Dir = filepath.Join(be, "truffle")
 	cmd.Env = os.Environ()
 	for k, v := range extraEnv {
 		if k == "CLASSPATH_OVERLAY" {
@@ -259,24 +272,53 @@ func javaBin() string {
 		return p
 	}
 	// javac is alongside java in the GraalVM JDK
-	return "/home/hatch/tools/graalvm-jdk-25/bin/javac"
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "tools", "graalvm-jdk-25", "bin", "javac")
+	}
+	return "javac"
 }
 
 func javaRunBin() string {
 	if p := os.Getenv("GRAALGO_JAVA_RUN"); p != "" {
 		return p
 	}
-	return "/home/hatch/tools/graalvm-jdk-25/bin/java"
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "tools", "graalvm-jdk-25", "bin", "java")
+	}
+	return "java"
 }
 
 func goBin() string {
-	return "/home/hatch/tools/go/bin/go"
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "tools", "go", "bin", "go")
+	}
+	return "go"
 }
 
-func jarCP(phase1 string) string {
-	// Match Makefile CP: lib/*.jar
-	jars, _ := filepath.Glob(filepath.Join(phase1, "lib", "*.jar"))
+func jarCP(be string) string {
+	// Match Makefile CP: truffle/lib/*.jar
+	jars, _ := filepath.Glob(filepath.Join(be, "truffle", "lib", "*.jar"))
 	return strings.Join(jars, ":")
+}
+
+// backendDir is the new-layout backend tree. The old phases/phase1 tree
+// was deleted in the Phase-4 restructure (2026-10-14); the Java modules
+// now live at internal/backend/{truffle,runtime,interop}.
+func backendDir(repo string) string {
+	return filepath.Join(repo, "internal", "backend")
+}
+
+// mutationReportsDir is the durable report location, outside the repo
+// tree: the no-debris rule forbids recreating hidden_files/ anywhere,
+// and per-run evidence must not land in the tree.
+func mutationReportsDir() string {
+	if p := os.Getenv("GRAALGO_MUTATION_REPORTS"); p != "" {
+		return p
+	}
+	if h, err := os.UserHomeDir(); err == nil {
+		return filepath.Join(h, "workspace", "graalgo-mutation-reports")
+	}
+	return filepath.Join(os.TempDir(), "graalgo-mutation-reports")
 }
 
 func copyDir(src, dst string) error {

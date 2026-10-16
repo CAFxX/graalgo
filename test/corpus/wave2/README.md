@@ -1,5 +1,13 @@
 # P3-M8 wave-2 differential corpus
 
+> **RETIREMENT NOTICE (2026-10-16, review-r2-phases-sweep):** the
+> `run_wave.sh` / per-package `run_differential.sh` runners were deleted —
+> they referenced the `phases/phase3` tree deleted in the Phase-4
+> restructure (dead on arrival) and are superseded by the live differential
+> harness ([test/differential/](../../differential/) + [`test/differential/cmd/diffharness`](../../differential/cmd/diffharness)). The
+> corpus programs and their marker files remain as data. The runner
+> description below is historical.
+
 Go programs exercising the wave-2 synthetic stdlib packages (io, os,
 syscall, reflect, unsafe, crypto/* — see
 `phases/phase3/hidden_files/m8-analysis/`), differential vs stock gc

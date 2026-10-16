@@ -19,12 +19,12 @@ projects/graalgo-fuzz/
 Built from a graalgo worktree at the pinned commit:
 
 ```bash
-cd ~/workspace/graalgo-m9   # at the commit to fuzz
+cd ~/workspace/graalgo   # at the commit to fuzz
 tar -czf graalgo-slim.tar.gz \
-  phases/phase1/src phases/phase1/lib internal/frontend \
-  phases/phase1/Makefile \
-  phases/phase2/src phases/phase2/Makefile \
-  phases/phase3/src phases/phase3/fuzzing phases/phase3/Makefile
+  Makefile \
+  internal/backend/truffle internal/backend/runtime internal/backend/interop \
+  internal/frontend \
+  tools/fuzz-soak
 ```
 
 Rebuild and re-push the Dockerfile whenever the pinned graalgo commit

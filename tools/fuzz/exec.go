@@ -2,8 +2,9 @@ package main
 
 // exec.go — backend execution for the M8 fuzzer.
 //
-// Two backends: stock gc (~/tools/go) and graalgo-run (phases/phase1).
-// Each run captures build success, exit code, stdout, stderr.
+// Two backends: stock gc (~/tools/go) and graalgo-run
+// (internal/backend/graalgo-run). Each run captures build success,
+// exit code, stdout, stderr.
 
 import (
 	"bytes"
@@ -15,7 +16,26 @@ import (
 )
 
 var goBin = os.ExpandEnv("$HOME/tools/go/bin/go")
-var graalgoRun = os.ExpandEnv("$HOME/workspace/graalgo/phases/phase1/graalgo-run")
+
+// graalgoRun is the graalgo-run launcher. GRAALGO_RUN overrides it outright;
+// otherwise it resolves to <repo>/internal/backend/graalgo-run with the
+// repo located via GRAALGO_ROOT, else ~/workspace/graalgo (same convention
+// as tools/stdlib-linkdiff's defaultGraalgo). The phases/phase1 default
+// died with the Phase-4 restructure (2026-10-14).
+var graalgoRun = resolveGraalgoRun()
+
+func resolveGraalgoRun() string {
+	if p := os.Getenv("GRAALGO_RUN"); p != "" {
+		return p
+	}
+	graalgo := os.Getenv("GRAALGO_ROOT")
+	if graalgo == "" {
+		if h, err := os.UserHomeDir(); err == nil {
+			graalgo = filepath.Join(h, "workspace", "graalgo")
+		}
+	}
+	return filepath.Join(graalgo, "internal", "backend", "graalgo-run")
+}
 
 type runResult struct {
 	buildOK   bool

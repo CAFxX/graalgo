@@ -175,12 +175,17 @@ gate1: build
 	python3 tools/gate1/run.py $(PKG) --out tools/gate1/.tmp/$(PKG) \
 		--graalgo-run "$(CURDIR)/internal/backend/graalgo-run"
 
-# Full test suite: all phase differential/test runners. LONG (30+ min);
-# for local verification and nightly runs, not per-push CI.
+# Full test suite: the three backend module suites plus the Layer-1 smoke
+# differential ([test/differential/run.sh](test/differential/run.sh): vet,
+# gofmt, Go unit tests, and the gc-vs-graalgo differential corpus with
+# mutation-validated oracles). LONG (30+ min); for local verification and
+# nightly runs, not per-push CI. This is the "full differential suite"
+# AGENTS.md §1 refers to.
 test: build
 	$(MAKE) -C internal/backend/truffle test
 	$(MAKE) -C internal/backend/runtime test
 	$(MAKE) -C internal/backend/interop test
+	cd $(DH) && ./run.sh
 
 # Behavior snapshots (M10 WS I): graalgo's observable behavior on the
 # differential corpus ([test/differential/corpus/](test/differential/corpus/)),

@@ -5,6 +5,21 @@
 **Standing authority:** Carlo 2026-10-06 — continuous adversarial test-finding;
 explicit "strong fuzzing campaign" request 2026-10-10.
 
+**DECISION 2026-10-16 (review-r2-phases-sweep): REWIRE, not retire.** The
+harness is live: it runs nightly in CI via
+[.github/workflows/fuzz-soak.yml](../../.github/workflows/fuzz-soak.yml)
+and implements the GG-0037 Layer-4 requirement. The 2026-10-14 `phases/`
+deletion left every `phases/phase{1,2,3}` path in this tree dead on arrival
+(build via `make -C phases/phase3 main`, classpath over
+`phases/phase{1,2,3}/out/classes`, scratch under
+`phases/phase3/hidden_files/`). The rewire: build via root `make build`;
+classpath `internal/backend/{interop,runtime,truffle}/out/classes` (+
+`truffle/lib/*.jar`) in the load-bearing interop-first order (cf.
+`internal/backend/graalgo-sync-run`); harness tree now `tools/fuzz-soak`;
+scratch travels with the batch output (no `hidden_files/` — no-debris rule).
+Retirement was rejected: deleting the only generative-adversarial net over
+the runtime would have no replacement.
+
 ## 1. Goal
 
 Find real graalgo bugs differentially against gc 1.27.1: crashes, hangs,

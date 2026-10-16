@@ -1,6 +1,23 @@
 #!/usr/bin/env bash
-# Layer-3 per-release gate (phases/phase3/PLAN.md §5 layer 3, GG-0029/GG-0032):
-# stdlib differential via the wave1/wave2/wave3 corpora.
+# Layer-3 per-release gate (GG-0029/GG-0032): stdlib differential via the
+# wave1/wave2/wave3 corpora.
+#
+# DECISION 2026-10-16 (review-r2-phases-sweep): this gate STAYS SCHEDULED,
+# not manual — it is wired into the weekly per-release CI job
+# .github/workflows/stdlib-gate.yml (Sunday 03:00 UTC) plus manual
+# dispatch. The review's "referenced by nothing" premise was wrong: the
+# wiring existed since M10 (efc1535f) and survived the Phase-4 migration.
+#
+# STATUS: BROKEN at HEAD. Its three wave runners
+# (test/corpus/wave{1,2}/run_wave.sh, test/corpus/wave3/run_wave3.sh) were
+# retired in this change: they referenced the phases/phase3 tree deleted in
+# the Phase-4 restructure (dead on arrival, and would have recreated a
+# forbidden hidden_files/ scratch tree) and are superseded by the live
+# differential harness (test/differential/ + cmd/diffharness). Re-baselining
+# this gate onto the live corpus is an open follow-up — GG-0029 still
+# requires the Layer-3 release gate, and the weekly job currently reports
+# red until that lands. The wave corpus programs and markers remain as data
+# under test/corpus/wave{1,2,3}/ for the re-baselining.
 #
 # The wave corpora are the operational form of the "stdlib + scripts" layer:
 # curated differential programs per stdlib package (wave1: strings/bytes/

@@ -8,15 +8,24 @@ GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+HERE="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# Repo root: tools/fuzz-soak/harness/diff_one.sh -> tools/fuzz-soak ->
+# tools -> repo (three levels up from the harness dir). The
+# phases/phase{1,2,3} trees were deleted in the Phase-4 restructure
+# (2026-10-14); the backend now lives at internal/backend.
+GR="${GR:-$(cd "$HERE/../../.." && pwd)}"
+BE="$GR/internal/backend"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
 JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
+# Scratch travels with the batch output (never /tmp — 512M tmpfs — and
+# never a hidden_files/ dir, per the no-debris rule).
+export TMPDIR="${FUZZ_TMPDIR:-$WORKDIR/fuzz-tmp}"
+mkdir -p "$TMPDIR"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+# Classpath order is load-bearing (cf. internal/backend/graalgo-sync-run):
+# interop first, then runtime (its same-FQN replacements shadow the truffle
+# stubs), then truffle, then the truffle lib jars.
+CP="$BE/interop/out/classes:$BE/runtime/out/classes:$BE/truffle/out/classes:$(ls "$BE"/truffle/lib/*.jar | tr '\n' ':')"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"

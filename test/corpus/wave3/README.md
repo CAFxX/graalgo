@@ -1,5 +1,13 @@
 # P3-M9 wave-3 differential corpus (tier-1b: container/*, hash/*)
 
+> **RETIREMENT NOTICE (2026-10-16, review-r2-phases-sweep):** the
+> `run_wave3.sh` / per-package `run_differential.sh` runners were deleted —
+> they referenced the `phases/phase3` tree deleted in the Phase-4
+> restructure (dead on arrival) and are superseded by the live differential
+> harness ([test/differential/](../../differential/) + [`test/differential/cmd/diffharness`](../../differential/cmd/diffharness)). The
+> corpus programs and their marker files remain as data. The runner
+> description below is historical.
+
 Wave-3 corpus for the P3-M9 synthetic `container/heap`, `container/list`,
 `container/ring`, `hash/adler32`, `hash/crc32`, `hash/crc64`, `hash/fnv`,
 `hash/maphash` packages. Conventions are the wave-1 ones

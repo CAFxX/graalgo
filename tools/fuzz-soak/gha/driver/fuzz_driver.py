@@ -21,7 +21,10 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 
 GRAALGO_HOME = os.environ.get("GRAALGO_HOME", "/opt/graalgo")
-FUZZ = os.path.join(GRAALGO_HOME, "phases/phase3/fuzzing")
+# The harness tree: tools/fuzz-soak (moved out of phases/phase3/fuzzing in
+# the Phase-4 restructure, 2026-10-14). Deriving it from the repo root keeps
+# the driver working in the /opt/graalgo Docker image and in a checkout.
+FUZZ = os.path.join(GRAALGO_HOME, "tools", "fuzz-soak")
 OUT_DIR = os.environ.get("OUT_DIR", "/out")
 SHARD_IDX = int(os.environ.get("SHARD_IDX", "0"))
 SHARD_COUNT = int(os.environ.get("SHARD_COUNT", "1"))

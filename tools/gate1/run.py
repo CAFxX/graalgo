@@ -46,9 +46,12 @@ def main():
             i += 1
 
     if graalgo_run is None:
-        # Default: phase1 graalgo-run in this repo (HERE=tools/gate1)
+        # Default: the backend graalgo-run launcher in this repo
+        # (HERE=tools/gate1). The phases/phase1 tree was deleted in the
+        # Phase-4 restructure (2026-10-14); the launcher now lives at
+        # internal/backend/graalgo-run.
         repo = os.path.abspath(os.path.join(HERE, "..", ".."))
-        graalgo_run = os.path.join(repo, "phases", "phase1", "graalgo-run")
+        graalgo_run = os.path.join(repo, "internal", "backend", "graalgo-run")
 
     workdir = outdir or tempfile.mkdtemp(prefix=f"gate1-{pkg}-")
     os.makedirs(workdir, exist_ok=True)

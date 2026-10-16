@@ -1,5 +1,14 @@
 # P3-M7 wave-1 differential corpus
 
+> **RETIREMENT NOTICE (2026-10-16, review-r2-phases-sweep):** the
+> `run_wave.sh` / per-package `run_differential.sh` runners were deleted —
+> they referenced the `phases/phase3` tree deleted in the Phase-4
+> restructure (dead on arrival) and are superseded by the live differential
+> harness ([test/differential/](../../differential/) + [`test/differential/cmd/diffharness`](../../differential/cmd/diffharness)). The
+> corpus programs and their marker files (`.expected`, `.panic`,
+> `.timing`, `.scopelimited`, `.synthetic`) remain as data. The runner
+> description below is historical.
+
 Go programs exercising the wave-1 synthetic stdlib packages (strings,
 bytes, strconv, unicode/utf8, path, path/filepath, errors, io, sort —
 see `phases/phase3/hidden_files/m7-CHECKLIST.md`), differential vs stock

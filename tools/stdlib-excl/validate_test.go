@@ -280,7 +280,7 @@ func TestParseVocabularySection(t *testing.T) {
 func fakeRepoRoot(t *testing.T, pin, manifestVer string) string {
 	t.Helper()
 	root := t.TempDir()
-	fork := filepath.Join(root, "phases", "phase3", "stdlib-fork")
+	fork := filepath.Join(root, "tools", "stdlib-fork")
 	if err := os.MkdirAll(fork, 0755); err != nil {
 		t.Fatal(err)
 	}

@@ -18,8 +18,11 @@ import shutil
 import subprocess
 import sys
 
-GR = os.environ.get("GR", os.path.expanduser("~/workspace/graalgo-m9"))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Repo root derived from this file's location:
+# tools/fuzz-soak/harness/triage.py -> tools/fuzz-soak -> tools -> repo.
+_HERE = os.path.dirname(os.path.abspath(__file__))
+GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(_HERE)))
+FUZZ = os.path.join(GR, "tools", "fuzz-soak")
 
 
 def diff_result(gofile, workdir):
