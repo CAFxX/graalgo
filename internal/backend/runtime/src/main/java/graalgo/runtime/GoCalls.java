@@ -1,7 +1,9 @@
 package graalgo.runtime;
 
 import com.oracle.truffle.api.RootCallTarget;
+import graalgo.frontend.Boxing;
 import graalgo.values.GoFunc;
+import graalgo.values.GoKind;
 
 /**
  * Invoking Go function values (M5, WS F).
@@ -34,7 +36,22 @@ public final class GoCalls {
         Object[] callArgs = new Object[args.length + prefix + 1];
         callArgs[0] = fn;
         if (bound != null) {
-            System.arraycopy(bound, 0, callArgs, 1, bound.length);
+            // Go value semantics: a method value's bound receiver is a
+            // value argument of every invocation — array/struct receivers
+            // are re-copied per call (one copyForAssign, same mechanism as
+            // every other call boundary), so one call's mutation is never
+            // visible to the next. Slices/maps/pointers pass through by
+            // reference, as Go requires.
+            GoKind[] kinds = fn.boundArgKinds();
+            if (kinds != null && kinds.length == bound.length) {
+                Object[] fresh = new Object[bound.length];
+                for (int i = 0; i < bound.length; i++) {
+                    fresh[i] = Boxing.copyForAssign(kinds[i], bound[i]);
+                }
+                System.arraycopy(fresh, 0, callArgs, 1, bound.length);
+            } else {
+                System.arraycopy(bound, 0, callArgs, 1, bound.length);
+            }
         }
         System.arraycopy(args, 0, callArgs, 1 + prefix, args.length);
         return callArgs;

@@ -92,8 +92,14 @@ public final class Boxing {
      * deep-copy (struct elements are copied, not aliased — a shallow
      * array clone would let {@code b := a; b[i].f = x} observably mutate
      * {@code a}), everything else is already a reference or immutable.
+     *
+     * <p>Public because call sites outside this package apply the same
+     * rule: argument copying at call boundaries ({@code FuncValueCallNode},
+     * {@code DeferNode}, {@code MethodValueNode} at capture time, and
+     * {@code graalgo.runtime.GoCalls#callArgs} for method-value bound
+     * receivers at each invocation). One mechanism, every boundary.
      */
-    static Object copyForAssign(GoKind kind, Object value) {
+    public static Object copyForAssign(GoKind kind, Object value) {
         if (value instanceof GoStruct gs && kind == GoKind.STRUCT) {
             return gs.deepCopy();
         }

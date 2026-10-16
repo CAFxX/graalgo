@@ -30,24 +30,42 @@ public final class GoFunc {
      * ordinary function values. See {@link graalgo.runtime.GoCalls#invoke}.
      */
     private final Object[] boundArgs;
+    /**
+     * Kind of each bound argument (parallel to {@code boundArgs}); null
+     * when no bound args. Used at invocation time to apply Go's
+     * value-copy rule per call (array/struct bound receivers are
+     * re-copied for every call, like any other value argument).
+     */
+    private final GoKind[] boundArgKinds;
 
     public GoFunc(RootCallTarget target, MaterializedFrame closureFrame) {
-        this(target, closureFrame, null, null);
+        this(target, closureFrame, null, null, null);
     }
 
     public GoFunc(RootCallTarget target, MaterializedFrame closureFrame, GoBox[] boxCells) {
-        this(target, closureFrame, boxCells, null);
+        this(target, closureFrame, boxCells, null, null);
     }
 
     public GoFunc(RootCallTarget target, MaterializedFrame closureFrame, GoBox[] boxCells,
             Object[] boundArgs) {
+        this(target, closureFrame, boxCells, boundArgs, null);
+    }
+
+    public GoFunc(RootCallTarget target, MaterializedFrame closureFrame, GoBox[] boxCells,
+            Object[] boundArgs, GoKind[] boundArgKinds) {
         if (target == null) {
             throw new IllegalArgumentException("call target must not be null (nil funcs are null references)");
+        }
+        if (boundArgs != null && boundArgKinds != null && boundArgs.length != boundArgKinds.length) {
+            throw new IllegalArgumentException(
+                    "boundArgs and boundArgKinds must be parallel (lengths "
+                            + boundArgs.length + " vs " + boundArgKinds.length + ")");
         }
         this.target = target;
         this.closureFrame = closureFrame;
         this.boxCells = boxCells;
         this.boundArgs = boundArgs;
+        this.boundArgKinds = boundArgKinds;
     }
 
     public RootCallTarget target() {
@@ -67,6 +85,14 @@ public final class GoFunc {
     /** Prefix arguments prepended at invocation; null for ordinary function values. */
     public Object[] boundArgs() {
         return boundArgs;
+    }
+
+    /**
+     * Kind of each bound argument (parallel to {@link #boundArgs});
+     * null when the producer did not record kinds (no per-call copy).
+     */
+    public GoKind[] boundArgKinds() {
+        return boundArgKinds;
     }
 
     @Override

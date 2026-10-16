@@ -34,12 +34,18 @@ public final class MethodValueNode extends GoExprNode {
 
     @Override
     public Object executeObject(VirtualFrame frame) {
-        Object recvVal = Boxing.box(recv.kind(), recv, frame);
+        // Go evaluates the receiver once when the method value is formed,
+        // and for a value receiver that means a copy (same rule as defer
+        // arguments): later mutation of the source must not leak into the
+        // method value, and each call below re-copies the bound copy.
+        Object recvVal = Boxing.copyForAssign(recv.kind(),
+                Boxing.box(recv.kind(), recv, frame));
         GoFunc f = funcTable.get(objId);
         if (f == null) {
             throw new FrontendException(
                     "unresolved method object " + objId + " (WS H)");
         }
-        return new GoFunc(f.target(), null, null, new Object[] {recvVal});
+        return new GoFunc(f.target(), null, null, new Object[] {recvVal},
+                new GoKind[] {recv.kind()});
     }
 }

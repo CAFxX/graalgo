@@ -38,6 +38,7 @@ public final class Runner {
         TESTS.add(graalgo.frontend.WrapInterfaceTest.class);
         TESTS.add(graalgo.frontend.BoxingArrayStorageTest.class);
         TESTS.add(graalgo.frontend.ArrayValueSemanticsTest.class);
+        TESTS.add(graalgo.frontend.MethodValueSemanticsTest.class);
         TESTS.add(graalgo.frontend.AtomicCellFieldAddrTest.class);
         TESTS.add(graalgo.frontend.v2.BinaryDecoderTest.class);
     }
