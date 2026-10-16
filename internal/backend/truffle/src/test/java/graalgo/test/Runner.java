@@ -40,6 +40,7 @@ public final class Runner {
         TESTS.add(graalgo.frontend.ArrayValueSemanticsTest.class);
         TESTS.add(graalgo.frontend.AtomicCellFieldAddrTest.class);
         TESTS.add(graalgo.frontend.v2.BinaryDecoderTest.class);
+        TESTS.add(graalgo.frontend.v2.V2PrintlnTest.class);
     }
 
     public static void main(String[] args) {

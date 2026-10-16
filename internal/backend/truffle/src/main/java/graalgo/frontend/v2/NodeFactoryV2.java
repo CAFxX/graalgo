@@ -30,6 +30,7 @@ import graalgo.frontend.MakeNode;
 import graalgo.frontend.NewNode;
 import graalgo.frontend.NilNode;
 import graalgo.frontend.PanicBuiltinNode;
+import graalgo.frontend.PrintNode;
 import graalgo.frontend.RangeArrayNode;
 import graalgo.frontend.RangeIntNode;
 import graalgo.frontend.RangeMapNode;
@@ -1107,12 +1108,13 @@ public final class NodeFactoryV2 {
             }
             case "print":
             case "println": {
-                // print/println write to stderr. For v2, evaluate args
-                // for side effects and return nil.
-                if (args.isEmpty()) {
-                    return new NilNode(GoKind.INTERFACE, null);
-                }
-                return args.get(0);
+                // V2-20: print/println write to stderr with gc's walkPrint
+                // formatting. Reuses the shared PrintNode (the same node v1
+                // builds) — args are evaluated for side effects in order and
+                // println adds a space between operands plus a trailing
+                // newline; print emits no separators.
+                return new PrintNode("println".equals(builtin),
+                        args.toArray(new GoExprNode[0]));
             }
             case "delete": {
                 if (args.size() != 2) {
