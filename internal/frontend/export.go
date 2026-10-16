@@ -8404,14 +8404,20 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 				}
 			}
 		}
-		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "runtime" && sel.Sel.Name == "Goexit" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
-				return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
+		// R2-P2-9: discriminate on the resolved object, not the identifier
+		// spelling — rt "runtime"; rt.Goexit() is intercepted; a shadowed
+		// local named runtime is not. The structural obj.Pkg().Name()
+		// check below stays as the second gate.
+		if pkg, ok := sel.X.(*ast.Ident); ok && sel.Sel.Name == "Goexit" {
+			if _, isPkg := e.info.Uses[pkg].(*types.PkgName); isPkg {
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
+					return nil, scopeErrorf("runtime.Goexit did not resolve to the overlay package")
+				}
+				if len(c.Args) != 0 {
+					return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
+				}
+				return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 			}
-			if len(c.Args) != 0 {
-				return nil, fmt.Errorf("gofrontend: runtime.Goexit takes no arguments")
-			}
-			return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 		}
 		// P3-M9 (driver-harden, go-cmp lane) note: runtime.FuncForPC was
 		// once rewritten to a panic ("no PC-to-function table"). The
@@ -9119,6 +9125,10 @@ var atomicWordOps = map[string]atomicWordOp{
 	"AndUintptr": {"And", "atomic.Uintptr", "int64", 1},
 	"OrUintptr":  {"Or", "atomic.Uintptr", "int64", 1},
 	// Note: no Bool entries — gc has no package-level bool atomics.
+	// PKG-012: internal/runtime/atomic (used by sync.Pool via rtatomic).
+	// Functionally identical to the sync/atomic uintptr ops.
+	"LoadAcquintptr":  {"Load", "atomic.Uintptr", "int64", 0},
+	"StoreReluintptr": {"Store", "atomic.Uintptr", "int64", 1},
 }
 
 // exportAtomicWordOp lowers a package-level sync/atomic word/bool call
@@ -9167,7 +9177,13 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 		return nil, false, nil
 	}
 	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok || pkgIdent.Name != "atomic" {
+	if !ok {
+		return nil, false, nil
+	}
+	// R2-P1-1: discriminate on the resolved object, not the identifier
+	// spelling — a renamed import (atom "sync/atomic") is still the
+	// package; a shadowed local named "atomic" is not.
+	if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); !isPkg {
 		return nil, false, nil
 	}
 	obj, ok := e.info.Uses[sel.Sel].(*types.Func)
