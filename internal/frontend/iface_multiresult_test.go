@@ -598,3 +598,228 @@ func main() {
 		t.Fatalf("want 2 ifacemethod Read nodes (bare statements), got %d", reads)
 	}
 }
+// TestUserIfaceMRAssignDesugar pins the r5 fix: an N-target ASSIGNMENT
+// (not just :=) of a user-defined multi-result interface method call must
+// desugar through the interface pair mechanism. Before the fix,
+// classifyMultiResultCall had no user-interface arm, so
+// `rr, size, err = r.ReadRune()` emitted a raw lhs=3/rhs=1 assign node,
+// which the backend rejects with "lhs/rhs length mismatch" — the
+// universal buildOk=false behind the red master (fmt's
+// s.rs.ReadRune in __ss_ReadRune).
+func TestUserIfaceMRAssignDesugar(t *testing.T) {
+	src := `package main
+
+type R interface {
+	ReadRune() (rune, int, error)
+}
+
+type B struct{}
+
+func (B) ReadRune() (rune, int, error) { return 'a', 1, nil }
+
+func main() {
+	var r R = B{}
+	var rr rune
+	var size int
+	var err error
+	rr, size, err = r.ReadRune()
+	println(string(rr), size, err == nil)
+}
+`
+	doc := d1ExportIfaceProg(t, src)
+	main := findR5FuncDecl(doc, "main")
+	if main == nil {
+		t.Fatal("no main funcdecl in wire doc")
+	}
+	// No raw N-target/M-value assign may remain: every assign node must
+	// have matching lhs/rhs arity (comma-ok excepted).
+	for _, a := range findAllKind(main, "assign") {
+		f := a["fields"].(map[string]any)
+		lhs, _ := f["lhs"].([]any)
+		rhs, _ := f["rhs"].([]any)
+		if len(lhs) == len(rhs) {
+			continue
+		}
+		// Comma-ok (2 lhs, 1 rhs with commaOk:true) is legitimate.
+		if len(lhs) == 2 && len(rhs) == 1 {
+			r0, _ := rhs[0].(map[string]any)
+			rf, _ := r0["fields"].(map[string]any)
+			if co, _ := rf["commaOk"].(bool); co {
+				continue
+			}
+		}
+		t.Fatalf("raw multi-target assign remains: %d lhs, %d rhs", len(lhs), len(rhs))
+	}
+	// The desugared block: __p5mr_N := <ifacemethod ReadRune>, then three
+	// 1-target assigns extracting f0/f1/f2.
+	foundTmp := false
+	foundExtracts := 0
+	for _, v := range findAllKind(main, "vardecl") {
+		f := v["fields"].(map[string]any)
+		names, _ := f["names"].([]any)
+		if len(names) != 1 {
+			continue
+		}
+		nm, _ := names[0].(string)
+		if len(nm) < 7 || nm[:7] != "__p5mr_" {
+			continue
+		}
+		vals, _ := f["values"].([]any)
+		if len(vals) != 1 {
+			continue
+		}
+		v0, _ := vals[0].(map[string]any)
+		if v0["kind"] != "ifacemethod" {
+			continue
+		}
+		vf := v0["fields"].(map[string]any)
+		if vf["method"] == "ReadRune" {
+			foundTmp = true
+		}
+	}
+	for _, a := range findAllKind(main, "assign") {
+		f := a["fields"].(map[string]any)
+		lhs, _ := f["lhs"].([]any)
+		rhs, _ := f["rhs"].([]any)
+		if len(lhs) != 1 || len(rhs) != 1 {
+			continue
+		}
+		r0, _ := rhs[0].(map[string]any)
+		if r0["kind"] == "selector" {
+			rf := r0["fields"].(map[string]any)
+			if fn, _ := rf["field"].(string); fn == "f0" || fn == "f1" || fn == "f2" {
+				foundExtracts++
+			}
+		}
+	}
+	if !foundTmp {
+		t.Fatal("no __p5mr_N := <ifacemethod ReadRune> tmp vardecl in main")
+	}
+	if foundExtracts != 3 {
+		t.Fatalf("want 3 pair-field extraction assigns, got %d", foundExtracts)
+	}
+}
+
+// TestUserIfaceMRDefineDesugar pins the := form: `rr, size, err :=
+// r.ReadRune()` must desugar the same way (exportDefine routes through
+// exportMultiResultDesugar too).
+func TestUserIfaceMRDefineDesugar(t *testing.T) {
+	src := `package main
+
+type R interface {
+	ReadRune() (rune, int, error)
+}
+
+type B struct{}
+
+func (B) ReadRune() (rune, int, error) { return 'a', 1, nil }
+
+func main() {
+	var r R = B{}
+	rr, size, err := r.ReadRune()
+	println(string(rr), size, err == nil)
+}
+`
+	doc := d1ExportIfaceProg(t, src)
+	main := findR5FuncDecl(doc, "main")
+	if main == nil {
+		t.Fatal("no main funcdecl in wire doc")
+	}
+	foundTmp := false
+	for _, v := range findAllKind(main, "vardecl") {
+		f := v["fields"].(map[string]any)
+		names, _ := f["names"].([]any)
+		if len(names) != 1 {
+			continue
+		}
+		nm, _ := names[0].(string)
+		if len(nm) < 7 || nm[:7] != "__p5mr_" {
+			continue
+		}
+		vals, _ := f["values"].([]any)
+		if len(vals) != 1 {
+			continue
+		}
+		v0, _ := vals[0].(map[string]any)
+		if v0["kind"] != "ifacemethod" {
+			continue
+		}
+		vf := v0["fields"].(map[string]any)
+		if vf["method"] == "ReadRune" {
+			foundTmp = true
+		}
+	}
+	if !foundTmp {
+		t.Fatal("no __p5mr_N := <ifacemethod ReadRune> tmp vardecl in main (:= form)")
+	}
+}
+
+// TestUserIfaceMRSingleResultNoDesugar pins the negative: a single-result
+// interface method call in 1-target assignment must NOT trigger the
+// multi-result desugar (no __p5mr_ tmp). Guards that the new classifier
+// arm only fires for genuine multi-result calls.
+func TestUserIfaceMRSingleResultNoDesugar(t *testing.T) {
+	src := `package main
+
+type R interface {
+	ReadByte() byte
+}
+
+type B struct{}
+
+func (B) ReadByte() byte { return 'a' }
+
+func main() {
+	var r R = B{}
+	var b byte
+	b = r.ReadByte()
+	println(b)
+}
+`
+	doc := d1ExportIfaceProg(t, src)
+	main := findR5FuncDecl(doc, "main")
+	if main == nil {
+		t.Fatal("no main funcdecl in wire doc")
+	}
+	// No __p5mr_ tmp may be created for the single-result assignment.
+	for _, v := range findAllKind(main, "vardecl") {
+		f := v["fields"].(map[string]any)
+		names, _ := f["names"].([]any)
+		if len(names) != 1 {
+			continue
+		}
+		nm, _ := names[0].(string)
+		if len(nm) >= 7 && nm[:7] == "__p5mr_" {
+			t.Fatalf("single-result assignment was desugared (tmp %s)", nm)
+		}
+	}
+	// The assignment must be a plain 1-target/1-value assign.
+	found := false
+	for _, a := range findAllKind(main, "assign") {
+		f := a["fields"].(map[string]any)
+		lhs, _ := f["lhs"].([]any)
+		rhs, _ := f["rhs"].([]any)
+		if len(lhs) == 1 && len(rhs) == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no plain 1-target assign for single-result interface call")
+	}
+}
+
+// findFuncDecl returns the funcdecl node with the given name, or nil.
+func findR5FuncDecl(doc map[string]any, name string) map[string]any {
+	funcs, _ := doc["funcs"].([]any)
+	for _, f := range funcs {
+		fm, _ := f.(map[string]any)
+		if fm["kind"] != "funcdecl" {
+			continue
+		}
+		fl, _ := fm["fields"].(map[string]any)
+		if fn, _ := fl["name"].(string); fn == name {
+			return fm
+		}
+	}
+	return nil
+}
