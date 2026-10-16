@@ -2109,18 +2109,12 @@ func (e *exporter) synthesizeFuncFieldPairType(sig *types.Signature, structName,
 		fields[i] = types.NewField(token.NoPos, e.pkg, fname, rt, false)
 	}
 	st := types.NewStruct(fields, nil)
-	// Unique name per (struct, field).
-	base := fmt.Sprintf("__wsd_pair_%s_%s", structName, fieldName)
-	name := base
-	for i := 1; ; i++ {
-		if e.pkg.Scope().Lookup(name) == nil {
-			break
-		}
-		name = fmt.Sprintf("%s_%d", base, i)
-	}
+	// Unique name per (struct, field). PKG-067: claim the name in the
+	// exporter's own set; never insert into the (possibly
+	// process-shared) package scope.
+	name := e.claimPairTypeName(fmt.Sprintf("__wsd_pair_%s_%s", structName, fieldName))
 	tname := types.NewTypeName(token.NoPos, e.pkg, name, nil)
 	named := types.NewNamed(tname, st, nil)
-	e.pkg.Scope().Insert(tname)
 	return named, fieldNames
 }
 
