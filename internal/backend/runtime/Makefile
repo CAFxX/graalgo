@@ -111,29 +111,43 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	touch $(OUT_TEST)/.built
 
 # placeholder + debug-leftover grep gates (Phase-1 done-gate 5 discipline).
-# The launchers (SchedMain, and Main inherited from the phase-1 tree) are
-# excluded from the debug gate: printing usage and diagnostics to stderr is
-# their job. SchedulerCore's panic/crash reporting and Drainer's fatal-halt
-# message are likewise excluded: printing "panic: ..." on an uncaught Go
-# panic is Go parity (gc prints it), and a violated scheduler invariant must
-# be LOUD before halting (P1-4: drainer death is never silent). These are
-# production diagnostics, not debug leftovers. TimerHeap's
-# callback-threw message is excluded on the same grounds: a throwing
-# timer callback must be loud, and letting it kill the timer thread
-# silently would stall every timer with no diagnostic.
-# GcInterop's finalizer-panicked message is excluded on the same grounds:
-# a panicking Go finalizer must be loud (gc crashes the program); letting
-# the finalizer thread die silently would lose the diagnostic.
-# SchedTrace's SCHED/SCHED-DETAIL lines and GcTrace's per-cycle lines are
-# excluded on the same grounds: they ARE the GODEBUG=schedtrace/gctrace
-# feature (P2-M5); the user explicitly asked for stderr diagnostics.
+#
+# Debug-gate exclusions (R2-P1-6 hardening): EVERY exclusion carries a review
+# date. Standing rule: an exclusion without a review date is removed on sight.
+# Migration target: route diagnostics through graalgo.p3log.P3Log (the
+# interop p3log pattern) and drop the carve-out at its review date.
+#   src/main/java/graalgo/launcher/Main.java               REVIEW 2027-04-16
+#       launcher usage/diagnostics to stderr is its job.
+#   src/main/java/graalgo/sched/launcher/SchedMain.java    REVIEW 2027-04-16
+#       scheduler entry point; same launcher grounds as Main.
+#   src/main/java/graalgo/sched/SchedulerCore.java         REVIEW 2027-04-16
+#       panic/crash reporting: printing "panic: ..." on an uncaught Go panic
+#       is Go parity (gc prints it).
+#   src/main/java/graalgo/sched/Drainer.java               REVIEW 2027-04-16
+#       fatal-halt message: a violated scheduler invariant must be LOUD
+#       before halting (P1-4: drainer death is never silent).
+#   src/main/java/graalgo/runtime/Runtime.java             REVIEW 2027-04-16
+#       Go print/println builtin path: stdout IS the feature (GG-0045).
+#   src/main/java/graalgo/runtime/TimerHeap.java           REVIEW 2027-04-16
+#       callback-threw message must be loud; a silent timer-thread death
+#       would stall every timer with no diagnostic.
+#   src/main/java/graalgo/runtime/GcInterop.java           REVIEW 2027-04-16
+#       finalizer-panicked message must be loud (gc crashes the program);
+#       a silent finalizer-thread death would lose the diagnostic.
+#   src/main/java/graalgo/sched/SchedTrace.java            REVIEW 2027-04-16
+#   src/main/java/graalgo/sched/launcher/GcTrace.java      REVIEW 2027-04-16
+#       SCHED/SCHED-DETAIL and per-cycle lines ARE the
+#       GODEBUG=schedtrace/gctrace feature (P2-M5); the user explicitly
+#       asked for stderr diagnostics.
+#   src/main/java/graalgo/sched/audit/PinAudit.java        REVIEW 2027-04-16
+#       pin-audit report output; the audit's whole job is the report.
 check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
+	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|[Tt][Oo][Dd][Oo]:|HACK|[Ww]orkaround|//[ \t]*[Pp]laceholder|panic\("not implemented"\)|throw new UnsupportedOperationException\("(stub|not implemented|unimplemented|not supported|unsupported|todo|fixme|unreachable|nyi|not yet)' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.(print|printf|println)|\.printStackTrace\(' src/main/ | grep -v 'src/main/java/graalgo/launcher/Main.java' | grep -v 'src/main/java/graalgo/sched/launcher/SchedMain.java' | grep -v 'src/main/java/graalgo/sched/SchedulerCore.java' | grep -v 'src/main/java/graalgo/sched/Drainer.java' | grep -v 'src/main/java/graalgo/runtime/Runtime.java' | grep -v 'src/main/java/graalgo/runtime/TimerHeap.java' | grep -v 'src/main/java/graalgo/runtime/GcInterop.java' | grep -v 'src/main/java/graalgo/sched/SchedTrace.java' | grep -v 'src/main/java/graalgo/sched/launcher/GcTrace.java' | grep -v 'src/main/java/graalgo/sched/audit/PinAudit.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== netpoller-deletion gate (GG-0018, P2-M3; updated P3-M9) =="
@@ -141,14 +155,17 @@ check: main $(OUT_TEST)/.built
 	@# P2-M3 deletion premise no longer holds. This disjunct now guards against
 	@# *code* references to netpoller paths in this module; the ParkReason.java javadoc
 	@# {@code GoNetpoll.pollWait} is documentation of the real interop-module API,
-	@# not a code path, and is excluded.
-	@if grep -rn --include='*.java' -E 'Netpoll\.' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java' | grep -v 'src/main/java/graalgo/jfr/ParkReason.java'; then \
+	@# not a code path, and is excluded. R2-P1-6: the word-boundary form also
+	@# catches bare type references (casts, declarations, instanceof); the
+	@# {@link ...} javadoc form is documentation, not a code path.
+	@if grep -rn --include='*.java' -E '\bNetpoll\b' src/ | grep -v 'src/main/java/graalgo/runtime/Netpoll.java' | grep -v 'src/test/java' | grep -v 'src/main/java/graalgo/jfr/ParkReason.java' | grep -v '{@link'; then \
 		echo "NETPOLLER GATE FAILED: reachable netpoller code path"; exit 1; fi
 	@# Exclusion: ToolPaths (phase-1 launcher, startup-only, never
 	@# goroutine-reachable) imports java.net.URISyntaxException for
 	@# code-source URI parsing — not network I/O; the phase-1 tree never
-	@# ran this gate.
-	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.net\.' src/main/ | grep -v 'java\.net\.URISyntaxException'; then \
+	@# ran this gate. R2-P1-6: also catches java.nio.ByteBuffer (direct
+	@# buffers bypass slot discipline) and reflective Class.forName("java.net...")
+	@if grep -rn --include='*.java' -E 'java\.nio\.channels|java\.nio\.ByteBuffer|java\.net\.|Class\.forName\("java\.net' src/main/ | grep -v 'java\.net\.URISyntaxException'; then \
 		echo "NETPOLLER GATE FAILED: NIO bypassing slot discipline (GG-0018 second disjunct)"; exit 1; fi
 	@echo "netpoller-deletion gate clean"
 	@echo "== off-heap/barrier gate (ADR-0002 D3/F3) =="
@@ -157,7 +174,10 @@ check: main $(OUT_TEST)/.built
 	@echo "-- theUnsafe/reflective Unsafe: raw-address access outside barrier discipline"
 	@echo "-- sun.misc/jdk.internal imports + fully-qualified sun.misc.Unsafe:"
 	@echo "--   unvetted barrier-bypass surface (incl. Class.forName evasion)"
-	@if grep -rn --include='*.java' -E 'allocateMemory|MemorySegment|Arena|theUnsafe|allocateDirect|import sun\.misc\.|import jdk\.internal|sun\.misc\.Unsafe|Class\.forName\("sun' src/; then \
+	@echo "-- loadLibrary/System.load/native: JNI entry points (R2-P1-6 — the old gate"
+	@echo "--   missed JNI entirely: a native method + System.loadLibrary bypasses"
+	@echo "--   the barrier discipline this gate claims to guard)"
+	@if grep -rn --include='*.java' -E 'allocateMemory|MemorySegment|Arena|theUnsafe|allocateDirect|import sun\.misc\.|import jdk\.internal|sun\.misc\.Unsafe|jdk\.internal\.misc\.Unsafe|Unsafe\.allocateInstance|Class\.forName\("sun|Class\.forName\("jdk\.internal|loadLibrary|System\.load\(|^[[:space:]]*(public|private|protected|static|final|synchronized|strictfp|[[:space:]])*native[[:space:]]' src/; then \
 		echo "OFF-HEAP/BARRIER GATE FAILED"; exit 1; fi
 	@echo "off-heap/barrier gate clean"
 	@echo "== pin-surface grep gate (P2-M7, GG-0057) =="

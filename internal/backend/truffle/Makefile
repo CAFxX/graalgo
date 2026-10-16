@@ -136,13 +136,16 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built $(RUNTIME_CLASSES)/.built
 
 # placeholder grep gate (done-gate 5): fails on TODO/FIXME/stub markers in src,
 # plus the gofrontend check (gofmt/vet/tests/vendoring diff gate).
+# Debug-gate exclusions (R2-P1-6 hardening): none currently. Standing rule —
+# any future exclusion MUST carry a review date (see the runtime Makefile
+# for the format); an exclusion without one is removed on sight.
 check:
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
+	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|[Tt][Oo][Dd][Oo]:|HACK|[Ww]orkaround|//[ \t]*[Pp]laceholder|panic\("not implemented"\)|throw new UnsupportedOperationException\("(stub|not implemented|unimplemented|not supported|unsupported|todo|fixme|unreachable|nyi|not yet)' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.(print|printf|println)|\.printStackTrace\(' src/main/; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== gofrontend check (gofmt/vet/tests/vendoring diff gate) =="

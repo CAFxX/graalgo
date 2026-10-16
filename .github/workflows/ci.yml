@@ -45,6 +45,32 @@ jobs:
       - name: No-bridges check (his 2026-10-15 order)
         run: python3 .github/scripts/check_no_bridges.py
 
+      - name: No-bridges gate regression test
+        # Adversarial bypasses from the 2026-10-16 independent review must be
+        # caught; legitimate/grandfathered/adjudicated cases must still pass.
+        run: python3 .github/scripts/check_no_bridges_test.py
+
+      - name: Golden re-record discipline (R2-P2-20)
+        # TestGolden's UPDATE_GOLDEN=1 re-records the wire-format goldens.
+        # Committing a change that sets or exports it would silently
+        # re-baseline the format to make red green. The variable is read only
+        # in internal/frontend/export_test.go itself; any added line
+        # mentioning it anywhere else fails the build. Diff source mirrors
+        # check_no_bridges.py: PR diff, else the master-push delta.
+        run: |
+          DIFF=""
+          for rev in "origin/master...HEAD" "HEAD~1...HEAD"; do
+            d=$(git diff "$rev" -- . ':!internal/frontend/export_test.go')
+            if [ -n "$d" ]; then DIFF="$d"; break; fi
+          done
+          if printf '%s\n' "$DIFF" | grep -E '^\+' | grep -v '^+++' | grep -q 'UPDATE_GOLDEN'; then
+            echo "GOLDEN DISCIPLINE FAILED: UPDATE_GOLDEN appears in an added line"
+            echo "outside internal/frontend/export_test.go — never re-record to make red green."
+            printf '%s\n' "$DIFF" | grep -E '^\+' | grep -v '^+++' | grep 'UPDATE_GOLDEN'
+            exit 1
+          fi
+          echo "golden discipline clean"
+
       - name: Set up GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1
         with:

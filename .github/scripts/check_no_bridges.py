@@ -50,6 +50,41 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "NumGoroutine"),
 }
 
+# All importable Go stdlib top-level package paths (from `go list std`,
+# go1.27.1, 2026-10-16; internal/vendor/zzdiag/testdata excluded). A
+# package-name conditional keyed on ANY of these (bare or as a path prefix)
+# is a bridge signal.
+STDLIB_TOP = [
+    "archive", "bufio", "bytes", "cmp", "compress", "container", "context",
+    "crypto", "database", "debug", "embed", "encoding", "errors", "expvar",
+    "flag", "fmt", "go", "hash", "html", "image", "index", "io", "iter",
+    "log", "maps", "math", "mime", "net", "os", "path", "plugin", "reflect",
+    "regexp", "runtime", "slices", "sort", "strconv", "strings", "structs",
+    "sync", "syscall", "testing", "text", "time", "unicode", "unique",
+    "unsafe", "uuid", "weak",
+]
+# Common leaf names, for conditionals keyed via path.Base(pkg) (e.g. a
+# switch on the base of "net/http" sees "http").
+STDLIB_LEAVES = [
+    "http", "url", "json", "tls", "smtp", "rpc", "template", "scanner",
+    "aes", "sha256", "rand", "atomic",
+]
+
+# Non-test files allowed to carry package-name conditionals (narrowed
+# 2026-10-16, R2-P2-21: the old "/test" substring exemption also matched
+# "/testdata/", letting conditionals in compiled fixtures slip through).
+PKG_COND_ALLOWLIST = {
+    # file substring: reason
+    "cmd/graalgo/testsynth.go":
+        "test harness; resolves synthetic import paths (e.g. `if path == \"testing\"`)",
+}
+
+
+def _is_test_exempt(fname):
+    if fname.endswith("_test.go") or fname.endswith("_test.java"):
+        return True
+    return any(sub in fname for sub in PKG_COND_ALLOWLIST)
+
 def get_diff():
     """Get the diff of added lines, plus a label naming the diff source.
 
@@ -103,78 +138,157 @@ def check_no_bridges(diff):
     for f in new_synth:
         errors.append(f"NEW SYNTHETIC FILE: {f} — synthetic stdlib packages are banned")
 
-    # 2. Package-name conditionals (stdlib names)
-    stdlib_pkgs = ["fmt", "sync", "os", "net", "http", "runtime", "reflect", "time",
-                   "strings", "bytes", "strconv", "sort", "math", "encoding", "crypto",
-                   "syscall", "unsafe", "io", "bufio", "context", "errors"]
+    # 2. Package-name conditionals (stdlib names). Matches full stdlib paths
+    # ("net/http"), bare tops ("fmt"), and leaf names ("http", via
+    # path.Base switches); conditional forms: ==, case, .Name ==,
+    # .equals() (Java); prefix/containment probes: strings.HasPrefix /
+    # HasSuffix / Contains and Java startsWith/endsWith/contains; map
+    # lookups keyed by a package path (special[pkgPath]); path.Base(pkg)
+    # switches. Exemption is narrow: *_test.go/_test.java plus the explicit
+    # PKG_COND_ALLOWLIST — a "/test" substring used to also exempt
+    # "/testdata/", i.e. compiled fixtures (R2-P2-21).
+    _top = "|".join(STDLIB_TOP)
+    _leaf = "|".join(STDLIB_LEAVES)
+    _path_lit = rf'"(?:{_top})(?:/[^"]*)?"'
+    _leaf_lit = rf'"(?:{_leaf})"'
+    _seg_lit = rf'"(?:{_top}|{_leaf})(?:/[^"]*)?"'
+    pkg_cond_patterns = [
+        rf'==\s*{_path_lit}',
+        rf'==\s*{_leaf_lit}',
+        rf'case\s*{_path_lit}',
+        rf'case\s*{_leaf_lit}',
+        rf'Name\s*==\s*{_path_lit}',
+        rf'\.equals\s*\(\s*{_path_lit}\s*\)',
+        rf'(?:HasPrefix|HasSuffix|Contains)\s*\([^,()]+,\s*{_seg_lit}\s*\)',
+        rf'\.(?:startsWith|endsWith|contains)\s*\(\s*{_seg_lit}\s*\)',
+        rf'path\.Base\s*\(\s*[A-Za-z_]*[Pp]kg',
+        rf'switch\s+path\.Base\s*\(',
+        rf'\w+\[[A-Za-z_]*[Pp]kg[Pp]ath\w*\]',
+    ]
     for fname, line in added_lines:
         if not fname or not (fname.endswith(".go") or fname.endswith(".java")):
             continue
-        # Match: if pkg == "fmt", case "sync", pkg.Name == "os", etc.
-        for pkg in stdlib_pkgs:
-            patterns = [
-                rf'==\s*"{pkg}"',
-                rf'case\s*"{pkg}"',
-                rf'Name\s*==\s*"{pkg}"',
-            ]
-            for pat in patterns:
-                if re.search(pat, line):
-                    # Allow in test files and docs. ("_test." covers
-                    # *_test.go harnesses, e.g. drift-test importers that
-                    # resolve synthetic import paths like the pre-existing
-                    # `if path == "bytes"` stubs.)
-                    if "/test" not in fname and "test_" not in fname and "_test." not in fname:
-                        errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
-                        break
+        for pat in pkg_cond_patterns:
+            if re.search(pat, line):
+                # Allow in test files and the explicit allowlist only.
+                if not _is_test_exempt(fname):
+                    errors.append(f"PACKAGE-NAME CONDITIONAL in {fname}: {line.strip()[:80]}")
+                break
 
     # 3. New panic stubs. The old regex only caught literal "not implemented"/
     #    "unsupported"/"todo" messages; fail-fast stubs also hide behind bare
-    #    panic(), panic(""), panic("unreachable"), and composed messages like
-    #    panic(fmt.Sprintf("... not implemented")). Fail loud on all of them —
-    #    a human decides whether an added panic is a legitimate invariant.
+    #    panic(), panic(""), panic("unreachable"), composed messages like
+    #    panic(fmt.Sprintf("... not implemented")), non-keyword composed
+    #    messages (panic(errors.New("operation failed"))), and non-panic
+    #    fail-fast (log.Fatal/log.Fatalf/os.Exit — os.Exit is unrecoverable
+    #    by definition). Fail loud on all of them — a human decides whether
+    #    an added fail-fast is a legitimate invariant. log.Fatal/os.Exit in
+    #    cmd/ and tools/ CLIs are legitimate (a CLI's job is to exit); the
+    #    stub-keyword variants are flagged everywhere.
+    _stub_kw = (r'not implemented|unimplemented|not supported|unsupported|'
+                r'todo|FIXME|unreachable|NYI|not yet|tbd|stub')
+    # (pattern, allowed_in_cli_dirs)
     panic_stub_res = [
-        r'panic\s*\(\s*\)',            # bare panic() — nothing to go on
-        r'panic\s*\(\s*""\s*\)',       # panic("") — nothing to go on
-        r'panic\s*\(\s*"(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet|tbd)',
+        (r'panic\s*\(\s*\)', False),            # bare panic() — nothing to go on
+        (r'panic\s*\(\s*""\s*\)', False),       # panic("") — nothing to go on
+        (rf'panic\s*\(\s*"({_stub_kw})', False),
         # Stub keyword anywhere in the first string arg of a composed panic.
-        r'panic\s*\(\s*(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)\s*\(\s*"[^"]*(not implemented|unimplemented|not supported|unsupported|todo|FIXME|unreachable|NYI|not yet)',
+        (rf'panic\s*\(\s*(?:fmt\.Sprintf|fmt\.Errorf|errors\.New)\s*\(\s*"[^"]*({_stub_kw})', False),
+        # Composed-message panic with NO stub keyword: still fail-fast by
+        # construction — the message wording is not a safety property.
+        (r'panic\s*\(\s*(?:errors\.New|fmt\.Errorf)\s*\(', False),
+        # log.Fatal / log.Fatalf call os.Exit: fail-fast in disguise.
+        (rf'log\.Fatalf?\s*\(\s*"[^"]*({_stub_kw})', False),
+        (r'log\.Fatalf?\s*\(', True),
+        (r'os\.Exit\s*\(', True),
     ]
+    _cli_dirs = ("/cmd/", "/tools/")
+    _cli_prefixes = ("cmd/", "tools/")
+
+    def _is_cli_file(fname):
+        return (fname.startswith(_cli_prefixes)
+                or any(d in fname for d in _cli_dirs))
+
     for fname, line in added_lines:
         if not fname or not fname.endswith(".go"):
             continue
-        for pat in panic_stub_res:
+        for pat, cli_ok in panic_stub_res:
             if re.search(pat, line, re.I):
+                if cli_ok and _is_cli_file(fname):
+                    continue  # legitimate CLI exit path; try remaining patterns
                 errors.append(f"PANIC STUB in {fname}: {line.strip()[:80]}")
                 break
 
-    # 4. New wire node kinds for stdlib
+    # 4. New wire node kinds for stdlib. The old gate watched only
+    #    e.node("...") in export.go for 5 prefixes (runtime|fmt|sync|os|net):
+    #    e.node("jsonmarshal"), dynamically composed e.node("sync" + name),
+    #    and wire nodes registered from any other file all slipped through.
+    #    Now: any e.node("literal") whose kind starts with a stdlib top-level
+    #    name (full STDLIB_TOP list) is flagged, in ANY frontend .go file;
+    #    string concatenation inside e.node(...) is always flagged. (The
+    #    stronger alternative — flagging every new e.node literal — was
+    #    considered; generic new kinds are already pinned by TestGolden and
+    #    the wire-format validator, so stdlib-prefixed + dynamic is the
+    #    bridge-relevant surface.)
     for fname, line in added_lines:
-        if not fname or "export.go" not in fname:
+        if not fname or not fname.endswith(".go"):
             continue
-        m = re.search(r'e\.node\s*\(\s*"([^"]+)"', line)
+        if "internal/frontend" not in fname and "export" not in fname:
+            continue
+        code = line.split("//")[0]  # ignore trailing comments for the concat check
+        m = re.search(r'e\.node\s*\(\s*"([^"]+)"', code)
         if m:
             node_kind = m.group(1)
-            # Flag runtime*/fmt*/sync*/etc. node kinds (stdlib-specific)
-            if re.match(r'^(runtime|fmt|sync|os|net)[a-z]', node_kind):
+            # Flag runtime*/fmt*/sync*/etc. node kinds (stdlib-specific).
+            # Both top-level names ("encoding" in "encodingjson...") and
+            # leaf names ("json" in "jsonmarshal") count: kind strings are
+            # lowercase concatenations, so either segment may lead.
+            if any(node_kind == t or node_kind.startswith(t)
+                   for t in STDLIB_TOP + STDLIB_LEAVES):
                 # Adjudicated real implementations are not bridges.
                 if any(f_sub in fname and nk == node_kind
                        for f_sub, nk in ADJUDICATED_WIRE_NODES):
                     continue
                 errors.append(f"SUSPICIOUS WIRE NODE in {fname}: {node_kind}")
+                continue
+        # Dynamically composed node kind: e.node("sync" + name) and friends.
+        if re.search(r'e\.node\s*\(.*\+', code):
+            errors.append(f"DYNAMIC WIRE NODE in {fname}: {line.strip()[:80]}")
 
-    # 5. New synthetic function registrations
+    # 5. New synthetic function registrations. The old gate matched only
+    #    addFunc(/synthetic.*Package(/registerSynthetic: registrations via
+    #    defineFunc/addBuiltin/registerBuiltin/declareFunc and new map-literal
+    #    entries with synthetic-valued identifiers ("NewReader":
+    #    syntheticNewReader,) slipped through. Grandfathered synth_*.go files
+    #    stay exempt (growth inside them is R2-P1-5's ledger lane).
+    registration_res = [
+        r'addFunc\s*\(',
+        r'defineFunc\s*\(',
+        r'addBuiltin\s*\(',
+        r'registerBuiltin\s*\(',
+        r'declareFunc\s*\(',
+        r'synthetic.*Package\s*\(',
+        r'registerSynthetic',
+    ]
     for fname, line in added_lines:
         if not fname or not fname.endswith(".go"):
             continue
-        if re.search(r'addFunc\s*\(|synthetic.*Package\s*\(|registerSynthetic', line):
-            # Allow in existing synth files (grandfathered), flag in new contexts
-            if "synth_" not in fname:
-                # Adjudicated real implementations are not bridges.
-                m = re.search(r'addFunc\s*\(\s*"([^"]+)"', line)
-                if m and any(f_sub in fname and sym == m.group(1)
-                             for f_sub, sym in ADJUDICATED_REGISTRATIONS):
-                    continue
-                errors.append(f"SYNTHETIC REGISTRATION in {fname}: {line.strip()[:80]}")
+        # Allow in existing synth files (grandfathered), flag in new contexts
+        if "synth_" in fname:
+            continue
+        code = line.split("//")[0]
+        hit = any(re.search(pat, code) for pat in registration_res)
+        # New map-literal entry whose value identifier is synthetic-flavored:
+        #   "NewReader": syntheticNewReader,
+        if re.search(r'"[^"]+"\s*:\s*[A-Za-z0-9_]*[Ss]ynthetic[A-Za-z0-9_]*\s*,?\s*$', code):
+            hit = True
+        if hit:
+            # Adjudicated real implementations are not bridges.
+            m = re.search(r'(?:addFunc|defineFunc|addBuiltin|registerBuiltin|declareFunc)\s*\(\s*"([^"]+)"', code)
+            if m and any(f_sub in fname and sym == m.group(1)
+                         for f_sub, sym in ADJUDICATED_REGISTRATIONS):
+                continue
+            errors.append(f"SYNTHETIC REGISTRATION in {fname}: {line.strip()[:80]}")
 
     return errors
 

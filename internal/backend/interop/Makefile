@@ -84,15 +84,26 @@ $(OUT_TEST)/.built: $(SRC_TEST) $(OUT_MAIN)/.built
 	touch $(OUT_TEST)/.built
 
 # placeholder + debug-leftover grep gates (Phase-1 done-gate 5 discipline).
-# The launcher (P3SyncMain) is excluded from the debug gate: printing usage
-# and diagnostics to stderr is its job (same exclusion as SchedMain and Main).
+#
+# Debug-gate exclusions (R2-P1-6 hardening): EVERY exclusion carries a review
+# date. Standing rule: an exclusion without a review date is removed on sight.
+# Migration target: route diagnostics through graalgo.p3log.P3Log (the p3log
+# pattern) and drop the carve-out at its review date.
+#   src/main/java/graalgo/p3sync/launcher/P3SyncMain.java   REVIEW 2027-04-16
+#       launcher usage/diagnostics to stderr is its job (same as SchedMain/Main).
+#   src/main/java/graalgo/p3link/SyncRuntime.java           REVIEW 2027-04-16
+#       syncThrow/syncFatal print "fatal error: ..." to stderr: Go parity
+#       (gc's runtime.throw/fatal do exactly this), then System.exit(2).
+#   src/main/java/graalgo/iface/FmtHandleMethods.java       REVIEW 2027-04-16
+#       GoString/Format callback threw: the stack trace must be loud;
+#       swallowing it would silently corrupt fmt output.
 check: main $(OUT_TEST)/.built
 	@echo "== placeholder grep gate =="
-	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|panic\("not implemented"\)|throw new UnsupportedOperationException\("stub' src/; then \
+	@if grep -rn --include='*.java' -E 'TODO|FIXME|XXX|[Tt][Oo][Dd][Oo]:|HACK|[Ww]orkaround|//[ \t]*[Pp]laceholder|panic\("not implemented"\)|throw new UnsupportedOperationException\("(stub|not implemented|unimplemented|not supported|unsupported|todo|fixme|unreachable|nyi|not yet)' src/; then \
 		echo "PLACEHOLDER GATE FAILED"; exit 1; fi
 	@echo "placeholder gate clean"
 	@echo "== debug-leftover grep gate (src/main only; launcher output is legitimate) =="
-	@if grep -rn --include='*.java' -E 'System\.(out|err)\.println' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java'; then \
+	@if grep -rn --include='*.java' -E 'System\.(out|err)\.(print|printf|println)|\.printStackTrace\(' src/main/ | grep -v 'src/main/java/graalgo/p3sync/launcher/P3SyncMain.java' | grep -v 'src/main/java/graalgo/p3link/SyncRuntime.java' | grep -v 'src/main/java/graalgo/iface/FmtHandleMethods.java'; then \
 		echo "DEBUG-LEFTOVER GATE FAILED"; exit 1; fi
 	@echo "debug-leftover gate clean"
 	@echo "== stdlib exclusion-list gate (P3-M6) =="

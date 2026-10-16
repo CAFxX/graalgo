@@ -61,6 +61,15 @@ def check_pos(ctx, path, pos):
         v = pos.get(k)
         if not isinstance(v, int) or isinstance(v, bool) or v < 0:
             ctx.err(f"{path}.{k}", f"must be non-negative int, got {v!r}")
+    if pos.get("line") == 0:
+        # Synthesized node (the exporter's e.pos on token.NoPos): no source
+        # position. file/col/off derive from the same invalid token.Position
+        # and must be 0; len may carry the token length.
+        for k in ("file", "col", "off"):
+            if pos.get(k) != 0:
+                ctx.err(f"{path}.{k}",
+                        f"must be 0 for a synthesized (line-0) position, got {pos.get(k)!r}")
+        return
     if not isinstance(pos.get("line"), int) or pos.get("line", 0) < 1:
         ctx.err(f"{path}.line", "line is 1-based")
 
@@ -200,13 +209,21 @@ def check_node(ctx, path, node, expr):
             need(k)
 
     if kind == "funcdecl":
-        # handled structurally by caller; still validate common shape
-        for k in ("name", "sig", "params", "body"):
+        # handled structurally by caller; still validate common shape.
+        # A bodyless function is legitimate when it carries the additive
+        # "unimplemented" or "linkname" marker (assembly-implemented or
+        # //go:linkname declarations — the backend builds a loud stub or a
+        # linkname dispatch); otherwise a body is required.
+        for k in ("name", "sig", "params"):
             need(k)
+        if not (f.get("unimplemented") or f.get("linkname")):
+            need("body")
         ctx.check_type_id(f"{fp}.sig", f.get("sig"))
-        for j, prm in enumerate(f.get("params", [])):
-            check_node(ctx, f"{fp}.params[{j}]", prm, False)
-        check_node(ctx, f"{fp}.body", f.get("body"), False)
+        for k in ("params", "results"):
+            for j, prm in enumerate(f.get(k, [])):
+                check_node(ctx, f"{fp}.{k}[{j}]", prm, False)
+        if f.get("body") is not None:
+            check_node(ctx, f"{fp}.body", f.get("body"), False)
     elif kind == "param":
         for k in ("name", "obj", "type"):
             need(k)
@@ -307,7 +324,13 @@ def check_node(ctx, path, node, expr):
         need("name")
         if "obj" in f and f["obj"] is not None:
             ctx.check_obj_id(f"{fp}.obj", f["obj"])
-        type_ref("type")
+        if "builtin" in f:
+            # Builtin form (spec §ident): name + builtin str, no type —
+            # builtins have no go/types signature to serialize.
+            if not isinstance(f["builtin"], str):
+                ctx.err(fp, "builtin must be a string")
+        else:
+            type_ref("type")
     elif kind == "basiclit":
         need("value")
         type_ref("type")
@@ -457,6 +480,125 @@ def check_node(ctx, path, node, expr):
         duration_field(ctx, fp, f)
         expr_node("func")
         type_ref("type")
+    elif kind == "funclit":
+        # M5 (WS F): function literal; params/results are param nodes.
+        for k in ("params", "results"):
+            need(k)
+            for j, prm in enumerate(f.get(k, [])):
+                check_node(ctx, f"{fp}.{k}[{j}]", prm, False)
+        check_node(ctx, f"{fp}.body", f.get("body"), False)
+        type_ref("type")
+    elif kind == "defer":
+        # M5 (WS F): deferred call.
+        check_node(ctx, f"{fp}.call", f.get("call"), False)
+    elif kind == "gostmt":
+        # P2-M1 (WS A): go statement. Additive node kind (freeze §2.3) —
+        # SPEC GAP: not yet in docs/arch/frontend-v1.md.
+        check_node(ctx, f"{fp}.call", f.get("call"), False)
+    elif kind == "methodref":
+        # M6 (WS H): method-call target; the receiver is evaluated first
+        # and passed as the method's params[0].
+        if "obj" in f:
+            ctx.check_obj_id(f"{fp}.obj", f["obj"])
+        else:
+            need("obj")
+        expr_node("recv")
+        type_ref("type")
+    elif kind == "methodvalue":
+        # P3-M9 (WS H): method value x.M with the receiver bound.
+        if "obj" in f:
+            ctx.check_obj_id(f"{fp}.obj", f["obj"])
+        else:
+            need("obj")
+        expr_node("recv")
+        type_ref("type")
+    elif kind == "ifacemethod":
+        # P3-M3 (WS D, ADR-0003): interface method call, dynamic dispatch
+        # through the itab.
+        expr_node("recv")
+        if not isinstance(f.get("method"), str):
+            ctx.err(fp, "method must be a string")
+        type_ref("iface")
+        type_ref("sig")
+        for j, a in enumerate(f.get("args", [])):
+            check_node(ctx, f"{fp}.args[{j}]", a, True)
+        type_ref("type", nullable=True)
+    elif kind == "nil":
+        # M5 (WS F): the nil identifier in expression position, typed as
+        # the empty interface.
+        type_ref("type")
+    elif kind == "deref":
+        # *p: pointer dereference. SPEC GAP: not yet in
+        # docs/arch/frontend-v1.md.
+        expr_node("x")
+        type_ref("type")
+    elif kind == "addrof":
+        # &x, or &a[i] in array/index form. SPEC GAP: not yet in
+        # docs/arch/frontend-v1.md.
+        if "x" in f:
+            expr_node("x")
+        else:
+            expr_node("array")
+            expr_node("index")
+        type_ref("type")
+    elif kind == "reflectop":
+        # P3-M8 (wave 2, reflect): reflect intrinsic lowered in the
+        # synthetic reflect package. SPEC GAP: not yet in
+        # docs/arch/frontend-v1.md — validated structurally here.
+        if not isinstance(f.get("op"), str) or not f["op"]:
+            ctx.err(fp, "op must be a non-empty string")
+        for j, a in enumerate(f.get("args", [])):
+            check_node(ctx, f"{fp}.args[{j}]", a, True)
+        type_ref("type")
+    elif kind == "unsafetooptr":
+        # unsafe.Pointer -> *T. SPEC GAP (as reflectop).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafefromptr":
+        # *T -> unsafe.Pointer. SPEC GAP (as reflectop).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafefromuint":
+        # uintptr -> unsafe.Pointer. SPEC GAP (as reflectop).
+        expr_node("x")
+        type_ref("type")
+    elif kind == "unsafeslice":
+        # unsafe.Slice(ptr, len). SPEC GAP (as reflectop).
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "unsafestring":
+        # unsafe.String(ptr, len). SPEC GAP (as reflectop).
+        expr_node("ptr")
+        expr_node("len")
+        type_ref("type")
+    elif kind == "abifuncpc":
+        # internal/abi FuncPCABI0/FuncPCABIInternal compile intrinsic.
+        # SPEC GAP (as reflectop).
+        if f.get("kind") not in ("FuncPCABI0", "FuncPCABIInternal"):
+            ctx.err(fp, f"abifuncpc kind must be FuncPCABI0/FuncPCABIInternal, got {f.get('kind')!r}")
+        expr_node("arg")
+        type_ref("type")
+    elif kind == "syncop":
+        # sync/atomic op on an atomicaddr cell. SPEC GAP (as reflectop).
+        if not isinstance(f.get("op"), str) or not f["op"]:
+            ctx.err(fp, "op must be a non-empty string")
+        if not isinstance(f.get("synctyp"), str) or not f["synctyp"]:
+            ctx.err(fp, "synctyp must be a non-empty string")
+        expr_node("recv")
+        for j, a in enumerate(f.get("args", [])):
+            check_node(ctx, f"{fp}.args[{j}]", a, True)
+        type_ref("type")
+    elif kind == "atomicaddr":
+        # Address cell for syncop (delegating AtomicLong/Integer).
+        # SPEC GAP (as reflectop).
+        expr_node("addr")
+        if not isinstance(f.get("cell"), str) or not f["cell"]:
+            ctx.err(fp, "cell must be a non-empty string")
+    elif kind == "runtimegomaxprocs":
+        # runtime.GOMAXPROCS(n) intrinsic. SPEC GAP (as reflectop).
+        expr_node("x")
+        type_ref("type")
     else:
         ctx.err(path, f"unknown node kind {kind!r}")
 
@@ -572,6 +714,53 @@ def selftest():
                               "fields": {"value": "1", "type": 0}},
                         "to": 99}}),
         "dangling type id")
+    bad("ok-zero-pos-synthesized",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "basiclit",
+             "pos": {"file": 0, "line": 0, "col": 0, "off": 0, "len": 12},
+             "fields": {"value": "1", "type": 0}}),
+        None)
+    bad("bad-partial-zero-pos",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "basiclit",
+             "pos": {"file": 0, "line": 0, "col": 3, "off": 0, "len": 1},
+             "fields": {"value": "1", "type": 0}}),
+        "must be 0 for a synthesized")
+    bad("ok-methodref",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "methodref",
+             "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+             "fields": {"obj": 0,
+                        "recv": {"kind": "ident",
+                                 "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+                                 "fields": {"name": "x", "obj": 0, "type": 0}},
+                        "type": 0}}),
+        None)
+    bad("ok-builtin-ident-no-type",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "ident",
+             "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+             "fields": {"name": "println", "builtin": "println"}}),
+        None)
+    bad("bad-methodref-missing-recv",
+        lambda d: d["funcs"][0]["fields"]["body"]["fields"]["stmts"].append(
+            {"kind": "methodref",
+             "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 1},
+             "fields": {"obj": 0, "type": 0}}),
+        "missing field")
+    bad("ok-bodyless-funcdecl-unimplemented",
+        lambda d: d["funcs"].append(
+            {"kind": "funcdecl",
+             "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 10},
+             "fields": {"name": "asmstub", "sig": 0, "params": [],
+                        "pkgpath": "example/asm", "unimplemented": True}}),
+        None)
+    bad("bad-bodyless-funcdecl-no-marker",
+        lambda d: d["funcs"].append(
+            {"kind": "funcdecl",
+             "pos": {"file": 0, "line": 1, "col": 1, "off": 0, "len": 10},
+             "fields": {"name": "asmstub", "sig": 0, "params": []}}),
+        "missing field 'body'")
 
     failures = 0
     for name, doc, want in cases:

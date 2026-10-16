@@ -3329,6 +3329,16 @@ func (e *exporter) pos(n ast.Node) *Pos {
 			length = utf8.RuneCount(src[s.Offset:t.Offset])
 		}
 	}
+	// A synthesized node can carry a valid Pos with a NoPos End (or vice
+	// versa) — e.g. desugar-built FuncDecls whose NamePos is copied from a
+	// real node. t.Offset-s.Offset then goes negative, and a negative
+	// source length is meaningless on the wire (it crashes
+	// Source.createSection consumers). Clamp to 0: the honest "unknown".
+	// (Surfaced by the R2-P2-19 validator extension: 110 such nodes in the
+	// testdata goldens.)
+	if length < 0 {
+		length = 0
+	}
 	return &Pos{File: fileIdx, Line: s.Line, Col: col, Off: s.Offset, Len: length}
 }
 

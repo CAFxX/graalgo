@@ -14,6 +14,11 @@ import (
 // its checked-in golden file. The goldens pin the frontend/v1 wire format;
 // any intentional format change must regenerate them explicitly
 // (UPDATE_GOLDEN=1) and update docs/arch/frontend-v1.md in the same change.
+//
+// Re-recording discipline (same as `make snapshot`): UPDATE_GOLDEN=1 is a
+// deliberate, reviewed act — NEVER re-record to make a red test green.
+// CI fails the build if UPDATE_GOLDEN appears in any added line outside
+// this file (see the "golden re-record discipline" step in ci.yml).
 func TestGolden(t *testing.T) {
 	files, err := filepath.Glob("testdata/*.go")
 	if err != nil {

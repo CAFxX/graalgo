@@ -49,9 +49,21 @@ case "${1:-build}" in
     echo "== frontend/v1 wire-format validator ==" >&2
     go build $OV -o gofrontend .
     python3 tools/validate_frontend_v1.py --selftest
-    ./gofrontend testdata/straight01.go > "${TMPDIR:-/tmp}/v1doc.json"
-    python3 tools/validate_frontend_v1.py "${TMPDIR:-/tmp}/v1doc.json" \
-      && echo "frontend/v1 validator: selftest + straight01.go accepted" >&2
+    # R2-P2-19: validate EVERY testdata fixture, not just straight01.go — a
+    # wire-format regression that only manifests with multi-result calls,
+    # generics, or channel ops must fail here. bad_*.go fixtures are error
+    # cases (TestGolden skips them too); everything else must export and
+    # validate.
+    V1DOCS=""
+    for f in testdata/*.go; do
+      case "$f" in testdata/bad_*) continue;; esac
+      b=$(basename "$f" .go)
+      ./gofrontend "$f" > "${TMPDIR:-/tmp}/v1doc-$b.json"
+      V1DOCS="$V1DOCS ${TMPDIR:-/tmp}/v1doc-$b.json"
+    done
+    # shellcheck disable=SC2086 (V1DOCS is a deliberate word-split file list)
+    python3 tools/validate_frontend_v1.py $V1DOCS \
+      && echo "frontend/v1 validator: selftest + all testdata fixtures accepted" >&2
     ;;
   *) echo "usage: build.sh [build|vet|test|check]" >&2; exit 1 ;;
 esac
