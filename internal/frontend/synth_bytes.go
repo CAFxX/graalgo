@@ -10174,10 +10174,31 @@ func (b *Buffer) WriteRune(r rune) (n int, err error) {
 // buffer has no data to return, err is EOF (unless len(p) is zero);
 // otherwise it is nil.
 //
-// M7 scope: exact gc 1.27.1 signature, fail-fast body (multi-result
-// calls need WS D; re-test when it lands).
+// P3-M9 (WS D): exact gc 1.27.1 signature with fail-fast body for
+// type-checking; real implementation in __bytesBufferRead helper
+// (v1 cannot emit 2-result methods). Interface dispatch maps to helper.
+// Shares __bytesReadPair with __bytesReaderRead: same {n int, err error}
+// shape, verified by the m7 table entry.
+func __bytesBufferRead(b *Buffer, p []byte) __bytesReadPair {
+	b.lastRead = opInvalid
+	if b.empty() {
+		// Buffer is empty, reset to recover space.
+		b.Reset()
+		if len(p) == 0 {
+			return __bytesReadPair{n: 0, err: nil}
+		}
+		return __bytesReadPair{n: 0, err: io.EOF}
+	}
+	n := copy(p, b.buf[b.off:])
+	b.off += n
+	if n > 0 {
+		b.lastRead = opRead
+	}
+	return __bytesReadPair{n: n, err: nil}
+}
+
 func (b *Buffer) Read(p []byte) (n int, err error) {
-	panic("bytes.Buffer.Read: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
+	panic("bytes.Buffer.Read: use __bytesBufferRead helper (WS D)")
 }
 
 // Next returns a slice containing the next n bytes from the buffer,
