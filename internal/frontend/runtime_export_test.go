@@ -544,3 +544,104 @@ func main() {
 		t.Errorf("exported JSON has %d runtimegosched nodes, want 2 (defer + go)", n)
 	}
 }
+
+// TestRuntimeRenamedImportIntrinsics (FE-10): the runtime intrinsic
+// interceptions resolve structurally via go/types (isRuntimeImport), not
+// by identifier spelling. rt "runtime"; rt.NumCPU() etc. must lower to
+// the same wire nodes as the canonical spelling. Red-green: fails before
+// the fix — renamed forms errored with "call to unknown function" (the
+// intrinsic block gated on pkgIdent.Name == "runtime") — passes after.
+func TestRuntimeRenamedImportIntrinsics(t *testing.T) {
+	cases := []struct {
+		name string
+		call string
+		node string
+	}{
+		{"NumCPU", "n := rt.NumCPU()\n\t_ = n", `"kind": "runtimenumcpu"`},
+		{"GOMAXPROCS", "m := rt.GOMAXPROCS(0)\n\t_ = m", `"kind": "runtimegomaxprocs"`},
+		{"NumGoroutine", "n := rt.NumGoroutine()\n\t_ = n", `"kind": "runtimenumgoroutine"`},
+		{"Gosched", "rt.Gosched()", `"kind": "runtimegosched"`},
+		{"Goexit", "rt.Goexit()", `"goexit": true`},
+		{"SetFinalizer", "var x int\n\tvar f func(*int)\n\trt.SetFinalizer(&x, f)", `"gcinterop": "SetFinalizer"`},
+		{"KeepAlive", "var x int\n\trt.KeepAlive(x)", `"gcinterop": "KeepAlive"`},
+		{"GC", "rt.GC()", `"gcinterop": "GC"`},
+		{"ReadMemStats", "var ms rt.MemStats\n\trt.ReadMemStats(&ms)", `"kind": "runtimereadmemstats"`},
+		{"GOROOT", "g := rt.GOROOT()\n\t_ = g", `"kind": "runtimegoroot"`},
+		{"Version", "v := rt.Version()\n\t_ = v", `"kind": "runtimeversion"`},
+		{"Stack", "var buf [64]byte\n\tn := rt.Stack(buf[:], false)\n\t_ = n", `"kind": "runtimestack"`},
+		{"Callers", "var pcs [8]uintptr\n\tn := rt.Callers(1, pcs[:])\n\t_ = n", `"kind": "runtimecallers"`},
+		{"CallersFrames", "var pcs [8]uintptr\n\tframes := rt.CallersFrames(pcs[:])\n\t_ = frames", `"kind": "runtimecallersframes"`},
+		{"FuncForPC", "var pcs [8]uintptr\n\tfn := rt.FuncForPC(pcs[0])\n\t_ = fn", `"kind": "runtimefuncforpc"`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, imp := range []struct{ name, imp, qual string }{
+				{"canonical", `"runtime"`, "runtime"},
+				{"renamed", `rt "runtime"`, "rt"},
+			} {
+				t.Run(imp.name, func(t *testing.T) {
+					call := strings.ReplaceAll(tc.call, "rt.", imp.qual+".")
+					src := "package main\n\nimport " + imp.imp + "\n\nfunc main() {\n\t" + call + "\n}\n"
+					out, err := ExportFile(writeSyncProg(t, src))
+					if err != nil {
+						t.Fatalf("ExportFile (%s import): %v", imp.name, err)
+					}
+					if !strings.Contains(out, tc.node) {
+						t.Errorf("exported JSON missing %s (%s import)", tc.node, imp.name)
+					}
+				})
+			}
+		})
+	}
+}
+
+// TestRuntimeRenamedImportGoschedDeferGo (FE-10): defer rt.Gosched() /
+// go rt.Gosched() desugar through isGoschedCall, whose spelling pre-gate
+// rejected renamed imports. Both statement positions must still yield
+// runtimegosched wire nodes under the renamed import. Red-green: fails
+// before the fix, passes after.
+func TestRuntimeRenamedImportGoschedDeferGo(t *testing.T) {
+	src := `package main
+
+import rt "runtime"
+
+func main() {
+	defer rt.Gosched()
+	go rt.Gosched()
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with defer/go rt.Gosched: %v", err)
+	}
+	if n := strings.Count(out, `"kind": "runtimegosched"`); n != 2 {
+		t.Errorf("exported JSON has %d runtimegosched nodes, want 2 (defer + go)", n)
+	}
+}
+
+// TestRuntimeShadowedLocalNotIntercepted (FE-10 guard): a local named
+// "runtime" is not an import — isRuntimeImport must reject it so a method
+// call on a local never lowers to a runtime intrinsic wire node. Not
+// red-green (the old spelling gate also fell through via the obj check),
+// but it pins the shadowing protection the structural gate provides.
+func TestRuntimeShadowedLocalNotIntercepted(t *testing.T) {
+	src := `package main
+
+type cpu struct{}
+
+func (cpu) NumCPU() int { return 1 }
+
+func main() {
+	runtime := cpu{}
+	n := runtime.NumCPU()
+	_ = n
+}
+`
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("ExportFile with shadowed runtime local: %v", err)
+	}
+	if strings.Contains(out, `"kind": "runtimenumcpu"`) {
+		t.Error("shadowed local named runtime was intercepted as the runtime intrinsic")
+	}
+}

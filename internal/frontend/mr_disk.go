@@ -25,6 +25,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	pathpkg "path"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -211,6 +213,26 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	// This is a general fix for intrinsics used in value position (M5 limitation).
 	// Currently handles time.Now; extend as needed.
 	for _, f := range files {
+		// Resolve the file's import local names to paths structurally, not
+		// by spelling: a renamed import (tm "time"; tm.Now in value
+		// position) must eta-expand exactly like time.Now. This rewrite
+		// runs before type-checking, so info.Uses is unavailable — resolve
+		// from the import specs instead.
+		importPath := map[string]string{}
+		for _, imp := range f.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				continue
+			}
+			name := pathpkg.Base(path)
+			if imp.Name != nil {
+				name = imp.Name.Name
+			}
+			if name == "_" || name == "." {
+				continue
+			}
+			importPath[name] = path
+		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			vs, ok := n.(*ast.ValueSpec)
 			if !ok || len(vs.Values) != 1 {
@@ -220,14 +242,15 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			if !ok || sel.Sel.Name != "Now" {
 				return true
 			}
-			if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "time" {
-				// Rewrite to func lit.
+			if pkg, ok := sel.X.(*ast.Ident); ok && importPath[pkg.Name] == "time" {
+				// Rewrite to func lit, preserving the import's local name
+				// in the synthesized time.Time result type.
 				vs.Values[0] = &ast.FuncLit{
 					Type: &ast.FuncType{
 						Params: &ast.FieldList{},
 						Results: &ast.FieldList{
 							List: []*ast.Field{
-								{Type: &ast.SelectorExpr{X: ast.NewIdent("time"), Sel: ast.NewIdent("Time")}},
+								{Type: &ast.SelectorExpr{X: ast.NewIdent(pkg.Name), Sel: ast.NewIdent("Time")}},
 							},
 						},
 					},

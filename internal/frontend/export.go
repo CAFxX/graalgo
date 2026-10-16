@@ -6781,6 +6781,16 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 	}
 }
 
+// isRuntimeImport reports whether id resolves (via go/types) to an import
+// of the runtime package. This is the structural, not spelling, gate for
+// runtime intrinsic interceptions (R2-P2-9 generality, the Goexit
+// precedent): rt "runtime"; rt.NumCPU() intercepts, while a shadowed local
+// named runtime does not.
+func isRuntimeImport(info *types.Info, id *ast.Ident) bool {
+	pkgName, ok := info.Uses[id].(*types.PkgName)
+	return ok && pkgName.Imported().Path() == "runtime"
+}
+
 // isGoschedCall reports whether x is a call to runtime.Gosched (resolved
 // against the synthetic runtime overlay package, not merely named
 // "runtime" — the exportCall interception's package check, mirrored here
@@ -6795,7 +6805,7 @@ func isGoschedCall(info *types.Info, x ast.Expr) (*ast.CallExpr, bool) {
 		return nil, false
 	}
 	pkgIdent, ok := sel.X.(*ast.Ident)
-	if !ok || pkgIdent.Name != "runtime" {
+	if !ok || !isRuntimeImport(info, pkgIdent) {
 		return nil, false
 	}
 	obj, ok := info.Uses[sel.Sel].(*types.Func)
@@ -8294,7 +8304,10 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// intrinsic; the factory builds the corresponding CallNode which
 		// delegates to graalgo.runtime.GcInterop. Marker is additive on the
 		// v1 wire format (goexit-marker precedent) — no version bump.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "runtime" {
+		// R2-P2-9 (the Goexit precedent): discriminate on the resolved
+		// import, not the identifier spelling — rt "runtime"; rt.NumCPU()
+		// intercepts; a shadowed local named runtime does not.
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok && isRuntimeImport(e.info, pkgIdent) {
 			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Name() == "runtime" {
 				switch sel.Sel.Name {
 				case "SetFinalizer", "KeepAlive", "GC":

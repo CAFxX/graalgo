@@ -568,3 +568,59 @@ func (p Pair[A, B]) Split() (A, B) {
 }
 `)
 }
+
+// TestDiskMREtaExpandRenamedTimeImport (FE-10 error class): the time.Now
+// value-position eta-expansion must resolve the import structurally, not
+// by identifier spelling. tm "time"; var x = tm.Now must rewrite to a
+// func literal whose synthesized result type uses the import's local
+// name (tm.Time); the canonical spelling must keep working. Red-green:
+// pre-fix the renamed form was not rewritten at all (spelling gate
+// pkg.Name == "time"), and the old rewrite always emitted time.Time,
+// which is undefined under a renamed import.
+func TestDiskMREtaExpandRenamedTimeImport(t *testing.T) {
+	for _, tc := range []struct{ name, imp, qual string }{
+		{"canonical", `"time"`, "time"},
+		{"renamed", `tm "time"`, "tm"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			src := "package p\n\nimport " + tc.imp + "\n\nvar x = " + tc.qual + ".Now\n"
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, "p.go", src, 0)
+			if err != nil {
+				t.Fatalf("parse error: %v", err)
+			}
+			transformDiskMultiResult("example.com/p", []*ast.File{f})
+			var vs *ast.ValueSpec
+			for _, d := range f.Decls {
+				gd, ok := d.(*ast.GenDecl)
+				if !ok || gd.Tok != token.VAR {
+					continue
+				}
+				for _, s := range gd.Specs {
+					if v, ok := s.(*ast.ValueSpec); ok {
+						vs = v
+					}
+				}
+			}
+			if vs == nil || len(vs.Values) != 1 {
+				t.Fatalf("var x not found after transform")
+			}
+			fl, ok := vs.Values[0].(*ast.FuncLit)
+			if !ok {
+				t.Fatalf("var x value was not eta-expanded to a func literal (got %T)", vs.Values[0])
+			}
+			res := fl.Type.Results.List
+			if len(res) != 1 {
+				t.Fatalf("eta-expanded funclit has %d results, want 1", len(res))
+			}
+			tsel, ok := res[0].Type.(*ast.SelectorExpr)
+			if !ok {
+				t.Fatalf("eta-expanded funclit result type is %T, want a qualified identifier", res[0].Type)
+			}
+			q, ok := tsel.X.(*ast.Ident)
+			if !ok || q.Name != tc.qual || tsel.Sel.Name != "Time" {
+				t.Errorf("eta-expanded result type qualifier = %v, want %s.Time", res[0].Type, tc.qual)
+			}
+		})
+	}
+}
