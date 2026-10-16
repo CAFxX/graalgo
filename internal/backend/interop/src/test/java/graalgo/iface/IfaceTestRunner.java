@@ -45,6 +45,10 @@ public final class IfaceTestRunner {
         // backend intrinsics with real JVM-telemetry semantics.
         TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
         TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
+        // 2026-10-16 (P1 launcher drift): graalgo-sync-run and graalgo-run
+        // must register identical wire-kind sets (the "abifuncpc" kind was
+        // missing from the graalgo-run ServiceLoader path).
+        TESTS.add(graalgo.p3sync.launcher.LauncherKindParityTest.class);
     }
 
     private IfaceTestRunner() {}

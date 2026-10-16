@@ -108,6 +108,10 @@ check: main $(OUT_TEST)/.built
 			echo "WARNING: $(HOME)/tools/go/bin/go not found; exclusion-list gate skipped"; \
 		fi; \
 	fi
+	@echo "== launcher kind single-source gate (P1 abifuncpc drift, 2026-10-16) =="
+	@if grep -rn -E 'register(Stmt|Expr)Kind\("' src/main/java/graalgo/p3sync/launcher/P3SyncMain.java; then \
+		echo "LAUNCHER-KIND GATE FAILED: P3SyncMain must not register wire kinds directly; use P3KindRegistrations"; exit 1; fi
+	@echo "launcher kind single-source gate clean"
 	@echo "== asm-inventory sync gate (P3-M6) =="
 	@if [ -n "$(GO)" ]; then \
 		GOROOT=$$(dirname $$(dirname "$(GO)")); \
