@@ -48,9 +48,9 @@ const syntheticMathBigSource = (
 "// P3-M9 (ecdsa-blockers): pair types for fmt.State.Precision/Width\n" +
 "// interface dispatch (WS D). The synthetic math/big Format methods call\n" +
 "// s.Precision()/s.Width() on fmt.State; the itab dispatches via the\n" +
-"// m8IfaceMultiResultMethods table. These types are never instantiated\n" +
-"// at runtime (FmtCallNode formats directly); they exist so the frontend\n" +
-"// can classify the interface method calls.\n" +
+"// m8IfaceMultiResultMethods table. These types exist so the frontend\n" +
+"// can classify the interface method calls (the pair types back the\n" +
+"// multi-result desugar).\n" +
 "type fmtPrecisionPair struct {\n" +
 "\tprec int\n" +
 "\tok   bool\n" +

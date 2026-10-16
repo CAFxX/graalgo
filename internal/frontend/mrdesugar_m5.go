@@ -401,13 +401,11 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	// called via the Type interface (the classify function retries with
 	// recvType="rtype" for reflect interface methods); StructTag.Lookup is
 	// on the named string type StructTag.
-	{"reflect", "Select", "", "__reflectSelect", "reflectSelectTriple", []string{"chosen", "recv", "recvOK"}, false},
-	{"reflect", "FieldByIndexErr", "Value", "__reflectFieldByIndexErr", "reflectValuePair", []string{"v", "err"}, false},
-	{"reflect", "TryRecv", "Value", "__reflectTryRecv", "reflectValueBoolPair", []string{"x", "ok"}, false},
-	{"reflect", "MethodByName", "rtype", "__reflectTMethodByName", "reflectMethodPair", []string{"m", "ok"}, true},
-	{"reflect", "FieldByName", "rtype", "__reflectTFieldByName", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "FieldByNameFunc", "rtype", "__reflectTFieldByNameFunc", "reflectStructFieldPair", []string{"f", "ok"}, true},
-	{"reflect", "Lookup", "StructTag", "__reflect_taglookup", "reflectTagPair", []string{"value", "ok"}, false},
+	// P3-M10 (real-fmt2 remediation): the reflect entries were removed.
+	// Synthetic reflect was retired (d2804a52, "uses disk importer"), so
+	// the __-helpers and pair types they named no longer exist. Real
+	// reflect's multi-result methods go through the disk MR mechanism
+	// (transformDiskMultiResult + classifyDiskMultiResultCall).
 	// NOTE: the top-level "encoding" package has no functions (only the six
 	// marshaling interfaces), so it needs no desugar entry. Its interface
 	// methods are multi-result and fail fast via isMultiResultSynthetic.
@@ -1334,9 +1332,10 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	{"crypto/internal/fips140/ecdsa", "ScalarBaseMult", "__mrPointIfaceScalarBaseMultPair", []string{"v0", "v1"}},
 	// P3-M9 (ecdsa-blockers): fmt.State.Precision/Width interface methods.
 	// The synthetic math/big Format methods call s.Precision()/s.Width();
-	// the pair types live in math/big (see synth_math_big.go). These are
-	// never dispatched at runtime (FmtCallNode formats directly); the
-	// entries exist so the frontend can classify the calls.
+	// the pair types live in math/big (see synth_math_big.go). The entries
+	// exist so the frontend can classify the calls; at runtime the itab
+	// dispatches to the concrete type's pair-returning helper
+	// (classifyIfaceMultiResultCall).
 	{"math/big", "Precision", "fmtPrecisionPair", []string{"prec", "ok"}},
 	{"math/big", "Width", "fmtWidthPair", []string{"wid", "ok"}},
 	// P3-M9 (WS D): crypto/elliptic.unmarshaler interface (2-result).
@@ -1597,6 +1596,22 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				// WS G (P3-M9): disk-package multi-result (dynamic table).
 				if plan := classifyDiskMultiResultCall(pkgPath, obj, targs); plan != nil {
 					return plan
+				}
+			}
+			// P3-M10 (real-fmt2 remediation): on-demand pair registration
+			// for multi-result functions not yet exported and not in any
+			// table (e.g., bodyless shims like reflect's chanrecv, declared
+			// after their call sites). The desugar uses the synthesized
+			// pair type; the callee's funcdecl reuses it when emitted.
+			if sig, ok := obj.Type().(*types.Signature); ok && sig.Results().Len() > 1 {
+				if sig.TypeParams() == nil || sig.TypeParams().Len() == 0 {
+					if mrInfo, err := e.ensureUserMRPair(obj, sig); err == nil && mrInfo != nil {
+						return &mrPlan{
+							kind:       mrUser,
+							tmpType:    mrInfo.pairType,
+							pairFields: mrInfo.pairFields,
+						}
+					}
 				}
 			}
 		}

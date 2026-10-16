@@ -20,10 +20,12 @@ deliverable until the design lands.
 ## Phased removal order
 
 - **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
-  packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
-  `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
+  packages via root-cause fixes: `fmt` (**retired 2026-10-16** via
+  `real-fmt2`, commit `a527063d` — the real `fmt` from GOROOT now compiles),
+  `crypto/x509` (worktree `real-x509`), `net`/`net/http`
   (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
-  B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
+  B-5 and the reflect/time/math name-keyed predicates in B-3 (B-1 already
+  retired).
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
@@ -42,33 +44,6 @@ deliverable until the design lands.
   `unsafe.Add`. Retires B-6, B-7.
 
 ## Active bridges
-
-### B-1. `FmtCallNode` + `graalgo.runtime.Fmt`/`FmtScan` (Java reimplementations of `fmt`)
-
-- **What:** [FmtCallNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/FmtCallNode.java)
-  is a custom wire node matching ~25 hardcoded `fmt.*` names
-  (`Print`/`Printf`/`Sprint`/`Errorf`/Append/Scan families/`FormatString`);
-  it delegates to
-  [graalgo/runtime/](../../internal/backend/runtime/src/main/java/graalgo/runtime/)
-  `Fmt`/`FmtScan` — Java reimplementations of stdlib `fmt` formatting and
-  scanning logic.
-  - **Frontend half (P1-N2, review-n1):** in
-    [internal/frontend/export.go](../../internal/frontend/export.go),
-    `exportCall` dispatches on the *identifier spelling*
-    (`pkgIdent.Name == "fmt"`) to `exportFmtCall`, which emits the
-    `"fmtcall"` wire node for the ten D4 overlay functions
-    (`fmtOverlayFuncs`) — instead of routing through the general
-    package-level call path. The spelling check (not the resolved package
-    path) is the name-keyed special case.
-- **Why:** the real `fmt` sources did not compile under graalgo, so
-  formatting was reimplemented in Java behind a name-keyed node.
-- **Root-cause fix:** make the real `fmt` package compile (fix the
-  compiler/runtime properly), then delete the node and the Java
-  reimplementations. In flight: worktrees `real-fmt2` and `real-fmt-rebase`
-  ("Retire synthetic fmt package — real fmt now compiles") — `real-fmt2`
-  already removes the frontend dispatch (`exportFmtCall` deleted there);
-  retire this entry when that lands on master.
-- **Phase:** 1.
 
 ### B-2. `NodeFactory.syncPrimitiveName` (name-keyed sync lowering)
 
@@ -257,6 +232,15 @@ extend these entries or add new ones without a fresh independent review.
 
 Entries move here when the bridge is gone (same change that removes the
 code, per [AGENTS.md](../../AGENTS.md) §7).
+
+- **2026-10-16 — B-1 `FmtCallNode` + `graalgo.runtime.Fmt`/`FmtScan`
+  (Java reimplementations of `fmt`).** Retired by commit `a527063d`
+  ("real-fmt2: remove Java fmt implementation"): the real `fmt` package
+  from GOROOT now compiles, so the `"fmtcall"` wire node, the
+  `exportFmtCall` frontend dispatch, `FmtCallNode`, `Fmt`/`FmtScan`,
+  `FmtHandleMethods`/`FmtMethodDispatch`, and the `DeferredCall` FMT kind
+  were deleted. `fmt` calls route through the general package-level call
+  path; deferred `fmt` calls go through the function-value path.
 
 - **2026-10-15 — stale `# BRIDGE` self-labels in module Makefiles.** The
   comments in

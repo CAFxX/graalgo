@@ -68,12 +68,12 @@ public final class DeferredCall {
 
     /** A deferred function-value call. */
     public static DeferredCall func(GoFunc func, Object[] args) {
-        return new DeferredCall(Kind.FUNC, func, args, null, null, null, null);
+        return new DeferredCall(Kind.FUNC, func, args, null, null);
     }
 
     /** A deferred builtin call ({@code println}, {@code print}, {@code panic}, {@code recover}). */
     public static DeferredCall builtin(String name, Object[] args, GoKind[] argKinds) {
-        return new DeferredCall(Kind.BUILTIN, null, args, argKinds, name, null, null);
+        return new DeferredCall(Kind.BUILTIN, null, args, argKinds, name);
     }
 
     public Kind kind() {

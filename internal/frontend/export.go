@@ -625,8 +625,6 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 	return failImporter{}.Import(path)
 }
 
-
-
 // runtimeStackMethod reports whether a MethodVal selection is one of the
 // synthetic runtime stack-inspection methods ((*Frames).Next,
 // (*Func).Name/Entry/FileLine), returning the method name. The check is
@@ -981,7 +979,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		synthFuncIDs: make(map[string]*funcDeclInfo),
 		// real-nethttp: linkname stub -> provider aliases.
 		linknameAlias: make(map[*types.Func]*funcDeclInfo),
-		sizes:        types.SizesFor("gc", "amd64"),
+		sizes:         types.SizesFor("gc", "amd64"),
 		// P3-M8: track imported synthetic packages for idempotency.
 		importedSynthetic: make(map[string]bool),
 		// WS G (P3-M9): track importPkgTree walks for idempotency.
@@ -2960,7 +2958,7 @@ type exporter struct {
 	// pair-returning convention. General mechanism: any linkname whose
 	// symbol resolves via synthFuncIDs gets an alias.
 	linknameAlias map[*types.Func]*funcDeclInfo
-	sizes        types.Sizes
+	sizes         types.Sizes
 	// M6 (WS H): active type-parameter substitution while exporting a
 	// monomorphized instantiation body (nil outside instantiations). See
 	// typeSubst below.
@@ -5827,6 +5825,33 @@ func (e *exporter) synthesizeUserPairType(fi *funcDeclInfo) (*types.Named, []str
 	return e.synthesizePairTypeForSig(sig, name)
 }
 
+// ensureUserMRPair synthesizes and registers a pair type for a multi-result
+// signature, returning the existing entry if already registered. Used for
+// on-demand registration when a caller is exported before its callee's
+// declaration (e.g., bodyless shims like reflect's chanrecv, declared after
+// their call sites). The pair type synthesizes from the signature alone;
+// when the callee's funcdecl is later emitted, markUnimplemented reuses the
+// entry instead of creating a duplicate.
+// P3-M10 (real-fmt2 remediation).
+func (e *exporter) ensureUserMRPair(fn *types.Func, sig *types.Signature) (*userMRInfo, error) {
+	if mrInfo, ok := e.userMRFuncs[fn]; ok {
+		return mrInfo, nil
+	}
+	// Build a minimal funcDeclInfo for synthesizeUserPairType's naming
+	// (pair name includes the receiver type for methods).
+	fi := &funcDeclInfo{obj: fn, sig: sig}
+	if sig.Recv() != nil {
+		fi.recv = sig.Recv()
+	}
+	pairType, fieldNames, err := e.synthesizeUserPairType(fi)
+	if err != nil {
+		return nil, err
+	}
+	mrInfo := &userMRInfo{pairType: pairType, pairFields: fieldNames, origSig: sig}
+	e.userMRFuncs[fn] = mrInfo
+	return mrInfo, nil
+}
+
 // synthesizePairTypeForSig synthesizes the pair struct type for a
 // multi-result signature (general mechanism, not tied to *types.Func).
 // Used for function literals assigned to variables (MR-closure-var) as
@@ -6158,6 +6183,13 @@ func funcPkgPath(e *exporter, fi *funcDeclInfo) string {
 // uniformly to all bodyless functions, preserving their type identity so
 // references and value positions work, while failing loudly (never
 // silently) if the unimplemented function is actually invoked.
+//
+// P3-M10 (real-fmt2 remediation): a //go:linkname stub whose symbol
+// resolves to no compiled provider (e.g. reflect's badlinkname_* method
+// prototypes, which are never called in-package) falls back to the
+// "unimplemented" treatment instead of failing the export: the backend
+// cannot dispatch a multi-result linkname, and the declaration keeps its
+// type identity while any actual invocation panics loudly.
 func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 	fd := fi.fd
 	pkgPath := funcPkgPath(e, fi)
@@ -6209,11 +6241,12 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 			}
 		}
 	}
-	if symbol == "" {
-		// No //go:linkname and not a runtime-provided intrinsic:
-		// assembly-implemented (or otherwise bodyless) function.
-		// Mark unimplemented; the backend panics if called. The
-		// multi-result WS D restriction does not apply: no body is built.
+	// markUnimplemented emits the bodyless function as an unimplemented
+	// stub (the backend panics if it is ever called), with a userMRFuncs
+	// pair entry when it has multiple results so that callers still
+	// compile. Shared by the no-linkname path and by //go:linkname stubs
+	// whose symbol resolves to no compiled provider.
+	markUnimplemented := func() (*Node, error) {
 		fields["unimplemented"] = true
 		// ASM Phase 1: a multi-result unimplemented function still
 		// needs a userMRFuncs entry so its callers get the pair
@@ -6222,40 +6255,49 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		// internal/cpu.doinit (which multi-assigns cpuid results)
 		// must type-check. This is general: any bodyless function
 		// with N>1 results gets it automatically.
+		// (ensureUserMRPair reuses the entry if on-demand registration
+		// already created it.)
 		if fi.sig != nil && fi.sig.Results().Len() > 1 && fi.obj != nil {
-			if _, ok := e.userMRFuncs[fi.obj]; !ok {
-				pairType, fieldNames, err := e.synthesizeUserPairType(fi)
-				if err != nil {
-					return nil, err
-				}
-				e.userMRFuncs[fi.obj] = &userMRInfo{
-					pairType:   pairType,
-					pairFields: fieldNames,
-					origSig:    fi.sig,
-				}
+			if _, err := e.ensureUserMRPair(fi.obj, fi.sig); err != nil {
+				return nil, err
 			}
 		}
-	} else {
-		if len(results) > 1 {
-			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
-		}
-		fields["linkname"] = symbol
-		// real-nethttp: if the linkname symbol resolves to a compiled
-		// funcdecl (via synthFuncIDs), alias the stub to the provider so
-		// calls lower to a direct provider call. This makes multi-result
-		// linkname targets (e.g. net/textproto.readMIMEHeader) work through
-		// the normal pair-returning convention. The symbol is either
-		// pkgpath.name (two-field form) or a bare name (single-field form,
-		// which is a provider declaration, not a consumer).
-		if strings.Contains(symbol, ".") {
-			if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
-				if e.linknameAlias == nil {
-					e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
-				}
-				e.linknameAlias[fi.obj] = providerFi
+		return e.node("funcdecl", fd, fields), nil
+	}
+	if symbol == "" {
+		// No //go:linkname and not a runtime-provided intrinsic:
+		// assembly-implemented (or otherwise bodyless) function.
+		// Mark unimplemented; the backend panics if called. The
+		// multi-result WS D restriction does not apply: no body is built.
+		return markUnimplemented()
+	}
+	// Has //go:linkname (or a runtime-provided intrinsic symbol): resolve
+	// the provider first (real-nethttp). A stub whose symbol resolves to
+	// a compiled funcdecl aliases to the provider, so calls lower to a
+	// direct provider call and multi-result targets use the normal
+	// pair-returning convention.
+	aliased := false
+	if strings.Contains(symbol, ".") {
+		if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
+			if e.linknameAlias == nil {
+				e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
 			}
+			e.linknameAlias[fi.obj] = providerFi
+			aliased = true
 		}
 	}
+	if len(results) > 1 && !aliased {
+		// P3-M10 (real-fmt2 remediation): multi-result //go:linkname stub
+		// with no compiled provider (e.g. reflect's badlinkname_*
+		// prototypes for methods, never called in-package). The backend
+		// cannot dispatch a multi-result linkname; fall back to the
+		// unimplemented treatment instead of failing the export.
+		return markUnimplemented()
+	}
+	if len(results) > 1 {
+		return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
+	}
+	fields["linkname"] = symbol
 	return e.node("funcdecl", fd, fields), nil
 }
 
@@ -7953,6 +7995,17 @@ func (e *exporter) exportExpr(x ast.Expr) (*Node, error) {
 			return e.exportRecv(x)
 		}
 		if x.Op == token.AND {
+			// P3-M10 (real-fmt2 remediation): parentheses are transparent
+			// for addressability and emission — &(E) ≡ &E. Strip them so
+			// e.g. &(SliceOf(elem).(*rtype).t) in reflect lowers like the
+			// unparenthesized form (the backend's addrof has no paren case).
+			for {
+				p, ok := x.X.(*ast.ParenExpr)
+				if !ok {
+					break
+				}
+				x.X = p.X
+			}
 			// &T{...}: normalize to a pointer-typed composite literal
 			// (M4, WS E).
 			if cl, ok := x.X.(*ast.CompositeLit); ok {
@@ -8689,7 +8742,11 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// whose type is a signature, not a composite type target.
 			// Export the fun expression and emit a plain call node
 			// (mirrors the func-valued variable branch below).
-			if sig, ok := tv.Type.Underlying().(*types.Signature); ok {
+			// P3-M10 (real-fmt2 remediation): a conversion to a func type,
+			// e.g. (func())(nil) in reflect.FuncOf, has tv.IsType() true —
+			// it is a type, not a func value. Route it to the conversion
+			// path below, not the call path.
+			if sig, ok := tv.Type.Underlying().(*types.Signature); ok && !tv.IsType() {
 				fun, err := e.exportExpr(c.Fun)
 				if err != nil {
 					return nil, err
@@ -9077,7 +9134,6 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 	}), true, nil
 }
 
-
 // exportFuncCall exports a call to a named top-level function (M6, WS H).
 // Generic functions resolve to their monomorphized instantiation via
 // info.Instances; the call target is an "ident" node whose obj is the
@@ -9360,6 +9416,23 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 	case *ast.StarExpr:
 		// *p is addressable (it's a dereference of a pointer).
 		return true
+	case *ast.ParenExpr:
+		// P3-M10 (real-fmt2 remediation): parentheses are transparent —
+		// (E) is addressable iff E is.
+		return isAddressable(x.X, info)
+	case *ast.TypeAssertExpr:
+		// P3-M10 (real-fmt2 remediation): &(e.(*P).f) — a type assertion
+		// to a pointer type yields the pointer itself (no copy), so a
+		// field selected through it addresses real storage. gc-verified:
+		// legal for pointer assertions (&i.(*S).f), illegal for value
+		// assertions (&j.(S).f). The descriptor-downcast pattern
+		// &mt.(*rtype).t appears throughout reflect (e.g. Method.Method).
+		if tv, ok := info.Types[x]; ok && tv.Type != nil {
+			if _, isPtr := tv.Type.(*types.Pointer); isPtr {
+				return true
+			}
+		}
+		return false
 	default:
 		return false
 	}
@@ -9703,6 +9776,17 @@ func embeddedFieldType(t types.Type, path []int) types.Type {
 				t = n.Underlying()
 				continue
 			}
+			// P3-M10 (real-fmt2 remediation): unwrap type aliases.
+			// go1.23+ materializes aliases as *types.Alias (e.g.
+			// reflect.funcType = internal/abi.FuncType); an alias of a
+			// struct must be walked like the struct itself, or promoted
+			// methods through its embedded fields fail to resolve
+			// ("method Common not found on FuncType" for ftyp.Common()
+			// in reflect/makefunc.go once real fmt compiles).
+			if a, ok := t.(*types.Alias); ok {
+				t = a.Rhs()
+				continue
+			}
 			break
 		}
 		st, ok := t.(*types.Struct)
@@ -9727,6 +9811,12 @@ func embeddedFieldName(t types.Type, path []int) string {
 			}
 			if n, ok := t.(*types.Named); ok {
 				t = n.Underlying()
+				continue
+			}
+			// P3-M10 (real-fmt2 remediation): unwrap type aliases, mirroring
+			// embeddedFieldType (e.g. reflect.funcType = internal/abi.FuncType).
+			if a, ok := t.(*types.Alias); ok {
+				t = a.Rhs()
 				continue
 			}
 			break
@@ -10780,6 +10870,22 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 				}
 				return tid, nil
 			}
+			// P3-M10 (real-fmt2 remediation): on-demand pair registration
+			// for multi-result callees whose declaration hasn't been
+			// exported yet (e.g., bodyless shims like reflect's chanrecv,
+			// declared after their call sites). The pair type synthesizes
+			// from the signature alone.
+			if fn := e.calledFunc(c); fn != nil {
+				if sig, ok := fn.Type().(*types.Signature); ok && sig.Results().Len() > 1 {
+					if mrInfo, err := e.ensureUserMRPair(fn, sig); err == nil && mrInfo != nil {
+						tid, err := e.typeID(mrInfo.pairType)
+						if err != nil {
+							return nil, err
+						}
+						return tid, nil
+					}
+				}
+			}
 			return nil, scopeErrorf("multi-valued call result is not supported in frontend/v1 scope (WS D)")
 		}
 		tid, err := e.typeID(tv.Type)
@@ -11422,4 +11528,3 @@ func isCommaOkRhs(r ast.Expr) bool {
 	}
 	return false
 }
-

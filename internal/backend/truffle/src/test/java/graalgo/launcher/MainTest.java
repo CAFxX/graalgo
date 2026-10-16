@@ -358,8 +358,10 @@ public final class MainTest {
 
     public void testFmtPointerStructValue() throws Exception {
         // M8 fuzzer find: Println(&T{...}) printed "0x0" because the
-        // NodeFactory fmtcall metadata loop had no pointer branch, so
-        // elemKind was null and fmtPointer fell through to erased output.
+        // (now removed, real-fmt2 2026-10-16) fmtcall metadata builder had
+        // no pointer branch, so elemKind was null and fmtPointer fell
+        // through to erased output. Real fmt from GOROOT now formats the
+        // referent; this test pins the behavior end-to-end.
         // gc prints &{1 2} (the referent's %v with & prefix).
         Path dir = Files.createTempDirectory("graalgo-main-test");
         Path f = dir.resolve("prog.go");
