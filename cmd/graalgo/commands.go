@@ -250,6 +250,14 @@ func cmdBuild(root string, args []string) int {
 	return 0
 }
 
+// vetCheckArgs builds the backend args for vet's frontend gate: a single
+// --check invocation over all files. The launcher type-checks every file
+// it is given as one compilation unit (see cmdRun/cmdBuild), so the whole
+// package is checked in one backend startup instead of one per file.
+func vetCheckArgs(files []string) []string {
+	return append([]string{"--check"}, files...)
+}
+
 // cmdVet implements `graalgo vet [packages]`.
 //
 // Runs the frontend translation check (--check) over the named packages,
@@ -261,13 +269,11 @@ func cmdVet(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo vet: %v\n", err)
 		return 1
 	}
-	failed := false
-	for _, f := range files {
-		if code := graalgoRun(root, []string{"--check", f}); code != 0 {
-			failed = true
-		}
-	}
-	if failed {
+	// One frontend-gate invocation for the whole package. gofrontend's
+	// combined build log still names each failing file, and checking the
+	// files together (rather than one at a time) also lets cross-file
+	// references resolve.
+	if code := graalgoRun(root, vetCheckArgs(files)); code != 0 {
 		return 1
 	}
 	// Run the analyzers over all files as one package.

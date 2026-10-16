@@ -197,7 +197,10 @@ func isGraalgoRoot(dir string) bool {
 // travel as explicit argv flags, never environment variables: env is
 // inherited by every child process, so a user-exported variable would
 // confer privilege on commands that never asked for it (`graalgo run`).
-func graalgoRun(root string, args []string) int {
+//
+// Declared as a variable (not a function) so unit tests can substitute a
+// stub backend and assert the driver's invocation pattern.
+var graalgoRun = func(root string, args []string) int {
 	runner := filepath.Join(root, "internal", "backend", "graalgo-sync-run")
 	cmd := exec.Command(runner, args...)
 	cmd.Stdin = os.Stdin
