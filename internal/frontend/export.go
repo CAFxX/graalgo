@@ -496,6 +496,7 @@ func syntheticRuntimePackage() *types.Package {
 	}, nil))
 	addMethod(memProfileRecord, "InUseBytes", nil, tuple(param("", types.Typ[types.Int64])))
 	addMethod(memProfileRecord, "InUseObjects", nil, tuple(param("", types.Typ[types.Int64])))
+	addMethod(memProfileRecord, "Stack", nil, tuple(param("", types.NewSlice(uintptrTyp))))
 
 	// Const Compiler. gc reports "gc" and gccgo reports "gccgo": each
 	// implementation reports its own name, so the overlay reports
