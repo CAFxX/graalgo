@@ -32,7 +32,6 @@ public final class Runner {
         TESTS.add(graalgo.values.ValuesTest.class);
         TESTS.add(graalgo.values.CallSiteProbesTest.class);
         TESTS.add(graalgo.values.CellIdentityTest.class);
-        TESTS.add(graalgo.runtime.FmtVerbMatrixTest.class);
         TESTS.add(graalgo.runtime.FreezeSignatureTest.class);
         TESTS.add(graalgo.frontend.SectionClampTest.class);
         TESTS.add(graalgo.frontend.WrapInterfaceTest.class);

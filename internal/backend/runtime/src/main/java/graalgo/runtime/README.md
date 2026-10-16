@@ -19,8 +19,8 @@ not a parity claim.
 - `Intrinsics`: memmove/memequal, makeslice/growslice (gc's growth policy
   ported exactly), slicecopy, map ops, fastrand (wyrand port).
 - `BuiltinPrint`: `print`/`println` builtins → **stderr** (gc parity).
-- `Fmt`: the D4 `fmt` stub (7 pure functions) with verb-conformance matrix
-  (`corpus/fmt/matrix.tsv`, 122 rows vs gc). Replaceable-in-Phase-3.
+- `fmt`: real Go `fmt` compiled from GOROOT (bridge B-1 retired by
+  real-fmt2; the D4 Java stub and its verb-conformance matrix are deleted).
 - `GoFloatFmt`, `GoQuote`, `GoIsPrint`: ported gc formatting logic.
 - `Atomics`: JVM-backed atomics. `Timers.nanotime()`: `System.nanoTime()`.
 

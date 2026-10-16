@@ -91,23 +91,23 @@ Conventions:
 | `public static void println(Arg[] args)` | `println` builtin → **stderr**. [T] |
 | `public record Arg(GoKind kind, Object value)` | Argument box. |
 
-### fmt stub — `graalgo.runtime.Fmt` (D4; replaceable-in-Phase-3)
+### fmt stub — `graalgo.runtime.Fmt` (D4; RETIRED by real-fmt2, 2026-10-16)
 
-The seven pure functions (D4). Real formatting logic held to the
-verb-conformance matrix (`corpus/fmt/matrix.tsv`, 122 rows differential
-vs gc); the *package* is a stub — resolved only via the frontend Phase-1
-import overlay, never linked as a real `fmt`.
+Bridge B-1 retirement: real `fmt` now compiles from GOROOT. The seven
+Java stub functions (`sprintf`/`sprint`/`sprintln`/`print`/`printf`/`println`
+/`errorf`) and the verb-conformance matrix (`corpus/fmt/matrix.tsv`) were
+deleted; the frozen signatures in §"fmt stub" below no longer exist.
 
 | Signature | Notes |
 |-----------|-------|
-| `public static GoString sprintf(String format, Arg[] args)` | [T] |
-| `public static GoString sprint(Arg[] args)` | [T] |
-| `public static GoString sprintln(Arg[] args)` | [T] |
-| `public static int print(Arg[] args)` | → stdout; returns bytes written. [T] |
-| `public static int printf(String format, Arg[] args)` | → stdout; returns bytes written. [T] |
-| `public static int println(Arg[] args)` | → stdout; returns bytes written. [T] |
-| `public static GoInterface errorf(String format, Arg[] args)` | Dynamic type `*errors.errorString`. [T] |
-| `public record Arg(Object value, GoKind kind, String typeName, GoKind keyKind, String keyTypeName, GoKind elemKind, String elemTypeName)` | Full type metadata. |
+| `public static GoString sprintf(String format, Arg[] args)` | DELETED [T] |
+| `public static GoString sprint(Arg[] args)` | DELETED [T] |
+| `public static GoString sprintln(Arg[] args)` | DELETED [T] |
+| `public static int print(Arg[] args)` | DELETED [T] |
+| `public static int printf(String format, Arg[] args)` | DELETED [T] |
+| `public static int println(Arg[] args)` | DELETED [T] |
+| `public static GoInterface errorf(String format, Arg[] args)` | DELETED [T] |
+| `public record Arg(Object value, GoKind kind, String typeName, GoKind keyKind, String keyTypeName, GoKind elemKind, String elemTypeName)` | DELETED |
 
 ### Atomics — `graalgo.runtime.Atomics` (REAL)
 
@@ -201,7 +201,7 @@ The builtins as Truffle expression nodes (WS G). The factory
 | `PrintNode(boolean, GoExprNode[])` | `print`/`println` | — (statement only) |
 | `PanicBuiltinNode(GoExprNode, GoTypeDescriptor, String, boolean)` | `panic` | — (statement only) |
 | `RecoverBuiltinNode()` | `recover` | INTERFACE |
-| `FmtCallNode(String, GoExprNode[], ...)` | `fmt.*` (D4) | STRING / INTERFACE |
+| `FmtCallNode(String, GoExprNode[], ...)` | RETIRED by real-fmt2 (2026-10-16): real `fmt` from GOROOT; node class deleted |
 
 ### M5 runtime surface (frozen 2026-10-04, WS F)
 

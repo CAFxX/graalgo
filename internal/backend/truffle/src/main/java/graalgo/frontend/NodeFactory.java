@@ -3511,8 +3511,8 @@ public final class NodeFactory {
     /**
      * P3-M10 (fix-fmt-funcs): walks a slice/array element type down to the
      * scalar, collecting the kind/name chain below the first element level
-     * (e.g. [2][2][2]int -&gt; kinds [ARRAY, INT32]). Factored out of
-     * {@link #buildFmtCall} so pointer-to-composite args (e.g. {@code *[]byte}
+     * (e.g. [2][2][2]int -&gt; kinds [ARRAY, INT32]). Factored out of the
+     * legacy fmt path so pointer-to-composite args (e.g. {@code *[]byte}
      * scan destinations) get the same chains. Terminates: each step moves
      * to a strictly smaller type, and go/types rejects recursive array
      * types before export.
@@ -3542,7 +3542,7 @@ public final class NodeFactory {
      * P3-M10 (fix-fmt-funcs): walks a map element type down through nested
      * maps, collecting the (key, elem) kinds per level (e.g.
      * map[string]map[string]int -&gt; keyChain=[STRING], elemChain=[INT]).
-     * Factored out of {@link #buildFmtCall}; same termination argument as
+     * Factored out of the legacy fmt path; same termination argument as
      * {@link #walkElemChain}.
      */
     private record MapChainWalk(java.util.List<GoKind> keyKinds, java.util.List<String> keyNames,
