@@ -23,7 +23,12 @@ import graalgo.values.GoString;
  * <ul>
  *   <li>one argument: returns it;</li>
  *   <li>integers (signed and unsigned): numeric fold;</li>
- *   <li>floats: NaN-propagating — any NaN argument yields NaN;</li>
+ *   <li>floats: every argument is evaluated exactly once in order; if any
+ *       argument is NaN the result is the <em>first</em> NaN argument's
+ *       value (payload bits preserved); otherwise the fold uses the
+ *       {@link Float#compare} / {@link Double#compare} total order, so
+ *       {@code min(+0.0,-0.0) == -0.0} and
+ *       {@code max(-0.0,+0.0) == +0.0};</li>
  *   <li>strings: byte-wise lexicographic (via {@link GoString#compareTo}).</li>
  * </ul>
  *
@@ -71,16 +76,27 @@ public final class MinMaxNode extends GoExprNode {
             throw new IllegalStateException("minmax executeFloat on non-float32 kind " + kind());
         }
         float best = args[0].executeFloat(frame);
+        // gc parity: the first NaN argument's value wins (payload bits
+        // preserved); the Float.compare total order distinguishes -0.0f
+        // from +0.0f, giving min(+0.0,-0.0) = -0.0 and max(-0.0,+0.0) = +0.0.
+        boolean seenNaN = Float.isNaN(best);
+        float firstNaN = best;
         for (int i = 1; i < args.length; i++) {
             float v = args[i].executeFloat(frame);
-            if (Float.isNaN(v) || Float.isNaN(best)) {
-                return Float.NaN;
+            if (seenNaN) {
+                continue;
             }
-            if (isMin ? v < best : v > best) {
+            if (Float.isNaN(v)) {
+                seenNaN = true;
+                firstNaN = v;
+                continue;
+            }
+            int cmp = Float.compare(v, best);
+            if (isMin ? cmp < 0 : cmp > 0) {
                 best = v;
             }
         }
-        return best;
+        return seenNaN ? firstNaN : best;
     }
 
     @Override
@@ -89,16 +105,27 @@ public final class MinMaxNode extends GoExprNode {
             throw new IllegalStateException("minmax executeDouble on non-float64 kind " + kind());
         }
         double best = args[0].executeDouble(frame);
+        // gc parity: the first NaN argument's value wins (payload bits
+        // preserved); the Double.compare total order distinguishes -0.0
+        // from +0.0, giving min(+0.0,-0.0) = -0.0 and max(-0.0,+0.0) = +0.0.
+        boolean seenNaN = Double.isNaN(best);
+        double firstNaN = best;
         for (int i = 1; i < args.length; i++) {
             double v = args[i].executeDouble(frame);
-            if (Double.isNaN(v) || Double.isNaN(best)) {
-                return Double.NaN;
+            if (seenNaN) {
+                continue;
             }
-            if (isMin ? v < best : v > best) {
+            if (Double.isNaN(v)) {
+                seenNaN = true;
+                firstNaN = v;
+                continue;
+            }
+            int cmp = Double.compare(v, best);
+            if (isMin ? cmp < 0 : cmp > 0) {
                 best = v;
             }
         }
-        return best;
+        return seenNaN ? firstNaN : best;
     }
 
     @Override

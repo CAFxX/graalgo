@@ -33,6 +33,18 @@ import graalgo.values.GoSlice;
  * never from the type table. {@code clear} returns no value; the node
  * evaluates to {@code null} and is used in statement position.
  *
+ * <p><b>Duplication strategy (P1-2, 2026-10-16):</b> this node is duplicated
+ * by {@code graalgo.frontend.ClearNode} (the truffle module), which is live
+ * only in {@code NodeFactoryV2} — no launcher uses the v2 path yet. The two
+ * implementations MUST stay semantically identical; the shared semantic
+ * matrix is pinned by the differential corpus program
+ * {@code test/differential/corpus/50_clear_builtin} (this node's path, vs
+ * gc) and by {@code ClearNodeSemanticsTest} in the truffle module's tests.
+ * When v2 becomes the launcher path, ONE implementation must die: the
+ * truffle one. The v2 factory must then route {@code "clear"} through the
+ * same wire-kind registration mechanism used here (P3KindRegistrations), so
+ * this single implementation serves both paths — never a third copy.
+ *
  * <p>Registered on the factory via the public
  * {@code NodeFactory.registerExprKind} hook.
  */

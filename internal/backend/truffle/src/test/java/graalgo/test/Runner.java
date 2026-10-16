@@ -40,6 +40,8 @@ public final class Runner {
         TESTS.add(graalgo.frontend.ArrayValueSemanticsTest.class);
         TESTS.add(graalgo.frontend.AtomicCellFieldAddrTest.class);
         TESTS.add(graalgo.frontend.v2.BinaryDecoderTest.class);
+        // P1-2 (2026-10-16): the shared clear semantic matrix (truffle path).
+        TESTS.add(graalgo.frontend.ClearNodeSemanticsTest.class);
     }
 
     public static void main(String[] args) {
