@@ -134,7 +134,6 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `paren` | `x`, `type`: type id |
 | `convert` | `to`: type id, `from`: source type id (M7; needed for string<->slice to get the element kind), `x`: expr node — a Go conversion `T(x)` where `T` denotes a type (M3; builtin calls stay `call`) |
 | `call` | `fun`: expr node, `args`: [expr nodes], `builtin`: str or null, `type`: type id or null, `ellipsis`: bool (M7; true for `append(s, x...)` — string spread *and* slice spread since `007b42f`; only `append` carries it, and only for `...` calls) |
-| `fmtcall` | `func`: str (one of `Print`, `Printf`, `Println`, `Sprint`, `Sprintf`, `Sprintln`, `Errorf`), `args`: [expr nodes], `type`: type id or null — a call to the D4 `fmt` stub via the Phase-1 import overlay (WS G). Only the seven D4 symbols resolve; any other `fmt.X` is a scope error naming Phase 3. |
 | `if` | `init`: stmt node or null, `cond`: expr node, `then`: block node, `else`: stmt node or null (block or `if` for else-if) |
 | `for` | `init`: stmt node or null, `cond`: expr node or null, `post`: stmt node or null, `body`: block node |
 | `range` | `key`, `value`: object ids or null (absent/blank), `define`: bool, `x`: expr node, `body`: block node |
@@ -169,6 +168,52 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `timeafter` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.After(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timetick` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.Tick(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timeafterfunc` | `duration`: expr node (or JSON number: nanoseconds), `func`: expr node, `type`: type id (`*time.Timer`) — `time.AfterFunc(d, f)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `addrof` | `x`: expr node (the addressable operand), or `array` + `index`: expr nodes (the element-address form for `&arr[i]`); `type`: type id of `&x` (emitted by all sites but never read by the builder — the result kind is always POINTER) — explicit `&x` / implicit `(&x).M()` receiver adaptation (P3-M9, WS D; additive node kind). Two emission shapes: `{"x","type"}` (plain `&x`, implicit receiver `&`, promoted-receiver `&`) vs `{"array","index","type"}` (`&arr[i]`) |
+| `deref` | `x`: expr node (the pointer), `type`: type id (element type of `*p`) — `*p` read; also used as assignment lhs (`*p = v`) and implicit `(*p).M()` receiver deref (P3-M9, WS D; additive node kind) |
+| `gostmt` | `call`: expr node (a `call` node whose `fun` is the spawned function expression and `args` is always empty — arguments desugar through a zero-arg funclit with hoisted temps) — `go f()` (P2-M1, WS A; additive STATEMENT kind) |
+| `mathf64bits` | `x`: expr node (float64), `type`: type id (uint64 result; validated by the builder, value unused) — `math.Float64bits(x)` (P3-M7, WS G, ADR-0007 D5; additive node kind) |
+| `mathf64frombits` | `x`: expr node (uint64), `type`: type id (float64 result; validated by the builder, value unused) — `math.Float64frombits(x)` (P3-M7, WS G, ADR-0007 D5; additive node kind) |
+| `mathf32bits` | `x`: expr node (float32), `type`: type id (uint32 result; validated by the builder, value unused) — `math.Float32bits(x)` (P3-M7, WS G, ADR-0007 D5; additive node kind) |
+| `mathf32frombits` | `x`: expr node (uint32), `type`: type id (float32 result; validated by the builder, value unused) — `math.Float32frombits(x)` (P3-M7, WS G, ADR-0007 D5; additive node kind) |
+| `mathsqrt` | `x`: expr node, `type`: type id (float result; validated by the builder, value unused) — `math.Sqrt(x)` (P3-M7, WS G, ADR-0007 D5; additive node kind) |
+| `mathfma` | `x`, `y`, `z`: expr nodes, `type`: type id (float result; validated by the builder, value unused) — `math.FMA(x, y, z)` (P3-M7, WS G, ADR-0007 D5; additive node kind) |
+| `minmax` | `op` ∈ {`min`,`max`}, `args`: [expr nodes] (≥1), `type`: type id (result type; the builder derives the node kind from it) — `min(args…)`/`max(args…)` with gc NaN-propagating float semantics (P4 driver-harden; additive node kind; emitted instead of the frozen v1 builtin path) |
+| `clear` | `x`: expr node — `clear(x)` on a map (deletes all entries; nil is a no-op) or slice (zeroes `len(x)` elements); no result value, statement position only (P4 driver-harden; additive node kind; emitted instead of the frozen v1 builtin path) |
+| `syncnew` | `synctyp`: str (primitive name), `type`: type id (named sync/atomic type, or pointer for the `&`/`new` forms), `newfunc`: expr node or absent (the `sync.Pool{New: f}` literal's func value) — construction of a `sync` primitive / `sync/atomic` wrapper cell (P3-M2b, WS D, ADR-0002; additive node kind). Emission RETIRED with the synthetic sync overlay — the builder and registration are retained but currently orphaned (no emitter) |
+| `atomicaddr` | `addr`: expr node (the `*T` address operand), `cell`: str (`"int64"`/`"int32"` — the delegating cell width) — wraps a Go address in an atomic cell so the `syncop` atomic machinery serves package-level `sync/atomic` word ops (fix-linkname lane; additive node kind) |
+| `syncop` | `op`: str, `synctyp`: str, `recv`: expr node, `args`: [expr nodes], `type`: type id or null (pair-struct id for `sync.Map` multi-result ops; result id — null for void `Store` — for atomic ops) — operation on a sync/atomic primitive. Dispatch: `synctyp` starting with `"atomic."` → atomic RMW ops (Load/Store/Add/Swap/And/Or/CompareAndSwap); otherwise `synctyp: "Map"` → `sync.Map` multi-result methods (P3-M2b, WS D, ADR-0002; P3-M4 atomic path, WS C, ADR-0004 D2; additive node kind) |
+| `unsafefromptr` | `x`: expr node (the `*T` operand), `type`: type id (`unsafe.Pointer` result type) — `unsafe.Pointer(p)` conversion (P3-M8; additive node kind) |
+| `unsafetooptr` | `x`: expr node (the pointer handle), `type`: type id (the `*T` result type) — `(*T)(unsafe.Pointer(p))` conversion (P3-M8; additive node kind) |
+| `unsafefromuint` | `x`: expr node (the `uintptr` operand), `type`: type id (`unsafe.Pointer` result type) — `unsafe.Pointer(uintptr)` conversion (P3-M8; additive node kind) |
+| `unsafeslice` | `ptr`, `len`: expr nodes, `type`: type id (the `[]T` result type) — `unsafe.Slice(ptr, len)` (P3-M8; additive node kind) |
+| `unsafeslicedata` | `slice`: expr node, `type`: type id (the `*T` result type) — `unsafe.SliceData(s)`; nil slice yields nil (P3-M8; additive node kind) |
+| `unsafestring` | `ptr`, `len`: expr nodes, `type`: type id (the `string` result type) — `unsafe.String(ptr, len)` (P3-M8; additive node kind) |
+| `unsafestringdata` | `s`: expr node (the string), `type`: type id (the `*byte` result type) — `unsafe.StringData(s)`; empty string yields nil (P3-M8; additive node kind) |
+| `unsafeadd` | `ptr`, `len`: expr nodes, `type`: type id (`unsafe.Pointer` result type) — `unsafe.Add(ptr, len)` (P3-M8; additive node kind) |
+| `reflectop` | `op`: str (intrinsic name without the `__reflect_` prefix), `args`: [expr nodes], `type`: type id of the call result (absent/null for void intrinsics — defaults to empty-interface) — the synthetic-reflect intrinsic calls (P3-M8 wave 2; additive node kind). One kind dispatching on `op` instead of ~60 node classes |
+| `abifuncpc` | `kind`: str (`FuncPCABI0` or `FuncPCABIInternal`), `arg`: expr node (the func value, as `any`), `type`: type id (the `uintptr` result type) — `internal/abi` FuncPC compile intrinsics; returns an opaque stable func id (real-reflect Phase 1; additive node kind) |
+| `sliceoverlap` | `x`, `y`: expr nodes (the two `[]byte` slices), `inexact`: bool, `type`: type id (bool result; emitted but currently unread by the builder — no `setTypeId`) — `alias.AnyOverlap`/`InexactOverlap`; `inexact` distinguishes the two intrinsics (P3-M9; additive node kind) |
+| `runtimenumcpu` | `type`: type id (int result type) — `runtime.NumCPU()` (P4 driver-harden; additive node kind) |
+| `runtimenumgoroutine` | `type`: type id (int result type) — `runtime.NumGoroutine()` (PKG-023; additive node kind) |
+| `runtimegomaxprocs` | `x`: expr node (the n argument), `type`: type id (int result type) — `runtime.GOMAXPROCS(n)` (P4 driver-harden; additive node kind) |
+| `runtimegosched` | no fields — `runtime.Gosched()` statement; voluntary scheduler yield (PKG-040; additive STATEMENT kind) |
+| `runtimecallers` | `skip`, `pc`: expr nodes (skip count; the []uintptr slice to fill), `type`: type id (int result type) — `runtime.Callers(skip, pc)` (stack-inspection family; additive node kind) |
+| `runtimecaller` | `skip`: expr node, `type`: type id (the callerPair struct) — `runtime.Caller(skip)`; emitted only in N-target assignment position (stack-inspection family; additive node kind) |
+| `runtimecallersframes` | `pcs`: expr node (the []uintptr slice), `type`: type id (`*runtime.Frames` pointer) — `runtime.CallersFrames(pcs)` (stack-inspection family; additive node kind) |
+| `runtimeframesnext` | `f`: expr node (the `*runtime.Frames` receiver), `type`: type id (the framesNextPair struct) — `(*Frames).Next()`; emitted only in N-target assignment position (stack-inspection family; additive node kind) |
+| `runtimefuncforpc` | `pc`: expr node, `type`: type id (`*runtime.Func` pointer) — `runtime.FuncForPC(pc)` (stack-inspection family; additive node kind) |
+| `runtimefuncname` | `f`: expr node (the `*runtime.Func` receiver), `type`: type id (string result type) — `(*Func).Name()`; nil `*Func` raises the nil-dereference panic (stack-inspection family; additive node kind) |
+| `runtimefuncentry` | `f`: expr node (the `*runtime.Func` receiver), `type`: type id (uintptr/int result type) — `(*Func).Entry()`; 0 when unknown (stack-inspection family; additive node kind) |
+| `runtimefuncfileline` | `f`: expr node (the `*runtime.Func` receiver), `pc`: expr node, `type`: type id (the funcFileLinePair struct) — `(*Func).FileLine(pc)`; emitted only in N-target assignment position (stack-inspection family; additive node kind) |
+| `runtimereadmemstats` | `m`: expr node (the `*runtime.MemStats` to fill) — no `type` field: `runtime.ReadMemStats(m)`; the node carries INT64 and returns 0, value discarded (PKG-051; additive node kind) |
+| `runtimegoroot` | `type`: type id (string result type) — `runtime.GOROOT()` (PKG-051; additive node kind) |
+| `runtimeversion` | `type`: type id (string result type) — `runtime.Version()` (PKG-051; additive node kind) |
+| `runtimestack` | `args`: [expr nodes] (exactly 2: buf, all), `type`: type id (int result type) — `runtime.Stack(buf, all)` (PKG-051; additive node kind) |
+
+Retired node kinds (removed from the wire; the backend no longer handles
+them and the frontend no longer emits them):
+- `fmtcall` — retired 2026-10-16 (B-1): the D4 `fmt` stub and Phase-1 import
+  overlay were removed; `fmt` calls now compile as normal calls.
 
 Normalizations (applied by the exporter, part of the contract):
 - `*ast.EmptyStmt` is dropped (empty statements carry no semantics).
@@ -246,8 +291,9 @@ the extension:
   the overlay synthesizes a `fmt` package exposing only
   the seven D4 symbols (`Print`, `Printf`, `Println`, `Sprint`, `Sprintf`,
   `Sprintln`, `Errorf`) with exact variadic signatures; any other `fmt.X`
-  is a scope error naming Phase 3. Calls to the D4 symbols are emitted as
-  `fmtcall` wire nodes.
+  is a scope error naming Phase 3. Calls to the D4 symbols were emitted as
+  `fmtcall` wire nodes — retired 2026-10-16 (B-1; see Retired node kinds
+  under §6).
 - package-level declarations: `func main` plus any number of named
   functions, generic or not (M6, WS H); package-level `const` (references
   fold through go/types, iota included) and `var` (M7 — initialized in
