@@ -117,9 +117,9 @@ import graalgo.values.GoString;
  *       {@code internal/sync} spellings, which gc provides from the same
  *       {@code runtime.throw}/{@code runtime.fatal}): gc maps these to
  *       {@code runtime.throw} / {@code runtime.fatal} — print
- *       {@code "fatal error: <s>"} and terminate the process. The JVM
- *       stack is not a Go stack, so no traceback is printed; the
- *       observable contract (message on stderr, nonzero exit) is kept.
+ *       {@code "fatal error: <s>"} plus the dying goroutine's Go stack
+ *       and terminate the process with exit 2. (The JVM stack is not a
+ *       Go stack; the Go frames come from {@code GoroutineState}.)
  *       Both are unrecoverable from Go code, as in gc.</li>
  *   <li><b>{@code internal/sync} mutex spinning</b>
  *       ({@code runtime_SemacquireMutex}/{@code runtime_Semrelease} —
@@ -453,9 +453,7 @@ public final class SyncRuntime {
      * unrecoverable from Go code.
      */
     public static void syncThrow(Object arg) {
-        System.err.println("fatal error: " + goString(arg, "sync.throw"));
-        System.err.flush();
-        System.exit(2);
+        printFatalError(goString(arg, "sync.throw"));
     }
 
     /**
@@ -463,7 +461,29 @@ public final class SyncRuntime {
      * unrecoverable from Go code.
      */
     public static void syncFatal(Object arg) {
-        System.err.println("fatal error: " + goString(arg, "sync.fatal"));
+        printFatalError(goString(arg, "sync.fatal"));
+    }
+
+    /**
+     * P1-9: prints {@code fatal error: <msg>} plus the dying goroutine's
+     * Go stack (gc's first traceback block), then exits 2. Shared by
+     * {@code sync.throw}/{@code sync.fatal} so the end-to-end output for
+     * real {@code import "sync"} programs matches gc (message, stack,
+     * exit code, unrecoverable).
+     */
+    private static void printFatalError(String msg) {
+        System.err.println("fatal error: " + msg);
+        System.err.println();
+        long gid = 1;
+        try {
+            gid = SchedulerCore.current().currentGoroutine().id;
+        } catch (IllegalStateException ignored) {
+            // No scheduler installed: goroutine 1, like the launcher default.
+        }
+        graalgo.runtime.GoroutineState s = graalgo.runtime.GoroutineState.current();
+        graalgo.runtime.GoStackFrame top = s == null
+                ? new graalgo.runtime.GoStackFrame() : s.goStack();
+        System.err.print(graalgo.runtime.Intrinsics.renderGoStack(gid, top, null));
         System.err.flush();
         System.exit(2);
     }

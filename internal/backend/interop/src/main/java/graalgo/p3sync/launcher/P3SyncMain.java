@@ -551,6 +551,9 @@ public final class P3SyncMain {
         if (dumpPolymorphism) {
             dumpPolymorphism();
         }
+        if (sched.fatalError()) {
+            return EXIT_PANIC; // Go fatal error (gc throw()): exit 2, never recoverable
+        }
         if (sched.panicked()) {
             return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
         }
