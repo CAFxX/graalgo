@@ -327,14 +327,9 @@ var syntheticSources = map[string]string{
 	"mime/quotedprintable": syntheticMimeQuotedprintableSource,
 	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest
 	// (real-Go sources in synth_net_http.go / synth_net_http_httptest.go,
-	// curated from gc 1.27.1). net/http imports bufio, bytes, errors, io,
-	// net, net/textproto, net/url, strconv, strings, sync, time. The client
-	// (Transport.RoundTrip) delegates to java.net.http.HttpClient via the
-	// graalgo.http.client.do intrinsic; the server is Go-implemented (needs
-	// net.Pipe support). httptest imports bytes, io, net, net/http,
-	// net/url, strings, sync.
-	"net/http":          syntheticNetHttpSource,
-	"net/http/httptest": syntheticNetHttpHttptestSource,
+// net/http and net/http/httptest are REAL (P4 bridge-removal): the
+	// synthetic sources are retired. Real net/http compiles from GOROOT
+	// via the general disk overlay.
 }
 
 // the overlay importer, so the context source's `import "time"` resolves
