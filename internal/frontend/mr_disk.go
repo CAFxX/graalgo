@@ -261,6 +261,11 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 	//   var __mr_tmp = __Parse(args)
 	//   var X = Must(__mr_tmp.f1, __mr_tmp.f2)
 	// This avoids needing export-time desugar for nested calls.
+	// FE-7: the temp counter is package-wide. The previous per-GenDecl
+	// len(hoisted) counter reset for every var block, so two var blocks
+	// (or two files) each needing a hoist both emitted var __mr_hoist_0
+	// and the package failed to type-check with "redeclared".
+	hoistSeq := 0
 	for _, f := range files {
 		var newDecls []ast.Decl
 		for _, decl := range f.Decls {
@@ -302,7 +307,15 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 				// Hoist: var __mr_tmp_N = __Inner(args), preserving the
 				// package qualifier and explicit type arguments
 				// (GAP-GENERIC-MR: F[T](args) -> __F[T](args)).
-				tmpName := fmt.Sprintf("__mr_hoist_%d", len(hoisted))
+				// The name is drawn from the package-wide counter and
+				// skips any pre-existing top-level name, so hoists from
+				// different var blocks and files can never collide.
+				tmpName := fmt.Sprintf("__mr_hoist_%d", hoistSeq)
+				for existing[tmpName] {
+					hoistSeq++
+					tmpName = fmt.Sprintf("__mr_hoist_%d", hoistSeq)
+				}
+				hoistSeq++
 				helperCall := &ast.CallExpr{
 					Fun:  mrHelperFunForCall(inner.Fun, innerName),
 					Args: inner.Args,

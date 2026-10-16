@@ -37,6 +37,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -567,4 +568,129 @@ func (p Pair[A, B]) Split() (A, B) {
 	return p.First, p.Second
 }
 `)
+}
+
+// Regression tests for FE-7: the __mr_hoist_N temp counter in
+// transformDiskMultiResult's var-initializer hoist
+// (var X = Must(MRCall(args))) must be package-wide. The previous
+// per-GenDecl len(hoisted) counter reset for every var block, so two var
+// blocks (or two files) in one package each needing a hoist both emitted
+// var __mr_hoist_0 and the rewritten package failed to type-check with
+// "redeclared: __mr_hoist_0". Both tests below failed pre-fix.
+
+// transformDiskMRFiles parses each src as a separate file of one package,
+// runs transformDiskMultiResult over all of them, and type-checks the
+// rewritten files, returning the files and the type errors.
+func transformDiskMRFiles(t *testing.T, srcs ...string) ([]*ast.File, []error) {
+	t.Helper()
+	fset := token.NewFileSet()
+	var files []*ast.File
+	for i, src := range srcs {
+		f, err := parser.ParseFile(fset, "p"+strconv.Itoa(i)+".go", src, 0)
+		if err != nil {
+			t.Fatalf("parse error: %v", err)
+		}
+		files = append(files, f)
+	}
+	transformDiskMultiResult("example.com/p", files)
+	conf := types.Config{Importer: importer.Default()}
+	var errs []error
+	conf.Error = func(e error) { errs = append(errs, e) }
+	_, _ = conf.Check("example.com/p", fset, files, nil)
+	return files, errs
+}
+
+// hoistedTempNames collects the __mr_hoist_N var names declared at package
+// level across files.
+func hoistedTempNames(files []*ast.File) []string {
+	var names []string
+	for _, f := range files {
+		for _, decl := range f.Decls {
+			gd, ok := decl.(*ast.GenDecl)
+			if !ok || gd.Tok != token.VAR {
+				continue
+			}
+			for _, s := range gd.Specs {
+				vs, ok := s.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, n := range vs.Names {
+					if strings.HasPrefix(n.Name, "__mr_hoist_") {
+						names = append(names, n.Name)
+					}
+				}
+			}
+		}
+	}
+	return names
+}
+
+// checkHoistTempsUnique asserts the transform type-checked cleanly and
+// emitted exactly want hoist temps with pairwise-distinct names. The
+// non-empty assertion keeps the test honest: without it a transform
+// that silently stops hoisting would pass vacuously.
+func checkHoistTempsUnique(t *testing.T, files []*ast.File, errs []error, want int) {
+	t.Helper()
+	if len(errs) != 0 {
+		t.Fatalf("got %d type errors, want 0: %v", len(errs), errs)
+	}
+	names := hoistedTempNames(files)
+	if len(names) != want {
+		t.Fatalf("got %d hoist temps %v, want %d (test does not exercise the hoist otherwise)", len(names), names, want)
+	}
+	seen := map[string]bool{}
+	for _, n := range names {
+		if seen[n] {
+			t.Fatalf("duplicate hoist temp %q in %v", n, names)
+		}
+		seen[n] = true
+	}
+}
+
+// fe7PairSrc is the shared fixture: a multi-result function Pair and a
+// single-result consumer Must, so var X = Must(Pair()) triggers the
+// var-initializer hoist.
+const fe7PairSrc = `package p
+
+func Pair() (int, string) { return 1, "x" }
+
+func Must(v int, s string) int { return v }
+`
+
+func TestDiskMRHoistTwoVarBlocks(t *testing.T) {
+	// Two var blocks in one file, each needing a hoist. Pre-fix both
+	// emitted __mr_hoist_0 ("redeclared: __mr_hoist_0").
+	files, errs := transformDiskMRFiles(t, fe7PairSrc+`
+var A = Must(Pair())
+
+var B = Must(Pair())
+`)
+	checkHoistTempsUnique(t, files, errs, 2)
+}
+
+func TestDiskMRHoistTwoFiles(t *testing.T) {
+	// Two files in one package, each needing a hoist. Pre-fix both
+	// emitted __mr_hoist_0 ("redeclared: __mr_hoist_0").
+	files, errs := transformDiskMRFiles(t,
+		fe7PairSrc+`
+var A = Must(Pair())
+`,
+		`package p
+
+var B = Must(Pair())
+`)
+	checkHoistTempsUnique(t, files, errs, 2)
+}
+
+func TestDiskMRHoistTwoSpecsOneBlock(t *testing.T) {
+	// Two hoist-triggering specs in a single var block: worked pre-fix
+	// (the counter incremented within the block) and must keep working.
+	files, errs := transformDiskMRFiles(t, fe7PairSrc+`
+var (
+	A = Must(Pair())
+	B = Must(Pair())
+)
+`)
+	checkHoistTempsUnique(t, files, errs, 2)
 }

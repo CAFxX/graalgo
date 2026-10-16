@@ -7129,6 +7129,21 @@ func (e *exporter) exportVarGenDecl(gd *ast.GenDecl) (*Node, error) {
 		if !ok {
 			return nil, scopeErrorf("non-value var spec %T is not supported in frontend/v1 scope", spec)
 		}
+		// FE-9 (WS D): a multi-valued initializer (var a, b = f()) is
+		// not desugared — exportMultiResultDesugar handles only
+		// *ast.AssignStmt (2-target := and =, incl. if-init). The
+		// package-level path fails fast in exportPackageVars; mirror
+		// that check here so a function-level var can never reach the
+		// generic vardecl path, where the call would resolve to the
+		// kept-for-type-checking stub (body: panic("unreachable")) or
+		// emit a wire-shape divergence (one pair value for N names).
+		// Structural, like the package-level check: any
+		// single-expression initializer for N != 1 names is
+		// multi-valued or a gc type error (rejected before export), so
+		// no valid working shape is cut.
+		if len(vs.Values) != 0 && len(vs.Values) != len(vs.Names) {
+			return nil, scopeErrorf("var with multi-valued initializer is not supported in v1 (WS D)")
+		}
 		var typeIsTimer *types.Named
 		hasType := false
 		if vs.Type != nil {

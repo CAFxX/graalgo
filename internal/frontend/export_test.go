@@ -277,6 +277,89 @@ func main() {
 	}
 }
 
+// TestVarDeclMultiValuedInitializerScopeError (FE-9, WS D): a var
+// declaration with a multi-valued initializer (var a, b = f()) is not
+// desugared — exportMultiResultDesugar handles only *ast.AssignStmt
+// (2-target := and =, incl. if-init). Package level already failed fast
+// in exportPackageVars; the function-level var path (exportVarGenDecl)
+// must fail fast too, instead of reaching the generic vardecl path
+// where the call would resolve to the kept-for-type-checking stub
+// (panic("unreachable") at runtime) or emit a wire-shape divergence
+// (one pair value for N names). The function-level case did not fail
+// fast pre-fix. The mrUser kind covers the reported disk-MR shape:
+// disk multi-result calls classify identically (isDisk only changes
+// helper resolution inside the desugar, which is never reached here).
+func TestVarDeclMultiValuedInitializerScopeError(t *testing.T) {
+	writeSrc := func(t *testing.T, src string) string {
+		t.Helper()
+		p := filepath.Join(t.TempDir(), "main.go")
+		if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	t.Run("packagelevel", func(t *testing.T) {
+		p := writeSrc(t, `package main
+
+func mkPair() (int, string) { return 1, "x" }
+
+var pa, pb = mkPair()
+
+func main() {
+	_, _ = pa, pb
+}
+`)
+		_, err := ExportFile(p)
+		if err == nil {
+			t.Fatal("expected WS D scope error, got success")
+		}
+		if !strings.Contains(err.Error(), "WS D") {
+			t.Fatalf("expected WS D scope error, got: %v", err)
+		}
+	})
+	t.Run("functionlevel", func(t *testing.T) {
+		p := writeSrc(t, `package main
+
+func mkPair() (int, string) { return 1, "x" }
+
+func main() {
+	var a, b = mkPair()
+	_, _ = a, b
+}
+`)
+		_, err := ExportFile(p)
+		if err == nil {
+			t.Fatal("expected WS D scope error, got success")
+		}
+		if !strings.Contains(err.Error(), "WS D") {
+			t.Fatalf("expected WS D scope error, got: %v", err)
+		}
+	})
+}
+
+// TestVarDeclBlankMultiValuedInitializerExports (FE-9 positive control):
+// var _ = f() with a multi-result call is valid Go and must keep
+// exporting — the structural WS D check only fires when one
+// initializer serves N != 1 names, so the blank single-name shape is
+// not cut.
+func TestVarDeclBlankMultiValuedInitializerExports(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "main.go")
+	src := `package main
+
+func mkPair() (int, string) { return 1, "x" }
+
+func main() {
+	var _ = mkPair()
+}
+`
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ExportFile(p); err != nil {
+		t.Fatalf("var _ = f() must keep exporting, got: %v", err)
+	}
+}
+
 // TestNoMain: a file without func main is rejected explicitly.
 func TestNoMain(t *testing.T) {
 	dir := t.TempDir()
