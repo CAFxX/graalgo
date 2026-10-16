@@ -138,7 +138,7 @@ func seqBodyPanic(yield func(int) bool) {
 	}
 }
 
-func caseBodyPanic() {
+func caseBodyPanics() {
 	defer func() { fmt.Println("recovered:", recover()) }()
 	defer fmt.Println("enclosing defer runs")
 	for v := range seqBodyPanic {
@@ -223,7 +223,7 @@ func caseMisuseYieldAfterExit() {
 	saved(99) // yield after whole loop exit
 }
 
-func caseMisuseSwallowedBodyPanic() {
+func caseMisuseSwallowedBodyPanics() {
 	defer func() { fmt.Println("recovered:", recover()) }()
 	seq := func(yield func(int) bool) {
 		defer func() { recover() }() // swallow body panic, return normally
@@ -265,7 +265,7 @@ func main() {
 	caseBodyDeferRecover()
 
 	fmt.Println("--- body-panic-rethrow ---")
-	caseBodyPanic()
+	caseBodyPanics()
 
 	fmt.Println("--- nested-return ---")
 	fmt.Println("result:", fNested())
@@ -280,7 +280,7 @@ func main() {
 	caseMisuseYieldAfterExit()
 
 	fmt.Println("--- misuse-swallowed-body-panic ---")
-	caseMisuseSwallowedBodyPanic()
+	caseMisuseSwallowedBodyPanics()
 
 	fmt.Println("--- misuse-reentrant-yield ---")
 	caseMisuseReentrantYield()
