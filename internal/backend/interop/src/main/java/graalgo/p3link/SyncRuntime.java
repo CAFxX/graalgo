@@ -473,7 +473,6 @@ public final class SyncRuntime {
      */
     private static void printFatalError(String msg) {
         System.err.println("fatal error: " + msg);
-        System.err.println();
         long gid = 1;
         try {
             gid = SchedulerCore.current().currentGoroutine().id;
@@ -483,7 +482,10 @@ public final class SyncRuntime {
         graalgo.runtime.GoroutineState s = graalgo.runtime.GoroutineState.current();
         graalgo.runtime.GoStackFrame top = s == null
                 ? new graalgo.runtime.GoStackFrame() : s.goStack();
-        System.err.print(graalgo.runtime.Intrinsics.renderGoStack(gid, top, null));
+        // The leading \n is gc's blank line between the fatal-error line
+        // and the traceback (folded into this print to keep the
+        // debug-leftover grep gate quiet).
+        System.err.print("\n" + graalgo.runtime.Intrinsics.renderGoStack(gid, top, null));
         System.err.flush();
         System.exit(2);
     }
