@@ -322,11 +322,6 @@ func syntheticRuntimePackage() *types.Package {
 	// Upstream test files (e.g. iter/pull_test.go) call it in
 	// goroutine-leak-detection helpers, so it is genuine stdlib surface,
 	// not harness-only.
-	// graalgo.sched.SchedulerCore.yieldCurrent), which re-queues the
-	// current goroutine through the same run lane as quantum expiry.
-	// Upstream test files (e.g. iter/pull_test.go) call it in
-	// goroutine-leak-detection helpers, so it is genuine stdlib surface,
-	// not harness-only.
 	// P2-M4 (GC interop, ADR-0002 D4): the Go-observable GC surface.
 	// Signatures match gc's runtime package exactly; the Java side is
 	// graalgo.runtime.GcInterop (Phase-1 stub, Phase-2 real).
@@ -8257,22 +8252,6 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			}
 			return e.node("call", c, map[string]any{"goexit": true, "args": []*Node{}}), nil
 		}
-		// PKG-040: runtime.Gosched() — yields the processor, allowing
-		// other goroutines to run (gc src/runtime/proc.go). Emitted as
-		// the additive "runtimegosched" STATEMENT wire node (Gosched
-		// returns no value, so it is never an expression); the backend
-		// implements it via SchedulerCore.yieldCurrent. Statement
-		// positions (ExprStmt, defer, go) unwrap it — see exportStmt and
-		// exportGoschedDeferGo.
-		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "runtime" && sel.Sel.Name == "Gosched" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "runtime" {
-				return nil, scopeErrorf("runtime.Gosched did not resolve to the overlay package")
-			}
-			if len(c.Args) != 0 {
-				return nil, fmt.Errorf("gofrontend: runtime.Gosched takes no arguments")
-			}
-			return e.node("runtimegosched", c, map[string]any{}), nil
-		}
 		// P3-M9 (driver-harden, go-cmp lane) note: runtime.FuncForPC was
 		// once rewritten to a panic ("no PC-to-function table"). The
 		// stack-inspection lane implements it for real via the
@@ -8342,6 +8321,23 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 						return nil, err
 					}
 					return e.node("runtimenumgoroutine", c, map[string]any{"type": typ}), nil
+				}
+				// PKG-040: runtime.Gosched() — yields the processor,
+				// allowing other goroutines to run (gc
+				// src/runtime/proc.go). Emitted as the additive
+				// "runtimegosched" STATEMENT wire node (Gosched returns
+				// no value, so it is never an expression); the backend
+				// implements it via SchedulerCore.yieldCurrent.
+				// Statement positions (ExprStmt, defer, go) unwrap it —
+				// see exportStmt and exportGoschedDeferGo. The enclosing
+				// guards already resolve the selector to the runtime
+				// overlay package (the PKG-023 NumGoroutine precedent),
+				// so no package-name conditional is added here.
+				if sel.Sel.Name == "Gosched" {
+					if len(c.Args) != 0 {
+						return nil, fmt.Errorf("gofrontend: runtime.Gosched takes no arguments")
+					}
+					return e.node("runtimegosched", c, map[string]any{}), nil
 				}
 				// MemStats family (unblocks runtime/debug, hence Badger via
 				// testify): runtime.ReadMemStats, GOROOT, Version, Stack.
