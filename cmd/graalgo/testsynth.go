@@ -795,6 +795,31 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 	// qualifier reference through the renamed import's file bindings is
 	// rewritten to the alias before printing, so emission can never
 	// redeclare.
+	//
+	// The uniqueness scope is the whole driver file, not just the
+	// import block: a kept import can also collide with a top-level
+	// declaration inlined into the driver. When the package's own
+	// sources are inlined (inlineSrc), a plain self-import is kept for
+	// the external test files' qualified references — but if the
+	// package declares a top-level name equal to its own import name
+	// (fmt's `type fmt struct`), the import and the inlined
+	// declaration redeclare (PKG-075: "fmt already declared through
+	// import of package fmt"). Seeding the taken set with the names the
+	// driver will declare (the inlined white-box declarations and the
+	// harness bindings) makes the aliasing cover this case too, and the
+	// existing qualifier-rewriting pass retargets the references.
+	driverDeclNames := make(map[string]bool)
+	for _, it := range items {
+		if it.g == nil || it.g.ext {
+			continue
+		}
+		for _, n := range it.g.names {
+			driverDeclNames[n] = true
+		}
+	}
+	for _, n := range []string{"main", "graalgoVerbose", "graalgoT", "joinArgs", "sprintf", "toString", "itoa", "fmtDur2", "twoDigits"} {
+		driverDeclNames[n] = true
+	}
 	var sb strings.Builder
 	sb.WriteString("package main\n\n")
 	emitName := make(map[importSpec]string)
@@ -820,6 +845,9 @@ func synthesizeTestDriver(dir string, ftList []fileTests, srcFiles []string, ver
 			}
 		}
 		taken := make(map[string]bool)
+		for n := range driverDeclNames {
+			taken[n] = true
+		}
 		for _, s := range kept {
 			if s.name == "." || s.name == "_" {
 				emitName[s] = s.name

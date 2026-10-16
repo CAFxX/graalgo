@@ -2,6 +2,8 @@ package main
 
 import (
 	"go/build"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -907,5 +909,60 @@ var HasVX = hasVX
 	if strings.Contains(src, "HasVX") {
 		t.Errorf("driver inlined the s390x-constrained sibling's helper on %s/%s:\n%s",
 			build.Default.GOOS, build.Default.GOARCH, src)
+	}
+}
+
+// TestPKG075SelfNamedType is the regression test for PKG-075: when the
+// package under test declares a top-level name equal to its own package
+// name (like fmt's `type fmt struct`) and its sources are inlined
+// (white-box test via an internal test file), a kept plain self-import
+// must be aliased so it does not redeclare the inlined name ("fmt
+// already declared through import of package fmt"). The emission
+// uniqueness scope is the whole driver file, not just the import block.
+func TestPKG075SelfNamedType(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, root, "go.mod", "module example.com/p\n\ngo 1.21\n")
+	// Package declares a type named same as the package (like fmt's `type fmt struct`).
+	writeFile(t, root, "p.go", "package p\n\ntype p struct{ x int }\n\nfunc (v *p) Get() int { return v.x }\n\nfunc Hello() string { return \"hi\" }\n")
+	// Internal test file -> inlineSrc = true (like fmt's export_test.go).
+	writeFile(t, root, "export_test.go", "package p\n\nvar InternalHook = Hello\n")
+	// External test file with plain self-import (like fmt's errors_test.go).
+	writeFile(t, root, "b_test.go", `package p_test
+
+import (
+	"example.com/p"
+	"testing"
+)
+
+func TestB(t *testing.T) {
+	if p.Hello() != "hi" {
+		t.Fatal("bad")
+	}
+}
+`)
+	testsB, err := discoverTests(filepath.Join(root, "b_test.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := synthDriver(t, root,
+		[]fileTests{{file: filepath.Join(root, "b_test.go"), tests: testsB}},
+		[]string{filepath.Join(root, "p.go")})
+
+	// The generated driver must parse.
+	fset := token.NewFileSet()
+	if _, err := parser.ParseFile(fset, "driver.go", src, 0); err != nil {
+		t.Fatalf("generated driver does not parse: %v\n%s", err, src)
+	}
+	// The self-import must be aliased (not plain "example.com/p"),
+	// because the inlined `type p struct` occupies the name `p`.
+	if strings.Contains(src, "\t\"example.com/p\"\n") {
+		t.Errorf("self-import was not aliased despite inlined `type p struct`:\n%s", src)
+	}
+	if !strings.Contains(src, "p2 \"example.com/p\"") {
+		t.Errorf("expected aliased self-import `p2 \"example.com/p\"`:\n%s", src)
+	}
+	// The qualifier reference must have been rewritten to the alias.
+	if !strings.Contains(src, "p2.Hello()") {
+		t.Errorf("expected qualifier rewritten to p2.Hello():\n%s", src)
 	}
 }
