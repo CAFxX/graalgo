@@ -242,6 +242,7 @@ func (e *exporter) exportSelect(s *ast.SelectStmt) (*Node, error) {
 			return nil, fmt.Errorf("gofrontend: select body holds %T", stmt)
 		}
 		var fields map[string]any
+		var casePrologue []*Node
 		if cc.Comm == nil {
 			fields = map[string]any{"kind": "default"}
 		} else {
@@ -266,8 +267,12 @@ func (e *exporter) exportSelect(s *ast.SelectStmt) (*Node, error) {
 			case *ast.AssignStmt:
 				// case v := <-ch: / case v, ok := <-ch: /
 				// case v = <-ch: (targets defined before the body so
-				// the body resolves them).
-				ch, targets, err := e.selectRecvTargets(comm, declare)
+				// the body resolves them). Targets that cannot occupy
+				// a frame slot (non-identifier lhs like arr[i]/s.x, or
+				// a package-level variable under =) desugar through
+				// temps; the copy-back assignments they return open
+				// the case body so they run on case selection.
+				ch, targets, prologue, err := e.selectRecvTargets(comm, declare)
 				if err != nil {
 					return nil, err
 				}
@@ -275,6 +280,7 @@ func (e *exporter) exportSelect(s *ast.SelectStmt) (*Node, error) {
 				if len(targets) > 0 {
 					fields["targets"] = targets
 				}
+				casePrologue = prologue
 			default:
 				return nil, fmt.Errorf("gofrontend: select case comm is %T", cc.Comm)
 			}
@@ -282,6 +288,15 @@ func (e *exporter) exportSelect(s *ast.SelectStmt) (*Node, error) {
 		body, err := e.exportStmtList(cc.Body, cc)
 		if err != nil {
 			return nil, err
+		}
+		if len(casePrologue) > 0 {
+			// FE-13/FE-14: temp copy-backs run first, immediately on
+			// case selection, before the user's case body.
+			stmts, _ := body.Fields["stmts"].([]*Node)
+			all := make([]*Node, 0, len(casePrologue)+len(stmts))
+			all = append(all, casePrologue...)
+			all = append(all, stmts...)
+			body = e.node("block", cc, map[string]any{"stmts": all})
 		}
 		fields["body"] = body
 		cases = append(cases, e.node("selectcase", cc, fields))
@@ -309,32 +324,92 @@ func (e *exporter) selectRecvChan(x ast.Expr) (*Node, error) {
 
 // selectRecvTargets exports the channel operand of a `case v := <-ch:`
 // (or `case v, ok := <-ch:` / `case v = <-ch:`) clause and defines the
-// case-scoped target variables, returning the channel node and the
-// target object ids (parallel to the lhs). Every :=-defined target
-// (including blank temps) is reported via declare so the caller can
-// emit the dominating vardecl the p3chan builder requires.
-func (e *exporter) selectRecvTargets(comm *ast.AssignStmt, declare func(string, int)) (*Node, []int, error) {
+// case-scoped target variables, returning the channel node, the target
+// object ids (parallel to the lhs), and — for targets that cannot occupy
+// a frame slot — copy-back assignments the caller prepends to the case
+// body. Every :=-defined target (including blank temps) is reported via
+// declare so the caller can emit the dominating vardecl the p3chan
+// builder requires. Targets that cannot occupy a frame slot (a
+// non-identifier lhs such as arr[i]/s.x, or a package-level variable
+// under `=`) desugar through a synthetic temp: the temp takes the frame
+// slot and the copy-back (target = tmp) opens the case body, mirroring
+// the global-temp desugar in exportRecvCommaOkDesugar.
+func (e *exporter) selectRecvTargets(comm *ast.AssignStmt, declare func(string, int)) (*Node, []int, []*Node, error) {
 	if len(comm.Rhs) != 1 {
-		return nil, nil, scopeErrorf("select recv case with %d rhs is not supported in frontend/v1 scope (WS D)", len(comm.Rhs))
+		return nil, nil, nil, scopeErrorf("select recv case with %d rhs is not supported in frontend/v1 scope (WS D)", len(comm.Rhs))
 	}
 	ux, ok := unparen(comm.Rhs[0]).(*ast.UnaryExpr)
 	if !ok || ux.Op != token.ARROW {
-		return nil, nil, scopeErrorf("select recv case rhs is %T, want <-ch", comm.Rhs[0])
+		return nil, nil, nil, scopeErrorf("select recv case rhs is %T, want <-ch", comm.Rhs[0])
 	}
 	ch, err := e.exportExpr(ux.X)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	// Element type (for blank temps).
 	elem, err := chanElemType(e.info, ux.X)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 	targets := make([]int, 0, len(comm.Lhs))
-	for _, lhs := range comm.Lhs {
-		id, ok := lhs.(*ast.Ident)
-		if !ok {
-			return nil, nil, scopeErrorf("select recv case with non-identifier target %T is not supported in frontend/v1 scope (WS D)", lhs)
+	var prologue []*Node
+	for i, lhs := range comm.Lhs {
+		id, isIdent := lhs.(*ast.Ident)
+		// FE-13/FE-14: any target that cannot be a frame-slot target
+		// goes through a temp. The Java buildTargetAssigns requires
+		// every target obj to have a frame slot in the current
+		// function scope; a non-identifier lhs and a package-level
+		// variable under `=` never have one. := always defines a
+		// fresh case-scoped variable, so a non-identifier lhs under
+		// := cannot survive go/types anyway.
+		needsTemp := !isIdent
+		var typ types.Type
+		var v *types.Var
+		if isIdent && id.Name != "_" {
+			var ok bool
+			v, ok = e.info.ObjectOf(id).(*types.Var)
+			if !ok {
+				return nil, nil, nil, fmt.Errorf("gofrontend: select target %q does not denote a variable", id.Name)
+			}
+			if comm.Tok == token.ASSIGN && e.pkg.Scope().Lookup(v.Name()) == v {
+				needsTemp = true
+				typ = v.Type()
+			}
+		} else if !isIdent {
+			// Value position takes the channel element type; the ok
+			// position of a two-target receive takes bool.
+			if len(comm.Lhs) == 2 && i == 1 {
+				typ = types.Typ[types.Bool]
+			} else {
+				typ = elem
+			}
+		}
+		if needsTemp {
+			e.chanSeq++
+			name := fmt.Sprintf("__sel_tmp_%d", e.chanSeq)
+			tv := types.NewVar(token.NoPos, nil, name, typ)
+			oid, err := e.defVar(tv, false)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			declare(name, oid)
+			ln, err := e.exportAssignable(lhs)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			tid, err := e.typeID(typ)
+			if err != nil {
+				return nil, nil, nil, err
+			}
+			prologue = append(prologue, e.node("assign", comm, map[string]any{
+				"tok": "=",
+				"lhs": []*Node{ln},
+				"rhs": []*Node{e.node("ident", comm, map[string]any{
+					"name": name, "obj": oid, "type": tid,
+				})},
+			}))
+			targets = append(targets, oid)
+			continue
 		}
 		if id.Name == "_" {
 			// Blank: assign to a synthetic temp so target positions
@@ -344,36 +419,32 @@ func (e *exporter) selectRecvTargets(comm *ast.AssignStmt, declare func(string, 
 			v := types.NewVar(token.NoPos, nil, name, elem)
 			oid, err := e.defVar(v, false)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			declare(name, oid)
 			targets = append(targets, oid)
 			continue
 		}
-		v, ok := e.info.ObjectOf(id).(*types.Var)
-		if !ok {
-			return nil, nil, fmt.Errorf("gofrontend: select target %q does not denote a variable", id.Name)
-		}
 		var oid int
 		if comm.Tok == token.DEFINE {
 			oid, err = e.defVar(v, false)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, nil, err
 			}
 			declare(id.Name, oid)
 		} else {
 			var ok bool
 			oid, ok = e.objIDs[v]
 			if !ok {
-				return nil, nil, fmt.Errorf("gofrontend: select target %q used before declaration", id.Name)
+				return nil, nil, nil, fmt.Errorf("gofrontend: select target %q used before declaration", id.Name)
 			}
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, nil, err
 		}
 		targets = append(targets, oid)
 	}
-	return ch, targets, nil
+	return ch, targets, prologue, nil
 }
 
 // exportRangeChan desugars `for v := range ch` (ADR-0005 Appendix C) to

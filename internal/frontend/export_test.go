@@ -519,6 +519,139 @@ func main() {
 	assertGostmtZeroArg(t, nodes)
 }
 
+// FE-13/FE-14: select receive cases with targets that cannot occupy a
+// frame slot — a non-identifier lhs (arr[0], b.x) or a package-level
+// variable under `=` — desugar through a synthetic temp. The recv case
+// keeps a single frame-slotted temp target, and its body opens with the
+// copy-back assignment (target = tmp) so the received value lands in
+// the real target. Pre-fix, the non-identifier cases failed export with
+// scopeErrorf; the package-level case exported the global's obj id as
+// the target, which the Java buildTargetAssigns rejects (no frame slot).
+func TestSelectRecvCompoundTargets(t *testing.T) {
+	src := `package main
+
+var g int
+
+type box struct{ x int }
+
+func main() {
+	ch := make(chan int, 1)
+	ch <- 1
+	arr := [1]int{}
+	b := box{}
+	select {
+	case arr[0] = <-ch:
+	case b.x = <-ch:
+	default:
+	}
+	select {
+	case g = <-ch:
+	default:
+	}
+	_, _, _ = arr[0], b.x, g
+}
+`
+	dir := t.TempDir()
+	p := filepath.Join(dir, "selrecv.go")
+	if err := os.WriteFile(p, []byte(src), 0644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := ExportFile(p)
+	if err != nil {
+		t.Fatalf("ExportFile: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+		t.Fatal(err)
+	}
+	// Collect recv selectcases with their (targets, body stmts).
+	type recvCase struct {
+		targets []any
+		stmts   []any
+	}
+	var cases []recvCase
+	var walk func(v any)
+	walk = func(v any) {
+		switch v := v.(type) {
+		case map[string]any:
+			if v["kind"] == "selectcase" {
+				if f, ok := v["fields"].(map[string]any); ok && f["kind"] == "recv" {
+					var c recvCase
+					c.targets, _ = f["targets"].([]any)
+					if bf, ok := f["body"].(map[string]any); ok {
+						if ff, ok := bf["fields"].(map[string]any); ok {
+							c.stmts, _ = ff["stmts"].([]any)
+						}
+					}
+					cases = append(cases, c)
+				}
+			}
+			for _, c := range v {
+				walk(c)
+			}
+		case []any:
+			for _, c := range v {
+				walk(c)
+			}
+		}
+	}
+	walk(raw)
+	if len(cases) != 3 {
+		t.Fatalf("want 3 recv selectcases, got %d", len(cases))
+	}
+	// Each case must open its body with the copy-back (target = tmp)
+	// where tmp is the case's single declared target. Identify each
+	// case by the shape of the copy-back lhs.
+	seen := map[string]bool{}
+	for _, c := range cases {
+		if len(c.targets) != 1 {
+			t.Errorf("want single target, got %v", c.targets)
+			continue
+		}
+		if len(c.stmts) == 0 {
+			t.Errorf("recv case body is empty; want copy-back prologue")
+			continue
+		}
+		first, ok := c.stmts[0].(map[string]any)
+		if !ok || first["kind"] != "assign" {
+			t.Errorf("recv case body does not open with copy-back assign, got %v", c.stmts[0])
+			continue
+		}
+		ff, _ := first["fields"].(map[string]any)
+		if ff["tok"] != "=" {
+			t.Errorf("copy-back tok = %v, want =", ff["tok"])
+		}
+		lhs, _ := ff["lhs"].([]any)
+		rhs, _ := ff["rhs"].([]any)
+		if len(lhs) != 1 || len(rhs) != 1 {
+			t.Errorf("copy-back has %d lhs / %d rhs, want 1/1", len(lhs), len(rhs))
+			continue
+		}
+		ln, _ := lhs[0].(map[string]any)
+		rn, _ := rhs[0].(map[string]any)
+		rf, _ := rn["fields"].(map[string]any)
+		// The rhs temp ident must be the case's declared target obj:
+		// this is the value the Java builder assigns into, so the
+		// copy-back is what lands the received value in the target.
+		if rn["kind"] != "ident" || rf["obj"] != c.targets[0] {
+			t.Errorf("copy-back rhs %v does not reference the case target %v", rn, c.targets[0])
+		}
+		kind, _ := ln["kind"].(string)
+		seen[kind] = true
+		if kind == "ident" {
+			lf, _ := ln["fields"].(map[string]any)
+			if lf["name"] != "g" {
+				t.Errorf("ident copy-back target = %v, want g", lf["name"])
+			}
+		}
+	}
+	for _, want := range []string{"index", "selector", "ident"} {
+		if !seen[want] {
+			t.Errorf("no recv case with %q copy-back target (index=arr[0], selector=b.x, ident=g)", want)
+		}
+	}
+}
+
 // nodeKind is a walked (kind, fields) pair from exported wire JSON.
 type nodeKind struct {
 	kind   string
