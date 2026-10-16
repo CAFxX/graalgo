@@ -249,9 +249,11 @@ public final class NodeFactoryV2 {
 
     /**
      * Builds a single function from its funcdecl node map.
+     *
+     * <p>Package-visible for unit tests ({@code NodeFactoryV2Test}).
      */
     @SuppressWarnings("unchecked")
-    private V2Function buildFunction(Map<String, Object> fnMap, int index,
+    V2Function buildFunction(Map<String, Object> fnMap, int index,
             List<Object> types, List<Object> objects) {
         String kind = getString(fnMap, "kind", "funcs[" + index + "]");
         if (!"funcdecl".equals(kind)) {
@@ -331,11 +333,11 @@ public final class NodeFactoryV2 {
                 if (results.isEmpty()) {
                     return new ReturnNode(new NilNode(GoKind.INTERFACE, null));
                 }
-                // Build all results; for multi-value, wrap in a tuple-like.
-                // v2 currently supports single-value returns directly.
-                // Multi-value uses the first value (documented limitation for
-                // the factory; the emitter produces single-value in practice
-                // for the tested subset).
+                // Build all results. v2 supports single-value returns directly;
+                // a multi-value return has no representation in the v2
+                // pipeline (ReturnNode, calls, and assignments are all
+                // single-valued), so it must fail loudly rather than
+                // silently returning only the first value.
                 List<GoExprNode> built = new ArrayList<>();
                 for (int i = 0; i < results.size(); i++) {
                     Object r = results.get(i);
@@ -347,10 +349,8 @@ public final class NodeFactoryV2 {
                 if (built.size() == 1) {
                     return new ReturnNode(built.get(0));
                 }
-                // Multi-result: build a block that evaluates all, return first.
-                // (Full multi-value return requires result slots; the v2
-                // factory uses single-value ReturnNode for the common case.)
-                return new ReturnNode(built.get(0));
+                throw new FrontendException(where + ": multi-value return (" +
+                    built.size() + " results) not yet supported in v2");
             }
             case "if": {
                 Object initObj = fields.get("init");
@@ -491,7 +491,10 @@ public final class NodeFactoryV2 {
             }
         }
 
-        // Build assignments. Single-value common case; multi-assign pairs up.
+        // Build assignments. Single-value and one-to-one multi-assign pair up;
+        // a single RHS for several targets is either a multi-valued
+        // expression (loud "not yet supported") or invalid Go (loud
+        // "mismatched") — never a silent duplication.
         List<GoStmtNode> assigns = new ArrayList<>();
         for (int i = 0; i < lhsList.size(); i++) {
             Object l = lhsList.get(i);
@@ -501,14 +504,25 @@ public final class NodeFactoryV2 {
             Map<String, Object> lmap = (Map<String, Object>) l;
             String lkind = getString(lmap, "kind", where + ".lhs[" + i + "]");
 
-            // RHS: pair up, or use single RHS for all (e.g. a, b = f()).
+            // RHS: pair up one-to-one. A single RHS expression for multiple
+            // LHS targets is only valid Go when the RHS is multi-valued
+            // (a multi-result call; a map index, type assertion, or receive
+            // in the two-value ok-form). v2 has no multi-value representation
+            // (calls, ReturnNode, and assignments are all single-valued), so
+            // such an assignment must fail loudly — silently duplicating one
+            // value across every target is wrong code. Any other count
+            // mismatch is invalid Go, and also fails loudly.
             GoExprNode rhs;
             if (rhsBuilt.size() == lhsList.size()) {
                 rhs = rhsBuilt.get(i);
-            } else if (rhsBuilt.size() == 1) {
+            } else if (rhsBuilt.size() == 1 && lhsList.size() == 1) {
                 rhs = rhsBuilt.get(0);
+            } else if (rhsBuilt.size() == 1 && isMultiValuedExpr(rhsList.get(0))) {
+                throw new FrontendException(where + ": multi-value assignment (" +
+                    lhsList.size() + " targets, single multi-valued RHS) not yet supported in v2");
             } else {
-                throw new FrontendException(where + ": mismatched lhs/rhs count");
+                throw new FrontendException(where + ": mismatched lhs/rhs count (" +
+                    lhsList.size() + " targets, " + rhsBuilt.size() + " values)");
             }
 
             if ("ident".equals(lkind)) {
@@ -552,6 +566,27 @@ public final class NodeFactoryV2 {
     }
 
     /**
+     * Structural test: is this RHS expression node one of the syntactic forms
+     * that can yield multiple values in Go — a call (multi-result function),
+     * or a map index / type assertion / receive in the two-value ok-form?
+     *
+     * <p>Of these, the v2 expression builder implements "call" and "index"
+     * (see {@link #buildExpr}); receive and type-assertion kinds are not
+     * implemented and already fail loudly inside {@code buildExpr}, so they
+     * can never reach an assignment silently. Paren-wrapping is transparent
+     * (buildExpr unwraps "paren"), so it needs no special case here.
+     */
+    private static boolean isMultiValuedExpr(Object node) {
+        if (!(node instanceof Map)) {
+            return false;
+        }
+        @SuppressWarnings("unchecked")
+        Map<String, Object> nodeMap = (Map<String, Object>) node;
+        Object kind = nodeMap.get("kind");
+        return "call".equals(kind) || "index".equals(kind);
+    }
+
+    /**
      * Builds a var declaration statement.
      * Fields: {names: [string], objs: [int], define, type, values: [expr]}
      */
@@ -577,7 +612,21 @@ public final class NodeFactoryV2 {
             }
         }
 
-        // Build values and assign.
+        // Build values and assign. A single value for multiple names is only
+        // valid Go when the value is multi-valued (e.g. var a, b = f());
+        // v2 has no multi-value representation, so that must fail loudly
+        // rather than silently initializing only the first name. Any other
+        // count mismatch is invalid Go — also a loud error, never a silent
+        // partial initialization. (No values at all means zero-value
+        // declaration, which is fine.)
+        if (values.size() == 1 && names.size() > 1 && isMultiValuedExpr(values.get(0))) {
+            throw new FrontendException(where + ": multi-value var initialization (" +
+                names.size() + " names, single multi-valued value) not yet supported in v2");
+        }
+        if (!values.isEmpty() && values.size() != names.size()) {
+            throw new FrontendException(where + ": mismatched names/values count (" +
+                names.size() + " names, " + values.size() + " values)");
+        }
         List<GoStmtNode> stmts = new ArrayList<>();
         for (int i = 0; i < values.size() && i < names.size(); i++) {
             Object v = values.get(i);

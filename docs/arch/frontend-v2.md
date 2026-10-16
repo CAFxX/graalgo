@@ -128,6 +128,13 @@ it *is* the frontend — just the next generation.
 - **Init order**: v1 handles `init()` and package-level var initialization
   order. v2 must preserve this (it's observable behavior).
 - **Cgo**: v1 punts. v2 punts too (documented limitation, not a bodge).
+- **Multi-value constructs**: the v2 Java backend (`NodeFactoryV2`) is
+  single-valued end to end (calls, `ReturnNode`, assignments), so
+  multi-value returns, multi-target assignments from a multi-valued RHS
+  (e.g. `a, b = f()`), and multi-value `var` initializations fail loudly
+  with `FrontendException` — never silently. A general multi-value
+  mechanism (per §2's "legitimate lowerings") is the proper fix; the loud
+  failure is the placeholder, not silent wrong code.
 
 ## 7. References
 
