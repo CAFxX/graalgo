@@ -8,6 +8,8 @@ package graalgo.values;
  * ({@code long} for all int/uint kinds, {@code double} for both float
  * kinds); IEEE semantics apply, so a NaN key never equals anything —
  * including itself — matching Go. {@link GoString} compares byte-wise.
+ * Complex kinds compare component-wise as scalar {@link GoComplex32} /
+ * {@link GoComplex64} records or as element-wise IEEE {@code []} carriers.
  * Values of different carrier classes are never equal (a Go map has a
  * single static key type, so this only arises from misuse).
  */
@@ -23,6 +25,14 @@ public final class GoEquality {
                 return false;
             }
             if (a instanceof Float f && f.isNaN()) {
+                return false;
+            }
+            if (a instanceof GoComplex32 c && (Float.isNaN(c.re()) || Float.isNaN(c.im()))) {
+                // A complex with a NaN component is never ==, even to
+                // itself (IEEE, like the float carriers above).
+                return false;
+            }
+            if (a instanceof GoComplex64 c && (Double.isNaN(c.re()) || Double.isNaN(c.im()))) {
                 return false;
             }
             return true;
@@ -137,6 +147,17 @@ public final class GoEquality {
             }
             return true;
         }
+        if (a instanceof GoComplex32 ca && b instanceof GoComplex32 cb) {
+            // TR-4: scalar complex64 key (Boxing boxes complex64 as a
+            // GoComplex32 record). Component-wise IEEE comparison, the
+            // scalar form of the [N]complex64 branch above: a NaN component
+            // makes != true, so NaN never equals (no explicit check needed).
+            return ca.re() == cb.re() && ca.im() == cb.im();
+        }
+        if (a instanceof GoComplex64 ca && b instanceof GoComplex64 cb) {
+            // TR-4: scalar complex128 key; as for complex64 above.
+            return ca.re() == cb.re() && ca.im() == cb.im();
+        }
         if (a instanceof boolean[] ba && b instanceof boolean[] bb) {
             return java.util.Arrays.equals(ba, bb);
         }
@@ -225,6 +246,16 @@ public final class GoEquality {
                 h = 31 * h + Double.hashCode(z.im());
             }
             return h;
+        }
+        if (key instanceof GoComplex32 c) {
+            // TR-4: scalar complex64 key. Consistent with the scalar equal
+            // branch above: equal keys hash equal, using the same 31-fold
+            // over the components as the [N]complex64 branch.
+            return 31 * Float.hashCode(c.re()) + Float.hashCode(c.im());
+        }
+        if (key instanceof GoComplex64 c) {
+            // TR-4: scalar complex128 key; as above.
+            return 31 * Double.hashCode(c.re()) + Double.hashCode(c.im());
         }
         if (key instanceof boolean[] ba) {
             return java.util.Arrays.hashCode(ba);

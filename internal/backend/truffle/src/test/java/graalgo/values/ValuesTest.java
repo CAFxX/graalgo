@@ -144,6 +144,80 @@ public final class ValuesTest {
         assertEq(1, fm.size(), "NaN key still stored");
     }
 
+    public void testGoComplexScalarEqualityAndMapKeys() {
+        // TR-4: scalar complex64/complex128 are comparable Go map-key types
+        // (boxed as GoComplex32/GoComplex64 records) and must compare with
+        // IEEE semantics, like the float carriers and the complex array
+        // branches already do.
+        assertTrue(GoEquality.equal(new GoComplex32(1f, 2f), new GoComplex32(1f, 2f)), "c64 equal");
+        assertTrue(!GoEquality.equal(new GoComplex32(1f, 2f), new GoComplex32(1f, 3f)), "c64 differ");
+        assertTrue(GoEquality.equal(new GoComplex64(1d, 2d), new GoComplex64(1d, 2d)), "c128 equal");
+        assertTrue(!GoEquality.equal(new GoComplex64(1d, 2d), new GoComplex64(2d, 1d)), "c128 differ");
+        assertTrue(GoEquality.equal(GoComplex32.ZERO, new GoComplex32(0f, 0f)), "c64 zero");
+        assertTrue(GoEquality.equal(GoComplex64.ZERO, new GoComplex64(0d, 0d)), "c128 zero");
+        // Cross-width carriers never agree (a Go map has one static key type).
+        assertTrue(!GoEquality.equal(new GoComplex32(1f, 2f), new GoComplex64(1d, 2d)), "c64 vs c128");
+        assertTrue(!GoEquality.equal(new GoComplex32(1f, 2f), new double[]{1d, 2d}), "c64 vs array");
+        // -0.0 == +0.0 under Go's == (IEEE comparison on components).
+        assertTrue(GoEquality.equal(new GoComplex32(-0f, -0f), new GoComplex32(0f, 0f)), "-0.0 c64 equal");
+        assertTrue(GoEquality.equal(new GoComplex64(-0d, -0d), new GoComplex64(0d, 0d)), "-0.0 c128 equal");
+        // NaN components never equal anything, including a fresh instance
+        // with identical bits (no reference-identity shortcut on this path).
+        assertTrue(!GoEquality.equal(new GoComplex32(Float.NaN, 0f), new GoComplex32(Float.NaN, 0f)),
+                "NaN re c64");
+        assertTrue(!GoEquality.equal(new GoComplex32(0f, Float.NaN), new GoComplex32(0f, Float.NaN)),
+                "NaN im c64");
+        assertTrue(!GoEquality.equal(new GoComplex64(Double.NaN, 0d), new GoComplex64(Double.NaN, 0d)),
+                "NaN re c128");
+        assertTrue(!GoEquality.equal(new GoComplex64(0d, Double.NaN), new GoComplex64(0d, Double.NaN)),
+                "NaN im c128");
+        // Self-reference with NaN: the a==b fast path must not rescue it.
+        GoComplex32 self64 = new GoComplex32(Float.NaN, 1f);
+        assertTrue(!GoEquality.equal(self64, self64), "self NaN c64");
+        GoComplex64 self128 = new GoComplex64(Double.NaN, 1d);
+        assertTrue(!GoEquality.equal(self128, self128), "self NaN c128");
+        // hash() consistent with equal(): equal keys hash equal.
+        assertEq(GoEquality.hash(new GoComplex32(1f, 2f)), GoEquality.hash(new GoComplex32(1f, 2f)),
+                "hash c64 consistent");
+        assertEq(GoEquality.hash(new GoComplex64(1d, 2d)), GoEquality.hash(new GoComplex64(1d, 2d)),
+                "hash c128 consistent");
+        assertTrue(GoEquality.hash(new GoComplex32(1f, 2f)) != GoEquality.hash(new GoComplex32(1f, 3f)),
+                "hash c64 discriminates");
+
+        // GoMap round-trip: m[1+2i]=3; m[1+2i] must be 3 (the TR-4 repro).
+        GoMap m64 = new GoMap();
+        m64.put(new GoComplex32(1f, 2f), 3L);
+        assertEq(3L, (Long) m64.get(new GoComplex32(1f, 2f)), "c64 key round-trip");
+        assertEq(1, m64.size(), "c64 size");
+        m64.put(new GoComplex32(1f, 2f), 7L);
+        assertEq(7L, (Long) m64.get(new GoComplex32(1f, 2f)), "c64 replace");
+        assertEq(1, m64.size(), "c64 size after replace");
+        m64.put(new GoComplex32(4f, 5f), 9L);
+        assertEq(9L, (Long) m64.get(new GoComplex32(4f, 5f)), "c64 second key");
+        assertEq(7L, (Long) m64.get(new GoComplex32(1f, 2f)), "c64 first key undisturbed");
+        m64.delete(new GoComplex32(1f, 2f));
+        assertTrue(m64.get(new GoComplex32(1f, 2f)) == null, "c64 deleted");
+        assertEq(1, m64.size(), "c64 size after delete");
+
+        GoMap m128 = new GoMap();
+        m128.put(new GoComplex64(1d, 2d), 3L);
+        assertEq(3L, (Long) m128.get(new GoComplex64(1d, 2d)), "c128 key round-trip");
+        m128.put(new GoComplex64(1d, 2d), 8L);
+        assertEq(8L, (Long) m128.get(new GoComplex64(1d, 2d)), "c128 replace");
+        assertEq(1, m128.size(), "c128 size after replace");
+
+        // NaN-component keys never match (stored, never retrievable — the Go
+        // rule, mirroring the existing Double.NaN test above).
+        GoMap nm = new GoMap();
+        nm.put(new GoComplex32(Float.NaN, 0f), 1L);
+        assertTrue(nm.get(new GoComplex32(Float.NaN, 0f)) == null, "NaN c64 key never matches");
+        assertEq(1, nm.size(), "NaN c64 key still stored");
+        GoMap nm128 = new GoMap();
+        nm128.put(new GoComplex64(Double.NaN, 0d), 1L);
+        assertTrue(nm128.get(new GoComplex64(Double.NaN, 0d)) == null, "NaN c128 key never matches");
+        assertEq(1, nm128.size(), "NaN c128 key still stored");
+    }
+
     public void testGoStruct() {
         GoStructDescriptor d = GoStructDescriptor.layout("T",
                 List.of("a", "b", "s"), List.of(GoKind.INT32, GoKind.STRING, GoKind.BOOL));
