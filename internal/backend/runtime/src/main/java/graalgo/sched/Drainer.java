@@ -42,6 +42,11 @@ public final class Drainer {
     // handle id -> parked generation (PARKED seen, UNPARK not yet).
     private final java.util.Map<Long, Long> parked = new java.util.HashMap<>();
     // handle id -> pending unpark arrived before the PARKED token.
+    // P1-10: never retains entries for dead goroutines — a stashed entry
+    // is purged when the handle's EXIT is routed, and an UNPARK routed
+    // after EXIT (stale; unpark raced goroutine exit) is dropped via the
+    // handle's exited flag. Ids are never reused, so without this the set
+    // would grow one entry per exit-race forever.
     private final java.util.Set<Long> unparkPending = new java.util.HashSet<>();
     // handle ids currently in blocking I/O (P2-M3, GG-0018): slot
     // released, vthread blocked in the syscall (not parked). IO_EXIT
@@ -137,6 +142,10 @@ public final class Drainer {
             }
             case WAKE -> wakeFifo.addLast(token);
             case EXIT -> {
+                // P1-10: a stashed pre-park unpark for this handle (UNPARK
+                // routed before EXIT) is stale now — the goroutine will
+                // never park again. Drop it so unparkPending stays bounded.
+                unparkPending.remove(token.handle.id);
                 // A goroutine that dies while in blocking I/O without
                 // ioExit would double-release its slot (it was already
                 // released at ioEnter). Every ioEnter must be paired —
@@ -167,14 +176,22 @@ public final class Drainer {
                 }
             }
             case UNPARK -> {
-                Long gen = parked.remove(token.handle.id);
-                if (gen != null) {
-                    wakeUnparkDirect.incrementAndGet();
-                    wakeFifo.addLast(new ResumeToken(
-                            ResumeToken.Kind.WAKE, token.handle, gen));
-                } else {
-                    // Park hasn't been processed yet: remember the wakeup.
-                    unparkPending.add(token.handle.id);
+                // P1-10: if the handle already exited, this UNPARK is
+                // stale (unpark raced goroutine exit — EXIT was offered
+                // first, so offer order puts this UNPARK after it). The
+                // goroutine is dead; drop the wakeup instead of retaining
+                // the id in unparkPending, which would leak one entry per
+                // such race forever (ids are never reused).
+                if (!token.handle.exited) {
+                    Long gen = parked.remove(token.handle.id);
+                    if (gen != null) {
+                        wakeUnparkDirect.incrementAndGet();
+                        wakeFifo.addLast(new ResumeToken(
+                                ResumeToken.Kind.WAKE, token.handle, gen));
+                    } else {
+                        // Park hasn't been processed yet: remember the wakeup.
+                        unparkPending.add(token.handle.id);
+                    }
                 }
             }
             case IO_ENTER -> {

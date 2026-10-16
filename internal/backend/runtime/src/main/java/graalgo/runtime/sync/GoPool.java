@@ -31,9 +31,11 @@ import java.util.concurrent.atomic.AtomicReference;
  *       racing a thief is safe. Stealing {@code private} is a deliberate
  *       JVM adaptation (see the field doc): gc's {@code getSlow} skips it
  *       because Ps are immortal; our threads are not. Locals of dead
- *       threads stay registered — their items remain stealable. The
- *       registry is bounded in practice by the scheduler's carrier pool
- *       plus the threads that touch the pool.</li>
+ *       threads are purged from the registry — with their items migrated
+ *       to the global queue, so they stay stealable — on registration and
+ *       on the {@code get()} slow path (P1-8); the registry is therefore
+ *       bounded by live threads, not by every goroutine that ever touched
+ *       the pool.</li>
  *   <li>Victim cache + GC interaction: gc rotates primary→victim at each
  *       GC stop-the-world ({@code poolCleanup}); there is no STW hook on
  *       the JVM, so the victim holds {@link WeakReference}s. The JVM GC
@@ -60,6 +62,22 @@ import java.util.concurrent.atomic.AtomicReference;
  * </ul>
  *
  * <p>No scheduler interaction: pool operations never block.
+ *
+ * <p>P1-8 design note — why purge-on-get, not a weak-keyed registry:
+ * <ul>
+ *   <li>A weak-keyed {@code allLocals} would clean up only when the JVM
+ *       GC happens to collect dead {@code Local}s: the bound would be
+ *       GC-timing-dependent and untestable, and an entry could vanish
+ *       between a steal scan's iterations.</li>
+ *   <li>Purge-before-scan <em>without</em> migration would strand dead
+ *       threads' items, breaking steal-from-dead-thread parity
+ *       ({@code GoPoolTest.testCrossThreadSteal}).</li>
+ * </ul>
+ * The chosen design purges under the pool lock on registration and on
+ * the {@code get()} slow path — both already O(registered) — checking
+ * liveness via {@code Thread.isAlive()} (exact at purge time, no GC
+ * dependence) and migrating items to the global queue. The fast paths
+ * are untouched: no extra branches, no allocation.
  */
 public final class GoPool {
 
@@ -88,12 +106,24 @@ public final class GoPool {
          * owner uses it lock-free on the fast path; thieves steal under
          * the pool lock. */
         final ConcurrentLinkedDeque<Object> shared = new ConcurrentLinkedDeque<>();
+        /**
+         * Owning thread, weakly held (P1-8): a strong reference would pin
+         * a dead virtual thread — stack frames included — in the
+         * registry once the owner dies. Liveness
+         * ({@code Thread.isAlive()}) drives {@link GoPool#purgeDeadLocals}.
+         */
+        final WeakReference<Thread> owner;
         /** Whether this Local is in {@link GoPool#allLocals}. Written
          * under the pool lock; the benign read race is idempotent. */
         boolean registered;
+
+        Local(Thread owner) {
+            this.owner = new WeakReference<>(owner);
+        }
     }
 
-    private final ThreadLocal<Local> locals = ThreadLocal.withInitial(Local::new);
+    private final ThreadLocal<Local> locals =
+            ThreadLocal.withInitial(() -> new Local(Thread.currentThread()));
 
     /** Pool-lock-guarded shared state. */
     private final Object lock = new Object();
@@ -132,9 +162,46 @@ public final class GoPool {
             synchronized (lock) {
                 allLocals.add(l);
                 l.registered = true;
+                // P1-8: registration is also a purge point, so put-only
+                // workloads stay bounded too.
+                purgeDeadLocals();
             }
         }
         return l;
+    }
+
+    /**
+     * Drops registry entries whose owner thread is dead (P1-8),
+     * migrating their items to the global queue so nothing stealable is
+     * lost ({@code sync.Pool} allows items to vanish at any time; we
+     * preserve them — strictly more than the contract requires, and it
+     * keeps steal-from-dead-thread parity with gc's {@code getSlow}).
+     *
+     * <p>Must be called under {@link #lock}. Runs on registration and on
+     * the {@code get()} slow path, so the registry holds at most the
+     * live threads' entries instead of growing one entry per goroutine
+     * that ever touched the pool.
+     */
+    private void purgeDeadLocals() {
+        var it = allLocals.iterator();
+        while (it.hasNext()) {
+            Local o = it.next();
+            Thread t = o.owner.get();
+            if (t == null || !t.isAlive()) {
+                Object p = o.privateSlot.getAndSet(null);
+                if (p != null) {
+                    globalShared.addLast(p);
+                }
+                Object s;
+                while ((s = o.shared.pollFirst()) != null) {
+                    globalShared.addLast(s);
+                }
+                while (globalShared.size() > GLOBAL_SHARED_CAP) {
+                    victim.addLast(new WeakReference<>(globalShared.pollFirst()));
+                }
+                it.remove();
+            }
+        }
     }
 
     /**
@@ -182,6 +249,10 @@ public final class GoPool {
             return x;
         }
         synchronized (lock) {
+            // P1-8: purge dead threads' Locals (migrating their items to
+            // the global queue above) before scanning, so the registry —
+            // and this scan — stay bounded by live threads.
+            purgeDeadLocals();
             // Slow path (gc's getSlow): steal from other threads'
             // shared queues, then their private slots (JVM adaptation —
             // see the privateSlot field doc), then the global spillover,

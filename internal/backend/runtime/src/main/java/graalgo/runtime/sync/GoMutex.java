@@ -1,5 +1,6 @@
 package graalgo.runtime.sync;
 
+import graalgo.runtime.GoFatalError;
 import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
 
@@ -16,9 +17,12 @@ import java.util.Deque;
  * {@code LockSupport.park} without a ticket) is banned here per P2-D4 —
  * it would bypass the in-flight cap accounting.
  *
- * <p>Go semantics: non-reentrant; {@code unlock} of an unlocked mutex
- * panics ("sync: unlock of unlocked mutex", gc parity); unlocking from a
- * different goroutine than the locker is allowed (as in gc).
+ * <p>Go semantics: non-reentrant; {@code unlock} of an unlocked mutex is a
+ * Go <em>fatal error</em> ({@code fatal error: sync: unlock of unlocked
+ * mutex}, exit 2 — gc calls {@code throw()}, not {@code panic()}, so it is
+ * unrecoverable); unlocking from a different goroutine than the locker is
+ * allowed (as in gc). Misuse detection does not depend on a scheduler
+ * being installed.
  *
  * <p>verifies: GG-SCHED-0004 (scheduler-aware blocking).
  */
@@ -44,23 +48,27 @@ public final class GoMutex {
         // On resume we own the lock (unlock() transferred it to us).
     }
 
-    /** Releases the lock, waking the longest-waiting contender (FIFO). */
+    /**
+     * Releases the lock, waking the longest-waiting contender (FIFO).
+     *
+     * <p>Unlock of an unlocked mutex is a Go fatal error (P1-9), checked
+     * before touching the scheduler so misuse is reported even where no
+     * scheduler is installed.
+     */
     public void unlock() {
-        SchedulerCore sched = SchedulerCore.current();
         GoroutineHandle next;
         synchronized (this) {
             if (!locked) {
-                throw new IllegalStateException("sync: unlock of unlocked mutex");
+                throw new GoFatalError("sync: unlock of unlocked mutex");
             }
             next = waiters.pollFirst();
             if (next == null) {
                 locked = false;
+                return;
             }
             // else: locked stays true, ownership transfers to next.
         }
-        if (next != null) {
-            sched.unpark(next);
-        }
+        SchedulerCore.current().unpark(next);
     }
 
     /** For tests: whether the lock is currently held. */

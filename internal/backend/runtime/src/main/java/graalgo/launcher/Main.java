@@ -234,6 +234,12 @@ public final class Main {
             // M5 (WS F): uncaught Go panic → gc-comparable output, exit 2.
             reportPanic(pe);
             exitCode = EXIT_PANIC;
+        } catch (graalgo.runtime.GoFatalError fe) {
+            // P1-9: Go fatal error (gc's throw()) — unrecoverable, exit 2.
+            // Must precede the generic RuntimeException catch, which
+            // would misreport it as an internal error (exit 1).
+            System.err.println("fatal error: " + fe.getMessage());
+            exitCode = EXIT_PANIC;
         } catch (graalgo.runtime.Goexit g) {
             // M5 (WS F): Goexit in main = gc's fatal deadlock (exit 2).
             // (Exit 0 applies to non-main goroutines, Phase 2.)

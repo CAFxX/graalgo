@@ -3,6 +3,7 @@ package graalgo.sched;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
+import graalgo.runtime.GoFatalError;
 import graalgo.runtime.GoroutineState;
 import graalgo.runtime.GoCalls;
 import graalgo.values.GoFunc;
@@ -345,9 +346,12 @@ public final class SchedulerCore {
      *
      * <p>Failure discipline (Go parity): an uncaught Go panic in
      * <em>any</em> goroutine is recorded and printed (the launcher exits
-     * 2); {@code Goexit} kills just that goroutine; internal
-     * {@code RuntimeException}s and stack overflows are recorded loudly
-     * (the launcher exits 1).
+     * 2); a Go <em>fatal error</em> ({@link GoFatalError}, gc's
+     * {@code throw()} — e.g. unlock of an unlocked mutex) is recorded and
+     * printed as {@code fatal error: ...} (the launcher exits 2, and
+     * unlike a panic it is never recoverable); {@code Goexit} kills just
+     * that goroutine; internal {@code RuntimeException}s and stack
+     * overflows are recorded loudly (the launcher exits 1).
      */
     public GoroutineHandle spawn(Runnable body) {
         GoroutineHandle h = new GoroutineHandle(body);
@@ -372,6 +376,13 @@ public final class SchedulerCore {
             } catch (graalgo.runtime.Goexit g) {
                 // Non-main goroutine Goexit: just dies. (Main's Goexit
                 // is handled by the launcher's own catch, inside.)
+            } catch (GoFatalError fe) {
+                // P1-9: Go fatal error (gc's throw()) — before the generic
+                // RuntimeException catch, which would misreport it as an
+                // internal error (exit 1). Unrecoverable by construction:
+                // DeferChain only unwraps PanicException, so deferred
+                // functions never run for it (gc parity).
+                recordFatalError(fe);
             } catch (StackOverflowError soe) {
                 recordCrash("stack overflow", soe);
             } catch (NoClassDefFoundError | ExceptionInInitializerError e) {
@@ -413,7 +424,26 @@ public final class SchedulerCore {
 
     private final AtomicInteger panicCount = new AtomicInteger();
     private final AtomicInteger crashCount = new AtomicInteger();
+    private final AtomicInteger fatalCount = new AtomicInteger();
     private volatile String firstPanicMessage;
+
+    /**
+     * Records a Go fatal error (P1-9, gc's {@code throw()}): prints
+     * {@code fatal error: <msg>} plus the dying goroutine's Go stack
+     * (gc's first traceback block) on stderr. The launcher exits 2
+     * (see {@link #fatalError}).
+     */
+    private void recordFatalError(GoFatalError fe) {
+        fatalCount.incrementAndGet();
+        System.err.println("fatal error: " + fe.getMessage());
+        System.err.println();
+        GoroutineHandle h = currentHandle.get();
+        long gid = h != null ? h.id : 1;
+        graalgo.runtime.GoroutineState s = graalgo.runtime.GoroutineState.current();
+        graalgo.runtime.GoStackFrame top = s == null
+                ? new graalgo.runtime.GoStackFrame() : s.goStack();
+        System.err.print(graalgo.runtime.Intrinsics.renderGoStack(gid, top, null));
+    }
 
     private void recordPanic(graalgo.runtime.PanicException pe) {
         if (panicCount.getAndIncrement() == 0) {
@@ -487,6 +517,11 @@ public final class SchedulerCore {
     /** True if any goroutine died from an uncaught Go panic. */
     public boolean panicked() {
         return panicCount.get() > 0;
+    }
+
+    /** True if any goroutine died from a Go fatal error (gc's throw()). */
+    public boolean fatalError() {
+        return fatalCount.get() > 0;
     }
 
     /** True if any goroutine died from an internal error. */

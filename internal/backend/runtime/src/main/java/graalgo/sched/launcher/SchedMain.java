@@ -25,8 +25,8 @@ import graalgo.sched.nodes.GoStatementNode;
  * blocks until quiescence. The {@code "gostmt"} wire kind is registered
  * on the factory via the public {@code registerStmtKind} hook.
  *
- * <p>Exit codes match Phase 1: 0 ok, 1 usage/input, 2 build failure or
- * uncaught Go panic (gc parity).
+ * <p>Exit codes match Phase 1: 0 ok, 1 usage/input, 2 build failure,
+ * uncaught Go panic, or Go fatal error (gc parity: both exit 2).
  */
 public final class SchedMain {
     private SchedMain() {}
@@ -175,6 +175,9 @@ public final class SchedMain {
             return EXIT_INPUT_ERROR;
         } finally {
             SchedulerCore.install(prev);
+        }
+        if (sched.fatalError()) {
+            return EXIT_PANIC; // Go fatal error (gc throw()): exit 2, never recoverable
         }
         if (sched.panicked()) {
             return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)

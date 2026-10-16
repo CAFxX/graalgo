@@ -145,25 +145,37 @@ correct zero) and stays allowed.
 factory-level zero manufacturing; the scope errors name M2 so the trigger
 is greppable.
 
-## D4. Misuse → Go panic with gc's message (known divergence, scoped)
+## D4. Misuse → Go panic / Go fatal error with gc's message (P1-9)
 
-`GoMutex.unlock()`/`GoRWMutex.rUnlock()` throw `IllegalStateException`
-with gc's message text; `GoWaitGroup.add` throws on negative counters.
-The binding translates these to Go panics via `Panic.throwPanic`:
+`GoMutex.unlock()`/`GoRWMutex.unlock()`/`GoRWMutex.rUnlock()` throw
+`graalgo.runtime.GoFatalError` with gc's message text;
+`GoWaitGroup.add` throws a recoverable Go panic via
+`Panic.throwPanic` (the message is a D5 Go string, per the P3-M4
+rendering rule). The syncop binding no longer translates anything —
+misuse semantics live in the primitives, so every caller gets Go
+semantics:
 
 - `sync: negative WaitGroup counter` — gc 1.27.1 panics (recoverable);
   full parity: `panic: sync: negative WaitGroup counter`, exit 2.
-- `sync: unlock of unlocked mutex`, `sync: RUnlock of unlocked RWMutex` —
-  gc 1.27.1 **fatal-errors** (`fatal error: ...`, unrecoverable, exit 2;
-  verified against `~/tools/go-1.27.1`). The binding panics with gc's
-  message text (`panic: sync: ...`, exit 2) per the P3-M2 brief
-  ("unlock-of-unlocked panics with gc's message"). **Scoped divergence:**
-  ours is recoverable, gc's is not; the `panic:`/`fatal error:` wrapper
-  line differs. A true fatal-error path needs scheduler machinery Phase 2
-  does not have (and may not be modified).
+- `sync: unlock of unlocked mutex`, `sync: Unlock of unlocked RWMutex`,
+  `sync: RUnlock of unlocked RWMutex` — gc 1.27.1 **fatal-errors**
+  (`fatal error: ...`, unrecoverable, exit 2; verified against
+  `~/tools/go-1.27.1`): full parity now. The scheduler records the
+  fatal error in `SchedulerCore.spawn`'s catch chain (before the generic
+  `RuntimeException` catch, which would misreport it as an internal
+  error, exit 1), prints `fatal error: <msg>` plus the dying goroutine's
+  Go stack, and the launcher exits 2. Fatal errors propagate through
+  deferred functions untouched — `DeferChain` only unwraps
+  `PanicException`, so `recover()` cannot catch them (gc parity).
+  Misuse detection does not depend on a scheduler being installed (the
+  check precedes `SchedulerCore.current()`).
 
-**Re-test trigger:** when the scheduler gains a fatal-error path, re-run
-the unlock-misuse corpus expecting gc's `fatal error:` line.
+Resolved 2026-10-16 (P1-9 remediation): the scoped divergence this
+section used to document (recoverable Go panic for unlock misuse) is
+gone. Known remaining delta: gc prints *all* goroutines' stacks on a
+fatal error; we print only the dying goroutine's (re-test trigger: full
+all-goroutine dump when the scheduler can capture other goroutines'
+Go stacks).
 
 Inherited limitation (phase-2 primitive, out of M2 scope): `GoWaitGroup`
 does not detect "Add called concurrently with Wait" (gc panics); the
