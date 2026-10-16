@@ -114,6 +114,10 @@ Related: [Makefile](../Makefile) (root build entry point),
       (the synthetic `runtime` package's stack-inspection intrinsics:
       `Callers`/`Caller`/`CallersFrames`/`FuncForPC` and the
       `Frames`/`Func` methods) plus
+      [`graalgo.rtmemstats`](../internal/backend/interop/src/main/java/graalgo/rtmemstats/)
+      (the synthetic `runtime` package's MemStats-family intrinsics:
+      `ReadMemStats`/`GOROOT`/`Version`/`Stack`, implemented against JVM
+      telemetry) plus
       [`graalgo.p3log`](../internal/backend/interop/src/main/java/graalgo/p3log/)
       (shared diagnostic logging for launch-time warnings; backed by
       `java.util.logging` — raw `System.err` printing is rejected by the

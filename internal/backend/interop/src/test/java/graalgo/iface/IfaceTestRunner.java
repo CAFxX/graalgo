@@ -40,6 +40,11 @@ public final class IfaceTestRunner {
         // PKG-012 remediation F1 (2026-10-15): sync.Cond notifyList state
         // isolation — identity-keyed, never structural.
         TESTS.add(graalgo.p3link.CondIsolationTest.class);
+        // PKG-051 (2026-10-16): the runtime MemStats-family wire kinds
+        // (runtimereadmemstats/runtimegoroot/runtimeversion/runtimestack) —
+        // backend intrinsics with real JVM-telemetry semantics.
+        TESTS.add(graalgo.rtmemstats.RtMemStatsTest.class);
+        TESTS.add(graalgo.frontend.RtMemStatsBuilderTest.class);
     }
 
     private IfaceTestRunner() {}
