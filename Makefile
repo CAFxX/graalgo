@@ -91,6 +91,12 @@ GENERATED_SYNTH := \
 	internal/frontend/synth_regexpsyntax.go \
 	internal/frontend/synth_textscanner.go
 GENERATED += $(GENERATED_SYNTH)
+# Synthetic-package ledger (no-bridges gate baseline): the exact
+# syntheticSources / dedicatedSyntheticStubs key set, derived from the map
+# literals by .github/scripts/check_no_bridges.py --emit-ledger. The gate
+# fails on ledger/code drift AND on any set growth without independent-review
+# adjudication (R2-P1-5); removals need no sign-off.
+GENERATED += .github/scripts/synthetic_package_ledger.json
 # NOTE: [test/snapshots/](test/snapshots/)/go<VERSION>.json are also generated
 # and committed, but their generator is `make snapshot` (deliberate
 # re-baseline: toolchain upgrade or reviewed behavior change), NOT `make all`
@@ -98,7 +104,7 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-p3frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth gen-ledger build check test-ci test-p3frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
 all: generate build snapshot-check check test-ci
 
@@ -110,9 +116,20 @@ all: generate build snapshot-check check test-ci
 gen-synth:
 	GO="$(GO)" python3 internal/frontend/run_gen_synth.py
 
+# Regenerate the synthetic-package ledger (no-bridges gate baseline, R2-P1-5)
+# from the syntheticSources / dedicatedSyntheticStubs map literals. Pure-python,
+# idempotent (writes only on change); CI's `git diff --exit-code` after
+# `make all` fails on any drift, and the gate itself requires
+# independent-review adjudication for additions.
+gen-ledger:
+	python3 .github/scripts/check_no_bridges.py --emit-ledger
+
+.github/scripts/synthetic_package_ledger.json: internal/frontend/synth_machinery.go internal/frontend/export.go .github/scripts/check_no_bridges.py
+	python3 .github/scripts/check_no_bridges.py --emit-ledger
+
 # Force-regenerate the gofrontend binary and overlay.json from the
 # vendored frontend sources (internal/frontend/*.go + internal/frontend/go overlay).
-generate: gen-synth
+generate: gen-synth gen-ledger
 	cd internal/frontend && ./build.sh build
 
 build:

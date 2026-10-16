@@ -17,6 +17,34 @@ that retires it, and its phased-removal order. "Needs design" marks entries
 whose retirement mechanism is still open — the entry itself is the
 deliverable until the design lands.
 
+## Synthetic-package ledger (no-bridges gate baseline)
+
+The mechanical gate ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py))
+keeps a committed ledger of the exact grandfathered synthetic-package set:
+[.github/scripts/synthetic_package_ledger.json](../../.github/scripts/synthetic_package_ledger.json) —
+the keys of `syntheticSources`
+([internal/frontend/synth_machinery.go](../../internal/frontend/synth_machinery.go))
+plus `dedicatedSyntheticStubs`
+([internal/frontend/export.go](../../internal/frontend/export.go))
+(133 + 3 at the 2026-10-16 baseline, counted on disk — not from this file).
+The gate fails when:
+
+- the ledger does not match the code — regenerate with
+  `python3 .github/scripts/check_no_bridges.py --emit-ledger` (or
+  `make gen-ledger`) and commit the result in the same change as the code;
+  `make all` also regenerates it and CI fails on drift;
+- the set *grows* without an independent-review sign-off: every new key must
+  have its review record filed below under [Adjudicated non-bridges](#adjudicated-non-bridges)
+  and an entry in the gate's `ADJUDICATED_SYNTHETIC_PACKAGES` allowlist —
+  otherwise the gate fails, even if the ledger was updated. A dangling
+  citation (allowlist entry with no filed record) also fails.
+  Removals need no sign-off: shrinking the set is the goal (Phase 2).
+
+The `synth_` filename rule is supplemented by content detection: a new
+`.go` file without `synth_` in its name that defines an embedded
+`synthetic*Source` payload or registers a synthetic package is flagged, as
+are post-init writes to the registration maps.
+
 ## Phased removal order
 
 - **Phase 1 — in flight (2026-10-15).** Retire the highest-value synthetic
