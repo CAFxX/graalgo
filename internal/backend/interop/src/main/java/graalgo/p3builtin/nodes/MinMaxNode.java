@@ -23,7 +23,9 @@ import graalgo.values.GoString;
  * <ul>
  *   <li>one argument: returns it;</li>
  *   <li>integers (signed and unsigned): numeric fold;</li>
- *   <li>floats: NaN-propagating — any NaN argument yields NaN;</li>
+ *   <li>floats: IEEE-754 minimumNumber/maximumNumber — NaN-propagating, and
+ *       {@code -0.0 < +0.0}, so {@code min(+0.0,-0.0) == -0.0} and
+ *       {@code max(+0.0,-0.0) == +0.0};</li>
  *   <li>strings: byte-wise lexicographic (via {@link GoString#compareTo}).</li>
  * </ul>
  *
@@ -73,12 +75,10 @@ public final class MinMaxNode extends GoExprNode {
         float best = args[0].executeFloat(frame);
         for (int i = 1; i < args.length; i++) {
             float v = args[i].executeFloat(frame);
-            if (Float.isNaN(v) || Float.isNaN(best)) {
-                return Float.NaN;
-            }
-            if (isMin ? v < best : v > best) {
-                best = v;
-            }
+            // IEEE-754 minimumNumber/maximumNumber (gc parity): NaN
+            // propagates, and -0.0f < +0.0f, so min(+0,-0) = -0.0f.
+            // (A plain `v < best` fold keeps +0.0f — wrong per gc.)
+            best = isMin ? Math.min(best, v) : Math.max(best, v);
         }
         return best;
     }
@@ -91,12 +91,10 @@ public final class MinMaxNode extends GoExprNode {
         double best = args[0].executeDouble(frame);
         for (int i = 1; i < args.length; i++) {
             double v = args[i].executeDouble(frame);
-            if (Double.isNaN(v) || Double.isNaN(best)) {
-                return Double.NaN;
-            }
-            if (isMin ? v < best : v > best) {
-                best = v;
-            }
+            // IEEE-754 minimumNumber/maximumNumber (gc parity): NaN
+            // propagates, and -0.0 < +0.0, so min(+0,-0) = -0.0.
+            // (A plain `v < best` fold keeps +0.0 — wrong per gc.)
+            best = isMin ? Math.min(best, v) : Math.max(best, v);
         }
         return best;
     }
