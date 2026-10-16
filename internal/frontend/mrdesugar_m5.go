@@ -1845,6 +1845,17 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
 					return plan
 				}
+				// P4 (WS D, general interface MR): user-defined (or
+				// otherwise unlisted) interfaces with multi-result
+				// methods — the final fallback, mirroring the
+				// exportIfaceMethodCall/exportIfaceFallbackCall
+				// pairPlan arms. Synthesizes the interface pair type
+				// on first use; without it, assignment position
+				// (v, ok := iface.M(...)) misses classification and
+				// emits a corrupt 2-name/1-pair-value vardecl.
+				if plan := e.classifyUserIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
 			}
 			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
 			// multi-result calls on type parameters (e.g.,

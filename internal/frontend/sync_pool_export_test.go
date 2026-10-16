@@ -98,9 +98,11 @@ func TestSyncPoolLiteralScopeErrors(t *testing.T) {
 	}
 }
 
-// TestSyncPoolNewAssignScopeError: with real sync (503608ea), exotic
+// TestSyncPoolNewAssignSupported: with real sync (503608ea), exotic
 // assignment shapes touching Pool.New are ordinary Go and succeed.
-func TestSyncPoolNewAssignScopeError(t *testing.T) {
+// (Renamed from TestSyncPoolNewAssignScopeError, FE-52: the name now
+// matches the success assertion.)
+func TestSyncPoolNewAssignSupported(t *testing.T) {
 	cases := []string{
 		"var a any\n\ta, p.New = 1, func() any { return 2 }\n\t_ = a",
 	}

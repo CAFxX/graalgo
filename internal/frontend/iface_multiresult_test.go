@@ -19,11 +19,12 @@ package main
 //  3. TestD1IfaceMultiResultCallNode pins the wire shape of
 //     `n, err := r.Read(buf)` through an interface: a desugared block
 //     whose temp holds an ifacemethod node typed as the interface pair.
-//  4. TestD1IfaceMultiResultStillFailFast pins that a multi-result
-//     interface method with no table entry (3-result user method;
-//     tabled-name/untabled-types 2-result method exercising the
-//     positional types.Identical guard; io.ReaderFrom.ReadFrom) keeps
-//     the fail-fast.
+//  4. TestD1IfaceMultiResultNowDesugars pins that a user-defined
+//     multi-result interface method (3-result; tabled-name/untabled-types
+//     2-result method exercising the positional types.Identical guard)
+//     desugars in assignment position to the __p5mr_N temp block, with
+//     the ifacemethod node typed as the synthesized user pair (FE-8),
+//     and never emits the corrupt 2-name/1-pair-value vardecl.
 //  5. TestD1IfaceMultiResultUserInterface pins the structural match: a
 //     user-declared interface with the Read shape dispatches too.
 //  6. TestD1VarDeclMultiResultFailFast pins the named M8 limitation for
@@ -429,12 +430,25 @@ func main() {
 	}
 }
 
-func TestD1IfaceMultiResultStillFailFast(t *testing.T) {
+// TestD1IfaceMultiResultNowDesugars: a user-defined multi-result
+// interface method desugars in assignment position (FE-8). The
+// interface arm of classifyMultiResultCall falls back to
+// classifyUserIfaceMultiResultCall, so `n, err, _ := r.Read(nil)`
+// emits the desugared block
+//
+//	__p5mr_N := <ifacemethod Read>;
+//	n := __p5mr_N.f0; err := __p5mr_N.f1
+//
+// instead of a corrupt 2-name/1-pair-value vardecl (which the backend
+// rejected with a values/objs length mismatch).
+func TestD1IfaceMultiResultNowDesugars(t *testing.T) {
 	// P4 (WS D, general interface MR): user-defined multi-result
-	// interface methods now work via classifyUserIfaceMultiResultCall
+	// interface methods work via classifyUserIfaceMultiResultCall
 	// (synthesized pair types), not just the m8IfaceMultiResultMethods
 	// whitelist. These cases previously failed with the WS-D scope
-	// error; they now compile.
+	// error in expression position; in assignment position they
+	// missed classification entirely and emitted the corrupt
+	// 2-name/1-pair-value vardecl (FE-8).
 	//
 	// NOTE (P3, Gate-1 fix-iface-mr): io.WriterTo.WriteTo and
 	// io.ReaderFrom.ReadFrom were added to m8IfaceMultiResultMethods
@@ -445,6 +459,10 @@ func TestD1IfaceMultiResultStillFailFast(t *testing.T) {
 	cases := []struct {
 		name string
 		src  string
+		// want: the non-blank extraction targets in order (blank targets
+		// are skipped by the desugar, so the block has 1+len(want)
+		// statements: the __p5mr_N temp plus one extraction each).
+		want []string
 	}{
 		{
 			name: "3-result user method",
@@ -464,6 +482,7 @@ func main() {
 	println(n, err == nil)
 }
 `,
+			want: []string{"n", "err"},
 		},
 		{
 			name: "2-result user method, non-tabled result types",
@@ -483,13 +502,97 @@ func main() {
 	println(n, s)
 }
 `,
+			want: []string{"n", "s"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := ExportFile(writeIfaceProg(t, tc.src))
-			if err != nil {
-				t.Fatalf("expected success for %s, got error: %v", tc.name, err)
+			doc := d1ExportIfaceProg(t, tc.src)
+			// 1. The call dispatches through an ifacemethod node whose
+			// type is the synthesized user pair (__wsd_ifacepair_Read).
+			foundIface := false
+			for _, n := range findAllKind(doc, "ifacemethod") {
+				f, _ := n["fields"].(map[string]any)
+				if f["method"] != "Read" {
+					continue
+				}
+				typeID, _ := f["type"].(float64)
+				tes := typeEntries(t, doc)
+				te, ok := tes[int(typeID)].(map[string]any)
+				if !ok {
+					t.Fatalf("ifacemethod type id %v out of range", typeID)
+				}
+				detail, _ := te["detail"].(map[string]any)
+				name, _ := detail["name"].(string)
+				if !strings.Contains(name, "__wsd_ifacepair_Read") {
+					t.Fatalf("ifacemethod pair type = %q, want synthesized __wsd_ifacepair_Read", name)
+				}
+				foundIface = true
+			}
+			if !foundIface {
+				t.Fatal("no ifacemethod Read node with synthesized user pair type found")
+			}
+			// 2. Assignment position desugars to the __p5mr_N temp block:
+			// __p5mr_N := <ifacemethod>, then one extraction vardecl
+			// per non-blank target, in order.
+			foundBlock := false
+			for _, b := range findAllKind(doc, "block") {
+				stmts, _ := b["fields"].(map[string]any)["stmts"].([]any)
+				if len(stmts) != 1+len(tc.want) {
+					continue
+				}
+				s0, _ := stmts[0].(map[string]any)
+				if s0["kind"] != "vardecl" {
+					continue
+				}
+				s0f, _ := s0["fields"].(map[string]any)
+				s0names, _ := s0f["names"].([]any)
+				if len(s0names) != 1 {
+					continue
+				}
+				name0, _ := s0names[0].(string)
+				if !strings.HasPrefix(name0, "__p5mr_") {
+					continue
+				}
+				vals, _ := s0f["values"].([]any)
+				if len(vals) != 1 {
+					continue
+				}
+				v0, _ := vals[0].(map[string]any)
+				if v0["kind"] != "ifacemethod" {
+					continue
+				}
+				ok := true
+				for i, want := range tc.want {
+					si, _ := stmts[1+i].(map[string]any)
+					if si["kind"] != "vardecl" {
+						ok = false
+						break
+					}
+					names, _ := si["fields"].(map[string]any)["names"].([]any)
+					if len(names) != 1 || names[0] != want {
+						ok = false
+						break
+					}
+				}
+				if ok {
+					foundBlock = true
+				}
+			}
+			if !foundBlock {
+				t.Fatalf("no desugared block __p5mr_N := r.Read(nil); %v found", tc.want)
+			}
+			// 3. The corrupt FE-8 shape must be gone: no vardecl anywhere
+			// may pair multiple names with a single ifacemethod value.
+			for _, n := range findAllKind(doc, "vardecl") {
+				f, _ := n["fields"].(map[string]any)
+				names, _ := f["names"].([]any)
+				vals, _ := f["values"].([]any)
+				if len(names) > 1 && len(vals) == 1 {
+					if v0, ok := vals[0].(map[string]any); ok && v0["kind"] == "ifacemethod" {
+						t.Fatalf("corrupt FE-8 shape: vardecl with %d names and 1 ifacemethod value", len(names))
+					}
+				}
 			}
 		})
 	}

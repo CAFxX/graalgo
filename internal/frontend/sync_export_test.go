@@ -70,11 +70,12 @@ func main() {
 	}
 }
 
-// TestSyncScopeErrors: with real sync (503608ea), the extended sync
-// surface is in scope — TryLock/TryRLock/RLocker/WaitGroup.Go all export
+// TestSyncExtendedSurfaceSupported: with real sync (503608ea), the extended
+// sync surface is in scope — TryLock/TryRLock/RLocker/WaitGroup.Go all export
 // successfully. (Previously these were "not in M2 scope" errors under the
-// synthetic sync package; the real package supports them.)
-func TestSyncScopeErrors(t *testing.T) {
+// synthetic sync package; the real package supports them. Renamed from
+// TestSyncScopeErrors, FE-52: the name now matches the success assertion.)
+func TestSyncExtendedSurfaceSupported(t *testing.T) {
 	cases := []string{
 		"m.TryLock()",
 		"rw.TryLock()",

@@ -923,11 +923,13 @@ func main() {
 	}
 }
 
-// TestIfaceMultiResultScopeError (R2 F4): an interface method with two
-// results (e.g. Read(p []byte) (int, error)) is a named frontend/v1 scope
-// error — the dispatch mechanics for multi-result methods are untested,
-// so the shape must fail fast, never silently miscompile.
-func TestIfaceMultiResultScopeError(t *testing.T) {
+// TestIfaceMultiResultDispatchSupported (R2 F4): an interface method with
+// two results (e.g. Read(p []byte) (int, error)) dispatches through the
+// M8 interface machinery — the dispatch mechanics for multi-result
+// methods are tested, so the shape compiles instead of failing fast.
+// (Renamed from TestIfaceMultiResultScopeError, FE-52: the old scope
+// error is gone; the name now matches the success assertion.)
+func TestIfaceMultiResultDispatchSupported(t *testing.T) {
 	// P3-M9: this test formerly asserted the WS D fail-fast for
 	// multi-result interface calls. The M8 interface dispatch (structural
 	// match on method shape) now handles them — see
