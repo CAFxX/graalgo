@@ -189,9 +189,7 @@ func (failImporter) Import(path string) (*types.Package, error) {
 // "runtime" exposing runtime.Goexit (plus the P2-M4 GC-interop surface
 // and the stack-inspection family: Callers/CallersFrames/Caller/FuncForPC
 // plus Frames/Frame/Func),
-// the synthetic package "fmt" exposing the seven D4 symbols (Print,
-// Printf, Println, Sprint, Sprintf, Sprintln, Errorf) with exact variadic
-// signatures, the synthetic package "sync" exposing the four P3-M2b
+// the synthetic package "sync" exposing the four P3-M2b
 // primitives (Mutex, RWMutex, WaitGroup, Once) with exact gc method
 // signatures, the synthetic package "sync/atomic" exposing the P3-M4
 // typed wrappers (Int64, Uint64, Int32, Uint32, Bool, Uintptr) plus the
@@ -585,26 +583,25 @@ func syntheticRuntimePackage() *types.Package {
 
 type overlayImporter struct{}
 
-// dedicatedSyntheticStubs maps the three import paths with dedicated
+// dedicatedSyntheticStubs maps the two import paths with dedicated
 // synthetic constructors (not in syntheticSources) to their builders.
 // sync and sync/atomic now resolve from disk (real packages).
 var dedicatedSyntheticStubs = map[string]func() *types.Package{
 	"runtime": syntheticRuntimePackage,
-	"fmt":     syntheticFmtPackage,
 	"unsafe":  syntheticUnsafePackage,
 }
 
-// isDedicatedSyntheticStub reports whether path is one of the three
+// isDedicatedSyntheticStub reports whether path is one of the two
 // packages with dedicated synthetic constructors (signature-only stubs,
-// not in syntheticSources). Single predicate for the triad (P2-F4,
-// review-n1) — do not re-enumerate the three names at call sites.
+// not in syntheticSources). Single predicate for the pair (P2-F4,
+// review-n1) — do not re-enumerate the two names at call sites.
 func isDedicatedSyntheticStub(path string) bool {
 	_, ok := dedicatedSyntheticStubs[path]
 	return ok
 }
 
 func (overlayImporter) Import(path string) (*types.Package, error) {
-	// The 3 packages with dedicated synthetic constructors (not in
+	// The 2 packages with dedicated synthetic constructors (not in
 	// syntheticSources). sync and sync/atomic now resolve from disk (real packages).
 	if isDedicatedSyntheticStub(path) {
 		return dedicatedSyntheticStubs[path](), nil
@@ -628,132 +625,7 @@ func (overlayImporter) Import(path string) (*types.Package, error) {
 	return failImporter{}.Import(path)
 }
 
-// syntheticFmtPackage builds the D4 fmt stub package for the Phase-1 import
-// overlay (PLAN.md D4): exactly the seven pure functions with exact
-// variadic signatures. Calls to any other fmt.X are a scope error naming
-// Phase 3.
-func syntheticFmtPackage() *types.Package {
-	pkg := types.NewPackage("fmt", "fmt")
-	anyT := types.NewInterfaceType(nil, nil).Complete()
-	anySlice := types.NewSlice(anyT)
-	errorT := types.Universe.Lookup("error").Type()
-	intT := types.Typ[types.Int]
-	stringT := types.Typ[types.String]
-	param := func(name string, t types.Type) *types.Var {
-		return types.NewParam(token.NoPos, pkg, name, t)
-	}
-	insert := func(name string, params, results *types.Tuple) {
-		sig := types.NewSignatureType(nil, nil, nil, params, results, true)
-		pkg.Scope().Insert(types.NewFunc(token.NoPos, pkg, name, sig))
-	}
-	a := param("a", anySlice)
-	format := param("format", stringT)
-	n := param("n", intT)
-	errRes := param("err", errorT)
-	strRes := param("", stringT)
-	errResOnly := param("", errorT)
-	insert("Print", types.NewTuple(a), types.NewTuple(n, errRes))
-	insert("Printf", types.NewTuple(format, a), types.NewTuple(n, errRes))
-	insert("Println", types.NewTuple(a), types.NewTuple(n, errRes))
-	insert("Sprint", types.NewTuple(a), types.NewTuple(strRes))
-	insert("Sprintf", types.NewTuple(format, a), types.NewTuple(strRes))
-	insert("Sprintln", types.NewTuple(a), types.NewTuple(strRes))
-	insert("Errorf", types.NewTuple(format, a), types.NewTuple(errResOnly))
-	// Gate-1 #4: the F-family (Fprint/Fprintf/Fprintln, gc 1.27.1 exact
-	// signatures). The backend's FmtCallNode executes them (writes to the
-	// io.Writer first arg via GoMethodDispatch); the exporter treats them
-	// like the Print variants (statement position, results discarded).
-	// The w parameter uses the synthetic io package's Writer type (io
-	// does not import fmt — no init cycle).
-	ioWriter := getSyntheticPackage("io").pkg.Scope().Lookup("Writer").Type()
-	w := param("w", ioWriter)
-	insert("Fprint", types.NewTuple(w, a), types.NewTuple(n, errRes))
-	insert("Fprintf", types.NewTuple(w, format, a), types.NewTuple(n, errRes))
-	insert("Fprintln", types.NewTuple(w, a), types.NewTuple(n, errRes))
-	// P3-M9 (wave 3): the State/Scanner/Formatter interfaces (gc 1.27.1
-	// exact signatures). math/big's Int/Float Format/Scan methods are
-	// declared against them. Types only — the stub keeps just the seven
-	// pure functions above.
-	boolT := types.Typ[types.Bool]
-	runeT := types.Typ[types.Rune]
-	ifaceMethod := func(name string, params, results *types.Tuple) *types.Func {
-		return types.NewFunc(token.NoPos, pkg, name,
-			types.NewSignatureType(nil, nil, nil, params, results, false))
-	}
-	stateNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "State", nil), nil, nil)
-	// gc 1.27.1: State embeds io.Writer (Write method) alongside
-	// Width/Precision/Flag.
-	byteSliceT := types.NewSlice(types.Typ[types.Byte])
-	stateNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
-		ifaceMethod("Write", types.NewTuple(param("b", byteSliceT)),
-			types.NewTuple(param("n", intT), param("err", errorT))),
-		ifaceMethod("Width", types.NewTuple(),
-			types.NewTuple(param("wid", intT), param("ok", boolT))),
-		ifaceMethod("Precision", types.NewTuple(),
-			types.NewTuple(param("prec", intT), param("ok", boolT))),
-		ifaceMethod("Flag", types.NewTuple(param("c", intT)),
-			types.NewTuple(param("", boolT))),
-	}, nil).Complete())
-	pkg.Scope().Insert(stateNamed.Obj())
-	// NOTE: declared after ScanState (below) would be cleaner, but the
-	// Named is created first and the underlying is set after ScanState
-	// exists; see the deferred SetUnderlying below.
-	scannerNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Scanner", nil), nil, nil)
-	pkg.Scope().Insert(scannerNamed.Obj())
-	formatterNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Formatter", nil), nil, nil)
-	formatterNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
-		ifaceMethod("Format",
-			types.NewTuple(param("f", stateNamed), param("verb", runeT)),
-			types.NewTuple()),
-	}, nil).Complete())
-	pkg.Scope().Insert(formatterNamed.Obj())
-	// BUG-MODPROBE-010 verification: fmt.Stringer was missing from the
-	// synthetic fmt package (gc 1.27.1: type Stringer interface{ String() string }).
-	// The arrdispatch interface-boxing battery references it as a type.
-	stringerNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "Stringer", nil), nil, nil)
-	stringerNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
-		ifaceMethod("String", types.NewTuple(), types.NewTuple(strRes)),
-	}, nil).Complete())
-	pkg.Scope().Insert(stringerNamed.Obj())
-	// P3-M9 (wave 3): fmt.ScanState (gc 1.27.1 exact signature). math/big's
-	// Int/Rat/Float Scan methods and intconv's byteReader embed it.
-	scanStateNamed := types.NewNamed(types.NewTypeName(token.NoPos, pkg, "ScanState", nil), nil, nil)
-	runePred := types.NewSignatureType(nil, nil, nil,
-		types.NewTuple(param("r", runeT)),
-		types.NewTuple(param("", boolT)), false)
-	scanStateNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
-		ifaceMethod("ReadRune", types.NewTuple(),
-			types.NewTuple(param("r", runeT), param("size", intT), param("err", errorT))),
-		ifaceMethod("UnreadRune", types.NewTuple(),
-			types.NewTuple(param("", errorT))),
-		ifaceMethod("SkipSpace", types.NewTuple(), types.NewTuple()),
-		ifaceMethod("Token",
-			types.NewTuple(param("skipSpace", boolT), param("f", runePred)),
-			types.NewTuple(param("token", byteSliceT), param("err", errorT))),
-		ifaceMethod("Width", types.NewTuple(),
-			types.NewTuple(param("wid", intT), param("ok", boolT))),
-		ifaceMethod("Read", types.NewTuple(param("buf", byteSliceT)),
-			types.NewTuple(param("n", intT), param("err", errorT))),
-	}, nil).Complete())
-	pkg.Scope().Insert(scanStateNamed.Obj())
-	// Scanner's method takes a ScanState (not State) — set now that
-	// scanStateNamed exists.
-	scannerNamed.SetUnderlying(types.NewInterfaceType([]*types.Func{
-		ifaceMethod("Scan",
-			types.NewTuple(param("state", scanStateNamed), param("verb", runeT)),
-			types.NewTuple(param("", errorT))),
-	}, nil).Complete())
-	pkg.MarkComplete()
-	return pkg
-}
 
-// fmtOverlayFuncs are the seven D4 symbols (PLAN.md D4) plus the F-family
-// (Gate-1 #4: Fprint/Fprintf/Fprintln, executed by the backend's FmtCallNode).
-var fmtOverlayFuncs = map[string]bool{
-	"Print": true, "Printf": true, "Println": true,
-	"Sprint": true, "Sprintf": true, "Sprintln": true, "Errorf": true,
-	"Fprint": true, "Fprintf": true, "Fprintln": true,
-}
 
 // runtimeStackMethod reports whether a MethodVal selection is one of the
 // synthetic runtime stack-inspection methods ((*Frames).Next,
@@ -1046,8 +918,6 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	conf := types.Config{Importer: failImporter{}}
 	// M5 (WS F): with the "runtime" import present, resolve it via the
 	// synthetic overlay package (runtime.Goexit only).
-	// M6 (WS H): with the "fmt" import present, resolve it via the
-	// synthetic overlay package (D4 fmt stub).
 	// P3-M2b (WS D, ADR-0002): with the "sync" import present, resolve it
 	// via the synthetic overlay package (four primitives).
 	// 503608ea: RETIRED — sync and sync/atomic now resolve from disk
@@ -8349,12 +8219,6 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 	// M6 (WS H): method calls — possibly wrapped in an index expression
 	// for explicit type arguments (s.M[T](...)).
 	if sel, ok := unwrapSelector(c.Fun); ok {
-		// M6 (WS H): fmt.X via the D4 import overlay.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "fmt" {
-			if _, ok := e.info.Uses[pkgIdent].(*types.PkgName); ok {
-				return e.exportFmtCall(c, sel)
-			}
-		}
 		// P3-M4 (WS C, ADR-0004 D2): package-level sync/atomic functions
 		// are defined with exact gc signatures but not implemented — they
 		// need &x (WS D). Fail fast with the named scope error, never a
@@ -8690,7 +8554,9 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 			// resolveMethodCall's WS H ifacemethod fallback (now
 			// multi-result capable via the pair plan).
 			if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) {
-				if _, isTP := selection.Recv().(*types.TypeParam); !isTP {
+				// Generic methods (template or instantiation) are exempt,
+				// like generic functions (see exportFuncCall).
+				if _, isTP := selection.Recv().(*types.TypeParam); !isTP && !isGenericFunc(f) && !isGenericFunc(f.Origin()) {
 					return nil, multiResultSyntheticError(f)
 				}
 			}
@@ -9211,38 +9077,6 @@ func (e *exporter) exportAtomicStorePointerStmt(s *ast.ExprStmt, c *ast.CallExpr
 	}), true, nil
 }
 
-// exportFmtCall exports a call to one of the seven D4 fmt stub functions
-// (M6, WS H — the Phase-1 fmt import overlay, PLAN.md D4). Any other fmt.X
-// is a scope error naming Phase 3.
-func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node, error) {
-	name := sel.Sel.Name
-	if !fmtOverlayFuncs[name] {
-		return nil, scopeErrorf("fmt.%s is not supported in frontend/v1 scope (Phase 3)", name)
-	}
-	if obj, ok := e.info.Uses[sel.Sel].(*types.Func); !ok || obj.Pkg() == nil || obj.Pkg().Name() != "fmt" {
-		return nil, scopeErrorf("fmt.%s did not resolve to the overlay package", name)
-	}
-	args, err := e.exportCallArgs(c)
-	if err != nil {
-		return nil, err
-	}
-	// The Print variants return (int, error); Phase 1 supports them in
-	// statement position only (results discarded) — the wire type is null.
-	// The F-family (Fprint/Fprintf/Fprintln) is the same: the backend's
-	// FmtCallNode writes to the writer and discards (n, err).
-	// The Sprint variants and Errorf return a single value.
-	var typ any
-	switch name {
-	case "Print", "Printf", "Println", "Fprint", "Fprintf", "Fprintln":
-		typ = nil
-	default:
-		typ, err = e.callType(c)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return e.node("fmtcall", c, map[string]any{"func": name, "args": args, "type": typ}), nil
-}
 
 // exportFuncCall exports a call to a named top-level function (M6, WS H).
 // Generic functions resolve to their monomorphized instantiation via
@@ -9312,7 +9146,16 @@ func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *type
 	// P3-M5 (WS E, ADR-0005): multi-result synthetic functions fail fast
 	// (WS D; F4 precedent) — e.g. a synthetic-internal call to
 	// time.ParseDuration.
-	if e.isMultiResultSyntheticFailFast(fn) {
+	// P4 (generic MR, real-fmt2): generic templates are exempt. The
+	// template itself is never in userMRFuncs (registerUserMRFunc skips
+	// isTemplate), but each instantiation gets its own pair type via
+	// instMRInfos (see exportInstantiation). Fail-fasting here would
+	// incorrectly reject generic multi-result calls like
+	// internal/bytealg.hashStr[string] from real disk packages.
+	// Note: isGenericFunc only detects templates (type params in
+	// signature). For instantiations (e.g. hashStr[string]), check
+	// the Origin which returns the generic template.
+	if e.isMultiResultSyntheticFailFast(fn) && !isGenericFunc(fn) && !isGenericFunc(fn.Origin()) {
 		return nil, multiResultSyntheticError(fn)
 	}
 	fi, ok := e.funcByObj[fn]
@@ -10634,7 +10477,7 @@ func (e *exporter) exportIfaceMethodCall(c *ast.CallExpr, sel *ast.SelectorExpr,
 			pairPlan = e.classifyUserIfaceMultiResultCall(selection)
 		}
 		if pairPlan == nil {
-			if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) {
+			if f, ok := selection.Obj().(*types.Func); ok && e.isMultiResultSyntheticFailFast(f) && !isGenericFunc(f) && !isGenericFunc(f.Origin()) {
 				return nil, multiResultSyntheticError(f)
 			}
 			return nil, scopeErrorf("interface method %s has %d results; at most one result is supported in frontend/v1 scope (WS D)",
@@ -10905,7 +10748,9 @@ func (e *exporter) callType(c *ast.CallExpr) (any, error) {
 				// P3-M9: synthetic multi-result methods (bytes.Buffer.Read,
 				// etc.) fail fast with the named milestone scope error, not
 				// the generic WS D message — the test pins the attribution.
-				if e.isMultiResultSyntheticFailFast(fn) {
+				// Generic functions (template or instantiation) are exempt
+				// (see exportFuncCall).
+				if e.isMultiResultSyntheticFailFast(fn) && !isGenericFunc(fn) && !isGenericFunc(fn.Origin()) {
 					return nil, multiResultSyntheticError(fn)
 				}
 			}
