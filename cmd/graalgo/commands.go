@@ -104,9 +104,14 @@ func cmdRun(root string, args []string) int {
 		fmt.Fprintf(os.Stderr, "graalgo run: no non-test Go files in %s\n", target)
 		return 1
 	}
-	// The backend compiles all package files together as one unit.
+	// The backend compiles all package files together as one unit. A
+	// failed check is a build failure: map it onto `go run`'s exit
+	// contract (exit 1) via runCheckExitCode — the raw backend code
+	// (2 = build failure) must not leak to the caller, or this branch
+	// would disagree with both the file branch (graalgoRunProgram
+	// exits 1) and `go run`. See the wart comment in main.go.
 	if code := graalgoRun(root, append([]string{"--check"}, pkgFiles...)); code != 0 {
-		return code
+		return runCheckExitCode(code)
 	}
 	runArgs := append(append([]string{}, pkgFiles...), "--")
 	runArgs = append(runArgs, progArgs...)

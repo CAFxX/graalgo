@@ -224,6 +224,11 @@ func graalgoRun(root string, args []string) int {
 // backend failure also gets the "exit status N" treatment; `go run`
 // prints no such line for its own build failures. Disambiguating needs
 // a backend exit-code convention change.
+//
+// The package branch of `cmdRun` (commands.go) compiles via a separate
+// `--check` step and maps its failure through runCheckExitCode below: a
+// failed check exits 1 with no "exit status N" trailer, because no
+// program ran — the honest `go run` shape for build failures.
 func graalgoRunProgram(root string, args []string) int {
 	code := graalgoRun(root, args)
 	if code != 0 {
@@ -231,6 +236,20 @@ func graalgoRunProgram(root string, args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// runCheckExitCode maps a failed backend `--check` (compile-only) run
+// onto `go run`'s exit contract: any build-phase failure exits 1.
+// Backend codes (cf. P3SyncMain): 1 = input error, 2 = build failure.
+// The raw codes must not leak to the caller — `go run` exits 1 for
+// build failures, and unlike graalgoRunProgram's wart above, no program
+// ran here so no "exit status N" trailer is printed; the backend already
+// emitted the diagnostics to stderr.
+func runCheckExitCode(code int) int {
+	if code == 0 {
+		return 0
+	}
+	return 1
 }
 
 // resolveFiles turns package/file arguments into a list of .go files.
