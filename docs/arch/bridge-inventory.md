@@ -43,33 +43,6 @@ deliverable until the design lands.
 
 ## Active bridges
 
-### B-1. `FmtCallNode` + `graalgo.runtime.Fmt`/`FmtScan` (Java reimplementations of `fmt`)
-
-- **What:** [FmtCallNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/FmtCallNode.java)
-  is a custom wire node matching ~25 hardcoded `fmt.*` names
-  (`Print`/`Printf`/`Sprint`/`Errorf`/Append/Scan families/`FormatString`);
-  it delegates to
-  [graalgo/runtime/](../../internal/backend/runtime/src/main/java/graalgo/runtime/)
-  `Fmt`/`FmtScan` — Java reimplementations of stdlib `fmt` formatting and
-  scanning logic.
-  - **Frontend half (P1-N2, review-n1):** in
-    [internal/frontend/export.go](../../internal/frontend/export.go),
-    `exportCall` dispatches on the *identifier spelling*
-    (`pkgIdent.Name == "fmt"`) to `exportFmtCall`, which emits the
-    `"fmtcall"` wire node for the ten D4 overlay functions
-    (`fmtOverlayFuncs`) — instead of routing through the general
-    package-level call path. The spelling check (not the resolved package
-    path) is the name-keyed special case.
-- **Why:** the real `fmt` sources did not compile under graalgo, so
-  formatting was reimplemented in Java behind a name-keyed node.
-- **Root-cause fix:** make the real `fmt` package compile (fix the
-  compiler/runtime properly), then delete the node and the Java
-  reimplementations. In flight: worktrees `real-fmt2` and `real-fmt-rebase`
-  ("Retire synthetic fmt package — real fmt now compiles") — `real-fmt2`
-  already removes the frontend dispatch (`exportFmtCall` deleted there);
-  retire this entry when that lands on master.
-- **Phase:** 1.
-
 ### B-2. `NodeFactory.syncPrimitiveName` (name-keyed sync lowering)
 
 - **What:**
@@ -258,6 +231,15 @@ extend these entries or add new ones without a fresh independent review.
 Entries move here when the bridge is gone (same change that removes the
 code, per [AGENTS.md](../../AGENTS.md) §7).
 
+- **2026-10-16 — B-1 `FmtCallNode` + `graalgo.runtime.Fmt`/`FmtScan`
+  (Java reimplementations of `fmt`).** The real `fmt` package now compiles
+  from GOROOT via the general disk importer (real-fmt2 lane, master
+  `c2c0718c`): synthetic `fmt` registration removed from
+  `dedicatedSyntheticStubs`, `exportFmtCall`/`fmtOverlayFuncs` deleted from
+  the frontend, and 5,091 lines of Java (`Fmt.java`, `FmtScan.java`,
+  `FmtCallNode.java`, `FmtHandleMethods.java`, `FmtMethodDispatch.java` plus
+  tests) deleted. `fmt.Append`/`Appendf`/`Appendln` verified working from
+  the real package.
 - **2026-10-15 — stale `# BRIDGE` self-labels in module Makefiles.** The
   comments in
   [internal/backend/interop/Makefile](../../internal/backend/interop/Makefile)
