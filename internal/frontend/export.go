@@ -1747,8 +1747,11 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	if err := e.importSyntheticPackage(getSyntheticPackage("internal/graalgo/fmtstate")); err != nil {
 		return "", err
 	}
-	// P3-M7 (wave 1): synthetic errors/sort are self-contained (no
-	// synthetic->synthetic imports), so no ordering constraints.
+	// P3-M7 (wave 1): synthetic sort is self-contained (no
+	// synthetic->synthetic imports). Synthetic errors imports reflect
+	// (PKG-022: real errors.As is implemented over the synthetic
+	// reflect package); importSyntheticPackage recurses into synthetic
+	// dependencies in post-order, so no manual ordering is needed here.
 	if needErrors {
 		if err := e.importSyntheticPackage(getSyntheticPackage("errors")); err != nil {
 			return "", err
@@ -2092,8 +2095,12 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		}
 	}
 	// P3-M8 (wave 2): synthetic reflect (synth_reflect.go). The source
-	// imports errors, iter, strconv (unsafe is a builtin surface, not a
-	// synthetic package); iter is self-contained. Dependencies are
+	// imports iter and strconv (unsafe is a builtin surface, not a
+	// synthetic package); iter is self-contained. The reflect->errors
+	// edge was cut by PKG-022 (fieldByIndexError is local); with the
+	// strconv->errors edge also cut (strconvError in synth_strconv.go),
+	// the errors->reflect->strconv->errors cycle is gone and the 130-
+	// source synthetic import graph is acyclic. Dependencies are
 	// imported before reflect itself (package-level initializers may
 	// call synthetic functions).
 	if needReflect {

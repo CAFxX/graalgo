@@ -14,7 +14,9 @@
 // ~/workspace/graalgo-stdlib/go1.27.1/strconv/*.go and
 // ~/workspace/graalgo-stdlib/go1.27.1/internal/strconv/*.go).
 // Implementations are ports of gc's algorithms to self-contained pure Go
-// with one import: "errors" (already a synthetic package). In particular:
+// with no imports (PKG-022 cut the strconv->errors edge via the local
+// strconvError type below, breaking the errors->reflect->strconv->errors
+// import cycle). In particular:
 //   - unsafe.Pointer bit casts (internal/strconv/deps.go) are replaced by
 //     exact float64 arithmetic (every multiplication is by a power of two,
 //     so float64frombits/float32frombits/float64bits/float32bits are
@@ -55,7 +57,7 @@ package main
 
 // syntheticStrconvSource is the P3-M7 synthetic `strconv` package.
 // Exact gc 1.27.1 signatures for the full public API; pure-Go
-// implementations with one import ("errors"); fail-fast bodies for the
+// implementations with no imports (see above); fail-fast bodies for the
 // multi-result declarations (see above).
 const syntheticStrconvSource = `package strconv
 

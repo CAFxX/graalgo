@@ -26,8 +26,8 @@ import java.util.List;
  * {@code typ == 0}.
  *
  * <p>Flag bits mirror gc exactly: {@code flagStickyRO=1<<5},
- * {@code flagEmbedRO=1<<6}, {@code flagAddr=1<<8},
- * {@code flagRO=flagStickyRO|flagEmbedRO}.
+ * {@code flagEmbedRO=1<<6}, {@code flagIndir=1<<7},
+ * {@code flagAddr=1<<8}, {@code flagRO=flagStickyRO|flagEmbedRO}.
  */
 public final class ReflectValues {
     private ReflectValues() {}
@@ -35,6 +35,11 @@ public final class ReflectValues {
     // Flag bits (gc-exact).
     public static final long FLAG_STICKY_RO = 1L << 5;
     public static final long FLAG_EMBED_RO = 1L << 6;
+    // gc's flagIndir: set by Elem on the result (both interface-unwrap and
+    // pointer-deref branches). Invisible to CanAddr/CanSet/CanInterface
+    // (they only read flagAddr/flagRO); consumed by the Cell-handle
+    // provenance rule in ReflectOpNode.reflectElem.
+    public static final long FLAG_INDIR = 1L << 7;
     public static final long FLAG_ADDR = 1L << 8;
     public static final long FLAG_RO = FLAG_STICKY_RO | FLAG_EMBED_RO;
 
