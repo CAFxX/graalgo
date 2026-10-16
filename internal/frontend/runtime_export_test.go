@@ -308,9 +308,16 @@ func main() {
 // backend intrinsic yet fail LOUD at export ("call to unknown function"),
 // never with the view-gap "undefined". Red-green per function: pre-fix the
 // error names "undefined", post-fix it names the honest export error.
+//
+// NOTE (PKG-040, 2026-10-16): runtime.Gosched used to be in this list — it
+// was declared surface with no backend. PKG-040 implemented it for real
+// (frontend lowers to the "runtimegosched" statement wire node, backend
+// GoschedNode yields via SchedulerCore.yieldCurrent), so it now exports
+// successfully and moved out of the honest-error list into the assertion
+// below. This is the expected 038→040 transition, not a weakening: the
+// list still covers every remaining unimplemented declared function.
 func TestRuntimeViewFuncsHonest(t *testing.T) {
 	for _, call := range []string{
-		`runtime.Gosched()`,
 		`runtime.Breakpoint()`,
 		`_ = runtime.NumCgoCall()`,
 	} {
@@ -326,6 +333,21 @@ func TestRuntimeViewFuncsHonest(t *testing.T) {
 		if !strings.Contains(err.Error(), "unknown function") {
 			t.Errorf("%s: error %q does not contain %q", call, err, "unknown function")
 		}
+	}
+
+	// PKG-040: runtime.Gosched() is now a known, implemented function —
+	// the call exports (to the real "runtimegosched" wire node), never
+	// with "undefined" and never with the honest "unknown function" error.
+	src := "package main\n\nimport \"runtime\"\n\nfunc main() {\n\truntime.Gosched()\n}\n"
+	out, err := ExportFile(writeSyncProg(t, src))
+	if err != nil {
+		t.Fatalf("runtime.Gosched: implemented since PKG-040, export failed: %v", err)
+	}
+	if strings.Contains(out, "undefined") || strings.Contains(out, "unknown function") {
+		t.Errorf("runtime.Gosched: export output must not contain view-gap or honest-error markers")
+	}
+	if !strings.Contains(out, `"kind": "runtimegosched"`) {
+		t.Errorf("runtime.Gosched: export did not lower to the real runtimegosched wire node")
 	}
 }
 

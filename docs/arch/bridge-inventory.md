@@ -220,6 +220,30 @@ extend these entries or add new ones without a fresh independent review.
   no name-keyed special case — the same mechanism as the grandfathered
   `runtimenumcpu`.
 
+- **2026-10-16 — `runtimegosched` wire node + `runtime.Gosched` overlay
+  declaration (PKG-040, lane commit `19786941` + coordinator adjudication).** The gate
+  flags the additive `\"runtimegosched\"` wire node in
+  [internal/frontend/export.go](../../internal/frontend/export.go); the
+  `addFunc(\"Gosched\", ...)` overlay declaration was provided by PKG-038
+  (master `bfc4b8e6`) and the lane's duplicate was dropped at integration.
+  Independent review: CLEAN, no veto — adjudicated a mechanical false
+  positive. This is a real implementation following the
+  `runtimenumgoroutine` precedent: the frontend lowers calls to the
+  additive STATEMENT wire node (Gosched returns no value, so bare
+  statements return it unwrapped per the `chanclose` precedent, and
+  defer/go positions desugar through a zero-arg funclit per the
+  `exportCloseDeferGo` precedent); the backend
+  [GoschedNode.java](../../internal/backend/interop/src/main/java/graalgo/p3builtin/nodes/GoschedNode.java)
+  implements it on the scheduler's voluntary-yield primitive
+  ([SchedulerCore.yieldCurrent()](../../internal/backend/runtime/src/main/java/graalgo/sched/SchedulerCore.java)),
+  registered via the public `registerStmtKind` hook in
+  `P3KindRegistrations`/`P3SyncMain` (no Phase-1 factory change),
+  verified by `SchedulerCoreTest.testGoschedYields`,
+  `TestRuntimeGoschedExport`, and `TestRuntimeGoschedDeferGoExport`. Not a
+  bridge: no synthetic stdlib logic, no name-keyed special case — the
+  call interception reuses the existing general runtime-overlay guard
+  block, exactly like `NumGoroutine`.
+
 ## Retired
 
 Entries move here when the bridge is gone (same change that removes the
