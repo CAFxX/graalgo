@@ -598,3 +598,201 @@ func main() {
 		t.Fatalf("want 2 ifacemethod Read nodes (bare statements), got %d", reads)
 	}
 }
+
+func TestD1IfaceMultiResultAssignDesugar(t *testing.T) {
+	// P4 (WS D, general interface MR): a multi-result interface method
+	// NOT in m8IfaceMultiResultMethods (io.RuneReader.ReadRune, 3 results)
+	// must desugar in N-target `=` and `:=` assignment positions exactly
+	// like the whitelisted cases: a block whose first statement declares
+	// the __p5mr_N temp holding the ifacemethod pair, followed by one
+	// field extraction per target.
+	//
+	// Red-green: before the classifyMultiResultCall fix, the exporter
+	// emitted a raw assign node (3 lhs, 1 rhs) here, which the v1 backend
+	// rejects with "assign.fields: lhs/rhs length mismatch". That single
+	// shape — r, size, err = s.rs.ReadRune() in fmt/scan.go — broke the
+	// build of every program importing fmt (38/38 snapshot-check
+	// failures on the red master).
+	const src = `package main
+
+import (
+	"io"
+	"strings"
+)
+
+func main() {
+	var r io.RuneReader = strings.NewReader("hi")
+	var ch rune
+	var size int
+	var err error
+	ch, size, err = r.ReadRune()
+	println(string(ch), size, err == nil)
+	ch2, size2, err2 := r.ReadRune()
+	println(string(ch2), size2, err2 == nil)
+}
+`
+	doc := d1ExportIfaceProg(t, src)
+	var mainFn map[string]any
+	for _, f := range doc["funcs"].([]any) {
+		fm, _ := f.(map[string]any)
+		fl, _ := fm["fields"].(map[string]any)
+		if fl["name"] == "main" {
+			mainFn = fm
+		}
+	}
+	if mainFn == nil {
+		t.Fatal("no main func in wire doc")
+	}
+	// The ReadRune ifacemethod node must be pair-typed: the synthesized
+	// __wsd_ifacepair_ReadRune struct with f0/f1/f2 matching the
+	// (rune, int, error) results positionally.
+	var pairNode map[string]any
+	for _, n := range findAllKind(mainFn, "ifacemethod") {
+		if n["fields"].(map[string]any)["method"] == "ReadRune" {
+			pairNode = n
+		}
+	}
+	if pairNode == nil {
+		t.Fatal("no ifacemethod node for ReadRune in main")
+	}
+	typeID, _ := pairNode["fields"].(map[string]any)["type"].(float64)
+	tes := typeEntries(t, doc)
+	te, ok := tes[int(typeID)].(map[string]any)
+	if !ok {
+		t.Fatalf("ifacemethod type id %v out of range", typeID)
+	}
+	detail, _ := te["detail"].(map[string]any)
+	under, _ := tes[int(detail["underlying"].(float64))].(map[string]any)
+	udetail, _ := under["detail"].(map[string]any)
+	fields, _ := udetail["fields"].([]any)
+	if len(fields) != 3 {
+		t.Fatalf("pair struct has %d fields, want 3 (f0/f1/f2)", len(fields))
+	}
+	for i, want := range []string{"f0", "f1", "f2"} {
+		fm, _ := fields[i].(map[string]any)
+		if fm["name"] != want {
+			t.Fatalf("pair field %d = %q, want %q", i, fm["name"], want)
+		}
+	}
+	// The two desugared blocks: __p5mr_N := <ifacemethod>, then one
+	// extraction per target. The `=` form assigns to the declared idents;
+	// the `:=` form declares them.
+	type blockWant struct {
+		targets []string
+		decl    bool // true for := (vardecl extractions), false for = (assign)
+	}
+	wants := []blockWant{
+		{[]string{"ch", "size", "err"}, false},
+		{[]string{"ch2", "size2", "err2"}, true},
+	}
+	matched := make([]bool, len(wants))
+	for _, b := range findAllKind(mainFn, "block") {
+		stmts, _ := b["fields"].(map[string]any)["stmts"].([]any)
+		if len(stmts) != 4 {
+			continue
+		}
+		s0, _ := stmts[0].(map[string]any)
+		if s0["kind"] != "vardecl" {
+			continue
+		}
+		names0, _ := s0["fields"].(map[string]any)["names"].([]any)
+		if len(names0) != 1 {
+			continue
+		}
+		n0, _ := names0[0].(string)
+		if len(n0) < 7 || n0[:7] != "__p5mr_" {
+			continue
+		}
+		vals, _ := s0["fields"].(map[string]any)["values"].([]any)
+		if len(vals) != 1 {
+			continue
+		}
+		v0, _ := vals[0].(map[string]any)
+		if v0["kind"] != "ifacemethod" ||
+			v0["fields"].(map[string]any)["method"] != "ReadRune" {
+			continue
+		}
+		// Extraction statements: selectors off the temp, in order.
+		// All three must share one form: assign (for `=`) or vardecl
+		// (for `:=`).
+		var targets []string
+		form := ""
+		formOK := true
+		for _, s := range stmts[1:] {
+			sm, _ := s.(map[string]any)
+			kind, _ := sm["kind"].(string)
+			if form == "" {
+				form = kind
+			} else if form != kind {
+				formOK = false
+				break
+			}
+			switch kind {
+			case "vardecl":
+				ns, _ := sm["fields"].(map[string]any)["names"].([]any)
+				if len(ns) != 1 {
+					formOK = false
+					break
+				}
+				tn, _ := ns[0].(string)
+				targets = append(targets, tn)
+			case "assign":
+				ls, _ := sm["fields"].(map[string]any)["lhs"].([]any)
+				rs, _ := sm["fields"].(map[string]any)["rhs"].([]any)
+				if len(ls) != 1 || len(rs) != 1 {
+					formOK = false
+					break
+				}
+				lm, _ := ls[0].(map[string]any)
+				if lm["kind"] != "ident" {
+					formOK = false
+					break
+				}
+				tn, _ := lm["fields"].(map[string]any)["name"].(string)
+				targets = append(targets, tn)
+			default:
+				formOK = false
+			}
+		}
+		if !formOK {
+			continue
+		}
+		isDecl := form == "vardecl"
+		for i, w := range wants {
+			if matched[i] {
+				continue
+			}
+			if len(targets) != len(w.targets) || isDecl != w.decl {
+				continue
+			}
+			eq := true
+			for j := range targets {
+				if targets[j] != w.targets[j] {
+					eq = false
+				}
+			}
+			if !eq {
+				continue
+			}
+			matched[i] = true
+		}
+	}
+	for i, w := range wants {
+		if !matched[i] {
+			t.Fatalf("no desugared block for targets %v (decl=%v)", w.targets, w.decl)
+		}
+	}
+	// The raw shape that broke the backend — an assign with 3 lhs and a
+	// single ifacemethod rhs — must not appear anywhere in main.
+	for _, n := range findAllKind(mainFn, "assign") {
+		f := n["fields"].(map[string]any)
+		lhs, _ := f["lhs"].([]any)
+		rhs, _ := f["rhs"].([]any)
+		if len(lhs) == 3 && len(rhs) == 1 {
+			rm, _ := rhs[0].(map[string]any)
+			if rm["kind"] == "ifacemethod" {
+				t.Fatal("raw 3-into-1 ifacemethod assign survived desugaring")
+			}
+		}
+	}
+}

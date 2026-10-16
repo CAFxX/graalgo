@@ -1855,6 +1855,17 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 				if plan := e.classifyDiskIfaceMultiResultCall(selection); plan != nil {
 					return plan
 				}
+				// P4 (WS D, general interface MR): user-defined (or
+				// otherwise unlisted) interfaces with multi-result
+				// methods — mirrors the exportIfaceMethodCall pairPlan
+				// path (classifyUserIfaceMultiResultCall). Without this,
+				// an N-target assignment from such a call (e.g.
+				// r, size, err = s.rs.ReadRune()) falls through to a raw
+				// assign node the v1 backend rejects with
+				// "assign.fields: lhs/rhs length mismatch".
+				if plan := e.classifyUserIfaceMultiResultCall(selection); plan != nil {
+					return plan
+				}
 			}
 			// P3-M9 (WS H + WS D, graalgo-wsh-wsd-interaction):
 			// multi-result calls on type parameters (e.g.,
