@@ -168,6 +168,16 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Uintptr.Swap" -> Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
+            // PKG-053: integer binary/comparison nodes always read
+            // operands via executeLong (BinaryOpNode), so the 32-bit
+            // ops serve it too by delegating to executeInt.
+            // Sign-extension is safe: callers mask to the operand
+            // width (extend) or compare unsigned on the preserved low
+            // 32 bits (Long.compareUnsigned).
+            case "atomic.Int32.Load", "atomic.Int32.Add", "atomic.Int32.Swap",
+                 "atomic.Int32.And", "atomic.Int32.Or",
+                 "atomic.Uint32.Load", "atomic.Uint32.Add", "atomic.Uint32.Swap",
+                 "atomic.Uint32.And", "atomic.Uint32.Or" -> executeInt(frame);
             default -> throw new FrontendException(
                     "atomic op " + atomicType + "." + op + " is not a long op");
         };
