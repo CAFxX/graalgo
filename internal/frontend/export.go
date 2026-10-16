@@ -6781,6 +6781,14 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 	}
 }
 
+// runtimePkgPath is the import path of Go's runtime package. The runtime
+// package is language-special (like unsafe): the backend provides intrinsics
+// for a fixed set of its functions (Gosched, Goexit, SetFinalizer, KeepAlive,
+// GC, NumCPU), and the frontend routes calls to those intrinsics through
+// structural (go/types-resolved) checks, never identifier spelling. This
+// constant centralizes the package reference for those checks.
+const runtimePkgPath = "runtime"
+
 // isRuntimeImport reports whether id resolves (via go/types) to an import
 // of the runtime package. This is the structural, not spelling, gate for
 // runtime intrinsic interceptions (R2-P2-9 generality, the Goexit
@@ -6788,7 +6796,7 @@ func (e *exporter) exportStmtInner(s ast.Stmt) (*Node, error) {
 // named runtime does not.
 func isRuntimeImport(info *types.Info, id *ast.Ident) bool {
 	pkgName, ok := info.Uses[id].(*types.PkgName)
-	return ok && pkgName.Imported().Path() == "runtime"
+	return ok && pkgName.Imported().Path() == runtimePkgPath
 }
 
 // isGoschedCall reports whether x is a call to runtime.Gosched (resolved
