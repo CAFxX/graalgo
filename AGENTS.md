@@ -14,7 +14,14 @@ Where things live: [docs/REPO_STRUCTURE.md](docs/REPO_STRUCTURE.md).
   all` regenerates any tracked file differently from what's committed, the
   build fails. **Push only after `make all` is green locally.**
 - `make check` — placeholder / debug-leftover / netpoller / exclusion-list
-  grep gates + gofrontend gofmt/vet/tests.
+  grep gates + the three backend module `check` gates. (The truffle
+  module's `check` ends with the gofrontend `internal/frontend/build.sh
+  check` gate — gofmt/vet/tests + vendoring diff + wire validator — but
+  it is UNREACHABLE today: `make check` dies first at the truffle
+  debug-leftover grep gate (V2DecodeDemo.java printlns), and the
+  gofrontend gate itself is red (10 `go test` failures + 30 gofmt-dirty
+  files as of 2026-10-16). Run `./build.sh check` manually inside
+  `internal/frontend/`.)
 - `make test` — the full differential suite (30+ minutes). Not per-push;
   for local verification and nightly runs. Invoke explicitly.
 - `make snapshot-check` — re-runs the differential corpus under graalgo and

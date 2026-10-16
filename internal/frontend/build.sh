@@ -36,8 +36,13 @@ case "${1:-build}" in
   vet)   exec go vet $OV . ;;
   test)  exec go test $OV . ;;
   check)
-    echo "== gofmt (excluding vendored tree) ==" >&2
-    if gofmt -l main.go export.go export_test.go | grep .; then
+    echo "== gofmt (whole tree, excluding vendored ./go) ==" >&2
+    command -v gofmt >/dev/null || { echo "build.sh check: gofmt not on PATH" >&2; exit 1; }
+    # -prune keeps gofmt out of ./go entirely: the vendored tree is
+    # pristine upstream (see VENDORING.md) and even contains a
+    # deliberately-invalid testdata .go file that makes gofmt exit 2.
+    # xargs -r: never run gofmt with zero args (it would read stdin).
+    if find . -path ./go -prune -o -name '*.go' -print0 | xargs -0 -r gofmt -l | grep .; then
       echo "gofmt: dirty files above" >&2; exit 1
     fi
     echo "== go vet ==" >&2

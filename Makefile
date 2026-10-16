@@ -30,7 +30,21 @@
 #               Runs before `check` (independent gate; stays live even when
 #               an unrelated grep gate is red).
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
-#               grep gates + the gofrontend gofmt/vet/tests gate
+#               grep gates + the three backend module `check` gates.
+#               (The truffle module's `check` ends with the gofrontend
+#               gate — [internal/frontend/build.sh](internal/frontend/build.sh)
+#               `check`: gofmt over the whole tree minus the vendored
+#               ./go, go vet, go test, the vendoring diff gate, the
+#               frontend/v1 wire validator — but it is currently
+#               UNREACHABLE: `make check` dies earlier at the truffle
+#               debug-leftover grep gate (V2DecodeDemo.java printlns; red
+#               on master as of 2026-10-16), and the gofrontend gate
+#               itself is red three ways (10 `go test` failures, 30
+#               gofmt-dirty files; same date — it never ran green in CI).
+#               Unblock order: clear the debug-leftover gate, reformat
+#               the tree, fix the 10 tests; the gofrontend gate then runs
+#               inside `make check` for the first time. Until then run
+#               `./build.sh check` manually inside internal/frontend/.)
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
 #     test-regression
 #               regression tests for fixed PKGs
