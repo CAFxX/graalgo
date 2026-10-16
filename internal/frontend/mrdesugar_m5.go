@@ -65,6 +65,21 @@ import (
 // (user code can never name them — go/types rejects unexported
 // cross-package references — so there is no collision).
 
+// syntheticPkgForPlan resolves path to its *syntheticPackage for MR-plan
+// type lookups, or nil when path is no longer synthetic (retired to the
+// disk importer). getSyntheticPackage panics on a retired path
+// ('gofrontend: no synthetic source for ...' — the PKG-077 failure mode,
+// P1-2); the MR pair tables below are keyed on synthetic package paths,
+// so a retired package simply yields no plan at the guarded call sites.
+// Full retirement handling (shrinking these tables as packages retire)
+// is bridge-inventory B-3 Phase 2 (docs/arch/bridge-inventory.md).
+func syntheticPkgForPlan(path string) *syntheticPackage {
+	if _, ok := syntheticSources[path]; !ok {
+		return nil
+	}
+	return getSyntheticPackage(path)
+}
+
 // mrKind classifies the Appendix M operations: the 5 reachable ones
 // plus mrDeadline, retained defense-in-depth for WS D (see the package
 // header — currently unreachable from user code).
@@ -1606,9 +1621,20 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	if !ok {
 		return nil
 	}
-	ctxPkg := getSyntheticPackage("context").pkg
-	timePkg := getSyntheticPackage("time").pkg
+	// P1-2 (review-r2): retirement-safe package resolution; a retired
+	// package leaves ctxPkg/timePkg nil, and the named() nil-guard
+	// below turns that into no plan instead of a panic.
+	var ctxPkg, timePkg *types.Package
+	if sp := syntheticPkgForPlan("context"); sp != nil {
+		ctxPkg = sp.pkg
+	}
+	if sp := syntheticPkgForPlan("time"); sp != nil {
+		timePkg = sp.pkg
+	}
 	named := func(pkg *types.Package, name string) *types.Named {
+		if pkg == nil {
+			return nil
+		}
 		obj := pkg.Scope().Lookup(name)
 		if obj == nil {
 			return nil
@@ -1751,7 +1777,12 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		}
 		if f, ok := selection.Obj().(*types.Func); ok {
 			if helper, ok := isXmlTokenMethod(f); ok {
-				xmlPkg := getSyntheticPackage("encoding/xml").pkg
+				// P1-2 (review-r2): retirement-safe; a nil xmlPkg flows
+				// into the named() nil-guard and yields no plan.
+				var xmlPkg *types.Package
+				if sp := syntheticPkgForPlan("encoding/xml"); sp != nil {
+					xmlPkg = sp.pkg
+				}
 				nt := named(xmlPkg, "tokenPair")
 				if nt == nil {
 					return nil
@@ -2201,7 +2232,14 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
+		// P1-2 (review-r2): retirement-safe; a retired package has no
+		// synthetic pair type, so this table entry yields no plan.
+		// Full retirement handling is B-3 Phase 2
+		// (docs/arch/bridge-inventory.md).
+		sp := syntheticPkgForPlan(mf.pkgPath)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2360,7 +2398,14 @@ func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		// P1-2 (review-r2): retirement-safe; a retired package has no
+		// synthetic pair type, so this table entry yields no plan.
+		// Full retirement handling is B-3 Phase 2
+		// (docs/arch/bridge-inventory.md).
+		sp := syntheticPkgForPlan(helperPkg)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2412,7 +2457,14 @@ func classifyOsMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		// P1-2 (review-r2): retirement-safe; a retired package has no
+		// synthetic pair type, so this table entry yields no plan.
+		// Full retirement handling is B-3 Phase 2
+		// (docs/arch/bridge-inventory.md).
+		sp := syntheticPkgForPlan(helperPkg)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2465,7 +2517,14 @@ func classifyM8MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		// P1-2 (review-r2): retirement-safe; a retired package has no
+		// synthetic pair type, so this table entry yields no plan.
+		// Full retirement handling is B-3 Phase 2
+		// (docs/arch/bridge-inventory.md).
+		sp := syntheticPkgForPlan(helperPkg)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2519,7 +2578,14 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
+		// P1-2 (review-r2): retirement-safe; a retired package has no
+		// synthetic pair type, so this table entry yields no plan.
+		// Full retirement handling is B-3 Phase 2
+		// (docs/arch/bridge-inventory.md).
+		sp := syntheticPkgForPlan(mf.pkgPath)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2562,7 +2628,12 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		sp := getSyntheticPackage(m.pkgPath)
+		// P1-2 (review-r2): retirement-safe; the nil check below was dead
+		// (getSyntheticPackage panics, never returns nil) — now it is the
+		// retirement path: a retired package yields no plan. Full
+		// retirement handling is B-3 Phase 2
+		// (docs/arch/bridge-inventory.md).
+		sp := syntheticPkgForPlan(m.pkgPath)
 		if sp == nil {
 			continue
 		}
@@ -2630,7 +2701,12 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		sp := getSyntheticPackage(m.pkgPath)
+		// P1-2 (review-r2): retirement-safe; the nil check below was dead
+		// (getSyntheticPackage panics, never returns nil) — now it is the
+		// retirement path: a retired package yields no plan. Full
+		// retirement handling is B-3 Phase 2
+		// (docs/arch/bridge-inventory.md).
+		sp := syntheticPkgForPlan(m.pkgPath)
 		if sp == nil {
 			continue
 		}
@@ -2898,7 +2974,11 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 				return nil, false
 			}
 		} else {
-			sp := getSyntheticPackage(helperPkg)
+			// P1-2 (review-r2): retirement-safe; the disk lookup above
+			// already succeeded for any retired package, so reaching here
+			// with a non-synthetic helperPkg means no helper exists —
+			// return instead of panicking.
+			sp := syntheticPkgForPlan(helperPkg)
 			if sp == nil {
 				return nil, false
 			}
@@ -2984,7 +3064,14 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
+		// P1-2 (review-r2): retirement-safe; a retired package has no
+		// synthetic pair type, so this table entry yields no plan.
+		// Full retirement handling is B-3 Phase 2
+		// (docs/arch/bridge-inventory.md).
+		sp := syntheticPkgForPlan(mf.pkgPath)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -3329,7 +3416,13 @@ func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 			return nil, err
 		}
 	} else {
-		sp = getSyntheticPackage(plan.helperPkg)
+		// P1-2 (review-r2): never panic on a retired package. The table
+		// classifiers above already skip retired packages, so this is
+		// unreachable defense-in-depth — but a loud error beats a panic.
+		sp = syntheticPkgForPlan(plan.helperPkg)
+		if sp == nil {
+			return nil, fmt.Errorf("gofrontend: MR plan references retired synthetic package %s", plan.helperPkg)
+		}
 	}
 	// P3-M8b: import the synthetic package so its helpers are registered
 	// in funcByObj (idempotent). Without this, synthHelperCallNode fails

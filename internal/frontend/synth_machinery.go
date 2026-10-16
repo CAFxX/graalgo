@@ -971,15 +971,12 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	// synthetic packages. Every synthetic package type-checks through the
 	// same overlay importer at build time, so each import here is known
 	// to resolve (synthetic, stub, or disk) — no new failure modes.
+	// P1-2 (review-r2): the guarded synthetic branch is folded into
+	// importPkgTree (resolvePkgTree routes synthetic paths through
+	// getSyntheticPackage identically), which additionally survives
+	// synthetic retirements via the disk importer instead of panicking.
 	for _, imp := range sp.pkg.Imports() {
-		ip := imp.Path()
-		if _, ok := syntheticSources[ip]; ok {
-			if err := e.importSyntheticPackage(getSyntheticPackage(ip)); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := e.importPkgTree(ip); err != nil {
+		if err := e.importPkgTree(imp.Path()); err != nil {
 			return err
 		}
 	}
