@@ -9372,6 +9372,24 @@ func isAddressable(x ast.Expr, info *types.Info) bool {
 		if isAddressable(x.X, info) {
 			return true
 		}
+		// PKG-081: pkg.Var is addressable when Var is a package-level
+		// variable. Here x.X is the package name itself (a *types.PkgName,
+		// not a value), so the recursive check above cannot succeed —
+		// a PkgName is never a *types.Var. Package-level variables are
+		// always addressable in Go, so &pkg.Var and &pkg.Var.field are
+		// valid. We detect this structurally: x.X is an Ident denoting a
+		// package, and x.Sel denotes a *types.Var (not a Func, Const,
+		// or TypeName).
+		if id, ok := x.X.(*ast.Ident); ok {
+			if obj := info.ObjectOf(id); obj != nil {
+				if _, isPkg := obj.(*types.PkgName); isPkg {
+					if selObj := info.ObjectOf(x.Sel); selObj != nil {
+						_, isVar := selObj.(*types.Var)
+						return isVar
+					}
+				}
+			}
+		}
 		// real-reflect (Phase 1): &(*T)(unsafe.Pointer(p)).f — the
 		// descriptor-downcast pattern used throughout internal/abi
 		// (Type.Uncommon) and reflect. The unsafe.Pointer<->*T casts
