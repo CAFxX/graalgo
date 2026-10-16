@@ -7562,10 +7562,8 @@ func (e *exporter) rangeVarId(x ast.Expr) (any, error) {
 func (e *exporter) exportRange(s *ast.RangeStmt) (*Node, error) {
 	// P3-M5 (WS E, ADR-0005 App C): `for v := range ch` desugars to a
 	// for+select loop (the v1 "range" node has no channel support).
-	if tv, ok := e.info.Types[s.X]; ok && tv.Type != nil {
-		if _, ok := tv.Type.Underlying().(*types.Chan); ok {
-			return e.exportRangeChan(s)
-		}
+	if isChanRange(e.info, s) {
+		return e.exportRangeChan(s, "")
 	}
 	var define bool
 	switch s.Tok {
@@ -7781,6 +7779,15 @@ func (e *exporter) exportBranch(s *ast.BranchStmt) (*Node, error) {
 
 // exportLabeled handles `L: stmt`.
 func (e *exporter) exportLabeled(s *ast.LabeledStmt) (*Node, error) {
+	// FE-4: a user label on `for v := range ch` must land on the
+	// synthesized for loop — the backend loop node consumes exactly one
+	// pending label, and a label on the desugared block leaves
+	// `continue <label>` with no loop to target (uncaught ContinueSignal
+	// at runtime). Thread the label into the desugar instead of wrapping
+	// the block.
+	if rs, ok := s.Stmt.(*ast.RangeStmt); ok && isChanRange(e.info, rs) {
+		return e.exportRangeChan(rs, s.Label.Name)
+	}
 	inner, err := e.exportStmt(s.Stmt)
 	if err != nil {
 		return nil, err

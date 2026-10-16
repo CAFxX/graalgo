@@ -376,18 +376,39 @@ func (e *exporter) selectRecvTargets(comm *ast.AssignStmt, declare func(string, 
 	return ch, targets, nil
 }
 
+// isChanRange reports whether s is `for ... range <chan>` (ADR-0005
+// Appendix C): the v1 "range" node has no channel support, so these
+// desugar via exportRangeChan. Single source of truth for the
+// exportRange / exportLabeled dispatch.
+func isChanRange(info *types.Info, s *ast.RangeStmt) bool {
+	tv, ok := info.Types[s.X]
+	if !ok || tv.Type == nil {
+		return false
+	}
+	_, ok = tv.Type.Underlying().(*types.Chan)
+	return ok
+}
+
 // exportRangeChan desugars `for v := range ch` (ADR-0005 Appendix C) to
 // a for+select loop over existing wire nodes plus the new "select":
 //
 //	__rng_ch_N := <chanexpr>
-//	__rng_N: for {
+//	<loopLabel>: for {
 //	    select {
 //	    case __rng_v_N, __rng_ok_N := <-__rng_ch_N:
-//	        if !__rng_ok_N { break __rng_N }
+//	        if !__rng_ok_N { break <loopLabel> }
 //	        v := __rng_v_N      // := form (v = __rng_v_N for =; dropped if absent)
 //	        <original body>
 //	    }
 //	}
+//
+// userLabel is the source-level label when the range statement is labeled
+// (`outer: for v := range ch`); "" otherwise. The backend loop node
+// consumes exactly one pending label, so the synthesized loop carries the
+// user's label when present (FE-4: `continue <label>` then targets the
+// loop instead of escaping as an uncaught ContinueSignal) and the
+// synthetic `__rng_N` otherwise; the internal `if !ok` break and the
+// FE-18 break rewrite both use whichever label the loop carries.
 //
 // The v1 "range" node has no channel support. gc semantics: the channel
 // expression is evaluated once (hoisted); receives block until a value
@@ -395,7 +416,7 @@ func (e *exporter) selectRecvTargets(comm *ast.AssignStmt, declare func(string, 
 // loop). The v := __rng_v_N vardecl is an ordinary loop-body vardecl, so
 // the factory's loopcap pre-scan gives it per-iteration box semantics
 // when captured by a closure (like any loop-body vardecl).
-func (e *exporter) exportRangeChan(s *ast.RangeStmt) (*Node, error) {
+func (e *exporter) exportRangeChan(s *ast.RangeStmt, userLabel string) (*Node, error) {
 	tv, ok := e.info.Types[s.X]
 	if !ok || tv.Type == nil {
 		return nil, fmt.Errorf("gofrontend: no type info for range channel expression")
@@ -413,7 +434,15 @@ func (e *exporter) exportRangeChan(s *ast.RangeStmt) (*Node, error) {
 	keyVar := s.Key
 	e.chanSeq++
 	seq := e.chanSeq
-	label := fmt.Sprintf("__rng_%d", seq)
+	// FE-4: the synthesized loop carries exactly one label — the backend
+	// for node consumes a single pending label. Prefer the user's label so
+	// `continue <label>` / `break <label>` target the loop; otherwise the
+	// synthetic one serves the internal `if !ok` break and the FE-18
+	// rewrite below.
+	loopLabel := userLabel
+	if loopLabel == "" {
+		loopLabel = fmt.Sprintf("__rng_%d", seq)
+	}
 
 	newTemp := func(tag string, typ types.Type) (string, int, int, error) {
 		name := fmt.Sprintf("__rng_%s_%d", tag, seq)
@@ -454,11 +483,11 @@ func (e *exporter) exportRangeChan(s *ast.RangeStmt) (*Node, error) {
 		"define": true, "type": nil, "values": []*Node{chanX},
 	})
 
-	// if !__rng_ok_N { break __rng_N }
+	// if !__rng_ok_N { break <loopLabel> }
 	notOk := e.node("unary", s, map[string]any{
 		"op": "!", "x": ident(okName, okID, okTid), "type": okTid,
 	})
-	brk := e.node("branch", s, map[string]any{"op": "break", "label": label})
+	brk := e.node("branch", s, map[string]any{"op": "break", "label": loopLabel})
 	ifNode := e.node("if", s, map[string]any{
 		"init": nil, "cond": notOk,
 		"then": e.node("block", s, map[string]any{"stmts": []*Node{brk}}),
@@ -497,7 +526,9 @@ func (e *exporter) exportRangeChan(s *ast.RangeStmt) (*Node, error) {
 			}
 		}
 	}
-	for _, bst := range s.Body.List {
+	// FE-18: rewrite unlabeled `break` in the copied body to
+	// `break <loopLabel>` before exporting (see rewriteRangeChanBreaks).
+	for _, bst := range rewriteRangeChanBreaks(s.Body.List, loopLabel) {
 		st, err := e.exportStmt(bst)
 		if err != nil {
 			return nil, err
@@ -526,8 +557,76 @@ func (e *exporter) exportRangeChan(s *ast.RangeStmt) (*Node, error) {
 		"init": nil, "cond": nil, "post": nil,
 		"body": e.node("block", s, map[string]any{"stmts": []*Node{targetDecl, sel}}),
 	})
-	labeled := e.node("labeled", s, map[string]any{"label": label, "stmt": loop})
+	labeled := e.node("labeled", s, map[string]any{"label": loopLabel, "stmt": loop})
 	return e.node("block", s, map[string]any{"stmts": []*Node{hoist, labeled}}), nil
+}
+
+// rewriteRangeChanBreaks rewrites unlabeled `break` statements in the body
+// of a desugared `for v := range ch` to `break <loopLabel>` (FE-18).
+// Source-level `break` binds to the range loop, but the copied body sits
+// inside a synthesized select: today an unlabeled break exits the loop
+// only because the backend SelectNode does not catch BreakSignal (itself
+// a backend bug — gc says `break` exits the select, not the loop). The
+// rewrite makes the binding explicit: it is behavior-preserving under the
+// current backend, and stays correct if SelectNode ever catches
+// BreakSignal, since a labeled signal passes the select through.
+//
+// The walk stops at nested for/range/switch/select constructs and at
+// function literals, whose own breaks bind to those constructs and must
+// not be rewritten. go/types has already validated the program, so any
+// unlabeled break NOT behind one of these boundaries binds to the range
+// loop. Expressions are never descended into, so function literals inside
+// defer/go/call expressions are excluded automatically.
+//
+// The rewrite builds new BranchStmt nodes rather than mutating the user's
+// AST in place; container statements get fresh statement lists.
+func rewriteRangeChanBreaks(list []ast.Stmt, loopLabel string) []ast.Stmt {
+	out := make([]ast.Stmt, 0, len(list))
+	for _, st := range list {
+		out = append(out, rewriteRangeChanBreakStmt(st, loopLabel))
+	}
+	return out
+}
+
+func rewriteRangeChanBreakStmt(st ast.Stmt, loopLabel string) ast.Stmt {
+	switch n := st.(type) {
+	case *ast.BranchStmt:
+		if n.Tok == token.BREAK && n.Label == nil {
+			return &ast.BranchStmt{
+				TokPos: n.TokPos,
+				Tok:    token.BREAK,
+				Label:  &ast.Ident{NamePos: n.TokPos, Name: loopLabel},
+			}
+		}
+		return st
+	case *ast.BlockStmt:
+		cp := *n
+		cp.List = rewriteRangeChanBreaks(n.List, loopLabel)
+		return &cp
+	case *ast.IfStmt:
+		cp := *n
+		if n.Init != nil {
+			cp.Init = rewriteRangeChanBreakStmt(n.Init, loopLabel)
+		}
+		body := *n.Body
+		body.List = rewriteRangeChanBreaks(n.Body.List, loopLabel)
+		cp.Body = &body
+		if n.Else != nil {
+			cp.Else = rewriteRangeChanBreakStmt(n.Else, loopLabel)
+		}
+		return &cp
+	case *ast.LabeledStmt:
+		cp := *n
+		cp.Stmt = rewriteRangeChanBreakStmt(n.Stmt, loopLabel)
+		return &cp
+	default:
+		// Boundaries — for, range, switch, type-switch, select: their
+		// breaks bind to those constructs. All other statements
+		// (defer/go/send/assign/return/decl/...) contain no statement
+		// lists outside expressions, which are never walked, so any
+		// function literal they carry keeps its own breaks.
+		return st
+	}
 }
 
 // exportRecvCommaOkDesugar lowers `v, ok := <-ch` (define=true) or
