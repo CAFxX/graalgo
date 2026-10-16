@@ -1801,7 +1801,9 @@ func (v Value) SetCap(n int) {
 
 // Clear clears the map v or zeroes the slice v's elements.
 func (v Value) Clear() {
-	v.__mustBeAssignable("reflect.Value.Clear")
+	// gc 1.27.1 (src/reflect/value.go): switches on Kind directly, no
+	// assignability requirement — ValueOf(m) is not addressable but
+	// clears fine. mustBeAssignable here was a divergence.
 	switch v.Kind() {
 	case Map, Slice:
 		__reflect_clear(v)
