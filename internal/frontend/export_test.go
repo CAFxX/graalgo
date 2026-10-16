@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -14,6 +17,13 @@ import (
 // its checked-in golden file. The goldens pin the frontend/v1 wire format;
 // any intentional format change must regenerate them explicitly
 // (UPDATE_GOLDEN=1) and update docs/arch/frontend-v1.md in the same change.
+//
+// A golden whose uncompressed export exceeds the GitHub API blob size limit
+// (10MB) is stored gzip-compressed as <base>.json.gz instead of <base>.json
+// (PKG-059: mr_return_named's encoding/json import pulls ~45MB of stdlib
+// type info into the export). The reader decompresses transparently, and
+// UPDATE_GOLDEN=1 re-writes the already-registered form, so the raw blob is
+// never reintroduced.
 func TestGolden(t *testing.T) {
 	files, err := filepath.Glob("testdata/*.go")
 	if err != nil {
@@ -32,15 +42,19 @@ func TestGolden(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ExportFile(%s): %v", f, err)
 			}
-			golden := filepath.Join("testdata", base+".json")
+			golden, compressed := goldenFile(base)
 			if os.Getenv("UPDATE_GOLDEN") == "1" {
-				if err := os.WriteFile(golden, []byte(out+"\n"), 0644); err != nil {
+				data := []byte(out + "\n")
+				if compressed {
+					data = gzipBytes(t, data)
+				}
+				if err := os.WriteFile(golden, data, 0644); err != nil {
 					t.Fatal(err)
 				}
 				t.Logf("updated %s", golden)
 				return
 			}
-			want, err := os.ReadFile(golden)
+			want, err := readGolden(t, golden, compressed)
 			if err != nil {
 				t.Fatalf("read golden %s: %v (run with UPDATE_GOLDEN=1 to create)", golden, err)
 			}
@@ -49,6 +63,56 @@ func TestGolden(t *testing.T) {
 			}
 		})
 	}
+}
+
+// goldenFile resolves the golden for base: testdata/<base>.json, falling
+// back to testdata/<base>.json.gz when a compressed golden is registered.
+// The second return is true iff the .gz form exists; UPDATE_GOLDEN=1
+// re-writes whichever form is registered (new programs default to .json).
+func goldenFile(base string) (path string, compressed bool) {
+	plain := filepath.Join("testdata", base+".json")
+	if _, err := os.Stat(plain); err == nil {
+		return plain, false
+	}
+	gz := filepath.Join("testdata", base+".json.gz")
+	if _, err := os.Stat(gz); err == nil {
+		return gz, true
+	}
+	return plain, false
+}
+
+// readGolden reads the golden at path, decompressing when it is the .gz form.
+func readGolden(t *testing.T, path string, compressed bool) ([]byte, error) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	if !compressed {
+		return raw, nil
+	}
+	zr, err := gzip.NewReader(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	defer zr.Close()
+	return io.ReadAll(zr)
+}
+
+// gzipBytes compresses data for UPDATE_GOLDEN=1 re-writes of a .json.gz
+// golden. Deterministic for identical input (no filename or mtime in the
+// header), so re-running the update is a byte-identical no-op.
+func gzipBytes(t *testing.T, data []byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	if _, err := zw.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
 }
 
 func firstDiffLine(a, b string) int {
