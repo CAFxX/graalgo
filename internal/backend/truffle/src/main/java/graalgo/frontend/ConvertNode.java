@@ -23,6 +23,9 @@ import graalgo.values.GoKind;
  *       from the constant (exact decimal for untyped ints), the imaginary
  *       part is zero; go/types guarantees representability.</li>
  *   <li>int → string: the rune conversion (out-of-range → U+FFFD).</li>
+ *   <li>struct → pointer: implicit {@code &T{}} (e.g. element elision in
+ *       {@code []*T{{...}}} composite literals); wraps the struct value
+ *       in a GoPointer.</li>
  * </ul>
  * Untyped constants never reach this node for same-family targets (they
  * are transparent — {@link GoKind#transparent}); the one untyped source
@@ -66,6 +69,12 @@ public final class ConvertNode extends GoExprNode {
         // P3-M9: []T -> *T (e.g., &s[0] desugared as convert in generic
         // contexts). At runtime, create a pointer to the first element.
         boolean sliceToPointer = from == GoKind.SLICE && to == GoKind.POINTER;
+        // real-x509 lane: STRUCT -> POINTER (e.g., the implicit &T{}
+        // element elision in []*T{{...}} composite literals, where each
+        // {…} is a T struct literal but the slice element type is *T).
+        // General Go language mechanism, not package-specific. At runtime,
+        // wrap the struct value in a GoPointer (address-of semantics).
+        boolean structToPointer = from == GoKind.STRUCT && to == GoKind.POINTER;
         // WS G: complex <-> complex (complex64 <-> complex128, either
         // direction; go/types rejects complex <-> float/int and
         // float/int <-> complex, so those never reach this node).
@@ -79,6 +88,7 @@ public final class ConvertNode extends GoExprNode {
                 && to.isComplexKind();
         if (!(numeric || intToString || stringToString || boolToBool || unsafeEscape
                 || stringToSlice || sliceToString || ifaceToPointer || sliceToPointer
+                || structToPointer
                 || complexToComplex || untypedConstToComplex)) {
             throw new IllegalArgumentException(
                     "illegal conversion: " + from + " -> " + to);
@@ -224,6 +234,15 @@ public final class ConvertNode extends GoExprNode {
             }
             // Java array (should not happen for SLICE kind, but be safe).
             return new graalgo.values.GoPointer(v, 0);
+        }
+        // real-x509 lane: STRUCT -> POINTER (implicit &T{} in []*T{{...}}
+        // composite literals, and any other struct-to-pointer conversion
+        // the exporter emits). General mechanism: wrap the struct value
+        // in a GoPointer (address-of semantics). The struct value is a
+        // Java object; the pointer refers to it directly.
+        if (to == GoKind.POINTER && from == GoKind.STRUCT) {
+            Object v = child.executeObject(frame);
+            return new graalgo.values.GoPointer(v);
         }
         throw new UnsupportedOperationException("conversion " + from + " -> " + to + " has no object value");
     }
