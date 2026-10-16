@@ -157,7 +157,7 @@ func TestAsmInventoryCategoriesKnown(t *testing.T) {
 	known := map[string]bool{
 		"evaporate": true, "intrinsify": true,
 		"emulate-then-intrinsify": true, "jvm-math": true,
-		"unsupported":             true,
+		"unsupported": true,
 	}
 	counts := map[string]int{}
 	for rel, e := range inv {
@@ -213,9 +213,9 @@ func TestAsmCategoriesEndToEnd(t *testing.T) {
 	src := gorootSrc(t)
 	loader := NewLoader()
 	replaced := []struct {
-		pkg          string
-		category     string
-		replacement  string // required substring of the pointer
+		pkg         string
+		category    string
+		replacement string // required substring of the pointer
 	}{
 		{"internal/bytealg", "intrinsify", "graalgo.runtime.Intrinsics.memequal"},
 		{"sync/atomic", "intrinsify", "graalgo.runtime.Atomics"},
@@ -356,7 +356,7 @@ func TestAsmUppercaseSFailsFast(t *testing.T) {
 		// fail-fast to even see them.
 		dir := t.TempDir()
 		writeFiles(t, dir, map[string]string{
-			"evil_amd64.S":  "TEXT ·evil(SB),$0-0\n\tRET\n",
+			"evil_amd64.S":    "TEXT ·evil(SB),$0-0\n\tRET\n",
 			"helper_amd64.sx": "TEXT ·helper(SB),$0-0\n\tRET\n",
 		})
 		names, err := NewLoader().SelectAsmFiles(dir)
@@ -402,9 +402,9 @@ func TestAsmHookInLoader(t *testing.T) {
 		t.Helper()
 		dir := t.TempDir()
 		files := map[string]string{
-			"go.mod":      "module example.com/asmhook\n\ngo 1.27\n",
-			"main.go":     "package main\n\nimport \"example.com/asmhook/dep\"\n\nfunc main() { dep.Hello() }\n",
-			"dep/dep.go":  "package dep\n\nfunc Hello() {}\n",
+			"go.mod":     "module example.com/asmhook\n\ngo 1.27\n",
+			"main.go":    "package main\n\nimport \"example.com/asmhook/dep\"\n\nfunc main() { dep.Hello() }\n",
+			"dep/dep.go": "package dep\n\nfunc Hello() {}\n",
 		}
 		if withAsm {
 			files["dep/evil_amd64.s"] = "TEXT ·evil(SB),$0-0\n\tRET\n"

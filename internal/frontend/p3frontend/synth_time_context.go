@@ -322,7 +322,7 @@ func syntheticContextPackage(timePkg *types.Package) *types.Package {
 			types.NewSignatureType(nil, nil, nil, nil,
 				types.NewTuple(
 					newParam("", types.NewChan(types.RecvOnly,
-						types.NewStruct(nil, nil)))) , false)),
+						types.NewStruct(nil, nil)))), false)),
 		types.NewFunc(token.NoPos, pkg, "Err",
 			types.NewSignatureType(nil, nil, nil, nil,
 				types.NewTuple(newParam("", errorT)), false)),

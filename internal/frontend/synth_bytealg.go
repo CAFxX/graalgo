@@ -17,21 +17,22 @@
 // inputs.
 //
 // Deviations from gc (documented, none observable):
-//   D1. Index/IndexString: gc's portable fallback panics("unimplemented")
-//       (real platforms use assembly); ours is a correct portable brute
-//       force. The declared contract "Requires 2 <= len(b) <= MaxLen" is
-//       honored by all in-tree callers; our implementation is additionally
-//       total (handles every length) — a strict superset of the contract.
-//   D2. MaxBruteForce = 0 and MaxLen = 0 (zero value): exactly the gc
-//       portable/generic build values (index_generic.go, bytealg.go).
-//   D3. MakeNoZero: gc's is assembly and may return unzeroed memory; ours
-//       is make([]byte, n) (zeroed, len n, cap n). The documented contract
-//       (length n, capacity >= n) holds; no correct program observes the
-//       backing bytes before writing them.
-//   D4. The offsetPPC64*/offsetX86* consts (unsafe.Offsetof into
-//       internal/cpu records, for assembly use) are omitted: there is no
-//       assembly consumer in the synthetic tree. Re-test trigger: a
-//       synthetic internal/cpu landing.
+//
+//	D1. Index/IndexString: gc's portable fallback panics("unimplemented")
+//	    (real platforms use assembly); ours is a correct portable brute
+//	    force. The declared contract "Requires 2 <= len(b) <= MaxLen" is
+//	    honored by all in-tree callers; our implementation is additionally
+//	    total (handles every length) — a strict superset of the contract.
+//	D2. MaxBruteForce = 0 and MaxLen = 0 (zero value): exactly the gc
+//	    portable/generic build values (index_generic.go, bytealg.go).
+//	D3. MakeNoZero: gc's is assembly and may return unzeroed memory; ours
+//	    is make([]byte, n) (zeroed, len n, cap n). The documented contract
+//	    (length n, capacity >= n) holds; no correct program observes the
+//	    backing bytes before writing them.
+//	D4. The offsetPPC64*/offsetX86* consts (unsafe.Offsetof into
+//	    internal/cpu records, for assembly use) are omitted: there is no
+//	    assembly consumer in the synthetic tree. Re-test trigger: a
+//	    synthetic internal/cpu landing.
 package main
 
 // syntheticBytealgSource is the P3-M9 synthetic `internal/bytealg`

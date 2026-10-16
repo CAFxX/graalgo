@@ -119,7 +119,7 @@ gen-synth:
 # Force-regenerate the gofrontend binary and overlay.json from the
 # vendored frontend sources (internal/frontend/*.go + internal/frontend/go overlay).
 generate: gen-synth
-	cd internal/frontend && ./build.sh build
+	cd internal/frontend && GO="$(GO)" ./build.sh build
 
 build:
 	$(MAKE) -C internal/backend/truffle main

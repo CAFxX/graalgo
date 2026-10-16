@@ -104,7 +104,7 @@ func TestMathSyntheticSignatures(t *testing.T) {
 	for _, scope := range []struct {
 		pkg *types.Package
 		m   map[string]*types.Func
-	}{ {phase1Pkg, phase1Funcs}, {pkg, mirrorFuncs} } {
+	}{{phase1Pkg, phase1Funcs}, {pkg, mirrorFuncs}} {
 		for _, name := range scope.pkg.Scope().Names() {
 			if !isExported(name) {
 				continue

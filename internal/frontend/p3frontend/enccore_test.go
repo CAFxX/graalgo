@@ -103,8 +103,8 @@ var encCorePackages = []encCorePackage{
 	},
 	{
 		path: "encoding", srcFile: "synth_encoding.go",
-		constName:  "syntheticEncodingSource",
-		mirror:     syntheticEncodingPackage,
+		constName: "syntheticEncodingSource",
+		mirror:    syntheticEncodingPackage,
 		namedTypes: []string{
 			"BinaryMarshaler", "BinaryUnmarshaler", "BinaryAppender",
 			"TextMarshaler", "TextUnmarshaler", "TextAppender",
@@ -277,8 +277,9 @@ func TestEncCoreSyntheticSignatures(t *testing.T) {
 // reason code from the exclusions.yaml vocabulary.
 //
 // Reason codes:
-//   DEFERRED_WAVE — needs a package landing in a later wave (io).
-//   UNSUPPORTED_FEATURE — needs a v1-unexpressible feature (WS D).
+//
+//	DEFERRED_WAVE — needs a package landing in a later wave (io).
+//	UNSUPPORTED_FEATURE — needs a v1-unexpressible feature (WS D).
 func TestEncCoreOmissionsPinned(t *testing.T) {
 	omissions := []struct {
 		pkg    string

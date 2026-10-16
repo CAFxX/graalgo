@@ -112,7 +112,7 @@ var syntheticSources = map[string]string{
 	// "internal/reflectlite": syntheticReflectliteSource, // RETIRED - real
 	// internal/reflectlite from GOROOT via disk importer (needed by real
 	// reflect and real errors)
-	"iter":                 syntheticIterSource,
+	"iter": syntheticIterSource,
 	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_structs.go,
 	// synth_bytealg.go). internal/bytealg is synthetic-only, like
 	// internal/reflectlite: user imports of internal/* are not admitted by
@@ -327,7 +327,7 @@ var syntheticSources = map[string]string{
 	"mime/quotedprintable": syntheticMimeQuotedprintableSource,
 	// P3-M9 (tier-5: net/http): synthetic net/http and net/http/httptest
 	// (real-Go sources in synth_net_http.go / synth_net_http_httptest.go,
-// net/http and net/http/httptest are REAL (P4 bridge-removal): the
+	// net/http and net/http/httptest are REAL (P4 bridge-removal): the
 	// synthetic sources are retired. Real net/http compiles from GOROOT
 	// via the general disk overlay.
 }
@@ -1113,7 +1113,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 								}
 							}
 						}
-					// General (real-x509 lane): fail-fast stubs ARE registered
+						// General (real-x509 lane): fail-fast stubs ARE registered
 						// (so call sites link to the stub, which panics at
 						// runtime if invoked — the honest fail-fast
 						// behavior); skipPairTransform below prevents the
@@ -1263,7 +1263,7 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 			}
 		}
 	}
-		varInits := []ginit{}
+	varInits := []ginit{}
 	for _, sv := range sspecs {
 		// WS G: the initializer's own file (multi-file disk packages).
 		e.src = sp.srcForFile(sv.file)
@@ -2182,6 +2182,7 @@ func (e *exporter) isMultiResultSyntheticFailFast(fn *types.Func) bool {
 	}
 	return isMultiResultSynthetic(fn)
 }
+
 // isGenericFunc reports whether fn is a generic function template (has
 // type parameters). Generic templates are never pair-transformed
 // themselves (registerUserMRFunc skips isTemplate); their instantiations

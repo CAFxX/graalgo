@@ -21,14 +21,15 @@
 // canonical *T, and Handle equality (pointer comparison) matches gc.
 //
 // Deviations from gc (all unobservable except via deliberate abuse):
-//   D1. gc's table uses weak references: entries for unreachable values
-//       are reclaimed. Ours are retained forever (documented above).
-//   D2. gc's Make for an uncomparable dynamic value (e.g. an interface
-//       holding a slice) panics in the runtime map; ours panics in the
-//       Go map insert with the same observable outcome (a panic).
-//   D3. The mutex is *sync.Mutex (pointer), not a value field — the P3-M2
-//       surface forbids value sync.Mutex in synthetic sources (synth_io.go
-//       deviation D1/D2).
+//
+//	D1. gc's table uses weak references: entries for unreachable values
+//	    are reclaimed. Ours are retained forever (documented above).
+//	D2. gc's Make for an uncomparable dynamic value (e.g. an interface
+//	    holding a slice) panics in the runtime map; ours panics in the
+//	    Go map insert with the same observable outcome (a panic).
+//	D3. The mutex is *sync.Mutex (pointer), not a value field — the P3-M2
+//	    surface forbids value sync.Mutex in synthetic sources (synth_io.go
+//	    deviation D1/D2).
 package main
 
 // syntheticUniqueSource is the P3-M9 synthetic `unique` package: exact gc

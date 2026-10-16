@@ -2,8 +2,9 @@
 //
 // This test enumerates every concrete AST node type in go/ast via reflection
 // and verifies each one is either:
-//   (a) HANDLED — the emitter produces output for it, or
-//   (b) FAILS LOUDLY — the emitter returns an "unsupported" error.
+//
+//	(a) HANDLED — the emitter produces output for it, or
+//	(b) FAILS LOUDLY — the emitter returns an "unsupported" error.
 //
 // There is no silent (c): a node kind that is silently dropped or
 // mis-emitted. If go/ast gains a new node type, this test fails until the
@@ -93,14 +94,14 @@ var nonNodeTypes = map[string]string{
 // "unsupported" error. The negative test below proves each one fails.
 var loudlyRejected = map[string]bool{
 	// Statements not yet implemented.
-	"BadStmt":       true,
-	"DeferStmt":     true,
-	"EmptyStmt":     true,
-	"GoStmt":        true,
-	"LabeledStmt":   true,
-	"SelectStmt":    true,
-	"SendStmt":      true,
-	"SwitchStmt":    true,
+	"BadStmt":        true,
+	"DeferStmt":      true,
+	"EmptyStmt":      true,
+	"GoStmt":         true,
+	"LabeledStmt":    true,
+	"SelectStmt":     true,
+	"SendStmt":       true,
+	"SwitchStmt":     true,
 	"TypeSwitchStmt": true,
 	// Expressions not yet implemented.
 	"BadExpr":        true,

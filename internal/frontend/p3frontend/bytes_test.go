@@ -63,7 +63,8 @@ func phase1SyntheticBytesPackage(t *testing.T) *types.Package {
 	}
 	bytesFset := token.NewFileSet()
 	bytesFile, err := parser.ParseFile(bytesFset, "bytes.go", raw, parser.AllErrors)
-	if err != nil {		t.Fatalf("parsing synthetic bytes source: %v", err)
+	if err != nil {
+		t.Fatalf("parsing synthetic bytes source: %v", err)
 	}
 	// P3-M10: use the shared synthetic importer (resolves "errors", "io",
 	// and "sync" for the M8 import graph).
@@ -199,7 +200,8 @@ func TestBytesSyntheticSignatures(t *testing.T) {
 // rejected as stale, verified 2026-10-07).
 //
 // Reason codes (same vocabulary as exclusions.yaml):
-//   DEFERRED_WAVE — needs a package landing in a later wave.
+//
+//	DEFERRED_WAVE — needs a package landing in a later wave.
 func TestBytesOmissionsPinned(t *testing.T) {
 	omissions := []struct {
 		name   string

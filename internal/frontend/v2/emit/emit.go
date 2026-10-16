@@ -39,7 +39,7 @@ type Emitter struct {
 	typeIDs map[types.Type]int
 	types   []any
 	// Object table: types.Object → id.
-	objIDs map[types.Object]int
+	objIDs  map[types.Object]int
 	objects []any
 }
 

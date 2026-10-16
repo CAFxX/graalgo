@@ -44,7 +44,7 @@ import (
 type AsmCategory string
 
 const (
-	AsmEvaporate            AsmCategory = "evaporate"
+	AsmEvaporate             AsmCategory = "evaporate"
 	AsmIntrinsify            AsmCategory = "intrinsify"
 	AsmEmulateThenIntrinsify AsmCategory = "emulate-then-intrinsify"
 	AsmJVMIntrinsicMath      AsmCategory = "jvm-math"
@@ -61,7 +61,7 @@ type AsmEntry struct {
 	Category    string `json:"category"`    // one of the five stored categories
 	Lines       int    `json:"lines"`       // source lines (inventory metadata)
 	Replacement string `json:"replacement"` // intrinsic name / Java class / emulation note; "" for unsupported
-	Reason      string `json:"reason"`       // why this category (fail-fast payload for unsupported)
+	Reason      string `json:"reason"`      // why this category (fail-fast payload for unsupported)
 }
 
 // AsmResolution is the mechanism's verdict for one buildable .s file:

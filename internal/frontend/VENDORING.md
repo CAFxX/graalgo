@@ -32,9 +32,11 @@ that keeps the tree byte-identical *and* compiled.
 
 ```sh
 cd internal/frontend
-rm -rf go && cp -r "$(go env GOROOT)/src/go" go
+export GO=~/tools/go/bin/go   # the pinned toolchain (see pin at the top of
+                              # this file); build.sh fails fast on anything else
+rm -rf go && cp -r "$("$GO" env GOROOT)/src/go" go
 # update the pinned revision at the top of this file
-./build.sh check   # gofmt + vet + tests + diff gate
+./build.sh check   # gofmt (all non-vendored, non-generated .go) + vet + tests + diff gate
 ```
 
 One copy command = one atomic unit (SPEC: "frontend + stdlib as one unit").

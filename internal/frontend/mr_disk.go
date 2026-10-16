@@ -1591,9 +1591,9 @@ type mrRewriteCtx struct {
 	// namedResultTypes parallels namedResults: the declared type of each
 	// named result (blank results need their type for the zero value).
 	namedResultTypes []ast.Expr
-	mrNames      map[string]bool
-	recvType     string
-	recvVar      string
+	mrNames          map[string]bool
+	recvType         string
+	recvVar          string
 	// GAP-GENERIC-MR: the enclosing function's type parameter names
 	// (nil for non-generic functions) and its name (to recognize
 	// recursion in return-position call forwarding).

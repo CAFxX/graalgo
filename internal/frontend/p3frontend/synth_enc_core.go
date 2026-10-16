@@ -69,7 +69,7 @@ func (h *encCoreHelpers) insertPair(name string, fields []*types.Var) *types.Nam
 type encodingSharedTypes struct {
 	byteT, runeT, intT     types.Type
 	stringT, boolT, errorT types.Type
-	byteSliceT            types.Type
+	byteSliceT             types.Type
 }
 
 func encShared() *encodingSharedTypes {

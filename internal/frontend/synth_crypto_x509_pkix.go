@@ -70,7 +70,7 @@ type RelativeDistinguishedNameSet []AttributeTypeAndValue
 // AlgorithmIdentifier represents an ASN.1 algorithm identifier.
 type AlgorithmIdentifier struct {
 	Algorithm  asn1.ObjectIdentifier
-	Parameters asn1.RawValue `+"`asn1:\"optional\"`"+`
+	Parameters asn1.RawValue ` + "`asn1:\"optional\"`" + `
 }
 
 // CertificateList represents a CRL.
@@ -83,19 +83,19 @@ type CertificateList struct {
 // TBSCertificateList represents the TBS part of a CRL.
 type TBSCertificateList struct {
 	Raw                 asn1.RawContent
-	Version             int `+"`asn1:\"optional,explicit,default:0,tag:0\"`"+`
+	Version             int ` + "`asn1:\"optional,explicit,default:0,tag:0\"`" + `
 	Signature           AlgorithmIdentifier
 	Issuer              RDNSequence
 	ThisUpdate          time.Time
-	NextUpdate          time.Time            `+"`asn1:\"optional\"`"+`
-	RevokedCertificates []RevokedCertificate `+"`asn1:\"optional\"`"+`
-	Extensions          []Extension          `+"`asn1:\"tag:0,optional,explicit\"`"+`
+	NextUpdate          time.Time            ` + "`asn1:\"optional\"`" + `
+	RevokedCertificates []RevokedCertificate ` + "`asn1:\"optional\"`" + `
+	Extensions          []Extension          ` + "`asn1:\"tag:0,optional,explicit\"`" + `
 }
 
 // RevokedCertificate represents a revoked certificate in a CRL.
 type RevokedCertificate struct {
 	SerialNumber   *big.Int
 	RevocationTime time.Time
-	Extensions     []Extension `+"`asn1:\"optional\"`"+`
+	Extensions     []Extension ` + "`asn1:\"optional\"`" + `
 }
 `

@@ -286,7 +286,7 @@ func decodeTestValue(t *testing.T, data []byte) (any, []byte) {
 	case tagInt:
 		n := readVarint()
 		// Invert zigzag: (n >>> 1) ^ -(n & 1).
-		return (n >> 1) ^ uint64(-(int64(n&1))), rest
+		return (n >> 1) ^ uint64(-(int64(n & 1))), rest
 	case tagString:
 		ln := readVarint()
 		if uint64(len(rest)) < ln {
