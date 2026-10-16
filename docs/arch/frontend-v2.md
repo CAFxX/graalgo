@@ -74,6 +74,17 @@ reaches differential parity on the corpus.
 - **Legitimate lowerings only**: language-level desugaring that `go/types`
   itself does not do but which the backend requires (e.g., multi-result
   handling — but done as a general mechanism, not per-package).
+- **Type-table type info** ([emit.go](../../internal/frontend/v2/emit/emit.go)):
+  struct fields carry real byte **offsets** computed with
+  `types.SizesFor("gc", "amd64")` — the same data model the v1 frontend
+  uses for the identical wire field, so both frontends describe one
+  backend memory model (the backend runs on a 64-bit JVM; gc/amd64 is the
+  reference ABI). Fields whose layout is instantiation-dependent (type
+  parameters) get offset `-1` ("unknown": index by position, never by
+  byte). Named types carry their full **method set** (declared + promoted)
+  and interfaces carry their **methods** plus **embedded** interfaces as
+  type references — name + signature id per method, which is the dispatch
+  data the backend needs.
 
 ## 3. What v2 does NOT do
 

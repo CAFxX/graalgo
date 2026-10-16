@@ -39,7 +39,7 @@ type Emitter struct {
 	typeIDs map[types.Type]int
 	types   []any
 	// Object table: types.Object → id.
-	objIDs map[types.Object]int
+	objIDs  map[types.Object]int
 	objects []any
 }
 
@@ -211,6 +211,99 @@ func (e *Emitter) typeID(t types.Type) int {
 	return id
 }
 
+// sizes is the target data model used for struct field offsets.
+//
+// The backend (GraalVM/Truffle on a 64-bit JVM) models Go values with the
+// gc/amd64 layout — the same model the v1 frontend uses
+// (internal/frontend/export.go: `types.SizesFor("gc", "amd64")`) for the
+// identical "offset" field consumed by the backend's reflect support
+// (internal/backend/interop/.../p3reflect/ReflectTypes.java reads
+// `f.longInt("offset", path)`). Both frontends must describe one backend
+// memory model, so v2 emits offsets under the same sizes. (The v2 checker
+// leaves types.Config.Sizes unset, so go/types defaults to the host's gc
+// sizes — gc/amd64 on every supported build host — consistent with the
+// explicit choice here.)
+var sizes types.Sizes = types.SizesFor("gc", "amd64")
+
+// unknownOffset marks a struct field whose byte offset cannot be computed
+// statically: some field type mentions a type parameter (go/types panics
+// on those — see sizesWouldPanic), so the layout is
+// instantiation-dependent. The backend must index such fields by
+// position, never by byte offset — the same convention as v1.
+const unknownOffset = -1
+
+// structOffsets returns one byte offset per field under the target sizes,
+// or unknownOffset for every field when any field type would make
+// go/types panic (type parameters). Structural, never name-keyed.
+func structOffsets(vars []*types.Var) []int64 {
+	offsets := make([]int64, len(vars))
+	for _, v := range vars {
+		if sizesWouldPanic(v.Type()) {
+			for i := range offsets {
+				offsets[i] = unknownOffset
+			}
+			return offsets
+		}
+	}
+	return sizes.Offsetsof(vars)
+}
+
+// sizesWouldPanic reports whether asking go/types for the size/alignment of
+// t would panic: gcSizes asserts on bare type parameters, which are reached
+// by descending through array element types, struct field types, and named
+// type underlyings. (Slice/map/pointer/chan positions are fine — gcSizes
+// returns WordSize without descending; signatures are word-sized too and
+// are never descended into.)
+func sizesWouldPanic(t types.Type) bool {
+	seen := make(map[types.Type]bool)
+	var walk func(t types.Type) bool
+	walk = func(t types.Type) bool {
+		if t == nil {
+			return false
+		}
+		if _, ok := t.(*types.TypeParam); ok {
+			return true
+		}
+		if seen[t] {
+			return false
+		}
+		seen[t] = true
+		switch u := t.(type) {
+		case *types.Named:
+			return walk(u.Underlying())
+		case *types.Array:
+			return walk(u.Elem())
+		case *types.Struct:
+			for i := 0; i < u.NumFields(); i++ {
+				if walk(u.Field(i).Type()) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(t)
+}
+
+// methodEntries describes the method set for dispatch: one entry per
+// method, in go/types method-set order (sorted by name), carrying the
+// method name and the type-table id of its signature. Names + signatures
+// are the dispatch data; there are no wire-only implementation keys and
+// no backend special cases.
+func (e *Emitter) methodEntries(ms *types.MethodSet) []any {
+	entries := make([]any, 0, ms.Len())
+	for i := 0; i < ms.Len(); i++ {
+		// go/types guarantees *types.Func for method-set selections;
+		// the assertion fails loud if that ever stops holding.
+		mobj := ms.At(i).Obj().(*types.Func)
+		entries = append(entries, map[string]any{
+			"name": mobj.Name(),
+			"sig":  e.typeID(mobj.Type()),
+		})
+	}
+	return entries
+}
+
 func (e *Emitter) describeType(t types.Type) map[string]any {
 	switch tt := t.(type) {
 	case *types.Basic:
@@ -291,11 +384,18 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			"detail": map[string]any{
 				"name":       namedName(tt),
 				"underlying": e.typeID(tt.Underlying()),
-				"methods":    []any{},
+				// Full method set (declared + promoted through embedded
+				// fields): this is the dispatch table's key set.
+				"methods": e.methodEntries(types.NewMethodSet(tt)),
 			},
 		}
 	case *types.Struct:
 		fields := []any{}
+		vars := make([]*types.Var, tt.NumFields())
+		for i := 0; i < tt.NumFields(); i++ {
+			vars[i] = tt.Field(i)
+		}
+		offsets := structOffsets(vars)
 		for i := 0; i < tt.NumFields(); i++ {
 			f := tt.Field(i)
 			fields = append(fields, map[string]any{
@@ -303,7 +403,7 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 				"type":     e.typeID(f.Type()),
 				"tag":      tt.Tag(i),
 				"embedded": f.Embedded(),
-				"offset":   0,
+				"offset":   offsets[i],
 			})
 		}
 		return map[string]any{
@@ -311,12 +411,27 @@ func (e *Emitter) describeType(t types.Type) map[string]any {
 			"detail": map[string]any{"fields": fields},
 		}
 	case *types.Interface:
+		methods := []any{}
+		for i := 0; i < tt.NumMethods(); i++ {
+			m := tt.Method(i)
+			methods = append(methods, map[string]any{
+				"name": m.Name(),
+				"sig":  e.typeID(m.Type()),
+			})
+		}
+		// Embedded interfaces travel as type-table references; the
+		// backend unions their method sets with the explicit methods
+		// above — the same model as v1's "embedded" list.
+		embedded := []any{}
+		for i := 0; i < tt.NumEmbeddeds(); i++ {
+			embedded = append(embedded, e.typeID(tt.EmbeddedType(i)))
+		}
 		return map[string]any{
 			"kind": "interface",
 			"detail": map[string]any{
 				"empty":    tt.Empty(),
-				"methods":  []any{},
-				"embedded": []any{},
+				"methods":  methods,
+				"embedded": embedded,
 			},
 		}
 	default:
