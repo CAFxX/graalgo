@@ -1954,8 +1954,23 @@ public final class NodeFactory {
         }
         if (name.startsWith("sync.")) {
             String base = name.substring(5);
+            // PKG-053: Mutex/RWMutex/WaitGroup/Once are NOT lowered to
+            // cells. Their real method bodies compile from disk
+            // (503608ea) and assume struct layout (m.mu.Lock(),
+            // o.done.Load(), wg.state.Add(), ...), but the opaque Java
+            // cells (GoMutex, GoRWMutex, GoWaitGroup, GoOnce) are not
+            // GoStructs — any real body touching one threw
+            // ClassCastException (the io.Pipe path died in
+            // (*sync.Once).doSlow → o.m.Lock() on the GoMutex-typed m
+            // field). As plain GoStructs the real bodies work
+            // end-to-end: their fields are either plain structs
+            // (isync.Mutex) or atomic wrappers, which stay cells for
+            // atomicity and are bridged by cell-transparent &x.v
+            // (FieldAddrNode). Pool and Map keep their Java objects:
+            // their real bodies need runtime support beyond struct
+            // layout (pool pinning, Go-== key semantics).
             switch (base) {
-                case "Mutex", "RWMutex", "WaitGroup", "Once", "Pool",
+                case "Pool",
                      // fix-linkname: sync.Map.
                      "Map":
                     return base;

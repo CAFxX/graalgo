@@ -50,18 +50,26 @@ public final class AtomicOpNode extends GoExprNode {
             Map.entry("atomic.Int64.Load", GoKind.INT64),
             Map.entry("atomic.Int64.Add", GoKind.INT64),
             Map.entry("atomic.Int64.Swap", GoKind.INT64),
+            Map.entry("atomic.Int64.And", GoKind.INT64),
+            Map.entry("atomic.Int64.Or", GoKind.INT64),
             Map.entry("atomic.Int64.CompareAndSwap", GoKind.BOOL),
             Map.entry("atomic.Uint64.Load", GoKind.UINT64),
             Map.entry("atomic.Uint64.Add", GoKind.UINT64),
             Map.entry("atomic.Uint64.Swap", GoKind.UINT64),
+            Map.entry("atomic.Uint64.And", GoKind.UINT64),
+            Map.entry("atomic.Uint64.Or", GoKind.UINT64),
             Map.entry("atomic.Uint64.CompareAndSwap", GoKind.BOOL),
             Map.entry("atomic.Int32.Load", GoKind.INT32),
             Map.entry("atomic.Int32.Add", GoKind.INT32),
             Map.entry("atomic.Int32.Swap", GoKind.INT32),
+            Map.entry("atomic.Int32.And", GoKind.INT32),
+            Map.entry("atomic.Int32.Or", GoKind.INT32),
             Map.entry("atomic.Int32.CompareAndSwap", GoKind.BOOL),
             Map.entry("atomic.Uint32.Load", GoKind.UINT32),
             Map.entry("atomic.Uint32.Add", GoKind.UINT32),
             Map.entry("atomic.Uint32.Swap", GoKind.UINT32),
+            Map.entry("atomic.Uint32.And", GoKind.UINT32),
+            Map.entry("atomic.Uint32.Or", GoKind.UINT32),
             Map.entry("atomic.Uint32.CompareAndSwap", GoKind.BOOL),
             Map.entry("atomic.Bool.Load", GoKind.BOOL),
             Map.entry("atomic.Bool.Swap", GoKind.BOOL),
@@ -69,6 +77,8 @@ public final class AtomicOpNode extends GoExprNode {
             Map.entry("atomic.Uintptr.Load", GoKind.UINT64),
             Map.entry("atomic.Uintptr.Add", GoKind.UINT64),
             Map.entry("atomic.Uintptr.Swap", GoKind.UINT64),
+            Map.entry("atomic.Uintptr.And", GoKind.UINT64),
+            Map.entry("atomic.Uintptr.Or", GoKind.UINT64),
             Map.entry("atomic.Uintptr.CompareAndSwap", GoKind.BOOL),
             // P3-M10: Pointer[T] (Go *T results are POINTER kind) and
             // Value (Go any results are INTERFACE kind).
@@ -81,7 +91,8 @@ public final class AtomicOpNode extends GoExprNode {
 
     /** Expected D5 argument count per op. */
     private static final Map<String, Integer> ARG_COUNTS = Map.of(
-            "Load", 0, "Store", 1, "Add", 1, "Swap", 1, "CompareAndSwap", 2);
+            "Load", 0, "Store", 1, "Add", 1, "Swap", 1, "And", 1, "Or", 1,
+            "CompareAndSwap", 2);
 
     private final String op;
     private final String atomicType;
@@ -145,12 +156,18 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Int64.Load" -> Atomics.loadInt64(cell64(frame));
             case "atomic.Int64.Add" -> Atomics.addInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Int64.Swap" -> Atomics.swapInt64(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Int64.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Int64.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uint64.Load" -> Atomics.loadInt64(cell64(frame));
             case "atomic.Uint64.Add" -> Atomics.addInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uint64.Swap" -> Atomics.swapInt64(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Uint64.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Uint64.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.Load" -> Atomics.loadUintptr(cell64(frame));
             case "atomic.Uintptr.Add" -> Atomics.addUintptr(cell64(frame), args[0].executeLong(frame));
             case "atomic.Uintptr.Swap" -> Atomics.swapUintptr(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Uintptr.And" -> Atomics.andInt64(cell64(frame), args[0].executeLong(frame));
+            case "atomic.Uintptr.Or" -> Atomics.orInt64(cell64(frame), args[0].executeLong(frame));
             default -> throw new FrontendException(
                     "atomic op " + atomicType + "." + op + " is not a long op");
         };
@@ -162,9 +179,13 @@ public final class AtomicOpNode extends GoExprNode {
             case "atomic.Int32.Load" -> Atomics.loadInt32(cell32(frame));
             case "atomic.Int32.Add" -> Atomics.addInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Int32.Swap" -> Atomics.swapInt32(cell32(frame), args[0].executeInt(frame));
+            case "atomic.Int32.And" -> Atomics.andInt32(cell32(frame), args[0].executeInt(frame));
+            case "atomic.Int32.Or" -> Atomics.orInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Uint32.Load" -> Atomics.loadInt32(cell32(frame));
             case "atomic.Uint32.Add" -> Atomics.addInt32(cell32(frame), args[0].executeInt(frame));
             case "atomic.Uint32.Swap" -> Atomics.swapInt32(cell32(frame), args[0].executeInt(frame));
+            case "atomic.Uint32.And" -> Atomics.andInt32(cell32(frame), args[0].executeInt(frame));
+            case "atomic.Uint32.Or" -> Atomics.orInt32(cell32(frame), args[0].executeInt(frame));
             default -> throw new FrontendException(
                     "atomic op " + atomicType + "." + op + " is not an int op");
         };

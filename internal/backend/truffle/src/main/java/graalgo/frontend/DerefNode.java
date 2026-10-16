@@ -35,6 +35,13 @@ public final class DerefNode extends GoExprNode {
             }
             o = p.referent();
         }
+        if (o instanceof java.util.concurrent.atomic.AtomicReference<?> ar) {
+            // PKG-053: dereferencing an atomic.Pointer/Value cell (&x.v
+            // yields the cell itself — see FieldAddrNode) reads the
+            // stored reference, e.g. LoadPointer(&x.v) in
+            // (*atomic.Pointer[T]).Load.
+            return ar.get();
+        }
         if (o instanceof Long l) {
             // Long-carried value: decode per the node's kind.
             return Boxing.fromLongBits(kind(), l.longValue());
