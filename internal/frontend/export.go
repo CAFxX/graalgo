@@ -3362,6 +3362,16 @@ func (e *exporter) defVar(v *types.Var, param bool) (int, error) {
 	return id, nil
 }
 
+// defTempVarWithType defines a synthetic temporary variable with an
+// explicit wire type id (for temps whose go/types Type is not directly
+// available, e.g. hoisted already-exported nodes). The temp is fresh per
+// call (no dedup); the caller references the returned obj id directly.
+func (e *exporter) defTempVarWithType(name string, typeID int) int {
+	id := len(e.objects)
+	e.objects = append(e.objects, ObjectEnt{Kind: "var", Name: name, Type: typeID})
+	return id
+}
+
 // defFunc records a top-level function or method object in the object table
 // (idempotent) and returns its object id (M6, WS H).
 func (e *exporter) defFunc(obj *types.Func) (int, error) {
@@ -6887,6 +6897,16 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 	if c, ok := isGoschedCall(e.info, s.Call); ok {
 		return e.exportGoschedDeferGo(s, c, true)
 	}
+	// P3-M9 (WS D): a concrete multi-result call as the deferred call
+	// (defer fmt.Println("x") — legal Go, results discarded) desugars to
+	// the __-helper call with the pair dropped, mirroring the bare
+	// statement position (exportBareMultiResultCall). Gated on the same
+	// concrete helper-call plans (mrM7, mrXmlToken); the M5 kinds keep
+	// their pinned fail-fast and other positions are unaffected.
+	if plan := e.classifyMultiResultCall(s.Call); plan != nil &&
+		(plan.kind == mrM7 || plan.kind == mrXmlToken) {
+		return e.exportDeferMultiResultCall(s, plan)
+	}
 	call, err := e.exportCall(s.Call)
 	if err != nil {
 		return nil, err
@@ -6911,6 +6931,35 @@ func (e *exporter) exportDeferStmt(s *ast.DeferStmt) (*Node, error) {
 	return e.node("defer", s, map[string]any{"call": call}), nil
 }
 
+// exportDeferMultiResultCall desugars `defer f_mr(args)` where f_mr is a
+// concrete multi-result call (mrM7/mrXmlToken plan): the __-helper call
+// (pair-returning) is built via the shared M5 machinery and wrapped in
+// the "defer" node; the pair is discarded like the bare statement
+// position. Pre-statements from nested desugars (arg temps) run at
+// defer-statement time, before the defer registration, matching Go's
+// immediate argument evaluation.
+func (e *exporter) exportDeferMultiResultCall(s *ast.DeferStmt, plan *mrPlan) (*Node, error) {
+	c := s.Call
+	helperFn, err := e.multiResultHelper(plan)
+	if err != nil {
+		return nil, err
+	}
+	args, preStmts, err := e.multiResultHelperArgs(c, plan)
+	if err != nil {
+		return nil, err
+	}
+	call, err := e.synthHelperCallNode(c, helperFn, plan.tmpType, args)
+	if err != nil {
+		return nil, err
+	}
+	deferNode := e.node("defer", s, map[string]any{"call": call})
+	if len(preStmts) > 0 {
+		stmts := append(append([]*Node{}, preStmts...), deferNode)
+		return e.node("block", s, map[string]any{"stmts": stmts}), nil
+	}
+	return deferNode, nil
+}
+
 // exportGoStmt exports `go f(args)` (P2-M1, WS A). The call is exported as
 // a call node; the Phase-2 factory builds a GoStatementNode that evaluates
 // the function value in the spawning goroutine and hands it to the
@@ -6928,6 +6977,15 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 	if c, ok := isGoschedCall(e.info, s.Call); ok {
 		return e.exportGoschedDeferGo(s, c, false)
 	}
+	// P3-M9 (WS D): a concrete multi-result call as the go call
+	// (go fmt.Println("x") — legal Go, results discarded) desugars to
+	// the __-helper call with the pair dropped, mirroring the bare
+	// statement position. Gated on the same concrete helper-call plans
+	// (mrM7, mrXmlToken).
+	if plan := e.classifyMultiResultCall(s.Call); plan != nil &&
+		(plan.kind == mrM7 || plan.kind == mrXmlToken) {
+		return e.exportGoMultiResultCall(s, plan)
+	}
 	call, err := e.exportCall(s.Call)
 	if err != nil {
 		return nil, err
@@ -6941,6 +6999,88 @@ func (e *exporter) exportGoStmt(s *ast.GoStmt) (*Node, error) {
 		return e.exportGoWithArgs(s)
 	}
 	return e.node("gostmt", s, map[string]any{"call": call}), nil
+}
+
+// exportGoMultiResultCall desugars `go f_mr(args)` where f_mr is a
+// concrete multi-result call (mrM7/mrXmlToken plan). The __-helper call's
+// args are hoisted to temps evaluated at go-time (Go spec), then a
+// zero-arg funclit runs the helper call (pair discarded), mirroring
+// exportGoWithArgs. Pre-statements from nested desugars run before the
+// hoists, at go-statement time.
+func (e *exporter) exportGoMultiResultCall(s *ast.GoStmt, plan *mrPlan) (*Node, error) {
+	c := s.Call
+	helperFn, err := e.multiResultHelper(plan)
+	if err != nil {
+		return nil, err
+	}
+	args, preStmts, err := e.multiResultHelperArgs(c, plan)
+	if err != nil {
+		return nil, err
+	}
+	// The helper is a declared synthetic function: fixed function value,
+	// referenced directly (no hoisting), like hoistGoFunValue's ident case.
+	fi, ok := e.funcByObj[helperFn]
+	if !ok {
+		return nil, fmt.Errorf("gofrontend: synthetic helper %s not in funcByObj", helperFn.Name())
+	}
+	sigID, err := e.typeID(helperFn.Type())
+	if err != nil {
+		return nil, err
+	}
+	funNode := e.node("ident", c, map[string]any{
+		"name": helperFn.Name(), "obj": fi.funcID, "type": sigID,
+	})
+	// Hoist args to temps evaluated at go-time.
+	e.chanSeq++
+	seq := e.chanSeq
+	vardecls := make([]*Node, 0, len(args))
+	tempIdents := make([]*Node, 0, len(args))
+	for i, arg := range args {
+		tid, ok := arg.Fields["type"]
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: no type field for go multi-result arg %d", i)
+		}
+		tidInt, ok := tid.(int)
+		if !ok {
+			// JSON round-trip may decode numbers as float64.
+			if f, ok := tid.(float64); ok {
+				tidInt, ok = int(f), true
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("gofrontend: bad type field for go multi-result arg %d", i)
+		}
+		name := fmt.Sprintf("__go_mrarg_%d_%d", seq, i)
+		oid := e.defTempVarWithType(name, tidInt)
+		vardecls = append(vardecls, e.node("vardecl", s, map[string]any{
+			"names": []string{name}, "objs": []int{oid},
+			"define": true, "type": nil, "values": []*Node{arg},
+		}))
+		tempIdents = append(tempIdents, e.node("ident", s, map[string]any{
+			"name": name, "obj": oid, "type": tidInt,
+		}))
+	}
+	resTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	innerCall := e.node("call", s, map[string]any{
+		"fun": funNode, "args": tempIdents, "type": resTid,
+	})
+	body := e.node("block", s, map[string]any{"stmts": []*Node{
+		e.node("exprstmt", s, map[string]any{"x": innerCall}),
+	}})
+	funclit := e.node("funclit", s, map[string]any{
+		"params": []*Node{}, "results": []*Node{}, "body": body,
+	})
+	gostmt := e.node("gostmt", s, map[string]any{
+		"call": e.node("call", s, map[string]any{
+			"fun": funclit, "args": []*Node{}, "type": nil,
+		}),
+	})
+	stmts := append(append([]*Node{}, preStmts...), vardecls...)
+	stmts = append(stmts, gostmt)
+	return e.node("block", s, map[string]any{"stmts": stmts}), nil
 }
 
 // exportGoWithArgs desugars `go f(args)` (args non-empty) to hoisted
