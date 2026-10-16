@@ -166,7 +166,7 @@ public final class NodeFactoryV2 {
                 // the constant value; we parse it here.
                 try {
                     long bits = Long.parseLong(value);
-                    return ConstNode.ofInt(GoKind.INT, bits);
+                    return ConstNode.ofUntypedInt(bits, value);
                 } catch (NumberFormatException e) {
                     throw new FrontendException(
                         where + ": non-integer literal \"" + value + "\" not yet supported (MVP)");
