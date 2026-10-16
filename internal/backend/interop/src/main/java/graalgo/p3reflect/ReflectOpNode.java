@@ -1399,14 +1399,7 @@ public final class ReflectOpNode extends GoExprNode {
         Object d5 = ReflectRefs.denotedValue(p.ptr(), t.kind);
         if (t.kind == GoKind.MAP) {
             GoMap m = (GoMap) d5;
-            // Clear by deleting all keys.
-            Object[] snapshot = graalgo.runtime.Intrinsics.mapIterInit(m);
-            for (int i = 0; i < snapshot.length; i++) {
-                Object entry = graalgo.runtime.Intrinsics.mapIterNext(snapshot, i);
-                // entry is a key,value pair; extract the key.
-                Object[] kv = (Object[]) entry;
-                graalgo.runtime.Intrinsics.mapDelete(m, kv[0]);
-            }
+            m.clear();
             return;
         }
         // Slice: zero the elements.

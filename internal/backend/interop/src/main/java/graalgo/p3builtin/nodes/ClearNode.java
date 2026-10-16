@@ -50,17 +50,32 @@ public final class ClearNode extends GoExprNode {
 
     @Override
     public Object executeObject(VirtualFrame frame) {
+        doClear(frame);
+        return null;
+    }
+
+    @Override
+    public long executeLong(VirtualFrame frame) {
+        // clear is statement-only, but ExprStmtNode dispatches on
+        // kind().slotKind(): INT64 -> executeLong. The truffle-frontend
+        // ClearNode implements executeLong for the same reason.
+        doClear(frame);
+        return 0L;
+    }
+
+    /** Performs the clear; shared by executeObject/executeLong. */
+    private void doClear(VirtualFrame frame) {
         Object v = operand.executeObject(frame);
         if (v == null) {
-            return null; // clear(nil) is a no-op.
+            return; // clear(nil) is a no-op.
         }
         if (v instanceof GoMap m) {
             m.clear();
-            return null;
+            return;
         }
         if (v instanceof GoSlice s) {
             clearSlice(s);
-            return null;
+            return;
         }
         throw new IllegalStateException(
                 "clear of non-map, non-slice value: " + v.getClass());
