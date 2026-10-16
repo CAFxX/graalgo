@@ -392,6 +392,10 @@ public final class SchedulerCore {
                         quiescenceLock.notifyAll();
                     }
                 }
+                // P1-10: mark exit before offering EXIT, so a UNPARK that
+                // races goroutine exit is recognizable as stale at route
+                // time (offer order == route order on the MPSC inbox).
+                h.exited = true;
                 drainer.offer(new ResumeToken(ResumeToken.Kind.EXIT, h, -1));
             }
         });

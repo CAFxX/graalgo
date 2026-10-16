@@ -202,6 +202,11 @@ public final class WakeupModelTest {
             case UNPARK -> e.inbox.addLast(new Tok(ResumeToken.Kind.UNPARK, g, -1));
             case EXIT -> {
                 e.inbox.addLast(new Tok(ResumeToken.Kind.EXIT, g, -1));
+                // P1-10: production sets the exited flag in spawn's
+                // finally BEFORE offering EXIT (offer order == route
+                // order on the MPSC inbox), so the drainer can tell a
+                // stale UNPARK from a legitimate pre-park wakeup.
+                h.exited = true;
                 e.st[g] = DONE;
             }
         }
@@ -231,7 +236,8 @@ public final class WakeupModelTest {
         int n = e.handles.size();
         for (int i = 0; i < n; i++) {
             sb.append(e.pc[i]).append(',').append(e.st[i]).append(',')
-              .append(e.waitGen[i]).append(';');
+              .append(e.waitGen[i]).append(',').append(e.handles.get(i).exited ? '1' : '0')
+              .append(';');
         }
         sb.append('d').append(e.driverPc).append(';');
         for (Tok t : e.inbox) {
@@ -431,9 +437,12 @@ public final class WakeupModelTest {
     }
 
     /**
-     * Unpark for an exited goroutine: retained in unparkPending (bounded:
-     * handle ids are unique, never reused), no hang, EXIT accounting
-     * stays exact.
+     * Unpark for an exited goroutine: never retained. A UNPARK routed
+     * before EXIT is purged from unparkPending when EXIT is routed; a
+     * UNPARK routed after EXIT (stale — unpark raced goroutine exit) is
+     * dropped outright. No hang, EXIT accounting stays exact, and
+     * unparkPending stays bounded (P1-10: ids are never reused, so a
+     * retained entry would leak forever).
      */
     public void testModelExitWithPendingUnpark() {
         explore(script("exit-pending-unpark", 1,
@@ -559,6 +568,52 @@ public final class WakeupModelTest {
         assertTrue(h.acked.get() >= t1, "park must be admitted via direct unpark");
         assertEquals(1, d.wakeUnparkDirect.get(), "exactly one direct admission");
         assertEquals(0, d.wakeUnparkStashed.get(), "no stashed admission on this path");
+    }
+
+    /**
+     * P1-10: a stashed pre-park unpark is purged when the handle's EXIT
+     * is routed. The goroutine will never park again, so retaining the
+     * entry would leak one unparkPending slot per exit-race forever
+     * (handle ids are never reused). Red on the unpurged drainer
+     * (pending=[g&lt;id&gt;] survives EXIT).
+     */
+    public void testUnparkPendingPurgedOnExit() {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        GoroutineHandle h = new GoroutineHandle(() -> {});
+        h.thread = Thread.currentThread();
+        Drainer d = sched.drainer();
+        long t0 = sched.armPark(h);
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.INIT, h, t0));
+        // UNPARK arrives before any park: stashed (goroutine not exited yet).
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
+        // The goroutine exits without ever parking; production sets the
+        // exited flag in spawn's finally before offering EXIT.
+        h.exited = true;
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.EXIT, h, -1));
+        String snap = d.snapshotForTest(null);
+        assertTrue(snap.contains("pending=[]"),
+                "stale unparkPending entry retained after EXIT: " + snap);
+    }
+
+    /**
+     * P1-10: an UNPARK routed after the handle's EXIT (unpark racing
+     * goroutine exit — e.g. a timer firing for a dead goroutine) is
+     * dropped outright, never added to unparkPending. Red on the
+     * unpurged drainer (pending=[g&lt;id&gt;] after the stale UNPARK).
+     */
+    public void testUnparkAfterExitDropped() {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        GoroutineHandle h = new GoroutineHandle(() -> {});
+        h.thread = Thread.currentThread();
+        Drainer d = sched.drainer();
+        long t0 = sched.armPark(h);
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.INIT, h, t0));
+        h.exited = true;
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.EXIT, h, -1));
+        d.processOneForTest(new ResumeToken(ResumeToken.Kind.UNPARK, h, -1));
+        String snap = d.snapshotForTest(null);
+        assertTrue(snap.contains("pending=[]"),
+                "stale UNPARK for exited goroutine retained: " + snap);
     }
 
     /**

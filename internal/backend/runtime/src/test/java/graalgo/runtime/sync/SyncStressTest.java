@@ -106,16 +106,50 @@ public final class SyncStressTest {
         }
     }
 
-    /** Unlock of an unlocked mutex panics (gc parity). */
-    public void testMutexUnlockOfUnlockedPanics() {
+    /**
+     * P1-9: unlock of an unlocked mutex is a Go FATAL error (gc parity:
+     * {@code fatal error: sync: unlock of unlocked mutex}, exit 2) —
+     * not a recoverable Go panic and not an internal-error
+     * IllegalStateException. Misuse detection is scheduler-independent
+     * (no scheduler is installed here).
+     */
+    public void testMutexUnlockOfUnlockedFatalErrors() {
         GoMutex mu = new GoMutex();
-        boolean panicked = false;
         try {
             mu.unlock();
-        } catch (IllegalStateException e) {
-            panicked = true;
+            throw new AssertionError("unlock of unlocked mutex did not throw");
+        } catch (graalgo.runtime.GoFatalError e) {
+            assertTrue("sync: unlock of unlocked mutex".equals(e.getMessage()),
+                    "wrong fatal message: " + e.getMessage());
+            // Unrecoverable by construction: GoFatalError must not be a
+            // PanicException (DeferChain only unwraps PanicException).
+            assertTrue(!graalgo.runtime.PanicException.class.isAssignableFrom(e.getClass()),
+                    "fatal error must not be a recoverable Go panic");
         }
-        assertTrue(panicked, "unlock of unlocked mutex must panic");
+    }
+
+    /** P1-9: RWMutex unlock-of-unlocked is a Go fatal error (gc parity). */
+    public void testRWMutexUnlockOfUnlockedFatalErrors() {
+        GoRWMutex mu = new GoRWMutex();
+        try {
+            mu.unlock();
+            throw new AssertionError("unlock of unlocked RWMutex did not throw");
+        } catch (graalgo.runtime.GoFatalError e) {
+            assertTrue("sync: Unlock of unlocked RWMutex".equals(e.getMessage()),
+                    "wrong fatal message: " + e.getMessage());
+        }
+    }
+
+    /** P1-9: RWMutex RUnlock-of-unlocked is a Go fatal error (gc parity). */
+    public void testRWMutexRUnlockOfUnlockedFatalErrors() {
+        GoRWMutex mu = new GoRWMutex();
+        try {
+            mu.rUnlock();
+            throw new AssertionError("RUnlock of unlocked RWMutex did not throw");
+        } catch (graalgo.runtime.GoFatalError e) {
+            assertTrue("sync: RUnlock of unlocked RWMutex".equals(e.getMessage()),
+                    "wrong fatal message: " + e.getMessage());
+        }
     }
 
     /**
@@ -205,16 +239,24 @@ public final class SyncStressTest {
         }
     }
 
-    /** WaitGroup negative counter panics. */
+    /**
+     * P1-9: a negative WaitGroup counter is a RECOVERABLE Go panic (gc
+     * parity: {@code panic: sync: negative WaitGroup counter}, exit 2) —
+     * a PanicException carrying the message as a Go string, not an
+     * internal-error IllegalStateException.
+     */
     public void testWaitGroupNegativePanics() {
         GoWaitGroup wg = new GoWaitGroup();
-        boolean panicked = false;
         try {
             wg.add(-1);
-        } catch (IllegalStateException e) {
-            panicked = true;
+            throw new AssertionError("negative WaitGroup counter did not panic");
+        } catch (graalgo.runtime.PanicException pe) {
+            Object v = pe.goValue();
+            assertTrue(v instanceof graalgo.values.GoString,
+                    "panic value must be a Go string, got: " + v);
+            assertTrue("sync: negative WaitGroup counter".equals(v.toString()),
+                    "wrong panic message: " + v);
         }
-        assertTrue(panicked, "negative WaitGroup counter must panic");
     }
 
     /** Zero-counter await returns immediately (no park). */

@@ -157,4 +157,35 @@ public final class GoPoolTest {
         }
         assertEquals(n, got.size(), "spill drain size");
     }
+
+    /**
+     * P1-8: dead threads' Locals are purged — the registry stays bounded
+     * by live threads instead of growing one entry per goroutine that
+     * ever touched the pool. 200 vthreads touch the pool and terminate;
+     * after they are all dead, one get() on the test thread must leave
+     * the registry small. Red on the unpurged design (registry retains
+     * all 200 entries: join() guarantees isAlive() == false, so the
+     * purge has no excuse to keep them).
+     */
+    public void testDeadThreadLocalsPurged() throws Exception {
+        GoPool pool = new GoPool();
+        int n = 200;
+        Thread[] workers = new Thread[n];
+        for (int i = 0; i < n; i++) {
+            workers[i] = Thread.ofVirtual().start(() -> {
+                pool.put(new Object());
+                pool.get();
+            });
+        }
+        for (Thread t : workers) {
+            t.join(30_000);
+            assertTrue(!t.isAlive(), "worker vthread did not terminate");
+        }
+        // Registers the test thread's Local; the purge runs on the
+        // registration path and on the slow path.
+        pool.get();
+        int retained = pool.registeredLocalCountForTest();
+        assertTrue(retained <= 2,
+                "registry retained dead locals: " + retained + " (want <= 2)");
+    }
 }

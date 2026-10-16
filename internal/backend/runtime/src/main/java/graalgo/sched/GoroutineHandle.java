@@ -100,6 +100,16 @@ public final class GoroutineHandle {
      */
     final java.util.concurrent.atomic.AtomicBoolean inIo = new java.util.concurrent.atomic.AtomicBoolean();
 
+    /**
+     * Set when the goroutine's body has completed (P1-10): written once
+     * in {@link SchedulerCore#spawn}'s finally block, before the EXIT
+     * token is offered, and read by the drainer. Lets the drainer tell a
+     * stale UNPARK (unpark racing goroutine exit) from a legitimate
+     * pre-park wakeup, so the stale one is dropped instead of being
+     * retained in {@code unparkPending} forever.
+     */
+    public volatile boolean exited;
+
     /** Body executed by the vthread. */
     final Runnable body;
 

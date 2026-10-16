@@ -116,6 +116,15 @@ public final class GoPool {
         newFunc = f;
     }
 
+    /**
+     * Registry size; white-box leak tests only (P1-8).
+     */
+    int registeredLocalCountForTest() {
+        synchronized (lock) {
+            return allLocals.size();
+        }
+    }
+
     /** The calling thread's Local, registered on first use. */
     private Local local() {
         Local l = locals.get();
