@@ -6261,9 +6261,6 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 			}
 		}
 	} else {
-		if len(results) > 1 {
-			return nil, scopeErrorf("func %s has %d results; at most one result is supported in frontend/v1 scope (WS D)", fd.Name.Name, len(results))
-		}
 		fields["linkname"] = symbol
 		// real-nethttp: if the linkname symbol resolves to a compiled
 		// funcdecl (via synthFuncIDs), alias the stub to the provider so
@@ -6272,13 +6269,32 @@ func (e *exporter) exportLinknameDecl(fi *funcDeclInfo) (*Node, error) {
 		// the normal pair-returning convention. The symbol is either
 		// pkgpath.name (two-field form) or a bare name (single-field form,
 		// which is a provider declaration, not a consumer).
+		//
+		// P4 (real-reflect): multi-result linkname consumers (e.g.
+		// reflect's badlinkname_rtype_FieldByName, which has 2 results)
+		// are only an error when no provider is found. With a provider,
+		// calls lower directly to it via linknameAlias. Without a
+		// provider, the backend's LinknameRootNode cannot handle
+		// multi-result dispatch, so emit as unimplemented (panic stub)
+		// rather than failing the entire package export. This is
+		// general: it applies to any bodyless multi-result linkname,
+		// not just reflect's shims.
+		hasProvider := false
 		if strings.Contains(symbol, ".") {
 			if providerFi, ok := e.synthFuncIDs[symbol]; ok && providerFi != nil {
 				if e.linknameAlias == nil {
 					e.linknameAlias = make(map[*types.Func]*funcDeclInfo)
 				}
 				e.linknameAlias[fi.obj] = providerFi
+				hasProvider = true
 			}
+		}
+		if len(results) > 1 && !hasProvider {
+			// No provider to alias to: mark unimplemented so the
+			// backend panics if called, instead of failing export.
+			// This matches the bodyless-no-linkname path above.
+			fields["unimplemented"] = true
+			delete(fields, "linkname")
 		}
 	}
 	return e.node("funcdecl", fd, fields), nil
