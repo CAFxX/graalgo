@@ -114,6 +114,12 @@ Package-level variables are listed in document order-independent
 Every node is exactly `{ "kind", "pos", "fields" }` — including `funcdecl`
 and `param`. `fields` schemas per kind (`type` = type-table id):
 
+Every expression kind's `fields.type` is stamped onto the built node by the
+central `buildExpr` dispatcher (`NodeFactory.java`) via `setTypeId` (M4, WS E:
+interface boxing and dynamic-type descriptors need the static type-table id).
+Per-kind builders don't read `fields.type` themselves — the field is live
+wire weight consumed centrally, not dead weight.
+
 | kind | fields |
 |---|---|
 | `funcdecl` | `name`, `sig`: type id, `params`: [param nodes], `body`: block node, `pkgpath`: str (the declaring package's import path — additive since the fix-linkname change; cross-package `//go:linkname` resolution binds every compiled function under `pkgpath.name`, so the backend can resolve Go→Go linknames without re-deriving the path) — or, for a `//go:linkname`-bound function (P3-M4, WS C, ADR-0004; first emitted by gofrontend 0.5.0): `name`, `sig`, `params`, `results` (optional), `linkname`: str (the target symbol) and NO `body` field; the factory builds a `LinknameRootNode` dispatching by symbol name instead of a Go body — or, for a bodyless function without `//go:linkname` (typically an assembly implementation; general mechanism, not name-keyed): `name`, `sig`, `params`, `results` (optional), `pkgpath`: str, `unimplemented`: bool (true) and NO `body` field; the factory builds an `UnimplementedRootNode` that panics if called |
@@ -169,6 +175,8 @@ and `param`. `fields` schemas per kind (`type` = type-table id):
 | `timeafter` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.After(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timetick` | `duration`: expr node (or JSON number: nanoseconds), `type`: type id (channel) — `time.Tick(d)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
 | `timeafterfunc` | `duration`: expr node (or JSON number: nanoseconds), `func`: expr node, `type`: type id (`*time.Timer`) — `time.AfterFunc(d, f)` (P3-M5, WS E, ADR-0005 App W; additive node kind, first emitted by gofrontend 0.7.0) |
+| `addrof` | `x`: expr node, `type`: type id (of `*T`) — address of the operand: ident → the variable's storage cell, selector → the field's storage cell, `&*p` → `p` itself, anything else → address of a snapshot; *or* `array`, `index`: expr nodes, `type`: type id — address of the array/slice slot `arr[i]` as a `GoPointer` to the slot (writes through `*p` update the element). Two schemas, not one: the `array`/`index` form encodes lvalue slot-addressing (a snapshot value is insufficient), and the exporter knows the addressing mode from the AST at emission time — nesting an `index` node under `x` would push AST-shape knowledge into the builder and lose the explicit lvalue marker. `&x` / implicit `&` for pointer-receiver method calls (P3-M9, WS D). The result kind is always POINTER; `fields.type` is consumed by the central `buildExpr` type-id stamp, not by the per-kind builder |
+| `sliceoverlap` | `x`, `y`: expr nodes (the two `[]byte` slices), `inexact`: bool, `type`: type id (bool) — `crypto/internal/fips140/alias.AnyOverlap` / `InexactOverlap` (P3-M9, unsafe patterns; the real stdlib's `uintptr(unsafe.Pointer(...))` address arithmetic traps under D5, so overlap is computed directly on `GoSlice` array identity + range intersection; `inexact` additionally returns false when `&x[0] == &y[0]`). `fields.type` is consumed by the central `buildExpr` type-id stamp, not by the per-kind builder |
 
 Normalizations (applied by the exporter, part of the contract):
 - `*ast.EmptyStmt` is dropped (empty statements carry no semantics).

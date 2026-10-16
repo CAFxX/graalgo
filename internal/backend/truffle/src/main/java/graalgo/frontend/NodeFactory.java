@@ -3071,6 +3071,26 @@ public final class NodeFactory {
      * addressable value, the exporter wraps the receiver in an "addrof"
      * node. The factory evaluates the inner expression and wraps the
      * result in a GoPointer.
+     *
+     * <p>Wire schemas (both carry {@code "type"} = the type-table id of the
+     * {@code *T} result; the field is <em>not</em> read here — the central
+     * {@link #buildExpr} dispatcher stamps every expression node's
+     * {@code fields.type} via {@code setTypeId}, which interface boxing and
+     * dynamic-type descriptors need):
+     * <ul>
+     *   <li>{@code {"x", "type"}} — address the operand: an ident addresses
+     *       the variable's storage cell, a selector the field's storage
+     *       cell, {@code &*p} is {@code p} itself, anything else takes the
+     *       address of a snapshot.</li>
+     *   <li>{@code {"array", "index", "type"}} — address the array/slice
+     *       slot: {@code &arr[i]} must yield a pointer to the slot itself
+     *       (writes through {@code *p} update {@code arr[i]}), never to a
+     *       snapshot of the element value. A separate schema — rather than
+     *       nesting an {@code index} node under {@code "x"} — keeps the
+     *       lvalue addressing mode explicit on the wire; the exporter knows
+     *       the mode from the AST at emission time.</li>
+     * </ul>
+     * The result kind is always {@link GoKind#POINTER}.
      */
     private GoExprNode buildAddrOf(Json.Object node, BuildCtx ctx) {
         Json.Object f = fieldsOf(node, "addrof");
@@ -3217,7 +3237,12 @@ public final class NodeFactory {
      * Builds the {@code sliceoverlap} wire node for
      * crypto/internal/fips140/alias.AnyOverlap and InexactOverlap
      * (P3-M9, unsafe patterns). Fields: "x", "y" (the two []byte slices),
-     * "inexact" (bool).
+     * "inexact" (bool), "type" (the bool result's type-table id).
+     *
+     * <p>{@code "type"} is not read here — the central {@link #buildExpr}
+     * dispatcher stamps every expression node's {@code fields.type} via
+     * {@code setTypeId} (interface boxing and dynamic-type descriptors
+     * need it).
      */
     private GoExprNode buildSliceOverlap(Json.Object node, BuildCtx ctx) {
         Json.Object f = fieldsOf(node, "sliceoverlap");
