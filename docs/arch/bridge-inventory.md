@@ -23,7 +23,7 @@ deliverable until the design lands.
   packages via root-cause fixes: `fmt` (worktrees `real-fmt2`,
   `real-fmt-rebase`), `crypto/x509` (worktree `real-x509`), `net`/`net/http`
   (worktree `real-nethttp`), `reflect` (worktree `real-reflect2`). Retires
-  B-1, B-5, and the reflect/time/math name-keyed predicates in B-3.
+  B-1, B-5, B-13, and the reflect/time/math name-keyed predicates in B-3.
 - **Phase 2 — package-by-package.** Retire each remaining `synth_*.go` as
   its root cause lands (real trap path for `internal/poll`+`syscall`; the
   `io`/`fs` export fix for `net`; a DNS resolver; …). Every retirement
@@ -34,12 +34,18 @@ deliverable until the design lands.
   `overlayImporter`/`resolvePkgTree` package switches, the linkname
   allowlist, `isMultiResultSynthetic`/`multiResultSyntheticError`, the
   intrinsic predicates, the `"syncop"`/`"runtimecaller"` wire nodes, and
-  `NodeFactory.syncPrimitiveName`. Retires B-2 and the rest of B-3.
+  `NodeFactory.syncPrimitiveName`. Retires B-2, B-10, and the rest of B-3.
 - **Phase 4 — needs design.** `frontend-rewrite` (frontend-v2
   parser→checker→emitter pipeline) replaces the name-keyed export machinery
   entirely; real `runtime.Callers` replaces the `rtstack` intrinsics; a
   byte-addressed value model (or documented trap contract) resolves
-  `unsafe.Add`. Retires B-6, B-7.
+  `unsafe.Add`; a syscall trap mechanism retires the Java `os`/`time`
+  reimplementations; scheduler-integrated channels and a runtime timer
+  implementation retire the Java `chan`/`time` runtimes; the linkname
+  provider surface, `internal/abi` intrinsics, interface dispatch, and
+  `math` bit-intrinsics get a general intrinsic/provider mechanism (or are
+  adjudicated permanent). Retires B-6, B-7, B-8, B-9, B-11, B-12, B-14,
+  B-15, B-16, B-17.
 
 ## Active bridges
 
@@ -203,6 +209,161 @@ deliverable until the design lands.
   then delete the synthetic intrinsics.
 - **Phase:** 4.
 
+### B-8. `p3os/GoOs.java` (Java reimplementation of `os` syscalls)
+
+- **What:**
+  [GoOs.java](../../internal/backend/interop/src/main/java/graalgo/p3os/GoOs.java)
+  (~1300 lines): implements the `os` package's file/dir/symlink/env
+  operations directly in Java on NIO — cookie handles, a virtual cwd, an
+  env overlay, and a hand-rolled errno mapper — instead of compiling the
+  real `os` sources against syscalls.
+- **Why:** the real `os` sources need syscalls; graalgo has no syscall trap
+  layer, so the OS surface was reimplemented in Java.
+- **Root-cause fix:** needs design — a general syscall trap mechanism that
+  lets the real `os` sources run (what would have to be true: a trap ABI
+  from guest code to host syscalls, plus `syscall` package support); then
+  delete `GoOs`.
+- **Phase:** 4.
+
+### B-9. `p3time` (Java reimplementation of the `time` runtime)
+
+- **What:**
+  [p3time/](../../internal/backend/interop/src/main/java/graalgo/p3time/)
+  (`P3TimeRuntime`, `GoTimerT`, `GoTickerT`, `TimeChan`, `TimeDescriptors`,
+  `nodes/`): timers, tickers, the wall clock, and timer channels
+  implemented in Java instead of compiling the real `time` sources against
+  the runtime timer heap.
+- **Why:** the real `time` package needs runtime timer support
+  (`runtime.addtimer`, timer heap); it was reimplemented on the JVM.
+- **Root-cause fix:** needs design — a runtime-integrated timer
+  implementation (timer wheel or heap driven by the scheduler) that the
+  real `time` sources can target; then delete the Java reimplementation.
+- **Phase:** 4.
+
+### B-10. `p3sync/nodes` (Java `sync`/`sync/atomic` primitives)
+
+- **What:**
+  [p3sync/nodes/](../../internal/backend/interop/src/main/java/graalgo/p3sync/nodes/)
+  (`AtomicAddrNode`, `AtomicOpNode`, `SyncNewNode`, `SyncOpNode`): backend
+  implementations of `sync`/`sync/atomic` operations as Truffle nodes,
+  complementing the frontend name-keyed lowering (B-2).
+- **Why:** the real `sync`/`sync/atomic` sources did not compile; the
+  backend implements the primitives directly in Java.
+- **Root-cause fix:** retire with B-2 — compile the real `sync` and
+  `sync/atomic` sources end-to-end (the PKG-053 partial retirement already
+  routes `Mutex`/`RWMutex`/`WaitGroup`/`Once` through real bodies), then
+  delete the nodes.
+- **Phase:** 3 (with B-2).
+
+### B-11. `p3chan/nodes` (Java channel implementation)
+
+- **What:**
+  [p3chan/nodes/](../../internal/backend/interop/src/main/java/graalgo/p3chan/nodes/)
+  (`MakeChanNode`, `ChanSendNode`, `ChanRecvNode`, `ChanCloseNode`,
+  `ChanLenCapNode`, `SelectNode`, `ChanWire`): channel make/send/recv/
+  close/select implemented in Java instead of compiling the real
+  `runtime/chan.go`.
+- **Why:** the real channel implementation needs runtime scheduler
+  integration (`gopark`/`goready`); it was reimplemented on JVM
+  concurrency primitives.
+- **Root-cause fix:** needs design — a scheduler-integrated channel
+  runtime (what would have to be true: guest goroutine
+  park/unpark wired to channel block/wakeup); then compile the real
+  channel paths.
+- **Phase:** 4.
+
+### B-12. `p3math/nodes` (Java `math` bit-intrinsics)
+
+- **What:**
+  [p3math/nodes/](../../internal/backend/interop/src/main/java/graalgo/p3math/nodes/)
+  (`MathF32BitsNode`, `MathF64BitsNode`, `MathFmaNode`, `MathSqrtNode`, …):
+  bit-level `math` operations (`Float32bits`, `Fma`, `Sqrt`, …)
+  implemented as Truffle nodes instead of compiling the real `math`
+  sources.
+- **Why:** expedience during bring-up; each op is a few lines in Java.
+- **Root-cause fix:** needs design — either compile the real (pure-Go)
+  `math` sources and delete the nodes (what would have to be true: the
+  frontend must handle `math`'s `arch`-gated files), or adjudicate these
+  as permanent intrinsics on the `NumGoroutine`/`Gosched` precedent (they
+  are gc intrinsics with no meaningful "real" Go body to compile).
+- **Phase:** 4 (pending the adjudication decision).
+
+### B-13. `p3reflect` (Java `reflect` implementation)
+
+- **What:**
+  [p3reflect/](../../internal/backend/interop/src/main/java/graalgo/p3reflect/)
+  (`ReflectOpNode`, `ReflectTypes`, `ReflectValues`, `ReflectCalls`,
+  `ReflectRefs`): the `reflect` package's value/type/call operations
+  implemented in Java instead of compiling the real `reflect` sources.
+- **Why:** the real `reflect` sources did not compile (they lean on
+  `unsafe`, linknames, and runtime type metadata).
+- **Root-cause fix:** compile the real `reflect` sources, then delete the
+  Java implementation. In flight: worktree `real-reflect2` (Phase 1).
+- **Phase:** 1.
+
+### B-14. `p3link` (Java `//go:linkname` runtime providers)
+
+- **What:**
+  [p3link/](../../internal/backend/interop/src/main/java/graalgo/p3link/)
+  (`SyncRuntime`, `LinknameIntrinsics`, `AddressIntCell`, `Synctest`):
+  implements gc's runtime `//go:linkname` provider surface
+  (`sync.runtime_registerPoolCleanup`, sema/mgc/proc/panic hooks) in Java
+  for the real `sync`/`sync/atomic` packages.
+- **Why:** the real `sync` sources declare bodyless functions the runtime
+  must provide; Java is where graalgo's runtime lives, so the providers
+  were written there.
+- **Root-cause fix:** needs design — this is the provider mechanism
+  itself, not a shim over missing functionality (what would have to be
+  true to retire it: the runtime reimplemented in Go, or providers moved
+  to compiled Go code). Until then it is load-bearing infrastructure.
+- **Phase:** 4.
+
+### B-15. `p3abi` (`internal/abi` FuncPC intrinsic node)
+
+- **What:**
+  [AbiFuncPCNode.java](../../internal/backend/interop/src/main/java/graalgo/p3abi/AbiFuncPCNode.java):
+  implements the `internal/abi` `FuncPCABI0`/`FuncPCABIInternal` compile
+  intrinsics as the `"abifuncpc"` wire node, returning an opaque stable
+  func id (graalgo has no PCs).
+- **Why:** gc implements these as compile intrinsics; there is no Go
+  source body to compile.
+- **Root-cause fix:** needs design — a general intrinsic mechanism (what
+  would have to be true: a sanctioned way to declare "this stdlib symbol
+  is provided by the backend", on the `NumGoroutine`/`Gosched`
+  adjudication precedent). May be permanent: without PCs there is no
+  "real" implementation to converge on.
+- **Phase:** 4 (pending the intrinsic-mechanism design).
+
+### B-16. `iface` (Java interface method tables and dispatch)
+
+- **What:**
+  [iface/](../../internal/backend/interop/src/main/java/graalgo/iface/)
+  (`IfaceMethodTables`, `IfaceDispatchNode`, `IfaceItab`,
+  `DescriptorNames`, …): builds itabs and dispatches interface method
+  calls in Java — the role gc's runtime/linker plays.
+- **Why:** the runtime lives in Java; itabs must be constructed
+  somewhere, and the Java side owns type metadata.
+- **Root-cause fix:** needs design — retires only if the runtime is
+  reimplemented in Go (what would have to be true: guest-side itab
+  construction with the backend exposing type metadata). Otherwise this
+  is the real implementation and should be adjudicated as such rather
+  than carried as a bridge.
+- **Phase:** 4 (pending the adjudication decision).
+
+### B-17. `p3unsafe` (Java `unsafe` operations, beyond the `Add` trap)
+
+- **What:**
+  [p3unsafe/](../../internal/backend/interop/src/main/java/graalgo/p3unsafe/)
+  (`UnsafeOps`, `UnsafeSliceNode`, `UnsafeFromPtrNode`, …): implements
+  `unsafe.Slice`, `unsafe.String`, pointer↔integer conversions in Java.
+  (The `unsafe.Add` always-trap is already B-6.)
+- **Why:** the value model has no byte-addressed pointer arithmetic, so
+  `unsafe` operations were implemented against the Java object model.
+- **Root-cause fix:** needs design — the same byte-addressed value model
+  as B-6 (what would have to be true: pointers as addressable values the
+  backend can do arithmetic on); then implement the real `unsafe` ops.
+- **Phase:** 4.
+
 ## Adjudicated non-bridges
 
 Mechanical gate ([check_no_bridges.py](../../.github/scripts/check_no_bridges.py))
@@ -252,6 +413,35 @@ extend these entries or add new ones without a fresh independent review.
   bridge: no synthetic stdlib logic, no name-keyed special case — the
   call interception reuses the existing general runtime-overlay guard
   block, exactly like `NumGoroutine`.
+
+- **2026-10-16 — JDK-delegating interop packages (IV-52, coordinator
+  adjudication).** Per his 2026-10-10 directive ("prefer delegating to
+  JDK libraries when semantically compatible"), the following are
+  directive-blessed delegations, not forbidden bridges:
+  - [p3crypto](../../internal/backend/interop/src/main/java/graalgo/p3crypto/)
+    → `java.security`/`javax.crypto` (hash, HMAC);
+  - [p3tls](../../internal/backend/interop/src/main/java/graalgo/p3tls/)
+    (`TlsRuntime.java`) → `javax.net.ssl` (TLS engines);
+  - [p3net](../../internal/backend/interop/src/main/java/graalgo/p3net/)
+    (`GoHttp.java`) → `java.net.http` (HTTP client).
+  Not bridges: they delegate to battle-tested JDK implementations
+  instead of reimplementing the logic; the Go side retains the types,
+  API surface, and semantics mapping. The delegation adjudication is
+  recorded here so the no-bridges gate and future reviewers do not
+  re-litigate it. **Caveat:** `p3crypto/GoCrypto.java` is currently dead
+  code (zero callers — verified 2026-10-16); a separate lane is deciding
+  wire-or-delete. The adjudication covers the delegation design, not the
+  dead file — if the lane deletes it, no inventory change is needed; if
+  it wires it in, the wiring inherits this adjudication.
+
+- **2026-10-16 — `p3log` diagnostic utility (IV-52, coordinator
+  adjudication).**
+  [P3Log.java](../../internal/backend/interop/src/main/java/graalgo/p3log/P3Log.java)
+  is shared diagnostic logging for the interop module (backed by
+  `java.util.logging`), routing compile/startup diagnostics away from
+  ad-hoc stderr printing (rejected by the debug-leftover gate). Not a
+  bridge: it is build/launch infrastructure, not a reimplementation of
+  guest-visible Go logic.
 
 ## Retired
 
