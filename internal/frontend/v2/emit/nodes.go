@@ -11,6 +11,7 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"strconv"
 )
 
 // node is the in-memory representation of one AST node.
@@ -41,7 +42,10 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 				if pobj == nil {
 					continue
 				}
-				pid := e.declareParam(pobj)
+				pid, err := e.declareParam(pobj)
+				if err != nil {
+					return nil, err
+				}
 				params = append(params, e.node("param", name, map[string]any{
 					"name": name.Name,
 					"obj":  pid,
@@ -152,7 +156,9 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 		for _, l := range st.Lhs {
 			if id, ok := l.(*ast.Ident); ok && id.Name != "_" {
 				if obj := e.info.Info.Defs[id]; obj != nil {
-					e.declareObject(obj)
+					if _, err := e.declareObject(obj); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
@@ -166,7 +172,15 @@ func (e *Emitter) emitAssign(st *ast.AssignStmt) (map[string]any, error) {
 
 func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 	gd, ok := st.Decl.(*ast.GenDecl)
-	if !ok || gd.Tok != token.VAR {
+	if !ok {
+		return nil, fmt.Errorf("emit: unsupported decl stmt %T", st.Decl)
+	}
+	// Constants have no runtime storage: every use folds to a literal
+	// (emitIdent), so the declaration itself emits no code.
+	if gd.Tok == token.CONST {
+		return e.node("block", st, map[string]any{"stmts": []any{}}), nil
+	}
+	if gd.Tok != token.VAR {
 		return nil, fmt.Errorf("emit: unsupported decl stmt %T", st.Decl)
 	}
 	names := []string{}
@@ -183,7 +197,11 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 		for _, name := range vs.Names {
 			names = append(names, name.Name)
 			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				objs = append(objs, oid)
 			} else {
 				objs = append(objs, -1)
 			}
@@ -287,14 +305,22 @@ func (e *Emitter) emitRange(st *ast.RangeStmt) (map[string]any, error) {
 	if st.Key != nil {
 		if id, ok := st.Key.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				key = e.declareObject(obj)
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				key = oid
 			}
 		}
 	}
 	if st.Value != nil {
 		if id, ok := st.Value.(*ast.Ident); ok && id.Name != "_" {
 			if obj := e.info.Info.Defs[id]; obj != nil {
-				value = e.declareObject(obj)
+				oid, err := e.declareObject(obj)
+				if err != nil {
+					return nil, err
+				}
+				value = oid
 			}
 		}
 	}
@@ -464,30 +490,82 @@ func (e *Emitter) emitIdent(id *ast.Ident) (map[string]any, error) {
 			"name": "_",
 		}), nil
 	}
-	// Builtin?
 	if obj := e.info.Info.Uses[id]; obj != nil {
-		if _, ok := obj.(*types.Builtin); ok {
-			return e.node("ident", id, map[string]any{
-				"name":    id.Name,
-				"builtin": id.Name,
-			}), nil
-		}
-		oid := e.declareObject(obj)
-		return e.node("ident", id, map[string]any{
-			"name": id.Name,
-			"obj":  oid,
-			"type": e.typeID(obj.Type()),
-		}), nil
+		return e.emitIdentUse(id, obj)
 	}
 	if obj := e.info.Info.Defs[id]; obj != nil {
-		oid := e.declareObject(obj)
-		return e.node("ident", id, map[string]any{
-			"name": id.Name,
-			"obj":  oid,
-			"type": e.typeID(obj.Type()),
-		}), nil
+		return e.emitIdentUse(id, obj)
 	}
 	return nil, fmt.Errorf("emit: unresolved ident %s", id.Name)
+}
+
+// emitIdentUse emits a reference to a resolved object.
+func (e *Emitter) emitIdentUse(id *ast.Ident, obj types.Object) (map[string]any, error) {
+	// Builtin (len, println, ...).
+	if _, ok := obj.(*types.Builtin); ok {
+		return e.node("ident", id, map[string]any{
+			"name":    id.Name,
+			"builtin": id.Name,
+		}), nil
+	}
+	// Named constant: Go constants have no runtime storage, so the value
+	// folds to a literal at the use site. This covers package-level and
+	// function-level consts, iota, and the universe constants true/false.
+	if c, ok := obj.(*types.Const); ok {
+		return e.foldConst(id, c)
+	}
+	// nil: the backend builds NilNode for the "nil" builtin marker.
+	if _, ok := obj.(*types.Nil); ok {
+		return e.node("ident", id, map[string]any{
+			"name":    id.Name,
+			"builtin": "nil",
+		}), nil
+	}
+	oid, err := e.declareObject(obj)
+	if err != nil {
+		return nil, err
+	}
+	return e.node("ident", id, map[string]any{
+		"name": id.Name,
+		"obj":  oid,
+		"type": e.typeID(obj.Type()),
+	}), nil
+}
+
+// foldConst emits a constant object as a basiclit node carrying the
+// constant's value in source syntax.
+func (e *Emitter) foldConst(id *ast.Ident, c *types.Const) (map[string]any, error) {
+	v := c.Val()
+	if v == nil {
+		return nil, fmt.Errorf("emit: const %s has no value", c.Name())
+	}
+	lit, ok := constLiteral(v)
+	if !ok {
+		return nil, fmt.Errorf("emit: unsupported const %s value %v", c.Name(), v)
+	}
+	return e.node("basiclit", id, map[string]any{
+		"value": lit,
+		"type":  e.typeID(c.Type()),
+	}), nil
+}
+
+// constLiteral renders a go/constant value in Go source syntax, matching
+// what the backend's literal parser accepts — the same syntax a literal
+// written inline in source would use.
+func constLiteral(v constant.Value) (string, bool) {
+	switch v.Kind() {
+	case constant.Bool, constant.String, constant.Int:
+		return v.ExactString(), true
+	case constant.Float:
+		// ExactString renders floats as exact rationals ("3/2"), which no
+		// literal parser accepts. Format the float64 value Go semantics
+		// produce, shortest round-trip form.
+		f, _ := constant.Float64Val(v)
+		return strconv.FormatFloat(f, 'g', -1, 64), true
+	default:
+		// Complex, imaginary, unknown: loud, never silent.
+		return "", false
+	}
 }
 
 func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
@@ -502,7 +580,6 @@ func (e *Emitter) emitBasicLit(l *ast.BasicLit) (map[string]any, error) {
 	if tv.Value != nil {
 		fields["const"] = tv.Value.ExactString()
 	}
-	_ = constant.MakeInt64(0)
 	return e.node("basiclit", l, fields), nil
 }
 
@@ -583,7 +660,11 @@ func (e *Emitter) emitSelector(s *ast.SelectorExpr) (map[string]any, error) {
 				}
 				var oid any
 				if target != nil {
-					oid = e.declareObject(target)
+					doid, err := e.declareObject(target)
+					if err != nil {
+						return nil, err
+					}
+					oid = doid
 				}
 				_ = pkgname
 				return e.node("pkgref", s, map[string]any{

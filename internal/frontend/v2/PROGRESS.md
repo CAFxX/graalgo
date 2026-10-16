@@ -84,3 +84,31 @@ for the design.
   graalgo compiles the v2 Go code (which uses go/parser, go/ast, go/types)
   to JVM bytecode, so it runs in-process and calls NodeFactoryV2 directly
   (no inter-process binary transfer).
+
+## 2026-10-16 — Const objects: honest kinds + folding (review V2-5/V2-23)
+
+- `describeObject` (`emit/emit.go`) no longer mislabels non-var objects:
+  `*types.Const` → `"const"` (carrying `value`), `*types.TypeName` →
+  `"typename"`, `*types.Label` → `"label"`, `*types.PkgName` →
+  `"pkgname"`, plus `"builtin"`/`"nil"`; unknown object kinds fail loudly.
+  `declareObject`/`declareParam` now return errors (threaded through all
+  call sites). Previously a const described as `"var"` allocated a frame
+  slot that was never initialized — silent wrong code.
+- Named constants fold to `basiclit` literals at their use sites
+  (`emitIdent`): Go constants have no runtime storage. Covers
+  package-level and function-level consts, iota, constant expressions,
+  typed consts, and the universe `true`/`false` (which are
+  `*types.Const`, not builtins — same bug). Function-level `const`
+  declarations emit no code. Complex/imaginary constants fail loudly
+  (`emit: unsupported const ...`); floats render via shortest
+  round-trip float64 (`go/constant.ExactString` yields rationals, which
+  no literal parser accepts).
+- `nil` (`*types.Nil`) emits the `"nil"` builtin marker the backend
+  already handles, instead of a bogus `"var"` object.
+- Also removed the `_ = constant.MakeInt64(0)` import-keepalive hack in
+  `emitBasicLit` (`go/constant` is now genuinely used).
+- Regression tests: `emit/const_test.go` (folding at both levels, all
+  const flavors, honest kinds for all six object types, loud imaginary)
+  and `encode/const_test.go` (folded value verified on the binary wire
+  via the test decoder). Every new test was run against the pre-fix
+  code and fails there.

@@ -33,7 +33,7 @@ var handledNodes = map[string]bool{
 	"AssignStmt": true,
 	"BlockStmt":  true,
 	"BranchStmt": true,
-	"DeclStmt":   true, // var only; const/type decls fail loudly
+	"DeclStmt":   true, // var and const; type decls fail loudly
 	"ExprStmt":   true,
 	"ForStmt":    true,
 	"IfStmt":     true,

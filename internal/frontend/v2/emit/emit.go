@@ -73,7 +73,9 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 			if obj == nil {
 				return nil, fmt.Errorf("emit: no object for func %s", fd.Name.Name)
 			}
-			e.declareObject(obj)
+			if _, err := e.declareObject(obj); err != nil {
+				return nil, err
+			}
 		}
 	}
 
@@ -152,50 +154,98 @@ func runeCol(p token.Position) int {
 }
 
 // declareObject assigns an object id if not already assigned.
-func (e *Emitter) declareObject(obj types.Object) int {
+func (e *Emitter) declareObject(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, false)
 }
 
 // declareParam assigns an object id for a function parameter.
-func (e *Emitter) declareParam(obj types.Object) int {
+func (e *Emitter) declareParam(obj types.Object) (int, error) {
 	return e.declareObjectParam(obj, true)
 }
 
-func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) int {
+func (e *Emitter) declareObjectParam(obj types.Object, isParam bool) (int, error) {
 	if id, ok := e.objIDs[obj]; ok {
-		return id
+		return id, nil
 	}
 	id := len(e.objects)
 	e.objIDs[obj] = id
 	// Placeholder; filled by describeObject below. Registered before
 	// description so recursive references work.
 	e.objects = append(e.objects, nil)
-	e.objects[id] = e.describeObject(obj, isParam)
-	return id
+	desc, err := e.describeObject(obj, isParam)
+	if err != nil {
+		return 0, err
+	}
+	e.objects[id] = desc
+	return id, nil
 }
 
-func (e *Emitter) describeObject(obj types.Object, isParam bool) map[string]any {
-	typ := e.typeID(obj.Type())
+// describeObject renders one entry of the object table. Every
+// types.Object implementation gets its honest kind: a const described as
+// "var" used to allocate a frame slot that was never initialized, i.e.
+// silent wrong code. Unknown object kinds fail loudly.
+func (e *Emitter) describeObject(obj types.Object, isParam bool) (map[string]any, error) {
 	switch o := obj.(type) {
 	case *types.Var:
 		return map[string]any{
 			"kind":  "var",
 			"name":  o.Name(),
-			"type":  typ,
+			"type":  e.typeID(o.Type()),
 			"param": isParam,
-		}
+		}, nil
 	case *types.Func:
 		return map[string]any{
 			"kind": "func",
 			"name": o.Name(),
-			"type": typ,
+			"type": e.typeID(o.Type()),
+		}, nil
+	case *types.Const:
+		// Constants normally fold to literals at their use sites
+		// (emitIdent); this entry exists so a const object that is
+		// declared anyway carries its honest kind and value.
+		v := o.Val()
+		if v == nil {
+			return nil, fmt.Errorf("emit: const %s has no value", o.Name())
 		}
-	default:
 		return map[string]any{
-			"kind": "var",
+			"kind":  "const",
+			"name":  o.Name(),
+			"type":  e.typeID(o.Type()),
+			"value": v.ExactString(),
+		}, nil
+	case *types.TypeName:
+		return map[string]any{
+			"kind": "typename",
 			"name": o.Name(),
-			"type": typ,
+			"type": e.typeID(o.Type()),
+		}, nil
+	case *types.Label:
+		return map[string]any{
+			"kind": "label",
+			"name": o.Name(),
+		}, nil
+	case *types.PkgName:
+		imp := ""
+		if p := o.Imported(); p != nil {
+			imp = p.Path()
 		}
+		return map[string]any{
+			"kind":   "pkgname",
+			"name":   o.Name(),
+			"import": imp,
+		}, nil
+	case *types.Builtin:
+		return map[string]any{
+			"kind": "builtin",
+			"name": o.Name(),
+		}, nil
+	case *types.Nil:
+		return map[string]any{
+			"kind": "nil",
+			"name": o.Name(),
+		}, nil
+	default:
+		return nil, fmt.Errorf("emit: unsupported object %T (%q)", obj, obj.Name())
 	}
 }
 
