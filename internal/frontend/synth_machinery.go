@@ -973,12 +973,10 @@ func (e *exporter) importSyntheticPackage(sp *syntheticPackage) error {
 	// to resolve (synthetic, stub, or disk) — no new failure modes.
 	for _, imp := range sp.pkg.Imports() {
 		ip := imp.Path()
-		if _, ok := syntheticSources[ip]; ok {
-			if err := e.importSyntheticPackage(getSyntheticPackage(ip)); err != nil {
-				return err
-			}
-			continue
-		}
+		// R1-P1-2: importPkgTree for every import (not just non-synthetic
+		// ones) — resolvePkgTree handles the synthetic/stub/retired cases
+		// uniformly, so a future retirement can't reintroduce the
+		// 'no synthetic source' panic here either.
 		if err := e.importPkgTree(ip); err != nil {
 			return err
 		}

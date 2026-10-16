@@ -8,6 +8,23 @@ import (
 	"strings"
 )
 
+// desugarSyntheticPackage resolves path for the multi-result desugar
+// tables, which only describe synthetic packages. Unlike
+// getSyntheticPackage it never panics: when path has no synthetic source
+// (retired to the disk importer — e.g. reflect since the real-reflect2
+// retirement), it returns nil and the caller skips the static entry,
+// letting the disk desugar path (classifyDiskMultiResultCall /
+// classifyDiskIfaceMultiResultCall) take over. Structural (no
+// package-name-keyed cases): the tables drive everything.
+// (R1-P1-2: PKG-077 future-proofing; previously every call site below
+// panicked with 'gofrontend: no synthetic source for X' on retirement.)
+func desugarSyntheticPackage(path string) *syntheticPackage {
+	if _, ok := syntheticSources[path]; !ok {
+		return nil
+	}
+	return getSyntheticPackage(path)
+}
+
 // P3-M5 (WS E, ADR-0005 Appendix M): multi-result call-site desugar.
 //
 // v1 cannot emit or call multi-result functions (WS D; the P3-M3 F4
@@ -1606,9 +1623,21 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 	if !ok {
 		return nil
 	}
-	ctxPkg := getSyntheticPackage("context").pkg
-	timePkg := getSyntheticPackage("time").pkg
+	// R1-P1-2: resolve via desugarSyntheticPackage — context/time may
+	// retire to the disk importer; a nil package makes named() return nil
+	// and classification falls through to the disk desugar path instead
+	// of panicking.
+	var ctxPkg, timePkg *types.Package
+	if sp := desugarSyntheticPackage("context"); sp != nil {
+		ctxPkg = sp.pkg
+	}
+	if sp := desugarSyntheticPackage("time"); sp != nil {
+		timePkg = sp.pkg
+	}
 	named := func(pkg *types.Package, name string) *types.Named {
+		if pkg == nil {
+			return nil
+		}
 		obj := pkg.Scope().Lookup(name)
 		if obj == nil {
 			return nil
@@ -1751,7 +1780,14 @@ func (e *exporter) classifyMultiResultCall(c *ast.CallExpr) *mrPlan {
 		}
 		if f, ok := selection.Obj().(*types.Func); ok {
 			if helper, ok := isXmlTokenMethod(f); ok {
-				xmlPkg := getSyntheticPackage("encoding/xml").pkg
+				// R1-P1-2: desugarSyntheticPackage, not getSyntheticPackage
+				// — a retired encoding/xml yields no plan (disk path takes
+				// over) instead of panicking.
+				xmlSP := desugarSyntheticPackage("encoding/xml")
+				if xmlSP == nil {
+					return nil
+				}
+				xmlPkg := xmlSP.pkg
 				nt := named(xmlPkg, "tokenPair")
 				if nt == nil {
 					return nil
@@ -1949,14 +1985,16 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 		return nil
 	}
 	pkgPath := f.Pkg().Path()
-	if _, ok := syntheticSources[pkgPath]; !ok {
-		return nil // not a synthetic package; no AST to inspect
+	// R1-P1-2: not a synthetic package (retired to disk, or user code);
+	// no AST to inspect — the disk path handles it.
+	sp := desugarSyntheticPackage(pkgPath)
+	if sp == nil {
+		return nil
 	}
 	sig, ok := f.Type().(*types.Signature)
 	if !ok || sig.Results().Len() < 2 {
 		return nil // multi-result desugar only; single results need no plan
 	}
-	sp := getSyntheticPackage(pkgPath)
 	// Match the FuncDecl by name; for methods also match the receiver's
 	// named type (handles *T receivers and generic instantiations).
 	var wantRecv string
@@ -2201,7 +2239,13 @@ func classifyM7MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
+		// R1-P1-2: a retired package (e.g. reflect since real-reflect2)
+		// has no static entry — skip it so the disk desugar path takes
+		// over, instead of panicking with 'no synthetic source'.
+		sp := desugarSyntheticPackage(mf.pkgPath)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2360,7 +2404,12 @@ func classifyM9MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		// R1-P1-2: a retired helper package has no static entry — skip
+		// it so the disk desugar path takes over, instead of panicking.
+		sp := desugarSyntheticPackage(helperPkg)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2412,7 +2461,12 @@ func classifyOsMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		// R1-P1-2: a retired helper package has no static entry — skip
+		// it so the disk desugar path takes over, instead of panicking.
+		sp := desugarSyntheticPackage(helperPkg)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2465,7 +2519,12 @@ func classifyM8MultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if helperPkg == "" {
 			helperPkg = mf.pkgPath
 		}
-		sp := getSyntheticPackage(helperPkg)
+		// R1-P1-2: a retired helper package has no static entry — skip
+		// it so the disk desugar path takes over, instead of panicking.
+		sp := desugarSyntheticPackage(helperPkg)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2519,7 +2578,12 @@ func classifyIoMultiResultCall(pkgPath string, fn *types.Func, targs []types.Typ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
+		// R1-P1-2: a retired package has no static entry — skip it so
+		// the disk desugar path takes over, instead of panicking.
+		sp := desugarSyntheticPackage(mf.pkgPath)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -2562,7 +2626,11 @@ func (e *exporter) classifyIfaceMultiResultCall(selection *types.Selection) *mrP
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		sp := getSyntheticPackage(m.pkgPath)
+		// R1-P1-2: desugarSyntheticPackage, not getSyntheticPackage —
+		// a retired table package (e.g. reflect) skips the entry
+		// instead of panicking. (The old nil check was dead code:
+		// getSyntheticPackage never returns nil.)
+		sp := desugarSyntheticPackage(m.pkgPath)
 		if sp == nil {
 			continue
 		}
@@ -2630,7 +2698,11 @@ func (e *exporter) classifyIfaceFallbackMultiResultCall(selection *types.Selecti
 		if m.method != f.Name() || len(m.pairFields) != sig.Results().Len() {
 			continue
 		}
-		sp := getSyntheticPackage(m.pkgPath)
+		// R1-P1-2: desugarSyntheticPackage, not getSyntheticPackage —
+		// a retired table package (e.g. reflect) skips the entry
+		// instead of panicking. (The old nil check was dead code:
+		// getSyntheticPackage never returns nil.)
+		sp := desugarSyntheticPackage(m.pkgPath)
 		if sp == nil {
 			continue
 		}
@@ -2898,7 +2970,11 @@ func (e *exporter) multiResultHelperFunc(mobj *types.Func) (*funcDeclInfo, bool)
 				return nil, false
 			}
 		} else {
-			sp := getSyntheticPackage(helperPkg)
+			// R1-P1-2: desugarSyntheticPackage, not getSyntheticPackage
+			// — a retired helper package yields (nil, false) instead of
+			// panicking. (The old nil check was dead code:
+			// getSyntheticPackage never returns nil.)
+			sp := desugarSyntheticPackage(helperPkg)
 			if sp == nil {
 				return nil, false
 			}
@@ -2984,7 +3060,12 @@ func classifyM7MultiResultCallIfaceFallback(pkgPath string, fn *types.Func, targ
 		if sig.Results().Len() != len(mf.pairFields) {
 			return nil
 		}
-		sp := getSyntheticPackage(mf.pkgPath)
+		// R1-P1-2: a retired package has no static entry — skip it so
+		// the disk desugar path takes over, instead of panicking.
+		sp := desugarSyntheticPackage(mf.pkgPath)
+		if sp == nil {
+			return nil
+		}
 		obj := sp.pkg.Scope().Lookup(mf.pairType)
 		if obj == nil {
 			return nil
@@ -3329,7 +3410,15 @@ func (e *exporter) multiResultHelper(plan *mrPlan) (*types.Func, error) {
 			return nil, err
 		}
 	} else {
-		sp = getSyntheticPackage(plan.helperPkg)
+		// R1-P1-2: desugarSyntheticPackage, not getSyntheticPackage.
+		// Documented-safe: every non-isDisk plan producer resolves
+		// through desugarSyntheticPackage, so helperPkg is always
+		// synthetic here; the nil branch turns a future programming
+		// error into a loud export error instead of a panic.
+		sp = desugarSyntheticPackage(plan.helperPkg)
+		if sp == nil {
+			return nil, fmt.Errorf("gofrontend: no synthetic source for desugar helper package %q", plan.helperPkg)
+		}
 	}
 	// P3-M8b: import the synthetic package so its helpers are registered
 	// in funcByObj (idempotent). Without this, synthHelperCallNode fails
