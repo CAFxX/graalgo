@@ -37,13 +37,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # The no-bridges gate diffs HEAD~1...HEAD on direct master pushes
-          # (wt.py integrate + push, no PR) — a shallow checkout has no
-          # HEAD~1 and the gate would fail loudly instead of inspecting.
+          # The no-bridges gate diffs github.event.before...github.sha on
+          # branch pushes (wt.py integrate + push, no PR) — a shallow checkout
+          # would leave the range unresolvable and the gate would fail loudly
+          # instead of inspecting.
           fetch-depth: 0
 
       - name: No-bridges check (his 2026-10-15 order)
-        run: python3 .github/scripts/check_no_bridges.py
+        # On branch push events (the standard integration path: wt.py
+        # integrate + push, no PR) the gate must inspect the FULL push range,
+        # not just HEAD~1...HEAD — a multi-commit push's earlier commits were
+        # previously never inspected (INFRA-2, 2026-10-16). github.event.before
+        # is the pre-push ref; an all-zeros before (first push) is resolved by
+        # the script against the empty tree. Tag pushes, PRs, schedule and
+        # manual runs keep the script's auto-detection (origin/master...HEAD
+        # for PRs, HEAD~1...HEAD otherwise).
+        run: |
+          if [ "${{ github.event_name }}" = "push" ] && [ "${{ github.ref_type }}" = "branch" ]; then
+            python3 .github/scripts/check_no_bridges.py --range "${{ github.event.before }}...${{ github.sha }}"
+          else
+            python3 .github/scripts/check_no_bridges.py
+          fi
 
       - name: Set up GraalVM JDK 25
         uses: graalvm/setup-graalvm@v1

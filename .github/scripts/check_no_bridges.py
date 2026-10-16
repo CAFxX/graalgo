@@ -13,18 +13,30 @@ Existing bridges are grandfathered (they're in the removal queue — see
 docs/arch/bridge-inventory.md). This check only looks at ADDED lines in the diff.
 
 Diff sources, in order:
+  0. --range BASE...HEAD  (explicit override, highest precedence; CI passes
+     github.event.before...github.sha on branch push events so the gate
+     inspects the FULL push range — earlier commits of a multi-commit push
+     were previously invisible to candidate 4 (INFRA-2, 2026-10-16). An
+     all-zeros BASE (first push) is resolved against the empty tree, so the
+     first push inspects everything it introduces. A range that cannot be
+     resolved is a loud failure, never a vacuous pass; a resolved range with
+     no added lines is an honest pass.)
   1. origin/master...HEAD  (PR / feature branch)
   2. git diff HEAD         (uncommitted working-tree changes)
   3. git diff --cached     (staged changes)
   4. HEAD~1...HEAD         (direct master push: wt.py integrate + push, no PR —
                            checkout lands exactly on origin/master, so 1-3 are
-                           all empty; inspect what the push itself introduced)
+                           all empty; inspect what the push itself introduced.
+                           Fallback only — in CI the branch-push path is
+                           superseded by --range for the full push range.)
 
 The check NEVER passes vacuously: if no diff can be determined (e.g. a
-shallow checkout with no history), it fails loudly instead of skipping.
-CI must check out full history (fetch-depth: 0) for source 4 to resolve.
+shallow checkout with no history, or an unresolvable --range), it fails
+loudly instead of skipping.
+CI must check out full history (fetch-depth: 0) for sources 0 and 4 to resolve.
 """
 
+import argparse
 import re
 import subprocess
 import sys
@@ -65,12 +77,20 @@ ADJUDICATED_REGISTRATIONS = {
     ("internal/frontend/export.go", "Gosched"),
 }
 
-def get_diff():
+def get_diff(range_override=None):
     """Get the diff of added lines, plus a label naming the diff source.
 
     Returns ("", "") when no diff could be determined — the caller must
     treat that as a loud failure, never a vacuous pass.
+
+    With range_override="BASE...HEAD" (or "BASE..HEAD", normalized to the
+    triple-dot form), the range is inspected directly: it is expected to
+    resolve (fetch-depth: 0 in CI) and may legitimately be empty — an empty
+    resolved range is an honest pass, while an unresolvable one is a loud
+    failure.
     """
+    if range_override:
+        return _diff_for_range(range_override)
     # Try vs origin/master first (for PRs), fall back to working tree,
     # then to the master-push delta. A shallow checkout (no HEAD~1)
     # yields nothing from the last source — that is a failure, not a skip.
@@ -88,6 +108,48 @@ def get_diff():
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout, name
     return "", ""
+
+def _diff_for_range(range_override):
+    """Diff the explicit range. Returns ("", "") if it cannot be resolved."""
+    m = re.fullmatch(r"\s*([0-9a-fA-F]+)\s*\.{2,3}\s*([0-9a-fA-F]+)\s*",
+                     range_override)
+    if not m:
+        print(f"  could not parse --range {range_override!r}: "
+              "expected BASE...HEAD.", file=sys.stderr)
+        return "", ""
+    base, head = m.group(1), m.group(2)
+    if re.fullmatch(r"0+", base):
+        # First push: inspect everything the push introduces. The empty-tree
+        # object is not guaranteed to exist in the object store, so
+        # materialize it (a local, untracked git-object write — harmless).
+        try:
+            empty = subprocess.run(
+                ["git", "hash-object", "-t", "tree", "/dev/null"],
+                capture_output=True, text=True, timeout=30)
+        except Exception as e:
+            print(f"  could not materialize empty tree: {e}", file=sys.stderr)
+            return "", ""
+        if empty.returncode != 0:
+            print("  could not materialize empty tree.", file=sys.stderr)
+            return "", ""
+        cmd = ["git", "diff", empty.stdout.strip(), head, "--", "."]
+        label = f"first push (empty tree...{head[:12]})"
+    else:
+        # Triple-dot: diff merge-base(base, head)..head — the full push range.
+        cmd = ["git", "diff", f"{base}...{head}", "--", "."]
+        label = f"push range {base[:12]}...{head[:12]}"
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+    except Exception as e:
+        print(f"  --range diff failed: {e}", file=sys.stderr)
+        return "", ""
+    if result.returncode != 0:
+        print(f"  --range diff failed (exit {result.returncode}): "
+              f"{result.stderr.strip()[:200]}", file=sys.stderr)
+        return "", ""
+    # A resolved-but-empty range is legitimate (nothing new pushed): return
+    # it with its label so the caller passes honestly instead of loudly.
+    return result.stdout, label
 
 def check_no_bridges(diff):
     errors = []
@@ -193,21 +255,39 @@ def check_no_bridges(diff):
 
     return errors
 
-def main():
-    diff, source = get_diff()
-    if not diff.strip():
+def main(argv=None):
+    parser = argparse.ArgumentParser(
+        description="Fail if the diff introduces new bridges.")
+    parser.add_argument(
+        "--range", metavar="BASE...HEAD",
+        help="Inspect this explicit push range instead of auto-detecting "
+             "the diff (CI passes github.event.before...github.sha on "
+             "branch push events). An all-zeros BASE (first push) is "
+             "resolved against the empty tree.")
+    args = parser.parse_args(argv)
+
+    diff, source = get_diff(args.range)
+    if not source:
         # Never pass vacuously: on the standard integration path (wt.py
         # integrate + push, no PR) every diff source above is empty only when
-        # the checkout has no history to diff against. Skipping here is
-        # exactly the false-green hole this check exists to close.
+        # the checkout has no history to diff against, and an explicit
+        # --range that cannot be resolved is a broken gate, not a clean one.
+        # Skipping here is exactly the false-green hole this check exists
+        # to close.
         print("NO-BRIDGES CHECK FAILED:")
         print("  could not determine any diff to inspect (no PR diff, no")
-        print("  working-tree changes, and HEAD~1 is unavailable — is this a")
-        print("  shallow checkout? CI must use fetch-depth: 0).")
+        print("  working-tree changes, no resolvable --range, and HEAD~1 is")
+        print("  unavailable — is this a shallow checkout? CI must use")
+        print("  fetch-depth: 0).")
         print("  Refusing to pass vacuously.")
         return 1
 
     print(f"No-bridges check: inspecting added lines from {source}.")
+    if not diff.strip():
+        # The range resolved but introduced no new lines: an honest pass,
+        # not a vacuous one — we know exactly what we inspected.
+        print("No-bridges check passed (range introduced no new lines).")
+        return 0
     errors = check_no_bridges(diff)
     if errors:
         print("NO-BRIDGES CHECK FAILED:")
