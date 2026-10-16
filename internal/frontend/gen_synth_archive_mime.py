@@ -834,8 +834,9 @@ PACKAGES = {
     'mime/multipart': {
         'files': [
             'mime/multipart/multipart.go',
+            'mime/multipart/formdata.go',
             'mime/multipart/writer.go',
-            # Skip formdata.go (needs os file handling) and readmimeheader.go (check)
+            # Skip readmimeheader.go (check)
         ],
         'const_name': 'syntheticMimeMultipartSource',
         'pkg_prefix': 'mp',
@@ -937,6 +938,11 @@ def multipart_adapt(src, pkg_prefix):
 func (s *__mpGodebugSetting) Value() string { return "" }
 func (s *__mpGodebugSetting) IncNonDefault() {}
 var multipartmaxheaders = &__mpGodebugSetting{name: "multipartmaxheaders"}'''
+    )
+    # Stub godebug vars from formdata.go (PKG-076: generator now includes formdata.go)
+    src = src.replace(
+        '\tmultipartfiles    = godebug.New("#multipartfiles") // TODO: document and remove #\n\tmultipartmaxparts = godebug.New("multipartmaxparts")',
+        '\tmultipartfiles    = &__mpGodebugSetting{name: "#multipartfiles"}\n\tmultipartmaxparts = &__mpGodebugSetting{name: "multipartmaxparts"}'
     )
     src = src.replace('textproto.MIMEHeader', '__mpMIMEHeader')
     src += '''
