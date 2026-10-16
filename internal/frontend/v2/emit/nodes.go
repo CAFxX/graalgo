@@ -169,34 +169,57 @@ func (e *Emitter) emitDeclStmt(st *ast.DeclStmt) (map[string]any, error) {
 	if !ok || gd.Tok != token.VAR {
 		return nil, fmt.Errorf("emit: unsupported decl stmt %T", st.Decl)
 	}
+	// One vardecl node per ValueSpec: a grouped `var (a int; b = 2)` must not
+	// merge names/values across specs, because the consumer pairs values to
+	// names by index. Keeping each spec's names/values/type in its own node
+	// preserves alignment structurally.
+	specs := []any{}
+	for _, spec := range gd.Specs {
+		vs, ok := spec.(*ast.ValueSpec)
+		if !ok {
+			return nil, fmt.Errorf("emit: unsupported var spec %T", spec)
+		}
+		vn, err := e.emitValueSpec(vs)
+		if err != nil {
+			return nil, err
+		}
+		specs = append(specs, vn)
+	}
+	if len(specs) == 1 {
+		return specs[0].(map[string]any), nil
+	}
+	return e.node("block", st, map[string]any{"stmts": specs}), nil
+}
+
+// emitValueSpec emits a single `var` spec as one vardecl node. Names, values
+// and the optional declared type are all drawn from the same ValueSpec, so
+// the index-pairing performed by the consumer is always correct.
+func (e *Emitter) emitValueSpec(vs *ast.ValueSpec) (map[string]any, error) {
 	names := []string{}
 	objs := []any{}
 	var typ any
 	values := []any{}
-	for _, spec := range gd.Specs {
-		vs := spec.(*ast.ValueSpec)
-		if vs.Type != nil {
-			if tv, ok := e.info.Info.Types[vs.Type]; ok {
-				typ = e.typeID(tv.Type)
-			}
-		}
-		for _, name := range vs.Names {
-			names = append(names, name.Name)
-			if obj := e.info.Info.Defs[name]; obj != nil {
-				objs = append(objs, e.declareObject(obj))
-			} else {
-				objs = append(objs, -1)
-			}
-		}
-		for _, v := range vs.Values {
-			vn, err := e.emitExpr(v)
-			if err != nil {
-				return nil, err
-			}
-			values = append(values, vn)
+	if vs.Type != nil {
+		if tv, ok := e.info.Info.Types[vs.Type]; ok {
+			typ = e.typeID(tv.Type)
 		}
 	}
-	return e.node("vardecl", st, map[string]any{
+	for _, name := range vs.Names {
+		names = append(names, name.Name)
+		if obj := e.info.Info.Defs[name]; obj != nil {
+			objs = append(objs, e.declareObject(obj))
+		} else {
+			objs = append(objs, -1)
+		}
+	}
+	for _, v := range vs.Values {
+		vn, err := e.emitExpr(v)
+		if err != nil {
+			return nil, err
+		}
+		values = append(values, vn)
+	}
+	return e.node("vardecl", vs, map[string]any{
 		"names":  names,
 		"objs":   objs,
 		"define": false,

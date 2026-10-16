@@ -21,6 +21,22 @@ for the design.
 - [x] Negative tests (`emit/negative_test.go`): 17 unhandled constructs
       proven to fail loudly with "unsupported" (no silent drops)
 
+## 2026-10-16 — Grouped var declarations: one vardecl per ValueSpec
+
+- Review findings V2-4 (P0) + V2-27 (P1), `emit/nodes.go:emitDeclStmt`:
+  `var (a int; b = 2)` merged specs into one vardecl node — values appended
+  across specs lost index alignment with names (a got 2, b got 0), and the
+  shared "type" field recorded the last spec's type for every name.
+- Fix: `emitDeclStmt` now emits one `vardecl` node per `ValueSpec`
+  (`emitValueSpec`), keeping each spec's names/values/type together.
+  A lone spec emits the unchanged bare `vardecl`; a grouped declaration
+  emits a `block` node wrapping one `vardecl` per spec (the factory already
+  handles nested `block` nodes, so no backend change was needed).
+- Regression tests: `emit/vardecl_alignment_test.go` — mixed-shape grouped
+  decls assert per-spec name→value→type alignment on the wire; distinct
+  types per spec; single-spec shape unchanged. The grouped tests were
+  verified to fail against the pre-fix emitter.
+
 ## Master merge log
 
 - 2026-10-15 21:10 CEST: merged `704932ce` (PKG-012 sync intrinsics,
