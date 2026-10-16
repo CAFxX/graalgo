@@ -1755,7 +1755,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// importSyntheticPackage needed).
 	if needMathBig {
 		for _, p := range []string{"errors", "io", "bytes", "math", "strconv", "strings", "math/bits", "math/rand", "internal/byteorder", "math/big"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2037,7 +2037,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// with other need-blocks is safe.
 	if needFlag {
 		for _, p := range []string{"errors", "time", "io", "io/fs", "syscall", "strconv", "os", "iter", "reflect", "sort", "encoding", "flag"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2048,7 +2048,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// strings are frozen or M2/M4 primitives, always available.
 	if needTesting {
 		for _, p := range []string{"errors", "time", "io", "io/fs", "syscall", "strconv", "os", "iter", "reflect", "sort", "encoding", "flag", "bytes", "context", "testing"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2058,7 +2058,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// reflect (value generation), then testing/quick itself.
 	if needTestingQuick {
 		for _, p := range []string{"errors", "time", "io", "io/fs", "syscall", "strconv", "os", "iter", "reflect", "sort", "encoding", "flag", "testing/quick"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2068,7 +2068,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// testing/iotest itself.
 	if needTestingIotest {
 		for _, p := range []string{"errors", "time", "io", "io/fs", "syscall", "strconv", "os", "bytes", "testing/iotest"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2118,7 +2118,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// hmac <- {subtle,errors,hash}; rand <- io.
 	if needCrypto {
 		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2219,7 +2219,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 			// via graalgo.tls.* intrinsics; imports crypto/x509).
 			"crypto/tls",
 		} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2227,28 +2227,28 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	if needCryptoCipher {
 		// cipher also imports the synthetic bytes package (bytes.Clone).
 		for _, p := range []string{"errors", "io", "bytes", "crypto/subtle", "crypto/cipher"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
 	}
 	if needCryptoAes {
 		for _, p := range []string{"errors", "io", "bytes", "crypto/subtle", "crypto/cipher", "strconv", "crypto/aes"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
 	}
 	if needCryptoMd5 {
 		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto", "crypto/md5"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
 	}
 	if needCryptoSha1 {
 		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto", "crypto/sha1"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2256,21 +2256,21 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	if needCryptoSha3 {
 		// sha3 also imports the synthetic bytes package (bytes.Clone).
 		for _, p := range []string{"errors", "io", "hash", "strconv", "bytes", "crypto", "crypto/sha3"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
 	}
 	if needCryptoSha512 {
 		for _, p := range []string{"errors", "io", "hash", "strconv", "crypto", "crypto/sha512"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
 	}
 	if needCryptoHmac {
 		for _, p := range []string{"errors", "io", "hash", "crypto/subtle", "crypto/hmac"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2283,7 +2283,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 		// for any program importing crypto/rand (directly, or via
 		// hash/maphash's MakeSeed entropy path).
 		for _, p := range []string{"errors", "io", "bytes", "math", "strconv", "strings", "math/bits", "math/rand", "internal/byteorder", "math/big", "crypto/rand"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2312,28 +2312,28 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// packages, imported by their own need-blocks above.
 	if needHashAdler32 {
 		for _, p := range []string{"errors", "hash", "hash/adler32"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
 	}
 	if needHashCrc32 {
 		for _, p := range []string{"errors", "hash", "hash/crc32"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
 	}
 	if needHashCrc64 {
 		for _, p := range []string{"errors", "hash", "hash/crc64"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
 	}
 	if needHashFnv {
 		for _, p := range []string{"errors", "hash", "hash/fnv"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
@@ -2345,7 +2345,7 @@ func ExportFiles(paths []string, testPackageDir string) (string, error) {
 	// explicit list here stays self-sufficient regardless of block order.
 	if needHashMaphash {
 		for _, p := range []string{"errors", "hash", "crypto/rand", "math", "hash/maphash"} {
-			if err := e.importSyntheticPackage(getSyntheticPackage(p)); err != nil {
+			if err := e.importPkgTree(p); err != nil {
 				return "", err
 			}
 		}
