@@ -728,20 +728,24 @@ public final class ReflectOpNode extends GoExprNode {
                 // the pointee itself is nil — e.g. **T pointing to nil *T).
                 long h;
                 if (d5 instanceof GoPointer gp) {
-                    Object ref = gp.referent();
-                    if (ref == null && gp.isCellPointer()) {
-                        // Non-nil cell pointer to a nil value (e.g. &ppp where
-                        // ppp is a nil **int): Elem() is a VALID nil *T Value
-                        // (gc), not the zero Value. Address the cell storage
-                        // so Set() writes through; interning the null value
-                        // would lose the storage identity. PKG-022:
-                        // Value.Elem() on **T pointing to nil *T returned the
-                        // zero Value, breaking reflect-driven Set in errors.As
-                        // test setup (and any pointer-to-nil-pointer Elem).
+                    if (gp.isCellPointer()) {
+                        // PKG-065: a cell pointer (&x, &s.f) denotes variable
+                        // storage. Elem() must address the cell itself — the
+                        // storage identity — whether the current content is
+                        // nil or not. PKG-022 handled only the nil-content
+                        // case; with non-nil content the old code interned
+                        // the content *value*, so the Elem Value denoted the
+                        // immutable value and Set through it died in
+                        // storeThroughRef ("cannot store through
+                        // GoPointer{...}"). (Same "storage identity, not the
+                        // dereferenced value" principle as the P3-M10 unsafe
+                        // interning path.)
                         h = ReflectRefs.intern(gp.cell());
-                    } else if (ref == null) {
-                        return ReflectValues.zero(desc);
                     } else {
+                        Object ref = gp.referent();
+                        if (ref == null) {
+                            return ReflectValues.zero(desc);
+                        }
                         h = ReflectRefs.intern(ref);
                     }
                 } else {
