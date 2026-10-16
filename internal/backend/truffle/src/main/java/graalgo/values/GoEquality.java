@@ -6,15 +6,30 @@ package graalgo.values;
  *
  * <p>Rules: numeric kinds compare by value within their Java carrier
  * ({@code long} for all int/uint kinds, {@code double} for both float
+ * kinds, {@code GoComplex32}/{@code GoComplex64} records for the complex
  * kinds); IEEE semantics apply, so a NaN key never equals anything —
- * including itself — matching Go. {@link GoString} compares byte-wise.
- * Values of different carrier classes are never equal (a Go map has a
- * single static key type, so this only arises from misuse).
+ * including itself — matching Go. Complex scalars are compared
+ * component-wise <em>before</em> the identity shortcut, because a NaN
+ * part defeats even identical references. {@link GoString} compares
+ * byte-wise. Values of different carrier classes are never equal (a Go
+ * map has a single static key type, so this only arises from misuse).
  */
 public final class GoEquality {
     private GoEquality() {}
 
     public static boolean equal(Object a, Object b) {
+        // P1-3: complex scalars precede the identity shortcut. A NaN part
+        // makes the value unequal to everything — including itself — so
+        // two references to one NaN-part record must NOT take the a == b
+        // fast path (Go: complex(0,NaN) != complex(0,NaN)).
+        if (a instanceof GoComplex32 || b instanceof GoComplex32) {
+            return a instanceof GoComplex32 ca && b instanceof GoComplex32 cb
+                    && complex32Equal(ca, cb);
+        }
+        if (a instanceof GoComplex64 || b instanceof GoComplex64) {
+            return a instanceof GoComplex64 ca && b instanceof GoComplex64 cb
+                    && complex64Equal(ca, cb);
+        }
         if (a == b) {
             // Covers reference-identity and the (null, null) case. Note: for
             // Doubles this would wrongly equate two identical NaN
@@ -154,7 +169,44 @@ public final class GoEquality {
         return false;
     }
 
-    /** Hash consistent with {@link #equal}: equal keys hash equal. */
+    /**
+     * P1-3: complex64 scalar equality, mirroring the {@code GoComplex32[]}
+     * branch in {@link #equal}: component-wise IEEE comparison, so NaN
+     * parts never compare equal. The {@code !=} operator already excludes
+     * NaN; the explicit guard documents the Go rule (and is what defeats
+     * the identical-reference case, handled by checking before the
+     * identity shortcut).
+     */
+    private static boolean complex32Equal(GoComplex32 x, GoComplex32 y) {
+        return !Float.isNaN(x.re()) && !Float.isNaN(x.im())
+                && x.re() == y.re() && x.im() == y.im();
+    }
+
+    /** P1-3: complex128 scalar equality; see {@link #complex32Equal}. */
+    private static boolean complex64Equal(GoComplex64 x, GoComplex64 y) {
+        return !Double.isNaN(x.re()) && !Double.isNaN(x.im())
+                && x.re() == y.re() && x.im() == y.im();
+    }
+
+    /**
+     * P1-4: normalize -0.0 to +0.0, mirroring gc's {@code f64hash}/
+     * {@code f32hash}, so that values {@link #equal} treats as equal hash
+     * equal. Package-private for reuse by {@link GoStruct}.
+     */
+    static double normZero(double x) {
+        return x == 0.0 ? 0.0 : x;
+    }
+
+    /** P1-4: float32 variant of {@link #normZero(double)}. */
+    static float normZero(float x) {
+        return x == 0.0f ? 0.0f : x;
+    }
+
+    /**
+     * Hash consistent with {@link #equal}: equal keys hash equal. Every
+     * float component normalizes -0.0 to +0.0 (see {@link #normZero}),
+     * mirroring gc.
+     */
     public static int hash(Object key) {
         if (key instanceof Long l) {
             return Long.hashCode(l);
@@ -163,10 +215,13 @@ public final class GoEquality {
             return Integer.hashCode(i);
         }
         if (key instanceof Double d) {
-            return Double.hashCode(d);
+            // P1-4: -0.0 normalizes to +0.0 (gc f64hash); equal() treats
+            // them as equal, so they must hash equal.
+            return Double.hashCode(normZero(d));
         }
         if (key instanceof Float f) {
-            return Float.hashCode(f);
+            // P1-4: -0.0f normalizes to +0.0f (gc f32hash).
+            return Float.hashCode(normZero(f));
         }
         if (key instanceof Boolean b) {
             return Boolean.hashCode(b);
@@ -199,30 +254,55 @@ public final class GoEquality {
             return java.util.Arrays.hashCode(ia);
         }
         if (key instanceof double[] da) {
-            return java.util.Arrays.hashCode(da);
+            // P1-4: element-wise like Arrays.hashCode, but with -0.0
+            // normalized per element (equal() treats -0.0 == +0.0).
+            int h = 1;
+            for (double x : da) {
+                h = 31 * h + Double.hashCode(normZero(x));
+            }
+            return h;
         }
         if (key instanceof float[] fa) {
-            // P3-M9 (arrdispatch): [N]float32 carrier hash.
-            return java.util.Arrays.hashCode(fa);
+            // P1-4 (arrdispatch): [N]float32 carrier hash; -0.0 normalized
+            // as for double[] above.
+            int h = 1;
+            for (float x : fa) {
+                h = 31 * h + Float.hashCode(normZero(x));
+            }
+            return h;
+        }
+        if (key instanceof GoComplex32 c) {
+            // P1-3: scalar complex64 keys previously fell through to the
+            // identity hash — equal keys hashed differently. Consistent
+            // with complex32Equal (P1-4: -0.0 components normalized).
+            int h = Float.hashCode(normZero(c.re()));
+            return 31 * h + Float.hashCode(normZero(c.im()));
+        }
+        if (key instanceof GoComplex64 c) {
+            // P1-3: scalar complex128 keys; see the GoComplex32 branch.
+            int h = Double.hashCode(normZero(c.re()));
+            return 31 * h + Double.hashCode(normZero(c.im()));
         }
         if (key instanceof GoComplex32[] ca) {
             // P3-M9 (arrdispatch): [N]complex64 carrier hash; consistent
             // with equal above (null elements hash as the zero value).
+            // P1-4: -0.0 components normalized (equal() treats them equal).
             int h = 1;
             for (GoComplex32 c : ca) {
                 GoComplex32 z = c == null ? GoComplex32.ZERO : c;
-                h = 31 * h + Float.hashCode(z.re());
-                h = 31 * h + Float.hashCode(z.im());
+                h = 31 * h + Float.hashCode(normZero(z.re()));
+                h = 31 * h + Float.hashCode(normZero(z.im()));
             }
             return h;
         }
         if (key instanceof GoComplex64[] ca) {
             // P3-M9 (arrdispatch): [N]complex128 carrier hash.
+            // P1-4: -0.0 components normalized as above.
             int h = 1;
             for (GoComplex64 c : ca) {
                 GoComplex64 z = c == null ? GoComplex64.ZERO : c;
-                h = 31 * h + Double.hashCode(z.re());
-                h = 31 * h + Double.hashCode(z.im());
+                h = 31 * h + Double.hashCode(normZero(z.re()));
+                h = 31 * h + Double.hashCode(normZero(z.im()));
             }
             return h;
         }

@@ -181,9 +181,35 @@ public final class GoStruct {
     @Override
     public int hashCode() {
         int h = System.identityHashCode(descriptor);
-        h = 31 * h + Arrays.hashCode(longs);
+        h = 31 * h + longsHashCode();
         for (Object o : objects) {
             h = 31 * h + GoEquality.hash(o);
+        }
+        return h;
+    }
+
+    /**
+     * P1-4: hash of the longs carrier. Float-carried slots hold
+     * {@code Float.floatToIntBits}/{@code Double.doubleToLongBits} bit
+     * patterns; -0.0 normalizes to +0.0 here (mirroring
+     * {@link GoEquality}'s float hashing, like gc's f64hash/f32hash), so
+     * structs that differ only by float zero sign hash alike. Bit-identical
+     * to {@code Arrays.hashCode(longs)} for every slot that is not a -0.0
+     * float.
+     */
+    private int longsHashCode() {
+        int h = 1;
+        for (GoStructDescriptor.Field f : descriptor.fields()) {
+            if (!f.inLongs()) {
+                continue;
+            }
+            long v = longs[f.index()];
+            if (f.kind() == GoKind.FLOAT64) {
+                v = Double.doubleToLongBits(GoEquality.normZero(Double.longBitsToDouble(v)));
+            } else if (f.kind() == GoKind.FLOAT32) {
+                v = Float.floatToIntBits(GoEquality.normZero(Float.intBitsToFloat((int) v)));
+            }
+            h = 31 * h + Long.hashCode(v);
         }
         return h;
     }
