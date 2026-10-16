@@ -581,6 +581,48 @@ type IPNet struct {
 	Mask IPMask // network mask
 }
 
+// networkNumberAndMask returns the network number and mask of n.
+func networkNumberAndMask(n *IPNet) (ip IP, m IPMask) {
+	if ip = n.IP.To4(); ip == nil {
+		ip = n.IP
+		if len(ip) != IPv6len {
+			return nil, nil
+		}
+	}
+	m = n.Mask
+	switch len(m) {
+	case IPv4len:
+		if len(ip) != IPv4len {
+			return nil, nil
+		}
+	case IPv6len:
+		if len(ip) == IPv4len {
+			m = m[12:]
+		}
+	default:
+		return nil, nil
+	}
+	return
+}
+
+// Contains reports whether the network includes ip.
+func (n *IPNet) Contains(ip IP) bool {
+	nn, m := networkNumberAndMask(n)
+	if x := ip.To4(); x != nil {
+		ip = x
+	}
+	l := len(ip)
+	if l != len(nn) {
+		return false
+	}
+	for i := 0; i < l; i++ {
+		if nn[i]&m[i] != ip[i]&m[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // IPMask represents an IP mask.
 type IPMask []byte
 
@@ -780,10 +822,7 @@ func (p *pipeConn) SetDeadline(t time.Time) error {
 }
 
 func (p *pipeConn) SetReadDeadline(t time.Time) error {
-	tt, ok := t.(time.Time)
-	if !ok {
-		return &OpError{Op: "setdeadline", Net: "pipe", Err: errors.New("net: deadline must be time.Time")}
-	}
+	tt := t
 	<-p.st.mu
 	p.rdDeadline = tt
 	p.st.mu <- struct{}{}
@@ -791,10 +830,7 @@ func (p *pipeConn) SetReadDeadline(t time.Time) error {
 }
 
 func (p *pipeConn) SetWriteDeadline(t time.Time) error {
-	tt, ok := t.(time.Time)
-	if !ok {
-		return &OpError{Op: "setdeadline", Net: "pipe", Err: errors.New("net: deadline must be time.Time")}
-	}
+	tt := t
 	<-p.st.mu
 	p.wrDeadline = tt
 	p.st.mu <- struct{}{}
@@ -1305,14 +1341,10 @@ func (c *TCPConn) SetDeadline(t time.Time) error    { return c.fd.setDeadline(t,
 func (c *TCPConn) SetReadDeadline(t time.Time) error  { return c.fd.setDeadline(t, 'r') }
 func (c *TCPConn) SetWriteDeadline(t time.Time) error { return c.fd.setDeadline(t, 'w') }
 
-func (fd *netFD) setDeadline(t interface{}, mode int) error {
-	tt, ok := t.(time.Time)
-	if !ok {
-		return &OpError{Op: "setdeadline", Net: fd.net, Err: errors.New("net: deadline must be time.Time")}
-	}
+func (fd *netFD) setDeadline(t time.Time, mode int) error {
 	var d int64
-	if !tt.IsZero() {
-		d = int64(time.Until(tt))
+	if !t.IsZero() {
+		d = int64(time.Until(t))
 		if d == 0 {
 			d = -1
 		}

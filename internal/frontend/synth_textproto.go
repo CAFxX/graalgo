@@ -27,7 +27,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 )
 
@@ -279,14 +278,15 @@ func (r *Reader) ReadContinuedLine() (string, error) {
 
 func trim(s []byte) []byte {
 	i := 0
-	for i < len(s) && isASCIISpace(s[i]) {
+	for i < len(s) && (s[i] == ' ' || s[i] == '\t') {
 		i++
 	}
-	n := len(s)
-	for n > i && isASCIISpace(s[n-1]) {
+	s = s[i:]
+	n := len(s) - 1
+	for n >= 0 && (s[n] == ' ' || s[n] == '\t') {
 		n--
 	}
-	return s[i:n]
+	return s[:n+1]
 }
 
 // ReadContinuedLineBytes is like ReadContinuedLine but
@@ -509,24 +509,34 @@ func isASCIILetter(c byte) bool {
 	return 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
 }
 
-// validHeaderValueByte reports whether c is a valid byte in a header value.
+// validHeaderValueByte reports whether c is a valid byte in a header
+// field value. RFC 7230 says:
+//
+//	field-content  = field-vchar [ 1*( SP / HTAB ) field-vchar ]
+//
+//	field-vchar    = VCHAR / obs-text
+//
+//	obs-text       = %x80-FF
+//
+// RFC 5234 says:
+//
+//	HTAB           =  %x09
+//
+//	SP             =  %x20
+//
+//	VCHAR          =  %x21-7E
 func validHeaderValueByte(c byte) bool {
 	// mask is a 128-bit bitmap with 1s for allowed bytes,
 	// so that the byte c can be tested with a shift and an and.
-	// If c > 128, then 1<<c and 1<<(c-64) will both be zero,
-	// and this function will return false.
-	var mask uint64 = 0 |
-		(1<<10)-1<<32 | // sp, ! ... ~
-		1<<9 | // tab
-		1<<13 // carriage return
-	var masklo uint64 = 0 |
-		(1<<10)-1<<32 // sp, ! ... ~
-	return (c < 64 && masklo&(1<<c) != 0) || (c >= 64 && c < 128 && mask&(1<<(c-64)) != 0)
-}
-
-// isASCIISpace reports whether c is ASCII whitespace.
-func isASCIISpace(c byte) bool {
-	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == 0x0b || c == 0x0c
+	// If c >= 128, then 1<<c and 1<<(c-64) will both be zero.
+	// Since this is the obs-text range, we invert the mask to
+	// create a bitmap with 1s for disallowed bytes.
+	const mask = 0 |
+		(1<<(0x7f-0x21)-1)<<0x21 | // VCHAR: %x21-7E
+		1<<0x20 | // SP: %x20
+		1<<0x09 // HTAB: %x09
+	return ((uint64(1)<<c)&^(mask&(1<<64-1)) |
+		(uint64(1)<<(c-64))&^(mask>>64)) == 0
 }
 
 // closeDot is a no-op placeholder; the dot-reader protocol is not

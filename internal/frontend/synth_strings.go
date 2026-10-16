@@ -1585,32 +1585,20 @@ func stringsAppendRune(b []byte, r rune) []byte {
 				chunkMax = len(s)
 			}
 		}
-		// O(n) doubling copy. Do NOT use Builder here: Builder.String()
-		// is O(n) in the synthetic package (it copies via string(buf);
-		// real Go uses unsafe for O(1)), so the classic
-		// b.writeString(b.String()[:chunk]) loop is O(n^2). Instead copy
-		// directly within a single backing array.
-		buf := make([]byte, n)
-		copied := copy(buf, s)
-		srcLen := len(s)
-		for copied < n {
-			chunk := srcLen
-			if chunk > chunkMax {
+		b := &Builder{}
+		b.Grow(n)
+		b.writeString(s)
+		for b.Len() < n {
+			chunk := n - b.Len()
+			if b.Len() < chunk {
+				chunk = b.Len()
+			}
+			if chunkMax < chunk {
 				chunk = chunkMax
 			}
-			if chunk > n-copied {
-				chunk = n - copied
-			}
-			copy(buf[copied:], buf[:chunk])
-			copied += chunk
-			if srcLen < chunkMax {
-				srcLen *= 2
-				if srcLen > chunkMax {
-					srcLen = chunkMax
-				}
-			}
+			b.writeString(b.String()[:chunk])
 		}
-		return string(buf)
+		return b.String()
 	}
 
 	// ToUpper returns s with all Unicode letters mapped to upper case.
@@ -2216,14 +2204,9 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		}
 	}
 
-	// Write appends p to b's buffer.
-	// PKG-031: implemented directly (was a fail-fast panic). The m7 desugar
-	// still rewrites direct calls to __builderWrite for efficiency, but
-	// interface dispatch (e.g., io.Writer) needs the real method.
+	// Write appends p to b's buffer. Multi-result: not in M7 scope (WS D).
 	func (b *Builder) Write(p []byte) (int, error) {
-		b.copyCheck()
-		b.buf = append(b.buf, p...)
-		return len(p), nil
+		panic("strings.Builder.Write: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
 	}
 
 	// WriteByte appends the byte c to b's buffer. The returned error is always
@@ -2234,21 +2217,16 @@ func stringsAppendRune(b []byte, r rune) []byte {
 		return nil
 	}
 
-	// WriteRune appends the UTF-8 encoding of r.
-	// PKG-031: implemented directly (was a fail-fast panic).
+	// WriteRune appends the UTF-8 encoding of r. Multi-result: not in M7 scope
+	// (WS D).
 	func (b *Builder) WriteRune(r rune) (int, error) {
-		b.copyCheck()
-		n := len(string(r))
-		b.buf = stringsAppendRune(b.buf, r)
-		return n, nil
+		panic("strings.Builder.WriteRune: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
 	}
 
-	// WriteString appends s to b's buffer.
-	// PKG-031: implemented directly (was a fail-fast panic).
+	// WriteString appends s to b's buffer. Multi-result: not in M7 scope
+	// (WS D).
 	func (b *Builder) WriteString(s string) (int, error) {
-		b.copyCheck()
-		b.buf = append(b.buf, s...)
-		return len(s), nil
+		panic("strings.Builder.WriteString: not in M7 scope (multi-result calls need WS D; re-test when it lands)")
 	}
 
 	// P3-M10: WS D discharge of the three fail-fasts above via the m7

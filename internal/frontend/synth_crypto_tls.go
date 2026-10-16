@@ -715,6 +715,11 @@ func connectionStateTrap(engineHandle int64) int64
 // net.Conn until the engine reports FINISHED. Afterwards (client side,
 // unless InsecureSkipVerify) the peer chain is verified in Go for exact
 // Go verification semantics.
+// NetConn returns the underlying network connection.
+func (c *Conn) NetConn() net.Conn {
+	return c.conn
+}
+
 func (c *Conn) Handshake() error {
 	if c.engineHandle == 0 {
 		return errors.New("tls: nil engine")

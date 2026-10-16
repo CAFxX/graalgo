@@ -21,6 +21,7 @@ import (
 	"maps"
 	"mime"
 	"mime/quotedprintable"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -909,5 +910,84 @@ func readMIMEHeader(r *__mpTextprotoReader, maxMemory, maxHeaders int64) (__mpMI
 
 // ErrMessageTooLarge is returned by ReadForm if the message is too large.
 var ErrMessageTooLarge = errors.New("multipart: message too large")
+
+// Form is a parsed multipart form.
+// Its File parts are stored either in memory or on disk,
+// and are accessible via the [*FileHeader]'s Open method.
+// Its Value parts are stored as strings.
+// Both are keyed by field name.
+type Form struct {
+	Value map[string][]string
+	File  map[string][]*FileHeader
+}
+
+// RemoveAll removes any temporary files associated with a [Form].
+func (f *Form) RemoveAll() error {
+	var err error
+	for _, fhs := range f.File {
+		for _, fh := range fhs {
+			if fh.tmpfile != "" {
+				e := os.Remove(fh.tmpfile)
+				if e != nil && !errors.Is(e, os.ErrNotExist) && err == nil {
+					err = e
+				}
+			}
+		}
+	}
+	return err
+}
+
+// A FileHeader describes a file part of a multipart request.
+type FileHeader struct {
+	Filename string
+	Header   __mpMIMEHeader
+	Size     int64
+
+	content   []byte
+	tmpfile   string
+	tmpoff    int64
+	tmpshared bool
+}
+
+// Open opens and returns the [FileHeader]'s associated File.
+func (fh *FileHeader) Open() (File, error) {
+	if b := fh.content; b != nil {
+		r := io.NewSectionReader(bytes.NewReader(b), 0, int64(len(b)))
+		return sectionReadCloser{r, nil}, nil
+	}
+	if fh.tmpshared {
+		f, err := os.Open(fh.tmpfile)
+		if err != nil {
+			return nil, err
+		}
+		r := io.NewSectionReader(f, fh.tmpoff, fh.Size)
+		return sectionReadCloser{r, f}, nil
+	}
+	return os.Open(fh.tmpfile)
+}
+
+// File is an interface to access the file part of a multipart message.
+// Its contents may be either stored in memory or on disk.
+// If stored on disk, the File's underlying concrete type will be an *os.File.
+type File interface {
+	io.Reader
+	io.ReaderAt
+	io.Seeker
+	io.Closer
+}
+
+// helper types to turn a []byte into a File
+
+type sectionReadCloser struct {
+	*io.SectionReader
+	io.Closer
+}
+
+func (rc sectionReadCloser) Close() error {
+	if rc.Closer != nil {
+		return rc.Closer.Close()
+	}
+	return nil
+}
 
 `
