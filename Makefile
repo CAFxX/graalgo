@@ -17,7 +17,8 @@
 # against runtime/out/classes, then interop builds against both.
 #
 # CI SCOPE — honest, not aspirational.
-#   `make all` = generate + build + snapshot-check + check + test-ci:
+#   `make all` = generate + build + snapshot-check + check + test-ci
+#                + test-regression:
 #     generate  rebuilds the gofrontend binary and overlay.json from sources
 #     build     compiles all three phase modules (javac, -Werror)
 #     snapshot-check
@@ -31,6 +32,11 @@
 #     check     placeholder / debug-leftover / netpoller / exclusion-list
 #               grep gates + the gofrontend gofmt/vet/tests gate
 #     test-ci   fast in-JVM tests (phase1 Truffle smoke tests)
+#     test-regression
+#               regression tests for fixed PKGs
+#               ([test/regression/](test/regression/)): each
+#               test/regression/<pkg>/ dir runs through the graalgo driver
+#               + backend. Per-push: a re-break fails the gate.
 #
 # EXCLUDED from per-push CI (documented here and in ci.yml, not forgotten):
 #   `make test` — the full differential suite (phase1 graalgo.test.Runner,
@@ -98,9 +104,9 @@ GENERATED += $(GENERATED_SYNTH)
 
 GO ?= $(HOME)/tools/go/bin/go
 
-.PHONY: all generate gen-synth build check test-ci test-p3frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
+.PHONY: all generate gen-synth build check test-ci test-regression test-p3frontend test clean snapshot snapshot-check fast-build fast-run fast-test fast-watch
 
-all: generate build snapshot-check check test-ci
+all: generate build snapshot-check check test-ci test-regression
 
 # Regenerate the synthetic stdlib sources (internal/frontend/synth_*.go) from
 # gc 1.27.1 (P1-R1-2/P1-R7-7 wiring). The driver version-pins go1.27.1 and
@@ -135,6 +141,24 @@ check:
 # `make test` (see header comment).
 test-ci: build
 	$(MAKE) -C internal/backend/truffle smoke-test
+
+# Regression tests for fixed PKGs ([test/regression/](test/regression/)):
+# each test/regression/<pkg>/ directory is a Go test package run through
+# the graalgo driver + backend (`graalgo test`). In `all` (hence per-push
+# CI): a re-break of a fixed bug fails the gate loudly.
+# /tmp is a 512M tmpfs shared with other work and routinely full: keep the
+# JVM and driver temp files on the persistent disk (same pattern as the
+# snapshot targets). test/regression/.tmp is gitignored.
+# `timeout 600` is the failability mechanism for hang regressions: no
+# in-test watchdog is possible (timers do not fire under graalgo, PKG-048),
+# so a reintroduced hang is killed here and fails the gate instead of
+# hanging CI. Post-fix the suite passes in ~75s.
+REGRESSION_TEST_DIRS := $(wildcard test/regression/*/)
+REGRESSION_TMP := $(CURDIR)/test/regression/.tmp
+test-regression: generate build graalgo
+	mkdir -p $(REGRESSION_TMP) && \
+	export TMPDIR="$(REGRESSION_TMP)" GOTMPDIR="$(REGRESSION_TMP)"; \
+	for d in $(REGRESSION_TEST_DIRS); do timeout 600 ./graalgo test ./$$d || exit 1; done
 
 # p3frontend drift tests: the phase-3 importer/loader module's own test
 # suite, including the synthetic-surface drift tests that the
