@@ -3150,6 +3150,33 @@ func (e *exporter) desugarMultiResult(s *ast.AssignStmt, c *ast.CallExpr, plan *
 // pair-typed result; the __p5mr_N temp declaration and field extraction
 // then proceed exactly like mrM7 via desugarExtract.
 func (e *exporter) desugarRuntimeStack(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	call, err := e.mrRuntimeStackNode(c, plan)
+	if err != nil {
+		return nil, err
+	}
+	tmpTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, call, nil)
+}
+
+// mrRuntimeStackNode builds the intrinsic wire node for an mrRuntimeStack
+// plan — the synthetic runtime package's multi-result stack-inspection
+// calls: runtime.Caller(skip), (*Frames).Next(), (*Func).FileLine(pc).
+// Unlike every other Appendix M kind there is no __-helper (the synthetic
+// runtime overlay has no real-Go source), so the intrinsic wire node
+// ("runtimecaller", "runtimeframesnext", "runtimefuncfileline") is built
+// directly with the pair-typed result. Shared by desugarRuntimeStack
+// (assignment position) and hoistMRCallArg (return/argument position).
+func (e *exporter) mrRuntimeStackNode(c *ast.CallExpr, plan *mrPlan) (*Node, error) {
 	var kind string
 	var args []*Node
 	switch plan.rtStackOp {
@@ -3210,14 +3237,7 @@ func (e *exporter) desugarRuntimeStack(s *ast.AssignStmt, c *ast.CallExpr, plan 
 		fields["pc"] = args[1]
 	}
 	call := e.node(kind, c, fields)
-	e.chanSeq++
-	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
-	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
-	tmpID, err := e.defVar(v, false)
-	if err != nil {
-		return nil, err
-	}
-	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, tmpTid, call, nil)
+	return call, nil
 }
 
 // desugarSyncMap desugars an N-target assignment of a sync.Map
@@ -3227,6 +3247,32 @@ func (e *exporter) desugarRuntimeStack(s *ast.AssignStmt, c *ast.CallExpr, plan 
 // pair-temp + field extraction (desugarExtract) splits it across the
 // targets. Arity is checked per op (fail-fast, never silent).
 func (e *exporter) desugarSyncMap(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPlan, define bool) (*Node, error) {
+	call, err := e.mrSyncMapNode(c, plan)
+	if err != nil {
+		return nil, err
+	}
+	pairTid, err := e.typeID(plan.tmpType)
+	if err != nil {
+		return nil, err
+	}
+	e.chanSeq++
+	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
+	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
+	tmpID, err := e.defVar(v, false)
+	if err != nil {
+		return nil, err
+	}
+	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, pairTid, call, nil)
+}
+
+// mrSyncMapNode builds the "syncop" wire node for an mrSyncMap plan — the
+// synthetic sync package's multi-result Map methods (Load, LoadOrStore,
+// LoadAndDelete, Swap). Like mrRuntimeStackNode there is no __-helper:
+// the types-built overlay has no real-Go source, so the node is built
+// directly with the mapAnyBoolPair result type. Arity is checked per op
+// (fail-fast, never silent). Shared by desugarSyncMap (assignment
+// position) and hoistMRCallArg (return/argument position).
+func (e *exporter) mrSyncMapNode(c *ast.CallExpr, plan *mrPlan) (*Node, error) {
 	sel, ok := unwrapSelector(c.Fun)
 	if !ok {
 		return nil, fmt.Errorf("gofrontend: sync.Map method call has non-selector fun %T", c.Fun)
@@ -3256,14 +3302,7 @@ func (e *exporter) desugarSyncMap(s *ast.AssignStmt, c *ast.CallExpr, plan *mrPl
 	call := e.node("syncop", c, map[string]any{
 		"op": plan.syncMapOp, "synctyp": "Map", "recv": recv, "args": args, "type": pairTid,
 	})
-	e.chanSeq++
-	tmpName := fmt.Sprintf("__p5mr_%d", e.chanSeq)
-	v := types.NewVar(token.NoPos, nil, tmpName, plan.tmpType)
-	tmpID, err := e.defVar(v, false)
-	if err != nil {
-		return nil, err
-	}
-	return e.desugarExtract(s, c, plan, define, tmpName, tmpID, pairTid, call, nil)
+	return call, nil
 }
 
 // desugarFuncFieldCall desugars a function field call (e.g.,
@@ -3382,70 +3421,18 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 				// Per Go spec, a multi-valued call as an argument must be
 				// the sole argument (besides the prepended receiver).
 				// The type checker guarantees this for valid Go.
-				innerArgs, innerPre, err := e.multiResultHelperArgs(inner, innerPlan)
+				// Delegate to hoistMRCallArg: it handles every mrPlan
+				// kind (user, interface, func-field, trivial-forwarder,
+				// runtime-stack, sync.Map, synthetic/disk) in one place —
+				// a kind handled only here would fall through to
+				// multiResultHelper and panic for kinds without a
+				// __-helper (FE-5).
+				unpacked, pre, err := e.hoistMRCallArg(inner, innerPlan)
 				if err != nil {
 					return nil, nil, err
 				}
-				preStmts = append(preStmts, innerPre...)
-				var innerCallNode *Node
-				var innerTmpName string
-				var innerTmpID, innerTmpTid int
-				if innerPlan.kind == mrUser || innerPlan.kind == mrIfaceMethod {
-					if innerPlan.kind == mrUser {
-						innerCallNode, err = e.exportCall(inner)
-					} else {
-						// General interface MR: build the ifacemethod
-						// dispatch node (yields the pair, like the
-						// assignment path in desugarIfaceMultiResult).
-						var sel *ast.SelectorExpr
-						var ok bool
-						if sel, ok = inner.Fun.(*ast.SelectorExpr); !ok {
-							return nil, nil, fmt.Errorf("gofrontend: iface-multi-result call has non-selector fun %T", inner.Fun)
-						}
-						selection, ok := e.info.Selections[sel]
-						if !ok {
-							return nil, nil, fmt.Errorf("gofrontend: no selection for iface-multi-result call")
-						}
-						innerCallNode, err = e.exportIfaceMethodCall(inner, sel, selection)
-					}
-					if err != nil {
-						return nil, nil, err
-					}
-					resTid, err := e.typeID(innerPlan.tmpType)
-					if err != nil {
-						return nil, nil, err
-					}
-					e.chanSeq++
-					innerTmpName = fmt.Sprintf("__p5mr_%d", e.chanSeq)
-					v := types.NewVar(token.NoPos, nil, innerTmpName, innerPlan.tmpType)
-					innerTmpID, err = e.defVar(v, false)
-					if err != nil {
-						return nil, nil, err
-					}
-					innerTmpTid = resTid
-				} else {
-					helperFn, err := e.multiResultHelper(innerPlan)
-					if err != nil {
-						return nil, nil, err
-					}
-					innerCallNode, innerTmpName, innerTmpID, innerTmpTid, err = e.synthHelperCall(inner, helperFn, innerPlan.tmpType, innerArgs)
-					if err != nil {
-						return nil, nil, err
-					}
-				}
-				// Emit the inner temp vardecl as a pre-statement.
-				preStmts = append(preStmts, e.node("vardecl", inner, map[string]any{
-					"names": []string{innerTmpName}, "objs": []int{innerTmpID},
-					"define": true, "type": nil, "values": []*Node{innerCallNode},
-				}))
-				// Spread the pair fields as separate arguments.
-				for i, field := range innerPlan.pairFields {
-					sel, err := e.synthPairField(inner, innerTmpName, innerTmpID, innerTmpTid, innerPlan.tmpType, field, i)
-					if err != nil {
-						return nil, nil, err
-					}
-					args = append(args, sel)
-				}
+				preStmts = append(preStmts, pre...)
+				args = append(args, unpacked...)
 				continue
 			}
 		}
@@ -3463,22 +3450,32 @@ func (e *exporter) multiResultHelperArgs(c *ast.CallExpr, plan *mrPlan) ([]*Node
 // be the sole argument; the type checker guarantees this for valid Go).
 // Returns the unpacked pair-field selector args and the pre-statements
 // (temp vardecl) that must execute before the outer call.
-// BUG-MODPROBE-010: used by exportCallArgs for the general call path;
-// mirrors the nested handling in multiResultHelperArgs.
+// BUG-MODPROBE-010: used by exportCallArgs for the general call path and
+// by the return-position desugar in export.go. The nested-call handler in
+// multiResultHelperArgs delegates to it, so every mrPlan kind is handled
+// in exactly one place.
 func (e *exporter) hoistMRCallArg(inner *ast.CallExpr, plan *mrPlan) ([]*Node, []*Node, error) {
 	var preStmts []*Node
 	var callNode *Node
 	var tmpName string
 	var tmpID, tmpTid int
-	if plan.kind == mrUser || plan.kind == mrIfaceMethod {
+	if plan.kind == mrUser || plan.kind == mrIfaceMethod || plan.kind == mrRuntimeStack || plan.kind == mrSyncMap {
 		// User-defined MR: export the call normally (pair-valued).
 		// Its args are hoisted recursively via exportCallArgs.
 		// Interface MR: build the ifacemethod dispatch node (yields the
 		// pair, like the assignment path in desugarIfaceMultiResult).
+		// Runtime-stack and sync.Map MR: build the intrinsic wire node
+		// directly (no __-helper exists), like the assignment path in
+		// desugarRuntimeStack/desugarSyncMap.
 		var err error
-		if plan.kind == mrUser {
+		switch plan.kind {
+		case mrUser:
 			callNode, err = e.exportCall(inner)
-		} else {
+		case mrRuntimeStack:
+			callNode, err = e.mrRuntimeStackNode(inner, plan)
+		case mrSyncMap:
+			callNode, err = e.mrSyncMapNode(inner, plan)
+		default:
 			var sel *ast.SelectorExpr
 			var ok bool
 			if sel, ok = inner.Fun.(*ast.SelectorExpr); !ok {
