@@ -65,6 +65,94 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			}
 		}
 	}
+	// Eta-expand intrinsic values: var x = time.Now -> var x = func() time.Time { return time.Now() }.
+	// This is a general fix for intrinsics used in value position (M5 limitation).
+	// The table below is the single source of truth; extend it as needed.
+	// Matching is structural: the selector's package is resolved from the
+	// file's import specs (so renamed imports work), and the (path, symbol)
+	// pair is looked up in the table — no package-name conditionals.
+	var etaExpandIntrinsics = []struct {
+		pkgPath string // import path, e.g. "time"
+		symbol  string // symbol name, e.g. "Now"
+		result  string // result type name within the package, e.g. "Time"
+	}{
+		{pkgPath: "time", symbol: "Now", result: "Time"},
+	}
+	for _, f := range files {
+		// Resolve the file's import local names to paths structurally, not
+		// by spelling: a renamed import (tm "time"; tm.Now in value
+		// position) must eta-expand exactly like time.Now. This rewrite
+		// runs before type-checking, so info.Uses is unavailable — resolve
+		// from the import specs instead.
+		importPath := map[string]string{}
+		for _, imp := range f.Imports {
+			path, err := strconv.Unquote(imp.Path.Value)
+			if err != nil {
+				continue
+			}
+			name := pathpkg.Base(path)
+			if imp.Name != nil {
+				name = imp.Name.Name
+			}
+			if name == "_" || name == "." {
+				continue
+			}
+			importPath[name] = path
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			vs, ok := n.(*ast.ValueSpec)
+			if !ok || len(vs.Values) != 1 {
+				return true
+			}
+			sel, ok := vs.Values[0].(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkgIdent, ok := sel.X.(*ast.Ident)
+			if !ok {
+				return true
+			}
+			// Look up the (import path, symbol) pair in the eta-expansion
+			// table. The path comes from the import specs, so renamed
+			// imports match structurally.
+			matchedResult := ""
+			for _, e := range etaExpandIntrinsics {
+				if importPath[pkgIdent.Name] == e.pkgPath && sel.Sel.Name == e.symbol {
+					matchedResult = e.result
+					break
+				}
+			}
+			if matchedResult == "" {
+				return true
+			}
+			{
+				// Rewrite to func lit, preserving the import's local name
+				// in the synthesized result type.
+				vs.Values[0] = &ast.FuncLit{
+					Type: &ast.FuncType{
+						Params: &ast.FieldList{},
+						Results: &ast.FieldList{
+							List: []*ast.Field{
+								{Type: &ast.SelectorExpr{X: ast.NewIdent(pkgIdent.Name), Sel: ast.NewIdent(matchedResult)}},
+							},
+						},
+					},
+					Body: &ast.BlockStmt{
+						List: []ast.Stmt{
+							&ast.ReturnStmt{
+								Results: []ast.Expr{
+									&ast.CallExpr{Fun: sel},
+								},
+							},
+						},
+					},
+				}
+			}
+			return true
+		})
+	}
+	// GAP-GENERIC-MR: index the package-level specs by name for the
+	// hoists below (shared by both).
 	if len(mrNames) == 0 {
 		return nil
 	}
@@ -209,99 +297,6 @@ func transformDiskMultiResult(pkgPath string, files []*ast.File) []diskMRSpec {
 			}
 		}
 	}
-	// Eta-expand intrinsic values: var x = time.Now -> var x = func() time.Time { return time.Now() }.
-	// This is a general fix for intrinsics used in value position (M5 limitation).
-	// The table below is the single source of truth; extend it as needed.
-	// Matching is structural: the selector's package is resolved from the
-	// file's import specs (so renamed imports work), and the (path, symbol)
-	// pair is looked up in the table — no package-name conditionals.
-	var etaExpandIntrinsics = []struct {
-		pkgPath string // import path, e.g. "time"
-		symbol  string // symbol name, e.g. "Now"
-		result  string // result type name within the package, e.g. "Time"
-	}{
-		{pkgPath: "time", symbol: "Now", result: "Time"},
-	}
-	for _, f := range files {
-		// Resolve the file's import local names to paths structurally, not
-		// by spelling: a renamed import (tm "time"; tm.Now in value
-		// position) must eta-expand exactly like time.Now. This rewrite
-		// runs before type-checking, so info.Uses is unavailable — resolve
-		// from the import specs instead.
-		importPath := map[string]string{}
-		for _, imp := range f.Imports {
-			path, err := strconv.Unquote(imp.Path.Value)
-			if err != nil {
-				continue
-			}
-			name := pathpkg.Base(path)
-			if imp.Name != nil {
-				name = imp.Name.Name
-			}
-			if name == "_" || name == "." {
-				continue
-			}
-			importPath[name] = path
-		}
-		ast.Inspect(f, func(n ast.Node) bool {
-			vs, ok := n.(*ast.ValueSpec)
-			if !ok || len(vs.Values) != 1 {
-				return true
-			}
-			sel, ok := vs.Values[0].(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			pkgIdent, ok := sel.X.(*ast.Ident)
-			if !ok {
-				return true
-			}
-			// Look up the (import path, symbol) pair in the eta-expansion
-			// table. The path comes from the import specs, so renamed
-			// imports match structurally.
-			var matched *struct {
-				pkgPath string
-				symbol  string
-				result  string
-			}
-			for i := range etaExpandIntrinsics {
-				e := &etaExpandIntrinsics[i]
-				if importPath[pkgIdent.Name] == e.pkgPath && sel.Sel.Name == e.symbol {
-					matched = e
-					break
-				}
-			}
-			if matched == nil {
-				return true
-			}
-			{
-				// Rewrite to func lit, preserving the import's local name
-				// in the synthesized result type.
-				vs.Values[0] = &ast.FuncLit{
-					Type: &ast.FuncType{
-						Params: &ast.FieldList{},
-						Results: &ast.FieldList{
-							List: []*ast.Field{
-								{Type: &ast.SelectorExpr{X: ast.NewIdent(pkgIdent.Name), Sel: ast.NewIdent(matched.result)}},
-							},
-						},
-					},
-					Body: &ast.BlockStmt{
-						List: []ast.Stmt{
-							&ast.ReturnStmt{
-								Results: []ast.Expr{
-									&ast.CallExpr{Fun: sel},
-								},
-							},
-						},
-					},
-				}
-			}
-			return true
-		})
-	}
-	// GAP-GENERIC-MR: index the package-level specs by name for the
-	// hoists below (shared by both).
 	specByName := map[string]*diskMRSpec{}
 	for i := range specs {
 		s := &specs[i]
