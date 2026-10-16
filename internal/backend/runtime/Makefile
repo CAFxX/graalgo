@@ -198,14 +198,11 @@ pin-audit: main $(OUT_TEST)/.built
 	--corpus $(P1_CORPUS) --corpus $(P2_CORPUS) --tests --gmp 2 \
 	--out out/pinaudit-report.md
 
-# P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
-# Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
-torture: main $(OUT_TEST)/.built
-	bash ../../../tools/torture/run_battery.sh
-
-# P2-M8 GOMAXPROCS matrix (differential vs gc).
-gmp-matrix: main $(OUT_TEST)/.built
-	bash ../../../tools/torture/gmp_matrix.sh
+# P2-M8 preemption-torture battery lives in source:
+# graalgo.sched.torture.TortureBattery has a main(); run it directly with
+# -cp "$(TEST_CP)" after `make main`. The old tools/torture/ wrapper scripts
+# were removed 2026-10-17 (dead: pointed at the removed phases/ layout and
+# a corpus that was never committed; no CI target consumed them).
 
 clean:
 	rm -rf out
