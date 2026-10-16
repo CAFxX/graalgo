@@ -4477,6 +4477,27 @@ func derefNamed(t types.Type) *types.Named {
 	return n
 }
 
+// unaliasType unwraps type aliases from t, preserving pointer structure.
+// go/types represents alias uses as *types.Alias; types.NewMethodSet does
+// not reliably resolve promoted methods through aliases (e.g. reflect's
+// `type funcType = abi.FuncType` — calling ft.Kind() where ft is *funcType
+// fails to find the promoted abi.Type.Kind method). Unwrapping the alias
+// to the underlying named type fixes the method set computation.
+// This is general: all aliases, all packages.
+func unaliasType(t types.Type) types.Type {
+	if p, ok := t.(*types.Pointer); ok {
+		elem := unaliasType(p.Elem())
+		if elem != p.Elem() {
+			return types.NewPointer(elem)
+		}
+		return t
+	}
+	if _, ok := t.(*types.Alias); ok {
+		return unaliasType(types.Unalias(t))
+	}
+	return t
+}
+
 // derefStruct unwraps pointer and alias layers, returning the underlying
 // *types.Struct when t is (a pointer to) an anonymous or named struct type,
 // or nil otherwise. Used to detect promoted-method receivers that are not
@@ -4954,7 +4975,11 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 	}
 	var msel *types.Selection
 	var recvAddrOf bool
-	ms := types.NewMethodSet(selection.Recv())
+	// PKG-073: unwrap aliases from the receiver type before computing the
+	// method set. types.NewMethodSet does not reliably find promoted methods
+	// through alias types (e.g. *funcType where funcType = abi.FuncType).
+	recvType := unaliasType(selection.Recv())
+	ms := types.NewMethodSet(recvType)
 	for i := 0; i < ms.Len(); i++ {
 		if s := ms.At(i); s.Obj().Name() == mname {
 			msel = s
@@ -4974,7 +4999,7 @@ func (e *exporter) resolvePromotedMethodCall(sel *ast.SelectorExpr, selection *t
 		// non-addressable receiver keeps the named WS D scope error —
 		// never a confusing "not found" for a method that exists.
 		var pmsel *types.Selection
-		pms := types.NewMethodSet(types.NewPointer(selection.Recv()))
+		pms := types.NewMethodSet(types.NewPointer(recvType))
 		for i := 0; i < pms.Len(); i++ {
 			if s := pms.At(i); s.Obj().Name() == mname {
 				pmsel = s
@@ -9699,6 +9724,14 @@ func embeddedFieldType(t types.Type, path []int) types.Type {
 				t = p.Elem()
 				continue
 			}
+			// PKG-073: unwrap type aliases (e.g. reflect's
+			// `type funcType = abi.FuncType`). go/types represents
+			// alias uses as *types.Alias; the underlying struct
+			// is on the aliased named type.
+			if a, ok := t.(*types.Alias); ok {
+				t = types.Unalias(a)
+				continue
+			}
 			if n, ok := t.(*types.Named); ok {
 				t = n.Underlying()
 				continue
@@ -9723,6 +9756,11 @@ func embeddedFieldName(t types.Type, path []int) string {
 		for {
 			if p, ok := t.(*types.Pointer); ok {
 				t = p.Elem()
+				continue
+			}
+			// PKG-073: unwrap type aliases (mirrors embeddedFieldType).
+			if a, ok := t.(*types.Alias); ok {
+				t = types.Unalias(a)
 				continue
 			}
 			if n, ok := t.(*types.Named); ok {
