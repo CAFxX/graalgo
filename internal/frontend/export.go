@@ -5988,6 +5988,37 @@ func (e *exporter) synthesizeInstPairType(inst *instantiation) (*userMRInfo, err
 	}, nil
 }
 
+// isSkippedDiskMRStub reports whether fi is a disk-package multi-result
+// stub that exportFuncDecl skips: the WS G desugar rewrote the original
+// multi-result FuncDecl into a pair type + pair-returning __-helper + a
+// stub (original name/signature, kept only for type-checking and method
+// resolution), and all call sites were desugared to the helper. The stub
+// therefore has no v1 node. This is the single source of truth for the
+// skip condition — exportFuncDecl and methodTableEntries must agree, or
+// the method table dangles on the stub's object id (GG-0014: the backend
+// fails fast on unknown obj ids instead of silently misdispatching).
+func isSkippedDiskMRStub(fi *funcDeclInfo) bool {
+	if fi == nil || fi.obj == nil || fi.obj.Pkg() == nil {
+		return false
+	}
+	name := fi.obj.Name()
+	if strings.HasPrefix(name, "__") {
+		return false
+	}
+	recvType := ""
+	if fi.recv != nil {
+		// Get receiver base type name.
+		rt := fi.recv.Type()
+		if pt, ok := rt.(*types.Pointer); ok {
+			rt = pt.Elem()
+		}
+		if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
+			recvType = nt.Obj().Name()
+		}
+	}
+	return lookupDiskMR(fi.obj.Pkg().Path(), name, recvType) != nil
+}
+
 // exportFuncDecl emits a non-generic top-level function or method. Methods
 // export their receiver as params[0] (the wire "signature" matches).
 func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
@@ -5996,26 +6027,11 @@ func (e *exporter) exportFuncDecl(fi *funcDeclInfo) (*Node, error) {
 	// (original name, multi-result signature) exists for type-checking
 	// and method resolution; the desugar rewrites all calls to the
 	// __-helper. The v1 exporter cannot emit multi-result functions.
-	if fi.obj != nil && fi.obj.Pkg() != nil {
-		pkgPath := fi.obj.Pkg().Path()
-		name := fi.obj.Name()
-		if !strings.HasPrefix(name, "__") {
-			recvType := ""
-			if fi.recv != nil {
-				// Get receiver base type name.
-				rt := fi.recv.Type()
-				if pt, ok := rt.(*types.Pointer); ok {
-					rt = pt.Elem()
-				}
-				if nt, ok := rt.(*types.Named); ok && nt.Obj() != nil {
-					recvType = nt.Obj().Name()
-				}
-			}
-			if lookupDiskMR(pkgPath, name, recvType) != nil {
-				// Stub: skip export (desugar handles all calls).
-				return nil, nil
-			}
-		}
+	// NOTE: returns (nil, nil) — callers must not append the nil to
+	// doc.Funcs (see the guards at the append sites).
+	if isSkippedDiskMRStub(fi) {
+		// Stub: skip export (desugar handles all calls).
+		return nil, nil
 	}
 	if fd.Body == nil {
 		// real-reflect (Phase 1): internal/abi FuncPCABI0/FuncPCABIInternal
@@ -10214,7 +10230,7 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 		}
 		fi, ok := e.funcByObj[mobj]
 		helperMapped := false
-		if !ok {
+		if !ok || isSkippedDiskMRStub(fi) {
 			// P3-M8 (WS D): multi-result synthetic methods are skipped
 			// from funcByObj (v1 cannot emit multi-result funcdecls),
 			// but their pair-returning __-helpers are emitted. Map the
@@ -10223,9 +10239,13 @@ func (e *exporter) methodTableEntries(t types.Type) ([]any, bool, error) {
 			// as params[0] (exactly the helper's prependRecv calling
 			// convention) and the node yields the pair, so r.Read(buf)
 			// through an interface produces the same pair shape as the
-			// concrete Appendix M desugar. Methods with no helper keep
-			// the old skip (dispatch fails fast with "missing method"
-			// — loud, never silent).
+			// concrete Appendix M desugar. WS G disk-package stubs are
+			// also skipped from export (isSkippedDiskMRStub) even though
+			// they sit in funcByObj — mapping them to the helper here
+			// keeps the method table off the stub's dangling object id
+			// (GG-0014: the backend fails fast on unknown obj ids).
+			// Methods with no helper keep the old skip (dispatch fails
+			// fast with "missing method" — loud, never silent).
 			var hfi *funcDeclInfo
 			hfi, ok = e.multiResultHelperFunc(mobj)
 			if !ok {

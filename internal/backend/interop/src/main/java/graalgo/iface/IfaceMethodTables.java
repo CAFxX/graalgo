@@ -8,7 +8,6 @@ import java.util.Map;
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.Json;
 import graalgo.frontend.TypeTable;
-import graalgo.p3log.P3Log;
 import graalgo.values.GoFunc;
 
 /**
@@ -93,15 +92,20 @@ public final class IfaceMethodTables {
                 } else {
                     f = functions.get(ref.objId);
                     if (f == null) {
-                        // Disk-MR stubs are skipped by the frontend (desugar
-                        // rewrites all calls to the __-helper); the method
-                        // table entry is vestigial. Skip instead of failing.
-                        P3Log.warn(IfaceMethodTables.class,
-                                "ifacemethod: method \"" + m.getKey()
+                        // GG-0014: a method objID missing from
+                        // Program.functions() fails fast naming the
+                        // descriptor, method, and obj id. The frontend
+                        // guarantees every wire obj id resolves to an
+                        // emitted funcdecl (methodTableEntries maps
+                        // skipped disk-MR stubs to their __-helper and
+                        // never emits the stub's id) — an unknown id here
+                        // is a broken method table, never a vestigial
+                        // entry, and silently dropping it would
+                        // misdispatch interface calls.
+                        throw new FrontendException("ifacemethod: method \"" + m.getKey()
                                 + "\" on dynamic type \"" + e.getKey()
                                 + "\" refers to unknown function object id " + ref.objId
-                                + " (skipped; likely a disk-MR stub)");
-                        continue;
+                                + " (WS D)");
                     }
                     embMethods = List.of();
                 }
