@@ -100,7 +100,9 @@ var syntheticSources = map[string]string{
 	// internal/reflectlite is a pure adapter; iter is the minimal generic
 	// sequence declarations.
 	// "reflect": syntheticReflectSource, // RETIRED - uses disk importer
-	"internal/reflectlite": syntheticReflectliteSource,
+	// "internal/reflectlite": syntheticReflectliteSource, // RETIRED - real
+	// internal/reflectlite from GOROOT via disk importer (needed by real
+	// reflect and real errors)
 	"iter":                 syntheticIterSource,
 	// P3-M9 (tier-1d): leaf utilities (synth_unique.go, synth_structs.go,
 	// synth_bytealg.go). internal/bytealg is synthetic-only, like
