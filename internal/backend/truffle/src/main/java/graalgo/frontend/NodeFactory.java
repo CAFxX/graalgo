@@ -5237,6 +5237,14 @@ public final class NodeFactory {
             // BinaryOpNode(ADD, kind, x, oneNode(kind))).
             case COMPLEX64 -> ConstNode.ofObject(kind, new graalgo.values.GoComplex32(1f, 0f));
             case COMPLEX128 -> ConstNode.ofObject(kind, new graalgo.values.GoComplex64(1d, 0d));
+            // R3-P2-2: UNTYPED_COMPLEX defaults to complex128 (Go spec), so it
+            // needs the 1+0i object const too — falling into the int default
+            // would mint an int const with a complex kind (the bug class
+            // PKG-026 fixed for the typed kinds). Unreachable from Go source
+            // today (declared vars/fields/elements always carry a defaulted
+            // type), but the desugar call sites pass the kind through
+            // unchecked, so the default arm must not be trusted for it.
+            case UNTYPED_COMPLEX -> ConstNode.ofObject(kind, new graalgo.values.GoComplex64(1d, 0d));
             default -> ConstNode.ofInt(kind, 1L);
         };
     }

@@ -89,6 +89,12 @@ public final class ArithmeticCorpusTest {
     // PKG-026: complex arithmetic (add/sub/mul/div on complex64/complex128,
     // negation, untyped-constant operands, complex64->complex128 widening).
     public void testAr18Complex() throws Exception { checkProgram("ar18_complex"); }
+    // R3-P1-2/R3-P2-1: complex edge cases — the C99 correction paths of the
+    // Smith-1962 division port, NaN/Inf/signed-zero/subnormal/overflow
+    // components on complex64+complex128, div-by-zero narrowing, ++
+    // saturation near max, untyped-complex constant division.
+    // Bit-compared vs stock gc at test time (see ar19_complex_edges.go).
+    public void testAr19Complex() throws Exception { checkProgram("ar19_complex_edges"); }
 
     /**
      * Runs one corpus program through both backends and asserts every
@@ -102,10 +108,78 @@ public final class ArithmeticCorpusTest {
         List<String> expected = gcOracle(src, vars, kinds);
         List<String> actual = graalgoValues(program, vars, kinds);
         for (int i = 0; i < vars.size(); i++) {
-            if (!expected.get(i).equals(actual.get(i))) {
+            if (!valuesEqual(kinds.get(i), expected.get(i), actual.get(i))) {
                 throw new AssertionError(base + "." + vars.get(i) + " (" + kinds.get(i) + "): gc=<"
                         + expected.get(i) + "> graalgo=<" + actual.get(i) + ">");
             }
+        }
+    }
+
+    /**
+     * R3-P1-2: value equality for the differential comparison. Bit-identical,
+     * except that NaN payloads are compared by NaN-ness rather than by bits:
+     * Go leaves NaN payloads unspecified; gc emits the hardware indefinite
+     * NaN (0xfff8… on amd64) while HotSpot canonicalizes every NaN result to
+     * 0x7ff8… (measured 2026-10-16 — see ar19_complex_edges.go header).
+     * Payload equality would pin an implementation accident, not a semantic
+     * (it varies by CPU and JVM); NaN presence, signs, and every non-NaN bit
+     * remain bit-exact. Precedent: ComplexBinaryOpTest asserts isNaN only
+     * for NaN components.
+     */
+    static boolean valuesEqual(GoKind kind, String expected, String actual) {
+        if (expected.equals(actual)) {
+            return true;
+        }
+        return switch (kind) {
+            case FLOAT32 -> isFloat32NaN(expected) && isFloat32NaN(actual);
+            case FLOAT64, UNTYPED_FLOAT -> isFloat64NaN(expected) && isFloat64NaN(actual);
+            case COMPLEX64, COMPLEX128 -> complexEqual(kind, expected, actual);
+            default -> false;
+        };
+    }
+
+    /** "hex(re):hex(im)" equality up to NaN payload per component. */
+    private static boolean complexEqual(GoKind kind, String expected, String actual) {
+        String[] e = expected.split(":");
+        String[] a = actual.split(":");
+        if (e.length != 2 || a.length != 2) {
+            return false;
+        }
+        return floatBitsEqual(kind, e[0], a[0]) && floatBitsEqual(kind, e[1], a[1]);
+    }
+
+    /** Hex float-bit token equality up to NaN payload (COMPLEX64/128). */
+    private static boolean floatBitsEqual(GoKind kind, String e, String a) {
+        if (e.equals(a)) {
+            return true;
+        }
+        try {
+            if (kind == GoKind.COMPLEX64) {
+                return Float.isNaN(Float.intBitsToFloat(Integer.parseUnsignedInt(e, 16)))
+                        && Float.isNaN(Float.intBitsToFloat(Integer.parseUnsignedInt(a, 16)));
+            }
+            return Double.isNaN(Double.longBitsToDouble(Long.parseUnsignedLong(e, 16)))
+                    && Double.isNaN(Double.longBitsToDouble(Long.parseUnsignedLong(a, 16)));
+        } catch (NumberFormatException ex) {
+            return false;
+        }
+    }
+
+    /** Decimal uint32-bits (FLOAT32 oracle/graalgo encoding) is NaN. */
+    private static boolean isFloat32NaN(String s) {
+        try {
+            return Float.isNaN(Float.intBitsToFloat(Integer.parseUnsignedInt(s)));
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+    /** Decimal uint64-bits (FLOAT64 oracle/graalgo encoding) is NaN. */
+    private static boolean isFloat64NaN(String s) {
+        try {
+            return Double.isNaN(Double.longBitsToDouble(Long.parseUnsignedLong(s)));
+        } catch (NumberFormatException e) {
+            return false;
         }
     }
 
