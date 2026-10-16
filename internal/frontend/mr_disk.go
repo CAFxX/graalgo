@@ -799,22 +799,46 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 	// Compute before rewriteMRReturns (which introduces its own __t :=
 	// bindings).
 	usedNames := usedNamedResults(fd)
-	rewrittenBody := rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName, tparamNames)
+	// FE-1: a defer anywhere in the body (outside nested func literals)
+	// selects the wrapper shape — but only when a result has a name a
+	// deferred closure could reference. With unnamed (or all-blank)
+	// results no deferred function can observe or modify them, so the
+	// direct pair construction is already correct.
+	wrapDefer := hasDeferStmt(fd.Body) && hasNamedResult(fd)
+	// Hygienic rename of result references (shadowing safety), applied
+	// to the body before the return rewrite. Mutates fd.Body.
+	rename := renameResultRefs(fd, tparamNames)
+	freshOf := func(orig string) string {
+		if r, ok := rename[orig]; ok {
+			return r
+		}
+		return orig
+	}
+	rewrittenBody := rewriteMRReturns(fd.Body, pairType, pairFields, mrNames, fd, recvType, recvVarName, tparamNames, rename, wrapDefer)
+	// In wrap mode every non-blank named result becomes a local: the
+	// single trailing pair construction reads them all. Otherwise
+	// declare only the results the body genuinely needs (as before),
+	// now under their fresh names.
+	needAll := wrapDefer
 	var namedDecls []ast.Stmt
-	if len(usedNames) > 0 && fd.Type.Results != nil {
+	if fd.Type.Results != nil {
 		for _, fld := range fd.Type.Results.List {
 			if len(fld.Names) == 0 {
 				continue
 			}
 			var keep []*ast.Ident
 			for _, n := range fld.Names {
-				if usedNames[n.Name] {
+				fresh := freshOf(n.Name)
+				if fresh == "_" {
+					continue
+				}
+				if needAll || usedNames[n.Name] {
 					// Fresh ident: reusing n would share its *ast.Object
 					// with the stub's named result (the stub reuses
 					// fd.Type), and go/types then misattributes uses —
 					// notably references from inside closures — as
 					// "declared and not used".
-					keep = append(keep, ast.NewIdent(n.Name))
+					keep = append(keep, ast.NewIdent(fresh))
 				}
 			}
 			if len(keep) > 0 {
@@ -826,23 +850,71 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 						},
 					},
 				})
-				// Mark each declared name as used: a named result that
-				// is only assigned (e.g. in a defer closure) but never
-				// read would trip go/types' "declared and not used" as
-				// a local variable. The blank assignment is a no-op
-				// that satisfies the use check.
-				for _, n := range keep {
-					namedDecls = append(namedDecls, &ast.AssignStmt{
-						Lhs: []ast.Expr{ast.NewIdent("_")},
-						Tok: token.ASSIGN,
-						Rhs: []ast.Expr{ast.NewIdent(n.Name)},
-					})
+				if !needAll {
+					// Mark each declared name as used: a named result that
+					// is only assigned (e.g. in a defer closure) but never
+					// read would trip go/types' "declared and not used" as
+					// a local variable. The blank assignment is a no-op
+					// that satisfies the use check. In wrap mode the
+					// trailing pair literal reads every declared name,
+					// so the hack is unnecessary.
+					for _, n := range keep {
+						namedDecls = append(namedDecls, &ast.AssignStmt{
+							Lhs: []ast.Expr{ast.NewIdent("_")},
+							Tok: token.ASSIGN,
+							Rhs: []ast.Expr{ast.NewIdent(n.Name)},
+						})
+					}
 				}
 			}
 		}
 	}
-	if len(namedDecls) > 0 {
-		rewrittenBody.List = append(namedDecls, rewrittenBody.List...)
+	var helperBody *ast.BlockStmt
+	if wrapDefer {
+		// func() { <rewritten body> }(): defers registered by the body
+		// run when this closure returns, strictly before the single
+		// pair construction below.
+		iife := &ast.ExprStmt{
+			X: &ast.CallExpr{
+				Fun: &ast.FuncLit{
+					Type: &ast.FuncType{Params: &ast.FieldList{}},
+					Body: rewrittenBody,
+				},
+			},
+		}
+		// Single pair construction, after the deferred functions ran.
+		// Blank results contribute their zero value (*new(T)), as in
+		// the bare-return path.
+		var pairArgs []ast.Expr
+		for _, fld := range fd.Type.Results.List {
+			for _, n := range fld.Names {
+				fresh := freshOf(n.Name)
+				if fresh == "_" {
+					pairArgs = append(pairArgs, &ast.StarExpr{
+						X: &ast.CallExpr{
+							Fun:  ast.NewIdent("new"),
+							Args: []ast.Expr{fld.Type},
+						},
+					})
+					continue
+				}
+				pairArgs = append(pairArgs, ast.NewIdent(fresh))
+			}
+		}
+		tail := &ast.ReturnStmt{
+			Results: []ast.Expr{
+				&ast.CompositeLit{
+					Type: genericRef(pairType, tparamNames),
+					Elts: pairArgs,
+				},
+			},
+		}
+		helperBody = &ast.BlockStmt{List: append(namedDecls, iife, tail)}
+	} else {
+		if len(namedDecls) > 0 {
+			rewrittenBody.List = append(namedDecls, rewrittenBody.List...)
+		}
+		helperBody = rewrittenBody
 	}
 	helperDecl := &ast.FuncDecl{
 		Name: ast.NewIdent(helper),
@@ -856,7 +928,7 @@ func transformMRFunc(pkgPath string, files []*ast.File, fd *ast.FuncDecl, mrName
 				List: []*ast.Field{{Type: genericRef(pairType, tparamNames)}},
 			},
 		},
-		Body: rewrittenBody,
+		Body: helperBody,
 	}
 
 	// Stub: func F(args...) (T1, T2) { panic("unreachable") }.
@@ -1027,6 +1099,132 @@ func hasBareReturn(body *ast.BlockStmt) bool {
 	return found
 }
 
+// hasDeferStmt reports whether body contains a defer statement at any
+// depth. Function literals are not descended into: a defer inside one
+// belongs to the literal and runs at the literal's return, so it is
+// unaffected by the multi-result transform. A defer anywhere else
+// registers on the transformed function and must observe the named
+// results after the body runs (FE-1), which selects the wrapper shape.
+func hasDeferStmt(body *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch n.(type) {
+		case *ast.FuncLit:
+			return false
+		case *ast.DeferStmt:
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// hasNamedResult reports whether fd declares at least one non-blank
+// named result. Only a named result can be referenced (and modified) by
+// a deferred closure, so only then can a defer change the values the
+// caller receives — and only then is the FE-1 wrapper needed.
+func hasNamedResult(fd *ast.FuncDecl) bool {
+	if fd.Type.Results == nil {
+		return false
+	}
+	for _, fld := range fd.Type.Results.List {
+		for _, n := range fld.Names {
+			if n.Name != "_" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// renameResultRefs rewrites every identifier in fd.Body that denotes one
+// of fd's named result variables to a fresh hygienic local (__mr_result<i>),
+// returning the original->fresh mapping (blank results are never mapped).
+// The rewrite uses mrUseWalker's scope-aware resolution, so an inner :=
+// shadowing a result name keeps referring to the shadowing local while
+// genuine result references move to the fresh name. This makes both the
+// bare-return pair construction and the FE-1 wrapper's result assignments
+// robust against shadowing: gc always means the result variable at a
+// return, and so does the rewritten code.
+//
+// The fresh names are collision-checked against every name bound in the
+// function (receiver, params, :=, var, range), the result names
+// themselves, the function's type parameters, and the generated
+// __mr_tmp / __mr_t<i> temporaries, so the rename is structural — it
+// never depends on any specific package, function, or variable name.
+func renameResultRefs(fd *ast.FuncDecl, tparamNames []string) map[string]string {
+	if fd.Type.Results == nil {
+		return nil
+	}
+	var names []string
+	for _, fld := range fd.Type.Results.List {
+		for _, n := range fld.Names {
+			if n.Name != "_" {
+				names = append(names, n.Name)
+			}
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	taken := map[string]bool{}
+	for n := range locallyBoundNames(fd) {
+		taken[n] = true
+	}
+	for _, n := range names {
+		taken[n] = true
+	}
+	for _, n := range tparamNames {
+		taken[n] = true
+	}
+	taken["__mr_tmp"] = true
+	for i := range names {
+		taken[fmt.Sprintf("__mr_t%d", i+1)] = true
+	}
+	rename := make(map[string]string, len(names))
+	for i, n := range names {
+		fresh := fmt.Sprintf("__mr_result%d", i)
+		for taken[fresh] {
+			fresh += "_"
+		}
+		taken[fresh] = true
+		rename[n] = fresh
+	}
+	w := &mrUseWalker{
+		results: map[string]bool{},
+		used:    map[string]bool{},
+		scope:   &mrScope{names: map[string]bool{}},
+		rename:  rename,
+	}
+	for _, n := range names {
+		w.results[n] = true
+		w.scope.names[n] = true
+	}
+	// The receiver and params share the function scope with the results;
+	// recording them keeps resolution correct (they can never collide
+	// with result names in valid Go).
+	if fd.Recv != nil {
+		for _, fld := range fd.Recv.List {
+			for _, n := range fld.Names {
+				w.scope.names[n.Name] = true
+			}
+		}
+	}
+	if fd.Type.Params != nil {
+		for _, fld := range fd.Type.Params.List {
+			for _, n := range fld.Names {
+				w.scope.names[n.Name] = true
+			}
+		}
+	}
+	w.walkBlock(fd.Body)
+	return rename
+}
+
 // mrScope is one lexical scope in the mrUseWalker name-resolution walk.
 // The outermost scope (parent == nil) is the function scope holding the
 // receiver, params, and named results.
@@ -1036,11 +1234,18 @@ type mrScope struct {
 }
 
 // mrUseWalker determines which named result variables a function body
-// genuinely references, with scope-aware name resolution.
+// genuinely references, with scope-aware name resolution. In rename mode
+// (rename != nil) it instead rewrites every identifier denoting a named
+// result to its hygienic fresh name, in place.
 type mrUseWalker struct {
 	results map[string]bool // named result names of interest
 	used    map[string]bool // result names found genuinely referenced
 	scope   *mrScope        // innermost scope
+	// rename maps original result names to fresh hygienic locals. When
+	// non-nil, useIdent renames the identifier instead of recording a
+	// use (FE-1: shadowing safety for the defer wrapper's assignments
+	// and for bare-return pair construction).
+	rename map[string]string
 }
 
 func (w *mrUseWalker) push() {
@@ -1062,7 +1267,8 @@ func (w *mrUseWalker) declare(name string) {
 // useIdent records a use of id if it resolves to a named result: the
 // innermost scope binding the name must be the function scope, where the
 // results live. A use resolving to any shadowing inner binding is not a
-// use of the result.
+// use of the result. In rename mode the identifier is rewritten to the
+// result's hygienic fresh name instead.
 func (w *mrUseWalker) useIdent(id *ast.Ident) {
 	name := id.Name
 	if name == "_" || name == "" || !w.results[name] {
@@ -1071,7 +1277,11 @@ func (w *mrUseWalker) useIdent(id *ast.Ident) {
 	for s := w.scope; s != nil; s = s.parent {
 		if s.names[name] {
 			if s.parent == nil {
-				w.used[name] = true
+				if w.rename != nil {
+					id.Name = w.rename[name]
+				} else {
+					w.used[name] = true
+				}
 			}
 			return
 		}
@@ -1318,7 +1528,13 @@ func (w *mrUseWalker) walkDecl(d ast.Decl) {
 func (w *mrUseWalker) walkType(e ast.Expr) {
 	switch e := e.(type) {
 	case *ast.Ident:
-		w.useIdent(e)
+		if w.rename == nil {
+			w.useIdent(e)
+		}
+		// Rename mode: a type-position identifier never denotes a
+		// result variable in valid (type-checked) input — renaming it
+		// would corrupt the type reference. (Use-detection mode keeps
+		// the historical over-approximation of counting it as a use.)
 	case *ast.ParenExpr:
 		w.walkType(e.X)
 	case *ast.StarExpr:
@@ -1548,14 +1764,28 @@ func (w *mrUseWalker) walkLitElem(e ast.Expr, kk, childKK mrKeyKind) {
 //   - return             -> return __Pair{n1, n2} (named results)
 //   - return F(args)     -> __t := __F(args); return __Pair{__t.f1, __t.f2}
 //     (F multi-result; spliced as two statements)
-func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string, mrNames map[string]bool, fd *ast.FuncDecl, recvType, recvVar string, tparamNames []string) *ast.BlockStmt {
+//
+// In wrapDefer mode (FE-1) the body is wrapped in an immediately-invoked
+// closure and the pair is built once after it, so returns instead become
+// assignments to the result locals plus a bare return of the closure:
+//   - return a, b        -> n1, n2 = a, b; return
+//   - return             -> return
+//   - return F(args)     -> __t := __F(args); n1, n2 = __t.f1, __t.f2; return
+//
+// rename maps original result names to their hygienic locals; the
+// rewritten code references the fresh names throughout.
+func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string, mrNames map[string]bool, fd *ast.FuncDecl, recvType, recvVar string, tparamNames []string, rename map[string]string, wrapDefer bool) *ast.BlockStmt {
 	// Named result names (and their types) for bare return.
 	var namedResults []string
 	var namedResultTypes []ast.Expr
 	if fd.Type.Results != nil {
 		for _, fld := range fd.Type.Results.List {
 			for _, n := range fld.Names {
-				namedResults = append(namedResults, n.Name)
+				nm := n.Name
+				if r, ok := rename[nm]; ok {
+					nm = r
+				}
+				namedResults = append(namedResults, nm)
 				namedResultTypes = append(namedResultTypes, fld.Type)
 			}
 		}
@@ -1578,6 +1808,13 @@ func rewriteMRReturns(body *ast.BlockStmt, pairType string, pairFields []string,
 		// return-position call to such a name is a func value, not a
 		// reference to the package-level multi-result function.
 		boundNames: locallyBoundNames(fd),
+		// rename maps original named-result names to their hygienic
+		// fresh locals (already applied to namedResults above).
+		rename: rename,
+		// wrapDefer: the body runs inside an immediately-invoked
+		// closure; returns assign the result locals and return from
+		// the closure, and the pair is built once afterwards (FE-1).
+		wrapDefer: wrapDefer,
 	}
 	ctx.rewriteBlock(body)
 	return body
@@ -1591,9 +1828,9 @@ type mrRewriteCtx struct {
 	// namedResultTypes parallels namedResults: the declared type of each
 	// named result (blank results need their type for the zero value).
 	namedResultTypes []ast.Expr
-	mrNames      map[string]bool
-	recvType     string
-	recvVar      string
+	mrNames          map[string]bool
+	recvType         string
+	recvVar          string
 	// GAP-GENERIC-MR: the enclosing function's type parameter names
 	// (nil for non-generic functions) and its name (to recognize
 	// recursion in return-position call forwarding).
@@ -1605,6 +1842,12 @@ type mrRewriteCtx struct {
 	// reference to the package-level multi-result function, so it must
 	// not be rewritten to a __-helper call.
 	boundNames map[string]bool
+	// rename maps original named-result names to hygienic fresh locals.
+	rename map[string]string
+	// wrapDefer selects the FE-1 wrapper shape: returns assign the
+	// result locals and return from the immediately-invoked closure
+	// instead of constructing the pair on the spot.
+	wrapDefer bool
 }
 
 // locallyBoundNames returns the names bound as locals anywhere in fd
@@ -1818,12 +2061,31 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 			},
 		}
 	}
+	// Wrap-mode helpers (FE-1): the body runs inside an
+	// immediately-invoked closure, so a return assigns the result
+	// locals and returns from the closure; the pair is built once
+	// afterwards, after deferred functions ran.
+	bare := &ast.ReturnStmt{Return: rs.Return}
+	assignResults := func(rhs []ast.Expr) *ast.AssignStmt {
+		lhs := make([]ast.Expr, len(namedResults))
+		for i, n := range namedResults {
+			// Fresh hygienic names (rename applied by the caller);
+			// "_" stays a discard target.
+			lhs[i] = ast.NewIdent(n)
+		}
+		return &ast.AssignStmt{Lhs: lhs, Tok: token.ASSIGN, Rhs: rhs}
+	}
 	switch len(rs.Results) {
 	case 0:
 		// Bare return: use named results.
 		if len(namedResults) != len(pairFields) {
 			// Should not happen for valid multi-result; leave as-is
 			// (type-check will catch it).
+			return []ast.Stmt{rs}
+		}
+		if ctx.wrapDefer {
+			// The result locals already hold the values; the
+			// deferred functions run when the closure returns.
 			return []ast.Stmt{rs}
 		}
 		args := make([]ast.Expr, len(namedResults))
@@ -1919,6 +2181,9 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 					// Use fresh Ident nodes for the uses (not the def site).
 					args[i] = &ast.SelectorExpr{X: ast.NewIdent("__mr_tmp"), Sel: ast.NewIdent(f)}
 				}
+				if ctx.wrapDefer {
+					return []ast.Stmt{assign, assignResults(args), bare}
+				}
 				return []ast.Stmt{assign, mkPair(args)}
 			}
 			// General fallback: __t1, __t2 := <original call>;
@@ -1940,11 +2205,22 @@ func (ctx *mrRewriteCtx) rewriteReturn(rs *ast.ReturnStmt) []ast.Stmt {
 				// Use fresh Ident nodes for the uses (not the def sites).
 				args[i] = ast.NewIdent(fmt.Sprintf("__mr_t%d", i+1))
 			}
+			if ctx.wrapDefer {
+				return []ast.Stmt{assign, assignResults(args), bare}
+			}
 			return []ast.Stmt{assign, mkPair(args)}
 		}
 		return []ast.Stmt{rs}
 	default:
 		// return a, b, ... -> return Pair{a, b, ...}
+		if ctx.wrapDefer {
+			if len(namedResults) != len(pairFields) {
+				// Should not happen for valid multi-result; leave
+				// as-is (type-check will catch it).
+				return []ast.Stmt{rs}
+			}
+			return []ast.Stmt{assignResults(rs.Results), bare}
+		}
 		return []ast.Stmt{mkPair(rs.Results)}
 	}
 }
