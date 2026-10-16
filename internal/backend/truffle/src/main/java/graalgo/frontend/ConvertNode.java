@@ -26,6 +26,8 @@ import graalgo.values.GoKind;
  *   <li>struct → pointer: implicit {@code &T{}} (e.g. element elision in
  *       {@code []*T{{...}}} composite literals); wraps the struct value
  *       in a GoPointer.</li>
+ *   <li>interface → chan: type-parameter desugaring (same as interface →
+ *       pointer); extracts the channel from the interface's data.</li>
  * </ul>
  * Untyped constants never reach this node for same-family targets (they
  * are transparent — {@link GoKind#transparent}); the one untyped source
@@ -66,6 +68,11 @@ public final class ConvertNode extends GoExprNode {
         // uses a type parameter P, and the exporter emits a convert).
         // At runtime the interface holds the pointer; extract its data.
         boolean ifaceToPointer = from == GoKind.INTERFACE && to == GoKind.POINTER;
+        // fix-interface-chan-convert: interface{} -> chan T assertion
+        // (same desugaring as ifaceToPointer: the Go source uses a type
+        // parameter P, and the exporter emits a convert). At runtime the
+        // interface holds the channel; extract its data.
+        boolean ifaceToChan = from == GoKind.INTERFACE && to == GoKind.CHAN;
         // P3-M9: []T -> *T (e.g., &s[0] desugared as convert in generic
         // contexts). At runtime, create a pointer to the first element.
         boolean sliceToPointer = from == GoKind.SLICE && to == GoKind.POINTER;
@@ -87,7 +94,7 @@ public final class ConvertNode extends GoExprNode {
         boolean untypedConstToComplex = (from == GoKind.UNTYPED_INT || from == GoKind.UNTYPED_FLOAT)
                 && to.isComplexKind();
         if (!(numeric || intToString || stringToString || boolToBool || unsafeEscape
-                || stringToSlice || sliceToString || ifaceToPointer || sliceToPointer
+                || stringToSlice || sliceToString || ifaceToPointer || ifaceToChan || sliceToPointer
                 || structToPointer
                 || complexToComplex || untypedConstToComplex)) {
             throw new IllegalArgumentException(
@@ -218,6 +225,17 @@ public final class ConvertNode extends GoExprNode {
         // P3-M9: interface{} -> *T (desugared pair field assertion).
         // The interface holds the concrete pointer; extract its data.
         if (to == GoKind.POINTER && from == GoKind.INTERFACE) {
+            Object v = child.executeObject(frame);
+            if (v instanceof graalgo.values.GoInterface gi) {
+                return gi.data();
+            }
+            return v;
+        }
+        // fix-interface-chan-convert: interface{} -> chan T (same
+        // desugaring as ifaceToPointer: the Go source uses a type
+        // parameter P, and the exporter emits a convert). At runtime the
+        // interface holds the channel; extract its data.
+        if (to == GoKind.CHAN && from == GoKind.INTERFACE) {
             Object v = child.executeObject(frame);
             if (v instanceof graalgo.values.GoInterface gi) {
                 return gi.data();
