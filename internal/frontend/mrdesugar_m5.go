@@ -268,6 +268,11 @@ var m7MultiResultFuncs = []m7MultiResultFunc{
 	{"errors", "AsType", "", "__asTypePub", "asTypePair", []string{"v", "ok"}, false},
 	// bytes: methods on *Reader (P3-M9 WS D: v1 cannot emit 2-result methods).
 	{"bytes", "Read", "Reader", "__bytesReaderRead", "__bytesReadPair", []string{"n", "err"}, false},
+	// bytes: methods on *Buffer (P3-M9 WS D: v1 cannot emit 2-result
+	// methods). Retired the M7 fail-fast stub: WS D landed, so the stub's
+	// "re-test when it lands" condition is met; the helper is the real gc
+	// 1.27.1 Buffer.Read. Shares __bytesReadPair with the Reader row.
+	{"bytes", "Read", "Buffer", "__bytesBufferRead", "__bytesReadPair", []string{"n", "err"}, false},
 	// bytes: methods on *Buffer (P3-M9 WS D: v1 cannot emit 2-result methods).
 	{"bytes", "Write", "Buffer", "__bytesBufferWrite", "__bytesWritePair", []string{"n", "err"}, false},
 	// bytes: Buffer.WriteString (P3-M10 WS D discharge; needed by
