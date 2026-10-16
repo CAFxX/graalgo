@@ -42,14 +42,16 @@ Enforces the exclusion-list contract; rejects (exit 1) when:
    `vendor-manifest.json` records the same `goVersion` as
    `tools/stdlib-fork/pinned-version.txt` (a manifest/pin skew
    fails loud);
-2. otherwise `GOROOT/src` of the pinned toolchain
-   (`~/tools/go/bin/go`), announced loudly on stderr -- results then
-   pin to the live toolchain, not the vendored tree.
+2. otherwise `GOROOT/src` of the toolchain named by `STDLIB_EXCL_GO`
+   (falling back to the pinned `~/tools/go/bin/go`), announced loudly
+   on stderr -- results then pin to the live toolchain, not the
+   vendored tree.
 
 An explicit `--src` always wins. There are no silent fallbacks: every
 resolution announces where the tree came from.
 
-Wired into `make -C phases/phase3 check` (stdlib exclusion-list gate).
+Wired into `make -C [internal/backend/interop](../../internal/backend/interop) check`
+(stdlib exclusion-list gate).
 
 ## measure
 
