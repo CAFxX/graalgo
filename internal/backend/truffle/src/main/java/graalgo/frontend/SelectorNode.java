@@ -4,6 +4,7 @@ import com.oracle.truffle.api.frame.VirtualFrame;
 import com.oracle.truffle.api.nodes.Node;
 import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
+import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
@@ -78,6 +79,16 @@ public final class SelectorNode extends GoExprNode {
                 Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
             }
             return p.referent();
+        }
+        if (o instanceof GoInterface gi) {
+            // PKG-074: a GoInterface wrapping a struct (e.g. from real
+            // reflect or interface-typed values) must be unwrapped to the
+            // underlying data before field selection. The data is the
+            // dynamic value in its D5 Java carrier.
+            if (gi.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, site);
+            }
+            return gi.data();
         }
         return o;
     }

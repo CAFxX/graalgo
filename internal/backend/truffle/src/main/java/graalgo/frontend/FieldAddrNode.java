@@ -6,6 +6,7 @@ import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
 import graalgo.runtime.sync.IntCell;
 import graalgo.runtime.sync.LongCell;
+import graalgo.values.GoInterface;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 import graalgo.values.GoStruct;
@@ -37,12 +38,7 @@ public final class FieldAddrNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         Object b = base.executeObject(frame);
-        if (b instanceof GoPointer gp) {
-            if (gp.isNil()) {
-                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
-            }
-            b = gp.referent();
-        }
+        b = unwrap(b);
         // PKG-053: the address of an atomic wrapper's value field IS the
         // wrapper cell itself. The real sync/atomic method bodies
         // (compiled from disk since 503608ea) address the word as &x.v,
@@ -57,13 +53,7 @@ public final class FieldAddrNode extends GoExprNode {
         GoStruct cur = (GoStruct) b;
         for (int i = 0; i < hops.length - 1; i++) {
             Object next = cur.getObject(hops[i]);
-            if (next instanceof GoPointer gp) {
-                // Promoted field through an embedded *struct field.
-                if (gp.isNil()) {
-                    Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
-                }
-                next = gp.referent();
-            }
+            next = unwrap(next);
             // Same cell transparency one level down: a field path that
             // lands on an atomic cell (e.g. &s.f.v) yields the cell.
             if (isAtomicCell(next)) {
@@ -72,6 +62,28 @@ public final class FieldAddrNode extends GoExprNode {
             cur = (GoStruct) next;
         }
         return new GoPointer(new GoFieldCell(cur, hops[hops.length - 1], fieldKind));
+    }
+
+    /**
+     * PKG-074: unwrap GoPointer (auto-deref) and GoInterface (extract
+     * underlying data) before struct field navigation. A GoInterface
+     * wrapping a struct must be unwrapped to the data, otherwise the
+     * GoStruct cast throws ClassCastException.
+     */
+    private Object unwrap(Object o) {
+        if (o instanceof GoPointer gp) {
+            if (gp.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+            }
+            return gp.referent();
+        }
+        if (o instanceof GoInterface gi) {
+            if (gi.isNil()) {
+                Panic.throwPanic(GoErrors.nilDereference(), null, null, this);
+            }
+            return gi.data();
+        }
+        return o;
     }
 
     /**
