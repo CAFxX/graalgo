@@ -33,6 +33,35 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	}
 	sig := e.typeID(fn.Type())
 
+	// Receiver (methods): fd.Recv is non-nil for method declarations.
+	// The receiver Var comes from go/types (Signature.Recv), which is
+	// authoritative — it handles named, blank, and unnamed receivers.
+	// Previously the receiver was silently dropped; it is now emitted
+	// as a param-like object so the backend can bind it.
+	var recv any
+	if fd.Recv != nil {
+		tsig, ok := fn.Type().(*types.Signature)
+		if !ok {
+			return nil, fmt.Errorf("emit: method %s has non-signature type", fd.Name.Name)
+		}
+		recvVar := tsig.Recv()
+		if recvVar == nil {
+			return nil, fmt.Errorf("emit: method %s has Recv AST but no types recv", fd.Name.Name)
+		}
+		recvID := e.declareParam(recvVar)
+		_, isPtr := recvVar.Type().(*types.Pointer)
+		recv = e.node("param", fd.Recv, map[string]any{
+			"name":    recvVar.Name(),
+			"obj":     recvID,
+			"type":    e.typeID(recvVar.Type()),
+			"pointer": isPtr,
+		})
+		// Record for the named type's method set.
+		if named := derefNamed(recvVar.Type()); named != nil {
+			e.methodsByNamed[named] = append(e.methodsByNamed[named], fn)
+		}
+	}
+
 	params := []any{}
 	if fd.Type.Params != nil {
 		for _, field := range fd.Type.Params.List {
@@ -67,11 +96,25 @@ func (e *Emitter) emitFuncDecl(fd *ast.FuncDecl) (map[string]any, error) {
 	fields := map[string]any{
 		"name":    fn.Name(),
 		"sig":     sig,
+		"recv":    recv,
 		"params":  params,
 		"body":    body,
 		"pkgpath": pkgpath,
 	}
 	return e.node("funcdecl", fd, fields), nil
+}
+
+// derefNamed returns the *types.Named for T or *T, or nil if the type
+// is not (a pointer to) a named type. Used to attach methods to their
+// receiver's named type for method-set population.
+func derefNamed(t types.Type) *types.Named {
+	if ptr, ok := t.(*types.Pointer); ok {
+		t = ptr.Elem()
+	}
+	if named, ok := t.(*types.Named); ok {
+		return named
+	}
+	return nil
 }
 
 func (e *Emitter) emitBlock(b *ast.BlockStmt) (map[string]any, error) {

@@ -43,7 +43,12 @@ for the design.
       output to compare against)
 - [ ] More node kinds: composite literals, struct/array/map/slice types,
       type assertions, type switches, go/defer, channels, interfaces
-- [ ] Method declarations (currently only functions)
+- [x] Method declarations (2026-10-16): `*ast.FuncDecl` with receiver now
+      emits the receiver as a param-like object (`recv` field on funcdecl:
+      name, obj, type, pointer bool). Method sets populated on Named types
+      (`methods` list in type-table detail, source order). Tests:
+      value/pointer/blank receivers, plain-func nil recv, method-set
+      population, method-call end-to-end (`emit/methods_test.go`, 6 tests).
 - [ ] Package-level vars and init order (globals)
 - [ ] Generic instantiations
 - [ ] Import resolution for multi-package programs

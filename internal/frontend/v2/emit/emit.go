@@ -42,6 +42,10 @@ type Emitter struct {
 	// Object table: types.Object → id.
 	objIDs  map[types.Object]int
 	objects []any
+	// Method sets: named receiver type → list of method *types.Func objects,
+	// in source order. Populated during emitFuncDecl; the Named type
+	// descriptions' "methods" fields are filled in after all decls emit.
+	methodsByNamed map[*types.Named][]types.Object
 }
 
 // Emit runs stage 3 and returns the in-memory program document. The
@@ -49,11 +53,12 @@ type Emitter struct {
 // it is never serialized to JSON.
 func Emit(cr *checker.Result, pkg *ast.Package, files []string) (*Document, error) {
 	e := &Emitter{
-		fset:    cr.Fset,
-		info:    cr,
-		files:   files,
-		typeIDs: make(map[types.Type]int),
-		objIDs:  make(map[types.Object]int),
+		fset:           cr.Fset,
+		info:           cr,
+		files:          files,
+		typeIDs:        make(map[types.Type]int),
+		objIDs:         make(map[types.Object]int),
+		methodsByNamed: make(map[*types.Named][]types.Object),
 	}
 	return e.emitDocument(pkg)
 }
@@ -88,6 +93,12 @@ func (e *Emitter) emitDocument(pkg *ast.Package) (*Document, error) {
 		}
 		funcs = append(funcs, fn)
 	}
+
+	// Populate method sets: for each named receiver type, fill the
+	// "methods" list in its type-table description with the object ids
+	// of its methods (in source order). This runs after all decls emit
+	// so every method's object id is assigned.
+	e.populateMethodSets()
 
 	baseNames := make([]string, len(e.files))
 	for i, f := range e.files {
@@ -153,6 +164,33 @@ func fileBase(p string) string {
 		}
 	}
 	return p
+}
+
+// populateMethodSets fills the "methods" list in each named type's
+// type-table description. Called after all funcdecls emit so method
+// object ids are assigned. Methods are listed in source order.
+func (e *Emitter) populateMethodSets() {
+	for named, methods := range e.methodsByNamed {
+		tid, ok := e.typeIDs[named]
+		if !ok {
+			continue
+		}
+		desc, ok := e.types[tid].(map[string]any)
+		if !ok {
+			continue
+		}
+		detail, ok := desc["detail"].(map[string]any)
+		if !ok {
+			continue
+		}
+		ids := []any{}
+		for _, m := range methods {
+			if id, ok := e.objIDs[m]; ok {
+				ids = append(ids, id)
+			}
+		}
+		detail["methods"] = ids
+	}
 }
 
 // pos renders a source position per §3 of the spec.
