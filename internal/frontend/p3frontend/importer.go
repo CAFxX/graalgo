@@ -166,7 +166,15 @@ func (imp *Importer) Import(path string) (*types.Package, error) {
 		return pkg, nil
 	case "encoding/json":
 		// P3-M7 (wave 1): synthetic encoding/json (see synth_json.go).
-		pkg := syntheticJsonPackage()
+		// Its Compact/Indent/HTMLEscape take *bytes.Buffer: ensure the
+		// synthetic bytes package is built and cached first (the
+		// context->time precedent) and share its Buffer named type, so
+		// json.Compact(&buf, ...) type-checks on type identity (P3FE-2).
+		bytesPkg, err := imp.Import("bytes")
+		if err != nil {
+			return nil, err
+		}
+		pkg := syntheticJsonPackage(bytesPkg)
 		imp.pkgs[path] = pkg
 		return pkg, nil
 	case "encoding/base32":

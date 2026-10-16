@@ -17,6 +17,7 @@ import (
 	"go/parser"
 	"go/token"
 	"go/types"
+	"path/filepath"
 	"strconv"
 	"testing"
 )
@@ -112,7 +113,7 @@ func jsonSigString(sig *types.Signature) string {
 // package: every exported type (with methods), function, and var must
 // match the phase-1 synthetic source declaration-by-declaration.
 func TestJsonSyntheticSignatures(t *testing.T) {
-	mirror := syntheticJsonPackage()
+	mirror := syntheticJsonPackage(syntheticBytesPackage(syntheticIoPackage()))
 	if mirror.Name() != "json" || mirror.Path() != "encoding/json" {
 		t.Fatalf("package name/path = %s/%s, want json/encoding/json",
 			mirror.Name(), mirror.Path())
@@ -253,7 +254,7 @@ func TestJsonSyntheticSignatures(t *testing.T) {
 // TestJsonImporterRegistersEncodingJson verifies the importer resolves
 // "encoding/json" to the synthetic mirror.
 func TestJsonImporterRegistersEncodingJson(t *testing.T) {
-	pkg := syntheticJsonPackage()
+	pkg := syntheticJsonPackage(syntheticBytesPackage(syntheticIoPackage()))
 	if pkg.Path() != "encoding/json" {
 		t.Fatalf("syntheticJsonPackage path = %q, want encoding/json", pkg.Path())
 	}
@@ -265,5 +266,49 @@ func TestJsonImporterRegistersEncodingJson(t *testing.T) {
 		if pkg.Scope().Lookup(name) == nil {
 			t.Fatalf("syntheticJsonPackage missing %q", name)
 		}
+	}
+}
+
+// TestJsonSharesBytesBufferTypeIdentity is the P3FE-2 regression test.
+// The synthetic encoding/json package must take *bytes.Buffer from the
+// importer's cached synthetic bytes package — the SAME named type, not a
+// throwaway fabrication whose signature merely renders identically.
+// Before the fix, json.Compact(&buf, data) failed type-check with
+// "cannot use &buf (value of type *bytes.Buffer) as *bytes.Buffer
+// value": both types render as *bytes.Buffer, but go/types compares
+// named types by identity. The drift test cannot catch this (rendered
+// signatures are equal); this test pins the identity.
+//
+// Asserted two ways, both of which fail on the pre-fix code:
+//  1. Compact's dst param is types.Identical to a pointer to the
+//     importer's cached bytes.Buffer.
+//  2. A real program passing a bytes.Buffer to json.Compact/HTMLEscape/
+//     Indent type-checks end to end through MergeDir.
+func TestJsonSharesBytesBufferTypeIdentity(t *testing.T) {
+	fset := token.NewFileSet()
+	imp := NewImporter(NewLoader(), "", fset)
+	jsonPkg, err := imp.Import("encoding/json")
+	if err != nil {
+		t.Fatalf("importing encoding/json: %v", err)
+	}
+	bytesPkg := imp.Package("bytes")
+	if bytesPkg == nil {
+		t.Fatal("importer did not build/cache the synthetic bytes package")
+	}
+	bufObj := bytesPkg.Scope().Lookup("Buffer")
+	if bufObj == nil {
+		t.Fatal("synthetic bytes package lacks Buffer")
+	}
+	want := types.NewPointer(bufObj.Type())
+	compactObj := jsonPkg.Scope().Lookup("Compact")
+	if compactObj == nil {
+		t.Fatal("synthetic encoding/json lacks Compact")
+	}
+	got := compactObj.Type().(*types.Signature).Params().At(0).Type()
+	if !types.Identical(got, want) {
+		t.Fatalf("Compact dst param must be identical to the importer's *bytes.Buffer:\n got:  %s\n want: %s", got, want)
+	}
+	if _, err := MergeDir(filepath.Join("testdata", "jsonbytes", "main")); err != nil {
+		t.Fatalf("MergeDir on the jsonbytes fixture: %v", err)
 	}
 }
