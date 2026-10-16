@@ -35,7 +35,7 @@ import java.util.stream.Stream;
  * manually created frame → per-kind frame-slot reads.
  *
  * <p>Run from the phase1 directory ({@code make test}); override with
- * {@code -Dgraalgo.phase1.dir=...}.
+ * {@code -Dgraalgo.repo.dir=...}.
  */
 // verifies: GG-0015 (M3: expressions + values differential-green on the
 // arithmetic corpus; every observed value asserted bit-identical to stock

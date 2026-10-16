@@ -76,7 +76,7 @@ import java.util.stream.Stream;
  * first stderr line, pinning the corpus documentation to the oracle.
  *
  * <p>Run from the phase1 directory ({@code make test}); override with
- * {@code -Dgraalgo.phase1.dir=...}.
+ * {@code -Dgraalgo.repo.dir=...}.
  */
 // verifies: GG-0019 (M5: defer/panic/recover/Goexit differential-green vs
 // stock gc — recovered programs assert every observed value bit-identical;

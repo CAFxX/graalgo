@@ -16,7 +16,7 @@ import java.util.stream.Stream;
  * <p>Corpus conventions: {@code corpus/vars/gv*.go}, each a complete
  * program printing its results with the fmt stub. Run from the phase1
  * directory ({@code make test}); override with
- * {@code -Dgraalgo.phase1.dir=...}.
+ * {@code -Dgraalgo.repo.dir=...}.
  */
 // verifies: GG-0014 (M7: package-level const/var declarations — const
 // folding incl. iota, dependency-order initialization, globals readable

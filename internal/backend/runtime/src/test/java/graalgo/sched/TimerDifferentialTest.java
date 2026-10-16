@@ -13,7 +13,7 @@ import graalgo.runtime.Timers;
  * P2-M3 timer differential tests (WS C; GG-SCHED-0004).
  *
  * <p>Each test is a mechanical Java translation of the Go program in
- * {@code phases/phase2/corpus/timers/<name>.go} (translation convention
+ * {@code test/corpus/phase2/timers/<name>.go} (translation convention
  * documented below), executed on the user-space scheduler. Output is
  * diffed byte-for-byte against the gc-recorded {@code <name>.expected}
  * file. Only event ORDER is significant — never wall-clock values

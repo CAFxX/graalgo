@@ -27,7 +27,7 @@ import com.sun.management.GarbageCollectionNotificationInfo;
  *
  * <p>The shape mirrors gc's {@code gctrace} ("a line per GC cycle on
  * stderr"); the numbers are JVM-heap sourced (documented in
- * {@code phases/phase2/GODEBUG.md}), not Go-heap: gc prints
+ * {@code docs/arch/phases/phase2/GODEBUG.md}), not Go-heap: gc prints
  * allocator-level detail ({@code 4-&gt;4-&gt;3 MB, 5 MB goal, ...}) that
  * has no counterpart when the collector is the JVM's.
  *

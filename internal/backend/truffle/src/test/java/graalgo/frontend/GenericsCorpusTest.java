@@ -30,7 +30,7 @@ import java.util.stream.Stream;
  * the {@code x = x} no-op-use idiom. Every file carries
  * {@code // verifies: GG-0014} (the M6 monomorphization requirement).
  * Run from the phase1 directory ({@code make test}); override with
- * {@code -Dgraalgo.phase1.dir=...}.
+ * {@code -Dgraalgo.repo.dir=...}.
  */
 // verifies: GG-0014 (M6: monomorphized generics — one RootNode per go/types
 // instantiation, functions and methods incl. generic methods — differential

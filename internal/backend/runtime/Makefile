@@ -97,10 +97,10 @@ run: main
 	$(JAVA) $(JAVA_FLAGS) -cp "$(RUN_CP)" graalgo.sched.launcher.SchedMain $(ARGS)
 
 test: main $(OUT_TEST)/.built
-	# BRIDGE (test lane): the differential tests resolve corpus/… paths
-	# relative to the module working directory (as in the phase-2 tree).
-	# The ./corpus symlink points at phases/phase2/corpus until the test
-	# code-move lane relocates it to test/corpus/; repoint/remove then.
+	# The differential tests resolve corpus/… paths relative to the module
+	# working directory. The ./corpus symlink points at test/corpus
+	# (repointed from phases/phase2/corpus after the test code-move lane
+	# relocated the corpus; the old phases/ tree is gone).
 	mkdir -p out/test-tmp
 	TMPDIR="$(CURDIR)/out/test-tmp" GOTMPDIR="$(CURDIR)/out/test-tmp" \
 	$(JAVA) -Djava.io.tmpdir="$(CURDIR)/out/test-tmp" $(JAVA_FLAGS) \
@@ -199,7 +199,7 @@ pin-audit: main $(OUT_TEST)/.built
 	--out out/pinaudit-report.md
 
 # P2-M8 preemption-torture battery (spike 2b F1–F6 on the production path).
-# Takes ~10 min. BRIDGE (phase-2 tooling still under phases/phase2/tools).
+# Takes ~10 min. BRIDGE (torture tooling under tools/torture/).
 torture: main $(OUT_TEST)/.built
 	bash ../../../tools/torture/run_battery.sh
 

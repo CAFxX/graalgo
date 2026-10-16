@@ -16,7 +16,7 @@ import java.util.stream.Stream;
  * exact, stderr normalized).
  *
  * <p>Run from the phase1 directory ({@code make test}); override with
- * {@code -Dgraalgo.phase1.dir=...}.
+ * {@code -Dgraalgo.repo.dir=...}.
  */
 // verifies: GG-0020 (M7: builtin functions — append/copy/delete/len/cap/
 // make/new/complex/real/imag/print/println — execute with gc-identical

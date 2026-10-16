@@ -20,13 +20,19 @@ package graalgo.frontend;
 // gc-identical observable behavior).
 public final class CompositeCorpusTest {
 
+    private static java.nio.file.Path repoDir() {
+        return java.nio.file.Path.of(System.getProperty("graalgo.repo.dir", "."));
+    }
+
+    private static java.nio.file.Path corpusDir() {
+        return repoDir().resolve("test").resolve("corpus").resolve("phase1").resolve("composite");
+    }
+
     /** Guards against accidental corpus shrinkage. */
     public void testCorpusHasEnoughPrograms() throws Exception {
         long n;
         try (java.util.stream.Stream<java.nio.file.Path> s =
-                java.nio.file.Files.list(java.nio.file.Path.of(
-                        System.getProperty("graalgo.repo.dir", "."),
-                        "corpus", "composite"))) {
+                java.nio.file.Files.list(corpusDir())) {
             n = s.map(p -> p.getFileName().toString())
                     .filter(x -> x.startsWith("co") && x.endsWith(".go"))
                     .count();
@@ -48,9 +54,7 @@ public final class CompositeCorpusTest {
     public void testCo10Assert() throws Exception { checkProgram("co10_assert"); }
 
     static void checkProgram(String base) throws Exception {
-        java.nio.file.Path src = java.nio.file.Path.of(
-                System.getProperty("graalgo.repo.dir", "."), "corpus", "composite",
-                base + ".go");
+        java.nio.file.Path src = corpusDir().resolve(base + ".go");
         java.util.List<String> vars = ControlFlowCorpusTest.observeVars(src);
         long[] expected = ControlFlowCorpusTest.gcOracle(src, vars);
         long[] actual = ControlFlowCorpusTest.graalgoValues(src, vars);
