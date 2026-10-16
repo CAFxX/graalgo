@@ -7,7 +7,8 @@ package main
 // type-check error. (Full export of bisect still needs
 // sync/atomic.Pointer struct fields — a separate lane; this test asserts
 // precisely that the Callers error is gone, not that the whole package
-// exports.)
+// exports. While full export is still blocked, the test SKIPs loudly —
+// it never passes without having run the regression check.)
 
 import (
 	"os"
@@ -48,8 +49,11 @@ func TestBisectNoCallersError(t *testing.T) {
 		if strings.Contains(err.Error(), "undefined: runtime.Callers") {
 			t.Fatalf("regression: %v", err)
 		}
-		t.Logf("bisect export blocked by unrelated feature: %v", err)
-		return
+		// Unrelated blocker (e.g. the sync/atomic.Pointer struct-field
+		// lane): loud skip, never a silent pass. A green suite must mean
+		// the Callers regression is genuinely guarded, not that the
+		// export never ran.
+		t.Skipf("bisect export blocked by unrelated feature: %v", err)
 	}
 	if !strings.Contains(out, `"kind": "runtimecallers"`) {
 		t.Errorf("exported bisect JSON missing the runtimecallers wire node")
