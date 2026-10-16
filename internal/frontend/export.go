@@ -8812,7 +8812,7 @@ type atomicWordOp struct {
 // atomicWordOps is the package-level atomic word/bool surface lowered to
 // the atomicaddr+syncop wire nodes (fix-linkname, Caddy/godebug lane).
 // gc's exact function names (verified against
-// ~/tools/go-1.27.1/src/sync/atomic/doc.go). And/Or, the Pointer/Value
+// ~/tools/go-1.27.1/src/sync/atomic/doc.go). The Pointer/Value
 // package funcs, and anything else stay M4: the caller fails fast with
 // the named scope error.
 var atomicWordOps = map[string]atomicWordOp{
@@ -8841,6 +8841,20 @@ var atomicWordOps = map[string]atomicWordOp{
 	"AddUintptr":            {"Add", "atomic.Uintptr", "int64", 1},
 	"SwapUintptr":           {"Swap", "atomic.Uintptr", "int64", 1},
 	"CompareAndSwapUintptr": {"CompareAndSwap", "atomic.Uintptr", "int64", 2},
+	// PKG-053: And/Or word ops (gc's exact function names, verified
+	// against ~/tools/go/src/sync/atomic/doc.go). The real
+	// (*Int32).And etc. bodies call these package-level funcs, so the
+	// typed-wrapper methods need them lowered like the rest.
+	"AndInt32":   {"And", "atomic.Int32", "int32", 1},
+	"OrInt32":    {"Or", "atomic.Int32", "int32", 1},
+	"AndInt64":   {"And", "atomic.Int64", "int64", 1},
+	"OrInt64":    {"Or", "atomic.Int64", "int64", 1},
+	"AndUint32":  {"And", "atomic.Uint32", "int32", 1},
+	"OrUint32":   {"Or", "atomic.Uint32", "int32", 1},
+	"AndUint64":  {"And", "atomic.Uint64", "int64", 1},
+	"OrUint64":   {"Or", "atomic.Uint64", "int64", 1},
+	"AndUintptr": {"And", "atomic.Uintptr", "int64", 1},
+	"OrUintptr":  {"Or", "atomic.Uintptr", "int64", 1},
 	// Note: no Bool entries — gc has no package-level bool atomics.
 }
 

@@ -83,6 +83,15 @@ deliverable until the design lands.
   (the 2026-10-15 on-demand disk method indexing work already routes `sync`
   through the disk importer — the remaining step is retiring the name-keyed
   lowering once the real package links end-to-end), then delete the method.
+- **Partial retirement (PKG-053, 2026-10-16):** `sync.Mutex`/`sync.RWMutex`/
+  `sync.WaitGroup`/`sync.Once` no longer lower to cells — their real method
+  bodies (compiled from disk) assume struct layout, so they now materialize
+  as plain `GoStruct`s and the real bodies run end-to-end. The
+  `sync/atomic.*` wrappers keep the cell representation (atomicity is
+  load-bearing); their real bodies are bridged by cell-transparent `&x.v`
+  ([FieldAddrNode.java](../../internal/backend/truffle/src/main/java/graalgo/frontend/FieldAddrNode.java)).
+  `sync.Pool`/`sync.Map` keep their Java objects. Full deletion of the
+  method awaits those.
 - **Phase:** 3 (after the last synthetic package that depends on it retires).
 
 ### B-3. Frontend package-name-keyed special-case machinery

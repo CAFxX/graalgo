@@ -45,6 +45,34 @@ public final class Atomics {
         return addr.getAndSet(new_);
     }
 
+    /**
+     * Atomic int32 AND; returns the previous value (gc's AndInt32
+     * semantics). Lock-free CAS loop over the {@link IntCell} interface
+     * so every cell kind (wrapper cells and address cells) shares one
+     * implementation. PKG-053: completes the atomic wrapper method
+     * family — the real (*Int32).And body calls the package-level
+     * AndInt32, which lowers through the same atomicaddr+syncop path.
+     */
+    public static int andInt32(IntCell addr, int mask) {
+        int prev;
+        do {
+            prev = addr.get();
+        } while (!addr.compareAndSet(prev, prev & mask));
+        return prev;
+    }
+
+    /**
+     * Atomic int32 OR; returns the previous value (gc's OrInt32
+     * semantics). See {@link #andInt32} for the implementation note.
+     */
+    public static int orInt32(IntCell addr, int mask) {
+        int prev;
+        do {
+            prev = addr.get();
+        } while (!addr.compareAndSet(prev, prev | mask));
+        return prev;
+    }
+
     // -- int64 ----------------------------------------------------------
 
     /** Atomic int64 load. */
@@ -70,6 +98,30 @@ public final class Atomics {
     /** Atomic int64 swap; returns the previous value. */
     public static long swapInt64(LongCell addr, long new_) {
         return addr.getAndSet(new_);
+    }
+
+    /**
+     * Atomic int64 AND; returns the previous value (gc's AndInt64
+     * semantics). Lock-free CAS loop; see {@link #andInt32}.
+     */
+    public static long andInt64(LongCell addr, long mask) {
+        long prev;
+        do {
+            prev = addr.get();
+        } while (!addr.compareAndSet(prev, prev & mask));
+        return prev;
+    }
+
+    /**
+     * Atomic int64 OR; returns the previous value (gc's OrInt64
+     * semantics). Lock-free CAS loop; see {@link #andInt32}.
+     */
+    public static long orInt64(LongCell addr, long mask) {
+        long prev;
+        do {
+            prev = addr.get();
+        } while (!addr.compareAndSet(prev, prev | mask));
+        return prev;
     }
 
     // -- pointer-sized (uintptr) -----------------------------------------

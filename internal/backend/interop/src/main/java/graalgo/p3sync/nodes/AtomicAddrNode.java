@@ -10,6 +10,8 @@ import graalgo.runtime.GoErrors;
 import graalgo.runtime.Panic;
 import graalgo.runtime.sync.GoPointerCell32;
 import graalgo.runtime.sync.GoPointerCell64;
+import graalgo.runtime.sync.IntCell;
+import graalgo.runtime.sync.LongCell;
 import graalgo.values.GoKind;
 import graalgo.values.GoPointer;
 
@@ -46,6 +48,14 @@ public final class AtomicAddrNode extends GoExprNode {
     @Override
     public Object executeObject(VirtualFrame frame) {
         Object a = addr.executeObject(frame);
+        // PKG-053: &x.v on an atomic wrapper cell evaluates to the cell
+        // itself (FieldAddrNode) — it already IS the IntCell / LongCell /
+        // AtomicReference the syncop machinery needs, so use it directly
+        // instead of wrapping a pointer.
+        if (a instanceof IntCell || a instanceof LongCell
+                || a instanceof java.util.concurrent.atomic.AtomicReference<?>) {
+            return a;
+        }
         GoPointer gp;
         if (a instanceof GoPointer q && !q.isNil()) {
             gp = q;
