@@ -9,14 +9,23 @@ WORKDIR="$2"
 GMP="${3:-1}"
 
 GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
+# Workspace-local scratch (the soak driver passes FUZZ_TMPDIR); never /tmp.
+export TMPDIR="${FUZZ_TMPDIR:-$HOME/workspace/.tmp-graalgo-fuzz}"
+JAVA_BIN="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+# The graalgo leg delegates to the product launcher
+# (internal/backend/graalgo-sync-run): it builds the classpath from
+# internal/backend/{interop,runtime,truffle}/out/classes plus the truffle
+# lib jars (classpath order is load-bearing: interop first, then runtime
+# so the runtime module's same-FQN replacements shadow the truffle
+# module's frozen stubs, then truffle) and invokes
+# graalgo.p3sync.launcher.P3SyncMain with these args. -Djava.io.tmpdir
+# follows $TMPDIR (never /tmp).
+if [ -z "${GRAALVM_HOME:-}" ]; then
+    export GRAALVM_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+fi
+LAUNCHER="$GR/internal/backend/graalgo-sync-run"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
@@ -32,9 +41,7 @@ timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
 # 3. graalgo run (120s timeout; JVM startup dominates)
-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
+timeout 120 "$LAUNCHER" --gmp="$GMP" -- "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
 gr_exit=$?
 

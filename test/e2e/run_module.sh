@@ -9,7 +9,7 @@
 #   stderr line is compared (wave3 convention).
 #
 # Environment (set by caller or defaults):
-#   GR        worktree root (default ~/workspace/worktrees/graalgo/m9-modprobe)
+#   GR        repo root (default: the repo containing this script)
 #   GO        gc toolchain (default ~/tools/go/bin/go)
 #   JAVA      GraalVM java (default ~/tools/graalvm-jdk-25/bin/java)
 #   TMPDIR    scratch (default <probe-dir>/.tmp, created)
@@ -19,22 +19,30 @@ set -uo pipefail
 
 PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
 shift
-GR="${GR:-$HOME/workspace/worktrees/graalgo/m9-modprobe}"
+GR="${GR:-$(cd "$(dirname "$0")/../.." && pwd)}"
 GO="${GO:-$HOME/tools/go/bin/go}"
 JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
-P3="$GR/phases/phase3"; P2="$GR/phases/phase2"; P1="$GR/phases/phase1"
+# The graalgo leg delegates to the product launcher
+# (internal/backend/graalgo-sync-run): it builds the classpath from
+# internal/backend/{interop,runtime,truffle}/out/classes plus the truffle
+# lib jars (classpath order is load-bearing: interop first, then runtime
+# so the runtime module's same-FQN replacements shadow the truffle
+# module's frozen stubs, then truffle) and invokes
+# graalgo.p3sync.launcher.P3SyncMain with these args. -Djava.io.tmpdir
+# follows $TMPDIR (never /tmp).
+if [ -z "${GRAALVM_HOME:-}" ]; then
+    export GRAALVM_HOME="$(cd "$(dirname "$JAVA")/.." && pwd)"
+fi
+GRAALGO_RUN=( "$GR/internal/backend/graalgo-sync-run" )
 TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
 export TMPDIR
 mkdir -p "$TMPDIR"
 export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
-# gofrontend: prefer the worktree build, else PATH.
-if [ -x "$P1/frontend/gofrontend" ]; then
-    export GRAALGO_GOFRONTEND="$P1/frontend/gofrontend"
+# gofrontend: prefer the repo build, else the launcher's own resolution
+# (GRAALGO_GOFRONTEND env, then its internal/frontend walk-up).
+if [ -x "$GR/internal/frontend/gofrontend" ]; then
+    export GRAALGO_GOFRONTEND="$GR/internal/frontend/gofrontend"
 fi
 
 filter_stderr() { grep -v '^WARNING: ' || true; }

@@ -36,16 +36,21 @@ set -uo pipefail
 cd "$(dirname "$0")"
 
 GR="${GR:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
 
 # Tmp discipline (corpus/wave2/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m8-tmp/wave2"
+# Workspace-local per-runner scratch; override with TMPDIR.
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp-graalgo-wave2}"
 export GOCACHE="$HOME/workspace/.gocache-m8-wave2"
 mkdir -p "$TMPDIR"
+
+# GraalVM java selection: JAVA_BIN wins; GRAALVM_HOME derives from it so
+# the product launcher (which resolves $GRAALVM_HOME/bin/java) and the
+# backend Makefiles agree on the toolchain.
+JAVA_BIN="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+if [ -z "${GRAALVM_HOME:-}" ]; then
+    export GRAALVM_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+fi
 
 case "${1-all}" in
     all)
@@ -61,15 +66,24 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+if [ ! -x "${GRAALGO_GOFRONTEND:-$GR/internal/frontend/gofrontend}" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && ./build.sh build ) > /dev/null \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M8b: point java.io.tmpdir at $TMPDIR (never /tmp): the JVM's shared-
-# memory files warn "Insufficient space" on the 512M /tmp tmpfs, which is
-# harness noise in every corpus run's stderr.
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m "-Djava.io.tmpdir=$TMPDIR" -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+# The graalgo leg delegates to the product launcher
+# (internal/backend/graalgo-sync-run): it builds the classpath from
+# internal/backend/{interop,runtime,truffle}/out/classes plus the truffle
+# lib jars (classpath order is load-bearing: interop first, then runtime
+# so the runtime module's same-FQN replacements shadow the truffle
+# module's frozen stubs, then truffle) and invokes
+# graalgo.p3sync.launcher.P3SyncMain with these args. -Djava.io.tmpdir
+# follows $TMPDIR (never /tmp: a full /tmp silently yields empty output
+# with exit 0 — methodology review finding).
+GRAALGO_RUN=( "$GR/internal/backend/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -87,7 +101,7 @@ build_gc() {
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m8prog/main.go" \

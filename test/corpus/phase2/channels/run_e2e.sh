@@ -1,26 +1,46 @@
 #!/bin/bash
 # P2-M2 corpus graduation runner (P3-M5, ADR-0005 Appendix C): the channel
 # corpus programs (ch01-ch12) run end-to-end through the full pipeline
-# (phase-1 gofrontend -> phase-3 P3SyncMain) and must produce their
+# (gofrontend -> product launcher P3SyncMain) and must produce their
 # gc-recorded .expected output. Follows the timectx run_differential.sh
 # pattern exactly (cd-to-script-dir, relative paths, gc built binary,
 # stdout+exit+(panic first line) comparison, JVM Unsafe stderr filter).
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+GR="${GR:-$HOME/workspace/graalgo}"
 export PATH="$HOME/tools/go/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+# Tmp discipline: never write to /tmp (512 MB shared tmpfs).
+# Workspace-local per-runner scratch; override with TMPDIR.
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp-graalgo-channels}"
+mkdir -p "$TMPDIR"
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+# GraalVM java selection: JAVA_BIN wins; GRAALVM_HOME derives from it so
+# the product launcher (which resolves $GRAALVM_HOME/bin/java) and the
+# backend Makefiles agree on the toolchain.
+JAVA_BIN="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+if [ -z "${GRAALVM_HOME:-}" ]; then
+    export GRAALVM_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+fi
+
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+if [ ! -x "${GRAALGO_GOFRONTEND:-$GR/internal/frontend/gofrontend}" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && ./build.sh build ) > /dev/null \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
+
+# The graalgo leg delegates to the product launcher
+# (internal/backend/graalgo-sync-run): it builds the classpath from
+# internal/backend/{interop,runtime,truffle}/out/classes plus the truffle
+# lib jars (classpath order is load-bearing: interop first, then runtime
+# so the runtime module's same-FQN replacements shadow the truffle
+# module's frozen stubs, then truffle) and invokes
+# graalgo.p3sync.launcher.P3SyncMain with these args. -Djava.io.tmpdir
+# follows $TMPDIR (never /tmp).
+GRAALGO_RUN=( "$GR/internal/backend/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

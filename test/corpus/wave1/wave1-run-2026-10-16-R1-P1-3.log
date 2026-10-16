@@ -1,0 +1,1237 @@
+# R1-P1-3 verification evidence: wave1 end-to-end run
+# Lane: r1-p1-3 (branch wt/graalgo-remediation-r1/r1-p1-3), base 954b758b
+# Date: 2026-10-16; runner: test/corpus/wave1/run_wave.sh (rewritten, new layout)
+# Env: GR=<worktree>, TMPDIR=~/workspace/tmp-r1-p1-3, go1.27.1, GraalVM JDK 25.0.4.1.1
+# Verdict: runner works end-to-end (build -> launcher -> compare -> report).
+# Product is RED: dominant cause is the known WS D frontend scope limitation
+#   '& on *ast.SelectorExpr is not supported in frontend/v1 scope', hit via real
+#   fmt sources after the real-fmt2 (B-1) retirement. See lane report.
+# Command: GR=<worktree> TMPDIR=~/workspace/tmp-r1-p1-3 ./run_wave.sh all
+
+== building backend java modules ==
+FAIL bytes/00_basic (gmp=1): stdout differs
+FAIL bytes/00_basic (gmp=1): exit gc=0 graalgo=2
+--- bytes/00_basic gc stdout:
+true
+false
+true
+true
+-1
+1
+0
+-1
+2
+6
+2
+true
+false
+true
+false
+true
+false
+true
+true
+false
+true
+false
+true
+false
+hello
+true
+512
+bytes.Buffer: too large
+--- bytes/00_basic graalgo stdout:
+--- bytes/00_basic graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/00_basic (gmp=4): stdout differs
+FAIL bytes/00_basic (gmp=4): exit gc=0 graalgo=2
+--- bytes/00_basic gc stdout:
+true
+false
+true
+true
+-1
+1
+0
+-1
+2
+6
+2
+true
+false
+true
+false
+true
+false
+true
+true
+false
+true
+false
+true
+false
+hello
+true
+512
+bytes.Buffer: too large
+--- bytes/00_basic graalgo stdout:
+--- bytes/00_basic graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/01_index (gmp=1): stdout differs
+FAIL bytes/01_index (gmp=1): exit gc=0 graalgo=2
+--- bytes/01_index gc stdout:
+2
+-1
+2
+-1
+1
+-1
+1
+-1
+2
+-1
+3
+-1
+4
+-1
+0
+0
+-1
+0
+-1
+--- bytes/01_index graalgo stdout:
+--- bytes/01_index graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/01_index (gmp=4): stdout differs
+FAIL bytes/01_index (gmp=4): exit gc=0 graalgo=2
+--- bytes/01_index gc stdout:
+2
+-1
+2
+-1
+1
+-1
+1
+-1
+2
+-1
+3
+-1
+4
+-1
+0
+0
+-1
+0
+-1
+--- bytes/01_index graalgo stdout:
+--- bytes/01_index graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/02_split_join (gmp=1): stdout differs
+FAIL bytes/02_split_join (gmp=1): exit gc=0 graalgo=2
+--- bytes/02_split_join gc stdout:
+[[97] [98] [99]]
+[[97 44 98 44 99]]
+[[97] [98 44 99]]
+[]
+[[97] [98] [99]]
+[[97 44] [98 44] [99]]
+[[97 44] [98 44 99]]
+[[]]
+[[97] [] [98]]
+[[102 111 111] [98 97 114] [98 97 122]]
+[]
+[[97] [98] [99] [100]]
+a,b,c
+
+x
+heLlo
+heLLo
+hello
+heLLo
+00ink
+ababab
+
+
+éé
+--- bytes/02_split_join graalgo stdout:
+--- bytes/02_split_join graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/02_split_join (gmp=4): stdout differs
+FAIL bytes/02_split_join (gmp=4): exit gc=0 graalgo=2
+--- bytes/02_split_join gc stdout:
+[[97] [98] [99]]
+[[97 44 98 44 99]]
+[[97] [98 44 99]]
+[]
+[[97] [98] [99]]
+[[97 44] [98 44] [99]]
+[[97 44] [98 44 99]]
+[[]]
+[[97] [] [98]]
+[[102 111 111] [98 97 114] [98 97 122]]
+[]
+[[97] [98] [99] [100]]
+a,b,c
+
+x
+heLlo
+heLLo
+hello
+heLLo
+00ink
+ababab
+
+
+éé
+--- bytes/02_split_join graalgo stdout:
+--- bytes/02_split_join graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/03_case (gmp=1): stdout differs
+FAIL bytes/03_case (gmp=1): exit gc=0 graalgo=2
+--- bytes/03_case gc stdout:
+HELLO
+HELLO
+
+hello
+hello
+hello world
+hello
+
+--- bytes/03_case graalgo stdout:
+--- bytes/03_case graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/03_case (gmp=4): stdout differs
+FAIL bytes/03_case (gmp=4): exit gc=0 graalgo=2
+--- bytes/03_case gc stdout:
+HELLO
+HELLO
+
+hello
+hello
+hello world
+hello
+
+--- bytes/03_case graalgo stdout:
+--- bytes/03_case graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/04_trim (gmp=1): stdout differs
+FAIL bytes/04_trim (gmp=1): exit gc=0 graalgo=2
+--- bytes/04_trim gc stdout:
+hello
+hello
+hello  
+  hello
+
+hello
+utse
+hello
+hello
+hello
+hello
+hello
+hello
+
+hello
+
+--- bytes/04_trim graalgo stdout:
+--- bytes/04_trim graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/04_trim (gmp=4): stdout differs
+FAIL bytes/04_trim (gmp=4): exit gc=0 graalgo=2
+--- bytes/04_trim gc stdout:
+hello
+hello
+hello  
+  hello
+
+hello
+utse
+hello
+hello
+hello
+hello
+hello
+hello
+
+hello
+
+--- bytes/04_trim graalgo stdout:
+--- bytes/04_trim graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/05_buffer (gmp=1): stdout differs
+FAIL bytes/05_buffer (gmp=1): exit gc=0 graalgo=2
+--- bytes/05_buffer gc stdout:
+5
+5
+0
+hello
+hello
+5
+world
+0
+0
+
+true
+true
+6
+abcdef
+true
+true
+true
+--- bytes/05_buffer graalgo stdout:
+--- bytes/05_buffer graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/05_buffer (gmp=4): stdout differs
+FAIL bytes/05_buffer (gmp=4): exit gc=0 graalgo=2
+--- bytes/05_buffer gc stdout:
+5
+5
+0
+hello
+hello
+5
+world
+0
+0
+
+true
+true
+6
+abcdef
+true
+true
+true
+--- bytes/05_buffer graalgo stdout:
+--- bytes/05_buffer graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/06_reader (gmp=1): stdout differs
+FAIL bytes/06_reader (gmp=1): exit gc=0 graalgo=2
+--- bytes/06_reader gc stdout:
+12
+12
+2
+2
+0
+0
+0
+10
+10
+--- bytes/06_reader graalgo stdout:
+--- bytes/06_reader graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/06_reader (gmp=4): stdout differs
+FAIL bytes/06_reader (gmp=4): exit gc=0 graalgo=2
+--- bytes/06_reader gc stdout:
+12
+12
+2
+2
+0
+0
+0
+10
+10
+--- bytes/06_reader graalgo stdout:
+--- bytes/06_reader graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/07_adversarial (gmp=1): stdout differs
+FAIL bytes/07_adversarial (gmp=1): exit gc=0 graalgo=2
+--- bytes/07_adversarial gc stdout:
+true
+true
+0
+[[]]
+[]
+
+
+
+1
+
+true
+
+[[]]
+
+-1
+1
+true
+7
+true
+false
+1
+0
+7
+100000
+100000
+0
+99999
+AAA
+2000
+a-b-a
+--- bytes/07_adversarial graalgo stdout:
+--- bytes/07_adversarial graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/07_adversarial (gmp=4): stdout differs
+FAIL bytes/07_adversarial (gmp=4): exit gc=0 graalgo=2
+--- bytes/07_adversarial gc stdout:
+true
+true
+0
+[[]]
+[]
+
+
+
+1
+
+true
+
+[[]]
+
+-1
+1
+true
+7
+true
+false
+1
+0
+7
+100000
+100000
+0
+99999
+AAA
+2000
+a-b-a
+--- bytes/07_adversarial graalgo stdout:
+--- bytes/07_adversarial graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/08_combined (gmp=1): stdout differs
+FAIL bytes/08_combined (gmp=1): exit gc=0 graalgo=2
+--- bytes/08_combined gc stdout:
+HE11O
+a,b,c
+a-b-c
+A_B_C
+true
+0
+
+padded
+3
+
+a--
+b--
+
+5 5
+6 6
+--- bytes/08_combined graalgo stdout:
+--- bytes/08_combined graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/08_combined (gmp=4): stdout differs
+FAIL bytes/08_combined (gmp=4): exit gc=0 graalgo=2
+--- bytes/08_combined gc stdout:
+HE11O
+a,b,c
+a-b-c
+A_B_C
+true
+0
+
+padded
+3
+
+a--
+b--
+
+5 5
+6 6
+--- bytes/08_combined graalgo stdout:
+--- bytes/08_combined graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/09_panic_repeat (gmp=1): stdout differs
+FAIL bytes/09_panic_repeat (gmp=1): exit gc=0 graalgo=2
+--- bytes/09_panic_repeat gc stdout:
+panic: bytes: negative Repeat count
+--- bytes/09_panic_repeat graalgo stdout:
+--- bytes/09_panic_repeat graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/09_panic_repeat (gmp=4): stdout differs
+FAIL bytes/09_panic_repeat (gmp=4): exit gc=0 graalgo=2
+--- bytes/09_panic_repeat gc stdout:
+panic: bytes: negative Repeat count
+--- bytes/09_panic_repeat graalgo stdout:
+--- bytes/09_panic_repeat graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/10_panic_buffer (gmp=1): stdout differs
+FAIL bytes/10_panic_buffer (gmp=1): exit gc=0 graalgo=2
+--- bytes/10_panic_buffer gc stdout:
+panic: bytes.Buffer.Grow: negative count
+--- bytes/10_panic_buffer graalgo stdout:
+--- bytes/10_panic_buffer graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL bytes/10_panic_buffer (gmp=4): stdout differs
+FAIL bytes/10_panic_buffer (gmp=4): exit gc=0 graalgo=2
+--- bytes/10_panic_buffer gc stdout:
+panic: bytes.Buffer.Grow: negative count
+--- bytes/10_panic_buffer graalgo stdout:
+--- bytes/10_panic_buffer graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL errors/00_new (gmp=1): exit gc=0 graalgo=1
+--- errors/00_new gc stdout:
+--- errors/00_new graalgo stdout:
+--- errors/00_new graalgo stderr (filtered):
+Oct 16, 2026 2:06:59 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:06:59 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:06:59 PM graalgo.p3log.P3Log warn
+FAIL errors/00_new (gmp=4): exit gc=0 graalgo=1
+--- errors/00_new gc stdout:
+--- errors/00_new graalgo stdout:
+--- errors/00_new graalgo stderr (filtered):
+Oct 16, 2026 2:07:07 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:07 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:07 PM graalgo.p3log.P3Log warn
+FAIL errors/01_is_basic (gmp=1): exit gc=0 graalgo=1
+--- errors/01_is_basic gc stdout:
+--- errors/01_is_basic graalgo stdout:
+--- errors/01_is_basic graalgo stderr (filtered):
+Oct 16, 2026 2:07:17 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:17 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:17 PM graalgo.p3log.P3Log warn
+FAIL errors/01_is_basic (gmp=4): exit gc=0 graalgo=1
+--- errors/01_is_basic gc stdout:
+--- errors/01_is_basic graalgo stdout:
+--- errors/01_is_basic graalgo stderr (filtered):
+Oct 16, 2026 2:07:25 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:25 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:25 PM graalgo.p3log.P3Log warn
+FAIL errors/02_is_tree (gmp=1): exit gc=0 graalgo=1
+--- errors/02_is_tree gc stdout:
+--- errors/02_is_tree graalgo stdout:
+--- errors/02_is_tree graalgo stderr (filtered):
+Oct 16, 2026 2:07:36 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:36 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:36 PM graalgo.p3log.P3Log warn
+FAIL errors/02_is_tree (gmp=4): exit gc=0 graalgo=1
+--- errors/02_is_tree gc stdout:
+--- errors/02_is_tree graalgo stdout:
+--- errors/02_is_tree graalgo stderr (filtered):
+Oct 16, 2026 2:07:44 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:44 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:44 PM graalgo.p3log.P3Log warn
+FAIL errors/03_is_adversarial (gmp=1): exit gc=0 graalgo=1
+--- errors/03_is_adversarial gc stdout:
+--- errors/03_is_adversarial graalgo stdout:
+--- errors/03_is_adversarial graalgo stderr (filtered):
+Oct 16, 2026 2:07:53 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:53 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:07:53 PM graalgo.p3log.P3Log warn
+FAIL errors/03_is_adversarial (gmp=4): exit gc=0 graalgo=1
+--- errors/03_is_adversarial gc stdout:
+--- errors/03_is_adversarial graalgo stdout:
+--- errors/03_is_adversarial graalgo stderr (filtered):
+Oct 16, 2026 2:08:01 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:08:01 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:08:01 PM graalgo.p3log.P3Log warn
+FAIL errors/04_unwrap (gmp=1): exit gc=0 graalgo=1
+--- errors/04_unwrap gc stdout:
+--- errors/04_unwrap graalgo stdout:
+--- errors/04_unwrap graalgo stderr (filtered):
+Oct 16, 2026 2:08:09 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:08:09 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:08:09 PM graalgo.p3log.P3Log warn
+FAIL errors/04_unwrap (gmp=4): exit gc=0 graalgo=1
+--- errors/04_unwrap gc stdout:
+--- errors/04_unwrap graalgo stdout:
+--- errors/04_unwrap graalgo stderr (filtered):
+Oct 16, 2026 2:08:33 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:08:34 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:08:34 PM graalgo.p3log.P3Log warn
+FAIL errors/05_join (gmp=1): exit gc=0 graalgo=1
+--- errors/05_join gc stdout:
+--- errors/05_join graalgo stdout:
+--- errors/05_join graalgo stderr (filtered):
+Oct 16, 2026 2:09:32 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:09:33 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:09:33 PM graalgo.p3log.P3Log warn
+FAIL errors/05_join (gmp=4): exit gc=0 graalgo=1
+--- errors/05_join gc stdout:
+--- errors/05_join graalgo stdout:
+--- errors/05_join graalgo stderr (filtered):
+Oct 16, 2026 2:10:34 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:10:35 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:10:35 PM graalgo.p3log.P3Log warn
+FAIL errors/06_combined (gmp=1): exit gc=0 graalgo=1
+--- errors/06_combined gc stdout:
+--- errors/06_combined graalgo stdout:
+--- errors/06_combined graalgo stderr (filtered):
+Oct 16, 2026 2:11:44 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:11:46 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:11:46 PM graalgo.p3log.P3Log warn
+FAIL errors/06_combined (gmp=4): exit gc=0 graalgo=1
+--- errors/06_combined gc stdout:
+--- errors/06_combined graalgo stdout:
+--- errors/06_combined graalgo stderr (filtered):
+Oct 16, 2026 2:12:42 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:12:43 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:12:43 PM graalgo.p3log.P3Log warn
+FAIL errors/07_astype (gmp=1): exit gc=0 graalgo=1
+--- errors/07_astype gc stdout:
+--- errors/07_astype graalgo stdout:
+--- errors/07_astype graalgo stderr (filtered):
+Oct 16, 2026 2:13:07 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:13:08 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:13:08 PM graalgo.p3log.P3Log warn
+FAIL errors/07_astype (gmp=4): exit gc=0 graalgo=1
+--- errors/07_astype gc stdout:
+--- errors/07_astype graalgo stdout:
+--- errors/07_astype graalgo stderr (filtered):
+Oct 16, 2026 2:14:09 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:14:10 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:14:10 PM graalgo.p3log.P3Log warn
+FAIL errors/08_as (gmp=1): stdout differs
+FAIL errors/08_as (gmp=1): exit gc=0 graalgo=2
+--- errors/08_as gc stdout:
+clear ok
+as-direct ok
+as-ptr ok
+ptr-chain ok
+new-elem-set ok
+new-double-elem ok
+PASS
+--- errors/08_as graalgo stdout:
+--- errors/08_as graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL errors/08_as (gmp=4): stdout differs
+FAIL errors/08_as (gmp=4): exit gc=0 graalgo=2
+--- errors/08_as gc stdout:
+clear ok
+as-direct ok
+as-ptr ok
+ptr-chain ok
+new-elem-set ok
+new-double-elem ok
+PASS
+--- errors/08_as graalgo stdout:
+--- errors/08_as graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL sort/09_combined (gmp=1): exit gc=0 graalgo=1
+--- sort/09_combined gc stdout:
+--- sort/09_combined graalgo stdout:
+--- sort/09_combined graalgo stderr (filtered):
+Oct 16, 2026 2:24:34 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:24:34 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:24:34 PM graalgo.p3log.P3Log warn
+FAIL sort/09_combined (gmp=4): exit gc=0 graalgo=1
+--- sort/09_combined gc stdout:
+--- sort/09_combined graalgo stdout:
+--- sort/09_combined graalgo stderr (filtered):
+Oct 16, 2026 2:24:54 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:24:54 PM graalgo.p3log.P3Log warn
+Oct 16, 2026 2:24:55 PM graalgo.p3log.P3Log warn
+FAIL strconv/00_basic (gmp=1): stdout differs
+FAIL strconv/00_basic (gmp=1): exit gc=0 graalgo=2
+--- strconv/00_basic gc stdout:
+ParseInt("0",10,64) = 0, err=false
+ParseInt("-0",10,64) = 0, err=false
+ParseInt("+42",10,64) = 42, err=false
+ParseInt("9223372036854775807",10,64) = 9223372036854775807, err=false
+ParseInt("-9223372036854775808",10,64) = -9223372036854775808, err=false
+ParseInt("9223372036854775808",10,64) = 9223372036854775807, err=true
+ParseInt("-9223372036854775809",10,64) = -9223372036854775808, err=true
+ParseInt("ff",16,64) = 255, err=false
+ParseInt("FF",16,32) = 255, err=false
+ParseInt("0xff",0,64) = 255, err=false
+ParseInt("0o77",0,64) = 63, err=false
+ParseInt("0b101",0,64) = 5, err=false
+ParseInt("1_000",10,64) = 0, err=true
+ParseInt("1__2",10,64) = 0, err=true
+ParseInt("",10,64) = 0, err=true
+ParseInt("  42",10,64) = 0, err=true
+ParseInt("42  ",10,64) = 0, err=true
+ParseInt("127",10,8) = 127, err=false
+ParseInt("128",10,8) = 127, err=true
+ParseInt("-129",10,8) = -128, err=true
+ParseInt("32767",10,16) = 32767, err=false
+ParseInt("32768",10,16) = 32767, err=true
+ParseUint("0") = 0, err=false
+ParseUint("42") = 42, err=false
+ParseUint("18446744073709551615") = 18446744073709551615, err=false
+ParseUint("18446744073709551616") = 18446744073709551615, err=true
+ParseUint("-1") = 0, err=true
+ParseUint("+42") = 0, err=true
+Atoi("0") = 0, err=false
+Atoi("-42") = -42, err=false
+Atoi("2147483647") = 2147483647, err=false
+Atoi("2147483648") = 2147483648, err=false
+Atoi("abc") = 0, err=true
+Atoi("") = 0, err=true
+Itoa(0) = "0"
+Itoa(-42) = "-42"
+Itoa(2147483647) = "2147483647"
+Itoa(-2147483648) = "-2147483648"
+ParseBool("1") = true, err=false
+ParseBool("t") = true, err=false
+ParseBool("T") = true, err=false
+ParseBool("TRUE") = true, err=false
+ParseBool("true") = true, err=false
+ParseBool("True") = true, err=false
+ParseBool("0") = false, err=false
+ParseBool("f") = false, err=false
+ParseBool("F") = false, err=false
+ParseBool("FALSE") = false, err=false
+ParseBool("false") = false, err=false
+ParseBool("False") = false, err=false
+ParseBool("yes") = false, err=true
+ParseBool("") = false, err=true
+ParseBool("2") = false, err=true
+ParseFloat("0") = 0, err=false
+ParseFloat("-0") = -0, err=false
+ParseFloat("1.5") = 1.5, err=false
+ParseFloat("-1.5") = -1.5, err=false
+ParseFloat("1e10") = 1e+10, err=false
+ParseFloat("1E-10") = 1e-10, err=false
+ParseFloat("Inf") = +Inf, err=false
+ParseFloat("-Inf") = -Inf, err=false
+ParseFloat("+Inf") = +Inf, err=false
+ParseFloat("NaN") = NaN, err=false
+ParseFloat("nan") = NaN, err=false
+ParseFloat("0x1p4") = 16, err=false
+ParseFloat("1_000.5") = 1000.5, err=false
+ParseFloat("") = 0, err=true
+ParseFloat("abc") = 0, err=true
+FormatInt(-42,16) = "-2a"
+FormatUint(42,2) = "101010"
+FormatFloat(1.5,'e',-1,64) = "1.5e+00"
+FormatFloat(0.1,'f',-1,64) = "0.1"
+FormatBool(true) = "true"
+Append = "-42\"hi\""
+IntSize = 64
+--- strconv/00_basic graalgo stdout:
+--- strconv/00_basic graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strconv/00_basic (gmp=4): stdout differs
+FAIL strconv/00_basic (gmp=4): exit gc=0 graalgo=2
+--- strconv/00_basic gc stdout:
+ParseInt("0",10,64) = 0, err=false
+ParseInt("-0",10,64) = 0, err=false
+ParseInt("+42",10,64) = 42, err=false
+ParseInt("9223372036854775807",10,64) = 9223372036854775807, err=false
+ParseInt("-9223372036854775808",10,64) = -9223372036854775808, err=false
+ParseInt("9223372036854775808",10,64) = 9223372036854775807, err=true
+ParseInt("-9223372036854775809",10,64) = -9223372036854775808, err=true
+ParseInt("ff",16,64) = 255, err=false
+ParseInt("FF",16,32) = 255, err=false
+ParseInt("0xff",0,64) = 255, err=false
+ParseInt("0o77",0,64) = 63, err=false
+ParseInt("0b101",0,64) = 5, err=false
+ParseInt("1_000",10,64) = 0, err=true
+ParseInt("1__2",10,64) = 0, err=true
+ParseInt("",10,64) = 0, err=true
+ParseInt("  42",10,64) = 0, err=true
+ParseInt("42  ",10,64) = 0, err=true
+ParseInt("127",10,8) = 127, err=false
+ParseInt("128",10,8) = 127, err=true
+ParseInt("-129",10,8) = -128, err=true
+ParseInt("32767",10,16) = 32767, err=false
+ParseInt("32768",10,16) = 32767, err=true
+ParseUint("0") = 0, err=false
+ParseUint("42") = 42, err=false
+ParseUint("18446744073709551615") = 18446744073709551615, err=false
+ParseUint("18446744073709551616") = 18446744073709551615, err=true
+ParseUint("-1") = 0, err=true
+ParseUint("+42") = 0, err=true
+Atoi("0") = 0, err=false
+Atoi("-42") = -42, err=false
+Atoi("2147483647") = 2147483647, err=false
+Atoi("2147483648") = 2147483648, err=false
+Atoi("abc") = 0, err=true
+Atoi("") = 0, err=true
+Itoa(0) = "0"
+Itoa(-42) = "-42"
+Itoa(2147483647) = "2147483647"
+Itoa(-2147483648) = "-2147483648"
+ParseBool("1") = true, err=false
+ParseBool("t") = true, err=false
+ParseBool("T") = true, err=false
+ParseBool("TRUE") = true, err=false
+ParseBool("true") = true, err=false
+ParseBool("True") = true, err=false
+ParseBool("0") = false, err=false
+ParseBool("f") = false, err=false
+ParseBool("F") = false, err=false
+ParseBool("FALSE") = false, err=false
+ParseBool("false") = false, err=false
+ParseBool("False") = false, err=false
+ParseBool("yes") = false, err=true
+ParseBool("") = false, err=true
+ParseBool("2") = false, err=true
+ParseFloat("0") = 0, err=false
+ParseFloat("-0") = -0, err=false
+ParseFloat("1.5") = 1.5, err=false
+ParseFloat("-1.5") = -1.5, err=false
+ParseFloat("1e10") = 1e+10, err=false
+ParseFloat("1E-10") = 1e-10, err=false
+ParseFloat("Inf") = +Inf, err=false
+ParseFloat("-Inf") = -Inf, err=false
+ParseFloat("+Inf") = +Inf, err=false
+ParseFloat("NaN") = NaN, err=false
+ParseFloat("nan") = NaN, err=false
+ParseFloat("0x1p4") = 16, err=false
+ParseFloat("1_000.5") = 1000.5, err=false
+ParseFloat("") = 0, err=true
+ParseFloat("abc") = 0, err=true
+FormatInt(-42,16) = "-2a"
+FormatUint(42,2) = "101010"
+FormatFloat(1.5,'e',-1,64) = "1.5e+00"
+FormatFloat(0.1,'f',-1,64) = "0.1"
+FormatBool(true) = "true"
+Append = "-42\"hi\""
+IntSize = 64
+--- strconv/00_basic graalgo stdout:
+--- strconv/00_basic graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strconv/01_quote (gmp=1): stdout differs
+FAIL strconv/01_quote (gmp=1): exit gc=0 graalgo=2
+--- strconv/01_quote gc stdout:
+Quote("") = "", roundtrip=true, err=false
+Quote("hello") = "hello", roundtrip=true, err=false
+Quote("a\nb") = "a\nb", roundtrip=true, err=false
+Quote("a\tb") = "a\tb", roundtrip=true, err=false
+Quote("a\rb") = "a\rb", roundtrip=true, err=false
+Quote("a\\b") = "a\\b", roundtrip=true, err=false
+Quote("\"quoted\"") = "\"quoted\"", roundtrip=true, err=false
+Quote("héllo") = "héllo", roundtrip=true, err=false
+Quote("🙂") = "🙂", roundtrip=true, err=false
+Quote("a\x00b") = "a\x00b", roundtrip=true, err=false
+Quote("a\x7fb") = "a\x7fb", roundtrip=true, err=false
+Quote("\x1b[31m") = "\x1b[31m", roundtrip=true, err=false
+Quote("back`tick") = "back`tick", roundtrip=true, err=false
+QuoteToASCII("héllo") = "h\u00e9llo"
+QuoteToGraphic("a\x00b") = "a\x00b"
+QuoteRune(U+0061) = 'a'
+QuoteRune(U+000A) = '\n'
+QuoteRune(U+00E9) = 'é'
+QuoteRune(U+1F642) = '🙂'
+QuoteRune(U+0000) = '\x00'
+QuoteRune(U+007F) = '\x7f'
+Unquote("\"abc") = "", err=true
+Unquote("\"a\\xzz\"") = "", err=true
+Unquote("\"a\\u12\"") = "", err=true
+Unquote("'ab'") = "", err=true
+Unquote("`abc") = "", err=true
+Unquote("\"a\\q\"") = "", err=true
+Unquote("") = "", err=true
+UnquoteChar("a\"") = U+0061, false, "\"", err=false
+UnquoteChar("\\n\"") = U+000A, false, "\"", err=false
+UnquoteChar("\\u00e9\"") = U+00E9, true, "\"", err=false
+UnquoteChar("\\\"") = U+0000, false, "", err=true
+UnquoteChar("x") = U+0078, false, "", err=false
+CanBackquote("hello") = true
+CanBackquote("a\nb") = false
+CanBackquote("a\tb") = true
+CanBackquote("héllo") = true
+IsPrint(U+0061)=true IsGraphic(U+0061)=true
+IsPrint(U+000A)=false IsGraphic(U+000A)=false
+IsPrint(U+0020)=true IsGraphic(U+0020)=true
+IsPrint(U+007F)=false IsGraphic(U+007F)=false
+IsPrint(U+00E9)=true IsGraphic(U+00E9)=true
+IsPrint(U+2028)=false IsGraphic(U+2028)=false
+QuotedPrefix("\"abc\"def") = "\"abc\"", err=false
+QuotedPrefix("\"a\\nb\"") = "\"a\\nb\"", err=false
+QuotedPrefix("xyz") = "", err=true
+QuotedPrefix("\"unterminated") = "", err=true
+ParseComplex("1+2i") = (1+2i), err=false
+ParseComplex("(1+2i)") = (1+2i), err=false
+ParseComplex("1i") = (0+1i), err=false
+ParseComplex("1") = (1+0i), err=false
+ParseComplex("i") = (0+0i), err=true
+ParseComplex("1+2j") = (0+0i), err=true
+ParseComplex("") = (0+0i), err=true
+FormatComplex(1+2i) = "(1+2i)"
+--- strconv/01_quote graalgo stdout:
+--- strconv/01_quote graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strconv/01_quote (gmp=4): stdout differs
+FAIL strconv/01_quote (gmp=4): exit gc=0 graalgo=2
+--- strconv/01_quote gc stdout:
+Quote("") = "", roundtrip=true, err=false
+Quote("hello") = "hello", roundtrip=true, err=false
+Quote("a\nb") = "a\nb", roundtrip=true, err=false
+Quote("a\tb") = "a\tb", roundtrip=true, err=false
+Quote("a\rb") = "a\rb", roundtrip=true, err=false
+Quote("a\\b") = "a\\b", roundtrip=true, err=false
+Quote("\"quoted\"") = "\"quoted\"", roundtrip=true, err=false
+Quote("héllo") = "héllo", roundtrip=true, err=false
+Quote("🙂") = "🙂", roundtrip=true, err=false
+Quote("a\x00b") = "a\x00b", roundtrip=true, err=false
+Quote("a\x7fb") = "a\x7fb", roundtrip=true, err=false
+Quote("\x1b[31m") = "\x1b[31m", roundtrip=true, err=false
+Quote("back`tick") = "back`tick", roundtrip=true, err=false
+QuoteToASCII("héllo") = "h\u00e9llo"
+QuoteToGraphic("a\x00b") = "a\x00b"
+QuoteRune(U+0061) = 'a'
+QuoteRune(U+000A) = '\n'
+QuoteRune(U+00E9) = 'é'
+QuoteRune(U+1F642) = '🙂'
+QuoteRune(U+0000) = '\x00'
+QuoteRune(U+007F) = '\x7f'
+Unquote("\"abc") = "", err=true
+Unquote("\"a\\xzz\"") = "", err=true
+Unquote("\"a\\u12\"") = "", err=true
+Unquote("'ab'") = "", err=true
+Unquote("`abc") = "", err=true
+Unquote("\"a\\q\"") = "", err=true
+Unquote("") = "", err=true
+UnquoteChar("a\"") = U+0061, false, "\"", err=false
+UnquoteChar("\\n\"") = U+000A, false, "\"", err=false
+UnquoteChar("\\u00e9\"") = U+00E9, true, "\"", err=false
+UnquoteChar("\\\"") = U+0000, false, "", err=true
+UnquoteChar("x") = U+0078, false, "", err=false
+CanBackquote("hello") = true
+CanBackquote("a\nb") = false
+CanBackquote("a\tb") = true
+CanBackquote("héllo") = true
+IsPrint(U+0061)=true IsGraphic(U+0061)=true
+IsPrint(U+000A)=false IsGraphic(U+000A)=false
+IsPrint(U+0020)=true IsGraphic(U+0020)=true
+IsPrint(U+007F)=false IsGraphic(U+007F)=false
+IsPrint(U+00E9)=true IsGraphic(U+00E9)=true
+IsPrint(U+2028)=false IsGraphic(U+2028)=false
+QuotedPrefix("\"abc\"def") = "\"abc\"", err=false
+QuotedPrefix("\"a\\nb\"") = "\"a\\nb\"", err=false
+QuotedPrefix("xyz") = "", err=true
+QuotedPrefix("\"unterminated") = "", err=true
+ParseComplex("1+2i") = (1+2i), err=false
+ParseComplex("(1+2i)") = (1+2i), err=false
+ParseComplex("1i") = (0+1i), err=false
+ParseComplex("1") = (1+0i), err=false
+ParseComplex("i") = (0+0i), err=true
+ParseComplex("1+2j") = (0+0i), err=true
+ParseComplex("") = (0+0i), err=true
+FormatComplex(1+2i) = "(1+2i)"
+--- strconv/01_quote graalgo stdout:
+--- strconv/01_quote graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strconv/02_adversarial (gmp=1): stdout differs
+FAIL strconv/02_adversarial (gmp=1): exit gc=0 graalgo=2
+--- strconv/02_adversarial gc stdout:
+NumError: Func="ParseInt" Num="xyz" Err=invalid syntax
+ErrSyntax==ne.Err: true
+Range: Err=value out of range (ErrRange=true)
+ErrSyntax: invalid syntax
+ErrRange: value out of range
+"_42": ParseInt=0,true ParseFloat=0,true
+"42_": ParseInt=0,true ParseFloat=0,true
+"0x_42": ParseInt=66,false ParseFloat=0,true
+"0x42_": ParseInt=0,true ParseFloat=0,true
+"0b_1": ParseInt=1,false ParseFloat=0,true
+"0o_7": ParseInt=7,false ParseFloat=0,true
+"1_.5": ParseInt=0,true ParseFloat=0,true
+"_1.5": ParseInt=0,true ParseFloat=0,true
+ParseFloat("1e1000") = +Inf, err=true
+ParseFloat("1e-1000") = 0, err=false
+ParseFloat("4.9e-324") = 5e-324, err=false
+ParseFloat("2.5e-324") = 5e-324, err=false
+ParseFloat("0x1.fffffffffffffp1023") = 1.7976931348623157e+308, err=false
+ParseFloat("0x1p-1074") = 5e-324, err=false
+AppendQuote escapes: "\"\\x00\\x01\\x02\\xff\\xfe\"'🙂'"
+"1000000000000000000000"
+"1e+21"
+"123.5"
+--- strconv/02_adversarial graalgo stdout:
+--- strconv/02_adversarial graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strconv/02_adversarial (gmp=4): stdout differs
+FAIL strconv/02_adversarial (gmp=4): exit gc=0 graalgo=2
+--- strconv/02_adversarial gc stdout:
+NumError: Func="ParseInt" Num="xyz" Err=invalid syntax
+ErrSyntax==ne.Err: true
+Range: Err=value out of range (ErrRange=true)
+ErrSyntax: invalid syntax
+ErrRange: value out of range
+"_42": ParseInt=0,true ParseFloat=0,true
+"42_": ParseInt=0,true ParseFloat=0,true
+"0x_42": ParseInt=66,false ParseFloat=0,true
+"0x42_": ParseInt=0,true ParseFloat=0,true
+"0b_1": ParseInt=1,false ParseFloat=0,true
+"0o_7": ParseInt=7,false ParseFloat=0,true
+"1_.5": ParseInt=0,true ParseFloat=0,true
+"_1.5": ParseInt=0,true ParseFloat=0,true
+ParseFloat("1e1000") = +Inf, err=true
+ParseFloat("1e-1000") = 0, err=false
+ParseFloat("4.9e-324") = 5e-324, err=false
+ParseFloat("2.5e-324") = 5e-324, err=false
+ParseFloat("0x1.fffffffffffffp1023") = 1.7976931348623157e+308, err=false
+ParseFloat("0x1p-1074") = 5e-324, err=false
+AppendQuote escapes: "\"\\x00\\x01\\x02\\xff\\xfe\"'🙂'"
+"1000000000000000000000"
+"1e+21"
+"123.5"
+--- strconv/02_adversarial graalgo stdout:
+--- strconv/02_adversarial graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/00_basic (gmp=1): stdout differs
+FAIL strings/00_basic (gmp=1): exit gc=0 graalgo=2
+--- strings/00_basic gc stdout:
+true
+false
+true
+false
+true
+false
+true
+true
+true
+2
+-1
+1
+2
+1
+5
+2
+4
+3
+0
+2
+6
+-1
+1
+0
+false
+true
+true
+--- strings/00_basic graalgo stdout:
+--- strings/00_basic graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/00_basic (gmp=4): stdout differs
+FAIL strings/00_basic (gmp=4): exit gc=0 graalgo=2
+--- strings/00_basic gc stdout:
+true
+false
+true
+false
+true
+false
+true
+true
+true
+2
+-1
+1
+2
+1
+5
+2
+4
+3
+0
+2
+6
+-1
+1
+0
+false
+true
+true
+--- strings/00_basic graalgo stdout:
+--- strings/00_basic graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/01_case (gmp=1): stdout differs
+FAIL strings/01_case (gmp=1): exit gc=0 graalgo=2
+--- strings/01_case gc stdout:
+HELLO
+HÉLLO
+hello
+héllo
+HELLO WORLD
+HELLO
+hello?world
+valid
+hello
+--- strings/01_case graalgo stdout:
+--- strings/01_case graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/01_case (gmp=4): stdout differs
+FAIL strings/01_case (gmp=4): exit gc=0 graalgo=2
+--- strings/01_case gc stdout:
+HELLO
+HÉLLO
+hello
+héllo
+HELLO WORLD
+HELLO
+hello?world
+valid
+hello
+--- strings/01_case graalgo stdout:
+--- strings/01_case graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/02_split_join (gmp=1): stdout differs
+FAIL strings/02_split_join (gmp=1): exit gc=0 graalgo=2
+--- strings/02_split_join gc stdout:
+[a b c]
+[a,b,c]
+[a b,c]
+[a, b, c]
+[a, b,c]
+[a b c]
+[a b c]
+a-b-c
+
+bba
+bbb
+bbb
+ababab
+
+hello
+hello
+hello
+hello
+llo
+hel
+hello
+hello
+hello
+--- strings/02_split_join graalgo stdout:
+--- strings/02_split_join graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/02_split_join (gmp=4): stdout differs
+FAIL strings/02_split_join (gmp=4): exit gc=0 graalgo=2
+--- strings/02_split_join gc stdout:
+[a b c]
+[a,b,c]
+[a b,c]
+[a, b, c]
+[a, b,c]
+[a b c]
+[a b c]
+a-b-c
+
+bba
+bbb
+bbb
+ababab
+
+hello
+hello
+hello
+hello
+llo
+hel
+hello
+hello
+hello
+--- strings/02_split_join graalgo stdout:
+--- strings/02_split_join graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+SCOPE-LIMITED strings/03_builder: implicit address-of on method receiver (b.WriteByte on an addressable value needs implicit &); the exporter fails fast by design (WS D limitation) — keep the exporter fail-fast, do not weaken it [retest: WS D lands implicit &/deref on method calls (P3-M8+); then re-run this program differentially]
+FAIL strings/04_replacer (gmp=1): stdout differs
+FAIL strings/04_replacer (gmp=1): exit gc=0 graalgo=2
+--- strings/04_replacer gc stdout:
+XbcdY
+hYllo
+XYZQc
+bar qux bar
+world there
+hello
+--- strings/04_replacer graalgo stdout:
+--- strings/04_replacer graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/04_replacer (gmp=4): stdout differs
+FAIL strings/04_replacer (gmp=4): exit gc=0 graalgo=2
+--- strings/04_replacer gc stdout:
+XbcdY
+hYllo
+XYZQc
+bar qux bar
+world there
+hello
+--- strings/04_replacer graalgo stdout:
+--- strings/04_replacer graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/05_reader (gmp=1): stdout differs
+FAIL strings/05_reader (gmp=1): exit gc=0 graalgo=2
+--- strings/05_reader gc stdout:
+5
+5
+5
+5
+--- strings/05_reader graalgo stdout:
+--- strings/05_reader graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/05_reader (gmp=4): stdout differs
+FAIL strings/05_reader (gmp=4): exit gc=0 graalgo=2
+--- strings/05_reader gc stdout:
+5
+5
+5
+5
+--- strings/05_reader graalgo stdout:
+--- strings/05_reader graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/06_adversarial (gmp=1): stdout differs
+FAIL strings/06_adversarial (gmp=1): exit gc=0 graalgo=2
+--- strings/06_adversarial gc stdout:
+true
+true
+0
+[]
+[]
+
+
+
+ß
+i
+false
+1
+6 6
+?
+�
+10000
+10000
+0
+--- strings/06_adversarial graalgo stdout:
+--- strings/06_adversarial graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/06_adversarial (gmp=4): stdout differs
+FAIL strings/06_adversarial (gmp=4): exit gc=0 graalgo=2
+--- strings/06_adversarial gc stdout:
+true
+true
+0
+[]
+[]
+
+
+
+ß
+i
+false
+1
+6 6
+?
+�
+10000
+10000
+0
+--- strings/06_adversarial graalgo stdout:
+--- strings/06_adversarial graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+SCOPE-LIMITED strings/07_combined: implicit address-of on method receiver (b.WriteByte on an addressable value needs implicit &); the exporter fails fast by design (WS D limitation) — keep the exporter fail-fast, do not weaken it [retest: WS D lands implicit &/deref on method calls (P3-M8+); then re-run this program differentially]
+FAIL strings/08_panic_repeat (gmp=1): stdout differs
+FAIL strings/08_panic_repeat (gmp=1): exit gc=0 graalgo=2
+--- strings/08_panic_repeat gc stdout:
+panic: strings: negative Repeat count
+--- strings/08_panic_repeat graalgo stdout:
+--- strings/08_panic_repeat graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+FAIL strings/08_panic_repeat (gmp=4): stdout differs
+FAIL strings/08_panic_repeat (gmp=4): exit gc=0 graalgo=2
+--- strings/08_panic_repeat gc stdout:
+panic: strings: negative Repeat count
+--- strings/08_panic_repeat graalgo stdout:
+--- strings/08_panic_repeat graalgo stderr (filtered):
+gofrontend: gofrontend: & on *ast.SelectorExpr is not supported in frontend/v1 scope (WS D)
+SCOPE-LIMITED strings/09_panic_title: strings.Title is fail-fast (deprecated upstream; needs unicode tables not in M7 scope) [retest: unicode tables land (P3-M8+); then re-run this program differentially]
+== differential: 18 passed, 3 scope-limited, 62 failed ==

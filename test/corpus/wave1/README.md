@@ -101,11 +101,12 @@ temp dirs to `out/test-tmp`, this covers the rest; `run_wave.sh` sets
 these itself to the wave-1 dirs):
 
 ```bash
-export TMPDIR=$HOME/workspace/graalgo-m7-int/phases/phase3/hidden_files/m7-tmp/<pkg>
+export TMPDIR=$HOME/workspace/.tmp-graalgo-wave1
 export GOCACHE=$HOME/workspace/.gocache-m7-<pkg>
 ```
 
 `run_wave.sh` creates its per-run scratch with `mktemp -d` (which honors
 `TMPDIR`) and removes it on exit, so setting `TMPDIR` before invoking the
-runner is sufficient. Each package gets its own `m7-tmp/<pkg>` and its
+runner is sufficient (the runner defaults `TMPDIR` to
+`$HOME/workspace/.tmp-graalgo-wave1` when unset). Each package gets its
 own `.gocache-m7-<pkg>`; never share a scratch dir with another worker.
