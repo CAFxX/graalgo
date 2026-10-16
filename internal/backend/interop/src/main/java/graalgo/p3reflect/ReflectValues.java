@@ -4,6 +4,8 @@ import graalgo.p3reflect.ReflectRefs.Cell;
 import graalgo.p3reflect.ReflectTypes.FieldInfo;
 import graalgo.p3reflect.ReflectTypes.Table;
 import graalgo.p3reflect.ReflectTypes.TypeInfo;
+import graalgo.runtime.GoErrors;
+import graalgo.runtime.Panic;
 import graalgo.values.GoFunc;
 import graalgo.values.GoKind;
 import graalgo.values.GoMap;
@@ -237,6 +239,12 @@ public final class ReflectValues {
      * GoStructDescriptor.layout.
      */
     public static Object structFieldGet(GoStruct s, int fieldIndex, GoKind kind) {
+        // PKG-080: a null GoStruct here means a Go nil was passed where a struct
+        // value was expected. In Go this is a nil pointer dereference panic,
+        // not a Java NPE. Convert to the proper Go panic.
+        if (s == null) {
+            Panic.throwPanic(GoErrors.nilDereference());
+        }
         // The descriptor's Field records carry the carrier assignment;
         // use them directly (robust against layout changes).
         GoStructDescriptor.Field f = s.descriptor().field(fieldIndex);
@@ -258,6 +266,10 @@ public final class ReflectValues {
     }
 
     public static void structFieldSet(GoStruct s, int fieldIndex, GoKind kind, Object boxed) {
+        // PKG-080: see structFieldGet — null struct is a Go nil dereference, not a Java NPE.
+        if (s == null) {
+            Panic.throwPanic(GoErrors.nilDereference());
+        }
         GoStructDescriptor.Field f = s.descriptor().field(fieldIndex);
         if (f.inLongs()) {
             long bits = switch (kind) {
