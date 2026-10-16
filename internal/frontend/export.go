@@ -7912,26 +7912,44 @@ func (e *exporter) exportCall(c *ast.CallExpr) (*Node, error) {
 		// a plain deref read (scoped divergence: atomicity without gc's
 		// ordering guarantee); atomic.StorePointer is statement-only and
 		// handled in exportStmt.
-		if pkgIdent, ok := sel.X.(*ast.Ident); ok && pkgIdent.Name == "atomic" {
-			if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "sync/atomic" {
-				if sel.Sel.Name == "LoadPointer" {
-					return e.exportAtomicLoadPointer(c)
+		if pkgIdent, ok := sel.X.(*ast.Ident); ok {
+			// Only intercept package-qualified calls (atomic.Foo,
+			// rtatomic.Bar). A selector on a non-package identifier is a
+			// method call (e.g. slot.Store on atomic.Pointer[T]); its
+			// *types.Func reports the defining package (sync/atomic) but
+			// it is NOT a package-level function and must fall through
+			// to the normal method-call path.
+			if _, isPkg := e.info.Uses[pkgIdent].(*types.PkgName); isPkg {
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil && obj.Pkg().Path() == "sync/atomic" {
+					if sel.Sel.Name == "LoadPointer" {
+						return e.exportAtomicLoadPointer(c)
+					}
+					// fix-linkname (Caddy/godebug lane): package-level atomic
+					// word/bool ops (LoadUint64, StoreInt32, …). The address
+					// operand evaluates to a GoPointer; the "atomicaddr"
+					// wire node wraps it in a delegating AtomicLong /
+					// AtomicInteger cell, and the existing "syncop" atomic
+					// machinery (AtomicOpNode) performs the op — the same
+					// node that serves the typed wrappers. RMW ops
+					// (Add/Swap/CompareAndSwap) serialize on a shared lock
+					// (documented in GoPointerCell64); Load/Store are plain
+					// volatile-cell accesses, the exportAtomicLoadPointer
+					// precedent.
+					if n, handled, err := e.exportAtomicWordOp(c, sel.Sel.Name); handled {
+						return n, err
+					}
+					return nil, scopeErrorf("sync/atomic.%s is not in M4 scope (package-level atomics need addressable operands, WS D)", sel.Sel.Name)
 				}
-				// fix-linkname (Caddy/godebug lane): package-level atomic
-				// word/bool ops (LoadUint64, StoreInt32, …). The address
-				// operand evaluates to a GoPointer; the "atomicaddr"
-				// wire node wraps it in a delegating AtomicLong /
-				// AtomicInteger cell, and the existing "syncop" atomic
-				// machinery (AtomicOpNode) performs the op — the same
-				// node that serves the typed wrappers. RMW ops
-				// (Add/Swap/CompareAndSwap) serialize on a shared lock
-				// (documented in GoPointerCell64); Load/Store are plain
-				// volatile-cell accesses, the exportAtomicLoadPointer
-				// precedent.
-				if n, handled, err := e.exportAtomicWordOp(c, sel.Sel.Name); handled {
-					return n, err
+				// PKG-012: internal/runtime/atomic (used by sync.Pool via
+				// rtatomic). LoadAcquintptr/StoreReluintptr are functionally
+				// identical to the sync/atomic uintptr ops.
+				if obj, ok := e.info.Uses[sel.Sel].(*types.Func); ok && obj.Pkg() != nil &&
+					obj.Pkg().Path() == "internal/runtime/atomic" {
+					if n, handled, err := e.exportAtomicWordOp(c, sel.Sel.Name); handled {
+						return n, err
+					}
+					// Fall through: not a word op, let normal path handle it.
 				}
-				return nil, scopeErrorf("sync/atomic.%s is not in M4 scope (package-level atomics need addressable operands, WS D)", sel.Sel.Name)
 			}
 		}
 		if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "runtime" && sel.Sel.Name == "Goexit" {
@@ -8731,6 +8749,25 @@ func (e *exporter) exportFmtCall(c *ast.CallExpr, sel *ast.SelectorExpr) (*Node,
 // info.Instances; the call target is an "ident" node whose obj is the
 // function/instantiation object id.
 func (e *exporter) exportFuncCall(c *ast.CallExpr, funIdent *ast.Ident, fn *types.Func) (*Node, error) {
+	// PKG-012: sync/atomic word ops called from within the sync/atomic
+	// package (e.g. StoreUint64 in (*Uint64).Store) lower to the
+	// atomicaddr+syncop wire nodes, like the qualified atomic.StoreUint64
+	// form. Intercepted before the funcByObj lookup (the bodyless funcs
+	// have no Go implementation to call).
+	if fn.Pkg() != nil && fn.Pkg().Path() == "sync/atomic" {
+		if n, handled, err := e.exportAtomicWordOp(c, fn.Name()); handled {
+			return n, err
+		}
+	}
+	// PKG-012 (fix-atomic-rtatomic): internal/runtime/atomic word ops
+	// called unqualified from within the package (e.g. in arch-specific
+	// files) lower the same way. The //go:noescape bodyless funcs have no
+	// Go implementation to call.
+	if fn.Pkg() != nil && fn.Pkg().Path() == "internal/runtime/atomic" {
+		if n, handled, err := e.exportAtomicWordOp(c, fn.Name()); handled {
+			return n, err
+		}
+	}
 	// P3-M5 (WS E, ADR-0005 D1): calls to synthetic time intrinsics from
 	// inside the synthetic packages (e.g. Since calling Now) lower to
 	// the §D3 wire nodes. Neither is exported as a funcdecl, so they must
