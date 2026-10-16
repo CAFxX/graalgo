@@ -278,6 +278,18 @@ type ioByteReaderPair struct {
 	err error
 }
 
+// ioRuneReaderPair is the P4 (real-fmt2) interface-dispatch carrier for
+// io.RuneReader.ReadRune (see ioReadPair). The 3-result shape
+// (rune, int, error) is the first 3-result interface method in the
+// table; the structural matching in classifyIfaceMultiResultCall already
+// generalizes to N results (method name + result count + positional
+// types), so this entry follows the same pattern.
+type ioRuneReaderPair struct {
+	r    rune
+	size int
+	err  error
+}
+
 // ioWritePair is the P3-M8 (WS D) interface-dispatch carrier for
 // Writer.Write and StringWriter.WriteString (see ioReadPair).
 type ioWritePair struct {

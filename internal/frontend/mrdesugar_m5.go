@@ -1267,6 +1267,12 @@ var m8IfaceMultiResultMethods = []m8IfaceMultiResultMethod{
 	// interfaces). Concrete *bufio.Reader has the m7 entry; the pair
 	// lives in synth_io.go.
 	{"io", "ReadByte", "ioByteReaderPair", []string{"c", "err"}},
+	// P4 (real-fmt2): io.RuneReader.ReadRune (r rune, size int, err
+	// error). fmt/scan.go calls ReadRune on io.RuneReader. This is the
+	// first 3-result entry; the structural matching (method name +
+	// result count + positional types) in classifyIfaceMultiResultCall
+	// generalizes to N results.
+	{"io", "ReadRune", "ioRuneReaderPair", []string{"r", "size", "err"}},
 	// P3 (WS D, Gate-1): io.WriterTo.WriteTo and io.ReaderFrom.ReadFrom.
 	// bufio (a dependency of image/png and many others) calls both on
 	// interface values: r.WriteTo(w) on io.WriterTo in (*Reader).WriteTo,
@@ -1974,12 +1980,12 @@ func classifyTrivialForwarder(f *types.Func) *mrPlan {
 //
 // Design: the field holds a function value. For the call to work, the
 // stored value must be pair-returning. This holds because:
-// - Synthetic packages declare pair-returning field types explicitly
-//   (e.g., nistCurve.generate)
-// - Disk/user packages: the field is assigned a function that has been
-//   pair-transformed (via userMRFuncs or the disk MR table), so the
-//   value is pair-returning even though the declared field type is
-//   multi-result.
+//   - Synthetic packages declare pair-returning field types explicitly
+//     (e.g., nistCurve.generate)
+//   - Disk/user packages: the field is assigned a function that has been
+//     pair-transformed (via userMRFuncs or the disk MR table), so the
+//     value is pair-returning even though the declared field type is
+//     multi-result.
 //
 // The desugar emits a regular "call" node (not "funcfieldcall") with the
 // pair type — the backend already handles selector-fun calls via

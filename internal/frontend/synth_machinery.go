@@ -2086,6 +2086,22 @@ func (e *exporter) isMultiResultSyntheticFailFast(fn *types.Func) bool {
 	}
 	return isMultiResultSynthetic(fn)
 }
+
+// isGenericFunc reports whether fn is a generic function template (has
+// type parameters). Generic templates are never pair-transformed
+// themselves (registerUserMRFunc skips isTemplate); their instantiations
+// get pair types via instMRInfos.
+func isGenericFunc(fn *types.Func) bool {
+	if fn == nil {
+		return false
+	}
+	sig, ok := fn.Type().(*types.Signature)
+	if !ok {
+		return false
+	}
+	return sig.TypeParams().Len() > 0
+}
+
 func isMultiResultSynthetic(fn *types.Func) bool {
 	if fn == nil || fn.Pkg() == nil {
 		return false
