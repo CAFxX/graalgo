@@ -311,6 +311,20 @@ public final class TimerHeap {
         }
     }
 
+    /**
+     * True iff any timer is armed (uncancelled, unfired). Deadlock-
+     * watchdog probe (P0-2): a pending timer can wake a goroutine
+     * (sleep unpark, channel tick, callback), so it rules out deadlock.
+     * Cancelled entries are removed from {@link #byId} eagerly, so they
+     * never count here even before the timer loop lazily drops them
+     * from the heap.
+     */
+    public boolean hasPendingTimers() {
+        synchronized (lock) {
+            return !byId.isEmpty();
+        }
+    }
+
     private void timerLoop() {
         for (;;) {
             final Entry e;

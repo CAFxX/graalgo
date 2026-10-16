@@ -79,12 +79,31 @@ public final class P3TimeRuntime {
 
     /**
      * Idempotent shutdown of every background translator: closes each
-     * {@code done} channel so parked translators wake and exit. Safe to
-     * call with none registered.
+     * {@code done} channel so parked translators wake and exit, then
+     * waits for them to deregister. Safe to call with none registered.
+     *
+     * <p>The wait is load-bearing: translators deregister in their own
+     * finally, asynchronously — without it a caller checking
+     * {@link #backgroundLive()} immediately after would see stale
+     * entries (P0-1: the main-returned path must not leak translators
+     * into the static set across in-JVM runs). Bounded at 10s so a
+     * stuck translator cannot hang shutdown.
      */
     public static void shutdownBackground() {
         for (GoTimerT t : background) {
             t.shutdownTranslator();
+        }
+        synchronized (bgLock) {
+            long deadline =
+                    System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(10);
+            while (backgroundLive.get() > 0 && System.nanoTime() < deadline) {
+                try {
+                    bgLock.wait(10);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    break;
+                }
+            }
         }
     }
 
@@ -96,8 +115,15 @@ public final class P3TimeRuntime {
      *
      * <p>With no timer translators registered this reduces to waiting for
      * ordinary quiescence (1ms poll granularity at exit).
+     *
+     * <p>P0-2: the scheduler's deadlock watchdog is armed for the wait —
+     * a user goroutine parked forever (not a translator) throws
+     * {@link graalgo.sched.DeadlockException} instead of hanging this
+     * drain forever. A pending timer still defeats the predicate (gc
+     * does not report deadlock with timers armed either).
      */
     public static void awaitBackgroundDrain(SchedulerCore sched) throws InterruptedException {
+        SchedulerCore.DeadlockWatch watch = SchedulerCore.newDeadlockWatch();
         for (;;) {
             final int live;
             final int bg;
@@ -110,6 +136,9 @@ public final class P3TimeRuntime {
             // so live <= bg means every live goroutine is background.
             if (live <= bg) {
                 break;
+            }
+            if (sched.deadlockTick(watch)) {
+                throw new graalgo.sched.DeadlockException();
             }
             Thread.sleep(1);
         }

@@ -12,6 +12,8 @@ import com.oracle.truffle.api.source.Source;
 
 import graalgo.frontend.FrontendException;
 import graalgo.frontend.NodeFactory;
+import graalgo.sched.DeadlockException;
+import graalgo.sched.GoroutineHandle;
 import graalgo.sched.SchedulerCore;
 import graalgo.sched.nodes.GoStatementNode;
 
@@ -150,25 +152,50 @@ public final class SchedMain {
         SchedulerCore sched = new SchedulerCore(gmp, SchedulerCore.DEFAULT_QUANTUM_NANOS);
         SchedulerCore prev = SchedulerCore.install(sched);
         sched.start();
-        final int[] exitCode = {EXIT_OK};
+        final boolean[] mainGoexited = {false};
+        final boolean[] deadlocked = {false};
+        final boolean[] noGoroutinesFatal = {false};
         try {
-            sched.spawn(() -> {
+            GoroutineHandle mainHandle = sched.spawn(() -> {
                 VirtualFrame frame = Truffle.getRuntime()
                         .createVirtualFrame(new Object[0], program.descriptor());
                 try {
                     program.root().execute(frame);
                 } catch (graalgo.runtime.Goexit g) {
-                    // Main called Goexit: Go fatal deadlock iff no other
-                    // goroutine is live; otherwise main just dies.
+                    // Main called Goexit (gc: the main goroutine dies; the
+                    // program runs on with the rest and can never exit 0
+                    // afterwards). No other goroutine live: gc's fatal
+                    // "no goroutines (main called runtime.Goexit)".
                     if (sched.runnableCount() > 1) {
+                        mainGoexited[0] = true;
                         return;
                     }
-                    System.err.println(
-                            "fatal error: all goroutines are asleep - deadlock!");
-                    exitCode[0] = EXIT_PANIC;
+                    noGoroutinesFatal[0] = true;
                 }
             });
-            sched.awaitQuiescence();
+            // P0-1: await MAIN, not quiescence. When main returns, gc
+            // abandons background goroutines and exits — awaiting every
+            // goroutine hung forever on e.g. `go func() { select{} }()`.
+            // The deadlock watchdog (P0-2) is armed for the wait.
+            try {
+                sched.awaitMainExit(mainHandle);
+            } catch (DeadlockException de) {
+                deadlocked[0] = true;
+            }
+            if (!deadlocked[0] && mainGoexited[0]) {
+                // Main Goexited with others live (gc: they keep running).
+                // Await the rest with the watchdog armed; afterwards the
+                // program is out of goroutines — gc's fatal "no
+                // goroutines", never exit 0.
+                try {
+                    sched.awaitQuiescence();
+                } catch (DeadlockException de) {
+                    deadlocked[0] = true;
+                }
+                if (!deadlocked[0]) {
+                    noGoroutinesFatal[0] = true;
+                }
+            }
         } catch (InterruptedException ie) {
             Thread.currentThread().interrupt();
             System.err.println("graalgo-run: interrupted while awaiting quiescence");
@@ -176,13 +203,45 @@ public final class SchedMain {
         } finally {
             SchedulerCore.install(prev);
         }
+        if (deadlocked[0]) {
+            return reportDeadlock(sched);
+        }
+        // P0-1 design point (documented): a panicked() state from an
+        // already-dead background goroutine STILL applies after main
+        // exits — the check runs here, after the main-await, exactly as
+        // it did after the old full-quiescence await. Rationale: gc kills
+        // the process on ANY goroutine's uncaught panic, so exit 2 is the
+        // conservative direction; a silent 0 would be the lie. Residual
+        // race (documented, accepted): a panic that BEGINS after the
+        // launcher observed main's exit may not be recorded — closing it
+        // would require awaiting background goroutines, reintroducing
+        // the P0-1 hang.
         if (sched.panicked()) {
             return EXIT_PANIC; // uncaught Go panic in some goroutine (gc: exit 2)
         }
         if (sched.crashed()) {
             return EXIT_INPUT_ERROR; // internal error, already reported on stderr
         }
-        return exitCode[0];
+        if (noGoroutinesFatal[0]) {
+            System.err.println(
+                    "fatal error: no goroutines (main called runtime.Goexit) - deadlock!");
+            return EXIT_PANIC;
+        }
+        return EXIT_OK;
+    }
+
+    /**
+     * Translates a {@link DeadlockException} from an await into gc's
+     * fatal-deadlock report (exit 2). A recorded panic wins over the
+     * deadlock line: gc dies at the panic, so the panic trace (already
+     * printed by the scheduler) is the report — not a redundant
+     * deadlock line on top.
+     */
+    private static int reportDeadlock(SchedulerCore sched) {
+        if (!sched.panicked()) {
+            System.err.println("fatal error: all goroutines are asleep - deadlock!");
+        }
+        return EXIT_PANIC;
     }
 
     /**

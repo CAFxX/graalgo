@@ -259,6 +259,46 @@ public final class Drainer {
         }
     }
 
+    /**
+     * Deadlock-watchdog probe (P0-2), called by
+     * {@link SchedulerCore} with its quiescence lock held. True iff the
+     * scheduler holds no actionable state: the inbox and all three lanes
+     * are drained, no wakeup is stashed in {@code unparkPending}, nobody
+     * is in blocking I/O, and every currently-live goroutine is parked
+     * in {@link #parked}. (Pending timers and netpoll waits are checked
+     * by the caller — they can produce wakeups this method cannot see.)
+     *
+     * @param liveIds ids of the scheduler's currently-live goroutines
+     */
+    boolean isDeadlockQuiescent(java.util.Set<Long> liveIds) {
+        synchronized (lock) {
+            if (!inbox.isEmpty()) {
+                return false;
+            }
+            if (!wakeFifo.isEmpty() || !initFifo.isEmpty() || !runFifo.isEmpty()) {
+                return false;
+            }
+            if (!unparkPending.isEmpty()) {
+                return false;
+            }
+            if (!inIo.isEmpty()) {
+                return false;
+            }
+            return parked.keySet().equals(liveIds);
+        }
+    }
+
+    /**
+     * Number of goroutines currently parked in {@link #parked}.
+     * Deadlock-watchdog fast gate: lets the caller skip the O(live)
+     * id-set build when the counts cannot match.
+     */
+    int parkedCount() {
+        synchronized (lock) {
+            return parked.size();
+        }
+    }
+
     // ---- test hooks (package-visible; production never calls these) ----
 
     /**

@@ -604,4 +604,206 @@ public final class SchedulerCoreTest {
             SchedulerCore.install(null);
         }
     }
+
+    // ---------- deadlock watchdog (P0-2) ----------
+
+    /**
+     * P0-2: {@code awaitMainExit} throws {@link DeadlockException} when
+     * every live goroutine is parked with no possible waker (the
+     * {@code main(){ <-c }} shape). Red-green: without the watchdog this
+     * blocks forever — the test fails via its own timeout instead of
+     * hanging the suite.
+     */
+    public void testAwaitMainExitThrowsOnDeadlock() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            GoroutineHandle main = sched.spawn(() ->
+                    sched.parkCurrent(null, graalgo.jfr.ParkReason.CHANNEL));
+            // The parked main goroutine is deliberately never woken: it
+            // is a daemon vthread, so leaking it cannot stall the suite.
+            expectDeadlock(() -> sched.awaitMainExit(main), 30,
+                    "awaitMainExit on a parked main");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * P0-1 at the scheduler level: {@code awaitMainExit} returns (does
+     * not throw) when main exits even though a background goroutine
+     * stays parked forever.
+     */
+    public void testAwaitMainExitReturnsWhenMainExits() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> sched.parkCurrent(null, graalgo.jfr.ParkReason.SELECT));
+            GoroutineHandle main = sched.spawn(() -> {});
+            long t0 = System.nanoTime();
+            sched.awaitMainExit(main); // must return, not throw
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertTrue(ms < 10_000, "awaitMainExit returned promptly, took " + ms + "ms");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * P0-2: {@code awaitQuiescence} throws {@link DeadlockException}
+     * when all goroutines park forever. Red-green: without the watchdog
+     * this hangs — the timeout fails it instead.
+     */
+    public void testAwaitQuiescenceThrowsOnDeadlock() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> sched.parkCurrent(null, graalgo.jfr.ParkReason.CHANNEL));
+            sched.spawn(() -> sched.parkCurrent(null, graalgo.jfr.ParkReason.SELECT));
+            expectDeadlock(sched::awaitQuiescence, 30,
+                    "awaitQuiescence on all-parked goroutines");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * P0-2: a pending timer defeats the watchdog (gc parity: a timer is
+     * a future wakeup). The waiter parks with a 2s heap timer armed —
+     * past the 250ms grace — and {@code awaitQuiescence} must return
+     * normally when the timer fires, not throw. Red-green: a watchdog
+     * that ignored timers would throw at ~250ms.
+     */
+    public void testWatchdogIgnoresPendingTimer() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> {
+                GoroutineHandle h = sched.currentGoroutine();
+                sched.timerHeap().addSleep(
+                        System.nanoTime() + 2_000_000_000L, h);
+                sched.parkCurrent(null, graalgo.jfr.ParkReason.TIMER);
+            });
+            long t0 = System.nanoTime();
+            sched.awaitQuiescence(); // must NOT throw
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertTrue(ms >= 1_500, "quiescence waited for the timer, took " + ms + "ms");
+            assertTrue(ms < 30_000, "quiescence completed, took " + ms + "ms");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * P0-2: a netpoll-parked goroutine defeats the watchdog — network
+     * readiness is an external event, never a deadlock (gc parity). The
+     * test thread unparks the waiter after 600ms (past the grace);
+     * {@code awaitQuiescence} must return normally, not throw.
+     * Red-green: a watchdog that ignored park reasons would throw at
+     * ~250ms.
+     */
+    public void testWatchdogIgnoresNetpollWait() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            GoroutineHandle waiter = sched.spawn(() ->
+                    sched.parkCurrent(null, graalgo.jfr.ParkReason.NETPOLL));
+            // Wait until the waiter really parked (its second armPark;
+            // generation 0 is the initial admission), then unpark after
+            // 600ms — past the 250ms grace.
+            long deadline = System.nanoTime() + 5_000_000_000L;
+            while (waiter.armed.get() < 1 && System.nanoTime() < deadline) {
+                Thread.yield();
+            }
+            assertTrue(waiter.armed.get() >= 1, "waiter parked");
+            Thread unparker = Thread.ofPlatform().daemon().start(() -> {
+                try {
+                    Thread.sleep(600);
+                } catch (InterruptedException ie) {
+                    return;
+                }
+                sched.unpark(waiter);
+            });
+            long t0 = System.nanoTime();
+            sched.awaitQuiescence(); // must NOT throw
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertTrue(ms >= 500, "quiescence waited for the unpark, took " + ms + "ms");
+            unparker.join(5_000);
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * P0-2: a goroutine in blocking I/O defeats the watchdog (the
+     * syscall may complete and wake it). Red-green: a watchdog that
+     * ignored in-I/O would throw at ~250ms.
+     */
+    public void testWatchdogIgnoresBlockingIO() throws Exception {
+        SchedulerCore sched = new SchedulerCore(2, SchedulerCore.DEFAULT_QUANTUM_NANOS);
+        sched.start();
+        SchedulerCore.install(sched);
+        try {
+            sched.spawn(() -> {
+                sched.ioEnter();
+                try {
+                    Thread.sleep(600); // bounded, inside ioEnter/ioExit
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                } finally {
+                    sched.ioExit();
+                }
+            });
+            long t0 = System.nanoTime();
+            sched.awaitQuiescence(); // must NOT throw
+            long ms = (System.nanoTime() - t0) / 1_000_000;
+            assertTrue(ms >= 500, "quiescence waited for I/O exit, took " + ms + "ms");
+        } finally {
+            SchedulerCore.install(null);
+        }
+    }
+
+    /**
+     * Runs an await that must throw {@link DeadlockException} within
+     * {@code timeoutSecs}; fails on timeout (watchdog missing/broken)
+     * or on a wrong outcome. The timeout keeps a red watchdog from
+     * hanging the suite.
+     */
+    private static void expectDeadlock(ThrowingRunnable await, long timeoutSecs, String what)
+            throws Exception {
+        java.util.concurrent.ExecutorService exec =
+                java.util.concurrent.Executors.newSingleThreadExecutor();
+        try {
+            java.util.concurrent.Future<?> f = exec.submit(() -> {
+                await.run();
+                return null;
+            });
+            try {
+                f.get(timeoutSecs, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (java.util.concurrent.TimeoutException te) {
+                f.cancel(true);
+                throw new AssertionError(what + ": no DeadlockException within "
+                        + timeoutSecs + "s (watchdog missing or broken)");
+            } catch (java.util.concurrent.ExecutionException ee) {
+                Throwable c = ee.getCause();
+                if (c instanceof DeadlockException) {
+                    return; // expected
+                }
+                throw new AssertionError(what + ": threw " + c
+                        + " instead of DeadlockException");
+            }
+            throw new AssertionError(what + ": returned normally, expected DeadlockException");
+        } finally {
+            exec.shutdownNow();
+        }
+    }
+
+    private interface ThrowingRunnable {
+        void run() throws Exception;
+    }
 }

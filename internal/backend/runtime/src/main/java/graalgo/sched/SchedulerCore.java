@@ -1,5 +1,7 @@
 package graalgo.sched;
 
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
@@ -41,6 +43,29 @@ import graalgo.jfr.ParkReason;
 public final class SchedulerCore {
     /** Default quantum: 10 ms (P2-D5, measured in spike 2b). */
     public static final long DEFAULT_QUANTUM_NANOS = 10_000_000L;
+
+    /**
+     * Deadlock-watchdog tick (P0-2): the await methods wait on
+     * {@link #quiescenceLock} with this timeout and re-evaluate the
+     * deadlock predicate on every wakeup. The timeout only fires when
+     * no goroutine exit notifies first, so healthy programs pay ~one
+     * cheap predicate evaluation per tick while awaiting.
+     */
+    static final long DEADLOCK_POLL_MILLIS = 10;
+    /**
+     * Deadlock-watchdog grace (P0-2): the quiescent state (every live
+     * goroutine parked, no possible waker) must persist for this long
+     * before the deadlock is declared. Rules out transient snapshots
+     * (a wakeup token delayed by scheduling).
+     */
+    static final long DEADLOCK_GRACE_NANOS = 250_000_000L;
+    /**
+     * Deadlock-watchdog tick-gap bound (P0-2): if two consecutive ticks
+     * are further apart than this, the awaiting thread was descheduled
+     * (loaded box, SIGSTOP) and the quiescence streak restarts instead
+     * of declaring on stale wall-clock evidence.
+     */
+    static final long DEADLOCK_MAX_TICK_GAP_NANOS = 100_000_000L;
 
     private static volatile SchedulerCore installed;
 
@@ -88,6 +113,14 @@ public final class SchedulerCore {
     private final graalgo.runtime.TimerHeap timerHeap;
     private final ThreadLocal<GoroutineHandle> currentHandle = new ThreadLocal<>();
     private final AtomicInteger liveGoroutines = new AtomicInteger();
+    /**
+     * Live-handle set, guarded by {@link #quiescenceLock}, maintained
+     * alongside {@link #liveGoroutines}: {@link #spawn} adds before the
+     * INIT token is offered; the vthread's finally removes before the
+     * EXIT token is offered. Lets {@link #awaitMainExit} wait for one
+     * specific goroutine (the launcher's main) instead of all of them.
+     */
+    private final Set<GoroutineHandle> liveHandles = new HashSet<>();
     /**
      * Quiescence monitor (reviewer2 P0). A one-shot CountDownLatch cannot
      * work here: the live count hits zero transiently mid-spawn-stream
@@ -388,9 +421,13 @@ public final class SchedulerCore {
                 GoroutineState.restore(prev);
                 currentHandle.remove();
                 synchronized (quiescenceLock) {
-                    if (liveGoroutines.decrementAndGet() == 0) {
-                        quiescenceLock.notifyAll();
-                    }
+                    liveHandles.remove(h);
+                    liveGoroutines.decrementAndGet();
+                    // Notify on EVERY exit, not just the last: awaitMainExit
+                    // waits for one specific goroutine, so any exit may be
+                    // the one it is waiting for. Exits are once per goroutine
+                    // lifetime; the extra wakeups are negligible.
+                    quiescenceLock.notifyAll();
                 }
                 drainer.offer(new ResumeToken(ResumeToken.Kind.EXIT, h, -1));
             }
@@ -401,6 +438,7 @@ public final class SchedulerCore {
         // until the drainer admits it, so early start is safe.
         vthread.start();
         synchronized (quiescenceLock) {
+            liveHandles.add(h);
             liveGoroutines.incrementAndGet();
         }
         drainer.offer(new ResumeToken(ResumeToken.Kind.INIT, h, t));
@@ -552,7 +590,55 @@ public final class SchedulerCore {
     }
 
     /**
+     * Blocks until the given goroutine has finished.
+     *
+     * <p>gc program-exit parity (P0-1): when the main goroutine returns,
+     * the process exits — background goroutines are abandoned, not
+     * awaited. Launchers spawn main via {@link #spawn}, keep the
+     * returned handle, and await it here instead of
+     * {@link #awaitQuiescence}.
+     *
+     * <p>The deadlock watchdog (P0-2) is armed for the wait: if every
+     * live goroutine ends up parked with no possible waker for the
+     * grace period, this throws {@link DeadlockException} instead of
+     * hanging forever. The launcher translates it to gc's
+     * {@code fatal error: all goroutines are asleep - deadlock!}
+     * (exit 2).
+     *
+     * <p>Same no-concurrent-spawn contract as {@link #awaitQuiescence}:
+     * the handle must already be spawned; a spawn racing this method's
+     * return is not waited for.
+     */
+    public void awaitMainExit(GoroutineHandle main) throws InterruptedException {
+        if (main == null) {
+            throw new IllegalArgumentException("awaitMainExit needs main's handle");
+        }
+        synchronized (quiescenceLock) {
+            DeadlockWatch watch = new DeadlockWatch();
+            while (liveHandles.contains(main)) {
+                quiescenceLock.wait(DEADLOCK_POLL_MILLIS);
+                // Normal completion wins over a racing watchdog tick: if
+                // main is gone, return without declaring a deadlock.
+                if (!liveHandles.contains(main)) {
+                    return;
+                }
+                if (watch.tick(isDeadlockQuiescentLocked())) {
+                    throw new DeadlockException();
+                }
+            }
+        }
+    }
+
+    /**
      * Blocks until every spawned goroutine has finished.
+     *
+     * <p>The deadlock watchdog (P0-2) is armed for the wait (same
+     * mechanism as {@link #awaitMainExit}): a program whose goroutines
+     * all park forever now fails fast with {@link DeadlockException}
+     * instead of hanging forever. Callers that deliberately park
+     * goroutines while another thread will wake them (tests) are
+     * unaffected: any in-flight wakeup, pending timer, blocking-I/O
+     * stint, or netpoll wait defeats the predicate.
      *
      * <p><strong>No-concurrent-spawn contract:</strong> {@code spawn()}
      * must not be called concurrently with this method from another
@@ -565,9 +651,117 @@ public final class SchedulerCore {
      */
     public void awaitQuiescence() throws InterruptedException {
         synchronized (quiescenceLock) {
+            DeadlockWatch watch = new DeadlockWatch();
             while (liveGoroutines.get() != 0) {
-                quiescenceLock.wait();
+                quiescenceLock.wait(DEADLOCK_POLL_MILLIS);
+                if (liveGoroutines.get() == 0) {
+                    return;
+                }
+                if (watch.tick(isDeadlockQuiescentLocked())) {
+                    throw new DeadlockException();
+                }
             }
         }
+    }
+
+    /**
+     * Per-await deadlock-watchdog streak state (P0-2). The awaiting
+     * thread doubles as the watchdog: each tick re-evaluates the
+     * deadlock predicate, and the deadlock is declared only after
+     * {@link #DEADLOCK_GRACE_NANOS} of continuous quiescence. The
+     * streak restarts if ticks arrive further apart than
+     * {@link #DEADLOCK_MAX_TICK_GAP_NANOS} (the awaiting thread was
+     * descheduled — loaded box, SIGSTOP — so wall-clock evidence from
+     * across the stall is discarded, never acted on).
+     *
+     * <p>Public so custom await loops (e.g.
+     * {@code P3TimeRuntime.awaitBackgroundDrain}, which cannot use
+     * {@link #awaitQuiescence}) can arm the same watchdog: create via
+     * {@link #newDeadlockWatch}, drive via {@link #deadlockTick}.
+     */
+    public static final class DeadlockWatch {
+        private long quiescentSince = -1;
+        private long lastTick = System.nanoTime();
+
+        private DeadlockWatch() {}
+
+        /**
+         * One watchdog tick. Returns true when the deadlock must be
+         * declared. {@code quiescentNow} is the freshly evaluated
+         * predicate (caller holds quiescenceLock).
+         */
+        boolean tick(boolean quiescentNow) {
+            long now = System.nanoTime();
+            try {
+                if (quiescentNow && now - lastTick <= DEADLOCK_MAX_TICK_GAP_NANOS) {
+                    if (quiescentSince < 0) {
+                        quiescentSince = now;
+                        return false;
+                    }
+                    return now - quiescentSince >= DEADLOCK_GRACE_NANOS;
+                }
+                quiescentSince = -1;
+                return false;
+            } finally {
+                lastTick = now;
+            }
+        }
+    }
+
+    /** Creates a watchdog handle for a custom await loop (P0-2). */
+    public static DeadlockWatch newDeadlockWatch() {
+        return new DeadlockWatch();
+    }
+
+    /**
+     * One watchdog tick for a custom await loop (P0-2): evaluates the
+     * deadlock predicate and advances {@code watch}; returns true when
+     * the deadlock must be declared (the caller throws
+     * {@link DeadlockException}). Takes the quiescence lock; the caller
+     * must hold no scheduler locks.
+     */
+    public boolean deadlockTick(DeadlockWatch watch) {
+        if (watch == null) {
+            throw new IllegalArgumentException("deadlockTick needs a watch");
+        }
+        synchronized (quiescenceLock) {
+            return watch.tick(isDeadlockQuiescentLocked());
+        }
+    }
+
+    /**
+     * Deadlock predicate (P0-2). Caller must hold {@link #quiescenceLock}.
+     * True iff the scheduler can never make progress again: at least one
+     * goroutine is live, every live goroutine is parked in the drainer,
+     * the inbox and all lanes are drained, no wakeup is stashed, nobody
+     * is in blocking I/O, no timer is pending, and nobody is parked in an
+     * external wait (netpoll — network readiness is an external event,
+     * never a deadlock, matching gc).
+     */
+    private boolean isDeadlockQuiescentLocked() {
+        if (liveHandles.isEmpty()) {
+            return false;
+        }
+        if (timerHeap.hasPendingTimers()) {
+            return false;
+        }
+        // Cheap gate: the O(live) scan below only runs when every live
+        // goroutine could plausibly be parked. (liveHandles is stable
+        // here — the caller holds quiescenceLock.)
+        if (drainer.parkedCount() != liveHandles.size()) {
+            return false;
+        }
+        Set<Long> ids = new HashSet<>(liveHandles.size() * 2 + 1);
+        for (GoroutineHandle h : liveHandles) {
+            // A goroutine parked in an external wait can still be woken
+            // from outside the scheduler: not a deadlock. (While running,
+            // parkReason is always null — parkResumed clears it — so this
+            // only excludes genuinely parked external waiters.)
+            if (h.parkReason == graalgo.jfr.ParkReason.NETPOLL) {
+                return false;
+            }
+            ids.add(h.id);
+        }
+        return drainer.isDeadlockQuiescent(ids);
     }
 }

@@ -257,8 +257,14 @@ public final class SelectOp {
                     // Every case was a send on a closed channel.
                     Panic.throwPanic(GoStrings.of("send on closed channel"));
                 }
-                // Zero cases: `select {}` blocks forever (gc deadlock).
-                // Park indefinitely; the deadlock detector (P2-M10) owns it.
+                // Zero cases: `select {}` blocks forever. Park indefinitely:
+                // if every live goroutine ends up parked with no possible
+                // waker, the scheduler's deadlock watchdog (P0-2,
+                // SchedulerCore.awaitMainExit/awaitQuiescence) reports gc's
+                // "fatal error: all goroutines are asleep - deadlock!".
+                // (The old comment cited a "deadlock detector (P2-M10)" —
+                // P2-M10 was the Phase-2 review milestone; no such
+                // detector ever existed.)
                 // P2-M6: it genuinely blocks — record with channelId -1
                 // (multi-channel select has no single channel).
                 JfrEvents.channelBlock(sched.currentGoroutine(), -1, ChannelOp.SELECT);

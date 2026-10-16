@@ -47,6 +47,9 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.sched.IoSlotsTest.class);
         TESTS.add(graalgo.sched.TimerDifferentialTest.class);
         TESTS.add(graalgo.sched.launcher.GoDebugTest.class);
+        // P0-1+P0-2 (2026-10-16): scheduler termination semantics —
+        // main-exit abandonment, deadlock watchdog, Goexit contract.
+        TESTS.add(graalgo.sched.launcher.SchedTerminationTest.class);
         TESTS.add(graalgo.runtime.TimerTest.class);
         TESTS.add(graalgo.runtime.FreezeGapTest.class);
         TESTS.add(graalgo.runtime.ZeroSizeSliceTest.class);
