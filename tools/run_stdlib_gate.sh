@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Layer-3 per-release gate (phases/phase3/PLAN.md §5 layer 3, GG-0029/GG-0032):
+# Layer-3 per-release gate (docs/arch/phases/phase3/PLAN.md §5 layer 3, GG-0029/GG-0032):
 # stdlib differential via the wave1/wave2/wave3 corpora.
 #
 # The wave corpora are the operational form of the "stdlib + scripts" layer:

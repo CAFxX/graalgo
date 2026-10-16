@@ -1,14 +1,15 @@
 #!/bin/bash
-# Differential runner for the P3-M9 wave-3 corpus (see README.md): each
-# program runs under stock gc 1.27.1 (built binary, run directly — `go run`
-# masks the exit code) and under graalgo-p3sync-run. Compares stdout bytes,
-# exit codes, and — for panic programs — the first stderr line.
+# Differential runner for the wave-3 corpus (see README.md): each program
+# runs under stock gc 1.27.1 (built binary, run directly — `go run` masks
+# the exit code) and under internal/backend/graalgo-sync-run (P3SyncMain).
+# Compares stdout bytes, exit codes, and — for panic programs — the first
+# stderr line.
 #
 # Known JVM Unsafe warnings on stderr are filtered (harness noise, cf.
-# p3frontend/DESIGN.md §7). Timing-sensitive programs (marked with an
-# empty <base>.timing file) print fixed strings only (never measured
-# durations) and run with gmp=1 only; all other programs run with gmp=1
-# and gmp=4 (the timectx convention).
+# internal/frontend/p3frontend/DESIGN.md §7). Timing-sensitive programs
+# (marked with an empty <base>.timing file) print fixed strings only
+# (never measured durations) and run with gmp=1 only; all other programs
+# run with gmp=1 and gmp=4 (the timectx convention).
 #
 # Scope-limited programs (marked with a <base>.scopelimited file naming
 # the reason and a retest: trigger) can never pass the frontend for honest
@@ -34,22 +35,37 @@
 # package dir when omitted (nested dirs like testing/quick are included).
 # Underscore-prefixed dirs (_smoke, infra) run only when named explicitly.
 #
-# The repo root defaults to $HOME/workspace/graalgo but can be overridden:
-#   GR=~/workspace/graalgo-m9 run_wave3.sh strings
+# The repo root defaults to the repository containing this script (resolved
+# via its own path — never hardcoded) but can be overridden:
+#   GR=/path/to/graalgo run_wave3.sh strings
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
-export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+# Repo root: test/corpus/wave3/run_wave3.sh -> corpus -> test -> repo.
+# The caller may export GR (tools/run_stdlib_gate.sh does); otherwise
+# resolve it from this script's location.
+GR="${GR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+BE="$GR/internal/backend"
 
-# Tmp discipline (corpus/wave3/README.md): never write to /tmp.
-export TMPDIR="$P3/hidden_files/m9-tmp/wave3"
-export GOCACHE="$HOME/workspace/.gocache-m9-wave3"
-mkdir -p "$TMPDIR"
+# Toolchains. The gc reference leg uses GO_BIN_DIR (the stdlib-gate CI job
+# exports it); the graalgo leg runs through the product launcher
+# (internal/backend/graalgo-sync-run), which reads GRAALVM_HOME — honor
+# JAVA_BIN if the caller set that instead.
+export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
+export GOTOOLCHAIN=local
+if [ -z "${GRAALVM_HOME:-}" ] && [ -n "${JAVA_BIN:-}" ]; then
+    GRAALVM_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+    export GRAALVM_HOME
+fi
+
+# Tmp discipline (corpus/wave3/README.md): never write to /tmp (512M shared
+# tmpfs on this VM). The repo's old hidden_files/ scratch convention was
+# retired with the phases/ tree — scratch goes to the workspace disk.
+# Honor a TMPDIR the caller already set (tools/run_stdlib_gate.sh exports
+# its own per-run scratch dir).
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp-wave3}"
+export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-wave3}"
+mkdir -p "$TMPDIR" "$GOCACHE"
 
 case "${1-all}" in
     all)
@@ -72,15 +88,19 @@ for d in "${dirs[@]}"; do
     [ -d "$d" ] || { echo "unknown package dir: $d"; exit 2; }
 done
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && ./build.sh build ) \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
+[ -x "$BE/graalgo-sync-run" ] || { echo "missing launcher: $BE/graalgo-sync-run"; exit 2; }
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-# P3-M7R2: -Djava.io.tmpdir keeps the JVM off /tmp (a full /tmp silently
-# yields empty output with exit 0 — methodology review finding).
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
+# The product launcher owns the load-bearing classpath order
+# (interop -> runtime -> truffle) and points -Djava.io.tmpdir at $TMPDIR;
+# never reconstruct the classpath here. --gmp=N sets scheduler parallelism.
+GRAALGO_RUN=( "$BE/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -89,16 +109,16 @@ pass=0; fail=0; scopelimited=0
 # filter_stderr: drop the known JVM Unsafe warning lines.
 filter_stderr() { grep -v '^WARNING: ' || true; }
 
-# build_gc <go file> <gcbin>: stock-gc reference leg. Programs marked
-# <base>.synthetic build against the extracted phase-1 synthetic sources;
-# all others build against real std.
+# build_gc <go file> <gcbin>: stock-gc reference leg. (No wave-3 program is
+# currently marked <base>.synthetic; the synthetic branch is kept for
+# corpus-format parity with wave1/wave2.)
 build_gc() {
     local go="$1" gcbin="$2" base="${1%.go}"
     if [ -f "$base.synthetic" ]; then
         local refdir="$TMP/synthref-$(basename "$base")"
         local gopath
         gopath="$(python3 "$(dirname "$0")/extract_synth_ref.py" \
-            "$P1/frontend" "$go" "$refdir")" \
+            "$GR/internal/frontend" "$go" "$refdir")" \
             || { echo "FAIL $base: synthetic-ref extraction failed"; return 1; }
         GO111MODULE=off GOPATH="$gopath" go build -o "$gcbin" \
             "$gopath/src/m7prog/main.go" \
@@ -143,7 +163,7 @@ run_one() { # $1 = go file, $2 = gmp
     # Programs with a <base>.args file get its whitespace-separated
     # contents as argv (after the program). Both legs receive the same
     # args; the graalgo leg passes them after `--` per the launcher
-    # argv convention (R6).
+    # argv convention.
     local args=()
     if [ -f "$base.args" ]; then
         # shellcheck disable=SC2207
@@ -184,9 +204,9 @@ run_one() { # $1 = go file, $2 = gmp
     fi
 }
 
-# Loopback-only policy gate (03-corpus-design.md §1.6): no program may
-# address a non-loopback host. Static grep over Dial/Listen call targets.
-# net.Pipe programs and 127.0.0.1/::1/localhost are allowed.
+# Loopback-only policy gate: no program may address a non-loopback host.
+# Static grep over Dial/Listen call targets. net.Pipe programs and
+# 127.0.0.1/::1/localhost are allowed.
 echo "== loopback egress gate =="
 if grep -rn --include='[0-9][0-9]_*.go' -E '\.(Dial|DialTimeout|Listen)\(' . | grep -v -E '127\.0\.0\.1|::1|localhost|net\.Pipe' ; then
     echo "FAIL: non-loopback network address in corpus program"

@@ -4,38 +4,57 @@
 # Usage: run_module.sh <probe-dir> [case...]
 #   probe-dir: contains go.mod (for the gc leg) and one subdir per case,
 #              each a package-main program (caseNN/main.go).
-#   Compares `go run` (gc 1.27.1) vs graalgo P3SyncMain --gmp=1 and --gmp=4:
+#   Compares `go run` (gc 1.27.1) vs graalgo P3SyncMain
+#   (internal/backend/graalgo-sync-run) --gmp=1 and --gmp=4:
 #   byte-identical stdout and equal exit codes. Panic programs: the first
 #   stderr line is compared (wave3 convention).
 #
 # Environment (set by caller or defaults):
-#   GR        worktree root (default ~/workspace/worktrees/graalgo/m9-modprobe)
-#   GO        gc toolchain (default ~/tools/go/bin/go)
-#   JAVA      GraalVM java (default ~/tools/graalvm-jdk-25/bin/java)
-#   TMPDIR    scratch (default <probe-dir>/.tmp, created)
+#   GR         repo root (default: the repository containing this script,
+#              resolved via its own path — never hardcoded)
+#   GO         gc toolchain (default: $GO_BIN_DIR/go, else
+#              ~/tools/go/bin/go)
+#   JAVA_BIN   GraalVM java (default ~/tools/graalvm-jdk-25/bin/java);
+#              translated to GRAALVM_HOME for the launcher
+#   TMPDIR     scratch (default $HOME/workspace/.tmp-modprobe, created;
+#              never /tmp — 512M shared tmpfs)
 #
 # Exit: 0 iff every case passes every leg. Prints a per-case table.
 set -uo pipefail
 
 PROBE_DIR="${1:?usage: run_module.sh <probe-dir> [case...]}"
 shift
-GR="${GR:-$HOME/workspace/worktrees/graalgo/m9-modprobe}"
-GO="${GO:-$HOME/tools/go/bin/go}"
-JAVA="${JAVA:-$HOME/tools/graalvm-jdk-25/bin/java}"
-P3="$GR/phases/phase3"; P2="$GR/phases/phase2"; P1="$GR/phases/phase1"
-TMPDIR="${TMPDIR:-$PROBE_DIR/.tmp}"
+# Repo root: test/e2e/run_module.sh -> test -> repo.
+GR="${GR:-$(cd "$(dirname "$0")/../.." && pwd)}"
+BE="$GR/internal/backend"
+GO="${GO:-${GO_BIN_DIR:-$HOME/tools/go/bin}/go}"
+if [ -z "${GRAALVM_HOME:-}" ]; then
+    JAVA_BIN="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
+    GRAALVM_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+    export GRAALVM_HOME
+fi
+TMPDIR="${TMPDIR:-$HOME/workspace/.tmp-modprobe}"
 export TMPDIR
 mkdir -p "$TMPDIR"
 export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-modprobe}"
+mkdir -p "$GOCACHE"
+export GOTOOLCHAIN=local
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain )
-# gofrontend: prefer the worktree build, else PATH.
-if [ -x "$P1/frontend/gofrontend" ]; then
-    export GRAALGO_GOFRONTEND="$P1/frontend/gofrontend"
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && PATH="$(dirname "$GO"):$PATH" ./build.sh build ) \
+        || { echo "gofrontend build failed"; exit 1; }
 fi
+[ -x "$BE/graalgo-sync-run" ] || { echo "missing launcher: $BE/graalgo-sync-run"; exit 2; }
+
+# The product launcher owns the load-bearing classpath order
+# (interop -> runtime -> truffle) and points -Djava.io.tmpdir at $TMPDIR;
+# never reconstruct the classpath here. --gmp=N sets scheduler parallelism.
+GRAALGO_RUN=( "$BE/graalgo-sync-run" )
+# gofrontend: prefer the explicit env var, else the repo build.
+export GRAALGO_GOFRONTEND="${GRAALGO_GOFRONTEND:-$GR/internal/frontend/gofrontend}"
 
 filter_stderr() { grep -v '^WARNING: ' || true; }
 

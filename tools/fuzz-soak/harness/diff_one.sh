@@ -1,25 +1,46 @@
 #!/bin/bash
-# Single-program differential: gc 1.27.1 vs graalgo P3SyncMain.
+# Single-program differential: gc 1.27.1 vs graalgo P3SyncMain
+# (internal/backend/graalgo-sync-run).
 # Usage: diff_one.sh <go-file> <workdir> <gmp>
 # Emits a JSON result record to stdout.
+#
+# Prerequisites (backend classes + gofrontend) are built once by the
+# caller (harness/run_batch.py step 1); this script never builds. Missing
+# prerequisites surface as HARNESS_ERROR, never as a diff verdict.
 set -uo pipefail
 
 GO_FILE="$1"
 WORKDIR="$2"
 GMP="${3:-1}"
 
-GR="${GR:-$HOME/workspace/graalgo-m9}"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
+# Repo root: harness/diff_one.sh -> fuzz-soak -> tools -> repo.
+GR="${GR:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+BE="$GR/internal/backend"
 export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
-JAVA="${JAVA_BIN:-$HOME/tools/graalvm-jdk-25/bin/java}"
-export TMPDIR="${FUZZ_TMPDIR:-$P3/hidden_files/m9-tmp/wave3}"
-
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
+export GOTOOLCHAIN=local
+if [ -z "${GRAALVM_HOME:-}" ] && [ -n "${JAVA_BIN:-}" ]; then
+    GRAALVM_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+    export GRAALVM_HOME
+fi
+# Tmp discipline: never write to /tmp (512M shared tmpfs on this VM), and
+# the repo's old hidden_files/ scratch convention was retired with the
+# phases/ tree. FUZZ_TMPDIR (exported by run_soak.sh) wins, then a
+# caller-set TMPDIR, then the workspace-disk default.
+export TMPDIR="${FUZZ_TMPDIR:-${TMPDIR:-$HOME/workspace/.tmp-fuzz-soak}}"
+mkdir -p "$TMPDIR"
 
 base="$(basename "$GO_FILE" .go)"
 gcbin="$WORKDIR/$base.gcbin"
+
+# 0. prerequisites (built once by the caller)
+if [ ! -x "$BE/graalgo-sync-run" ]; then
+    printf '{"file": "%s", "result": "HARNESS_ERROR", "detail": "missing launcher %s/graalgo-sync-run"}\n' "$base" "$BE"
+    exit 0
+fi
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    printf '{"file": "%s", "result": "HARNESS_ERROR", "detail": "missing gofrontend binary (internal/frontend/gofrontend not built)"}\n' "$base"
+    exit 0
+fi
 
 # 1. gc build
 if ! go build -o "$gcbin" "$GO_FILE" 2> "$WORKDIR/gc_build.err"; then
@@ -31,10 +52,10 @@ fi
 timeout 10 "$gcbin" > "$WORKDIR/gc.out" 2> "$WORKDIR/gc.err"
 gc_exit=$?
 
-# 3. graalgo run (120s timeout; JVM startup dominates)
-timeout 120 "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m \
-    -Djava.io.tmpdir="$TMPDIR" -cp "$CP" \
-    graalgo.p3sync.launcher.P3SyncMain --gmp="$GMP" -- "$GO_FILE" \
+# 3. graalgo run (120s timeout; JVM startup dominates). The product
+# launcher owns the load-bearing classpath order (interop -> runtime ->
+# truffle) and points -Djava.io.tmpdir at $TMPDIR.
+timeout 120 "$BE/graalgo-sync-run" --gmp="$GMP" -- "$GO_FILE" \
     > "$WORKDIR/gr.out" 2> "$WORKDIR/gr.err"
 gr_exit=$?
 

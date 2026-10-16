@@ -16,9 +16,9 @@ import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
 
-# Repo root: harness/run_batch.py -> fuzzing -> phase3 -> phases -> repo.
-GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-FUZZ = os.path.join(GR, "phases/phase3/fuzzing")
+# Repo root: harness/run_batch.py -> fuzz-soak -> tools -> repo.
+GR = os.environ.get("GR") or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+FUZZ = os.path.join(GR, "tools/fuzz-soak")
 
 
 def sh(cmd, **kw):
@@ -39,14 +39,27 @@ def main():
     progdir = os.path.join(outdir, "programs")
     os.makedirs(progdir, exist_ok=True)
 
-    # 1. Build Java modules once.
-    print("== building graalgo java modules ==", flush=True)
-    r = sh(f"make -C {GR}/phases/phase3 main", timeout=600)
+    # 1. Build Java modules + gofrontend once (diff_one.sh needs both;
+    # it never builds, so a missing prerequisite would be a per-program
+    # HARNESS_ERROR instead of a clean build failure here).
+    print("== building graalgo java modules + gofrontend ==", flush=True)
+    r = sh(f"make -C {GR} build", timeout=600)
     if r.returncode != 0:
         print("BUILD FAILED")
         print(r.stdout[-2000:])
         print(r.stderr[-2000:])
         sys.exit(1)
+    gofrontend = os.path.join(GR, "internal/frontend/gofrontend")
+    if not os.access(gofrontend, os.X_OK):
+        go_bin = os.environ.get("GO_BIN_DIR", os.path.expanduser("~/tools/go/bin"))
+        env = dict(os.environ, PATH=go_bin + os.pathsep + os.environ.get("PATH", ""))
+        r = sh(f"cd {GR}/internal/frontend && ./build.sh build",
+               timeout=600, env=env)
+        if r.returncode != 0 or not os.access(gofrontend, os.X_OK):
+            print("GOFRONTEND BUILD FAILED")
+            print(r.stdout[-2000:])
+            print(r.stderr[-2000:])
+            sys.exit(1)
     print("build ok", flush=True)
 
     # 2. Generate programs.

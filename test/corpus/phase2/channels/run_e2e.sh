@@ -1,26 +1,53 @@
 #!/bin/bash
-# P2-M2 corpus graduation runner (P3-M5, ADR-0005 Appendix C): the channel
-# corpus programs (ch01-ch12) run end-to-end through the full pipeline
-# (phase-1 gofrontend -> phase-3 P3SyncMain) and must produce their
-# gc-recorded .expected output. Follows the timectx run_differential.sh
-# pattern exactly (cd-to-script-dir, relative paths, gc built binary,
-# stdout+exit+(panic first line) comparison, JVM Unsafe stderr filter).
+# Channel corpus graduation runner: the channel corpus programs (ch01-ch12)
+# run end-to-end through the full pipeline (gofrontend ->
+# internal/backend/graalgo-sync-run) and must produce their gc-recorded
+# .expected output. Follows the timectx run_differential.sh pattern (cd to
+# the script dir, relative paths, gc built binary, stdout+exit+(panic first
+# line) comparison, JVM Unsafe stderr filter).
+#
+# The repo root defaults to the repository containing this script (resolved
+# via its own path — never hardcoded) but can be overridden:
+#   GR=/path/to/graalgo run_e2e.sh
 set -uo pipefail
 cd "$(dirname "$0")"
 
-GR="$HOME/workspace/graalgo"
-P3="$GR/phases/phase3"
-P2="$GR/phases/phase2"
-P1="$GR/phases/phase1"
-export PATH="$HOME/tools/go/bin:$PATH"
-JAVA="$HOME/tools/graalvm-jdk-25/bin/java"
+# Repo root: test/corpus/phase2/channels/run_e2e.sh -> phase2 -> corpus ->
+# test -> repo.
+GR="${GR:-$(cd "$(dirname "$0")/../../../.." && pwd)}"
+BE="$GR/internal/backend"
 
-echo "== building phase-3 java module =="
-make -C "$P3" main > /dev/null || { echo "phase3 build failed"; exit 1; }
+# Toolchains. The gc reference leg uses GO_BIN_DIR; the graalgo leg runs
+# through the product launcher (internal/backend/graalgo-sync-run), which
+# reads GRAALVM_HOME — honor JAVA_BIN if the caller set that instead.
+export PATH="${GO_BIN_DIR:-$HOME/tools/go/bin}:$PATH"
+export GOTOOLCHAIN=local
+if [ -z "${GRAALVM_HOME:-}" ] && [ -n "${JAVA_BIN:-}" ]; then
+    GRAALVM_HOME="$(cd "$(dirname "$JAVA_BIN")/.." && pwd)"
+    export GRAALVM_HOME
+fi
 
-CP="$P3/out/classes:$P2/out/classes:$P1/out/classes:$(ls "$P1"/lib/*.jar | tr '\n' ':')"
-GRAALGO_RUN=( "$JAVA" --enable-native-access=ALL-UNNAMED -Xss32m -cp "$CP"
-    graalgo.p3sync.launcher.P3SyncMain )
+# Tmp discipline: never write to /tmp (512M shared tmpfs on this VM). The
+# repo's old hidden_files/ scratch convention was retired with the
+# phases/ tree — scratch goes to the workspace disk. Honor a TMPDIR the
+# caller already set.
+export TMPDIR="${TMPDIR:-$HOME/workspace/.tmp-channels}"
+export GOCACHE="${GOCACHE:-$HOME/workspace/.gocache-channels}"
+mkdir -p "$TMPDIR" "$GOCACHE"
+
+echo "== building backend java modules =="
+make -C "$GR" build > /dev/null || { echo "backend build failed"; exit 1; }
+if [ ! -x "$GR/internal/frontend/gofrontend" ]; then
+    echo "== building gofrontend =="
+    ( cd "$GR/internal/frontend" && ./build.sh build ) \
+        || { echo "gofrontend build failed"; exit 1; }
+fi
+[ -x "$BE/graalgo-sync-run" ] || { echo "missing launcher: $BE/graalgo-sync-run"; exit 2; }
+
+# The product launcher owns the load-bearing classpath order
+# (interop -> runtime -> truffle) and points -Djava.io.tmpdir at $TMPDIR;
+# never reconstruct the classpath here. --gmp=N sets scheduler parallelism.
+GRAALGO_RUN=( "$BE/graalgo-sync-run" )
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

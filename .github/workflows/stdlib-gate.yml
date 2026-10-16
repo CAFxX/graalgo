@@ -1,5 +1,5 @@
-# Layer 3 — stdlib + scripts per-release gate (phases/phase3/PLAN.md §5,
-# GG-0029/GG-0032): wave1/wave2/wave3 corpora differential vs stock gc.
+# Layer 3 — stdlib + scripts per-release gate (docs/arch/phases/phase3/PLAN.md
+# §5, GG-0029/GG-0032): wave1/wave2/wave3 corpora differential vs stock gc.
 #
 # Cadence: weekly (the per-release gate — releases cut from a green gate)
 # plus manual dispatch. Hours-scale by design; the four-way triage per red
