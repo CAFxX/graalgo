@@ -26,6 +26,11 @@ def run_cmd(cmd, env=None, timeout=300):
     except subprocess.TimeoutExpired:
         return -1, "", "TIMEOUT"
 
+def default_graalgo_run():
+    """Default graalgo-run launcher: the in-repo backend launcher."""
+    repo = os.path.abspath(os.path.join(HERE, "..", ".."))
+    return os.path.join(repo, "internal", "backend", "graalgo-run")
+
 def main():
     if len(sys.argv) < 2:
         sys.exit("usage: run.py <package> [--goroot PATH] [--graalgo-run PATH] [--out DIR]")
@@ -46,9 +51,8 @@ def main():
             i += 1
 
     if graalgo_run is None:
-        # Default: phase1 graalgo-run in this repo (HERE=tools/gate1)
-        repo = os.path.abspath(os.path.join(HERE, "..", ".."))
-        graalgo_run = os.path.join(repo, "phases", "phase1", "graalgo-run")
+        # Default: the in-repo backend launcher (HERE=tools/gate1).
+        graalgo_run = default_graalgo_run()
 
     workdir = outdir or tempfile.mkdtemp(prefix=f"gate1-{pkg}-")
     os.makedirs(workdir, exist_ok=True)
@@ -116,7 +120,17 @@ def main():
 
     verdict = "PASS"
     divergences = []
-    if rc_gc != 0 and rc_gr == 0:
+    if rc_gc != 0 and rc_gr != 0:
+        # Both legs failed (e.g. the synthesized driver does not compile
+        # under either toolchain). Comparing two empty result sets would
+        # report PASS ("0 tests agree") — a gate that validated nothing
+        # must never report green.
+        verdict = "ERROR"
+        print(f"ERROR: both gc and graalgo legs failed "
+              f"(rc_gc={rc_gc}, rc_gr={rc_gr}); harness cannot validate this package")
+        print(f"gc stderr tail: {err_gc[-500:]}")
+        print(f"graalgo stderr tail: {err_gr[-800:]}")
+    elif rc_gc != 0 and rc_gr == 0:
         # gc itself failed (e.g. unsupported test helper) — harness issue, not graalgo
         verdict = "SKIP"
         print(f"SKIP: gc driver failed (rc={rc_gc}); harness cannot validate this package")
@@ -126,16 +140,26 @@ def main():
         print(f"DIVERGE: graalgo driver failed (rc={rc_gr}) while gc passed")
         print(f"graalgo stderr tail: {err_gr[-800:]}")
     else:
-        for name in sorted(set(gc_res) | set(gr_res)):
-            g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
-            if g != r:
-                divergences.append((name, g, r))
-        if divergences:
-            verdict = "DIVERGE"
-            for name, g, r in divergences:
-                print(f"  DIVERGE {name}: gc={g} graalgo={r}")
+        # Both legs exited 0. A PASS is only meaningful if the gc leg
+        # actually produced results to agree with: zero parsed results
+        # means the driver emitted nothing the harness understands, i.e.
+        # a broken harness, not a passing package.
+        if not gc_res:
+            verdict = "ERROR"
+            print("ERROR: gc leg exited 0 but produced zero parsed test "
+                  "results; harness cannot validate this package")
+            print(f"gc stdout tail: {out_gc[-500:]}")
         else:
-            print(f"  {len(gc_res)} tests agree")
+            for name in sorted(set(gc_res) | set(gr_res)):
+                g, r = gc_res.get(name, "MISSING"), gr_res.get(name, "MISSING")
+                if g != r:
+                    divergences.append((name, g, r))
+            if divergences:
+                verdict = "DIVERGE"
+                for name, g, r in divergences:
+                    print(f"  DIVERGE {name}: gc={g} graalgo={r}")
+            else:
+                print(f"  {len(gc_res)} tests agree")
 
     print(f"VERDICT {pkg}: {verdict}")
     with open(os.path.join(workdir, "verdict.txt"), "w") as f:

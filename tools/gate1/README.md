@@ -8,17 +8,22 @@ and compare against gc 1.27.1.
 Graalgo's frontend is single-file today (no package-mode `go test`).
 The harness synthesizes single-file drivers from stdlib test sources:
 
-1. **discover.py** — extract `TestXxx` functions from `$GOROOT/src/<pkg>/*_test.go`
-2. **synthesize.py** — generate a `main`-package driver:
+1. **[discover.py](discover.py)** — extract `TestXxx` functions from `$GOROOT/src/<pkg>/*_test.go`
+2. **[synthesize.py](synthesize.py)** — generate a `main`-package driver:
    - Inlines the testing shim (package main)
    - Hoists imports to the driver header
    - Rewrites `*testing.T` → `*T`, strips benchmarks
    - Handles dot-import vs qualified import styles
-3. **shim/shim.go** — minimal `testing.T` replacement (`Errorf`, `Fatalf`,
+3. **[shim/shim.go](shim/shim.go)** — minimal `testing.T` replacement (`Errorf`, `Fatalf`,
    `Run`, `Skip`, etc.). Does NOT support: `Cleanup` (no-op), `Parallel`
    (no-op), benchmarks.
-4. **run.py** — differential runner: builds driver via `go run` (gc) and
-   `graalgo-run`, compares per-test PASS/FAIL/SKIP.
+4. **[run.py](run.py)** — differential runner: builds driver via `go run` (gc) and
+   `graalgo-run`, compares per-test PASS/FAIL/SKIP. Never reports PASS
+   when both legs fail (verdict `ERROR`) or when the gc leg produced no
+   parsable results.
+5. **[test_run_verdict.py](test_run_verdict.py)** — self-test for the verdict
+   logic (fail-open regression): drives [run.py](run.py) with fake
+   toolchains. Run with `python3 tools/gate1/test_run_verdict.py`.
 
 ## Usage
 
