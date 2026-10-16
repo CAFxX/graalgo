@@ -208,50 +208,45 @@ public final class GoFuncRootNode extends RootNode {
             Boxing.setSlot(frame, paramSlots[i], paramKinds[i], arg);
         }
         GoroutineState state = GoroutineState.current();
-        DeferChain chain = state != null ? state.deferChain() : null;
-        int mark = chain != null ? chain.depth() : 0;
-        GoStackFrameHead head = null;
-        if (state != null) {
-            head = new GoStackFrameHead(state.pushGoStack(funcName, getSourceSection()));
+        if (state == null) {
+            // TR-8: GoCalls.invoke guarantees a state on entry (installing
+            // a fresh thread-confined one on stateless threads), GoRootNode
+            // and SchedulerCore.spawn install their own. Reaching here
+            // means the root was invoked through a path that bypassed
+            // GoCalls — fail loud, never silently drop defers.
+            throw new FrontendException("GoFuncRootNode(" + funcName
+                    + "): no GoroutineState installed on the calling thread; "
+                    + "compiled Go code requires a goroutine state (see GoCalls.invoke)");
         }
+        DeferChain chain = state.deferChain();
+        int mark = chain.depth();
+        GoStackFrameHead head =
+                new GoStackFrameHead(state.pushGoStack(funcName, getSourceSection()));
         try {
             try {
                 body.executeVoid(frame);
             } catch (GoReturn r) {
-                if (chain != null) {
-                    adoptRangeDefers(chain, frame, mark);
-                    chain.unwindReturning(mark);
-                }
-                return readResult(frame, resultSlot, resultKind, r.value, resultBoxed);
-            }
-            if (chain != null) {
                 adoptRangeDefers(chain, frame, mark);
                 chain.unwindReturning(mark);
+                return readResult(frame, resultSlot, resultKind, r.value, resultBoxed);
             }
+            adoptRangeDefers(chain, frame, mark);
+            chain.unwindReturning(mark);
             return readResult(frame, resultSlot, resultKind, null, resultBoxed);
         } catch (PanicException p) {
-            PanicException rest;
-            if (chain != null) {
-                adoptRangeDefers(chain, frame, mark);
-                rest = chain.unwindPanicking(mark, p);
-            } else {
-                rest = p;
-            }
+            adoptRangeDefers(chain, frame, mark);
+            PanicException rest = chain.unwindPanicking(mark, p);
             if (rest != null) {
                 throw rest;
             }
             // Recovered: resume after the chain with the result slot.
             return readResult(frame, resultSlot, resultKind, null, resultBoxed);
         } catch (Goexit g) {
-            if (chain != null) {
-                adoptRangeDefers(chain, frame, mark);
-                chain.unwindGoexiting(mark);
-            }
+            adoptRangeDefers(chain, frame, mark);
+            chain.unwindGoexiting(mark);
             throw g;
         } finally {
-            if (state != null && head != null) {
-                state.popGoStack(head.frame);
-            }
+            state.popGoStack(head.frame);
         }
     }
 

@@ -124,6 +124,12 @@ public final class Linknames {
      * under {@code qualifiedName} with the given D5-boxed arguments via
      * the {@link GoCalls} protocol. Unbound names fail fast.
      *
+     * <p>TR-8: the invocation goes through {@link GoCalls#invoke}, so a
+     * {@link GoroutineState} is always present on the calling thread — a
+     * fresh thread-confined one is installed when the caller is a
+     * stateless Java thread, the goroutine's own otherwise. Defers (and
+     * panic/recover) in the helper behave as on a goroutine.
+     *
      * <p>Arguments may arrive boxed as {@link graalgo.values.GoInterface}
      * (the call-site adaptation boxes concrete values for
      * {@code any}-typed parameters); {@code GoFuncRootNode} unwraps those

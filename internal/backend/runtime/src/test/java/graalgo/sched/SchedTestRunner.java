@@ -52,6 +52,7 @@ public final class SchedTestRunner {
         TESTS.add(graalgo.runtime.ZeroSizeSliceTest.class);
         TESTS.add(graalgo.runtime.PanicOverlayDriftTest.class);
         TESTS.add(graalgo.runtime.GcInteropTest.class);
+        TESTS.add(graalgo.runtime.DeferStateTest.class);
         TESTS.add(graalgo.runtime.GcDifferentialTest.class);
         TESTS.add(graalgo.runtime.GcTortureTest.class);
         TESTS.add(graalgo.runtime.GcVisibilityTest.class);

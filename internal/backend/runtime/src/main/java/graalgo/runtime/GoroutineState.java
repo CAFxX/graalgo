@@ -15,6 +15,16 @@ package graalgo.runtime;
  * <p>{@code ThreadLocal} is vthread-scoped because the holder lives on
  * the {@link Thread} object, and a virtual thread keeps its identity
  * across {@code LockSupport} park/unpark cycles.
+ *
+ * <p><strong>Entry invariant (TR-8):</strong> every entry into compiled Go
+ * code runs with a non-null holder on the calling thread. Goroutine
+ * threads get theirs from {@code GoRootNode} (main) and
+ * {@code SchedulerCore.spawn}; Java-driven entry points that may run on
+ * stateless threads go through {@link GoCalls#invoke}, which installs a
+ * fresh thread-confined state when {@link #current()} is null and restores
+ * the previous holder on return. Code executing inside compiled Go code
+ * may therefore treat a null holder as a violated invariant and fail
+ * loud (never NullPointerException, never silent behavior change).
  */
 public final class GoroutineState {
     private final DeferChain deferChain = new DeferChain();

@@ -94,6 +94,18 @@ public final class DeferNode extends GoStmtNode {
                 }
             }
         }
-        GoroutineState.current().deferChain().push(dc);
+        GoroutineState state = GoroutineState.current();
+        if (state == null) {
+            // TR-8: a defer statement only executes inside a function body,
+            // and every entry into compiled Go code installs a
+            // GoroutineState (GoCalls.invoke, GoRootNode,
+            // SchedulerCore.spawn). A null here means the entry invariant
+            // was violated — fail loud naming the missing state, never
+            // NullPointerException.
+            throw new FrontendException("defer: no GoroutineState installed "
+                    + "on the calling thread; defer requires a goroutine "
+                    + "state (see GoCalls.invoke)");
+        }
+        state.deferChain().push(dc);
     }
 }
