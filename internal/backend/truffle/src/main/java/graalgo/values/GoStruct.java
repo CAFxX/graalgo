@@ -1,7 +1,5 @@
 package graalgo.values;
 
-import java.util.Arrays;
-
 /**
  * A Go struct value: descriptor + {@code long[]} + {@code Object[]} (D5).
  *
@@ -163,7 +161,47 @@ public final class GoStruct {
     @Override
     public boolean equals(Object o) {
         return o instanceof GoStruct gs && descriptor == gs.descriptor
-                && Arrays.equals(longs, gs.longs) && structObjectsEqual(objects, gs.objects);
+                && structLongsEqual(gs) && structObjectsEqual(objects, gs.objects);
+    }
+
+    /**
+     * Field-wise comparison of the longs carrier. Go's {@code ==} on floats
+     * is IEEE: {@code -0.0 == +0.0}, but {@code NaN != NaN} — even for
+     * identical bit patterns. A bitwise {@code Arrays.equals} diverged in
+     * both directions ({@code -0.0} vs {@code +0.0} float fields compared
+     * unequal; identical NaN fields compared equal). Float-carried slots
+     * (stored as {@code Float.floatToIntBits}/{@code Double.doubleToLongBits}
+     * patterns) compare with Java's {@code ==} plus an explicit NaN guard —
+     * the same idiom as the {@link GoEquality} {@code double[]}/{@code float[]}
+     * branches ({@code Double.compare} would treat {@code NaN == NaN}, which
+     * is wrong here). Field kinds come from the descriptor — the same kind
+     * dispatch as {@link #longsHashCode}; all other longs-carried kinds
+     * (ints, bools) compare bitwise.
+     */
+    private boolean structLongsEqual(GoStruct gs) {
+        for (GoStructDescriptor.Field f : descriptor.fields()) {
+            if (!f.inLongs()) {
+                continue;
+            }
+            long a = longs[f.index()];
+            long b = gs.longs[f.index()];
+            if (f.kind() == GoKind.FLOAT64) {
+                double x = Double.longBitsToDouble(a);
+                double y = Double.longBitsToDouble(b);
+                if (x != y || Double.isNaN(x)) {
+                    return false;
+                }
+            } else if (f.kind() == GoKind.FLOAT32) {
+                float x = Float.intBitsToFloat((int) a);
+                float y = Float.intBitsToFloat((int) b);
+                if (x != y || Float.isNaN(x)) {
+                    return false;
+                }
+            } else if (a != b) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean structObjectsEqual(Object[] a, Object[] b) {

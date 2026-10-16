@@ -446,4 +446,95 @@ public final class ValuesTest {
         t2.setLong(0, Float.floatToIntBits(0.0f));
         assertEq(t1.hashCode(), t2.hashCode(), "struct float32 field -0.0 hash");
     }
+
+    // P1-5: GoStruct.equals uses IEEE float semantics for longs-carried
+    // float fields: -0.0 == +0.0 (Go), and the equal->same-hash contract
+    // holds (the P1-4 hash normalizes -0.0 -> +0.0).
+    public void testGoStructEqualsNegativeZeroFloatField() {
+        GoStructDescriptor d = GoStructDescriptor.layout("F",
+                List.of("f"), List.of(GoKind.FLOAT64));
+        GoStruct s1 = GoStruct.zero(d);
+        s1.setLong(0, Double.doubleToLongBits(-0.0));
+        GoStruct s2 = GoStruct.zero(d);
+        s2.setLong(0, Double.doubleToLongBits(0.0));
+        assertTrue(GoEquality.equal(s1, s2), "struct float64 -0.0 == +0.0");
+        assertTrue(s1.equals(s2), "struct float64 -0.0 equals +0.0");
+        assertEq(s1.hashCode(), s2.hashCode(), "equal structs hash equal");
+        // float32 variant.
+        GoStructDescriptor d32 = GoStructDescriptor.layout("F32",
+                List.of("f"), List.of(GoKind.FLOAT32));
+        GoStruct t1 = GoStruct.zero(d32);
+        t1.setLong(0, Float.floatToIntBits(-0.0f));
+        GoStruct t2 = GoStruct.zero(d32);
+        t2.setLong(0, Float.floatToIntBits(0.0f));
+        assertTrue(GoEquality.equal(t1, t2), "struct float32 -0.0f == +0.0f");
+        assertEq(t1.hashCode(), t2.hashCode(), "equal float32 structs hash equal");
+        // Map lookup hits in both directions (Go: hit).
+        GoMap m = new GoMap();
+        m.put(s1, 1L);
+        assertEq(1L, (Long) m.get(s2), "struct{-0.0} key; struct{+0.0} lookup hits");
+    }
+
+    // P1-5: NaN float fields never compare equal — even identical
+    // references (Go: s == s is false when a field is NaN).
+    public void testGoStructEqualsNaNFloatField() {
+        GoStructDescriptor d = GoStructDescriptor.layout("F",
+                List.of("f", "n"), List.of(GoKind.FLOAT64, GoKind.INT64));
+        GoStruct s1 = GoStruct.zero(d);
+        s1.setLong(0, Double.doubleToLongBits(Double.NaN));
+        s1.setLong(1, 7);
+        GoStruct s2 = GoStruct.zero(d);
+        s2.setLong(0, Double.doubleToLongBits(Double.NaN));
+        s2.setLong(1, 7);
+        assertTrue(!GoEquality.equal(s1, s2), "NaN float64 field: distinct structs unequal");
+        assertTrue(!GoEquality.equal(s1, s1), "NaN float64 field: identical reference unequal");
+        assertTrue(!s1.equals(s1), "NaN float64 field: equals(self) false");
+        // float32 variant, identical reference.
+        GoStructDescriptor d32 = GoStructDescriptor.layout("F32",
+                List.of("f"), List.of(GoKind.FLOAT32));
+        GoStruct t = GoStruct.zero(d32);
+        t.setLong(0, Float.floatToIntBits(Float.NaN));
+        assertTrue(!GoEquality.equal(t, t), "NaN float32 field: identical reference unequal");
+        // Interface-boxed NaN struct: an identical interface reference
+        // still compares unequal (the GoInterface branch precedes the
+        // identity shortcut).
+        Object desc = new Object();
+        Object itab = new Object();
+        GoInterface i = new GoInterface(desc, s1, itab);
+        assertTrue(!GoEquality.equal(i, i), "any(NaN-struct): identical interface reference unequal");
+    }
+
+    // P1-5: nested structs compare float fields by IEEE semantics through
+    // the objects carrier; int kinds in the same struct still compare
+    // bitwise.
+    public void testGoStructEqualsNestedAndMixedFloatFields() {
+        GoStructDescriptor inner = GoStructDescriptor.layout("Inner",
+                List.of("f"), List.of(GoKind.FLOAT64));
+        GoStructDescriptor outer = GoStructDescriptor.layout("Outer",
+                List.of("inner", "i"), List.of(GoKind.STRUCT, GoKind.INT64));
+        GoStruct in1 = GoStruct.zero(inner);
+        in1.setLong(0, Double.doubleToLongBits(-0.0));
+        GoStruct o1 = GoStruct.zero(outer);
+        o1.setObject(0, in1);
+        o1.setLong(1, 5);
+        GoStruct in2 = GoStruct.zero(inner);
+        in2.setLong(0, Double.doubleToLongBits(0.0));
+        GoStruct o2 = GoStruct.zero(outer);
+        o2.setObject(0, in2);
+        o2.setLong(1, 5);
+        assertTrue(GoEquality.equal(o1, o2), "nested struct -0.0 == +0.0");
+        assertEq(o1.hashCode(), o2.hashCode(), "nested equal structs hash equal");
+        // NaN in the nested field makes the outer structs unequal.
+        GoStruct in3 = GoStruct.zero(inner);
+        in3.setLong(0, Double.doubleToLongBits(Double.NaN));
+        GoStruct o3 = GoStruct.zero(outer);
+        o3.setObject(0, in3);
+        o3.setLong(1, 5);
+        assertTrue(!GoEquality.equal(o3, o3), "nested NaN: identical reference unequal");
+        // Non-float longs-carried kinds still compare bitwise.
+        GoStruct o4 = GoStruct.zero(outer);
+        o4.setObject(0, in2);
+        o4.setLong(1, 6);
+        assertTrue(!GoEquality.equal(o2, o4), "int field difference still detected");
+    }
 }

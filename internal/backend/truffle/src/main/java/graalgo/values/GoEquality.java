@@ -30,6 +30,26 @@ public final class GoEquality {
             return a instanceof GoComplex64 ca && b instanceof GoComplex64 cb
                     && complex64Equal(ca, cb);
         }
+        if (a instanceof GoStruct sa && b instanceof GoStruct sb) {
+            // Struct map keys (M4, WS E): comparable struct types only
+            // reach here (go/types rejects uncomparable key types).
+            // Precedes the identity shortcut (see the P1-3 complex note):
+            // a NaN float field makes the value unequal to everything —
+            // including itself (Go: s == s with a NaN field is false) —
+            // so two references to one NaN-carrying struct must NOT take
+            // the a == b fast path.
+            return sa.equals(sb);
+        }
+        if (a instanceof GoInterface ia && b instanceof GoInterface ib) {
+            // P3-M9 (tier-1d): interface map keys (e.g. unique's any-held
+            // struct keys). Same reason as the GoStruct branch above: a
+            // NaN inside the dynamic value defeats even identical
+            // references, so this precedes the identity shortcut too.
+            if (ia.isNil() || ib.isNil()) {
+                return ia.isNil() && ib.isNil();
+            }
+            return ia.descriptor() == ib.descriptor() && equal(ia.data(), ib.data());
+        }
         if (a == b) {
             // Covers reference-identity and the (null, null) case. Note: for
             // Doubles this would wrongly equate two identical NaN
@@ -64,20 +84,6 @@ public final class GoEquality {
         }
         if (a instanceof GoString sa && b instanceof GoString sb) {
             return sa.equals(sb);
-        }
-        if (a instanceof GoStruct sa && b instanceof GoStruct sb) {
-            // Struct map keys (M4, WS E): comparable struct types only
-            // reach here (go/types rejects uncomparable key types).
-            return sa.equals(sb);
-        }
-        if (a instanceof GoInterface ia && b instanceof GoInterface ib) {
-            // P3-M9 (tier-1d): interface map keys (e.g. unique's any-held
-            // struct keys). Nil == nil; else same dynamic type (descriptor
-            // identity) and equal dynamic values.
-            if (ia.isNil() || ib.isNil()) {
-                return ia.isNil() && ib.isNil();
-            }
-            return ia.descriptor() == ib.descriptor() && equal(ia.data(), ib.data());
         }
         if (a instanceof long[] la && b instanceof long[] lb) {
             // P3-M9 (tier-1d): array fields in struct keys (e.g. unique's
