@@ -457,6 +457,17 @@
       "stdin": "",
       "stdout": "named new-elem: 7\nkind=func str=\"func(int, string) float64\"\nvariadic: false in: 2 out: 1\nf2: func(...int) variadic: true in0: []int\ncanonical: true ptr: *func(int, string) float64\npanic: interface conversion: reflect.Type is nil, not *reflect.rtype\npanic: reflect.FuncOf: last arg of variadic func must be slice\npanic: reflect.FuncOf: last arg of variadic func must be slice\nkind=struct str=\"struct { A int; b string; C float64 \\\"json:\\\\\\\"c\\\\\\\"\\\" }\"\nfield b: true b string main 8\nnumfield: 3 field1off: 8 field2off: 24 size: 32 align: 8\npanic: reflect.StructOf: field 0 has no name\npanic: reflect.StructOf: duplicate field A\npanic: reflect.StructOf: field \"a\" is unexported but missing PkgPath\npanic: reflect.StructOf: field \"a\" is unexported but missing PkgPath\nkind=struct str=\"struct { main.E }\"\npromoted Hello: true Hello true\ncall: hello 42\nptr-embed Pong: true Pong\ncall3: 10\nptr-embed value method: true\nmakefunc: 5\nsetfield: 9\ntag: c\n",
       "timedOut": false
+    },
+    {
+      "name": "48_range_over_func_edge",
+      "args": [],
+      "stdin": "",
+      "buildOk": true,
+      "buildLog": "",
+      "exitCode": 0,
+      "timedOut": false,
+      "stdout": "--- return-with-defers ---\nseq defer\nenclosing defer\nresult: 30\n--- goto-out ---\n0\n1\n2\nseq defer\ndone\n--- outward-labels ---\n0 0\n1 0\nend\n--- body-defer-lifo ---\niter 0\niter 1\niter 2\nafter loop\nd2\nbody 2\nbody 1\nbody 0\nd1\n--- body-defer-recover ---\nbody defer 0\ninner recovered: boom\nbody defer 1\ninner recovered: boom\nbody defer 2\ninner recovered: boom\nafter\n--- body-panic-rethrow ---\niter 0\niter 1\niter 2\nseq defer runs\nenclosing defer runs\nrecovered: body boom\n--- nested-return ---\ninner seq defer 3\ninner seq defer 3\ninner seq defer 3\nf defer\nresult: 42\n--- assign-form ---\nx = 7\nx = 8\nx = 9\nfinal x = 9\n--- misuse-yield-after-false ---\ngot 1\nrecovered: runtime error: range function continued iteration after function for loop body returned false\n--- misuse-yield-after-exit ---\ngot 1\nrecovered: runtime error: range function continued iteration after whole loop exit\n--- misuse-swallowed-body-panic ---\ngot 1\nrecovered: runtime error: range function recovered a loop body panic and did not resume panicking\n--- misuse-reentrant-yield ---\ngot 1\nrecovered: runtime error: range function continued iteration after loop body panic\n",
+      "stderr": ""
     }
   ],
   "recordedAt": "2026-10-14T13:37:58Z",
